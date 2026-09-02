@@ -1,10 +1,7 @@
 """
 Celery Beat scheduler backend implementation.
 
-This module provides a Celery Beat-based scheduler backend that:
-- Uses the existing celery_app.py configuration
-- Supports embedded mode (Worker/Beat as threads) or standalone mode
-- Maintains backward compatibility with existing Subscription scheduling
+This module provides the control-plane view of supervisor-owned Celery roles.
 """
 
 import logging
@@ -22,7 +19,7 @@ class CeleryBeatBackend(SchedulerBackend):
 
     This backend leverages the existing Celery infrastructure for scheduling:
     - Uses beat_schedule for periodic task configuration
-    - Supports embedded mode (threads) or standalone Celery processes
+    - Worker and Beat run as supervisor-managed sibling processes
     - The core scheduling logic remains in check_due_subscriptions task
 
     Design notes:
@@ -62,30 +59,16 @@ class CeleryBeatBackend(SchedulerBackend):
         """
         Start the Celery Beat scheduler.
 
-        In embedded mode, starts Worker and Beat as daemon threads.
-        In standalone mode, relies on externally running Celery processes.
+        Process lifecycle is owned by ``app.runtime``. This method only
+        initializes job metadata for the scheduler control plane.
         """
-        from app.core.config import settings
-
         if self._state == SchedulerState.RUNNING:
             logger.warning("[CeleryBeatBackend] Already running, skipping start")
             return
 
-        if settings.EMBEDDED_CELERY_ENABLED:
-            from app.core.embedded_celery import start_embedded_celery
-
-            logger.info(
-                "[CeleryBeatBackend] Starting embedded Celery Worker and Beat..."
-            )
-            start_embedded_celery()
-            logger.info("[CeleryBeatBackend] Embedded Celery started")
-        else:
-            logger.info(
-                "[CeleryBeatBackend] Standalone mode - "
-                "ensure Celery Worker and Beat are running externally"
-            )
-
         # Initialize the core check-due-subscriptions job in our tracking
+        from app.core.config import settings
+
         celery_app = self._get_celery_app()
         schedule = celery_app.conf.beat_schedule.get(
             self.CHECK_DUE_SUBSCRIPTIONS_JOB_ID
@@ -111,22 +94,9 @@ class CeleryBeatBackend(SchedulerBackend):
         Args:
             wait: Whether to wait for running tasks to complete (not used in embedded mode)
         """
-        from app.core.config import settings
-
         if self._state == SchedulerState.STOPPED:
             logger.warning("[CeleryBeatBackend] Already stopped, skipping stop")
             return
-
-        if settings.EMBEDDED_CELERY_ENABLED:
-            from app.core.embedded_celery import stop_embedded_celery
-
-            logger.info("[CeleryBeatBackend] Stopping embedded Celery...")
-            stop_embedded_celery()
-            logger.info("[CeleryBeatBackend] Embedded Celery stopped")
-        else:
-            logger.info(
-                "[CeleryBeatBackend] Standalone mode - Celery processes remain running"
-            )
 
         self._state = SchedulerState.STOPPED
 
@@ -376,28 +346,17 @@ class CeleryBeatBackend(SchedulerBackend):
         from app.core.config import settings
 
         healthy = True
-        details: Dict[str, Any] = {
-            "embedded_mode": settings.EMBEDDED_CELERY_ENABLED,
-        }
+        details: Dict[str, Any] = {"process_owner": "app.runtime"}
+        try:
+            from redis import Redis
 
-        if settings.EMBEDDED_CELERY_ENABLED:
-            from app.core.embedded_celery import is_celery_running
-
-            running = is_celery_running()
-            healthy = running
-            details["celery_running"] = running
-        else:
-            # Check Redis connectivity for standalone mode
-            try:
-                from redis import Redis
-
-                redis_client = Redis.from_url(settings.REDIS_URL)
-                redis_client.ping()
-                details["redis_connected"] = True
-            except Exception as e:
-                healthy = False
-                details["redis_error"] = str(e)
-                details["redis_connected"] = False
+            redis_client = Redis.from_url(settings.REDIS_URL)
+            redis_client.ping()
+            details["redis_connected"] = True
+        except Exception as e:
+            healthy = False
+            details["redis_error"] = str(e)
+            details["redis_connected"] = False
 
         return {
             "healthy": healthy,

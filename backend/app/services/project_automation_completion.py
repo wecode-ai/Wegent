@@ -15,6 +15,7 @@ from app.core.events import EventBus, TaskCompletedEvent, get_event_bus
 from app.db.session import get_db_session
 from app.models.delivery import ProjectAutomationRun
 from app.models.project_chat_message import ProjectChatMessage
+from app.services.chat.storage.db import run_sync_in_executor
 from app.services.project_chat.push import push_project_chat_message
 from app.services.project_chat.service import project_chat_service
 from app.services.project_workflow_projection import sync_automation_workflow_node
@@ -190,10 +191,10 @@ def _apply_terminal_state(
     return True
 
 
-async def handle_project_automation_task_completed(
+def _handle_project_automation_task_completed_sync(
     event: TaskCompletedEvent,
 ) -> None:
-    """Project one terminal Wegent Task event onto its automation run/comment."""
+    """Project one terminal task event inside a database worker thread."""
 
     message_view: dict[str, Any] | None = None
     with get_db_session() as db:
@@ -283,6 +284,14 @@ async def handle_project_automation_task_completed(
 
     if message_view is not None:
         push_project_chat_message(message_view)
+
+
+async def handle_project_automation_task_completed(
+    event: TaskCompletedEvent,
+) -> None:
+    """Project one terminal event without blocking the application event loop."""
+
+    await run_sync_in_executor(_handle_project_automation_task_completed_sync, event)
 
 
 def register_project_automation_task_completion_handler(

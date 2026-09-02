@@ -1,0 +1,59 @@
+# SPDX-FileCopyrightText: 2026 Weibo, Inc.
+#
+# SPDX-License-Identifier: Apache-2.0
+
+"""Wire contract for Web-owned relays backed by the local Stream worker."""
+
+WEB_STREAM_FRAME_DATA = b"S"
+WEB_STREAM_FRAME_HEARTBEAT = b"H"
+WEB_STREAM_FRAME_COMPLETE = b"C"
+WEB_STREAM_FRAME_ERROR = b"E"
+WEB_STREAM_FRAME_METADATA = b"M"
+
+WEB_STREAM_MAX_FRAME_BYTES = 32 * 1024 * 1024
+WEB_STREAM_MAX_TOTAL_BYTES = 128 * 1024 * 1024
+WEB_STREAM_MAX_DURATION_SECONDS = 30 * 60.0
+WEB_EXECUTE_MAX_RESULT_BYTES = WEB_STREAM_MAX_FRAME_BYTES
+MODEL_RUNTIME_STREAM = "model_runtime"
+PROMPT_DRAFT_STREAM = "prompt_draft"
+WIZARD_PROMPT_STREAM = "wizard_prompt"
+DEEP_RESEARCH_STREAM = "deep_research"
+SUBTASK_SUBSCRIPTION_STREAM = "subtask_subscription"
+REMOTE_WORKSPACE_FILE_STREAM = "remote_workspace_file"
+MODEL_RUNTIME_EXECUTE = "model_runtime_execute"
+PROMPT_DRAFT_EXECUTE = "prompt_draft_execute"
+WIZARD_PROMPT_EXECUTE = "wizard_prompt_execute"
+DEEP_RESEARCH_CREATE_EXECUTE = "deep_research_create_execute"
+DEEP_RESEARCH_STATUS_EXECUTE = "deep_research_status_execute"
+SUBTASK_RECOVERY_EXECUTE = "subtask_recovery_execute"
+REMOTE_WORKSPACE_STATUS_EXECUTE = "remote_workspace_status_execute"
+REMOTE_WORKSPACE_TREE_EXECUTE = "remote_workspace_tree_execute"
+EXECUTION_CANCEL_EXECUTE = "execution_cancel_execute"
+TASK_RUNTIME_ACTIVE_STREAM_EXECUTE = "task_runtime_active_stream_execute"
+
+WEB_STREAM_OPERATIONS = frozenset(
+    {
+        MODEL_RUNTIME_STREAM,
+        PROMPT_DRAFT_STREAM,
+        WIZARD_PROMPT_STREAM,
+        DEEP_RESEARCH_STREAM,
+        SUBTASK_SUBSCRIPTION_STREAM,
+    }
+)
+
+WEB_RAW_STREAM_OPERATIONS = frozenset({REMOTE_WORKSPACE_FILE_STREAM})
+
+WEB_EXECUTE_OPERATIONS = frozenset(
+    {
+        MODEL_RUNTIME_EXECUTE,
+        PROMPT_DRAFT_EXECUTE,
+        WIZARD_PROMPT_EXECUTE,
+        DEEP_RESEARCH_CREATE_EXECUTE,
+        DEEP_RESEARCH_STATUS_EXECUTE,
+        SUBTASK_RECOVERY_EXECUTE,
+        REMOTE_WORKSPACE_STATUS_EXECUTE,
+        REMOTE_WORKSPACE_TREE_EXECUTE,
+        EXECUTION_CANCEL_EXECUTE,
+        TASK_RUNTIME_ACTIVE_STREAM_EXECUTE,
+    }
+)

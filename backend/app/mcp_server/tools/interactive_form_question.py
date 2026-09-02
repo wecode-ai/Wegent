@@ -29,10 +29,12 @@ WebSocket notification design:
 import json
 import logging
 import re
+from functools import partial
 from typing import Any, Dict, List, Literal
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
+from app.core.payload_codec import run_payload_codec
 from app.mcp_server.auth import TaskTokenInfo
 from app.mcp_server.tools.decorator import mcp_tool
 from app.services.interactive_form_extensions import (
@@ -413,6 +415,24 @@ def _has_interactive_form_payload(block: Dict[str, Any]) -> bool:
     return True
 
 
+def _contains_existing_interactive_form(blocks: List[Dict[str, Any]]) -> bool:
+    return any(
+        _has_interactive_form_payload(block)
+        for block in blocks
+        if _is_interactive_form_tool_block(block)
+    )
+
+
+def _latest_interactive_form_tool_use_id(
+    blocks: List[Dict[str, Any]],
+) -> str | None:
+    for block in reversed(blocks):
+        if _is_interactive_form_tool_block(block):
+            tool_use_id = block.get("tool_use_id")
+            return str(tool_use_id) if tool_use_id else None
+    return None
+
+
 async def _has_existing_interactive_form(subtask_id: int) -> bool:
     """Check whether this subtask has already displayed an interactive form."""
     try:
@@ -427,8 +447,12 @@ async def _has_existing_interactive_form(subtask_id: int) -> bool:
         )
         return False
 
-    form_blocks = [block for block in blocks if _is_interactive_form_tool_block(block)]
-    return any(_has_interactive_form_payload(block) for block in form_blocks)
+    return await run_payload_codec(
+        _contains_existing_interactive_form,
+        blocks,
+        payload_hint=blocks,
+        force_offload=True,
+    )
 
 
 async def _notify_frontend(
@@ -446,7 +470,12 @@ async def _notify_frontend(
         subtask_id: Subtask ID for block lookup
         question_data: The question data to send to frontend
     """
-    render_payload = _build_form_render_payload(question_data)
+    render_payload = await run_payload_codec(
+        _build_form_render_payload,
+        question_data,
+        payload_hint=question_data,
+        force_offload=True,
+    )
     tool_result = _build_deferred_tool_result()
 
     try:
@@ -459,12 +488,12 @@ async def _notify_frontend(
         # "mcp__ask-user_wegent-ask-user__ask_user" (ClaudeCode executor path),
         # so match by checking if the name contains "interactive_form_question".
         blocks = await session_manager.get_blocks(subtask_id)
-        tool_use_id = None
-        for block in reversed(blocks):
-            tool_name = block.get("tool_name", "")
-            if block.get("type") == "tool" and "interactive_form_question" in tool_name:
-                tool_use_id = block.get("tool_use_id")
-                break
+        tool_use_id = await run_payload_codec(
+            _latest_interactive_form_tool_use_id,
+            blocks,
+            payload_hint=blocks,
+            force_offload=True,
+        )
 
         if not tool_use_id:
             logger.warning(
@@ -575,10 +604,15 @@ async def interactive_form_question(
             f"interactive_form_question already displayed for subtask {token_info.subtask_id}"
         )
 
-    question_data = build_render_payload_from_tool_input(
-        task_id=token_info.task_id,
-        subtask_id=token_info.subtask_id,
-        tool_input={"questions": questions},
+    question_data = await run_payload_codec(
+        partial(
+            build_render_payload_from_tool_input,
+            task_id=token_info.task_id,
+            subtask_id=token_info.subtask_id,
+            tool_input={"questions": questions},
+        ),
+        payload_hint=questions,
+        force_offload=True,
     )
     if not question_data:
         raise ValueError("questions must contain at least one item")

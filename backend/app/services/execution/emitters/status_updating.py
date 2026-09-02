@@ -22,6 +22,7 @@ import time
 from dataclasses import dataclass
 from typing import Any, Dict, Optional
 
+from app.core.payload_codec import run_payload_codec
 from app.services.chat.storage.session import StreamContentType
 from app.services.chat.trigger.lifecycle import (
     collect_completed_result,
@@ -38,6 +39,7 @@ from .protocol import ResultEmitter
 logger = logging.getLogger(__name__)
 
 STREAMING_STORAGE_FLUSH_INTERVAL_SECONDS = 1.0
+STREAMING_STORAGE_BUFFER_MAX_CHARS = 256 * 1024
 TASK_STREAMING_ACTIVITY_TOUCH_INTERVAL_SECONDS = 1.0
 
 STREAM_CONTENT_EVENT_TYPES = {
@@ -77,6 +79,10 @@ class _BufferedStreamContent:
     content: str
 
 
+class StreamStoragePersistenceError(RuntimeError):
+    """Raised when buffered stream content was not acknowledged by Redis."""
+
+
 class StatusUpdatingEmitter(ResultEmitter):
     """Emitter wrapper that updates task status on terminal events.
 
@@ -99,6 +105,7 @@ class StatusUpdatingEmitter(ResultEmitter):
         subtask_id: int,
         executor_name: Optional[str] = None,
         executor_namespace: Optional[str] = None,
+        publish_completion_events: bool = True,
     ):
         """Initialize the status updating emitter.
 
@@ -108,18 +115,22 @@ class StatusUpdatingEmitter(ResultEmitter):
             subtask_id: Subtask ID for status updates
             executor_name: Optional executor name for container reuse
             executor_namespace: Optional executor namespace
+            publish_completion_events: Whether this process owns in-process
+                TaskCompletedEvent delivery
         """
         self._wrapped = wrapped
         self._task_id = task_id
         self._subtask_id = subtask_id
         self._executor_name = executor_name
         self._executor_namespace = executor_namespace
+        self._publish_completion_events = publish_completion_events
         self._status_updated = False
         self._terminal_event_deferred = False
         self._stream_storage_buffer: list[_BufferedStreamContent] = []
+        self._stream_storage_buffer_chars = 0
         self._stream_storage_lock = asyncio.Lock()
+        self._stream_storage_flush_lock = asyncio.Lock()
         self._stream_storage_flush_task: Optional[asyncio.Task[None]] = None
-        self._stream_storage_flush_in_progress = False
         self._last_task_activity_touch = 0.0
 
     def _resolve_owner_user_id(self) -> Optional[int]:
@@ -144,6 +155,7 @@ class StatusUpdatingEmitter(ResultEmitter):
         if not content:
             return
 
+        flush_now = False
         async with self._stream_storage_lock:
             if (
                 self._stream_storage_buffer
@@ -157,8 +169,12 @@ class StatusUpdatingEmitter(ResultEmitter):
                         content=content,
                     )
                 )
+            self._stream_storage_buffer_chars += len(content)
+            flush_now = (
+                self._stream_storage_buffer_chars >= STREAMING_STORAGE_BUFFER_MAX_CHARS
+            )
 
-            if (
+            if not flush_now and (
                 self._stream_storage_flush_task is None
                 or self._stream_storage_flush_task.done()
             ):
@@ -166,11 +182,15 @@ class StatusUpdatingEmitter(ResultEmitter):
                     self._flush_stream_storage_after_delay()
                 )
 
+        if flush_now:
+            # A slow Redis write now backpressures only this stream's bounded
+            # IPC relay instead of allowing an unbounded in-memory buffer.
+            await self._flush_stream_storage()
+
     async def _flush_stream_storage_after_delay(self) -> None:
         """Flush buffered stream content after the configured interval."""
         try:
             await asyncio.sleep(STREAMING_STORAGE_FLUSH_INTERVAL_SECONDS)
-            self._stream_storage_flush_in_progress = True
             await self._flush_stream_storage()
         except asyncio.CancelledError:
             raise
@@ -181,28 +201,59 @@ class StatusUpdatingEmitter(ResultEmitter):
                 exc_info=True,
             )
         finally:
-            self._stream_storage_flush_in_progress = False
             if self._stream_storage_flush_task is asyncio.current_task():
                 self._stream_storage_flush_task = None
 
     async def _flush_stream_storage(self) -> None:
         """Persist buffered stream content to Redis in order."""
-        async with self._stream_storage_lock:
-            pending = self._stream_storage_buffer
-            self._stream_storage_buffer = []
+        async with self._stream_storage_flush_lock:
+            async with self._stream_storage_lock:
+                pending = self._stream_storage_buffer
+                self._stream_storage_buffer = []
+                self._stream_storage_buffer_chars = 0
 
+            if not pending:
+                return
+
+            from app.services.chat.storage import session_manager
+
+            for index, item in enumerate(pending):
+                try:
+                    persisted = await session_manager.add_stream_content(
+                        subtask_id=self._subtask_id,
+                        content_type=item.content_type,
+                        content=item.content,
+                    )
+                except BaseException:
+                    await self._restore_unwritten_stream_content(pending[index:])
+                    raise
+                if not persisted:
+                    await self._restore_unwritten_stream_content(pending[index:])
+                    raise StreamStoragePersistenceError(
+                        "Redis did not persist buffered stream content"
+                    )
+            await self._touch_task_streaming_activity(session_manager, force=True)
+
+    async def _restore_unwritten_stream_content(
+        self,
+        pending: list[_BufferedStreamContent],
+    ) -> None:
+        """Put unacknowledged content back before events buffered concurrently."""
         if not pending:
             return
-
-        from app.services.chat.storage import session_manager
-
-        for item in pending:
-            await session_manager.add_stream_content(
-                subtask_id=self._subtask_id,
-                content_type=item.content_type,
-                content=item.content,
-            )
-        await self._touch_task_streaming_activity(session_manager, force=True)
+        pending_chars = sum(len(item.content) for item in pending)
+        async with self._stream_storage_lock:
+            restored = list(pending)
+            current = self._stream_storage_buffer
+            if (
+                restored
+                and current
+                and restored[-1].content_type == current[0].content_type
+            ):
+                restored[-1].content += current[0].content
+                current = current[1:]
+            self._stream_storage_buffer = [*restored, *current]
+            self._stream_storage_buffer_chars += pending_chars
 
     async def _touch_task_streaming_activity(
         self,
@@ -227,10 +278,6 @@ class StatusUpdatingEmitter(ResultEmitter):
         if not task or task.done() or task is asyncio.current_task():
             return
 
-        if self._stream_storage_flush_in_progress:
-            await task
-            return
-
         task.cancel()
         try:
             await task
@@ -239,6 +286,43 @@ class StatusUpdatingEmitter(ResultEmitter):
         finally:
             if self._stream_storage_flush_task is task:
                 self._stream_storage_flush_task = None
+
+    @staticmethod
+    async def _persist_context_metrics(
+        event: ExecutionEvent,
+        session_manager: Any,
+    ) -> None:
+        """Persist refresh state in the status-owning worker process."""
+        phase = event.data.get("phase") if event.data else None
+        context_metrics = event.data.get("context_metrics") if event.data else None
+        context_compaction = (
+            event.data.get("context_compaction") if event.data else None
+        )
+        if not phase or not isinstance(context_metrics, dict):
+            return
+        try:
+            await session_manager.save_context_metrics(
+                event.subtask_id,
+                {
+                    "task_id": event.task_id,
+                    "subtask_id": event.subtask_id,
+                    "phase": phase,
+                    "context_metrics": context_metrics,
+                    "context_compaction": (
+                        context_compaction
+                        if isinstance(context_compaction, dict)
+                        else None
+                    ),
+                },
+            )
+        except Exception:
+            logger.warning(
+                "[StatusUpdatingEmitter] Failed to persist context metrics: "
+                "task_id=%s subtask_id=%s",
+                event.task_id,
+                event.subtask_id,
+                exc_info=True,
+            )
 
     async def emit(self, event: ExecutionEvent) -> None:
         """Emit event and update status if terminal.
@@ -275,6 +359,8 @@ class StatusUpdatingEmitter(ResultEmitter):
         elif event.type in STREAM_BOUNDARY_EVENT_TYPES:
             await self._flush_stream_storage()
             await self._touch_task_streaming_activity(session_manager)
+        elif event.type == EventType.STATUS_UPDATED.value:
+            await self._persist_context_metrics(event, session_manager)
 
         # Collect blocks for mixed content rendering using session_manager
         if event.type == EventType.TOOL_START.value:
@@ -331,7 +417,12 @@ class StatusUpdatingEmitter(ResultEmitter):
                     "tool_protocol": tool_protocol,
                     "server_label": server_label,
                 }
-                render_payload = build_interactive_form_render_payload(event)
+                render_payload = await run_payload_codec(
+                    build_interactive_form_render_payload,
+                    event,
+                    payload_hint=event.tool_input,
+                    force_offload=True,
+                )
                 if render_payload is not None:
                     update_kwargs["render_payload"] = render_payload
                 await session_manager.update_tool_block_status(**update_kwargs)
@@ -555,7 +646,7 @@ class StatusUpdatingEmitter(ResultEmitter):
                 f"[StatusUpdatingEmitter] Failed to update status to COMPLETED: {e}",
                 exc_info=True,
             )
-            return result
+            raise
 
     async def _update_status_failed(
         self, error_message: str, error_code: Optional[str] = None
@@ -611,7 +702,7 @@ class StatusUpdatingEmitter(ResultEmitter):
                 f"[StatusUpdatingEmitter] Failed to update status to FAILED: {e}",
                 exc_info=True,
             )
-            return None
+            raise
 
     async def _update_status_cancelled(self) -> Optional[Dict[str, Any]]:
         """Update subtask and task status to CANCELLED.
@@ -647,7 +738,7 @@ class StatusUpdatingEmitter(ResultEmitter):
                 f"[StatusUpdatingEmitter] Failed to update status for cancelled: {e}",
                 exc_info=True,
             )
-            return None
+            raise
 
     async def _publish_task_completed_event(
         self,
@@ -665,10 +756,14 @@ class StatusUpdatingEmitter(ResultEmitter):
             result: Optional result data
             error: Optional error message
         """
+        if not self._publish_completion_events:
+            return
+
         from app.core.events import TaskCompletedEvent, get_event_bus
+        from app.services.chat.storage.db import run_sync_in_executor
 
         try:
-            user_id = self._resolve_owner_user_id()
+            user_id = await run_sync_in_executor(self._resolve_owner_user_id)
 
             if user_id is None:
                 logger.warning(

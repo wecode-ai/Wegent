@@ -2931,8 +2931,6 @@ async def test_execute_device_command_endpoint_maps_request_to_service(monkeypat
         }
     )
     monkeypatch.setattr(devices, "execute_configured_device_command", service_mock)
-    db = object()
-
     response = await devices.execute_device_command(
         device_id="device-abc",
         request=DeviceCommandRequest(
@@ -2943,14 +2941,13 @@ async def test_execute_device_command_endpoint_maps_request_to_service(monkeypat
             timeout_seconds=5,
             max_output_bytes=1024,
         ),
-        db=db,
         current_user=SimpleNamespace(id=7),
     )
 
     assert response.success is True
     assert response.stdout == "ok"
     service_mock.assert_awaited_once_with(
-        db=db,
+        db=None,
         user_id=7,
         device_id="device-abc",
         command_key="repo_status",
@@ -3058,6 +3055,11 @@ async def test_execute_device_command_endpoint_allows_wework_local_project_works
         }
     )
     monkeypatch.setattr(devices, "execute_configured_device_command", service_mock)
+    monkeypatch.setattr(
+        devices,
+        "_device_command_db_roots",
+        lambda *_: ["/Users/test/projects/repo"],
+    )
     response = await devices.execute_device_command(
         device_id="device-abc",
         request=DeviceCommandRequest(
@@ -3065,7 +3067,6 @@ async def test_execute_device_command_endpoint_allows_wework_local_project_works
             path="/Users/test/projects/repo/src",
             env={"EXISTING": "1"},
         ),
-        db=test_db,
         current_user=SimpleNamespace(id=7),
     )
 
@@ -3100,6 +3101,7 @@ async def test_execute_device_command_endpoint_does_not_trust_client_workspace_r
         }
     )
     monkeypatch.setattr(devices, "execute_configured_device_command", service_mock)
+    monkeypatch.setattr(devices, "_device_command_db_roots", lambda *_: [])
     runtime_rpc_mock = AsyncMock(
         side_effect=devices.RuntimeRpcError("Device is unavailable")
     )
@@ -3112,7 +3114,6 @@ async def test_execute_device_command_endpoint_does_not_trust_client_workspace_r
             path="/etc",
             env={"WEGENT_WORKSPACE_ROOTS": "/", "EXISTING": "1"},
         ),
-        db=test_db,
         current_user=SimpleNamespace(id=7),
     )
 
@@ -3165,6 +3166,7 @@ async def test_execute_device_command_endpoint_allows_explicit_root_project_work
         }
     )
     monkeypatch.setattr(devices, "execute_configured_device_command", service_mock)
+    monkeypatch.setattr(devices, "_device_command_db_roots", lambda *_: ["/"])
 
     response = await devices.execute_device_command(
         device_id="device-abc",
@@ -3173,7 +3175,6 @@ async def test_execute_device_command_endpoint_allows_explicit_root_project_work
             path="/etc",
             env={"EXISTING": "1"},
         ),
-        db=test_db,
         current_user=SimpleNamespace(id=7),
     )
 
@@ -3230,6 +3231,11 @@ async def test_execute_device_command_endpoint_allows_absolute_git_checkout_work
         }
     )
     monkeypatch.setattr(devices, "execute_configured_device_command", service_mock)
+    monkeypatch.setattr(
+        devices,
+        "_device_command_db_roots",
+        lambda *_: [checkout_path],
+    )
 
     response = await devices.execute_device_command(
         device_id="device-abc",
@@ -3238,7 +3244,6 @@ async def test_execute_device_command_endpoint_allows_absolute_git_checkout_work
             path=f"{checkout_path}/wework",
             env={"EXISTING": "1"},
         ),
-        db=test_db,
         current_user=SimpleNamespace(id=7),
     )
 
@@ -3284,6 +3289,11 @@ async def test_execute_device_command_endpoint_allows_runtime_device_workspace(
         }
     )
     monkeypatch.setattr(devices, "execute_configured_device_command", service_mock)
+    monkeypatch.setattr(
+        devices,
+        "_device_command_db_roots",
+        lambda *_: [workspace_path],
+    )
 
     response = await devices.execute_device_command(
         device_id="device-abc",
@@ -3292,7 +3302,6 @@ async def test_execute_device_command_endpoint_allows_runtime_device_workspace(
             path=f"{workspace_path}/src",
             env={"EXISTING": "1"},
         ),
-        db=test_db,
         current_user=SimpleNamespace(id=7),
     )
 
@@ -3339,6 +3348,7 @@ async def test_execute_device_command_endpoint_allows_runtime_rpc_workspace(
         }
     )
     monkeypatch.setattr(devices, "execute_configured_device_command", service_mock)
+    monkeypatch.setattr(devices, "_device_command_db_roots", lambda *_: [])
     monkeypatch.setattr(devices.runtime_rpc_service, "call", runtime_rpc_mock)
 
     response = await devices.execute_device_command(
@@ -3348,7 +3358,6 @@ async def test_execute_device_command_endpoint_allows_runtime_rpc_workspace(
             path=workspace_path,
             env={"EXISTING": "1"},
         ),
-        db=test_db,
         current_user=SimpleNamespace(id=7),
     )
 
@@ -3389,7 +3398,6 @@ async def test_execute_device_command_endpoint_applies_configured_post_processor
     response = await devices.execute_device_command(
         device_id="device-abc",
         request=DeviceCommandRequest(command_key="repo_files"),
-        db=object(),
         current_user=SimpleNamespace(id=7),
     )
 
@@ -3428,7 +3436,6 @@ async def test_execute_device_command_endpoint_returns_structured_stdout(monkeyp
     response = await devices.execute_device_command(
         device_id="device-abc",
         request=DeviceCommandRequest(command_key="ls_skills"),
-        db=object(),
         current_user=SimpleNamespace(id=7),
     )
 
@@ -3458,7 +3465,6 @@ async def test_execute_device_command_endpoint_returns_dict_stdout(monkeypatch):
     response = await devices.execute_device_command(
         device_id="device-abc",
         request=DeviceCommandRequest(command_key="workspace_tree"),
-        db=object(),
         current_user=SimpleNamespace(id=7),
     )
 
@@ -3485,7 +3491,6 @@ async def test_execute_device_command_endpoint_rejects_unknown_command_key(monke
         await devices.execute_device_command(
             device_id="device-abc",
             request=DeviceCommandRequest(command_key="repo_status"),
-            db=object(),
             current_user=SimpleNamespace(id=7),
         )
 

@@ -9,7 +9,7 @@ Dispatches tasks to execution services based on routing configuration.
 
 All external code should use the unified `dispatch` method with an appropriate
 emitter. Different emitter types support different use cases:
-- WebSocketResultEmitter: Push events to WebSocket clients
+- worker-owned projection: Push events to WebSocket clients
 - SSEResultEmitter: Queue-based emitter for streaming responses
 - SubscriptionResultEmitter: For subscription task execution
 
@@ -20,6 +20,7 @@ OpenAI Responses API compatible endpoint.
 import asyncio
 import json
 import logging
+from functools import partial
 from typing import TYPE_CHECKING, Any, List, Optional
 
 from shared.telemetry.decorators import (
@@ -32,11 +33,11 @@ if TYPE_CHECKING:
     from openai import AsyncOpenAI
 
 from app.core.async_utils import run_in_main_loop
-from app.db.session import SessionLocal
+from app.core.payload_codec import encode_http_json, run_payload_codec
+from app.services.chat.storage.db import run_sync_in_executor
 from app.services.device.remote_control_policy import (
     ensure_remote_control_enabled_for_device,
 )
-from app.services.task_status import extract_task_error
 from app.stores.tasks import subtask_store, task_store
 from shared.models import (
     EventType,
@@ -51,18 +52,27 @@ from .attachment_sync import apply_attachment_sync_response, sync_executor_attac
 from .emitters import (
     ResultEmitter,
     ResultEmitterFactory,
-    StatusUpdatingEmitter,
-    WebSocketResultEmitter,
 )
+from .emitters.base import BaseResultEmitter
 from .git_credentials import build_device_git_execution_payload
 from .polling_dispatcher import dispatch_polling
-from .recovery_service import recovery_service
+from .recovery_service import ExecutorRecoveryContext, recovery_service
 from .router import CommunicationMode, ExecutionRouter, ExecutionTarget
+from .sse_transport import create_bounded_sse_http_client
+from .stream_client import RemoteProjectionEmitter
 
 logger = logging.getLogger(__name__)
 
 _FRONTEND_ERROR_EMITTED_ATTR = "_frontend_error_emitted"
 _SSE_CANCEL_POLL_INTERVAL_SECONDS = 1.0
+_SSE_CLIENT_CLOSE_TIMEOUT_SECONDS = 5.0
+
+
+class _DiscardResultEmitter(BaseResultEmitter):
+    """Consume IPC acknowledgements when the worker owns client projection."""
+
+    async def emit(self, event: ExecutionEvent) -> None:
+        return None
 
 
 class InvalidToolCallEventError(ValueError):
@@ -218,6 +228,10 @@ class ResponsesAPIEventParser:
         for key in stale_keys:
             self._tool_contexts.pop(key, None)
         self._reasoning_buffers.pop(self._request_key(task_id, subtask_id), None)
+
+    def clear_request(self, task_id: int, subtask_id: int) -> None:
+        """Release parser state for a request that ended outside the protocol."""
+        self._clear_task_contexts(task_id, subtask_id)
 
     def parse(
         self,
@@ -736,6 +750,90 @@ class ExecutionDispatcher:
         self.http_client = traced_async_client(timeout=300.0)
         self.event_parser = ResponsesAPIEventParser()
 
+    async def close(self) -> None:
+        """Close dispatcher-owned network clients."""
+        await self.http_client.aclose()
+
+    def execution_mode(self, request: ExecutionRequest) -> CommunicationMode:
+        """Return the mode selected for a server-owned execution request."""
+        return self.router.route(request, device_id=None).mode
+
+    async def _prepare_dispatch_target(
+        self,
+        request: ExecutionRequest,
+        device_id: Optional[str],
+    ) -> ExecutionTarget:
+        if device_id:
+            user_id = request.user.get("id") if request.user else None
+            if not isinstance(user_id, int):
+                raise ValueError("Device dispatch requires an authenticated user")
+            await run_sync_in_executor(
+                partial(
+                    ensure_remote_control_enabled_for_device,
+                    user_id=user_id,
+                    device_id=device_id,
+                )
+            )
+        else:
+            await self._recover_executor_if_needed(request)
+        target = self.router.route(request, device_id)
+        logger.info(
+            "[ExecutionDispatcher] Routed: task_id=%s, subtask_id=%s, "
+            "device_id=%s -> %s",
+            request.task_id,
+            request.subtask_id,
+            device_id,
+            target,
+        )
+        return target
+
+    async def _dispatch_to_target(
+        self,
+        request: ExecutionRequest,
+        target: ExecutionTarget,
+        emitter: ResultEmitter,
+        *,
+        sse_upstream: bool,
+    ) -> None:
+        logger.info(
+            "[ExecutionDispatcher] Dispatching: task_id=%s, subtask_id=%s, mode=%s",
+            request.task_id,
+            request.subtask_id,
+            target.mode.value,
+        )
+        await self._update_subtask_to_running(request.subtask_id)
+        if target.mode == CommunicationMode.SSE:
+            if sse_upstream:
+                await self._dispatch_sse_upstream(request, target, emitter)
+            else:
+                await self._dispatch_via_stream_worker(request, emitter)
+        elif target.mode == CommunicationMode.WEBSOCKET:
+            await self._dispatch_websocket(request, target, emitter)
+        elif target.mode == CommunicationMode.POLLING:
+            await self._dispatch_polling(request, target, emitter)
+        elif target.mode == CommunicationMode.INPROCESS:
+            await self._dispatch_inprocess(request, target, emitter)
+        else:
+            await self._dispatch_http_callback(request, target, emitter)
+
+    async def dispatch_worker_owned(
+        self,
+        request: ExecutionRequest,
+        emitter: ResultEmitter,
+    ) -> None:
+        """Execute any communication mode directly inside the Stream worker.
+
+        This entry point deliberately skips Web-facing IPC projection. Its caller
+        owns status, Redis, Socket.IO and completion projection in the same worker.
+        """
+        target = await self._prepare_dispatch_target(request, device_id=None)
+        await self._dispatch_to_target(
+            request,
+            target,
+            emitter,
+            sse_upstream=True,
+        )
+
     async def dispatch(
         self,
         request: ExecutionRequest,
@@ -748,7 +846,7 @@ class ExecutionDispatcher:
         should use this method with an appropriate emitter.
 
         For different use cases, pass different emitter types:
-        - WebSocketResultEmitter: Events pushed to WebSocket (default)
+        - default: Worker-owned WebSocket projection
         - SSEResultEmitter: Use emitter.stream() to iterate events
         - SubscriptionResultEmitter: For subscription task callbacks
 
@@ -768,93 +866,93 @@ class ExecutionDispatcher:
         Args:
             request: Unified execution request
             device_id: Optional device ID - uses WebSocket mode when specified
-            emitter: Optional custom emitter, defaults to WebSocketResultEmitter
+            emitter: Optional explicit response transport
         """
-        wrapped_emitter = None
-        try:
-            if device_id:
-                user_id = request.user.get("id") if request.user else None
-                if not isinstance(user_id, int):
-                    raise ValueError("Device dispatch requires an authenticated user")
-                ensure_remote_control_enabled_for_device(
-                    user_id=user_id,
-                    device_id=device_id,
-                )
-            await self._recover_executor_if_needed(request, device_id=device_id)
-
-            # Route to execution target
-            target = self.router.route(request, device_id)
-            logger.info(
-                f"[ExecutionDispatcher] Routed: task_id={request.task_id}, "
-                f"subtask_id={request.subtask_id}, device_id={device_id} -> {target}"
+        route_mode = (
+            CommunicationMode.WEBSOCKET
+            if device_id is not None
+            else self.execution_mode(request)
+        )
+        if route_mode != CommunicationMode.WEBSOCKET:
+            project_to_web = emitter is None
+            relay_emitter = emitter or _DiscardResultEmitter(
+                request.task_id,
+                request.subtask_id,
             )
-            # Create default emitter if not provided
-            if emitter is None:
-                # Extract team info from request for task:created event
-                team_id = None
-                team_name = None
-                is_group_chat = False
-                if request.bot and len(request.bot) > 0:
-                    team_id = request.bot[0].get("team_id")
-                    team_name = request.bot[0].get("team_name")
-                    is_group_chat = request.bot[0].get("is_group_chat", False)
+            try:
+                await self._dispatch_via_stream_worker(
+                    request,
+                    relay_emitter,
+                    project_to_web=project_to_web,
+                )
+            finally:
+                await relay_emitter.close()
+            return
 
-                # Extract task title from request
-                task_title = request.task_title
-
-                emitter = WebSocketResultEmitter(
+        wrapped_emitter: Optional[ResultEmitter] = None
+        target: Optional[ExecutionTarget] = None
+        close_emitter: Optional[ResultEmitter] = None
+        try:
+            target = await self._prepare_dispatch_target(request, device_id)
+            user_id = request.user.get("id") if request.user else request.user_id
+            user_id = user_id if isinstance(user_id, int) else None
+            if target.mode == CommunicationMode.SSE:
+                # The Stream worker owns status, Socket.IO, Redis and completion.
+                # Only an explicitly supplied response transport consumes IPC.
+                wrapped_emitter = emitter or _DiscardResultEmitter(
+                    request.task_id,
+                    request.subtask_id,
+                )
+            else:
+                wrapped_emitter = RemoteProjectionEmitter(
                     task_id=request.task_id,
                     subtask_id=request.subtask_id,
-                    user_id=request.user.get("id") if request.user else None,
-                    team_id=team_id,
-                    team_name=team_name,
-                    task_title=task_title,
-                    is_group_chat=is_group_chat,
+                    user_id=user_id,
+                    source=f"Dispatcher {target.mode.value}",
+                    wrapped=emitter,
+                    executor_name=request.executor_name,
+                    executor_namespace=request.executor_namespace,
                 )
+            close_emitter = wrapped_emitter
 
-            # Wrap emitter with StatusUpdatingEmitter for unified status updates
-            # This ensures task status is updated to COMPLETED/FAILED/CANCELLED
-            # when terminal events are received, regardless of execution mode
-            wrapped_emitter = StatusUpdatingEmitter(
-                wrapped=emitter,
-                task_id=request.task_id,
-                subtask_id=request.subtask_id,
+            await self._dispatch_to_target(
+                request,
+                target,
+                wrapped_emitter,
+                sse_upstream=False,
             )
-
-            logger.info(
-                f"[ExecutionDispatcher] Dispatching: task_id={request.task_id}, "
-                f"subtask_id={request.subtask_id}, mode={target.mode.value}"
-            )
-
-            # Update subtask status to RUNNING before dispatching
-            # This applies to all execution modes (SSE, WebSocket, HTTP+Callback)
-            await self._update_subtask_to_running(request.subtask_id)
-
-            if target.mode == CommunicationMode.SSE:
-                await self._dispatch_sse(request, target, wrapped_emitter)
-            elif target.mode == CommunicationMode.WEBSOCKET:
-                await self._dispatch_websocket(request, target, wrapped_emitter)
-            elif target.mode == CommunicationMode.POLLING:
-                await self._dispatch_polling(request, target, wrapped_emitter)
-            elif target.mode == CommunicationMode.INPROCESS:
-                await self._dispatch_inprocess(request, target, wrapped_emitter)
-            else:
-                await self._dispatch_http_callback(request, target, wrapped_emitter)
         except Exception as e:
             logger.exception(
                 f"[ExecutionDispatcher] Dispatch error: task_id={request.task_id}, "
                 f"subtask_id={request.subtask_id}, error={e}"
             )
             # Try to emit error to frontend if emitter is available
-            if wrapped_emitter is not None:
+            error_emitter = wrapped_emitter
+            fallback_projection_emitter: Optional[RemoteProjectionEmitter] = None
+            if target is not None and target.mode == CommunicationMode.SSE:
+                fallback_projection_emitter = RemoteProjectionEmitter(
+                    task_id=request.task_id,
+                    subtask_id=request.subtask_id,
+                    user_id=(
+                        request.user.get("id")
+                        if request.user and isinstance(request.user.get("id"), int)
+                        else request.user_id
+                    ),
+                    source="Dispatcher SSE failure",
+                    wrapped=emitter,
+                    executor_name=request.executor_name,
+                    executor_namespace=request.executor_namespace,
+                )
+                error_emitter = fallback_projection_emitter
+            if error_emitter is not None:
                 try:
                     from shared.utils.error_classifier import (
                         classify_error,
                         format_error_message,
                     )
 
-                    error_code = classify_error(e)
-                    await wrapped_emitter.emit_error(
+                    error_code = getattr(e, "error_code", None) or classify_error(e)
+                    await error_emitter.emit_error(
                         task_id=request.task_id,
                         subtask_id=request.subtask_id,
                         error=format_error_message(e),
@@ -865,12 +963,23 @@ class ExecutionDispatcher:
                     logger.error(
                         f"[ExecutionDispatcher] Failed to emit error: {emit_error}"
                     )
+                finally:
+                    if fallback_projection_emitter is not None:
+                        try:
+                            await fallback_projection_emitter.close()
+                            close_emitter = None
+                        except Exception as close_error:
+                            logger.error(
+                                "[ExecutionDispatcher] Failed to close fallback "
+                                "projection emitter: %s",
+                                close_error,
+                            )
             # Re-raise the exception so the caller knows dispatch failed
             raise
         finally:
-            if wrapped_emitter is not None:
+            if close_emitter is not None:
                 try:
-                    await wrapped_emitter.close()
+                    await close_emitter.close()
                 except Exception as close_error:
                     logger.error(
                         f"[ExecutionDispatcher] Failed to close emitter: {close_error}"
@@ -888,79 +997,106 @@ class ExecutionDispatcher:
         if device_id and self._has_fork_workspace_archive(request):
             return
 
-        db = SessionLocal()
-        try:
+        context = await run_sync_in_executor(
+            self._load_executor_recovery_context_sync,
+            request,
+        )
+        if context is None:
+            return
+
+        logger.info(
+            "[ExecutionDispatcher] Recovering executor workspace: "
+            "task_id=%s, subtask_id=%s, executor=%s, reason=%s",
+            request.task_id,
+            request.subtask_id,
+            context.previous_executor_name,
+            (
+                "deleted_executor"
+                if context.executor_deleted_at
+                else "fork_workspace_archive"
+            ),
+        )
+        outcome = await recovery_service.recover_detached(
+            context=context,
+            request=request,
+        )
+        if not outcome.recovered:
+            error_message = (
+                outcome.error_message
+                or context.subtask_error
+                or context.task_error
+                or f"Failed to recover executor for subtask {request.subtask_id}"
+            )
+            raise RuntimeError(error_message)
+
+        await run_sync_in_executor(
+            self._persist_recovered_executor_sync,
+            context.subtask_id,
+            outcome.executor_name,
+            outcome.executor_namespace,
+        )
+        request.executor_name = outcome.executor_name
+        request.executor_namespace = outcome.executor_namespace
+        logger.info(
+            "[ExecutionDispatcher] Recovered executor: "
+            "task_id=%s, current_subtask_id=%s, executor=%s/%s",
+            request.task_id,
+            context.subtask_id,
+            request.executor_namespace,
+            request.executor_name,
+        )
+
+    def _load_executor_recovery_context_sync(
+        self,
+        request: ExecutionRequest,
+    ) -> Optional[ExecutorRecoveryContext]:
+        """Load and detach recovery state in a worker-owned session."""
+        from app.db.session import get_db_session
+
+        with get_db_session() as db:
             subtask = subtask_store.get_by_id(db, subtask_id=request.subtask_id)
             if not subtask:
-                return
-
-            # Save reference to current subtask for later update
-            current_subtask = subtask
-
+                return None
             restore_fork_workspace = self._has_fork_workspace_archive(request)
             if not subtask.executor_deleted_at and not restore_fork_workspace:
-                return
-
+                return None
             task = task_store.get_by_id(db, task_id=request.task_id)
             if not task:
                 raise RuntimeError(
                     f"Task {request.task_id} not found for executor recovery"
                 )
-
-            logger.info(
-                "[ExecutionDispatcher] Recovering executor workspace: "
-                "task_id=%s, subtask_id=%s, executor=%s, reason=%s",
-                request.task_id,
-                request.subtask_id,
-                subtask.executor_name,
-                (
-                    "deleted_executor"
-                    if subtask.executor_deleted_at
-                    else "fork_workspace_archive"
-                ),
-            )
-
-            recovered_info = await recovery_service.recover(
-                db=db,
+            return recovery_service.build_detached_context(
+                db,
                 subtask=subtask,
                 task=task,
                 request=request,
             )
-            if not recovered_info:
-                subtask_error = getattr(subtask, "error_message", None)
-                error_message = (
-                    subtask_error
-                    if isinstance(subtask_error, str) and subtask_error.strip()
-                    else extract_task_error(task)
-                )
-                if not error_message:
-                    error_message = (
-                        f"Failed to recover executor for subtask {request.subtask_id}"
-                    )
-                raise RuntimeError(error_message)
 
-            # Update the current subtask to reflect the recovered executor.
+    def _persist_recovered_executor_sync(
+        self,
+        subtask_id: int,
+        executor_name: Optional[str],
+        executor_namespace: Optional[str],
+    ) -> None:
+        """Persist recovered executor identity in a fresh worker session."""
+        if not executor_name or not executor_namespace:
+            raise RuntimeError("Recovered executor identity is incomplete")
+        from app.db.session import get_db_session
+
+        with get_db_session() as db:
+            subtask = subtask_store.get_by_id(db, subtask_id=subtask_id)
+            if not subtask:
+                raise RuntimeError(
+                    f"Subtask {subtask_id} not found after executor recovery"
+                )
             subtask_store.update_fields(
                 db,
-                subtask=current_subtask,
-                executor_name=recovered_info["executor_name"],
-                executor_namespace=recovered_info["executor_namespace"],
+                subtask=subtask,
+                executor_name=executor_name,
+                executor_namespace=executor_namespace,
                 executor_deleted_at=False,
             )
             db.commit()
-
-            request.executor_name = recovered_info["executor_name"]
-            request.executor_namespace = recovered_info["executor_namespace"]
-            logger.info(
-                "[ExecutionDispatcher] Recovered executor: "
-                "task_id=%s, current_subtask_id=%s, executor=%s/%s",
-                request.task_id,
-                current_subtask.id,
-                request.executor_namespace,
-                request.executor_name,
-            )
-        finally:
-            db.close()
 
     @staticmethod
     def _has_fork_workspace_archive(request: ExecutionRequest) -> bool:
@@ -1010,10 +1146,27 @@ class ExecutionDispatcher:
             device_id: Device ID
             user_id: User ID
         """
-        db = SessionLocal()
+        await run_sync_in_executor(
+            self._set_subtask_executor_sync,
+            subtask_id,
+            device_id,
+            user_id,
+        )
+
+    def _set_subtask_executor_sync(
+        self,
+        subtask_id: int,
+        device_id: str,
+        user_id: Optional[int],
+    ) -> None:
+        """Persist device executor identity in a worker-owned session."""
+        from app.db.session import get_db_session
+
         try:
-            subtask = subtask_store.get_by_id(db, subtask_id=subtask_id)
-            if subtask:
+            with get_db_session() as db:
+                subtask = subtask_store.get_by_id(db, subtask_id=subtask_id)
+                if not subtask:
+                    return
                 subtask_store.update_executor_info(
                     db,
                     subtask=subtask,
@@ -1021,17 +1174,14 @@ class ExecutionDispatcher:
                     executor_namespace=f"user-{user_id}" if user_id else "",
                 )
                 db.commit()
-                logger.info(
-                    f"[ExecutionDispatcher] Set executor on subtask {subtask_id}: "
-                    f"executor_name=device-{device_id}"
-                )
+            logger.info(
+                f"[ExecutionDispatcher] Set executor on subtask {subtask_id}: "
+                f"executor_name=device-{device_id}"
+            )
         except Exception as e:
             logger.error(
                 f"[ExecutionDispatcher] Failed to set executor on subtask {subtask_id}: {e}"
             )
-            db.rollback()
-        finally:
-            db.close()
 
     def supports_streaming(self, request: ExecutionRequest) -> bool:
         """Check if the request supports streaming.
@@ -1202,8 +1352,44 @@ class ExecutionDispatcher:
 
         await self.dispatch(request, device_id, emitter)
 
+    async def _dispatch_via_stream_worker(
+        self,
+        request: ExecutionRequest,
+        emitter: ResultEmitter,
+        *,
+        project_to_web: bool = True,
+    ) -> None:
+        """Execute every non-WebSocket request outside the Web process."""
+        from app.core.shutdown import shutdown_manager
+
+        from .stream_client import stream_execution_client
+
+        await shutdown_manager.register_stream(request.subtask_id)
+        try:
+            await stream_execution_client.dispatch(
+                request,
+                emitter,
+                project_to_web=project_to_web,
+            )
+        finally:
+            await shutdown_manager.unregister_stream(request.subtask_id)
+
+    async def dispatch_sse_upstream(
+        self,
+        request: ExecutionRequest,
+        emitter: ResultEmitter,
+    ) -> None:
+        """Execute raw upstream SSE inside the Pod-local stream process."""
+        target = self.router.route(request, device_id=None)
+        if target.mode != CommunicationMode.SSE:
+            raise ValueError(
+                "Local stream worker only accepts SSE execution targets: "
+                f"mode={target.mode.value}"
+            )
+        await self._dispatch_sse_upstream(request, target, emitter)
+
     @trace_async(
-        span_name="dispatcher.dispatch_sse",
+        span_name="dispatcher.dispatch_sse_upstream",
         tracer_name="backend.execution",
         extract_attributes=lambda self, request, target, emitter: {
             "task.id": str(request.task_id),
@@ -1212,7 +1398,7 @@ class ExecutionDispatcher:
             "shell.type": self._get_shell_type(request),
         },
     )
-    async def _dispatch_sse(
+    async def _dispatch_sse_upstream(
         self,
         request: ExecutionRequest,
         target: ExecutionTarget,
@@ -1255,27 +1441,6 @@ class ExecutionDispatcher:
             f"[ExecutionDispatcher] SSE dispatch via OpenAI client: base_url={base_url}"
         )
 
-        # Register stream for cancellation tracking
-        cancel_event = await session_manager.register_stream(request.subtask_id)
-
-        # Send START event
-        await emitter.emit_start(
-            task_id=request.task_id,
-            subtask_id=request.subtask_id,
-            message_id=request.message_id,
-            data=self._build_start_event_data(request),
-        )
-
-        # Lazy import OpenAI SDK for memory optimization
-        from openai import AsyncOpenAI
-
-        # Create OpenAI client pointing to chat_shell
-        client = AsyncOpenAI(
-            base_url=base_url,
-            api_key="dummy",  # Not used by chat_shell but required by client
-            timeout=300.0,
-        )
-
         # Convert ExecutionRequest to OpenAI format
         openai_request = OpenAIRequestConverter.from_execution_request(request)
 
@@ -1289,42 +1454,71 @@ class ExecutionDispatcher:
         # Get tools from openai_request (includes MCP servers converted to tools)
         tools = openai_request.get("tools", [])
 
-        logger.info(
-            f"[ExecutionDispatcher] Sending OpenAI request: model={openai_request.get('model')}, "
-            f"task_id={request.task_id}, subtask_id={request.subtask_id}, "
-            f"tools_count={len(tools)}, request_id={request_id}, request_id_source={request_id_source}"
-        )
-
-        # Stream response using OpenAI client
-        # Note: tools is a first-class parameter in OpenAI Responses API, not in extra_body
-        logger.info(
-            f"[ExecutionDispatcher] About to call client.responses.create: "
-            f"task_id={request.task_id}, subtask_id={request.subtask_id}"
-        )
-        add_span_event(
-            "sse.openai_request_start",
-            {
-                "model": openai_request.get("model"),
-                "base_url": base_url,
-                "tools_count": len(tools),
-                "request_id": request_id,
-            },
-        )
         event_count = 0
         cancelled = False
         cancel_source = ""
         terminal_event_type = ""
+        client: Any | None = None
         stream_open_task: Optional[asyncio.Task[Any]] = None
         stream_task: Optional[asyncio.Task[None]] = None
-        cancel_task = asyncio.create_task(
-            self._wait_for_sse_cancellation(
-                session_manager,
-                request.subtask_id,
-                cancel_event,
-            )
-        )
+        cancel_task: Optional[asyncio.Task[str]] = None
+
+        # The stream worker must not clear a cancellation flag written before
+        # this IPC request was accepted.
+        cancel_event = await session_manager.attach_stream(request.subtask_id)
 
         try:
+            cancel_task = asyncio.create_task(
+                self._wait_for_sse_cancellation(
+                    session_manager,
+                    request.subtask_id,
+                    cancel_event,
+                )
+            )
+
+            # Send START event
+            await emitter.emit_start(
+                task_id=request.task_id,
+                subtask_id=request.subtask_id,
+                message_id=request.message_id,
+                data=self._build_start_event_data(request),
+            )
+
+            # Lazy import OpenAI SDK for memory optimization
+            from openai import AsyncOpenAI
+
+            client = AsyncOpenAI(
+                base_url=base_url,
+                api_key="dummy",  # Not used by chat_shell but required by client
+                timeout=300.0,
+                http_client=create_bounded_sse_http_client(300.0),
+            )
+            logger.info(
+                "[ExecutionDispatcher] Sending OpenAI request: model=%s, "
+                "task_id=%d, subtask_id=%d, tools_count=%d, request_id=%s, "
+                "request_id_source=%s",
+                openai_request.get("model"),
+                request.task_id,
+                request.subtask_id,
+                len(tools),
+                request_id,
+                request_id_source,
+            )
+            logger.info(
+                "[ExecutionDispatcher] About to call client.responses.create: "
+                "task_id=%d, subtask_id=%d",
+                request.task_id,
+                request.subtask_id,
+            )
+            add_span_event(
+                "sse.openai_request_start",
+                {
+                    "model": openai_request.get("model"),
+                    "base_url": base_url,
+                    "tools_count": len(tools),
+                    "request_id": request_id,
+                },
+            )
             stream_open_task = asyncio.create_task(
                 client.responses.create(
                     model=openai_request.get("model", ""),
@@ -1433,13 +1627,7 @@ class ExecutionDispatcher:
                             )
 
                             if parsed_event:
-                                log_fn = (
-                                    logger.debug
-                                    if parsed_event.type
-                                    == EventType.TOOL_ARGUMENT_DELTA.value
-                                    else logger.info
-                                )
-                                log_fn(
+                                logger.debug(
                                     "[ExecutionDispatcher] Parsed SSE event -> "
                                     "internal event: task_id=%d, subtask_id=%d, "
                                     "request_id=%s, sse_event=%s, internal_event=%s",
@@ -1575,6 +1763,23 @@ class ExecutionDispatcher:
             if pending_tasks:
                 await asyncio.gather(*pending_tasks, return_exceptions=True)
 
+            self.event_parser.clear_request(request.task_id, request.subtask_id)
+
+            if client is not None:
+                try:
+                    await asyncio.wait_for(
+                        client.close(),
+                        timeout=_SSE_CLIENT_CLOSE_TIMEOUT_SECONDS,
+                    )
+                except Exception as exc:
+                    logger.warning(
+                        "[ExecutionDispatcher] Failed to close SSE client: "
+                        "task_id=%d, subtask_id=%d, error=%s",
+                        request.task_id,
+                        request.subtask_id,
+                        exc,
+                    )
+
             await session_manager.unregister_stream(request.subtask_id)
             add_span_event(
                 "sse.stream_unregistered",
@@ -1658,8 +1863,13 @@ class ExecutionDispatcher:
             data=self._build_start_event_data(request),
         )
 
-        # Send task to specified room
-        payload = build_device_git_execution_payload(request)
+        # Device credential projection and deep copying must not run on the serving loop.
+        payload = await run_payload_codec(
+            build_device_git_execution_payload,
+            request,
+            payload_hint=request,
+            force_offload=True,
+        )
         await self._emit_socketio_in_main_loop(sio, target, payload)
 
         logger.info(
@@ -1711,6 +1921,22 @@ class ExecutionDispatcher:
             target: Execution target configuration (not used, kept for interface consistency)
             emitter: Result emitter for event emission
         """
+        from app.core.shutdown import shutdown_manager
+
+        await shutdown_manager.register_stream(request.subtask_id)
+        try:
+            await self._dispatch_inprocess_admitted(request, target, emitter)
+        finally:
+            await shutdown_manager.unregister_stream(request.subtask_id)
+
+    async def _dispatch_inprocess_admitted(
+        self,
+        request: ExecutionRequest,
+        target: ExecutionTarget,
+        emitter: ResultEmitter,
+    ) -> None:
+        """Execute an in-process request after shutdown admission succeeds."""
+        del target
         shell_type = self._get_shell_type(request)
 
         logger.info(
@@ -1964,17 +2190,39 @@ class ExecutionDispatcher:
             True if cancel request was sent successfully
         """
         target = self.router.route(request, device_id)
+        if target.mode == CommunicationMode.WEBSOCKET:
+            return await self._cancel_websocket(request, target)
+
+        from .web_stream_client import web_stream_worker_client
+        from .web_stream_protocol import EXECUTION_CANCEL_EXECUTE
+
+        raw_request = await run_payload_codec(
+            request.to_dict,
+            payload_hint=request,
+            force_offload=True,
+        )
+        result = await web_stream_worker_client.execute(
+            EXECUTION_CANCEL_EXECUTE,
+            {"request": raw_request},
+        )
+        success = result.get("success")
+        if not isinstance(success, bool):
+            raise RuntimeError("Stream worker returned an invalid cancel result")
+        return success
+
+    async def cancel_worker_owned(self, request: ExecutionRequest) -> bool:
+        """Cancel a non-WebSocket execution inside the Stream process."""
+        target = self.router.route(request, device_id=None)
+        if target.mode == CommunicationMode.WEBSOCKET:
+            raise RuntimeError("WebSocket cancellation must remain in Web")
 
         if target.mode == CommunicationMode.SSE:
             return await self._cancel_sse(request, target)
-        elif target.mode == CommunicationMode.WEBSOCKET:
-            return await self._cancel_websocket(request, target)
-        elif target.mode == CommunicationMode.POLLING:
+        if target.mode == CommunicationMode.POLLING:
             return await self._cancel_sse(request, target)
-        elif target.mode == CommunicationMode.INPROCESS:
+        if target.mode == CommunicationMode.INPROCESS:
             return False
-        else:
-            return await self._cancel_http(request, target)
+        return await self._cancel_http(request, target)
 
     async def _cancel_sse(
         self,
@@ -2069,7 +2317,8 @@ class ExecutionDispatcher:
         try:
             response = await self.http_client.post(
                 url,
-                json=payload,
+                content=await encode_http_json(payload),
+                headers={"Content-Type": "application/json"},
             )
             logger.info(
                 "[ExecutionDispatcher] HTTP cancel response: "
@@ -2132,11 +2381,15 @@ class ExecutionDispatcher:
 
         # If emitter is provided, also emit error event to frontend
         if emitter is not None:
-            # Wrap with StatusUpdatingEmitter for unified status updates
-            wrapped_emitter = StatusUpdatingEmitter(
-                wrapped=emitter,
+            user_id = request.user.get("id") if request.user else request.user_id
+            wrapped_emitter = RemoteProjectionEmitter(
                 task_id=request.task_id,
                 subtask_id=request.subtask_id,
+                user_id=user_id if isinstance(user_id, int) else None,
+                source="Dispatcher explicit error",
+                wrapped=emitter,
+                executor_name=request.executor_name,
+                executor_namespace=request.executor_namespace,
             )
             try:
                 await wrapped_emitter.emit_error(
@@ -2169,12 +2422,14 @@ class ExecutionDispatcher:
             request_id, _ = self._resolve_request_id(
                 request, {"request_id": getattr(request, "request_id", "")}
             )
+            payload = {
+                "request_id": request_id,
+                "error": error_message,
+            }
             await self.http_client.post(
                 url,
-                json={
-                    "request_id": request_id,
-                    "error": error_message,
-                },
+                content=await encode_http_json(payload),
+                headers={"Content-Type": "application/json"},
             )
         except Exception as e:
             # Error notification to chat_shell is best-effort

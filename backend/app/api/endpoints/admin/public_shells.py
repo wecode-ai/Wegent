@@ -59,7 +59,7 @@ def _shell_to_response(shell: Kind) -> PublicShellResponse:
 
 
 @router.get("/public-shells", response_model=PublicShellListResponse)
-async def list_public_shells(
+def list_public_shells(
     page: int = Query(1, ge=1),
     limit: int = Query(20, ge=1, le=1000),
     db: Session = Depends(get_db),
@@ -90,7 +90,7 @@ async def list_public_shells(
     response_model=PublicShellResponse,
     status_code=status.HTTP_201_CREATED,
 )
-async def create_public_shell(
+def create_public_shell(
     shell_data: PublicShellCreate,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_admin_user),
@@ -131,7 +131,7 @@ async def create_public_shell(
 
 
 @router.put("/public-shells/{shell_id}", response_model=PublicShellResponse)
-async def update_public_shell(
+def update_public_shell(
     shell_data: PublicShellUpdate,
     shell_id: int = Path(..., description="Shell ID"),
     db: Session = Depends(get_db),
@@ -187,7 +187,7 @@ async def update_public_shell(
 
 
 @router.delete("/public-shells/{shell_id}", status_code=status.HTTP_204_NO_CONTENT)
-async def delete_public_shell(
+def delete_public_shell(
     shell_id: int = Path(..., description="Shell ID"),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_admin_user),

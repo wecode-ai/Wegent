@@ -46,7 +46,6 @@ def get_dingtalk_docs(
 
 @router.post("/sync", response_model=DingtalkSyncResult)
 async def sync_dingtalk_docs(
-    db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> DingtalkSyncResult:
     """Trigger sync of DingTalk documents from the user's MCP server.
@@ -54,20 +53,17 @@ async def sync_dingtalk_docs(
     Requires the user to have DingTalk Docs MCP URL configured and enabled
     in their integration settings.
     """
-    if not DingTalkDocService.is_configured(current_user):
-        raise HTTPException(
-            status_code=400,
-            detail="DingTalk Docs MCP is not configured. "
-            "Please enable it in Settings > Integrations first.",
-        )
+    user_id = current_user.id
+    preferences = current_user.preferences
+    del current_user
 
     try:
-        result = await DingTalkDocService.sync_dingtalk_docs(current_user, db)
+        result = await DingTalkDocService.sync_dingtalk_docs(user_id, preferences)
         return DingtalkSyncResult(**result)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
-        logger.exception("Failed to sync DingTalk documents: %s", e)
+        logger.exception("Failed to sync DingTalk documents (%s)", type(e).__name__)
         raise HTTPException(
             status_code=500,
             detail="Failed to sync DingTalk documents",

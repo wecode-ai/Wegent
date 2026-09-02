@@ -52,12 +52,16 @@ def _remote_device(user_id: int, device_id: str = "remote-device-1") -> Kind:
 
 
 @pytest.mark.asyncio
-async def test_device_service_lists_remote_devices(test_db, test_user):
+async def test_device_service_lists_remote_devices(test_db, test_user, monkeypatch):
     """Remote devices should be returned by the provider aggregation."""
     test_db.add(_remote_device(test_user.id))
     test_db.commit()
 
     assert DeviceProviderFactory.get_provider(DeviceType.REMOTE) is not None
+    monkeypatch.setattr(
+        "app.services.device.remote_provider.executor_version_service.get_latest_version",
+        AsyncMock(return_value="1.0.0"),
+    )
 
     devices = await device_service.get_all_devices(test_db, test_user.id)
 

@@ -9,14 +9,21 @@ Refactored to use modular architecture with pluggable storage backends.
 
 import asyncio
 import logging
+from dataclasses import dataclass
 from typing import Any, Dict, List, Literal, Optional
 
 from sqlalchemy.orm import Session
 
+from app.core.blocking_work import run_knowledge_io
 from app.core.config import settings
+from app.core.payload_codec import run_payload_codec
 from app.models.kind import Kind
 from app.services.rag.document_id_utils import extract_document_id
 from app.services.rag.runtime_resolver import RagRuntimeResolver
+from app.services.rag.runtime_specs import (
+    DEFAULT_DIRECT_INJECTION_BUDGET,
+    QueryRuntimeSpec,
+)
 from knowledge_engine.embedding import create_embedding_model_from_runtime_config
 from knowledge_engine.query import QueryExecutor
 from knowledge_engine.storage.factory import create_storage_backend_from_runtime_config
@@ -30,6 +37,70 @@ CHAT_SHELL_MAX_ALL_CHUNKS = 10000
 CHAT_SHELL_DEFAULT_MAX_DIRECT_CHUNKS = 500
 CHAT_SHELL_DIRECT_INJECTION_FORMATTING_OVERHEAD = 50
 CHAT_SHELL_DIRECT_INJECTION_CHARS_PER_TOKEN = 4
+
+
+@dataclass(frozen=True)
+class PreparedKnowledgeQuery:
+    """One DB-independent knowledge storage query."""
+
+    config: RemoteKnowledgeBaseQueryConfig
+    query_plan: dict[str, Any] | None
+
+
+@dataclass(frozen=True)
+class PreparedRetrievalPlan:
+    """Detached local retrieval inputs safe to execute after Session close."""
+
+    query: str
+    search_hints: SearchHints | None
+    scope: RetrievalScope | None
+    metadata_condition: Optional[Dict[str, Any]]
+    max_results: int
+    prepared_queries: tuple[PreparedKnowledgeQuery, ...] = ()
+    direct_result: Dict[str, Any] | None = None
+
+
+def _build_local_query_executor(
+    knowledge_base_config: RemoteKnowledgeBaseQueryConfig,
+) -> QueryExecutor:
+    storage_backend = create_storage_backend_from_runtime_config(
+        knowledge_base_config.retriever_config
+    )
+    embed_model = create_embedding_model_from_runtime_config(
+        knowledge_base_config.embedding_model_config
+    )
+    return QueryExecutor(
+        storage_backend=storage_backend,
+        embed_model=embed_model,
+        sync_runner=run_knowledge_io,
+    )
+
+
+def _merge_prepared_query_results(
+    executed_results: list[tuple[int, dict[str, Any]]],
+    max_results: int,
+) -> dict[str, Any]:
+    records: list[dict[str, Any]] = []
+    for knowledge_base_id, result in executed_results:
+        for record in result.get("records", [])[:max_results]:
+            records.append(
+                {
+                    "content": record.get("content", ""),
+                    "score": record.get("score", 0.0),
+                    "title": record.get("title", "Unknown"),
+                    "metadata": record.get("metadata") or {},
+                    "knowledge_base_id": knowledge_base_id,
+                    "document_id": extract_document_id(record),
+                }
+            )
+    records.sort(key=lambda item: item.get("score", 0.0) or 0.0, reverse=True)
+    records = records[:max_results]
+    return {
+        "mode": "rag_retrieval",
+        "records": records,
+        "total": len(records),
+        "total_estimated_tokens": 0,
+    }
 
 
 class RetrievalService:
@@ -392,6 +463,173 @@ class RetrievalService:
             return "direct_injection"
         return "rag_retrieval"
 
+    def prepare_local_retrieval(
+        self,
+        spec: QueryRuntimeSpec,
+        db: Session,
+    ) -> PreparedRetrievalPlan:
+        """Resolve every DB-dependent input without performing network awaits."""
+
+        if not spec.knowledge_base_ids:
+            return PreparedRetrievalPlan(
+                query=spec.query,
+                search_hints=spec.search_hints,
+                scope=spec.scope,
+                metadata_condition=spec.metadata_condition,
+                max_results=spec.max_results,
+                direct_result={
+                    "mode": "rag_retrieval",
+                    "records": [],
+                    "total": 0,
+                    "total_estimated_tokens": 0,
+                },
+            )
+
+        route_mode = spec.route_mode
+        if route_mode == "auto":
+            budget = spec.direct_injection_budget or DEFAULT_DIRECT_INJECTION_BUDGET
+            route_mode = self.decide_route_mode_for_chat_shell(
+                query=spec.query,
+                knowledge_base_ids=spec.knowledge_base_ids,
+                db=db,
+                route_mode=route_mode,
+                scope=spec.scope,
+                metadata_condition=spec.metadata_condition,
+                context_window=budget.context_window,
+                used_context_tokens=budget.used_context_tokens,
+                reserved_output_tokens=budget.reserved_output_tokens,
+                context_buffer_ratio=budget.context_buffer_ratio,
+                max_direct_chunks=budget.max_direct_chunks,
+            )
+
+        if route_mode == "direct_injection":
+            direct_result = self._prepare_direct_result(spec, db)
+            if direct_result is not None:
+                return PreparedRetrievalPlan(
+                    query=spec.query,
+                    search_hints=spec.search_hints,
+                    scope=spec.scope,
+                    metadata_condition=spec.metadata_condition,
+                    max_results=spec.max_results,
+                    direct_result=direct_result,
+                )
+
+        configs = {
+            config.knowledge_base_id: config
+            for config in spec.knowledge_base_configs or []
+        }
+        prepared_queries: list[PreparedKnowledgeQuery] = []
+        for knowledge_base_id in spec.knowledge_base_ids:
+            config = configs.get(knowledge_base_id)
+            if config is None:
+                kb = (
+                    db.query(Kind)
+                    .filter(
+                        Kind.id == knowledge_base_id,
+                        Kind.kind == "KnowledgeBase",
+                        Kind.is_active,
+                    )
+                    .first()
+                )
+                if kb is None:
+                    raise ValueError(f"Knowledge base {knowledge_base_id} not found")
+                config = self._build_runtime_query_config(
+                    kb=kb,
+                    db=db,
+                    user_name=spec.user_name,
+                )
+            retrieval_config = config.retrieval_config
+            retrieval_mode = (
+                retrieval_config.get("retrieval_mode")
+                if isinstance(retrieval_config, dict)
+                else getattr(retrieval_config, "retrieval_mode", None)
+            )
+            query_plan = (
+                self._build_qa_query_plan(
+                    db=db,
+                    knowledge_base_id=knowledge_base_id,
+                    scope=spec.scope,
+                )
+                if retrieval_mode == "vector"
+                else None
+            )
+            prepared_queries.append(
+                PreparedKnowledgeQuery(config=config, query_plan=query_plan)
+            )
+
+        return PreparedRetrievalPlan(
+            query=spec.query,
+            search_hints=spec.search_hints,
+            scope=spec.scope,
+            metadata_condition=spec.metadata_condition,
+            max_results=spec.max_results,
+            prepared_queries=tuple(prepared_queries),
+        )
+
+    def _prepare_direct_result(
+        self,
+        spec: QueryRuntimeSpec,
+        db: Session,
+    ) -> Dict[str, Any] | None:
+        budget = spec.direct_injection_budget or DEFAULT_DIRECT_INJECTION_BUDGET
+        records = self._get_original_documents_from_knowledge_base_sync(
+            knowledge_base_ids=spec.knowledge_base_ids,
+            db=db,
+            document_ids=spec.scope.document_ids if spec.scope else None,
+        )
+        if records is None:
+            return None
+        available_tokens = self._calculate_available_injection_tokens(
+            context_window=budget.context_window,
+            used_context_tokens=budget.used_context_tokens,
+            reserved_output_tokens=budget.reserved_output_tokens,
+            context_buffer_ratio=budget.context_buffer_ratio,
+        )
+        estimated_tokens = self._estimate_direct_injection_tokens(records)
+        rejection = self._get_direct_injection_rejection_reason(
+            route_mode="direct_injection",
+            direct_records=records,
+            direct_injection_estimated_tokens=estimated_tokens,
+            available_injection_tokens=available_tokens,
+            max_direct_chunks=budget.max_direct_chunks,
+        )
+        if rejection:
+            return None
+        return {
+            "mode": "direct_injection",
+            "records": records,
+            "total": len(records),
+            "total_estimated_tokens": estimated_tokens,
+        }
+
+    async def execute_prepared_local_retrieval(
+        self,
+        plan: PreparedRetrievalPlan,
+    ) -> Dict[str, Any]:
+        """Execute only DB-independent storage/model awaits."""
+
+        if plan.direct_result is not None:
+            return plan.direct_result
+
+        executed_results: list[tuple[int, dict[str, Any]]] = []
+        for prepared in plan.prepared_queries:
+            result = await self._execute_runtime_query(
+                query=plan.query,
+                search_hints=plan.search_hints,
+                query_plan=prepared.query_plan,
+                knowledge_base_config=prepared.config,
+                scope=plan.scope,
+                metadata_condition=plan.metadata_condition,
+            )
+            executed_results.append((prepared.config.knowledge_base_id, result))
+        return await run_payload_codec(
+            _merge_prepared_query_results,
+            executed_results,
+            plan.max_results,
+            payload_hint=executed_results,
+            force_offload=True,
+        )
+
     @trace_async(
         span_name="rag.retrieve_with_routing",
         tracer_name="backend.services.rag",
@@ -743,15 +981,9 @@ class RetrievalService:
         metadata_condition: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         """Execute a single knowledge query with optional retrieval hints."""
-        storage_backend = create_storage_backend_from_runtime_config(
-            knowledge_base_config.retriever_config
-        )
-        embed_model = create_embedding_model_from_runtime_config(
-            knowledge_base_config.embedding_model_config
-        )
-        executor = QueryExecutor(
-            storage_backend=storage_backend,
-            embed_model=embed_model,
+        executor = await run_knowledge_io(
+            _build_local_query_executor,
+            knowledge_base_config,
         )
         return await executor.execute(
             knowledge_id=str(knowledge_base_config.knowledge_base_id),
@@ -824,6 +1056,20 @@ class RetrievalService:
         }
 
     async def get_original_documents_from_knowledge_base(
+        self,
+        knowledge_base_ids: list[int],
+        db: Session,
+        document_ids: Optional[list[int]] = None,
+    ) -> Optional[List[Dict[str, Any]]]:
+        """Compatibility coroutine for callers already executing off the Web loop."""
+
+        return self._get_original_documents_from_knowledge_base_sync(
+            knowledge_base_ids=knowledge_base_ids,
+            db=db,
+            document_ids=document_ids,
+        )
+
+    def _get_original_documents_from_knowledge_base_sync(
         self,
         knowledge_base_ids: list[int],
         db: Session,

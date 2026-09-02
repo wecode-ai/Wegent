@@ -25,7 +25,6 @@ from app.core.async_utils import (
     execute_async_safely,
     get_main_event_loop,
     run_in_main_loop,
-    schedule_async_task,
     set_main_event_loop,
 )
 
@@ -148,44 +147,6 @@ class TestAsyncSessionManager:
 
                 # Timeout should be created with correct value
                 mock_timeout_class.assert_called_once_with(total=60.0)
-
-
-class TestScheduleAsyncTask:
-    """Tests for schedule_async_task.
-
-    This function schedules async tasks in the main loop if available,
-    otherwise creates a new thread with its own loop.
-    """
-
-    def test_schedule_task_in_new_thread(self) -> None:
-        """Test that task is scheduled in new thread when main loop unavailable."""
-        import app.core.async_utils as async_utils
-
-        # Save and clear main loop
-        original = async_utils._main_loop
-        async_utils._main_loop = None
-
-        result_holder: dict = {"result": None, "error": None}
-        event = threading.Event()
-
-        async def async_func() -> str:
-            return "completed"
-
-        def callback(result: Optional[str], error: Optional[Exception]) -> None:
-            result_holder["result"] = result
-            result_holder["error"] = error
-            event.set()
-
-        try:
-            schedule_async_task(async_func, callback=callback)
-
-            # Wait for completion
-            event.wait(timeout=5.0)
-
-            assert result_holder["result"] == "completed"
-            assert result_holder["error"] is None
-        finally:
-            async_utils._main_loop = original
 
 
 class TestOriginalBugReproduction:

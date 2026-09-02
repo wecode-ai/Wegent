@@ -16,9 +16,9 @@ from app.core.shutdown import shutdown_manager
 
 @pytest.fixture(autouse=True)
 def reset_shutdown_manager():
-    shutdown_manager.reset()
+    shutdown_manager._reset_for_testing()
     yield
-    shutdown_manager.reset()
+    shutdown_manager._reset_for_testing()
 
 
 @pytest.fixture
@@ -26,10 +26,14 @@ def valid_jwt_auth(monkeypatch):
     monkeypatch.setattr(device_namespace, "is_api_key", lambda token: False)
     monkeypatch.setattr(
         device_namespace,
-        "verify_jwt_token",
-        lambda token: SimpleNamespace(id=7, user_name="alice"),
+        "verify_jwt_token_async",
+        AsyncMock(return_value=SimpleNamespace(id=7, user_name="alice")),
     )
-    monkeypatch.setattr(device_namespace, "get_token_expiry", lambda token: 123456)
+    monkeypatch.setattr(
+        device_namespace,
+        "get_token_expiry_async",
+        AsyncMock(return_value=123456),
+    )
 
 
 @pytest.mark.asyncio

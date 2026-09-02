@@ -11,15 +11,16 @@ for all event types.
 """
 
 import asyncio
-import concurrent.futures
 import logging
 from datetime import datetime
-from typing import Any, Callable, Dict, Optional
+from typing import Any, Dict, Optional
 
 import socketio
 
 from app.api.ws.events import ServerEvents
-from app.utils.client_payload_sanitizer import sanitize_client_payload
+from app.utils.client_payload_sanitizer import (
+    sanitize_client_payload_nonblocking,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -30,9 +31,7 @@ __all__ = [
     "ExtendedEventEmitter",  # Re-exported from extended_emitter module
     # Functions
     "get_extended_emitter",  # Re-exported from extended_emitter module
-    "get_main_event_loop",
     "init_ws_emitter",
-    "safe_emit_in_main_loop",
     # Deprecated - for backward compatibility only
     "get_webpage_ws_emitter",
 ]
@@ -143,7 +142,7 @@ class WebPageSocketEmitter:
 
         # Include full result if provided (for executor tasks)
         if result is not None:
-            payload["result"] = sanitize_client_payload(result)
+            payload["result"] = await sanitize_client_payload_nonblocking(result)
 
         await self.sio.emit(
             ServerEvents.CHAT_CHUNK,
@@ -170,13 +169,14 @@ class WebPageSocketEmitter:
             result: Optional result data
             message_id: Message ID for ordering (primary sort key)
         """
+        sanitized_result = await sanitize_client_payload_nonblocking(result or {})
         await self.sio.emit(
             ServerEvents.CHAT_DONE,
             {
                 "task_id": task_id,
                 "subtask_id": subtask_id,
                 "offset": offset,
-                "result": sanitize_client_payload(result or {}),
+                "result": sanitized_result,
                 "message_id": message_id,
             },
             room=f"task:{task_id}",
@@ -1097,8 +1097,6 @@ class WebPageSocketEmitter:
 
 # Global emitter instance (lazy initialized)
 _ws_emitter: Optional[WebPageSocketEmitter] = None
-# Global reference to the main event loop (set during initialization)
-_main_event_loop: Optional[asyncio.AbstractEventLoop] = None
 
 
 def _get_ws_emitter() -> Optional[WebPageSocketEmitter]:
@@ -1129,16 +1127,6 @@ def get_webpage_ws_emitter() -> Optional[WebPageSocketEmitter]:
     return _get_ws_emitter()
 
 
-def get_main_event_loop() -> Optional[asyncio.AbstractEventLoop]:
-    """
-    Get the main event loop reference.
-
-    Returns:
-        The main event loop or None if not initialized
-    """
-    return _main_event_loop
-
-
 def init_ws_emitter(sio: socketio.AsyncServer) -> WebPageSocketEmitter:
     """
     Initialize the global WebSocket emitter.
@@ -1151,110 +1139,11 @@ def init_ws_emitter(sio: socketio.AsyncServer) -> WebPageSocketEmitter:
     Returns:
         WebSocketEmitter: Initialized emitter instance
     """
-    global _ws_emitter, _main_event_loop
+    global _ws_emitter
     _ws_emitter = WebPageSocketEmitter(sio)
+    from app.core.async_utils import set_main_event_loop
 
-    # Capture the main event loop reference - only use get_running_loop()
-    # as get_event_loop() is deprecated in Python 3.10+
-    try:
-        _main_event_loop = asyncio.get_running_loop()
-        logger.info(
-            "[WS_LOOP] WebSocket emitter initialized with main event loop reference"
-        )
-    except RuntimeError:
-        # No running loop during initialization - this is expected if called
-        # before the async context starts. The loop will be set later.
-        logger.warning(
-            "[WS_LOOP] WebSocket emitter initialized without event loop reference "
-            "(will be set when async context starts)"
-        )
-
-    # Also set the main loop in async_utils for consistency
-    if _main_event_loop is not None:
-        from app.core.async_utils import set_main_event_loop
-
-        set_main_event_loop(_main_event_loop)
+    set_main_event_loop(asyncio.get_running_loop())
+    logger.info("[WS_LOOP] WebSocket emitter initialized on the serving loop")
 
     return _ws_emitter
-
-
-async def safe_emit_in_main_loop(
-    emit_func: Callable[..., Any], *args: Any, **kwargs: Any
-) -> None:
-    """Safely execute an emit function in the main event loop.
-
-    This function handles the case where the current event loop is different
-    from the main event loop (which can happen when event handlers run in
-    background threads or different async contexts). Redis connections are
-    bound to the event loop they were created in, so we must ensure emits
-    happen in the main loop.
-
-    Args:
-        emit_func: The emit function to execute (e.g., ws_emitter.sio.emit)
-        *args: Positional arguments for the emit function
-        **kwargs: Keyword arguments for the emit function
-    """
-    global _main_event_loop
-
-    def _make_done_callback(
-        context: str,
-    ) -> Callable[["concurrent.futures.Future[Any]"], None]:
-        """Create a done callback that logs exceptions from the scheduled emit."""
-
-        def done_callback(future: "concurrent.futures.Future[Any]") -> None:
-            try:
-                future.result()
-            except Exception:
-                logger.warning(
-                    "[WS_LOOP] Emit failed in main loop (%s): %s",
-                    context,
-                    future.exception(),
-                )
-
-        return done_callback
-
-    # Try to get current running loop
-    try:
-        current_loop = asyncio.get_running_loop()
-    except RuntimeError:
-        # No running loop, try to schedule in main loop
-        if _main_event_loop is not None and _main_event_loop.is_running():
-            try:
-                future = asyncio.run_coroutine_threadsafe(
-                    emit_func(*args, **kwargs), _main_event_loop
-                )
-                future.add_done_callback(_make_done_callback("no current loop"))
-                logger.info("[WS_LOOP] Scheduled emit in main loop (no current loop)")
-            except Exception as e:
-                logger.warning("[WS_LOOP] Failed to schedule emit in main loop: %s", e)
-            return
-        # No main loop available, skip emit
-        logger.warning(
-            "[WS_LOOP] Cannot emit: no current loop and main loop not available"
-        )
-        return
-
-    # If we're already in the main loop, execute directly
-    if _main_event_loop is None or current_loop is _main_event_loop:
-        try:
-            await emit_func(*args, **kwargs)
-        except Exception as e:
-            logger.warning("[WS_LOOP] Direct emit failed: %s", e)
-        return
-
-    # We're in a different loop, schedule in main loop
-    if _main_event_loop.is_running():
-        try:
-            future = asyncio.run_coroutine_threadsafe(
-                emit_func(*args, **kwargs), _main_event_loop
-            )
-            future.add_done_callback(_make_done_callback("cross-loop"))
-            logger.info("[WS_LOOP] Scheduled emit in main loop from different loop")
-        except Exception as e:
-            logger.warning("[WS_LOOP] Failed to schedule emit in main loop: %s", e)
-    else:
-        # Main loop not running, log warning and skip
-        # Don't try to execute in current loop as it will likely fail with Redis
-        logger.warning(
-            "[WS_LOOP] Main loop not running, skipping emit (would fail with Redis)"
-        )

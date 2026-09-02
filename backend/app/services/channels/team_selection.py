@@ -19,6 +19,7 @@ from dataclasses import asdict, dataclass
 from typing import Optional
 
 from app.core.cache import cache_manager
+from app.core.payload_codec import run_payload_codec
 
 logger = logging.getLogger(__name__)
 
@@ -78,7 +79,11 @@ class TeamSelectionManager:
         if data:
             try:
                 if isinstance(data, str):
-                    data = json.loads(data)
+                    data = await run_payload_codec(
+                        json.loads,
+                        data,
+                        payload_hint=data,
+                    )
                 return TeamSelection.from_dict(data)
             except (json.JSONDecodeError, TypeError, KeyError) as e:
                 logger.warning(
@@ -97,8 +102,16 @@ class TeamSelectionManager:
         """
         key = f"{TEAM_SELECTION_KEY_PREFIX}{user_id}"
         try:
+            selection_data = selection.to_dict()
+            encoded_selection = await run_payload_codec(
+                json.dumps,
+                selection_data,
+                payload_hint=selection_data,
+            )
             await cache_manager.set(
-                key, json.dumps(selection.to_dict()), expire=TEAM_SELECTION_TTL
+                key,
+                encoded_selection,
+                expire=TEAM_SELECTION_TTL,
             )
             logger.info(
                 f"[TeamSelectionManager] Saved team selection for user {user_id}: "

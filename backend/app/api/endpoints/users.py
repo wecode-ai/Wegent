@@ -2,8 +2,10 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
+import copy
 import json
 import logging
+from dataclasses import dataclass
 from typing import Optional
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, status
@@ -62,11 +64,37 @@ from app.services.user_runtime_config import (
     UserRuntimeConfigSyncError,
     user_runtime_config_service,
 )
-from shared.telemetry.decorators import trace_async
+from shared.telemetry.decorators import trace_sync
 from shared.utils.crypto import encrypt_sensitive_data_with_embedded_iv
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True)
+class _RuntimeConfigUser:
+    id: int
+    preferences: object
+
+
+def _load_runtime_config_user_sync(token: str) -> _RuntimeConfigUser:
+    """Load the immutable runtime-config auth fields in a DB worker."""
+    from app.db.session import SessionLocal
+
+    with SessionLocal() as db:
+        current_user = security.get_current_user(token=token, db=db)
+        return _RuntimeConfigUser(
+            id=int(current_user.id),
+            preferences=copy.deepcopy(current_user.preferences),
+        )
+
+
+async def _get_runtime_config_user(
+    token: str = Depends(security.oauth2_scheme),
+) -> _RuntimeConfigUser:
+    from app.services.chat.storage.db import run_sync_in_executor
+
+    return await run_sync_in_executor(_load_runtime_config_user_sync, token)
 
 
 # ==================== Feature Flags ====================
@@ -161,7 +189,7 @@ class WegentRuntimeAuthTokenResponse(BaseModel):
 
 
 @router.get("/features", response_model=FeatureFlags)
-async def get_feature_flags(
+def get_feature_flags(
     _current_user: User = Depends(security.get_current_user),
 ):
     """
@@ -181,7 +209,7 @@ async def get_feature_flags(
 
 
 @router.get("/me", response_model=UserInDB)
-async def read_current_user(
+def read_current_user(
     db: Session = Depends(get_db),
     current_user: Optional[User] = Depends(security.get_current_user_optional),
 ):
@@ -229,7 +257,7 @@ async def read_current_user(
 
 
 @router.get("/me/wegent-runtime", response_model=WegentRuntimeUserResponse)
-async def read_wegent_runtime_user(
+def read_wegent_runtime_user(
     authorization: Optional[str] = Header(default=None),
     db: Session = Depends(get_db),
 ):
@@ -269,8 +297,8 @@ async def read_wegent_runtime_user(
 
 
 @router.post("/me/wegent-runtime-token", response_model=WegentRuntimeAuthTokenResponse)
-@trace_async("create_wegent_runtime_auth_token", "users.api")
-async def create_wegent_runtime_auth_token(
+@trace_sync("create_wegent_runtime_auth_token", "users.api")
+def create_wegent_runtime_auth_token(
     current_user: User = Depends(security.get_current_user),
 ) -> WegentRuntimeAuthTokenResponse:
     """Return a task token that WeWork local Skills can use with Wegent runtime APIs."""
@@ -289,7 +317,7 @@ async def create_wegent_runtime_auth_token(
 
 
 @router.put("/me", response_model=UserInDB)
-async def update_current_user_endpoint(
+def update_current_user_endpoint(
     user_update: UserUpdate,
     db: Session = Depends(get_db),
     current_user: User = Depends(security.get_current_user),
@@ -323,7 +351,7 @@ async def update_current_user_endpoint(
     "/me/runtime-configs/{runtime}",
     response_model=UserRuntimeConfigResponse,
 )
-async def get_user_runtime_config(
+def get_user_runtime_config(
     runtime: str,
     db: Session = Depends(get_db),
     current_user: User = Depends(security.get_current_user),
@@ -349,7 +377,7 @@ async def get_user_runtime_config(
     "/me/runtime-configs/{runtime}",
     response_model=UserRuntimeConfigResponse,
 )
-async def update_user_runtime_config(
+def update_user_runtime_config(
     runtime: str,
     request: UserRuntimeConfigUpdateRequest,
     db: Session = Depends(get_db),
@@ -376,7 +404,7 @@ async def update_user_runtime_config(
     "/me/proxy-config",
     response_model=UserProxyConfigResponse,
 )
-async def update_user_proxy_config(
+def update_user_proxy_config(
     request: UserProxyConfigRequest,
     db: Session = Depends(get_db),
     current_user: User = Depends(security.get_current_user),
@@ -401,7 +429,7 @@ async def update_user_proxy_config(
     "/me/proxy-config",
     response_model=UserProxyConfigResponse,
 )
-async def get_user_proxy_config(
+def get_user_proxy_config(
     db: Session = Depends(get_db),
     current_user: User = Depends(security.get_current_user),
 ):
@@ -418,7 +446,7 @@ async def get_user_proxy_config(
     "/me/runtime-configs/{runtime}/auth-json",
     response_model=UserRuntimeConfigResponse,
 )
-async def upload_user_runtime_auth_json(
+def upload_user_runtime_auth_json(
     runtime: str,
     request: UserRuntimeAuthJsonRequest,
     db: Session = Depends(get_db),
@@ -449,14 +477,12 @@ async def upload_user_runtime_auth_json(
 async def import_user_runtime_auth_json_from_device(
     runtime: str,
     request: UserRuntimeConfigImportRequest,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(security.get_current_user),
+    current_user: _RuntimeConfigUser = Depends(_get_runtime_config_user),
 ):
     """Import and encrypt current user's runtime auth JSON from a local device."""
     try:
         return UserRuntimeConfigResponse(
             **await user_runtime_config_service.import_auth_json_from_device(
-                db,
                 user_id=current_user.id,
                 runtime=runtime,
                 device_id=request.device_id,
@@ -479,7 +505,7 @@ async def import_user_runtime_auth_json_from_device(
     "/me/mcps/providers/{provider_id}/services",
     response_model=list[MCPProviderServiceConfigResponse],
 )
-async def list_mcp_provider_services(
+def list_mcp_provider_services(
     provider_id: str,
     current_user: User = Depends(security.get_current_user),
 ):
@@ -505,7 +531,7 @@ async def list_mcp_provider_services(
     "/me/mcps/providers/{provider_id}/services/{service_id}",
     response_model=MCPProviderServiceConfigResponse,
 )
-async def get_mcp_provider_service_config(
+def get_mcp_provider_service_config(
     provider_id: str,
     service_id: str,
     current_user: User = Depends(security.get_current_user),
@@ -534,7 +560,7 @@ async def get_mcp_provider_service_config(
     "/me/mcps/providers/{provider_id}/services/{service_id}",
     response_model=MCPProviderServiceConfigResponse,
 )
-async def update_mcp_provider_service_config(
+def update_mcp_provider_service_config(
     provider_id: str,
     service_id: str,
     config: MCPProviderServiceConfigRequest,
@@ -585,7 +611,7 @@ async def update_mcp_provider_service_config(
 
 
 @router.delete("/me/git-token/{git_domain:path}", response_model=UserInDB)
-async def delete_git_token(
+def delete_git_token(
     git_domain: str,
     git_info_id: Optional[str] = Query(
         None, description="Unique ID of the git_info entry to delete"
@@ -625,7 +651,7 @@ async def delete_git_token(
 
 
 @router.put("/me/git-token-order", response_model=UserInDB)
-async def reorder_git_tokens(
+def reorder_git_tokens(
     order: GitTokenOrderUpdate,
     db: Session = Depends(get_db),
     current_user: User = Depends(security.get_current_user),
@@ -640,7 +666,7 @@ async def reorder_git_tokens(
     "/me/git-accounts/sync-summary",
     response_model=GitAccountSyncSummary,
 )
-async def get_git_account_sync_summary(
+def get_git_account_sync_summary(
     current_user: User = Depends(security.get_current_user),
 ) -> GitAccountSyncSummary:
     """Return ordered Git account metadata without returning credentials."""
@@ -835,7 +861,7 @@ def _is_ready_attachment_context(context: object) -> bool:
 
 
 @router.get("/quick-access", response_model=QuickAccessResponse)
-async def get_user_quick_access(
+def get_user_quick_access(
     db: Session = Depends(get_db),
     current_user: User = Depends(security.get_current_user),
 ):
@@ -915,7 +941,7 @@ async def get_user_quick_access(
 
 
 @router.get("/recent-teams", response_model=list[QuickAccessTeam])
-async def get_user_recent_teams(
+def get_user_recent_teams(
     is_code: bool = False,
     db: Session = Depends(get_db),
     current_user: User = Depends(security.get_current_user),
@@ -930,7 +956,7 @@ async def get_user_recent_teams(
 
 
 @router.get("/quick-launch", response_model=QuickLaunchResponse)
-async def get_user_quick_launch(
+def get_user_quick_launch(
     db: Session = Depends(get_db),
     current_user: User = Depends(security.get_current_user),
 ):
@@ -968,7 +994,7 @@ async def get_user_quick_launch(
     "/quick-launch/prepare-preset",
     response_model=QuickLaunchPreparePresetResponse,
 )
-async def prepare_quick_launch_preset(
+def prepare_quick_launch_preset(
     request: QuickLaunchPreparePresetRequest,
     db: Session = Depends(get_db),
     current_user: User = Depends(security.get_current_user),
@@ -1115,7 +1141,7 @@ ADMIN_SETUP_CONFIG_KEY = "admin_setup_completed"
 
 
 @router.get("/welcome-config", response_model=WelcomeConfigResponse)
-async def get_welcome_config(
+def get_welcome_config(
     db: Session = Depends(get_db),
     current_user: User = Depends(security.get_current_user),
 ):
@@ -1219,7 +1245,7 @@ def parse_default_team_config(config_value: str) -> Optional[DefaultTeamConfig]:
 
 
 @router.get("/default-teams", response_model=DefaultTeamsResponse)
-async def get_default_teams(
+def get_default_teams(
     _current_user: User = Depends(security.get_current_user),  # noqa: ARG001
 ):
     """
@@ -1241,7 +1267,7 @@ async def get_default_teams(
 
 
 @router.get("/search", response_model=SearchUsersResponse)
-async def search_users(
+def search_users(
     q: str = Query(..., min_length=1, description="Search query"),
     limit: int = Query(
         default=20, ge=1, le=100, description="Maximum results to return"
@@ -1278,7 +1304,7 @@ async def search_users(
 
 
 @router.get("/by-ids", response_model=SearchUsersResponse)
-async def get_users_by_ids(
+def get_users_by_ids(
     ids: list[int] = Query(..., description="User IDs to resolve"),
     db: Session = Depends(get_db),
     _current_user: User = Depends(security.get_current_user),  # noqa: ARG001
@@ -1306,7 +1332,7 @@ async def get_users_by_ids(
 
 
 @router.get("/me/available-channels", response_model=list[NotificationChannelInfo])
-async def get_user_available_channels(
+def get_user_available_channels(
     db: Session = Depends(get_db),
     current_user: User = Depends(security.get_current_user),
 ):

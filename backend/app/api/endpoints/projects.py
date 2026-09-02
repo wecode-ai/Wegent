@@ -8,6 +8,7 @@ Project API endpoints for managing projects and project-task associations.
 Projects are containers for organizing tasks. Each task can belong to one project.
 """
 
+from dataclasses import dataclass
 from typing import Annotated
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Path, Query, status
@@ -39,6 +40,18 @@ from app.schemas.task import TaskArchiveBatchResponse
 from app.services import project_device_session_service, project_service
 
 router = APIRouter()
+
+
+@dataclass(frozen=True)
+class _ProjectUser:
+    id: int
+
+
+def _get_project_user(
+    current_user: User = Depends(get_current_user),
+) -> _ProjectUser:
+    return _ProjectUser(id=current_user.id)
+
 
 ClientOriginQuery = Annotated[
     str,
@@ -100,13 +113,11 @@ def create_project_endpoint(
 )
 async def create_git_workspace_project_endpoint(
     project_create: GitWorkspaceProjectCreate,
-    current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db),
+    current_user: _ProjectUser = Depends(_get_project_user),
 ):
     """Create a Git-backed workspace project and clone it on the selected device."""
     try:
         return await project_service.create_git_workspace_project(
-            db=db,
             project_data=project_create,
             user_id=current_user.id,
         )
@@ -146,13 +157,11 @@ def archive_all_project_chats_endpoint(
 @router.get("/worktrees", response_model=ProjectWorktreeListResponse)
 async def list_project_worktrees_endpoint(
     client_origin: ClientOriginQuery = CLIENT_ORIGIN_FRONTEND,
-    current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db),
+    current_user: _ProjectUser = Depends(_get_project_user),
 ):
     """List Wework worktree directories by scanning each relevant online device once."""
     try:
         return await project_service.list_project_worktrees(
-            db=db,
             user_id=current_user.id,
             client_origin=client_origin,
         )
@@ -174,13 +183,11 @@ async def delete_project_worktree_endpoint(
     worktree_id: str = Path(..., description="Task ID worktree directory"),
     project_id: int = Query(..., description="Project ID matched to the worktree"),
     client_origin: ClientOriginQuery = CLIENT_ORIGIN_FRONTEND,
-    current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db),
+    current_user: _ProjectUser = Depends(_get_project_user),
 ):
     """Delete a project worktree directory and its matching task."""
     try:
         return await project_service.delete_project_worktree(
-            db=db,
             user_id=current_user.id,
             client_origin=client_origin,
             device_id=device_id,
@@ -349,12 +356,10 @@ async def start_project_terminal_session_endpoint(
     project_id: int = Path(..., description="Project ID"),
     payload: ProjectDeviceSessionCreate | None = Body(default=None),
     client_origin: ClientOriginQuery = CLIENT_ORIGIN_FRONTEND,
-    current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db),
+    current_user: _ProjectUser = Depends(_get_project_user),
 ):
     """Start a writable PTY terminal session for the project's bound device."""
     return await project_device_session_service.start_project_device_session(
-        db=db,
         user_id=current_user.id,
         project_id=project_id,
         session_type="terminal",
@@ -372,12 +377,10 @@ async def start_project_code_server_session_endpoint(
     project_id: int = Path(..., description="Project ID"),
     payload: ProjectDeviceSessionCreate | None = Body(default=None),
     client_origin: ClientOriginQuery = CLIENT_ORIGIN_FRONTEND,
-    current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db),
+    current_user: _ProjectUser = Depends(_get_project_user),
 ):
     """Start a code-server session for the project's bound local device."""
     return await project_device_session_service.start_project_device_session(
-        db=db,
         user_id=current_user.id,
         project_id=project_id,
         session_type="code_server",

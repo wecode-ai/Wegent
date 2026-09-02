@@ -17,7 +17,7 @@ router = APIRouter()
 
 
 @router.get("/stats", response_model=SystemStats)
-async def get_system_stats(
+def get_system_stats(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_admin_user),
 ):

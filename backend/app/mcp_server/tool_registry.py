@@ -20,11 +20,14 @@ from typing import Any, Callable, Dict, List, Optional
 
 from mcp.server.fastmcp import FastMCP
 
+from app.core.blocking_work import run_mcp_tool
+from app.core.payload_codec import run_payload_codec
 from app.mcp_server.context import get_mcp_context
 from app.mcp_server.schema_extractor import generate_tool_docstring
 from app.mcp_server.tools.decorator import get_registered_mcp_tools
 
 logger = logging.getLogger(__name__)
+_AUTHENTICATION_REQUIRED_RESULT = json.dumps({"error": "Authentication required"})
 
 
 def register_tools_to_server(mcp_server: FastMCP, server_name: str) -> int:
@@ -92,14 +95,14 @@ def _register_tool(
 
     # Create wrapper that handles token_info injection.
     # IMPORTANT: This wrapper is async so that FastMCP calls it as a coroutine
-    # and does NOT block the event loop.  Synchronous tool functions are
-    # dispatched to the default thread-pool executor so long-running calls
+    # and does NOT block the event loop. Synchronous tool functions are
+    # dispatched to the bounded MCP executor so long-running calls
     # (e.g. image generation) never freeze FastAPI's event loop.
     # Async tool functions are awaited directly.
     async def tool_wrapper(**kwargs: Any) -> str:
         ctx = get_mcp_context()
         if not ctx or not ctx.token_info:
-            return json.dumps({"error": "Authentication required"})
+            return _AUTHENTICATION_REQUIRED_RESULT
 
         try:
             # Build call kwargs with only valid MCP parameters
@@ -112,35 +115,31 @@ def _register_tool(
                 # Async function - await directly
                 result = await func(**call_kwargs)
             else:
-                # Synchronous function - run in thread pool executor
+                # Synchronous function - run in the MCP responsibility pool
                 # so the event loop remains free to serve other requests
                 # while potentially slow tools (image generation, knowledge search)
                 # are running.
-                loop = asyncio.get_running_loop()
-                result = await loop.run_in_executor(
-                    None,
-                    lambda: func(**call_kwargs),
-                )
+                result = await run_mcp_tool(func, **call_kwargs)
 
             # Serialize result
-            return _serialize_result(result)
+            return await run_payload_codec(
+                _serialize_result,
+                result,
+                payload_hint=result,
+            )
 
         except Exception as e:
             logger.error(
                 f"[MCP:{server_name}] Tool {tool_name} failed: {e}",
                 exc_info=True,
             )
-            return json.dumps(
-                {
-                    "error": {
-                        "code": "MCP_TOOL_EXECUTION_FAILED",
-                        "message": str(e),
-                        "server": server_name,
-                        "tool": tool_name,
-                        "retryable": False,
-                    }
-                },
-                ensure_ascii=False,
+            return await run_payload_codec(
+                _serialize_tool_error,
+                e,
+                server_name,
+                tool_name,
+                payload_hint=e,
+                force_offload=True,
             )
 
     # Set function metadata for FastMCP
@@ -175,6 +174,25 @@ def _serialize_result(result: Any) -> str:
         return json.dumps(result.dict(), ensure_ascii=False, default=str)
     else:
         return json.dumps(result, ensure_ascii=False, default=str)
+
+
+def _serialize_tool_error(
+    error: Exception,
+    server_name: str,
+    tool_name: str,
+) -> str:
+    return json.dumps(
+        {
+            "error": {
+                "code": "MCP_TOOL_EXECUTION_FAILED",
+                "message": str(error),
+                "server": server_name,
+                "tool": tool_name,
+                "retryable": False,
+            }
+        },
+        ensure_ascii=False,
+    )
 
 
 def _set_function_signature(func: Callable, params: List[Dict[str, Any]]) -> None:

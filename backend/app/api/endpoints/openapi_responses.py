@@ -9,23 +9,28 @@ Compatible with OpenAI Responses API format.
 This module uses the unified trigger architecture:
 - setup_chat_session: Creates task and subtasks
 - build_execution_request: Builds ExecutionRequest using TaskRequestBuilder
-- execution_dispatcher.dispatch: Unified dispatch with SSEResultEmitter for streaming
+- OpenAPIWorkerClient: Sends prepared requests to the stream worker over bounded UDS
 """
 
+import copy
 import json
 import logging
+from dataclasses import dataclass
 from datetime import datetime
+from functools import partial
 from typing import Any, Dict, Optional
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request, status
 from fastapi.responses import StreamingResponse
-from slowapi import Limiter
+from pydantic import TypeAdapter
 from sqlalchemy.orm import Session
 
-from app.api.dependencies import get_db
 from app.core import security
 from app.core.config import settings
-from app.core.rate_limit import get_limiter
+from app.core.payload_codec import run_payload_codec
+from app.core.rate_limit import get_limiter, nonblocking_limit
+from app.core.request_body_limit import OPENAPI_RESPONSES_BODY_MAX_BYTES
+from app.core.request_json import validate_json_request
 from app.models.subtask import Subtask, SubtaskRole, SubtaskStatus
 from app.models.task import TaskResource
 from app.models.user import User
@@ -42,6 +47,12 @@ from app.services.chat.trigger.lifecycle import (
     collect_completed_result,
     persist_completed_result,
 )
+from app.services.execution.stream_client import (
+    StreamWorkerExecutionError,
+    StreamWorkerUnavailableError,
+)
+from app.services.execution.web_stream_client import web_stream_worker_client
+from app.services.execution.web_stream_protocol import SUBTASK_RECOVERY_EXECUTE
 from app.services.openapi.helpers import (
     extract_input_text,
     parse_model_string,
@@ -68,78 +79,124 @@ router = APIRouter()
 
 # Get rate limiter instance
 limiter = get_limiter()
+_RESPONSE_CREATE_VALIDATOR = TypeAdapter(ResponseCreateInput)
 
 
-class _DispatchWithoutTerminalError(RuntimeError):
-    """Raised when dispatch fails before any terminal event is emitted."""
+async def _decode_response_create_request(request: Request) -> ResponseCreateInput:
+    return await validate_json_request(
+        request,
+        _RESPONSE_CREATE_VALIDATOR,
+        max_bytes=OPENAPI_RESPONSES_BODY_MAX_BYTES,
+    )
 
 
-async def _iter_callback_events(pubsub_obj: Any, cancel_event: Any):
-    """Yield callback events until the executor sends a terminal event."""
-    from shared.models import EventType, ExecutionEvent
+@dataclass(frozen=True)
+class _OpenAPIUser:
+    """Authenticated user fields safe to retain outside the auth DB session."""
 
-    while True:
-        if cancel_event.is_set():
-            return
-        message = await pubsub_obj.get_message(
-            ignore_subscribe_messages=True,
-            timeout=1.0,
-        )
-        if message is None or message.get("type") != "message":
-            continue
-        data = message["data"]
-        if isinstance(data, bytes):
-            data = data.decode("utf-8")
-        event = ExecutionEvent.from_dict(json.loads(data))
-        yield event
-        if event.type in (
-            EventType.DONE.value,
-            EventType.ERROR.value,
-            EventType.CANCELLED.value,
-        ):
-            return
+    id: int
+    user_name: str
 
 
-def _build_result_block_streaming_chunks(
-    result: Any,
-    known_blocks: Dict[str, Dict[str, Any]],
-) -> list[Any]:
-    """Convert result blocks carried by chunk/done events into streaming chunks."""
-    from app.services.openapi.streaming import StreamingChunk
+@dataclass(frozen=True)
+class _OpenAPIAuthContext:
+    user: _OpenAPIUser
+    api_key_name: Optional[str]
 
-    if not isinstance(result, dict):
-        return []
-    blocks = result.get("blocks")
-    if not isinstance(blocks, list):
-        return []
 
-    chunks: list[StreamingChunk] = []
-    for block in blocks:
-        if not isinstance(block, dict) or not block.get("id"):
-            continue
-        block_id = str(block["id"])
-        if block_id not in known_blocks:
-            known_blocks[block_id] = dict(block)
-            chunks.append(
-                StreamingChunk(
-                    type="block_created",
-                    data={"block": block},
-                )
-            )
-            continue
+async def _get_openapi_auth_context(
+    auth_context: security.DetachedAuthContext = Depends(
+        security.get_detached_auth_context
+    ),
+) -> _OpenAPIAuthContext:
+    """Detach auth fields before OpenAPI async orchestration begins."""
+    return _OpenAPIAuthContext(
+        user=_OpenAPIUser(
+            id=int(auth_context.user.id),
+            user_name=str(auth_context.user.user_name),
+        ),
+        api_key_name=auth_context.api_key_name,
+    )
 
-        updates = {key: value for key, value in block.items() if key != "id"}
-        known_blocks[block_id].update(updates)
-        chunks.append(
-            StreamingChunk(
-                type="block_updated",
-                data={
-                    "block_id": block_id,
-                    "updates": updates,
-                },
-            )
-        )
-    return chunks
+
+async def _get_openapi_user(
+    auth_context: security.DetachedAuthContext = Depends(
+        security.get_detached_auth_context
+    ),
+) -> _OpenAPIUser:
+    return _OpenAPIUser(
+        id=int(auth_context.user.id),
+        user_name=str(auth_context.user.user_name),
+    )
+
+
+@dataclass(frozen=True)
+class _ValidatedResponseTarget:
+    team_id: int
+    model_info: Dict[str, Any]
+
+
+@dataclass(frozen=True)
+class _PreparedResponseSession:
+    task_id: int
+    user_subtask_id: int
+    assistant_subtask_id: int
+    linked_attachment_ids: Optional[list[int]]
+    current_kb_refs: list[dict]
+    enable_tools: bool
+    enable_chat_bot: bool
+    preload_skills: list[Any]
+    memory_save_request: Optional[Dict[str, Any]]
+
+
+@dataclass(frozen=True)
+class _SubtaskView:
+    id: int
+    role: Any
+    status: Any
+    result: Any
+
+
+@dataclass(frozen=True)
+class _CancelResponsePlan:
+    is_chat_shell: bool
+    source_label: Optional[str]
+    model_string: str
+    running_subtask_id: Optional[int]
+    call_executor_cancel: bool
+
+
+@dataclass(frozen=True)
+class _DeleteResponsePlan:
+    running_subtask_id: Optional[int]
+
+
+async def _run_sync(callable_obj: Any, /, *args: Any, **kwargs: Any) -> Any:
+    """Run a synchronous OpenAPI preparation step in the shared DB pool."""
+    from app.services.chat.storage.db import run_sync_in_executor
+
+    return await run_sync_in_executor(partial(callable_obj, *args, **kwargs))
+
+
+def _worker_session() -> Any:
+    """Create a fresh Session owned exclusively by one worker invocation."""
+    from app.db.session import get_db_session
+
+    return get_db_session()
+
+
+def _dump_model(value: Any) -> dict[str, Any]:
+    return value.model_dump()
+
+
+def _prepare_response_request_payload(
+    request_body: ResponseCreateInput,
+) -> tuple[Dict[str, Any], Dict[str, Any], str]:
+    return (
+        parse_model_string(request_body.model),
+        parse_wegent_tools(request_body.tools),
+        extract_input_text(request_body.input),
+    )
 
 
 def _normalize_auto_delete_executor_header(value: Optional[str]) -> Optional[str]:
@@ -209,6 +266,70 @@ def _filter_current_assistant_turn(
     return [subtask for subtask in subtasks if subtask.id == assistant_subtask_id]
 
 
+def _project_current_response(
+    response_id: str,
+    created_at: int,
+    response_status: str,
+    model: str,
+    subtasks: list[_SubtaskView],
+    assistant_subtask_id: int,
+    assistant_status: str,
+    assistant_content: Optional[str],
+    previous_response_id: Optional[str],
+) -> ResponseObject:
+    """Build one potentially large OpenAPI response in the codec worker."""
+    current_subtasks = _filter_current_assistant_turn(
+        subtasks,
+        assistant_subtask_id,
+    )
+    pending_user_input, pending_user_input_payload = extract_pending_user_input_state(
+        current_subtasks
+    )
+    return ResponseObject(
+        id=response_id,
+        created_at=created_at,
+        status=response_status,
+        model=model,
+        output=build_response_output(
+            current_subtasks,
+            active_assistant_subtask_id=assistant_subtask_id,
+            active_assistant_status=assistant_status,
+            active_assistant_content=assistant_content,
+        ),
+        pending_user_input=pending_user_input or None,
+        pending_user_input_payload=pending_user_input_payload,
+        previous_response_id=previous_response_id,
+    )
+
+
+async def _project_current_response_nonblocking(
+    *,
+    response_id: str,
+    created_at: int,
+    response_status: str,
+    model: str,
+    subtasks: list[_SubtaskView],
+    assistant_subtask_id: int,
+    assistant_status: str,
+    assistant_content: Optional[str] = None,
+    previous_response_id: Optional[str] = None,
+) -> ResponseObject:
+    return await run_payload_codec(
+        _project_current_response,
+        response_id,
+        created_at,
+        response_status,
+        model,
+        subtasks,
+        assistant_subtask_id,
+        assistant_status,
+        assistant_content,
+        previous_response_id,
+        payload_hint=subtasks,
+        force_offload=True,
+    )
+
+
 def _latest_assistant_subtask(subtasks: list[Subtask]) -> list[Subtask]:
     for subtask in reversed(subtasks or []):
         if subtask.role == SubtaskRole.ASSISTANT:
@@ -265,6 +386,666 @@ def _generation_options_dict(
     if generation_options is None:
         return None
     return generation_options.model_dump(exclude_none=True)
+
+
+def _validate_response_target_sync(
+    *,
+    user_id: int,
+    model_info: Dict[str, Any],
+    previous_task_id: Optional[int],
+) -> _ValidatedResponseTarget:
+    """Validate conversation, team, bots, and model in a worker-owned session."""
+    model_info = dict(model_info)
+    with _worker_session() as db:
+        if previous_task_id is not None:
+            existing_task = task_store.get_task_by_states(
+                db,
+                task_id=previous_task_id,
+                states=[TaskResource.STATE_ACTIVE],
+                owner_user_id=user_id,
+            )
+            if not existing_task:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail=f"Previous response 'resp_{previous_task_id}' not found",
+                )
+
+        team = kindReader.get_by_name_and_namespace(
+            db,
+            user_id,
+            KindType.TEAM,
+            model_info["namespace"],
+            model_info["team_name"],
+        )
+        if not team:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=(
+                    f"Team '{model_info['namespace']}#"
+                    f"{model_info['team_name']}' not found or not accessible"
+                ),
+            )
+
+        if model_info.get("model_id"):
+            _validate_explicit_response_model(db, user_id, model_info)
+        else:
+            _validate_team_response_models(db, user_id, team, model_info)
+
+        return _ValidatedResponseTarget(team_id=team.id, model_info=model_info)
+
+
+def _validate_explicit_response_model(
+    db: Session,
+    user_id: int,
+    model_info: Dict[str, Any],
+) -> None:
+    model_name = model_info["model_id"]
+    model_namespace = model_info["namespace"]
+    model = kindReader.get_by_name_and_namespace(
+        db,
+        user_id,
+        KindType.MODEL,
+        model_namespace,
+        model_name,
+    )
+    if not model and model_namespace != "default":
+        model = kindReader.get_by_name_and_namespace(
+            db,
+            user_id,
+            KindType.MODEL,
+            "default",
+            model_name,
+        )
+    if not model:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Model '{model_namespace}/{model_name}' not found",
+        )
+    model_info["model_type"] = _model_category_from_kind(model)
+
+
+def _validate_team_response_models(
+    db: Session,
+    user_id: int,
+    team: Any,
+    model_info: Dict[str, Any],
+) -> None:
+    team_crd = Team.model_validate(team.json)
+    if not team_crd.spec.members:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=(
+                f"Team '{model_info['namespace']}#"
+                f"{model_info['team_name']}' has no members configured"
+            ),
+        )
+
+    for member_index, member in enumerate(team_crd.spec.members):
+        bot_ref = member.botRef
+        if not bot_ref.name:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=(
+                    f"Team '{model_info['namespace']}#"
+                    f"{model_info['team_name']}' has invalid bot reference"
+                ),
+            )
+        bot_kind = kindReader.get_by_name_and_namespace(
+            db,
+            team.user_id,
+            KindType.BOT,
+            bot_ref.namespace,
+            bot_ref.name,
+        )
+        if not bot_kind:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Bot '{bot_ref.namespace}/{bot_ref.name}' not found",
+            )
+        bot_crd = Bot.model_validate(bot_kind.json)
+        model_ref = bot_crd.spec.modelRef
+        if not model_ref or not model_ref.name or not model_ref.namespace:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=(
+                    f"Bot '{bot_ref.namespace}/{bot_ref.name}' does not have a "
+                    "valid model configured. Please specify model_id in the request "
+                    "or configure modelRef for the bot."
+                ),
+            )
+        if member_index == 0:
+            default_model = kindReader.get_by_name_and_namespace(
+                db,
+                user_id,
+                KindType.MODEL,
+                model_ref.namespace,
+                model_ref.name,
+            )
+            if default_model:
+                model_info["model_type"] = _model_category_from_kind(default_model)
+
+
+def _prepare_response_session_sync(
+    *,
+    user_id: int,
+    team_id: int,
+    model_info: Dict[str, Any],
+    request_body: ResponseCreateInput,
+    input_text: str,
+    tool_settings: Dict[str, Any],
+    task_id: Optional[int],
+    api_key_name: Optional[str],
+    auto_delete_executor: Optional[str],
+) -> _PreparedResponseSession:
+    """Create chat records and attachment links without touching Uvicorn's loop."""
+    from app.models.kind import Kind
+    from app.services.openapi.chat_session import setup_chat_session
+
+    with _worker_session() as db:
+        user = db.get(User, user_id)
+        team = db.get(Kind, team_id)
+        if user is None or team is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="User or team no longer exists",
+            )
+
+        setup = setup_chat_session(
+            db,
+            user,
+            team,
+            model_info,
+            input_text,
+            tool_settings,
+            task_id,
+            api_key_name,
+            auto_delete_executor,
+            generation_params=_generation_options_dict(request_body),
+            defer_memory_save=True,
+        )
+        current_kb_refs = _get_current_knowledge_base_refs(tool_settings)
+        inherited_kb_refs = _get_inherited_knowledge_base_refs(
+            task=setup.task,
+            current_refs=current_kb_refs,
+        )
+        enable_chat_bot = tool_settings.get("enable_chat_bot", False)
+        enable_tools = (
+            enable_chat_bot or bool(current_kb_refs) or bool(inherited_kb_refs)
+        )
+
+        linked_attachment_ids = None
+        if request_body.attachment_ids:
+            linked_attachment_ids = link_contexts_to_subtask(
+                db=db,
+                subtask_id=setup.user_subtask.id,
+                user_id=user_id,
+                attachment_ids=request_body.attachment_ids,
+                task=setup.task,
+            )
+
+        return _PreparedResponseSession(
+            task_id=setup.task_id,
+            user_subtask_id=setup.user_subtask.id,
+            assistant_subtask_id=setup.assistant_subtask.id,
+            linked_attachment_ids=linked_attachment_ids,
+            current_kb_refs=current_kb_refs,
+            enable_tools=enable_tools,
+            enable_chat_bot=enable_chat_bot,
+            preload_skills=tool_settings.get("preload_skills", []),
+            memory_save_request=getattr(setup, "memory_save_request", None),
+        )
+
+
+def _query_subtask_views_sync(
+    *,
+    task_id: int,
+    user_id: int,
+) -> list[_SubtaskView]:
+    """Load only response-output fields and detach them from SQLAlchemy."""
+    with _worker_session() as db:
+        subtasks = subtask_store.list_by_task_for_user_ordered(
+            db,
+            task_id=task_id,
+            user_id=user_id,
+        )
+        return [
+            _SubtaskView(
+                id=subtask.id,
+                role=subtask.role,
+                status=subtask.status,
+                result=copy.deepcopy(subtask.result),
+            )
+            for subtask in subtasks
+        ]
+
+
+def _model_string_from_task_json(task_json: Any) -> str:
+    if not isinstance(task_json, dict):
+        return "unknown"
+    task_crd = Task.model_validate(task_json)
+    team_ref = task_crd.spec.teamRef
+    model_id = (
+        task_crd.metadata.labels.get("modelId") if task_crd.metadata.labels else None
+    )
+    model_string = f"{team_ref.namespace}#{team_ref.name}"
+    return f"{model_string}#{model_id}" if model_id else model_string
+
+
+def _parse_response_task_id(
+    response_id: str,
+    *,
+    include_expected_format: bool = False,
+) -> int:
+    if not response_id.startswith("resp_"):
+        detail = f"Invalid response_id format: '{response_id}'"
+        if include_expected_format:
+            detail += ". Expected format: 'resp_{task_id}'"
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=detail,
+        )
+    try:
+        return int(response_id[5:])
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Invalid response_id format: '{response_id}'",
+        ) from exc
+
+
+def _response_object_from_db(
+    db: Session,
+    *,
+    task_id: int,
+    user_id: int,
+    model_string: Optional[str] = None,
+) -> ResponseObject:
+    task_dict = task_kinds_service.get_task_by_id(
+        db,
+        task_id=task_id,
+        user_id=user_id,
+    )
+    subtasks = subtask_store.list_by_task_for_user_ordered(
+        db,
+        task_id=task_id,
+        user_id=user_id,
+    )
+    if model_string is None:
+        task = task_store.get_task_by_states(
+            db,
+            task_id=task_id,
+            states=[TaskResource.STATE_ACTIVE],
+            owner_user_id=user_id,
+        )
+        model_string = _model_string_from_task_json(task.json if task else None)
+    return _task_to_response_object(task_dict, model_string, subtasks=subtasks)
+
+
+def _get_response_sync(
+    *,
+    task_id: int,
+    user_id: int,
+    response_id: str,
+) -> ResponseObject:
+    """Load and serialize one response in a worker-owned session."""
+    with _worker_session() as db:
+        try:
+            return _response_object_from_db(
+                db,
+                task_id=task_id,
+                user_id=user_id,
+            )
+        except HTTPException as exc:
+            if exc.status_code == status.HTTP_404_NOT_FOUND:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail=f"Response '{response_id}' not found",
+                ) from exc
+            raise
+
+
+def _get_accessible_active_task(
+    db: Session,
+    *,
+    task_id: int,
+    user_id: int,
+) -> Optional[TaskResource]:
+    task = task_store.get_task_by_states(
+        db,
+        task_id=task_id,
+        states=[TaskResource.STATE_ACTIVE],
+        owner_user_id=user_id,
+    )
+    if task is not None:
+        return task
+    member_task = task_store.get_task_by_states(
+        db,
+        task_id=task_id,
+        states=[TaskResource.STATE_ACTIVE],
+    )
+    if member_task and task_access_store.is_member(
+        db,
+        task_id=task_id,
+        user_id=user_id,
+    ):
+        return member_task
+    return None
+
+
+def _cancel_executor_response_sync(
+    db: Session,
+    *,
+    task_id: int,
+    user_id: int,
+) -> bool:
+    """Persist an executor cancellation and return whether to call its runtime."""
+    from app.schemas.task import TaskUpdate
+
+    task_dict = task_kinds_service.get_task_detail(
+        db=db,
+        task_id=task_id,
+        user_id=user_id,
+    )
+    if not task_dict:
+        raise HTTPException(status_code=404, detail="Task not found")
+
+    current_status = task_dict.get("status", "")
+    if current_status in {"COMPLETED", "FAILED", "CANCELLED", "DELETE"}:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=(f"Task is already {current_status.lower()}, cannot cancel"),
+        )
+    if current_status == "CANCELLING":
+        return False
+
+    try:
+        task_kinds_service.update_task(
+            db=db,
+            task_id=task_id,
+            obj_in=TaskUpdate(status="CANCELLED"),
+            user_id=user_id,
+        )
+    except Exception as exc:
+        logger.error("Failed to update task %s status to CANCELLED: %s", task_id, exc)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to update task status: {str(exc)}",
+        ) from exc
+    return True
+
+
+def _running_response_subtask_id(
+    db: Session,
+    *,
+    task_id: int,
+    user_id: int,
+) -> Optional[int]:
+    subtask = subtask_store.get_latest_assistant_for_user_by_statuses(
+        db,
+        task_id=task_id,
+        user_id=user_id,
+        statuses=[SubtaskStatus.PENDING, SubtaskStatus.RUNNING],
+    )
+    return subtask.id if subtask else None
+
+
+def _prepare_cancel_response_sync(
+    *,
+    task_id: int,
+    user_id: int,
+    response_id: str,
+) -> _CancelResponsePlan:
+    """Validate cancellation and persist the non-chat cancellation phase."""
+    with _worker_session() as db:
+        task = _get_accessible_active_task(db, task_id=task_id, user_id=user_id)
+        if task is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Response '{response_id}' not found",
+            )
+
+        task_crd = Task.model_validate(task.json)
+        source_label = (
+            task_crd.metadata.labels.get("source") if task_crd.metadata.labels else None
+        )
+        is_chat_shell = source_label == "chat_shell"
+        running_subtask_id = None
+        call_executor_cancel = False
+        if is_chat_shell:
+            running_subtask_id = _running_response_subtask_id(
+                db,
+                task_id=task_id,
+                user_id=user_id,
+            )
+        else:
+            try:
+                call_executor_cancel = _cancel_executor_response_sync(
+                    db,
+                    task_id=task_id,
+                    user_id=user_id,
+                )
+            except HTTPException as exc:
+                if exc.status_code == status.HTTP_404_NOT_FOUND:
+                    raise HTTPException(
+                        status_code=status.HTTP_404_NOT_FOUND,
+                        detail=f"Response '{response_id}' not found",
+                    ) from exc
+                raise
+
+        return _CancelResponsePlan(
+            is_chat_shell=is_chat_shell,
+            source_label=source_label,
+            model_string=_model_string_from_task_json(task.json),
+            running_subtask_id=running_subtask_id,
+            call_executor_cancel=call_executor_cancel,
+        )
+
+
+def _complete_chat_cancel_sync(
+    *,
+    task_id: int,
+    user_id: int,
+    subtask_id: int,
+    partial_content: Optional[str],
+) -> None:
+    """Persist Chat Shell cancellation after async Redis coordination."""
+    with _worker_session() as db:
+        task = _get_accessible_active_task(db, task_id=task_id, user_id=user_id)
+        subtask = subtask_store.get_basic_by_id(
+            db,
+            subtask_id=subtask_id,
+            owner_user_id=user_id,
+        )
+        if task is None or subtask is None or subtask.task_id != task_id:
+            return
+
+        subtask_store.update_fields(
+            db,
+            subtask=subtask,
+            status=SubtaskStatus.COMPLETED,
+            progress=100,
+            completed_at=datetime.now(),
+            result={"value": partial_content or ""},
+        )
+        task_crd = Task.model_validate(task.json)
+        if task_crd.status:
+            completed_at = datetime.now()
+            task_crd.status.status = "COMPLETED"
+            task_crd.status.errorMessage = ""
+            task_crd.status.updatedAt = completed_at
+            task_crd.status.completedAt = completed_at
+            task_crd.status.result = {"value": partial_content or ""}
+        task_store.update_json(
+            db,
+            task=task,
+            payload=task_crd.model_dump(mode="json"),
+        )
+        db.commit()
+
+
+def _build_cancel_response_sync(
+    *,
+    task_id: int,
+    user_id: int,
+    response_id: str,
+    model_string: str,
+) -> ResponseObject:
+    """Serialize the post-cancellation state without leaking ORM objects."""
+    with _worker_session() as db:
+        try:
+            return _response_object_from_db(
+                db,
+                task_id=task_id,
+                user_id=user_id,
+                model_string=model_string,
+            )
+        except HTTPException:
+            return ResponseObject(
+                id=response_id,
+                created_at=int(datetime.now().timestamp()),
+                status="cancelled",
+                model="unknown",
+                output=[],
+            )
+
+
+def _prepare_delete_response_sync(
+    *,
+    task_id: int,
+    user_id: int,
+) -> _DeleteResponsePlan:
+    """Find the only stream that must be stopped before task deletion."""
+    with _worker_session() as db:
+        task = task_store.get_task_by_states(
+            db,
+            task_id=task_id,
+            states=[TaskResource.STATE_ACTIVE],
+            owner_user_id=user_id,
+        )
+        if task is None:
+            return _DeleteResponsePlan(running_subtask_id=None)
+        task_crd = Task.model_validate(task.json)
+        source_label = (
+            task_crd.metadata.labels.get("source") if task_crd.metadata.labels else None
+        )
+        if source_label != "chat_shell":
+            return _DeleteResponsePlan(running_subtask_id=None)
+        return _DeleteResponsePlan(
+            running_subtask_id=_running_response_subtask_id(
+                db,
+                task_id=task_id,
+                user_id=user_id,
+            ),
+        )
+
+
+def _delete_response_sync(
+    *,
+    task_id: int,
+    user_id: int,
+    response_id: str,
+) -> ResponseDeletedObject:
+    """Delete one response using a worker-owned database session."""
+    with _worker_session() as db:
+        try:
+            task_kinds_service.delete_task(
+                db,
+                task_id=task_id,
+                user_id=user_id,
+            )
+        except HTTPException as exc:
+            if exc.status_code == status.HTTP_404_NOT_FOUND:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail=f"Response '{response_id}' not found",
+                ) from exc
+            raise
+    return ResponseDeletedObject(id=response_id)
+
+
+async def _apply_cancel_response_plan(
+    *,
+    plan: _CancelResponsePlan,
+    session_manager: Any,
+    background_tasks: BackgroundTasks,
+    task_id: int,
+    user_id: int,
+) -> None:
+    if not plan.is_chat_shell:
+        if plan.call_executor_cancel:
+            background_tasks.add_task(
+                task_kinds_service._call_executor_cancel,
+                task_id,
+            )
+        return
+    if plan.running_subtask_id is None:
+        logger.info("[CANCEL] No running subtask found for task %s", task_id)
+        return
+
+    subtask_id = plan.running_subtask_id
+    logger.info("[CANCEL] Found running subtask: id=%s", subtask_id)
+    try:
+        recovery = await web_stream_worker_client.execute(
+            SUBTASK_RECOVERY_EXECUTE,
+            {
+                "subtask_id": subtask_id,
+                "offset": 0,
+                "include_blocks": False,
+                "include_context_metrics": False,
+            },
+        )
+    except StreamWorkerUnavailableError as error:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Streaming recovery worker is unavailable",
+        ) from error
+    except StreamWorkerExecutionError as error:
+        raise HTTPException(
+            status_code=error.status_code or status.HTTP_502_BAD_GATEWAY,
+            detail=str(error),
+        ) from error
+    partial_content = recovery.get("content")
+    if not isinstance(partial_content, str):
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="Streaming recovery worker returned an invalid snapshot",
+        )
+    logger.info(
+        "[CANCEL] Got partial content from Redis: length=%s",
+        len(partial_content) if partial_content else 0,
+    )
+    await session_manager.cancel_stream(subtask_id)
+    await _run_sync(
+        _complete_chat_cancel_sync,
+        task_id=task_id,
+        user_id=user_id,
+        subtask_id=subtask_id,
+        partial_content=partial_content,
+    )
+    logger.info(
+        "[CANCEL] Chat Shell task cancelled: task_id=%s, subtask_id=%s",
+        task_id,
+        subtask_id,
+    )
+
+
+async def _stop_delete_stream(
+    *,
+    session_manager: Any,
+    task_id: int,
+    subtask_id: Optional[int],
+) -> None:
+    if subtask_id is None:
+        return
+    logger.info(
+        "[DELETE] Stopping running stream before delete: task_id=%s, subtask_id=%s",
+        task_id,
+        subtask_id,
+    )
+    await session_manager.cancel_stream(subtask_id)
+    await session_manager.delete_streaming_content(subtask_id)
+    await session_manager.unregister_stream(subtask_id)
+    logger.info("[DELETE] Stream stopped for subtask %s", subtask_id)
 
 
 def _execution_model_type(execution_request: Any) -> str:
@@ -349,12 +1130,24 @@ async def _persist_terminal_failure(
     )
 
 
-@router.post("")
-@limiter.limit(settings.RATE_LIMIT_CREATE_RESPONSE)
+@router.post(
+    "",
+    openapi_extra={
+        "requestBody": {
+            "required": True,
+            "content": {
+                "application/json": {
+                    "schema": ResponseCreateInput.model_json_schema(by_alias=True)
+                }
+            },
+        }
+    },
+)
+@nonblocking_limit(limiter, settings.RATE_LIMIT_CREATE_RESPONSE)
 @trace_async(
     span_name="openapi.create_response",
     tracer_name="backend.openapi",
-    extract_attributes=lambda request, request_body, db, auth_context: {
+    extract_attributes=lambda request, request_body, auth_context: {
         "user.id": str(auth_context.user.id),
         "user.name": auth_context.user.user_name,
         "request.model": request_body.model,
@@ -364,9 +1157,8 @@ async def _persist_terminal_failure(
 )
 async def create_response(
     request: Request,
-    request_body: ResponseCreateInput,
-    db: Session = Depends(get_db),
-    auth_context: security.AuthContext = Depends(security.get_auth_context),
+    request_body: ResponseCreateInput = Depends(_decode_response_create_request),
+    auth_context: _OpenAPIAuthContext = Depends(_get_openapi_auth_context),
 ):
     """
     Create a new response (execute a task).
@@ -410,19 +1202,18 @@ async def create_response(
     # Extract user and api_key_name from auth context
     current_user = auth_context.user
     api_key_name = auth_context.api_key_name
+    del auth_context
     auto_delete_executor = _normalize_auto_delete_executor_header(
         request.headers.get("auto_delete_executor")
         or request.headers.get("auto-delete-executor")
     )
 
-    # Parse model string
-    model_info = parse_model_string(request_body.model)
-
-    # Parse tools for settings
-    tool_settings = parse_wegent_tools(request_body.tools)
-
-    # Extract input text
-    input_text = extract_input_text(request_body.input)
+    model_info, tool_settings, input_text = await run_payload_codec(
+        _prepare_response_request_payload,
+        request_body,
+        payload_hint=request_body,
+        force_offload=True,
+    )
 
     # Determine task_id from previous_response_id if provided
     task_id = None
@@ -439,121 +1230,12 @@ async def create_response(
                     detail=f"Invalid previous_response_id format: '{request_body.previous_response_id}'",
                 )
 
-            # Verify previous task exists and belongs to the current user
-            existing_task = task_store.get_task_by_states(
-                db,
-                task_id=previous_task_id,
-                states=[TaskResource.STATE_ACTIVE],
-                owner_user_id=current_user.id,
-            )
-            if not existing_task:
-                raise HTTPException(
-                    status_code=status.HTTP_404_NOT_FOUND,
-                    detail=f"Previous response '{request_body.previous_response_id}' not found",
-                )
-
-    # Verify team exists and user has access
-    team = kindReader.get_by_name_and_namespace(
-        db,
-        current_user.id,
-        KindType.TEAM,
-        model_info["namespace"],
-        model_info["team_name"],
+    target = await _run_sync(
+        _validate_response_target_sync,
+        user_id=current_user.id,
+        model_info=model_info,
+        previous_task_id=previous_task_id,
     )
-    if not team:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Team '{model_info['namespace']}#{model_info['team_name']}' not found or not accessible",
-        )
-
-    # If model_id is provided, verify that the model exists
-    if model_info.get("model_id"):
-        model_name = model_info["model_id"]
-        model_namespace = model_info["namespace"]
-
-        model = kindReader.get_by_name_and_namespace(
-            db,
-            current_user.id,
-            KindType.MODEL,
-            model_namespace,
-            model_name,
-        )
-
-        # If not found and namespace is not default, try with default namespace
-        # This handles the case where user passes group#group_team#public_model_id
-        if not model and model_namespace != "default":
-            model = kindReader.get_by_name_and_namespace(
-                db,
-                current_user.id,
-                KindType.MODEL,
-                "default",
-                model_name,
-            )
-
-        if not model:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"Model '{model_namespace}/{model_name}' not found",
-            )
-        model_info["model_type"] = _model_category_from_kind(model)
-    else:
-        # If model_id is not provided, verify that all team's bots have valid modelRef
-        # Parse team JSON to Team CRD object
-        team_crd = Team.model_validate(team.json)
-
-        if not team_crd.spec.members:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"Team '{model_info['namespace']}#{model_info['team_name']}' has no members configured",
-            )
-
-        # Validate all members' bots have valid modelRef
-        for member_index, member in enumerate(team_crd.spec.members):
-            bot_ref = member.botRef
-            bot_name = bot_ref.name
-            bot_namespace = bot_ref.namespace
-
-            if not bot_name:
-                raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail=f"Team '{model_info['namespace']}#{model_info['team_name']}' has invalid bot reference",
-                )
-
-            # Query the bot using kindReader
-            bot_kind = kindReader.get_by_name_and_namespace(
-                db,
-                team.user_id,
-                KindType.BOT,
-                bot_namespace,
-                bot_name,
-            )
-
-            if not bot_kind:
-                raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail=f"Bot '{bot_namespace}/{bot_name}' not found",
-                )
-
-            # Parse bot JSON to Bot CRD object and check modelRef
-            bot_crd = Bot.model_validate(bot_kind.json)
-
-            # modelRef must exist and have non-empty name and namespace
-            model_ref = bot_crd.spec.modelRef
-            if not model_ref or not model_ref.name or not model_ref.namespace:
-                raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail=f"Bot '{bot_namespace}/{bot_name}' does not have a valid model configured. Please specify model_id in the request or configure modelRef for the bot.",
-                )
-            if member_index == 0:
-                default_model = kindReader.get_by_name_and_namespace(
-                    db,
-                    current_user.id,
-                    KindType.MODEL,
-                    model_ref.namespace,
-                    model_ref.name,
-                )
-                if default_model:
-                    model_info["model_type"] = _model_category_from_kind(default_model)
 
     # Use unified trigger architecture for all shell types
     # ExecutionRouter will automatically select communication mode based on shell_type
@@ -561,10 +1243,9 @@ async def create_response(
         # Streaming mode: use dispatch_sse_stream
         # Note: background=True takes precedence over stream=True
         return await _create_streaming_response_unified(
-            db=db,
             user=current_user,
-            team=team,
-            model_info=model_info,
+            team_id=target.team_id,
+            model_info=target.model_info,
             request_body=request_body,
             input_text=input_text,
             tool_settings=tool_settings,
@@ -575,10 +1256,9 @@ async def create_response(
     else:
         # Non-streaming mode: background or sync
         return await _create_non_streaming_response_unified(
-            db=db,
             user=current_user,
-            team=team,
-            model_info=model_info,
+            team_id=target.team_id,
+            model_info=target.model_info,
             request_body=request_body,
             input_text=input_text,
             tool_settings=tool_settings,
@@ -590,9 +1270,8 @@ async def create_response(
 
 
 async def _create_non_streaming_response_unified(
-    db: Session,
-    user: User,
-    team,
+    user: _OpenAPIUser,
+    team_id: int,
     model_info: Dict[str, Any],
     request_body: ResponseCreateInput,
     input_text: str,
@@ -610,85 +1289,59 @@ async def _create_non_streaming_response_unified(
 
     For non-SSE shell types, always returns queued response regardless of background flag.
     """
-    import asyncio
-
-    from app.db.session import SessionLocal
-    from app.services.chat.storage import session_manager
     from app.services.chat.trigger.unified import build_execution_request
-    from app.services.execution import execution_dispatcher
-    from app.services.execution.emitters import SSEResultEmitter
-    from app.services.openapi.chat_session import setup_chat_session
-    from shared.models import EventType
+    from app.services.openapi.chat_session import schedule_memory_save
+    from app.services.openapi.worker_client import openapi_worker_client
 
-    # Set up chat session (creates task and subtasks)
-    setup = setup_chat_session(
-        db,
-        user,
-        team,
-        model_info,
-        input_text,
-        tool_settings,
-        task_id,
-        api_key_name,
-        auto_delete_executor,
-        generation_params=_generation_options_dict(request_body),
+    preparation = await _run_sync(
+        _prepare_response_session_sync,
+        user_id=user.id,
+        team_id=team_id,
+        model_info=model_info,
+        request_body=request_body,
+        input_text=input_text,
+        tool_settings=tool_settings,
+        task_id=task_id,
+        api_key_name=api_key_name,
+        auto_delete_executor=auto_delete_executor,
     )
+    schedule_memory_save(preparation.memory_save_request)
 
-    response_id = f"resp_{setup.task_id}"
+    response_id = f"resp_{preparation.task_id}"
     created_at = int(datetime.now().timestamp())
-    assistant_subtask_id = setup.assistant_subtask.id
-    task_kind_id = setup.task_id
-    enable_chat_bot = tool_settings.get("enable_chat_bot", False)
-    preload_skills = tool_settings.get("preload_skills", [])
+    assistant_subtask_id = preparation.assistant_subtask_id
+    task_kind_id = preparation.task_id
     user_id = user.id
-
-    current_kb_refs = _get_current_knowledge_base_refs(tool_settings)
-    inherited_kb_refs = _get_inherited_knowledge_base_refs(
-        task=setup.task,
-        current_refs=current_kb_refs,
-    )
-
-    # Auto-enable tools when knowledge_base is specified
-    # This ensures KB tools and skill tools are actually added to the agent
-    enable_tools = enable_chat_bot or bool(current_kb_refs) or bool(inherited_kb_refs)
-
-    # Link attachments to user subtask if provided
-    linked_attachment_ids = None
-    if request_body.attachment_ids:
-        linked_attachment_ids = link_contexts_to_subtask(
-            db=db,
-            subtask_id=setup.user_subtask.id,
-            user_id=user.id,
-            attachment_ids=request_body.attachment_ids,
-            task=setup.task,
-        )
-        logger.info(
-            f"[OPENAPI] Linked {len(request_body.attachment_ids)} attachments "
-            f"to subtask {setup.user_subtask.id}"
-        )
 
     # Convert reasoning config from Pydantic model to dict
     reasoning_config = None
     if request_body.reasoning:
-        reasoning_config = request_body.reasoning.model_dump()
+        reasoning_config = await run_payload_codec(
+            _dump_model,
+            request_body.reasoning,
+            payload_hint=request_body.reasoning,
+            force_offload=True,
+        )
 
     # Build execution request
     try:
         execution_request = await build_execution_request(
-            task=setup.task,
-            assistant_subtask=setup.assistant_subtask,
-            team=team,
-            user=user,
+            task=preparation.task_id,
+            assistant_subtask=preparation.assistant_subtask_id,
+            team=team_id,
+            user=user.id,
             message=input_text,
-            enable_tools=enable_tools,
-            user_subtask_id=setup.user_subtask.id,
-            enable_deep_thinking=enable_chat_bot,
-            enable_web_search=enable_chat_bot and settings.WEB_SEARCH_ENABLED,
-            preload_skills=preload_skills,
-            knowledge_base_refs=current_kb_refs,
+            enable_tools=preparation.enable_tools,
+            user_subtask_id=preparation.user_subtask_id,
+            enable_deep_thinking=preparation.enable_chat_bot,
+            enable_web_search=(
+                preparation.enable_chat_bot and settings.WEB_SEARCH_ENABLED
+            ),
+            preload_skills=preparation.preload_skills,
+            knowledge_base_refs=preparation.current_kb_refs,
             reasoning_config=reasoning_config,
             generation_params=_generation_options(request_body),
-            attachment_ids=linked_attachment_ids,
+            attachment_ids=preparation.linked_attachment_ids,
         )
         _validate_generation_options_model(request_body, execution_request)
     except ExternalRefValidationError as e:
@@ -704,10 +1357,16 @@ async def _create_non_streaming_response_unified(
         ) from e
     except HTTPException as e:
         logger.warning("Failed to build execution request: %s", e.detail)
+        error_message = await run_payload_codec(
+            _exception_message,
+            e,
+            payload_hint=e.detail,
+            force_offload=True,
+        )
         await _persist_terminal_failure(
             subtask_id=assistant_subtask_id,
             task_id=task_kind_id,
-            error_message=_exception_message(e),
+            error_message=error_message,
         )
         raise
     except ValueError as e:
@@ -733,190 +1392,56 @@ async def _create_non_streaming_response_unified(
             detail=f"Failed to build execution request: {str(e)}",
         )
 
-    # Helper: close db session
-    def _close_db():
-        try:
-            db.rollback()
-        except Exception:
-            pass
-        db.close()
+    await _reject_video_streaming(
+        request_body=request_body,
+        execution_request=execution_request,
+        subtask_id=assistant_subtask_id,
+        task_id=task_kind_id,
+    )
 
-    try:
-        await _reject_video_streaming(
-            request_body=request_body,
-            execution_request=execution_request,
-            subtask_id=assistant_subtask_id,
+    async def _query_subtasks() -> list[_SubtaskView]:
+        return await _run_sync(
+            _query_subtask_views_sync,
             task_id=task_kind_id,
+            user_id=user_id,
         )
-    except HTTPException:
-        _close_db()
-        raise
 
-    # Helper: execute and collect content using SSEResultEmitter
-    async def _execute_and_collect() -> tuple[str, Optional[Any]]:
-        emitter = SSEResultEmitter(
-            task_id=execution_request.task_id,
-            subtask_id=execution_request.subtask_id,
-        )
-        dispatch_task = asyncio.create_task(
-            execution_dispatcher.dispatch(execution_request, emitter=emitter)
-        )
-        accumulated_content, final_event = await emitter.collect()
-        dispatch_error = None
-        try:
-            await dispatch_task
-        except Exception as exc:
-            dispatch_error = exc
-
-        if final_event and final_event.type == EventType.ERROR.value:
-            raise RuntimeError(final_event.error or "Unknown error")
-        if dispatch_error is not None and final_event is None:
-            raise _DispatchWithoutTerminalError(str(dispatch_error)) from dispatch_error
-
-        return accumulated_content, final_event
-
-    # Helper: query subtasks
-    def _query_subtasks():
-        query_db = SessionLocal()
-        try:
-            return subtask_store.list_by_task_for_user_ordered(
-                query_db,
-                task_id=task_kind_id,
-                user_id=user_id,
-            )
-        finally:
-            query_db.close()
-
-    # Check if SSE mode is supported
-    supports_sse = execution_dispatcher.supports_streaming(execution_request)
     background = _should_run_in_background(
         requested_background=background,
         execution_request=execution_request,
     )
-
-    # Non-SSE mode: dispatch and return queued response
-    if not supports_sse:
-        _close_db()
-        asyncio.create_task(
-            execution_dispatcher.dispatch(execution_request, emitter=None)
-        )
-        logger.info(
-            f"[OPENAPI] Dispatched non-SSE task: task_id={task_kind_id}, "
-            f"subtask_id={assistant_subtask_id}"
-        )
-        subtasks = _filter_current_assistant_turn(
-            _query_subtasks(),
-            assistant_subtask_id,
-        )
-        pending_user_input, pending_user_input_payload = (
-            extract_pending_user_input_state(subtasks)
-        )
-        return ResponseObject(
-            id=response_id,
-            created_at=created_at,
-            status="queued",
-            model=request_body.model,
-            output=build_response_output(
-                subtasks,
-                active_assistant_subtask_id=assistant_subtask_id,
-                active_assistant_status="in_progress",
-            ),
-            pending_user_input=pending_user_input or None,
-            pending_user_input_payload=pending_user_input_payload,
-            previous_response_id=request_body.previous_response_id,
-        )
-
-    # SSE mode with background=True: fire-and-forget
-    if background:
-        _close_db()
-
-        async def _run_background_task():
-            try:
-                accumulated_content, _ = await _execute_and_collect()
-                logger.info(
-                    f"[BACKGROUND] Task completed: task_id={task_kind_id}, "
-                    f"subtask_id={assistant_subtask_id}, content_len={len(accumulated_content)}"
-                )
-            except _DispatchWithoutTerminalError as e:
-                await _persist_terminal_failure(
-                    subtask_id=assistant_subtask_id,
-                    task_id=task_kind_id,
-                    error_message=str(e),
-                )
-                logger.exception(f"[BACKGROUND] Error in background task: {e}")
-            except Exception as e:
-                logger.exception(f"[BACKGROUND] Error in background task: {e}")
-
-        asyncio.create_task(_run_background_task())
-        logger.info(
-            f"[BACKGROUND] Task started: task_id={task_kind_id}, "
-            f"subtask_id={assistant_subtask_id}"
-        )
-        subtasks = _filter_current_assistant_turn(
-            _query_subtasks(),
-            assistant_subtask_id,
-        )
-        pending_user_input, pending_user_input_payload = (
-            extract_pending_user_input_state(subtasks)
-        )
-        return ResponseObject(
-            id=response_id,
-            created_at=created_at,
-            status="in_progress",
-            model=request_body.model,
-            output=build_response_output(
-                subtasks,
-                active_assistant_subtask_id=assistant_subtask_id,
-                active_assistant_status="in_progress",
-            ),
-            pending_user_input=pending_user_input or None,
-            pending_user_input_payload=pending_user_input_payload,
-            previous_response_id=request_body.previous_response_id,
-        )
-
-    # SSE mode with background=False: sync wait for completion
-    _close_db()
     try:
-        accumulated_content, _ = await _execute_and_collect()
-        logger.info(f"[OPENAPI] Sync completed for subtask {assistant_subtask_id}")
-    except _DispatchWithoutTerminalError as e:
+        outcome = await openapi_worker_client.execute(
+            execution_request,
+            background=background,
+        )
+    except Exception as e:
         await _persist_terminal_failure(
             subtask_id=assistant_subtask_id,
             task_id=task_kind_id,
             error_message=str(e),
         )
-        logger.exception(f"Error in sync chat response: {e}")
+        logger.exception("Worker-owned OpenAPI execution failed")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"LLM request failed: {str(e)}",
-        )
-    except Exception as e:
-        logger.exception(f"Error in sync chat response: {e}")
+        ) from e
+    if outcome.status == "failed":
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"LLM request failed: {str(e)}",
+            detail=f"LLM request failed: {outcome.error or 'Unknown error'}",
         )
 
-    subtasks = _filter_current_assistant_turn(
-        _query_subtasks(),
-        assistant_subtask_id,
-    )
-    pending_user_input, pending_user_input_payload = extract_pending_user_input_state(
-        subtasks
-    )
-    return ResponseObject(
-        id=response_id,
+    response_status = outcome.status
+    assistant_status = "completed" if response_status == "completed" else "in_progress"
+    return await _project_current_response_nonblocking(
+        response_id=response_id,
         created_at=created_at,
-        status="completed",
+        response_status=response_status,
         model=request_body.model,
-        output=build_response_output(
-            subtasks,
-            active_assistant_subtask_id=assistant_subtask_id,
-            active_assistant_status="completed",
-            active_assistant_content=accumulated_content,
-        ),
-        pending_user_input=pending_user_input or None,
-        pending_user_input_payload=pending_user_input_payload,
+        subtasks=await _query_subtasks(),
+        assistant_subtask_id=assistant_subtask_id,
+        assistant_status=assistant_status,
         previous_response_id=request_body.previous_response_id,
     )
 
@@ -924,7 +1449,7 @@ async def _create_non_streaming_response_unified(
 @trace_async(
     span_name="openapi.streaming_response",
     tracer_name="backend.openapi",
-    extract_attributes=lambda db, user, team, model_info, request_body, input_text, tool_settings, task_id, api_key_name, auto_delete_executor=None: {
+    extract_attributes=lambda user, team_id, model_info, request_body, input_text, tool_settings, task_id, api_key_name, auto_delete_executor=None: {
         "task.id": str(task_id) if task_id else "new",
         "user.id": str(user.id),
         "team.name": model_info.get("team_name"),
@@ -935,9 +1460,8 @@ async def _create_non_streaming_response_unified(
     },
 )
 async def _create_streaming_response_unified(
-    db: Session,
-    user: User,
-    team,
+    user: _OpenAPIUser,
+    team_id: int,
     model_info: Dict[str, Any],
     request_body: ResponseCreateInput,
     input_text: str,
@@ -950,98 +1474,72 @@ async def _create_streaming_response_unified(
 
     Uses direct SSE for Chat shells and callback streaming for executor shells.
     """
-    from app.services.chat.storage import session_manager
     from app.services.chat.trigger.unified import build_execution_request
-    from app.services.execution import execution_dispatcher
-    from app.services.openapi.chat_session import setup_chat_session
-    from app.services.openapi.streaming import streaming_service
-    from shared.models import EventType
+    from app.services.openapi.chat_session import schedule_memory_save
+    from app.services.openapi.worker_client import openapi_worker_client
+    from app.services.openapi.worker_protocol import OpenAPIStreamSpec
 
-    # Set up chat session (creates task and subtasks)
-    setup = setup_chat_session(
-        db,
-        user,
-        team,
-        model_info,
-        input_text,
-        tool_settings,
-        task_id,
-        api_key_name,
-        auto_delete_executor,
-        generation_params=_generation_options_dict(request_body),
+    preparation = await _run_sync(
+        _prepare_response_session_sync,
+        user_id=user.id,
+        team_id=team_id,
+        model_info=model_info,
+        request_body=request_body,
+        input_text=input_text,
+        tool_settings=tool_settings,
+        task_id=task_id,
+        api_key_name=api_key_name,
+        auto_delete_executor=auto_delete_executor,
     )
+    schedule_memory_save(preparation.memory_save_request)
 
     # Add trace events for session setup
     add_span_event(
         "streaming.session_setup",
         {
-            "task_id": str(setup.task_id),
-            "assistant_subtask_id": str(setup.assistant_subtask.id),
-            "user_subtask_id": str(setup.user_subtask.id),
+            "task_id": str(preparation.task_id),
+            "assistant_subtask_id": str(preparation.assistant_subtask_id),
+            "user_subtask_id": str(preparation.user_subtask_id),
         },
     )
-    set_span_attribute("task.id", setup.task_id)
-    set_span_attribute("subtask.id", setup.assistant_subtask.id)
+    set_span_attribute("task.id", preparation.task_id)
+    set_span_attribute("subtask.id", preparation.assistant_subtask_id)
     set_span_attribute("user.id", str(user.id))
 
-    response_id = f"resp_{setup.task_id}"
+    response_id = f"resp_{preparation.task_id}"
     created_at = int(datetime.now().timestamp())
-    assistant_subtask_id = setup.assistant_subtask.id
-    task_kind_id = setup.task_id
-    enable_chat_bot = tool_settings.get("enable_chat_bot", False)
-    preload_skills = tool_settings.get("preload_skills", [])
-
-    # Extract data needed for streaming before closing db
-    user_id = user.id
-    user_name = user.user_name
-
-    current_kb_refs = _get_current_knowledge_base_refs(tool_settings)
-    inherited_kb_refs = _get_inherited_knowledge_base_refs(
-        task=setup.task,
-        current_refs=current_kb_refs,
-    )
-
-    # Auto-enable tools when knowledge_base is specified
-    # This ensures KB tools and skill tools are actually added to the agent
-    enable_tools = enable_chat_bot or bool(current_kb_refs) or bool(inherited_kb_refs)
-
-    # Link attachments to user subtask if provided
-    linked_attachment_ids = None
-    if request_body.attachment_ids:
-        linked_attachment_ids = link_contexts_to_subtask(
-            db=db,
-            subtask_id=setup.user_subtask.id,
-            user_id=user.id,
-            attachment_ids=request_body.attachment_ids,
-            task=setup.task,
-        )
-        logger.info(
-            f"[OPENAPI] Linked {len(request_body.attachment_ids)} attachments "
-            f"to subtask {setup.user_subtask.id}"
-        )
+    assistant_subtask_id = preparation.assistant_subtask_id
+    task_kind_id = preparation.task_id
 
     # Convert reasoning config from Pydantic model to dict
     reasoning_config = None
     if request_body.reasoning:
-        reasoning_config = request_body.reasoning.model_dump()
+        reasoning_config = await run_payload_codec(
+            _dump_model,
+            request_body.reasoning,
+            payload_hint=request_body.reasoning,
+            force_offload=True,
+        )
 
     # Build execution request using unified builder
     try:
         execution_request = await build_execution_request(
-            task=setup.task,
-            assistant_subtask=setup.assistant_subtask,
-            team=team,
-            user=user,
+            task=preparation.task_id,
+            assistant_subtask=preparation.assistant_subtask_id,
+            team=team_id,
+            user=user.id,
             message=input_text,
-            enable_tools=enable_tools,
-            user_subtask_id=setup.user_subtask.id,
-            enable_deep_thinking=enable_chat_bot,
-            enable_web_search=enable_chat_bot and settings.WEB_SEARCH_ENABLED,
-            preload_skills=preload_skills,
-            knowledge_base_refs=current_kb_refs,
+            enable_tools=preparation.enable_tools,
+            user_subtask_id=preparation.user_subtask_id,
+            enable_deep_thinking=preparation.enable_chat_bot,
+            enable_web_search=(
+                preparation.enable_chat_bot and settings.WEB_SEARCH_ENABLED
+            ),
+            preload_skills=preparation.preload_skills,
+            knowledge_base_refs=preparation.current_kb_refs,
             reasoning_config=reasoning_config,
             generation_params=_generation_options(request_body),
-            attachment_ids=linked_attachment_ids,
+            attachment_ids=preparation.linked_attachment_ids,
         )
         _validate_generation_options_model(request_body, execution_request)
     except ExternalRefValidationError as e:
@@ -1057,10 +1555,16 @@ async def _create_streaming_response_unified(
         ) from e
     except HTTPException as e:
         logger.warning("Failed to build execution request: %s", e.detail)
+        error_message = await run_payload_codec(
+            _exception_message,
+            e,
+            payload_hint=e.detail,
+            force_offload=True,
+        )
         await _persist_terminal_failure(
             subtask_id=assistant_subtask_id,
             task_id=task_kind_id,
-            error_message=_exception_message(e),
+            error_message=error_message,
         )
         raise
     except ValueError as e:
@@ -1085,14 +1589,6 @@ async def _create_streaming_response_unified(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to build execution request: {str(e)}",
         )
-    finally:
-        # Close the database session before streaming starts
-        try:
-            db.rollback()
-        except Exception:
-            pass
-        db.close()
-
     await _reject_video_streaming(
         request_body=request_body,
         execution_request=execution_request,
@@ -1100,466 +1596,28 @@ async def _create_streaming_response_unified(
         task_id=task_kind_id,
     )
 
-    @trace_async_generator(
-        span_name="openapi.raw_chat_stream",
-        tracer_name="backend.openapi",
-        extract_attributes=lambda: {
-            "task.id": str(task_kind_id),
-            "subtask.id": str(assistant_subtask_id),
-        },
+    stream_spec = OpenAPIStreamSpec(
+        response_id=response_id,
+        model_string=request_body.model,
+        created_at=created_at,
+        previous_response_id=request_body.previous_response_id,
+        task_context=(
+            {
+                "task_id": task_kind_id,
+                "task_path": f"/chat?task_id={task_kind_id}",
+            }
+            if request_body.wegent_options
+            and request_body.wegent_options.include_task_context
+            else None
+        ),
     )
-    async def raw_chat_stream():
-        """Generate raw text and reasoning chunks from ExecutionDispatcher."""
-        import asyncio
-
-        from app.services.execution.emitters import SSEResultEmitter
-        from app.services.openapi.streaming import StreamingChunk
-        from shared.models import ExecutionEvent
-
-        accumulated_content = ""
-        accumulated_reasoning = ""
-        tool_states: Dict[str, Dict[str, Any]] = {}
-        response_blocks: Dict[str, Dict[str, Any]] = {}
-        next_output_index = 0
-        reasoning_output_started = False
-        message_output_started = False
-
-        def allocate_output_index() -> int:
-            nonlocal next_output_index
-            assigned = next_output_index
-            next_output_index += 1
-            return assigned
-
-        def _normalize_protocol_type(
-            value: str | None, tool_name: str | None = None
-        ) -> str:
-            if value in {"mcp", "mcp_call"}:
-                return "mcp_call"
-            if value == "shell_call":
-                return "shell_call"
-            if tool_name == "exec":
-                return "shell_call"
-            return "function_call"
-
-        emitter = None
-        dispatch_task = None
-        pubsub_redis_client = None
-        pubsub_obj = None
-
-        try:
-            cancel_event = await session_manager.register_stream(assistant_subtask_id)
-            add_span_event(
-                "sse.stream_registered",
-                {
-                    "subtask_id": str(assistant_subtask_id),
-                    "task_id": str(execution_request.task_id),
-                },
-            )
-
-            is_sse = execution_dispatcher.supports_streaming(execution_request)
-            add_span_event(
-                "sse.mode_determined",
-                {
-                    "is_sse_mode": is_sse,
-                    "shell_type": (
-                        execution_request.bot[0].get("shell_type", "Chat")
-                        if execution_request.bot
-                        else "Chat"
-                    ),
-                },
-            )
-
-            if is_sse:
-                # SSE mode (Chat shell): stream directly via OpenAI client
-                emitter = SSEResultEmitter(
-                    task_id=execution_request.task_id,
-                    subtask_id=execution_request.subtask_id,
-                )
-                dispatch_task = asyncio.create_task(
-                    execution_dispatcher.dispatch(execution_request, emitter=emitter)
-                )
-            else:
-                # HTTP+Callback mode (ClaudeCode/Agno/Dify): subscribe to Redis
-                # pub/sub channel; the /internal/callback handler publishes events
-                pubsub_redis_client, pubsub_obj = (
-                    await session_manager.subscribe_callback_channel(
-                        assistant_subtask_id
-                    )
-                )
-                if pubsub_redis_client is None:
-                    raise RuntimeError("Failed to subscribe to callback stream channel")
-                # Fire-and-forget; executor sends events back via /internal/callback
-                asyncio.create_task(
-                    execution_dispatcher.dispatch(execution_request, emitter=None)
-                )
-
-            async def _iter_events():
-                """Yield ExecutionEvents from either SSE emitter or callback pub/sub."""
-                if is_sse:
-                    async for ev in emitter.stream():
-                        yield ev
-                else:
-                    async for ev in _iter_callback_events(pubsub_obj, cancel_event):
-                        yield ev
-
-            # Stream events from the unified source
-            event_count = 0
-            try:
-                add_span_event(
-                    "sse.event_iteration_start",
-                    {
-                        "subtask_id": str(assistant_subtask_id),
-                        "is_sse_mode": is_sse,
-                    },
-                )
-                async for event in _iter_events():
-                    event_count += 1
-                    if cancel_event.is_set() or await session_manager.is_cancelled(
-                        assistant_subtask_id
-                    ):
-                        logger.info(
-                            f"Stream cancelled for subtask {assistant_subtask_id}"
-                        )
-                        add_span_event(
-                            "sse.stream_cancelled",
-                            {
-                                "subtask_id": str(assistant_subtask_id),
-                                "events_processed": event_count,
-                            },
-                        )
-                        break
-
-                    if event.type == EventType.CHUNK.value:
-                        for block_chunk in _build_result_block_streaming_chunks(
-                            event.result,
-                            response_blocks,
-                        ):
-                            yield block_chunk
-                        content = event.content or ""
-                        if content:
-                            if not message_output_started:
-                                message_output_started = True
-                                allocate_output_index()
-                            accumulated_content += content
-                            yield StreamingChunk(type="text", content=content)
-                    elif event.type == EventType.THINKING.value:
-                        # Handle reasoning/thinking content
-                        reasoning = event.content or ""
-                        if reasoning:
-                            if not reasoning_output_started:
-                                reasoning_output_started = True
-                                allocate_output_index()
-                            accumulated_reasoning += reasoning
-                            yield StreamingChunk(type="reasoning", content=reasoning)
-                    elif event.type == EventType.BLOCK_CREATED.value:
-                        block = event.data.get("block") if event.data else None
-                        if isinstance(block, dict):
-                            block_id = str(block.get("id") or "")
-                            if block_id:
-                                response_blocks[block_id] = dict(block)
-                            yield StreamingChunk(
-                                type="block_created",
-                                data={"block": block},
-                            )
-                    elif event.type == EventType.BLOCK_UPDATED.value:
-                        block_id = event.data.get("block_id") if event.data else None
-                        updates = event.data.get("updates") if event.data else None
-                        if block_id and isinstance(updates, dict):
-                            block_id = str(block_id)
-                            if block_id in response_blocks:
-                                response_blocks[block_id].update(updates)
-                            yield StreamingChunk(
-                                type="block_updated",
-                                data={
-                                    "block_id": block_id,
-                                    "updates": updates,
-                                },
-                            )
-                    elif event.type == EventType.TOOL_START.value:
-                        tool_use_id = event.tool_use_id or ""
-                        if not tool_use_id:
-                            continue
-
-                        tool_protocol = _normalize_protocol_type(
-                            event.data.get("tool_protocol") if event.data else None,
-                            event.tool_name,
-                        )
-                        tool_name = event.tool_name or ""
-                        tool_input = (
-                            event.tool_input if event.tool_input is not None else {}
-                        )
-                        tool_state = {
-                            "protocol": tool_protocol,
-                            "name": tool_name,
-                            "arguments": tool_input,
-                            "output_index": allocate_output_index(),
-                        }
-                        if event.data and event.data.get("server_label"):
-                            tool_state["server_label"] = event.data["server_label"]
-                        tool_states[tool_use_id] = tool_state
-
-                        if tool_protocol == "mcp_call":
-                            yield StreamingChunk(
-                                type="mcp_call_added",
-                                data={
-                                    "item_id": tool_use_id,
-                                    "name": tool_name,
-                                    "server_label": tool_state.get("server_label", ""),
-                                    "output_index": tool_state["output_index"],
-                                },
-                            )
-                        elif tool_protocol == "shell_call":
-                            yield StreamingChunk(
-                                type="shell_call_added",
-                                data={
-                                    "call_id": tool_use_id,
-                                    "name": tool_name,
-                                    "arguments": tool_input,
-                                    "output_index": tool_state["output_index"],
-                                },
-                            )
-                        else:
-                            yield StreamingChunk(
-                                type="function_call_added",
-                                data={
-                                    "call_id": tool_use_id,
-                                    "name": tool_name,
-                                    "arguments": (
-                                        json.dumps(tool_input, ensure_ascii=False)
-                                        if tool_input is not None
-                                        else ""
-                                    ),
-                                    "output_index": tool_state["output_index"],
-                                },
-                            )
-                    elif event.type == EventType.TOOL.value:
-                        tool_use_id = event.tool_use_id or ""
-                        if not tool_use_id:
-                            continue
-                        tool_state = tool_states.get(tool_use_id)
-                        if not tool_state:
-                            continue
-                        if tool_state.get("protocol") == "mcp_call":
-                            tool_state["arguments"] = (
-                                event.tool_input if event.tool_input is not None else {}
-                            )
-                    elif event.type == EventType.ERROR.value:
-                        error_msg = event.error or "Unknown error"
-                        logger.error(f"[OPENAPI] Error from execution: {error_msg}")
-                        raise Exception(error_msg)
-                    elif event.type == EventType.TOOL_RESULT.value:
-                        tool_use_id = event.tool_use_id or ""
-                        if not tool_use_id:
-                            continue
-                        tool_state = tool_states.pop(tool_use_id, None)
-                        if tool_state is None:
-                            tool_state = {
-                                "protocol": _normalize_protocol_type(
-                                    (
-                                        event.data.get("tool_protocol")
-                                        if event.data
-                                        else None
-                                    ),
-                                    event.tool_name,
-                                ),
-                                "name": event.tool_name or "",
-                                "arguments": (
-                                    event.tool_input
-                                    if event.tool_input is not None
-                                    else {}
-                                ),
-                                "output_index": allocate_output_index(),
-                            }
-                            if event.data and event.data.get("server_label"):
-                                tool_state["server_label"] = event.data["server_label"]
-                        tool_protocol = _normalize_protocol_type(
-                            tool_state.get("protocol")
-                            or (
-                                event.data.get("tool_protocol") if event.data else None
-                            ),
-                            tool_state.get("name") or event.tool_name,
-                        )
-                        tool_name = tool_state.get("name") or event.tool_name or ""
-                        arguments = (
-                            event.tool_input
-                            if event.tool_input is not None
-                            else tool_state.get("arguments") or {}
-                        )
-                        output_index = tool_state["output_index"]
-
-                        if tool_protocol == "mcp_call":
-                            yield StreamingChunk(
-                                type="mcp_call_done",
-                                data={
-                                    "item_id": tool_use_id,
-                                    "name": tool_name,
-                                    "server_label": tool_state.get("server_label", ""),
-                                    "arguments": (
-                                        json.dumps(arguments, ensure_ascii=False)
-                                        if arguments
-                                        else ""
-                                    ),
-                                    "output_index": output_index,
-                                    "output": event.tool_output,
-                                    "status": (
-                                        "failed"
-                                        if event.data
-                                        and event.data.get("status") == "failed"
-                                        else "completed"
-                                    ),
-                                    "error": event.error
-                                    or (
-                                        event.data.get("error") if event.data else None
-                                    ),
-                                },
-                            )
-                        elif tool_protocol == "shell_call":
-                            yield StreamingChunk(
-                                type="shell_call_done",
-                                data={
-                                    "call_id": tool_use_id,
-                                    "name": tool_name,
-                                    "arguments": arguments,
-                                    "output_index": output_index,
-                                    "status": (
-                                        "failed"
-                                        if event.data
-                                        and event.data.get("status") == "failed"
-                                        else "completed"
-                                    ),
-                                },
-                            )
-                        else:
-                            yield StreamingChunk(
-                                type="function_call_done",
-                                data={
-                                    "call_id": tool_use_id,
-                                    "name": tool_name,
-                                    "arguments": (
-                                        json.dumps(arguments, ensure_ascii=False)
-                                        if arguments
-                                        else ""
-                                    ),
-                                    "output_index": output_index,
-                                },
-                            )
-                    if event.type == EventType.DONE.value:
-                        for block_chunk in _build_result_block_streaming_chunks(
-                            event.result,
-                            response_blocks,
-                        ):
-                            yield block_chunk
-                        logger.info(
-                            f"[OPENAPI] Stream completed for subtask {assistant_subtask_id}"
-                        )
-                        add_span_event(
-                            "sse.terminal_event",
-                            {
-                                "event_type": "DONE",
-                                "total_events": event_count,
-                            },
-                        )
-                add_span_event(
-                    "sse.event_iteration_complete",
-                    {
-                        "subtask_id": str(assistant_subtask_id),
-                        "total_events": event_count,
-                    },
-                )
-            finally:
-                # Wait for SSE dispatch task to complete
-                if dispatch_task is not None:
-                    try:
-                        await dispatch_task
-                    except Exception:
-                        pass  # Error already handled via emitter
-
-        except NotImplementedError as e:
-            # Streaming not supported for this shell type
-            logger.error(f"[OPENAPI] Streaming not supported: {e}")
-            raise
-        except Exception as e:
-            logger.exception(f"Error in streaming: {e}")
-            raise
-        finally:
-            if pubsub_obj is not None:
-                try:
-                    await pubsub_obj.unsubscribe()
-                except Exception:
-                    pass
-            if pubsub_redis_client is not None:
-                try:
-                    await pubsub_redis_client.aclose()
-                except Exception:
-                    pass
-            await session_manager.unregister_stream(assistant_subtask_id)
-            await session_manager.delete_streaming_content(assistant_subtask_id)
 
     async def generate():
-        event_count = 0
-        add_span_event(
-            "sse.generate_start",
-            {
-                "response_id": response_id,
-                "task_id": str(task_kind_id),
-                "subtask_id": str(assistant_subtask_id),
-            },
-        )
-        try:
-            async for event in streaming_service.create_streaming_response(
-                response_id=response_id,
-                model_string=request_body.model,
-                chat_stream=raw_chat_stream(),
-                created_at=created_at,
-                previous_response_id=request_body.previous_response_id,
-                task_context=(
-                    {
-                        "task_id": task_kind_id,
-                        "task_path": f"/chat?task_id={task_kind_id}",
-                    }
-                    if request_body.wegent_options
-                    and request_body.wegent_options.include_task_context
-                    else None
-                ),
-            ):
-                event_count += 1
-                # Log every 100 events and first 5 events
-                if event_count <= 5 or event_count % 100 == 0:
-                    add_span_event(
-                        "sse.event_yielded",
-                        {
-                            "event_number": event_count,
-                            "response_id": response_id,
-                        },
-                    )
-                yield event
-            add_span_event(
-                "sse.generate_complete",
-                {
-                    "total_events_sent": event_count,
-                    "response_id": response_id,
-                },
-            )
-        except NotImplementedError as e:
-            add_span_event(
-                "sse.generate_not_implemented",
-                {
-                    "error": str(e),
-                },
-            )
-            # Return error in SSE format
-            import json
-
-            error_response = ResponseObject(
-                id=response_id,
-                created_at=created_at,
-                status="failed",
-                error=ResponseError(code="not_implemented", message=str(e)),
-                model=request_body.model,
-                output=[],
-                previous_response_id=request_body.previous_response_id,
-            )
-            yield f"data: {json.dumps({'response': error_response.model_dump(), 'type': 'response.failed'})}\n\n"
+        async for payload in openapi_worker_client.stream(
+            execution_request,
+            stream_spec,
+        ):
+            yield payload
 
     return StreamingResponse(
         generate(),
@@ -1573,12 +1631,11 @@ async def _create_streaming_response_unified(
 
 
 @router.get("/{response_id}", response_model=ResponseObject)
-@limiter.limit(settings.RATE_LIMIT_GET_RESPONSE)
+@nonblocking_limit(limiter, settings.RATE_LIMIT_GET_RESPONSE)
 async def get_response(
     request: Request,
     response_id: str,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(security.get_current_user_flexible),
+    current_user: _OpenAPIUser = Depends(_get_openapi_user),
 ):
     """
     Retrieve a response by ID.
@@ -1589,75 +1646,28 @@ async def get_response(
     Returns:
         ResponseObject with current status and output
     """
-    # Extract task_id from response_id
-    if not response_id.startswith("resp_"):
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Invalid response_id format: '{response_id}'. Expected format: 'resp_{{task_id}}'",
-        )
-
-    try:
-        task_id = int(response_id[5:])
-    except ValueError:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Invalid response_id format: '{response_id}'",
-        )
-
-    # Get task detail
-    try:
-        task_dict = task_kinds_service.get_task_by_id(
-            db, task_id=task_id, user_id=current_user.id
-        )
-    except HTTPException as e:
-        if e.status_code == 404:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail=f"Response '{response_id}' not found",
-            )
-        raise
-
-    # Get subtasks for output
-    subtasks = subtask_store.list_by_task_for_user_ordered(
-        db,
-        task_id=task_id,
-        user_id=current_user.id,
+    task_id = _parse_response_task_id(
+        response_id,
+        include_expected_format=True,
     )
 
-    # Reconstruct model string from task team reference
-    task_kind = task_store.get_task_by_states(
-        db,
+    user_id = int(current_user.id)
+    del current_user
+    return await _run_sync(
+        _get_response_sync,
         task_id=task_id,
-        states=[TaskResource.STATE_ACTIVE],
-        owner_user_id=current_user.id,
+        user_id=user_id,
+        response_id=response_id,
     )
-
-    model_string = "unknown"
-    if task_kind and task_kind.json:
-        task_crd = Task.model_validate(task_kind.json)
-        team_name = task_crd.spec.teamRef.name
-        team_namespace = task_crd.spec.teamRef.namespace
-        model_id = (
-            task_crd.metadata.labels.get("modelId")
-            if task_crd.metadata.labels
-            else None
-        )
-        if model_id:
-            model_string = f"{team_namespace}#{team_name}#{model_id}"
-        else:
-            model_string = f"{team_namespace}#{team_name}"
-
-    return _task_to_response_object(task_dict, model_string, subtasks=subtasks)
 
 
 @router.post("/{response_id}/cancel", response_model=ResponseObject)
-@limiter.limit(settings.RATE_LIMIT_CANCEL_RESPONSE)
+@nonblocking_limit(limiter, settings.RATE_LIMIT_CANCEL_RESPONSE)
 async def cancel_response(
     request: Request,
     response_id: str,
     background_tasks: BackgroundTasks,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(security.get_current_user_flexible),
+    current_user: _OpenAPIUser = Depends(_get_openapi_user),
 ):
     """
     Cancel a running response.
@@ -1673,185 +1683,48 @@ async def cancel_response(
     Returns:
         ResponseObject with status 'cancelled' or current status
     """
-    from app.services.chat.storage import db_handler, session_manager
+    from app.services.chat.storage import session_manager
 
-    # Extract task_id from response_id
-    if not response_id.startswith("resp_"):
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Invalid response_id format: '{response_id}'",
-        )
+    task_id = _parse_response_task_id(response_id)
 
-    try:
-        task_id = int(response_id[5:])
-    except ValueError:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Invalid response_id format: '{response_id}'",
-        )
-
-    # Get task to check if it's a Chat Shell type
-    task_kind = task_store.get_task_by_states(
-        db,
+    user_id = int(current_user.id)
+    del current_user
+    plan = await _run_sync(
+        _prepare_cancel_response_sync,
         task_id=task_id,
-        states=[TaskResource.STATE_ACTIVE],
-        owner_user_id=current_user.id,
+        user_id=user_id,
+        response_id=response_id,
     )
-    if not task_kind:
-        member_task = task_store.get_task_by_states(
-            db,
-            task_id=task_id,
-            states=[TaskResource.STATE_ACTIVE],
-        )
-        if member_task and task_access_store.is_member(
-            db,
-            task_id=task_id,
-            user_id=current_user.id,
-        ):
-            task_kind = member_task
-
-    if not task_kind:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Response '{response_id}' not found",
-        )
-
-    # Check if this is a Chat Shell task (source="chat_shell")
-    task_crd = Task.model_validate(task_kind.json)
-    source_label = (
-        task_crd.metadata.labels.get("source") if task_crd.metadata.labels else None
-    )
-    is_chat_shell = source_label == "chat_shell"
-
     logger.info(
-        f"[CANCEL] task_id={task_id}, source={source_label}, is_chat_shell={is_chat_shell}"
+        "[CANCEL] task_id=%s, source=%s, is_chat_shell=%s",
+        task_id,
+        plan.source_label,
+        plan.is_chat_shell,
     )
 
-    if is_chat_shell:
-        # For Chat Shell tasks, use session_manager to cancel the stream
-        # Find running assistant subtask
-        running_subtask = subtask_store.get_latest_assistant_for_user_by_statuses(
-            db,
-            task_id=task_id,
-            user_id=current_user.id,
-            statuses=[SubtaskStatus.PENDING, SubtaskStatus.RUNNING],
-        )
-
-        if running_subtask:
-            logger.info(
-                f"[CANCEL] Found running subtask: id={running_subtask.id}, status={running_subtask.status}"
-            )
-
-            # Get partial content from Redis before cancelling
-            partial_content = await session_manager.get_streaming_content(
-                running_subtask.id
-            )
-            logger.info(
-                f"[CANCEL] Got partial content from Redis: length={len(partial_content) if partial_content else 0}"
-            )
-
-            # Cancel the stream (this sets the cancel event)
-            await session_manager.cancel_stream(running_subtask.id)
-            logger.info(f"[CANCEL] Stream cancelled for subtask {running_subtask.id}")
-
-            # Update subtask status to COMPLETED with partial content
-            subtask_store.update_fields(
-                db,
-                subtask=running_subtask,
-                status=SubtaskStatus.COMPLETED,
-                progress=100,
-                completed_at=datetime.now(),
-                result={"value": partial_content or ""},
-            )
-
-            # Update task status to COMPLETED
-            if task_crd.status:
-                task_crd.status.status = "COMPLETED"
-                task_crd.status.errorMessage = ""
-                task_crd.status.updatedAt = datetime.now()
-                task_crd.status.completedAt = datetime.now()
-                task_crd.status.result = {"value": partial_content or ""}
-
-            task_store.update_json(
-                db,
-                task=task_kind,
-                payload=task_crd.model_dump(mode="json"),
-            )
-
-            db.commit()
-            db.refresh(task_kind)
-            db.refresh(running_subtask)
-
-            logger.info(
-                f"[CANCEL] Chat Shell task cancelled: task_id={task_id}, subtask_id={running_subtask.id}"
-            )
-        else:
-            logger.info(f"[CANCEL] No running subtask found for task {task_id}")
-    else:
-        # For Executor-based tasks, use the existing cancel service
-        try:
-            await task_kinds_service.cancel_task(
-                db=db,
-                task_id=task_id,
-                user_id=current_user.id,
-                background_task_runner=background_tasks.add_task,
-            )
-        except HTTPException as e:
-            if e.status_code == 404:
-                raise HTTPException(
-                    status_code=status.HTTP_404_NOT_FOUND,
-                    detail=f"Response '{response_id}' not found",
-                )
-            raise
-
-    # Get updated task data for response
-    try:
-        task_dict = task_kinds_service.get_task_by_id(
-            db, task_id=task_id, user_id=current_user.id
-        )
-    except HTTPException:
-        # If task not found after cancel, return minimal response
-        return ResponseObject(
-            id=response_id,
-            created_at=int(datetime.now().timestamp()),
-            status="cancelled",
-            model="unknown",
-            output=[],
-        )
-
-    # Get subtasks for output (to include partial content)
-    subtasks = subtask_store.list_by_task_for_user_ordered(
-        db,
+    await _apply_cancel_response_plan(
+        plan=plan,
+        session_manager=session_manager,
+        background_tasks=background_tasks,
         task_id=task_id,
-        user_id=current_user.id,
+        user_id=user_id,
     )
 
-    # Reconstruct model string
-    model_string = "unknown"
-    if task_kind and task_kind.json:
-        task_crd = Task.model_validate(task_kind.json)
-        team_name = task_crd.spec.teamRef.name
-        team_namespace = task_crd.spec.teamRef.namespace
-        model_id = (
-            task_crd.metadata.labels.get("modelId")
-            if task_crd.metadata.labels
-            else None
-        )
-        if model_id:
-            model_string = f"{team_namespace}#{team_name}#{model_id}"
-        else:
-            model_string = f"{team_namespace}#{team_name}"
-
-    return _task_to_response_object(task_dict, model_string, subtasks=subtasks)
+    return await _run_sync(
+        _build_cancel_response_sync,
+        task_id=task_id,
+        user_id=user_id,
+        response_id=response_id,
+        model_string=plan.model_string,
+    )
 
 
 @router.delete("/{response_id}", response_model=ResponseDeletedObject)
-@limiter.limit(settings.RATE_LIMIT_DELETE_RESPONSE)
+@nonblocking_limit(limiter, settings.RATE_LIMIT_DELETE_RESPONSE)
 async def delete_response(
     request: Request,
     response_id: str,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(security.get_current_user_flexible),
+    current_user: _OpenAPIUser = Depends(_get_openapi_user),
 ):
     """
     Delete a response.
@@ -1867,69 +1740,24 @@ async def delete_response(
     """
     from app.services.chat.storage import session_manager
 
-    # Extract task_id from response_id
-    if not response_id.startswith("resp_"):
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Invalid response_id format: '{response_id}'",
-        )
+    task_id = _parse_response_task_id(response_id)
 
-    try:
-        task_id = int(response_id[5:])
-    except ValueError:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Invalid response_id format: '{response_id}'",
-        )
-
-    # Get task to check if it's a Chat Shell type with running stream
-    task_kind = task_store.get_task_by_states(
-        db,
+    user_id = int(current_user.id)
+    del current_user
+    plan = await _run_sync(
+        _prepare_delete_response_sync,
         task_id=task_id,
-        states=[TaskResource.STATE_ACTIVE],
-        owner_user_id=current_user.id,
+        user_id=user_id,
+    )
+    await _stop_delete_stream(
+        session_manager=session_manager,
+        task_id=task_id,
+        subtask_id=plan.running_subtask_id,
     )
 
-    if task_kind:
-        # Check if this is a Chat Shell task (source="chat_shell")
-        task_crd = Task.model_validate(task_kind.json)
-        source_label = (
-            task_crd.metadata.labels.get("source") if task_crd.metadata.labels else None
-        )
-        is_chat_shell = source_label == "chat_shell"
-
-        if is_chat_shell:
-            # For Chat Shell tasks, stop any running stream before deleting
-            running_subtask = subtask_store.get_latest_assistant_for_user_by_statuses(
-                db,
-                task_id=task_id,
-                user_id=current_user.id,
-                statuses=[SubtaskStatus.PENDING, SubtaskStatus.RUNNING],
-            )
-
-            if running_subtask:
-                logger.info(
-                    f"[DELETE] Stopping running stream before delete: task_id={task_id}, subtask_id={running_subtask.id}"
-                )
-                # Cancel the stream (this sets the cancel event)
-                await session_manager.cancel_stream(running_subtask.id)
-                # Clean up streaming content from Redis
-                await session_manager.delete_streaming_content(running_subtask.id)
-                await session_manager.unregister_stream(running_subtask.id)
-                logger.info(f"[DELETE] Stream stopped for subtask {running_subtask.id}")
-
-    try:
-        task_kinds_service.delete_task(
-            db,
-            task_id=task_id,
-            user_id=current_user.id,
-        )
-    except HTTPException as e:
-        if e.status_code == 404:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail=f"Response '{response_id}' not found",
-            )
-        raise
-
-    return ResponseDeletedObject(id=response_id)
+    return await _run_sync(
+        _delete_response_sync,
+        task_id=task_id,
+        user_id=user_id,
+        response_id=response_id,
+    )

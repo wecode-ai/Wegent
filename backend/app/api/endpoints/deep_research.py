@@ -5,26 +5,31 @@
 """
 Deep Research API endpoints.
 
-Calls the Gemini Interaction API directly via GeminiInteractionClient
-for long-running research tasks.
+Delegates Gemini Interaction API lifecycles to the local Stream worker.
 """
 
-import json
 import logging
 from datetime import datetime
 from typing import Any, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import StreamingResponse
-from pydantic import BaseModel, Field
-from sqlalchemy.orm import Session
+from pydantic import BaseModel, Field, TypeAdapter
 
-from app.api.dependencies import get_db
 from app.core import security
-from app.core.rate_limit import get_limiter
-from shared.clients.gemini_interaction import (
-    GeminiInteractionClient,
-    GeminiInteractionError,
+from app.core.payload_codec import dump_model, run_payload_codec
+from app.core.rate_limit import get_limiter, nonblocking_limit
+from app.core.request_body_limit import DEEP_RESEARCH_BODY_MAX_BYTES
+from app.core.request_json import validate_json_request
+from app.services.execution.stream_client import (
+    StreamWorkerExecutionError,
+    StreamWorkerUnavailableError,
+)
+from app.services.execution.web_stream_client import web_stream_worker_client
+from app.services.execution.web_stream_protocol import (
+    DEEP_RESEARCH_CREATE_EXECUTE,
+    DEEP_RESEARCH_STATUS_EXECUTE,
+    DEEP_RESEARCH_STREAM,
 )
 
 logger = logging.getLogger(__name__)
@@ -115,28 +120,67 @@ class DeepResearchStreamRequest(BaseModel):
         populate_by_name = True
 
 
-# ============================================================
-# SSE Event Formatting
-# ============================================================
+_DEEP_RESEARCH_CREATE_VALIDATOR = TypeAdapter(DeepResearchCreateRequest)
+_DEEP_RESEARCH_STATUS_VALIDATOR = TypeAdapter(DeepResearchStatusRequest)
+_DEEP_RESEARCH_STREAM_VALIDATOR = TypeAdapter(DeepResearchStreamRequest)
 
 
-def _format_sse_event(event_type: str, data: dict[str, Any]) -> str:
-    """Format data as SSE event."""
-    return f"event: {event_type}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n"
+async def _decode_deep_research_create_request(
+    request: Request,
+) -> DeepResearchCreateRequest:
+    return await validate_json_request(
+        request,
+        _DEEP_RESEARCH_CREATE_VALIDATOR,
+        max_bytes=DEEP_RESEARCH_BODY_MAX_BYTES,
+    )
 
 
-def _map_gemini_event_type(gemini_event: str) -> str:
-    """Map Gemini event types to frontend-expected event types."""
-    mapping = {
-        "interaction.start": "response.start",
-        "interaction.status_update": "response.status_update",
-        "content.start": "content.start",
-        "content.delta": "content.delta",
-        "content.stop": "content.stop",
-        "interaction.complete": "response.done",
-        "done": "done",
+async def _decode_deep_research_status_request(
+    request: Request,
+) -> DeepResearchStatusRequest:
+    return await validate_json_request(
+        request,
+        _DEEP_RESEARCH_STATUS_VALIDATOR,
+        max_bytes=DEEP_RESEARCH_BODY_MAX_BYTES,
+    )
+
+
+async def _decode_deep_research_stream_request(
+    request: Request,
+) -> DeepResearchStreamRequest:
+    return await validate_json_request(
+        request,
+        _DEEP_RESEARCH_STREAM_VALIDATOR,
+        max_bytes=DEEP_RESEARCH_BODY_MAX_BYTES,
+    )
+
+
+def _deep_research_stream_payload(
+    interaction_id: str,
+    model_config: DeepResearchModelConfig,
+) -> dict[str, Any]:
+    return {
+        "interaction_id": interaction_id,
+        "model_config": model_config.model_dump(mode="json"),
     }
-    return mapping.get(gemini_event, gemini_event)
+
+
+async def _execute_deep_research(
+    operation: str,
+    payload: dict[str, Any],
+) -> dict[str, Any]:
+    try:
+        return await web_stream_worker_client.execute(operation, payload)
+    except StreamWorkerUnavailableError as error:
+        raise HTTPException(
+            status_code=503,
+            detail="Deep research worker is unavailable",
+        ) from error
+    except StreamWorkerExecutionError as error:
+        raise HTTPException(
+            status_code=error.status_code or 502,
+            detail=str(error),
+        ) from error
 
 
 # ============================================================
@@ -144,12 +188,26 @@ def _map_gemini_event_type(gemini_event: str) -> str:
 # ============================================================
 
 
-@router.post("", response_model=DeepResearchCreateResponse)
-@limiter.limit("10/minute")
+@router.post(
+    "",
+    response_model=DeepResearchCreateResponse,
+    openapi_extra={
+        "requestBody": {
+            "required": True,
+            "content": {
+                "application/json": {
+                    "schema": DeepResearchCreateRequest.model_json_schema(by_alias=True)
+                }
+            },
+        }
+    },
+)
+@nonblocking_limit(limiter, "10/minute")
 async def create_deep_research(
     request: Request,
-    request_body: DeepResearchCreateRequest,
-    db: Session = Depends(get_db),
+    request_body: DeepResearchCreateRequest = Depends(
+        _decode_deep_research_create_request
+    ),
     auth_context: security.AuthContext = Depends(security.get_auth_context),
 ):
     """Create a new deep research task.
@@ -158,47 +216,59 @@ async def create_deep_research(
     The task runs in the background and can be polled for status.
     """
     current_user = auth_context.user
+    user_id = current_user.id
 
     logger.info(
         "[DEEP_RESEARCH] Create request: user=%s, agent=%s, input_len=%d",
-        current_user.id,
+        user_id,
         request_body.agent,
         len(request_body.input),
     )
 
-    client = GeminiInteractionClient(
-        base_url=request_body.model_config_data.base_url,
-        api_key=request_body.model_config_data.api_key,
-        default_headers=request_body.model_config_data.default_headers,
+    del auth_context, current_user
+    model_config = await dump_model(request_body.model_config_data, mode="json")
+    result = await _execute_deep_research(
+        DEEP_RESEARCH_CREATE_EXECUTE,
+        {
+            "model_config": model_config,
+            "input": request_body.input,
+            "agent": request_body.agent,
+        },
+    )
+    interaction_id = result.get("id")
+    if not isinstance(interaction_id, str) or not interaction_id:
+        raise HTTPException(
+            status_code=502,
+            detail="Deep research worker returned an invalid create result",
+        )
+    return DeepResearchCreateResponse(
+        interaction_id=interaction_id,
+        status=result.get("status", "in_progress"),
+        created_at=datetime.utcnow(),
     )
 
-    try:
-        result = await client.create_interaction(
-            input_text=request_body.input,
-            agent=request_body.agent,
-        )
 
-        return DeepResearchCreateResponse(
-            interaction_id=result["id"],
-            status=result.get("status", "in_progress"),
-            created_at=datetime.utcnow(),
-        )
-
-    except GeminiInteractionError as e:
-        logger.error("[DEEP_RESEARCH] Create failed: %s", e)
-        raise HTTPException(
-            status_code=e.status_code or 500,
-            detail=str(e),
-        )
-
-
-@router.post("/{interaction_id}/status", response_model=DeepResearchStatusResponse)
-@limiter.limit("60/minute")
+@router.post(
+    "/{interaction_id}/status",
+    response_model=DeepResearchStatusResponse,
+    openapi_extra={
+        "requestBody": {
+            "required": True,
+            "content": {
+                "application/json": {
+                    "schema": DeepResearchStatusRequest.model_json_schema(by_alias=True)
+                }
+            },
+        }
+    },
+)
+@nonblocking_limit(limiter, "60/minute")
 async def get_deep_research_status(
     request: Request,
     interaction_id: str,
-    request_body: DeepResearchStatusRequest,
-    db: Session = Depends(get_db),
+    request_body: DeepResearchStatusRequest = Depends(
+        _decode_deep_research_status_request
+    ),
     auth_context: security.AuthContext = Depends(security.get_auth_context),
 ):
     """Get the status of a deep research task.
@@ -206,61 +276,75 @@ async def get_deep_research_status(
     Poll this endpoint to check if the task has completed.
     """
     current_user = auth_context.user
+    user_id = current_user.id
 
     logger.debug(
         "[DEEP_RESEARCH] Status request: user=%s, interaction_id=%s",
-        current_user.id,
+        user_id,
         interaction_id,
     )
 
-    client = GeminiInteractionClient(
-        base_url=request_body.model_config_data.base_url,
-        api_key=request_body.model_config_data.api_key,
-        default_headers=request_body.model_config_data.default_headers,
+    del auth_context, current_user
+    model_config = await dump_model(request_body.model_config_data, mode="json")
+    result = await _execute_deep_research(
+        DEEP_RESEARCH_STATUS_EXECUTE,
+        {
+            "interaction_id": interaction_id,
+            "model_config": model_config,
+        },
     )
 
-    try:
-        result = await client.get_interaction_status(interaction_id)
+    created_at = None
+    updated_at = None
+    if result.get("created"):
+        try:
+            created_at = datetime.fromisoformat(
+                result["created"].replace("Z", "+00:00")
+            )
+        except ValueError:
+            pass
+    if result.get("updated"):
+        try:
+            updated_at = datetime.fromisoformat(
+                result["updated"].replace("Z", "+00:00")
+            )
+        except ValueError:
+            pass
 
-        created_at = None
-        updated_at = None
-        if result.get("created"):
-            try:
-                created_at = datetime.fromisoformat(
-                    result["created"].replace("Z", "+00:00")
-                )
-            except ValueError:
-                pass
-        if result.get("updated"):
-            try:
-                updated_at = datetime.fromisoformat(
-                    result["updated"].replace("Z", "+00:00")
-                )
-            except ValueError:
-                pass
-
-        return DeepResearchStatusResponse(
-            interaction_id=result["id"],
-            status=result.get("status", "unknown"),
-            created_at=created_at,
-            updated_at=updated_at,
-        )
-
-    except GeminiInteractionError as e:
-        logger.error("[DEEP_RESEARCH] Get status failed: %s", e)
+    returned_id = result.get("id")
+    if not isinstance(returned_id, str) or not returned_id:
         raise HTTPException(
-            status_code=e.status_code or 500,
-            detail=str(e),
+            status_code=502,
+            detail="Deep research worker returned an invalid status result",
         )
+    return DeepResearchStatusResponse(
+        interaction_id=returned_id,
+        status=result.get("status", "unknown"),
+        created_at=created_at,
+        updated_at=updated_at,
+    )
 
 
-@router.post("/{interaction_id}/stream")
-@limiter.limit("10/minute")
+@router.post(
+    "/{interaction_id}/stream",
+    openapi_extra={
+        "requestBody": {
+            "required": True,
+            "content": {
+                "application/json": {
+                    "schema": DeepResearchStreamRequest.model_json_schema(by_alias=True)
+                }
+            },
+        }
+    },
+)
+@nonblocking_limit(limiter, "10/minute")
 async def stream_deep_research_result(
     request: Request,
     interaction_id: str,
-    request_body: DeepResearchStreamRequest,
-    db: Session = Depends(get_db),
+    request_body: DeepResearchStreamRequest = Depends(
+        _decode_deep_research_stream_request
+    ),
     auth_context: security.AuthContext = Depends(security.get_auth_context),
 ):
     """Stream the results of a completed deep research task.
@@ -276,49 +360,17 @@ async def stream_deep_research_result(
         interaction_id,
     )
 
-    client = GeminiInteractionClient(
-        base_url=request_body.model_config_data.base_url,
-        api_key=request_body.model_config_data.api_key,
-        default_headers=request_body.model_config_data.default_headers,
+    payload = await run_payload_codec(
+        _deep_research_stream_payload,
+        interaction_id,
+        request_body.model_config_data,
+        payload_hint=request_body,
+        force_offload=True,
     )
-
-    async def generate_sse():
-        """Generate SSE events from Gemini stream."""
-        try:
-            async for event_type, event_data in client.stream_interaction_result(
-                interaction_id
-            ):
-                mapped_type = _map_gemini_event_type(event_type)
-
-                try:
-                    data = json.loads(event_data)
-                    yield _format_sse_event(mapped_type, data)
-                except json.JSONDecodeError:
-                    yield _format_sse_event(mapped_type, {"raw": event_data})
-
-        except GeminiInteractionError as e:
-            logger.error("[DEEP_RESEARCH] Stream error: %s", e)
-            yield _format_sse_event(
-                "response.error",
-                {
-                    "code": "stream_error",
-                    "message": str(e),
-                    "status_code": e.status_code,
-                },
-            )
-
-        except Exception as e:
-            logger.exception("[DEEP_RESEARCH] Unexpected stream error: %s", e)
-            yield _format_sse_event(
-                "response.error",
-                {
-                    "code": "internal_error",
-                    "message": str(e),
-                },
-            )
+    del auth_context, current_user
 
     return StreamingResponse(
-        generate_sse(),
+        web_stream_worker_client.stream(DEEP_RESEARCH_STREAM, payload),
         media_type="text/event-stream",
         headers={
             "Cache-Control": "no-cache",

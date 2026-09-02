@@ -7,11 +7,11 @@ Chat session setup for OpenAPI v1/responses endpoint.
 Contains ChatSessionSetup and related functions.
 """
 
-import logging
 from typing import Any, Dict, List, NamedTuple, Optional
 
 from sqlalchemy.orm import Session
 
+from app.core.web_background_tasks import web_background_task_manager
 from app.models.kind import Kind
 from app.models.subtask import Subtask
 from app.models.task import TaskResource
@@ -19,8 +19,6 @@ from app.models.user import User
 from app.schemas.kind import Task
 from app.services.chat.storage.task_manager import TaskCreationParams
 from app.services.chat.trigger.lifecycle import prepare_execution_session
-
-logger = logging.getLogger(__name__)
 
 
 class ChatSessionSetup(NamedTuple):
@@ -33,6 +31,24 @@ class ChatSessionSetup(NamedTuple):
     existing_subtasks: List[Subtask]
     bot_name: str  # First bot's name for MCP loading
     bot_namespace: str  # First bot's namespace for MCP loading
+    memory_save_request: Optional[Dict[str, Any]] = None
+
+
+def schedule_memory_save(memory_save_request: Optional[Dict[str, Any]]) -> None:
+    """Schedule a prepared long-term-memory write on the active event loop."""
+    if not memory_save_request:
+        return
+
+    from app.services.memory import get_memory_manager
+
+    memory_manager = get_memory_manager()
+    if not memory_manager.is_enabled:
+        return
+    subtask_id = memory_save_request.get("subtask_id", "unknown")
+    web_background_task_manager.submit_nowait(
+        lambda: memory_manager.save_user_message_async(**memory_save_request),
+        name=f"openapi-memory-save-{subtask_id}",
+    )
 
 
 def setup_chat_session(
@@ -46,6 +62,7 @@ def setup_chat_session(
     api_key_name: Optional[str] = None,
     auto_delete_executor: Optional[str] = None,
     generation_params: Optional[Dict[str, Any]] = None,
+    defer_memory_save: bool = False,
 ) -> ChatSessionSetup:
     """
     Set up chat session: build config, create task and subtasks.
@@ -99,15 +116,13 @@ def setup_chat_session(
     # Store user message in long-term memory (fire-and-forget)
     # Only store if enable_chat_bot=True (wegent_chat_bot tool is enabled)
     # This runs in background and doesn't block the main flow
+    memory_save_request = None
     enable_chat_bot = tool_settings.get("enable_chat_bot", False)
     if enable_chat_bot:
-        import asyncio
-
         from app.core.config import settings
-        from app.services.memory import build_context_messages, get_memory_manager
+        from app.services.memory import build_context_messages
 
-        memory_manager = get_memory_manager()
-        if memory_manager.is_enabled:
+        if settings.MEMORY_ENABLED:
             task_crd = Task.model_validate(session.task.json)
             workspace_id = (
                 f"{task_crd.spec.workspaceRef.namespace}/{task_crd.spec.workspaceRef.name}"
@@ -126,59 +141,21 @@ def setup_chat_session(
                 context_limit=settings.MEMORY_CONTEXT_MESSAGES,
             )
 
-            # Create task with proper exception handling
-            def _log_memory_task_exception(task_obj: asyncio.Task) -> None:
-                """Log exceptions from background memory storage task."""
-                try:
-                    exc = task_obj.exception()
-                    if exc is not None:
-                        logger.error(
-                            "[setup_chat_session] Memory storage task failed for user %d, task %d, subtask %d: %s",
-                            user.id,
-                            session.task_id,
-                            session.user_subtask.id,
-                            exc,
-                            exc_info=exc,
-                        )
-                except asyncio.CancelledError:
-                    logger.info(
-                        "[setup_chat_session] Memory storage task cancelled for user %d, task %d, subtask %d",
-                        user.id,
-                        session.task_id,
-                        session.user_subtask.id,
-                    )
-
-            # Use get_running_loop with proper error handling
-            try:
-                loop = asyncio.get_running_loop()
-                memory_save_task = loop.create_task(
-                    memory_manager.save_user_message_async(
-                        user_id=str(user.id),
-                        team_id=str(team.id),
-                        task_id=str(session.task_id),
-                        subtask_id=str(session.user_subtask.id),
-                        messages=context_messages,
-                        workspace_id=workspace_id,
-                        project_id=(
-                            str(session.task.project_id)
-                            if session.task.project_id
-                            else None
-                        ),
-                        is_group_chat=is_group_chat,
-                    )
-                )
-                memory_save_task.add_done_callback(_log_memory_task_exception)
-                logger.info(
-                    "[setup_chat_session] Started background task to store memory for user %d, task %d, subtask %d (enable_chat_bot=True)",
-                    user.id,
-                    session.task_id,
-                    session.user_subtask.id,
-                )
-            except RuntimeError:
-                # No event loop is running - this is unexpected in FastAPI context
-                logger.warning(
-                    "[setup_chat_session] Cannot create background task: no event loop running"
-                )
+            memory_save_request = {
+                "user_id": str(user.id),
+                "team_id": str(team.id),
+                "task_id": str(session.task_id),
+                "subtask_id": str(session.user_subtask.id),
+                "messages": context_messages,
+                "workspace_id": workspace_id,
+                "project_id": (
+                    str(session.task.project_id) if session.task.project_id else None
+                ),
+                "is_group_chat": is_group_chat,
+            }
+            if not defer_memory_save:
+                schedule_memory_save(memory_save_request)
+                memory_save_request = None
 
     return ChatSessionSetup(
         task=session.task,
@@ -188,4 +165,5 @@ def setup_chat_session(
         existing_subtasks=session.existing_subtasks,
         bot_name=session.bot_name,
         bot_namespace=session.bot_namespace,
+        memory_save_request=memory_save_request,
     )

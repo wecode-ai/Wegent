@@ -9,17 +9,6 @@
 
 set -e
 
-# Trap Ctrl+C and cleanup
-cleanup() {
-    echo ""
-    echo -e "${YELLOW}Shutting down server...${NC}"
-    # Kill all child processes
-    jobs -p | xargs -r kill 2>/dev/null || true
-    exit 0
-}
-
-trap cleanup SIGINT SIGTERM
-
 # Color output
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -428,7 +417,13 @@ echo -e "${YELLOW}Press Ctrl+C to stop the server${NC}"
 echo -e "${YELLOW}Server will wait for active streams to complete before shutdown (max 10 minutes)${NC}"
 echo ""
 
-# Start uvicorn with graceful shutdown timeout
-# --timeout-graceful-shutdown: Wait for active connections to complete (matches GRACEFUL_SHUTDOWN_TIMEOUT in config)
-# Default is 600 seconds (10 minutes) to allow long-running streaming requests to complete
-uvicorn app.main:app --reload --host "$HOST" --port "$PORT" --timeout-graceful-shutdown 600
+# Replace this shell with the local development reloader. It restarts the entire
+# app.runtime topology after Python changes and preserves dependency-aware drain.
+export HOST PORT
+export GRACEFUL_SHUTDOWN_TIMEOUT="${GRACEFUL_SHUTDOWN_TIMEOUT:-600}"
+BACKEND_PYTHON="$(pwd)/.venv/bin/python"
+if [ ! -x "$BACKEND_PYTHON" ]; then
+    echo -e "${RED}Error: Backend Python is not executable: $BACKEND_PYTHON${NC}"
+    exit 1
+fi
+exec "$BACKEND_PYTHON" -m app.dev_runtime

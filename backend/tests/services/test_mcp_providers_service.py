@@ -2,6 +2,8 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
+import threading
+
 import httpx
 import pytest
 
@@ -155,3 +157,83 @@ async def test_sync_servers_rejects_plaintext_token(monkeypatch, test_provider_c
     assert success is False
     assert error_details == "invalid_api_key_format"
     assert "invalid" in message.lower()
+
+
+@pytest.mark.anyio
+async def test_sync_servers_merges_install_state_off_event_loop(
+    monkeypatch, test_provider_config
+):
+    event_loop_thread = threading.get_ident()
+    server = service_module.MCPServer(
+        id="@test/server",
+        name="Test server",
+        description="Test",
+        type="streamable-http",
+        base_url="https://example.com/mcp",
+        is_active=True,
+        provider="Test",
+    )
+
+    async def mock_sync(key, token, user_name=None):
+        return [server], None
+
+    def merge_install_state(user_id, provider_key, servers):
+        assert threading.get_ident() != event_loop_thread
+        assert user_id == 42
+        assert provider_key == "test_provider"
+        return servers
+
+    monkeypatch.setattr(MCPProviderRegistry, "sync_servers", mock_sync)
+    monkeypatch.setattr(
+        MCPProviderService,
+        "_apply_install_state_for_user",
+        merge_install_state,
+    )
+    MCPProviderRegistry.register(test_provider_config)
+    preferences = UserPreferences(
+        mcp_provider_keys=MCPProviderKeys(test_provider=encrypt_sensitive_data("token"))
+    )
+
+    success, _message, servers, error_details = await MCPProviderService.sync_servers(
+        provider_key="test_provider",
+        preferences=preferences,
+        user_id=42,
+    )
+
+    assert success is True
+    assert servers == [server]
+    assert error_details is None
+
+
+@pytest.mark.anyio
+async def test_sync_servers_decrypts_token_off_event_loop(
+    monkeypatch, test_provider_config
+):
+    event_loop_thread = threading.get_ident()
+    decrypted_on: list[int] = []
+    decrypt = service_module.decrypt_mcp_provider_key
+
+    def tracked_decrypt(raw_value: str | None) -> str:
+        decrypted_on.append(threading.get_ident())
+        return decrypt(raw_value)
+
+    async def mock_sync(key, token, user_name=None):
+        assert token == "token"
+        return [], None
+
+    monkeypatch.setattr(service_module, "decrypt_mcp_provider_key", tracked_decrypt)
+    monkeypatch.setattr(MCPProviderRegistry, "sync_servers", mock_sync)
+    MCPProviderRegistry.register(test_provider_config)
+    preferences = UserPreferences(
+        mcp_provider_keys=MCPProviderKeys(test_provider=encrypt_sensitive_data("token"))
+    )
+
+    success, _message, _servers, error_details = await MCPProviderService.sync_servers(
+        provider_key="test_provider",
+        preferences=preferences,
+    )
+
+    assert success is True
+    assert error_details is None
+    assert decrypted_on
+    assert all(thread_id != event_loop_thread for thread_id in decrypted_on)

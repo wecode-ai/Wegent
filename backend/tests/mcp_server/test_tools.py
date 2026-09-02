@@ -182,7 +182,7 @@ class TestKnowledgeTool:
             task_id=1, subtask_id=2, user_id=3, user_name="alice"
         )
         mock_session = MagicMock()
-        user = SimpleNamespace(id=3)
+        user = SimpleNamespace(id=3, user_name="alice")
         response = SimpleNamespace(
             total=1,
             returned_count=1,
@@ -297,7 +297,7 @@ class TestKnowledgeTool:
             task_id=1, subtask_id=2, user_id=3, user_name="alice"
         )
         mock_session = MagicMock()
-        user = SimpleNamespace(id=3)
+        user = SimpleNamespace(id=3, user_name="alice")
 
         async def fake_retrieve(**kwargs):
             return {
@@ -317,7 +317,7 @@ class TestKnowledgeTool:
             ) as mock_resolve,
             patch.object(
                 module.knowledge_orchestrator,
-                "retrieve_knowledge",
+                "retrieve_knowledge_for_user",
                 side_effect=fake_retrieve,
             ) as mock_retrieve,
         ):

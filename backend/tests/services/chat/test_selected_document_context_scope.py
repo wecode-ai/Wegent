@@ -3,7 +3,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 from fastapi import HTTPException
@@ -133,8 +133,7 @@ def test_selected_document_context_requires_database_session():
         )
 
 
-@pytest.mark.asyncio
-async def test_selected_documents_augment_existing_kb_scopes_in_runtime_request():
+def test_selected_documents_augment_existing_kb_scopes_in_runtime_request():
     selected_context = SimpleNamespace(
         context_type="selected_documents",
         status="ready",
@@ -163,7 +162,7 @@ async def test_selected_documents_augment_existing_kb_scopes_in_runtime_request(
         ),
         patch(
             "app.services.chat.preprocessing.contexts._process_attachment_contexts_for_message",
-            new=AsyncMock(return_value="prompt"),
+            new=MagicMock(return_value="prompt"),
         ),
         patch(
             "app.services.chat.preprocessing.contexts._prepare_kb_tools_from_contexts",
@@ -174,7 +173,7 @@ async def test_selected_documents_augment_existing_kb_scopes_in_runtime_request(
             return_value=("prompt", "system", []),
         ),
     ):
-        result = await prepare_contexts_for_chat(
+        result = prepare_contexts_for_chat(
             db=MagicMock(),
             user_subtask_id=21,
             user_id=7,
@@ -195,8 +194,7 @@ async def test_selected_documents_augment_existing_kb_scopes_in_runtime_request(
     ]
 
 
-@pytest.mark.asyncio
-async def test_selected_documents_without_valid_scopes_raise_domain_error():
+def test_selected_documents_without_valid_scopes_raise_domain_error():
     selected_context = SimpleNamespace(
         context_type="selected_documents",
         status="ready",
@@ -211,7 +209,7 @@ async def test_selected_documents_without_valid_scopes_raise_domain_error():
         ),
         patch(
             "app.services.chat.preprocessing.contexts._process_attachment_contexts_for_message",
-            new=AsyncMock(return_value="prompt"),
+            new=MagicMock(return_value="prompt"),
         ),
         patch(
             "app.services.chat.preprocessing.contexts._prepare_kb_tools_from_contexts",
@@ -230,7 +228,7 @@ async def test_selected_documents_without_valid_scopes_raise_domain_error():
             match="no valid documents",
         ),
     ):
-        await prepare_contexts_for_chat(
+        prepare_contexts_for_chat(
             db=MagicMock(),
             user_subtask_id=21,
             user_id=7,

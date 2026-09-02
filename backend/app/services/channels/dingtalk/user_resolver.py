@@ -19,7 +19,7 @@ from sqlalchemy.orm import Session
 
 from app.core.security import get_password_hash
 from app.models.user import User
-from app.services.channels.dingtalk.user_mapping import get_user_mapper
+from app.services.channels.dingtalk.user_mapping import MappedUserInfo, get_user_mapper
 from app.services.k_batch import apply_default_resources_sync
 
 logger = logging.getLogger(__name__)
@@ -61,40 +61,58 @@ class DingTalkUserResolver:
         self.user_mapping_mode = user_mapping_mode or USER_MAPPING_MODE_STAFF_ID
         self.user_mapping_config = user_mapping_config or {}
 
-    async def resolve_user(
-        self,
+    @staticmethod
+    async def map_external_user(
+        *,
         sender_id: str,
-        sender_nick: Optional[str] = None,
-        sender_staff_id: Optional[str] = None,
+        sender_nick: Optional[str],
+        sender_staff_id: Optional[str],
+    ) -> Optional[MappedUserInfo]:
+        """Resolve external identity without touching a database session."""
+
+        if not sender_staff_id:
+            return None
+        mapper = get_user_mapper()
+        try:
+            mapped_info = await mapper.map_user(
+                staff_id=sender_staff_id,
+                sender_id=sender_id,
+                sender_nick=sender_nick,
+            )
+            if mapped_info:
+                logger.debug(
+                    "[DingTalkUserResolver] Mapper resolved: staff_id=%s -> user_name=%s",
+                    sender_staff_id,
+                    mapped_info.user_name,
+                )
+            return mapped_info
+        except Exception as e:
+            logger.warning(
+                "[DingTalkUserResolver] User mapper failed: staff_id=%s, error=%s",
+                sender_staff_id,
+                e,
+            )
+            return None
+
+    def resolve_user_from_mapping(
+        self,
+        *,
+        sender_id: str,
+        sender_staff_id: Optional[str],
+        mapped_info: Optional[MappedUserInfo],
+        check_selected_user: bool = True,
     ) -> Optional[User]:
-        """
-        Resolve a DingTalk user to a Wegent user.
+        """Apply one detached external mapping using this resolver's session."""
 
-        Resolution logic:
-        1. If mode is select_user, return the configured target user
-        2. If mode is email, try to match by email from user mapper
-        3. Try user mapper (for enterprise user directory integration)
-        4. Fall back to staff_id (employee ID) as username
-        5. Auto-create user if not found
-
-        Args:
-            sender_id: DingTalk user ID (userId)
-            sender_nick: User's nickname (optional)
-            sender_staff_id: Employee staff ID (optional)
-
-        Returns:
-            User object if found/created, None otherwise
-        """
-        # Step 0: Handle select_user mode - return configured target user
-        if self.user_mapping_mode == USER_MAPPING_MODE_SELECT_USER:
+        if (
+            check_selected_user
+            and self.user_mapping_mode == USER_MAPPING_MODE_SELECT_USER
+        ):
             target_user_id = self.user_mapping_config.get("target_user_id")
             if target_user_id:
                 user = (
                     self.db.query(User)
-                    .filter(
-                        User.id == target_user_id,
-                        User.is_active == True,
-                    )
+                    .filter(User.id == target_user_id, User.is_active == True)
                     .first()
                 )
                 if user:
@@ -104,44 +122,9 @@ class DingTalkUserResolver:
                         target_user_id,
                     )
                     return user
-                else:
-                    logger.warning(
-                        "[DingTalkUserResolver] select_user mode: target user not found, "
-                        "target_user_id=%d",
-                        target_user_id,
-                    )
-            else:
-                logger.warning(
-                    "[DingTalkUserResolver] select_user mode: no target_user_id configured"
-                )
-            # Fall through to default behavior if select_user fails
 
-        user_name: Optional[str] = None
-        email: Optional[str] = None
-
-        # Step 1: Try user mapper for enterprise user resolution
-        if sender_staff_id:
-            mapper = get_user_mapper()
-            try:
-                mapped_info = await mapper.map_user(
-                    staff_id=sender_staff_id,
-                    sender_id=sender_id,
-                    sender_nick=sender_nick,
-                )
-                if mapped_info:
-                    user_name = mapped_info.user_name
-                    email = mapped_info.email
-                    logger.debug(
-                        "[DingTalkUserResolver] Mapper resolved: staff_id=%s -> user_name=%s",
-                        sender_staff_id,
-                        user_name,
-                    )
-            except Exception as e:
-                logger.warning(
-                    "[DingTalkUserResolver] User mapper failed: staff_id=%s, error=%s",
-                    sender_staff_id,
-                    e,
-                )
+        user_name = mapped_info.user_name if mapped_info else None
+        email = mapped_info.email if mapped_info else None
 
         # Step 1.5: Handle email mode - try to find user by email
         if self.user_mapping_mode == USER_MAPPING_MODE_EMAIL and email:

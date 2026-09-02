@@ -2,6 +2,8 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
+import asyncio
+import threading
 import uuid
 from contextlib import contextmanager
 from unittest.mock import AsyncMock, patch
@@ -223,8 +225,8 @@ async def test_heartbeat_reconciliation_queries_only_unconfirmed_executions(
 
     with (
         patch("app.db.session.get_db_session", _test_session),
-        patch.object(
-            loop_item_execution_service,
+        patch(
+            "app.tasks.robot_queue_tasks.loop_item_execution_service."
             "active_for_device_reconciliation",
             return_value=[],
         ) as active_for_device,
@@ -244,3 +246,43 @@ async def test_heartbeat_reconciliation_queries_only_unconfirmed_executions(
         needs_confirmation_only=True,
     )
     get_sio.assert_not_called()
+
+
+async def test_reconciliation_storage_load_does_not_block_event_loop() -> None:
+    from app.tasks import robot_queue_tasks
+
+    load_started = threading.Event()
+    release_load = threading.Event()
+
+    def blocking_load(*args) -> list[tuple[int, str]]:
+        load_started.set()
+        release_load.wait(timeout=5)
+        return []
+
+    with patch.object(
+        robot_queue_tasks,
+        "_load_device_reconciliation_refs",
+        blocking_load,
+    ):
+        reconcile_task = asyncio.create_task(
+            robot_queue_tasks.reconcile_device_executions(
+                user_id=7,
+                device_id="cloud-device",
+            )
+        )
+        try:
+            for _ in range(200):
+                if load_started.is_set():
+                    break
+                await asyncio.sleep(0.005)
+            else:
+                raise AssertionError("reconciliation storage load did not start")
+
+            loop_progressed = asyncio.Event()
+            asyncio.get_running_loop().call_soon(loop_progressed.set)
+            await asyncio.wait_for(loop_progressed.wait(), timeout=0.1)
+            assert not reconcile_task.done()
+        finally:
+            release_load.set()
+
+        assert await reconcile_task == 0

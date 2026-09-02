@@ -10,6 +10,7 @@ import logging
 from typing import Any, Optional
 
 from app.core.cache import cache_manager
+from app.core.payload_codec import run_payload_codec
 from app.services.channels.weibo.sender import WeiboSender, generate_weibo_message_id
 from app.services.execution.emitters import ResultEmitter
 from shared.models import EventType, ExecutionEvent
@@ -18,6 +19,14 @@ logger = logging.getLogger(__name__)
 
 MAX_WEIBO_CHUNK_CHARS = 1800
 STREAM_COUNTER_TTL_SECONDS = 60 * 60
+
+
+def _join_text(left: str, right: str) -> str:
+    return f"{left}{right}"
+
+
+def _failure_text(error: str) -> str:
+    return f"任务执行失败: {error}"
 
 
 def normalize_execution_event_type(event_type: Any) -> str:
@@ -135,7 +144,12 @@ class WeiboStreamingResponseEmitter(ResultEmitter):
 
         self._ensure_message_id(task_id, subtask_id)
         await self._send_text_parts(content, done=False)
-        self._sent_content += content
+        self._sent_content = await run_payload_codec(
+            _join_text,
+            self._sent_content,
+            content,
+            payload_hint=(self._sent_content, content),
+        )
 
     async def emit_status_prefix(
         self,
@@ -174,10 +188,19 @@ class WeiboStreamingResponseEmitter(ResultEmitter):
             return
 
         self._ensure_message_id(task_id, subtask_id)
-        tail = self._extract_unsent_tail(result)
+        tail = await run_payload_codec(
+            self._extract_unsent_tail,
+            result,
+            payload_hint=(result, self._sent_content),
+        )
         if tail:
             await self._send_text_parts(tail, done=True)
-            self._sent_content += tail
+            self._sent_content = await run_payload_codec(
+                _join_text,
+                self._sent_content,
+                tail,
+                payload_hint=(self._sent_content, tail),
+            )
         else:
             await self._send_one("", done=True)
         self._finished = True
@@ -193,7 +216,12 @@ class WeiboStreamingResponseEmitter(ResultEmitter):
             return
 
         self._ensure_message_id(task_id, subtask_id)
-        await self._send_text_parts(f"任务执行失败: {error}", done=True)
+        failure = await run_payload_codec(
+            _failure_text,
+            error,
+            payload_hint=error,
+        )
+        await self._send_text_parts(failure, done=True)
         self._finished = True
 
     async def emit_cancelled(
@@ -234,12 +262,14 @@ class WeiboStreamingResponseEmitter(ResultEmitter):
         return ""
 
     async def _send_text_parts(self, text: str, *, done: bool) -> None:
-        parts = [
-            text[index : index + MAX_WEIBO_CHUNK_CHARS]
-            for index in range(0, len(text), MAX_WEIBO_CHUNK_CHARS)
-        ] or [""]
-        for index, part in enumerate(parts):
-            await self._send_one(part, done=done and index == len(parts) - 1)
+        if not text:
+            await self._send_one("", done=done)
+            return
+        text_length = len(text)
+        for index in range(0, text_length, MAX_WEIBO_CHUNK_CHARS):
+            part = text[index : index + MAX_WEIBO_CHUNK_CHARS]
+            is_last = index + MAX_WEIBO_CHUNK_CHARS >= text_length
+            await self._send_one(part, done=done and is_last)
 
     async def _send_one(self, text: str, *, done: bool) -> None:
         if not self._message_id:

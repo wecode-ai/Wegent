@@ -16,6 +16,7 @@ is performed by the AI agent, guided by SKILL.md instructions.
 import logging
 from typing import Any, Dict, List, Optional
 
+from app.core.blocking_work import run_mcp_tool
 from app.db.session import SessionLocal
 from app.mcp_server.auth import TaskTokenInfo
 from app.mcp_server.tools.decorator import mcp_tool
@@ -25,6 +26,57 @@ from app.services.prompt_optimization import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+def _load_team_prompt_from_store(task_id: int, user_id: int) -> Dict[str, Any]:
+    """Load and serialize one Team prompt inside the bounded MCP pool."""
+    with SessionLocal() as db:
+        team = resolve_team_from_task(db, task_id, user_id)
+        assembled, sources = assemble_team_prompt(db, team.id, user_id)
+        return {
+            "team_id": team.id,
+            "assembled_prompt": assembled,
+            "sources": [source.model_dump() for source in sources],
+        }
+
+
+def _prepare_prompt_changes_from_store(
+    task_id: int,
+    subtask_id: int,
+    user_id: int,
+    changes: List[Dict[str, Any]],
+) -> Dict[str, Any]:
+    """Resolve the Team and build a detached prompt-change payload."""
+    with SessionLocal() as db:
+        team = resolve_team_from_task(db, task_id, user_id)
+        team_id = team.id
+
+    apply_changes = []
+    for change in changes:
+        apply_change: Dict[str, Any] = {
+            "type": change["type"],
+            "value": change["suggested"],
+        }
+        if change["type"] == "ghost":
+            apply_change["id"] = change["id"]
+            apply_change["field"] = change.get("field", "systemPrompt")
+        elif change["type"] == "member":
+            apply_change["team_id"] = team_id
+            apply_change["index"] = change.get("index", 0)
+        apply_changes.append(apply_change)
+
+    return {
+        "type": "prompt_optimization",
+        "task_id": task_id,
+        "subtask_id": subtask_id,
+        "team_id": team_id,
+        "changes": changes,
+        "apply_action": {
+            "endpoint": "/api/prompt-optimization/apply",
+            "method": "POST",
+            "payload": {"team_id": team_id, "changes": apply_changes},
+        },
+    }
 
 
 async def _send_block_to_frontend(
@@ -111,16 +163,12 @@ async def get_team_prompt(
     Returns the complete assembled prompt and a breakdown of sources
     (Ghost.systemPrompt and TeamMember.prompt components).
     """
-    db = SessionLocal()
     try:
-        team = resolve_team_from_task(db, token_info.task_id, token_info.user_id)
-        assembled, sources = assemble_team_prompt(db, team.id, token_info.user_id)
-
-        return {
-            "team_id": team.id,
-            "assembled_prompt": assembled,
-            "sources": [s.model_dump() for s in sources],
-        }
+        return await run_mcp_tool(
+            _load_team_prompt_from_store,
+            token_info.task_id,
+            token_info.user_id,
+        )
     except Exception as e:
         logger.error("[PromptOptimization] get_team_prompt failed: %s", e)
         return {
@@ -128,8 +176,6 @@ async def get_team_prompt(
             "assembled_prompt": "",
             "sources": [],
         }
-    finally:
-        db.close()
 
 
 @mcp_tool(
@@ -165,41 +211,16 @@ async def submit_prompt_changes(
     Each change is rendered as a separate card showing original vs modified text.
     The user can apply or cancel each change independently.
     """
-    db = SessionLocal()
     try:
-        team = resolve_team_from_task(db, token_info.task_id, token_info.user_id)
-        team_id = team.id
-
         if not changes:
             return {"error": "No changes provided"}
-
-        # Build apply_action payload for each change
-        apply_changes = []
-        for change in changes:
-            apply_change: Dict[str, Any] = {
-                "type": change["type"],
-                "value": change["suggested"],
-            }
-            if change["type"] == "ghost":
-                apply_change["id"] = change["id"]
-                apply_change["field"] = change.get("field", "systemPrompt")
-            elif change["type"] == "member":
-                apply_change["team_id"] = team_id
-                apply_change["index"] = change.get("index", 0)
-            apply_changes.append(apply_change)
-
-        block_data = {
-            "type": "prompt_optimization",
-            "task_id": token_info.task_id,
-            "subtask_id": token_info.subtask_id,
-            "team_id": team_id,
-            "changes": changes,
-            "apply_action": {
-                "endpoint": "/api/prompt-optimization/apply",
-                "method": "POST",
-                "payload": {"team_id": team_id, "changes": apply_changes},
-            },
-        }
+        block_data = await run_mcp_tool(
+            _prepare_prompt_changes_from_store,
+            token_info.task_id,
+            token_info.subtask_id,
+            token_info.user_id,
+            changes,
+        )
 
         await _send_block_to_frontend(
             task_id=token_info.task_id,
@@ -223,5 +244,3 @@ async def submit_prompt_changes(
             "error": str(e),
             "__silent_exit__": True,
         }
-    finally:
-        db.close()

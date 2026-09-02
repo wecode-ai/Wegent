@@ -6,13 +6,33 @@
 
 import json
 import uuid
-from dataclasses import asdict, dataclass
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Optional
 
 from app.core.cache import cache_manager
+from app.core.constants import (
+    MAX_GUIDANCE_ID_LENGTH,
+    MAX_GUIDANCE_MESSAGE_LENGTH,
+    MAX_GUIDANCE_QUEUE_ITEMS,
+)
+from app.core.payload_codec import run_payload_codec
 
 DEFAULT_GUIDANCE_QUEUE_TTL_SECONDS = 60 * 60 * 24
+MAX_GUIDANCE_QUEUE_ITEM_BYTES = MAX_GUIDANCE_MESSAGE_LENGTH * 4 + 8 * 1024
+_ATOMIC_BOUNDED_PUSH_SCRIPT = """
+local current = redis.call('LLEN', KEYS[1])
+if current >= tonumber(ARGV[1]) then
+    return 0
+end
+redis.call('RPUSH', KEYS[1], ARGV[2])
+redis.call('EXPIRE', KEYS[1], tonumber(ARGV[3]))
+return 1
+"""
+
+
+class GuidanceQueueFullError(RuntimeError):
+    """Raised when a subtask already owns the maximum pending guidance."""
 
 
 @dataclass
@@ -29,7 +49,15 @@ class GuidanceQueueItem:
 
     def to_dict(self) -> dict:
         """Convert to JSON-serializable dict."""
-        return asdict(self)
+        return {
+            "task_id": self.task_id,
+            "subtask_id": self.subtask_id,
+            "team_id": self.team_id,
+            "user_id": self.user_id,
+            "guidance_id": self.guidance_id,
+            "message": self.message,
+            "created_at": self.created_at,
+        }
 
     @classmethod
     def from_dict(cls, data: dict) -> "GuidanceQueueItem":
@@ -48,8 +76,17 @@ class GuidanceQueueItem:
 class GuidanceQueue:
     """Redis FIFO queue keyed by task and subtask."""
 
-    def __init__(self, ttl_seconds: int = DEFAULT_GUIDANCE_QUEUE_TTL_SECONDS):
+    def __init__(
+        self,
+        ttl_seconds: int = DEFAULT_GUIDANCE_QUEUE_TTL_SECONDS,
+        max_items: int = MAX_GUIDANCE_QUEUE_ITEMS,
+    ):
+        if ttl_seconds <= 0:
+            raise ValueError("ttl_seconds must be positive")
+        if max_items <= 0:
+            raise ValueError("max_items must be positive")
         self.ttl_seconds = ttl_seconds
+        self.max_items = max_items
         self._cache = cache_manager
 
     @staticmethod
@@ -68,6 +105,8 @@ class GuidanceQueue:
         guidance_id: Optional[str] = None,
     ) -> GuidanceQueueItem:
         """Append a guidance item to the queue."""
+        if guidance_id is not None and len(guidance_id) > MAX_GUIDANCE_ID_LENGTH:
+            raise ValueError(f"guidance_id exceeds {MAX_GUIDANCE_ID_LENGTH} characters")
         item = GuidanceQueueItem(
             task_id=task_id,
             subtask_id=subtask_id,
@@ -77,13 +116,34 @@ class GuidanceQueue:
             message=message,
             created_at=datetime.now(timezone.utc).isoformat(),
         )
+        encoded_item = await run_payload_codec(
+            self._encode_item,
+            item,
+            payload_hint=item,
+            force_offload=True,
+        )
+        if len(encoded_item) > MAX_GUIDANCE_QUEUE_ITEM_BYTES:
+            raise ValueError(
+                "Encoded guidance item exceeds "
+                f"{MAX_GUIDANCE_QUEUE_ITEM_BYTES} bytes"
+            )
         key = self.key(task_id, subtask_id)
         client = await self._cache._get_client()
         try:
-            await client.rpush(key, json.dumps(item.to_dict()).encode("utf-8"))
-            await client.expire(key, self.ttl_seconds)
+            added = await client.eval(
+                _ATOMIC_BOUNDED_PUSH_SCRIPT,
+                1,
+                key,
+                self.max_items,
+                encoded_item,
+                self.ttl_seconds,
+            )
         finally:
             await client.aclose()
+        if int(added) != 1:
+            raise GuidanceQueueFullError(
+                f"Guidance queue already contains {self.max_items} pending items"
+            )
         return item
 
     async def consume(
@@ -97,9 +157,13 @@ class GuidanceQueue:
             await client.aclose()
         if raw is None:
             return None
-        if isinstance(raw, bytes):
-            raw = raw.decode("utf-8")
-        return GuidanceQueueItem.from_dict(json.loads(raw))
+        self._require_bounded_item(raw)
+        return await run_payload_codec(
+            self._decode_item,
+            raw,
+            payload_hint=raw,
+            force_offload=True,
+        )
 
     async def expire(self, *, task_id: int, subtask_id: int) -> list[str]:
         """Delete pending guidance and return expired guidance IDs."""
@@ -111,15 +175,42 @@ class GuidanceQueue:
         finally:
             await client.aclose()
 
+        for raw in raw_items:
+            self._require_bounded_item(raw)
+        return await run_payload_codec(
+            self._decode_expired_ids,
+            raw_items,
+            payload_hint=raw_items,
+            force_offload=True,
+        )
+
+    @staticmethod
+    def _encode_item(item: GuidanceQueueItem) -> bytes:
+        return json.dumps(
+            item.to_dict(),
+            ensure_ascii=False,
+            separators=(",", ":"),
+        ).encode("utf-8")
+
+    @staticmethod
+    def _decode_item(raw: bytes | str) -> GuidanceQueueItem:
+        return GuidanceQueueItem.from_dict(json.loads(raw))
+
+    @staticmethod
+    def _decode_expired_ids(raw_items: list[bytes | str]) -> list[str]:
         expired_ids: list[str] = []
         for raw in raw_items:
-            if isinstance(raw, bytes):
-                raw = raw.decode("utf-8")
-            data = json.loads(raw)
-            guidance_id = data.get("guidance_id")
+            guidance_id = json.loads(raw).get("guidance_id")
             if guidance_id:
                 expired_ids.append(str(guidance_id))
         return expired_ids
+
+    @staticmethod
+    def _require_bounded_item(raw: bytes | str) -> None:
+        if len(raw) > MAX_GUIDANCE_QUEUE_ITEM_BYTES:
+            raise ValueError(
+                "Stored guidance item exceeds " f"{MAX_GUIDANCE_QUEUE_ITEM_BYTES} bytes"
+            )
 
 
 guidance_queue = GuidanceQueue()

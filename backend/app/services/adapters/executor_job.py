@@ -20,6 +20,7 @@ from app.models.task import TaskResource
 from app.schemas.kind import Task
 from app.services.adapters.executor_kinds import executor_kinds_service
 from app.services.base import BaseService
+from app.services.chat.storage.db import run_sync_in_executor
 from app.services.executor_cleanup_cursor_service import (
     executor_cleanup_cursor_service,
 )
@@ -28,6 +29,22 @@ logger = logging.getLogger(__name__)
 
 CLEANUP_TARGET_DELETED_EXECUTORS_PER_RUN = 2000
 CLEANUP_MAX_BATCHES_PER_RUN = 50
+
+
+def _mark_executor_deleted_from_store(subtask_ids: tuple[int, ...]) -> None:
+    """Persist executor deletion using a worker-owned Session."""
+    sync_db = SessionLocal()
+    try:
+        task_stores.subtask_store.mark_executor_deleted_by_ids(
+            sync_db,
+            subtask_ids=list(subtask_ids),
+        )
+        sync_db.commit()
+    except Exception:
+        sync_db.rollback()
+        raise
+    finally:
+        sync_db.close()
 
 
 @dataclass
@@ -1167,8 +1184,7 @@ class JobService(BaseService[Kind, None, None]):
     ) -> bool:
         """Archive workspace files before Pod deletion.
 
-        Uses a short-lived sync session because archive_service expects
-        a sync Session for its DB writes.
+        Archive persistence is owned by the archive service worker phase.
 
         Returns:
             True when it is safe to proceed with executor deletion: either
@@ -1192,17 +1208,13 @@ class JobService(BaseService[Kind, None, None]):
             f"executor={executor_namespace}/{executor_name}"
         )
 
-        sync_db = SessionLocal()
         try:
             archive_info = await archive_service.archive_workspace(
-                db=sync_db,
-                task=task,
+                task_id=task.id,
                 executor_name=executor_name,
                 executor_namespace=executor_namespace,
             )
-            sync_db.commit()
         except Exception as archive_error:
-            sync_db.rollback()
             logger.error(
                 f"[executor_job] Error archiving workspace "
                 f"task_id={task.id} "
@@ -1210,9 +1222,6 @@ class JobService(BaseService[Kind, None, None]):
                 exc_info=True,
             )
             return False
-        finally:
-            sync_db.close()
-
         if archive_info:
             logger.info(
                 f"[executor_job] Workspace archived "
@@ -1233,19 +1242,10 @@ class JobService(BaseService[Kind, None, None]):
         """Mark selected subtasks as deleted in a short-lived sync Store boundary."""
         if not subtask_ids:
             return
-
-        sync_db = SessionLocal()
-        try:
-            task_stores.subtask_store.mark_executor_deleted_by_ids(
-                sync_db,
-                subtask_ids=subtask_ids,
-            )
-            sync_db.commit()
-        except Exception:
-            sync_db.rollback()
-            raise
-        finally:
-            sync_db.close()
+        await run_sync_in_executor(
+            _mark_executor_deleted_from_store,
+            tuple(subtask_ids),
+        )
 
 
 job_service = JobService(Kind)

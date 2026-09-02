@@ -3,6 +3,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 import logging
+from collections.abc import Callable
 from typing import Any, Dict, List, Optional, Tuple
 
 from fastapi import HTTPException
@@ -26,6 +27,76 @@ logger = logging.getLogger(__name__)
 
 class InstalledMCPService:
     """Manage user-scoped MCP installations in the kinds table."""
+
+    def __init__(
+        self,
+        session_factory: Callable[[], Session] | None = None,
+    ) -> None:
+        self._configured_session_factory = session_factory
+
+    def _session_factory(self) -> Session:
+        if self._configured_session_factory is not None:
+            return self._configured_session_factory()
+        from app.db.session import SessionLocal
+
+        return SessionLocal()
+
+    def list_installed_mcps_for_user(
+        self,
+        user_id: int,
+    ) -> InstalledMCPListResponse:
+        with self._session_factory() as db:
+            return self.list_installed_mcps(db=db, user_id=user_id)
+
+    def create_custom_mcp_for_user(
+        self,
+        user_id: int,
+        request: InstalledMCPCustomCreateRequest,
+    ) -> InstalledMCP:
+        with self._session_factory() as db:
+            return self.create_custom_mcp(
+                db=db,
+                user_id=user_id,
+                request=request,
+            )
+
+    def install_provider_mcp_for_user(
+        self,
+        user_id: int,
+        request: InstalledMCPInstallRequest,
+    ) -> InstalledMCP:
+        with self._session_factory() as db:
+            return self.install_provider_mcp(
+                db=db,
+                user_id=user_id,
+                request=request,
+            )
+
+    def update_installed_mcp_for_user(
+        self,
+        user_id: int,
+        installed_id: int,
+        request: InstalledMCPUpdateRequest,
+    ) -> InstalledMCP:
+        with self._session_factory() as db:
+            return self.update_installed_mcp(
+                db=db,
+                user_id=user_id,
+                installed_id=installed_id,
+                request=request,
+            )
+
+    def uninstall_installed_mcp_for_user(
+        self,
+        user_id: int,
+        installed_id: int,
+    ) -> None:
+        with self._session_factory() as db:
+            self.uninstall_installed_mcp(
+                db=db,
+                user_id=user_id,
+                installed_id=installed_id,
+            )
 
     def create_custom_mcp(
         self,

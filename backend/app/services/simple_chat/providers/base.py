@@ -20,6 +20,8 @@ from typing import Any, AsyncGenerator
 
 import httpx
 
+from app.core.payload_codec import run_payload_codec
+
 logger = logging.getLogger(__name__)
 
 
@@ -120,12 +122,23 @@ class LLMProvider(ABC):
         chunk_count = 0
 
         try:
+            payload_bytes = await run_payload_codec(
+                _encode_json_payload,
+                payload,
+                payload_hint=payload,
+                force_offload=True,
+            )
             async with self.client.stream(
-                "POST", url, json=payload, headers=headers
+                "POST", url, content=payload_bytes, headers=headers
             ) as response:
                 if response.status_code >= 400:
                     error_body = await response.aread()
-                    error_msg = error_body.decode("utf-8", errors="replace")
+                    error_msg = await run_payload_codec(
+                        _decode_error_body,
+                        error_body,
+                        payload_hint=error_body,
+                        force_offload=True,
+                    )
                     logger.error(
                         "%s API error: status=%s, body=%s",
                         self.provider_name,
@@ -163,11 +176,16 @@ class LLMProvider(ABC):
                             )
                             return
 
-                        try:
-                            chunk_count += 1
-                            yield json.loads(data)
-                        except json.JSONDecodeError:
+                        parsed = await run_payload_codec(
+                            _decode_sse_json,
+                            data,
+                            payload_hint=data,
+                            force_offload=True,
+                        )
+                        if parsed is None:
                             continue
+                        chunk_count += 1
+                        yield parsed
 
                 # If we exit the loop without [DONE], log it
                 logger.info(
@@ -180,3 +198,18 @@ class LLMProvider(ABC):
         except httpx.RequestError as e:
             logger.exception("%s request error", self.provider_name)
             yield {"_error": str(e)}
+
+
+def _encode_json_payload(payload: dict[str, Any]) -> bytes:
+    return json.dumps(payload).encode("utf-8")
+
+
+def _decode_error_body(body: bytes) -> str:
+    return body.decode("utf-8", errors="replace")
+
+
+def _decode_sse_json(data: str) -> Any | None:
+    try:
+        return json.loads(data)
+    except json.JSONDecodeError:
+        return None

@@ -11,6 +11,11 @@ from typing import Optional
 import httpx
 
 from app.core.config import settings
+from app.core.payload_codec import (
+    decode_sync_response_json,
+    decode_sync_response_text,
+    encode_http_json,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -35,27 +40,29 @@ async def _create_asset(
     image_url: str,
     wecode_user: str,
 ) -> tuple[Optional[str], bool]:
+    request_payload = {
+        "GroupId": settings.SEEDANCE_ASSET_GROUP_ID.strip(),
+        "URL": image_url,
+        "AssetType": "Image",
+    }
     response = await client.post(
         _asset_endpoint("CreateAsset"),
-        json={
-            "GroupId": settings.SEEDANCE_ASSET_GROUP_ID.strip(),
-            "URL": image_url,
-            "AssetType": "Image",
-        },
+        content=await encode_http_json(request_payload),
         headers={
             "Content-Type": "application/json",
             "wecode-user": wecode_user,
         },
     )
     if response.status_code >= 400:
+        response_text = await decode_sync_response_text(response)
         logger.warning(
             "[SeedanceAsset] CreateAsset failed: status=%s, response=%s",
             response.status_code,
-            response.text[:2000],
+            response_text[:2000],
         )
         return None, False
 
-    payload = response.json()
+    payload = await decode_sync_response_json(response)
     asset_id = payload.get("Id") if isinstance(payload, dict) else None
     if not isinstance(asset_id, str) or not asset_id.strip():
         return None, False
@@ -72,24 +79,26 @@ async def _wait_until_active(
     elapsed = 0
 
     while elapsed <= timeout:
+        request_payload = {"Id": asset_id}
         response = await client.post(
             _asset_endpoint("GetAsset"),
-            json={"Id": asset_id},
+            content=await encode_http_json(request_payload),
             headers={
                 "Content-Type": "application/json",
                 "wecode-user": wecode_user,
             },
         )
         if response.status_code >= 400:
+            response_text = await decode_sync_response_text(response)
             logger.warning(
                 "[SeedanceAsset] GetAsset failed: asset_id=%s, status=%s, response=%s",
                 asset_id,
                 response.status_code,
-                response.text[:2000],
+                response_text[:2000],
             )
             return False
 
-        payload = response.json()
+        payload = await decode_sync_response_json(response)
         if isinstance(payload, dict) and payload.get("Status") == _ACTIVE_STATUS:
             return True
 

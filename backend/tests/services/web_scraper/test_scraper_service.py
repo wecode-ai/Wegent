@@ -4,11 +4,27 @@ import httpx
 import pytest
 
 import app.services.web_scraper.pdf_extractor as pdf_extractor_module
+from app.core.bounded_executor import BoundedExecutorOverloaded
 from app.services.web_scraper.models import ERROR_INVALID_URL, InternalScrapeResult
 from app.services.web_scraper.pdf_extractor import PdfExtractor
 from app.services.web_scraper.proxy import ProxyMode, ProxyPlan
 from app.services.web_scraper.scraper_service import ScrapedContent, WebScraperService
 from app.services.web_scraper.security import WebScraperUrlGuard
+
+
+@pytest.mark.asyncio
+async def test_scrape_url_propagates_executor_overload(monkeypatch) -> None:
+    async def reject(*args, **kwargs):
+        del args, kwargs
+        raise BoundedExecutorOverloaded("full")
+
+    monkeypatch.setattr(
+        "app.services.web_scraper.scraper_service.run_knowledge_io",
+        reject,
+    )
+
+    with pytest.raises(BoundedExecutorOverloaded, match="full"):
+        await WebScraperService().scrape_url("https://example.com")
 
 
 class FakeCrawlStrategy:
@@ -98,7 +114,6 @@ class RecordingRedirectGuard(WebScraperUrlGuard):
 
     def validate_final_url(self, original_url: str, final_url: str) -> None:
         self.final_urls.append((original_url, final_url))
-        super().validate_final_url(original_url, final_url)
 
 
 def prepare_service(monkeypatch: pytest.MonkeyPatch) -> WebScraperService:
@@ -284,12 +299,18 @@ async def test_pdf_extract_empty_text_is_successful_empty_result(
         return response
 
     monkeypatch.setattr(extractor, "_download_pdf", download_pdf)
-    monkeypatch.setattr(extractor, "_extract_pdf_text", lambda response: ("", None))
+    monkeypatch.setattr(
+        extractor,
+        "_extract_pdf_text",
+        lambda content, final_url: ("", None),
+    )
 
+    guard = WebScraperUrlGuard()
+    monkeypatch.setattr(guard, "validate_initial_url", lambda url: None)
     result = await extractor.extract(
         pdf_url="https://example.com/empty.pdf",
         proxy_plan=ProxyPlan(mode=ProxyMode.NONE),
-        guard=WebScraperUrlGuard(),
+        guard=guard,
     )
 
     assert result.success is True

@@ -7,15 +7,16 @@
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 
-from app.api.dependencies import get_db
-from app.core.security import get_current_user
-from app.models.user import User
+from app.core.bounded_executor import BoundedExecutorOverloaded
+from app.core.payload_codec import run_payload_codec
+from app.core.security import DetachedUser, get_detached_current_user
 from app.schemas.rag import (
     RagChunkListResponse,
     RagChunkRecord,
     RetrieveRequest,
     RetrieveResponse,
 )
+from app.services.knowledge.web_db import run_knowledge_db_phase
 from app.services.rag.gateway_factory import get_delete_gateway, get_query_gateway
 from app.services.rag.local_gateway import LocalRagGateway
 from app.services.rag.remote_gateway import (
@@ -36,11 +37,113 @@ def _map_public_admin_value_error(error: ValueError) -> HTTPException:
     return HTTPException(status_code=400, detail=detail)
 
 
+def _build_public_query_spec(
+    db: Session,
+    request: RetrieveRequest,
+    user_id: int,
+    user_name: str,
+):
+    return runtime_resolver.build_public_query_runtime_spec(
+        db=db,
+        knowledge_base_id=int(request.knowledge_id),
+        query=request.query,
+        search_hints=request.search_hints,
+        max_results=request.top_k,
+        retriever_name=request.retriever_ref.name,
+        retriever_namespace=request.retriever_ref.namespace,
+        embedding_model_name=request.embedding_model_ref.model_name,
+        embedding_model_namespace=request.embedding_model_ref.model_namespace,
+        user_id=user_id,
+        user_name=user_name,
+        score_threshold=request.score_threshold,
+        retrieval_mode=request.retrieval_mode.value,
+        vector_weight=(
+            request.hybrid_weights.vector_weight
+            if request.hybrid_weights is not None
+            else None
+        ),
+        keyword_weight=(
+            request.hybrid_weights.keyword_weight
+            if request.hybrid_weights is not None
+            else None
+        ),
+        metadata_condition=request.metadata_condition,
+    )
+
+
+def _build_public_list_spec(
+    db: Session,
+    knowledge_id: int,
+    user_id: int,
+    user_name: str,
+):
+    return runtime_resolver.build_public_list_chunks_runtime_spec(
+        db=db,
+        knowledge_base_id=knowledge_id,
+        user_id=user_id,
+        user_name=user_name,
+        max_chunks=INDEX_CHUNK_LIST_MAX_CHUNKS,
+        query="list_index_chunks",
+    )
+
+
+def _build_public_purge_spec(
+    db: Session,
+    knowledge_id: int,
+    user_id: int,
+    user_name: str,
+):
+    return runtime_resolver.build_public_purge_index_runtime_spec(
+        db=db,
+        knowledge_base_id=knowledge_id,
+        user_id=user_id,
+        user_name=user_name,
+    )
+
+
+def _build_public_drop_spec(
+    db: Session,
+    knowledge_id: int,
+    user_id: int,
+    user_name: str,
+):
+    return runtime_resolver.build_public_drop_index_runtime_spec(
+        db=db,
+        knowledge_base_id=knowledge_id,
+        user_id=user_id,
+        user_name=user_name,
+    )
+
+
+def _build_chunk_list_response(
+    result: dict,
+    page: int,
+    page_size: int,
+) -> RagChunkListResponse:
+    chunks = result.get("chunks", [])
+    start = (page - 1) * page_size
+    page_items = chunks[start : start + page_size]
+    return RagChunkListResponse(
+        items=[
+            RagChunkRecord(
+                content=chunk.get("content", ""),
+                title=chunk.get("title", "Unknown"),
+                chunk_id=chunk.get("chunk_id"),
+                doc_ref=chunk.get("doc_ref"),
+                metadata=chunk.get("metadata"),
+            )
+            for chunk in page_items
+        ],
+        total=result.get("total", len(chunks)),
+        page=page,
+        page_size=page_size,
+    )
+
+
 @router.post("/retrieve", response_model=RetrieveResponse)
 async def retrieve_documents(
     request: RetrieveRequest,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: DetachedUser = Depends(get_detached_current_user),
 ):
     """
     Retrieve relevant document chunks.
@@ -87,44 +190,25 @@ async def retrieve_documents(
         ```
     """
     try:
-        knowledge_base_id = int(request.knowledge_id)
-        runtime_spec = runtime_resolver.build_public_query_runtime_spec(
-            db=db,
-            knowledge_base_id=knowledge_base_id,
-            query=request.query,
-            search_hints=request.search_hints,
-            max_results=request.top_k,
-            retriever_name=request.retriever_ref.name,
-            retriever_namespace=request.retriever_ref.namespace,
-            embedding_model_name=request.embedding_model_ref.model_name,
-            embedding_model_namespace=request.embedding_model_ref.model_namespace,
-            user_id=current_user.id,
-            user_name=current_user.user_name,
-            score_threshold=request.score_threshold,
-            retrieval_mode=request.retrieval_mode.value,
-            vector_weight=(
-                request.hybrid_weights.vector_weight
-                if request.hybrid_weights is not None
-                else None
-            ),
-            keyword_weight=(
-                request.hybrid_weights.keyword_weight
-                if request.hybrid_weights is not None
-                else None
-            ),
-            metadata_condition=request.metadata_condition,
+        runtime_spec = await run_knowledge_db_phase(
+            _build_public_query_spec,
+            request,
+            current_user.id,
+            current_user.user_name,
         )
 
         gateway = get_query_gateway()
         try:
-            result = await gateway.query(runtime_spec, db=db)
+            result = await gateway.query(runtime_spec)
         except RemoteRagGatewayError as exc:
             if not should_fallback_to_local(exc):
                 raise
-            result = await LocalRagGateway().query(runtime_spec, db=db)
+            result = await LocalRagGateway().query(runtime_spec)
 
         return {"records": result.get("records", [])}
     except HTTPException:
+        raise
+    except BoundedExecutorOverloaded:
         raise
     except RemoteRagGatewayError as e:
         raise HTTPException(status_code=e.status_code or 502, detail=str(e)) from e
@@ -139,8 +223,7 @@ async def list_index_chunks(
     knowledge_id: int = Query(..., description="Knowledge base ID"),
     page: int = Query(1, ge=1, description="Page number"),
     page_size: int = Query(50, ge=1, le=500, description="Page size"),
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: DetachedUser = Depends(get_detached_current_user),
 ):
     """List indexed chunks stored for a knowledge base."""
     try:
@@ -151,41 +234,31 @@ async def list_index_chunks(
                 f"{INDEX_CHUNK_LIST_MAX_CHUNKS}"
             )
 
-        runtime_spec = runtime_resolver.build_public_list_chunks_runtime_spec(
-            db=db,
-            knowledge_base_id=knowledge_id,
-            user_id=current_user.id,
-            user_name=current_user.user_name,
-            max_chunks=INDEX_CHUNK_LIST_MAX_CHUNKS,
-            query="list_index_chunks",
+        runtime_spec = await run_knowledge_db_phase(
+            _build_public_list_spec,
+            knowledge_id,
+            current_user.id,
+            current_user.user_name,
         )
         gateway = get_query_gateway()
         try:
-            result = await gateway.list_chunks(runtime_spec, db=db)
+            result = await gateway.list_chunks(runtime_spec)
         except RemoteRagGatewayError as exc:
             if not should_fallback_to_local(exc):
                 raise
-            result = await LocalRagGateway().list_chunks(runtime_spec, db=db)
+            result = await LocalRagGateway().list_chunks(runtime_spec)
 
-        chunks = result.get("chunks", [])
-        page_items = chunks[start : start + page_size]
-
-        return RagChunkListResponse(
-            items=[
-                RagChunkRecord(
-                    content=chunk.get("content", ""),
-                    title=chunk.get("title", "Unknown"),
-                    chunk_id=chunk.get("chunk_id"),
-                    doc_ref=chunk.get("doc_ref"),
-                    metadata=chunk.get("metadata"),
-                )
-                for chunk in page_items
-            ],
-            total=result.get("total", len(chunks)),
-            page=page,
-            page_size=page_size,
+        return await run_payload_codec(
+            _build_chunk_list_response,
+            result,
+            page,
+            page_size,
+            payload_hint=result,
+            force_offload=True,
         )
     except HTTPException:
+        raise
+    except BoundedExecutorOverloaded:
         raise
     except RemoteRagGatewayError as e:
         raise HTTPException(status_code=e.status_code or 502, detail=str(e)) from e
@@ -198,25 +271,26 @@ async def list_index_chunks(
 @router.delete("/index-contents")
 async def purge_index_contents(
     knowledge_id: int = Query(..., description="Knowledge base ID"),
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: DetachedUser = Depends(get_detached_current_user),
 ):
     """Delete all indexed chunks stored for a knowledge base while keeping documents."""
     try:
-        runtime_spec = runtime_resolver.build_public_purge_index_runtime_spec(
-            db=db,
-            knowledge_base_id=knowledge_id,
-            user_id=current_user.id,
-            user_name=current_user.user_name,
+        runtime_spec = await run_knowledge_db_phase(
+            _build_public_purge_spec,
+            knowledge_id,
+            current_user.id,
+            current_user.user_name,
         )
         gateway = get_delete_gateway()
         try:
-            return await gateway.purge_knowledge_index(runtime_spec, db=db)
+            return await gateway.purge_knowledge_index(runtime_spec)
         except RemoteRagGatewayError as exc:
             if not should_fallback_to_local(exc):
                 raise
-            return await LocalRagGateway().purge_knowledge_index(runtime_spec, db=db)
+            return await LocalRagGateway().purge_knowledge_index(runtime_spec)
     except HTTPException:
+        raise
+    except BoundedExecutorOverloaded:
         raise
     except RemoteRagGatewayError as e:
         raise HTTPException(status_code=e.status_code or 502, detail=str(e)) from e
@@ -229,25 +303,26 @@ async def purge_index_contents(
 @router.delete("/index")
 async def drop_index(
     knowledge_id: int = Query(..., description="Knowledge base ID"),
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: DetachedUser = Depends(get_detached_current_user),
 ):
     """Physically drop the dedicated index/collection for a knowledge base."""
     try:
-        runtime_spec = runtime_resolver.build_public_drop_index_runtime_spec(
-            db=db,
-            knowledge_base_id=knowledge_id,
-            user_id=current_user.id,
-            user_name=current_user.user_name,
+        runtime_spec = await run_knowledge_db_phase(
+            _build_public_drop_spec,
+            knowledge_id,
+            current_user.id,
+            current_user.user_name,
         )
         gateway = get_delete_gateway()
         try:
-            return await gateway.drop_knowledge_index(runtime_spec, db=db)
+            return await gateway.drop_knowledge_index(runtime_spec)
         except RemoteRagGatewayError as exc:
             if not should_fallback_to_local(exc):
                 raise
-            return await LocalRagGateway().drop_knowledge_index(runtime_spec, db=db)
+            return await LocalRagGateway().drop_knowledge_index(runtime_spec)
     except HTTPException:
+        raise
+    except BoundedExecutorOverloaded:
         raise
     except RemoteRagGatewayError as e:
         raise HTTPException(status_code=e.status_code or 502, detail=str(e)) from e

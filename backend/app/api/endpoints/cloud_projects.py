@@ -4,6 +4,8 @@
 
 """Shared cloud project endpoints."""
 
+from dataclasses import dataclass
+
 from fastapi import (
     APIRouter,
     BackgroundTasks,
@@ -18,8 +20,8 @@ from fastapi.responses import Response
 from sqlalchemy.orm import Session
 
 from app.api.dependencies import get_db
+from app.core import security
 from app.core.security import get_current_user, get_current_user_flexible_for_executor
-from app.models.delivery import LoopItem
 from app.models.user import User
 from app.schemas.cloud_file import (
     CloudFileAccessResponse,
@@ -58,6 +60,99 @@ from app.services.project_board_snapshot import project_board_snapshot_service
 from app.services.project_chat.service import project_chat_service
 
 router = APIRouter()
+
+
+@dataclass(frozen=True)
+class _LoopItemAssignIntent:
+    version: int
+    assignee_type: str
+    assignee_id: str
+
+    def to_request(self) -> LoopItemAssign:
+        return LoopItemAssign(
+            version=self.version,
+            assignee_type=self.assignee_type,
+            assignee_id=self.assignee_id,
+        )
+
+
+def _is_external_loop_item_sync(item_id: str) -> bool:
+    from app.services.chat.storage.db import get_db_session
+
+    with get_db_session() as db:
+        return external_loop_item_provider.is_external_item(db, item_id)
+
+
+def _assign_external_loop_item_sync(
+    item_id: str,
+    user_id: int,
+    intent: _LoopItemAssignIntent,
+) -> LoopItemResponse:
+    from app.models.delivery import LoopItem
+    from app.services.chat.storage.db import get_db_session
+
+    with get_db_session() as db:
+        response = external_loop_item_provider.assign(
+            db,
+            item_id,
+            user_id,
+            intent.to_request(),
+        )
+        if intent.assignee_type == "agent" and db.get(LoopItem, item_id) is None:
+            raise RuntimeError("External Team assignment index is unavailable")
+        return LoopItemResponse.model_validate(response)
+
+
+def _get_external_loop_item_sync(item_id: str, user_id: int) -> LoopItemResponse:
+    from app.services.chat.storage.db import get_db_session
+
+    with get_db_session() as db:
+        return LoopItemResponse.model_validate(
+            external_loop_item_provider.get(db, item_id, user_id)
+        )
+
+
+def _assign_internal_loop_item_sync(
+    project_id: int,
+    item_id: str,
+    user_id: int,
+    intent: _LoopItemAssignIntent,
+) -> None:
+    from app.services.chat.storage.db import get_db_session
+
+    with get_db_session() as db:
+        loop_item_service.assign(
+            db,
+            project_id=project_id,
+            item_id=item_id,
+            user_id=user_id,
+            values=intent.to_request(),
+        )
+
+
+def _finalize_internal_loop_item_sync(
+    project_id: int,
+    item_id: str,
+    user_id: int,
+) -> LoopItemResponse:
+    from app.models.delivery import LoopItem
+    from app.services.chat.storage.db import get_db_session
+
+    with get_db_session() as db:
+        item = db.get(LoopItem, item_id)
+        if item is None:
+            raise RuntimeError("Assigned board task is unavailable")
+        db.refresh(item)
+        publish_loop_item_changed(
+            db,
+            item=item,
+            reason="assignment",
+            actor_user_id=user_id,
+        )
+        access = cloud_project_service.access(db, project_id, user_id)
+        return LoopItemResponse.model_validate(
+            loop_item_service.response_values(db, item, user_id, access=access)
+        )
 
 
 def _project_response(
@@ -187,8 +282,7 @@ async def assign_loop_item(
     item_id: str,
     values: LoopItemAssign,
     background_tasks: BackgroundTasks,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: security.DetachedUser = Depends(security.get_detached_current_user),
 ) -> LoopItemResponse:
     """Assign a task to a member, project robot, or Wegent Team.
 
@@ -196,48 +290,54 @@ async def assign_loop_item(
     there is no separate queue storage.
     """
 
-    if external_loop_item_provider.is_external_item(db, item_id):
-        response = external_loop_item_provider.assign(
-            db, item_id, current_user.id, values
-        )
-        if values.assignee_type == "agent":
-            from app.services.board_team_execution import (
-                dispatch_board_team_assignment,
-            )
-
-            item = db.get(LoopItem, item_id)
-            if item is None:
-                raise RuntimeError("External Team assignment index is unavailable")
-            await dispatch_board_team_assignment(db, item=item, user=current_user)
-            response = external_loop_item_provider.get(db, item_id, current_user.id)
-        from app.tasks.robot_queue_tasks import consume_queues_background
-
-        background_tasks.add_task(consume_queues_background)
-        return LoopItemResponse.model_validate(response)
-    item = loop_item_service.assign(
-        db,
-        project_id=project_id,
-        item_id=item_id,
-        user_id=current_user.id,
-        values=values,
+    from app.core.blocking_work import run_repository_io
+    from app.services.board_team_execution import (
+        dispatch_board_team_assignment_nonblocking,
     )
-    if values.assignee_type == "agent":
-        from app.services.board_team_execution import dispatch_board_team_assignment
-
-        await dispatch_board_team_assignment(db, item=item, user=current_user)
-        db.refresh(item)
+    from app.services.chat.storage.db import run_sync_in_executor
     from app.tasks.robot_queue_tasks import consume_queues_background
 
-    background_tasks.add_task(consume_queues_background)
-    publish_loop_item_changed(
-        db,
-        item=item,
-        reason="assignment",
-        actor_user_id=current_user.id,
+    intent = _LoopItemAssignIntent(
+        version=values.version,
+        assignee_type=values.assignee_type,
+        assignee_id=values.assignee_id,
     )
-    access = cloud_project_service.access(db, project_id, current_user.id)
-    return LoopItemResponse.model_validate(
-        loop_item_service.response_values(db, item, current_user.id, access=access)
+    is_external = await run_sync_in_executor(
+        _is_external_loop_item_sync,
+        item_id,
+    )
+    if is_external:
+        response = await run_repository_io(
+            _assign_external_loop_item_sync,
+            item_id,
+            current_user.id,
+            intent,
+        )
+        if intent.assignee_type == "agent":
+            await dispatch_board_team_assignment_nonblocking(item_id=item_id)
+            response = await run_repository_io(
+                _get_external_loop_item_sync,
+                item_id,
+                current_user.id,
+            )
+        background_tasks.add_task(consume_queues_background)
+        return response
+
+    await run_sync_in_executor(
+        _assign_internal_loop_item_sync,
+        project_id,
+        item_id,
+        current_user.id,
+        intent,
+    )
+    if intent.assignee_type == "agent":
+        await dispatch_board_team_assignment_nonblocking(item_id=item_id)
+    background_tasks.add_task(consume_queues_background)
+    return await run_sync_in_executor(
+        _finalize_internal_loop_item_sync,
+        project_id,
+        item_id,
+        current_user.id,
     )
 
 

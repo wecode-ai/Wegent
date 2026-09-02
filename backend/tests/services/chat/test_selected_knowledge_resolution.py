@@ -3,7 +3,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -199,7 +199,7 @@ async def test_request_build_keeps_unselected_task_defaults(
         },
     )
 
-    async def _process_contexts(db, processed_request, *args, **kwargs):
+    def _process_contexts(db, processed_request, *args, **kwargs):
         processed_request.knowledge_base_ids = [12]
         return processed_request
 
@@ -217,7 +217,7 @@ async def test_request_build_keeps_unselected_task_defaults(
         patch.object(
             trigger_unified,
             "_process_contexts",
-            new=AsyncMock(side_effect=_process_contexts),
+            new=MagicMock(side_effect=_process_contexts),
         ),
     ):
         result = await trigger_unified.build_execution_request(

@@ -4,6 +4,7 @@
 
 """Persist device-level materialization of account plugin desired state."""
 
+from collections.abc import Callable
 from datetime import datetime
 
 from sqlalchemy.orm import Session
@@ -17,15 +18,27 @@ from app.schemas.device import (
     DeviceCapabilitySyncResult,
 )
 from app.schemas.installed_plugin import PluginDeviceReportItem
-from app.services.device_service import device_service
+from app.services.chat.storage.db import run_sync_in_executor
 
 
 class PluginDeviceInstallationService:
     """Translate capability sync acknowledgements into queryable device state."""
 
+    def __init__(
+        self,
+        session_factory: Callable[[], Session] | None = None,
+    ) -> None:
+        self._configured_session_factory = session_factory
+
+    def _session_factory(self) -> Session:
+        if self._configured_session_factory is not None:
+            return self._configured_session_factory()
+        from app.db.session import SessionLocal
+
+        return SessionLocal()
+
     async def ensure_pending_for_all_devices(
         self,
-        db: Session,
         *,
         user_id: int,
         installed_kind_id: int,
@@ -33,9 +46,52 @@ class PluginDeviceInstallationService:
         reset_failures: bool = False,
     ) -> None:
         """Materialize desired state for registered online and offline devices."""
-        devices = await device_service.get_all_devices(db, user_id)
-        for device in devices:
-            device_id = self._device_id(device)
+        await run_sync_in_executor(
+            self._ensure_pending_for_all_devices_sync,
+            user_id,
+            installed_kind_id,
+            desired_release_id,
+            reset_failures,
+        )
+
+    def _ensure_pending_for_all_devices_sync(
+        self,
+        user_id: int,
+        installed_kind_id: int,
+        desired_release_id: int,
+        reset_failures: bool,
+    ) -> None:
+        with self._session_factory() as db:
+            devices = (
+                db.query(Kind)
+                .filter(
+                    Kind.user_id == user_id,
+                    Kind.kind == "Device",
+                    Kind.namespace == "default",
+                    Kind.is_active == True,
+                )
+                .all()
+            )
+            self._materialize_pending_devices(
+                db,
+                device_ids=[device.name for device in devices],
+                user_id=user_id,
+                installed_kind_id=installed_kind_id,
+                desired_release_id=desired_release_id,
+                reset_failures=reset_failures,
+            )
+
+    def _materialize_pending_devices(
+        self,
+        db: Session,
+        *,
+        device_ids: list[str],
+        user_id: int,
+        installed_kind_id: int,
+        desired_release_id: int,
+        reset_failures: bool,
+    ) -> None:
+        for device_id in device_ids:
             if not device_id:
                 continue
             row = self._device_row(db, installed_kind_id, device_id)

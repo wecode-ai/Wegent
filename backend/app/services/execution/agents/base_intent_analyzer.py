@@ -13,6 +13,8 @@ import json
 import logging
 from typing import Optional
 
+from app.core.payload_codec import run_payload_codec
+
 logger = logging.getLogger(__name__)
 
 
@@ -46,7 +48,12 @@ class BaseIntentAnalyzer:
                     temperature=0,
                     response_format={"type": "json_object"},
                 )
-                return json.loads(response.choices[0].message.content)
+                content = response.choices[0].message.content
+                return await run_payload_codec(
+                    json.loads,
+                    content,
+                    payload_hint=content,
+                )
             except Exception as e:
                 logger.exception(f"[{self.__class__.__name__}] LLM call failed: {e}")
                 return None

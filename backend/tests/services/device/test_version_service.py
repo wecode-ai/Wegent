@@ -8,11 +8,23 @@ from unittest.mock import AsyncMock, Mock
 import pytest
 
 from app.core.cache import cache_manager
+from app.core.web_background_tasks import web_background_task_manager
 from app.services.device.version_checker import (
     GithubVersionChecker,
     RegistryVersionChecker,
     VersionInfo,
 )
+
+
+@pytest.fixture(autouse=True)
+def _run_refreshes_through_test_owned_tasks(monkeypatch: pytest.MonkeyPatch) -> None:
+    async def submit(factory, *, name: str):
+        del name
+        return asyncio.create_task(factory())
+
+    monkeypatch.setattr(web_background_task_manager, "submit", submit)
+
+
 from app.services.device.version_service import (
     EXECUTOR_VERSION_CACHE_KEY,
     EXECUTOR_VERSION_FAILURE_CACHE_TTL,
@@ -143,18 +155,18 @@ async def test_version_checker_runs_blocking_request_in_thread(
     response.json.return_value = payload
     session = Mock()
     session.get.return_value = response
-    to_thread = AsyncMock(side_effect=lambda callback: callback())
+    run_device_io = AsyncMock(side_effect=lambda callback: callback())
     monkeypatch.setattr(
         "app.services.device.version_checker.traced_session",
         lambda: session,
     )
     monkeypatch.setattr(
-        "app.services.device.version_checker.asyncio.to_thread",
-        to_thread,
+        "app.services.device.version_checker.run_device_io",
+        run_device_io,
     )
 
     result = await checker.get_latest_version()
 
     assert result is not None
     assert result.version == expected_version
-    to_thread.assert_awaited_once()
+    run_device_io.assert_awaited_once()

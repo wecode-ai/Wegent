@@ -20,7 +20,13 @@ import httpx
 from sqlalchemy.orm import Session
 from sqlalchemy.orm.attributes import flag_modified
 
+from app.core.bounded_executor import BoundedExecutor
 from app.core.config import settings
+from app.core.payload_codec import (
+    decode_sync_response_json,
+    decode_sync_response_text,
+    encode_http_json,
+)
 from app.models.task import TaskResource
 from app.schemas.kind import ArchiveInfo, Task
 from app.utils.workspace_archive_time import (
@@ -31,6 +37,12 @@ from app.utils.workspace_archive_time import (
 from .storage import archive_storage_service
 
 logger = logging.getLogger(__name__)
+
+_ARCHIVE_STORAGE_EXECUTOR = BoundedExecutor(
+    max_workers=4,
+    max_in_flight=8,
+    thread_name_prefix="wegent-archive-storage",
+)
 
 
 class ArchiveService:
@@ -57,8 +69,7 @@ class ArchiveService:
 
     async def archive_workspace(
         self,
-        db: Session,
-        task: TaskResource,
+        task_id: int,
         executor_name: str,
         executor_namespace: str,
         runtime_type: str = "executor",
@@ -66,8 +77,7 @@ class ArchiveService:
         """Archive workspace files before Pod deletion.
 
         Args:
-            db: Database session
-            task: Task resource
+            task_id: Task resource identity
             executor_name: Executor name
             executor_namespace: Executor namespace
 
@@ -78,16 +88,15 @@ class ArchiveService:
             logger.info("Workspace archiving is disabled")
             return None
 
-        task_id = task.id
         logger.info(
             f"[ArchiveService] Starting archive for task {task_id}, "
             f"executor={executor_namespace}/{executor_name}"
         )
 
         try:
-            # Generate presigned upload URL
-            upload_url, storage_key = archive_storage_service.generate_upload_url(
-                task_id
+            upload_url, storage_key = await _ARCHIVE_STORAGE_EXECUTOR.run(
+                archive_storage_service.generate_upload_url,
+                task_id,
             )
 
             # Call executor to archive workspace
@@ -102,7 +111,11 @@ class ArchiveService:
             if not archive_result:
                 # Executor may have uploaded the file before the response failed.
                 # Check MinIO directly so we don't discard a successful upload.
-                archive_result = self._try_recover_archive(task_id, storage_key)
+                archive_result = await _ARCHIVE_STORAGE_EXECUTOR.run(
+                    self._try_recover_archive,
+                    task_id,
+                    storage_key,
+                )
                 if not archive_result:
                     logger.warning(
                         f"[ArchiveService] Archive failed for task {task_id}, "
@@ -111,17 +124,25 @@ class ArchiveService:
                     return None
 
             # Create archive info
+            expires_at = await _ARCHIVE_STORAGE_EXECUTOR.run(
+                archive_storage_service.calculate_expiration_time
+            )
             archive_info = ArchiveInfo(
                 storageKey=storage_key,
                 archivedAt=workspace_archive_now(),
-                expiresAt=archive_storage_service.calculate_expiration_time(),
+                expiresAt=expires_at,
                 sizeBytes=archive_result.get("size_bytes"),
                 sessionFileIncluded=archive_result.get("session_file_included", False),
                 gitIncluded=archive_result.get("git_included", False),
             )
 
-            # Update task status with archive info
-            self._update_task_archive_info(db, task, archive_info)
+            from app.services.chat.storage.db import run_sync_in_executor
+
+            await run_sync_in_executor(
+                self._persist_task_archive_info_sync,
+                task_id,
+                archive_info,
+            )
 
             logger.info(
                 f"[ArchiveService] Successfully archived task {task_id}, "
@@ -139,69 +160,30 @@ class ArchiveService:
             )
             return None
 
-    async def restore_workspace(
+    async def restore_workspace_snapshot(
         self,
-        db: Session,
-        task: TaskResource,
+        *,
+        task_id: int,
+        task_json: Dict[str, Any],
         executor_name: str,
         executor_namespace: str,
         runtime_type: str = "executor",
     ) -> Optional[Dict[str, Any]]:
-        """Restore workspace files after Pod recreation.
-
-        Args:
-            db: Database session
-            task: Task resource with archive info
-            executor_name: New executor name
-            executor_namespace: New executor namespace
-
-        Returns:
-            Restore details if successful, None otherwise
-        """
-        task_id = task.id
+        """Restore a detached task snapshot without blocking the event loop."""
         logger.info(
             f"[ArchiveService] Starting restore for task {task_id}, "
             f"executor={executor_namespace}/{executor_name}"
         )
 
         try:
-            # Get archive info from task
-            task_crd = Task.model_validate(task.json)
-            archive_info = task_crd.status.archive if task_crd.status else None
-
-            if not archive_info or not archive_info.storageKey:
-                logger.info(
-                    f"[ArchiveService] No archive found for task {task_id}, "
-                    "will use git clone instead"
-                )
-                return None
-
-            # Check if archive is expired
-            if (
-                archive_info.expiresAt
-                and normalize_workspace_archive_datetime(archive_info.expiresAt)
-                < workspace_archive_now()
-            ):
-                logger.info(
-                    f"[ArchiveService] Archive expired for task {task_id}, "
-                    f"expired at {archive_info.expiresAt}"
-                )
-                return None
-
-            # Check if archive file exists
-            if not archive_storage_service.archive_exists(archive_info.storageKey):
-                logger.warning(
-                    f"[ArchiveService] Archive file not found for task {task_id}, "
-                    f"key={archive_info.storageKey}"
-                )
-                return None
-
-            # Generate presigned download URL
-            download_url = archive_storage_service.generate_download_url(
-                archive_info.storageKey
+            download_url = await _ARCHIVE_STORAGE_EXECUTOR.run(
+                self._prepare_restore_download_sync,
+                task_id,
+                task_json,
             )
+            if download_url is None:
+                return None
 
-            # Call executor to restore workspace
             restore_result = await self._call_executor_restore(
                 task_id=task_id,
                 download_url=download_url,
@@ -228,6 +210,38 @@ class ArchiveService:
                 exc_info=True,
             )
             return None
+
+    def _prepare_restore_download_sync(
+        self,
+        task_id: int,
+        task_json: Dict[str, Any],
+    ) -> Optional[str]:
+        """Validate an archive and prepare its URL outside the event loop."""
+        task_crd = Task.model_validate(task_json)
+        archive_info = task_crd.status.archive if task_crd.status else None
+        if not archive_info or not archive_info.storageKey:
+            logger.info(
+                f"[ArchiveService] No archive found for task {task_id}, "
+                "will use git clone instead"
+            )
+            return None
+        if (
+            archive_info.expiresAt
+            and normalize_workspace_archive_datetime(archive_info.expiresAt)
+            < workspace_archive_now()
+        ):
+            logger.info(
+                f"[ArchiveService] Archive expired for task {task_id}, "
+                f"expired at {archive_info.expiresAt}"
+            )
+            return None
+        if not archive_storage_service.archive_exists(archive_info.storageKey):
+            logger.warning(
+                f"[ArchiveService] Archive file not found for task {task_id}, "
+                f"key={archive_info.storageKey}"
+            )
+            return None
+        return archive_storage_service.generate_download_url(archive_info.storageKey)
 
     def check_archive_available(
         self, task: TaskResource
@@ -302,18 +316,20 @@ class ArchiveService:
 
         try:
             async with httpx.AsyncClient(timeout=120.0) as client:
+                request_body = await encode_http_json(payload)
                 response = await client.post(
                     url,
-                    json=payload,
+                    content=request_body,
                     headers={"Content-Type": "application/json"},
                 )
                 response.raise_for_status()
-                return response.json()
+                return await decode_sync_response_json(response)
         except httpx.HTTPStatusError as e:
+            response_text = await decode_sync_response_text(e.response)
             logger.error(
                 f"[ArchiveService] HTTP error calling archive: "
                 f"task_id={task_id} status={e.response.status_code} "
-                f"body={e.response.text[:500]}"
+                f"body={response_text[:500]}"
             )
             return None
         except httpx.HTTPError as e:
@@ -366,13 +382,14 @@ class ArchiveService:
 
         try:
             async with httpx.AsyncClient(timeout=120.0) as client:
+                request_body = await encode_http_json(payload)
                 response = await client.post(
                     url,
-                    json=payload,
+                    content=request_body,
                     headers={"Content-Type": "application/json"},
                 )
                 response.raise_for_status()
-                return response.json()
+                return await decode_sync_response_json(response)
         except httpx.HTTPError as e:
             logger.error(f"[ArchiveService] HTTP error calling restore: {e}")
             return None
@@ -406,6 +423,22 @@ class ArchiveService:
                 f"task_id={task_id} error={e}"
             )
             return None
+
+    def _persist_task_archive_info_sync(
+        self,
+        task_id: int,
+        archive_info: ArchiveInfo,
+    ) -> None:
+        """Persist archive metadata with a worker-owned session."""
+        from app.db.session import get_db_session
+        from app.stores.tasks import task_store
+
+        with get_db_session() as db:
+            task = task_store.get_by_id(db, task_id=task_id)
+            if not task:
+                raise ValueError(f"Task {task_id} no longer exists")
+            self._update_task_archive_info(db, task, archive_info)
+            db.commit()
 
     def _update_task_archive_info(
         self, db: Session, task: TaskResource, archive_info: ArchiveInfo

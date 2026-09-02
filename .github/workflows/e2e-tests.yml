@@ -357,10 +357,10 @@ jobs:
         with:
           setup-toolchain: "false"
 
-      - name: Set up Python 3.11 and uv
+      - name: Set up Python 3.12 and uv
         uses: ./.github/actions/setup-python-uv-cache
         with:
-          python-version: "3.11"
+          python-version: "3.12"
 
       - name: Install shared module
         working-directory: ./shared
@@ -420,7 +420,7 @@ jobs:
           CHUNK_STORAGE_ENABLED: "true"
         run: |
           source .venv/bin/activate
-          nohup uvicorn app.main:app --host 0.0.0.0 --port 8000 > backend.log 2>&1 &
+          nohup env HOST=0.0.0.0 PORT=8000 uv run --no-sync python -m app.runtime > backend.log 2>&1 &
           echo $! > backend.pid
 
       - name: Start Knowledge Runtime
@@ -473,7 +473,7 @@ jobs:
             return 1
           }
 
-          wait_for_url http://localhost:8000/api/docs \
+          wait_for_url http://localhost:8000/api/ready \
             && wait_for_url http://localhost:8200/internal/rag/health \
             && wait_for_url http://qdrant:6333/readyz \
             && wait_for_url http://localhost:8100/health \
@@ -483,7 +483,7 @@ jobs:
 
       - name: Verify backend is running
         run: |
-          curl -f http://localhost:8000/api/docs > /dev/null 2>&1 || (cat backend/backend.log && exit 1)
+          curl -fsS http://localhost:8000/api/ready > /dev/null 2>&1 || (cat backend/backend.log && exit 1)
 
       - name: Verify Chat Shell is running
         run: |
@@ -685,10 +685,10 @@ jobs:
           path: .github/claude-code-cli/node_modules
           key: ${{ runner.os }}-node-24-local-harness-clis-v2-${{ hashFiles('.github/claude-code-cli/package.json', '.github/claude-code-cli/package-lock.json') }}
 
-      - name: Set up Python 3.11 and uv
+      - name: Set up Python 3.12 and uv
         uses: ./.github/actions/setup-python-uv-cache
         with:
-          python-version: "3.11"
+          python-version: "3.12"
 
       - name: Install shared module
         working-directory: ./shared
@@ -790,7 +790,7 @@ jobs:
           INIT_DATA_ENABLED: "true"
         run: |
           source .venv/bin/activate
-          nohup uvicorn app.main:app --host 0.0.0.0 --port 8000 > backend.log 2>&1 &
+          nohup env HOST=0.0.0.0 PORT=8000 uv run --no-sync python -m app.runtime > backend.log 2>&1 &
           echo $! > backend.pid
 
       - name: Start Chat Shell server
@@ -839,7 +839,7 @@ jobs:
           CLAUDE_CODE_INCLUDE_CO_AUTHORED_BY: "false"
         run: |
           for i in {1..120}; do
-            if curl -sf http://localhost:8000/api/docs >/dev/null; then
+            if curl -fsS http://localhost:8000/api/ready >/dev/null; then
               break
             fi
             sleep 1
@@ -936,7 +936,7 @@ jobs:
             return 1
           }
 
-          wait_for_url http://localhost:8000/api/docs \
+          wait_for_url http://localhost:8000/api/ready \
             && wait_for_url http://localhost:8100/health \
             && wait_for_url http://localhost:3000 \
             && wait_for_url http://localhost:9999/health \
@@ -945,7 +945,7 @@ jobs:
 
       - name: Verify backend is running
         run: |
-          curl -f http://localhost:8000/api/docs > /dev/null 2>&1 || (cat backend/backend.log && exit 1)
+          curl -fsS http://localhost:8000/api/ready > /dev/null 2>&1 || (cat backend/backend.log && exit 1)
 
       - name: Verify Chat Shell is running
         run: |

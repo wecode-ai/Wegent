@@ -855,7 +855,7 @@ class TestKnowledgeOrchestrator:
     async def test_get_document_detail_maps_content_length_and_truncated(
         self, orchestrator, mock_db, mock_user
     ):
-        """Test get_document_detail maps paged content and async summary."""
+        """Test get_document_detail maps paged content and summary."""
         document = SimpleNamespace(id=9, name="roadmap", kind_id=77, source_type="file")
         paged = SimpleNamespace(
             document_id=9,
@@ -868,7 +868,7 @@ class TestKnowledgeOrchestrator:
             kb_id=77,
         )
         summary_service = MagicMock()
-        summary_service.get_document_summary = AsyncMock(
+        summary_service.get_document_summary_sync = MagicMock(
             return_value={"summary": "hello"}
         )
 
@@ -910,7 +910,7 @@ class TestKnowledgeOrchestrator:
             limit=100000,
         )
         mock_get_summary_service.assert_called_once_with(mock_db)
-        summary_service.get_document_summary.assert_awaited_once_with(9)
+        summary_service.get_document_summary_sync.assert_called_once_with(9)
 
     @pytest.mark.asyncio
     async def test_get_document_detail_skips_content_when_disabled(
@@ -960,7 +960,7 @@ class TestKnowledgeOrchestrator:
         mock_db.query.return_value.filter.return_value.first.return_value = document
 
         summary_service = MagicMock()
-        summary_service.get_document_summary = AsyncMock(
+        summary_service.get_document_summary_sync = MagicMock(
             return_value={"summary": "hello"}
         )
 
@@ -982,7 +982,7 @@ class TestKnowledgeOrchestrator:
                         include_summary=True,
                     )
 
-        summary_service.get_document_summary.assert_not_awaited()
+        summary_service.get_document_summary_sync.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_get_document_detail_converts_summary_model_dump(
@@ -996,7 +996,9 @@ class TestKnowledgeOrchestrator:
         summary_result.model_dump.return_value = {"summary": "hello"}
 
         summary_service = MagicMock()
-        summary_service.get_document_summary = AsyncMock(return_value=summary_result)
+        summary_service.get_document_summary_sync = MagicMock(
+            return_value=summary_result
+        )
 
         with patch(
             "app.services.knowledge.orchestrator.KnowledgeService"

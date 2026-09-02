@@ -5,25 +5,31 @@
 """Service for Project -> Device Workspace -> LocalTask runtime work trees."""
 
 import asyncio
+import copy
 import json
 import logging
 import posixpath
 import re
 import time
+from collections.abc import Callable
 from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 from hashlib import sha256
 from types import SimpleNamespace
-from typing import Any, Optional
+from typing import Any, Optional, TypeVar
 from urllib.parse import urlparse
 from uuid import uuid4
 
 from fastapi import HTTPException, status
+from sqlalchemy import and_
 from sqlalchemy.orm import Session
 
+from app.core.blocking_work import run_execution_io
 from app.core.config import settings
 from app.core.constants import CLIENT_ORIGIN_WEWORK
+from app.core.payload_codec import run_payload_codec
 from app.models.im_session import IMPrivateSession
+from app.models.kind import Kind
 from app.models.project import Project
 from app.models.subtask_context import ContextStatus, ContextType, SubtaskContext
 from app.models.user import User
@@ -111,6 +117,8 @@ from app.services.runtime_work_kind_store import (
 
 logger = logging.getLogger(__name__)
 
+T = TypeVar("T")
+
 RUNTIME_LIST_TIMEOUT_SECONDS = 30
 RUNTIME_TRANSCRIPT_TIMEOUT_SECONDS = 30
 RUNTIME_SEARCH_TIMEOUT_SECONDS = 30
@@ -189,6 +197,248 @@ class RuntimeWorkspaceListing:
     remote_host_id: Optional[str] = None
 
 
+@dataclass(frozen=True)
+class _PreparedRuntimeSend:
+    address: RuntimeTaskAddress
+    payload: dict[str, Any]
+
+
+@dataclass(frozen=True)
+class _PreparedGuidance:
+    address: RuntimeTaskAddress
+    payload: dict[str, Any]
+
+
+@dataclass(frozen=True)
+class _PreparedWorkspace:
+    project_id: int
+    project_name: str
+    workspace_path: str
+    repo_url: Optional[str]
+    branch: Optional[str]
+    git_domain: Optional[str]
+    git_identity: tuple[Optional[str], Optional[str]]
+
+
+@dataclass(frozen=True)
+class _OwnedDeviceRecord:
+    id: int
+    device_id: str
+    spec: dict[str, Any]
+
+
+def _execute_db_phase(
+    operation: Callable[..., T],
+    *args: Any,
+) -> T:
+    """Run one database-only phase with a worker-owned session."""
+
+    from app.services.chat.storage.db import get_db_session
+
+    with get_db_session() as db:
+        return operation(db, *args)
+
+
+async def _run_db_phase(
+    operation: Callable[..., T],
+    *args: Any,
+) -> T:
+    """Admit one database phase to the bounded ``wegent-db`` executor."""
+
+    from app.services.chat.storage.db import run_sync_in_executor
+
+    return await run_sync_in_executor(_execute_db_phase, operation, *args)
+
+
+def _load_owned_device_records_sync(
+    db: Session,
+    user_id: int,
+) -> tuple[_OwnedDeviceRecord, ...]:
+    records = (
+        db.query(Kind)
+        .filter(
+            and_(
+                Kind.user_id == user_id,
+                Kind.kind == "Device",
+                Kind.namespace == "default",
+                Kind.is_active == True,
+            )
+        )
+        .all()
+    )
+    return tuple(
+        _OwnedDeviceRecord(
+            id=int(record.id),
+            device_id=str(record.name),
+            spec=copy.deepcopy(
+                record.json.get("spec", {}) if isinstance(record.json, dict) else {}
+            ),
+        )
+        for record in records
+    )
+
+
+def _runtime_online_device_id(record: _OwnedDeviceRecord) -> str:
+    device_type = str(record.spec.get("deviceType") or "local").lower()
+    if device_type != "cloud":
+        return record.device_id
+    cloud_config = record.spec.get("cloudConfig")
+    if not isinstance(cloud_config, dict):
+        cloud_config = {}
+    return str(
+        record.spec.get("deviceId") or cloud_config.get("deviceId") or record.device_id
+    )
+
+
+def _project_runtime_devices(
+    records: tuple[_OwnedDeviceRecord, ...],
+    online_keys: list[str],
+    online_info_by_key: dict[str, Any],
+) -> list[dict[str, Any]]:
+    devices: list[dict[str, Any]] = []
+    for record, online_key in zip(records, online_keys):
+        raw_online_info = online_info_by_key.get(online_key)
+        online_info = raw_online_info if isinstance(raw_online_info, dict) else {}
+        spec = record.spec
+        device_type = str(spec.get("deviceType") or "local").lower()
+        devices.append(
+            {
+                "id": record.id,
+                "device_id": record.device_id,
+                "socket_device_id": _runtime_online_device_id(record),
+                "name": spec.get("displayName") or record.device_id,
+                "status": (
+                    online_info.get("status", "online") if online_info else "offline"
+                ),
+                "device_type": device_type,
+                "client_ip": spec.get("clientIp"),
+                "runtime_transfer_host": spec.get("runtimeTransferHost"),
+                "cloud_config": copy.deepcopy(spec.get("cloudConfig")),
+                "remote_config": copy.deepcopy(spec.get("remoteConfig")),
+                "runtime_features": copy.deepcopy(
+                    online_info.get("runtime_features") if online_info else None
+                ),
+            }
+        )
+    return devices
+
+
+async def _load_runtime_devices(user_id: int) -> list[dict[str, Any]]:
+    """Load DB device identity off-loop, then enrich it from Redis on-loop."""
+
+    from app.core.cache import cache_manager
+
+    records = await _run_db_phase(_load_owned_device_records_sync, user_id)
+    online_keys = [
+        device_service.generate_online_key(
+            user_id,
+            _runtime_online_device_id(record),
+        )
+        for record in records
+    ]
+    online_info_by_key = await cache_manager.mget(online_keys) if online_keys else {}
+    return await run_payload_codec(
+        _project_runtime_devices,
+        records,
+        online_keys,
+        online_info_by_key,
+        payload_hint=(records, online_info_by_key),
+        force_offload=True,
+    )
+
+
+def _prepare_runtime_address_sync(
+    db: Session,
+    user_id: int,
+    address: RuntimeTaskAddress,
+    touch: bool,
+) -> RuntimeTaskAddress:
+    normalized = _normalized_address(address)
+    _ensure_owned_device(db, user_id, normalized.device_id)
+    if touch:
+        _touch_workspace_mapping(db, user_id, normalized)
+    return normalized
+
+
+def _prepare_runtime_addresses_sync(
+    db: Session,
+    user_id: int,
+    addresses: tuple[RuntimeTaskAddress, ...],
+    touch: bool,
+) -> tuple[RuntimeTaskAddress, ...]:
+    return tuple(
+        _prepare_runtime_address_sync(db, user_id, address, touch)
+        for address in addresses
+    )
+
+
+def _touch_runtime_address_sync(
+    db: Session,
+    user_id: int,
+    address: RuntimeTaskAddress,
+) -> None:
+    _touch_workspace_mapping(db, user_id, address)
+
+
+def _validate_active_project_sync(
+    db: Session,
+    user_id: int,
+    project_id: int,
+) -> None:
+    _get_active_project(db, user_id, project_id, None)
+
+
+def _ensure_owned_device_id_sync(
+    db: Session,
+    user_id: int,
+    device_id: str,
+) -> None:
+    _ensure_owned_device(db, user_id, device_id)
+
+
+def _validate_fork_devices_sync(
+    db: Session,
+    user_id: int,
+    source_device_id: str,
+    target_device_id: str,
+) -> None:
+    _ensure_owned_device(db, user_id, source_device_id)
+    _ensure_owned_device(db, user_id, target_device_id)
+
+
+def _presign_runtime_transfer_urls(
+    user_id: int,
+    transfer_id: str,
+) -> tuple[str, str]:
+    object_key = f"runtime-task-transfers/{user_id}/{transfer_id}.tar.gz"
+    upload_url, _upload_expires_at = object_storage_presign_service.generate_upload_url(
+        bucket=settings.WORKSPACE_ARCHIVE_BUCKET,
+        object_key=object_key,
+        expires_seconds=settings.PUBLISH_PRESIGNED_UPLOAD_EXPIRE_SECONDS,
+    )
+    download_url, _download_expires_at = (
+        object_storage_presign_service.generate_download_url(
+            bucket=settings.WORKSPACE_ARCHIVE_BUCKET,
+            object_key=object_key,
+            expires_seconds=settings.PUBLISH_PRESIGNED_UPLOAD_EXPIRE_SECONDS,
+        )
+    )
+    return upload_url, download_url
+
+
+def _compile_runtime_task_create_sync(
+    db: Session,
+    user_id: int,
+    request: RuntimeTaskCreateRequest,
+) -> CompiledRuntimeTaskCreate:
+    compiled = compile_runtime_task_create(
+        db=db,
+        user_id=user_id,
+        request=request,
+    )
+    return replace(compiled, target=replace(compiled.target, project=None))
+
+
 async def call_runtime_worktree_rpc(
     *,
     user_id: int,
@@ -264,54 +514,91 @@ def upsert_device_workspace(
     )
 
 
+def _prepare_device_workspace_sync(
+    db: Session,
+    user_id: int,
+    payload: DeviceWorkspacePrepareRequest,
+) -> _PreparedWorkspace:
+    project = _get_active_project(db, user_id, payload.project_id, None)
+    workspace_path = normalize_workspace_path(payload.workspace_path)
+    config = ProjectConfig.model_validate(project.config or {})
+    repo_url = config.git.url if config.is_workspace and config.git else None
+    git_domain = config.git.domain if config.git else None
+    return _PreparedWorkspace(
+        project_id=project.id,
+        project_name=str(project.name),
+        workspace_path=workspace_path,
+        repo_url=repo_url,
+        branch=config.git.branch if config.git else None,
+        git_domain=git_domain,
+        git_identity=_resolve_user_git_identity(
+            db,
+            user_id=user_id,
+            git_domain=git_domain,
+        ),
+    )
+
+
+def _persist_prepared_device_workspace_sync(
+    db: Session,
+    user_id: int,
+    payload: DeviceWorkspacePrepareRequest,
+    prepared: _PreparedWorkspace,
+) -> DeviceWorkspaceResponse:
+    return upsert_device_workspace(
+        db=db,
+        user_id=user_id,
+        payload=DeviceWorkspaceUpsert(
+            projectId=prepared.project_id,
+            deviceId=payload.device_id,
+            workspacePath=prepared.workspace_path,
+            repoUrl=prepared.repo_url,
+            label=payload.label,
+        ),
+    )
+
+
 async def prepare_device_workspace(
     *,
-    db: Session,
     user_id: int,
     payload: DeviceWorkspacePrepareRequest,
 ) -> DeviceWorkspacePrepareResponse:
     """Prepare a project child folder on one device and persist its mapping."""
 
-    project = _get_active_project(db, user_id, payload.project_id, None)
-    workspace_path = normalize_workspace_path(payload.workspace_path)
-    config = ProjectConfig.model_validate(project.config or {})
-    repo_url = config.git.url if config.is_workspace and config.git else None
+    prepared = await _run_db_phase(
+        _prepare_device_workspace_sync,
+        user_id,
+        payload,
+    )
     prepared_action = (
         await _prepare_git_workspace_path(
-            db=db,
             user_id=user_id,
             device_id=payload.device_id,
-            workspace_path=workspace_path,
-            git_url=repo_url,
-            branch=config.git.branch if config.git else None,
-            git_domain=config.git.domain if config.git else None,
+            workspace_path=prepared.workspace_path,
+            git_url=prepared.repo_url,
+            branch=prepared.branch,
+            git_identity=prepared.git_identity,
             action=payload.action,
         )
-        if repo_url
+        if prepared.repo_url
         else await _prepare_plain_workspace_path(
-            db=db,
             user_id=user_id,
             device_id=payload.device_id,
-            workspace_path=workspace_path,
+            workspace_path=prepared.workspace_path,
             action=payload.action,
         )
     )
     await _register_prepared_runtime_workspace(
         user_id=user_id,
         device_id=payload.device_id,
-        workspace_path=workspace_path,
-        project_name=project.name,
+        workspace_path=prepared.workspace_path,
+        project_name=prepared.project_name,
     )
-    mapping = upsert_device_workspace(
-        db=db,
-        user_id=user_id,
-        payload=DeviceWorkspaceUpsert(
-            projectId=project.id,
-            deviceId=payload.device_id,
-            workspacePath=workspace_path,
-            repoUrl=repo_url,
-            label=payload.label,
-        ),
+    mapping = await _run_db_phase(
+        _persist_prepared_device_workspace_sync,
+        user_id,
+        payload,
+        prepared,
     )
     return DeviceWorkspacePrepareResponse(
         mapping=mapping,
@@ -358,12 +645,11 @@ def delete_device_workspace(
 
 async def list_runtime_work(
     *,
-    db: Session,
     user_id: int,
 ) -> RuntimeWorkListResponse:
     """Return runtime-native work grouped by executor workspace."""
 
-    devices = await device_service.get_all_devices(db, user_id)
+    devices = await _load_runtime_devices(user_id)
     devices_by_id = {str(device.get("device_id")): device for device in devices}
     runtime_workspaces = await _list_online_runtime_workspaces(
         user_id=user_id,
@@ -425,15 +711,17 @@ async def list_runtime_work(
 
 async def get_runtime_transcript(
     *,
-    db: Session,
     user_id: int,
     address: RuntimeTranscriptRequest,
 ) -> RuntimeTranscriptResponse:
     """Read a LocalTask transcript from the owning local executor."""
 
-    normalized_address = _normalized_address(address)
-    _ensure_owned_device(db, user_id, normalized_address.device_id)
-    _touch_workspace_mapping(db, user_id, normalized_address)
+    normalized_address = await _run_db_phase(
+        _prepare_runtime_address_sync,
+        user_id,
+        address,
+        True,
+    )
     payload = _runtime_transcript_payload(address, normalized_address)
     started_at = time.perf_counter()
     logger.info(
@@ -491,13 +779,12 @@ async def get_runtime_transcript(
 
 async def search_runtime_work(
     *,
-    db: Session,
     user_id: int,
     request: RuntimeWorkSearchRequest,
 ) -> RuntimeWorkSearchResponse:
     """Search runtime transcripts on online or busy devices owned by the user."""
 
-    devices = await device_service.get_all_devices(db, user_id)
+    devices = await _load_runtime_devices(user_id)
     searchable_devices: list[tuple[str, dict[str, Any]]] = []
     for device in devices:
         device_id = str(device.get("device_id") or "")
@@ -558,14 +845,17 @@ async def _search_runtime_work_device(
 
 async def revert_runtime_file_changes(
     *,
-    db: Session,
     user_id: int,
     request: RuntimeFileChangesRevertRequest,
 ) -> RuntimeFileChangesRevertResponse:
     """Revert a native runtime file-change artifact on the owning device."""
 
-    address = _normalized_address(request.address)
-    _ensure_owned_device(db, user_id, address.device_id)
+    address = await _run_db_phase(
+        _prepare_runtime_address_sync,
+        user_id,
+        request.address,
+        False,
+    )
     summary = TurnFileChangesSummary.model_validate(
         _runtime_file_changes_summary_payload(request.file_changes)
     )
@@ -580,7 +870,7 @@ async def revert_runtime_file_changes(
         )
 
     result = await execute_configured_device_command(
-        db=db,
+        db=None,
         user_id=user_id,
         device_id=address.device_id,
         command_key="turn_file_changes_revert",
@@ -623,70 +913,92 @@ async def revert_runtime_file_changes(
     )
 
 
-async def send_runtime_message(
+def _prepare_runtime_message_sync(
+    user_id: int,
+    request: RuntimeSendRequest,
+    include_request_user_input_response: bool,
+) -> _PreparedRuntimeSend:
+    """Compile one runtime send using a worker-owned database session."""
+
+    from app.services.chat.storage.db import get_db_session
+
+    with get_db_session() as db:
+        address = _normalized_address(request.address)
+        _ensure_owned_device(db, user_id, address.device_id)
+        _touch_workspace_mapping(db, user_id, address)
+        payload = {
+            **_runtime_task_address_payload(address),
+            "message": request.message,
+        }
+        _apply_runtime_user_message_identity(payload, request)
+        attachments = _runtime_attachment_payloads(
+            db,
+            user_id,
+            request.attachment_ids,
+        )
+        if attachments:
+            payload["attachments"] = attachments
+        if request.source:
+            payload["source"] = request.source.model_dump()
+        if (
+            include_request_user_input_response
+            and request.request_user_input_response is not None
+        ):
+            payload["requestUserInputResponse"] = request.request_user_input_response
+        if request.additional_context is not None:
+            payload["additionalContext"] = request.additional_context
+        _complete_runtime_send_payload(
+            db=db,
+            user_id=user_id,
+            address=address,
+            payload=payload,
+            request=request,
+        )
+        return _PreparedRuntimeSend(address=address, payload=payload)
+
+
+async def send_runtime_message_nonblocking(
     *,
-    db: Session,
     user_id: int,
     request: RuntimeSendRequest,
 ) -> RuntimeSendResponse:
-    """Continue a LocalTask through the owning local executor."""
+    """Continue a LocalTask without synchronous storage work on the event loop."""
 
-    address = _normalized_address(request.address)
-    _ensure_owned_device(db, user_id, address.device_id)
-    _touch_workspace_mapping(db, user_id, address)
-    payload = {
-        **_runtime_task_address_payload(address),
-        "message": request.message,
-    }
-    _apply_runtime_user_message_identity(payload, request)
-    attachments = _runtime_attachment_payloads(db, user_id, request.attachment_ids)
-    if attachments:
-        payload["attachments"] = attachments
-    if request.source:
-        payload["source"] = request.source.model_dump()
-    if request.request_user_input_response is not None:
-        payload["requestUserInputResponse"] = request.request_user_input_response
-    if request.additional_context is not None:
-        payload["additionalContext"] = request.additional_context
-    return await _dispatch_runtime_send(
-        db=db,
+    from app.services.chat.storage.db import run_sync_in_executor
+
+    prepared = await run_sync_in_executor(
+        _prepare_runtime_message_sync,
+        user_id,
+        request,
+        True,
+    )
+    return await _call_runtime_send_rpc(
         user_id=user_id,
-        address=address,
-        payload=payload,
-        request=request,
+        address=prepared.address,
+        payload=prepared.payload,
         rpc_method="runtime.tasks.send",
     )
 
 
-async def interrupt_and_send_runtime_message(
+async def interrupt_and_send_runtime_message_nonblocking(
     *,
-    db: Session,
     user_id: int,
     request: RuntimeSendRequest,
 ) -> RuntimeSendResponse:
-    """Interrupt the active turn and immediately continue the same LocalTask."""
+    """Interrupt and continue without synchronous work on the event loop."""
 
-    address = _normalized_address(request.address)
-    _ensure_owned_device(db, user_id, address.device_id)
-    _touch_workspace_mapping(db, user_id, address)
-    payload = {
-        **_runtime_task_address_payload(address),
-        "message": request.message,
-    }
-    _apply_runtime_user_message_identity(payload, request)
-    attachments = _runtime_attachment_payloads(db, user_id, request.attachment_ids)
-    if attachments:
-        payload["attachments"] = attachments
-    if request.source:
-        payload["source"] = request.source.model_dump()
-    if request.additional_context is not None:
-        payload["additionalContext"] = request.additional_context
-    return await _dispatch_runtime_send(
-        db=db,
+    from app.services.chat.storage.db import run_sync_in_executor
+
+    prepared = await run_sync_in_executor(
+        _prepare_runtime_message_sync,
+        user_id,
+        request,
+        False,
+    )
+    return await _call_runtime_send_rpc(
         user_id=user_id,
-        address=address,
-        payload=payload,
-        request=request,
+        address=prepared.address,
+        payload=prepared.payload,
         rpc_method="runtime.tasks.interrupt_and_send",
     )
 
@@ -704,25 +1016,14 @@ def _apply_runtime_user_message_identity(
     payload["createdAt"] = int(time.time() * 1000)
 
 
-async def _dispatch_runtime_send(
+def _complete_runtime_send_payload(
     *,
     db: Session,
     user_id: int,
     address: RuntimeTaskAddress,
     payload: dict[str, Any],
     request: RuntimeSendRequest,
-    rpc_method: str,
-) -> RuntimeSendResponse:
-    """Send a runtime task message with the required execution request.
-
-    The executor requires ``executionRequest`` to spawn a new turn (it carries
-    model config, user info, skills, etc.). The Wework frontend builds this
-    client-side for direct local sends; the IM continuation path flows through
-    the backend RPC, so we rebuild it from the default task-mode team while
-    preserving the model selected for the bound runtime task.
-    Request-user-input responses use a dedicated executor channel and do not
-    spawn a new turn, so they intentionally omit ``executionRequest``.
-    """
+) -> None:
     if request.request_user_input_response is None:
         try:
             execution_request = _build_runtime_send_execution_request(
@@ -746,9 +1047,16 @@ async def _dispatch_runtime_send(
             ) from exc
         payload["executionRequest"] = execution_request.to_dict()
     if request.model_selection:
-        payload["modelSelection"] = request.model_selection.model_dump(
-            by_alias=True,
-        )
+        payload["modelSelection"] = request.model_selection.model_dump(by_alias=True)
+
+
+async def _call_runtime_send_rpc(
+    *,
+    user_id: int,
+    address: RuntimeTaskAddress,
+    payload: dict[str, Any],
+    rpc_method: str,
+) -> RuntimeSendResponse:
     try:
         result = await runtime_rpc_service.call(
             user_id=user_id,
@@ -765,17 +1073,12 @@ async def _dispatch_runtime_send(
     return _runtime_send_response(result, address.local_task_id)
 
 
-async def send_runtime_guidance(
-    *,
+def _prepare_runtime_guidance_sync(
     db: Session,
     user_id: int,
     request: RuntimeGuidanceRequest,
-) -> RuntimeGuidanceResponse:
-    """Steer an active LocalTask turn through the owning local executor."""
-
-    address = _normalized_address(request.address)
-    _ensure_owned_device(db, user_id, address.device_id)
-    _touch_workspace_mapping(db, user_id, address)
+) -> _PreparedGuidance:
+    address = _prepare_runtime_address_sync(db, user_id, request.address, True)
     payload = {
         **_runtime_task_address_payload(address),
         "message": request.message,
@@ -787,12 +1090,27 @@ async def send_runtime_guidance(
         payload["clientGuidanceId"] = request.client_guidance_id
     if request.additional_context:
         payload["additionalContext"] = request.additional_context
+    return _PreparedGuidance(address=address, payload=payload)
+
+
+async def send_runtime_guidance(
+    *,
+    user_id: int,
+    request: RuntimeGuidanceRequest,
+) -> RuntimeGuidanceResponse:
+    """Steer an active LocalTask turn through the owning local executor."""
+
+    prepared = await _run_db_phase(
+        _prepare_runtime_guidance_sync,
+        user_id,
+        request,
+    )
     try:
         result = await runtime_rpc_service.call(
             user_id=user_id,
-            device_id=address.device_id,
+            device_id=prepared.address.device_id,
             method="runtime.tasks.guidance",
-            payload=payload,
+            payload=prepared.payload,
             timeout_seconds=RUNTIME_SEND_TIMEOUT_SECONDS,
         )
     except RuntimeRpcError as exc:
@@ -800,22 +1118,23 @@ async def send_runtime_guidance(
             status_code=status.HTTP_502_BAD_GATEWAY,
             detail=str(exc),
         ) from exc
-    return _runtime_guidance_response(result, address.local_task_id)
+    return _runtime_guidance_response(result, prepared.address.local_task_id)
 
 
 async def bind_runtime_task_to_im_sessions(
     *,
-    db: Session,
     user_id: int,
     request: BindRuntimeTaskIMSessionsRequest,
 ) -> BindRuntimeTaskIMSessionsResponse:
     """Bind private IM sessions to a device-local runtime task address."""
 
-    address = _normalized_address(request.address)
-    _ensure_owned_device(db, user_id, address.device_id)
-    _touch_workspace_mapping(db, user_id, address)
+    address = await _run_db_phase(
+        _prepare_runtime_address_sync,
+        user_id,
+        request.address,
+        True,
+    )
     sessions = await im_session_service.load_user_sessions_by_keys(
-        db,
         user_id=user_id,
         session_keys=request.session_keys,
     )
@@ -826,12 +1145,10 @@ async def bind_runtime_task_to_im_sessions(
         )
     for session in sessions:
         await im_session_service.bind_active_runtime_task(
-            db,
             session=session,
             runtime_task=runtime_task,
         )
-    notification = await im_notification_dispatcher.send_task_switched(
-        db,
+    notification = await im_notification_dispatcher.send_task_switched_nonblocking(
         sessions,
         request.task_title,
     )
@@ -844,7 +1161,6 @@ async def bind_runtime_task_to_im_sessions(
 
 async def get_im_notification_settings(
     *,
-    db: Session,
     user_id: int,
 ) -> RuntimeIMNotificationSettingsResponse:
     """Return global and task-level IM notification settings for runtime tasks."""
@@ -884,19 +1200,17 @@ async def get_im_notification_settings(
 
 async def update_global_im_notification(
     *,
-    db: Session,
     user_id: int,
     request: RuntimeGlobalIMNotificationUpdateRequest,
 ) -> RuntimeIMNotificationSettingsResponse:
     """Update the user-level IM notification quick switch."""
 
     await im_session_service.update_global_notification(
-        db,
         user_id=user_id,
         enabled=request.enabled,
         session_key=request.session_key,
     )
-    return await get_im_notification_settings(db=db, user_id=user_id)
+    return await get_im_notification_settings(user_id=user_id)
 
 
 async def update_im_notification_presence(
@@ -919,23 +1233,24 @@ async def update_im_notification_presence(
 
 async def subscribe_runtime_task_im_notification(
     *,
-    db: Session,
     user_id: int,
     request: RuntimeTaskIMNotificationSubscriptionRequest,
 ) -> RuntimeTaskIMNotificationSubscriptionResponse:
     """Subscribe a device-local runtime task to private IM notifications."""
 
-    address = _normalized_address(request.address)
-    _ensure_owned_device(db, user_id, address.device_id)
+    address = await _run_db_phase(
+        _prepare_runtime_address_sync,
+        user_id,
+        request.address,
+        False,
+    )
     sessions = await im_session_service.load_user_sessions_by_keys(
-        db,
         user_id=user_id,
         session_keys=request.session_keys,
     )
     runtime_task = _runtime_task_address_payload(address)
     for session in sessions:
         await im_session_service.subscribe_runtime_task_notification(
-            db,
             session=session,
             runtime_task=runtime_task,
         )
@@ -948,14 +1263,17 @@ async def subscribe_runtime_task_im_notification(
 
 async def unsubscribe_runtime_task_im_notification(
     *,
-    db: Session,
     user_id: int,
     address: RuntimeTaskAddress,
 ) -> RuntimeTaskIMNotificationSubscriptionResponse:
     """Remove all private IM notification subscriptions for one runtime task."""
 
-    normalized_address = _normalized_address(address)
-    _ensure_owned_device(db, user_id, normalized_address.device_id)
+    normalized_address = await _run_db_phase(
+        _prepare_runtime_address_sync,
+        user_id,
+        address,
+        False,
+    )
     await im_session_service.unsubscribe_runtime_task_notification(
         user_id=user_id,
         runtime_task=_runtime_task_address_payload(normalized_address),
@@ -969,21 +1287,34 @@ async def unsubscribe_runtime_task_im_notification(
 
 async def archive_runtime_task(
     *,
-    db: Session,
     user_id: int,
     address: RuntimeTaskAddress,
 ) -> RuntimeTaskArchiveResponse:
     """Archive a LocalTask through the owning local executor."""
 
-    normalized_address = _normalized_address(address)
-    _ensure_owned_device(db, user_id, normalized_address.device_id)
-    _touch_workspace_mapping(db, user_id, normalized_address)
+    normalized_address = await _run_db_phase(
+        _prepare_runtime_address_sync,
+        user_id,
+        address,
+        True,
+    )
+    return await _archive_prepared_runtime_task(
+        user_id=user_id,
+        address=normalized_address,
+    )
+
+
+async def _archive_prepared_runtime_task(
+    *,
+    user_id: int,
+    address: RuntimeTaskAddress,
+) -> RuntimeTaskArchiveResponse:
     try:
         result = await runtime_rpc_service.call(
             user_id=user_id,
-            device_id=normalized_address.device_id,
+            device_id=address.device_id,
             method="runtime.tasks.archive",
-            payload=_runtime_task_address_payload(normalized_address),
+            payload=_runtime_task_address_payload(address),
             timeout_seconds=RUNTIME_TRANSCRIPT_TIMEOUT_SECONDS,
         )
     except RuntimeRpcError as exc:
@@ -991,12 +1322,11 @@ async def archive_runtime_task(
             status_code=status.HTTP_502_BAD_GATEWAY,
             detail=str(exc),
         ) from exc
-    return _runtime_archive_response(result, normalized_address)
+    return _runtime_archive_response(result, address)
 
 
 async def rename_runtime_task(
     *,
-    db: Session,
     user_id: int,
     request: RuntimeTaskRenameRequest,
 ) -> RuntimeTaskArchiveResponse:
@@ -1009,8 +1339,12 @@ async def rename_runtime_task(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="title is required",
         )
-    _ensure_owned_device(db, user_id, normalized_address.device_id)
-    _touch_workspace_mapping(db, user_id, normalized_address)
+    normalized_address = await _run_db_phase(
+        _prepare_runtime_address_sync,
+        user_id,
+        normalized_address,
+        True,
+    )
     try:
         result = await runtime_rpc_service.call(
             user_id=user_id,
@@ -1032,14 +1366,12 @@ async def rename_runtime_task(
 
 async def cancel_runtime_task(
     *,
-    db: Session,
     user_id: int,
     address: RuntimeTaskAddress,
 ) -> RuntimeTaskCancelResponse:
     """Cancel a running LocalTask through the owning local executor."""
 
     normalized_address, result = await _call_runtime_task_control(
-        db=db,
         user_id=user_id,
         address=address,
         method="runtime.tasks.cancel",
@@ -1049,14 +1381,12 @@ async def cancel_runtime_task(
 
 async def force_start_runtime_task(
     *,
-    db: Session,
     user_id: int,
     address: RuntimeTaskAddress,
 ) -> RuntimeTaskCancelResponse:
     """Force one queued LocalTask to run through the owning executor."""
 
     normalized_address, result = await _call_runtime_task_control(
-        db=db,
         user_id=user_id,
         address=address,
         method="runtime.tasks.force_start",
@@ -1066,14 +1396,12 @@ async def force_start_runtime_task(
 
 async def reorder_runtime_task_queue(
     *,
-    db: Session,
     user_id: int,
     request: RuntimeTaskQueueReorderRequest,
 ) -> RuntimeTaskQueueReorderResponse:
     """Move one queued LocalTask to a new persisted execution position."""
 
     normalized_address, result = await _call_runtime_task_control(
-        db=db,
         user_id=user_id,
         address=request,
         method="runtime.tasks.queue.reorder",
@@ -1090,15 +1418,17 @@ async def reorder_runtime_task_queue(
 
 async def _call_runtime_task_control(
     *,
-    db: Session,
     user_id: int,
     address: RuntimeTaskAddress,
     method: str,
     payload_patch: Optional[dict[str, Any]] = None,
 ) -> tuple[RuntimeTaskAddress, dict[str, Any]]:
-    normalized_address = _normalized_address(address)
-    _ensure_owned_device(db, user_id, normalized_address.device_id)
-    _touch_workspace_mapping(db, user_id, normalized_address)
+    normalized_address = await _run_db_phase(
+        _prepare_runtime_address_sync,
+        user_id,
+        address,
+        True,
+    )
     payload = _runtime_task_address_payload(normalized_address)
     payload.update(payload_patch or {})
     try:
@@ -1119,22 +1449,25 @@ async def _call_runtime_task_control(
 
 async def list_archived_conversations(
     *,
-    db: Session,
     user_id: int,
     request: ArchivedConversationsListRequest,
 ) -> ArchivedConversationsListResponse:
     """List archived conversations from online device-local runtime state."""
 
-    devices = await device_service.get_all_devices(db, user_id)
+    devices = await _load_runtime_devices(user_id)
     if request.device_id:
-        _ensure_owned_device(db, user_id, request.device_id)
+        await _run_db_phase(
+            _ensure_owned_device_id_sync,
+            user_id,
+            request.device_id,
+        )
         devices = [
             device
             for device in devices
             if str(device.get("device_id") or "") == request.device_id
         ]
 
-    project_lookup = _archived_project_lookup(db, user_id)
+    project_lookup = await _run_db_phase(_archived_project_lookup, user_id)
     items: list[ArchivedConversationItem] = []
     for device in devices:
         device_id = str(device.get("device_id") or "")
@@ -1175,7 +1508,6 @@ async def list_archived_conversations(
 
 async def archive_project_conversations(
     *,
-    db: Session,
     user_id: int,
     request: RuntimeArchiveProjectConversationsRequest,
 ) -> RuntimeArchivedConversationBulkResponse:
@@ -1187,16 +1519,19 @@ async def archive_project_conversations(
             detail="projectId or runtimeProjectKey is required",
         )
     if request.project_id is not None:
-        _get_active_project(db, user_id, request.project_id, None)
+        await _run_db_phase(
+            _validate_active_project_sync,
+            user_id,
+            request.project_id,
+        )
 
-    runtime_work = await list_runtime_work(db=db, user_id=user_id)
+    runtime_work = await list_runtime_work(user_id=user_id)
     addresses = _active_runtime_addresses(
         runtime_work,
         project_id=request.project_id,
         runtime_project_key=request.runtime_project_key,
     )
     return await _archive_runtime_addresses(
-        db=db,
         user_id=user_id,
         addresses=addresses,
     )
@@ -1204,15 +1539,13 @@ async def archive_project_conversations(
 
 async def archive_all_conversations(
     *,
-    db: Session,
     user_id: int,
 ) -> RuntimeArchivedConversationBulkResponse:
     """Archive all active runtime conversations visible on online devices."""
 
-    runtime_work = await list_runtime_work(db=db, user_id=user_id)
+    runtime_work = await list_runtime_work(user_id=user_id)
     addresses = _active_runtime_addresses(runtime_work)
     return await _archive_runtime_addresses(
-        db=db,
         user_id=user_id,
         addresses=addresses,
     )
@@ -1220,34 +1553,44 @@ async def archive_all_conversations(
 
 async def unarchive_conversation(
     *,
-    db: Session,
     user_id: int,
     address: RuntimeTaskAddress,
 ) -> RuntimeTaskArchiveResponse:
     """Unarchive one device-local conversation through the owning executor."""
 
-    normalized_address = _normalized_address(address)
-    _ensure_owned_device(db, user_id, normalized_address.device_id)
+    normalized_address = await _run_db_phase(
+        _prepare_runtime_address_sync,
+        user_id,
+        address,
+        False,
+    )
     result = await _call_archived_conversation_rpc(
         user_id=user_id,
         address=normalized_address,
         method="runtime.archived_conversations.unarchive",
     )
     if result.get("success") and normalized_address.workspace_path:
-        _touch_workspace_mapping(db, user_id, normalized_address)
+        await _run_db_phase(
+            _touch_runtime_address_sync,
+            user_id,
+            normalized_address,
+        )
     return _runtime_archive_response(result, normalized_address)
 
 
 async def delete_archived_conversation(
     *,
-    db: Session,
     user_id: int,
     address: RuntimeTaskAddress,
 ) -> RuntimeTaskArchiveResponse:
     """Delete one archived device-local conversation through the executor."""
 
-    normalized_address = _normalized_address(address)
-    _ensure_owned_device(db, user_id, normalized_address.device_id)
+    normalized_address = await _run_db_phase(
+        _prepare_runtime_address_sync,
+        user_id,
+        address,
+        False,
+    )
     result = await _call_archived_conversation_rpc(
         user_id=user_id,
         address=normalized_address,
@@ -1258,15 +1601,19 @@ async def delete_archived_conversation(
 
 async def delete_archived_conversations_bulk(
     *,
-    db: Session,
     user_id: int,
     request: RuntimeArchivedConversationBulkRequest,
 ) -> RuntimeArchivedConversationBulkResponse:
     """Delete archived conversations grouped by owning device RPC."""
 
-    addresses = [_normalized_address(address) for address in request.items]
-    for address in addresses:
-        _ensure_owned_device(db, user_id, address.device_id)
+    addresses = list(
+        await _run_db_phase(
+            _prepare_runtime_addresses_sync,
+            user_id,
+            tuple(request.items),
+            False,
+        )
+    )
 
     grouped: dict[str, list[RuntimeTaskAddress]] = {}
     for address in addresses:
@@ -1307,16 +1654,15 @@ async def delete_archived_conversations_bulk(
 
 async def create_runtime_task(
     *,
-    db: Session,
     user_id: int,
     request: RuntimeTaskCreateRequest,
 ) -> RuntimeTaskCreateResponse:
     """Create a LocalTask on the selected device executor without DB Task rows."""
 
-    compiled = compile_runtime_task_create(
-        db=db,
-        user_id=user_id,
-        request=request,
+    compiled = await _run_db_phase(
+        _compile_runtime_task_create_sync,
+        user_id,
+        request,
     )
     try:
         result = await runtime_rpc_service.call(
@@ -1506,7 +1852,6 @@ async def _register_prepared_runtime_workspace(
 
 async def open_runtime_workspace(
     *,
-    db: Session,
     user_id: int,
     request: RuntimeWorkspaceOpenRequest,
 ) -> RuntimeWorkspaceOpenResponse:
@@ -1514,7 +1859,7 @@ async def open_runtime_workspace(
 
     device_id = request.device_id.strip()
     workspace_path = normalize_workspace_path(request.workspace_path)
-    _ensure_owned_device(db, user_id, device_id)
+    await _run_db_phase(_ensure_owned_device_id_sync, user_id, device_id)
     payload = {
         "runtime": request.runtime,
         "workspacePath": workspace_path,
@@ -1544,7 +1889,6 @@ async def open_runtime_workspace(
 
 async def rename_runtime_workspace(
     *,
-    db: Session,
     user_id: int,
     request: RuntimeWorkspaceRenameRequest,
 ) -> RuntimeWorkspaceOpenResponse:
@@ -1558,7 +1902,7 @@ async def rename_runtime_workspace(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="name is required",
         )
-    _ensure_owned_device(db, user_id, device_id)
+    await _run_db_phase(_ensure_owned_device_id_sync, user_id, device_id)
     try:
         result = await runtime_rpc_service.call(
             user_id=user_id,
@@ -1586,7 +1930,6 @@ async def rename_runtime_workspace(
 
 async def remove_runtime_workspace(
     *,
-    db: Session,
     user_id: int,
     request: RuntimeWorkspaceRemoveRequest,
 ) -> RuntimeWorkspaceOpenResponse:
@@ -1594,7 +1937,7 @@ async def remove_runtime_workspace(
 
     device_id = request.device_id.strip()
     workspace_path = normalize_workspace_path(request.workspace_path)
-    _ensure_owned_device(db, user_id, device_id)
+    await _run_db_phase(_ensure_owned_device_id_sync, user_id, device_id)
     payload = {
         "runtime": request.runtime,
         "workspacePath": workspace_path,
@@ -1625,14 +1968,13 @@ async def remove_runtime_workspace(
 
 async def search_runtime_workspace(
     *,
-    db: Session,
     user_id: int,
     request: RuntimeWorkspaceSearchRequest,
 ) -> RuntimeWorkspaceSearchResponse:
     """Search one workspace through its owning online local executor."""
 
     device_id = request.device_id.strip()
-    _ensure_owned_device(db, user_id, device_id)
+    await _run_db_phase(_ensure_owned_device_id_sync, user_id, device_id)
     payload: dict[str, Any] = {
         "root": normalize_workspace_path(request.root),
         "query": request.query.strip(),
@@ -1657,7 +1999,6 @@ async def search_runtime_workspace(
 
 async def fork_runtime_task(
     *,
-    db: Session,
     user_id: int,
     request: RuntimeTaskForkRequest,
 ) -> RuntimeTaskForkResponse:
@@ -1666,17 +2007,20 @@ async def fork_runtime_task(
     source = _normalized_address(request.source)
     target_device_id = request.target.device_id.strip()
     target_workspace_path = normalize_workspace_path(request.target.workspace_path)
-    _ensure_owned_device(db, user_id, source.device_id)
-    _ensure_owned_device(db, user_id, target_device_id)
+    await _run_db_phase(
+        _validate_fork_devices_sync,
+        user_id,
+        source.device_id,
+        target_device_id,
+    )
     source = await _resolve_runtime_task_source_address(
         user_id=user_id,
         source=source,
     )
-    _touch_workspace_mapping(db, user_id, source)
+    await _run_db_phase(_touch_runtime_address_sync, user_id, source)
 
     transfer_id = str(uuid4())
     workspace_transfer = await _runtime_fork_workspace_transfer(
-        db=db,
         user_id=user_id,
         source=source,
         target_device_id=target_device_id,
@@ -1693,7 +2037,6 @@ async def fork_runtime_task(
         "transferId": transfer_id,
     }
     source_direct_hosts = await _runtime_transfer_direct_hosts(
-        db=db,
         user_id=user_id,
         device_id=source.device_id,
         peer_device_id=target_device_id,
@@ -1748,7 +2091,6 @@ async def fork_runtime_task(
                     "transferId": push_transfer_id,
                     "token": push_token,
                     "directHosts": await _runtime_transfer_direct_hosts(
-                        db=db,
                         user_id=user_id,
                         device_id=target_device_id,
                         peer_device_id=source.device_id,
@@ -1831,21 +2173,11 @@ async def fork_runtime_task(
                     ) from exc
 
     if import_result.get("success") is False:
-        object_key = f"runtime-task-transfers/{user_id}/{transfer_id}.tar.gz"
         try:
-            upload_url, _upload_expires_at = (
-                object_storage_presign_service.generate_upload_url(
-                    bucket=settings.WORKSPACE_ARCHIVE_BUCKET,
-                    object_key=object_key,
-                    expires_seconds=settings.PUBLISH_PRESIGNED_UPLOAD_EXPIRE_SECONDS,
-                )
-            )
-            download_url, _download_expires_at = (
-                object_storage_presign_service.generate_download_url(
-                    bucket=settings.WORKSPACE_ARCHIVE_BUCKET,
-                    object_key=object_key,
-                    expires_seconds=settings.PUBLISH_PRESIGNED_UPLOAD_EXPIRE_SECONDS,
-                )
+            upload_url, download_url = await run_execution_io(
+                _presign_runtime_transfer_urls,
+                user_id,
+                transfer_id,
             )
         except Exception as exc:
             logger.warning(
@@ -1914,7 +2246,7 @@ async def fork_runtime_task(
         fallback_runtime=str(fork_package.get("sourceRuntime") or "codex"),
     )
     if response.accepted:
-        _touch_workspace_mapping(db, user_id, response.target)
+        await _run_db_phase(_touch_runtime_address_sync, user_id, response.target)
     return response
 
 
@@ -1942,14 +2274,12 @@ def _get_active_project(
 
 async def _prepare_plain_workspace_path(
     *,
-    db: Session,
     user_id: int,
     device_id: str,
     workspace_path: str,
     action: str,
 ) -> str:
     status_payload = await _read_project_folder_status(
-        db=db,
         user_id=user_id,
         device_id=device_id,
         workspace_path=workspace_path,
@@ -1964,7 +2294,7 @@ async def _prepare_plain_workspace_path(
                 detail="Project folder already exists",
             )
         mkdir_result = await execute_configured_device_command(
-            db=db,
+            db=None,
             user_id=user_id,
             device_id=device_id,
             command_key="mkdir_p",
@@ -1982,30 +2312,27 @@ async def _prepare_plain_workspace_path(
 
 async def _prepare_git_workspace_path(
     *,
-    db: Session,
     user_id: int,
     device_id: str,
     workspace_path: str,
     git_url: str,
     branch: Optional[str],
-    git_domain: Optional[str],
+    git_identity: tuple[Optional[str], Optional[str]],
     action: str,
 ) -> str:
     status_payload = await _read_project_folder_status(
-        db=db,
         user_id=user_id,
         device_id=device_id,
         workspace_path=workspace_path,
     )
     if not status_payload.get("exists") or status_payload.get("isEmpty"):
         await _clone_git_workspace_path(
-            db=db,
             user_id=user_id,
             device_id=device_id,
             workspace_path=workspace_path,
             git_url=git_url,
             branch=branch,
-            git_domain=git_domain,
+            git_identity=git_identity,
         )
         return "cloned"
 
@@ -2022,25 +2349,23 @@ async def _prepare_git_workspace_path(
             detail="Project folder is linked to another repository",
         )
     await _reuse_git_workspace_path(
-        db=db,
         user_id=user_id,
         device_id=device_id,
         workspace_path=workspace_path,
         branch=branch,
-        git_domain=git_domain,
+        git_identity=git_identity,
     )
     return "reused_git"
 
 
 async def _read_project_folder_status(
     *,
-    db: Session,
     user_id: int,
     device_id: str,
     workspace_path: str,
 ) -> dict[str, Any]:
     result = await execute_configured_device_command(
-        db=db,
+        db=None,
         user_id=user_id,
         device_id=device_id,
         command_key="project_folder_status",
@@ -2053,7 +2378,11 @@ async def _read_project_folder_status(
         return stdout
     if isinstance(stdout, str):
         try:
-            parsed = json.loads(stdout)
+            parsed = await run_payload_codec(
+                json.loads,
+                stdout,
+                payload_hint=stdout,
+            )
         except json.JSONDecodeError as exc:
             raise HTTPException(
                 status_code=status.HTTP_502_BAD_GATEWAY,
@@ -2082,18 +2411,17 @@ def _ensure_selectable_directory(status_payload: dict[str, Any]) -> None:
 
 async def _clone_git_workspace_path(
     *,
-    db: Session,
     user_id: int,
     device_id: str,
     workspace_path: str,
     git_url: str,
     branch: Optional[str],
-    git_domain: Optional[str],
+    git_identity: tuple[Optional[str], Optional[str]],
 ) -> None:
     parent_path = posixpath.dirname(workspace_path)
     if parent_path and parent_path != ".":
         mkdir_result = await execute_configured_device_command(
-            db=db,
+            db=None,
             user_id=user_id,
             device_id=device_id,
             command_key="mkdir_p",
@@ -2103,7 +2431,7 @@ async def _clone_git_workspace_path(
         _raise_for_failed_device_command(mkdir_result, "Failed to create parent folder")
 
     clone_result = await execute_configured_device_command(
-        db=db,
+        db=None,
         user_id=user_id,
         device_id=device_id,
         command_key="git_clone",
@@ -2113,25 +2441,23 @@ async def _clone_git_workspace_path(
     )
     _raise_for_failed_device_command(clone_result, "Failed to clone Git repository")
     await _configure_git_workspace_identity(
-        db=db,
         user_id=user_id,
         device_id=device_id,
         workspace_path=workspace_path,
-        git_domain=git_domain,
+        git_identity=git_identity,
     )
 
 
 async def _reuse_git_workspace_path(
     *,
-    db: Session,
     user_id: int,
     device_id: str,
     workspace_path: str,
     branch: Optional[str],
-    git_domain: Optional[str],
+    git_identity: tuple[Optional[str], Optional[str]],
 ) -> None:
     fetch_result = await execute_configured_device_command(
-        db=db,
+        db=None,
         user_id=user_id,
         device_id=device_id,
         command_key="git_fetch",
@@ -2142,7 +2468,7 @@ async def _reuse_git_workspace_path(
     _raise_for_failed_device_command(fetch_result, "Failed to fetch Git repository")
     if branch and branch.strip():
         checkout_result = await execute_configured_device_command(
-            db=db,
+            db=None,
             user_id=user_id,
             device_id=device_id,
             command_key="git_checkout",
@@ -2152,32 +2478,26 @@ async def _reuse_git_workspace_path(
         )
         _raise_for_failed_device_command(checkout_result, "Failed to checkout branch")
     await _configure_git_workspace_identity(
-        db=db,
         user_id=user_id,
         device_id=device_id,
         workspace_path=workspace_path,
-        git_domain=git_domain,
+        git_identity=git_identity,
     )
 
 
 async def _configure_git_workspace_identity(
     *,
-    db: Session,
     user_id: int,
     device_id: str,
     workspace_path: str,
-    git_domain: Optional[str],
+    git_identity: tuple[Optional[str], Optional[str]],
 ) -> None:
-    git_user_name, git_user_email = _resolve_user_git_identity(
-        db,
-        user_id=user_id,
-        git_domain=git_domain,
-    )
+    git_user_name, git_user_email = git_identity
     if not git_user_name or not git_user_email:
         return
     for key, value in (("user.name", git_user_name), ("user.email", git_user_email)):
         config_result = await execute_configured_device_command(
-            db=db,
+            db=None,
             user_id=user_id,
             device_id=device_id,
             command_key="git_config",
@@ -2587,23 +2907,21 @@ def _raise_runtime_rpc_failure(result: dict[str, Any]) -> None:
 
 async def _runtime_fork_workspace_transfer(
     *,
-    db: Session,
     user_id: int,
     source: RuntimeTaskAddress,
     target_device_id: str,
     target_workspace_path: str,
     transfer_id: str,
 ) -> Optional[RuntimeForkWorkspaceTransfer]:
-    mappings = list_device_workspace_kinds(db=db, user_id=user_id)
-    target_project_id = _project_id_for_runtime_workspace(
-        mappings=mappings,
-        device_id=target_device_id,
-        workspace_path=target_workspace_path,
+    target_is_mapped = await _run_db_phase(
+        _runtime_fork_target_is_mapped_sync,
+        user_id,
+        target_device_id,
+        target_workspace_path,
     )
-    if target_project_id is None:
+    if not target_is_mapped:
         return None
     source_commit = await _runtime_git_workspace_transfer_source_commit(
-        db=db,
         user_id=user_id,
         source=source,
         target_device_id=target_device_id,
@@ -2617,7 +2935,6 @@ async def _runtime_fork_workspace_transfer(
     )
     if target_worktree_path != target_workspace_path:
         await _prepare_runtime_fork_git_worktree(
-            db=db,
             user_id=user_id,
             target_device_id=target_device_id,
             target_workspace_path=target_workspace_path,
@@ -2631,9 +2948,23 @@ async def _runtime_fork_workspace_transfer(
     )
 
 
+def _runtime_fork_target_is_mapped_sync(
+    db: Session,
+    user_id: int,
+    target_device_id: str,
+    target_workspace_path: str,
+) -> bool:
+    mappings = list_device_workspace_kinds(db=db, user_id=user_id)
+    target_project_id = _project_id_for_runtime_workspace(
+        mappings=mappings,
+        device_id=target_device_id,
+        workspace_path=target_workspace_path,
+    )
+    return target_project_id is not None
+
+
 async def _runtime_transfer_direct_hosts(
     *,
-    db: Session,
     user_id: int,
     device_id: str,
     peer_device_id: str,
@@ -2669,7 +3000,6 @@ def _is_loopback_transfer_host(host: str) -> bool:
 
 async def _runtime_git_workspace_transfer_source_commit(
     *,
-    db: Session,
     user_id: int,
     source: RuntimeTaskAddress,
     target_device_id: str,
@@ -2678,13 +3008,11 @@ async def _runtime_git_workspace_transfer_source_commit(
     if not source.workspace_path:
         return None
     source_status = await _runtime_git_status(
-        db=db,
         user_id=user_id,
         device_id=source.device_id,
         workspace_path=source.workspace_path,
     )
     target_status = await _runtime_git_status(
-        db=db,
         user_id=user_id,
         device_id=target_device_id,
         workspace_path=target_workspace_path,
@@ -2699,7 +3027,6 @@ async def _runtime_git_workspace_transfer_source_commit(
     if not source_commit:
         return None
     available = await _runtime_git_commit_available(
-        db=db,
         user_id=user_id,
         device_id=target_device_id,
         workspace_path=target_workspace_path,
@@ -2710,7 +3037,6 @@ async def _runtime_git_workspace_transfer_source_commit(
 
 async def _prepare_runtime_fork_git_worktree(
     *,
-    db: Session,
     user_id: int,
     target_device_id: str,
     target_workspace_path: str,
@@ -2718,7 +3044,7 @@ async def _prepare_runtime_fork_git_worktree(
     source_commit: str,
 ) -> None:
     result = await execute_configured_device_command(
-        db=db,
+        db=None,
         user_id=user_id,
         device_id=target_device_id,
         command_key="git_worktree_add",
@@ -2774,14 +3100,12 @@ def _join_device_path(root: str, relative_path: str) -> str:
 
 async def _runtime_git_status(
     *,
-    db: Session,
     user_id: int,
     device_id: str,
     workspace_path: str,
 ) -> Optional[dict[str, Any]]:
     try:
         status_payload = await _read_project_folder_status(
-            db=db,
             user_id=user_id,
             device_id=device_id,
             workspace_path=workspace_path,
@@ -2795,7 +3119,6 @@ async def _runtime_git_status(
 
 async def _runtime_git_commit_available(
     *,
-    db: Session,
     user_id: int,
     device_id: str,
     workspace_path: str,
@@ -2803,7 +3126,7 @@ async def _runtime_git_commit_available(
 ) -> bool:
     try:
         result = await execute_configured_device_command(
-            db=db,
+            db=None,
             user_id=user_id,
             device_id=device_id,
             command_key="git_commit_available",
@@ -3227,15 +3550,19 @@ def _archived_project_groups(
 
 async def _archive_runtime_addresses(
     *,
-    db: Session,
     user_id: int,
     addresses: list[RuntimeTaskAddress],
 ) -> RuntimeArchivedConversationBulkResponse:
+    prepared_addresses = await _run_db_phase(
+        _prepare_runtime_addresses_sync,
+        user_id,
+        tuple(addresses),
+        True,
+    )
     results: list[dict[str, Any]] = []
     accepted_count = 0
-    for address in addresses:
-        response = await archive_runtime_task(
-            db=db,
+    for address in prepared_addresses:
+        response = await _archive_prepared_runtime_task(
             user_id=user_id,
             address=address,
         )

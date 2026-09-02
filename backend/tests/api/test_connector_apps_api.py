@@ -26,7 +26,7 @@ from app.services.connector_connections import (
     CONNECTOR_CONNECTION_KIND,
     connector_connection_service,
 )
-from app.services.connector_oauth import ConnectorOAuthService
+from app.services.connector_oauth import ConnectorOAuthService, GitHubToken
 from shared.utils.crypto import decrypt_sensitive_data
 
 
@@ -60,7 +60,7 @@ def _create_app(
     return connector_app_service.create_app(
         db,
         ConnectorAppWrite.model_validate(payload),
-        admin,
+        admin.id,
     )
 
 
@@ -180,11 +180,13 @@ def test_github_oauth_api_flow_connects_polls_and_disconnects(
         ConnectorOAuthService,
         "_exchange_code",
         AsyncMock(
-            return_value={
-                "access_token": "github-access-token",
-                "token_type": "bearer",
-                "scope": "repo",
-            }
+            return_value=GitHubToken(
+                access_token="github-access-token",
+                refresh_token=None,
+                token_type="bearer",
+                scopes=("repo",),
+                expires_in=None,
+            )
         ),
     )
     monkeypatch.setattr(

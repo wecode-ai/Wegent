@@ -34,7 +34,7 @@ def _raise_error(exc: OAuthProviderError) -> None:
 
 
 @router.get("", response_model=OAuthClientListResponse)
-async def list_oauth_clients(
+def list_oauth_clients(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> OAuthClientListResponse:
@@ -47,7 +47,7 @@ async def list_oauth_clients(
     response_model=OAuthClientResponse,
     status_code=status.HTTP_201_CREATED,
 )
-async def create_oauth_client(
+def create_oauth_client(
     request: OAuthClientCreateRequest,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
@@ -61,7 +61,7 @@ async def create_oauth_client(
 
 
 @router.put("/{client_kind_id}", response_model=OAuthClientResponse)
-async def update_oauth_client(
+def update_oauth_client(
     client_kind_id: int,
     request: OAuthClientUpdateRequest,
     db: Session = Depends(get_db),
@@ -82,7 +82,7 @@ async def update_oauth_client(
     "/{client_kind_id}/rotate-secret",
     response_model=OAuthClientResponse,
 )
-async def rotate_oauth_client_secret(
+def rotate_oauth_client_secret(
     client_kind_id: int,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
@@ -98,7 +98,7 @@ async def rotate_oauth_client_secret(
 
 
 @router.delete("/{client_kind_id}", status_code=status.HTTP_204_NO_CONTENT)
-async def delete_oauth_client(
+def delete_oauth_client(
     client_kind_id: int,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),

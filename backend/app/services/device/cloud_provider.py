@@ -18,6 +18,7 @@ from sqlalchemy.orm import Session
 from app.core.config import settings
 from app.models.kind import Kind
 from app.schemas.device import DeviceConnectionMode, DeviceType
+from app.services.device.base_provider import DeviceRecord
 from app.services.device.local_provider import (
     LocalDeviceProvider,
     runtime_capacity_slot_values,
@@ -126,9 +127,31 @@ class CloudDeviceProvider(LocalDeviceProvider):
             .all()
         )
 
-        # Filter cloud devices
+        return await self.list_device_records(
+            tuple(
+                DeviceRecord(
+                    id=device.id,
+                    name=device.name,
+                    json=device.json,
+                )
+                for device in devices
+            ),
+            user_id,
+            include_offline,
+        )
+
+    async def list_device_records(
+        self,
+        records: tuple[DeviceRecord, ...],
+        user_id: int,
+        include_offline: bool = True,
+    ) -> List[Dict[str, Any]]:
+        """Enrich detached cloud Device records."""
+
+        from app.core.cache import cache_manager
+
         cloud_devices = []
-        for device_kind in devices:
+        for device_kind in records:
             spec = device_kind.json.get("spec", {})
             if spec.get("deviceType") == DeviceType.CLOUD.value:
                 cloud_devices.append(device_kind)
@@ -213,7 +236,7 @@ class CloudDeviceProvider(LocalDeviceProvider):
 
         return result
 
-    def _resolve_runtime_device_id(self, device_kind: Kind) -> str:
+    def _resolve_runtime_device_id(self, device_kind: Kind | DeviceRecord) -> str:
         """Return the WebSocket device ID used for Redis online tracking."""
         spec = device_kind.json.get("spec", {})
         cloud_config = spec.get("cloudConfig") or {}

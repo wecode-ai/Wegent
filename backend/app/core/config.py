@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Any, Mapping, Optional, Tuple, Type
 
 from dotenv import dotenv_values
-from pydantic import field_validator
+from pydantic import field_validator, model_validator
 from pydantic_settings import (
     BaseSettings,
     PydanticBaseSettingsSource,
@@ -281,6 +281,20 @@ class Settings(BaseSettings):
     REDIS_URL: str = "redis://127.0.0.1:6379/0"
     TASK_RUN_METRICS_RETENTION_DAYS: int = 32
 
+    # Pod-local upstream SSE process configuration
+    STREAM_WORKER_SOCKET_PATH: str = "/tmp/wegent-stream-worker.sock"
+    # Pod-local process that exclusively owns persistent IM channel providers.
+    CHANNEL_WORKER_SOCKET_PATH: str = "/tmp/wegent-channel-worker.sock"
+    # Hard cap for connections/tasks admitted by the sole Uvicorn worker.
+    WEB_MAX_CONCURRENCY: int = 512
+    # Keep persistent upgrades below the Uvicorn connection cap so HTTP probes
+    # and ordinary requests retain process-level admission headroom.
+    WEB_MAX_WEBSOCKET_CONNECTIONS: int = 256
+    # Long-lived execution/SSE requests admitted by the Web process.
+    WEB_MAX_STREAM_CONNECTIONS: int = 192
+    # Capacity that neither WebSocket nor execution streams may consume.
+    WEB_HTTP_CONCURRENCY_RESERVE: int = 64
+
     # Public base URL of this backend, reachable from executor devices. The
     # cloud-model LLM proxy URL is derived from it
     # (`{WEGENT_BACKEND_PUBLIC_URL}/api/runtime-work/llm-responses-proxy`).
@@ -328,10 +342,29 @@ class Settings(BaseSettings):
     # If None/empty, uses DATABASE_URL
     CELERY_BEAT_DATABASE_URL: Optional[str] = None
 
-    # Embedded Celery configuration
-    # When True, Backend starts Celery worker/beat as daemon threads (for local dev)
-    # When False, Celery must be started separately (for production)
-    EMBEDDED_CELERY_ENABLED: bool = True
+    @model_validator(mode="after")
+    def validate_web_admission_limits(self) -> "Settings":
+        """Fail fast when persistent upgrades can consume all Web capacity."""
+        if self.WEB_MAX_CONCURRENCY <= 0:
+            raise ValueError("WEB_MAX_CONCURRENCY must be positive")
+        if self.WEB_MAX_WEBSOCKET_CONNECTIONS <= 0:
+            raise ValueError("WEB_MAX_WEBSOCKET_CONNECTIONS must be positive")
+        if self.WEB_MAX_STREAM_CONNECTIONS <= 0:
+            raise ValueError("WEB_MAX_STREAM_CONNECTIONS must be positive")
+        if self.WEB_HTTP_CONCURRENCY_RESERVE <= 0:
+            raise ValueError("WEB_HTTP_CONCURRENCY_RESERVE must be positive")
+        reserved_capacity = (
+            self.WEB_MAX_WEBSOCKET_CONNECTIONS
+            + self.WEB_MAX_STREAM_CONNECTIONS
+            + self.WEB_HTTP_CONCURRENCY_RESERVE
+        )
+        if reserved_capacity > self.WEB_MAX_CONCURRENCY:
+            raise ValueError(
+                "WEB_MAX_WEBSOCKET_CONNECTIONS + WEB_MAX_STREAM_CONNECTIONS "
+                "+ WEB_HTTP_CONCURRENCY_RESERVE must not exceed "
+                "WEB_MAX_CONCURRENCY"
+            )
+        return self
 
     @field_validator(
         "CELERY_BROKER_URL",

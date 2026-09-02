@@ -104,43 +104,29 @@ class SubscriptionEventHandler:
             result_summary: Summary of the execution result
         """
         try:
-            from app.db.session import get_db_session
             from app.services.subscription.notification_dispatcher import (
                 subscription_notification_dispatcher,
             )
 
-            with get_db_session() as db:
-                logger.info(
-                    f"[SubscriptionEventHandler] Dispatching notifications for "
-                    f"subscription {self.subscription_id}, execution {self.execution_id}, status={status}"
-                )
+            logger.info(
+                f"[SubscriptionEventHandler] Dispatching notifications for "
+                f"subscription {self.subscription_id}, execution {self.execution_id}, status={status}"
+            )
+            subscription_info = self.subscription_display_name
+            if self.team_display_name:
+                subscription_info = f"{subscription_info} ({self.team_display_name})"
+            detail_url = None
+            if self.task_id and self.base_url:
+                detail_url = f"{self.base_url.rstrip('/')}/chat?taskId={self.task_id}"
 
-                # Build subscription display name with team info
-                subscription_info = self.subscription_display_name
-                if self.team_display_name:
-                    subscription_info = (
-                        f"{subscription_info} ({self.team_display_name})"
-                    )
-
-                # Format the result summary
-                formatted_summary = self._format_result_summary(result_summary)
-
-                # Generate detail URL
-                detail_url = None
-                if self.task_id and self.base_url:
-                    detail_url = (
-                        f"{self.base_url.rstrip('/')}/chat?taskId={self.task_id}"
-                    )
-
-                await subscription_notification_dispatcher.dispatch_execution_notifications(
-                    db,
-                    subscription_id=self.subscription_id,
-                    execution_id=self.execution_id,
-                    subscription_display_name=subscription_info,
-                    result_summary=formatted_summary,
-                    status=status,
-                    detail_url=detail_url,
-                )
+            await subscription_notification_dispatcher.dispatch_execution_notifications_from_store(
+                subscription_id=self.subscription_id,
+                execution_id=self.execution_id,
+                subscription_display_name=subscription_info,
+                result_summary=self._format_result_summary(result_summary),
+                status=status,
+                detail_url=detail_url,
+            )
         except Exception as e:
             logger.error(
                 f"[SubscriptionEventHandler] Failed to dispatch notifications for "

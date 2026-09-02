@@ -344,7 +344,7 @@ def _bot_to_response(bot: Kind, db: Session) -> PublicBotResponse:
 
 
 @router.get("/public-bots", response_model=PublicBotListResponse)
-async def list_public_bots(
+def list_public_bots(
     page: int = Query(1, ge=1),
     limit: int = Query(20, ge=1, le=1000),
     db: Session = Depends(get_db),
@@ -571,7 +571,7 @@ def _build_bot_json_from_form_data(
     response_model=PublicBotResponse,
     status_code=status.HTTP_201_CREATED,
 )
-async def create_public_bot(
+def create_public_bot(
     bot_data: PublicBotCreate,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_admin_user),
@@ -747,7 +747,7 @@ async def create_public_bot(
 
 
 @router.put("/public-bots/{bot_id}", response_model=PublicBotResponse)
-async def update_public_bot(
+def update_public_bot(
     bot_data: PublicBotUpdate,
     bot_id: int = Path(..., description="Bot ID"),
     db: Session = Depends(get_db),
@@ -1027,7 +1027,7 @@ async def update_public_bot(
 
 
 @router.delete("/public-bots/{bot_id}", status_code=status.HTTP_204_NO_CONTENT)
-async def delete_public_bot(
+def delete_public_bot(
     bot_id: int = Path(..., description="Bot ID"),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_admin_user),

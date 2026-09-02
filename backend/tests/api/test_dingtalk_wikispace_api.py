@@ -38,11 +38,6 @@ class TestSyncDingtalkWikispace:
 
     @patch(
         "app.api.endpoints.dingtalk_wikispace.DingTalkWikiSpaceService"
-        ".get_user_wikispace_mcp_url",
-        return_value="https://wikispace.mcp.example.com",
-    )
-    @patch(
-        "app.api.endpoints.dingtalk_wikispace.DingTalkWikiSpaceService"
         ".sync_wikispace_nodes",
         side_effect=DingTalkMCPToolError(
             "DingTalk MCP tool returned an unsuccessful result"
@@ -51,7 +46,6 @@ class TestSyncDingtalkWikispace:
     def test_mcp_fetch_failure_returns_failure_response(
         self,
         mock_sync: MagicMock,
-        mock_get_url: MagicMock,
         dingtalk_wikispace_client: TestClient,
     ) -> None:
         """An MCP fetch failure is never reported as a successful sync."""

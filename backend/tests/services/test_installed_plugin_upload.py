@@ -9,12 +9,14 @@ import zipfile
 
 import pytest
 from fastapi import HTTPException
+from sqlalchemy.orm import sessionmaker
 
 import app.services.builtin_plugin_service as builtin_plugin_service_module
 from app.api.endpoints.installed_plugins import (
     _read_plugin_upload,
     ensure_builtin_plugin_installed,
 )
+from app.db import session as db_session
 from app.models.kind import Kind
 from app.models.skill_binary import SkillBinary
 from app.schemas.device import DeviceCapabilitySyncResponse, DeviceCapabilitySyncResult
@@ -32,6 +34,19 @@ from app.services.plugin_package_parser import (
     MAX_PLUGIN_PACKAGE_SIZE_BYTES,
     plugin_package_parser,
 )
+
+
+@pytest.fixture(autouse=True)
+def worker_session_factory(test_db, monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setattr(
+        db_session,
+        "SessionLocal",
+        sessionmaker(
+            bind=test_db.get_bind(),
+            expire_on_commit=False,
+            join_transaction_mode="create_savepoint",
+        ),
+    )
 
 
 class ChunkedUpload:
@@ -745,7 +760,7 @@ async def test_ensure_builtin_plugin_waits_for_requested_device_sync(
     )
     requested_syncs = []
 
-    async def fake_sync(db, *, user_id, device_id, installed_plugin_id):
+    async def fake_sync(*, user_id, device_id, installed_plugin_id):
         requested_syncs.append((device_id, installed_plugin_id))
         result = DeviceCapabilitySyncResult(
             device_id=device_id,
@@ -775,7 +790,6 @@ async def test_ensure_builtin_plugin_waits_for_requested_device_sync(
     response = await ensure_builtin_plugin_installed(
         plugin_name,
         BuiltinPluginInstallRequest(device_id="device-1"),
-        db=test_db,
         current_user=test_user,
     )
 
@@ -810,8 +824,7 @@ async def test_ensure_builtin_plugin_without_device_syncs_online_devices(
         results=[],
     )
 
-    async def fake_sync_global(db, *, user_id, mode="replace"):
-        assert db is test_db
+    async def fake_sync_global(*, user_id, mode="replace"):
         assert user_id == test_user.id
         assert mode == "replace"
         return sync_response
@@ -824,7 +837,6 @@ async def test_ensure_builtin_plugin_without_device_syncs_online_devices(
     response = await ensure_builtin_plugin_installed(
         BUILTIN_SITES_PLUGIN_NAME,
         BuiltinPluginInstallRequest(),
-        db=test_db,
         current_user=test_user,
     )
 

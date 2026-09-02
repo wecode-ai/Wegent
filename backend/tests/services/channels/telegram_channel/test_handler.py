@@ -4,6 +4,8 @@
 
 """Unit tests for TelegramChannelHandler."""
 
+import asyncio
+import threading
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -35,11 +37,12 @@ def _message_context() -> MessageContext:
     )
 
 
-def _creation_result() -> SimpleNamespace:
+def _creation_result(device_id: str | None = None) -> SimpleNamespace:
     return SimpleNamespace(
-        task=SimpleNamespace(id=200),
-        user_subtask=SimpleNamespace(id=300),
-        assistant_subtask=SimpleNamespace(id=301),
+        task_id=200,
+        user_subtask_id=300,
+        assistant_subtask_id=301,
+        device_id=device_id,
     )
 
 
@@ -107,6 +110,61 @@ class TestTelegramChannelHandler:
         config = handler.user_mapping_config
         assert config.mode == "select_user"
         assert config.config == {"target_user_id": 1}
+
+    @pytest.mark.asyncio
+    async def test_dynamic_mapping_config_keeps_event_loop_responsive(self, mock_bot):
+        """A slow dynamic configuration query must not stop the IM loop."""
+        started = threading.Event()
+        release = threading.Event()
+
+        def load_mapping_config():
+            started.set()
+            release.wait(timeout=1)
+            return {"mode": "select_user", "config": {"target_user_id": 7}}
+
+        handler = TelegramChannelHandler(
+            channel_id=1,
+            bot=mock_bot,
+            get_user_mapping_config=load_mapping_config,
+        )
+        release_timer = threading.Timer(0.2, release.set)
+        release_timer.start()
+        loop = asyncio.get_running_loop()
+        started_at = loop.time()
+
+        operation = asyncio.create_task(handler.get_user_mapping_config_nonblocking())
+        await asyncio.sleep(0.02)
+
+        assert started.is_set()
+        assert loop.time() - started_at < 0.1
+        assert not operation.done()
+
+        release.set()
+        config = await operation
+        release_timer.cancel()
+        assert config.config == {"target_user_id": 7}
+
+    @pytest.mark.asyncio
+    async def test_resolve_user_id_closes_worker_session(self, handler):
+        """User resolution must release its worker-owned session before return."""
+        session = MagicMock()
+        message_context = _message_context()
+        message_context.extra_data = {"telegram_user_id": 12345}
+
+        with (
+            patch(
+                "app.services.channels.telegram.handler.SessionLocal",
+                return_value=session,
+            ),
+            patch(
+                "app.services.channels.telegram.handler.TelegramUserResolver.resolve_user_sync",
+                return_value=SimpleNamespace(id=7),
+            ),
+        ):
+            user_id = await handler.resolve_user_id(message_context)
+
+        assert user_id == 7
+        session.close.assert_called_once_with()
 
     def test_parse_message_regular(self, handler):
         """Test parsing regular text message."""
@@ -315,7 +373,7 @@ class TestTelegramChannelHandler:
         message_context = _message_context()
         user = SimpleNamespace(id=1)
         team = SimpleNamespace(id=100)
-        creation_result = _creation_result()
+        creation_result = _creation_result(device_id="hw-4e4bfa88fa25")
         db = MagicMock()
         streaming_emitter = _streaming_emitter()
 
@@ -341,8 +399,8 @@ class TestTelegramChannelHandler:
             ),
             patch.object(
                 handler,
-                "_get_selected_or_default_team",
-                new=AsyncMock(return_value=team),
+                "_get_selected_or_default_team_id",
+                new=AsyncMock(return_value=team.id),
             ),
             patch.object(
                 handler,
@@ -355,7 +413,7 @@ class TestTelegramChannelHandler:
                 new=AsyncMock(),
             ),
             patch(
-                "app.services.chat.storage.task_manager.create_task_and_subtasks",
+                "app.services.chat.storage.task_manager.create_chat_task_ids_nonblocking",
                 new=AsyncMock(return_value=creation_result),
             ) as create_task_mock,
             patch(
@@ -375,8 +433,7 @@ class TestTelegramChannelHandler:
         message_context = _message_context()
         user = SimpleNamespace(id=1)
         team = SimpleNamespace(id=100)
-        creation_result = _creation_result()
-        creation_result.task.json = {"spec": {"device_id": "hw-4e4bfa88fa25"}}
+        creation_result = _creation_result(device_id="hw-4e4bfa88fa25")
         db = MagicMock()
         streaming_emitter = _streaming_emitter()
 
@@ -402,8 +459,8 @@ class TestTelegramChannelHandler:
             ),
             patch.object(
                 handler,
-                "_get_selected_or_default_team",
-                new=AsyncMock(return_value=team),
+                "_get_selected_or_default_team_id",
+                new=AsyncMock(return_value=team.id),
             ),
             patch.object(
                 handler,
@@ -416,7 +473,7 @@ class TestTelegramChannelHandler:
                 new=AsyncMock(),
             ),
             patch(
-                "app.services.chat.storage.task_manager.create_task_and_subtasks",
+                "app.services.chat.storage.task_manager.create_chat_task_ids_nonblocking",
                 new=AsyncMock(return_value=creation_result),
             ),
             patch(
@@ -444,7 +501,7 @@ class TestTelegramChannelHandler:
         with (
             patch.object(
                 handler,
-                "_get_device_mode_model_override",
+                "_get_device_mode_model_override_nonblocking",
                 new=AsyncMock(return_value=(None, None)),
             ),
             patch.object(
@@ -468,18 +525,17 @@ class TestTelegramChannelHandler:
                 new=AsyncMock(),
             ),
             patch(
-                "app.services.chat.storage.task_manager.create_task_and_subtasks",
+                "app.services.chat.storage.task_manager.create_chat_task_ids_nonblocking",
                 new=AsyncMock(return_value=creation_result),
             ) as create_task_mock,
             patch(
-                "app.services.device_router.route_task_to_device",
+                "app.services.device_router.route_task_to_device_nonblocking",
                 new=AsyncMock(),
             ),
         ):
             result = await handler._create_and_process_device_task(
-                db=db,
                 user=user,
-                team=team,
+                team_id=team.id,
                 device_id="device-123456",
                 message_context=message_context,
             )
@@ -526,35 +582,24 @@ class TestTelegramChannelHandler:
                 new=AsyncMock(),
             ),
             patch(
-                "app.services.chat.storage.task_manager.create_task_and_subtasks",
+                "app.services.chat.storage.task_manager.create_chat_task_ids_nonblocking",
                 new=AsyncMock(return_value=creation_result),
             ) as create_task_mock,
             patch("app.services.execution.schedule_dispatch") as schedule_dispatch,
         ):
             result = await handler._create_and_process_cloud_task(
-                db=db,
                 user=user,
-                team=team,
+                team_id=team.id,
                 message_context=message_context,
             )
 
         assert result is None
-        schedule_dispatch.assert_called_once_with(creation_result.task.id)
+        schedule_dispatch.assert_called_once_with(creation_result.task_id)
         _assert_message_source(create_task_mock)
 
     @pytest.mark.asyncio
     async def test_private_im_task_response_failure_marks_task_failed(self, handler):
         message_context = _message_context()
-        task = SimpleNamespace(id=33, json={"status": {"status": "PENDING"}})
-        assistant_subtask = SimpleNamespace(
-            id=52,
-            status=SubtaskStatus.PENDING,
-            progress=0,
-            error_message="",
-            completed_at=None,
-        )
-        db = MagicMock()
-
         with (
             patch.object(
                 handler,
@@ -567,25 +612,22 @@ class TestTelegramChannelHandler:
                 "app.services.chat.trigger.trigger_ai_response_unified",
                 new=AsyncMock(side_effect=ValueError("Model codex-gpt-5.5 not found")),
             ),
+            patch(
+                "app.services.channels.handler._mark_private_im_task_response_failed_sync"
+            ) as mark_failed,
         ):
             await handler._trigger_private_im_task_response(
-                db=db,
-                task=task,
-                assistant_subtask=assistant_subtask,
-                team=SimpleNamespace(id=38),
-                user=SimpleNamespace(id=1),
+                task_id=33,
+                assistant_subtask_id=52,
+                team_id=38,
+                user_id=1,
                 user_subtask_id=51,
                 message="我刚才说的啥",
                 message_context=message_context,
                 params=SimpleNamespace(is_group_chat=False),
             )
 
-        assert task.json["status"]["status"] == "FAILED"
-        assert "Model codex-gpt-5.5 not found" in task.json["status"]["errorMessage"]
-        assert assistant_subtask.status == SubtaskStatus.FAILED
-        assert assistant_subtask.progress == 100
-        assert "Model codex-gpt-5.5 not found" in assistant_subtask.error_message
-        db.commit.assert_called_once()
+        mark_failed.assert_called_once_with(33, 52, "Model codex-gpt-5.5 not found")
         send_reply.assert_awaited_once()
         assert "任务执行失败" in send_reply.await_args.args[1]
 
@@ -594,11 +636,6 @@ class TestTelegramChannelHandler:
         self, handler
     ):
         message_context = _message_context()
-        task = SimpleNamespace(
-            id=33,
-            json={"spec": {"device_id": "hw-4e4bfa88fa25"}},
-        )
-        assistant_subtask = SimpleNamespace(id=54)
         streaming_emitter = _streaming_emitter()
 
         with (
@@ -614,15 +651,17 @@ class TestTelegramChannelHandler:
             ) as trigger_mock,
         ):
             await handler._trigger_private_im_task_response(
-                db=MagicMock(),
-                task=task,
-                assistant_subtask=assistant_subtask,
-                team=SimpleNamespace(id=38),
-                user=SimpleNamespace(id=1),
+                task_id=33,
+                assistant_subtask_id=54,
+                team_id=38,
+                user_id=1,
                 user_subtask_id=53,
                 message="继续",
                 message_context=message_context,
-                params=SimpleNamespace(is_group_chat=False),
+                params=SimpleNamespace(
+                    is_group_chat=False,
+                    device_id="hw-4e4bfa88fa25",
+                ),
             )
 
         assert trigger_mock.await_args.kwargs["device_id"] == "hw-4e4bfa88fa25"
@@ -638,12 +677,11 @@ class TestTelegramChannelHandler:
 
         with (
             patch(
-                "app.services.channels.handler.im_task_continuation_service.validate_personal_wework_task",
-                return_value=task,
-            ),
-            patch(
-                "app.services.channels.handler.im_task_continuation_service.get_task_team",
-                return_value=SimpleNamespace(id=38),
+                "app.services.channels.handler._prepare_existing_private_task_sync",
+                return_value=SimpleNamespace(
+                    team_id=38,
+                    params=SimpleNamespace(is_group_chat=False),
+                ),
             ),
             patch.object(
                 handler,
@@ -651,7 +689,7 @@ class TestTelegramChannelHandler:
                 return_value=EXPECTED_IM_SOURCE,
             ),
             patch(
-                "app.services.channels.handler.im_task_continuation_service.append_message_to_task",
+                "app.services.chat.storage.task_manager.create_chat_task_ids_nonblocking",
                 new=AsyncMock(
                     side_effect=HTTPException(
                         status_code=400,
@@ -662,7 +700,6 @@ class TestTelegramChannelHandler:
             patch.object(handler, "send_text_reply", new=AsyncMock()) as send_reply,
         ):
             await handler._execute_private_im_continue_task(
-                db=db,
                 user=user,
                 im_session=im_session,
                 task_id=33,

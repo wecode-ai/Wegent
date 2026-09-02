@@ -1,5 +1,6 @@
 from sqlalchemy.orm import Session
 
+from app.services.knowledge.web_db import run_knowledge_db_phase
 from app.services.rag.local_data_plane.administration import test_connection_local
 from app.services.rag.local_data_plane.indexing import (
     delete_document_index_local,
@@ -7,7 +8,8 @@ from app.services.rag.local_data_plane.indexing import (
     index_document_local,
     purge_knowledge_index_local,
 )
-from app.services.rag.local_data_plane.retrieval import list_chunks_local, query_local
+from app.services.rag.local_data_plane.retrieval import list_chunks_local
+from app.services.rag.retrieval_service import PreparedRetrievalPlan, RetrievalService
 from app.services.rag.runtime_specs import (
     ConnectionTestRuntimeSpec,
     DeleteRuntimeSpec,
@@ -19,13 +21,21 @@ from app.services.rag.runtime_specs import (
 )
 
 
+def _prepare_query_with_worker_session(
+    db: Session,
+    spec: QueryRuntimeSpec,
+) -> PreparedRetrievalPlan:
+    """Prepare local retrieval inputs in the bounded DB executor."""
+
+    return RetrievalService().prepare_local_retrieval(spec, db)
+
+
 class LocalRagGateway:
     def __init__(self) -> None:
         self._index_executor = index_document_local
         self._delete_executor = delete_document_index_local
         self._purge_executor = purge_knowledge_index_local
         self._drop_executor = drop_knowledge_index_local
-        self._retrieval_executor = query_local
         self._list_chunks_executor = list_chunks_local
         self._connection_test_executor = test_connection_local
 
@@ -40,12 +50,12 @@ class LocalRagGateway:
     async def query(
         self,
         spec: QueryRuntimeSpec,
-        *,
-        db: Session | None = None,
     ) -> dict:
-        if db is None:
-            raise ValueError("db is required for LocalRagGateway.query")
-        return await self._retrieval_executor(spec, db=db)
+        plan = await run_knowledge_db_phase(
+            _prepare_query_with_worker_session,
+            spec,
+        )
+        return await RetrievalService().execute_prepared_local_retrieval(plan)
 
     async def delete_document_index(
         self,
@@ -59,7 +69,7 @@ class LocalRagGateway:
         self,
         spec: PurgeKnowledgeRuntimeSpec,
         *,
-        db: Session,
+        db: Session | None = None,
     ) -> dict:
         return await self._purge_executor(spec, db=db)
 
@@ -67,7 +77,7 @@ class LocalRagGateway:
         self,
         spec: DropKnowledgeIndexRuntimeSpec,
         *,
-        db: Session,
+        db: Session | None = None,
     ) -> dict:
         return await self._drop_executor(spec, db=db)
 
@@ -77,8 +87,6 @@ class LocalRagGateway:
         *,
         db: Session | None = None,
     ) -> dict:
-        if db is None:
-            raise ValueError("db is required for LocalRagGateway.list_chunks")
         return await self._list_chunks_executor(spec, db=db)
 
     async def test_connection(

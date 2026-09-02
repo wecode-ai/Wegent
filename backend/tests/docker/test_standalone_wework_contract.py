@@ -37,6 +37,7 @@ def test_standalone_image_includes_wework_executor_and_workspace_volume() -> Non
     assert "EXPOSE 3000" in dockerfile
     assert "EXPOSE 3000 3001 8000" not in dockerfile
     assert 'VOLUME ["/app/data", "/workspace"]' in dockerfile
+    assert "STOPSIGNAL SIGTERM" in dockerfile
     assert "http://localhost:7681" not in dockerfile
     assert "COPY executor /app/executor" not in dockerfile
     assert "cd /app/executor && uv pip install" not in dockerfile
@@ -129,7 +130,7 @@ def test_standalone_start_ensures_token_before_optional_executor() -> None:
     start_script = STANDALONE_START.read_text(encoding="utf-8")
 
     backend_ready_index = start_script.index(
-        'wait_for_http "Backend" "http://localhost:${BACKEND_PORT}/health"'
+        'wait_for_http "Backend" "http://localhost:${BACKEND_PORT}/api/ready"'
     )
     token_ensure_index = start_script.index("\nensure_standalone_executor_token\n")
     executor_branch_index = start_script.index(
@@ -151,7 +152,7 @@ def test_standalone_nginx_routes_frontend_backend_and_wework() -> None:
     assert "upstream wegent_backend" in nginx_config
     assert "server 127.0.0.1:8000;" in nginx_config
     assert "location = /health" in nginx_config
-    assert "proxy_pass http://wegent_backend/health;" in nginx_config
+    assert "proxy_pass http://wegent_backend/api/ready;" in nginx_config
     assert "location ^~ /wework/api/" in nginx_config
     assert "proxy_pass http://wegent_backend/api/;" in nginx_config
     assert "location ^~ /wework/socket.io/" in nginx_config
@@ -229,6 +230,8 @@ def test_installer_exposes_wework_backend_and_workspace_volume() -> None:
     install_script = INSTALL_SCRIPT.read_text(encoding="utf-8")
 
     assert 'STANDALONE_WORKSPACE_VOLUME_NAME="wegent-workspace"' in install_script
+    assert 'docker_run_cmd+=" --stop-timeout 610"' in install_script
+    assert "--stop-timeout 610" in install_script
     assert 'docker_run_cmd+=" -p 3000:3000"' in install_script
     assert 'docker_run_cmd+=" -p 3001:3001"' not in install_script
     assert 'docker_run_cmd+=" -p 8000:8000"' not in install_script

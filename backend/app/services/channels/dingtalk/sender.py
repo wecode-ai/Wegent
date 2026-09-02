@@ -22,7 +22,18 @@ from typing import Any, Dict, List, Optional
 
 import httpx
 
+from app.core.payload_codec import (
+    decode_sync_response_json,
+    decode_sync_response_text,
+    encode_http_json,
+    run_payload_codec,
+)
+
 logger = logging.getLogger(__name__)
+
+
+def _encode_json(value: Any) -> str:
+    return json.dumps(value, ensure_ascii=False)
 
 
 class DingTalkRobotSender:
@@ -61,11 +72,14 @@ class DingTalkRobotSender:
         }
 
         async with httpx.AsyncClient(timeout=10.0) as client:
+            request_body = await encode_http_json(payload)
             response = await client.post(
-                url, json=payload, headers={"Content-Type": "application/json"}
+                url,
+                content=request_body,
+                headers={"Content-Type": "application/json"},
             )
             response.raise_for_status()
-            data = response.json()
+            data = await decode_sync_response_json(response)
 
             if "code" in data:
                 error_msg = data.get("message", "Unknown error")
@@ -150,13 +164,16 @@ class DingTalkRobotSender:
             access_token = await self._get_access_token()
 
             url = f"{self.BASE_URL}/v1.0/robot/oToMessages/batchSend"
+            encoded_msg_param = await run_payload_codec(
+                _encode_json,
+                msg_param,
+                payload_hint=msg_param,
+            )
             payload = {
                 "robotCode": robot_code or self.client_id,
                 "userIds": user_ids,
                 "msgKey": msg_key,
-                "msgParam": json.dumps(
-                    msg_param, ensure_ascii=False
-                ),  # Properly escape JSON
+                "msgParam": encoded_msg_param,
             }
 
             logger.info(
@@ -164,16 +181,17 @@ class DingTalkRobotSender:
             )
 
             async with httpx.AsyncClient(timeout=30.0) as client:
+                request_body = await encode_http_json(payload)
                 response = await client.post(
                     url,
-                    json=payload,
+                    content=request_body,
                     headers={
                         "x-acs-dingtalk-access-token": access_token,
                         "Content-Type": "application/json",
                     },
                 )
                 response.raise_for_status()
-                data = response.json()
+                data = await decode_sync_response_json(response)
 
                 logger.info(
                     f"[DingTalkSender] Message sent successfully, "
@@ -185,7 +203,7 @@ class DingTalkRobotSender:
         except httpx.HTTPStatusError as e:
             error_data = {}
             try:
-                error_data = e.response.json()
+                error_data = await decode_sync_response_json(e.response)
             except Exception:
                 pass
 
@@ -290,24 +308,18 @@ class DingTalkRobotSender:
                 f"template={card_template_id}, streaming={enable_streaming}, "
                 f"is_group={is_group}, open_space_id={resolved_open_space_id}"
             )
-            logger.debug(
-                f"[DingTalkSender] Request payload: {json.dumps(payload, ensure_ascii=False)}"
-            )
-
             async with httpx.AsyncClient(timeout=30.0) as client:
+                request_body = await encode_http_json(payload)
                 response = await client.post(
                     url,
-                    json=payload,
+                    content=request_body,
                     headers={
                         "x-acs-dingtalk-access-token": access_token,
                         "Content-Type": "application/json",
                     },
                 )
                 response.raise_for_status()
-                data = response.json()
-                logger.info(
-                    f"[DingTalkSender] API response: {json.dumps(data, ensure_ascii=False)}"
-                )
+                data = await decode_sync_response_json(response)
 
                 # Check for API error
                 if "code" in data and data.get("code") != "0":
@@ -351,9 +363,10 @@ class DingTalkRobotSender:
         except httpx.HTTPStatusError as e:
             error_data = {}
             try:
-                error_data = e.response.json()
+                error_data = await decode_sync_response_json(e.response)
             except Exception:
                 pass
+            response_text = await decode_sync_response_text(e.response)
 
             error_code = error_data.get("code", "HTTP_ERROR")
             error_msg = error_data.get("message", str(e))
@@ -364,7 +377,7 @@ class DingTalkRobotSender:
             logger.error(
                 f"[DingTalkSender] Response status: {e.response.status_code}, "
                 f"headers: {dict(e.response.headers)}, "
-                f"body: {e.response.text}"
+                f"body: {response_text}"
             )
 
             return {
@@ -425,9 +438,10 @@ class DingTalkRobotSender:
                 }
 
                 async with httpx.AsyncClient(timeout=10.0) as client:
+                    request_body = await encode_http_json(payload)
                     await client.put(
                         url,
-                        json=payload,
+                        content=request_body,
                         headers={
                             "x-acs-dingtalk-access-token": access_token,
                             "Content-Type": "application/json",
@@ -450,9 +464,10 @@ class DingTalkRobotSender:
             }
 
             async with httpx.AsyncClient(timeout=10.0) as client:
+                request_body = await encode_http_json(payload)
                 await client.put(
                     url,
-                    json=payload,
+                    content=request_body,
                     headers={
                         "x-acs-dingtalk-access-token": access_token,
                         "Content-Type": "application/json",
@@ -506,9 +521,10 @@ class DingTalkRobotSender:
             }
 
             async with httpx.AsyncClient(timeout=10.0) as client:
+                request_body = await encode_http_json(payload)
                 await client.put(
                     url,
-                    json=payload,
+                    content=request_body,
                     headers={
                         "x-acs-dingtalk-access-token": access_token,
                         "Content-Type": "application/json",
@@ -571,16 +587,17 @@ class DingTalkRobotSender:
                 payload["finished"] = True
 
             async with httpx.AsyncClient(timeout=10.0) as client:
+                request_body = await encode_http_json(payload)
                 response = await client.put(
                     url,
-                    json=payload,
+                    content=request_body,
                     headers={
                         "x-acs-dingtalk-access-token": access_token,
                         "Content-Type": "application/json",
                     },
                 )
                 response.raise_for_status()
-                data = response.json()
+                data = await decode_sync_response_json(response)
 
                 return {"success": True, "result": data}
 

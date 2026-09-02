@@ -126,11 +126,9 @@ async def get_active_streaming(task_id: int) -> Optional[Dict[str, Any]]:
             return await _get_active_streaming_from_db(task_id)
 
         redis_status["subtask_id"] = subtask_id
-        # Also get cached content to verify stream is active
-        cached_content = await session_manager.get_streaming_content(subtask_id)
         logger.info(
             f"[get_active_streaming] Found Redis streaming status for task {task_id}: "
-            f"subtask_id={subtask_id}, cached_content_len={len(cached_content) if cached_content else 0}"
+            f"subtask_id={subtask_id}"
         )
         return redis_status
 

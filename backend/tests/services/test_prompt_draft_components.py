@@ -10,8 +10,10 @@ from sqlalchemy.orm import Session
 from app.models.subtask import Subtask, SubtaskRole, SubtaskStatus
 from app.models.task import TaskResource
 from app.models.user import User
+from app.services.prompt_draft import transcript as transcript_module
 from app.services.prompt_draft.modeling import resolve_prompt_draft_model_config
 from app.services.prompt_draft.transcript import (
+    PromptDraftTranscriptTooLargeError,
     collect_conversation_blocks,
     extract_assistant_turn_blocks,
 )
@@ -153,6 +155,33 @@ def test_collect_conversation_blocks_reads_user_and_assistant_attempts(
 
     assert ("user", "帮我创建流程图") in blocks
     assert any(block_type == "assistant_attempt" for block_type, _ in blocks)
+
+
+def test_collect_conversation_blocks_rejects_context_byte_overflow(
+    test_db: Session,
+    test_user: User,
+    monkeypatch,
+) -> None:
+    task = _create_task(test_db, test_user)
+    _add_user_subtask(test_db, test_user, task, "too-large")
+    monkeypatch.setattr(transcript_module, "PROMPT_DRAFT_MAX_CONTEXT_BYTES", 4)
+
+    with pytest.raises(PromptDraftTranscriptTooLargeError):
+        collect_conversation_blocks(test_db, task.id)
+
+
+def test_collect_conversation_blocks_limits_database_rows_before_loading(
+    test_db: Session,
+    test_user: User,
+    monkeypatch,
+) -> None:
+    task = _create_task(test_db, test_user)
+    _add_user_subtask(test_db, test_user, task, "one")
+    _add_user_subtask(test_db, test_user, task, "two")
+    monkeypatch.setattr(transcript_module, "PROMPT_DRAFT_MAX_SUBTASKS", 1)
+
+    with pytest.raises(PromptDraftTranscriptTooLargeError):
+        collect_conversation_blocks(test_db, task.id)
 
 
 def test_resolve_prompt_draft_model_config_returns_empty_name_when_no_model(

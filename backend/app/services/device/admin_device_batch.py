@@ -7,14 +7,14 @@
 import asyncio
 import logging
 import uuid
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any, Awaitable, Dict, List, Optional
 
 from packaging.version import InvalidVersion, Version
-from sqlalchemy.orm import Session
 
 from app.core.cache import cache_manager
-from app.db.session import SessionLocal
+from app.core.web_background_tasks import web_background_task_manager
 from app.schemas.device import DeviceStatusEnum
 from app.services.device.admin_device_restart import restart_admin_device
 from app.services.device.local_provider import local_device_provider
@@ -149,10 +149,11 @@ class AdminDeviceBatchManager:
             message=f"Cloud device restart batch started for {len(targets)} device(s)",
         )
         self._schedule(
-            self._run_batch(
+            lambda: self._run_batch(
                 batch.batch_id,
                 self._run_cloud_restart(batch.batch_id, admin_name),
-            )
+            ),
+            name=f"admin-device-cloud-restart-{batch.batch_id}",
         )
         return batch
 
@@ -169,10 +170,11 @@ class AdminDeviceBatchManager:
             message=f"Local device upgrade batch started for {len(targets)} device(s)",
         )
         self._schedule(
-            self._run_batch(
+            lambda: self._run_batch(
                 batch.batch_id,
                 self._run_local_upgrade(batch.batch_id, force_stop_tasks, admin_name),
-            )
+            ),
+            name=f"admin-device-local-upgrade-{batch.batch_id}",
         )
         return batch
 
@@ -210,8 +212,13 @@ class AdminDeviceBatchManager:
         self._batches[batch.batch_id] = batch
         return batch
 
-    def _schedule(self, coro: Awaitable[None]) -> None:
-        task = asyncio.create_task(coro)
+    def _schedule(
+        self,
+        factory: Callable[[], Awaitable[None]],
+        *,
+        name: str,
+    ) -> None:
+        task = web_background_task_manager.submit_nowait(factory, name=name)
         self._tasks.add(task)
         task.add_done_callback(self._tasks.discard)
 
@@ -250,15 +257,13 @@ class AdminDeviceBatchManager:
         batch.status = "running"
         batch.message = "Cloud device restart batch is running"
 
-        with SessionLocal() as db:
-            for item in batch.items:
-                await self._run_cloud_restart_item(db, batch, item)
+        for item in batch.items:
+            await self._run_cloud_restart_item(batch, item)
 
         self._finish_batch(batch, admin_name)
 
     async def _run_cloud_restart_item(
         self,
-        db: Session,
         batch: AdminDeviceBatchState,
         item: AdminDeviceBatchItemState,
     ) -> None:
@@ -267,7 +272,7 @@ class AdminDeviceBatchManager:
 
         try:
             result = await asyncio.wait_for(
-                restart_admin_device(db, item.user_id, item.device_id),
+                restart_admin_device(item.user_id, item.device_id),
                 timeout=DEVICE_BATCH_ACTION_TIMEOUT_SECONDS,
             )
         except Exception as exc:

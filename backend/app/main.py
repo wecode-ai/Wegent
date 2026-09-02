@@ -16,6 +16,7 @@ if _get_otel_config_early("wegent-backend").enabled:
 import asyncio
 import json
 import logging
+import re
 import signal
 import sys
 import time
@@ -27,18 +28,34 @@ import socketio
 from fastapi import FastAPI, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from starlette.datastructures import QueryParams
+from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from app.api.api import api_router
 from app.api.endpoints.oauth_provider import metadata_router as oauth_metadata_router
+from app.core.bounded_executor import BoundedExecutorOverloaded
 from app.core.config import settings
 from app.core.exceptions import (
     CustomHTTPException,
     RequestValidationError,
+    executor_overload_exception_handler,
+    framework_http_exception_handler,
     http_exception_handler,
     python_exception_handler,
     validation_exception_handler,
 )
+from app.core.fastapi_route_isolation import install_fastapi_route_isolation
 from app.core.logging import setup_logging
+from app.core.payload_codec import run_payload_codec
+from app.core.request_body_limit import (
+    DEFAULT_MULTIPART_BODY_MAX_BYTES,
+    TEAM_ICON_FILE_MAX_BYTES,
+    RequestBodyLimitMiddleware,
+    get_buffered_request_body,
+    multipart_request_body_limit_patterns,
+    multipart_request_body_limits,
+    streaming_request_body_limit_patterns,
+    streaming_request_body_limits,
+)
 from app.core.shutdown import shutdown_manager
 from app.core.yaml_init import run_yaml_initialization
 from app.db.base import Base
@@ -47,7 +64,8 @@ from app.models import *  # noqa: F401,F403
 from app.services.auth.internal_service_token import (
     require_internal_service_token_configured,
 )
-from app.services.jobs import start_background_jobs, stop_background_jobs
+from app.services.plugin_package_parser import MAX_PLUGIN_PACKAGE_SIZE_BYTES
+from app.services.skill_service import SkillValidator
 from shared.telemetry.context.large_data import log_json_body
 
 # Redis lock key for startup operations (migrations + YAML init)
@@ -73,6 +91,21 @@ SENSITIVE_HTTP_BODY_PATHS = {
     f"{settings.API_PREFIX}/external/oauth/revoke",
     f"{settings.API_PREFIX}/external/oauth/token",
 }
+STREAMING_HTTP_BODY_PATHS = {
+    f"{settings.API_PREFIX}/internal/callback",
+    f"{settings.API_PREFIX}/internal/callback/batch",
+    f"{settings.API_PREFIX}/model-runtime/responses",
+    f"{settings.API_PREFIX}/runtime-work/llm-responses-proxy/responses",
+    f"{settings.API_PREFIX}/v1/responses",
+    f"{settings.API_PREFIX}/wizard/test-prompt/stream",
+}
+STREAMING_HTTP_BODY_PATH_PATTERNS = (
+    re.compile(
+        rf"^{re.escape(settings.API_PREFIX)}/tasks/\d+/"
+        r"prompt-drafts/generate/stream/?$"
+    ),
+    re.compile(rf"^{re.escape(settings.API_PREFIX)}/v1/deep-research/[^/]+/stream/?$"),
+)
 
 # Initialize logging at module level for use in lifespan
 setup_logging()
@@ -134,8 +167,27 @@ def _request_context_fields(request_body: str) -> tuple[object, object, object]:
     )
 
 
+def _request_telemetry_snapshot(
+    body: bytes,
+    max_body_size: int,
+) -> tuple[str, tuple[object, object, object]]:
+    """Decode and inspect one bounded telemetry snapshot outside the ASGI loop."""
+    captured = body[:max_body_size].decode("utf-8", errors="replace")
+    if len(body) > max_body_size:
+        captured += f"... [truncated, total size: {len(body)} bytes]"
+    return captured, _request_context_fields(captured)
+
+
 def _should_capture_http_body(path: str) -> bool:
-    return path not in SENSITIVE_HTTP_BODY_PATHS
+    normalized_path = path.rstrip("/") or "/"
+    if (
+        normalized_path in SENSITIVE_HTTP_BODY_PATHS
+        or normalized_path in STREAMING_HTTP_BODY_PATHS
+    ):
+        return False
+    return not any(
+        pattern.fullmatch(path) for pattern in STREAMING_HTTP_BODY_PATH_PATTERNS
+    )
 
 
 def _load_system_initialization_state(logger: logging.Logger) -> None:
@@ -175,6 +227,10 @@ async def lifespan(app: FastAPI):
     setup_logging()
 
     logger = _logger
+
+    from app.core.web_background_tasks import web_background_task_manager
+
+    web_background_task_manager.start()
 
     # ==================== STARTUP ====================
     require_internal_service_token_configured()
@@ -220,35 +276,15 @@ async def lifespan(app: FastAPI):
         try:
             # Step 1: Run database migrations
             if settings.ENVIRONMENT == "development" and settings.DB_AUTO_MIGRATE:
-                logger.info(
-                    "Running database migrations automatically (development mode)..."
+                from app.core.database_migrations import (
+                    prepare_runtime_database_schema,
+                    runtime_schema_is_ready,
                 )
-                try:
-                    import os
-                    import subprocess
 
-                    # Get the alembic.ini path
-                    backend_dir = os.path.dirname(
-                        os.path.dirname(os.path.abspath(__file__))
-                    )
-
-                    logger.info("Executing Alembic upgrade to head...")
-
-                    # Run Alembic as subprocess to avoid output buffering issues
-                    result = subprocess.run(
-                        ["alembic", "upgrade", "head"],
-                        cwd=backend_dir,
-                        capture_output=False,  # Let output go directly to stdout/stderr
-                        text=True,
-                        check=True,
-                    )
-
-                    logger.info("✓ Alembic migrations completed successfully")
-                except subprocess.CalledProcessError as e:
-                    logger.error(f"✗ Error running Alembic migrations: {e}")
-                except Exception as e:
-                    logger.error(f"✗ Unexpected error running Alembic migrations: {e}")
-                    raise
+                if runtime_schema_is_ready():
+                    logger.info("Database migrations completed by runtime supervisor")
+                else:
+                    prepare_runtime_database_schema()
             elif settings.ENVIRONMENT == "production":
                 logger.warning(
                     "Running in production mode. Database migrations must be run manually. "
@@ -340,27 +376,6 @@ async def lifespan(app: FastAPI):
     task_run_metric_hooks.register()
     logger.info("✓ Task run metric transaction hooks registered")
 
-    # Start background jobs
-    logger.info("Starting background jobs...")
-    start_background_jobs(app)
-    logger.info("✓ Background jobs started")
-
-    # Start scheduler backend (for Flow scheduling)
-    # The scheduler backend is selected based on SCHEDULER_BACKEND config:
-    # - "celery" (default): Uses Celery Beat with embedded/standalone mode
-    # - "apscheduler": Uses APScheduler (lightweight, no Redis required)
-    # - "xxljob": Uses XXL-JOB distributed scheduler
-    logger.info(f"Starting scheduler backend: {settings.SCHEDULER_BACKEND}...")
-    from app.core.scheduler import start_scheduler
-
-    scheduler = start_scheduler()
-    if scheduler:
-        logger.info(f"✓ Scheduler backend '{scheduler.backend_type}' started")
-    else:
-        logger.warning(
-            "Failed to start scheduler backend. Flow scheduling may not work."
-        )
-
     # Initialize Socket.IO WebSocket emitter
     # Note: Chat namespace is already registered in create_socketio_asgi_app()
     logger.info("Initializing Socket.IO...")
@@ -381,48 +396,15 @@ async def lifespan(app: FastAPI):
     # Initialize event bus and register event handlers
     # This enables decoupled communication between modules (e.g., pet experience updates)
     logger.info("Initializing event bus and registering handlers...")
-    from app.core.events import init_event_bus
-    from app.services.pet.event_handlers import register_pet_event_handlers
-    from app.services.subscription.task_completion_handler import (
-        TaskCompletedEvent,
-        handle_task_completed,
-    )
+    from app.core.events import MemoryCreatedEvent, init_event_bus
+    from app.services.pet.event_handlers import handle_memory_created
 
     event_bus = init_event_bus()
-    register_pet_event_handlers()
-
-    # Register subscription task completion handler
-    event_bus.subscribe(TaskCompletedEvent, handle_task_completed)
-    logger.info("✓ Subscription task completion handler registered")
-
-    # Register IM channel task completion handler
-    # This sends task results back to IM channels (DingTalk, Feishu, etc.)
-    from app.services.channels import handle_channel_task_completed
-
-    event_bus.subscribe(TaskCompletedEvent, handle_channel_task_completed)
-    logger.info("✓ IM channel task completion handler registered")
-
-    # Register the durable Wework board-automation projection handler.
-    from app.services.project_automation_completion import (
-        register_project_automation_task_completion_handler,
-    )
-
-    register_project_automation_task_completion_handler(event_bus)
-    from app.services.board_team_completion import (
-        register_board_team_completion_handler,
-    )
-
-    register_board_team_completion_handler(event_bus)
-    logger.info("✓ Project automation task completion handler registered")
-
-    # Register code wiki run completion handler. A version's outcome is normally
-    # reported by the agent itself; this covers the agent never getting to speak,
-    # where the version would otherwise stay RUNNING until the staleness sweep looks
-    # at it — which only happens when the next run starts.
-    from app.services.knowledge.code_wiki.task_completion import conclude_code_wiki_run
-
-    event_bus.subscribe(TaskCompletedEvent, conclude_code_wiki_run)
-    logger.info("✓ Code wiki run completion handler registered")
+    # Memory creation originates in the Web-owned request flow. Execution
+    # completion handlers belong to Stream/Maintenance workers and are never
+    # registered in the sole Uvicorn process.
+    event_bus.subscribe(MemoryCreatedEvent, handle_memory_created)
+    logger.info("✓ Pet memory event handler registered")
 
     # Register inbox auto-process handler
     from app.core.events import QueueMessageCreatedEvent
@@ -443,45 +425,6 @@ async def lifespan(app: FastAPI):
     await get_pending_request_registry()
     logger.info("✓ PendingRequestRegistry initialized")
 
-    # Start device heartbeat monitor for local device support
-    logger.info("Starting device heartbeat monitor...")
-    from app.services.device_monitor import start_device_monitor
-
-    start_device_monitor()
-    logger.info("✓ Device heartbeat monitor started")
-
-    # Initialize IM Channel Manager and start enabled channels
-    # This enables DingTalk, Feishu, WeChat bot integrations
-    logger.info("Initializing IM Channel Manager...")
-    from app.services.channels import get_channel_manager
-
-    channel_manager = get_channel_manager()
-    db = SessionLocal()
-    try:
-        started_count = await channel_manager.start_all_enabled(db)
-        logger.info(
-            f"✓ IM Channel Manager initialized, {started_count} channels started"
-        )
-    except Exception as e:
-        logger.warning(f"Failed to start IM channels: {e}")
-    finally:
-        db.close()
-
-    logger.info("Recovering in-progress video jobs...")
-    try:
-        from app.services.execution.agents.video.recovery import (
-            recover_video_jobs,
-            recover_video_jobs_after_stale_delay,
-        )
-
-        recovered_count = await recover_video_jobs()
-        logger.info("✓ Recovered %d in-progress video job(s)", recovered_count)
-        app.state.video_recovery_task = asyncio.create_task(
-            recover_video_jobs_after_stale_delay()
-        )
-    except Exception as e:
-        logger.warning("Failed to recover video jobs: %s", e, exc_info=True)
-
     logger.info("=" * 60)
     logger.info("Application startup completed successfully!")
     logger.info("=" * 60)
@@ -489,9 +432,13 @@ async def lifespan(app: FastAPI):
     # ==================== YIELD (app is running) ====================
     # Mounted ASGI applications do not receive parent lifespan events, so the
     # backend lifespan explicitly owns every mounted MCP session manager.
+    from app.core.event_loop_monitor import event_loop_lag_monitor
     from app.mcp_server.server import mcp_session_managers_lifespan
 
-    async with mcp_session_managers_lifespan():
+    async with (
+        event_loop_lag_monitor.lifespan(),
+        mcp_session_managers_lifespan(),
+    ):
         yield
 
         # ==================== SHUTDOWN ====================
@@ -499,13 +446,11 @@ async def lifespan(app: FastAPI):
         logger.info("Graceful shutdown initiated...")
         logger.info("=" * 60)
 
-        video_recovery_task = getattr(app.state, "video_recovery_task", None)
-        if video_recovery_task and not video_recovery_task.done():
-            video_recovery_task.cancel()
-            try:
-                await video_recovery_task
-            except asyncio.CancelledError:
-                pass
+        # Stop request-detached admission first. Uvicorn has already drained
+        # request handlers before lifespan teardown, so every accepted task can
+        # finish and enter any Stream-worker boundary before its admission closes.
+        await web_background_task_manager.shutdown()
+        logger.info("✓ Web background tasks drained")
 
         # Step 1: Initiate graceful shutdown (mark as shutting down)
         await shutdown_manager.initiate_shutdown()
@@ -514,53 +459,43 @@ async def lifespan(app: FastAPI):
             shutdown_manager.get_active_stream_count(),
         )
 
-        # Step 2: Wait for active streaming requests to complete
+        # Step 2: Wait for streams admitted before the shutdown gate closed.
         shutdown_timeout = settings.GRACEFUL_SHUTDOWN_TIMEOUT
-        if shutdown_manager.get_active_stream_count() > 0:
-            logger.info(
-                "Waiting for %d active streams to complete (timeout: %ds)...",
-                shutdown_manager.get_active_stream_count(),
-                shutdown_timeout,
+        logger.info(
+            "Waiting for %d active streams to complete (timeout: %ds)...",
+            shutdown_manager.get_active_stream_count(),
+            shutdown_timeout,
+        )
+        streams_completed = await shutdown_manager.wait_for_streams(
+            timeout=shutdown_timeout
+        )
+
+        if not streams_completed:
+            # Timeout reached, cancel remaining streams
+            remaining = shutdown_manager.get_active_stream_count()
+            logger.warning(
+                "Timeout reached. Cancelling %d remaining streams...", remaining
             )
-            streams_completed = await shutdown_manager.wait_for_streams(
-                timeout=shutdown_timeout
-            )
+            cancelled = await shutdown_manager.cancel_all_streams()
+            logger.info("Cancelled %d streams", cancelled)
 
-            if not streams_completed:
-                # Timeout reached, cancel remaining streams
-                remaining = shutdown_manager.get_active_stream_count()
-                logger.warning(
-                    "Timeout reached. Cancelling %d remaining streams...", remaining
-                )
-                cancelled = await shutdown_manager.cancel_all_streams()
-                logger.info("Cancelled %d streams", cancelled)
+            # Give a short grace period for cancellation to propagate
+            await asyncio.sleep(1)
 
-                # Give a short grace period for cancellation to propagate
-                await asyncio.sleep(1)
-        else:
-            logger.info("No active streams, proceeding with shutdown")
+        # Step 3: Stop device WebSocket background work owned by Web.
+        from app.api.ws.device_namespace import (
+            shutdown_device_namespace_background_tasks,
+        )
 
-        # Step 3: Stop IM Channel Manager
-        from app.services.channels import get_channel_manager
+        await shutdown_device_namespace_background_tasks()
+        logger.info("✓ Device WebSocket background tasks stopped")
 
-        channel_manager = get_channel_manager()
-        stopped_count = await channel_manager.stop_all()
-        logger.info(f"✓ IM Channel Manager stopped, {stopped_count} channels stopped")
-
-        # Step 4: Stop background jobs
-        await stop_background_jobs(app)
+        # Step 4: Stop Web-process transaction hooks. Maintenance and scheduler
+        # lifecycles belong to supervisor-managed sibling processes.
         task_run_metric_hooks.unregister()
-        logger.info("✓ Background jobs stopped")
+        logger.info("✓ Task run metric transaction hooks stopped")
 
-        # Step 5: Stop scheduler backend
-        from app.core.scheduler import get_active_scheduler, stop_scheduler
-
-        scheduler = get_active_scheduler()
-        if scheduler:
-            stop_scheduler()
-            logger.info(f"✓ Scheduler backend '{scheduler.backend_type}' stopped")
-
-        # Step 6: Shutdown PendingRequestRegistry
+        # Step 5: Shutdown PendingRequestRegistry
         from chat_shell.tools import (
             shutdown_pending_request_registry,
         )
@@ -568,13 +503,7 @@ async def lifespan(app: FastAPI):
         await shutdown_pending_request_registry()
         logger.info("✓ PendingRequestRegistry shutdown completed")
 
-        # Step 7: Stop device heartbeat monitor
-        from app.services.device_monitor import stop_device_monitor_async
-
-        await stop_device_monitor_async()
-        logger.info("✓ Device heartbeat monitor stopped")
-
-        # Step 7: Shutdown OpenTelemetry
+        # Step 6: Shutdown OpenTelemetry
         from shared.telemetry.config import get_otel_config
         from shared.telemetry.core import is_telemetry_enabled, shutdown_telemetry
 
@@ -650,8 +579,6 @@ def create_app():
 
     @app.middleware("http")
     async def log_requests(request: Request, call_next):
-        from starlette.responses import StreamingResponse
-
         # Skip logging for health check/probe requests (root path)
         if request.url.path == "/":
             return await call_next(request)
@@ -662,10 +589,11 @@ def create_app():
 
         start_time = time.time()
 
-        # Extract username from Authorization header
-        from app.core.security import get_username_from_request
-
-        username = get_username_from_request(request)
+        # Authentication dependencies populate the user context later in the
+        # request. The transport middleware must not synchronously verify JWTs
+        # merely to enrich an access-log line.
+        service_name = request.headers.get("X-Service-Name")
+        username = f"[{service_name}]" if service_name else "anonymous"
 
         client_ip = request.client.host if request.client else "Unknown"
         forwarded_headers_log = _format_forwarded_headers_for_log(request.headers)
@@ -690,18 +618,15 @@ def create_app():
             and _should_capture_http_body(request.url.path)
         ):
             try:
-                # Read the body
-                body_bytes = await request.body()
+                body_bytes = get_buffered_request_body(request.scope)
                 if body_bytes:
-                    # Limit body size to avoid huge spans
-                    max_body_size = otel_config.max_body_size
-                    if len(body_bytes) <= max_body_size:
-                        request_body = body_bytes.decode("utf-8", errors="replace")
-                    else:
-                        request_body = (
-                            body_bytes[:max_body_size].decode("utf-8", errors="replace")
-                            + f"... [truncated, total size: {len(body_bytes)} bytes]"
-                        )
+                    request_body, request_context = await run_payload_codec(
+                        _request_telemetry_snapshot,
+                        body_bytes,
+                        otel_config.max_body_size,
+                        payload_hint=body_bytes,
+                        force_offload=True,
+                    )
             except Exception as e:
                 logger.debug(f"Failed to capture request body: {e}")
 
@@ -714,7 +639,7 @@ def create_app():
             if is_telemetry_enabled():
                 # Extract task_id and subtask_id from request body for tracing
                 if request_body:
-                    task_id, subtask_id, user_id = _request_context_fields(request_body)
+                    task_id, subtask_id, user_id = request_context
                     if task_id is not None or subtask_id is not None:
                         set_task_context(task_id=task_id, subtask_id=subtask_id)
                     if user_id is not None:
@@ -724,7 +649,13 @@ def create_app():
                 if request_body:
                     current_span = trace.get_current_span()
                     if current_span and current_span.is_recording():
-                        log_json_body("http.request.body", request_body)
+                        await run_payload_codec(
+                            log_json_body,
+                            "http.request.body",
+                            request_body,
+                            payload_hint=request_body,
+                            force_offload=True,
+                        )
 
         # Pre-request logging with request ID
         request_log_message = (
@@ -765,48 +696,9 @@ def create_app():
                                 f"http.response.header.{header_name}", header_value
                             )
 
-                    # Capture response body (only for non-streaming responses)
-                    if otel_config.capture_response_body and _should_capture_http_body(
-                        request.url.path
-                    ):
-                        if not isinstance(response, StreamingResponse):
-                            try:
-                                # For regular responses, we need to read and reconstruct the body
-                                response_body_chunks = []
-                                async for chunk in response.body_iterator:
-                                    response_body_chunks.append(chunk)
-
-                                response_body = b"".join(response_body_chunks)
-
-                                # Limit body size
-                                max_body_size = otel_config.max_body_size
-                                if response_body:
-                                    if len(response_body) <= max_body_size:
-                                        body_str = response_body.decode(
-                                            "utf-8", errors="replace"
-                                        )
-                                    else:
-                                        body_str = (
-                                            response_body[:max_body_size].decode(
-                                                "utf-8", errors="replace"
-                                            )
-                                            + f"... [truncated, total size: {len(response_body)} bytes]"
-                                        )
-                                    current_span.set_attribute(
-                                        "http.response.body", body_str
-                                    )
-
-                                # Reconstruct the response with the body
-                                from starlette.responses import Response
-
-                                response = Response(
-                                    content=response_body,
-                                    status_code=response.status_code,
-                                    headers=dict(response.headers),
-                                    media_type=response.media_type,
-                                )
-                            except Exception as e:
-                                logger.debug(f"Failed to capture response body: {e}")
+                    # Response body capture is handled by the OpenTelemetry ASGI
+                    # send hook, which inspects at most one bounded chunk and never
+                    # buffers or reconstructs the response on the Uvicorn loop.
 
         # Post-request logging with request ID
         response_log_message = (
@@ -834,10 +726,43 @@ def create_app():
         allow_headers=["*"],
         expose_headers=["Content-Disposition", "X-Request-ID"],
     )
+    app.add_middleware(
+        RequestBodyLimitMiddleware,
+        path_limits=streaming_request_body_limits(settings.API_PREFIX),
+        path_patterns=streaming_request_body_limit_patterns(settings.API_PREFIX),
+        multipart_path_limits=multipart_request_body_limits(
+            settings.API_PREFIX,
+            max_attachment_file_bytes=(settings.MAX_UPLOAD_FILE_SIZE_MB * 1024 * 1024),
+            max_feedback_bundle_bytes=(
+                settings.WEWORK_FEEDBACK_MAX_BUNDLE_SIZE_MB * 1024 * 1024
+            ),
+            max_plugin_package_bytes=MAX_PLUGIN_PACKAGE_SIZE_BYTES,
+            max_skill_package_bytes=SkillValidator.MAX_SIZE,
+            max_team_icon_bytes=TEAM_ICON_FILE_MAX_BYTES,
+        ),
+        multipart_path_patterns=multipart_request_body_limit_patterns(
+            settings.API_PREFIX,
+            max_cloud_file_bytes=(settings.DELIVERY_MAX_ASSET_SIZE_MB * 1024 * 1024),
+            max_delivery_asset_bytes=(
+                settings.DELIVERY_MAX_ASSET_SIZE_MB * 1024 * 1024
+            ),
+            max_skill_package_bytes=SkillValidator.MAX_SIZE,
+            max_work_queue_file_bytes=(settings.MAX_UPLOAD_FILE_SIZE_MB * 1024 * 1024),
+        ),
+        multipart_body_limit=DEFAULT_MULTIPART_BODY_MAX_BYTES,
+    )
 
     # Register exception handlers
     app.add_exception_handler(CustomHTTPException, http_exception_handler)
+    app.add_exception_handler(
+        StarletteHTTPException,
+        framework_http_exception_handler,
+    )
     app.add_exception_handler(RequestValidationError, validation_exception_handler)
+    app.add_exception_handler(
+        BoundedExecutorOverloaded,
+        executor_overload_exception_handler,
+    )
     app.add_exception_handler(Exception, python_exception_handler)
 
     # Register rate limiter exception handler and state
@@ -869,6 +794,11 @@ def create_app():
         # In production, fail fast to surface configuration problems early
         if settings.ENVIRONMENT.lower() == "production":
             raise
+
+    # Route registration is complete. Move FastAPI's synchronous codecs,
+    # dependencies, and endpoints to bounded workers, and protect routes added
+    # later through app decorators with IsolatedAPIRoute.
+    install_fastapi_route_isolation(app)
 
     return app
 

@@ -5,11 +5,10 @@
 """Local executor control-plane endpoints."""
 
 import logging
+from dataclasses import dataclass
 
 from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy.orm import Session
 
-from app.api.dependencies import get_db
 from app.core import security
 from app.models.user import User
 from app.schemas.device import (
@@ -27,6 +26,17 @@ logger = logging.getLogger(__name__)
 router = APIRouter(tags=["local-executor"])
 
 
+@dataclass(frozen=True)
+class _LocalExecutorUser:
+    id: int
+
+
+def _get_local_executor_user(
+    current_user: User = Depends(security.get_current_user),
+) -> _LocalExecutorUser:
+    return _LocalExecutorUser(id=current_user.id)
+
+
 @router.post(
     "/devices/{device_id}/capabilities/sync",
     response_model=DeviceCapabilitySyncResponse,
@@ -34,14 +44,12 @@ router = APIRouter(tags=["local-executor"])
 async def sync_device_capabilities(
     device_id: str,
     request: DeviceCapabilitySyncRequest,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(security.get_current_user),
+    current_user: _LocalExecutorUser = Depends(_get_local_executor_user),
 ) -> DeviceCapabilitySyncResponse:
     """Sync selected global capabilities to one online local executor device."""
     try:
         return await device_capability_sync_service.sync_device_capabilities(
-            db,
-            user=current_user,
+            user_id=current_user.id,
             device_id=device_id,
             skill_ids=request.skill_ids,
             installed_skill_ids=request.installed_skill_ids,

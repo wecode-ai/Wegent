@@ -12,7 +12,7 @@ from unittest.mock import Mock
 
 import pytest
 from fastapi import HTTPException
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.orm.attributes import flag_modified
 
 from app.api.endpoints.installed_plugins import (
@@ -24,6 +24,7 @@ from app.api.endpoints.installed_plugins import (
     uninstall_installed_plugin,
 )
 from app.core.config import settings
+from app.db import session as db_session
 from app.models.kind import Kind
 from app.models.namespace import Namespace
 from app.models.plugin_marketplace import (
@@ -79,6 +80,19 @@ GITHUB_UPSTREAM_SKILL_PATHS = (
     "skills/github/SKILL.md",
     "skills/yeet/SKILL.md",
 )
+
+
+@pytest.fixture(autouse=True)
+def worker_session_factory(test_db, monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setattr(
+        db_session,
+        "SessionLocal",
+        sessionmaker(
+            bind=test_db.get_bind(),
+            expire_on_commit=False,
+            join_transaction_mode="create_savepoint",
+        ),
+    )
 
 
 def _plugin_zip(
@@ -1820,18 +1834,21 @@ async def test_all_devices_receive_pending_rows(test_db, test_user, monkeypatch)
     test_db.add(installed)
     test_db.commit()
 
-    async def devices(_db, _user_id):
-        return [
-            {"device_id": "online-device", "status": "online"},
-            {"device_id": "offline-device", "status": "offline"},
+    test_db.add_all(
+        [
+            Kind(
+                user_id=test_user.id,
+                kind="Device",
+                namespace="default",
+                name=device_id,
+                json={"spec": {"deviceType": "local"}},
+                is_active=True,
+            )
+            for device_id in ("online-device", "offline-device")
         ]
-
-    monkeypatch.setattr(
-        "app.services.plugin_device_installation_service.device_service.get_all_devices",
-        devices,
     )
+    test_db.commit()
     await PluginDeviceInstallationService().ensure_pending_for_all_devices(
-        test_db,
         user_id=test_user.id,
         installed_kind_id=installed.id,
         desired_release_id=release.id,
@@ -2123,8 +2140,6 @@ def test_ensure_pending_for_device_skips_uninstalling_rows(test_db, test_user):
 async def test_sync_installed_plugins_to_device_materializes_account_install(
     test_db, test_user, monkeypatch
 ):
-    from contextlib import contextmanager
-
     installed, release = _device_install(test_db, test_user.id)
     reconcile_calls: list[int] = []
 
@@ -2141,10 +2156,6 @@ async def test_sync_installed_plugins_to_device_materializes_account_install(
             plugins=[DeviceCapabilityItemResult(id=str(installed.id), status="synced")],
         )
 
-    @contextmanager
-    def reuse_test_db():
-        yield test_db
-
     monkeypatch.setattr(
         plugin_marketplace_service,
         "reconcile_stale_installed_catalog_refs",
@@ -2155,16 +2166,8 @@ async def test_sync_installed_plugins_to_device_materializes_account_install(
         "sync_device_payload",
         sync_device_payload,
     )
-    # Nested test transactions are connection-bound; reuse the fixture session.
-    monkeypatch.setattr(test_db, "close", lambda: None)
-    monkeypatch.setattr(
-        "app.api.endpoints.installed_plugins.get_db_session",
-        reuse_test_db,
-    )
-
     response = await sync_installed_plugins_to_device(
         device_id="new-device",
-        db=test_db,
         current_user=test_user,
     )
 
@@ -2178,7 +2181,8 @@ async def test_sync_installed_plugins_to_device_materializes_account_install(
     assert row.actual_release_id == release.id
 
 
-def test_report_installed_plugins_on_device_acks_without_pushing_packages(
+@pytest.mark.asyncio
+async def test_report_installed_plugins_on_device_acks_without_pushing_packages(
     test_db, test_user, monkeypatch
 ):
     installed, release = _device_install(test_db, test_user.id)
@@ -2198,7 +2202,7 @@ def test_report_installed_plugins_on_device_acks_without_pushing_packages(
 
     monkeypatch.setattr(device_capability_sync_service, "sync_device_payload", boom)
 
-    response = report_installed_plugins_on_device(
+    response = await report_installed_plugins_on_device(
         payload=PluginDeviceReportRequest(
             plugins=[
                 PluginDeviceReportItem(
@@ -2209,7 +2213,6 @@ def test_report_installed_plugins_on_device_acks_without_pushing_packages(
             ]
         ),
         device_id="current-device",
-        db=test_db,
         current_user=test_user,
     )
 
@@ -2224,7 +2227,8 @@ def test_report_installed_plugins_on_device_acks_without_pushing_packages(
     assert row.attempt_count == 0
 
 
-def test_report_installed_plugins_on_device_rejects_stale_release_evidence(
+@pytest.mark.asyncio
+async def test_report_installed_plugins_on_device_rejects_stale_release_evidence(
     test_db, test_user
 ):
     installed, release = _device_install(test_db, test_user.id)
@@ -2239,7 +2243,7 @@ def test_report_installed_plugins_on_device_rejects_stale_release_evidence(
     )
     test_db.commit()
 
-    response = report_installed_plugins_on_device(
+    response = await report_installed_plugins_on_device(
         payload=PluginDeviceReportRequest(
             plugins=[
                 PluginDeviceReportItem(
@@ -2250,7 +2254,6 @@ def test_report_installed_plugins_on_device_rejects_stale_release_evidence(
             ]
         ),
         device_id="current-device",
-        db=test_db,
         current_user=test_user,
     )
 
@@ -2419,14 +2422,14 @@ def test_publish_capability_supports_admin_flag_and_user_allowlist(
     monkeypatch.setattr(settings, "PLUGIN_PUBLISH_ENABLED", False)
     monkeypatch.setattr(settings, "PLUGIN_PUBLISH_USER_IDS", [])
     test_user.role = "user"
-    assert _can_publish(test_user) is False
+    assert _can_publish(user_id=test_user.id, user_role=test_user.role) is False
 
     monkeypatch.setattr(settings, "PLUGIN_PUBLISH_USER_IDS", [test_user.id])
-    assert _can_publish(test_user) is True
+    assert _can_publish(user_id=test_user.id, user_role=test_user.role) is True
 
     monkeypatch.setattr(settings, "PLUGIN_PUBLISH_USER_IDS", [])
     test_user.role = "admin"
-    assert _can_publish(test_user) is True
+    assert _can_publish(user_id=test_user.id, user_role=test_user.role) is True
 
 
 @pytest.mark.asyncio
@@ -2459,7 +2462,6 @@ async def test_plugin_mutation_only_fails_for_the_required_device(
     )
 
     result = await _sync_global_capabilities(
-        test_db,
         test_user.id,
         required_device_id="current-device",
     )
@@ -2467,7 +2469,6 @@ async def test_plugin_mutation_only_fails_for_the_required_device(
 
     with pytest.raises(HTTPException) as exc_info:
         await _sync_global_capabilities(
-            test_db,
             test_user.id,
             required_device_id="other-device",
         )
@@ -2501,7 +2502,6 @@ async def test_plugin_mutation_requires_the_current_plugin_result(
 
     with pytest.raises(HTTPException) as exc_info:
         await _sync_global_capabilities(
-            test_db,
             test_user.id,
             required_device_id="current-device",
             required_installed_kind_id=installed.id,
@@ -2585,7 +2585,6 @@ async def test_install_returns_plugin_when_device_sync_fails(
         marketplace_id=plugin.id,
         release_id=None,
         device_id="current-device",
-        db=test_db,
         current_user=test_user,
     )
     assert response.plugin is not None
@@ -2643,7 +2642,6 @@ async def test_uninstall_succeeds_when_device_sync_fails(
     await uninstall_installed_plugin(
         installed_id=installed.id,
         device_id="current-device",
-        db=test_db,
         current_user=test_user,
     )
 
@@ -2687,7 +2685,6 @@ async def test_uninstall_is_idempotent_for_inactive_kind(
     await uninstall_installed_plugin(
         installed_id=installed.id,
         device_id="current-device",
-        db=test_db,
         current_user=test_user,
     )
     assert installed.is_active is False

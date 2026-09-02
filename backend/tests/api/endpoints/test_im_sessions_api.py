@@ -80,7 +80,6 @@ def _create_session(
 ) -> IMPrivateSession:
     return asyncio.run(
         im_session_service.get_or_create_private_session(
-            db=db,
             user_id=user_id,
             channel_type=channel_type,
             channel_id=channel_id,
@@ -208,7 +207,7 @@ def test_bind_task_private_sessions_returns_bound_keys_and_notified_count(
     test_db.commit()
     calls: list[dict[str, object]] = []
 
-    async def fake_send_task_switched(db, sessions, task_title):
+    async def fake_send_task_switched(sessions, task_title):
         calls.append(
             {
                 "session_keys": [session.session_key for session in sessions],
@@ -218,7 +217,7 @@ def test_bind_task_private_sessions_returns_bound_keys_and_notified_count(
         return {"sent": len(sessions), "results": []}
 
     monkeypatch.setattr(
-        "app.api.endpoints.im_sessions.im_notification_dispatcher.send_task_switched",
+        "app.api.endpoints.im_sessions.im_notification_dispatcher.send_task_switched_nonblocking",
         fake_send_task_switched,
     )
 

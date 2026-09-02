@@ -99,27 +99,26 @@ async def test_send_text_reply_returns_false_when_channel_send_fails():
 @pytest.mark.asyncio
 async def test_resolve_user_passes_discord_fields_and_mapping_config(monkeypatch):
     calls = {}
-    resolved_user = object()
-    db = object()
 
-    class FakeResolver:
-        def __init__(self, db, user_mapping_mode=None, user_mapping_config=None):
-            calls["db"] = db
-            calls["user_mapping_mode"] = user_mapping_mode
-            calls["user_mapping_config"] = user_mapping_config
+    def fake_resolve(
+        mapping_mode,
+        mapping_config,
+        discord_user_id,
+        discord_username,
+        discord_global_name,
+    ):
+        calls.update(
+            {
+                "user_mapping_mode": mapping_mode,
+                "user_mapping_config": mapping_config,
+                "discord_user_id": discord_user_id,
+                "discord_username": discord_username,
+                "discord_global_name": discord_global_name,
+            }
+        )
+        return 123
 
-        async def resolve_user(
-            self,
-            discord_user_id: int,
-            discord_username: str | None = None,
-            discord_global_name: str | None = None,
-        ):
-            calls["discord_user_id"] = discord_user_id
-            calls["discord_username"] = discord_username
-            calls["discord_global_name"] = discord_global_name
-            return resolved_user
-
-    monkeypatch.setattr(discord_handler, "DiscordUserResolver", FakeResolver)
+    monkeypatch.setattr(discord_handler, "_resolve_discord_user_id_sync", fake_resolve)
     handler = DiscordChannelHandler(
         channel_id=7,
         get_user_mapping_config=lambda: {
@@ -128,11 +127,10 @@ async def test_resolve_user_passes_discord_fields_and_mapping_config(monkeypatch
         },
     )
 
-    result = await handler.resolve_user(db, handler.parse_message(_message()))
+    result = await handler.resolve_user_id(handler.parse_message(_message()))
 
-    assert result is resolved_user
+    assert result == 123
     assert calls == {
-        "db": db,
         "user_mapping_mode": "email",
         "user_mapping_config": {"email_domain": "example.com"},
         "discord_user_id": 123456,

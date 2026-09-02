@@ -34,9 +34,9 @@ from app.api.knowledge_document_side_effects import (
     schedule_kb_summary_updates_after_deletion,
 )
 from app.core import security
+from app.core.blocking_work import run_execution_io
 from app.core.config import settings
 from app.core.exceptions import CustomHTTPException
-from app.db.session import SessionLocal
 from app.models.knowledge import DocumentIndexStatus, KnowledgeDocument
 from app.models.user import User
 from app.schemas.knowledge import (
@@ -73,7 +73,11 @@ from app.schemas.knowledge import (
 )
 from app.schemas.knowledge_multimodal import DocumentReindexRequest
 from app.schemas.knowledge_qa_history import QAHistoryResponse
-from app.schemas.summary import KnowledgeBaseSummaryUpdateRequest
+from app.schemas.summary import (
+    DocumentSummaryResponse,
+    KnowledgeBaseSummaryResponse,
+    KnowledgeBaseSummaryUpdateRequest,
+)
 from app.services.knowledge import (
     KnowledgeFolderService,
     KnowledgeService,
@@ -90,6 +94,8 @@ from app.services.knowledge.orchestrator import (
     knowledge_orchestrator,
 )
 from app.services.knowledge.retrieval_profile import get_profile
+from app.services.knowledge.summary_service import get_summary_service
+from app.services.knowledge.web_db import run_knowledge_db_phase
 from shared.telemetry.decorators import (
     add_span_event,
     trace_async,
@@ -184,6 +190,171 @@ def _validate_knowledge_base_access_or_raise(
             detail="Access denied to this knowledge base",
         )
     return knowledge_base
+
+
+def _load_knowledge_user(db: Session, user_id: int) -> User:
+    user = db.get(User, user_id)
+    if user is None:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Could not validate credentials",
+        )
+    return user
+
+
+def _get_document_detail_phase(
+    db: Session,
+    user_id: int,
+    document_id: int,
+    include_content: bool,
+    include_summary: bool,
+    offset: int,
+    limit: int,
+) -> DocumentDetailResponse:
+    return knowledge_orchestrator.get_document_detail_sync(
+        db=db,
+        user=_load_knowledge_user(db, user_id),
+        document_id=document_id,
+        include_content=include_content,
+        include_summary=include_summary,
+        offset=offset,
+        limit=limit,
+    )
+
+
+def _get_scoped_document_detail_phase(
+    db: Session,
+    user_id: int,
+    kb_id: int,
+    document_id: int,
+    include_content: bool,
+    include_summary: bool,
+    offset: int,
+    limit: int,
+) -> DocumentDetailResponse:
+    user = _load_knowledge_user(db, user_id)
+    _validate_knowledge_base_access_or_raise(
+        db,
+        knowledge_base_id=kb_id,
+        user=user,
+    )
+    document = (
+        db.query(KnowledgeDocument)
+        .filter(
+            KnowledgeDocument.id == document_id,
+            KnowledgeDocument.kind_id == kb_id,
+        )
+        .first()
+    )
+    if document is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Document not found in the specified knowledge base",
+        )
+    return knowledge_orchestrator.get_document_detail_sync(
+        db=db,
+        user=user,
+        document_id=document_id,
+        include_content=include_content,
+        include_summary=include_summary,
+        offset=offset,
+        limit=limit,
+    )
+
+
+def _get_kb_summary_phase(
+    db: Session,
+    user_id: int,
+    kb_id: int,
+) -> KnowledgeBaseSummaryResponse:
+    user = _load_knowledge_user(db, user_id)
+    _validate_knowledge_base_access_or_raise(
+        db,
+        knowledge_base_id=kb_id,
+        user=user,
+    )
+    return KnowledgeBaseSummaryResponse(
+        kb_id=kb_id,
+        summary=get_summary_service(db).get_kb_summary_sync(kb_id),
+    )
+
+
+def _update_kb_summary_phase(
+    db: Session,
+    user_id: int,
+    user_name: str,
+    kb_id: int,
+    content: str,
+) -> KnowledgeBaseSummaryResponse:
+    user = _load_knowledge_user(db, user_id)
+    _validate_knowledge_base_access_or_raise(
+        db,
+        knowledge_base_id=kb_id,
+        user=user,
+    )
+    if not KnowledgeService.can_manage_knowledge_base(db, kb_id, user_id):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="You do not have permission to update knowledge base summary",
+        )
+    summary = get_summary_service(db).update_kb_manual_summary_sync(
+        kb_id=kb_id,
+        user_id=user_id,
+        user_name=user_name,
+        content=content,
+    )
+    return KnowledgeBaseSummaryResponse(kb_id=kb_id, summary=summary)
+
+
+def _reset_kb_summary_phase(
+    db: Session,
+    user_id: int,
+    kb_id: int,
+) -> KnowledgeBaseSummaryResponse:
+    user = _load_knowledge_user(db, user_id)
+    _validate_knowledge_base_access_or_raise(
+        db,
+        knowledge_base_id=kb_id,
+        user=user,
+    )
+    if not KnowledgeService.can_manage_knowledge_base(db, kb_id, user_id):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="You do not have permission to reset knowledge base summary",
+        )
+    summary = get_summary_service(db).reset_kb_manual_summary_sync(kb_id)
+    return KnowledgeBaseSummaryResponse(kb_id=kb_id, summary=summary)
+
+
+def _get_document_summary_phase(
+    db: Session,
+    user_id: int,
+    kb_id: int,
+    document_id: int,
+) -> DocumentSummaryResponse:
+    user = _load_knowledge_user(db, user_id)
+    _validate_knowledge_base_access_or_raise(
+        db,
+        knowledge_base_id=kb_id,
+        user=user,
+    )
+    document = (
+        db.query(KnowledgeDocument)
+        .filter(
+            KnowledgeDocument.id == document_id,
+            KnowledgeDocument.kind_id == kb_id,
+        )
+        .first()
+    )
+    if document is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Document not found in the specified knowledge base",
+        )
+    return DocumentSummaryResponse(
+        document_id=document_id,
+        summary=get_summary_service(db).get_document_summary_sync(document_id),
+    )
 
 
 # ============== Knowledge Base Endpoints ==============
@@ -739,8 +910,8 @@ def list_documents(
     response_model=KnowledgeDocumentResponse,
     status_code=status.HTTP_201_CREATED,
 )
-@trace_async("create_document", "knowledge.api")
-async def create_document(
+@trace_sync("create_document", "knowledge.api")
+def create_document(
     knowledge_base_id: int,
     data: KnowledgeDocumentCreate,
     current_user: User = Depends(security.get_current_user),
@@ -789,8 +960,8 @@ async def create_document(
     response_model=KnowledgeDocumentResponse,
     status_code=status.HTTP_201_CREATED,
 )
-@trace_async("import_external_document", "knowledge.api")
-async def import_external_document(
+@trace_sync("import_external_document", "knowledge.api")
+def import_external_document(
     knowledge_base_id: int,
     data: ExternalDocumentImportRequest,
     current_user: User = Depends(security.get_current_user),
@@ -842,8 +1013,8 @@ async def import_external_document(
     response_model=ExternalDocumentBatchImportResponse,
     status_code=status.HTTP_201_CREATED,
 )
-@trace_async("import_external_document_batch", "knowledge.api")
-async def import_external_document_batch(
+@trace_sync("import_external_document_batch", "knowledge.api")
+def import_external_document_batch(
     knowledge_base_id: int,
     data: ExternalDocumentBatchImportRequest,
     current_user: User = Depends(security.get_current_user),
@@ -987,8 +1158,8 @@ def update_document(
 
 
 @document_router.post("/{document_id}/reindex")
-@trace_async("reindex_document", "knowledge.api")
-async def reindex_document(
+@trace_sync("reindex_document", "knowledge.api")
+def reindex_document(
     document_id: int,
     payload: Optional[DocumentReindexRequest] = None,
     current_user: User = Depends(security.get_current_user),
@@ -1144,8 +1315,8 @@ def delete_document(
 
 
 @document_router.put("/{document_id}/content")
-@trace_async("update_document_content", "knowledge.api")
-async def update_document_content(
+@trace_sync("update_document_content", "knowledge.api")
+def update_document_content(
     document_id: int,
     data: DocumentContentUpdate,
     current_user: User = Depends(security.get_current_user),
@@ -1203,8 +1374,7 @@ async def get_document_detail_standalone(
     document_id: int,
     include_content: bool = Query(True, description="Include document content"),
     include_summary: bool = Query(True, description="Include document summary"),
-    current_user: User = Depends(security.get_current_user),
-    db: Session = Depends(get_db),
+    current_user: security.DetachedUser = Depends(security.get_detached_current_user),
 ):
     """
     Get document detail (content and/or summary) without requiring knowledge base ID.
@@ -1213,14 +1383,14 @@ async def get_document_detail_standalone(
     is not readily available (e.g., in citation tooltips).
     """
     try:
-        detail = await knowledge_orchestrator.get_document_detail(
-            db=db,
-            user=current_user,
-            document_id=document_id,
-            include_content=include_content,
-            include_summary=include_summary,
-            offset=0,
-            limit=MAX_DOCUMENT_READ_LIMIT,
+        detail = await run_knowledge_db_phase(
+            _get_document_detail_phase,
+            current_user.id,
+            document_id,
+            include_content,
+            include_summary,
+            0,
+            MAX_DOCUMENT_READ_LIMIT,
         )
         return _serialize_standalone_document_detail(
             detail,
@@ -1573,8 +1743,7 @@ summary_router = APIRouter()
 @trace_async("get_kb_summary", "knowledge.api")
 async def get_kb_summary(
     kb_id: int,
-    current_user: User = Depends(security.get_current_user),
-    db: Session = Depends(get_db),
+    current_user: security.DetachedUser = Depends(security.get_detached_current_user),
 ):
     """
     Get knowledge base summary.
@@ -1585,25 +1754,11 @@ async def get_kb_summary(
     - topics: List of core topic tags
     - status: Summary generation status
     """
-    from app.schemas.summary import KnowledgeBaseSummaryResponse
-    from app.services.knowledge import get_summary_service
-
-    # Validate KB access permission
-    kb, has_access = KnowledgeService.get_knowledge_base(db, kb_id, current_user.id)
-    if not kb:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Knowledge base not found",
-        )
-    if not has_access:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Access denied to this knowledge base",
-        )
-
-    summary_service = get_summary_service(db)
-    summary = await summary_service.get_kb_summary(kb_id)
-    return KnowledgeBaseSummaryResponse(kb_id=kb_id, summary=summary)
+    return await run_knowledge_db_phase(
+        _get_kb_summary_phase,
+        current_user.id,
+        kb_id,
+    )
 
 
 @summary_router.put("/{kb_id}/summary")
@@ -1611,76 +1766,35 @@ async def get_kb_summary(
 async def update_kb_summary(
     kb_id: int,
     data: KnowledgeBaseSummaryUpdateRequest,
-    current_user: User = Depends(security.get_current_user),
-    db: Session = Depends(get_db),
+    current_user: security.DetachedUser = Depends(security.get_detached_current_user),
 ):
     """Manually update knowledge base summary."""
-    from app.schemas.summary import KnowledgeBaseSummaryResponse
-    from app.services.knowledge import get_summary_service
-
-    kb, has_access = KnowledgeService.get_knowledge_base(db, kb_id, current_user.id)
-    if not kb:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Knowledge base not found",
-        )
-    if not has_access:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Access denied to this knowledge base",
-        )
-    if not KnowledgeService.can_manage_knowledge_base(db, kb_id, current_user.id):
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="You do not have permission to update knowledge base summary",
-        )
-
-    summary_service = get_summary_service(db)
-    summary = await summary_service.update_kb_manual_summary(
-        kb_id=kb_id,
-        user_id=current_user.id,
-        user_name=current_user.user_name,
-        content=data.long_summary,
+    return await run_knowledge_db_phase(
+        _update_kb_summary_phase,
+        current_user.id,
+        current_user.user_name,
+        kb_id,
+        data.long_summary,
     )
-    return KnowledgeBaseSummaryResponse(kb_id=kb_id, summary=summary)
 
 
 @summary_router.post("/{kb_id}/summary/reset")
 @trace_async("reset_kb_summary", "knowledge.api")
 async def reset_kb_summary(
     kb_id: int,
-    current_user: User = Depends(security.get_current_user),
-    db: Session = Depends(get_db),
+    current_user: security.DetachedUser = Depends(security.get_detached_current_user),
 ):
     """Reset manual knowledge base summary and fall back to AI summary."""
-    from app.schemas.summary import KnowledgeBaseSummaryResponse
-    from app.services.knowledge import get_summary_service
-
-    kb, has_access = KnowledgeService.get_knowledge_base(db, kb_id, current_user.id)
-    if not kb:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Knowledge base not found",
-        )
-    if not has_access:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Access denied to this knowledge base",
-        )
-    if not KnowledgeService.can_manage_knowledge_base(db, kb_id, current_user.id):
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="You do not have permission to reset knowledge base summary",
-        )
-
-    summary_service = get_summary_service(db)
-    summary = await summary_service.reset_kb_manual_summary(kb_id)
-    return KnowledgeBaseSummaryResponse(kb_id=kb_id, summary=summary)
+    return await run_knowledge_db_phase(
+        _reset_kb_summary_phase,
+        current_user.id,
+        kb_id,
+    )
 
 
 @summary_router.post("/{kb_id}/summary/refresh")
-@trace_async("refresh_kb_summary", "knowledge.api")
-async def refresh_kb_summary(
+@trace_sync("refresh_kb_summary", "knowledge.api")
+def refresh_kb_summary(
     kb_id: int,
     background_tasks: BackgroundTasks,
     current_user: User = Depends(security.get_current_user),
@@ -1747,8 +1861,7 @@ async def get_document_detail(
         le=MAX_DOCUMENT_READ_LIMIT,
         description=f"Content read limit (max: {MAX_DOCUMENT_READ_LIMIT})",
     ),
-    current_user: User = Depends(security.get_current_user),
-    db: Session = Depends(get_db),
+    current_user: security.DetachedUser = Depends(security.get_detached_current_user),
 ):
     """
     Get document detail including content and summary.
@@ -1766,37 +1879,16 @@ async def get_document_detail(
     - truncated: Whether more content is available (if include_content=true)
     - summary: Document summary object (if include_summary=true)
     """
-    from app.models.knowledge import KnowledgeDocument
-
-    _validate_knowledge_base_access_or_raise(
-        db,
-        knowledge_base_id=kb_id,
-        user=current_user,
-    )
-
-    document = (
-        db.query(KnowledgeDocument)
-        .filter(
-            KnowledgeDocument.id == doc_id,
-            KnowledgeDocument.kind_id == kb_id,
-        )
-        .first()
-    )
-    if not document:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Document not found in the specified knowledge base",
-        )
-
     try:
-        return await knowledge_orchestrator.get_document_detail(
-            db=db,
-            user=current_user,
-            document_id=doc_id,
-            include_content=include_content,
-            include_summary=include_summary,
-            offset=offset,
-            limit=limit,
+        return await run_knowledge_db_phase(
+            _get_scoped_document_detail_phase,
+            current_user.id,
+            kb_id,
+            doc_id,
+            include_content,
+            include_summary,
+            offset,
+            limit,
         )
     except ValueError as error:
         _raise_document_detail_http_error(error)
@@ -1807,8 +1899,7 @@ async def get_document_detail(
 async def get_document_summary(
     kb_id: int,
     doc_id: int,
-    current_user: User = Depends(security.get_current_user),
-    db: Session = Depends(get_db),
+    current_user: security.DetachedUser = Depends(security.get_detached_current_user),
 ):
     """
     Get document summary.
@@ -1820,46 +1911,17 @@ async def get_document_summary(
     - meta_info: Extracted metadata
     - status: Summary generation status
     """
-    from app.models.knowledge import KnowledgeDocument
-    from app.schemas.summary import DocumentSummaryResponse
-    from app.services.knowledge import get_summary_service
-
-    # Validate KB access permission first
-    kb, has_access = KnowledgeService.get_knowledge_base(db, kb_id, current_user.id)
-    if not kb:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Knowledge base not found",
-        )
-    if not has_access:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Access denied to this knowledge base",
-        )
-
-    # Validate document belongs to the specified knowledge base
-    document = (
-        db.query(KnowledgeDocument)
-        .filter(
-            KnowledgeDocument.id == doc_id,
-            KnowledgeDocument.kind_id == kb_id,
-        )
-        .first()
+    return await run_knowledge_db_phase(
+        _get_document_summary_phase,
+        current_user.id,
+        kb_id,
+        doc_id,
     )
-    if not document:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Document not found in the specified knowledge base",
-        )
-
-    summary_service = get_summary_service(db)
-    summary = await summary_service.get_document_summary(doc_id)
-    return DocumentSummaryResponse(document_id=doc_id, summary=summary)
 
 
 @summary_router.post("/{kb_id}/documents/{doc_id}/summary/refresh")
-@trace_async("refresh_document_summary", "knowledge.api")
-async def refresh_document_summary(
+@trace_sync("refresh_document_summary", "knowledge.api")
+def refresh_document_summary(
     kb_id: int,
     doc_id: int,
     background_tasks: BackgroundTasks,
@@ -1918,8 +1980,8 @@ async def refresh_document_summary(
 
 @trace_async("kb_summary_refresh_background", "knowledge.worker")
 async def _run_kb_summary_refresh(kb_id: int, user_id: int, user_name: str):
-    """Background task wrapper for KB summary refresh."""
-    from app.services.knowledge import get_summary_service
+    """Enqueue KB summary refresh without running it on the Web event loop."""
+    from app.tasks.knowledge_tasks import update_kb_summary_task
 
     add_span_event(
         "kb.summary.refresh.started",
@@ -1929,13 +1991,16 @@ async def _run_kb_summary_refresh(kb_id: int, user_id: int, user_name: str):
         },
     )
 
-    # Create new session for background task
-    new_db = SessionLocal()
     try:
-        summary_service = get_summary_service(new_db)
-        await summary_service.refresh_kb_summary(kb_id, user_id, user_name)
+        await run_execution_io(
+            update_kb_summary_task.delay,
+            kb_id,
+            user_id,
+            user_name,
+            True,
+        )
         add_span_event(
-            "kb.summary.refresh.completed",
+            "kb.summary.refresh.enqueued",
             {
                 "kb_id": str(kb_id),
             },
@@ -1949,14 +2014,12 @@ async def _run_kb_summary_refresh(kb_id: int, user_id: int, user_name: str):
                 "error": str(e),
             },
         )
-    finally:
-        new_db.close()
 
 
 @trace_async("document_summary_refresh_background", "knowledge.worker")
 async def _run_document_summary_refresh(doc_id: int, user_id: int, user_name: str):
-    """Background task wrapper for document summary refresh."""
-    from app.services.knowledge import get_summary_service
+    """Enqueue document summary refresh outside the Web event loop."""
+    from app.tasks.knowledge_tasks import generate_document_summary_task
 
     add_span_event(
         "document.summary.refresh.started",
@@ -1966,13 +2029,15 @@ async def _run_document_summary_refresh(doc_id: int, user_id: int, user_name: st
         },
     )
 
-    # Create new session for background task
-    new_db = SessionLocal()
     try:
-        summary_service = get_summary_service(new_db)
-        await summary_service.refresh_document_summary(doc_id, user_id, user_name)
+        await run_execution_io(
+            generate_document_summary_task.delay,
+            doc_id,
+            user_id,
+            user_name,
+        )
         add_span_event(
-            "document.summary.refresh.completed",
+            "document.summary.refresh.enqueued",
             {
                 "doc_id": str(doc_id),
             },
@@ -1986,8 +2051,6 @@ async def _run_document_summary_refresh(doc_id: int, user_id: int, user_name: st
                 "error": str(e),
             },
         )
-    finally:
-        new_db.close()
 
 
 # ============== Chunk Management Endpoints ==============

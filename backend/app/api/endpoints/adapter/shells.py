@@ -17,6 +17,13 @@ from sqlalchemy.orm import Session
 from app.api.dependencies import get_db
 from app.core import security
 from app.core.cache import cache_manager
+from app.core.payload_codec import (
+    decode_sync_response_json,
+    decode_sync_response_text,
+    dump_model,
+    encode_http_json,
+)
+from app.core.web_background_tasks import web_background_task_manager
 from app.models.kind import Kind
 from app.models.user import User
 from app.schemas.kind import Shell as ShellCRD
@@ -809,20 +816,25 @@ async def validate_image(
         async with httpx.AsyncClient(
             timeout=VALIDATION_SUBMIT_TIMEOUT_SECONDS
         ) as client:
+            payload = {
+                "image": image,
+                "shell_type": shell_type,
+                "user_name": current_user.user_name,
+                "shell_name": request.shellName or "",
+                "validation_id": validation_id,
+            }
             response = await client.post(
                 validate_url,
-                json={
-                    "image": image,
-                    "shell_type": shell_type,
-                    "user_name": current_user.user_name,
-                    "shell_name": request.shellName or "",
-                    "validation_id": validation_id,  # Pass UUID to executor manager
-                },
+                content=await encode_http_json(payload),
+                headers={"Content-Type": "application/json"},
             )
 
         if response.status_code != 200:
+            response_text = await decode_sync_response_text(response)
             logger.error(
-                f"Executor manager validation request failed: {response.status_code} {response.text}"
+                "Executor manager validation request failed: %s %s",
+                response.status_code,
+                response_text,
             )
             # Update Redis status to error
             await _update_validation_status(
@@ -831,17 +843,17 @@ async def validate_image(
                 stage="Error",
                 progress=100,
                 valid=False,
-                error_message=f"Failed to submit validation task: {response.text}",
+                error_message=f"Failed to submit validation task: {response_text}",
             )
             return ImageValidationResponse(
                 status="error",
-                message=f"Failed to submit validation task: {response.text}",
+                message=f"Failed to submit validation task: {response_text}",
                 validationId=validation_id,
                 valid=False,
-                errors=[f"Executor manager error: {response.text}"],
+                errors=[f"Executor manager error: {response_text}"],
             )
 
-        result = response.json()
+        result = await decode_sync_response_json(response)
         logger.info(f"Validation task submission result: status={result.get('status')}")
 
         # Return the submission status with validation_id for polling
@@ -1023,15 +1035,16 @@ async def update_validation_status(
     this will automatically cleanup the validation container if executor_name is provided.
     """
     try:
+        request_payload = await dump_model(request, mode="python")
         success = await _update_validation_status(
             validation_id=validation_id,
-            status=request.status,
-            stage=request.stage,
-            progress=request.progress,
-            valid=request.valid,
-            checks=[c.model_dump() for c in request.checks] if request.checks else None,
-            errors=request.errors,
-            error_message=request.errorMessage,
+            status=request_payload["status"],
+            stage=request_payload["stage"],
+            progress=request_payload["progress"],
+            valid=request_payload["valid"],
+            checks=request_payload["checks"],
+            errors=request_payload["errors"],
+            error_message=request_payload["errorMessage"],
         )
 
         if not success:
@@ -1040,9 +1053,12 @@ async def update_validation_status(
             )
 
         # Cleanup validation container if validation is completed.
-        # Run cleanup asynchronously to avoid blocking callback response.
-        if request.executor_name and request.valid is True:
-            asyncio.create_task(_cleanup_validation_container(request.executor_name))
+        if request_payload["executor_name"] and request_payload["valid"] is True:
+            executor_name = request_payload["executor_name"]
+            await web_background_task_manager.submit(
+                lambda: _cleanup_validation_container(executor_name),
+                name=f"validation-container-cleanup-{executor_name}",
+            )
 
         return {"status": "success", "message": "Validation status updated"}
     except HTTPException:
@@ -1081,12 +1097,15 @@ async def _cleanup_validation_container(executor_name: str) -> None:
     try:
         logger.info(f"Cleaning up validation container: {executor_name}")
         async with httpx.AsyncClient(timeout=10.0) as client:
+            payload = {"executor_name": executor_name}
             response = await client.post(
-                delete_url, json={"executor_name": executor_name}
+                delete_url,
+                content=await encode_http_json(payload),
+                headers={"Content-Type": "application/json"},
             )
 
             if response.status_code == 200:
-                result = response.json()
+                result = await decode_sync_response_json(response)
                 if result.get("status") == "success":
                     logger.info(
                         f"Successfully cleaned up validation container: {executor_name}"

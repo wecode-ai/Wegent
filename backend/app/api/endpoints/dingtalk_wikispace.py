@@ -44,25 +44,26 @@ def get_wikispace_nodes(
 
 @router.post("/sync", response_model=DingtalkSyncResult)
 async def sync_wikispace_nodes(
-    db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> DingtalkSyncResult:
     """Trigger sync of DingTalk wikispace nodes from the user's wikispace MCP server."""
-    # Guard on the WikiSpace MCP URL directly so the error names the right
-    # service; a missing Docs MCP is reported by the service layer below.
-    if not DingTalkWikiSpaceService.get_user_wikispace_mcp_url(current_user):
-        raise HTTPException(
-            status_code=400,
-            detail="DingTalk WikiSpace MCP is not configured. "
-            "Please enable it in Settings > Integrations first.",
-        )
+    user_id = current_user.id
+    preferences = current_user.preferences
+    del current_user
+
     try:
-        result = await DingTalkWikiSpaceService.sync_wikispace_nodes(current_user, db)
+        result = await DingTalkWikiSpaceService.sync_wikispace_nodes(
+            user_id,
+            preferences,
+        )
         return DingtalkSyncResult(**result)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
-        logger.exception("Failed to sync DingTalk wikispace nodes: %s", e)
+        logger.exception(
+            "Failed to sync DingTalk wikispace nodes (%s)",
+            type(e).__name__,
+        )
         raise HTTPException(
             status_code=500,
             detail="Failed to sync DingTalk wikispace nodes",

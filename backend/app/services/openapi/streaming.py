@@ -14,8 +14,10 @@ import logging
 import uuid
 from dataclasses import dataclass, field
 from datetime import datetime
+from functools import partial
 from typing import Any, AsyncGenerator, Dict, List, Optional, Union
 
+from app.core.payload_codec import run_payload_codec
 from app.schemas.openapi_response import (
     FunctionCallOutputItem,
     MCPCallOutputItem,
@@ -54,6 +56,170 @@ def _format_sse_event(data: Dict[str, Any]) -> str:
         Formatted SSE string (data only, without event line)
     """
     return f"data: {json.dumps(data, ensure_ascii=False)}\n\n"
+
+
+async def _encode_sse_event(data: Dict[str, Any]) -> str:
+    return await run_payload_codec(
+        _format_sse_event,
+        data,
+        payload_hint=data,
+        force_offload=True,
+    )
+
+
+def _join_text_chunks(chunks: List[str]) -> str:
+    return "".join(chunks)
+
+
+def _store_response_block_created(
+    response_blocks: Dict[str, Dict[str, Any]],
+    block: Any,
+) -> bool:
+    if not isinstance(block, dict) or not block.get("id"):
+        return False
+    response_blocks[str(block["id"])] = dict(block)
+    return True
+
+
+def _store_response_block_updated(
+    response_blocks: Dict[str, Dict[str, Any]],
+    block_id: Any,
+    updates: Any,
+) -> tuple[str, bool]:
+    if not block_id or not isinstance(updates, dict):
+        return "", False
+    normalized_id = str(block_id)
+    if normalized_id in response_blocks:
+        response_blocks[normalized_id].update(updates)
+    return normalized_id, True
+
+
+def _build_completed_stream_projection(
+    *,
+    response_id: str,
+    created_at: int,
+    model_string: str,
+    previous_response_id: Optional[str],
+    message_id: str,
+    message_output_index: Optional[int],
+    accumulated_text_chunks: List[str],
+    reasoning_segments: List[Dict[str, Any]],
+    completed_output_items: Dict[int, Any],
+    response_blocks: Dict[str, Dict[str, Any]],
+) -> tuple[str, ResponseObject, List[Dict[str, Any]]]:
+    accumulated_text = _join_text_chunks(accumulated_text_chunks)
+    for segment in reasoning_segments:
+        reasoning_content = _join_text_chunks(segment["content_chunks"])
+        if not reasoning_content:
+            continue
+        completed_output_items[segment["output_index"]] = OutputMessage(
+            id=segment["item_id"],
+            status="completed",
+            role="assistant",
+            content=[
+                OutputTextContent(
+                    type="reasoning",
+                    text=reasoning_content,
+                    annotations=[],
+                )
+            ],
+        )
+    if accumulated_text and message_output_index is not None:
+        completed_output_items[message_output_index] = OutputMessage(
+            id=message_id,
+            status="completed",
+            role="assistant",
+            content=[OutputTextContent(text=accumulated_text)],
+        )
+
+    output_items = [
+        completed_output_items[index] for index in sorted(completed_output_items.keys())
+    ]
+    blocks = list(response_blocks.values())
+    for block in blocks:
+        generation_item = build_generation_output_item_from_block(block)
+        if generation_item is not None:
+            output_items.append(generation_item)
+    return (
+        accumulated_text,
+        ResponseObject(
+            id=response_id,
+            created_at=created_at,
+            status="completed",
+            model=model_string,
+            output=output_items,
+            previous_response_id=previous_response_id,
+        ),
+        blocks,
+    )
+
+
+def _build_failed_stream_response(
+    *,
+    response_id: str,
+    created_at: int,
+    model_string: str,
+    previous_response_id: Optional[str],
+    message_id: str,
+    accumulated_text_chunks: List[str],
+    error_message: str,
+) -> ResponseObject:
+    accumulated_text = _join_text_chunks(accumulated_text_chunks)
+    return ResponseObject(
+        id=response_id,
+        created_at=created_at,
+        status="failed",
+        error=ResponseError(code="stream_error", message=error_message),
+        model=model_string,
+        output=(
+            [
+                OutputMessage(
+                    id=message_id,
+                    status="incomplete",
+                    role="assistant",
+                    content=[OutputTextContent(text=accumulated_text)],
+                )
+            ]
+            if accumulated_text
+            else []
+        ),
+        previous_response_id=previous_response_id,
+    )
+
+
+def _format_response_sse_event(
+    response: ResponseObject,
+    sequence_number: int,
+    event_type: str,
+    blocks: List[Dict[str, Any]] | None = None,
+) -> str:
+    response_data = response.model_dump()
+    if blocks:
+        response_data["blocks"] = blocks
+    return _format_sse_event(
+        {
+            "response": response_data,
+            "sequence_number": sequence_number,
+            "type": event_type,
+        }
+    )
+
+
+async def _encode_response_sse_event(
+    response: ResponseObject,
+    sequence_number: int,
+    event_type: str,
+    blocks: List[Dict[str, Any]] | None = None,
+) -> str:
+    return await run_payload_codec(
+        _format_response_sse_event,
+        response,
+        sequence_number,
+        event_type,
+        blocks,
+        payload_hint=response,
+        force_offload=True,
+    )
 
 
 def _build_shell_call_action(arguments: Dict[str, Any]) -> Dict[str, Any]:
@@ -139,6 +305,7 @@ class OpenAPIStreamingService:
 
         message_id = _generate_message_id()
         accumulated_text = ""
+        accumulated_text_chunks: List[str] = []
         sequence_number = 0
         next_output_index = 0
         message_started = False
@@ -174,7 +341,7 @@ class OpenAPIStreamingService:
             current_reasoning_segment = {
                 "output_index": allocate_output_index(),
                 "item_id": _generate_message_id(),
-                "content": "",
+                "content_chunks": [],
             }
             reasoning_segments.append(current_reasoning_segment)
             return current_reasoning_segment, True
@@ -193,27 +360,23 @@ class OpenAPIStreamingService:
                 output=[],
                 previous_response_id=previous_response_id,
             )
-            yield _format_sse_event(
-                {
-                    "response": initial_response.model_dump(),
-                    "sequence_number": sequence_number,
-                    "type": "response.created",
-                }
+            yield await _encode_response_sse_event(
+                initial_response,
+                sequence_number,
+                "response.created",
             )
             sequence_number += 1
 
             # Event 2: response.in_progress
-            yield _format_sse_event(
-                {
-                    "response": initial_response.model_dump(),
-                    "sequence_number": sequence_number,
-                    "type": "response.in_progress",
-                }
+            yield await _encode_response_sse_event(
+                initial_response,
+                sequence_number,
+                "response.in_progress",
             )
             sequence_number += 1
 
             if task_context:
-                yield _format_sse_event(
+                yield await _encode_sse_event(
                     {
                         "type": "response.task_context",
                         "response_id": response_id,
@@ -234,7 +397,7 @@ class OpenAPIStreamingService:
                         segment, created = ensure_reasoning_segment()
                         if created:
                             # Official OpenAI event: response.reasoning_summary_part.added
-                            yield _format_sse_event(
+                            yield await _encode_sse_event(
                                 {
                                     "item": {
                                         "id": segment["item_id"],
@@ -252,9 +415,9 @@ class OpenAPIStreamingService:
 
                         # Accumulate reasoning content
                         if chunk.content:
-                            segment["content"] += chunk.content
+                            segment["content_chunks"].append(chunk.content)
                             # Official OpenAI event: response.reasoning_summary_text.delta
-                            yield _format_sse_event(
+                            yield await _encode_sse_event(
                                 {
                                     "content_index": 0,
                                     "delta": chunk.content,
@@ -271,14 +434,14 @@ class OpenAPIStreamingService:
                         if chunk.content:
                             close_reasoning_segment()
 
-                            accumulated_text += chunk.content
+                            accumulated_text_chunks.append(chunk.content)
 
                             # Start text output if this is the first text chunk
                             if not message_started:
                                 message_started = True
                                 message_output_index = allocate_output_index()
                                 # Official OpenAI event: response.output_item.added
-                                yield _format_sse_event(
+                                yield await _encode_sse_event(
                                     {
                                         "item": {
                                             "content": [],
@@ -295,7 +458,7 @@ class OpenAPIStreamingService:
                                 sequence_number += 1
 
                                 # Official OpenAI event: response.content_part.added
-                                yield _format_sse_event(
+                                yield await _encode_sse_event(
                                     {
                                         "content_index": 0,
                                         "item_id": message_id,
@@ -312,7 +475,7 @@ class OpenAPIStreamingService:
                                 sequence_number += 1
 
                             # Official OpenAI event: response.output_text.delta
-                            yield _format_sse_event(
+                            yield await _encode_sse_event(
                                 {
                                     "content_index": 0,
                                     "delta": chunk.content,
@@ -329,7 +492,7 @@ class OpenAPIStreamingService:
                         name = chunk.data["name"]
                         arguments = chunk.data.get("arguments") or ""
                         tool_output_index = get_tool_output_index(f"function:{call_id}")
-                        yield _format_sse_event(
+                        yield await _encode_sse_event(
                             {
                                 "type": "response.output_item.added",
                                 "response_id": response_id,
@@ -359,7 +522,7 @@ class OpenAPIStreamingService:
                                 arguments=arguments,
                             )
                         )
-                        yield _format_sse_event(
+                        yield await _encode_sse_event(
                             {
                                 "type": "response.function_call_arguments.done",
                                 "response_id": response_id,
@@ -371,7 +534,7 @@ class OpenAPIStreamingService:
                             }
                         )
                         sequence_number += 1
-                        yield _format_sse_event(
+                        yield await _encode_sse_event(
                             {
                                 "type": "response.output_item.done",
                                 "response_id": response_id,
@@ -393,7 +556,7 @@ class OpenAPIStreamingService:
                         name = chunk.data["name"]
                         arguments = chunk.data.get("arguments") or {}
                         tool_output_index = get_tool_output_index(f"shell:{call_id}")
-                        yield _format_sse_event(
+                        yield await _encode_sse_event(
                             {
                                 "type": "response.output_item.added",
                                 "response_id": response_id,
@@ -424,7 +587,7 @@ class OpenAPIStreamingService:
                                 )
                             )
                         )
-                        yield _format_sse_event(
+                        yield await _encode_sse_event(
                             {
                                 "type": "response.output_item.done",
                                 "response_id": response_id,
@@ -445,7 +608,7 @@ class OpenAPIStreamingService:
                         name = chunk.data["name"]
                         server_label = chunk.data["server_label"]
                         tool_output_index = get_tool_output_index(f"mcp:{item_id}")
-                        yield _format_sse_event(
+                        yield await _encode_sse_event(
                             {
                                 "type": "response.output_item.added",
                                 "response_id": response_id,
@@ -461,7 +624,7 @@ class OpenAPIStreamingService:
                             }
                         )
                         sequence_number += 1
-                        yield _format_sse_event(
+                        yield await _encode_sse_event(
                             {
                                 "type": "response.mcp_call.in_progress",
                                 "response_id": response_id,
@@ -477,7 +640,12 @@ class OpenAPIStreamingService:
                         name = chunk.data["name"]
                         server_label = chunk.data["server_label"]
                         arguments = chunk.data.get("arguments") or ""
-                        tool_output = normalize_tool_output(chunk.data.get("output"))
+                        tool_output = await run_payload_codec(
+                            normalize_tool_output,
+                            chunk.data.get("output"),
+                            payload_hint=chunk.data.get("output"),
+                            force_offload=True,
+                        )
                         tool_output_index = pop_tool_output_index(f"mcp:{item_id}")
                         completed_output_items[tool_output_index] = MCPCallOutputItem(
                             id=item_id,
@@ -491,7 +659,7 @@ class OpenAPIStreamingService:
                             ),
                             output=tool_output,
                         )
-                        yield _format_sse_event(
+                        yield await _encode_sse_event(
                             {
                                 "type": "response.mcp_call_arguments.done",
                                 "response_id": response_id,
@@ -520,7 +688,7 @@ class OpenAPIStreamingService:
                             terminal_payload["failure_reason"] = chunk.data["error"]
                         if tool_output is not None:
                             terminal_payload["output"] = tool_output
-                        yield _format_sse_event(terminal_payload)
+                        yield await _encode_sse_event(terminal_payload)
                         sequence_number += 1
                         item_payload = {
                             "type": "mcp_call",
@@ -536,7 +704,7 @@ class OpenAPIStreamingService:
                         }
                         if tool_output is not None:
                             item_payload["output"] = tool_output
-                        yield _format_sse_event(
+                        yield await _encode_sse_event(
                             {
                                 "type": "response.output_item.done",
                                 "response_id": response_id,
@@ -549,11 +717,16 @@ class OpenAPIStreamingService:
                     elif chunk.type == "block_created":
                         close_reasoning_segment()
                         block = chunk.data.get("block")
-                        if not isinstance(block, dict) or not block.get("id"):
+                        stored = await run_payload_codec(
+                            _store_response_block_created,
+                            response_blocks,
+                            block,
+                            payload_hint=(response_blocks, block),
+                            force_offload=True,
+                        )
+                        if not stored:
                             continue
-                        block_id = str(block["id"])
-                        response_blocks[block_id] = dict(block)
-                        yield _format_sse_event(
+                        yield await _encode_sse_event(
                             {
                                 "type": "response.block.created",
                                 "response_id": response_id,
@@ -566,12 +739,17 @@ class OpenAPIStreamingService:
                         close_reasoning_segment()
                         block_id = chunk.data.get("block_id")
                         updates = chunk.data.get("updates")
-                        if not block_id or not isinstance(updates, dict):
+                        block_id, stored = await run_payload_codec(
+                            _store_response_block_updated,
+                            response_blocks,
+                            block_id,
+                            updates,
+                            payload_hint=(response_blocks, updates),
+                            force_offload=True,
+                        )
+                        if not stored:
                             continue
-                        block_id = str(block_id)
-                        if block_id in response_blocks:
-                            response_blocks[block_id].update(updates)
-                        yield _format_sse_event(
+                        yield await _encode_sse_event(
                             {
                                 "type": "response.block.updated",
                                 "response_id": response_id,
@@ -582,10 +760,33 @@ class OpenAPIStreamingService:
                         )
                         sequence_number += 1
 
+            accumulated_text, final_response, final_blocks = await run_payload_codec(
+                partial(
+                    _build_completed_stream_projection,
+                    response_id=response_id,
+                    created_at=created_at,
+                    model_string=model_string,
+                    previous_response_id=previous_response_id,
+                    message_id=message_id,
+                    message_output_index=message_output_index,
+                    accumulated_text_chunks=accumulated_text_chunks,
+                    reasoning_segments=reasoning_segments,
+                    completed_output_items=completed_output_items,
+                    response_blocks=response_blocks,
+                ),
+                payload_hint=(
+                    accumulated_text_chunks,
+                    reasoning_segments,
+                    completed_output_items,
+                    response_blocks,
+                ),
+                force_offload=True,
+            )
+
             # Close text output items
             if accumulated_text:
                 # Official OpenAI event: response.output_text.done
-                yield _format_sse_event(
+                yield await _encode_sse_event(
                     {
                         "content_index": 0,
                         "item_id": message_id,
@@ -598,7 +799,7 @@ class OpenAPIStreamingService:
                 sequence_number += 1
 
                 # Official OpenAI event: response.content_part.done
-                yield _format_sse_event(
+                yield await _encode_sse_event(
                     {
                         "content_index": 0,
                         "item_id": message_id,
@@ -615,7 +816,7 @@ class OpenAPIStreamingService:
                 sequence_number += 1
 
                 # Official OpenAI event: response.output_item.done
-                yield _format_sse_event(
+                yield await _encode_sse_event(
                     {
                         "item": {
                             "content": [
@@ -637,56 +838,12 @@ class OpenAPIStreamingService:
                 )
                 sequence_number += 1
 
-            # Build final output items
-            for segment in reasoning_segments:
-                if not segment["content"]:
-                    continue
-                completed_output_items[segment["output_index"]] = OutputMessage(
-                    id=segment["item_id"],
-                    status="completed",
-                    role="assistant",
-                    content=[
-                        OutputTextContent(
-                            type="reasoning",
-                            text=segment["content"],
-                            annotations=[],
-                        )
-                    ],
-                )
-            if accumulated_text and message_output_index is not None:
-                completed_output_items[message_output_index] = OutputMessage(
-                    id=message_id,
-                    status="completed",
-                    role="assistant",
-                    content=[OutputTextContent(text=accumulated_text)],
-                )
-            output_items = [
-                completed_output_items[index]
-                for index in sorted(completed_output_items.keys())
-            ]
-            for block in response_blocks.values():
-                generation_item = build_generation_output_item_from_block(block)
-                if generation_item is not None:
-                    output_items.append(generation_item)
-
             # Official OpenAI event: response.completed
-            final_response = ResponseObject(
-                id=response_id,
-                created_at=created_at,
-                status="completed",
-                model=model_string,
-                output=output_items,
-                previous_response_id=previous_response_id,
-            )
-            final_response_data = final_response.model_dump()
-            if response_blocks:
-                final_response_data["blocks"] = list(response_blocks.values())
-            yield _format_sse_event(
-                {
-                    "response": final_response_data,
-                    "sequence_number": sequence_number,
-                    "type": "response.completed",
-                }
+            yield await _encode_response_sse_event(
+                final_response,
+                sequence_number,
+                "response.completed",
+                final_blocks,
             )
 
         except NotImplementedError:
@@ -694,32 +851,24 @@ class OpenAPIStreamingService:
         except Exception as e:
             logger.exception(f"Error during streaming response: {e}")
             # Official OpenAI event: response.failed (or error)
-            error_response = ResponseObject(
-                id=response_id,
-                created_at=created_at,
-                status="failed",
-                error=ResponseError(code="stream_error", message=str(e)),
-                model=model_string,
-                output=(
-                    [
-                        OutputMessage(
-                            id=message_id,
-                            status="incomplete",
-                            role="assistant",
-                            content=[OutputTextContent(text=accumulated_text)],
-                        )
-                    ]
-                    if accumulated_text
-                    else []
+            error_response = await run_payload_codec(
+                partial(
+                    _build_failed_stream_response,
+                    response_id=response_id,
+                    created_at=created_at,
+                    model_string=model_string,
+                    previous_response_id=previous_response_id,
+                    message_id=message_id,
+                    accumulated_text_chunks=accumulated_text_chunks,
+                    error_message=str(e),
                 ),
-                previous_response_id=previous_response_id,
+                payload_hint=(accumulated_text_chunks, e),
+                force_offload=True,
             )
-            yield _format_sse_event(
-                {
-                    "response": error_response.model_dump(),
-                    "sequence_number": sequence_number,
-                    "type": "response.failed",
-                }
+            yield await _encode_response_sse_event(
+                error_response,
+                sequence_number,
+                "response.failed",
             )
 
 

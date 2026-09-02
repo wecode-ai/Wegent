@@ -14,7 +14,7 @@ Uses unified block types from shared.models.blocks for consistency.
 import logging
 from typing import Any, Optional
 
-from app.services.chat.storage import session_manager
+from app.core.payload_codec import run_payload_codec
 from app.services.chat.webpage_ws_chat_emitter import WebPageSocketEmitter
 from app.services.execution.interactive_form_render import (
     build_interactive_form_render_payload,
@@ -25,6 +25,20 @@ from shared.models.blocks import BlockStatus, create_tool_block
 from .base import BaseResultEmitter
 
 logger = logging.getLogger(__name__)
+
+
+def _select_guidance_blocks(result: Any) -> list[dict[str, Any]]:
+    """Select guidance blocks without scanning a large result on the Web loop."""
+    if not isinstance(result, dict):
+        return []
+    blocks = result.get("blocks") or []
+    if not isinstance(blocks, list):
+        return []
+    return [
+        block
+        for block in blocks
+        if isinstance(block, dict) and block.get("type") == "guidance"
+    ]
 
 
 class WebSocketResultEmitter(BaseResultEmitter):
@@ -251,7 +265,7 @@ class WebSocketResultEmitter(BaseResultEmitter):
     async def _emit_status_updated(
         self, event: ExecutionEvent, ws_emitter: WebPageSocketEmitter
     ) -> None:
-        """Emit chat:status_updated and cache the latest snapshot."""
+        """Forward a context status snapshot to the connected client."""
         phase = event.data.get("phase") if event.data else None
         context_metrics = event.data.get("context_metrics", {}) if event.data else {}
         context_compaction = (
@@ -264,28 +278,6 @@ class WebSocketResultEmitter(BaseResultEmitter):
             )
             return
 
-        try:
-            await session_manager.save_context_metrics(
-                event.subtask_id,
-                {
-                    "task_id": event.task_id,
-                    "subtask_id": event.subtask_id,
-                    "phase": phase,
-                    "context_metrics": context_metrics,
-                    "context_compaction": (
-                        context_compaction
-                        if isinstance(context_compaction, dict)
-                        else None
-                    ),
-                },
-            )
-        except Exception as exc:
-            logger.warning(
-                "[WebSocketResultEmitter] Failed to cache context metrics for task_id=%s subtask_id=%s: %s",
-                event.task_id,
-                event.subtask_id,
-                exc,
-            )
         await ws_emitter.emit_chat_status_updated(
             task_id=event.task_id,
             subtask_id=event.subtask_id,
@@ -350,7 +342,7 @@ class WebSocketResultEmitter(BaseResultEmitter):
     async def _emit_direct_block_created(
         self, event: ExecutionEvent, ws_emitter
     ) -> None:
-        """Emit chat:block_created from an ExecutionEvent block payload."""
+        """Forward chat:block_created from an ExecutionEvent block payload."""
         block = event.data.get("block") if event.data else None
         if not isinstance(block, dict):
             return
@@ -359,11 +351,6 @@ class WebSocketResultEmitter(BaseResultEmitter):
             subtask_id=event.subtask_id,
             block=block,
         )
-        # Persist block to Redis so it survives page refresh and is included
-        # in the final subtask result via finalize_and_get_blocks().
-        import app.services.chat.storage as chat_storage
-
-        await chat_storage.session_manager.add_block(event.subtask_id, block)
 
     async def _emit_direct_block_updated(
         self, event: ExecutionEvent, ws_emitter
@@ -393,34 +380,21 @@ class WebSocketResultEmitter(BaseResultEmitter):
                 update_kwargs[target_key] = updates[source_key]
         await ws_emitter.emit_block_updated(**update_kwargs)
 
-        import app.services.chat.storage as chat_storage
-
-        blocks = await chat_storage.session_manager.get_blocks(event.subtask_id)
-        existing_block = next(
-            (block for block in blocks if block.get("id") == str(block_id)),
-            None,
-        )
-        if existing_block is None:
-            return
-        existing_block.update(updates)
-        await chat_storage.session_manager.add_block(event.subtask_id, existing_block)
-
     async def _emit_result_guidance_blocks(
         self, event: ExecutionEvent, ws_emitter
     ) -> None:
         """Emit completed guidance blocks found in final result payload."""
-        if not isinstance(event.result, dict):
-            return
-        blocks = event.result.get("blocks") or []
-        if not isinstance(blocks, list):
-            return
-        for block in blocks:
-            if isinstance(block, dict) and block.get("type") == "guidance":
-                await ws_emitter.emit_block_created(
-                    task_id=event.task_id,
-                    subtask_id=event.subtask_id,
-                    block=block,
-                )
+        guidance_blocks = await run_payload_codec(
+            _select_guidance_blocks,
+            event.result,
+            payload_hint=event.result,
+        )
+        for block in guidance_blocks:
+            await ws_emitter.emit_block_created(
+                task_id=event.task_id,
+                subtask_id=event.subtask_id,
+                block=block,
+            )
 
     async def _emit_block_updated(self, event: ExecutionEvent, ws_emitter) -> None:
         """Emit chat:block_updated event for tool result.
@@ -442,7 +416,11 @@ class WebSocketResultEmitter(BaseResultEmitter):
             "tool_input": event.tool_input,
             "status": status.value,
         }
-        render_payload = build_interactive_form_render_payload(event)
+        render_payload = await run_payload_codec(
+            build_interactive_form_render_payload,
+            event,
+            payload_hint=event.tool_input,
+        )
         if render_payload is not None:
             update_kwargs["render_payload"] = render_payload
 

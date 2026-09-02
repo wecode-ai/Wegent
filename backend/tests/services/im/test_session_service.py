@@ -17,7 +17,6 @@ async def test_get_or_create_private_session_uses_stable_redis_key(
     test_user: User,
 ) -> None:
     first = await im_session_service.get_or_create_private_session(
-        db=None,
         user_id=test_user.id,
         channel_type="telegram",
         channel_id=33,
@@ -28,7 +27,6 @@ async def test_get_or_create_private_session_uses_stable_redis_key(
     )
 
     refreshed = await im_session_service.get_or_create_private_session(
-        db=None,
         user_id=test_user.id,
         channel_type="telegram",
         channel_id=33,
@@ -58,7 +56,6 @@ async def test_list_user_sessions_returns_recent_redis_sessions(
     test_user: User,
 ) -> None:
     older = await im_session_service.get_or_create_private_session(
-        db=None,
         user_id=test_user.id,
         channel_type="telegram",
         channel_id=33,
@@ -67,7 +64,6 @@ async def test_list_user_sessions_returns_recent_redis_sessions(
         display_name="Older",
     )
     newer = await im_session_service.get_or_create_private_session(
-        db=None,
         user_id=test_user.id,
         channel_type="discord",
         channel_id=44,
@@ -78,9 +74,7 @@ async def test_list_user_sessions_returns_recent_redis_sessions(
     older.last_seen_at = datetime.now() - timedelta(minutes=5)
     await im_session_service.save_session(older)
 
-    sessions = await im_session_service.list_user_sessions(
-        db=None, user_id=test_user.id
-    )
+    sessions = await im_session_service.list_user_sessions(user_id=test_user.id)
 
     assert [session.session_key for session in sessions] == [
         newer.session_key,
@@ -94,7 +88,6 @@ async def test_pending_state_expires_and_returns_to_idle(
     test_user: User,
 ) -> None:
     session = await im_session_service.get_or_create_private_session(
-        db=None,
         user_id=test_user.id,
         channel_type="telegram",
         channel_id=33,
@@ -103,14 +96,13 @@ async def test_pending_state_expires_and_returns_to_idle(
         display_name="Alice",
     )
     await im_session_service.set_pending_state(
-        db=None,
         session=session,
         state=IMSessionState.PENDING_TASK_SWITCH,
         payload={"task_ids": [1, 2]},
         expires_at=datetime.now() - timedelta(seconds=1),
     )
 
-    active_payload = await im_session_service.get_active_pending_payload(None, session)
+    active_payload = await im_session_service.get_active_pending_payload(session)
 
     assert active_payload is None
     assert session.state == IMSessionState.IDLE
@@ -123,7 +115,6 @@ async def test_bind_active_task_sets_task_mode_and_clears_pending_state(
     test_user: User,
 ) -> None:
     session = await im_session_service.get_or_create_private_session(
-        db=None,
         user_id=test_user.id,
         channel_type="dingtalk",
         channel_id=12,
@@ -132,13 +123,12 @@ async def test_bind_active_task_sets_task_mode_and_clears_pending_state(
         display_name="Alice",
     )
     await im_session_service.set_pending_state(
-        db=None,
         session=session,
         state=IMSessionState.PENDING_TASK_CREATION,
         payload={"first_message": "fix auth"},
     )
 
-    await im_session_service.bind_active_task(None, session=session, task_id=7001)
+    await im_session_service.bind_active_task(session=session, task_id=7001)
 
     assert session.mode == IMSessionMode.TASK
     assert session.state == IMSessionState.IDLE

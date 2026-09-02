@@ -3,6 +3,8 @@
 # SPDX-License-Identifier: Apache-2.0
 
 import logging
+import threading
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -11,6 +13,43 @@ from app.services.knowledge.protected_mediation import (
     ProtectedKnowledgeMediationService,
     RestrictedSafeSummaryResult,
 )
+
+
+@pytest.mark.asyncio
+async def test_model_response_decode_and_validation_use_payload_worker() -> None:
+    service = ProtectedKnowledgeMediationService()
+    llm = MagicMock()
+    llm.ainvoke = AsyncMock(
+        return_value=SimpleNamespace(
+            content=(
+                '{"decision":"answer","reason":"ok","summary":"safe",'
+                '"answer_guidance":"stay abstract","confidence":"high"}'
+            )
+        )
+    )
+    parse_threads: list[str] = []
+
+    def parse(content):
+        parse_threads.append(threading.current_thread().name)
+        return ProtectedKnowledgeMediationService._parse_summary_response(content)
+
+    with (
+        patch(
+            "app.services.knowledge.protected_mediation."
+            "LangChainModelFactory.create_from_config",
+            return_value=llm,
+        ),
+        patch.object(service, "_parse_summary_response", side_effect=parse),
+    ):
+        result = await service._summarize_records(
+            model_config={"model_id": "safe-model"},
+            query="diagnose",
+            records=[{"content": "protected", "knowledge_base_id": 1}],
+            kb_name_map={1: "KB-1"},
+        )
+
+    assert result.summary == "safe"
+    assert parse_threads[0].startswith("wegent-payload-codec")
 
 
 @pytest.mark.asyncio

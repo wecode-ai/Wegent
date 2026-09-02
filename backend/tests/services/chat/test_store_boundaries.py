@@ -194,7 +194,6 @@ async def test_active_streaming_keeps_valid_redis_status(monkeypatch):
                 "user_id": 7,
             }
         ),
-        get_streaming_content=AsyncMock(return_value="hello"),
         cleanup_streaming_state=AsyncMock(),
     )
     monkeypatch.setattr(
@@ -218,7 +217,6 @@ async def test_active_streaming_keeps_valid_redis_status(monkeypatch):
     result = await permissions.get_active_streaming(100)
 
     assert result == {"subtask_id": 10, "user_id": 7}
-    mock_session_manager.get_streaming_content.assert_awaited_once_with(10)
     mock_session_manager.cleanup_streaming_state.assert_not_awaited()
 
 

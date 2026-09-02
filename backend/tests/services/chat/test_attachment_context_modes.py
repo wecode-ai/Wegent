@@ -6,8 +6,6 @@
 
 from types import SimpleNamespace
 
-import pytest
-
 from app.models.subtask_context import ContextStatus, ContextType
 from app.services.chat.preprocessing.contexts import (
     _process_attachment_contexts_for_message,
@@ -30,9 +28,8 @@ def _attachment(**overrides):
     return SimpleNamespace(**data)
 
 
-@pytest.mark.asyncio
-async def test_metadata_only_attachment_context_omits_backend_parsed_text():
-    result = await _process_attachment_contexts_for_message(
+def test_metadata_only_attachment_context_omits_backend_parsed_text():
+    result = _process_attachment_contexts_for_message(
         [_attachment()],
         "please inspect it",
         task_id=78,
@@ -48,9 +45,8 @@ async def test_metadata_only_attachment_context_omits_backend_parsed_text():
     assert result[1]["text"] == "please inspect it"
 
 
-@pytest.mark.asyncio
-async def test_metadata_only_image_context_omits_image_block():
-    result = await _process_attachment_contexts_for_message(
+def test_metadata_only_image_context_omits_image_block():
+    result = _process_attachment_contexts_for_message(
         [
             _attachment(
                 original_filename="image.png",

@@ -4,6 +4,8 @@
 
 """Runtime-native local work endpoints for Wework."""
 
+from dataclasses import dataclass
+
 from fastapi import APIRouter, Body, Depends, Query, Request
 from sqlalchemy.orm import Session
 
@@ -71,13 +73,27 @@ from shared.telemetry.decorators import (
 router = APIRouter()
 
 
+@dataclass(frozen=True)
+class _RuntimeUser:
+    id: int
+    user_name: str | None
+
+
+def _get_runtime_user(
+    current_user: User = Depends(get_current_user),
+) -> _RuntimeUser:
+    """Detach the authenticated identity before an async route starts."""
+
+    return _RuntimeUser(id=current_user.id, user_name=current_user.user_name)
+
+
 def _runtime_worktree_payload(request: RuntimeWorktreeDeviceRequest) -> dict:
     return request.model_dump(by_alias=True, exclude_none=True)
 
 
 async def _runtime_worktree_rpc(
     *,
-    current_user: User,
+    current_user: _RuntimeUser,
     request: RuntimeWorktreeDeviceRequest,
     method: str,
 ):
@@ -91,13 +107,11 @@ async def _runtime_worktree_rpc(
 
 @router.get("", response_model=RuntimeWorkListResponse, response_model_by_alias=True)
 async def list_runtime_work_endpoint(
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: _RuntimeUser = Depends(_get_runtime_user),
 ):
     """List executor-local work grouped as projects and conversations."""
 
     return await runtime_work_service.list_runtime_work(
-        db=db,
         user_id=current_user.id,
     )
 
@@ -105,7 +119,7 @@ async def list_runtime_work_endpoint(
 @router.post("/worktrees/capabilities")
 async def get_runtime_worktree_capabilities_endpoint(
     request: RuntimeWorktreeDeviceRequest,
-    current_user: User = Depends(get_current_user),
+    current_user: _RuntimeUser = Depends(_get_runtime_user),
 ):
     """Read managed Worktree capability from the addressed Runtime."""
 
@@ -119,7 +133,7 @@ async def get_runtime_worktree_capabilities_endpoint(
 @router.post("/worktrees/preflight")
 async def preflight_runtime_worktree_endpoint(
     request: RuntimeWorktreePreflightRequest,
-    current_user: User = Depends(get_current_user),
+    current_user: _RuntimeUser = Depends(_get_runtime_user),
 ):
     """Validate the addressed Runtime source workspace for Worktree use."""
 
@@ -133,7 +147,7 @@ async def preflight_runtime_worktree_endpoint(
 @router.post("/worktrees/settings")
 async def get_runtime_worktree_settings_endpoint(
     request: RuntimeWorktreeDeviceRequest,
-    current_user: User = Depends(get_current_user),
+    current_user: _RuntimeUser = Depends(_get_runtime_user),
 ):
     """Read managed Worktree settings from the addressed Runtime."""
 
@@ -147,7 +161,7 @@ async def get_runtime_worktree_settings_endpoint(
 @router.put("/worktrees/settings")
 async def update_runtime_worktree_settings_endpoint(
     request: RuntimeWorktreeSettingsPatch,
-    current_user: User = Depends(get_current_user),
+    current_user: _RuntimeUser = Depends(_get_runtime_user),
 ):
     """Update managed Worktree settings on the addressed Runtime."""
 
@@ -161,7 +175,7 @@ async def update_runtime_worktree_settings_endpoint(
 @router.post("/worktrees/list")
 async def list_runtime_worktrees_endpoint(
     request: RuntimeWorktreeDeviceRequest,
-    current_user: User = Depends(get_current_user),
+    current_user: _RuntimeUser = Depends(_get_runtime_user),
 ):
     """List managed Worktrees from the addressed Runtime."""
 
@@ -175,7 +189,7 @@ async def list_runtime_worktrees_endpoint(
 @router.post("/worktrees/prepare")
 async def prepare_runtime_worktree_endpoint(
     request: RuntimeWorktreePrepareRequest,
-    current_user: User = Depends(get_current_user),
+    current_user: _RuntimeUser = Depends(_get_runtime_user),
 ):
     """Prepare one managed Worktree on the addressed Runtime."""
 
@@ -189,7 +203,7 @@ async def prepare_runtime_worktree_endpoint(
 @router.post("/worktrees/delete")
 async def delete_runtime_worktree_endpoint(
     request: RuntimeWorktreePathRequest,
-    current_user: User = Depends(get_current_user),
+    current_user: _RuntimeUser = Depends(_get_runtime_user),
 ):
     """Delete one managed Worktree on the addressed Runtime."""
 
@@ -203,7 +217,7 @@ async def delete_runtime_worktree_endpoint(
 @router.post("/worktrees/restore")
 async def restore_runtime_worktree_endpoint(
     request: RuntimeWorktreePathRequest,
-    current_user: User = Depends(get_current_user),
+    current_user: _RuntimeUser = Depends(_get_runtime_user),
 ):
     """Restore one managed Worktree snapshot on the addressed Runtime."""
 
@@ -222,7 +236,7 @@ async def restore_runtime_worktree_endpoint(
 def list_device_workspaces_endpoint(
     project_id: int | None = Query(default=None, alias="project_id"),
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: _RuntimeUser = Depends(_get_runtime_user),
 ):
     """List central Device Workspace mappings for the current user."""
 
@@ -241,7 +255,7 @@ def list_device_workspaces_endpoint(
 def upsert_device_workspace_endpoint(
     payload: DeviceWorkspaceUpsert = Body(...),
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: _RuntimeUser = Depends(_get_runtime_user),
 ):
     """Create or update a central Project-to-device-directory mapping."""
 
@@ -259,13 +273,11 @@ def upsert_device_workspace_endpoint(
 )
 async def prepare_device_workspace_endpoint(
     payload: DeviceWorkspacePrepareRequest = Body(...),
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: _RuntimeUser = Depends(_get_runtime_user),
 ):
     """Prepare a device folder for one Project and store its mapping."""
 
     return await runtime_work_service.prepare_device_workspace(
-        db=db,
         user_id=current_user.id,
         payload=payload,
     )
@@ -277,7 +289,7 @@ def delete_device_workspace_endpoint(
     device_id: str = Query(..., min_length=1),
     workspace_path: str = Query(..., min_length=1),
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: _RuntimeUser = Depends(_get_runtime_user),
 ):
     """Deactivate one Project-to-device-directory mapping."""
 
@@ -298,13 +310,11 @@ def delete_device_workspace_endpoint(
 )
 async def search_runtime_work_endpoint(
     request: RuntimeWorkSearchRequest = Body(...),
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: _RuntimeUser = Depends(_get_runtime_user),
 ):
     """Search online runtime transcripts owned by the current user."""
 
     return await runtime_work_service.search_runtime_work(
-        db=db,
         user_id=current_user.id,
         request=request,
     )
@@ -317,13 +327,11 @@ async def search_runtime_work_endpoint(
 )
 async def search_runtime_workspace_endpoint(
     request: RuntimeWorkspaceSearchRequest = Body(...),
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: _RuntimeUser = Depends(_get_runtime_user),
 ):
     """Search workspace paths through the owning online local executor."""
 
     return await runtime_work_service.search_runtime_workspace(
-        db=db,
         user_id=current_user.id,
         request=request,
     )
@@ -336,13 +344,11 @@ async def search_runtime_workspace_endpoint(
 )
 async def get_runtime_transcript_endpoint(
     address: RuntimeTranscriptRequest,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: _RuntimeUser = Depends(_get_runtime_user),
 ):
     """Read a native runtime transcript from the owning online local executor."""
 
     return await runtime_work_service.get_runtime_transcript(
-        db=db,
         user_id=current_user.id,
         address=address,
     )
@@ -355,13 +361,11 @@ async def get_runtime_transcript_endpoint(
 )
 async def revert_runtime_file_changes_endpoint(
     request: RuntimeFileChangesRevertRequest,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: _RuntimeUser = Depends(_get_runtime_user),
 ):
     """Revert a native runtime file-change artifact on the owning device."""
 
     return await runtime_work_service.revert_runtime_file_changes(
-        db=db,
         user_id=current_user.id,
         request=request,
     )
@@ -374,13 +378,11 @@ async def revert_runtime_file_changes_endpoint(
 )
 async def send_runtime_message_endpoint(
     request: RuntimeSendRequest,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: _RuntimeUser = Depends(_get_runtime_user),
 ):
     """Continue a native runtime LocalTask through the owning local executor."""
 
-    return await runtime_work_service.send_runtime_message(
-        db=db,
+    return await runtime_work_service.send_runtime_message_nonblocking(
         user_id=current_user.id,
         request=request,
     )
@@ -393,13 +395,11 @@ async def send_runtime_message_endpoint(
 )
 async def interrupt_and_send_runtime_message_endpoint(
     request: RuntimeSendRequest,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: _RuntimeUser = Depends(_get_runtime_user),
 ):
     """Interrupt the active native runtime turn and immediately continue it."""
 
-    return await runtime_work_service.interrupt_and_send_runtime_message(
-        db=db,
+    return await runtime_work_service.interrupt_and_send_runtime_message_nonblocking(
         user_id=current_user.id,
         request=request,
     )
@@ -412,13 +412,11 @@ async def interrupt_and_send_runtime_message_endpoint(
 )
 async def send_runtime_guidance_endpoint(
     request: RuntimeGuidanceRequest,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: _RuntimeUser = Depends(_get_runtime_user),
 ):
     """Steer an active native runtime turn through the owning local executor."""
 
     return await runtime_work_service.send_runtime_guidance(
-        db=db,
         user_id=current_user.id,
         request=request,
     )
@@ -432,8 +430,7 @@ async def send_runtime_guidance_endpoint(
 @trace_async("runtime_work.bind_im_sessions", "runtime_work.api")
 async def bind_runtime_task_im_sessions_endpoint(
     request: BindRuntimeTaskIMSessionsRequest,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: _RuntimeUser = Depends(_get_runtime_user),
 ):
     """Bind private IM sessions to a native runtime LocalTask address."""
 
@@ -451,7 +448,6 @@ async def bind_runtime_task_im_sessions_endpoint(
         },
     )
     return await runtime_work_service.bind_runtime_task_to_im_sessions(
-        db=db,
         user_id=current_user.id,
         request=request,
     )
@@ -464,14 +460,12 @@ async def bind_runtime_task_im_sessions_endpoint(
 )
 @trace_async("runtime_work.im_notifications.get", "runtime_work.api")
 async def get_im_notification_settings_endpoint(
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: _RuntimeUser = Depends(_get_runtime_user),
 ):
     """Read global and task-level IM notification settings."""
 
     set_span_attribute("user.id", current_user.id)
     return await runtime_work_service.get_im_notification_settings(
-        db=db,
         user_id=current_user.id,
     )
 
@@ -484,15 +478,13 @@ async def get_im_notification_settings_endpoint(
 @trace_async("runtime_work.im_notifications.global.update", "runtime_work.api")
 async def update_global_im_notification_endpoint(
     request: RuntimeGlobalIMNotificationUpdateRequest,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: _RuntimeUser = Depends(_get_runtime_user),
 ):
     """Update the user-level IM notification quick switch."""
 
     set_span_attribute("user.id", current_user.id)
     set_span_attribute("runtime.im_notifications.global.enabled", request.enabled)
     return await runtime_work_service.update_global_im_notification(
-        db=db,
         user_id=current_user.id,
         request=request,
     )
@@ -506,7 +498,7 @@ async def update_global_im_notification_endpoint(
 @trace_async("runtime_work.im_notifications.presence.update", "runtime_work.api")
 async def update_im_notification_presence_endpoint(
     request: RuntimeIMNotificationPresenceUpdateRequest,
-    current_user: User = Depends(get_current_user),
+    current_user: _RuntimeUser = Depends(_get_runtime_user),
 ):
     """Refresh one Wework client's foreground or away presence."""
 
@@ -526,8 +518,7 @@ async def update_im_notification_presence_endpoint(
 @trace_async("runtime_work.im_notifications.runtime_task.subscribe", "runtime_work.api")
 async def subscribe_runtime_task_im_notification_endpoint(
     request: RuntimeTaskIMNotificationSubscriptionRequest,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: _RuntimeUser = Depends(_get_runtime_user),
 ):
     """Subscribe a runtime LocalTask to private IM notifications."""
 
@@ -536,7 +527,6 @@ async def subscribe_runtime_task_im_notification_endpoint(
     set_span_attribute("runtime.local_task_id", request.address.local_task_id)
     set_span_attribute("runtime.im_session_count", len(request.session_keys))
     return await runtime_work_service.subscribe_runtime_task_im_notification(
-        db=db,
         user_id=current_user.id,
         request=request,
     )
@@ -552,8 +542,7 @@ async def subscribe_runtime_task_im_notification_endpoint(
 )
 async def unsubscribe_runtime_task_im_notification_endpoint(
     address: RuntimeTaskAddress,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: _RuntimeUser = Depends(_get_runtime_user),
 ):
     """Remove runtime LocalTask private IM notification subscriptions."""
 
@@ -561,7 +550,6 @@ async def unsubscribe_runtime_task_im_notification_endpoint(
     set_span_attribute("runtime.device_id", address.device_id)
     set_span_attribute("runtime.local_task_id", address.local_task_id)
     return await runtime_work_service.unsubscribe_runtime_task_im_notification(
-        db=db,
         user_id=current_user.id,
         address=address,
     )
@@ -575,8 +563,7 @@ async def unsubscribe_runtime_task_im_notification_endpoint(
 @trace_async("runtime_work.archive_task", "runtime_work.api")
 async def archive_runtime_task_endpoint(
     address: RuntimeTaskAddress,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: _RuntimeUser = Depends(_get_runtime_user),
 ):
     """Archive a native runtime LocalTask through the owning local executor."""
 
@@ -592,7 +579,6 @@ async def archive_runtime_task_endpoint(
         },
     )
     return await runtime_work_service.archive_runtime_task(
-        db=db,
         user_id=current_user.id,
         address=address,
     )
@@ -605,13 +591,11 @@ async def archive_runtime_task_endpoint(
 )
 async def cancel_runtime_task_endpoint(
     address: RuntimeTaskAddress,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: _RuntimeUser = Depends(_get_runtime_user),
 ):
     """Cancel a native runtime LocalTask through the owning local executor."""
 
     return await runtime_work_service.cancel_runtime_task(
-        db=db,
         user_id=current_user.id,
         address=address,
     )
@@ -624,13 +608,11 @@ async def cancel_runtime_task_endpoint(
 )
 async def force_start_runtime_task_endpoint(
     address: RuntimeTaskAddress,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: _RuntimeUser = Depends(_get_runtime_user),
 ):
     """Force one queued runtime task to start through its owning executor."""
 
     return await runtime_work_service.force_start_runtime_task(
-        db=db,
         user_id=current_user.id,
         address=address,
     )
@@ -643,13 +625,11 @@ async def force_start_runtime_task_endpoint(
 )
 async def reorder_runtime_task_queue_endpoint(
     request: RuntimeTaskQueueReorderRequest,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: _RuntimeUser = Depends(_get_runtime_user),
 ):
     """Move one queued runtime task to a new execution position."""
 
     return await runtime_work_service.reorder_runtime_task_queue(
-        db=db,
         user_id=current_user.id,
         request=request,
     )
@@ -662,13 +642,11 @@ async def reorder_runtime_task_queue_endpoint(
 )
 async def rename_runtime_task_endpoint(
     request: RuntimeTaskRenameRequest,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: _RuntimeUser = Depends(_get_runtime_user),
 ):
     """Rename one device-local runtime conversation."""
 
     return await runtime_work_service.rename_runtime_task(
-        db=db,
         user_id=current_user.id,
         request=request,
     )
@@ -681,13 +659,11 @@ async def rename_runtime_task_endpoint(
 )
 async def list_archived_conversations_endpoint(
     request: ArchivedConversationsListRequest | None = Body(default=None),
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: _RuntimeUser = Depends(_get_runtime_user),
 ):
     """List archived device-local conversations."""
 
     return await runtime_work_service.list_archived_conversations(
-        db=db,
         user_id=current_user.id,
         request=request or ArchivedConversationsListRequest(),
     )
@@ -700,13 +676,11 @@ async def list_archived_conversations_endpoint(
 )
 async def archive_conversation_endpoint(
     address: RuntimeTaskAddress,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: _RuntimeUser = Depends(_get_runtime_user),
 ):
     """Archive one device-local conversation."""
 
     return await runtime_work_service.archive_runtime_task(
-        db=db,
         user_id=current_user.id,
         address=address,
     )
@@ -719,13 +693,11 @@ async def archive_conversation_endpoint(
 )
 async def archive_project_conversations_endpoint(
     request: RuntimeArchiveProjectConversationsRequest,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: _RuntimeUser = Depends(_get_runtime_user),
 ):
     """Archive active conversations under one runtime project."""
 
     return await runtime_work_service.archive_project_conversations(
-        db=db,
         user_id=current_user.id,
         request=request,
     )
@@ -737,13 +709,11 @@ async def archive_project_conversations_endpoint(
     response_model_by_alias=True,
 )
 async def archive_all_conversations_endpoint(
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: _RuntimeUser = Depends(_get_runtime_user),
 ):
     """Archive all active device-local conversations."""
 
     return await runtime_work_service.archive_all_conversations(
-        db=db,
         user_id=current_user.id,
     )
 
@@ -755,13 +725,11 @@ async def archive_all_conversations_endpoint(
 )
 async def unarchive_conversation_endpoint(
     address: RuntimeTaskAddress,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: _RuntimeUser = Depends(_get_runtime_user),
 ):
     """Unarchive one device-local conversation."""
 
     return await runtime_work_service.unarchive_conversation(
-        db=db,
         user_id=current_user.id,
         address=address,
     )
@@ -774,13 +742,11 @@ async def unarchive_conversation_endpoint(
 )
 async def delete_archived_conversation_endpoint(
     address: RuntimeTaskAddress,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: _RuntimeUser = Depends(_get_runtime_user),
 ):
     """Delete one archived device-local conversation."""
 
     return await runtime_work_service.delete_archived_conversation(
-        db=db,
         user_id=current_user.id,
         address=address,
     )
@@ -793,13 +759,11 @@ async def delete_archived_conversation_endpoint(
 )
 async def delete_archived_conversations_bulk_endpoint(
     request: RuntimeArchivedConversationBulkRequest,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: _RuntimeUser = Depends(_get_runtime_user),
 ):
     """Delete multiple archived device-local conversations."""
 
     return await runtime_work_service.delete_archived_conversations_bulk(
-        db=db,
         user_id=current_user.id,
         request=request,
     )
@@ -812,13 +776,11 @@ async def delete_archived_conversations_bulk_endpoint(
 )
 async def create_runtime_task_endpoint(
     request: RuntimeTaskCreateRequest,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: _RuntimeUser = Depends(_get_runtime_user),
 ):
     """Create a native runtime LocalTask through the owning local executor."""
 
     return await runtime_work_service.create_runtime_task(
-        db=db,
         user_id=current_user.id,
         request=request,
     )
@@ -827,8 +789,7 @@ async def create_runtime_task_endpoint(
 @router.post("/llm-responses-proxy/responses")
 async def llm_responses_proxy_endpoint(
     fastapi_request: Request,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: _RuntimeUser = Depends(_get_runtime_user),
 ):
     """Proxy an LLM responses request to the real provider without exposing api_key.
 
@@ -838,7 +799,10 @@ async def llm_responses_proxy_endpoint(
     """
     from app.services.llm_proxy_service import proxy_llm_responses
 
-    return await proxy_llm_responses(fastapi_request, db, current_user)
+    user_id = current_user.id
+    user_name = current_user.user_name or ""
+    del current_user
+    return await proxy_llm_responses(fastapi_request, user_id, user_name)
 
 
 @router.post(
@@ -848,13 +812,11 @@ async def llm_responses_proxy_endpoint(
 )
 async def open_runtime_workspace_endpoint(
     request: RuntimeWorkspaceOpenRequest,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: _RuntimeUser = Depends(_get_runtime_user),
 ):
     """Open a native runtime workspace without starting a turn."""
 
     return await runtime_work_service.open_runtime_workspace(
-        db=db,
         user_id=current_user.id,
         request=request,
     )
@@ -867,13 +829,11 @@ async def open_runtime_workspace_endpoint(
 )
 async def rename_runtime_workspace_endpoint(
     request: RuntimeWorkspaceRenameRequest,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: _RuntimeUser = Depends(_get_runtime_user),
 ):
     """Rename a native runtime workspace project without touching conversations."""
 
     return await runtime_work_service.rename_runtime_workspace(
-        db=db,
         user_id=current_user.id,
         request=request,
     )
@@ -886,13 +846,11 @@ async def rename_runtime_workspace_endpoint(
 )
 async def remove_runtime_workspace_endpoint(
     request: RuntimeWorkspaceRemoveRequest,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: _RuntimeUser = Depends(_get_runtime_user),
 ):
     """Remove a native runtime workspace project without deleting conversations."""
 
     return await runtime_work_service.remove_runtime_workspace(
-        db=db,
         user_id=current_user.id,
         request=request,
     )
@@ -905,13 +863,11 @@ async def remove_runtime_workspace_endpoint(
 )
 async def fork_runtime_task_endpoint(
     request: RuntimeTaskForkRequest,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: _RuntimeUser = Depends(_get_runtime_user),
 ):
     """Fork a native runtime LocalTask to another device workspace."""
 
     return await runtime_work_service.fork_runtime_task(
-        db=db,
         user_id=current_user.id,
         request=request,
     )

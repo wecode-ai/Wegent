@@ -805,6 +805,7 @@ class SqlAlchemySubtaskStore:
         exclude_deleted: bool = False,
         order_by: Literal["id", "message_id", "created_at"] = "message_id",
         owner_user_id: Optional[int] = None,
+        limit: Optional[int] = None,
     ) -> list[Subtask]:
         query = db.query(Subtask).filter(Subtask.task_id == task_id)
         query = self._filter_owner_user_id(query, owner_user_id=owner_user_id)
@@ -817,10 +818,16 @@ class SqlAlchemySubtaskStore:
         if exclude_deleted:
             query = query.filter(Subtask.status != SubtaskStatus.DELETE)
         if order_by == "id":
-            return query.order_by(Subtask.id.asc()).all()
-        if order_by == "created_at":
-            return query.order_by(Subtask.created_at.asc(), Subtask.id.asc()).all()
-        return query.order_by(Subtask.message_id.asc(), Subtask.created_at.asc()).all()
+            query = query.order_by(Subtask.id.asc())
+        elif order_by == "created_at":
+            query = query.order_by(Subtask.created_at.asc(), Subtask.id.asc())
+        else:
+            query = query.order_by(Subtask.message_id.asc(), Subtask.created_at.asc())
+        if limit is not None:
+            if limit <= 0:
+                raise ValueError("limit must be positive")
+            query = query.limit(limit)
+        return query.all()
 
     def list_recent_by_task_ids(
         self,

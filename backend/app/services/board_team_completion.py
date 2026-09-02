@@ -10,6 +10,7 @@ from typing import Any
 from app.core.events import EventBus, TaskCompletedEvent, get_event_bus
 from app.db.session import get_db_session
 from app.models.loop_item_execution import LoopItemExecution
+from app.services.chat.storage.db import run_sync_in_executor
 from app.services.loop_item_executions.service import (
     STATUS_CANCELLED,
     TERMINAL_STATUSES,
@@ -167,8 +168,8 @@ def project_board_team_cancellation(
     return terminal
 
 
-async def handle_board_team_task_completed(event: TaskCompletedEvent) -> None:
-    """Accept terminal state only from the labelled Team Task for this run."""
+def _handle_board_team_task_completed_sync(event: TaskCompletedEvent) -> None:
+    """Project a labelled Team task inside a database worker thread."""
 
     with get_db_session() as db:
         from app.services.board_team_continuation import (
@@ -214,6 +215,12 @@ async def handle_board_team_task_completed(event: TaskCompletedEvent) -> None:
                 error=event.error or content or "Wegent Team execution failed.",
                 termination_reason="managed_team_failed",
             )
+
+
+async def handle_board_team_task_completed(event: TaskCompletedEvent) -> None:
+    """Accept terminal state without blocking the application event loop."""
+
+    await run_sync_in_executor(_handle_board_team_task_completed_sync, event)
 
 
 def register_board_team_completion_handler(

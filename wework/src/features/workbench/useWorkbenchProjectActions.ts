@@ -337,8 +337,12 @@ export function useWorkbenchProjectActions({
       const runtimeProject = state.runtimeWork?.projects.find(
         item => runtimeProjectUiId(item.project) === projectId
       )?.project
+      const runtimeDeviceStatus = state.devices.find(
+        device => device.device_id === runtimeWorkspace.deviceId
+      )?.status
       const removesOfflineRemoteProject =
-        !runtimeWorkspace.available && isRemoteRuntimeWorkspace(runtimeWorkspace)
+        isRemoteRuntimeWorkspace(runtimeWorkspace) &&
+        (runtimeDeviceStatus === 'offline' || !runtimeWorkspace.available)
       const removePrimaryProject = () =>
         executorClient.runtime.removeRuntimeWorkspace({
           deviceId: runtimeWorkspace.deviceId,
@@ -421,6 +425,7 @@ export function useWorkbenchProjectActions({
       invalidateRemoteProjectSync,
       markRuntimeProjectRemoved,
       refreshWorkLists,
+      state.devices,
       state.runtimeWork,
       state.standaloneDeviceId,
       state.standaloneWorkspacePath,

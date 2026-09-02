@@ -8,7 +8,9 @@ API integration tests for OpenAPI v1/responses endpoints.
 
 import asyncio
 import hashlib
+import inspect
 import json
+import threading
 from datetime import datetime, timedelta
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -18,10 +20,9 @@ from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session
 
 from app.api.endpoints.openapi_responses import (
-    _build_result_block_streaming_chunks,
     _create_non_streaming_response_unified,
     _filter_current_assistant_turn,
-    _iter_callback_events,
+    _PreparedResponseSession,
     _task_to_response_object,
 )
 from app.models.api_key import KEY_TYPE_PERSONAL, APIKey
@@ -31,37 +32,286 @@ from app.models.share_link import ResourceType
 from app.models.subtask import SenderType, Subtask, SubtaskRole, SubtaskStatus
 from app.models.task import TaskResource
 from app.models.user import User
+from app.services.openapi.worker_execution import (
+    _decode_callback_event,
+    _result_block_chunks,
+)
+from app.services.openapi.worker_protocol import OpenAPIExecutionOutcome
 
 
 @pytest.mark.asyncio
-async def test_callback_event_stream_waits_for_executor_terminal_event():
-    messages = [
-        None,
+async def test_create_response_validation_keeps_event_loop_responsive() -> None:
+    """Conversation/team/model SQL validation must run outside Uvicorn."""
+    from app.api.endpoints import openapi_responses
+    from app.schemas.openapi_response import ResponseCreateInput
+
+    started = threading.Event()
+    release = threading.Event()
+    worker_thread_id = None
+    expected = object()
+
+    def blocking_validation(**_kwargs):
+        nonlocal worker_thread_id
+        worker_thread_id = threading.get_ident()
+        started.set()
+        release.wait(timeout=2)
+        return openapi_responses._ValidatedResponseTarget(
+            team_id=7,
+            model_info={"namespace": "default", "team_name": "team"},
+        )
+
+    endpoint = inspect.unwrap(openapi_responses.create_response)
+    request = openapi_responses.Request(
         {
-            "type": "message",
-            "data": json.dumps(
-                {"type": "block_created", "task_id": 1, "subtask_id": 2}
+            "type": "http",
+            "method": "POST",
+            "path": "/api/v1/responses",
+            "headers": [],
+        }
+    )
+    auth_context = SimpleNamespace(
+        user=SimpleNamespace(id=11, user_name="test-user"),
+        api_key_name=None,
+    )
+    event_loop_thread_id = threading.get_ident()
+    loop = asyncio.get_running_loop()
+    started_at = loop.time()
+    safety_release = threading.Timer(1, release.set)
+    safety_release.start()
+
+    with (
+        patch.object(
+            openapi_responses,
+            "_validate_response_target_sync",
+            side_effect=blocking_validation,
+        ),
+        patch.object(
+            openapi_responses,
+            "_create_non_streaming_response_unified",
+            new=AsyncMock(return_value=expected),
+        ),
+    ):
+        task = asyncio.create_task(
+            endpoint(
+                request=request,
+                request_body=ResponseCreateInput(
+                    model="default#team",
+                    input="hello",
+                ),
+                auth_context=auth_context,
+            )
+        )
+        try:
+            assert await asyncio.to_thread(started.wait, 1)
+            assert loop.time() - started_at < 0.5
+            loop_tick = asyncio.Event()
+            loop.call_soon(loop_tick.set)
+            await asyncio.wait_for(loop_tick.wait(), timeout=0.1)
+        finally:
+            release.set()
+            safety_release.cancel()
+
+        result = await asyncio.wait_for(task, timeout=1)
+
+    assert result is expected
+    assert worker_thread_id != event_loop_thread_id
+
+
+async def _await_worker_without_blocking_loop(
+    coroutine,
+    *,
+    started: threading.Event,
+    release: threading.Event,
+):
+    event_loop_thread_id = threading.get_ident()
+    loop = asyncio.get_running_loop()
+    started_at = loop.time()
+    safety_release = threading.Timer(1, release.set)
+    safety_release.start()
+    task = asyncio.create_task(coroutine)
+    try:
+        assert await asyncio.to_thread(started.wait, 1)
+        assert loop.time() - started_at < 0.5
+        loop_tick = asyncio.Event()
+        loop.call_soon(loop_tick.set)
+        await asyncio.wait_for(loop_tick.wait(), timeout=0.1)
+    finally:
+        release.set()
+        safety_release.cancel()
+    return await asyncio.wait_for(task, timeout=1), event_loop_thread_id
+
+
+@pytest.mark.asyncio
+async def test_get_response_query_keeps_event_loop_responsive() -> None:
+    from app.api.endpoints import openapi_responses
+
+    started = threading.Event()
+    release = threading.Event()
+    worker_thread_id = None
+    expected = object()
+
+    def blocking_get(**kwargs):
+        nonlocal worker_thread_id
+        assert kwargs == {
+            "task_id": 17,
+            "user_id": 11,
+            "response_id": "resp_17",
+        }
+        worker_thread_id = threading.get_ident()
+        started.set()
+        release.wait(timeout=2)
+        return expected
+
+    endpoint = inspect.unwrap(openapi_responses.get_response)
+    with patch.object(
+        openapi_responses,
+        "_get_response_sync",
+        side_effect=blocking_get,
+    ):
+        result, event_loop_thread_id = await _await_worker_without_blocking_loop(
+            endpoint(
+                request=MagicMock(),
+                response_id="resp_17",
+                current_user=SimpleNamespace(id=11),
             ),
-        },
-        None,
-        {
-            "type": "message",
-            "data": json.dumps({"type": "done", "task_id": 1, "subtask_id": 2}),
-        },
-    ]
-    pubsub = AsyncMock()
-    pubsub.get_message = AsyncMock(side_effect=messages)
+            started=started,
+            release=release,
+        )
 
-    events = [event async for event in _iter_callback_events(pubsub, asyncio.Event())]
+    assert result is expected
+    assert worker_thread_id != event_loop_thread_id
 
-    assert [event.type for event in events] == ["block_created", "done"]
-    assert pubsub.get_message.await_count == 4
+
+@pytest.mark.asyncio
+async def test_cancel_response_persistence_keeps_event_loop_responsive() -> None:
+    from app.api.endpoints import openapi_responses
+
+    started = threading.Event()
+    release = threading.Event()
+    worker_thread_id = None
+    expected = object()
+    plan = openapi_responses._CancelResponsePlan(
+        is_chat_shell=True,
+        source_label="chat_shell",
+        model_string="default#team",
+        running_subtask_id=23,
+        call_executor_cancel=False,
+    )
+
+    def blocking_complete(**kwargs):
+        nonlocal worker_thread_id
+        assert kwargs == {
+            "task_id": 17,
+            "user_id": 11,
+            "subtask_id": 23,
+            "partial_content": "partial",
+        }
+        worker_thread_id = threading.get_ident()
+        started.set()
+        release.wait(timeout=2)
+
+    endpoint = inspect.unwrap(openapi_responses.cancel_response)
+    session_manager = MagicMock()
+    session_manager.cancel_stream = AsyncMock(return_value=True)
+    with (
+        patch.object(
+            openapi_responses,
+            "_prepare_cancel_response_sync",
+            return_value=plan,
+        ),
+        patch.object(
+            openapi_responses,
+            "_complete_chat_cancel_sync",
+            side_effect=blocking_complete,
+        ),
+        patch.object(
+            openapi_responses,
+            "_build_cancel_response_sync",
+            return_value=expected,
+        ),
+        patch.object(
+            openapi_responses.web_stream_worker_client,
+            "execute",
+            AsyncMock(return_value={"content": "partial", "cursor": 7}),
+        ),
+        patch("app.services.chat.storage.session_manager", session_manager),
+    ):
+        result, event_loop_thread_id = await _await_worker_without_blocking_loop(
+            endpoint(
+                request=MagicMock(),
+                response_id="resp_17",
+                background_tasks=openapi_responses.BackgroundTasks(),
+                current_user=SimpleNamespace(id=11),
+            ),
+            started=started,
+            release=release,
+        )
+
+    assert result is expected
+    assert worker_thread_id != event_loop_thread_id
+    session_manager.cancel_stream.assert_awaited_once_with(23)
+
+
+@pytest.mark.asyncio
+async def test_delete_response_worker_keeps_event_loop_responsive() -> None:
+    from app.api.endpoints import openapi_responses
+
+    started = threading.Event()
+    release = threading.Event()
+    worker_thread_id = None
+    expected = object()
+
+    def blocking_delete(**kwargs):
+        nonlocal worker_thread_id
+        assert kwargs == {
+            "task_id": 17,
+            "user_id": 11,
+            "response_id": "resp_17",
+        }
+        worker_thread_id = threading.get_ident()
+        started.set()
+        release.wait(timeout=2)
+        return expected
+
+    endpoint = inspect.unwrap(openapi_responses.delete_response)
+    with (
+        patch.object(
+            openapi_responses,
+            "_prepare_delete_response_sync",
+            return_value=openapi_responses._DeleteResponsePlan(running_subtask_id=None),
+        ),
+        patch.object(
+            openapi_responses,
+            "_delete_response_sync",
+            side_effect=blocking_delete,
+        ),
+    ):
+        result, event_loop_thread_id = await _await_worker_without_blocking_loop(
+            endpoint(
+                request=MagicMock(),
+                response_id="resp_17",
+                current_user=SimpleNamespace(id=11),
+            ),
+            started=started,
+            release=release,
+        )
+
+    assert result is expected
+    assert worker_thread_id != event_loop_thread_id
+
+
+def test_callback_event_decode_is_owned_by_openapi_worker():
+    event = _decode_callback_event(
+        json.dumps({"type": "done", "task_id": 1, "subtask_id": 2})
+    )
+
+    assert event.type == "done"
 
 
 def test_result_blocks_become_created_then_updated_streaming_chunks():
     known_blocks = {}
 
-    created = _build_result_block_streaming_chunks(
+    created = _result_block_chunks(
         {
             "blocks": [
                 {
@@ -74,7 +324,7 @@ def test_result_blocks_become_created_then_updated_streaming_chunks():
         },
         known_blocks,
     )
-    updated = _build_result_block_streaming_chunks(
+    updated = _result_block_chunks(
         {
             "blocks": [
                 {
@@ -396,6 +646,23 @@ def _assistant_subtask_with_pending_form(
     )
 
 
+def _prepared_response_session(
+    *, linked_attachment_ids: list[int] | None = None
+) -> _PreparedResponseSession:
+    """Build the detached preparation result consumed by execution tests."""
+    return _PreparedResponseSession(
+        task_id=101,
+        user_subtask_id=321,
+        assistant_subtask_id=654,
+        linked_attachment_ids=linked_attachment_ids,
+        current_kb_refs=[],
+        enable_tools=False,
+        enable_chat_bot=False,
+        preload_skills=[],
+        memory_save_request=None,
+    )
+
+
 @pytest.mark.api
 class TestOpenAPIResponsesCreate:
     """Test POST /api/v1/responses endpoint."""
@@ -682,12 +949,6 @@ class TestOpenAPIResponsesCreate:
         test_team: Kind,
     ):
         """Queued non-streaming responses should not expose legacy pending form state."""
-        setup = SimpleNamespace(
-            task=SimpleNamespace(id=101, json={"metadata": {"labels": {}}}),
-            task_id=101,
-            user_subtask=SimpleNamespace(id=321),
-            assistant_subtask=SimpleNamespace(id=654),
-        )
         execution_request = SimpleNamespace(task_id=101, subtask_id=654)
         assistant_subtask = _assistant_subtask_with_pending_form(
             subtask_id=654,
@@ -702,30 +963,25 @@ class TestOpenAPIResponsesCreate:
 
         with (
             patch(
-                "app.services.openapi.chat_session.setup_chat_session",
-                return_value=setup,
+                "app.api.endpoints.openapi_responses._prepare_response_session_sync",
+                return_value=_prepared_response_session(),
             ),
             patch(
                 "app.services.chat.trigger.unified.build_execution_request",
                 new=AsyncMock(return_value=execution_request),
             ),
             patch(
-                "app.services.execution.execution_dispatcher.supports_streaming",
-                return_value=False,
+                "app.services.openapi.worker_client.openapi_worker_client.execute",
+                new=AsyncMock(return_value=OpenAPIExecutionOutcome(status="queued")),
             ),
             patch(
-                "app.services.execution.execution_dispatcher.dispatch",
-                new=AsyncMock(),
-            ),
-            patch(
-                "app.db.session.SessionLocal",
-                return_value=query_db,
+                "app.api.endpoints.openapi_responses._query_subtask_views_sync",
+                return_value=[assistant_subtask],
             ),
         ):
             response = await _create_non_streaming_response_unified(
-                db=test_db,
-                user=test_user,
-                team=test_team,
+                user=SimpleNamespace(id=test_user.id, user_name=test_user.user_name),
+                team_id=test_team.id,
                 model_info={"namespace": "default", "team_name": "test-team"},
                 request_body=SimpleNamespace(
                     model="default#test-team",
@@ -833,12 +1089,6 @@ class TestOpenAPIResponsesCreate:
         )
         from app.schemas.openapi_response import ResponseCreateInput
 
-        setup = SimpleNamespace(
-            task=SimpleNamespace(id=101, json={"metadata": {"labels": {}}}),
-            task_id=101,
-            user_subtask=SimpleNamespace(id=321),
-            assistant_subtask=SimpleNamespace(id=654),
-        )
         execution_request = SimpleNamespace(
             task_id=101,
             subtask_id=654,
@@ -847,20 +1097,16 @@ class TestOpenAPIResponsesCreate:
 
         with (
             patch(
-                "app.services.openapi.chat_session.setup_chat_session",
-                return_value=setup,
+                "app.api.endpoints.openapi_responses._prepare_response_session_sync",
+                return_value=_prepared_response_session(),
             ),
             patch(
                 "app.services.chat.trigger.unified.build_execution_request",
                 new=AsyncMock(return_value=execution_request),
             ),
             patch(
-                "app.services.execution.execution_dispatcher.supports_streaming",
-                return_value=False,
-            ),
-            patch(
-                "app.services.execution.execution_dispatcher.dispatch",
-                new=AsyncMock(),
+                "app.services.openapi.worker_client.openapi_worker_client.execute",
+                new=AsyncMock(return_value=OpenAPIExecutionOutcome(status="queued")),
             ),
             patch(
                 "app.api.endpoints.openapi_responses._persist_terminal_failure",
@@ -868,9 +1114,8 @@ class TestOpenAPIResponsesCreate:
             ) as mock_persist_failure,
         ):
             response = await _create_streaming_response_unified(
-                db=test_db,
-                user=test_user,
-                team=test_team,
+                user=SimpleNamespace(id=test_user.id, user_name=test_user.user_name),
+                team_id=test_team.id,
                 model_info={"namespace": "default", "team_name": "test-team"},
                 request_body=ResponseCreateInput(
                     model="default#test-team",
@@ -883,6 +1128,70 @@ class TestOpenAPIResponsesCreate:
 
         assert response.media_type == "text/event-stream"
         mock_persist_failure.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_client_disconnect_cancels_stream_dispatch(
+        self,
+        test_db: Session,
+        test_user: User,
+        test_team: Kind,
+    ):
+        """Closing the HTTP body must propagate cancellation to dispatch."""
+        from app.api.endpoints.openapi_responses import (
+            _create_streaming_response_unified,
+        )
+        from app.schemas.openapi_response import ResponseCreateInput
+
+        execution_request = SimpleNamespace(
+            task_id=101,
+            subtask_id=654,
+            model_config={"modelType": "llm"},
+            bot=[{"shell_type": "Chat"}],
+        )
+        dispatch_started = asyncio.Event()
+        dispatch_cancelled = asyncio.Event()
+
+        async def stream_until_cancelled(_request, _spec):
+            dispatch_started.set()
+            try:
+                yield b"data: first\n\n"
+                await asyncio.Future()
+            finally:
+                dispatch_cancelled.set()
+
+        with (
+            patch(
+                "app.api.endpoints.openapi_responses._prepare_response_session_sync",
+                return_value=_prepared_response_session(),
+            ),
+            patch(
+                "app.services.chat.trigger.unified.build_execution_request",
+                new=AsyncMock(return_value=execution_request),
+            ),
+            patch(
+                "app.services.openapi.worker_client.openapi_worker_client.stream",
+                new=stream_until_cancelled,
+            ),
+        ):
+            response = await _create_streaming_response_unified(
+                user=SimpleNamespace(id=test_user.id, user_name=test_user.user_name),
+                team_id=test_team.id,
+                model_info={"namespace": "default", "team_name": "test-team"},
+                request_body=ResponseCreateInput(
+                    model="default#test-team",
+                    input="hello",
+                    stream=True,
+                ),
+                input_text="hello",
+                tool_settings={},
+            )
+            body = response.body_iterator
+            await anext(body)
+            await asyncio.wait_for(dispatch_started.wait(), timeout=0.5)
+
+            await body.aclose()
+
+            await asyncio.wait_for(dispatch_cancelled.wait(), timeout=0.5)
 
     @pytest.mark.asyncio
     async def test_video_streaming_returns_bad_request(
@@ -899,12 +1208,6 @@ class TestOpenAPIResponsesCreate:
         )
         from app.schemas.openapi_response import ResponseCreateInput
 
-        setup = SimpleNamespace(
-            task=SimpleNamespace(id=101, json={"metadata": {"labels": {}}}),
-            task_id=101,
-            user_subtask=SimpleNamespace(id=321),
-            assistant_subtask=SimpleNamespace(id=654),
-        )
         execution_request = SimpleNamespace(
             task_id=101,
             subtask_id=654,
@@ -913,8 +1216,8 @@ class TestOpenAPIResponsesCreate:
 
         with (
             patch(
-                "app.services.openapi.chat_session.setup_chat_session",
-                return_value=setup,
+                "app.api.endpoints.openapi_responses._prepare_response_session_sync",
+                return_value=_prepared_response_session(),
             ),
             patch(
                 "app.services.chat.trigger.unified.build_execution_request",
@@ -927,9 +1230,11 @@ class TestOpenAPIResponsesCreate:
         ):
             with pytest.raises(HTTPException) as exc_info:
                 await _create_streaming_response_unified(
-                    db=test_db,
-                    user=test_user,
-                    team=test_team,
+                    user=SimpleNamespace(
+                        id=test_user.id,
+                        user_name=test_user.user_name,
+                    ),
+                    team_id=test_team.id,
                     model_info={"namespace": "default", "team_name": "test-team"},
                     request_body=ResponseCreateInput(
                         model="default#test-team",
@@ -1052,12 +1357,6 @@ class TestOpenAPIResponsesCreate:
         )
         from app.schemas.openapi_response import ResponseCreateInput
 
-        setup = SimpleNamespace(
-            task=SimpleNamespace(id=101, json={"metadata": {"labels": {}}}),
-            task_id=101,
-            user_subtask=SimpleNamespace(id=321),
-            assistant_subtask=SimpleNamespace(id=654),
-        )
         execution_request = SimpleNamespace(task_id=101, subtask_id=654)
         query_db = MagicMock()
         query_db.query.return_value.filter.return_value.order_by.return_value.all.return_value = (
@@ -1066,29 +1365,25 @@ class TestOpenAPIResponsesCreate:
 
         with (
             patch(
-                "app.services.openapi.chat_session.setup_chat_session",
-                return_value=setup,
+                "app.api.endpoints.openapi_responses._prepare_response_session_sync",
+                return_value=_prepared_response_session(),
             ),
             patch(
                 "app.services.chat.trigger.unified.build_execution_request",
                 new=AsyncMock(return_value=execution_request),
             ) as mock_build_execution_request,
             patch(
-                "app.services.execution.execution_dispatcher.supports_streaming",
-                return_value=False,
+                "app.services.openapi.worker_client.openapi_worker_client.execute",
+                new=AsyncMock(return_value=OpenAPIExecutionOutcome(status="queued")),
             ),
             patch(
-                "app.services.execution.execution_dispatcher.dispatch", new=AsyncMock()
-            ),
-            patch(
-                "app.db.session.SessionLocal",
-                return_value=query_db,
+                "app.api.endpoints.openapi_responses._query_subtask_views_sync",
+                return_value=[],
             ),
         ):
             response = await _create_non_streaming_response_unified(
-                db=test_db,
-                user=test_user,
-                team=test_team,
+                user=SimpleNamespace(id=test_user.id, user_name=test_user.user_name),
+                team_id=test_team.id,
                 model_info={"namespace": "default", "team_name": "test-team"},
                 request_body=ResponseCreateInput(
                     model="default#test-team",
@@ -1099,11 +1394,13 @@ class TestOpenAPIResponsesCreate:
             )
 
         assert response.status == "queued"
-        query_db.close.assert_called()
-        assert mock_build_execution_request.await_args.kwargs["user_subtask_id"] == 321
-        assert mock_build_execution_request.await_args.kwargs["message"] == (
-            "follow-up question"
-        )
+        build_kwargs = mock_build_execution_request.await_args.kwargs
+        assert build_kwargs["task"] == 101
+        assert build_kwargs["assistant_subtask"] == 654
+        assert build_kwargs["team"] == test_team.id
+        assert build_kwargs["user"] == test_user.id
+        assert build_kwargs["user_subtask_id"] == 321
+        assert build_kwargs["message"] == "follow-up question"
 
     @pytest.mark.asyncio
     async def test_non_streaming_build_request_passes_generation_and_attachment_order(
@@ -1118,52 +1415,32 @@ class TestOpenAPIResponsesCreate:
         )
         from app.schemas.openapi_response import ResponseCreateInput
 
-        setup = SimpleNamespace(
-            task=SimpleNamespace(id=101, json={"metadata": {"labels": {}}}),
-            task_id=101,
-            user_subtask=SimpleNamespace(id=321),
-            assistant_subtask=SimpleNamespace(id=654),
-        )
         execution_request = SimpleNamespace(
             task_id=101,
             subtask_id=654,
             model_config={"modelType": "image"},
         )
-        query_db = MagicMock()
-        query_db.query.return_value.filter.return_value.order_by.return_value.all.return_value = (
-            []
-        )
-
         with (
             patch(
-                "app.services.openapi.chat_session.setup_chat_session",
-                return_value=setup,
-            ) as setup_chat_session_mock,
-            patch(
-                "app.api.endpoints.openapi_responses.link_contexts_to_subtask",
-                return_value=[31, 12],
+                "app.api.endpoints.openapi_responses._prepare_response_session_sync",
+                return_value=_prepared_response_session(linked_attachment_ids=[31, 12]),
             ),
             patch(
                 "app.services.chat.trigger.unified.build_execution_request",
                 new=AsyncMock(return_value=execution_request),
             ) as mock_build_execution_request,
             patch(
-                "app.services.execution.execution_dispatcher.supports_streaming",
-                return_value=False,
+                "app.services.openapi.worker_client.openapi_worker_client.execute",
+                new=AsyncMock(return_value=OpenAPIExecutionOutcome(status="queued")),
             ),
             patch(
-                "app.services.execution.execution_dispatcher.dispatch",
-                new=AsyncMock(),
-            ),
-            patch(
-                "app.db.session.SessionLocal",
-                return_value=query_db,
-            ),
+                "app.api.endpoints.openapi_responses._query_subtask_views_sync",
+                return_value=[],
+            ) as mock_query_subtask_views,
         ):
             response = await _create_non_streaming_response_unified(
-                db=test_db,
-                user=test_user,
-                team=test_team,
+                user=SimpleNamespace(id=test_user.id, user_name=test_user.user_name),
+                team_id=test_team.id,
                 model_info={"namespace": "default", "team_name": "test-team"},
                 request_body=ResponseCreateInput(
                     model="default#test-team",
@@ -1176,12 +1453,13 @@ class TestOpenAPIResponsesCreate:
             )
 
         assert response.status == "queued"
+        mock_query_subtask_views.assert_called_once_with(
+            task_id=101,
+            user_id=test_user.id,
+        )
         build_kwargs = mock_build_execution_request.await_args.kwargs
         assert build_kwargs["attachment_ids"] == [31, 12]
         assert build_kwargs["generation_params"].size == "1024x1024"
-        assert setup_chat_session_mock.call_args.kwargs["generation_params"] == {
-            "size": "1024x1024"
-        }
 
     @pytest.mark.asyncio
     async def test_non_streaming_dispatch_failure_persists_failed_status(
@@ -1198,36 +1476,19 @@ class TestOpenAPIResponsesCreate:
         )
         from app.schemas.openapi_response import ResponseCreateInput
 
-        setup = SimpleNamespace(
-            task=SimpleNamespace(id=101, json={"metadata": {"labels": {}}}),
-            task_id=101,
-            user_subtask=SimpleNamespace(id=321),
-            assistant_subtask=SimpleNamespace(id=654),
-        )
         execution_request = SimpleNamespace(task_id=101, subtask_id=654)
-        mock_emitter = MagicMock()
-        mock_emitter.collect = AsyncMock(return_value=("", None))
-
         with (
             patch(
-                "app.services.openapi.chat_session.setup_chat_session",
-                return_value=setup,
+                "app.api.endpoints.openapi_responses._prepare_response_session_sync",
+                return_value=_prepared_response_session(),
             ),
             patch(
                 "app.services.chat.trigger.unified.build_execution_request",
                 new=AsyncMock(return_value=execution_request),
             ),
             patch(
-                "app.services.execution.execution_dispatcher.supports_streaming",
-                return_value=True,
-            ),
-            patch(
-                "app.services.execution.execution_dispatcher.dispatch",
+                "app.services.openapi.worker_client.openapi_worker_client.execute",
                 new=AsyncMock(side_effect=RuntimeError("dispatcher boom")),
-            ),
-            patch(
-                "app.services.execution.emitters.SSEResultEmitter",
-                return_value=mock_emitter,
             ),
             patch(
                 "app.api.endpoints.openapi_responses.collect_completed_result",
@@ -1240,9 +1501,11 @@ class TestOpenAPIResponsesCreate:
         ):
             with pytest.raises(HTTPException) as exc_info:
                 await _create_non_streaming_response_unified(
-                    db=test_db,
-                    user=test_user,
-                    team=test_team,
+                    user=SimpleNamespace(
+                        id=test_user.id,
+                        user_name=test_user.user_name,
+                    ),
+                    team_id=test_team.id,
                     model_info={"namespace": "default", "team_name": "test-team"},
                     request_body=ResponseCreateInput(
                         model="default#test-team",
@@ -1735,15 +1998,16 @@ class TestOpenAPIResponsesCancel:
         test_db.refresh(running_subtask)
 
         # Mock session_manager methods
-        mock_session_manager.get_streaming_content = AsyncMock(
-            return_value="Partial content"
-        )
         mock_session_manager.cancel_stream = AsyncMock()
 
-        response = test_client.post(
-            f"/api/v1/responses/resp_{task.id}/cancel",
-            headers={"X-API-Key": test_api_key[0]},
-        )
+        with patch(
+            "app.api.endpoints.openapi_responses.web_stream_worker_client.execute",
+            new=AsyncMock(return_value={"content": "Partial content", "cursor": 15}),
+        ):
+            response = test_client.post(
+                f"/api/v1/responses/resp_{task.id}/cancel",
+                headers={"X-API-Key": test_api_key[0]},
+            )
 
         assert response.status_code == 200
         data = response.json()
@@ -1851,18 +2115,84 @@ class TestOpenAPIResponsesCancel:
         test_db.commit()
         test_db.refresh(task)
 
-        mock_session_manager.get_streaming_content = AsyncMock(
-            return_value="Partial content"
-        )
         mock_session_manager.cancel_stream = AsyncMock()
 
-        response = test_client.post(
-            f"/api/v1/responses/resp_{task.id}/cancel",
-            headers={"X-API-Key": raw_key},
-        )
+        with patch(
+            "app.api.endpoints.openapi_responses.web_stream_worker_client.execute",
+            new=AsyncMock(return_value={"content": "Partial content", "cursor": 15}),
+        ):
+            response = test_client.post(
+                f"/api/v1/responses/resp_{task.id}/cancel",
+                headers={"X-API-Key": raw_key},
+            )
 
         assert response.status_code == 200
         assert response.json()["id"] == f"resp_{task.id}"
+
+    def test_cancel_response_executor_success(
+        self,
+        test_client: TestClient,
+        test_api_key,
+        test_db: Session,
+        test_user: User,
+    ):
+        """Executor cancellation persists in a worker and schedules async cleanup."""
+        from app.services.adapters.task_kinds import task_kinds_service
+
+        task_json = {
+            "apiVersion": "agent.wecode.io/v1",
+            "kind": "Task",
+            "metadata": {
+                "name": "task-executor-running",
+                "namespace": "default",
+                "labels": {"source": "api"},
+            },
+            "spec": {
+                "title": "Running executor task",
+                "prompt": "Hello",
+                "teamRef": {"name": "test-team", "namespace": "default"},
+                "workspaceRef": {
+                    "name": "workspace-1",
+                    "namespace": "default",
+                },
+            },
+            "status": {
+                "status": "RUNNING",
+                "progress": 10,
+                "result": None,
+                "errorMessage": "",
+                "createdAt": datetime.now().isoformat(),
+                "updatedAt": datetime.now().isoformat(),
+            },
+        }
+        task = TaskResource(
+            user_id=test_user.id,
+            kind="Task",
+            name="task-executor-running",
+            namespace="default",
+            json=task_json,
+            is_active=True,
+        )
+        test_db.add(task)
+        test_db.commit()
+        test_db.refresh(task)
+
+        with patch.object(
+            task_kinds_service,
+            "_call_executor_cancel",
+            new=AsyncMock(),
+        ) as cancel_runtime:
+            response = test_client.post(
+                f"/api/v1/responses/resp_{task.id}/cancel",
+                headers={"X-API-Key": test_api_key[0]},
+            )
+
+        assert response.status_code == 200
+        assert response.json()["status"] == "cancelled"
+        cancel_runtime.assert_awaited_once_with(task.id)
+        test_db.expire_all()
+        updated_task = test_db.get(TaskResource, task.id)
+        assert updated_task.json["status"]["status"] == "CANCELLED"
 
 
 @pytest.mark.api

@@ -4,7 +4,6 @@
 
 """Resolve an owned logical device identity to its current Runtime socket."""
 
-import asyncio
 from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
@@ -14,6 +13,7 @@ from sqlalchemy.orm import Session
 
 from app.models.kind import Kind
 from app.schemas.device import DeviceType
+from app.services.chat.storage.db import run_sync_in_executor
 from app.services.device_service import device_service
 from shared.telemetry.decorators import trace_async
 
@@ -192,7 +192,7 @@ class RuntimeRouteResolver:
     ) -> RuntimeRoute:
         """Resolve and validate one owned, online Runtime route."""
 
-        identity = await asyncio.to_thread(
+        identity = await run_sync_in_executor(
             self._resolve_identity,
             user_id,
             submitted_device_id,

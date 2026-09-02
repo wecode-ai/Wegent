@@ -11,11 +11,21 @@ import pytest
 from fastapi import HTTPException
 from sqlalchemy.orm import Session
 
+from app.core.bounded_executor import BoundedExecutorOverloaded
 from app.models.user import User
-from app.schemas.connector import ConnectorAppWrite
+from app.schemas.connector import (
+    ConnectorAppWrite,
+    ConnectorHttpToolDefinition,
+    ConnectorToolCallRequest,
+)
+from app.services import connector_runtime as connector_runtime_module
 from app.services.connector_apps import _encrypt_json, connector_app_service
 from app.services.connector_connections import connector_connection_service
-from app.services.connector_runtime import ConnectorRuntimeService
+from app.services.connector_runtime import (
+    ConnectorRuntimePlan,
+    ConnectorRuntimeService,
+    ConnectorServerConfig,
+)
 
 
 def _app(**overrides):
@@ -36,7 +46,27 @@ def _app(**overrides):
         "http_tools": [],
     }
     defaults.update(overrides)
+    defaults["allowed_roles"] = tuple(defaults["allowed_roles"])
+    defaults["tool_allowlist"] = tuple(defaults["tool_allowlist"])
+    defaults["http_tools"] = tuple(
+        (
+            item
+            if isinstance(item, ConnectorHttpToolDefinition)
+            else ConnectorHttpToolDefinition.model_validate(item)
+        )
+        for item in defaults["http_tools"]
+    )
     return SimpleNamespace(**defaults)
+
+
+def _runtime(test_db: Session) -> ConnectorRuntimeService:
+    return ConnectorRuntimeService(
+        lambda: Session(
+            bind=test_db.get_bind(),
+            expire_on_commit=False,
+            join_transaction_mode="create_savepoint",
+        )
+    )
 
 
 def _create_app(
@@ -63,7 +93,7 @@ def _create_app(
             auth_type=auth_type,
             forward_user_context_headers=forward_user_context_headers,
         ),
-        admin,
+        admin.id,
     )
 
 
@@ -103,13 +133,16 @@ async def test_lists_only_allowlisted_tools_with_connector_namespace(
     upstream_tools = AsyncMock(return_value=[Tool()])
     monkeypatch.setattr(ConnectorRuntimeService, "_upstream_tools", upstream_tools)
 
-    tools = await ConnectorRuntimeService.list_tools(test_db, test_user)
+    service = _runtime(test_db)
+    tools = await service.list_tools(
+        test_user.id,
+        test_user.user_name,
+        test_user.role,
+    )
 
     assert [tool.name for tool in tools] == ["crm__search"]
     assert tools[0].annotations == {"readOnlyHint": True}
-    assert upstream_tools.await_args.args[0] is test_db
-    assert upstream_tools.await_args.args[1].slug == "crm"
-    assert upstream_tools.await_args.args[2] is test_user
+    assert upstream_tools.await_args.args[0].app.slug == "crm"
 
 
 @pytest.mark.asyncio
@@ -118,7 +151,6 @@ async def test_tool_discovery_isolates_an_unavailable_app(
 ) -> None:
     unavailable = _app(id=1, slug="offline", name="Offline")
     healthy = _app(id=2, slug="docs", name="Docs")
-    user = SimpleNamespace(id=7)
 
     class Tool:
         name = "search"
@@ -127,25 +159,71 @@ async def test_tool_discovery_isolates_an_unavailable_app(
         inputSchema = {"type": "object", "properties": {}}
         annotations = None
 
-    async def upstream_tools(_db, app, _user):
-        if app.slug == "offline":
+    async def upstream_tools(plan):
+        if plan.app.slug == "offline":
             raise HTTPException(502, "upstream unavailable")
         return [Tool()]
 
-    monkeypatch.setattr(
-        ConnectorRuntimeService,
-        "_connected_apps",
-        lambda _db, _user: [unavailable, healthy],
+    config = ConnectorServerConfig(
+        transport="streamable-http",
+        url="https://mcp.example.test",
+        headers={},
     )
+    service = ConnectorRuntimeService()
     monkeypatch.setattr(
-        ConnectorRuntimeService,
-        "_upstream_tools",
-        upstream_tools,
+        service,
+        "_prepare_list_sync",
+        lambda *_args: (
+            ConnectorRuntimePlan(unavailable, config),
+            ConnectorRuntimePlan(healthy, config),
+        ),
     )
+    monkeypatch.setattr(service, "_upstream_tools", upstream_tools)
 
-    tools = await ConnectorRuntimeService.list_tools(object(), user)
+    tools = await service.list_tools(7, "user", "user")
 
     assert [tool.name for tool in tools] == ["docs__search"]
+
+
+@pytest.mark.asyncio
+async def test_db_executor_overload_stops_before_upstream_network(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    service = ConnectorRuntimeService()
+    upstream_tools = AsyncMock()
+    monkeypatch.setattr(service, "_upstream_tools", upstream_tools)
+    monkeypatch.setattr(
+        connector_runtime_module,
+        "run_sync_in_executor",
+        AsyncMock(side_effect=BoundedExecutorOverloaded("full")),
+    )
+
+    with pytest.raises(BoundedExecutorOverloaded, match="full"):
+        await service.list_tools(7, "user", "user")
+
+    upstream_tools.assert_not_awaited()
+
+
+def test_db_planning_fault_closes_worker_owned_session() -> None:
+    class FailingSession:
+        closed = False
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            self.closed = True
+
+        def query(self, *_args):
+            raise RuntimeError("database unavailable")
+
+    session = FailingSession()
+    service = ConnectorRuntimeService(lambda: session)
+
+    with pytest.raises(RuntimeError, match="database unavailable"):
+        service._prepare_list_sync(7, "user", "user")
+
+    assert session.closed is True
 
 
 @pytest.mark.asyncio
@@ -218,11 +296,11 @@ async def test_mcp_session_initializes_streamable_http_transport(
     monkeypatch.setattr(mcp, "ClientSession", FakeClientSession)
 
     async with ConnectorRuntimeService._mcp_session(
-        {
-            "type": "streamable-http",
-            "url": "https://mcp.example.test/tools",
-            "headers": {"Authorization": "Bearer secret"},
-        }
+        ConnectorServerConfig(
+            transport="streamable-http",
+            url="https://mcp.example.test/tools",
+            headers={"Authorization": "Bearer secret"},
+        )
     ):
         pass
 
@@ -246,9 +324,15 @@ async def test_server_config_sends_trusted_user_headers_without_opt_in(
         provider_headers_encrypted=_encrypt_json({"X-Provider": "configured"}),
     )
 
-    config = await ConnectorRuntimeService._server_config(test_db, app, test_user)
+    plan = ConnectorRuntimeService._plan_for_app_sync(
+        test_db,
+        app,
+        test_user.id,
+        test_user.user_name,
+        allow_expired=False,
+    )
 
-    assert config["headers"] == {
+    assert dict(plan.config.headers) == {
         "X-Provider": "configured",
         "X-Wegent-Username": test_user.user_name,
         "X-Wegent-User-Id": str(test_user.id),
@@ -273,9 +357,15 @@ async def test_oauth_server_config_uses_user_token_with_identity_headers(
         expires_at=None,
     )
 
-    config = await ConnectorRuntimeService._server_config(test_db, app, test_user)
+    plan = ConnectorRuntimeService._plan_for_app_sync(
+        test_db,
+        app,
+        test_user.id,
+        test_user.user_name,
+        allow_expired=False,
+    )
 
-    assert config["headers"] == {
+    assert dict(plan.config.headers) == {
         "Authorization": "Bearer github-user-token",
         "X-Wegent-Username": test_user.user_name,
         "X-Wegent-User-Id": str(test_user.id),
@@ -319,13 +409,23 @@ async def test_call_preserves_mcp_content_and_error_state(
     )
 
     @asynccontextmanager
-    async def fake_session(_: dict):
+    async def fake_session(
+        _service: ConnectorRuntimeService,
+        _config: ConnectorServerConfig,
+    ):
         yield session
 
     monkeypatch.setattr(ConnectorRuntimeService, "_mcp_session", fake_session)
 
-    content, structured_content, is_error = await ConnectorRuntimeService.call_tool(
-        test_db, test_user, "tickets__search", {"query": "T-1"}
+    service = _runtime(test_db)
+    content, structured_content, is_error = await service.call_tool(
+        test_user.id,
+        test_user.user_name,
+        test_user.role,
+        ConnectorToolCallRequest(
+            name="tickets__search",
+            arguments={"query": "T-1"},
+        ),
     )
 
     assert content == [{"type": "resource_link", "uri": "https://example.test/T-1"}]
@@ -349,8 +449,11 @@ async def test_rejects_direct_calls_outside_tool_allowlist(
     )
 
     with pytest.raises(HTTPException) as exc_info:
-        await ConnectorRuntimeService.call_tool(
-            test_db, test_user, "tickets__delete", {}
+        await _runtime(test_db).call_tool(
+            test_user.id,
+            test_user.user_name,
+            test_user.role,
+            ConnectorToolCallRequest(name="tickets__delete", arguments={}),
         )
 
     assert exc_info.value.status_code == 403
@@ -421,12 +524,20 @@ async def test_http_connector_lists_and_calls_configured_tool(
 
     monkeypatch.setattr(httpx.AsyncClient, "send", send)
 
-    tools = await ConnectorRuntimeService.list_tools(test_db, test_user)
-    content, structured, is_error = await ConnectorRuntimeService.call_tool(
-        test_db,
-        test_user,
-        "ticket-api__get_ticket",
-        {"id": "T/42", "expand": True},
+    service = _runtime(test_db)
+    tools = await service.list_tools(
+        test_user.id,
+        test_user.user_name,
+        test_user.role,
+    )
+    content, structured, is_error = await service.call_tool(
+        test_user.id,
+        test_user.user_name,
+        test_user.role,
+        ConnectorToolCallRequest(
+            name="ticket-api__get_ticket",
+            arguments={"id": "T/42", "expand": True},
+        ),
     )
 
     assert [tool.name for tool in tools] == ["ticket-api__get_ticket"]
@@ -464,7 +575,11 @@ async def test_http_connector_validates_arguments_before_request(
 
     with pytest.raises(HTTPException) as exc_info:
         await ConnectorRuntimeService._call_http_tool(
-            {"url": "https://search.example.test", "headers": {}},
+            ConnectorServerConfig(
+                transport="http",
+                url="https://search.example.test",
+                headers={},
+            ),
             definition,
             {"query": 42},
         )

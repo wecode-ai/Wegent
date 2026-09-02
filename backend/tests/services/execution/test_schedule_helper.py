@@ -1,9 +1,14 @@
+import asyncio
+import threading
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from app.core.bounded_executor import BoundedExecutor
+from app.services.execution import schedule_helper
 from app.services.execution.schedule_helper import (
+    ScheduleDispatchOverloaded,
     _dispatch_task_async,
     _extract_device_id_from_executor_name,
 )
@@ -21,6 +26,73 @@ def test_extract_device_id_from_executor_name_ignores_non_device_executor() -> N
     assert _extract_device_id_from_executor_name("executor-123") is None
     assert _extract_device_id_from_executor_name("") is None
     assert _extract_device_id_from_executor_name(None) is None
+
+
+@pytest.mark.asyncio
+async def test_schedule_dispatch_never_runs_work_on_caller_loop(monkeypatch) -> None:
+    main_loop = asyncio.get_running_loop()
+    main_thread_id = threading.get_ident()
+    worker_started = threading.Event()
+    worker_details = {}
+
+    async def fake_dispatch(task_id: int) -> None:
+        worker_details.update(
+            task_id=task_id,
+            loop=asyncio.get_running_loop(),
+            thread_id=threading.get_ident(),
+        )
+        worker_started.set()
+
+    executor = BoundedExecutor(
+        max_workers=1,
+        max_in_flight=1,
+        thread_name_prefix="test-schedule-loop-isolation",
+    )
+    monkeypatch.setattr(schedule_helper, "_DISPATCH_EXECUTOR", executor)
+    monkeypatch.setattr(schedule_helper, "_dispatch_task_async", fake_dispatch)
+
+    schedule_helper.schedule_dispatch(73)
+    for _ in range(200):
+        if worker_started.is_set():
+            break
+        await asyncio.sleep(0.005)
+    else:
+        pytest.fail("background dispatch did not start")
+
+    assert worker_details["task_id"] == 73
+    assert worker_details["loop"] is not main_loop
+    assert worker_details["thread_id"] != main_thread_id
+
+
+def test_schedule_dispatch_rejects_instead_of_queueing_without_bound(
+    monkeypatch,
+) -> None:
+    worker_started = threading.Event()
+    release_worker = threading.Event()
+    worker_finished = threading.Event()
+
+    def blocking_dispatch(task_id: int) -> None:
+        assert task_id == 80
+        worker_started.set()
+        release_worker.wait(timeout=5)
+        worker_finished.set()
+
+    executor = BoundedExecutor(
+        max_workers=1,
+        max_in_flight=1,
+        thread_name_prefix="test-schedule-capacity",
+    )
+    monkeypatch.setattr(schedule_helper, "_DISPATCH_EXECUTOR", executor)
+    monkeypatch.setattr(schedule_helper, "_dispatch_task_in_worker", blocking_dispatch)
+
+    schedule_helper.schedule_dispatch(80)
+    assert worker_started.wait(timeout=2)
+    try:
+        with pytest.raises(ScheduleDispatchOverloaded):
+            schedule_helper.schedule_dispatch(81)
+    finally:
+        release_worker.set()
+    assert worker_finished.wait(timeout=2)
 
 
 @pytest.mark.asyncio

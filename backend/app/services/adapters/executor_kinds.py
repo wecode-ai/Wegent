@@ -9,6 +9,7 @@ import httpx
 from fastapi import HTTPException
 
 from app.core.config import settings
+from app.core.payload_codec import decode_sync_response_json, encode_http_json
 from app.models.kind import Kind
 from app.services.base import BaseService
 
@@ -135,11 +136,12 @@ class ExecutorKindsService(BaseService[Kind, None, None]):
             async with httpx.AsyncClient(timeout=30.0) as client:
                 response = await client.post(
                     settings.EXECUTOR_DELETE_TASK_URL,
-                    json=payload,
+                    content=await encode_http_json(payload),
                     headers={"Content-Type": "application/json"},
                 )
                 response.raise_for_status()
-                return self._validate_delete_response(response.json())
+                response_data = await decode_sync_response_json(response)
+                return self._validate_delete_response(response_data)
         except httpx.HTTPError as e:
             raise HTTPException(
                 status_code=500, detail=f"Error deleting executor task: {str(e)}"

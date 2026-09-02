@@ -26,6 +26,7 @@ import logging
 from app.core.events import TaskCompletedEvent
 from app.db.session import SessionLocal
 from app.models.wiki import WikiGeneration, WikiGenerationStatus
+from app.services.chat.storage.db import run_sync_in_executor
 from app.services.knowledge.code_wiki.generation import FailureCode
 from app.services.knowledge.code_wiki.runner import finish_run
 from shared.telemetry.decorators import add_span_event, trace_async
@@ -33,12 +34,7 @@ from shared.telemetry.decorators import add_span_event, trace_async
 logger = logging.getLogger(__name__)
 
 
-@trace_async(
-    "code_wiki.conclude_run",
-    "knowledge.code_wiki",
-    extract_attributes=lambda event: {"task.id": str(event.task_id)},
-)
-async def conclude_code_wiki_run(event: TaskCompletedEvent) -> None:
+def _conclude_code_wiki_run_sync(event: TaskCompletedEvent) -> None:
     """End the code wiki version this task was writing, if it was writing one.
 
     Does nothing for a run the agent already concluded: it filters on RUNNING, so a
@@ -46,15 +42,8 @@ async def conclude_code_wiki_run(event: TaskCompletedEvent) -> None:
     idempotent by construction rather than by a check that could race with the
     agent's own report.
 
-    Never raises. Handlers share a loop with the subscription and IM channel ones,
-    and a code wiki has no claim to break their delivery.
-
-    **Traced because it is a blocking step on a path every task takes.** ``async def``
-    is not what makes it cheap -- the session and query below are synchronous, so the
-    event loop is held for their duration rather than yielding -- and the publisher
-    awaits every handler. What keeps it small is that ``wiki_generations.task_id`` is
-    indexed and almost no task matches, so a task that is not a wiki's returns after
-    one lookup. The span is here so that stops being an argument and becomes a number.
+    Never raises. The public handler runs this synchronous session in the shared
+    worker pool, so its indexed lookup cannot hold the application event loop.
 
     Registered unconditionally, and deliberately not behind ``CODE_WIKI_ENABLED``:
     that flag gates *creating* a wiki, so a deployment that turns the rollout down
@@ -115,3 +104,14 @@ async def conclude_code_wiki_run(event: TaskCompletedEvent) -> None:
         )
     finally:
         db.close()
+
+
+@trace_async(
+    "code_wiki.conclude_run",
+    "knowledge.code_wiki",
+    extract_attributes=lambda event: {"task.id": str(event.task_id)},
+)
+async def conclude_code_wiki_run(event: TaskCompletedEvent) -> None:
+    """Conclude a code wiki run without blocking the application event loop."""
+
+    await run_sync_in_executor(_conclude_code_wiki_run_sync, event)

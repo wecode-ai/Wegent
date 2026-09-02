@@ -10,13 +10,14 @@ from functools import partial
 from typing import AsyncIterator
 
 from starlette.applications import Starlette
-from starlette.concurrency import run_in_threadpool
 from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
 from starlette.routing import Route
 from starlette.types import ASGIApp, Receive, Scope, Send
 
+from app.core.blocking_work import run_knowledge_io, run_rate_limit_io
 from app.core.config import settings
+from app.core.payload_codec import run_payload_codec
 from app.core.rate_limit import (
     ExternalMcpRateLimitStatus,
     check_external_mcp_dimension_rate_limit,
@@ -39,6 +40,29 @@ from app.mcp_server.server import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+def _load_document_file_sync(
+    *,
+    user_id: int,
+    document_id: int,
+    disposition: str,
+):
+    from app.db.session import SessionLocal
+    from app.services.knowledge.external_document_access import (
+        load_document_file_or_raise,
+    )
+
+    db = SessionLocal()
+    try:
+        return load_document_file_or_raise(
+            db,
+            user_id=user_id,
+            document_id=document_id,
+            disposition=disposition,
+        )
+    finally:
+        db.close()
 
 
 def build_external_knowledge_mcp_app(
@@ -104,11 +128,9 @@ def _root_metadata(mount_path: str):
 
 
 async def _document_file(request: Request) -> Response:
-    from app.db.session import SessionLocal
     from app.services.knowledge.external_document_access import (
         DOWNLOAD_TOKEN_HEADER,
         ExternalDocumentAccessError,
-        load_document_file_or_raise,
         verify_document_download_token,
     )
 
@@ -127,7 +149,12 @@ async def _document_file(request: Request) -> Response:
         return rate_limit_response
 
     token = request.headers.get(DOWNLOAD_TOKEN_HEADER, "")
-    token_payload = verify_document_download_token(token)
+    token_payload = await run_payload_codec(
+        verify_document_download_token,
+        token,
+        payload_hint=token,
+        force_offload=True,
+    )
     if token_payload is None or token_payload.document_id != document_id:
         return JSONResponse(
             {"error": "Invalid or expired download token", "code": "unauthorized"},
@@ -141,11 +168,9 @@ async def _document_file(request: Request) -> Response:
     if rate_limit_response is not None:
         return rate_limit_response
 
-    db = SessionLocal()
     try:
-        document_file = await run_in_threadpool(
-            load_document_file_or_raise,
-            db,
+        document_file = await run_knowledge_io(
+            _load_document_file_sync,
             user_id=token_payload.user_id,
             document_id=document_id,
             disposition=token_payload.disposition,
@@ -163,8 +188,6 @@ async def _document_file(request: Request) -> Response:
             {"error": str(exc), "code": exc.code},
             status_code=_document_access_status_code(exc.code),
         )
-    finally:
-        db.close()
 
 
 async def _check_download_preauth_rate_limit(
@@ -176,7 +199,7 @@ async def _check_download_preauth_rate_limit(
 
     client_ip = request.client.host if request.client else "unknown"
     ip_hash = hash_rate_limit_value(client_ip)
-    ip_status = await run_in_threadpool(
+    ip_status = await run_rate_limit_io(
         partial(
             check_external_mcp_dimension_rate_limit,
             dimensions=[f"ip:{ip_hash}"],
@@ -191,7 +214,7 @@ async def _check_download_preauth_rate_limit(
     if rate_limit_response is not None:
         return rate_limit_response
 
-    document_status = await run_in_threadpool(
+    document_status = await run_rate_limit_io(
         partial(
             check_external_mcp_dimension_rate_limit,
             dimensions=[f"ip:{ip_hash}:document:{document_id}"],
@@ -215,7 +238,7 @@ async def _check_download_rate_limit(
     if not settings.EXTERNAL_KNOWLEDGE_MCP_DOWNLOAD_RATE_LIMIT_ENABLED:
         return None
 
-    rate_limit_status = await run_in_threadpool(
+    rate_limit_status = await run_rate_limit_io(
         partial(
             check_external_mcp_dimension_rate_limit,
             dimensions=[f"user:{user_id}:document:{document_id}"],
@@ -350,7 +373,7 @@ class _ExternalKnowledgeRateLimitMiddleware:
             return
 
         request = Request(scope)
-        rate_limit_status = await run_in_threadpool(
+        rate_limit_status = await run_rate_limit_io(
             partial(
                 check_external_mcp_rate_limit,
                 request,

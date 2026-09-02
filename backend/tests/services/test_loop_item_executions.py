@@ -5526,17 +5526,29 @@ async def test_cancel_stops_selected_robot_before_terminal_wegent_manager_task(
         test_user,
         automation_context={"run_id": str(run.id)},
     )
+    plan = project_automation_service._prepare_cancel_run(
+        test_db,
+        str(project.id),
+        str(run.id),
+        test_user.id,
+    )
 
-    with patch(
-        "app.services.project_automation_managed_execution."
-        "project_automation_managed_execution_service.cancel",
-        new_callable=AsyncMock,
-    ) as cancel_manager:
-        view = await project_automation_service.cancel_run(
-            test_db,
-            str(project.id),
-            str(run.id),
-            test_user.id,
+    with (
+        patch.object(
+            project_automation_service,
+            "_prepare_cancel_run_from_store",
+            return_value=plan,
+        ),
+        patch(
+            "app.services.project_automation_managed_execution."
+            "project_automation_managed_execution_service.cancel",
+            new_callable=AsyncMock,
+        ) as cancel_manager,
+    ):
+        view = await project_automation_service.cancel_run_nonblocking(
+            project_id=str(project.id),
+            run_id=str(run.id),
+            user_id=test_user.id,
         )
 
     test_db.refresh(execution)
@@ -5558,17 +5570,31 @@ async def test_cancel_running_automation_requires_runtime_confirmation(
 
     execution, run, _ = _make_running_automation_execution(test_db, test_user)
     execution_id = execution.id
+    plan = project_automation_service._prepare_cancel_run(
+        test_db,
+        str(execution.cloud_project_id),
+        str(run.id),
+        test_user.id,
+    )
+    assert plan.runtime_execution_id == execution_id
 
-    with patch(
-        "app.tasks.robot_queue_tasks.emit_runtime_cancels",
-        return_value=set(),
+    with (
+        patch.object(
+            project_automation_service,
+            "_prepare_cancel_run_from_store",
+            return_value=plan,
+        ),
+        patch.object(
+            project_automation_service,
+            "_emit_runtime_cancel_from_store",
+            return_value=False,
+        ),
     ):
         with pytest.raises(HTTPException) as error:
-            await project_automation_service.cancel_run(
-                test_db,
-                str(execution.cloud_project_id),
-                str(run.id),
-                test_user.id,
+            await project_automation_service.cancel_run_nonblocking(
+                project_id=str(execution.cloud_project_id),
+                run_id=str(run.id),
+                user_id=test_user.id,
             )
 
     assert error.value.status_code == 502

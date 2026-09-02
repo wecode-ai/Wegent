@@ -1155,7 +1155,8 @@ def test_a_maintainer_can_stop_the_current_wiki_generation(
     _add_kb_member(test_db, kb_id, maintainer, ResourceRole.Maintainer)
 
     with patch(
-        "app.api.endpoints.knowledge_code_wiki.task_kinds_service.cancel_task",
+        "app.api.endpoints.knowledge_code_wiki."
+        "task_kinds_service.cancel_task_nonblocking",
         new_callable=AsyncMock,
         return_value={"status": "CANCELLED"},
     ) as cancel_task:
@@ -1165,7 +1166,6 @@ def test_a_maintainer_can_stop_the_current_wiki_generation(
 
     assert response.status_code == 204, response.text
     cancel_task.assert_awaited_once_with(
-        db=test_db,
         task_id=generation.task_id,
         user_id=test_user.id,
         background_task_runner=ANY,

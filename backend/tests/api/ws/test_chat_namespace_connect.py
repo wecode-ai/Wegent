@@ -14,9 +14,9 @@ from app.core.shutdown import shutdown_manager
 
 @pytest.fixture(autouse=True)
 def reset_shutdown_manager():
-    shutdown_manager.reset()
+    shutdown_manager._reset_for_testing()
     yield
-    shutdown_manager.reset()
+    shutdown_manager._reset_for_testing()
 
 
 @pytest.fixture

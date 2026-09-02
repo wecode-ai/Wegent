@@ -23,6 +23,7 @@ from sqlalchemy.orm import Session
 
 from app.api.dependencies import get_db
 from app.core import security
+from app.core.bounded_executor import BoundedExecutorOverloaded
 from app.models.kind import Kind
 from app.models.subtask import SubtaskRole
 from app.models.task import TaskResource
@@ -32,10 +33,10 @@ from app.services.chat.config import (
 )
 from app.services.chat.correction import (
     apply_correction_to_subtask,
-    build_chat_history,
     delete_correction_from_subtask,
-    evaluate_and_save_correction,
-    get_existing_correction,
+    evaluate_correction,
+    prepare_correction,
+    save_correction,
 )
 from app.stores.tasks import subtask_store, task_access_store, task_store
 
@@ -80,7 +81,7 @@ class StreamChatRequest(BaseModel):
 
 
 @router.get("/check-direct-chat/{team_id}")
-async def check_direct_chat(
+def check_direct_chat(
     team_id: int,
     db: Session = Depends(get_db),
     current_user: User = Depends(security.get_current_user),
@@ -141,7 +142,7 @@ async def check_direct_chat(
 
 
 @router.get("/search-engines")
-async def get_search_engines(
+def get_search_engines(
     current_user: User = Depends(security.get_current_user),
 ):
     """
@@ -185,8 +186,7 @@ class CorrectionRequest(BaseModel):
 @router.post("/correct")
 async def correct_response(
     request: CorrectionRequest,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(security.get_current_user),
+    current_user: security.DetachedUser = Depends(security.get_detached_current_user),
 ):
     """
     Evaluate and correct an AI response using a specified correction model.
@@ -214,39 +214,21 @@ async def correct_response(
     # Get extended emitter for progress broadcasting
     extended_emitter = get_extended_emitter()
 
-    # Validate that the task belongs to the current user
-    task = task_store.get_owned_task_by_state(
-        db,
-        task_id=request.task_id,
+    preparation = await prepare_correction(
         user_id=current_user.id,
-        state=TaskResource.STATE_ACTIVE,
+        user_name=current_user.user_name,
+        task_id=request.task_id,
+        message_id=request.message_id,
+        correction_model_id=request.correction_model_id,
+        force_retry=request.force_retry,
     )
-
-    if not task and not task_access_store.is_member(
-        db,
-        task_id=request.task_id,
-        user_id=current_user.id,
-    ):
-        raise HTTPException(status_code=404, detail="Task not found")
-
-    # Get the subtask (AI message) to check for existing correction
-    subtask = subtask_store.get_by_id(db, subtask_id=request.message_id)
-
-    if (
-        not subtask
-        or subtask.task_id != request.task_id
-        or subtask.role != SubtaskRole.ASSISTANT
-    ):
-        raise HTTPException(status_code=404, detail="AI message not found")
-
-    # Check for existing correction using service module
-    existing_correction = get_existing_correction(subtask)
+    existing_correction = preparation.existing_correction
 
     # Return cached result only if not forcing retry
     if existing_correction and not request.force_retry:
         # Return cached result including applied status
         return {
-            "message_id": subtask.id,
+            "message_id": preparation.subtask_id,
             "scores": existing_correction.get("scores", {}),
             "corrections": existing_correction.get("corrections", []),
             "summary": existing_correction.get("summary", ""),
@@ -254,30 +236,6 @@ async def correct_response(
             "is_correct": existing_correction.get("is_correct", False),
             "applied": existing_correction.get("applied", False),
         }
-
-    # Get the correction model config using chat's unified model resolver
-    # This handles: env var placeholders, decryption, default_headers, etc.
-    from app.services.chat.config.model_resolver import (
-        _find_model,
-        extract_and_process_model_config,
-    )
-
-    model_spec = _find_model(db, request.correction_model_id, current_user.id)
-    if not model_spec:
-        raise HTTPException(
-            status_code=400,
-            detail=f"Correction model '{request.correction_model_id}' not found",
-        )
-
-    # Extract and process model config with all placeholder handling
-    model_config = extract_and_process_model_config(
-        model_spec=model_spec,
-        user_id=current_user.id,
-        user_name=current_user.user_name or "",
-    )
-
-    # Build chat history from previous subtasks using service module
-    history = build_chat_history(db, request.task_id, subtask.message_id)
 
     # Get search tool if enabled (use LangChain-compatible WebSearchTool for LangGraph)
     tools = None
@@ -324,17 +282,20 @@ async def correct_response(
 
     try:
         # Call correction service with progress callbacks using service module
-        llm_result = await evaluate_and_save_correction(
-            db=db,
-            subtask=subtask,
+        llm_result = await evaluate_correction(
             original_question=request.original_question,
             original_answer=request.original_answer,
-            model_config=model_config,
-            correction_model_id=request.correction_model_id,
-            history=history if history else None,
+            model_config=preparation.model_config,
+            history=preparation.history or None,
             tools=tools,
             on_progress=on_progress,
             on_chunk=on_chunk,
+        )
+        await save_correction(
+            subtask_id=preparation.subtask_id,
+            correction_model_id=request.correction_model_id,
+            model_config=preparation.model_config,
+            llm_result=llm_result,
         )
 
         # Emit correction:done event
@@ -353,6 +314,8 @@ async def correct_response(
             "is_correct": llm_result["is_correct"],
         }
 
+    except BoundedExecutorOverloaded:
+        raise
     except Exception as e:
         logger.error(f"Correction evaluation failed: {e}", exc_info=True)
 
@@ -370,7 +333,7 @@ async def correct_response(
 
 
 @router.delete("/subtasks/{subtask_id}/correction")
-async def delete_correction(
+def delete_correction(
     subtask_id: int,
     db: Session = Depends(get_db),
     current_user: User = Depends(security.get_current_user),
@@ -415,7 +378,7 @@ class ApplyCorrectionRequest(BaseModel):
 
 
 @router.post("/subtasks/{subtask_id}/apply-correction")
-async def apply_correction(
+def apply_correction(
     subtask_id: int,
     request: ApplyCorrectionRequest,
     db: Session = Depends(get_db),

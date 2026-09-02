@@ -8,7 +8,6 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from app.api.endpoints.internal import callback as internal_callback
 from app.core.events import EventBus, TaskCompletedEvent
 from app.models.delivery import LoopItem, ProjectAutomationRule, ProjectAutomationRun
 from app.models.kind import Kind
@@ -16,6 +15,7 @@ from app.models.loop_item_execution import LoopItemExecution
 from app.models.project_chat_message import ProjectChatMessage
 from app.models.subtask import Subtask, SubtaskRole, SubtaskStatus
 from app.models.task import TaskResource
+from app.services.execution import point_projection
 from app.services.execution.emitters.status_updating import StatusUpdatingEmitter
 from app.services.execution.router import CommunicationMode, ExecutionRouter
 from app.services.loop_item_executions.service import loop_item_execution_service
@@ -906,21 +906,11 @@ async def test_cancel_routes_real_managed_request_without_device(
         "_mark_cancelled",
         mark_cancelled,
     )
+    project_terminal = AsyncMock()
     monkeypatch.setattr(
-        "app.services.project_automation_managed_execution."
-        "register_project_automation_task_completion_handler",
-        MagicMock(),
-    )
-    event_bus = MagicMock()
-    event_bus.publish = AsyncMock()
-    monkeypatch.setattr(
-        "app.services.project_automation_managed_execution.get_event_bus",
-        MagicMock(return_value=event_bus),
-    )
-    cleanup = AsyncMock()
-    monkeypatch.setattr(
-        "app.services.chat.storage.session_manager.cleanup_streaming_state",
-        cleanup,
+        "app.services.execution.stream_client.stream_execution_client."
+        "dispatch_execution_event",
+        project_terminal,
     )
 
     cancelled = await project_automation_managed_execution_service.cancel(
@@ -934,14 +924,16 @@ async def test_cancel_routes_real_managed_request_without_device(
     dispatcher.cancel.assert_awaited_once_with(request, device_id=None)
     if cancel_acknowledged:
         mark_cancelled.assert_called_once_with(task_id=61, user_id=7)
-        event = event_bus.publish.await_args.args[0]
-        assert event.status == "CANCELLED"
+        event = project_terminal.await_args.args[0]
+        assert event.type == "cancelled"
         assert event.task_id == 61
-        cleanup.assert_awaited_once_with(63, task_id=61)
+        assert project_terminal.await_args.kwargs == {
+            "user_id": 7,
+            "source": "project_automation",
+        }
     else:
         mark_cancelled.assert_not_called()
-        event_bus.publish.assert_not_awaited()
-        cleanup.assert_not_awaited()
+        project_terminal.assert_not_awaited()
 
 
 @pytest.mark.asyncio
@@ -987,22 +979,11 @@ async def test_cancelled_queued_task_cannot_be_dispatched_by_worker(
     monkeypatch.setattr(
         "app.services.project_automation_managed_execution.get_db_session", session
     )
-    register_handler = MagicMock()
+    project_terminal = AsyncMock()
     monkeypatch.setattr(
-        "app.services.project_automation_managed_execution."
-        "register_project_automation_task_completion_handler",
-        register_handler,
-    )
-    event_bus = MagicMock()
-    event_bus.publish = AsyncMock()
-    monkeypatch.setattr(
-        "app.services.project_automation_managed_execution.get_event_bus",
-        MagicMock(return_value=event_bus),
-    )
-    cleanup = AsyncMock()
-    monkeypatch.setattr(
-        "app.services.chat.storage.session_manager.cleanup_streaming_state",
-        cleanup,
+        "app.services.execution.stream_client.stream_execution_client."
+        "dispatch_execution_event",
+        project_terminal,
     )
     build_request = AsyncMock()
     monkeypatch.setattr(
@@ -1044,10 +1025,13 @@ async def test_cancelled_queued_task_cannot_be_dispatched_by_worker(
     build_request.assert_not_awaited()
     dispatcher.cancel.assert_not_awaited()
     dispatcher.dispatch.assert_not_awaited()
-    event = event_bus.publish.await_args.args[0]
-    assert event.status == "CANCELLED"
+    event = project_terminal.await_args.args[0]
+    assert event.type == "cancelled"
     assert event.subtask_id == assistant.id
-    cleanup.assert_awaited_once_with(assistant.id, task_id=task.id)
+    assert project_terminal.await_args.kwargs == {
+        "user_id": test_user.id,
+        "source": "project_automation",
+    }
 
 
 @pytest.mark.asyncio
@@ -1398,51 +1382,56 @@ async def test_executor_callback_projects_managed_parent_comment(
         lambda _self: test_user.id,
     )
     monkeypatch.setattr(
-        internal_callback,
-        "_get_task_status_user_id",
-        lambda _task_id, _event_type: test_user.id,
+        point_projection,
+        "_resolve_websocket_recipient_user_id",
+        lambda _task_id: test_user.id,
     )
     monkeypatch.setattr(
-        internal_callback,
+        point_projection,
         "WebSocketResultEmitter",
         lambda **_kwargs: wrapped_emitter,
     )
     monkeypatch.setattr(
-        internal_callback.session_manager,
+        point_projection.session_manager,
         "publish_callback_event",
         AsyncMock(return_value=True),
     )
     monkeypatch.setattr(
-        internal_callback,
-        "forward_event_to_channel_callbacks",
+        point_projection.channel_worker_client,
+        "forward_event",
         AsyncMock(),
     )
 
-    response = await internal_callback.handle_callback(
-        internal_callback.CallbackRequest(
-            event_type=ResponsesAPIStreamEvents.RESPONSE_COMPLETED.value,
-            task_id=task.id,
-            subtask_id=73,
-            data={
-                "response": {
-                    "output": [
-                        {
-                            "content": [
-                                {
-                                    "type": "output_text",
-                                    "text": "No suitable project assignee",
-                                }
-                            ]
-                        }
-                    ]
-                }
-            },
-        )
+    projector = point_projection.ExecutionProjectionService()
+    response = await projector._project_callback_events(
+        [
+            point_projection.CallbackRequest(
+                event_type=ResponsesAPIStreamEvents.RESPONSE_COMPLETED.value,
+                task_id=task.id,
+                subtask_id=73,
+                data={
+                    "response": {
+                        "output": [
+                            {
+                                "content": [
+                                    {
+                                        "type": "output_text",
+                                        "text": "No suitable project assignee",
+                                    }
+                                ]
+                            }
+                        ]
+                    }
+                },
+            )
+        ],
+        batch=False,
     )
+    await projector.close()
 
     test_db.refresh(run)
     test_db.refresh(message)
-    assert response.status == "ok"
+    assert response["status"] == "ok"
     assert run.status == "failed"
     assert run.backend_task_id == task.id
     assert message.status == "failed"

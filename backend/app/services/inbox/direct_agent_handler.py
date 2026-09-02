@@ -6,22 +6,34 @@
 
 import asyncio
 import logging
-import threading
-from typing import Optional
+from dataclasses import dataclass
+from typing import Any, Optional
 
-from sqlalchemy.orm import Session, make_transient
+from sqlalchemy.orm import Session
 
 from app.core.events import QueueMessageCreatedEvent, TaskCompletedEvent
 from app.db.session import get_db_session
 from app.models.kind import Kind
 from app.models.user import User
 from app.schemas.work_queue import AutoProcessConfig, TeamRef
+from app.services.chat.storage.db import run_sync_in_executor
 from app.services.readers import KindType, kindReader
-from app.stores.tasks import subtask_store, task_store
+from app.stores.tasks import task_store
 from shared.models.db.enums import QueueMessageStatus
 from shared.models.db.work_queue import QueueMessage
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True)
+class _DirectAgentPlan:
+    """Detached values required to create and dispatch one inbox task."""
+
+    message_id: int
+    user_id: int
+    team_id: int
+    message: str
+    params: Any
 
 
 class InboxDirectAgentHandler:
@@ -32,9 +44,6 @@ class InboxDirectAgentHandler:
         self,
         event: QueueMessageCreatedEvent,
         auto_process: AutoProcessConfig,
-        message: QueueMessage,
-        work_queue: Kind,
-        db: Session,
     ) -> None:
         """Create a chat Task for the given inbox message.
 
@@ -49,153 +58,94 @@ class InboxDirectAgentHandler:
         """
         logger.info(
             f"[InboxDirectAgent] handle() called: "
-            f"message_id={message.id}, queue_id={work_queue.id}, "
-            f"work_queue_user_id={work_queue.user_id}, "
+            f"message_id={event.message_id}, queue_id={event.queue_id}, "
             f"auto_process.mode={auto_process.mode}, "
             f"auto_process.triggerMode={auto_process.triggerMode}, "
             f"auto_process.teamRef={auto_process.teamRef}"
         )
 
-        if not auto_process.teamRef:
-            self._mark_failed(
-                db, message, "direct_agent mode requires teamRef configuration"
-            )
-            return
-
-        # Resolve Team
-        logger.info(
-            f"[InboxDirectAgent] Resolving team: "
-            f"namespace={auto_process.teamRef.namespace}, "
-            f"name={auto_process.teamRef.name}, "
-            f"user_id={work_queue.user_id}"
-        )
-        team = self._resolve_team(db, auto_process.teamRef, work_queue.user_id)
-        if not team:
-            self._mark_failed(
-                db,
-                message,
-                f"Team '{auto_process.teamRef.namespace}/{auto_process.teamRef.name}' "
-                "not found",
-            )
-            return
-
-        logger.info(
-            f"[InboxDirectAgent] Resolved team: id={team.id}, name={team.name}, "
-            f"namespace={team.namespace}, user_id={team.user_id}"
-        )
-
-        # Resolve the owner User object required by create_chat_task()
-        user = db.query(User).filter(User.id == work_queue.user_id).first()
-        if not user:
-            self._mark_failed(db, message, f"User {work_queue.user_id} not found")
-            return
-
-        logger.info(
-            f"[InboxDirectAgent] Resolved user: id={user.id}, "
-            f"user_name={user.user_name}"
-        )
-
-        # Build user message text from content_snapshot
-        logger.info(
-            f"[InboxDirectAgent] Extracting user message from content_snapshot: "
-            f"snapshot={message.content_snapshot}"
-        )
-        user_message = self._extract_user_message(message)
-        logger.info(
-            f"[InboxDirectAgent] Extracted user_message: "
-            f"len={len(user_message) if user_message else 0}, "
-            f"preview={repr(user_message[:100]) if user_message else None}"
-        )
-        if not user_message:
-            self._mark_failed(db, message, "No user message content found in snapshot")
-            return
-
-        # Look up workspace params from the team's most recent active Task
-        workspace_params = self._find_latest_workspace_params(
-            db, team, work_queue.user_id
-        )
-        (
-            override_model_id,
-            force_override_bot_model,
-            force_override_bot_model_type,
-        ) = self._resolve_model_override(
-            db=db,
-            owner=user,
-            auto_process=auto_process,
-        )
-
-        # Build TaskCreationParams
-        from app.services.chat.storage.task_manager import TaskCreationParams
-
-        params = TaskCreationParams(
-            message=user_message,
-            model_id=override_model_id,
-            force_override_bot_model=force_override_bot_model,
-            force_override_bot_model_type=force_override_bot_model_type,
-            task_type="chat" if not workspace_params else None,
-            **workspace_params,
-        )
-
-        # Mark PROCESSING before async dispatch
-        message.status = QueueMessageStatus.PROCESSING
-        db.commit()
-
-        # Create the Task
         try:
-            from app.services.chat.storage.task_manager import create_chat_task
+            plan = await run_sync_in_executor(
+                self._prepare_direct_agent_sync,
+                event,
+                auto_process,
+            )
+        except Exception as exc:
+            logger.error(
+                "[InboxDirectAgent] Failed to prepare message %s: %s",
+                event.message_id,
+                exc,
+                exc_info=True,
+            )
+            await run_sync_in_executor(
+                self._mark_failed_by_id_sync,
+                event.message_id,
+                f"Task preparation failed: {exc}",
+            )
+            return
+        if plan is None:
+            return
 
-            result = await create_chat_task(
-                db=db,
-                user=user,
-                team=team,
-                message=user_message,
-                params=params,
+        try:
+            from app.services.chat.storage.task_manager import (
+                create_chat_task_nonblocking,
+            )
+
+            result = await create_chat_task_nonblocking(
+                user_id=plan.user_id,
+                team_id=plan.team_id,
+                message=plan.message,
+                params=plan.params,
                 should_trigger_ai=True,
-                source="inbox",
             )
         except Exception as exc:
             logger.error(
                 f"[InboxDirectAgent] Failed to create task for message "
-                f"{message.id}: {exc}",
+                f"{plan.message_id}: {exc}",
                 exc_info=True,
             )
-            self._mark_failed(db, message, f"Task creation failed: {exc}")
+            await run_sync_in_executor(
+                self._mark_failed_by_id_sync,
+                plan.message_id,
+                f"Task creation failed: {exc}",
+            )
             return
 
         task_id = result.task.id
+        user_subtask_id = result.user_subtask.id if result.user_subtask else None
+        assistant_subtask_id = (
+            result.assistant_subtask.id if result.assistant_subtask else None
+        )
         logger.info(
-            f"[InboxDirectAgent] Created task {task_id} for message {message.id}"
+            f"[InboxDirectAgent] Created task {task_id} for message {plan.message_id}"
         )
 
-        # Link inbox message attachments to user_subtask so the LLM can access them.
-        # Uses the shared utility also used by subscription mode.
-        if result.user_subtask:
-            from app.services.inbox.attachments import link_inbox_attachments_to_subtask
+        await run_sync_in_executor(
+            self._persist_created_task_sync,
+            plan.message_id,
+            plan.user_id,
+            task_id,
+            user_subtask_id,
+        )
 
-            link_inbox_attachments_to_subtask(
-                db=db,
-                user_subtask_id=result.user_subtask.id,
-                user_id=user.id,
-                inbox_message_id=message.id,
-            )
+        self._register_task_completion_listener(task_id, plan.message_id)
 
-        # Persist task ID and remain in PROCESSING state
-        message.process_task_id = task_id
-        db.commit()
-
-        # Register a one-shot listener so we can update message status when done
-        self._register_task_completion_listener(task_id, message.id)
-
-        # Trigger AI execution in a background thread to avoid blocking the event handler
-        if result.assistant_subtask:
-            self._trigger_ai_in_background(
-                task_id=task_id,
-                assistant_subtask_id=result.assistant_subtask.id,
-                user_subtask_id=result.user_subtask.id if result.user_subtask else None,
-                team_id=team.id,
-                user_id=user.id,
-                message=user_message,
-            )
+        if assistant_subtask_id is not None:
+            try:
+                await self._dispatch_ai_execution(
+                    task_id=task_id,
+                    assistant_subtask_id=assistant_subtask_id,
+                    user_subtask_id=user_subtask_id,
+                    team_id=plan.team_id,
+                    user_id=plan.user_id,
+                    message=plan.message,
+                )
+            except Exception as exc:
+                await run_sync_in_executor(
+                    self._mark_failed_by_id_sync,
+                    plan.message_id,
+                    f"AI dispatch failed: {exc}",
+                )
         else:
             logger.warning(
                 f"[InboxDirectAgent] No assistant subtask created for task {task_id}, "
@@ -205,6 +155,142 @@ class InboxDirectAgentHandler:
     # ------------------------------------------------------------------
     # Private helpers
     # ------------------------------------------------------------------
+
+    def _prepare_direct_agent_sync(
+        self,
+        event: QueueMessageCreatedEvent,
+        auto_process: AutoProcessConfig,
+    ) -> Optional[_DirectAgentPlan]:
+        """Load and persist the direct-agent preparation in one worker session."""
+        from app.services.chat.storage.task_manager import TaskCreationParams
+
+        with get_db_session() as db:
+            message = (
+                db.query(QueueMessage)
+                .filter(QueueMessage.id == event.message_id)
+                .first()
+            )
+            work_queue = (
+                db.query(Kind)
+                .filter(
+                    Kind.id == event.queue_id,
+                    Kind.kind == "WorkQueue",
+                    Kind.is_active == True,
+                )
+                .first()
+            )
+            if not message or not work_queue:
+                logger.warning(
+                    "[InboxDirectAgent] Missing message=%s or queue=%s",
+                    event.message_id,
+                    event.queue_id,
+                )
+                return None
+            if message.status in (
+                QueueMessageStatus.PROCESSING,
+                QueueMessageStatus.PROCESSED,
+            ):
+                return None
+            if not auto_process.teamRef:
+                self._mark_failed(
+                    db,
+                    message,
+                    "direct_agent mode requires teamRef configuration",
+                )
+                return None
+
+            team = self._resolve_team(
+                db,
+                auto_process.teamRef,
+                work_queue.user_id,
+            )
+            if not team:
+                self._mark_failed(
+                    db,
+                    message,
+                    f"Team '{auto_process.teamRef.namespace}/"
+                    f"{auto_process.teamRef.name}' not found",
+                )
+                return None
+            user = db.query(User).filter(User.id == work_queue.user_id).first()
+            if not user:
+                self._mark_failed(
+                    db,
+                    message,
+                    f"User {work_queue.user_id} not found",
+                )
+                return None
+
+            user_message = self._extract_user_message(message)
+            if not user_message:
+                self._mark_failed(
+                    db,
+                    message,
+                    "No user message content found in snapshot",
+                )
+                return None
+            workspace_params = self._find_latest_workspace_params(
+                db,
+                team,
+                work_queue.user_id,
+            )
+            model_id, force_override, model_type = self._resolve_model_override(
+                db=db,
+                owner=user,
+                auto_process=auto_process,
+            )
+            params = TaskCreationParams(
+                message=user_message,
+                model_id=model_id,
+                force_override_bot_model=force_override,
+                force_override_bot_model_type=model_type,
+                task_type="chat" if not workspace_params else None,
+                **workspace_params,
+            )
+            message.status = QueueMessageStatus.PROCESSING
+            db.commit()
+            return _DirectAgentPlan(
+                message_id=message.id,
+                user_id=user.id,
+                team_id=team.id,
+                message=user_message,
+                params=params,
+            )
+
+    def _persist_created_task_sync(
+        self,
+        message_id: int,
+        user_id: int,
+        task_id: int,
+        user_subtask_id: Optional[int],
+    ) -> None:
+        """Link attachments and persist the new task using a fresh session."""
+        from app.services.inbox.attachments import link_inbox_attachments_to_subtask
+
+        with get_db_session() as db:
+            message = (
+                db.query(QueueMessage).filter(QueueMessage.id == message_id).first()
+            )
+            if not message:
+                raise ValueError(f"Inbox message {message_id} no longer exists")
+            if user_subtask_id is not None:
+                link_inbox_attachments_to_subtask(
+                    db=db,
+                    user_subtask_id=user_subtask_id,
+                    user_id=user_id,
+                    inbox_message_id=message_id,
+                )
+            message.process_task_id = task_id
+            db.commit()
+
+    def _mark_failed_by_id_sync(self, message_id: int, error: str) -> None:
+        """Mark a message failed in a worker-owned session."""
+        with get_db_session() as db:
+            message = (
+                db.query(QueueMessage).filter(QueueMessage.id == message_id).first()
+            )
+            if message:
+                self._mark_failed(db, message, error)
 
     def _resolve_team(
         self,
@@ -321,47 +407,6 @@ class InboxDirectAgentHandler:
             model_type,
         )
 
-    def _trigger_ai_in_background(
-        self,
-        task_id: int,
-        assistant_subtask_id: int,
-        user_subtask_id: Optional[int],
-        team_id: int,
-        user_id: int,
-        message: str,
-    ) -> None:
-        """Trigger AI execution in a background thread.
-
-        Runs the AI dispatch in a separate thread with its own event loop to avoid
-        blocking the event handler and to prevent event loop conflicts.
-        """
-
-        def _run_in_thread() -> None:
-            thread_loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(thread_loop)
-            try:
-                thread_loop.run_until_complete(
-                    self._dispatch_ai_execution(
-                        task_id=task_id,
-                        assistant_subtask_id=assistant_subtask_id,
-                        team_id=team_id,
-                        user_id=user_id,
-                        message=message,
-                        user_subtask_id=user_subtask_id,
-                    )
-                )
-            except Exception as exc:
-                logger.error(
-                    f"[InboxDirectAgent] AI trigger thread failed for task {task_id}: {exc}",
-                    exc_info=True,
-                )
-            finally:
-                thread_loop.close()
-
-        thread = threading.Thread(target=_run_in_thread, daemon=True)
-        thread.start()
-        logger.info(f"[InboxDirectAgent] Started AI trigger thread for task {task_id}")
-
     async def _dispatch_ai_execution(
         self,
         task_id: int,
@@ -373,8 +418,7 @@ class InboxDirectAgentHandler:
     ) -> None:
         """Dispatch AI execution using the unified execution pipeline.
 
-        Uses SSEResultEmitter (thread-safe) to avoid WebSocket/Socket.IO
-        cross-thread issues.
+        Runs entirely on the EventBus-owned event loop.
         """
         from app.services.execution import execution_dispatcher
         from app.services.execution.emitters import SSEResultEmitter
@@ -396,7 +440,6 @@ class InboxDirectAgentHandler:
             if not request:
                 return
 
-            # Use SSEResultEmitter to avoid WebSocket/Socket.IO cross-thread issues
             emitter = SSEResultEmitter(
                 task_id=task_id,
                 subtask_id=assistant_subtask_id,
@@ -407,7 +450,7 @@ class InboxDirectAgentHandler:
             )
 
             # Collect response (waits for completion)
-            accumulated_content, final_event = await emitter.collect()
+            accumulated_content, _ = await emitter.collect()
 
             try:
                 await dispatch_task
@@ -424,6 +467,7 @@ class InboxDirectAgentHandler:
                 f"[InboxDirectAgent] AI dispatch failed for task {task_id}: {exc}",
                 exc_info=True,
             )
+            raise
 
     async def _build_ai_execution_request(
         self,
@@ -434,30 +478,14 @@ class InboxDirectAgentHandler:
         message: str,
         user_subtask_id: Optional[int],
     ):
-        """Build an execution request without keeping the loader session open."""
+        """Build an execution request from scalar database identities."""
         from app.services.chat.trigger.unified import build_execution_request
 
-        with get_db_session() as db:
-            try:
-                loaded = self._load_ai_execution_objects(
-                    db=db,
-                    task_id=task_id,
-                    assistant_subtask_id=assistant_subtask_id,
-                    team_id=team_id,
-                    user_id=user_id,
-                )
-                if not loaded:
-                    return None
-                task, assistant_subtask, team, user = loaded
-                self._detach_ai_execution_objects(db, loaded)
-            finally:
-                db.rollback()
-
         return await build_execution_request(
-            task=task,
-            assistant_subtask=assistant_subtask,
-            team=team,
-            user=user,
+            task=task_id,
+            assistant_subtask=assistant_subtask_id,
+            team=team_id,
+            user=user_id,
             message=message,
             payload=None,
             user_subtask_id=user_subtask_id,
@@ -466,54 +494,43 @@ class InboxDirectAgentHandler:
             enable_deep_thinking=True,
         )
 
-    def _detach_ai_execution_objects(self, db: Session, loaded) -> None:
-        """Detach loaded ORM objects before closing the loader session."""
-        for obj in loaded:
-            if hasattr(obj, "_sa_instance_state"):
-                db.refresh(obj)
-                make_transient(obj)
-
-    def _load_ai_execution_objects(
-        self,
-        db: Session,
-        task_id: int,
-        assistant_subtask_id: int,
-        team_id: int,
-        user_id: int,
-    ):
-        """Load ORM objects required to build a direct-agent request."""
-        task = task_store.get_by_id(db, task_id=task_id)
-        assistant_subtask = subtask_store.get_basic_by_id(
-            db,
-            subtask_id=assistant_subtask_id,
-        )
-        team = db.query(Kind).filter(Kind.id == team_id, Kind.kind == "Team").first()
-        user = db.query(User).filter(User.id == user_id).first()
-
-        missing = []
-        if not task:
-            missing.append(f"task={task_id}")
-        if not assistant_subtask:
-            missing.append(f"assistant_subtask={assistant_subtask_id}")
-        if not team:
-            missing.append(f"team={team_id}")
-        if not user:
-            missing.append(f"user={user_id}")
-        if missing:
-            logger.error(
-                "[InboxDirectAgent] Missing AI execution objects: %s",
-                ", ".join(missing),
-            )
-            return None
-
-        return task, assistant_subtask, team, user
-
     def _mark_failed(self, db: Session, message: QueueMessage, error: str) -> None:
         """Mark the message as failed with the given error."""
         message.status = QueueMessageStatus.FAILED
         message.process_result = {"error": error}
         db.commit()
         logger.warning(f"[InboxDirectAgent] Message {message.id} failed: {error}")
+
+    def _update_message_from_task_completion_sync(
+        self,
+        message_id: int,
+        task_id: int,
+        event: TaskCompletedEvent,
+    ) -> None:
+        """Update one inbox message inside a database worker thread."""
+        is_failure = event.status in ("FAILED", "CANCELLED") or bool(event.error)
+        with get_db_session() as db:
+            message = (
+                db.query(QueueMessage).filter(QueueMessage.id == message_id).first()
+            )
+            if not message:
+                return
+            if is_failure:
+                message.status = QueueMessageStatus.FAILED
+                message.process_result = {
+                    "error": event.error or "Task ended with failure status",
+                    "taskId": task_id,
+                }
+            else:
+                message.status = QueueMessageStatus.PROCESSED
+                message.process_result = {"taskId": task_id}
+            db.commit()
+            logger.info(
+                "[InboxDirectAgent] Message %s updated to %s after task %s completion",
+                message_id,
+                message.status,
+                task_id,
+            )
 
     def _register_task_completion_listener(self, task_id: int, message_id: int) -> None:
         """Register a one-shot TaskCompletedEvent listener that updates the
@@ -532,32 +549,13 @@ class InboxDirectAgentHandler:
             if unsubscribe_fn:
                 unsubscribe_fn[0]()
 
-            # TaskCompletedEvent.status is a plain string: COMPLETED / FAILED / CANCELLED
-            is_failure = event.status in ("FAILED", "CANCELLED") or bool(event.error)
-
             try:
-                with get_db_session() as db:
-                    msg = (
-                        db.query(QueueMessage)
-                        .filter(QueueMessage.id == message_id)
-                        .first()
-                    )
-                    if not msg:
-                        return
-                    if is_failure:
-                        msg.status = QueueMessageStatus.FAILED
-                        msg.process_result = {
-                            "error": event.error or "Task ended with failure status",
-                            "taskId": task_id,
-                        }
-                    else:
-                        msg.status = QueueMessageStatus.PROCESSED
-                        msg.process_result = {"taskId": task_id}
-                    db.commit()
-                    logger.info(
-                        f"[InboxDirectAgent] Message {message_id} updated to "
-                        f"{msg.status} after task {task_id} completion"
-                    )
+                await run_sync_in_executor(
+                    self._update_message_from_task_completion_sync,
+                    message_id,
+                    task_id,
+                    event,
+                )
             except Exception as exc:
                 logger.error(
                     f"[InboxDirectAgent] Failed to update message {message_id} "

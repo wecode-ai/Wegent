@@ -4,10 +4,23 @@
 
 """Tests for project-scoped local device sessions."""
 
+from contextlib import contextmanager
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 import pytest
+
+
+@contextmanager
+def _worker_db_session(db):
+    yield db
+
+
+def _use_worker_db(monkeypatch, db) -> None:
+    monkeypatch.setattr(
+        "app.services.chat.storage.db.get_db_session",
+        lambda: _worker_db_session(db),
+    )
 
 
 def _project_config(path: str = "/repo", device_id: str = "device-abc") -> dict:
@@ -49,9 +62,9 @@ async def test_start_project_device_session_uses_project_bound_device_and_path(
         "start_session",
         execute_mock,
     )
+    _use_worker_db(monkeypatch, db)
 
     result = await service.start_project_device_session(
-        db=db,
         user_id=7,
         project_id=123,
         session_type="code_server",
@@ -138,9 +151,9 @@ async def test_start_project_device_session_uses_task_execution_workspace_path(
         SimpleNamespace(get_device_by_device_id=lambda db, user_id, device_id: None),
         raising=False,
     )
+    _use_worker_db(monkeypatch, db)
 
     result = await service.start_project_device_session(
-        db=db,
         user_id=7,
         project_id=123,
         session_type="terminal",
@@ -184,9 +197,9 @@ async def test_start_project_device_session_creates_configured_workspace_path(
         "start_session",
         execute_mock,
     )
+    _use_worker_db(monkeypatch, db)
 
     result = await service.start_project_device_session(
-        db=db,
         user_id=7,
         project_id=34,
         session_type="code_server",
@@ -229,9 +242,9 @@ async def test_start_project_device_session_accepts_existing_project_path_field(
         "start_session",
         execute_mock,
     )
+    _use_worker_db(monkeypatch, db)
 
     result = await service.start_project_device_session(
-        db=db,
         user_id=7,
         project_id=17,
         session_type="terminal",
@@ -273,9 +286,9 @@ async def test_start_project_device_session_uses_default_project_path_when_missi
         "start_session",
         execute_mock,
     )
+    _use_worker_db(monkeypatch, db)
 
     result = await service.start_project_device_session(
-        db=db,
         user_id=7,
         project_id=17,
         session_type="terminal",
@@ -288,7 +301,9 @@ async def test_start_project_device_session_uses_default_project_path_when_missi
 
 
 @pytest.mark.asyncio
-async def test_start_project_device_session_rejects_project_without_bound_device():
+async def test_start_project_device_session_rejects_project_without_bound_device(
+    monkeypatch,
+):
     """Workspace project sessions require a local bound device."""
     from fastapi import HTTPException
 
@@ -306,10 +321,10 @@ async def test_start_project_device_session_rejects_project_without_bound_device
     )
     query = SimpleNamespace(filter=lambda *args: SimpleNamespace(first=lambda: project))
     db = SimpleNamespace(query=lambda model: query)
+    _use_worker_db(monkeypatch, db)
 
     with pytest.raises(HTTPException) as exc_info:
         await service.start_project_device_session(
-            db=db,
             user_id=7,
             project_id=123,
             session_type="terminal",
@@ -358,9 +373,9 @@ async def test_start_project_terminal_session_allows_local_device_type(monkeypat
         ),
         raising=False,
     )
+    _use_worker_db(monkeypatch, db)
 
     result = await service.start_project_device_session(
-        db=db,
         user_id=7,
         project_id=123,
         session_type="terminal",
@@ -401,10 +416,10 @@ async def test_start_project_code_server_session_rejects_local_device_type(monke
         ),
         raising=False,
     )
+    _use_worker_db(monkeypatch, db)
 
     with pytest.raises(HTTPException) as exc_info:
         await service.start_project_device_session(
-            db=db,
             user_id=7,
             project_id=123,
             session_type="code_server",
@@ -442,7 +457,9 @@ async def test_local_device_session_service_calls_device_start_session(monkeypat
     monkeypatch.setattr(
         session_service.device_service,
         "get_device_by_device_id",
-        lambda db, user_id, device_id: object(),
+        lambda db, user_id, device_id: SimpleNamespace(
+            json={"spec": {"deviceType": "local"}}
+        ),
     )
     monkeypatch.setattr(session_service, "get_sio", lambda: mock_sio)
     monkeypatch.setattr(
@@ -451,9 +468,9 @@ async def test_local_device_session_service_calls_device_start_session(monkeypat
         terminal_registry,
         raising=False,
     )
+    _use_worker_db(monkeypatch, object())
 
     result = await session_service.local_device_session_service.start_session(
-        db=object(),
         user_id=7,
         device_id="device-abc",
         project_id=123,
@@ -502,13 +519,13 @@ async def test_external_session_rejects_app_device_when_remote_control_is_disabl
         "get_device_online_info",
         online_info,
     )
+    _use_worker_db(monkeypatch, object())
 
     with pytest.raises(
         session_service.DeviceSessionError,
         match="Remote control is disabled for this app device",
     ):
         await session_service.local_device_session_service.start_session(
-            db=object(),
             user_id=7,
             device_id="app-device",
             project_id=123,
@@ -547,7 +564,9 @@ async def test_local_device_session_service_maps_terminal_registry_failures(
     monkeypatch.setattr(
         session_service.device_service,
         "get_device_by_device_id",
-        lambda db, user_id, device_id: object(),
+        lambda db, user_id, device_id: SimpleNamespace(
+            json={"spec": {"deviceType": "local"}}
+        ),
     )
     monkeypatch.setattr(session_service, "get_sio", lambda: mock_sio)
     monkeypatch.setattr(
@@ -556,13 +575,13 @@ async def test_local_device_session_service_maps_terminal_registry_failures(
         terminal_registry,
         raising=False,
     )
+    _use_worker_db(monkeypatch, object())
 
     with pytest.raises(
         session_service.DeviceSessionError,
         match="Failed to persist terminal session metadata",
     ):
         await session_service.local_device_session_service.start_session(
-            db=object(),
             user_id=7,
             device_id="device-abc",
             project_id=123,
@@ -602,12 +621,14 @@ async def test_local_device_session_service_adds_missing_url_token(monkeypatch):
     monkeypatch.setattr(
         session_service.device_service,
         "get_device_by_device_id",
-        lambda db, user_id, device_id: object(),
+        lambda db, user_id, device_id: SimpleNamespace(
+            json={"spec": {"deviceType": "local"}}
+        ),
     )
     monkeypatch.setattr(session_service, "get_sio", lambda: mock_sio)
+    _use_worker_db(monkeypatch, object())
 
     result = await session_service.local_device_session_service.start_session(
-        db=object(),
         user_id=7,
         device_id="device-abc",
         project_id=123,
@@ -666,9 +687,9 @@ async def test_cloud_device_session_service_rewrites_localhost_session_url(
         "_get_cloud_device_provider",
         lambda: FakeCloudDeviceProvider(),
     )
+    _use_worker_db(monkeypatch, object())
 
     result = await session_service.local_device_session_service.start_session(
-        db=object(),
         user_id=7,
         device_id="device-abc",
         project_id=123,
@@ -726,9 +747,9 @@ async def test_cloud_device_session_service_uses_runtime_transfer_host(
         "_get_cloud_device_provider",
         lambda: (_ for _ in ()).throw(ModuleNotFoundError("wecode")),
     )
+    _use_worker_db(monkeypatch, object())
 
     result = await session_service.local_device_session_service.start_session(
-        db=object(),
         user_id=7,
         device_id="device-abc",
         project_id=123,

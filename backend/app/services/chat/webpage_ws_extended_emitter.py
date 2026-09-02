@@ -448,7 +448,6 @@ class ExtendedEventEmitter:
             multiplier: Multiplier applied to the base experience
         """
         from app.api.ws.events import ServerEvents
-        from app.services.chat.webpage_ws_chat_emitter import safe_emit_in_main_loop
 
         ws_emitter = self._get_ws_emitter()
         if not ws_emitter:
@@ -457,8 +456,7 @@ class ExtendedEventEmitter:
             )
             return
 
-        await safe_emit_in_main_loop(
-            ws_emitter.sio.emit,
+        await ws_emitter.sio.emit(
             ServerEvents.PET_EXPERIENCE_GAINED,
             {
                 "amount": amount,
@@ -492,7 +490,6 @@ class ExtendedEventEmitter:
             new_stage_name: New stage name
         """
         from app.api.ws.events import ServerEvents
-        from app.services.chat.webpage_ws_chat_emitter import safe_emit_in_main_loop
 
         ws_emitter = self._get_ws_emitter()
         if not ws_emitter:
@@ -501,8 +498,7 @@ class ExtendedEventEmitter:
             )
             return
 
-        await safe_emit_in_main_loop(
-            ws_emitter.sio.emit,
+        await ws_emitter.sio.emit(
             ServerEvents.PET_STAGE_EVOLVED,
             {
                 "old_stage": old_stage,
@@ -530,7 +526,6 @@ class ExtendedEventEmitter:
             traits: Updated appearance traits
         """
         from app.api.ws.events import ServerEvents
-        from app.services.chat.webpage_ws_chat_emitter import safe_emit_in_main_loop
 
         ws_emitter = self._get_ws_emitter()
         if not ws_emitter:
@@ -539,8 +534,7 @@ class ExtendedEventEmitter:
             )
             return
 
-        await safe_emit_in_main_loop(
-            ws_emitter.sio.emit,
+        await ws_emitter.sio.emit(
             ServerEvents.PET_TRAITS_UPDATED,
             {
                 "traits": traits,

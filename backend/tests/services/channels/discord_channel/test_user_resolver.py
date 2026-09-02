@@ -38,7 +38,7 @@ async def test_resolve_user_select_user_mode_success(mock_db, mock_user):
         user_mapping_config={"target_user_id": 123},
     )
 
-    result = await resolver.resolve_user(
+    result = resolver.resolve_user_sync(
         discord_user_id=456789,
         discord_username="alice",
     )
@@ -54,7 +54,7 @@ async def test_resolve_user_discord_user_id_mode_success(mock_db, mock_user):
         user_mapping_mode=USER_MAPPING_MODE_DISCORD_USER_ID,
     )
 
-    result = await resolver.resolve_user(
+    result = resolver.resolve_user_sync(
         discord_user_id=456789,
         discord_username="alice",
     )
@@ -71,7 +71,7 @@ async def test_resolve_user_email_mode_success(mock_db, mock_user):
         user_mapping_config={"email_domain": "discord.example"},
     )
 
-    result = await resolver.resolve_user(
+    result = resolver.resolve_user_sync(
         discord_user_id=456789,
         discord_username="alice",
     )
@@ -87,7 +87,7 @@ async def test_resolve_user_select_user_mode_without_target_user_returns_none(mo
         user_mapping_config={},
     )
 
-    result = await resolver.resolve_user(
+    result = resolver.resolve_user_sync(
         discord_user_id=456789,
         discord_username="alice",
     )
@@ -104,7 +104,7 @@ async def test_resolve_user_email_mode_without_username_returns_none(mock_db):
         user_mapping_config={"email_domain": "discord.example"},
     )
 
-    result = await resolver.resolve_user(
+    result = resolver.resolve_user_sync(
         discord_user_id=456789,
         discord_username=None,
     )

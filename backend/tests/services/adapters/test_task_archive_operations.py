@@ -761,6 +761,7 @@ def test_delete_task_accepts_archived_tasks(
     runtime_client = MagicMock()
     runtime_client.get_sandbox = AsyncMock(return_value=(None, None))
     runtime_client.delete_sandbox = AsyncMock(return_value=(True, None))
+    runtime_client.cleanup_sandbox_by_task_id = AsyncMock(return_value=True)
     execution_module = ModuleType("app.services.execution")
     execution_module.get_executor_runtime_client = MagicMock(
         return_value=runtime_client

@@ -11,11 +11,34 @@ Emits execution events in SSE format for OpenAPI streaming responses.
 import logging
 from typing import AsyncIterator, Optional
 
+from app.core.bounded_executor import BoundedExecutor
+from app.core.byte_admission import LoopLocalByteAdmission
 from shared.models import EventType, ExecutionEvent
 
-from .base import QueueBasedEmitter
+from .base import DEFAULT_QUEUE_MAXSIZE, QueueBasedEmitter
 
 logger = logging.getLogger(__name__)
+
+_SSE_CODEC_EXECUTOR = BoundedExecutor(
+    max_workers=4,
+    max_in_flight=16,
+    thread_name_prefix="wegent-sse-codec",
+)
+
+
+def _serialize_sse_event(event: ExecutionEvent) -> str:
+    """Serialize one client event outside the sole Uvicorn event loop."""
+    return event.to_sse()
+
+
+def _stringify_event(event: ExecutionEvent) -> str:
+    """Build the legacy non-SSE representation outside the event loop."""
+    return str(event.to_dict())
+
+
+async def _serialize_sse_event_nonblocking(event: ExecutionEvent) -> str:
+    """Serialize with bounded admission while preserving caller ordering."""
+    return await _SSE_CODEC_EXECUTOR.run(_serialize_sse_event, event)
 
 
 class SSEResultEmitter(QueueBasedEmitter):
@@ -29,6 +52,9 @@ class SSEResultEmitter(QueueBasedEmitter):
         task_id: int,
         subtask_id: int,
         format_sse: bool = True,
+        maxsize: int = DEFAULT_QUEUE_MAXSIZE,
+        *,
+        byte_admission: LoopLocalByteAdmission | None = None,
     ):
         """Initialize the SSE emitter.
 
@@ -36,8 +62,15 @@ class SSEResultEmitter(QueueBasedEmitter):
             task_id: Task ID
             subtask_id: Subtask ID
             format_sse: Whether to format output as SSE (default: True)
+            maxsize: Maximum buffered event count before applying backpressure
+            byte_admission: Shared retained-byte budget for queued events
         """
-        super().__init__(task_id, subtask_id)
+        super().__init__(
+            task_id,
+            subtask_id,
+            maxsize=maxsize,
+            byte_admission=byte_admission,
+        )
         self.format_sse = format_sse
 
     async def stream_sse(self) -> AsyncIterator[str]:
@@ -46,11 +79,15 @@ class SSEResultEmitter(QueueBasedEmitter):
         Yields:
             str: SSE formatted event strings
         """
-        async for event in self.stream():
-            if self.format_sse:
-                yield event.to_sse()
-            else:
-                yield str(event.to_dict())
+        events = self.stream()
+        try:
+            async for event in events:
+                if self.format_sse:
+                    yield await _serialize_sse_event_nonblocking(event)
+                else:
+                    yield await _SSE_CODEC_EXECUTOR.run(_stringify_event, event)
+        finally:
+            await events.aclose()
 
     async def stream_content(self) -> AsyncIterator[str]:
         """Stream only content chunks.
@@ -60,11 +97,15 @@ class SSEResultEmitter(QueueBasedEmitter):
         Yields:
             str: Content text
         """
-        async for event in self.stream():
-            if event.type == EventType.CHUNK.value and event.content:
-                yield event.content
-            elif event.type == EventType.ERROR.value:
-                raise Exception(event.error or "Unknown error")
+        events = self.stream()
+        try:
+            async for event in events:
+                if event.type == EventType.CHUNK.value and event.content:
+                    yield event.content
+                elif event.type == EventType.ERROR.value:
+                    raise Exception(event.error or "Unknown error")
+        finally:
+            await events.aclose()
 
 
 class DirectSSEEmitter:
@@ -107,7 +148,7 @@ class DirectSSEEmitter:
             str: SSE formatted event strings
         """
         async for event in self.stream():
-            yield event.to_sse()
+            yield await _serialize_sse_event_nonblocking(event)
 
     async def collect(self) -> tuple[str, Optional[ExecutionEvent]]:
         """Collect all content.
@@ -118,16 +159,17 @@ class DirectSSEEmitter:
         Raises:
             Exception: If an error event is received
         """
-        accumulated_content = ""
+        content_chunks: list[str] = []
         final_event = None
 
         async for event in self.stream():
             if event.type == EventType.CHUNK.value:
-                accumulated_content += event.content or ""
+                if event.content:
+                    content_chunks.append(event.content)
             elif event.type in (EventType.DONE.value, EventType.ERROR.value):
                 final_event = event
                 if event.type == EventType.ERROR.value:
                     raise Exception(event.error or "Unknown error")
                 break
 
-        return accumulated_content, final_event
+        return "".join(content_chunks), final_event

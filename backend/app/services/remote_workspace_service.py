@@ -5,13 +5,14 @@
 import json
 import logging
 import posixpath
+from collections.abc import AsyncIterator
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any, Optional
 from urllib.parse import quote
 
 import httpx
 from fastapi import HTTPException
-from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
@@ -25,13 +26,73 @@ from app.services.adapters.task_kinds import task_kinds_service
 WORKSPACE_ROOT = "/workspace"
 SANDBOX_HOME_ROOT = "/home/user"
 SANDBOX_RUNNING_STATUS = "running"
-REMOTE_WORKSPACE_FILE_TIMEOUT_SECONDS = 130.0
+REMOTE_WORKSPACE_FILE_CONNECT_TIMEOUT_SECONDS = 3.0
+REMOTE_WORKSPACE_FILE_IDLE_TIMEOUT_SECONDS = 20.0
+REMOTE_WORKSPACE_FILE_CHUNK_BYTES = 64 * 1024
+REMOTE_WORKSPACE_FILE_MAX_BYTES = 128 * 1024 * 1024
 LOG_PREVIEW_LIMIT = 300
 logger = logging.getLogger(__name__)
 
 
 def _build_task_workspace_root(task_id: int) -> str:
     return posixpath.join(WORKSPACE_ROOT, str(task_id))
+
+
+@dataclass(frozen=True)
+class RemoteWorkspaceFileRequest:
+    url: str
+    params: dict[str, Any]
+    normalized_path: str
+    disposition: str
+
+
+@dataclass
+class RemoteWorkspaceFileStream:
+    content_type: str
+    content_disposition: str
+    _client: httpx.AsyncClient
+    _response: httpx.Response
+    _closed: bool = field(default=False, init=False)
+
+    async def chunks(self) -> AsyncIterator[bytes]:
+        total_bytes = 0
+        try:
+            async for chunk in self._response.aiter_bytes(
+                chunk_size=REMOTE_WORKSPACE_FILE_CHUNK_BYTES
+            ):
+                if not chunk:
+                    continue
+                if len(chunk) > REMOTE_WORKSPACE_FILE_CHUNK_BYTES:
+                    raise HTTPException(
+                        status_code=502,
+                        detail="Remote file chunk exceeds maximum size",
+                    )
+                total_bytes += len(chunk)
+                if total_bytes > REMOTE_WORKSPACE_FILE_MAX_BYTES:
+                    raise HTTPException(
+                        status_code=413,
+                        detail="Remote file exceeds maximum size",
+                    )
+                yield chunk
+        except httpx.TimeoutException as exc:
+            raise HTTPException(
+                status_code=504,
+                detail="Remote file stream timed out",
+            ) from exc
+        except httpx.HTTPError as exc:
+            raise HTTPException(
+                status_code=502,
+                detail="Remote file stream failed",
+            ) from exc
+        finally:
+            await self.aclose()
+
+    async def aclose(self) -> None:
+        if self._closed:
+            return
+        self._closed = True
+        await self._response.aclose()
+        await self._client.aclose()
 
 
 class RemoteWorkspaceService:
@@ -159,14 +220,14 @@ class RemoteWorkspaceService:
         )
         return RemoteWorkspaceTreeResponse(path=normalized_path, entries=entries)
 
-    def stream_file(
+    def prepare_file_stream(
         self,
         db: Session,
         task_id: int,
         user_id: int,
         path: str,
         disposition: str = "inline",
-    ) -> StreamingResponse:
+    ) -> RemoteWorkspaceFileRequest:
         if disposition not in {"inline", "attachment"}:
             raise HTTPException(status_code=400, detail="Invalid disposition")
 
@@ -177,7 +238,11 @@ class RemoteWorkspaceService:
         normalized_path = self.normalize_and_validate_workspace_path(
             path, root_path=root_path
         )
-        self._get_task_detail(db=db, task_id=task_id, user_id=user_id)
+        task_detail = self._get_task_detail(
+            db=db,
+            task_id=task_id,
+            user_id=user_id,
+        )
         logger.info(
             "[remote_workspace] stream_file start task_id=%s user_id=%s path=%s normalized_path=%s disposition=%s root_path=%s",
             task_id,
@@ -189,44 +254,150 @@ class RemoteWorkspaceService:
         )
         if self._is_sandbox_available(sandbox_payload):
             sandbox_base_url = str(sandbox_payload.get("base_url", "")).rstrip("/")
-            content, content_type = self._download_file_via_sandbox(
-                base_url=sandbox_base_url,
-                path=normalized_path,
+            request = RemoteWorkspaceFileRequest(
+                url=f"{sandbox_base_url}/files",
+                params={"path": normalized_path},
+                normalized_path=normalized_path,
+                disposition=disposition,
             )
         else:
-            executor_name = self._ensure_sandbox_available(
-                db=db,
+            executor_name = self._get_connected_executor_name(task_detail)
+            base_url = self._resolve_workspace_base_url(
                 task_id=task_id,
-                user_id=user_id,
+                task_detail=task_detail,
+                sandbox_payload=sandbox_payload,
             )
-            content, content_type = self._download_file(
-                task_id=task_id,
-                executor_name=executor_name,
-                path=normalized_path,
+            if not base_url:
+                raise HTTPException(
+                    status_code=409,
+                    detail="Remote workspace is unavailable",
+                )
+            params: dict[str, Any] = {
+                "task_id": task_id,
+                "path": normalized_path,
+            }
+            if executor_name:
+                params["executor_name"] = executor_name
+            request = RemoteWorkspaceFileRequest(
+                url=(
+                    f"{self.executor_manager_url}"
+                    "/executor-manager/executor/workspace/file"
+                ),
+                params=params,
+                normalized_path=normalized_path,
+                disposition=disposition,
             )
 
-        filename = self._download_filename(
-            path=normalized_path,
-            content_type=content_type,
-        )
-        response = StreamingResponse(
-            iter([content]),
-            media_type=content_type or "application/octet-stream",
-        )
-        response.headers["Content-Disposition"] = self._build_content_disposition(
-            disposition=disposition,
-            filename=filename,
-        )
         logger.info(
-            "[remote_workspace] stream_file success task_id=%s user_id=%s normalized_path=%s content_type=%s size=%s base_url=%s",
+            "[remote_workspace] stream_file prepared task_id=%s user_id=%s "
+            "normalized_path=%s url=%s",
             task_id,
             user_id,
             normalized_path,
-            content_type,
-            len(content),
-            sandbox_payload.get("base_url") if sandbox_payload else None,
+            request.url,
         )
-        return response
+        return request
+
+    async def open_file_stream(
+        self,
+        request: RemoteWorkspaceFileRequest,
+    ) -> RemoteWorkspaceFileStream:
+        timeout = httpx.Timeout(
+            connect=REMOTE_WORKSPACE_FILE_CONNECT_TIMEOUT_SECONDS,
+            read=REMOTE_WORKSPACE_FILE_IDLE_TIMEOUT_SECONDS,
+            write=REMOTE_WORKSPACE_FILE_IDLE_TIMEOUT_SECONDS,
+            pool=REMOTE_WORKSPACE_FILE_CONNECT_TIMEOUT_SECONDS,
+        )
+        client = httpx.AsyncClient(timeout=timeout)
+        response: httpx.Response | None = None
+        try:
+            upstream_request = client.build_request(
+                "GET",
+                request.url,
+                params=request.params,
+            )
+            response = await client.send(upstream_request, stream=True)
+            if response.status_code == 404:
+                raise HTTPException(status_code=404, detail="File not found")
+            if response.status_code >= 400:
+                preview = await self._read_response_preview(response)
+                logger.warning(
+                    "[remote_workspace] file upstream error url=%s path=%s "
+                    "status_code=%s body_preview=%s",
+                    request.url,
+                    request.normalized_path,
+                    response.status_code,
+                    preview,
+                )
+                raise HTTPException(
+                    status_code=502,
+                    detail="Remote file request failed",
+                )
+
+            content_length = response.headers.get("content-length")
+            if content_length is not None:
+                try:
+                    declared_size = int(content_length)
+                except ValueError:
+                    declared_size = -1
+                if declared_size > REMOTE_WORKSPACE_FILE_MAX_BYTES:
+                    raise HTTPException(
+                        status_code=413,
+                        detail="Remote file exceeds maximum size",
+                    )
+
+            content_type = self._normalize_content_type(
+                response.headers.get("content-type")
+            )
+            filename = self._download_filename(
+                path=request.normalized_path,
+                content_type=content_type,
+            )
+            return RemoteWorkspaceFileStream(
+                content_type=content_type,
+                content_disposition=self._build_content_disposition(
+                    disposition=request.disposition,
+                    filename=filename,
+                ),
+                _client=client,
+                _response=response,
+            )
+        except HTTPException:
+            if response is not None:
+                await response.aclose()
+            await client.aclose()
+            raise
+        except httpx.TimeoutException as exc:
+            if response is not None:
+                await response.aclose()
+            await client.aclose()
+            raise HTTPException(
+                status_code=504,
+                detail="Remote file request timed out",
+            ) from exc
+        except httpx.HTTPError as exc:
+            if response is not None:
+                await response.aclose()
+            await client.aclose()
+            raise HTTPException(
+                status_code=503,
+                detail="Failed to fetch remote file",
+            ) from exc
+
+    async def _read_response_preview(self, response: httpx.Response) -> str:
+        preview = bytearray()
+        async for chunk in response.aiter_bytes(chunk_size=LOG_PREVIEW_LIMIT):
+            remaining = LOG_PREVIEW_LIMIT - len(preview)
+            preview.extend(chunk[:remaining])
+            if len(preview) >= LOG_PREVIEW_LIMIT:
+                break
+        return self._to_log_preview(preview.decode("utf-8", errors="replace"))
+
+    @staticmethod
+    def _normalize_content_type(content_type: str | None) -> str:
+        if not content_type or "\r" in content_type or "\n" in content_type:
+            return "application/octet-stream"
+        return content_type
 
     def _download_filename(self, path: str, content_type: str | None) -> str:
         filename = posixpath.basename(path) or "download"
@@ -665,55 +836,6 @@ class RemoteWorkspaceService:
 
         return entries
 
-    def _download_file_via_sandbox(
-        self,
-        base_url: str,
-        path: str,
-    ) -> tuple[bytes, Optional[str]]:
-        file_url = f"{base_url}/files"
-        logger.info(
-            "[remote_workspace] file request via sandbox url=%s path=%s",
-            file_url,
-            path,
-        )
-
-        try:
-            with httpx.Client(timeout=REMOTE_WORKSPACE_FILE_TIMEOUT_SECONDS) as client:
-                response = client.get(
-                    file_url,
-                    params={"path": path},
-                )
-        except Exception as exc:
-            logger.warning(
-                "[remote_workspace] sandbox file request failed url=%s path=%s error=%s",
-                file_url,
-                path,
-                exc,
-            )
-            raise HTTPException(
-                status_code=503,
-                detail="Failed to fetch remote file",
-            ) from exc
-
-        if response.status_code == 404:
-            logger.info(
-                "[remote_workspace] sandbox file path not found url=%s path=%s",
-                file_url,
-                path,
-            )
-            raise HTTPException(status_code=404, detail="File not found")
-        if response.status_code >= 400:
-            logger.warning(
-                "[remote_workspace] sandbox file upstream error url=%s path=%s status_code=%s body_preview=%s",
-                file_url,
-                path,
-                response.status_code,
-                self._to_log_preview(response.text),
-            )
-            raise HTTPException(status_code=502, detail="Remote file request failed")
-
-        return response.content, response.headers.get("content-type")
-
     def _list_directory(
         self,
         task_id: int,
@@ -792,64 +914,6 @@ class RemoteWorkspaceService:
             if isinstance(payload, list)
             else []
         )
-
-    def _download_file(
-        self, task_id: int, executor_name: Optional[str], path: str
-    ) -> tuple[bytes, Optional[str]]:
-        file_url = (
-            f"{self.executor_manager_url}/executor-manager/executor/workspace/file"
-        )
-        logger.info(
-            "[remote_workspace] file request via manager url=%s task_id=%s executor_name=%s path=%s",
-            file_url,
-            task_id,
-            executor_name,
-            path,
-        )
-
-        params: dict[str, Any] = {
-            "task_id": task_id,
-            "path": path,
-        }
-        if executor_name:
-            params["executor_name"] = executor_name
-
-        try:
-            with httpx.Client(timeout=REMOTE_WORKSPACE_FILE_TIMEOUT_SECONDS) as client:
-                response = client.get(
-                    file_url,
-                    params=params,
-                )
-        except Exception as exc:
-            logger.warning(
-                "[remote_workspace] file request failed url=%s path=%s error=%s",
-                file_url,
-                path,
-                exc,
-            )
-            raise HTTPException(
-                status_code=503,
-                detail="Failed to fetch remote file",
-            ) from exc
-
-        if response.status_code == 404:
-            logger.info(
-                "[remote_workspace] file path not found url=%s path=%s",
-                file_url,
-                path,
-            )
-            raise HTTPException(status_code=404, detail="File not found")
-        if response.status_code >= 400:
-            logger.warning(
-                "[remote_workspace] file upstream error url=%s path=%s status_code=%s body_preview=%s",
-                file_url,
-                path,
-                response.status_code,
-                self._to_log_preview(response.text),
-            )
-            raise HTTPException(status_code=502, detail="Remote file request failed")
-
-        return response.content, response.headers.get("content-type")
 
     def _to_log_preview(self, raw: str) -> str:
         if not raw:

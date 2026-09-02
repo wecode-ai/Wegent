@@ -17,7 +17,7 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from app.core.shutdown import ShutdownManager
+from app.core.shutdown import ShutdownManager, StreamAdmissionClosedError
 
 
 class TestShutdownManager:
@@ -29,7 +29,7 @@ class TestShutdownManager:
         manager = ShutdownManager()
         yield manager
         # Reset state after test
-        manager.reset()
+        manager._reset_for_testing()
 
     @pytest.mark.asyncio
     async def test_initial_state(self, shutdown_manager):
@@ -78,22 +78,66 @@ class TestShutdownManager:
 
     @pytest.mark.asyncio
     async def test_register_stream_during_shutdown(self, shutdown_manager):
-        """Test that registering a stream during shutdown still succeeds.
-
-        During graceful shutdown, we still accept new streams from existing
-        WebSocket connections. New WebSocket connections are rejected at the
-        connection level (on_connect), but requests from already connected
-        clients should be allowed to complete gracefully.
-        """
+        """Test that shutdown atomically closes stream admission."""
         with patch("app.core.cache.cache_manager") as mock_cache:
             mock_cache.set = AsyncMock(return_value=True)
 
             await shutdown_manager.initiate_shutdown()
-            result = await shutdown_manager.register_stream(123)
 
-            # Streams are still accepted during shutdown for graceful handling
-            assert result is True
-            assert shutdown_manager.get_active_stream_count() == 1
+            with pytest.raises(
+                StreamAdmissionClosedError,
+                match="stream 123 was not started",
+            ) as raised:
+                await shutdown_manager.register_stream(123)
+
+            assert raised.value.error_code == "server_shutting_down"
+            assert shutdown_manager.get_active_stream_count() == 0
+
+    @pytest.mark.asyncio
+    async def test_initiate_wins_registration_race_atomically(
+        self,
+        shutdown_manager,
+    ):
+        """A registration queued behind shutdown cannot reopen admission."""
+        with patch("app.core.cache.cache_manager") as mock_cache:
+            mock_cache.set = AsyncMock(return_value=True)
+            await shutdown_manager._lock.acquire()
+            shutdown_task = asyncio.create_task(shutdown_manager.initiate_shutdown())
+            await asyncio.sleep(0)
+            register_task = asyncio.create_task(shutdown_manager.register_stream(123))
+            await asyncio.sleep(0)
+
+            shutdown_manager._lock.release()
+            await shutdown_task
+
+            with pytest.raises(StreamAdmissionClosedError):
+                await register_task
+
+            assert await shutdown_manager.wait_for_streams(timeout=0.1)
+            assert shutdown_manager.get_active_stream_count() == 0
+
+    @pytest.mark.asyncio
+    async def test_shutdown_waits_only_for_preexisting_streams(
+        self,
+        shutdown_manager,
+    ):
+        """The gate rejects new work while a preexisting stream drains."""
+        with patch("app.core.cache.cache_manager") as mock_cache:
+            mock_cache.set = AsyncMock(return_value=True)
+            await shutdown_manager.register_stream(1)
+            await shutdown_manager.initiate_shutdown()
+
+            with pytest.raises(StreamAdmissionClosedError):
+                await shutdown_manager.register_stream(2)
+
+            wait_task = asyncio.create_task(
+                shutdown_manager.wait_for_streams(timeout=1.0)
+            )
+            await asyncio.sleep(0)
+            assert not wait_task.done()
+
+            await shutdown_manager.unregister_stream(1)
+            assert await wait_task is True
 
     @pytest.mark.asyncio
     async def test_unregister_stream(self, shutdown_manager):
@@ -182,22 +226,64 @@ class TestShutdownManager:
         assert 2 not in shutdown_manager.get_active_streams()
 
     @pytest.mark.asyncio
-    async def test_reset(self, shutdown_manager):
-        """Test resetting shutdown manager state."""
-        from app.core.local_shutdown import is_local_shutdown
-
+    async def test_duplicate_registration_is_reference_counted(
+        self,
+        shutdown_manager,
+    ):
+        """One completion cannot drain another execution of the same subtask."""
         with patch("app.core.cache.cache_manager") as mock_cache:
             mock_cache.set = AsyncMock(return_value=True)
-
+            await shutdown_manager.register_stream(123)
             await shutdown_manager.register_stream(123)
             await shutdown_manager.initiate_shutdown()
 
-            shutdown_manager.reset()
+            await shutdown_manager.unregister_stream(123)
+            assert shutdown_manager.get_active_stream_count() == 1
+            assert 123 in shutdown_manager.get_active_streams()
+            assert not await shutdown_manager.wait_for_streams(timeout=0.01)
 
-            assert shutdown_manager.is_shutting_down is False
-            assert shutdown_manager.get_active_stream_count() == 0
-            assert shutdown_manager.shutdown_duration == 0.0
-            assert is_local_shutdown() is False
+            await shutdown_manager.unregister_stream(123)
+            assert await shutdown_manager.wait_for_streams(timeout=0.1)
+
+    @pytest.mark.asyncio
+    async def test_shutdown_has_no_runtime_reset(self, shutdown_manager):
+        """Once initiated, production code cannot reopen stream admission."""
+        with patch("app.core.cache.cache_manager") as mock_cache:
+            mock_cache.set = AsyncMock(return_value=True)
+            await shutdown_manager.initiate_shutdown()
+
+            assert not hasattr(shutdown_manager, "reset")
+            with pytest.raises(StreamAdmissionClosedError):
+                await shutdown_manager.register_stream(123)
+
+    @pytest.mark.asyncio
+    async def test_shutdown_cannot_be_reopened_while_notification_is_in_flight(
+        self,
+        shutdown_manager,
+    ):
+        """The admission gate stays irreversible during slow Redis notification."""
+        notification_started = asyncio.Event()
+        release_notification = asyncio.Event()
+
+        async def slow_notification() -> None:
+            notification_started.set()
+            await release_notification.wait()
+
+        with patch.object(
+            shutdown_manager,
+            "_notify_shutdown_via_redis",
+            side_effect=slow_notification,
+        ):
+            shutdown_task = asyncio.create_task(shutdown_manager.initiate_shutdown())
+            await notification_started.wait()
+            try:
+                assert shutdown_manager.is_shutting_down is True
+                assert not hasattr(shutdown_manager, "reset")
+                with pytest.raises(StreamAdmissionClosedError):
+                    await shutdown_manager.register_stream(123)
+            finally:
+                release_notification.set()
+            await shutdown_task
 
 
 class TestShutdownIntegration:
@@ -205,12 +291,7 @@ class TestShutdownIntegration:
 
     @pytest.mark.asyncio
     async def test_shutdown_flow(self):
-        """Test the complete shutdown flow.
-
-        During graceful shutdown, new streams from existing connections are
-        still accepted. New WebSocket connections are rejected at the
-        connection level (on_connect).
-        """
+        """Test the complete shutdown flow."""
         manager = ShutdownManager()
 
         with patch("app.core.cache.cache_manager") as mock_cache:
@@ -224,17 +305,16 @@ class TestShutdownIntegration:
             await manager.initiate_shutdown()
             assert manager.is_shutting_down is True
 
-            # New streams are still accepted during shutdown (from existing connections)
-            result = await manager.register_stream(3)
-            assert result is True
+            # The closed gate rejects streams from already-connected clients too.
+            with pytest.raises(StreamAdmissionClosedError):
+                await manager.register_stream(3)
 
             # Complete all streams
             await manager.unregister_stream(1)
             await manager.unregister_stream(2)
-            await manager.unregister_stream(3)
 
             # Wait should complete immediately
             result = await manager.wait_for_streams(timeout=1.0)
             assert result is True
 
-            manager.reset()
+            manager._reset_for_testing()

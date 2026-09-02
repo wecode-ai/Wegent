@@ -13,6 +13,11 @@ from typing import Any, Dict, Optional
 
 import httpx
 
+from app.core.payload_codec import (
+    decode_sync_response_json,
+    decode_sync_response_text,
+    encode_http_json,
+)
 from app.schemas.mcp_provider_config import MCPProviderConfig
 from shared.logger import setup_logger
 
@@ -87,7 +92,7 @@ class MCPProviderHTTPClient:
 
         return headers
 
-    def _check_response(self, response: httpx.Response) -> Dict[str, Any]:
+    async def _check_response(self, response: httpx.Response) -> Dict[str, Any]:
         """Check response and raise on error"""
         if response.status_code == 401:
             raise HTTPClientError("unauthorized", "Invalid or expired token")
@@ -96,12 +101,13 @@ class MCPProviderHTTPClient:
         if response.status_code == 500:
             raise HTTPClientError("server_error", "Server error")
         if not response.is_success:
+            response_text = await decode_sync_response_text(response)
             raise HTTPClientError(
                 f"http_error:{response.status_code}",
-                response.text[:200],
+                response_text[:200],
             )
 
-        data = response.json()
+        data = await decode_sync_response_json(response)
 
         # Check success field
         success_field = self.config.mapping.success_field
@@ -130,15 +136,21 @@ class MCPProviderHTTPClient:
                 page,
             )
 
+            request_body = (
+                await encode_http_json(params)
+                if self.config.api.method == "POST"
+                else None
+            )
+
             response = await client.request(
                 method=self.config.api.method,
                 url=url,
                 params=params if self.config.api.method == "GET" else None,
-                json=params if self.config.api.method == "POST" else None,
+                content=request_body,
                 headers=headers,
             )
 
-            data = self._check_response(response)
+            data = await self._check_response(response)
 
             # Extract items
             items = self._extract_by_path(data, self.config.mapping.items_path)

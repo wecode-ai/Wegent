@@ -11,11 +11,13 @@ from __future__ import annotations
 
 import base64
 import logging
+from dataclasses import dataclass
 from io import BytesIO
 from typing import Any
 
 from sqlalchemy.orm import Session
 
+from app.core.blocking_work import run_execution_io
 from app.core.config import settings
 from app.db.session import SessionLocal
 from app.mcp_server.auth import MCPAuthInfo
@@ -45,6 +47,7 @@ from app.schemas.delivery import (
 )
 from app.schemas.issue_workflow import WorkflowPlanSubmit, WorkflowTaskOutcomeSubmit
 from app.schemas.project_chat import LoopItemAssign
+from app.services.chat.storage.db import run_sync_in_executor
 from app.services.cloud_files import cloud_file_service
 from app.services.cloud_projects.access import require_cloud_project_role
 from app.services.cloud_projects.service import cloud_project_service
@@ -73,6 +76,32 @@ BOARD_TASK_SOURCES = {
 }
 MAX_INLINE_CONTENT_BYTES = 1024 * 1024
 logger = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True)
+class _BoardItemCreationPlan:
+    event: "ProjectAutomationEvent"
+    automation_id: str | None
+    project_id: str
+    item_id: str
+
+
+@dataclass(frozen=True)
+class _WorkflowOutcomePlan:
+    result: dict[str, Any]
+    restart_item_id: str | None
+
+
+@dataclass(frozen=True)
+class _WorkflowSubmissionPlan:
+    result: dict[str, Any]
+    execution_ids: tuple[int, ...]
+
+
+@dataclass(frozen=True)
+class _BoardItemMutationPlan:
+    result: dict[str, Any]
+    dispatch_item_id: str | None
 
 
 def _user(db: Session, user_id: int) -> User:
@@ -405,17 +434,52 @@ async def create_board_item(
 ) -> dict[str, Any]:
     """Create a board item and activate an assigned Wegent robot if present."""
 
+    plan = await run_sync_in_executor(
+        _prepare_board_item_creation_from_store,
+        token_info,
+        dict(item),
+        space_id,
+    )
+    from app.services.project_automations import project_automation_processor
+
+    try:
+        await project_automation_processor.process_nonblocking(
+            plan.event,
+            automation_id=plan.automation_id,
+        )
+    except Exception:
+        logger.exception(
+            "Board MCP automation processing failed project=%s item=%s",
+            plan.project_id,
+            plan.item_id,
+        )
+
+    from app.services.board_team_execution import (
+        dispatch_board_team_assignment_nonblocking,
+    )
+
+    await dispatch_board_team_assignment_nonblocking(item_id=plan.item_id)
+    return await run_sync_in_executor(
+        _read_created_board_item_from_store,
+        token_info,
+        space_id,
+        plan.item_id,
+    )
+
+
+def _prepare_board_item_creation_from_store(
+    token_info: MCPAuthInfo,
+    item: dict[str, Any],
+    space_id: str,
+) -> _BoardItemCreationPlan:
+    from app.services.project_automation_domain import ProjectAutomationEvent
+
     with SessionLocal() as db:
         project = _project(db, _space_id(db, token_info, space_id), token_info.user_id)
         user = _user(db, token_info.user_id)
         created = loop_item_provider_router.create(
             db, project, user, LoopItemCreate.model_validate(item)
         )
-        from app.services.project_automations import (
-            ProjectAutomationEvent,
-            project_automation_processor,
-        )
-
         response = LoopItemResponse.model_validate(created.values)
         planning_run = None
         if (
@@ -428,49 +492,46 @@ async def create_board_item(
                 issue=created.internal_item,
                 user_id=user.id,
             )
-        try:
-            await project_automation_processor.process(
-                db,
-                ProjectAutomationEvent(
-                    event_type="task.created",
-                    project_id=str(project.id),
-                    subject_id=str(created.values["id"]),
-                    source=project.task_provider,
-                    actor_user_id=user.id,
-                    payload={
-                        **response.model_dump(mode="json"),
-                        **(
-                            {
-                                "workflow_run_id": planning_run.id,
-                                "workflow_plan_version": (
-                                    planning_run.metadata_json or {}
-                                ).get("plan_version"),
-                            }
-                            if planning_run is not None
-                            else {}
-                        ),
-                    },
-                ),
-                automation_id=(
-                    response.workflow.ai_automation_rule_id
-                    if response.workflow
-                    and response.workflow.advancement_policy == "ai"
-                    else None
-                ),
-            )
-        except Exception:
-            db.rollback()
-            logger.exception(
-                "Board MCP automation processing failed project=%s item=%s",
-                project.id,
-                created.values.get("id"),
-            )
-        internal = created.internal_item or db.get(LoopItem, str(created.values["id"]))
-        if internal is not None and internal.assignee_agent_id:
-            from app.services.board_team_execution import dispatch_board_team_assignment
+        item_id = str(created.values["id"])
+        return _BoardItemCreationPlan(
+            event=ProjectAutomationEvent(
+                event_type="task.created",
+                project_id=str(project.id),
+                subject_id=item_id,
+                source=project.task_provider,
+                actor_user_id=user.id,
+                payload={
+                    **response.model_dump(mode="json"),
+                    **(
+                        {
+                            "workflow_run_id": planning_run.id,
+                            "workflow_plan_version": (
+                                planning_run.metadata_json or {}
+                            ).get("plan_version"),
+                        }
+                        if planning_run is not None
+                        else {}
+                    ),
+                },
+            ),
+            automation_id=(
+                response.workflow.ai_automation_rule_id
+                if response.workflow and response.workflow.advancement_policy == "ai"
+                else None
+            ),
+            project_id=str(project.id),
+            item_id=item_id,
+        )
 
-            await dispatch_board_team_assignment(db, item=internal, user=user)
-        return _read_item(db, project, str(created.values["id"]), token_info.user_id)
+
+def _read_created_board_item_from_store(
+    token_info: MCPAuthInfo,
+    space_id: str,
+    item_id: str,
+) -> dict[str, Any]:
+    with SessionLocal() as db:
+        project = _project(db, _space_id(db, token_info, space_id), token_info.user_id)
+        return _read_item(db, project, item_id, token_info.user_id)
 
 
 @mcp_tool(server="wework_space")
@@ -529,7 +590,28 @@ async def submit_workflow_plan(
 ) -> dict[str, Any]:
     """Submit a child-task plan; the server binds its active planning scope."""
 
-    execution_ids: list[int] = []
+    submission = await run_sync_in_executor(
+        _submit_workflow_plan_from_store,
+        token_info,
+        plan,
+        space_id,
+        item_id,
+    )
+    if submission.execution_ids:
+        await run_execution_io(
+            _schedule_board_execution_ids,
+            submission.execution_ids,
+        )
+    return submission.result
+
+
+def _submit_workflow_plan_from_store(
+    token_info: MCPAuthInfo,
+    plan: dict[str, Any],
+    space_id: str,
+    item_id: str,
+) -> _WorkflowSubmissionPlan:
+    execution_ids: tuple[int, ...] = ()
     with SessionLocal() as db:
         try:
             project = _project(
@@ -563,7 +645,7 @@ async def submit_workflow_plan(
                     workflow_plan_execution_ids,
                 )
 
-                execution_ids = workflow_plan_execution_ids(db, view)
+                execution_ids = tuple(workflow_plan_execution_ids(db, view))
             result = {
                 **view.model_dump(mode="json"),
                 "project_id": str(project.id),
@@ -571,6 +653,14 @@ async def submit_workflow_plan(
         except Exception:
             db.rollback()
             raise
+
+    return _WorkflowSubmissionPlan(
+        result=result,
+        execution_ids=execution_ids,
+    )
+
+
+def _schedule_board_execution_ids(execution_ids: tuple[int, ...]) -> None:
     from app.services.board_team_execution import (
         schedule_board_robot_execution_by_id,
     )
@@ -583,7 +673,6 @@ async def submit_workflow_plan(
                 "Workflow plan execution scheduling failed execution_id=%s",
                 execution_id,
             )
-    return result
 
 
 @mcp_tool(server="wework_space")
@@ -597,6 +686,31 @@ async def report_workflow_outcome(
 ) -> dict[str, Any]:
     """Report a planned child task as passed or needing AI replanning."""
 
+    plan = await run_sync_in_executor(
+        _prepare_workflow_outcome_from_store,
+        token_info,
+        verdict,
+        summary,
+        tuple(findings or []),
+        space_id,
+        item_id,
+    )
+    if plan.restart_item_id is not None:
+        await issue_workflow_start_service.start_nonblocking(
+            item_id=plan.restart_item_id,
+            user_id=token_info.user_id,
+        )
+    return plan.result
+
+
+def _prepare_workflow_outcome_from_store(
+    token_info: MCPAuthInfo,
+    verdict: str,
+    summary: str,
+    findings: tuple[str, ...],
+    space_id: str,
+    item_id: str,
+) -> _WorkflowOutcomePlan:
     with SessionLocal() as db:
         project = _project(db, _space_id(db, token_info, space_id), token_info.user_id)
         resolved_item_id = _item_id(db, token_info, item_id)
@@ -612,7 +726,7 @@ async def report_workflow_outcome(
         values = WorkflowTaskOutcomeSubmit(
             verdict=verdict,
             summary=summary,
-            findings=findings or [],
+            findings=list(findings),
         )
         view = issue_workflow_planning_service.report_outcome(
             db,
@@ -620,20 +734,19 @@ async def report_workflow_outcome(
             user_id=token_info.user_id,
             values=values,
         )
+        restart_item_id: str | None = None
         if values.verdict == "needs_rework" and view.status == "planning":
             parent = db.get(LoopItem, view.issue_id)
             if parent is None:
                 raise ValueError("Workflow parent Issue is unavailable")
-            await issue_workflow_start_service.start(
-                db,
-                item=parent,
-                project=project,
-                user_id=token_info.user_id,
-            )
-        return {
-            **view.model_dump(mode="json"),
-            "project_id": str(project.id),
-        }
+            restart_item_id = str(parent.id)
+        return _WorkflowOutcomePlan(
+            result={
+                **view.model_dump(mode="json"),
+                "project_id": str(project.id),
+            },
+            restart_item_id=restart_item_id,
+        )
 
 
 @mcp_tool(server="wework_space")
@@ -646,6 +759,30 @@ async def assign_board_item(
 ) -> dict[str, Any]:
     """Assign a board item to a project member or user-created board robot."""
 
+    plan = await run_sync_in_executor(
+        _assign_board_item_from_store,
+        token_info,
+        assignee_type,
+        assignee_id,
+        space_id,
+        item_id,
+    )
+    if plan.dispatch_item_id is not None:
+        from app.services.board_team_execution import (
+            dispatch_board_team_assignment_nonblocking,
+        )
+
+        await dispatch_board_team_assignment_nonblocking(item_id=plan.dispatch_item_id)
+    return plan.result
+
+
+def _assign_board_item_from_store(
+    token_info: MCPAuthInfo,
+    assignee_type: str,
+    assignee_id: str,
+    space_id: str,
+    item_id: str,
+) -> _BoardItemMutationPlan:
     with SessionLocal() as db:
         project = _project(db, _space_id(db, token_info, space_id), token_info.user_id)
         resolved_item_id = _item_id(db, token_info, item_id)
@@ -670,8 +807,10 @@ async def assign_board_item(
                 assignee_id=assignee_id,
             )
             if isinstance(result, LoopItem):
-                return _item_view(db, result, token_info.user_id)
-            return LoopItemResponse.model_validate(result).model_dump(mode="json")
+                view = _item_view(db, result, token_info.user_id)
+            else:
+                view = LoopItemResponse.model_validate(result).model_dump(mode="json")
+            return _BoardItemMutationPlan(result=view, dispatch_item_id=None)
         if project.task_provider in {"github", "gitlab"}:
             external_loop_item_provider.assign(
                 db, resolved_item_id, token_info.user_id, values
@@ -685,13 +824,15 @@ async def assign_board_item(
                 user_id=token_info.user_id,
                 values=values,
             )
-        if assignee_type == "agent" and assigned is not None:
-            from app.services.board_team_execution import dispatch_board_team_assignment
-
-            await dispatch_board_team_assignment(
-                db, item=assigned, user=_user(db, token_info.user_id)
-            )
-        return _read_item(db, project, resolved_item_id, token_info.user_id)
+        dispatch_item_id = (
+            str(assigned.id)
+            if assignee_type == "agent" and assigned is not None
+            else None
+        )
+        return _BoardItemMutationPlan(
+            result=_read_item(db, project, resolved_item_id, token_info.user_id),
+            dispatch_item_id=dispatch_item_id,
+        )
 
 
 @mcp_tool(server="wework_space")
@@ -703,6 +844,28 @@ async def update_board_item(
 ) -> dict[str, Any]:
     """Update a board item and activate a newly assigned Wegent robot."""
 
+    plan = await run_sync_in_executor(
+        _update_board_item_from_store,
+        token_info,
+        item,
+        space_id,
+        item_id,
+    )
+    if plan.dispatch_item_id is not None:
+        from app.services.board_team_execution import (
+            dispatch_board_team_assignment_nonblocking,
+        )
+
+        await dispatch_board_team_assignment_nonblocking(item_id=plan.dispatch_item_id)
+    return plan.result
+
+
+def _update_board_item_from_store(
+    token_info: MCPAuthInfo,
+    item: dict[str, Any],
+    space_id: str,
+    item_id: str,
+) -> _BoardItemMutationPlan:
     with SessionLocal() as db:
         project = _project(db, _space_id(db, token_info, space_id), token_info.user_id)
         resolved_item_id = _item_id(db, token_info, item_id)
@@ -717,13 +880,15 @@ async def update_board_item(
             updated = loop_item_service.update(
                 db, resolved_item_id, token_info.user_id, values
             )
-        if values.assignee_agent_id and updated is not None:
-            from app.services.board_team_execution import dispatch_board_team_assignment
-
-            await dispatch_board_team_assignment(
-                db, item=updated, user=_user(db, token_info.user_id)
-            )
-        return _read_item(db, project, resolved_item_id, token_info.user_id)
+        dispatch_item_id = (
+            str(updated.id)
+            if values.assignee_agent_id and updated is not None
+            else None
+        )
+        return _BoardItemMutationPlan(
+            result=_read_item(db, project, resolved_item_id, token_info.user_id),
+            dispatch_item_id=dispatch_item_id,
+        )
 
 
 @mcp_tool(server="wework_space")
@@ -1103,31 +1268,57 @@ async def finalize_delivery(
 ) -> dict[str, Any]:
     """Finalize a Delivery with typed requirement fulfillments."""
 
+    plan = await run_sync_in_executor(
+        _finalize_bound_delivery_from_store,
+        token_info,
+        delivery_id,
+        fulfillments or [],
+        space_id,
+        item_id,
+    )
+    if plan[1]:
+        await issue_workflow_start_service.continue_ready_stages_nonblocking(
+            item_id=plan[0],
+            user_id=token_info.user_id,
+            stage_ids=set(plan[1]),
+        )
+    return await run_sync_in_executor(
+        _delivery_view_from_store,
+        delivery_id,
+        token_info.user_id,
+    )
+
+
+def _finalize_bound_delivery_from_store(
+    token_info: MCPAuthInfo,
+    delivery_id: str,
+    fulfillments: list[dict[str, Any]],
+    space_id: str,
+    item_id: str,
+) -> tuple[str, tuple[str, ...]]:
     with SessionLocal() as db:
         project = _project(db, _space_id(db, token_info, space_id), token_info.user_id)
         resolved_item_id = _item_id(db, token_info, item_id)
-        item = _read_item(db, project, resolved_item_id, token_info.user_id)
-        ready_before = issue_workflow_start_service.ready_robot_stage_ids(item)
+        _read_item(db, project, resolved_item_id, token_info.user_id)
         _delivery_draft_for_binding(db, token_info, resolved_item_id, delivery_id)
-        delivery = delivery_service.finalize(
+        item = loop_item_service.get(db, resolved_item_id, token_info.user_id)
+        ready_before = issue_workflow_start_service.ready_robot_stage_ids(item)
+        delivery_service.finalize(
             db,
             delivery_id,
             token_info.user_id,
-            DeliveryFinalize.model_validate({"fulfillments": fulfillments or []}),
+            DeliveryFinalize.model_validate({"fulfillments": fulfillments}),
         )
         db.refresh(item)
         newly_ready = (
             issue_workflow_start_service.ready_robot_stage_ids(item) - ready_before
         )
-        if newly_ready:
-            started = await issue_workflow_start_service.continue_ready_stages(
-                db,
-                item=item,
-                user_id=token_info.user_id,
-                stage_ids=newly_ready,
-            )
-            if started:
-                db.refresh(delivery)
+        return str(item.id), tuple(sorted(newly_ready))
+
+
+def _delivery_view_from_store(delivery_id: str, user_id: int) -> dict[str, Any]:
+    with SessionLocal() as db:
+        delivery = delivery_service.get_delivery(db, delivery_id, user_id)
         return _delivery_view(db, delivery)
 
 

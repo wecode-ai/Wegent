@@ -4,6 +4,8 @@
 
 import logging
 
+import pytest
+
 from app.main import _request_context_fields, _should_capture_http_body
 
 
@@ -21,6 +23,39 @@ def test_oauth_token_endpoint_body_is_excluded_from_telemetry() -> None:
     assert _should_capture_http_body("/api/external/oauth/token") is False
     assert _should_capture_http_body("/api/external/oauth/revoke") is False
     assert _should_capture_http_body("/api/external/oauth/userinfo") is True
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        "/api/internal/callback",
+        "/api/internal/callback/",
+        "/api/internal/callback/batch",
+        "/api/model-runtime/responses",
+        "/api/runtime-work/llm-responses-proxy/responses",
+        "/api/v1/responses",
+        "/api/v1/responses/",
+        "/api/wizard/test-prompt/stream",
+        "/api/tasks/123/prompt-drafts/generate/stream",
+        "/api/v1/deep-research/interaction-123/stream",
+    ],
+)
+def test_streaming_request_bodies_are_excluded_from_telemetry(path: str) -> None:
+    assert _should_capture_http_body(path) is False
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        "/api/tasks/not-an-id/prompt-drafts/generate/stream",
+        "/api/tasks/123/prompt-drafts/generate",
+        "/api/v1/deep-research/interaction-123/status",
+        "/api/model-runtime/models",
+        "/api/wizard/test-prompt",
+    ],
+)
+def test_non_streaming_nearby_paths_keep_body_capture(path: str) -> None:
+    assert _should_capture_http_body(path) is True
 
 
 def test_access_logs_include_forwarded_headers(test_client, caplog):

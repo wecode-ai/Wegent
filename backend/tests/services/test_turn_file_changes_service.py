@@ -6,11 +6,29 @@ from unittest.mock import AsyncMock
 
 import pytest
 from fastapi import HTTPException
+from sqlalchemy.orm import sessionmaker
 
 from app.models.subtask import Subtask, SubtaskRole, SubtaskStatus
 from app.models.task import TaskResource
 from app.services.device.command_service import DeviceCommandError
 from app.services.turn_file_changes import turn_file_changes_service
+
+
+@pytest.fixture(autouse=True)
+def _worker_sessions_use_test_database(test_db, monkeypatch):
+    from app.db import session as db_session
+
+    monkeypatch.setattr(
+        db_session,
+        "SessionLocal",
+        sessionmaker(
+            autocommit=False,
+            autoflush=False,
+            bind=test_db.get_bind(),
+            expire_on_commit=False,
+            join_transaction_mode="create_savepoint",
+        ),
+    )
 
 
 def _summary(*, device_id="device-1", status="active"):
@@ -96,14 +114,13 @@ async def test_get_diff_dispatches_recorded_device_and_workspace(
     )
 
     response = await turn_file_changes_service.get_diff(
-        db=test_db,
         user_id=7,
         subtask_id=subtask.id,
     )
 
     assert response.diff == "diff --git\n"
     execute.assert_awaited_once_with(
-        db=test_db,
+        db=None,
         user_id=7,
         device_id="device-1",
         command_key="turn_file_changes_review",
@@ -129,7 +146,6 @@ async def test_get_diff_rejects_device_mismatch(test_db, monkeypatch):
 
     with pytest.raises(HTTPException) as exc_info:
         await turn_file_changes_service.get_diff(
-            db=test_db,
             user_id=7,
             subtask_id=subtask.id,
         )
@@ -149,7 +165,6 @@ async def test_get_diff_reports_offline_device(test_db, monkeypatch):
 
     with pytest.raises(HTTPException) as exc_info:
         await turn_file_changes_service.get_diff(
-            db=test_db,
             user_id=7,
             subtask_id=subtask.id,
         )
@@ -169,7 +184,6 @@ async def test_revert_updates_only_file_changes_status(test_db, monkeypatch):
     )
 
     response = await turn_file_changes_service.revert(
-        db=test_db,
         user_id=7,
         subtask_id=subtask.id,
     )
@@ -199,7 +213,6 @@ async def test_revert_conflict_keeps_existing_message_result(test_db, monkeypatc
 
     with pytest.raises(HTTPException) as exc_info:
         await turn_file_changes_service.revert(
-            db=test_db,
             user_id=7,
             subtask_id=subtask.id,
         )
@@ -226,7 +239,6 @@ async def test_revert_is_idempotent_after_success(test_db, monkeypatch):
     )
 
     response = await turn_file_changes_service.revert(
-        db=test_db,
         user_id=7,
         subtask_id=subtask.id,
     )
@@ -253,7 +265,6 @@ async def test_missing_artifact_marks_artifact_missing(test_db, monkeypatch):
 
     with pytest.raises(HTTPException) as exc_info:
         await turn_file_changes_service.get_diff(
-            db=test_db,
             user_id=7,
             subtask_id=subtask.id,
         )

@@ -476,9 +476,9 @@ def test_external_knowledge_mcp_sync_auth_runs_in_threadpool():
         ),
         auth_handler as sync_auth_handler,
         patch(
-            "app.mcp_server.server.run_in_threadpool",
+            "app.mcp_server.server.run_mcp_tool",
             new=AsyncMock(return_value=ExternalKnowledgeUser(id=7, user_name="alice")),
-        ) as run_in_threadpool,
+        ) as run_mcp_tool,
     ):
         app = _build_external_knowledge_mcp_app()
         client = TestClient(app)
@@ -486,7 +486,7 @@ def test_external_knowledge_mcp_sync_auth_runs_in_threadpool():
 
     assert response.status_code == 200
     assert response.json() == {"user_id": 7}
-    run_in_threadpool.assert_awaited_once_with(
+    run_mcp_tool.assert_awaited_once_with(
         sync_auth_handler,
         "trusted-token",
         ANY,

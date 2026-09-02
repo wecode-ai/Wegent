@@ -11,6 +11,7 @@ from redis import Redis as SyncRedis
 from redis.asyncio import Redis
 
 from app.core.config import settings
+from app.core.payload_codec import run_payload_codec
 
 logger = logging.getLogger(__name__)
 
@@ -59,7 +60,11 @@ class RedisCache:
                 if data is None:
                     return None
                 try:
-                    return orjson.loads(data)
+                    return await run_payload_codec(
+                        orjson.loads,
+                        data,
+                        payload_hint=data,
+                    )
                 except Exception:
                     # If value was stored as plain bytes/string
                     return data
@@ -89,7 +94,11 @@ class RedisCache:
                 for key, data in zip(keys, values):
                     if data is not None:
                         try:
-                            result[key] = orjson.loads(data)
+                            result[key] = await run_payload_codec(
+                                orjson.loads,
+                                data,
+                                payload_hint=data,
+                            )
                         except Exception:
                             # If value was stored as plain bytes/string
                             result[key] = data
@@ -168,7 +177,11 @@ class RedisCache:
         try:
             client = await self._get_client()
             try:
-                payload = orjson.dumps(value)
+                payload = await run_payload_codec(
+                    orjson.dumps,
+                    value,
+                    payload_hint=value,
+                )
                 if expire is None:
                     ok = await client.set(key, payload)
                 else:
@@ -187,7 +200,11 @@ class RedisCache:
         try:
             client = await self._get_client()
             try:
-                payload = orjson.dumps(value)
+                payload = await run_payload_codec(
+                    orjson.dumps,
+                    value,
+                    payload_hint=value,
+                )
                 ok = await client.set(key, payload, ex=expire, nx=True)
                 return bool(ok)
             finally:
@@ -218,7 +235,11 @@ class RedisCache:
                 if data is None:
                     return None
                 try:
-                    return orjson.loads(data)
+                    return await run_payload_codec(
+                        orjson.loads,
+                        data,
+                        payload_hint=data,
+                    )
                 except Exception:
                     return data
             finally:

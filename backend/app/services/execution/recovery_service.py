@@ -17,19 +17,52 @@ with git clone enabled.
 """
 
 import logging
+from copy import deepcopy
+from dataclasses import dataclass
 from typing import Any, Dict, Optional
 
 from sqlalchemy.orm import Session
 
+from app.core.payload_codec import run_payload_codec
 from app.models.subtask import Subtask, SubtaskStatus
 from app.models.task import TaskResource
-from app.services.task_status import mark_task_failed
+from app.services.task_status import extract_task_error, mark_task_failed
 from app.services.workspace_archive import archive_service
-from app.stores.tasks import subtask_store
+from app.stores.tasks import subtask_store, task_store
 from shared.models import ExecutionRequest
 from shared.telemetry.decorators import trace_async
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True)
+class ExecutorRecoveryContext:
+    """Detached database state required by executor recovery."""
+
+    task_id: int
+    subtask_id: int
+    task_json: Dict[str, Any]
+    previous_executor_name: Optional[str]
+    previous_executor_namespace: Optional[str]
+    executor_deleted_at: bool
+    archive_available: bool
+    archive_reason: Optional[str]
+    prior_claude_session_evidence: bool
+    subtask_error: Optional[str]
+    task_error: Optional[str]
+
+
+@dataclass(frozen=True)
+class ExecutorRecoveryOutcome:
+    """Result of detached executor recovery."""
+
+    executor_name: Optional[str] = None
+    executor_namespace: Optional[str] = None
+    error_message: Optional[str] = None
+
+    @property
+    def recovered(self) -> bool:
+        return bool(self.executor_name and self.executor_namespace)
 
 
 class ExecutorRecoveryService:
@@ -184,6 +217,289 @@ class ExecutorRecoveryService:
                 f"for task {task_id}: {exc}"
             )
 
+    def build_detached_context(
+        self,
+        db: Session,
+        *,
+        subtask: Subtask,
+        task: TaskResource,
+        request: ExecutionRequest,
+    ) -> ExecutorRecoveryContext:
+        """Copy recovery inputs while the caller's database session is active."""
+        archive_available, _, archive_reason = archive_service.check_archive_available(
+            task
+        )
+        prior_session_evidence = False
+        if archive_available and self._requires_claude_session(request):
+            prior_session_evidence = self._has_prior_claude_session_evidence(
+                db,
+                task,
+                request,
+            )
+        subtask_error = getattr(subtask, "error_message", None)
+        return ExecutorRecoveryContext(
+            task_id=task.id,
+            subtask_id=subtask.id,
+            task_json=deepcopy(task.json),
+            previous_executor_name=subtask.executor_name,
+            previous_executor_namespace=subtask.executor_namespace,
+            executor_deleted_at=bool(subtask.executor_deleted_at),
+            archive_available=archive_available,
+            archive_reason=archive_reason,
+            prior_claude_session_evidence=prior_session_evidence,
+            subtask_error=(
+                subtask_error
+                if isinstance(subtask_error, str) and subtask_error.strip()
+                else None
+            ),
+            task_error=extract_task_error(task),
+        )
+
+    async def recover_from_store(
+        self,
+        *,
+        task_id: int,
+        subtask_id: int,
+        request: ExecutionRequest,
+    ) -> ExecutorRecoveryOutcome:
+        """Recover and persist executor state without a caller-owned session."""
+        from app.services.chat.storage.db import run_sync_in_executor
+
+        context = await run_sync_in_executor(
+            self._load_detached_context_sync,
+            task_id,
+            subtask_id,
+            request,
+        )
+        outcome = await self.recover_detached(context=context, request=request)
+        if outcome.recovered:
+            await run_sync_in_executor(
+                self._persist_recovered_executor_sync,
+                subtask_id,
+                outcome.executor_name,
+                outcome.executor_namespace,
+            )
+        return outcome
+
+    def _load_detached_context_sync(
+        self,
+        task_id: int,
+        subtask_id: int,
+        request: ExecutionRequest,
+    ) -> ExecutorRecoveryContext:
+        """Load recovery inputs inside a worker-owned session."""
+        from app.db.session import get_db_session
+
+        with get_db_session() as db:
+            task = task_store.get_by_id(db, task_id=task_id)
+            subtask = subtask_store.get_by_id(db, subtask_id=subtask_id)
+            if not task or not subtask:
+                raise ValueError(
+                    f"Recovery state missing for task={task_id} subtask={subtask_id}"
+                )
+            return self.build_detached_context(
+                db,
+                subtask=subtask,
+                task=task,
+                request=request,
+            )
+
+    def _persist_recovered_executor_sync(
+        self,
+        subtask_id: int,
+        executor_name: Optional[str],
+        executor_namespace: Optional[str],
+    ) -> None:
+        """Persist a successful recovery in a fresh worker session."""
+        from app.db.session import get_db_session
+
+        if not executor_name or not executor_namespace:
+            raise ValueError("Recovered executor identity is incomplete")
+        with get_db_session() as db:
+            subtask = subtask_store.get_by_id(db, subtask_id=subtask_id)
+            if not subtask:
+                raise ValueError(f"Subtask {subtask_id} no longer exists")
+            subtask_store.update_fields(
+                db,
+                subtask=subtask,
+                executor_name=executor_name,
+                executor_namespace=executor_namespace,
+                executor_deleted_at=False,
+            )
+            db.commit()
+
+    async def recover_detached(
+        self,
+        *,
+        context: ExecutorRecoveryContext,
+        request: ExecutionRequest,
+    ) -> ExecutorRecoveryOutcome:
+        """Recover from detached state without retaining a database session."""
+        logger.info(
+            "[RecoveryService] Starting detached recovery for task %s, subtask %s",
+            context.task_id,
+            context.subtask_id,
+        )
+        if context.archive_reason == "expired":
+            raise RuntimeError(
+                f"Workspace archive for task {context.task_id} has expired (>30 days). "
+                "This task can no longer be resumed. Please create a new task to continue."
+            )
+        if context.archive_available:
+            return await self._recover_detached_with_archive(context, request)
+        return await self._recover_detached_without_archive(context, request)
+
+    async def _recover_detached_with_archive(
+        self,
+        context: ExecutorRecoveryContext,
+        request: ExecutionRequest,
+    ) -> ExecutorRecoveryOutcome:
+        """Recover and restore an archived workspace from detached state."""
+        prepared_executor_pending_cleanup = False
+        try:
+            request.skip_git_clone = True
+            request.executor_name = None
+            request.executor_namespace = None
+            executor, error = await self._prepare_executor(request, True)
+            if error or not executor:
+                if error:
+                    await self._persist_detached_failure(context, error)
+                return ExecutorRecoveryOutcome(error_message=error)
+
+            executor_name = executor.container_name
+            executor_namespace = self._resolve_executor_namespace(
+                executor,
+                context.previous_executor_namespace,
+            )
+            prepared_executor_pending_cleanup = True
+            task_json = await run_payload_codec(
+                deepcopy,
+                context.task_json,
+                payload_hint=context.task_json,
+                force_offload=True,
+            )
+            restore_result = await archive_service.restore_workspace_snapshot(
+                task_id=context.task_id,
+                task_json=task_json,
+                executor_name=executor_name,
+                executor_namespace=executor_namespace,
+            )
+            session_available = bool(restore_result) and bool(
+                restore_result.get("session_restored", False)
+                or self._has_inherited_claude_session(request)
+            )
+            if self._requires_claude_session(request) and not session_available:
+                if context.prior_claude_session_evidence:
+                    error = (
+                        f"Claude session context for task {context.task_id} was not "
+                        "restored. Refusing to send the continuation to a new session."
+                    )
+                    await self._persist_detached_failure(context, error)
+                    raise RuntimeError(error)
+                logger.warning(
+                    "[RecoveryService] No prior Claude session evidence for task %s; "
+                    "continuing recovery with a new session",
+                    context.task_id,
+                )
+            if not restore_result:
+                logger.warning(
+                    "[RecoveryService] Failed to restore workspace for task %s, "
+                    "continuing with empty workspace",
+                    context.task_id,
+                )
+
+            request.executor_name = executor_name
+            request.executor_namespace = executor_namespace
+            return ExecutorRecoveryOutcome(
+                executor_name=executor_name,
+                executor_namespace=executor_namespace,
+            )
+        except RuntimeError:
+            if prepared_executor_pending_cleanup:
+                await self._delete_prepared_executor(task_id=context.task_id)
+            raise
+        except Exception as exc:
+            if prepared_executor_pending_cleanup:
+                await self._delete_prepared_executor(task_id=context.task_id)
+            logger.error(
+                "[RecoveryService] Error recovering detached archive for task %s: %s",
+                context.task_id,
+                exc,
+                exc_info=True,
+            )
+            return ExecutorRecoveryOutcome(error_message=str(exc))
+
+    async def _recover_detached_without_archive(
+        self,
+        context: ExecutorRecoveryContext,
+        request: ExecutionRequest,
+    ) -> ExecutorRecoveryOutcome:
+        """Recover a detached task with a normal workspace clone."""
+        try:
+            request.skip_git_clone = False
+            request.executor_name = None
+            request.executor_namespace = None
+            executor, error = await self._prepare_executor(request, False)
+            if error or not executor:
+                if error:
+                    await self._persist_detached_failure(context, error)
+                return ExecutorRecoveryOutcome(error_message=error)
+
+            executor_name = executor.container_name
+            executor_namespace = self._resolve_executor_namespace(
+                executor,
+                context.previous_executor_namespace,
+            )
+            request.executor_name = executor_name
+            request.executor_namespace = executor_namespace
+            return ExecutorRecoveryOutcome(
+                executor_name=executor_name,
+                executor_namespace=executor_namespace,
+            )
+        except Exception as exc:
+            logger.error(
+                "[RecoveryService] Error recovering detached task %s: %s",
+                context.task_id,
+                exc,
+                exc_info=True,
+            )
+            return ExecutorRecoveryOutcome(error_message=str(exc))
+
+    async def _persist_detached_failure(
+        self,
+        context: ExecutorRecoveryContext,
+        error_message: str,
+    ) -> None:
+        """Persist recovery failure in a fresh worker-owned session."""
+        from app.services.chat.storage.db import run_sync_in_executor
+
+        await run_sync_in_executor(
+            self._persist_detached_failure_sync,
+            context.task_id,
+            context.subtask_id,
+            error_message,
+        )
+
+    def _persist_detached_failure_sync(
+        self,
+        task_id: int,
+        subtask_id: int,
+        error_message: str,
+    ) -> None:
+        from app.db.session import get_db_session
+
+        with get_db_session() as db:
+            subtask = subtask_store.get_by_id(db, subtask_id=subtask_id)
+            task = task_store.get_by_id(db, task_id=task_id)
+            if not subtask or not task:
+                logger.error(
+                    "[RecoveryService] Cannot persist recovery failure: task=%s subtask=%s",
+                    task_id,
+                    subtask_id,
+                )
+                return
+            self._persist_recovery_failure(db, subtask, task, error_message)
+
     async def recover(
         self,
         db: Session,
@@ -319,9 +635,16 @@ class ExecutorRecoveryService:
             prepared_executor_pending_cleanup = True
 
             # Restore workspace from archive
-            restore_result = await archive_service.restore_workspace(
-                db=db,
-                task=task,
+            raw_task_json = getattr(task, "json", {}) or {}
+            task_json = await run_payload_codec(
+                deepcopy,
+                raw_task_json,
+                payload_hint=raw_task_json,
+                force_offload=True,
+            )
+            restore_result = await archive_service.restore_workspace_snapshot(
+                task_id=task.id,
+                task_json=task_json,
                 executor_name=executor_name,
                 executor_namespace=executor_namespace,
             )

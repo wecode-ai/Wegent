@@ -17,7 +17,9 @@ from fastapi.security.utils import get_authorization_scheme_param
 from jose import JWTError, jwt
 from passlib.context import CryptContext
 from sqlalchemy import select
-from sqlalchemy.orm import Session
+from sqlalchemy.exc import NoInspectionAvailable
+from sqlalchemy.inspection import inspect as sqlalchemy_inspect
+from sqlalchemy.orm import Session, object_session
 
 from app.api.dependencies import get_db
 from app.core.config import settings
@@ -134,7 +136,7 @@ def get_current_user(
                 span.set_attribute(SpanAttributes.USER_ID, str(user.id))
                 _set_user_context(user_id=str(user.id), user_name=user.user_name)
 
-            return user
+            return _expunge_authenticated_user(user)
         except HTTPException:
             raise
         except Exception as e:
@@ -143,6 +145,51 @@ def get_current_user(
                 span.set_attribute(SpanAttributes.AUTH_FAILURE_REASON, str(e)[:200])
                 span.record_exception(e)
             raise
+
+
+@dataclass(frozen=True)
+class DetachedUser:
+    """Authenticated scalar fields safe to retain across async awaits."""
+
+    id: int
+    user_name: str
+
+
+def _expunge_authenticated_user(user: User) -> User:
+    """Load scalar columns and sever the ORM Session before request execution."""
+    try:
+        state = sqlalchemy_inspect(user)
+    except NoInspectionAvailable:
+        return user
+    session = object_session(user)
+    if session is None:
+        return user
+    for attribute in state.mapper.column_attrs:
+        getattr(user, attribute.key)
+    session.expunge(user)
+    return user
+
+
+def _detach_user(user: User) -> DetachedUser:
+    return DetachedUser(id=int(user.id), user_name=str(user.user_name))
+
+
+def _get_detached_current_user_sync(token: str) -> DetachedUser:
+    """Authenticate inside the database worker that owns the Session."""
+    from app.db.session import SessionLocal
+
+    with SessionLocal() as db:
+        return _detach_user(get_current_user(token=token, db=db))
+
+
+async def get_detached_current_user(
+    token: str = Depends(oauth2_scheme),
+) -> DetachedUser:
+    """Authenticate without retaining a Session on the event loop."""
+
+    from app.services.chat.storage.db import run_sync_in_executor
+
+    return await run_sync_in_executor(_get_detached_current_user_sync, token)
 
 
 def verify_password(plain_password: str, hashed_password: str) -> bool:
@@ -293,33 +340,6 @@ def verify_token(token: str) -> Dict[str, Any]:
         return {"username": token_data.username}
     except JWTError:
         raise credentials_exception
-
-
-def get_username_from_request(request) -> str:
-    """
-    Extract username from Authorization header in request
-
-    Args:
-        request: FastAPI Request object
-
-    Returns:
-        Username or 'anonymous'/'internal-service' if not found/invalid
-    """
-    # Check for internal service requests first
-    service_name = request.headers.get("X-Service-Name")
-    if service_name:
-        return f"[{service_name}]"
-
-    auth_header = request.headers.get("Authorization")
-    if not auth_header or not auth_header.startswith("Bearer "):
-        return "anonymous"
-
-    try:
-        token = auth_header.split(" ")[1]
-        token_data = verify_token(token)
-        return token_data.get("username", "anonymous")
-    except Exception:
-        return "anonymous"
 
 
 def get_admin_user(current_user: User = Depends(get_current_user)) -> User:
@@ -478,6 +498,14 @@ class AuthContext:
     api_key_name: Optional[str] = None  # API key name used for authentication
 
 
+@dataclass(frozen=True)
+class DetachedAuthContext:
+    """Flexible authentication result without a live ORM entity."""
+
+    user: DetachedUser
+    api_key_name: Optional[str] = None
+
+
 def get_auth_context(
     db: Session = Depends(get_db),
     api_key: str = Depends(get_api_key_from_header),
@@ -545,7 +573,10 @@ def get_auth_context(
                                     user_id=str(user.id),
                                     user_name=user.user_name,
                                 )
-                            return AuthContext(user=user, api_key_name=None)
+                            return AuthContext(
+                                user=_expunge_authenticated_user(user),
+                                api_key_name=None,
+                            )
 
                         # Try task token as fallback
                         from app.services.auth.task_token import verify_task_token
@@ -582,7 +613,10 @@ def get_auth_context(
                                         user_id=str(user.id),
                                         user_name=user.user_name,
                                     )
-                                return AuthContext(user=user, api_key_name=None)
+                                return AuthContext(
+                                    user=_expunge_authenticated_user(user),
+                                    api_key_name=None,
+                                )
 
             if is_telemetry_enabled():
                 span.set_attribute(SpanAttributes.AUTH_RESULT, "failure")
@@ -664,7 +698,10 @@ def get_auth_context(
                     span.set_attribute(SpanAttributes.USER_ID, str(user.id))
                     span.set_attribute(SpanAttributes.USER_NAME, user.user_name)
                     _set_user_context(user_id=str(user.id), user_name=user.user_name)
-                return AuthContext(user=user, api_key_name=api_key_record.name)
+                return AuthContext(
+                    user=_expunge_authenticated_user(user),
+                    api_key_name=api_key_record.name,
+                )
 
             if is_telemetry_enabled():
                 span.set_attribute(SpanAttributes.AUTH_RESULT, "failure")
@@ -730,7 +767,10 @@ def get_auth_context(
                     span.set_attribute(SpanAttributes.USER_ID, str(user.id))
                     span.set_attribute(SpanAttributes.AUTH_USER_CREATED, False)
                     _set_user_context(user_id=str(user.id), user_name=user.user_name)
-                return AuthContext(user=user, api_key_name=api_key_record.name)
+                return AuthContext(
+                    user=_expunge_authenticated_user(user),
+                    api_key_name=api_key_record.name,
+                )
 
             # User not found, auto-create for service key authentication
             logger.info(
@@ -782,7 +822,10 @@ def get_auth_context(
                     user_id=str(new_user.id), user_name=new_user.user_name
                 )
 
-            return AuthContext(user=new_user, api_key_name=api_key_record.name)
+            return AuthContext(
+                user=_expunge_authenticated_user(new_user),
+                api_key_name=api_key_record.name,
+            )
 
         if is_telemetry_enabled():
             span.set_attribute(SpanAttributes.AUTH_RESULT, "failure")
@@ -806,6 +849,44 @@ def get_current_user_flexible(
         Authenticated User object
     """
     return auth_context.user
+
+
+def _get_detached_auth_context_sync(
+    api_key: str,
+    wegent_username: Optional[str],
+    authorization: str,
+) -> DetachedAuthContext:
+    """Resolve flexible auth inside the worker that owns the Session."""
+    from app.db.session import SessionLocal
+
+    with SessionLocal() as db:
+        context = get_auth_context(
+            db=db,
+            api_key=api_key,
+            wegent_username=wegent_username,
+            authorization=authorization,
+        )
+        return DetachedAuthContext(
+            user=_detach_user(context.user),
+            api_key_name=context.api_key_name,
+        )
+
+
+async def get_detached_auth_context(
+    api_key: str = Depends(get_api_key_from_header),
+    wegent_username: Optional[str] = Header(default=None, alias="wegent-username"),
+    authorization: str = Header(default=""),
+) -> DetachedAuthContext:
+    """Resolve flexible auth without retaining a Session on the event loop."""
+
+    from app.services.chat.storage.db import run_sync_in_executor
+
+    return await run_sync_in_executor(
+        _get_detached_auth_context_sync,
+        api_key,
+        wegent_username,
+        authorization,
+    )
 
 
 def get_current_user_flexible_for_executor(
@@ -862,7 +943,7 @@ def get_current_user_flexible_for_executor(
                     span.set_attribute(SpanAttributes.USER_ID, str(user.id))
                     span.set_attribute(SpanAttributes.USER_NAME, user.user_name)
                     _set_user_context(user_id=str(user.id), user_name=user.user_name)
-                return user
+                return _expunge_authenticated_user(user)
 
             if is_telemetry_enabled():
                 span.set_attribute(SpanAttributes.AUTH_RESULT, "failure")
@@ -895,7 +976,7 @@ def get_current_user_flexible_for_executor(
                         _set_user_context(
                             user_id=str(user.id), user_name=user.user_name
                         )
-                    return user
+                    return _expunge_authenticated_user(user)
 
                 if is_telemetry_enabled():
                     span.set_attribute(SpanAttributes.AUTH_RESULT, "failure")
@@ -920,7 +1001,7 @@ def get_current_user_flexible_for_executor(
                     span.set_attribute(SpanAttributes.USER_ID, str(user.id))
                     span.set_attribute(SpanAttributes.USER_NAME, user.user_name)
                     _set_user_context(user_id=str(user.id), user_name=user.user_name)
-                return user
+                return _expunge_authenticated_user(user)
 
             if is_telemetry_enabled():
                 span.set_attribute(SpanAttributes.AUTH_RESULT, "failure")
@@ -1003,7 +1084,7 @@ def get_current_user_jwt_apikey_tasktoken(
                     span.set_attribute(SpanAttributes.USER_ID, str(user.id))
                     span.set_attribute(SpanAttributes.USER_NAME, user.user_name)
                     _set_user_context(user_id=str(user.id), user_name=user.user_name)
-                return user
+                return _expunge_authenticated_user(user)
 
             if is_telemetry_enabled():
                 span.set_attribute(SpanAttributes.AUTH_RESULT, "failure")
@@ -1041,7 +1122,7 @@ def get_current_user_jwt_apikey_tasktoken(
                         _set_user_context(
                             user_id=str(user.id), user_name=user.user_name
                         )
-                    return user
+                    return _expunge_authenticated_user(user)
 
                 if is_telemetry_enabled():
                     span.set_attribute(SpanAttributes.AUTH_RESULT, "failure")
@@ -1066,7 +1147,7 @@ def get_current_user_jwt_apikey_tasktoken(
                     span.set_attribute(SpanAttributes.USER_ID, str(user.id))
                     span.set_attribute(SpanAttributes.USER_NAME, user.user_name)
                     _set_user_context(user_id=str(user.id), user_name=user.user_name)
-                return user
+                return _expunge_authenticated_user(user)
 
             # Try task token as fallback
             if is_telemetry_enabled():
@@ -1089,7 +1170,7 @@ def get_current_user_jwt_apikey_tasktoken(
                         f"Task token auth successful: user={user.user_name}, "
                         f"task_id={token_info.task_id}"
                     )
-                    return user
+                    return _expunge_authenticated_user(user)
 
             if is_telemetry_enabled():
                 span.set_attribute(SpanAttributes.AUTH_RESULT, "failure")
@@ -1164,7 +1245,7 @@ def get_current_user_optional(
                 span.set_attribute(SpanAttributes.USER_ID, str(user.id))
                 _set_user_context(user_id=str(user.id), user_name=user.user_name)
 
-            return user
+            return _expunge_authenticated_user(user)
         except HTTPException:
             # Token verification failed, return None instead of raising
             if is_telemetry_enabled():

@@ -81,7 +81,7 @@ async def list_sites(
 
 
 @router.get("/app-types", response_model=ApplicationTypeListResponse)
-async def list_site_app_types(
+def list_site_app_types(
     _current_user: User = Depends(security.get_current_user),
 ) -> ApplicationTypeListResponse:
     """List application types and capabilities supported by this Backend."""

@@ -106,8 +106,7 @@ def test_sync_endpoint_targets_one_device_and_returns_sanitized_result(
     assert response.status_code == 200
     assert response.json()["device_id"] == "remote-1"
     sync.assert_awaited_once_with(
-        test_db,
-        user=test_user,
+        user_id=test_user.id,
         device_id="remote-1",
         allow_empty=False,
     )

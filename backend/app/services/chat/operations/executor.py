@@ -11,6 +11,7 @@ including task cancellation and status management.
 import logging
 
 from app.core.config import settings
+from app.core.payload_codec import encode_http_json
 
 logger = logging.getLogger(__name__)
 
@@ -29,9 +30,11 @@ async def call_executor_cancel(task_id: int) -> bool:
 
     try:
         async with httpx.AsyncClient() as client:
+            request_body = await encode_http_json({"task_id": task_id})
             response = await client.post(
                 settings.EXECUTOR_CANCEL_TASK_URL,
-                json={"task_id": task_id},
+                content=request_body,
+                headers={"Content-Type": "application/json"},
                 timeout=5.0,
             )
             response.raise_for_status()

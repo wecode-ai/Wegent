@@ -19,6 +19,7 @@ from app.core.cache import cache_manager
 from app.core.config import settings
 from app.models.kind import Kind
 from app.schemas.device import DeviceConnectionMode, DeviceType
+from app.services.device.base_provider import DeviceRecord
 from app.services.device.local_provider import (
     LocalDeviceProvider,
     runtime_capacity_slot_values,
@@ -123,9 +124,30 @@ class RemoteDeviceProvider(LocalDeviceProvider):
             )
             .all()
         )
+        return await self.list_device_records(
+            tuple(
+                DeviceRecord(
+                    id=device.id,
+                    name=device.name,
+                    json=device.json,
+                )
+                for device in devices
+            ),
+            user_id,
+            include_offline,
+        )
+
+    async def list_device_records(
+        self,
+        records: tuple[DeviceRecord, ...],
+        user_id: int,
+        include_offline: bool = True,
+    ) -> List[Dict[str, Any]]:
+        """Enrich detached remote Device records."""
+
         remote_devices = [
             device
-            for device in devices
+            for device in records
             if device.json.get("spec", {}).get("deviceType") == DeviceType.REMOTE.value
         ]
         if not remote_devices:

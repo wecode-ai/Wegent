@@ -3,11 +3,11 @@
 
 """Best-effort invalidation events for open Wework Issue projections."""
 
-import asyncio
 import logging
 
 from sqlalchemy.orm import Session
 
+from app.core.web_background_tasks import web_background_task_manager
 from app.models.delivery import LoopItem, LoopItemCollaborator
 from app.models.resource_member import (
     APPROVED_MEMBER_STATUS_VALUES,
@@ -79,17 +79,7 @@ def publish_loop_item_changed(
                 namespace=WEWORK_RUNTIME_NAMESPACE,
             )
 
-    try:
-        future = asyncio.run_coroutine_threadsafe(_emit(), loop)
-        future.add_done_callback(_log_emit_failure)
-    except Exception:
-        logger.warning(
-            "Failed to schedule loop-item invalidation item=%s", item.id, exc_info=True
-        )
-
-
-def _log_emit_failure(future: "asyncio.Future[None]") -> None:
-    try:
-        future.result()
-    except Exception:
-        logger.warning("Loop-item invalidation emit failed", exc_info=True)
+    web_background_task_manager.submit_from_sync(
+        _emit,
+        name=f"loop-item-invalidation-{item.id}-{item.version}",
+    )

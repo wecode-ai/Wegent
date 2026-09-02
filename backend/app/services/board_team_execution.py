@@ -3,6 +3,8 @@
 
 """Dispatch Wegent-runtime board robots through the native Wegent pipeline."""
 
+from dataclasses import dataclass
+
 from sqlalchemy.orm import Session
 
 from app.db.session import SessionLocal
@@ -13,8 +15,22 @@ from app.models.user import User
 from app.schemas.issue_workflow import WorkflowPlanView
 from app.services.loop_item_executions.profile import build_project_robot_user_input
 from app.services.project_automation_managed_execution import (
+    ManagedTeamExecutionHandle,
     project_automation_managed_execution_service,
 )
+
+
+@dataclass(frozen=True)
+class _BoardTeamDispatchIntent:
+    owner_user_id: int
+    agent_id: str
+    team_id: int
+    prompt: str
+    title: str
+    project_id: str
+    item_id: str
+    execution_id: int
+    sender_name: str
 
 
 def _execution_prompt(
@@ -78,6 +94,88 @@ async def dispatch_board_team_assignment(
     if execution is None:
         return None
     return await dispatch_board_robot_execution(db, execution_id=execution.id)
+
+
+async def dispatch_board_team_assignment_nonblocking(
+    *,
+    item_id: str,
+) -> ManagedTeamExecutionHandle | None:
+    """Dispatch an assigned Team using only detached values on the caller loop."""
+
+    from app.services.chat.storage.db import run_sync_in_executor
+
+    intent = await run_sync_in_executor(
+        _prepare_board_team_assignment_from_store,
+        item_id,
+    )
+    if intent is None:
+        return None
+    return await project_automation_managed_execution_service.dispatch_board_team_nonblocking(
+        owner_user_id=intent.owner_user_id,
+        agent_id=intent.agent_id,
+        team_id=intent.team_id,
+        prompt=intent.prompt,
+        title=intent.title,
+        project_id=intent.project_id,
+        loop_item_id=intent.item_id,
+        execution_id=intent.execution_id,
+        sender_name=intent.sender_name,
+    )
+
+
+def _prepare_board_team_assignment_from_store(
+    item_id: str,
+) -> _BoardTeamDispatchIntent | None:
+    from app.services.chat.storage.db import get_db_session
+    from app.services.project_chat.service import bot_config
+
+    with get_db_session() as db:
+        item = db.get(LoopItem, item_id)
+        if item is None or not item.assignee_agent_id:
+            return None
+        agent = db.get(ProjectChatAgent, item.assignee_agent_id)
+        if agent is None:
+            return None
+        config = bot_config(agent)
+        if config.get("runtime") != "wegent" or config.get("wegent_team_id") is None:
+            return None
+        team_id = int(config["wegent_team_id"])
+        execution = (
+            db.query(LoopItemExecution)
+            .filter(
+                LoopItemExecution.loop_item_id == item.id,
+                LoopItemExecution.agent_id == item.assignee_agent_id,
+                LoopItemExecution.team_id == team_id,
+                LoopItemExecution.status == "queued",
+            )
+            .order_by(LoopItemExecution.id.desc())
+            .first()
+        )
+        if execution is None:
+            return None
+        team = db.get(Kind, team_id)
+        owner = db.get(User, execution.executor_owner_user_id)
+        if team is None or team.kind != "Team" or not team.is_active:
+            raise RuntimeError("Assigned Wegent Team is unavailable")
+        if owner is None:
+            raise RuntimeError("Board robot execution owner is unavailable")
+        prompt, title = _execution_prompt(
+            db,
+            item=item,
+            execution=execution,
+            execution_prompt=str(config.get("execution_prompt") or ""),
+        )
+        return _BoardTeamDispatchIntent(
+            owner_user_id=owner.id,
+            agent_id=str(agent.id),
+            team_id=team.id,
+            prompt=prompt,
+            title=title,
+            project_id=str(item.cloud_project_id),
+            item_id=str(item.id),
+            execution_id=execution.id,
+            sender_name=agent.title or agent.name or "AI",
+        )
 
 
 async def dispatch_board_robot_execution(

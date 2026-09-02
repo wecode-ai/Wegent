@@ -47,7 +47,7 @@ def _raise_http_error(exc: Exception) -> None:
 
 
 @router.get("/signing-keys", response_model=SigningKeyListResponse)
-async def list_signing_keys(
+def list_signing_keys(
     db: Session = Depends(get_db),
     _: User = Depends(get_admin_user),
 ):
@@ -60,7 +60,7 @@ async def list_signing_keys(
     response_model=SigningKeyResponse,
     status_code=status.HTTP_201_CREATED,
 )
-async def create_signing_key(
+def create_signing_key(
     request: SigningKeyCreateRequest,
     db: Session = Depends(get_db),
     _: User = Depends(get_admin_user),
@@ -72,7 +72,7 @@ async def create_signing_key(
 
 
 @router.post("/signing-keys/{key_id}/toggle-status", response_model=SigningKeyResponse)
-async def toggle_signing_key_status(
+def toggle_signing_key_status(
     key_id: int,
     db: Session = Depends(get_db),
     _: User = Depends(get_admin_user),
@@ -84,7 +84,7 @@ async def toggle_signing_key_status(
 
 
 @router.delete("/signing-keys/{key_id}", status_code=status.HTTP_204_NO_CONTENT)
-async def delete_signing_key(
+def delete_signing_key(
     key_id: int,
     db: Session = Depends(get_db),
     _: User = Depends(get_admin_user),
@@ -97,7 +97,7 @@ async def delete_signing_key(
 
 
 @router.get("/token-issuers", response_model=TokenIssuerListResponse)
-async def list_token_issuers(
+def list_token_issuers(
     db: Session = Depends(get_db),
     _: User = Depends(get_admin_user),
 ):
@@ -110,7 +110,7 @@ async def list_token_issuers(
     response_model=TokenIssuerResponse,
     status_code=status.HTTP_201_CREATED,
 )
-async def create_token_issuer(
+def create_token_issuer(
     request: TokenIssuerCreateRequest,
     db: Session = Depends(get_db),
     _: User = Depends(get_admin_user),
@@ -122,7 +122,7 @@ async def create_token_issuer(
 
 
 @router.put("/token-issuers/{issuer_id}", response_model=TokenIssuerResponse)
-async def update_token_issuer(
+def update_token_issuer(
     issuer_id: int,
     request: TokenIssuerUpdateRequest,
     db: Session = Depends(get_db),
@@ -137,7 +137,7 @@ async def update_token_issuer(
 @router.post(
     "/token-issuers/{issuer_id}/toggle-status", response_model=TokenIssuerResponse
 )
-async def toggle_token_issuer_status(
+def toggle_token_issuer_status(
     issuer_id: int,
     db: Session = Depends(get_db),
     _: User = Depends(get_admin_user),
@@ -149,7 +149,7 @@ async def toggle_token_issuer_status(
 
 
 @router.delete("/token-issuers/{issuer_id}", status_code=status.HTTP_204_NO_CONTENT)
-async def delete_token_issuer(
+def delete_token_issuer(
     issuer_id: int,
     db: Session = Depends(get_db),
     _: User = Depends(get_admin_user),

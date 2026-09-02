@@ -60,7 +60,7 @@ class _FakeDb:
 
 @pytest.mark.asyncio
 async def test_get_quick_launch_functions_returns_empty_default():
-    response = await system_config_endpoint.get_quick_launch_functions_config(
+    response = system_config_endpoint.get_quick_launch_functions_config(
         db=_FakeDb(),
         current_user=SimpleNamespace(id=1),
     )
@@ -73,7 +73,7 @@ async def test_get_quick_launch_functions_returns_empty_default():
 async def test_update_quick_launch_functions_normalizes_input_presets():
     db = _FakeDb()
 
-    response = await system_config_endpoint.update_quick_launch_functions_config(
+    response = system_config_endpoint.update_quick_launch_functions_config(
         config_data=QuickLaunchFunctionsUpdate(
             functions=[
                 {

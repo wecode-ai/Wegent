@@ -19,7 +19,7 @@ router = APIRouter()
 
 
 @router.post("/namespaces/{namespace:path}/apply", response_model=BatchResponse)
-async def apply_resources(
+def apply_resources(
     namespace: str,
     resources: List[Dict[str, Any]],
     current_user: User = Depends(get_current_user),
@@ -42,7 +42,7 @@ async def apply_resources(
 
 
 @router.post("/namespaces/{namespace:path}/delete", response_model=BatchResponse)
-async def delete_resources(
+def delete_resources(
     namespace: str,
     resources: List[Dict[str, Any]],
     current_user: User = Depends(get_current_user),

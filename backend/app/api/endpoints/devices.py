@@ -12,6 +12,7 @@ Online status is managed via Redis with heartbeat mechanism.
 import logging
 import os
 import posixpath
+from dataclasses import dataclass
 from typing import Any, Literal, Optional
 
 from fastapi import APIRouter, Body, Depends, HTTPException, status
@@ -57,6 +58,18 @@ from app.services.runtime_work_kind_store import list_device_workspace_kinds
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
+
+
+@dataclass(frozen=True)
+class _DeviceUser:
+    id: int
+
+
+def _get_device_user(
+    current_user: User = Depends(security.get_current_user),
+) -> _DeviceUser:
+    return _DeviceUser(id=current_user.id)
+
 
 WORKSPACE_FILE_COMMAND_KEYS = {
     "workspace_tree",
@@ -291,7 +304,6 @@ async def _runtime_local_task_workspace_roots_for_command(
 
 async def _device_command_env(
     *,
-    db: Session,
     user_id: int,
     device_id: str,
     request: DeviceCommandRequest,
@@ -302,17 +314,13 @@ async def _device_command_env(
 
     env.pop(WORKSPACE_ROOTS_ENV, None)
     path = request.path or request.cwd
-    roots = _wework_local_workspace_roots_for_command(
-        db=db,
-        user_id=user_id,
-        device_id=device_id,
-        path=path,
-    )
-    roots += _runtime_device_workspace_roots_for_command(
-        db=db,
-        user_id=user_id,
-        device_id=device_id,
-        path=path,
+    from app.services.chat.storage.db import run_sync_in_executor
+
+    roots = await run_sync_in_executor(
+        _device_command_db_roots,
+        user_id,
+        device_id,
+        path,
     )
     roots = _dedupe_paths(roots)
     if not roots:
@@ -326,10 +334,32 @@ async def _device_command_env(
     return env
 
 
+def _device_command_db_roots(
+    user_id: int,
+    device_id: str,
+    path: Optional[str],
+) -> list[str]:
+    from app.services.chat.storage.db import get_db_session
+
+    with get_db_session() as db:
+        roots = _wework_local_workspace_roots_for_command(
+            db=db,
+            user_id=user_id,
+            device_id=device_id,
+            path=path,
+        )
+        roots += _runtime_device_workspace_roots_for_command(
+            db=db,
+            user_id=user_id,
+            device_id=device_id,
+            path=path,
+        )
+        return _dedupe_paths(roots)
+
+
 @router.get("", response_model=DeviceListResponse)
 async def get_all_devices(
-    db: Session = Depends(get_db),
-    current_user: User = Depends(security.get_current_user),
+    current_user: _DeviceUser = Depends(_get_device_user),
 ):
     """
     Get all devices for the current user (including offline).
@@ -340,7 +370,7 @@ async def get_all_devices(
     Returns:
         DeviceListResponse with all devices list
     """
-    devices = await device_service.get_all_devices(db, current_user.id)
+    devices = await device_service.get_all_devices_nonblocking(current_user.id)
     return DeviceListResponse(
         items=[DeviceInfo(**d) for d in devices],
         total=len(devices),
@@ -349,8 +379,7 @@ async def get_all_devices(
 
 @router.get("/online", response_model=DeviceListResponse)
 async def get_online_devices(
-    db: Session = Depends(get_db),
-    current_user: User = Depends(security.get_current_user),
+    current_user: _DeviceUser = Depends(_get_device_user),
 ):
     """
     Get only online devices for the current user.
@@ -361,7 +390,7 @@ async def get_online_devices(
     Returns:
         DeviceListResponse with online devices list
     """
-    devices = await device_service.get_online_devices(db, current_user.id)
+    devices = await device_service.get_online_devices_nonblocking(current_user.id)
     return DeviceListResponse(
         items=[DeviceInfo(**d) for d in devices],
         total=len(devices),
@@ -369,7 +398,7 @@ async def get_online_devices(
 
 
 @router.put("/{device_id}/default")
-async def set_default_device(
+def set_default_device(
     device_id: str,
     db: Session = Depends(get_db),
     current_user: User = Depends(security.get_current_user),
@@ -399,7 +428,7 @@ async def set_default_device(
 
 
 @router.delete("/{device_id}")
-async def delete_device(
+def delete_device(
     device_id: str,
     db: Session = Depends(get_db),
     current_user: User = Depends(security.get_current_user),
@@ -428,7 +457,7 @@ async def delete_device(
 
 
 @router.put("/{device_id}/alias")
-async def update_device_alias(
+def update_device_alias(
     device_id: str,
     request: DeviceUpdateAliasRequest,
     db: Session = Depends(get_db),
@@ -472,8 +501,7 @@ async def update_device_alias(
 async def trigger_device_upgrade(
     device_id: str,
     request: DeviceUpgradeRequest,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(security.get_current_user),
+    current_user: _DeviceUser = Depends(_get_device_user),
 ) -> DeviceUpgradeResponse:
     """
     Trigger a remote upgrade for a device.
@@ -496,9 +524,16 @@ async def trigger_device_upgrade(
     """
     user_id = current_user.id
 
-    # Check if device exists and user owns it
-    device_kind = device_service.get_device_by_device_id(db, user_id, device_id)
-    if not device_kind:
+    devices = await device_service.get_all_devices_nonblocking(user_id)
+    device_info = next(
+        (
+            device
+            for device in devices
+            if str(device.get("device_id") or "") == device_id
+        ),
+        None,
+    )
+    if device_info is None:
         logger.warning(
             f"[Device Upgrade] Device not found or access denied: "
             f"user_id={user_id}, device_id={device_id}"
@@ -507,26 +542,6 @@ async def trigger_device_upgrade(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Device not found or access denied",
         )
-
-    # Get device status from provider (includes Redis online status and running tasks)
-    from app.schemas.device import DeviceType
-    from app.services.device.provider_factory import DeviceProviderFactory
-
-    device_type_str = device_kind.json.get("spec", {}).get(
-        "deviceType", DeviceType.LOCAL.value
-    )
-    device_type = DeviceType(device_type_str)
-    provider = DeviceProviderFactory.get_provider(device_type)
-    if provider is None:
-        logger.error(
-            f"[Device Upgrade] No provider found for device type: {device_type}, "
-            f"user_id={user_id}, device_id={device_id}"
-        )
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"No provider available for device type: {device_type}",
-        )
-    device_info = await provider.get_status(db, user_id, device_id)
 
     # Check if device is online
     if device_info.get("status") != "online":
@@ -643,7 +658,7 @@ def _runtime_settings_response(
 )
 async def get_device_runtime_settings(
     device_id: str,
-    current_user: User = Depends(security.get_current_user),
+    current_user: _DeviceUser = Depends(_get_device_user),
 ) -> DeviceRuntimeSettingsResponse:
     """Read the total task concurrency owned by one connected Runtime."""
 
@@ -669,7 +684,7 @@ async def get_device_runtime_settings(
 async def update_device_runtime_settings(
     device_id: str,
     request: DeviceRuntimeSettingsUpdate,
-    current_user: User = Depends(security.get_current_user),
+    current_user: _DeviceUser = Depends(_get_device_user),
 ) -> DeviceRuntimeSettingsResponse:
     """Persist and apply one connected Runtime's total task concurrency."""
 
@@ -698,8 +713,7 @@ async def update_device_runtime_settings(
 async def execute_device_command(
     device_id: str,
     request: DeviceCommandRequest,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(security.get_current_user),
+    current_user: _DeviceUser = Depends(_get_device_user),
 ) -> DeviceCommandResponse:
     """
     Execute a shell command on an online local executor device.
@@ -710,14 +724,13 @@ async def execute_device_command(
     user_id = current_user.id
     try:
         result = await execute_configured_device_command(
-            db=db,
+            db=None,
             user_id=user_id,
             device_id=device_id,
             command_key=request.command_key,
             path=request.path or request.cwd,
             args=request.args,
             env=await _device_command_env(
-                db=db,
                 user_id=user_id,
                 device_id=device_id,
                 request=request,
@@ -771,16 +784,14 @@ async def execute_device_command(
 async def sync_device_git_accounts(
     device_id: str,
     request: DeviceGitAccountSyncRequest,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(security.get_current_user),
+    current_user: _DeviceUser = Depends(_get_device_user),
 ) -> DeviceGitAccountSyncResponse:
     """Reconcile current-user Git credentials to one selected device."""
 
     try:
         return DeviceGitAccountSyncResponse(
             **await sync_git_accounts_to_device(
-                db,
-                user=current_user,
+                user_id=current_user.id,
                 device_id=device_id,
                 allow_empty=request.allow_empty,
             )
@@ -848,8 +859,7 @@ class DeviceSessionCreate(BaseModel):
 async def start_device_terminal(
     device_id: str,
     payload: DeviceSessionCreate | None = Body(default=None),
-    db: Session = Depends(get_db),
-    current_user: User = Depends(security.get_current_user),
+    current_user: _DeviceUser = Depends(_get_device_user),
 ):
     """Start a terminal session on a device.
 
@@ -865,7 +875,6 @@ async def start_device_terminal(
     session_path = requested_path
     try:
         result = await local_device_session_service.start_session(
-            db=db,
             user_id=current_user.id,
             device_id=device_id,
             project_id=0,
@@ -894,8 +903,7 @@ async def start_device_terminal(
 async def start_device_code_server(
     device_id: str,
     payload: DeviceSessionCreate | None = Body(default=None),
-    db: Session = Depends(get_db),
-    current_user: User = Depends(security.get_current_user),
+    current_user: _DeviceUser = Depends(_get_device_user),
 ):
     """Start a code-server (IDE) session on a device.
 
@@ -911,7 +919,6 @@ async def start_device_code_server(
     session_path = requested_path
     try:
         result = await local_device_session_service.start_session(
-            db=db,
             user_id=current_user.id,
             device_id=device_id,
             project_id=0,

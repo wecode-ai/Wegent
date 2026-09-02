@@ -6,12 +6,15 @@
 
 import asyncio
 import logging
+from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, Optional
 from urllib.parse import urlparse
 
 from pydantic import BaseModel, Field
 
+from app.core.blocking_work import run_knowledge_io
+from app.core.bounded_executor import BoundedExecutorOverloaded
 from app.core.config import settings
 from app.services.web_scraper.classifier import ScrapeResultClassifier
 from app.services.web_scraper.models import (
@@ -31,11 +34,7 @@ from app.services.web_scraper.models import (
     ScrapeStatus,
 )
 from app.services.web_scraper.pdf_extractor import PdfExtractor
-from app.services.web_scraper.policy import (
-    DEFAULT_TOTAL_TIMEOUT_SECONDS,
-    ScrapePolicy,
-    SitePolicyResolver,
-)
+from app.services.web_scraper.policy import ScrapePolicy, SitePolicyResolver
 from app.services.web_scraper.profiles import BrowserProfileFactory
 from app.services.web_scraper.proxy import ProxyPlan, ProxyResolver
 from app.services.web_scraper.quality import MarkdownQualityEvaluator
@@ -95,6 +94,17 @@ class ScrapeError(BaseModel):
     url: str
 
 
+@dataclass(frozen=True)
+class _PreparedScrape:
+    """Validated scraper configuration detached from synchronous setup work."""
+
+    policy: ScrapePolicy
+    proxy_plan: ProxyPlan
+    profile: Any
+    direct_pdf: bool
+    crawl4ai_available: bool
+
+
 class WebScraperService:
     """Service for scraping web pages."""
 
@@ -144,16 +154,7 @@ class WebScraperService:
             if self._crawler is not None:
                 return self._crawler
 
-            from crawl4ai import AsyncWebCrawler, BrowserConfig
-
-            browser_config = BrowserConfig(
-                headless=True,
-                browser_type="chromium",
-                user_agent_mode="random",
-                use_managed_browser=True,
-                extra_args=["--no-sandbox", "--disable-dev-shm-usage"],
-            )
-            crawler = AsyncWebCrawler(config=browser_config)
+            crawler = await run_knowledge_io(self._create_crawler)
             try:
                 await crawler.start()
             except Exception:
@@ -167,6 +168,21 @@ class WebScraperService:
             self._crawler = crawler
         return self._crawler
 
+    @staticmethod
+    def _create_crawler() -> Any:
+        """Import Crawl4AI and validate its browser config off the loop."""
+
+        from crawl4ai import AsyncWebCrawler, BrowserConfig
+
+        browser_config = BrowserConfig(
+            headless=True,
+            browser_type="chromium",
+            user_agent_mode="random",
+            use_managed_browser=True,
+            extra_args=["--no-sandbox", "--disable-dev-shm-usage"],
+        )
+        return AsyncWebCrawler(config=browser_config)
+
     @trace_async(
         span_name="web_scraper.scrape_url",
         tracer_name="web_scraper",
@@ -175,33 +191,35 @@ class WebScraperService:
     async def scrape_url(self, url: str) -> ScrapedContent:
         """Scrape a web page and convert to Markdown."""
         try:
+            prepared = await run_knowledge_io(self._prepare_scrape, url)
             return await asyncio.wait_for(
-                self._scrape_url_impl(url),
-                timeout=self._resolve_total_timeout(url),
+                self._scrape_url_impl(url, prepared),
+                timeout=prepared.policy.total_timeout_seconds,
             )
         except asyncio.TimeoutError:
             return self._error_result(url, ERROR_FETCH_TIMEOUT, "Request timed out")
         except WebScraperSecurityError as exc:
             return self._error_result(url, exc.error_code, exc.message)
+        except BoundedExecutorOverloaded:
+            raise
         except Exception as exc:
             logger.exception("Web scraping failed for %s", redact_url_for_logging(url))
             return self._error_result(
                 url, ERROR_FETCH_FAILED, f"Failed to scrape page: {str(exc)}"
             )
 
-    async def _scrape_url_impl(self, url: str) -> ScrapedContent:
-        self._guard.validate_initial_url(url)
+    async def _scrape_url_impl(
+        self,
+        url: str,
+        prepared: _PreparedScrape,
+    ) -> ScrapedContent:
+        policy = prepared.policy
+        proxy_plan = prepared.proxy_plan
 
-        policy = self._policy_resolver.resolve(url)
-        proxy_plan = self._proxy_resolver.resolve(
-            mode=settings.WEBSCRAPER_PROXY_MODE,
-            raw_url=settings.WEBSCRAPER_PROXY,
-        )
-
-        if self._is_direct_pdf_url(url):
+        if prepared.direct_pdf:
             return await self._scrape_pdf(url, policy, proxy_plan)
 
-        if not self._check_crawl4ai():
+        if not prepared.crawl4ai_available:
             return self._error_result(
                 url,
                 ERROR_CRAWL4AI_NOT_INSTALLED,
@@ -209,7 +227,7 @@ class WebScraperService:
                 "pip install 'crawl4ai[sync]' && crawl4ai-setup",
             )
 
-        profile = self._profile_factory.create(policy.profile)
+        profile = prepared.profile
         primary = await self._crawl4ai_strategy.scrape(
             url=url,
             policy=policy,
@@ -217,22 +235,28 @@ class WebScraperService:
             proxy_plan=proxy_plan,
             guard=self._guard,
         )
-        primary_quality = self._quality_evaluator.evaluate(
-            primary.markdown, policy, primary.quality_level
+        primary_decision, primary_quality = await run_knowledge_io(
+            self._assess_result,
+            primary,
+            policy,
         )
-        primary_decision = self._classifier.classify(primary, primary_quality)
 
         if primary_decision.is_pdf:
             pdf_url = primary.final_url or url
             return await self._scrape_pdf(pdf_url, policy, proxy_plan)
 
         if primary_decision.status == ScrapeStatus.OK and primary_quality.acceptable:
-            return self._build_success(primary)
+            return await run_knowledge_io(self._build_success, primary)
 
         if not self._classifier.should_use_playwright_fallback(
             primary_decision, primary_quality, policy
         ):
-            return self._build_result(primary, primary_decision, primary_quality)
+            return await run_knowledge_io(
+                self._build_result,
+                primary,
+                primary_decision,
+                primary_quality,
+            )
 
         fallback = await self._playwright_strategy.scrape(
             url=url,
@@ -241,11 +265,17 @@ class WebScraperService:
             proxy_plan=proxy_plan,
             guard=self._guard,
         )
-        fallback_quality = self._quality_evaluator.evaluate(
-            fallback.markdown, policy, fallback.quality_level
+        fallback_decision, fallback_quality = await run_knowledge_io(
+            self._assess_result,
+            fallback,
+            policy,
         )
-        fallback_decision = self._classifier.classify(fallback, fallback_quality)
-        return self._build_result(fallback, fallback_decision, fallback_quality)
+        return await run_knowledge_io(
+            self._build_result,
+            fallback,
+            fallback_decision,
+            fallback_quality,
+        )
 
     async def _scrape_pdf(
         self,
@@ -258,25 +288,49 @@ class WebScraperService:
             proxy_plan=proxy_plan,
             guard=self._guard,
         )
-        pdf_quality = self._quality_evaluator.evaluate(
-            pdf_result.markdown, policy, pdf_result.quality_level
+        pdf_decision, pdf_quality = await run_knowledge_io(
+            self._assess_result,
+            pdf_result,
+            policy,
         )
-        pdf_decision = self._classifier.classify(pdf_result, pdf_quality)
-        return self._build_result(pdf_result, pdf_decision, pdf_quality)
+        return await run_knowledge_io(
+            self._build_result,
+            pdf_result,
+            pdf_decision,
+            pdf_quality,
+        )
+
+    def _prepare_scrape(self, url: str) -> _PreparedScrape:
+        """Validate URL and build Pydantic configuration outside the loop."""
+        self._guard.validate_initial_url(url)
+        policy = self._policy_resolver.resolve(url)
+        proxy_plan = self._proxy_resolver.resolve(
+            mode=settings.WEBSCRAPER_PROXY_MODE,
+            raw_url=settings.WEBSCRAPER_PROXY,
+        )
+        direct_pdf = self._is_direct_pdf_url(url)
+        return _PreparedScrape(
+            policy=policy,
+            proxy_plan=proxy_plan,
+            profile=self._profile_factory.create(policy.profile),
+            direct_pdf=direct_pdf,
+            crawl4ai_available=direct_pdf or self._check_crawl4ai(),
+        )
+
+    def _assess_result(
+        self,
+        result: InternalScrapeResult,
+        policy: ScrapePolicy,
+    ) -> tuple[ScrapeDecision, MarkdownQuality]:
+        quality = self._quality_evaluator.evaluate(
+            result.markdown,
+            policy,
+            result.quality_level,
+        )
+        return self._classifier.classify(result, quality), quality
 
     def _is_direct_pdf_url(self, url: str) -> bool:
         return urlparse(url).path.lower().endswith(".pdf")
-
-    def _resolve_total_timeout(self, url: str) -> int:
-        try:
-            return self._policy_resolver.resolve(url).total_timeout_seconds
-        except (AttributeError, KeyError, ValueError) as exc:
-            logger.warning(
-                "Failed to resolve scrape timeout for %s; using default: %s",
-                redact_url_for_logging(url),
-                exc,
-            )
-            return DEFAULT_TOTAL_TIMEOUT_SECONDS
 
     def _build_success(self, result: InternalScrapeResult) -> ScrapedContent:
         final_url = result.final_url or result.url

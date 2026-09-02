@@ -52,6 +52,24 @@ def _create_device_kind(
     return device
 
 
+def _detached_device(
+    device: Kind,
+    user: User,
+) -> device_monitor._AdminDeviceRecord:
+    spec = device.json["spec"]
+    return device_monitor._AdminDeviceRecord(
+        id=device.id,
+        device_id=spec["deviceId"],
+        name=spec["displayName"],
+        device_type=spec["deviceType"],
+        bind_shell=spec["bindShell"],
+        user_id=user.id,
+        user_name=user.user_name,
+        client_ip=None,
+        created_at=device.created_at.isoformat() if device.created_at else None,
+    )
+
+
 @pytest.mark.asyncio
 async def test_admin_device_monitor_filters_online_devices_by_version(
     test_db: Session,
@@ -62,7 +80,9 @@ async def test_admin_device_monitor_filters_online_devices_by_version(
         test_db, test_user.id, "device-online", "Online"
     )
     busy_device = _create_device_kind(test_db, test_user.id, "device-busy", "Busy")
-    _create_device_kind(test_db, test_user.id, "device-offline", "Offline")
+    offline_device = _create_device_kind(
+        test_db, test_user.id, "device-offline", "Offline"
+    )
 
     online_key = device_monitor.local_device_provider.generate_online_key(
         test_user.id, "device-online"
@@ -74,22 +94,36 @@ async def test_admin_device_monitor_filters_online_devices_by_version(
         test_user.id, "device-offline"
     )
 
-    with patch(
-        "app.api.endpoints.admin.device_monitor.cache_manager.mget",
-        new=AsyncMock(
-            return_value={
-                online_key: {
-                    "status": "online",
-                    "executor_version": "1.7.0",
-                    "running_task_ids": [],
+    with (
+        patch.object(
+            device_monitor,
+            "_load_device_query_snapshot_from_store",
+            return_value=device_monitor._AdminDeviceQuerySnapshot(
+                records=(
+                    _detached_device(online_device, test_user),
+                    _detached_device(busy_device, test_user),
+                    _detached_device(offline_device, test_user),
+                ),
+                total=3,
+            ),
+        ),
+        patch(
+            "app.api.endpoints.admin.device_monitor.cache_manager.mget",
+            new=AsyncMock(
+                return_value={
+                    online_key: {
+                        "status": "online",
+                        "executor_version": "1.7.0",
+                        "running_task_ids": [],
+                    },
+                    busy_key: {
+                        "status": "busy",
+                        "executor_version": "1.8.0",
+                        "running_task_ids": [],
+                    },
+                    offline_key: None,
                 },
-                busy_key: {
-                    "status": "busy",
-                    "executor_version": "1.8.0",
-                    "running_task_ids": [],
-                },
-                offline_key: None,
-            }
+            ),
         ),
     ):
         response = await device_monitor.get_all_devices(
@@ -101,7 +135,6 @@ async def test_admin_device_monitor_filters_online_devices_by_version(
             search=None,
             version_op="gte",
             version="1.7.0",
-            db=test_db,
             current_user=test_admin_user,
         )
 
@@ -119,7 +152,9 @@ async def test_admin_device_monitor_ignores_version_filter_for_offline_status(
     test_admin_user: User,
     test_user: User,
 ):
-    _create_device_kind(test_db, test_user.id, "device-online", "Online")
+    online_device = _create_device_kind(
+        test_db, test_user.id, "device-online", "Online"
+    )
     offline_device = _create_device_kind(
         test_db, test_user.id, "device-offline", "Offline"
     )
@@ -131,17 +166,30 @@ async def test_admin_device_monitor_ignores_version_filter_for_offline_status(
         test_user.id, "device-offline"
     )
 
-    with patch(
-        "app.api.endpoints.admin.device_monitor.cache_manager.mget",
-        new=AsyncMock(
-            return_value={
-                online_key: {
-                    "status": "online",
-                    "executor_version": "1.5.0",
-                    "running_task_ids": [],
+    with (
+        patch.object(
+            device_monitor,
+            "_load_device_query_snapshot_from_store",
+            return_value=device_monitor._AdminDeviceQuerySnapshot(
+                records=(
+                    _detached_device(offline_device, test_user),
+                    _detached_device(online_device, test_user),
+                ),
+                total=2,
+            ),
+        ),
+        patch(
+            "app.api.endpoints.admin.device_monitor.cache_manager.mget",
+            new=AsyncMock(
+                return_value={
+                    online_key: {
+                        "status": "online",
+                        "executor_version": "1.5.0",
+                        "running_task_ids": [],
+                    },
+                    offline_key: None,
                 },
-                offline_key: None,
-            }
+            ),
         ),
     ):
         response = await device_monitor.get_all_devices(
@@ -153,7 +201,6 @@ async def test_admin_device_monitor_ignores_version_filter_for_offline_status(
             search=None,
             version_op="gte",
             version="9.9.9",
-            db=test_db,
             current_user=test_admin_user,
         )
 
@@ -195,15 +242,16 @@ async def test_admin_device_monitor_restarts_all_cloud_devices(
     restarted: list[tuple[int, str]] = []
     scheduled = []
 
-    async def fake_restart(_db: Session, user_id: int, device_id: str):
+    async def fake_restart(user_id: int, device_id: str):
         restarted.append((user_id, device_id))
         return AdminDeviceBatchOperationResult(
             success=True,
             message=f"Restart queued for {device_id}",
         )
 
-    def capture_schedule(coro):
-        scheduled.append(coro)
+    def capture_schedule(factory, *, name: str):
+        assert name.startswith("admin-device-cloud-restart-")
+        scheduled.append(factory())
 
     device_monitor.admin_device_batch_manager._reset_for_tests()
     with (
@@ -216,9 +264,22 @@ async def test_admin_device_monitor_restarts_all_cloud_devices(
             "_schedule",
             new=capture_schedule,
         ),
+        patch.object(
+            device_monitor,
+            "_load_batch_targets_from_store",
+            return_value=[
+                device_monitor.AdminDeviceBatchTarget(
+                    user_id=test_user.id,
+                    device_id="cloud-device-1",
+                ),
+                device_monitor.AdminDeviceBatchTarget(
+                    user_id=test_user.id,
+                    device_id="cloud-device-2",
+                ),
+            ],
+        ),
     ):
         response = await device_monitor.restart_all_cloud_devices(
-            db=test_db,
             current_user=test_admin_user,
         )
         assert response.total == 2
@@ -227,7 +288,7 @@ async def test_admin_device_monitor_restarts_all_cloud_devices(
         assert restarted == []
 
         await scheduled[0]
-        status_response = await device_monitor.get_device_batch_status(
+        status_response = device_monitor.get_device_batch_status(
             batch_id=response.batch_id,
             current_user=test_admin_user,
         )
@@ -271,8 +332,9 @@ async def test_admin_device_monitor_upgrades_only_eligible_local_devices(
         emitted.append((socket_id, params))
         return True
 
-    def capture_schedule(coro):
-        scheduled.append(coro)
+    def capture_schedule(factory, *, name: str):
+        assert name.startswith("admin-device-local-upgrade-")
+        scheduled.append(factory())
 
     device_monitor.admin_device_batch_manager._reset_for_tests()
     with (
@@ -305,10 +367,27 @@ async def test_admin_device_monitor_upgrades_only_eligible_local_devices(
             "_schedule",
             new=capture_schedule,
         ),
+        patch.object(
+            device_monitor,
+            "_load_batch_targets_from_store",
+            return_value=[
+                device_monitor.AdminDeviceBatchTarget(
+                    user_id=test_user.id,
+                    device_id="local-ready",
+                ),
+                device_monitor.AdminDeviceBatchTarget(
+                    user_id=test_user.id,
+                    device_id="local-old",
+                ),
+                device_monitor.AdminDeviceBatchTarget(
+                    user_id=test_user.id,
+                    device_id="local-offline",
+                ),
+            ],
+        ),
     ):
         response = await device_monitor.upgrade_all_local_devices(
             request=device_monitor.AdminDeviceBatchUpgradeRequest(),
-            db=test_db,
             current_user=test_admin_user,
         )
         assert response.total == 3
@@ -317,7 +396,7 @@ async def test_admin_device_monitor_upgrades_only_eligible_local_devices(
         assert emitted == []
 
         await scheduled[0]
-        status_response = await device_monitor.get_device_batch_status(
+        status_response = device_monitor.get_device_batch_status(
             batch_id=response.batch_id,
             current_user=test_admin_user,
         )

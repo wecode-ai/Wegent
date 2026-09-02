@@ -6,11 +6,21 @@ import io
 import json
 import logging
 import re
+from dataclasses import dataclass
 from datetime import datetime
 from typing import Annotated, Literal, Optional
 
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, status
+from fastapi import (
+    APIRouter,
+    BackgroundTasks,
+    Depends,
+    HTTPException,
+    Query,
+    Request,
+    status,
+)
 from fastapi.responses import StreamingResponse
+from pydantic import TypeAdapter
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import Session
 
@@ -21,6 +31,9 @@ from app.core.constants import (
     CLIENT_ORIGIN_FRONTEND,
     SUPPORTED_CLIENT_ORIGINS,
 )
+from app.core.payload_codec import run_payload_codec, validate_model
+from app.core.request_body_limit import PROMPT_DRAFT_BODY_MAX_BYTES
+from app.core.request_json import validate_json_request
 from app.db.session import get_async_db
 from app.models.user import User
 from app.schemas.remote_workspace import (
@@ -62,8 +75,20 @@ from app.schemas.task_fork import TaskForkRequest, TaskForkResponse
 from app.services import prompt_draft_service
 from app.services.adapters.executor_job import job_service
 from app.services.adapters.task_kinds import task_kinds_service
-from app.services.chat.storage import session_manager
-from app.services.remote_workspace_service import remote_workspace_service
+from app.services.chat.storage.db import run_sync_in_executor
+from app.services.execution.stream_client import (
+    StreamWorkerExecutionError,
+    StreamWorkerUnavailableError,
+)
+from app.services.execution.web_stream_client import web_stream_worker_client
+from app.services.execution.web_stream_protocol import (
+    PROMPT_DRAFT_EXECUTE,
+    PROMPT_DRAFT_STREAM,
+    REMOTE_WORKSPACE_FILE_STREAM,
+    REMOTE_WORKSPACE_STATUS_EXECUTE,
+    REMOTE_WORKSPACE_TREE_EXECUTE,
+    TASK_RUNTIME_ACTIVE_STREAM_EXECUTE,
+)
 from app.services.shared_task import shared_task_service
 from app.services.task_fork import task_fork_service
 from app.stores.tasks import task_store
@@ -71,6 +96,80 @@ from shared.telemetry.decorators import trace_sync
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
+_PROMPT_DRAFT_STREAM_VALIDATOR = TypeAdapter(PromptDraftGenerateRequest)
+
+
+@dataclass(frozen=True)
+class _TaskRuntimeSnapshot:
+    status: str
+    updated_at: datetime | None
+
+
+def _load_task_runtime_snapshot_sync(
+    task_id: int,
+    user_id: int,
+) -> _TaskRuntimeSnapshot:
+    from app.services.chat.storage.db import get_db_session
+
+    with get_db_session() as db:
+        task = task_kinds_service.get_task_by_id(
+            db=db,
+            task_id=task_id,
+            user_id=user_id,
+        )
+        return _TaskRuntimeSnapshot(
+            status=str(task["status"]),
+            updated_at=task.get("updated_at"),
+        )
+
+
+def _prompt_draft_stream_payload(
+    context: prompt_draft_service.PromptDraftContext,
+    source: str | None,
+    current_prompt: str | None,
+    regenerate: bool,
+) -> dict:
+    return {
+        "context": {
+            "task_id": context.task_id,
+            "user_id": context.user_id,
+            "selected_model": context.selected_model,
+            "model_config": context.model_config,
+            "conversation_blocks": list(context.conversation_blocks),
+        },
+        "source": source,
+        "current_prompt": current_prompt,
+        "regenerate": regenerate,
+    }
+
+
+async def _decode_prompt_draft_stream_request(
+    request: Request,
+) -> PromptDraftGenerateRequest:
+    return await validate_json_request(
+        request,
+        _PROMPT_DRAFT_STREAM_VALIDATOR,
+        max_bytes=PROMPT_DRAFT_BODY_MAX_BYTES,
+    )
+
+
+async def _execute_worker_operation(
+    operation: str,
+    payload: dict,
+) -> dict:
+    try:
+        return await web_stream_worker_client.execute(operation, payload)
+    except StreamWorkerUnavailableError as error:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Backend Stream worker is unavailable",
+        ) from error
+    except StreamWorkerExecutionError as error:
+        raise HTTPException(
+            status_code=error.status_code or status.HTTP_502_BAD_GATEWAY,
+            detail=str(error),
+        ) from error
+
 
 ClientOriginQuery = Annotated[
     str,
@@ -378,39 +477,35 @@ def delete_all_personal_tasks(
 @router.get("/{task_id}/runtime-check", response_model=TaskRuntimeCheck)
 async def get_task_runtime_check(
     task_id: int = Depends(with_task_telemetry),
-    current_user: User = Depends(security.get_current_user),
-    db: Session = Depends(get_db),
+    current_user: security.DetachedUser = Depends(security.get_detached_current_user),
 ):
     """Return lightweight task/runtime consistency checkpoint.
 
     This endpoint must not return message content. Messages are recovered via
     WebSocket join/resume only.
     """
-    task = task_kinds_service.get_task_by_id(
-        db=db, task_id=task_id, user_id=current_user.id
+    snapshot = await run_sync_in_executor(
+        _load_task_runtime_snapshot_sync,
+        task_id,
+        current_user.id,
     )
 
     active_stream = None
-    streaming_status = await session_manager.get_task_streaming_status(task_id)
-    if streaming_status:
-        raw_subtask_id = streaming_status.get("subtask_id")
-        subtask_id = int(raw_subtask_id) if raw_subtask_id is not None else None
-        if subtask_id is not None:
-            cached_content = await session_manager.get_streaming_content(subtask_id)
-            active_stream = TaskRuntimeActiveStream(
-                subtask_id=subtask_id,
-                cursor=len(cached_content or ""),
-                last_activity_at=(
-                    datetime.fromisoformat(streaming_status["last_activity_at"])
-                    if streaming_status.get("last_activity_at")
-                    else None
-                ),
-            )
+    runtime_result = await _execute_worker_operation(
+        TASK_RUNTIME_ACTIVE_STREAM_EXECUTE,
+        {"task_id": task_id},
+    )
+    raw_active_stream = runtime_result.get("active_stream")
+    if isinstance(raw_active_stream, dict):
+        active_stream = await validate_model(
+            TaskRuntimeActiveStream,
+            raw_active_stream,
+        )
 
     return TaskRuntimeCheck(
         task_id=task_id,
-        task_status=task["status"],
-        status_updated_at=task.get("updated_at"),
+        task_status=snapshot.status,
+        status_updated_at=snapshot.updated_at,
         active_stream=active_stream,
     )
 
@@ -463,16 +558,14 @@ def unarchive_task(
     "/{task_id}/remote-workspace/status",
     response_model=RemoteWorkspaceStatusResponse,
 )
-def get_remote_workspace_status(
+async def get_remote_workspace_status(
     task_id: int = Depends(with_task_telemetry),
-    current_user: User = Depends(security.get_current_user),
-    db: Session = Depends(get_db),
+    current_user: security.DetachedUser = Depends(security.get_detached_current_user),
 ):
     """Get remote workspace connection and availability status for a task."""
-    return remote_workspace_service.get_status(
-        db=db,
-        task_id=task_id,
-        user_id=current_user.id,
+    return await _execute_worker_operation(
+        REMOTE_WORKSPACE_STATUS_EXECUTE,
+        {"task_id": task_id, "user_id": current_user.id},
     )
 
 
@@ -480,38 +573,74 @@ def get_remote_workspace_status(
     "/{task_id}/remote-workspace/tree",
     response_model=RemoteWorkspaceTreeResponse,
 )
-def get_remote_workspace_tree(
-    path: str = Query("/workspace", description="Workspace path to list"),
+async def get_remote_workspace_tree(
+    path: str = Query(
+        "/workspace",
+        max_length=4096,
+        description="Workspace path to list",
+    ),
     task_id: int = Depends(with_task_telemetry),
-    current_user: User = Depends(security.get_current_user),
-    db: Session = Depends(get_db),
+    current_user: security.DetachedUser = Depends(security.get_detached_current_user),
 ):
     """List remote workspace tree under /workspace."""
-    return remote_workspace_service.list_tree(
-        db=db,
-        task_id=task_id,
-        user_id=current_user.id,
-        path=path,
+    return await _execute_worker_operation(
+        REMOTE_WORKSPACE_TREE_EXECUTE,
+        {"task_id": task_id, "user_id": current_user.id, "path": path},
     )
 
 
 @router.get("/{task_id}/remote-workspace/file")
-def get_remote_workspace_file(
-    path: str = Query(..., description="Workspace file path"),
+async def get_remote_workspace_file(
+    path: str = Query(..., max_length=4096, description="Workspace file path"),
     disposition: str = Query(
         "inline", pattern="^(inline|attachment)$", description="File disposition"
     ),
     task_id: int = Depends(with_task_telemetry),
-    current_user: User = Depends(security.get_current_user),
-    db: Session = Depends(get_db),
+    current_user: security.DetachedUser = Depends(security.get_detached_current_user),
 ):
     """Stream remote workspace file for inline preview or attachment download."""
-    return remote_workspace_service.stream_file(
-        db=db,
-        task_id=task_id,
-        user_id=current_user.id,
-        path=path,
-        disposition=disposition,
+    try:
+        worker_response = await web_stream_worker_client.open_raw_stream(
+            REMOTE_WORKSPACE_FILE_STREAM,
+            {
+                "task_id": task_id,
+                "user_id": current_user.id,
+                "path": path,
+                "disposition": disposition,
+            },
+        )
+    except StreamWorkerUnavailableError as error:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Remote workspace worker is unavailable",
+        ) from error
+    except StreamWorkerExecutionError as error:
+        raise HTTPException(
+            status_code=error.status_code or status.HTTP_502_BAD_GATEWAY,
+            detail=str(error),
+        ) from error
+
+    content_type = worker_response.metadata.get("content_type")
+    content_disposition = worker_response.metadata.get("content_disposition")
+    if (
+        not isinstance(content_type, str)
+        or not content_type
+        or "\r" in content_type
+        or "\n" in content_type
+        or not isinstance(content_disposition, str)
+        or not content_disposition
+        or "\r" in content_disposition
+        or "\n" in content_disposition
+    ):
+        await worker_response.body.aclose()
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="Remote workspace worker returned invalid metadata",
+        )
+    return StreamingResponse(
+        worker_response.body,
+        media_type=content_type,
+        headers={"Content-Disposition": content_disposition},
     )
 
 
@@ -540,24 +669,35 @@ def get_task_skills(
 
 
 @router.post(
-    "/{task_id}/prompt-drafts/generate", response_model=PromptDraftGenerateResponse
+    "/{task_id}/prompt-drafts/generate",
+    response_model=PromptDraftGenerateResponse,
+    openapi_extra={
+        "requestBody": {
+            "required": True,
+            "content": {
+                "application/json": {
+                    "schema": PromptDraftGenerateRequest.model_json_schema()
+                }
+            },
+        }
+    },
 )
-def generate_task_prompt_draft(
-    request: PromptDraftGenerateRequest,
+async def generate_task_prompt_draft(
+    request: PromptDraftGenerateRequest = Depends(_decode_prompt_draft_stream_request),
     task_id: int = Depends(with_task_telemetry),
-    current_user: User = Depends(security.get_current_user),
-    db: Session = Depends(get_db),
+    current_user: security.DetachedUser = Depends(security.get_detached_current_user),
 ):
     """Generate a prompt draft from current task conversation."""
+    user_id = current_user.id
+    user_name = current_user.user_name or ""
+    del current_user
     try:
-        return prompt_draft_service.generate_prompt_draft(
-            db=db,
-            task_id=task_id,
-            current_user=current_user,
-            model=request.model,
-            source=request.source,
-            current_prompt=request.current_prompt,
-            regenerate=request.regenerate,
+        context = await run_sync_in_executor(
+            prompt_draft_service.prepare_prompt_draft_stream_context,
+            task_id,
+            user_id,
+            user_name,
+            request.model,
         )
     except prompt_draft_service.PromptDraftTaskNotFoundError:
         raise HTTPException(status_code=404, detail="Task not found")
@@ -565,13 +705,16 @@ def generate_task_prompt_draft(
         raise HTTPException(
             status_code=400, detail="Conversation is too short to generate prompt"
         )
+    except prompt_draft_service.PromptDraftConversationTooLargeError:
+        raise HTTPException(
+            status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+            detail="Conversation is too large to generate prompt",
+        )
     except prompt_draft_service.PromptDraftModelUnavailableError:
         raise HTTPException(
             status_code=400,
             detail="No available model for prompt draft generation",
         )
-    except prompt_draft_service.PromptDraftGenerationFailedError:
-        raise HTTPException(status_code=502, detail="Prompt draft generation failed")
     except ValueError as exc:
         if str(exc) == "task_not_found":
             raise HTTPException(status_code=404, detail="Task not found")
@@ -585,26 +728,78 @@ def generate_task_prompt_draft(
             )
         raise
 
+    payload = await run_payload_codec(
+        _prompt_draft_stream_payload,
+        context,
+        request.source,
+        request.current_prompt,
+        request.regenerate,
+        payload_hint=context,
+        force_offload=True,
+    )
+    try:
+        return await web_stream_worker_client.execute(
+            PROMPT_DRAFT_EXECUTE,
+            payload,
+        )
+    except StreamWorkerUnavailableError as error:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Prompt draft worker is unavailable",
+        ) from error
+    except StreamWorkerExecutionError as error:
+        raise HTTPException(
+            status_code=error.status_code or status.HTTP_502_BAD_GATEWAY,
+            detail=str(error),
+        ) from error
 
-@router.post("/{task_id}/prompt-drafts/generate/stream")
+
+@router.post(
+    "/{task_id}/prompt-drafts/generate/stream",
+    openapi_extra={
+        "requestBody": {
+            "required": True,
+            "content": {
+                "application/json": {
+                    "schema": PromptDraftGenerateRequest.model_json_schema()
+                }
+            },
+        }
+    },
+)
 async def generate_task_prompt_draft_stream(
-    request: PromptDraftGenerateRequest,
+    request: PromptDraftGenerateRequest = Depends(_decode_prompt_draft_stream_request),
     task_id: int = Depends(with_task_telemetry),
-    current_user: User = Depends(security.get_current_user),
-    db: Session = Depends(get_db),
+    current_user: security.DetachedUser = Depends(security.get_detached_current_user),
 ):
     """Generate prompt draft as SSE stream events."""
 
+    user_id = current_user.id
+    user_name = current_user.user_name or ""
+    model = request.model
+    source = request.source
+    current_prompt = request.current_prompt
+    regenerate = request.regenerate
+    del current_user
+
     try:
-        # Pre-check to return 4xx before streaming starts.
-        prompt_draft_service.validate_prompt_draft_context(
-            db=db, task_id=task_id, current_user=current_user, model=request.model
+        context = await run_sync_in_executor(
+            prompt_draft_service.prepare_prompt_draft_stream_context,
+            task_id,
+            user_id,
+            user_name,
+            model,
         )
     except prompt_draft_service.PromptDraftTaskNotFoundError:
         raise HTTPException(status_code=404, detail="Task not found")
     except prompt_draft_service.PromptDraftConversationTooShortError:
         raise HTTPException(
             status_code=400, detail="Conversation is too short to generate prompt"
+        )
+    except prompt_draft_service.PromptDraftConversationTooLargeError:
+        raise HTTPException(
+            status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+            detail="Conversation is too large to generate prompt",
         )
     except prompt_draft_service.PromptDraftModelUnavailableError:
         raise HTTPException(
@@ -618,19 +813,19 @@ async def generate_task_prompt_draft_stream(
             raise HTTPException(status_code=400, detail="Model not found")
         raise
 
-    async def event_stream():
-        async for event in prompt_draft_service.generate_prompt_draft_stream(
-            db=db,
-            task_id=task_id,
-            current_user=current_user,
-            model=request.model,
-            source=request.source,
-            current_prompt=request.current_prompt,
-            regenerate=request.regenerate,
-        ):
-            yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
-
-    return StreamingResponse(event_stream(), media_type="text/event-stream")
+    payload = await run_payload_codec(
+        _prompt_draft_stream_payload,
+        context,
+        source,
+        current_prompt,
+        regenerate,
+        payload_hint=context,
+        force_offload=True,
+    )
+    return StreamingResponse(
+        web_stream_worker_client.stream(PROMPT_DRAFT_STREAM, payload),
+        media_type="text/event-stream",
+    )
 
 
 @router.put("/{task_id}", response_model=TaskInDB)
@@ -669,12 +864,10 @@ def delete_task(
 async def cancel_task(
     background_tasks: BackgroundTasks,
     task_id: int = Depends(with_task_telemetry),
-    current_user: User = Depends(security.get_current_user),
-    db: Session = Depends(get_db),
+    current_user: security.DetachedUser = Depends(security.get_detached_current_user),
 ):
     """Cancel a running task by calling executor_manager or Chat Shell cancel"""
-    return await task_kinds_service.cancel_task(
-        db=db,
+    return await task_kinds_service.cancel_task_nonblocking(
         task_id=task_id,
         user_id=current_user.id,
         background_task_runner=background_tasks.add_task,
@@ -832,7 +1025,7 @@ def sanitize_filename(name: str) -> str:
 
 
 @router.get("/{task_id}/export/docx", summary="Export task as DOCX")
-async def export_task_docx(
+def export_task_docx(
     task_id: int,
     message_ids: Optional[str] = Query(
         None,

@@ -9,130 +9,65 @@ import json
 import pytest
 
 from app.services.chat.storage.session import SessionManager
+from tests.services.chat.storage.fake_stream_redis import FakeCache, FakeRedisClient
 
 
-class FakeRedisClient:
-    def __init__(self):
-        self.lists = {}
-        self.values = {}
-        self.expirations = {}
-        self.lset_calls = []
-        self.pipeline_execute_count = 0
+@pytest.mark.asyncio
+async def test_legacy_active_stream_without_usage_counters_remains_readable():
+    manager = SessionManager()
+    content_key = "chat:streaming:block_content:41:text-1"
+    blocks_key = "chat:streaming:blocks:41"
+    raw_block = json.dumps(
+        {
+            "id": "text-1",
+            "type": "text",
+            "content": "",
+            "_content_key": content_key,
+        }
+    )
+    redis_client = FakeRedisClient(
+        values={content_key: "existing"},
+        lists={blocks_key: [raw_block]},
+    )
+    manager._cache = FakeCache(redis_client)
 
-    async def get(self, key):
-        return self.values.get(key)
-
-    async def mget(self, keys):
-        return [self.values.get(key) for key in keys]
-
-    async def set(self, key, value, ex=None):
-        self.values[key] = value
-        if ex is not None:
-            self.expirations[key] = ex
-        return True
-
-    async def append(self, key, value):
-        self.values[key] = self.values.get(key, "") + value
-        return len(self.values[key])
-
-    async def delete(self, *keys):
-        for key in keys:
-            self.values.pop(key, None)
-            self.lists.pop(key, None)
-        return len(keys)
-
-    async def rpush(self, key, value):
-        self.lists.setdefault(key, []).append(value)
-        return len(self.lists[key])
-
-    async def lrange(self, key, start, end):
-        values = self.lists.get(key, [])
-        if end == -1:
-            return values[start:]
-        return values[start : end + 1]
-
-    async def lset(self, key, index, value):
-        self.lset_calls.append((key, index, value))
-        self.lists[key][index] = value
-        return True
-
-    async def expire(self, key, ttl):
-        self.expirations[key] = ttl
-        return True
-
-    def pipeline(self, transaction=True):
-        return FakePipeline(self)
-
-    async def aclose(self):
-        return None
+    assert await manager.get_blocks(41) == [
+        {"id": "text-1", "type": "text", "content": "existing"}
+    ]
 
 
-class FakePipeline:
-    def __init__(self, redis_client):
-        self.redis_client = redis_client
-        self.commands = []
+@pytest.mark.asyncio
+async def test_first_write_to_legacy_active_stream_creates_usage_counters():
+    manager = SessionManager()
+    content_key = "chat:streaming:block_content:42:text-1"
+    blocks_key = "chat:streaming:blocks:42"
+    usage_key = "chat:streaming:blocks_usage:42"
+    active_key = "chat:streaming:text_block:42"
+    raw_block = json.dumps(
+        {
+            "id": "text-1",
+            "type": "text",
+            "content": "",
+            "_content_key": content_key,
+        }
+    )
+    redis_client = FakeRedisClient(
+        values={
+            content_key: "old",
+            active_key: "text-1",
+            "chat:streaming:42": "old",
+        },
+        lists={blocks_key: [raw_block]},
+    )
+    manager._cache = FakeCache(redis_client)
 
-    async def __aenter__(self):
-        return self
+    assert await manager.add_text_content(42, "new") is True
 
-    async def __aexit__(self, exc_type, exc, tb):
-        return None
-
-    def append(self, key, value):
-        self.commands.append(("append", key, value))
-        return self
-
-    def expire(self, key, ttl):
-        self.commands.append(("expire", key, ttl))
-        return self
-
-    def rpush(self, key, value):
-        self.commands.append(("rpush", key, value))
-        return self
-
-    def set(self, key, value, ex=None):
-        self.commands.append(("set", key, value, ex))
-        return self
-
-    def lset(self, key, index, value):
-        self.commands.append(("lset", key, index, value))
-        return self
-
-    def delete(self, *keys):
-        self.commands.append(("delete", *keys))
-        return self
-
-    async def execute(self):
-        self.redis_client.pipeline_execute_count += 1
-        results = []
-        for command in self.commands:
-            name = command[0]
-            if name == "append":
-                results.append(await self.redis_client.append(command[1], command[2]))
-            elif name == "expire":
-                results.append(await self.redis_client.expire(command[1], command[2]))
-            elif name == "rpush":
-                results.append(await self.redis_client.rpush(command[1], command[2]))
-            elif name == "set":
-                results.append(
-                    await self.redis_client.set(command[1], command[2], ex=command[3])
-                )
-            elif name == "lset":
-                results.append(
-                    await self.redis_client.lset(command[1], command[2], command[3])
-                )
-            elif name == "delete":
-                results.append(await self.redis_client.delete(*command[1:]))
-        self.commands = []
-        return results
-
-
-class FakeCache:
-    def __init__(self, redis_client):
-        self.redis_client = redis_client
-
-    async def _get_client(self):
-        return self.redis_client
+    assert redis_client.values[content_key] == "oldnew"
+    assert redis_client.hashes[usage_key] == {
+        "metadata_bytes": len(raw_block.encode("utf-8")),
+        "content_bytes": len("oldnew".encode("utf-8")),
+    }
 
 
 @pytest.mark.asyncio

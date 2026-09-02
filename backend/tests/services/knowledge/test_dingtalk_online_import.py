@@ -18,8 +18,9 @@ import aiohttp
 import pytest
 from fastapi.testclient import TestClient
 from openpyxl import Workbook
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, sessionmaker
 
+from app.db import session as db_session
 from app.models.dingtalk_doc import DingTalkNodeSource, DingtalkSyncedNode
 from app.models.knowledge import DocumentIndexStatus
 from app.models.user import User
@@ -40,6 +41,25 @@ from app.services.knowledge.external_document_providers import (
 from app.services.knowledge.knowledge_service import KnowledgeService
 
 McpFixture = tuple[dict[str, Any], MagicMock]
+
+
+@pytest.fixture(autouse=True)
+def dingtalk_owned_session_factory(
+    test_db: Session,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Bind worker-owned DingTalk sessions to the current test transaction."""
+    monkeypatch.setattr(
+        db_session,
+        "SessionLocal",
+        sessionmaker(
+            autocommit=False,
+            autoflush=False,
+            bind=test_db.get_bind(),
+            expire_on_commit=False,
+            join_transaction_mode="create_savepoint",
+        ),
+    )
 
 
 @pytest.mark.asyncio
@@ -102,7 +122,10 @@ async def spreadsheet_source(
     }
     responses["list_nodes"] = {"success": True, "nodes": [info]}
     responses["get_document_info"] = info
-    await DingTalkDocService.sync_dingtalk_docs(test_user, test_db)
+    await DingTalkDocService.sync_dingtalk_docs(
+        test_user.id,
+        test_user.preferences,
+    )
     return DingTalkExternalDocumentProvider()
 
 
@@ -150,7 +173,10 @@ async def test_missing_export_configuration_does_not_block_text_import(
     }
     responses["list_nodes"] = {"success": True, "nodes": [info]}
     responses["get_document_info"] = info
-    await DingTalkDocService.sync_dingtalk_docs(test_user, test_db)
+    await DingTalkDocService.sync_dingtalk_docs(
+        test_user.id,
+        test_user.preferences,
+    )
     assert (
         await online_source.fetch_content(test_db, test_user, "online-doc")
     ).file_extension == "md"
@@ -388,7 +414,10 @@ async def test_ai_table_exports_whole_base_and_polls_same_task(
             }
         ),
     }
-    await DingTalkDocService.sync_dingtalk_docs(test_user, test_db)
+    await DingTalkDocService.sync_dingtalk_docs(
+        test_user.id,
+        test_user.preferences,
+    )
 
     content = await DingTalkExternalDocumentProvider().fetch_content(
         test_db, test_user, "base-1"
@@ -620,7 +649,10 @@ async def test_regular_file_download_preserves_bytes_and_extension(
     monkeypatch.setattr(
         "socket.getaddrinfo", lambda *args: [(2, 1, 6, "", ("93.184.216.34", 443))]
     )
-    await DingTalkDocService.sync_dingtalk_docs(test_user, test_db)
+    await DingTalkDocService.sync_dingtalk_docs(
+        test_user.id,
+        test_user.preferences,
+    )
 
     content = await DingTalkExternalDocumentProvider().fetch_content(
         test_db, test_user, "file-pdf"
@@ -732,7 +764,11 @@ async def test_manual_refresh_makes_online_document_importable_in_place(
         ],
     }
 
-    await DingTalkDocService.sync_dingtalk_docs(test_user, test_db)
+    await DingTalkDocService.sync_dingtalk_docs(
+        test_user.id,
+        test_user.preferences,
+    )
+    test_db.expire_all()
 
     nodes = DingTalkDocService.get_dingtalk_docs(test_user.id, test_db)
     assert [(item.id, item.node_type) for item in nodes] == [(original_id, "doc")]
@@ -763,7 +799,10 @@ async def online_source(
         "nodeId": "online-doc",
         "markdown": "# 正文\n\n只导入这段内容。",
     }
-    await DingTalkDocService.sync_dingtalk_docs(test_user, test_db)
+    await DingTalkDocService.sync_dingtalk_docs(
+        test_user.id,
+        test_user.preferences,
+    )
     return DingTalkExternalDocumentProvider()
 
 
@@ -824,10 +863,16 @@ async def test_both_sources_offer_supported_document_formats(
         "wikiSpaces": [{"workspaceId": "space-1", "name": "Space"}],
     }
     if source == "docs":
-        await DingTalkDocService.sync_dingtalk_docs(test_user, test_db)
+        await DingTalkDocService.sync_dingtalk_docs(
+            test_user.id,
+            test_user.preferences,
+        )
         synced = DingTalkDocService.get_dingtalk_docs(test_user.id, test_db)
     else:
-        await DingTalkWikiSpaceService.sync_wikispace_nodes(test_user, test_db)
+        await DingTalkWikiSpaceService.sync_wikispace_nodes(
+            test_user.id,
+            test_user.preferences,
+        )
         synced = DingTalkWikiSpaceService.get_wikispace_nodes(test_user.id, test_db)
 
     actual = {node.dingtalk_node_id: node.node_type for node in synced}
@@ -954,7 +999,7 @@ async def test_sync_preserves_original_metadata_and_replaces_snapshot(
         if source == DingTalkNodeSource.DOCS
         else DingTalkWikiSpaceService.sync_wikispace_nodes
     )
-    await sync(test_user, test_db)
+    await sync(test_user.id, test_user.preferences)
     test_db.expire_all()
     node = (
         test_db.query(DingtalkSyncedNode)
@@ -978,20 +1023,20 @@ async def test_sync_preserves_original_metadata_and_replaces_snapshot(
 
     # JSON boolean and number values are distinct even though True == 1.
     child["flag"] = 1
-    await sync(test_user, test_db)
+    await sync(test_user.id, test_user.preferences)
     test_db.refresh(node)
     assert type(node.raw_metadata["flag"]) is int
 
     # A refresh replaces metadata even when indexed fields are unchanged.
     child.pop("unknown")
     child["newField"] = {"version": 2}
-    await sync(test_user, test_db)
+    await sync(test_user.id, test_user.preferences)
     test_db.refresh(node)
     assert node.raw_metadata == child
     assert node.extension == "pdf"
 
     child.pop("extension")
-    await sync(test_user, test_db)
+    await sync(test_user.id, test_user.preferences)
     test_db.refresh(node)
     assert node.raw_metadata == child
     assert DingtalkDocNode.model_validate(node).extension == ""

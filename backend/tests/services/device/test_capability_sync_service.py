@@ -5,7 +5,6 @@
 import pytest
 
 from app.models.kind import Kind
-from app.models.user import User
 from app.services.device.capability_sync_service import (
     DeviceCapabilityResolutionError,
     device_capability_sync_service,
@@ -48,11 +47,9 @@ def test_resolve_payload_authorizes_skills_without_deriving_mcp(test_db):
     public_skill = _skill(102, 0, "public-helper")
     test_db.add_all([own_skill, public_skill])
     test_db.flush()
-    user = User(id=7, user_name="alice")
-
     resolved = device_capability_sync_service.resolve_payload(
         test_db,
-        user=user,
+        user_id=7,
         skill_ids=[101, 102],
         mcp_ids=[],
         mode="merge",
@@ -66,12 +63,10 @@ def test_resolve_payload_authorizes_skills_without_deriving_mcp(test_db):
 
 
 def test_resolve_payload_rejects_mcp_ids(test_db):
-    user = User(id=7, user_name="alice")
-
     with pytest.raises(DeviceCapabilityResolutionError) as exc:
         device_capability_sync_service.resolve_payload(
             test_db,
-            user=user,
+            user_id=7,
             skill_ids=[],
             mcp_ids=["dingtalk/docs"],
             mode="merge",
@@ -84,12 +79,10 @@ def test_resolve_payload_rejects_mcp_ids(test_db):
 def test_resolve_payload_rejects_unauthorized_skill(test_db):
     test_db.add(_skill(201, 99, "other-user-skill"))
     test_db.flush()
-    user = User(id=7, user_name="alice")
-
     with pytest.raises(DeviceCapabilityResolutionError) as exc:
         device_capability_sync_service.resolve_payload(
             test_db,
-            user=user,
+            user_id=7,
             skill_ids=[201],
             mcp_ids=[],
             mode="merge",
@@ -127,11 +120,9 @@ def test_resolve_payload_includes_selected_installed_plugins(test_db):
     )
     test_db.add(installed)
     test_db.flush()
-    user = User(id=7, user_name="alice")
-
     resolved = device_capability_sync_service.resolve_payload(
         test_db,
-        user=user,
+        user_id=7,
         skill_ids=[],
         installed_plugin_ids=[301],
         mcp_ids=[],
@@ -189,11 +180,9 @@ def test_resolve_payload_uses_uploaded_plugin_key_and_download_ref(test_db):
     )
     test_db.add(installed)
     test_db.flush()
-    user = User(id=7, user_name="alice")
-
     resolved = device_capability_sync_service.resolve_payload(
         test_db,
-        user=user,
+        user_id=7,
         skill_ids=[],
         installed_plugin_ids=[302],
         mode="merge",

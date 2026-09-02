@@ -289,13 +289,12 @@ class UserService(BaseService[User, UserUpdate, UserUpdate]):
 
         # Send IM notification if default_execution_target changed
         if new_default_target is not None and old_default_target != new_default_target:
-            self._send_default_device_notification_async(db, user, new_default_target)
+            self._send_default_device_notification_async(user, new_default_target)
 
         return user
 
     def _send_default_device_notification_async(
         self,
-        db: Session,
         user: User,
         new_target: str,
     ) -> None:
@@ -307,7 +306,6 @@ class UserService(BaseService[User, UserUpdate, UserUpdate]):
         2. Send notification to user's bound IM channels
 
         Args:
-            db: Database session
             user: User who changed the default device
             new_target: New default execution target ('cloud' or device_id)
         """
@@ -364,7 +362,6 @@ class UserService(BaseService[User, UserUpdate, UserUpdate]):
                 # Send notification using user_id instead of user object
                 asyncio.run(
                     send_default_device_notification(
-                        notification_db,
                         user_id,
                         target_type,
                         device_name,

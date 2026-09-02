@@ -31,14 +31,16 @@ def _record(user_id: int = 7, device_id: str = "device-abc") -> TerminalSessionR
 def valid_jwt_auth(monkeypatch):
     monkeypatch.setattr(
         terminal_namespace,
-        "verify_jwt_token",
-        lambda token: SimpleNamespace(id=7, user_name="alice"),
+        "verify_jwt_token_async",
+        AsyncMock(return_value=SimpleNamespace(id=7, user_name="alice")),
     )
     monkeypatch.setattr(
         terminal_namespace,
-        "get_token_expiry",
-        lambda token: int(
-            (datetime.now(timezone.utc) + timedelta(minutes=5)).timestamp()
+        "get_token_expiry_async",
+        AsyncMock(
+            return_value=int(
+                (datetime.now(timezone.utc) + timedelta(minutes=5)).timestamp()
+            )
         ),
     )
 

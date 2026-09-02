@@ -40,6 +40,7 @@ async def load_server_mcp_tools(
     import json
 
     from app.core.config import settings
+    from app.core.payload_codec import run_payload_codec
 
     if not include_env_mcp_servers:
         logger.info(
@@ -56,7 +57,11 @@ async def load_server_mcp_tools(
         mcp_servers_config = getattr(settings, "CHAT_MCP_SERVERS", "")
         if mcp_servers_config:
             try:
-                config_data = json.loads(mcp_servers_config)
+                config_data = await run_payload_codec(
+                    json.loads,
+                    mcp_servers_config,
+                    payload_hint=mcp_servers_config,
+                )
                 backend_servers = config_data.get("mcpServers", config_data)
             except json.JSONDecodeError as e:
                 logger.warning(f"[OPENAPI_MCP] Failed to parse CHAT_MCP_SERVERS: {e}")
@@ -176,9 +181,9 @@ async def _get_bot_mcp_servers(
     user_id: int, bot_name: str, bot_namespace: str
 ) -> Dict[str, Any]:
     """Query bot's Ghost CRD to get MCP server configuration."""
-    import asyncio
+    from app.services.chat.storage.db import run_sync_in_executor
 
-    return await asyncio.to_thread(
+    return await run_sync_in_executor(
         _get_bot_mcp_servers_sync, user_id, bot_name, bot_namespace
     )
 

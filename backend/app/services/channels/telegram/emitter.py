@@ -14,6 +14,7 @@ import logging
 import time
 from typing import TYPE_CHECKING, Any, Dict, Optional
 
+from app.core.payload_codec import run_payload_codec
 from app.services.execution.emitters import ResultEmitter
 from shared.models import EventType, ExecutionEvent
 
@@ -21,6 +22,24 @@ if TYPE_CHECKING:
     from telegram import Bot
 
 logger = logging.getLogger(__name__)
+
+
+def _join_text(left: str, right: str) -> str:
+    return f"{left}{right}"
+
+
+def _error_message(content: str, error: str, limit: int) -> str:
+    message = f"❌ 错误: {error}"
+    if content:
+        message = f"{content}\n\n{message}"
+    return message[:limit]
+
+
+def _cancelled_message(content: str, limit: int) -> str:
+    message = f"{content}\n\n⚠️ 任务已取消"
+    if len(message) > limit - 50:
+        return f"{message[: limit - 50]}\n\n..."
+    return message
 
 
 class StreamingResponseEmitter(ResultEmitter):
@@ -189,7 +208,6 @@ class StreamingResponseEmitter(ResultEmitter):
     def _build_display_content(
         self,
         answer_content: str,
-        *,
         include_status: bool = True,
     ) -> str:
         """Build Telegram text with separate reasoning and answer blocks."""
@@ -236,7 +254,11 @@ class StreamingResponseEmitter(ResultEmitter):
         time_since_last = current_time - self._last_update_time
 
         # Extract thinking status and actual content from the incoming chunk
-        thinking, actual_content = self._extract_thinking_and_content(content)
+        thinking, actual_content = await run_payload_codec(
+            self._extract_thinking_and_content,
+            content,
+            payload_hint=content,
+        )
 
         # Update thinking status (replace, not accumulate)
         if thinking:
@@ -244,7 +266,12 @@ class StreamingResponseEmitter(ResultEmitter):
 
         # Accumulate actual content
         if actual_content:
-            self._pending_content += actual_content
+            self._pending_content = await run_payload_codec(
+                _join_text,
+                self._pending_content,
+                actual_content,
+                payload_hint=(self._pending_content, actual_content),
+            )
 
         # Check if we should send an update
         if not force and time_since_last < self.MIN_UPDATE_INTERVAL:
@@ -254,15 +281,33 @@ class StreamingResponseEmitter(ResultEmitter):
         try:
             # Accumulate pending content to full content
             if self._pending_content:
-                self._full_content += self._pending_content
+                self._full_content = await run_payload_codec(
+                    _join_text,
+                    self._full_content,
+                    self._pending_content,
+                    payload_hint=(self._full_content, self._pending_content),
+                )
                 self._pending_content = ""
 
-            display_content = self._build_display_content(self._full_content)
+            display_content = await run_payload_codec(
+                self._build_display_content,
+                self._full_content,
+                True,
+                payload_hint=(
+                    self._full_content,
+                    self._reasoning_content,
+                    self._current_thinking,
+                ),
+            )
 
             if not display_content:
                 return
 
-            display_content = self._truncate_message(display_content)
+            display_content = await run_payload_codec(
+                self._truncate_message,
+                display_content,
+                payload_hint=display_content,
+            )
 
             logger.debug(
                 f"[TelegramStreamingEmitter] Editing message {self._message_id}, "
@@ -375,7 +420,12 @@ class StreamingResponseEmitter(ResultEmitter):
             if not await self._ensure_message_created():
                 return
 
-            self._reasoning_content += content
+            self._reasoning_content = await run_payload_codec(
+                _join_text,
+                self._reasoning_content,
+                content,
+                payload_hint=(self._reasoning_content, content),
+            )
             await self._send_streaming_update("")
 
     async def emit_done(
@@ -393,12 +443,16 @@ class StreamingResponseEmitter(ResultEmitter):
                 )
                 return
 
-            final_content = self._drain_pending_content_locked()
+            final_content = await self._drain_pending_content_locked()
 
             if result and isinstance(result, dict):
                 result_value = result.get("value", "") or result.get("output", "") or ""
                 if result_value and not isinstance(result_value, str):
-                    result_value = str(result_value)
+                    result_value = await run_payload_codec(
+                        str,
+                        result_value,
+                        payload_hint=result_value,
+                    )
                 if result_value:
                     final_content = result_value
                     logger.info(
@@ -423,12 +477,18 @@ class StreamingResponseEmitter(ResultEmitter):
                 self._full_content = final_content
 
                 # Final update with complete content
-                display_content = self._build_display_content(
+                display_content = await run_payload_codec(
+                    self._build_display_content,
                     final_content,
-                    include_status=False,
+                    False,
+                    payload_hint=(final_content, self._reasoning_content),
                 )
                 if display_content:
-                    display_content = self._truncate_message(display_content)
+                    display_content = await run_payload_codec(
+                        self._truncate_message,
+                        display_content,
+                        payload_hint=display_content,
+                    )
 
                     try:
                         await self._bot.edit_message_text(
@@ -464,8 +524,10 @@ class StreamingResponseEmitter(ResultEmitter):
     ) -> None:
         """Emit error event - show error message."""
         logger.warning(
-            f"[TelegramStreamingEmitter] error task={task_id} subtask={subtask_id} "
-            f"error={error}"
+            "[TelegramStreamingEmitter] error task=%s subtask=%s error_len=%s",
+            task_id,
+            subtask_id,
+            len(error),
         )
 
         async with self._update_lock:
@@ -478,15 +540,19 @@ class StreamingResponseEmitter(ResultEmitter):
                     return
 
                 # Update message with error
-                error_text = f"❌ 错误: {error}"
-                final_content = self._drain_pending_content_locked()
-                if final_content:
-                    error_text = f"{final_content}\n\n{error_text}"
+                final_content = await self._drain_pending_content_locked()
+                error_text = await run_payload_codec(
+                    _error_message,
+                    final_content,
+                    error,
+                    self.MAX_MESSAGE_LENGTH,
+                    payload_hint=(final_content, error),
+                )
 
                 await self._bot.edit_message_text(
                     chat_id=self._chat_id,
                     message_id=self._message_id,
-                    text=error_text[: self.MAX_MESSAGE_LENGTH],
+                    text=error_text,
                 )
 
                 self._finished = True
@@ -517,16 +583,16 @@ class StreamingResponseEmitter(ResultEmitter):
                     return
 
                 # Add cancellation note to content
-                self._full_content = (
-                    self._drain_pending_content_locked() + "\n\n⚠️ 任务已取消"
+                final_content = await self._drain_pending_content_locked()
+                self._full_content = await run_payload_codec(
+                    _cancelled_message,
+                    final_content,
+                    self.MAX_MESSAGE_LENGTH,
+                    payload_hint=final_content,
                 )
 
                 # Update message with cancellation
                 display_content = self._full_content
-                if len(display_content) > self.MAX_MESSAGE_LENGTH - 50:
-                    display_content = (
-                        display_content[: self.MAX_MESSAGE_LENGTH - 50] + "\n\n..."
-                    )
 
                 await self._bot.edit_message_text(
                     chat_id=self._chat_id,
@@ -545,10 +611,15 @@ class StreamingResponseEmitter(ResultEmitter):
         """Close the emitter and release resources."""
         pass
 
-    def _drain_pending_content_locked(self) -> str:
+    async def _drain_pending_content_locked(self) -> str:
         final_content = self._full_content
         if self._pending_content:
-            final_content += self._pending_content
+            final_content = await run_payload_codec(
+                _join_text,
+                final_content,
+                self._pending_content,
+                payload_hint=(final_content, self._pending_content),
+            )
             self._pending_content = ""
         self._full_content = final_content
         return final_content

@@ -85,7 +85,7 @@ def _provider_base_url() -> str:
     f"/.well-known/oauth-authorization-server{settings.API_PREFIX.rstrip('/')}",
     response_model=OAuthProviderMetadata,
 )
-async def oauth_provider_metadata() -> OAuthProviderMetadata:
+def oauth_provider_metadata() -> OAuthProviderMetadata:
     base = _provider_base_url()
     return OAuthProviderMetadata(
         issuer=base,
@@ -98,7 +98,7 @@ async def oauth_provider_metadata() -> OAuthProviderMetadata:
 
 
 @router.get("/jwks", response_model=OAuthJwks)
-async def jwks(db: Session = Depends(get_db)) -> OAuthJwks:
+def jwks(db: Session = Depends(get_db)) -> OAuthJwks:
     return oauth_provider_service.jwks(db)
 
 
@@ -111,11 +111,9 @@ async def authorize(
     state: str = Query(default="", max_length=2048),
     code_challenge: str = Query(..., min_length=43, max_length=128),
     code_challenge_method: str = Query(..., max_length=16),
-    db: Session = Depends(get_db),
 ):
     try:
         redirect_url = await oauth_provider_service.begin_authorization(
-            db,
             response_type=response_type,
             client_id=client_id,
             redirect_uri=redirect_uri,
@@ -126,8 +124,7 @@ async def authorize(
         )
         return RedirectResponse(redirect_url, status_code=302)
     except OAuthProviderError as exc:
-        redirect_url = oauth_provider_service.authorization_error_redirect(
-            db,
+        redirect_url = await oauth_provider_service.authorization_error_redirect(
             client_id=client_id,
             redirect_uri=redirect_uri,
             state=state,
@@ -145,11 +142,10 @@ async def authorize(
 )
 async def get_authorization_request(
     request_id: str,
-    db: Session = Depends(get_db),
     _: User = Depends(security.get_current_user),
 ):
     try:
-        return await oauth_provider_service.get_authorization_request(db, request_id)
+        return await oauth_provider_service.get_authorization_request(request_id)
     except OAuthProviderError as exc:
         return _oauth_error(exc)
 
@@ -160,12 +156,13 @@ async def get_authorization_request(
 )
 async def approve_authorization_request(
     request_id: str,
-    db: Session = Depends(get_db),
     current_user: User = Depends(security.get_current_user),
 ):
     try:
         return await oauth_provider_service.decide_authorization(
-            db, request_id=request_id, user=current_user, approved=True
+            request_id=request_id,
+            user_id=current_user.id,
+            approved=True,
         )
     except OAuthProviderError as exc:
         return _oauth_error(exc)
@@ -177,12 +174,13 @@ async def approve_authorization_request(
 )
 async def deny_authorization_request(
     request_id: str,
-    db: Session = Depends(get_db),
     current_user: User = Depends(security.get_current_user),
 ):
     try:
         return await oauth_provider_service.decide_authorization(
-            db, request_id=request_id, user=current_user, approved=False
+            request_id=request_id,
+            user_id=current_user.id,
+            approved=False,
         )
     except OAuthProviderError as exc:
         return _oauth_error(exc)
@@ -199,7 +197,6 @@ async def token(
     code_verifier: str | None = Form(default=None),
     refresh_token: str | None = Form(default=None),
     authorization: str = Header(default=""),
-    db: Session = Depends(get_db),
 ):
     response.headers["Cache-Control"] = "no-store"
     response.headers["Pragma"] = "no-cache"
@@ -214,7 +211,6 @@ async def token(
                     "code, redirect_uri, and code_verifier are required",
                 )
             return await oauth_provider_service.exchange_code(
-                db,
                 client_id=resolved_client_id,
                 client_secret=resolved_secret,
                 code=code,
@@ -224,8 +220,7 @@ async def token(
         if grant_type == "refresh_token":
             if not refresh_token:
                 raise OAuthProviderError("invalid_request", "refresh_token is required")
-            return oauth_provider_service.refresh(
-                db,
+            return await oauth_provider_service.refresh(
                 client_id=resolved_client_id,
                 client_secret=resolved_secret,
                 refresh_token=refresh_token,
@@ -238,7 +233,7 @@ async def token(
 
 
 @router.post("/revoke", status_code=200)
-async def revoke(
+def revoke(
     token: str = Form(...),
     token_type_hint: str | None = Form(default=None),
     client_id: str = Form(default=""),
@@ -263,7 +258,7 @@ async def revoke(
 
 
 @router.get("/userinfo", response_model=OAuthUserInfoResponse)
-async def userinfo(
+def userinfo(
     authorization: str = Header(default=""),
     db: Session = Depends(get_db),
 ):

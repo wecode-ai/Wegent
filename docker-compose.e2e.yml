@@ -31,8 +31,8 @@ services:
 
   backend-test:
     build:
-      context: ./backend
-      dockerfile: ../docker/backend/Dockerfile
+      context: .
+      dockerfile: docker/backend/Dockerfile
     environment:
       DATABASE_URL: mysql+pymysql://root:test123@mysql-test:3306/wegent_e2e
       REDIS_URL: redis://redis-test:6379/0
@@ -46,7 +46,7 @@ services:
       redis-test:
         condition: service_healthy
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8000/api/health"]
+      test: ["CMD", "curl", "-fsS", "http://localhost:8000/api/ready"]
       interval: 10s
       timeout: 5s
       retries: 5

@@ -6,9 +6,7 @@ import logging
 from typing import Literal, Optional
 
 from fastapi import APIRouter, Depends, Query, status
-from sqlalchemy.orm import Session
 
-from app.api.dependencies import get_db
 from app.core import security
 from app.models.user import User
 from app.schemas.system_skills import (
@@ -20,6 +18,7 @@ from app.schemas.system_skills import (
     SystemSkillProviderListResponse,
     SystemSkillUpdateInstalledRequest,
 )
+from app.services.chat.storage.db import run_sync_in_executor
 from app.services.device.capability_sync_service import device_capability_sync_service
 from app.services.system_skill_providers.service import system_skill_provider_service
 
@@ -44,16 +43,17 @@ async def list_system_skills(
     page: int = Query(1, ge=1),
     pageSize: int = Query(20, ge=1, le=100),
     category: Literal["system"] = Query("system"),
-    db: Session = Depends(get_db),
     current_user: User = Depends(security.get_current_user),
 ) -> SystemSkillListResponse:
     """List or search system skills."""
     parsed_tags = _parse_tags(tags)
+    user_id = current_user.id
+    user_name = current_user.user_name
+    del current_user
 
     return await system_skill_provider_service.list_system_skills(
-        db=db,
-        user_id=current_user.id,
-        user_name=current_user.user_name,
+        user_id=user_id,
+        user_name=user_name,
         provider_key=providerKey,
         keyword=keyword,
         tags=parsed_tags,
@@ -69,31 +69,31 @@ async def list_system_skills(
 )
 async def install_system_skill(
     request: SystemSkillInstallRequest,
-    db: Session = Depends(get_db),
     current_user: User = Depends(security.get_current_user),
 ) -> InstalledSkill:
     """Install a system skill for the current user."""
+    user_id = current_user.id
+    del current_user
     logger.info(
         "System skill install requested: user_id=%s provider=%s skill=%s catalog_item=%s",
-        current_user.id,
+        user_id,
         request.providerKey,
         request.skillKey,
         request.catalogItemId,
     )
     installed = await system_skill_provider_service.install_system_skill(
-        db=db,
-        user_id=current_user.id,
+        user_id=user_id,
         request=request,
     )
     logger.info(
         "System skill install completed: user_id=%s installed_id=%s skill=%s enabled=%s state=%s",
-        current_user.id,
+        user_id,
         _installed_skill_id(installed),
         installed.spec.source.skillKey,
         installed.spec.enabled,
         installed.spec.installState,
     )
-    await _sync_global_capabilities(db, current_user.id)
+    await _sync_global_capabilities(user_id)
     return installed
 
 
@@ -104,41 +104,43 @@ async def install_system_skill(
 )
 async def install_personal_skill(
     request: PersonalSkillInstallRequest,
-    db: Session = Depends(get_db),
     current_user: User = Depends(security.get_current_user),
 ) -> InstalledSkill:
     """Install a user-owned Skill asset for the current user."""
+    user_id = current_user.id
+    del current_user
     logger.info(
         "Personal skill install requested: user_id=%s skill_id=%s",
-        current_user.id,
+        user_id,
         request.skillId,
     )
-    installed = system_skill_provider_service.install_personal_skill(
-        db=db,
-        user_id=current_user.id,
-        request=request,
+    installed = await run_sync_in_executor(
+        system_skill_provider_service.install_personal_skill_for_user,
+        user_id,
+        request,
     )
     logger.info(
         "Personal skill install completed: user_id=%s installed_id=%s skill=%s enabled=%s state=%s",
-        current_user.id,
+        user_id,
         _installed_skill_id(installed),
         installed.spec.source.skillKey,
         installed.spec.enabled,
         installed.spec.installState,
     )
-    await _sync_global_capabilities(db, current_user.id)
+    await _sync_global_capabilities(user_id)
     return installed
 
 
 @router.get("/installed", response_model=InstalledSkillListResponse)
-def list_installed_system_skills(
-    db: Session = Depends(get_db),
+async def list_installed_system_skills(
     current_user: User = Depends(security.get_current_user),
 ) -> InstalledSkillListResponse:
     """List system skills installed by the current user."""
-    return system_skill_provider_service.list_installed_system_skills(
-        db=db,
-        user_id=current_user.id,
+    user_id = current_user.id
+    del current_user
+    return await run_sync_in_executor(
+        system_skill_provider_service.list_installed_system_skills_for_user,
+        user_id,
     )
 
 
@@ -146,57 +148,59 @@ def list_installed_system_skills(
 async def update_installed_system_skill(
     installed_id: int,
     request: SystemSkillUpdateInstalledRequest,
-    db: Session = Depends(get_db),
     current_user: User = Depends(security.get_current_user),
 ) -> InstalledSkill:
     """Enable or disable an installed system skill."""
+    user_id = current_user.id
+    del current_user
     logger.info(
         "System skill update requested: user_id=%s installed_id=%s enabled=%s",
-        current_user.id,
+        user_id,
         installed_id,
         request.enabled,
     )
-    installed = system_skill_provider_service.update_installed_system_skill(
-        db=db,
-        user_id=current_user.id,
-        installed_id=installed_id,
-        request=request,
+    installed = await run_sync_in_executor(
+        system_skill_provider_service.update_installed_system_skill_for_user,
+        user_id,
+        installed_id,
+        request,
     )
     logger.info(
         "System skill update completed: user_id=%s installed_id=%s skill=%s enabled=%s state=%s",
-        current_user.id,
+        user_id,
         _installed_skill_id(installed),
         installed.spec.source.skillKey,
         installed.spec.enabled,
         installed.spec.installState,
     )
-    await _sync_global_capabilities(db, current_user.id)
+    await _sync_global_capabilities(user_id)
     return installed
 
 
 @router.delete("/installed/{installed_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def uninstall_installed_system_skill(
     installed_id: int,
-    db: Session = Depends(get_db),
     current_user: User = Depends(security.get_current_user),
 ) -> None:
     """Uninstall a system skill for the current user."""
+    user_id = current_user.id
+    del current_user
     logger.info(
         "System skill uninstall requested: user_id=%s installed_id=%s",
-        current_user.id,
+        user_id,
         installed_id,
     )
-    system_skill_provider_service.uninstall_installed_system_skill(
-        db=db,
-        user_id=current_user.id,
-        installed_id=installed_id,
+    await run_sync_in_executor(
+        system_skill_provider_service.uninstall_installed_system_skill_for_user,
+        user_id,
+        installed_id,
     )
     logger.info(
         "System skill uninstall completed: user_id=%s installed_id=%s",
-        current_user.id,
+        user_id,
         installed_id,
     )
-    await _sync_global_capabilities(db, current_user.id)
+    await _sync_global_capabilities(user_id)
 
 
 def _parse_tags(tags: Optional[str]) -> Optional[list[str]]:
@@ -207,10 +211,9 @@ def _parse_tags(tags: Optional[str]) -> Optional[list[str]]:
     return parsed_tags or None
 
 
-async def _sync_global_capabilities(db: Session, user_id: int) -> None:
+async def _sync_global_capabilities(user_id: int) -> None:
     try:
         result = await device_capability_sync_service.sync_user_global_capabilities(
-            db,
             user_id=user_id,
         )
         logger.info(

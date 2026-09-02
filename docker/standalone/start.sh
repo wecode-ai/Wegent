@@ -243,14 +243,10 @@ fi
 # ========================================
 echo "[3/8] Starting Backend (port ${BACKEND_PORT})..."
 cd /app/backend
-uvicorn app.main:app \
-    --host 0.0.0.0 \
-    --port ${BACKEND_PORT} \
-    --workers 1 \
-    --timeout-graceful-shutdown ${GRACEFUL_SHUTDOWN_TIMEOUT:-600} &
+HOST=0.0.0.0 PORT="${BACKEND_PORT}" python -m app.runtime &
 BACKEND_PID=$!
 
-wait_for_http "Backend" "http://localhost:${BACKEND_PORT}/health" 60 "$BACKEND_PID" true
+wait_for_http "Backend" "http://localhost:${BACKEND_PORT}/api/ready" 60 "$BACKEND_PID" true
 
 # Host executor setup reads this token even when the in-container executor is disabled.
 ensure_standalone_executor_token

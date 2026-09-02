@@ -5,6 +5,7 @@
 """Backend RPC service for executing commands on local devices."""
 
 import logging
+from dataclasses import dataclass
 from typing import Any, Mapping, Optional
 
 from socketio.exceptions import (
@@ -90,6 +91,14 @@ LOCAL_COMMAND_DEVICE_TYPES = frozenset({DeviceType.LOCAL, DeviceType.APP})
 INTERNAL_DEVICE_COMMAND_KEYS = frozenset({"sync_git_credentials"})
 
 
+@dataclass(frozen=True)
+class _DeviceCommandRoute:
+    """Persisted device routing fields safe to retain across an async RPC."""
+
+    device_type: Optional[DeviceType]
+    cloud_runtime_device_id: str
+
+
 class DeviceCommandError(RuntimeError):
     """Raised when a local device command cannot be dispatched or completed."""
 
@@ -124,8 +133,8 @@ async def _resolve_dispatch_device_id(
     user_id: int,
     submitted_device_id: str,
     command_key: str,
-    device_kind: Any,
     device_type: Optional[DeviceType],
+    cloud_runtime_device_id: str,
     allow_app_device: bool,
 ) -> str:
     if device_type is None:
@@ -156,7 +165,7 @@ async def _resolve_dispatch_device_id(
         )
 
     dispatch_device_id = (
-        _resolve_cloud_runtime_device_id(device_kind)
+        cloud_runtime_device_id
         if device_type == DeviceType.CLOUD
         else submitted_device_id
     )
@@ -312,6 +321,23 @@ class LocalDeviceCommandService:
 local_device_command_service = LocalDeviceCommandService()
 
 
+def _load_device_command_route(
+    user_id: int,
+    device_id: str,
+) -> Optional[_DeviceCommandRoute]:
+    """Load only immutable command-routing fields in a DB worker."""
+    from app.services.chat.storage.db import get_db_session
+
+    with get_db_session() as db:
+        device_kind = device_service.get_device_by_device_id(db, user_id, device_id)
+        if device_kind is None:
+            return None
+        return _DeviceCommandRoute(
+            device_type=device_kind_type(device_kind),
+            cloud_runtime_device_id=_resolve_cloud_runtime_device_id(device_kind),
+        )
+
+
 async def execute_configured_device_command(
     *,
     db: Any,
@@ -328,10 +354,25 @@ async def execute_configured_device_command(
     allow_app_device: bool = True,
 ) -> dict[str, Any]:
     """Execute a configured local device command for internal Backend callers."""
-    device_kind = device_service.get_device_by_device_id(db, user_id, device_id)
-    if not device_kind:
-        raise DeviceCommandNotFoundError("Device not found or access denied")
-    device_type = device_kind_type(device_kind)
+    if db is None:
+        from app.services.chat.storage.db import run_sync_in_executor
+
+        route = await run_sync_in_executor(
+            _load_device_command_route,
+            user_id,
+            device_id,
+        )
+        if route is None:
+            raise DeviceCommandNotFoundError("Device not found or access denied")
+        device_type = route.device_type
+        cloud_runtime_device_id = route.cloud_runtime_device_id
+    else:
+        device_kind = device_service.get_device_by_device_id(db, user_id, device_id)
+        if not device_kind:
+            raise DeviceCommandNotFoundError("Device not found or access denied")
+        device_type = device_kind_type(device_kind)
+        cloud_runtime_device_id = _resolve_cloud_runtime_device_id(device_kind)
+        del device_kind
 
     if command_key in INTERNAL_DEVICE_COMMAND_KEYS and not allow_internal:
         raise DeviceCommandUnknownKeyError(
@@ -359,8 +400,8 @@ async def execute_configured_device_command(
         user_id=user_id,
         submitted_device_id=device_id,
         command_key=command_key,
-        device_kind=device_kind,
         device_type=device_type,
+        cloud_runtime_device_id=cloud_runtime_device_id,
         allow_app_device=allow_app_device,
     )
 

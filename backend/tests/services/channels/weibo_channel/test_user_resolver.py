@@ -38,7 +38,7 @@ async def test_resolve_user_select_user_mode_success(mock_db, mock_user):
         user_mapping_config={"target_user_id": 123},
     )
 
-    result = await resolver.resolve_user(weibo_user_id="10001")
+    result = resolver.resolve_user_sync(weibo_user_id="10001")
 
     assert result == mock_user
 
@@ -51,7 +51,7 @@ async def test_resolve_user_weibo_user_id_mode_success(mock_db, mock_user):
         user_mapping_mode=USER_MAPPING_MODE_WEIBO_USER_ID,
     )
 
-    result = await resolver.resolve_user(weibo_user_id="10001")
+    result = resolver.resolve_user_sync(weibo_user_id="10001")
 
     assert result == mock_user
 
@@ -64,7 +64,7 @@ async def test_resolve_user_email_mode_success(mock_db, mock_user):
         user_mapping_mode=USER_MAPPING_MODE_EMAIL,
     )
 
-    result = await resolver.resolve_user(
+    result = resolver.resolve_user_sync(
         weibo_user_id="10001",
         weibo_email="alice@weibo.example",
     )
@@ -80,7 +80,7 @@ async def test_resolve_user_select_user_mode_without_target_user_returns_none(mo
         user_mapping_config={},
     )
 
-    result = await resolver.resolve_user(weibo_user_id="10001")
+    result = resolver.resolve_user_sync(weibo_user_id="10001")
 
     assert result is None
     mock_db.query.assert_not_called()
@@ -93,7 +93,7 @@ async def test_resolve_user_email_mode_without_email_returns_none(mock_db):
         user_mapping_mode=USER_MAPPING_MODE_EMAIL,
     )
 
-    result = await resolver.resolve_user(weibo_user_id="10001", weibo_email=None)
+    result = resolver.resolve_user_sync(weibo_user_id="10001", weibo_email=None)
 
     assert result is None
     mock_db.query.assert_not_called()

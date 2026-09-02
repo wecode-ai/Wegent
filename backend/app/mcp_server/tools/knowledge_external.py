@@ -12,9 +12,10 @@ from typing import Optional
 
 import anyio
 from sqlalchemy.orm import Session
-from starlette.concurrency import run_in_threadpool
 
+from app.core.blocking_work import run_knowledge_io
 from app.core.config import settings
+from app.core.payload_codec import run_payload_codec
 from app.core.rate_limit import (
     ExternalMcpRateLimitStatus,
     check_external_mcp_dimension_rate_limit,
@@ -71,6 +72,7 @@ from app.services.knowledge.namespace_utils import (
 from app.services.knowledge.orchestrator import MAX_DOCUMENT_READ_LIMIT
 from app.services.rag.document_id_utils import extract_document_id
 from app.services.rag.gateway_factory import get_query_gateway
+from app.services.rag.local_data_plane.retrieval import query_local
 from app.services.rag.local_gateway import LocalRagGateway
 from app.services.rag.remote_gateway import (
     RemoteRagGatewayError,
@@ -138,6 +140,19 @@ def _get_external_user():
 
 def _json_error(message: str, code: str = "bad_request") -> str:
     return json.dumps({"error": message, "code": code}, ensure_ascii=False)
+
+
+async def _json_error_nonblocking(
+    message: str,
+    code: str = "bad_request",
+) -> str:
+    """Serialize an MCP error without charging the serving event loop."""
+    return await run_payload_codec(
+        _json_error,
+        message,
+        code,
+        payload_hint=(message, code),
+    )
 
 
 def _is_int(value) -> bool:
@@ -609,7 +624,7 @@ def _query_content_local_sync(runtime_spec: QueryRuntimeSpec) -> dict:
     db = SessionLocal()
     try:
         local_runtime_spec = _with_local_query_configs(runtime_spec, db)
-        return anyio.run(partial(LocalRagGateway().query, local_runtime_spec, db=db))
+        return anyio.run(partial(query_local, local_runtime_spec, db=db))
     finally:
         db.close()
 
@@ -617,7 +632,7 @@ def _query_content_local_sync(runtime_spec: QueryRuntimeSpec) -> dict:
 async def _query_content(runtime_spec: QueryRuntimeSpec) -> dict:
     gateway = get_query_gateway()
     if isinstance(gateway, LocalRagGateway):
-        return await run_in_threadpool(_query_content_local_sync, runtime_spec)
+        return await run_knowledge_io(_query_content_local_sync, runtime_spec)
 
     try:
         return await gateway.query(runtime_spec, db=None)
@@ -628,7 +643,40 @@ async def _query_content(runtime_spec: QueryRuntimeSpec) -> dict:
             "External knowledge search remote query failed; falling back to local: %s",
             exc,
         )
-        return await run_in_threadpool(_query_content_local_sync, runtime_spec)
+        return await run_knowledge_io(_query_content_local_sync, runtime_spec)
+
+
+def _serialize_search_content_response(
+    result: dict,
+    preparation: SearchPreparation,
+    normalized_query: str,
+) -> str:
+    """Project and serialize search records in the knowledge worker pool."""
+    records = []
+    for item in result.get("records", []):
+        kb_id = item.get("knowledge_base_id")
+        records.append(
+            ExternalSearchContentRecord(
+                content=item.get("content", ""),
+                title=item.get("title", ""),
+                score=item.get("score"),
+                knowledge_base_id=kb_id,
+                knowledge_base_name=(
+                    preparation.kb_name_map.get(kb_id) if kb_id is not None else None
+                ),
+                document_id=extract_document_id(item),
+            )
+        )
+
+    return ExternalSearchContentResponse(
+        query=normalized_query,
+        total=result.get("total", len(records)),
+        total_estimated_tokens=result.get("total_estimated_tokens", 0),
+        searched_knowledge_base_ids=preparation.target_ids,
+        ignored_knowledge_base_ids=preparation.ignored_knowledge_base_ids,
+        warnings=preparation.warnings,
+        records=records,
+    ).model_dump_json()
 
 
 @external_knowledge_mcp_server.tool()
@@ -643,7 +691,7 @@ async def wegent_kb_list_knowledge_bases(
     """List knowledge bases visible to the authenticated external user."""
     user = _get_external_user()
     if not user:
-        return _json_error("Authentication required", "unauthorized")
+        return await _json_error_nonblocking("Authentication required", "unauthorized")
 
     params, error = validate_knowledge_base_list_params(
         scope=scope,
@@ -654,10 +702,10 @@ async def wegent_kb_list_knowledge_bases(
         offset=offset,
     )
     if error:
-        return _json_error(error)
+        return await _json_error_nonblocking(error)
     assert params is not None
 
-    return await run_in_threadpool(
+    return await run_knowledge_io(
         partial(
             _list_knowledge_bases_sync,
             user_id=user.id,
@@ -678,29 +726,35 @@ async def wegent_kb_list_nodes(
     """List folder and document nodes in a knowledge base."""
     user = _get_external_user()
     if not user:
-        return _json_error("Authentication required", "unauthorized")
+        return await _json_error_nonblocking("Authentication required", "unauthorized")
     if not _is_int(knowledge_base_id):
-        return _json_error("knowledge_base_id must be an integer")
+        return await _json_error_nonblocking("knowledge_base_id must be an integer")
     if not _is_int(folder_id):
-        return _json_error("folder_id must be an integer")
+        return await _json_error_nonblocking("folder_id must be an integer")
     if not _is_bool(recursive):
-        return _json_error("recursive must be a boolean")
+        return await _json_error_nonblocking("recursive must be a boolean")
     if not _is_bool(include_inactive):
-        return _json_error("include_inactive must be a boolean")
+        return await _json_error_nonblocking("include_inactive must be a boolean")
     if not _is_int(limit):
-        return _json_error("limit must be an integer")
+        return await _json_error_nonblocking("limit must be an integer")
     if not _is_int(offset):
-        return _json_error("offset must be an integer")
+        return await _json_error_nonblocking("offset must be an integer")
     if knowledge_base_id <= 0:
-        return _json_error("knowledge_base_id is required")
+        return await _json_error_nonblocking("knowledge_base_id is required")
     if folder_id < 0:
-        return _json_error("folder_id must be greater than or equal to 0")
+        return await _json_error_nonblocking(
+            "folder_id must be greater than or equal to 0"
+        )
     if limit < 1 or limit > MAX_DIRECT_NODE_LIMIT:
-        return _json_error(f"limit must be between 1 and {MAX_DIRECT_NODE_LIMIT}")
+        return await _json_error_nonblocking(
+            f"limit must be between 1 and {MAX_DIRECT_NODE_LIMIT}"
+        )
     if offset < 0:
-        return _json_error("offset must be greater than or equal to 0")
+        return await _json_error_nonblocking(
+            "offset must be greater than or equal to 0"
+        )
 
-    return await run_in_threadpool(
+    return await run_knowledge_io(
         partial(
             _list_nodes_sync,
             user_id=user.id,
@@ -723,16 +777,16 @@ async def wegent_kb_get_document_content(
     """Read parsed text content for an accessible knowledge document."""
     user = _get_external_user()
     if not user:
-        return _json_error("Authentication required", "unauthorized")
+        return await _json_error_nonblocking("Authentication required", "unauthorized")
 
     validation_error = _validate_document_id(document_id)
     if validation_error:
-        return _json_error(validation_error)
+        return await _json_error_nonblocking(validation_error)
     validation_error = _validate_document_read_paging(offset, limit)
     if validation_error:
-        return _json_error(validation_error)
+        return await _json_error_nonblocking(validation_error)
 
-    return await run_in_threadpool(
+    return await run_knowledge_io(
         partial(
             _get_document_content_sync,
             user_id=user.id,
@@ -751,19 +805,19 @@ async def wegent_kb_get_document_download(
     """Get a short-lived original file download credential for a document."""
     user = _get_external_user()
     if not user:
-        return _json_error("Authentication required", "unauthorized")
+        return await _json_error_nonblocking("Authentication required", "unauthorized")
 
     validation_error = _validate_document_id(document_id)
     if validation_error:
-        return _json_error(validation_error)
+        return await _json_error_nonblocking(validation_error)
 
     try:
         normalized_disposition = normalize_disposition(disposition)
     except ExternalDocumentAccessError as exc:
-        return _json_error(str(exc), exc.code)
+        return await _json_error_nonblocking(str(exc), exc.code)
 
     resource_url = _external_knowledge_document_file_url(document_id)
-    return await run_in_threadpool(
+    return await run_knowledge_io(
         partial(
             _get_document_download_sync,
             user_id=user.id,
@@ -783,36 +837,42 @@ async def wegent_kb_search_content(
     """Search document content in accessible knowledge bases."""
     user = _get_external_user()
     if not user:
-        return _json_error("Authentication required", "unauthorized")
+        return await _json_error_nonblocking("Authentication required", "unauthorized")
 
     if not isinstance(query, str):
-        return _json_error("query must be a string")
+        return await _json_error_nonblocking("query must be a string")
     normalized_query = query.strip()
     if not normalized_query:
-        return _json_error("query must not be empty")
+        return await _json_error_nonblocking("query must not be empty")
     if len(normalized_query) > MAX_SEARCH_QUERY_LENGTH:
-        return _json_error(
+        return await _json_error_nonblocking(
             f"query must be at most {MAX_SEARCH_QUERY_LENGTH} characters"
         )
     if not _is_int(max_results):
-        return _json_error("max_results must be an integer")
+        return await _json_error_nonblocking("max_results must be an integer")
     if max_results < 1 or max_results > MAX_SEARCH_RESULTS:
-        return _json_error(f"max_results must be between 1 and {MAX_SEARCH_RESULTS}")
+        return await _json_error_nonblocking(
+            f"max_results must be between 1 and {MAX_SEARCH_RESULTS}"
+        )
     if knowledge_base_ids is None:
-        return _json_error("knowledge_base_ids is required")
+        return await _json_error_nonblocking("knowledge_base_ids is required")
     if not isinstance(knowledge_base_ids, list):
-        return _json_error("knowledge_base_ids must be a list of integers")
+        return await _json_error_nonblocking(
+            "knowledge_base_ids must be a list of integers"
+        )
     if any(not _is_int(knowledge_base_id) for knowledge_base_id in knowledge_base_ids):
-        return _json_error("knowledge_base_ids must contain only integers")
+        return await _json_error_nonblocking(
+            "knowledge_base_ids must contain only integers"
+        )
     requested_ids = list(dict.fromkeys(knowledge_base_ids))
     if not requested_ids:
-        return _json_error("knowledge_base_ids must not be empty")
+        return await _json_error_nonblocking("knowledge_base_ids must not be empty")
     if len(requested_ids) > MAX_SEARCH_KNOWLEDGE_BASE_IDS:
-        return _json_error(
+        return await _json_error_nonblocking(
             f"knowledge_base_ids must contain at most {MAX_SEARCH_KNOWLEDGE_BASE_IDS} items"
         )
 
-    preparation = await run_in_threadpool(
+    preparation = await run_knowledge_io(
         partial(
             _prepare_search_content_sync,
             user_id=user.id,
@@ -827,34 +887,15 @@ async def wegent_kb_search_content(
 
     try:
         result = await _query_content(preparation.runtime_spec)
-
-        records = []
-        for item in result.get("records", []):
-            kb_id = item.get("knowledge_base_id")
-            records.append(
-                ExternalSearchContentRecord(
-                    content=item.get("content", ""),
-                    title=item.get("title", ""),
-                    score=item.get("score"),
-                    knowledge_base_id=kb_id,
-                    knowledge_base_name=(
-                        preparation.kb_name_map.get(kb_id)
-                        if kb_id is not None
-                        else None
-                    ),
-                    document_id=extract_document_id(item),
-                )
-            )
-
-        return ExternalSearchContentResponse(
-            query=normalized_query,
-            total=result.get("total", len(records)),
-            total_estimated_tokens=result.get("total_estimated_tokens", 0),
-            searched_knowledge_base_ids=preparation.target_ids,
-            ignored_knowledge_base_ids=preparation.ignored_knowledge_base_ids,
-            warnings=preparation.warnings,
-            records=records,
-        ).model_dump_json()
+        return await run_knowledge_io(
+            _serialize_search_content_response,
+            result,
+            preparation,
+            normalized_query,
+        )
     except Exception as exc:
         logger.exception("wegent_kb_search_content failed: %s", exc)
-        return _json_error(INTERNAL_ERROR_MESSAGE, "internal_error")
+        return await _json_error_nonblocking(
+            INTERNAL_ERROR_MESSAGE,
+            "internal_error",
+        )

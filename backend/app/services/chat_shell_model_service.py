@@ -8,24 +8,148 @@ from __future__ import annotations
 
 import json
 from contextlib import asynccontextmanager
+from dataclasses import dataclass
+from functools import partial
 from typing import Any, AsyncIterator
 
-from openai import AsyncOpenAI
+import httpx
 
 from app.core.config import settings
+from app.core.payload_codec import run_payload_codec
 
 DEFAULT_METADATA: dict[str, Any] = {
     "history_limit": 0,
     "stateless": True,
 }
+CHAT_SHELL_RESPONSE_MAX_BYTES = 32 * 1024 * 1024
+CHAT_SHELL_SSE_EVENT_MAX_BYTES = 16 * 1024 * 1024
 
 
-def _build_client(timeout: float = 300.0) -> AsyncOpenAI:
-    return AsyncOpenAI(
-        base_url=f"{settings.CHAT_SHELL_URL.rstrip('/')}/v1",
-        api_key=settings.CHAT_SHELL_TOKEN or "dummy",
-        timeout=timeout,
+@dataclass(frozen=True)
+class _PreparedChatShellRequest:
+    url: str
+    headers: tuple[tuple[str, str], ...]
+    body: bytes
+
+
+def _build_client(timeout: float = 300.0) -> httpx.AsyncClient:
+    return httpx.AsyncClient(timeout=httpx.Timeout(timeout))
+
+
+def _encode_chat_shell_request(
+    *,
+    model: str,
+    input_messages: list[dict[str, Any]],
+    instructions: str | None,
+    model_config: dict[str, Any] | None,
+    metadata: dict[str, Any] | None,
+    tools: list[dict[str, Any]] | None,
+    stream: bool,
+) -> _PreparedChatShellRequest:
+    payload: dict[str, Any] = {
+        "model": model,
+        "input": input_messages,
+        "stream": stream,
+        "metadata": _merge_metadata(metadata),
+        "model_config": model_config or {},
+    }
+    if instructions is not None:
+        payload["instructions"] = instructions
+    if tools:
+        payload["tools"] = tools
+
+    token = settings.CHAT_SHELL_TOKEN or "dummy"
+    return _PreparedChatShellRequest(
+        url=f"{settings.CHAT_SHELL_URL.rstrip('/')}/v1/responses",
+        headers=(
+            ("Authorization", f"Bearer {token}"),
+            ("Content-Type", "application/json"),
+            (
+                "Accept",
+                "text/event-stream" if stream else "application/json",
+            ),
+        ),
+        body=json.dumps(
+            payload,
+            ensure_ascii=False,
+            separators=(",", ":"),
+        ).encode("utf-8"),
     )
+
+
+def _join_response_chunks(chunks: list[bytes]) -> bytes:
+    body = b"".join(chunks)
+    if len(body) > CHAT_SHELL_RESPONSE_MAX_BYTES:
+        raise RuntimeError("Chat Shell response exceeds the configured limit")
+    return body
+
+
+def _decode_response_body(body: bytes, content_type: str) -> Any:
+    if "json" in content_type.lower():
+        return json.loads(body)
+    return body.decode("utf-8")
+
+
+def _decode_sse_records(
+    pending: bytes,
+    chunk: bytes,
+    final: bool = False,
+) -> tuple[bytes, list[dict[str, Any]]]:
+    normalized = (pending + chunk).replace(b"\r\n", b"\n")
+    records = normalized.split(b"\n\n")
+    remainder = b"" if final else records.pop()
+    if final and records and not records[-1]:
+        records.pop()
+    if len(remainder) > CHAT_SHELL_SSE_EVENT_MAX_BYTES:
+        raise RuntimeError("Chat Shell SSE event exceeds the configured limit")
+
+    events: list[dict[str, Any]] = []
+    for record in records:
+        if not record:
+            continue
+        if len(record) > CHAT_SHELL_SSE_EVENT_MAX_BYTES:
+            raise RuntimeError("Chat Shell SSE event exceeds the configured limit")
+        data_lines = [
+            line[5:].lstrip(b" ")
+            for line in record.split(b"\n")
+            if line.startswith(b"data:")
+        ]
+        if not data_lines:
+            continue
+        data = b"\n".join(data_lines)
+        if data.strip() == b"[DONE]":
+            continue
+        event = json.loads(data)
+        if isinstance(event, dict):
+            events.append(event)
+    return remainder, events
+
+
+async def _iter_sse_events(response: httpx.Response) -> AsyncIterator[dict[str, Any]]:
+    pending = b""
+    async for chunk in response.aiter_bytes():
+        pending, events = await run_payload_codec(
+            _decode_sse_records,
+            pending,
+            chunk,
+            False,
+            payload_hint=(pending, chunk),
+            force_offload=True,
+        )
+        for event in events:
+            yield event
+
+    if pending.strip():
+        _, events = await run_payload_codec(
+            _decode_sse_records,
+            pending,
+            b"",
+            True,
+            payload_hint=pending,
+            force_offload=True,
+        )
+        for event in events:
+            yield event
 
 
 def _merge_metadata(metadata: dict[str, Any] | None) -> dict[str, Any]:
@@ -186,18 +310,55 @@ async def create_response(
     returns an async context manager that ensures the underlying httpx
     connection is properly closed.
     """
-    client = _build_client()
-    return await client.responses.create(
-        model=model,
-        input=input_messages,
-        instructions=instructions,
-        tools=tools if tools else None,
-        stream=stream,
-        extra_body={
-            "metadata": _merge_metadata(metadata),
-            "model_config": model_config or {},
-        },
+    prepared = await run_payload_codec(
+        partial(
+            _encode_chat_shell_request,
+            model=model,
+            input_messages=input_messages,
+            instructions=instructions,
+            model_config=model_config,
+            metadata=metadata,
+            tools=tools,
+            stream=stream,
+        ),
+        payload_hint=(input_messages, instructions, model_config, metadata, tools),
+        force_offload=True,
     )
+    client = await run_payload_codec(
+        _build_client,
+        payload_hint=prepared.url,
+        force_offload=True,
+    )
+    async with client:
+        async with client.stream(
+            "POST",
+            prepared.url,
+            headers=prepared.headers,
+            content=prepared.body,
+        ) as response:
+            response.raise_for_status()
+            chunks: list[bytes] = []
+            received = 0
+            async for chunk in response.aiter_bytes():
+                received += len(chunk)
+                if received > CHAT_SHELL_RESPONSE_MAX_BYTES:
+                    raise RuntimeError(
+                        "Chat Shell response exceeds the configured limit"
+                    )
+                chunks.append(chunk)
+            body = await run_payload_codec(
+                _join_response_chunks,
+                chunks,
+                payload_hint=chunks,
+                force_offload=True,
+            )
+            return await run_payload_codec(
+                _decode_response_body,
+                body,
+                response.headers.get("content-type", ""),
+                payload_hint=body,
+                force_offload=True,
+            )
 
 
 @asynccontextmanager
@@ -216,19 +377,34 @@ async def create_streaming_response(
     connection is properly closed when the caller is done iterating,
     preventing orphan CancelScope corruption in anyio.
     """
-    client = _build_client()
-    async with await client.responses.create(
-        model=model,
-        input=input_messages,
-        instructions=instructions,
-        tools=tools if tools else None,
-        stream=True,
-        extra_body={
-            "metadata": _merge_metadata(metadata),
-            "model_config": model_config or {},
-        },
-    ) as stream:
-        yield stream
+    prepared = await run_payload_codec(
+        partial(
+            _encode_chat_shell_request,
+            model=model,
+            input_messages=input_messages,
+            instructions=instructions,
+            model_config=model_config,
+            metadata=metadata,
+            tools=tools,
+            stream=True,
+        ),
+        payload_hint=(input_messages, instructions, model_config, metadata, tools),
+        force_offload=True,
+    )
+    client = await run_payload_codec(
+        _build_client,
+        payload_hint=prepared.url,
+        force_offload=True,
+    )
+    async with client:
+        async with client.stream(
+            "POST",
+            prepared.url,
+            headers=prepared.headers,
+            content=prepared.body,
+        ) as response:
+            response.raise_for_status()
+            yield _iter_sse_events(response)
 
 
 async def complete_text(
@@ -250,4 +426,9 @@ async def complete_text(
         tools=tools,
         stream=False,
     )
-    return extract_response_text(response)
+    return await run_payload_codec(
+        extract_response_text,
+        response,
+        payload_hint=response,
+        force_offload=True,
+    )

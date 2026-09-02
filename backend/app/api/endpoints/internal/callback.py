@@ -1,296 +1,177 @@
-# SPDX-FileCopyrightText: 2025 Weibo, Inc.
+# SPDX-FileCopyrightText: 2026 Weibo, Inc.
 #
 # SPDX-License-Identifier: Apache-2.0
 
-"""
-Unified callback API for execution events.
+"""Bounded HTTP transport for worker-owned execution-event projection."""
 
-This module provides a unified callback endpoint for receiving execution events
-from different sources (executor_manager, device, etc.) and forwarding them
-to the frontend via WebSocket.
+from __future__ import annotations
 
-All callback events use OpenAI Responses API format for consistency with SSE mode.
-The ResponsesAPIEventParser is used to parse events into ExecutionEvent format.
+from typing import Any
 
-For terminal events (DONE, ERROR, CANCELLED), StatusUpdatingEmitter handles:
-1. Database status updates
-2. Publishing TaskCompletedEvent for unified handling by SubscriptionTaskCompletionHandler
-"""
+from fastapi import APIRouter, HTTPException, Request
+from fastapi.exceptions import RequestValidationError
 
-import logging
-from typing import Any, Optional
-
-from fastapi import APIRouter, HTTPException
-from pydantic import BaseModel, Field
-
-from app.db.session import SessionLocal
-from app.models.task import TaskResource
-from app.services.channels.callback import forward_event_to_channel_callbacks
-
-# Import channel callback modules to ensure they register with
-# ChannelCallbackRegistry in this worker process. Without these imports,
-# the registry may be empty when /callback is handled by a different worker
-# than the one that processed the original IM message.
-from app.services.channels.dingtalk import callback as _dingtalk_cb  # noqa: F401
-from app.services.channels.telegram import callback as _telegram_cb  # noqa: F401
-from app.services.chat.storage import session_manager
-from app.services.execution.dispatcher import ResponsesAPIEventParser
-from app.services.execution.emitters.status_updating import StatusUpdatingEmitter
-from app.services.execution.emitters.websocket import WebSocketResultEmitter
-from app.stores.tasks import task_store
-from shared.models import EventType
-
-logger = logging.getLogger(__name__)
+from app.core.payload_codec import run_payload_codec
+from app.core.request_body_limit import (
+    CALLBACK_BATCH_BODY_MAX_BYTES,
+    CALLBACK_EVENT_BODY_MAX_BYTES,
+    get_buffered_request_body,
+    release_request_body_admission,
+)
+from app.services.execution.point_projection import (
+    CallbackBatch,
+    CallbackRequest,
+    CallbackResponse,
+)
+from app.services.execution.stream_client import (
+    StreamWorkerExecutionError,
+    StreamWorkerUnavailableError,
+    stream_execution_client,
+)
 
 router = APIRouter(prefix="/callback", tags=["execution-callback"])
-
-# Shared event parser instance
-_event_parser = ResponsesAPIEventParser()
-
-_TASK_STATUS_EVENT_TYPES = {
-    EventType.DONE.value,
-    EventType.ERROR.value,
-    EventType.CANCEL.value,
-    EventType.CANCELLED.value,
-}
+_CALLBACK_REQUEST_OPENAPI_SCHEMA = CallbackRequest.model_json_schema()
 
 
-def _get_task_status_user_id(task_id: int, event_type: str) -> Optional[int]:
-    """Load task owner only for events that emit task-level status."""
-    if event_type not in _TASK_STATUS_EVENT_TYPES:
-        return None
-
-    with SessionLocal() as db:
-        task = task_store.get_task_by_states(
-            db,
-            task_id=task_id,
-            states=[TaskResource.STATE_ACTIVE],
-        )
-        return task.user_id if task else None
-
-
-class CallbackRequest(BaseModel):
-    """Request model for execution callback.
-
-    Uses OpenAI Responses API format for consistency with SSE mode.
-    The event_type field corresponds to ResponsesAPIStreamEvents values.
-    """
-
-    # OpenAI Responses API format fields
-    event_type: str = Field(
-        ...,
-        description="OpenAI Responses API event type (e.g., response.output_text.delta)",
-    )
-    task_id: int = Field(..., description="Task ID")
-    subtask_id: int = Field(..., description="Subtask ID")
-    message_id: Optional[int] = Field(None, description="Message ID for ordering")
-    executor_name: Optional[str] = Field(None, description="Executor name")
-    executor_namespace: Optional[str] = Field(None, description="Executor namespace")
-    data: dict = Field(
-        default_factory=dict,
-        description="Event data in OpenAI Responses API format",
-    )
-
-
-class CallbackResponse(BaseModel):
-    """Response model for execution callback."""
-
-    status: str = "ok"
-    message: Optional[str] = None
-
-
-@router.post("", response_model=CallbackResponse)
-async def handle_callback(
-    request: CallbackRequest,
-) -> CallbackResponse:
-    """Handle execution callback.
-
-    This endpoint receives execution events in OpenAI Responses API format
-    from executors and forwards them to the frontend via WebSocketResultEmitter.
-
-    For terminal events (DONE, ERROR, CANCELLED), StatusUpdatingEmitter handles:
-    - Database status updates
-    - Publishing TaskCompletedEvent for unified handling by SubscriptionTaskCompletionHandler
-
-    The event format is the same as SSE mode, ensuring consistency across
-    all execution modes (SSE, callback, device).
-
-    Args:
-        request: Callback request with event data in OpenAI Responses API format
-    Returns:
-        CallbackResponse indicating success
-    """
-    logger.debug(
-        f"[Callback] Received event: event_type={request.event_type}, "
-        f"task_id={request.task_id}, subtask_id={request.subtask_id}"
-    )
-
+async def _read_callback_body(request: Request, *, max_bytes: int) -> bytes:
+    """Take the middleware-bounded body and release its lease exactly once."""
     try:
-        # Parse OpenAI Responses API event using shared parser
-        event = _event_parser.parse(
-            task_id=request.task_id,
-            subtask_id=request.subtask_id,
-            message_id=request.message_id,
-            event_type=request.event_type,
-            data=request.data,
+        buffered = get_buffered_request_body(request.scope)
+        if buffered is not None:
+            if len(buffered) > max_bytes:
+                raise HTTPException(
+                    status_code=413,
+                    detail=f"Request body exceeds {max_bytes} bytes",
+                )
+            return buffered
+
+        chunks: list[bytes] = []
+        size = 0
+        async for chunk in request.stream():
+            size += len(chunk)
+            if size > max_bytes:
+                raise HTTPException(
+                    status_code=413,
+                    detail=f"Request body exceeds {max_bytes} bytes",
+                )
+            if chunk:
+                chunks.append(chunk)
+        if not chunks:
+            return b""
+        if len(chunks) == 1:
+            return chunks[0]
+        return await run_payload_codec(
+            b"".join,
+            chunks,
+            payload_hint=chunks,
+            force_offload=True,
         )
+    finally:
+        release_request_body_admission(request.scope)
 
-        if event is None:
-            # Lifecycle events are skipped
-            logger.debug(f"[Callback] Skipping lifecycle event: {request.event_type}")
-            return CallbackResponse(status="ok", message="Lifecycle event skipped")
 
-        # Keep database access outside the async emit path. Streaming events do
-        # not emit task-level status and therefore need no database connection.
-        user_id = _get_task_status_user_id(request.task_id, event.type)
+def _validation_errors(
+    details: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    errors: list[dict[str, Any]] = []
+    for detail in details:
+        error = dict(detail)
+        error["loc"] = ("body", *detail.get("loc", ()))
+        errors.append(error)
+    return errors
 
-        # Emit event via WebSocketResultEmitter wrapped with StatusUpdatingEmitter
-        # StatusUpdatingEmitter intercepts terminal events (DONE, ERROR, CANCELLED)
-        # and handles:
-        # 1. Database status updates (including executor_name for container reuse)
-        # 2. Publishing TaskCompletedEvent for unified handling
-        ws_emitter = WebSocketResultEmitter(
-            task_id=request.task_id, subtask_id=request.subtask_id, user_id=user_id
+
+async def _dispatch_callback_body(body: bytes, *, batch: bool) -> CallbackResponse:
+    try:
+        result = await stream_execution_client.dispatch_callback_body(
+            body,
+            batch=batch,
         )
-        emitter = StatusUpdatingEmitter(
-            wrapped=ws_emitter,
-            task_id=request.task_id,
-            subtask_id=request.subtask_id,
-            executor_name=request.executor_name,
-            executor_namespace=request.executor_namespace,
-        )
-        await emitter.emit(event)
-        await emitter.close()
-
-        # Publish to callback stream channel for any active SSE consumers
-        # (e.g., v1/responses with stream=True for ClaudeCode/Agno/Dify tasks)
-        await session_manager.publish_callback_event(request.subtask_id, event)
-
-        logger.debug(
-            f"[Callback] Event emitted: type={event.type}, "
-            f"task_id={request.task_id}, subtask_id={request.subtask_id}"
-        )
-
-        # Forward non-terminal events to registered channel callback services
-        # (e.g., DingTalk AI Card streaming). Terminal events (DONE, ERROR,
-        # CANCELLED) are handled by TaskCompletedEvent via send_task_result().
-        await forward_event_to_channel_callbacks(
-            task_id=request.task_id,
-            subtask_id=request.subtask_id,
-            event=event,
-            source="Callback",
-        )
-
-        # Note: TaskCompletedEvent is now published by StatusUpdatingEmitter
-        # for unified handling across all execution modes
-
-        return CallbackResponse(status="ok")
-
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.exception(f"[Callback] Error handling callback: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-@router.post("/batch", response_model=CallbackResponse)
-async def handle_batch_callback(
-    events: list[CallbackRequest],
-) -> CallbackResponse:
-    """Handle batch execution callbacks.
-
-    This endpoint receives multiple execution events in OpenAI Responses API format
-    and processes them in order.
-
-    For terminal events (DONE, ERROR, CANCELLED), StatusUpdatingEmitter handles:
-    - Database status updates
-    - Publishing TaskCompletedEvent for unified handling
-
-    Args:
-        events: List of callback requests in OpenAI Responses API format
-    Returns:
-        CallbackResponse indicating success
-    """
-    logger.info(f"[Callback] Received batch of {len(events)} events")
-
-    processed = 0
-    skipped = 0
-    errors = []
-
-    # Cache task_id -> user_id mapping to avoid repeated database queries
-    task_user_cache: dict[int, Optional[int]] = {}
-
-    for request in events:
-        try:
-            # Parse OpenAI Responses API event using shared parser
-            event = _event_parser.parse(
-                task_id=request.task_id,
-                subtask_id=request.subtask_id,
-                message_id=request.message_id,
-                event_type=request.event_type,
-                data=request.data,
-            )
-
-            if event is None:
-                # Lifecycle events are skipped
-                skipped += 1
-                continue
-
-            # Load task owner only for terminal events. The helper closes its
-            # short-lived session before any async emit work starts.
-            cache_key = request.task_id
-            if event.type in _TASK_STATUS_EVENT_TYPES:
-                if cache_key not in task_user_cache:
-                    task_user_cache[cache_key] = _get_task_status_user_id(
-                        request.task_id,
-                        event.type,
-                    )
-                user_id = task_user_cache[cache_key]
-            else:
-                user_id = None
-
-            # Emit event via WebSocketResultEmitter wrapped with StatusUpdatingEmitter
-            # StatusUpdatingEmitter handles:
-            # 1. Database status updates (including executor_name for container reuse)
-            # 2. Publishing TaskCompletedEvent for unified handling
-            ws_emitter = WebSocketResultEmitter(
-                task_id=request.task_id,
-                subtask_id=request.subtask_id,
-                user_id=user_id,
-            )
-            emitter = StatusUpdatingEmitter(
-                wrapped=ws_emitter,
-                task_id=request.task_id,
-                subtask_id=request.subtask_id,
-                executor_name=request.executor_name,
-                executor_namespace=request.executor_namespace,
-            )
-            await emitter.emit(event)
-            await emitter.close()
-
-            # Note: batch callback events are typically terminal (DONE/ERROR).
-            # Terminal events are handled by TaskCompletedEvent via
-            # StatusUpdatingEmitter, so no need to forward to channels here.
-
-            processed += 1
-
-        except Exception as e:
-            errors.append(
-                f"Error processing event for subtask {request.subtask_id}: {str(e)}"
-            )
-
-    logger.info(
-        f"[Callback] Batch processed: {processed}/{len(events)} events, "
-        f"{skipped} skipped"
+    except StreamWorkerUnavailableError as error:
+        raise HTTPException(
+            status_code=503,
+            detail=str(error),
+            headers={"Retry-After": "1"},
+        ) from error
+    except StreamWorkerExecutionError as error:
+        if error.error_code == "point_projection_validation" and error.details:
+            raise RequestValidationError(_validation_errors(error.details)) from error
+        if error.error_code == "point_projection_frame_too_large":
+            raise HTTPException(status_code=413, detail=str(error)) from error
+        if error.error_code in {
+            "point_projection_overloaded",
+            "point_projection_session_overloaded",
+        }:
+            raise HTTPException(
+                status_code=503,
+                detail=str(error),
+                headers={"Retry-After": "1"},
+            ) from error
+        raise HTTPException(status_code=500, detail=str(error)) from error
+    return await run_payload_codec(
+        CallbackResponse.model_validate,
+        result,
+        payload_hint=result,
+        force_offload=True,
     )
 
-    if errors:
-        return CallbackResponse(
-            status="partial",
-            message=f"Processed {processed}/{len(events)} events. Errors: {'; '.join(errors[:5])}",
-        )
 
-    return CallbackResponse(
-        status="ok",
-        message=f"Processed {processed} events, {skipped} skipped",
+@router.post(
+    "",
+    response_model=CallbackResponse,
+    openapi_extra={
+        "requestBody": {
+            "required": True,
+            "content": {
+                "application/json": {
+                    "schema": _CALLBACK_REQUEST_OPENAPI_SCHEMA,
+                }
+            },
+        }
+    },
+)
+async def handle_callback(request: Request) -> CallbackResponse:
+    """Forward one raw bounded callback frame to the Stream worker."""
+    body = await _read_callback_body(
+        request,
+        max_bytes=CALLBACK_EVENT_BODY_MAX_BYTES,
     )
+    return await _dispatch_callback_body(body, batch=False)
+
+
+@router.post(
+    "/batch",
+    response_model=CallbackResponse,
+    openapi_extra={
+        "requestBody": {
+            "required": True,
+            "content": {
+                "application/json": {
+                    "schema": {
+                        "type": "array",
+                        "minItems": 1,
+                        "maxItems": 100,
+                        "items": _CALLBACK_REQUEST_OPENAPI_SCHEMA,
+                    }
+                }
+            },
+        }
+    },
+)
+async def handle_batch_callback(request: Request) -> CallbackResponse:
+    """Forward one raw bounded callback batch to the Stream worker."""
+    body = await _read_callback_body(
+        request,
+        max_bytes=CALLBACK_BATCH_BODY_MAX_BYTES,
+    )
+    return await _dispatch_callback_body(body, batch=True)
+
+
+__all__ = [
+    "CallbackBatch",
+    "CallbackRequest",
+    "CallbackResponse",
+    "handle_batch_callback",
+    "handle_callback",
+    "router",
+]

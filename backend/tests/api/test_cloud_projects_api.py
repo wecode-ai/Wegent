@@ -1464,15 +1464,13 @@ def test_project_automation_webhook_verifies_github_signature(
 
     captured: dict[str, object] = {}
 
-    async def fake_process(
-        db: Session, event: object, *, automation_id: str | None = None
-    ) -> int:
+    async def fake_process(event: object, *, automation_id: str | None = None) -> int:
         captured["event"] = event
         captured["automation_id"] = automation_id
         return 1
 
     monkeypatch.setattr(
-        "app.api.endpoints.project_automations.project_automation_processor.process",
+        "app.api.endpoints.project_automations.project_automation_processor.process_nonblocking",
         fake_process,
     )
     payload = {"action": "opened", "issue": {"number": 42, "title": "Bug"}}
@@ -1585,14 +1583,12 @@ def test_project_automation_webhook_verifies_gitlab_token(
 
     captured: dict[str, object] = {}
 
-    async def fake_process(
-        db: Session, event: object, *, automation_id: str | None = None
-    ) -> int:
+    async def fake_process(event: object, *, automation_id: str | None = None) -> int:
         captured["event"] = event
         return 1
 
     monkeypatch.setattr(
-        "app.api.endpoints.project_automations.project_automation_processor.process",
+        "app.api.endpoints.project_automations.project_automation_processor.process_nonblocking",
         fake_process,
     )
     response = test_client.post(

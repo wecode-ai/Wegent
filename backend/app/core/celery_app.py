@@ -31,12 +31,14 @@ from celery.signals import (
     after_setup_task_logger,
     task_postrun,
     task_prerun,
+    worker_process_init,
+    worker_process_shutdown,
     worker_shutdown,
     worker_shutting_down,
 )
 
 from app.core.config import settings
-from app.core.logging import RequestIdFilter, _create_file_handler
+from app.core.logging import setup_logging, shutdown_logging
 
 # Use configured broker/backend or fallback to REDIS_URL
 # Settings validator already converts empty strings to None
@@ -59,6 +61,10 @@ celery_app = Celery(
 
 # Celery configuration
 celery_app.conf.update(
+    # Backend owns the complete logging pipeline. Celery must not replace the
+    # root logger or redirect stdout back into logging.
+    worker_hijack_root_logger=False,
+    worker_redirect_stdouts=False,
     # Serialization
     task_serializer="json",
     result_serializer="json",
@@ -128,39 +134,14 @@ celery_app.conf.update(
 )
 
 
-# Configure Celery logging to use the same format as backend (with request_id)
 def _apply_backend_format(logger: logging.Logger) -> None:
-    """
-    Apply backend log format to all existing handlers of *logger*,
-    then attach a TimedRotatingFileHandler so that logs are also
-    written to the shared log file (same as uvicorn workers).
-
-    Celery rebuilds logger handlers via its own signals, so the file
-    handler added by setup_logging() would be lost without this call.
-    """
-    log_format = (
-        "%(asctime)s %(levelname)-4s [%(request_id)s] "
-        "%(pathname)s:%(lineno)d : %(message)s"
-    )
-    datefmt = "%Y-%m-%d %H:%M:%S"
-    formatter = logging.Formatter(log_format, datefmt=datefmt)
-
-    # Re-format existing (console) handlers
-    for handler in logger.handlers:
-        handler.setFormatter(formatter)
-        handler.addFilter(RequestIdFilter())
-
-    # Attach file handler if enabled and not already present
-    if settings.LOG_FILE_ENABLED:
-        from app.core.logging import HourlyRotatingFileHandler
-
-        already_has_file = any(
-            isinstance(h, HourlyRotatingFileHandler) for h in logger.handlers
-        )
-        if not already_has_file:
-            file_handler = _create_file_handler(log_format, datefmt)
-            if file_handler is not None:
-                logger.addHandler(file_handler)
+    """Route Celery logs through the process-local nonblocking root handler."""
+    setup_logging()
+    root_logger = logging.getLogger()
+    if logger is root_logger:
+        return
+    logger.handlers.clear()
+    logger.propagate = True
 
 
 @after_setup_logger.connect
@@ -179,6 +160,18 @@ def setup_celery_task_logger(logger, *args, **kwargs):
     and write to the rotating log file.
     """
     _apply_backend_format(logger)
+
+
+@worker_process_init.connect
+def setup_celery_child_logging(*args, **kwargs):
+    """Create an independent queue and listener in each prefork child."""
+    setup_logging()
+
+
+@worker_process_shutdown.connect
+def shutdown_celery_child_logging(*args, **kwargs):
+    """Bound shutdown latency while giving queued child logs time to drain."""
+    shutdown_logging()
 
 
 @task_prerun.connect

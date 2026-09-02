@@ -6,10 +6,11 @@
 Tests for WebSocket context decorators.
 """
 
+import threading
 from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
-from pydantic import BaseModel, ValidationError
+from pydantic import BaseModel, ValidationError, field_validator
 
 from app.api.ws.context_decorators import (
     auto_payload_validation,
@@ -52,6 +53,32 @@ class TestAutoTaskContextDecorator:
 
         assert result["success"] is True
         assert result["task_id"] == 123
+
+    @pytest.mark.asyncio
+    async def test_validation_runs_outside_event_loop_thread(self):
+        """Pydantic validation must not consume the sole Socket.IO loop."""
+
+        event_loop_thread = threading.get_ident()
+        validation_threads: list[int] = []
+
+        class ObservedPayload(BaseModel):
+            task_id: int
+
+            @field_validator("task_id")
+            @classmethod
+            def observe_thread(cls, value: int) -> int:
+                validation_threads.append(threading.get_ident())
+                return value
+
+        @auto_task_context(ObservedPayload)
+        async def handler(self, sid: str, data):
+            return {"task_id": data.task_id}
+
+        result = await handler(Mock(), "sid123", {"task_id": 123})
+
+        assert result == {"task_id": 123}
+        assert validation_threads
+        assert all(thread_id != event_loop_thread for thread_id in validation_threads)
 
     @pytest.mark.asyncio
     async def test_returns_error_for_invalid_payload(self):

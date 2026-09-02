@@ -5,12 +5,11 @@
 """Best-effort private IM notifications for task continuation events."""
 
 import logging
-from contextlib import contextmanager
-from typing import Any, Generator, Sequence
+from dataclasses import dataclass
+from typing import Any, Sequence
 
 from sqlalchemy.orm import Session
 
-from app.db.session import SessionLocal
 from app.models.im_session import IMPrivateSession
 from app.models.kind import Kind
 from app.services.im.session_service import im_session_service
@@ -35,114 +34,121 @@ SENSITIVE_CONFIG_KEYS = {
 }
 
 
+@dataclass(frozen=True)
+class _PreparedNotification:
+    session: IMPrivateSession
+    config: dict[str, Any] | None
+    dingtalk_recipient_id: str = ""
+
+
 class IMNotificationDispatcher:
     """Send provider-neutral best-effort notifications to private IM sessions."""
 
-    async def send_task_switched(
+    async def send_task_switched_nonblocking(
         self,
-        db: Session,
         sessions: Sequence[IMPrivateSession],
         task_title: str,
     ) -> dict[str, Any]:
-        """Notify each session that subsequent IM messages target a task."""
+        """Send task-switch messages without synchronous DB work on the loop."""
 
+        from app.services.chat.storage.db import run_sync_in_executor
+
+        prepared = await run_sync_in_executor(
+            self._prepare_notifications_with_owned_session,
+            tuple(_dedupe_sessions(sessions)),
+        )
         title = task_title or "当前任务"
         message = f"已切换到任务「{title}」，后续消息将继续发送到该任务。"
         results: list[dict[str, Any]] = []
         sent = 0
-
-        for session in sessions:
-            result = await self.send_text(db, session, message)
-            result.setdefault("session_key", session.session_key)
+        for item in prepared:
+            result = await self._send_prepared_text(item, message)
+            result.setdefault("session_key", item.session.session_key)
             results.append(result)
             if result.get("success"):
                 sent += 1
-
         return {"sent": sent, "results": results}
 
-    async def send_runtime_task_update(
+    def _prepare_notifications_with_owned_session(
         self,
-        db: Session,
-        *,
-        user_id: int,
-        address: dict[str, Any],
-        title: str,
-        status: str,
-        content: str = "",
-        source: str | None = None,
-    ) -> dict[str, Any]:
-        """Notify IM sessions about a runtime task update using priority rules."""
+        sessions: tuple[IMPrivateSession, ...],
+    ) -> tuple[_PreparedNotification, ...]:
+        from app.services.chat.storage.db import get_db_session
 
-        if source == "im":
-            return {"sent": 0, "results": [], "skipped": "im_source"}
-
-        sessions = await self._runtime_notification_sessions(
-            db=db,
-            user_id=user_id,
-            address=address,
-        )
-        message = _runtime_task_update_message(
-            title=title,
-            local_task_id=str(address.get("localTaskId") or "本地任务"),
-            status=status,
-            content=content,
-        )
-        return await self._send_to_sessions(
-            db,
-            sessions,
-            message,
-            runtime_task=address,
-        )
-
-    async def send_runtime_task_update_for_user(
-        self,
-        *,
-        user_id: int,
-        address: dict[str, Any],
-        title: str,
-        status: str,
-        content: str = "",
-        source: str | None = None,
-    ) -> dict[str, Any]:
-        """Notify IM sessions about a runtime task update without exposing DB plumbing."""
-
-        with _notification_db_session() as db:
-            return await self.send_runtime_task_update(
-                db,
-                user_id=user_id,
-                address=address,
-                title=title,
-                status=status,
-                content=content,
-                source=source,
+        with get_db_session() as db:
+            return tuple(
+                self._prepare_notification(db, session) for session in sessions
             )
 
-    async def send_text(
+    def _prepare_notification(
         self,
         db: Session,
         session: IMPrivateSession,
+    ) -> _PreparedNotification:
+        channel = self._get_channel(db, session.channel_id)
+        if channel is None:
+            return _PreparedNotification(session=session, config=None)
+        config = get_channel_config(channel)
+        recipient_id = ""
+        if session.channel_type == "dingtalk":
+            recipient_id = self._resolve_dingtalk_recipient_id_sync(db, session)
+        return _PreparedNotification(
+            session=session,
+            config=config,
+            dingtalk_recipient_id=recipient_id,
+        )
+
+    def _resolve_dingtalk_recipient_id_sync(
+        self,
+        db: Session,
+        session: IMPrivateSession,
+    ) -> str:
+        recipient_id = str(session.proactive_recipient_id or "").strip()
+        if recipient_id:
+            return recipient_id
+        bindings = subscription_notification_service.get_user_im_bindings(
+            db,
+            user_id=session.user_id,
+        )
+        binding = bindings.get(str(session.channel_id))
+        if (
+            binding is None
+            or binding.channel_type != session.channel_type
+            or str(binding.last_conversation_id or "").strip()
+            != session.conversation_id
+        ):
+            return ""
+        return str(binding.sender_staff_id or "").strip()
+
+    async def _send_prepared_text(
+        self,
+        prepared: _PreparedNotification,
         text: str,
     ) -> dict[str, Any]:
-        """Send one text message, returning a success flag instead of raising."""
-
+        session = prepared.session
         try:
-            channel = self._get_channel(db, session.channel_id)
-            if channel is None:
+            if prepared.config is None:
                 return {
                     "success": False,
                     "channel_id": session.channel_id,
                     "channel_type": session.channel_type,
                     "error": "Channel not found",
                 }
-
-            config = _get_channel_config(channel)
             if session.channel_type == "dingtalk":
-                return await self._send_dingtalk(db, session, config, text)
+                recipient_id = prepared.dingtalk_recipient_id
+                if recipient_id and recipient_id != session.proactive_recipient_id:
+                    session.proactive_recipient_id = recipient_id
+                    await im_session_service.save_session(session)
+                return await self._send_dingtalk_to_recipient(
+                    session,
+                    prepared.config,
+                    text,
+                    recipient_id,
+                )
             if session.channel_type == "telegram":
-                return await self._send_telegram(session, config, text)
+                return await self._send_telegram(session, prepared.config, text)
             if session.channel_type == "discord":
-                return await self._send_discord(session, config, text)
-
+                return await self._send_discord(session, prepared.config, text)
             return {
                 "success": False,
                 "channel_id": session.channel_id,
@@ -163,10 +169,61 @@ class IMNotificationDispatcher:
                 "error": str(exc),
             }
 
+    async def send_runtime_task_update_for_user(
+        self,
+        *,
+        user_id: int,
+        address: dict[str, Any],
+        title: str,
+        status: str,
+        content: str = "",
+        source: str | None = None,
+    ) -> dict[str, Any]:
+        """Notify IM sessions about a runtime task update without exposing DB plumbing."""
+
+        if source == "im":
+            return {"sent": 0, "results": [], "skipped": "im_source"}
+
+        sessions = await self._runtime_notification_sessions(
+            user_id=user_id,
+            address=address,
+        )
+        message = _runtime_task_update_message(
+            title=title,
+            local_task_id=str(address.get("localTaskId") or "本地任务"),
+            status=status,
+            content=content,
+        )
+        return await self._send_to_sessions(
+            sessions,
+            message,
+            runtime_task=address,
+        )
+
+    async def send_text(
+        self,
+        session: IMPrivateSession,
+        text: str,
+    ) -> dict[str, Any]:
+        """Send one text message, returning a success flag instead of raising."""
+
+        from app.services.chat.storage.db import run_sync_in_executor
+
+        prepared = await run_sync_in_executor(self._prepare_notification_owned, session)
+        return await self._send_prepared_text(prepared, text)
+
+    def _prepare_notification_owned(
+        self,
+        session: IMPrivateSession,
+    ) -> _PreparedNotification:
+        from app.services.chat.storage.db import get_db_session
+
+        with get_db_session() as db:
+            return self._prepare_notification(db, session)
+
     async def _runtime_notification_sessions(
         self,
         *,
-        db: Session,
         user_id: int,
         address: dict[str, Any],
     ) -> list[IMPrivateSession]:
@@ -175,7 +232,6 @@ class IMNotificationDispatcher:
             return []
 
         active_sessions = await im_session_service.list_active_runtime_task_sessions(
-            db,
             user_id=user_id,
             runtime_task=address,
         )
@@ -184,7 +240,6 @@ class IMNotificationDispatcher:
 
         subscribed_sessions = (
             await im_session_service.list_runtime_task_notification_sessions(
-                db,
                 user_id=user_id,
                 runtime_task=address,
             )
@@ -203,15 +258,21 @@ class IMNotificationDispatcher:
 
     async def _send_to_sessions(
         self,
-        db: Session,
         sessions: Sequence[IMPrivateSession],
         message: str,
         runtime_task: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
+        from app.services.chat.storage.db import run_sync_in_executor
+
+        prepared = await run_sync_in_executor(
+            self._prepare_notifications_with_owned_session,
+            tuple(_dedupe_sessions(sessions)),
+        )
         sent = 0
         results: list[dict[str, Any]] = []
-        for session in _dedupe_sessions(sessions):
-            result = await self.send_text(db, session, message)
+        for item in prepared:
+            session = item.session
+            result = await self._send_prepared_text(item, message)
             result.setdefault("session_key", session.session_key)
             results.append(result)
             if result.get("success"):
@@ -237,12 +298,12 @@ class IMNotificationDispatcher:
             .first()
         )
 
-    async def _send_dingtalk(
+    async def _send_dingtalk_to_recipient(
         self,
-        db: Session,
         session: IMPrivateSession,
         config: dict[str, Any],
         text: str,
+        recipient_id: str,
     ) -> dict[str, Any]:
         from app.services.channels.dingtalk.sender import DingTalkRobotSender
 
@@ -255,8 +316,6 @@ class IMNotificationDispatcher:
                 "channel_type": session.channel_type,
                 "error": "Missing DingTalk credentials",
             }
-
-        recipient_id = await self._dingtalk_recipient_id(db, session)
         if not recipient_id:
             return {
                 "success": False,
@@ -275,36 +334,6 @@ class IMNotificationDispatcher:
             "channel_type": session.channel_type,
             **result,
         }
-
-    async def _dingtalk_recipient_id(
-        self,
-        db: Session,
-        session: IMPrivateSession,
-    ) -> str:
-        recipient_id = str(session.proactive_recipient_id or "").strip()
-        if recipient_id:
-            return recipient_id
-
-        bindings = subscription_notification_service.get_user_im_bindings(
-            db,
-            user_id=session.user_id,
-        )
-        binding = bindings.get(str(session.channel_id))
-        if (
-            binding is None
-            or binding.channel_type != session.channel_type
-            or str(binding.last_conversation_id or "").strip()
-            != session.conversation_id
-        ):
-            return ""
-
-        recipient_id = str(binding.sender_staff_id or "").strip()
-        if not recipient_id:
-            return ""
-
-        session.proactive_recipient_id = recipient_id
-        await im_session_service.save_session(session)
-        return recipient_id
 
     async def _send_telegram(
         self,
@@ -363,7 +392,9 @@ class IMNotificationDispatcher:
         }
 
 
-def _get_channel_config(channel: Kind) -> dict[str, Any]:
+def get_channel_config(channel: Kind) -> dict[str, Any]:
+    """Return a detached, decrypted IM channel configuration."""
+
     spec = channel.json.get("spec", {}) if isinstance(channel.json, dict) else {}
     config = spec.get("config", {}) if isinstance(spec, dict) else {}
     if not isinstance(config, dict):
@@ -416,15 +447,6 @@ def _result_message_id(result: dict[str, Any]) -> int | str | None:
     if isinstance(message_id, (int, str)) and not isinstance(message_id, bool):
         return message_id
     return None
-
-
-@contextmanager
-def _notification_db_session() -> Generator[Session, None, None]:
-    db = SessionLocal()
-    try:
-        yield db
-    finally:
-        db.close()
 
 
 def _runtime_task_update_message(

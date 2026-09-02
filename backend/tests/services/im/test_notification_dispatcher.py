@@ -2,12 +2,14 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
+import threading
+from contextlib import contextmanager
 from datetime import datetime
 from typing import Any
 from unittest.mock import AsyncMock
 
 import pytest
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, sessionmaker
 
 from app.models.im_session import IMPrivateSession
 from app.models.kind import Kind
@@ -24,6 +26,32 @@ def isolate_im_session_cache(fake_im_session_cache: Any) -> Any:
     """Keep dispatcher tests from mutating the developer's Redis state."""
 
     return fake_im_session_cache
+
+
+@pytest.fixture(autouse=True)
+def configure_dispatcher_worker_session(
+    test_db: Session,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from app.services.chat.storage import db as storage_db
+
+    worker_session_factory = sessionmaker(
+        autocommit=False,
+        autoflush=False,
+        bind=test_db.get_bind(),
+        expire_on_commit=False,
+        join_transaction_mode="create_savepoint",
+    )
+
+    @contextmanager
+    def worker_session_scope():
+        db = worker_session_factory()
+        try:
+            yield db
+        finally:
+            db.close()
+
+    monkeypatch.setattr(storage_db, "get_db_session", worker_session_scope)
 
 
 def _create_channel(
@@ -82,6 +110,83 @@ def _create_session(
 
 
 @pytest.mark.asyncio
+async def test_task_switched_nonblocking_splits_db_and_network_phases(
+    test_db: Session,
+    test_user,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from app.services.chat.storage import db as storage_db
+
+    _create_channel(
+        test_db,
+        channel_id=9410,
+        channel_type="telegram",
+        config={"botToken": encrypt_sensitive_data("telegram-token")},
+    )
+    session = _create_session(
+        user_id=test_user.id,
+        channel_id=9410,
+        channel_type="telegram",
+        sender_id="100200300",
+    )
+    test_db.commit()
+
+    worker_session_factory = sessionmaker(
+        autocommit=False,
+        autoflush=False,
+        bind=test_db.get_bind(),
+        expire_on_commit=False,
+        join_transaction_mode="create_savepoint",
+    )
+
+    @contextmanager
+    def worker_session_scope():
+        db = worker_session_factory()
+        try:
+            yield db
+        finally:
+            db.close()
+
+    loop_thread_id = threading.get_ident()
+    db_thread_ids: set[int] = set()
+    sender_thread_ids: set[int] = set()
+    original_get_channel = im_notification_dispatcher._get_channel
+
+    def tracked_get_channel(db: Session, channel_id: int):
+        db_thread_ids.add(threading.get_ident())
+        return original_get_channel(db, channel_id)
+
+    class FakeTelegramBotSender:
+        def __init__(self, bot_token: str):
+            assert bot_token == "telegram-token"
+
+        async def send_text_message(self, chat_id: int, text: str):
+            sender_thread_ids.add(threading.get_ident())
+            return {"success": True, "chat_id": chat_id, "text": text}
+
+    monkeypatch.setattr(storage_db, "get_db_session", worker_session_scope)
+    monkeypatch.setattr(
+        im_notification_dispatcher,
+        "_get_channel",
+        tracked_get_channel,
+    )
+    monkeypatch.setattr(
+        "app.services.channels.telegram.sender.TelegramBotSender",
+        FakeTelegramBotSender,
+    )
+
+    result = await im_notification_dispatcher.send_task_switched_nonblocking(
+        [session],
+        "Runtime task",
+    )
+
+    assert result["sent"] == 1
+    assert db_thread_ids
+    assert loop_thread_id not in db_thread_ids
+    assert sender_thread_ids == {loop_thread_id}
+
+
+@pytest.mark.asyncio
 async def test_dingtalk_notification_uses_private_session_staff_id(
     test_db: Session,
     test_user,
@@ -120,7 +225,6 @@ async def test_dingtalk_notification_uses_private_session_staff_id(
     )
 
     result = await im_notification_dispatcher.send_text(
-        test_db,
         session,
         "已切换",
     )
@@ -180,7 +284,6 @@ async def test_dingtalk_legacy_binding_backfill_requires_matching_conversation(
     )
 
     mismatched = await im_notification_dispatcher.send_text(
-        test_db,
         session,
         "不会串发",
     )
@@ -200,7 +303,6 @@ async def test_dingtalk_legacy_binding_backfill_requires_matching_conversation(
     )
 
     matched = await im_notification_dispatcher.send_text(
-        test_db,
         session,
         "安全回填",
     )
@@ -252,7 +354,6 @@ async def test_telegram_notification_decrypts_bot_token(
     )
 
     result = await im_notification_dispatcher.send_text(
-        test_db,
         session,
         "已切换",
     )
@@ -281,7 +382,7 @@ async def test_runtime_task_update_uses_global_im_notification_target(
         sender_id="100200300",
     )
     await im_session_service.save_session(session)
-    await im_session_service.enable_global_notification(test_db, session=session)
+    await im_session_service.enable_global_notification(session=session)
     test_db.commit()
     calls: list[dict[str, Any]] = []
 
@@ -305,8 +406,7 @@ async def test_runtime_task_update_uses_global_im_notification_target(
         FakeTelegramBotSender,
     )
 
-    result = await im_notification_dispatcher.send_runtime_task_update(
-        test_db,
+    result = await im_notification_dispatcher.send_runtime_task_update_for_user(
         user_id=test_user.id,
         address={
             "deviceId": "device-1",
@@ -337,15 +437,14 @@ async def test_runtime_task_update_suppresses_global_target_while_client_is_acti
         sender_id="100200300",
     )
     await im_session_service.save_session(session)
-    await im_session_service.enable_global_notification(test_db, session=session)
+    await im_session_service.enable_global_notification(session=session)
     await im_session_service.update_im_notification_presence(
         user_id=test_user.id,
         client_id="wework-client",
         away=False,
     )
 
-    result = await im_notification_dispatcher.send_runtime_task_update(
-        test_db,
+    result = await im_notification_dispatcher.send_runtime_task_update_for_user(
         user_id=test_user.id,
         address={
             "deviceId": "device-1",
@@ -384,22 +483,23 @@ async def test_runtime_task_update_master_switch_suppresses_session_targets(
     await im_session_service.save_session(session)
     if target_kind == "active":
         await im_session_service.bind_active_runtime_task(
-            test_db,
             session=session,
             runtime_task=address,
         )
     else:
         await im_session_service.subscribe_runtime_task_notification(
-            test_db,
             session=session,
             runtime_task=address,
         )
 
-    send_text = AsyncMock(return_value={"success": True})
-    monkeypatch.setattr(im_notification_dispatcher, "send_text", send_text)
+    send_prepared_text = AsyncMock(return_value={"success": True})
+    monkeypatch.setattr(
+        im_notification_dispatcher,
+        "_send_prepared_text",
+        send_prepared_text,
+    )
 
-    result = await im_notification_dispatcher.send_runtime_task_update(
-        test_db,
+    result = await im_notification_dispatcher.send_runtime_task_update_for_user(
         user_id=test_user.id,
         address=address,
         title="Native Codex task",
@@ -409,7 +509,7 @@ async def test_runtime_task_update_master_switch_suppresses_session_targets(
     )
 
     assert result == {"sent": 0, "results": []}
-    send_text.assert_not_awaited()
+    send_prepared_text.assert_not_awaited()
 
 
 @pytest.mark.asyncio
@@ -432,21 +532,23 @@ async def test_runtime_task_update_uses_active_session_when_master_switch_enable
     )
     await im_session_service.save_session(session)
     await im_session_service.bind_active_runtime_task(
-        test_db,
         session=session,
         runtime_task=address,
     )
-    await im_session_service.enable_global_notification(test_db, session=session)
+    await im_session_service.enable_global_notification(session=session)
     await im_session_service.update_im_notification_presence(
         user_id=test_user.id,
         client_id="wework-client",
         away=False,
     )
-    send_text = AsyncMock(return_value={"success": True})
-    monkeypatch.setattr(im_notification_dispatcher, "send_text", send_text)
+    send_prepared_text = AsyncMock(return_value={"success": True})
+    monkeypatch.setattr(
+        im_notification_dispatcher,
+        "_send_prepared_text",
+        send_prepared_text,
+    )
 
-    result = await im_notification_dispatcher.send_runtime_task_update(
-        test_db,
+    result = await im_notification_dispatcher.send_runtime_task_update_for_user(
         user_id=test_user.id,
         address=address,
         title="Native Codex task",
@@ -456,7 +558,7 @@ async def test_runtime_task_update_uses_active_session_when_master_switch_enable
     )
 
     assert result["sent"] == 1
-    send_text.assert_awaited_once()
+    send_prepared_text.assert_awaited_once()
 
 
 @pytest.mark.asyncio
@@ -483,14 +585,13 @@ async def test_runtime_task_update_uses_subscribed_native_codex_task(
         "workspacePath": "/repo/Wegent",
     }
     await im_session_service.save_session(session)
-    await im_session_service.enable_global_notification(test_db, session=session)
+    await im_session_service.enable_global_notification(session=session)
     await im_session_service.update_im_notification_presence(
         user_id=test_user.id,
         client_id="wework-client",
         away=False,
     )
     await im_session_service.subscribe_runtime_task_notification(
-        test_db,
         session=session,
         runtime_task=subscription_address,
     )
@@ -517,8 +618,7 @@ async def test_runtime_task_update_uses_subscribed_native_codex_task(
         FakeTelegramBotSender,
     )
 
-    result = await im_notification_dispatcher.send_runtime_task_update(
-        test_db,
+    result = await im_notification_dispatcher.send_runtime_task_update_for_user(
         user_id=test_user.id,
         address={
             "deviceId": "device-1",
@@ -578,7 +678,6 @@ async def test_discord_notification_decrypts_bot_token(
     )
 
     result = await im_notification_dispatcher.send_text(
-        test_db,
         session,
         "已切换",
     )

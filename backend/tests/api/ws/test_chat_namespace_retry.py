@@ -2,6 +2,7 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
+import asyncio
 import sys
 from contextlib import contextmanager
 from types import ModuleType, SimpleNamespace
@@ -22,6 +23,22 @@ sys.modules.setdefault("app.services.chat.config", chat_config_module)
 import app.stores.tasks as task_stores
 from app.api.ws import chat_namespace
 from app.api.ws.chat_namespace import ChatNamespace
+
+
+@pytest.fixture(autouse=True)
+def _run_retry_background_work_inline(monkeypatch):
+    """Keep retry unit tests deterministic without starting app lifespan."""
+
+    async def submit(factory, *, name):
+        task = asyncio.create_task(factory(), name=name)
+        await task
+        return task
+
+    monkeypatch.setattr(
+        chat_namespace.web_background_task_manager,
+        "submit",
+        submit,
+    )
 
 
 def test_retry_restores_image_generation_size() -> None:
@@ -235,12 +252,14 @@ async def test_chat_retry_persists_failed_state_when_dispatch_raises():
     namespace = ChatNamespace()
     namespace.get_session = AsyncMock(return_value={"user_id": 1})
     namespace._check_token_expiry = AsyncMock(return_value=False)
+    namespace.emit = AsyncMock()
 
     db = _RetryDbMock(user=SimpleNamespace(id=1))
-    assistant_subtask = SimpleNamespace(id=42)
+    assistant_subtask = SimpleNamespace(id=42, message_id=7)
     dispatch_args = {
         "task": SimpleNamespace(id=100),
         "assistant_subtask": assistant_subtask,
+        "task_room": "task:100",
     }
     dispatch_error = RuntimeError("video attachment preprocessing failed")
 
@@ -273,9 +292,7 @@ async def test_chat_retry_persists_failed_state_when_dispatch_raises():
             },
         )
 
-    assert result == {
-        "error": "Internal server error: video attachment preprocessing failed"
-    }
+    assert result == {"success": True}
     mock_finalize.assert_awaited_once()
     assert mock_finalize.await_args.kwargs["task_id"] == 100
     assert mock_finalize.await_args.kwargs["assistant_subtask_id"] == 42

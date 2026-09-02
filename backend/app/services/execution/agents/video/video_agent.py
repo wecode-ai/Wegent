@@ -18,7 +18,9 @@ import uuid
 from datetime import datetime, timezone
 from typing import Any, Optional
 
+from app.core.blocking_work import run_execution_io
 from app.core.shutdown import shutdown_manager
+from app.services.chat.storage.db import run_sync_in_executor
 from shared.models import EventType, ExecutionEvent, ExecutionRequest
 
 from ...emitters import ResultEmitter
@@ -34,6 +36,42 @@ from .prompt import normalize_video_prompt
 from .providers import get_video_provider
 
 logger = logging.getLogger(__name__)
+
+
+def _persist_video_job(subtask_id: int, video_job: dict[str, Any]) -> None:
+    from app.tasks.video_tasks import update_subtask_video_job
+
+    update_subtask_video_job(subtask_id, video_job)
+
+
+def _persist_and_dispatch_video_job(
+    *,
+    subtask_id: int,
+    task_id: int,
+    user_id: int,
+    job_id: str,
+    protocol: str,
+    video_block_id: str,
+    model_config: dict[str, Any],
+    message_id: int | None,
+    video_job: dict[str, Any],
+) -> None:
+    from app.tasks.video_tasks import (
+        dispatch_video_polling_task,
+        update_subtask_video_job,
+    )
+
+    update_subtask_video_job(subtask_id, video_job)
+    dispatch_video_polling_task(
+        subtask_id=subtask_id,
+        task_id=task_id,
+        user_id=user_id,
+        job_id=job_id,
+        provider_protocol=protocol,
+        video_block_id=video_block_id,
+        model_config=model_config,
+        message_id=message_id,
+    )
 
 
 class VideoAgent(PollingAgent):
@@ -71,9 +109,7 @@ class VideoAgent(PollingAgent):
         """
         from app.services.chat.storage.session import session_manager
 
-        await session_manager.register_stream(request.subtask_id)
         await shutdown_manager.register_stream(request.subtask_id)
-
         task_id = request.task_id
         subtask_id = request.subtask_id
         message_id = request.message_id
@@ -81,8 +117,12 @@ class VideoAgent(PollingAgent):
 
         # Generate a unique block ID for the video block
         video_block_id = f"video-{uuid.uuid4().hex[:8]}"
+        session_registered = False
 
         try:
+            await session_manager.register_stream(subtask_id)
+            session_registered = True
+
             # Emit START event
             await emitter.emit_start(
                 task_id=task_id,
@@ -103,10 +143,8 @@ class VideoAgent(PollingAgent):
                 status="streaming",
             )
 
-            from app.tasks.video_tasks import update_subtask_video_job
-
-            await asyncio.to_thread(
-                update_subtask_video_job,
+            await run_execution_io(
+                _persist_video_job,
                 subtask_id,
                 {
                     "status": "creating",
@@ -125,19 +163,22 @@ class VideoAgent(PollingAgent):
             reference_image_descriptors.extend(
                 {"url": image} for image in prompt_images
             )
-            uploaded_images, reference_videos, reference_audios = (
-                resolve_uploaded_media(
-                    request.user_subtask_id,
-                    user_id,
-                    attachment_ids=[
-                        attachment_id
-                        for attachment in request.attachments
-                        if isinstance(
-                            attachment_id := attachment.get("id"),
-                            int,
-                        )
-                    ],
-                )
+            (
+                uploaded_images,
+                reference_videos,
+                reference_audios,
+            ) = await run_sync_in_executor(
+                resolve_uploaded_media,
+                request.user_subtask_id,
+                user_id,
+                [
+                    attachment_id
+                    for attachment in request.attachments
+                    if isinstance(
+                        attachment_id := attachment.get("id"),
+                        int,
+                    )
+                ],
             )
             images_by_identity = {
                 self._image_identity(descriptor): descriptor
@@ -242,14 +283,8 @@ class VideoAgent(PollingAgent):
                 "model_namespace": model_config.get("model_namespace"),
             }
 
-            from app.tasks.video_tasks import dispatch_video_polling_task
-
-            await asyncio.to_thread(
-                update_subtask_video_job,
-                subtask_id,
-                video_job_data,
-            )
-            dispatch_video_polling_task(
+            await run_execution_io(
+                _persist_and_dispatch_video_job,
                 subtask_id=subtask_id,
                 task_id=task_id,
                 user_id=user_id,
@@ -258,6 +293,7 @@ class VideoAgent(PollingAgent):
                 video_block_id=video_block_id,
                 model_config=model_config,
                 message_id=message_id,
+                video_job=video_job_data,
             )
 
             logger.info(
@@ -286,8 +322,11 @@ class VideoAgent(PollingAgent):
                 )
             )
         finally:
-            await session_manager.unregister_stream(subtask_id)
-            await shutdown_manager.unregister_stream(subtask_id)
+            try:
+                if session_registered:
+                    await session_manager.unregister_stream(subtask_id)
+            finally:
+                await shutdown_manager.unregister_stream(subtask_id)
 
     def _extract_reference_images(
         self,

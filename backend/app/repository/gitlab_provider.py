@@ -14,8 +14,11 @@ from urllib.parse import quote
 import requests
 from fastapi import HTTPException
 
+from app.core.blocking_work import run_repository_io
 from app.core.cache import cache_manager
 from app.core.config import settings
+from app.core.payload_codec import decode_sync_response_json
+from app.core.web_background_tasks import web_background_task_manager
 from app.models.user import User
 from app.repository.file_status import FileStatus
 from app.repository.interfaces.repository_provider import RepositoryProvider
@@ -176,7 +179,7 @@ class GitLabProvider(RepositoryProvider):
         headers = {"Authorization": f"Bearer {token}", "Accept": "application/json"}
 
         try:
-            response = await asyncio.to_thread(
+            response = await run_repository_io(
                 requests.request, method, url, headers=headers, params=params, **kwargs
             )
             if response.status_code != 401:
@@ -192,7 +195,7 @@ class GitLabProvider(RepositoryProvider):
         self.logger.info(f"Bearer auth failed with 401, retrying with Private-Token")
         headers = {"Private-Token": token, "Accept": "application/json"}
 
-        response = await asyncio.to_thread(
+        response = await run_repository_io(
             requests.request, method, url, headers=headers, params=params, **kwargs
         )
         response.raise_for_status()
@@ -252,7 +255,7 @@ class GitLabProvider(RepositoryProvider):
                 continue
 
             try:
-                response = self._make_request_with_auth_retry(
+                response = await self._make_request_with_auth_retry_async(
                     method="GET",
                     url=f"{api_base_url}/projects",
                     token=git_token,
@@ -264,7 +267,7 @@ class GitLabProvider(RepositoryProvider):
                     },
                 )
 
-                repos = response.json()
+                repos = await decode_sync_response_json(response)
 
                 all_repos.extend(
                     [
@@ -290,8 +293,11 @@ class GitLabProvider(RepositoryProvider):
                         cache_key, all_repos, expire=settings.REPO_CACHE_EXPIRED_TIME
                     )
                 else:
-                    asyncio.create_task(
-                        self._fetch_all_repositories_async(user, git_token, git_domain)
+                    await web_background_task_manager.submit(
+                        lambda: self._fetch_all_repositories_async(
+                            user, git_token, git_domain
+                        ),
+                        name=f"gitlab-repository-refresh-{user.id}-{git_domain}",
                     )
 
             except requests.exceptions.RequestException as e:
@@ -338,14 +344,14 @@ class GitLabProvider(RepositoryProvider):
             per_page = 100
 
             while True:
-                response = self._make_request_with_auth_retry(
+                response = await self._make_request_with_auth_retry_async(
                     method="GET",
                     url=f"{api_base_url}/projects/{encoded_repo_name}/repository/branches",
                     token=git_token,
                     params={"per_page": per_page, "page": page},
                 )
 
-                branches = response.json()
+                branches = await decode_sync_response_json(response)
                 if not branches:
                     break
 
@@ -585,7 +591,7 @@ class GitLabProvider(RepositoryProvider):
             # 5) Fallback: fetch first page for this domain only (avoid cross-domain aggregation)
             try:
                 api_base_url = self._get_api_base_url(git_domain)
-                response = self._make_request_with_auth_retry(
+                response = await self._make_request_with_auth_retry_async(
                     method="GET",
                     url=f"{api_base_url}/projects",
                     token=git_token,
@@ -596,7 +602,7 @@ class GitLabProvider(RepositoryProvider):
                         "membership": "true",
                     },
                 )
-                repos = response.json()
+                repos = await decode_sync_response_json(response)
                 mapped = [
                     {
                         "id": repo["id"],
@@ -687,7 +693,7 @@ class GitLabProvider(RepositoryProvider):
                     },
                 )
 
-                repos = response.json()
+                repos = await decode_sync_response_json(response)
                 if not repos:
                     break
 
@@ -792,23 +798,23 @@ class GitLabProvider(RepositoryProvider):
         try:
             # Get repository ID first (GitLab API uses project ID)
             encoded_repo_name = requests.utils.quote(repo_name, safe="")
-            repo_response = self._make_request_with_auth_retry(
+            repo_response = await self._make_request_with_auth_retry_async(
                 method="GET",
                 url=f"{api_base_url}/projects/{encoded_repo_name}",
                 token=git_token,
             )
-            repo_data = repo_response.json()
+            repo_data = await decode_sync_response_json(repo_response)
             project_id = repo_data["id"]
 
             # Get compare API response
-            response = self._make_request_with_auth_retry(
+            response = await self._make_request_with_auth_retry_async(
                 method="GET",
                 url=f"{api_base_url}/projects/{project_id}/repository/compare",
                 token=git_token,
                 params={"from": target_branch, "to": source_branch},
             )
 
-            compare_data = response.json()
+            compare_data = await decode_sync_response_json(response)
             self.logger.info(f"Response: {compare_data}")
 
             # Process commits

@@ -51,12 +51,12 @@ def test_polling_context_fresh_before_threshold() -> None:
 @pytest.mark.asyncio
 async def test_recovery_runs_blocking_work_in_thread() -> None:
     with patch(
-        "app.services.execution.agents.video.recovery.asyncio.to_thread",
+        "app.services.execution.agents.video.recovery.run_execution_io",
         new=AsyncMock(return_value=3),
-    ) as to_thread:
+    ) as run_execution_io:
         recovered_count = await recover_video_jobs()
 
-    to_thread.assert_awaited_once_with(_recover_video_jobs_sync)
+    run_execution_io.assert_awaited_once_with(_recover_video_jobs_sync)
     assert recovered_count == 3
 
 

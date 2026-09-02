@@ -18,9 +18,19 @@ from app.db.session import SessionLocal
 from app.models.subtask import Subtask, SubtaskStatus
 from app.models.task import TaskResource
 from app.schemas.kind import Task
+from app.services.chat.storage.db import run_sync_in_executor
 from app.stores.tasks import subtask_store, task_store
 
 logger = logging.getLogger(__name__)
+
+
+def _load_cancel_task_id(subtask_id: int) -> int | None:
+    db = SessionLocal()
+    try:
+        subtask = subtask_store.get_by_id(db, subtask_id=subtask_id)
+        return subtask.task_id if subtask is not None else None
+    finally:
+        db.close()
 
 
 async def cancel_chat_stream(
@@ -62,13 +72,9 @@ async def cancel_chat_stream(
         # Get task_id from subtask
         from app.services.chat.operations.executor import call_executor_cancel
 
-        db = SessionLocal()
-        try:
-            subtask = subtask_store.get_by_id(db, subtask_id=subtask_id)
-            if subtask:
-                await call_executor_cancel(subtask.task_id)
-        finally:
-            db.close()
+        task_id = await run_sync_in_executor(_load_cancel_task_id, subtask_id)
+        if task_id is not None:
+            await call_executor_cancel(task_id)
 
 
 def update_subtask_on_cancel(

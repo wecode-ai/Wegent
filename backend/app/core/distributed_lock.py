@@ -44,6 +44,9 @@ logger = logging.getLogger(__name__)
 
 # Lock key prefix
 LOCK_KEY_PREFIX = "wegent:lock:"
+LOCK_REDIS_MAX_CONNECTIONS = 8
+LOCK_REDIS_CONNECT_TIMEOUT_SECONDS = 2
+LOCK_REDIS_COMMAND_TIMEOUT_SECONDS = 5
 
 
 class DistributedLock:
@@ -72,8 +75,9 @@ class DistributedLock:
                     self._redis_client = redis.from_url(
                         redis_url,
                         decode_responses=True,
-                        socket_timeout=5,
-                        socket_connect_timeout=5,
+                        max_connections=LOCK_REDIS_MAX_CONNECTIONS,
+                        socket_timeout=LOCK_REDIS_COMMAND_TIMEOUT_SECONDS,
+                        socket_connect_timeout=LOCK_REDIS_CONNECT_TIMEOUT_SECONDS,
                     )
                     # Test connection
                     self._redis_client.ping()
@@ -267,8 +271,9 @@ class DistributedLock:
                     self._async_redis_client = AsyncRedis.from_url(
                         redis_url,
                         decode_responses=True,
-                        socket_timeout=5,
-                        socket_connect_timeout=5,
+                        max_connections=LOCK_REDIS_MAX_CONNECTIONS,
+                        socket_timeout=LOCK_REDIS_COMMAND_TIMEOUT_SECONDS,
+                        socket_connect_timeout=LOCK_REDIS_CONNECT_TIMEOUT_SECONDS,
                     )
             except Exception as e:
                 logger.warning(

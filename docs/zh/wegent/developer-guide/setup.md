@@ -172,8 +172,8 @@ cp .env.example .env
 #### 运行开发服务器
 
 ```bash
-# 使用 uvicorn 运行,支持热重载
-uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+# 启动 Backend 父进程及其 Web、Stream、Maintenance、Celery 子进程
+HOST=0.0.0.0 PORT=8000 uv run python -m app.runtime
 ```
 
 访问 API 文档:
@@ -395,7 +395,7 @@ pytest tests/ --cov=utils
 ```bash
 # 启用详细日志
 export LOG_LEVEL=DEBUG
-uvicorn app.main:app --reload --log-level debug
+PORT=8000 uv run python -m app.runtime
 ```
 
 ### Frontend 调试

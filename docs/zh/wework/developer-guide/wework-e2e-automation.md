@@ -317,7 +317,7 @@ SITES_API_TOKEN=e2e-sites-token
 cd backend
 SITES_API_BASE_URL=http://127.0.0.1:9997 \
 SITES_API_TOKEN=e2e-sites-token \
-uv run uvicorn app.main:app --host 127.0.0.1 --port 8000
+HOST=127.0.0.1 PORT=8000 uv run python -m app.runtime
 ```
 
 `wework/e2e/utils/mock-connector-upstream-server.mjs` 模拟 connector 可连接的外部服务：

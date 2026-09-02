@@ -1,8 +1,15 @@
 import json
 
 import pytest
+from pydantic import ValidationError
 
-from app.services.chat.guidance_queue import GuidanceQueue, GuidanceQueueItem
+from app.api.ws.events import ChatGuidePayload
+from app.core.constants import MAX_GUIDANCE_ID_LENGTH, MAX_GUIDANCE_MESSAGE_LENGTH
+from app.services.chat.guidance_queue import (
+    GuidanceQueue,
+    GuidanceQueueFullError,
+    GuidanceQueueItem,
+)
 
 
 class FakeRedis:
@@ -14,6 +21,17 @@ class FakeRedis:
     async def rpush(self, key: str, value: bytes) -> int:
         self.lists.setdefault(key, []).append(value)
         return len(self.lists[key])
+
+    async def eval(self, script: str, num_keys: int, key: str, *args):
+        del script
+        assert num_keys == 1
+        max_items, value, ttl_seconds = args
+        values = self.lists.setdefault(key, [])
+        if len(values) >= int(max_items):
+            return 0
+        values.append(value)
+        self.expirations[key] = int(ttl_seconds)
+        return 1
 
     async def lpop(self, key: str):
         values = self.lists.get(key, [])
@@ -38,6 +56,27 @@ class FakeRedis:
 
     async def aclose(self) -> None:
         self.closed = True
+
+
+def test_chat_guidance_payload_has_a_finite_message_size() -> None:
+    with pytest.raises(ValidationError):
+        ChatGuidePayload(
+            task_id=1,
+            subtask_id=2,
+            team_id=3,
+            message="x" * (MAX_GUIDANCE_MESSAGE_LENGTH + 1),
+        )
+
+
+def test_chat_guidance_payload_has_a_finite_correlation_id() -> None:
+    with pytest.raises(ValidationError):
+        ChatGuidePayload(
+            task_id=1,
+            subtask_id=2,
+            team_id=3,
+            message="guide",
+            client_guidance_id="x" * (MAX_GUIDANCE_ID_LENGTH + 1),
+        )
 
 
 @pytest.mark.asyncio
@@ -110,3 +149,37 @@ async def test_guidance_queue_expire_returns_ids(monkeypatch) -> None:
 
     assert expired_ids == ["g1", "g2"]
     assert key not in redis.lists
+
+
+@pytest.mark.asyncio
+async def test_guidance_queue_atomically_rejects_items_above_capacity(
+    monkeypatch,
+) -> None:
+    redis = FakeRedis()
+    queue = GuidanceQueue(ttl_seconds=60, max_items=2)
+
+    async def get_client():
+        return redis
+
+    monkeypatch.setattr(queue._cache, "_get_client", get_client)
+    for guidance_id in ("g1", "g2"):
+        await queue.enqueue(
+            task_id=1,
+            subtask_id=2,
+            team_id=3,
+            user_id=4,
+            message=guidance_id,
+            guidance_id=guidance_id,
+        )
+
+    with pytest.raises(GuidanceQueueFullError, match="2 pending items"):
+        await queue.enqueue(
+            task_id=1,
+            subtask_id=2,
+            team_id=3,
+            user_id=4,
+            message="third",
+            guidance_id="g3",
+        )
+
+    assert len(redis.lists[queue.key(1, 2)]) == 2

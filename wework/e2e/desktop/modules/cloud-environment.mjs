@@ -279,38 +279,25 @@ class RealCloudEnvironment {
       ATTACHMENT_S3_SECRET_KEY: 'desktop-e2e-secret-key',
       ATTACHMENT_S3_USE_SSL: 'false',
       PLUGIN_PUBLISH_ENABLED: 'true',
+      HOST: '127.0.0.1',
+      PORT: String(this.backendPort),
     }
     this.backendEnv = backendEnv
     await runChecked('uv', ['run', 'alembic', 'upgrade', 'head'], {
       cwd: backendDirectory,
       env: backendEnv,
     })
-    this.backend = spawn(
-      'uv',
-      [
-        'run',
-        'python',
-        '-u',
-        '-m',
-        'uvicorn',
-        'app.main:app',
-        '--host',
-        '127.0.0.1',
-        '--port',
-        String(this.backendPort),
-      ],
-      {
-        cwd: backendDirectory,
-        env: backendEnv,
-        stdio: ['ignore', 'pipe', 'pipe'],
-      }
-    )
+    this.backend = spawn('uv', ['run', '--no-sync', 'python', '-u', '-m', 'app.runtime'], {
+      cwd: backendDirectory,
+      env: backendEnv,
+      stdio: ['ignore', 'pipe', 'pipe'],
+    })
     await Promise.all([
       appendProcessOutput(this.backend.stdout, this.backendLogPath),
       appendProcessOutput(this.backend.stderr, this.backendLogPath),
     ])
     await waitForUrl(
-      `${this.backendUrl}/api/docs`,
+      `${this.backendUrl}/api/ready`,
       `Real cloud backend did not start; see ${this.backendLogPath}`
     )
 

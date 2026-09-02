@@ -269,7 +269,7 @@ vim .env  # Edit configuration
 mysql -u root -p -e "CREATE DATABASE IF NOT EXISTS task_manager CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;"
 
 # Run backend service
-uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+HOST=0.0.0.0 PORT=8000 uv run python -m app.runtime
 ```
 
 > **Administrator password**: First startup automatically creates the `admin` administrator account, but it does not assign a default password. By default, `CHECK_SYSTEM_INITIALIZATION_STATUS=True` makes the backend load the initialization state into memory at startup, and the first visit to the login page forces the administrator password setup flow. Complete that flow before logging in and using the system. Set `CHECK_SYSTEM_INITIALIZATION_STATUS=False` only for deployments that must skip this check.

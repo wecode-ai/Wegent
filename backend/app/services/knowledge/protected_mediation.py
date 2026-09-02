@@ -9,12 +9,16 @@ from __future__ import annotations
 import json
 import logging
 import re
+from dataclasses import dataclass
 from typing import Any, Literal, Optional
 
 from langchain_core.messages import HumanMessage, SystemMessage
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
+from app.core.blocking_work import run_knowledge_io
+from app.core.bounded_executor import BoundedExecutorOverloaded
+from app.core.payload_codec import run_payload_codec
 from app.services.chat.config import LangChainModelFactory
 from app.services.knowledge.protected_model_resolver import (
     ProtectedModelResolver,
@@ -114,10 +118,19 @@ class ProtectedKnowledgeMediationResponse(BaseModel):
     )
 
 
+@dataclass(frozen=True)
+class PreparedProtectedMediation:
+    """Detached model configuration required by the async mediation phase."""
+
+    model_config: dict[str, Any]
+    kb_name_map: dict[int, str]
+
+
 def _extract_transform_attributes(
     _service: "ProtectedKnowledgeMediationService",
     *,
-    db: Session,
+    db: Session | None = None,
+    prepared: PreparedProtectedMediation | None = None,
     query: str,
     retrieval_mode: Literal["direct_injection", "rag_retrieval"],
     records: list[dict[str, Any]],
@@ -170,7 +183,8 @@ class ProtectedKnowledgeMediationService:
     async def transform(
         self,
         *,
-        db: Session,
+        db: Session | None = None,
+        prepared: PreparedProtectedMediation | None = None,
         query: str,
         retrieval_mode: Literal["direct_injection", "rag_retrieval"],
         records: list[dict[str, Any]],
@@ -181,13 +195,35 @@ class ProtectedKnowledgeMediationService:
         user_name: str = "system",
     ) -> ProtectedKnowledgeMediationResponse:
         """Transform raw protected records into a safe summary envelope."""
-        logger.info(
-            "[protected_mediation] Transform started: retrieval_mode=%s kb_count=%d record_count=%d query_length=%d",
-            retrieval_mode,
-            len(knowledge_base_ids),
-            len(records),
-            len(query),
+        if prepared is None:
+            if db is None:
+                raise ValueError("db or prepared mediation state is required")
+            prepared = self.prepare(
+                db=db,
+                mediation_context=mediation_context,
+                knowledge_base_ids=knowledge_base_ids,
+                user_id=user_id,
+                user_name=user_name,
+            )
+        return await self.transform_prepared(
+            prepared=prepared,
+            query=query,
+            retrieval_mode=retrieval_mode,
+            records=records,
+            knowledge_base_ids=knowledge_base_ids,
+            total_estimated_tokens=total_estimated_tokens,
         )
+
+    def prepare(
+        self,
+        *,
+        db: Session,
+        mediation_context: dict[str, Any] | None,
+        knowledge_base_ids: list[int],
+        user_id: int | None,
+        user_name: str,
+    ) -> PreparedProtectedMediation:
+        """Resolve all database-backed mediation state synchronously."""
         knowledge_base_snapshots = self._model_resolver.load_knowledge_base_snapshots(
             db=db,
             knowledge_base_ids=knowledge_base_ids,
@@ -200,6 +236,33 @@ class ProtectedKnowledgeMediationService:
             user_id=user_id,
             user_name=user_name,
         )
+        return PreparedProtectedMediation(
+            model_config=model_config,
+            kb_name_map=self._build_kb_name_map(
+                knowledge_base_ids=knowledge_base_ids,
+                knowledge_base_snapshots=knowledge_base_snapshots,
+            ),
+        )
+
+    async def transform_prepared(
+        self,
+        *,
+        prepared: PreparedProtectedMediation,
+        query: str,
+        retrieval_mode: Literal["direct_injection", "rag_retrieval"],
+        records: list[dict[str, Any]],
+        knowledge_base_ids: list[int],
+        total_estimated_tokens: int = 0,
+    ) -> ProtectedKnowledgeMediationResponse:
+        """Run model I/O from detached state after the DB Session is closed."""
+        logger.info(
+            "[protected_mediation] Transform started: retrieval_mode=%s kb_count=%d record_count=%d query_length=%d",
+            retrieval_mode,
+            len(knowledge_base_ids),
+            len(records),
+            len(query),
+        )
+        model_config = prepared.model_config
         selected_model = _format_selected_model(model_config)
         logger.info(
             "[protected_mediation] Model resolved: selected_model=%s has_model_config=%s",
@@ -210,15 +273,11 @@ class ProtectedKnowledgeMediationService:
             "knowledge.selected_model",
             selected_model,
         )
-        kb_name_map = self._build_kb_name_map(
-            knowledge_base_ids=knowledge_base_ids,
-            knowledge_base_snapshots=knowledge_base_snapshots,
-        )
         safe_summary = await self._summarize_records(
             model_config=model_config,
             query=query,
             records=records,
-            kb_name_map=kb_name_map,
+            kb_name_map=prepared.kb_name_map,
         )
         fallback_used = safe_summary.reason in FALLBACK_REASONS
         set_span_attribute("knowledge.fallback_used", fallback_used)
@@ -233,13 +292,14 @@ class ProtectedKnowledgeMediationService:
             safe_summary.confidence,
             fallback_used,
         )
-        return ProtectedKnowledgeMediationResponse(
-            retrieval_mode=retrieval_mode,
-            restricted_safe_summary=safe_summary,
-            answer_contract=PROTECTED_KB_ANSWER_CONTRACT,
-            message=PROTECTED_KB_MESSAGE,
-            total=len(records),
-            total_estimated_tokens=total_estimated_tokens,
+        return await run_payload_codec(
+            self._build_mediation_response,
+            retrieval_mode,
+            safe_summary,
+            len(records),
+            total_estimated_tokens,
+            payload_hint=safe_summary,
+            force_offload=True,
         )
 
     def _build_kb_name_map(
@@ -278,46 +338,42 @@ class ProtectedKnowledgeMediationService:
                 ),
             )
 
-        summary_chunks = self._truncate_chunks_for_summary(records, kb_name_map)
+        summary_chunks = await run_payload_codec(
+            self._truncate_chunks_for_summary,
+            records,
+            kb_name_map,
+            payload_hint=records,
+            force_offload=True,
+        )
         if not summary_chunks:
             return self._build_fallback_result(
                 reason="no_summary_chunks",
                 summary="No usable protected material was available for safe analysis.",
             )
         try:
-            llm = LangChainModelFactory.create_from_config(
+            llm = await run_knowledge_io(
+                LangChainModelFactory.create_from_config,
                 model_config,
                 streaming=False,
                 temperature=0.1,
             )
-            user_payload = {
-                "query": query,
-                "knowledge_bases": [
-                    {"id": kb_id, "name": kb_name}
-                    for kb_id, kb_name in sorted(kb_name_map.items())
-                ],
-                "chunks": summary_chunks,
-            }
-            response = await llm.ainvoke(
-                [
-                    SystemMessage(content=SAFE_SUMMARY_SYSTEM_PROMPT),
-                    HumanMessage(content=json.dumps(user_payload, ensure_ascii=False)),
-                ]
+            messages = await run_payload_codec(
+                self._build_summary_messages,
+                query,
+                kb_name_map,
+                summary_chunks,
+                payload_hint=summary_chunks,
+                force_offload=True,
             )
-            raw_text = self._normalize_ai_content(
-                getattr(response, "content", response)
+            response = await llm.ainvoke(messages)
+            return await run_payload_codec(
+                self._parse_summary_response,
+                getattr(response, "content", response),
+                payload_hint=getattr(response, "content", response),
+                force_offload=True,
             )
-            parsed = self._extract_json_payload(raw_text)
-            return RestrictedSafeSummaryResult(
-                decision=parsed.get("decision", "refuse"),
-                reason=parsed.get("reason", "safe_summary_unclassified"),
-                summary=parsed.get("summary", ""),
-                observations=parsed.get("observations", []) or [],
-                risks=parsed.get("risks", []) or [],
-                recommended_actions=parsed.get("recommended_actions", []) or [],
-                answer_guidance=parsed.get("answer_guidance", ""),
-                confidence=parsed.get("confidence", "low"),
-            )
+        except BoundedExecutorOverloaded:
+            raise
         except Exception:
             logger.error(
                 "[protected_mediation] Safe summary generation failed",
@@ -330,6 +386,61 @@ class ProtectedKnowledgeMediationService:
                     "Please ask for a high-level diagnostic or try again later."
                 ),
             )
+
+    @staticmethod
+    def _build_summary_messages(
+        query: str,
+        kb_name_map: dict[int, str],
+        summary_chunks: list[dict[str, Any]],
+    ) -> list[SystemMessage | HumanMessage]:
+        """Encode the bounded model request outside the event loop."""
+
+        user_payload = {
+            "query": query,
+            "knowledge_bases": [
+                {"id": kb_id, "name": kb_name}
+                for kb_id, kb_name in sorted(kb_name_map.items())
+            ],
+            "chunks": summary_chunks,
+        }
+        return [
+            SystemMessage(content=SAFE_SUMMARY_SYSTEM_PROMPT),
+            HumanMessage(content=json.dumps(user_payload, ensure_ascii=False)),
+        ]
+
+    @classmethod
+    def _parse_summary_response(cls, content: Any) -> RestrictedSafeSummaryResult:
+        """Decode and validate model output outside the event loop."""
+
+        parsed = cls._extract_json_payload(cls._normalize_ai_content(content))
+        return RestrictedSafeSummaryResult(
+            decision=parsed.get("decision", "refuse"),
+            reason=parsed.get("reason", "safe_summary_unclassified"),
+            summary=parsed.get("summary", ""),
+            observations=parsed.get("observations", []) or [],
+            risks=parsed.get("risks", []) or [],
+            recommended_actions=parsed.get("recommended_actions", []) or [],
+            answer_guidance=parsed.get("answer_guidance", ""),
+            confidence=parsed.get("confidence", "low"),
+        )
+
+    @staticmethod
+    def _build_mediation_response(
+        retrieval_mode: Literal["direct_injection", "rag_retrieval"],
+        safe_summary: RestrictedSafeSummaryResult,
+        total: int,
+        total_estimated_tokens: int,
+    ) -> ProtectedKnowledgeMediationResponse:
+        """Validate the response DTO outside the event loop."""
+
+        return ProtectedKnowledgeMediationResponse(
+            retrieval_mode=retrieval_mode,
+            restricted_safe_summary=safe_summary,
+            answer_contract=PROTECTED_KB_ANSWER_CONTRACT,
+            message=PROTECTED_KB_MESSAGE,
+            total=total,
+            total_estimated_tokens=total_estimated_tokens,
+        )
 
     def _truncate_chunks_for_summary(
         self,

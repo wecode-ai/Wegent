@@ -18,6 +18,7 @@ import logging
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
 
+from app.core.blocking_work import run_execution_io
 from app.core.config import settings
 from app.stores.tasks import subtask_store, task_store
 
@@ -50,7 +51,7 @@ async def recover_video_jobs() -> int:
     Returns:
         Number of recovered video jobs
     """
-    return await asyncio.to_thread(_recover_video_jobs_sync)
+    return await run_execution_io(_recover_video_jobs_sync)
 
 
 def _recover_video_jobs_sync() -> int:

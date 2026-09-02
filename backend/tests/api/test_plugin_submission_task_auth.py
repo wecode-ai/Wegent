@@ -108,7 +108,7 @@ def test_task_token_can_initialize_personal_plugin_submission(
 ) -> None:
     token, task, subtask = active_task_auth
     init_submission = mocker.patch(
-        "app.api.endpoints.installed_plugins.plugin_marketplace_service.init_submission",
+        "app.services.plugin_endpoint_db.plugin_marketplace_service.init_submission",
         return_value=PluginSubmissionInitResponse(
             submissionId=31,
             pluginId=41,
@@ -164,7 +164,7 @@ def test_task_token_cannot_initialize_after_subtask_finishes(
     subtask.completed_at = datetime.now()
     test_db.commit()
     init_submission = mocker.patch(
-        "app.api.endpoints.installed_plugins.plugin_marketplace_service.init_submission"
+        "app.services.plugin_endpoint_db.plugin_marketplace_service.init_submission"
     )
 
     response = test_client.post(

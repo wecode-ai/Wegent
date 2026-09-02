@@ -14,8 +14,12 @@ This module provides unified task dispatch functionality including:
 - ExecutorRecoveryService: Recovers executor Pods after deletion
 """
 
-import json
-
+from app.core.payload_codec import (
+    decode_sync_response_json,
+    decode_sync_response_text,
+    encode_http_json,
+    run_payload_codec,
+)
 from shared.models import ExecutionRequest
 
 from .dispatcher import ExecutionDispatcher, execution_dispatcher
@@ -48,7 +52,7 @@ class _ExecutorRuntimeClient:
     """Thin client for calling executor_manager runtime APIs."""
 
     @staticmethod
-    def _format_http_error(error: Exception) -> str:
+    async def _format_http_error(error: Exception) -> str:
         """Build a stable error string from executor-manager HTTP failures."""
         try:
             import httpx
@@ -57,8 +61,8 @@ class _ExecutorRuntimeClient:
                 response = error.response
                 detail = ""
                 try:
-                    payload = response.json()
-                except (ValueError, json.JSONDecodeError):
+                    payload = await decode_sync_response_json(response)
+                except ValueError:
                     payload = None
 
                 if isinstance(payload, dict):
@@ -70,7 +74,7 @@ class _ExecutorRuntimeClient:
                     )
 
                 if not detail:
-                    detail = response.text or str(error)
+                    detail = await decode_sync_response_text(response) or str(error)
 
                 request_id = response.headers.get("X-Request-ID")
                 error_message = (
@@ -121,11 +125,11 @@ class _ExecutorRuntimeClient:
             async with httpx.AsyncClient(timeout=180.0) as client:
                 response = await client.post(
                     url,
-                    json=payload,
+                    content=await encode_http_json(payload),
                     headers={"Content-Type": "application/json"},
                 )
                 response.raise_for_status()
-                data = response.json()
+                data = await decode_sync_response_json(response)
 
                 # Create a simple sandbox object
                 class SimpleSandbox:
@@ -155,9 +159,9 @@ class _ExecutorRuntimeClient:
                 if response.status_code == 404:
                     return None, None
                 response.raise_for_status()
-                return response.json(), None
+                return await decode_sync_response_json(response), None
         except Exception as e:
-            return None, self._format_http_error(e)
+            return None, await self._format_http_error(e)
 
     async def delete_sandbox(self, sandbox_id: str):
         """Delete a sandbox via executor_manager API."""
@@ -174,7 +178,7 @@ class _ExecutorRuntimeClient:
                 response.raise_for_status()
                 return True, None
         except Exception as e:
-            return False, self._format_http_error(e)
+            return False, await self._format_http_error(e)
 
     async def cleanup_stale_sandboxes(
         self,
@@ -194,11 +198,11 @@ class _ExecutorRuntimeClient:
             async with httpx.AsyncClient(timeout=180.0) as client:
                 response = await client.post(
                     url,
-                    json=payload,
+                    content=await encode_http_json(payload),
                     headers={"Content-Type": "application/json"},
                 )
                 response.raise_for_status()
-                return response.json()
+                return await decode_sync_response_json(response)
         except Exception as e:
             return {
                 "target": "sandboxes",
@@ -209,7 +213,7 @@ class _ExecutorRuntimeClient:
                 "failed": [
                     {
                         "reason": "executor_manager_error",
-                        "error": self._format_http_error(e),
+                        "error": await self._format_http_error(e),
                     }
                 ],
             }
@@ -238,11 +242,11 @@ class _ExecutorRuntimeClient:
             async with httpx.AsyncClient(timeout=180.0) as client:
                 response = await client.post(
                     url,
-                    json=payload,
+                    content=await encode_http_json(payload),
                     headers={"Content-Type": "application/json"},
                 )
                 response.raise_for_status()
-                return response.json()
+                return await decode_sync_response_json(response)
         except Exception as e:
             return {
                 "target": "sandbox",
@@ -252,7 +256,7 @@ class _ExecutorRuntimeClient:
                 "deleted": False,
                 "redis_cleared": False,
                 "reason": "executor_manager_error",
-                "error": self._format_http_error(e),
+                "error": await self._format_http_error(e),
             }
 
     async def prepare_executor(self, request: ExecutionRequest):
@@ -265,14 +269,18 @@ class _ExecutorRuntimeClient:
         url = f"{base_url}/executor-manager/executors/prepare"
 
         try:
+            payload = await run_payload_codec(
+                request.to_dict,
+                payload_hint=request,
+            )
             async with httpx.AsyncClient(timeout=180.0) as client:
                 response = await client.post(
                     url,
-                    json=request.to_dict(),
+                    content=await encode_http_json(payload),
                     headers={"Content-Type": "application/json"},
                 )
                 response.raise_for_status()
-                data = response.json()
+                data = await decode_sync_response_json(response)
 
                 class SimpleSandbox:
                     def __init__(self, data):
@@ -282,7 +290,7 @@ class _ExecutorRuntimeClient:
 
                 return SimpleSandbox(data), None
         except Exception as e:
-            return None, self._format_http_error(e)
+            return None, await self._format_http_error(e)
 
 
 __all__ = [

@@ -15,6 +15,7 @@ from fastapi import HTTPException, status
 from sqlalchemy.orm import Session
 
 import app.stores.tasks as task_stores
+from app.core.payload_codec import run_payload_codec
 from app.db.session import SessionLocal
 from app.models.kind import Kind
 from app.models.subtask import Subtask, SubtaskRole
@@ -165,6 +166,88 @@ def _extract_embedded_result_blocks(blocks: Any) -> list[dict[str, Any]]:
                 embedded_blocks = _merge_blocks(embedded_blocks, result_blocks)
 
     return embedded_blocks
+
+
+def _merge_completed_result_sources(
+    runtime_result: Dict[str, Any],
+    existing_result: Dict[str, Any],
+    blocks: List[Dict[str, Any]],
+) -> tuple[Dict[str, Any], int]:
+    """Merge terminal result sources without blocking an async serving loop."""
+    final_result = dict(runtime_result)
+    for key, value in existing_result.items():
+        if key == "blocks":
+            merged_blocks = _merge_blocks(value, final_result.get("blocks"))
+            if merged_blocks:
+                final_result["blocks"] = merged_blocks
+            continue
+        current_value = final_result.get(key)
+        if key not in final_result or current_value is None:
+            final_result[key] = value
+
+    if blocks:
+        merged_blocks = _merge_blocks(final_result.get("blocks"), blocks)
+        if merged_blocks:
+            final_result["blocks"] = merged_blocks
+
+    embedded_blocks = _extract_embedded_result_blocks(final_result.get("blocks"))
+    if embedded_blocks:
+        final_result["blocks"] = _merge_blocks(
+            final_result.get("blocks"),
+            embedded_blocks,
+        )
+    return final_result, len(embedded_blocks)
+
+
+def _assemble_completed_result(
+    normalized_status: str,
+    result: Optional[Dict[str, Any]],
+    existing_result: Dict[str, Any],
+    accumulated_content: str,
+    blocks: List[Dict[str, Any]],
+    termination_reason: Optional[str],
+    error_message: Optional[str],
+    error_code: Optional[str],
+) -> tuple[Optional[Dict[str, Any]], int]:
+    """Build the complete terminal result in the shared payload codec worker."""
+    runtime_result = dict(result) if isinstance(result, dict) else {}
+    if termination_reason:
+        runtime_result["termination_reason"] = termination_reason
+    else:
+        runtime_result.pop("termination_reason", None)
+
+    if not (
+        runtime_result
+        or existing_result
+        or accumulated_content
+        or blocks
+        or normalized_status == "COMPLETED"
+        or (normalized_status == "FAILED" and error_code)
+    ):
+        return None, 0
+
+    final_result, promoted_block_count = _merge_completed_result_sources(
+        runtime_result,
+        existing_result,
+        blocks,
+    )
+    if _is_blank_text_value(final_result.get("value")) and (
+        normalized_status == "COMPLETED" or accumulated_content.strip()
+    ):
+        final_result["value"] = (
+            accumulated_content
+            if accumulated_content.strip()
+            else _extract_text_value_from_blocks(final_result.get("blocks"))
+        )
+
+    if normalized_status == "FAILED" and error_code:
+        from shared.utils.error_classifier import extract_http_status_code
+
+        final_result["error_type"] = error_code
+        http_code = extract_http_status_code(error_message or "")
+        if http_code is not None:
+            final_result["error_code"] = http_code
+    return final_result, promoted_block_count
 
 
 def _load_team_crd(team: Kind) -> Optional[Team]:
@@ -441,8 +524,8 @@ def prepare_execution_session(
     )
 
 
-async def _get_existing_subtask_result(subtask_id: int) -> Dict[str, Any]:
-    """Load the stored subtask result so we can preserve existing fields."""
+def _get_existing_subtask_result_sync(subtask_id: int) -> Dict[str, Any]:
+    """Load a stored subtask result in a synchronous database worker."""
     db = SessionLocal()
     try:
         subtask = subtask_store.get_by_id(db, subtask_id=subtask_id)
@@ -460,11 +543,18 @@ async def _get_existing_subtask_result(subtask_id: int) -> Dict[str, Any]:
         db.close()
 
 
-async def persist_result_without_status(
+async def _get_existing_subtask_result(subtask_id: int) -> Dict[str, Any]:
+    """Load the stored subtask result without blocking the event loop."""
+    from app.services.chat.storage.db import run_sync_in_executor
+
+    return await run_sync_in_executor(_get_existing_subtask_result_sync, subtask_id)
+
+
+def _persist_result_without_status_sync(
     subtask_id: int,
     result: Dict[str, Any],
 ) -> None:
-    """Persist result data while leaving the current subtask status unchanged."""
+    """Persist result data in a synchronous database worker."""
     db = SessionLocal()
     try:
         subtask = task_stores.subtask_store.get_by_id(db, subtask_id=subtask_id)
@@ -481,6 +571,16 @@ async def persist_result_without_status(
         raise
     finally:
         db.close()
+
+
+async def persist_result_without_status(
+    subtask_id: int,
+    result: Dict[str, Any],
+) -> None:
+    """Persist result data while leaving the current subtask status unchanged."""
+    from app.services.chat.storage.db import run_sync_in_executor
+
+    await run_sync_in_executor(_persist_result_without_status_sync, subtask_id, result)
 
 
 async def collect_completed_result(
@@ -508,8 +608,9 @@ async def collect_completed_result(
             type(result).__name__,
         )
 
-    runtime_result = dict(result) if isinstance(result, dict) else {}
-    termination_reason = runtime_result.get("termination_reason")
+    termination_reason = (
+        result.get("termination_reason") if isinstance(result, dict) else None
+    )
     if not isinstance(termination_reason, str) or not termination_reason:
         existing_termination_reason = existing_result.get("termination_reason")
         termination_reason = (
@@ -518,47 +619,13 @@ async def collect_completed_result(
             and existing_termination_reason
             else None
         )
-    if termination_reason:
-        runtime_result["termination_reason"] = termination_reason
-    else:
-        runtime_result.pop("termination_reason", None)
     blocks = await chat_storage.session_manager.finalize_and_get_blocks(
         subtask_id,
         termination_reason=termination_reason,
         terminal_status=normalized_status,
     )
 
-    has_payload = bool(
-        runtime_result
-        or existing_result
-        or accumulated_content
-        or blocks
-        or normalized_status == "COMPLETED"
-        or (normalized_status == "FAILED" and error_code)
-    )
-    if not has_payload:
-        return None
-
-    final_result: Dict[str, Any] = dict(runtime_result)
-
-    for key, value in existing_result.items():
-        if key == "blocks":
-            merged_blocks = _merge_blocks(value, final_result.get("blocks"))
-            if merged_blocks:
-                final_result["blocks"] = merged_blocks
-            continue
-        current_value = final_result.get(key)
-        if (
-            key not in final_result
-            or current_value is None
-            or (key == "blocks" and not current_value)
-        ):
-            final_result[key] = value
-
     if blocks:
-        merged_blocks = _merge_blocks(final_result.get("blocks"), blocks)
-        if merged_blocks:
-            final_result["blocks"] = merged_blocks
         logger.info(
             "[CompletedResult] Added %d blocks to %s result for subtask %s",
             len(blocks),
@@ -566,37 +633,24 @@ async def collect_completed_result(
             subtask_id,
         )
 
-    embedded_blocks = _extract_embedded_result_blocks(final_result.get("blocks"))
-    if embedded_blocks:
-        final_result["blocks"] = _merge_blocks(
-            final_result.get("blocks"),
-            embedded_blocks,
-        )
+    final_result, promoted_block_count = await run_payload_codec(
+        _assemble_completed_result,
+        normalized_status,
+        result,
+        existing_result,
+        accumulated_content,
+        blocks,
+        termination_reason,
+        error_message,
+        error_code,
+        payload_hint=(result, existing_result, accumulated_content, blocks),
+    )
+    if promoted_block_count:
         logger.info(
             "[CompletedResult] Promoted %d embedded result blocks for subtask %s",
-            len(embedded_blocks),
+            promoted_block_count,
             subtask_id,
         )
-
-    if _is_blank_text_value(final_result.get("value")) and (
-        normalized_status == "COMPLETED" or accumulated_content.strip()
-    ):
-        text_value = (
-            accumulated_content
-            if accumulated_content.strip()
-            else _extract_text_value_from_blocks(final_result.get("blocks"))
-        )
-        final_result["value"] = text_value
-
-    if normalized_status == "FAILED" and error_code:
-        final_result["error_type"] = error_code
-
-        from shared.utils.error_classifier import extract_http_status_code
-
-        http_code = extract_http_status_code(error_message or "")
-        if http_code is not None:
-            final_result["error_code"] = http_code
-
     return final_result
 
 
@@ -644,11 +698,11 @@ async def persist_completed_result(
         )
 
 
-async def _persist_standalone_workspace_path(
+def _persist_standalone_workspace_path_sync(
     task_id: int,
     result: Optional[Dict[str, Any]],
 ) -> None:
-    """Persist standalone chat workspace path returned by local executors."""
+    """Persist a standalone workspace path in a synchronous database worker."""
 
     from app.db.session import SessionLocal
     from app.services.chat.standalone_workspace import (
@@ -676,6 +730,16 @@ async def _persist_standalone_workspace_path(
         )
     finally:
         db.close()
+
+
+async def _persist_standalone_workspace_path(
+    task_id: int,
+    result: Optional[Dict[str, Any]],
+) -> None:
+    """Persist a standalone workspace path without blocking the event loop."""
+    from app.services.chat.storage.db import run_sync_in_executor
+
+    await run_sync_in_executor(_persist_standalone_workspace_path_sync, task_id, result)
 
 
 __all__ = [

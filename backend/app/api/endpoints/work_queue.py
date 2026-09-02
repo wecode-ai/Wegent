@@ -5,7 +5,8 @@
 """Work Queue API endpoints."""
 
 import logging
-from typing import List, Optional
+from functools import partial
+from typing import BinaryIO, List, Optional, Sequence
 
 from fastapi import (
     APIRouter,
@@ -13,6 +14,7 @@ from fastapi import (
     File,
     Form,
     HTTPException,
+    Path,
     Query,
     UploadFile,
     status,
@@ -21,7 +23,9 @@ from sqlalchemy.orm import Session
 
 from app.api.dependencies import get_db
 from app.core import security
+from app.core.bounded_executor import BoundedExecutor
 from app.core.exceptions import ConflictException, ForbiddenException, NotFoundException
+from app.db import session as db_session
 from app.models.user import User
 from app.schemas.work_queue import (
     BatchMessageIds,
@@ -47,6 +51,8 @@ from app.schemas.work_queue import (
     WorkQueueResponse,
     WorkQueueUpdate,
 )
+from app.services.attachment.parser import DocumentParser
+from app.services.context import context_service
 from app.services.message_forwarding_service import message_forwarding_service
 from app.services.work_queue_service import (
     contact_service,
@@ -61,12 +67,22 @@ _ingest_auth = security.get_current_user_flexible_for_executor
 
 router = APIRouter()
 
+WORK_QUEUE_UPLOAD_CHUNK_SIZE = 1024 * 1024
+WORK_QUEUE_UPLOAD_MAX_FILES = 20
+WORK_QUEUE_UPLOAD_FILENAME_MAX_LENGTH = 255
+_WORK_QUEUE_UPLOAD_EXECUTOR = BoundedExecutor(
+    max_workers=2,
+    max_in_flight=2,
+    max_waiters=4,
+    thread_name_prefix="wegent-work-queue-upload",
+)
+
 
 # ==================== Work Queue Management ====================
 
 
 @router.post("", response_model=WorkQueueResponse, status_code=status.HTTP_201_CREATED)
-async def create_work_queue(
+def create_work_queue(
     data: WorkQueueCreate,
     current_user: User = Depends(security.get_current_user),
 ):
@@ -78,7 +94,7 @@ async def create_work_queue(
 
 
 @router.get("", response_model=WorkQueueListResponse)
-async def list_work_queues(
+def list_work_queues(
     current_user: User = Depends(_ingest_auth),
 ):
     """List all work queues for the current user."""
@@ -87,7 +103,7 @@ async def list_work_queues(
 
 
 @router.get("/messages/unread-count", response_model=UnreadCountResponse)
-async def get_unread_message_count(
+def get_unread_message_count(
     current_user: User = Depends(security.get_current_user),
 ):
     """Get unread message count across all queues."""
@@ -96,7 +112,7 @@ async def get_unread_message_count(
 
 
 @router.get("/{queue_id}", response_model=WorkQueueResponse)
-async def get_work_queue(
+def get_work_queue(
     queue_id: int,
     current_user: User = Depends(security.get_current_user),
 ):
@@ -110,7 +126,7 @@ async def get_work_queue(
 
 
 @router.put("/{queue_id}", response_model=WorkQueueResponse)
-async def update_work_queue(
+def update_work_queue(
     queue_id: int,
     data: WorkQueueUpdate,
     current_user: User = Depends(security.get_current_user),
@@ -123,7 +139,7 @@ async def update_work_queue(
 
 
 @router.delete("/{queue_id}", status_code=status.HTTP_204_NO_CONTENT)
-async def delete_work_queue(
+def delete_work_queue(
     queue_id: int,
     current_user: User = Depends(security.get_current_user),
 ):
@@ -135,7 +151,7 @@ async def delete_work_queue(
 
 
 @router.post("/{queue_id}/set-default", response_model=WorkQueueResponse)
-async def set_default_queue(
+def set_default_queue(
     queue_id: int,
     current_user: User = Depends(security.get_current_user),
 ):
@@ -147,7 +163,7 @@ async def set_default_queue(
 
 
 @router.post("/{queue_id}/regenerate-invite", response_model=WorkQueueResponse)
-async def regenerate_invite_code(
+def regenerate_invite_code(
     queue_id: int,
     current_user: User = Depends(security.get_current_user),
 ):
@@ -164,7 +180,7 @@ async def regenerate_invite_code(
 
 
 @router.get("/{queue_id}/messages", response_model=QueueMessageListResponse)
-async def list_queue_messages(
+def list_queue_messages(
     queue_id: int,
     message_status: Optional[QueueMessageStatus] = Query(None, alias="status"),
     priority: Optional[QueueMessagePriority] = Query(None),
@@ -198,7 +214,79 @@ async def list_queue_messages(
     return QueueMessageListResponse(items=items, total=total, unreadCount=unread)
 
 
-async def _build_ingest_request_with_files(
+def _read_work_queue_uploads_limited(
+    uploads: Sequence[tuple[str, BinaryIO]],
+) -> list[tuple[str, bytes]]:
+    """Read multipart files with per-request and per-file hard limits."""
+    if len(uploads) > WORK_QUEUE_UPLOAD_MAX_FILES:
+        raise HTTPException(
+            status_code=status.HTTP_413_CONTENT_TOO_LARGE,
+            detail=f"At most {WORK_QUEUE_UPLOAD_MAX_FILES} files may be uploaded",
+        )
+
+    max_bytes = DocumentParser.get_max_file_size()
+    total_bytes = 0
+    buffered_uploads: list[tuple[str, bytes]] = []
+
+    for filename, file_object in uploads:
+        binary_data = bytearray()
+        file_object.seek(0)
+        while True:
+            file_remaining = max_bytes - len(binary_data)
+            total_remaining = max_bytes - total_bytes
+            read_size = min(
+                WORK_QUEUE_UPLOAD_CHUNK_SIZE,
+                file_remaining + 1,
+                total_remaining + 1,
+            )
+            chunk = file_object.read(read_size)
+            if not chunk:
+                break
+            if len(chunk) > file_remaining:
+                raise HTTPException(
+                    status_code=status.HTTP_413_CONTENT_TOO_LARGE,
+                    detail=f"File '{filename}' exceeds the upload size limit",
+                )
+            if len(chunk) > total_remaining:
+                raise HTTPException(
+                    status_code=status.HTTP_413_CONTENT_TOO_LARGE,
+                    detail="Combined attachment size exceeds the upload size limit",
+                )
+            binary_data.extend(chunk)
+            total_bytes += len(chunk)
+
+        if binary_data:
+            buffered_uploads.append((filename, bytes(binary_data)))
+
+    return buffered_uploads
+
+
+def _work_queue_upload_sources(
+    files: Sequence[UploadFile],
+) -> tuple[tuple[str, BinaryIO], ...]:
+    """Validate cheap multipart metadata before bounded worker admission."""
+    if len(files) > WORK_QUEUE_UPLOAD_MAX_FILES:
+        raise HTTPException(
+            status_code=status.HTTP_413_CONTENT_TOO_LARGE,
+            detail=f"At most {WORK_QUEUE_UPLOAD_MAX_FILES} files may be uploaded",
+        )
+
+    uploads: list[tuple[str, BinaryIO]] = []
+    for upload in files:
+        filename = upload.filename or ""
+        if not filename:
+            raise HTTPException(
+                status_code=400, detail="Uploaded file name is required"
+            )
+        if len(filename) > WORK_QUEUE_UPLOAD_FILENAME_MAX_LENGTH:
+            raise HTTPException(
+                status_code=400, detail="Uploaded file name is too long"
+            )
+        uploads.append((filename, upload.file))
+    return tuple(uploads)
+
+
+def _build_ingest_request(
     content: Optional[str],
     title: Optional[str],
     note: Optional[str],
@@ -207,47 +295,8 @@ async def _build_ingest_request_with_files(
     sender_display_name: Optional[str],
     source_type: Optional[str],
     source_name: Optional[str],
-    files: List[UploadFile],
-    user_id: int,
-    db: Session,
+    attachment_context_ids: list[int],
 ) -> IngestMessageRequest:
-    """Upload files to subtask_contexts and build IngestMessageRequest.
-
-    Files are pre-written as attachments so the LLM can reference them
-    by attachment_id without re-outputting content through the output window.
-    """
-    from app.services.context.context_service import context_service
-
-    attachment_context_ids: List[int] = []
-
-    for upload_file in files:
-        if not upload_file.filename:
-            continue
-        try:
-            binary_data = await upload_file.read()
-            if not binary_data:
-                continue
-            ctx, _ = context_service.upload_attachment(
-                db=db,
-                user_id=user_id,
-                filename=upload_file.filename,
-                binary_data=binary_data,
-                subtask_id=0,
-            )
-            attachment_context_ids.append(ctx.id)
-            logger.info(
-                f"[ingest] Uploaded file '{upload_file.filename}' "
-                f"as attachment context {ctx.id}"
-            )
-        except Exception as e:
-            logger.warning(
-                f"[ingest] Failed to upload file '{upload_file.filename}': {e}"
-            )
-            raise HTTPException(
-                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                detail=f"Failed to process file '{upload_file.filename}': {e}",
-            )
-
     sender = None
     if sender_external_id or sender_display_name:
         sender = ExternalSender(
@@ -264,8 +313,11 @@ async def _build_ingest_request_with_files(
 
     try:
         priority_enum = QueueMessagePriority(priority)
-    except ValueError:
-        priority_enum = QueueMessagePriority.NORMAL
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Priority must be one of: low, normal, high",
+        ) from exc
 
     return IngestMessageRequest(
         content=content or None,
@@ -278,24 +330,107 @@ async def _build_ingest_request_with_files(
     )
 
 
+def _ingest_message_with_files_sync(
+    uploads: Sequence[tuple[str, BinaryIO]],
+    *,
+    user_id: int,
+    queue_name: str,
+    content: Optional[str],
+    title: Optional[str],
+    note: Optional[str],
+    priority: str,
+    sender_external_id: Optional[str],
+    sender_display_name: Optional[str],
+    source_type: Optional[str],
+    source_name: Optional[str],
+) -> QueueMessageResponse:
+    """Read, parse, persist, and ingest one bounded multipart request."""
+    buffered_uploads = _read_work_queue_uploads_limited(uploads)
+    if not content and not buffered_uploads:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Either message content or a non-empty attachment is required",
+        )
+    try:
+        QueueMessagePriority(priority)
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Priority must be one of: low, normal, high",
+        ) from exc
+
+    attachment_context_ids: list[int] = []
+
+    try:
+        if buffered_uploads:
+            with db_session.SessionLocal() as db:
+                for filename, binary_data in buffered_uploads:
+                    context, _ = context_service.upload_attachment(
+                        db=db,
+                        user_id=user_id,
+                        filename=filename,
+                        binary_data=binary_data,
+                        subtask_id=0,
+                    )
+                    attachment_context_ids.append(context.id)
+                    logger.info(
+                        "[ingest] Uploaded file as attachment context %s",
+                        context.id,
+                    )
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.warning("[ingest] Failed to process uploaded file", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Failed to process uploaded file",
+        ) from exc
+
+    request = _build_ingest_request(
+        content=content,
+        title=title,
+        note=note,
+        priority=priority,
+        sender_external_id=sender_external_id,
+        sender_display_name=sender_display_name,
+        source_type=source_type,
+        source_name=source_name,
+        attachment_context_ids=attachment_context_ids,
+    )
+    return queue_message_service.ingest_message_by_name(
+        user_id=user_id,
+        queue_name=queue_name,
+        request=request,
+    )
+
+
 @router.post(
     "/by-name/{queue_name}/messages/ingest",
     response_model=QueueMessageResponse,
     status_code=status.HTTP_201_CREATED,
 )
 async def ingest_message_by_name(
-    queue_name: str,
-    db: Session = Depends(get_db),
+    queue_name: str = Path(..., min_length=1, max_length=100),
     current_user: User = Depends(_ingest_auth),
     # Text fields via Form (multipart/form-data)
-    content: Optional[str] = Form(None, description="Message text content"),
-    title: Optional[str] = Form(None, description="Optional title"),
-    note: Optional[str] = Form(None, description="Optional note"),
-    priority: str = Form("normal", description="Priority: low, normal, high"),
-    sender_external_id: Optional[str] = Form(None, alias="senderExternalId"),
-    sender_display_name: Optional[str] = Form(None, alias="senderDisplayName"),
-    source_type: Optional[str] = Form(None, alias="sourceType"),
-    source_name: Optional[str] = Form(None, alias="sourceName"),
+    content: Optional[str] = Form(
+        None, max_length=50000, description="Message text content"
+    ),
+    title: Optional[str] = Form(None, max_length=200, description="Optional title"),
+    note: Optional[str] = Form(None, max_length=1000, description="Optional note"),
+    priority: str = Form(
+        "normal",
+        pattern="^(low|normal|high)$",
+        description="Priority: low, normal, high",
+    ),
+    sender_external_id: Optional[str] = Form(
+        None, max_length=255, alias="senderExternalId"
+    ),
+    sender_display_name: Optional[str] = Form(
+        None, max_length=255, alias="senderDisplayName"
+    ),
+    source_type: Optional[str] = Form(None, max_length=100, alias="sourceType"),
+    source_name: Optional[str] = Form(None, max_length=255, alias="sourceName"),
     # File uploads (optional)
     files: List[UploadFile] = File(default=[], description="Files to attach"),
 ):
@@ -316,24 +451,27 @@ async def ingest_message_by_name(
         curl -X POST .../by-name/inbox/messages/ingest \\
             -F "content=See attached" -F "files=@doc.pdf" -F "files=@notes.md"
     """
-    request = await _build_ingest_request_with_files(
-        content=content,
-        title=title,
-        note=note,
-        priority=priority,
-        sender_external_id=sender_external_id,
-        sender_display_name=sender_display_name,
-        source_type=source_type,
-        source_name=source_name,
-        files=files,
-        user_id=current_user.id,
-        db=db,
-    )
+    uploads = _work_queue_upload_sources(files)
+    del files
+    user_id = int(current_user.id)
+    del current_user
+
     try:
-        return queue_message_service.ingest_message_by_name(
-            user_id=current_user.id,
-            queue_name=queue_name,
-            request=request,
+        return await _WORK_QUEUE_UPLOAD_EXECUTOR.run(
+            partial(
+                _ingest_message_with_files_sync,
+                uploads,
+                user_id=user_id,
+                queue_name=queue_name,
+                content=content,
+                title=title,
+                note=note,
+                priority=priority,
+                sender_external_id=sender_external_id,
+                sender_display_name=sender_display_name,
+                source_type=source_type,
+                source_name=source_name,
+            )
         )
     except NotFoundException as e:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
@@ -347,7 +485,7 @@ messages_router = APIRouter()
 
 
 @messages_router.get("/{message_id}", response_model=QueueMessageResponse)
-async def get_queue_message(
+def get_queue_message(
     message_id: int,
     current_user: User = Depends(security.get_current_user),
 ):
@@ -361,7 +499,7 @@ async def get_queue_message(
 
 
 @messages_router.patch("/{message_id}/status", response_model=QueueMessageResponse)
-async def update_message_status(
+def update_message_status(
     message_id: int,
     data: QueueMessageStatusUpdate,
     current_user: User = Depends(security.get_current_user),
@@ -376,7 +514,7 @@ async def update_message_status(
 
 
 @messages_router.patch("/{message_id}/priority", response_model=QueueMessageResponse)
-async def update_message_priority(
+def update_message_priority(
     message_id: int,
     data: QueueMessagePriorityUpdate,
     current_user: User = Depends(security.get_current_user),
@@ -391,7 +529,7 @@ async def update_message_priority(
 
 
 @messages_router.delete("/{message_id}", status_code=status.HTTP_204_NO_CONTENT)
-async def delete_queue_message(
+def delete_queue_message(
     message_id: int,
     current_user: User = Depends(security.get_current_user),
 ):
@@ -403,7 +541,7 @@ async def delete_queue_message(
 
 
 @messages_router.post("/{message_id}/retry", response_model=QueueMessageResponse)
-async def retry_message(
+def retry_message(
     message_id: int,
     current_user: User = Depends(security.get_current_user),
 ):
@@ -454,7 +592,7 @@ async def process_message(
 
 
 @messages_router.post("/batch/status", response_model=BatchOperationResult)
-async def batch_update_message_status(
+def batch_update_message_status(
     data: BatchStatusUpdate,
     current_user: User = Depends(security.get_current_user),
 ):
@@ -470,7 +608,7 @@ async def batch_update_message_status(
 
 
 @messages_router.post("/batch/delete", response_model=BatchOperationResult)
-async def batch_delete_messages(
+def batch_delete_messages(
     data: BatchMessageIds,
     current_user: User = Depends(security.get_current_user),
 ):
@@ -491,7 +629,7 @@ forward_router = APIRouter()
 
 
 @forward_router.post("", response_model=ForwardMessageResponse)
-async def forward_messages(
+def forward_messages(
     data: ForwardMessageRequest,
     current_user: User = Depends(security.get_current_user),
 ):
@@ -510,7 +648,7 @@ users_router = APIRouter()
 
 
 @users_router.get("/{user_id}/public-queues", response_model=UserPublicQueuesResponse)
-async def get_user_public_queues(
+def get_user_public_queues(
     user_id: int,
     db: Session = Depends(get_db),
     current_user: User = Depends(security.get_current_user),
@@ -534,7 +672,7 @@ async def get_user_public_queues(
 
 
 @users_router.get("/recent-contacts", response_model=RecentContactsListResponse)
-async def get_recent_contacts(
+def get_recent_contacts(
     limit: int = Query(20, ge=1, le=100),
     current_user: User = Depends(security.get_current_user),
 ):

@@ -2,15 +2,18 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
+import asyncio
+import threading
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from fastapi import HTTPException, Request
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, sessionmaker
 from starlette.datastructures import Headers
 
 from app.models.kind import Kind
 from app.models.user import User
+from app.services import llm_proxy_service as llm_proxy_module
 from app.services.chat.trigger.unified import (
     _build_codex_runtime_model_config,
     build_wework_runtime_model_config,
@@ -18,8 +21,31 @@ from app.services.chat.trigger.unified import (
 from app.services.llm_proxy_service import (
     _join_upstream_url,
     proxy_llm_responses,
-    resolve_llm_proxy_model_config,
+    resolve_llm_proxy_model_config_for_user,
 )
+
+
+async def _proxy(request: Request, user: User):
+    return await proxy_llm_responses(
+        request,
+        user_id=user.id,
+        user_name=user.user_name or "",
+    )
+
+
+async def _consume_body(response) -> bytes:
+    return b"".join([chunk async for chunk in response.body_iterator])
+
+
+@pytest.fixture(autouse=True)
+def _use_fresh_proxy_test_sessions(monkeypatch, test_db: Session):
+    """Make worker-owned sessions share the test's transaction connection."""
+    factory = sessionmaker(
+        bind=test_db.connection(),
+        autoflush=False,
+        expire_on_commit=False,
+    )
+    monkeypatch.setattr("app.services.llm_proxy_service.SessionLocal", factory)
 
 
 def _model_kind(
@@ -131,17 +157,19 @@ def test_resolve_llm_proxy_model_config_uses_complete_identity(
     test_db.add(public_model)
     test_db.commit()
 
-    personal_config = resolve_llm_proxy_model_config(
+    personal_config = resolve_llm_proxy_model_config_for_user(
         test_db,
-        test_user,
+        user_id=test_user.id,
+        user_name=test_user.user_name or "",
         model_name=test_model_kind.name,
         model_type="user",
         namespace="default",
         resource_user_id=test_user.id,
     )
-    public_config = resolve_llm_proxy_model_config(
+    public_config = resolve_llm_proxy_model_config_for_user(
         test_db,
-        test_user,
+        user_id=test_user.id,
+        user_name=test_user.user_name or "",
         model_name=public_model.name,
         model_type="public",
         namespace="default",
@@ -156,9 +184,10 @@ def test_resolve_llm_proxy_model_config_rejects_spoofed_personal_owner(
     test_db, test_user: User
 ):
     with pytest.raises(HTTPException) as exc_info:
-        resolve_llm_proxy_model_config(
+        resolve_llm_proxy_model_config_for_user(
             test_db,
-            test_user,
+            user_id=test_user.id,
+            user_name=test_user.user_name or "",
             model_name="private-model",
             model_type="user",
             namespace="default",
@@ -183,9 +212,10 @@ def test_resolve_llm_proxy_model_config_processes_custom_header_placeholders(
     test_db.add(model)
     test_db.commit()
 
-    config = resolve_llm_proxy_model_config(
+    config = resolve_llm_proxy_model_config_for_user(
         test_db,
-        test_user,
+        user_id=test_user.id,
+        user_name=test_user.user_name or "",
         model_name=model.name,
         model_type="user",
         namespace="default",
@@ -219,10 +249,12 @@ async def test_proxy_llm_responses_forwards_to_provider(
     upstream_response_mock.status_code = 200
     upstream_response_mock.headers = {"content-type": "text/event-stream"}
 
-    async def fake_aiter_raw():
+    async def fake_aiter_raw(*, chunk_size: int | None = None):
+        assert chunk_size is not None
         yield b"data: ok\n\n"
 
     upstream_response_mock.aiter_raw = fake_aiter_raw
+    upstream_response_mock.aclose = AsyncMock()
     client_mock = AsyncMock()
     client_mock.send = AsyncMock(return_value=upstream_response_mock)
     client_mock.aclose = AsyncMock()
@@ -231,10 +263,13 @@ async def test_proxy_llm_responses_forwards_to_provider(
         "app.services.llm_proxy_service.httpx.AsyncClient",
         return_value=client_mock,
     ):
-        response = await proxy_llm_responses(request_mock, test_db, test_user)
+        response = await _proxy(request_mock, test_user)
 
     assert response.status_code == 200
     assert response.media_type == "text/event-stream"
+    assert response.headers["cache-control"] == "no-cache"
+    assert response.headers["connection"] == "keep-alive"
+    assert response.headers["x-accel-buffering"] == "no"
     body = b"".join([chunk async for chunk in response.body_iterator])
     assert body == b"data: ok\n\n"
 
@@ -248,6 +283,124 @@ async def test_proxy_llm_responses_forwards_to_provider(
     assert b'"input": "hello"' in sent_request.content
     assert "x-wegent-model-type" not in sent_request.headers
     client_mock.aclose.assert_awaited_once()
+
+
+async def test_proxy_llm_responses_rejects_shared_stream_capacity_exhaustion(
+    test_user: User,
+    test_model_kind: Kind,
+    monkeypatch,
+):
+    del test_model_kind
+
+    class OverloadedAdmission:
+        def acquire(self) -> None:
+            raise llm_proxy_module.StreamWorkerExecutionError(
+                "Web stream connection capacity exhausted",
+                error_code="web_stream_overloaded",
+            )
+
+        def release(self) -> None:
+            raise AssertionError("unacquired admission must not be released")
+
+    request_mock = MagicMock(spec=Request)
+    request_mock.body = AsyncMock(
+        return_value=b'{"model":"deepseek-v4-flash","input":"hello"}'
+    )
+    request_mock.headers = Headers(
+        {
+            "content-type": "application/json",
+            "x-wegent-model-type": "user",
+            "x-wegent-model-namespace": "default",
+            "x-wegent-model-user-id": str(test_user.id),
+        }
+    )
+    client_factory = MagicMock()
+    monkeypatch.setattr(
+        llm_proxy_module,
+        "web_stream_rpc_admission",
+        OverloadedAdmission(),
+    )
+    monkeypatch.setattr(llm_proxy_module.httpx, "AsyncClient", client_factory)
+
+    with pytest.raises(HTTPException) as exc_info:
+        await _proxy(request_mock, test_user)
+
+    assert exc_info.value.status_code == 503
+    assert exc_info.value.headers == {"Retry-After": "1"}
+    client_factory.assert_not_called()
+
+
+async def test_proxy_request_decode_does_not_block_event_loop(
+    test_user: User,
+    test_model_kind: Kind,
+    monkeypatch,
+):
+    del test_model_kind
+    started = threading.Event()
+    release = threading.Event()
+    worker_thread_ids: list[int] = []
+    original = llm_proxy_module._parse_proxy_request
+
+    def blocking_parse(body_bytes, raw_headers):
+        worker_thread_ids.append(threading.get_ident())
+        started.set()
+        release.wait(timeout=5)
+        return original(body_bytes, raw_headers)
+
+    request_mock = MagicMock(spec=Request)
+    request_mock.body = AsyncMock(
+        return_value=b'{"model":"deepseek-v4-flash","input":"hello"}'
+    )
+    request_mock.headers = Headers(
+        {
+            "content-type": "application/json",
+            "accept": "text/event-stream",
+            "x-wegent-model-type": "user",
+            "x-wegent-model-namespace": "default",
+            "x-wegent-model-user-id": str(test_user.id),
+        }
+    )
+    upstream_response = MagicMock(
+        status_code=200,
+        headers={"content-type": "text/event-stream"},
+    )
+
+    async def raw_chunks(*, chunk_size: int | None = None):
+        assert chunk_size is not None
+        yield b"data: ok\n\n"
+
+    upstream_response.aiter_raw = raw_chunks
+    upstream_response.aclose = AsyncMock()
+    client = AsyncMock()
+    client.send = AsyncMock(return_value=upstream_response)
+    client.aclose = AsyncMock()
+    monkeypatch.setattr(llm_proxy_module, "_parse_proxy_request", blocking_parse)
+    monkeypatch.setattr(
+        llm_proxy_module.httpx,
+        "AsyncClient",
+        MagicMock(return_value=client),
+    )
+
+    loop_thread_id = threading.get_ident()
+    task = asyncio.create_task(_proxy(request_mock, test_user))
+    try:
+        for _ in range(200):
+            if started.is_set():
+                break
+            await asyncio.sleep(0.005)
+        assert started.is_set()
+        ticked = asyncio.Event()
+        asyncio.get_running_loop().call_soon(ticked.set)
+        await asyncio.wait_for(ticked.wait(), timeout=0.1)
+        assert not task.done()
+        assert worker_thread_ids[0] != loop_thread_id
+    finally:
+        release.set()
+
+    response = await task
+    assert b"".join([chunk async for chunk in response.body_iterator]) == (
+        b"data: ok\n\n"
+    )
 
 
 async def test_proxy_llm_responses_omits_authorization_when_api_key_is_empty(
@@ -287,10 +440,12 @@ async def test_proxy_llm_responses_omits_authorization_when_api_key_is_empty(
     upstream_response_mock.status_code = 200
     upstream_response_mock.headers = {"content-type": "text/event-stream"}
 
-    async def fake_aiter_raw():
+    async def fake_aiter_raw(*, chunk_size: int | None = None):
+        assert chunk_size is not None
         yield b"data: ok\n\n"
 
     upstream_response_mock.aiter_raw = fake_aiter_raw
+    upstream_response_mock.aclose = AsyncMock()
     client_mock = AsyncMock()
     client_mock.send = AsyncMock(return_value=upstream_response_mock)
     client_mock.aclose = AsyncMock()
@@ -299,7 +454,7 @@ async def test_proxy_llm_responses_omits_authorization_when_api_key_is_empty(
         "app.services.llm_proxy_service.httpx.AsyncClient",
         return_value=client_mock,
     ):
-        response = await proxy_llm_responses(request_mock, test_db, test_user)
+        response = await _proxy(request_mock, test_user)
 
     body = b"".join([chunk async for chunk in response.body_iterator])
     sent_request = client_mock.send.call_args[0][0]
@@ -335,7 +490,7 @@ async def test_proxy_llm_responses_rejects_protected_custom_upstream_header(
     )
 
     with pytest.raises(HTTPException) as exc_info:
-        await proxy_llm_responses(request_mock, test_db, test_user)
+        await _proxy(request_mock, test_user)
 
     assert exc_info.value.status_code == 400
     assert exc_info.value.detail == "Custom upstream header is protected: authorization"
@@ -349,7 +504,7 @@ async def test_proxy_llm_responses_requires_model_identity_headers(
     request_mock.headers = Headers({"content-type": "application/json"})
 
     with pytest.raises(HTTPException) as exc_info:
-        await proxy_llm_responses(request_mock, test_db, test_user)
+        await _proxy(request_mock, test_user)
 
     assert exc_info.value.status_code == 400
 
@@ -505,10 +660,12 @@ async def test_proxy_llm_responses_forwards_chat_completions_to_provider(
     upstream_response_mock.status_code = 200
     upstream_response_mock.headers = {"content-type": "text/event-stream"}
 
-    async def fake_aiter_raw():
+    async def fake_aiter_raw(*, chunk_size: int | None = None):
+        assert chunk_size is not None
         yield b"data: ok\n\n"
 
     upstream_response_mock.aiter_raw = fake_aiter_raw
+    upstream_response_mock.aclose = AsyncMock()
     client_mock = AsyncMock()
     client_mock.send = AsyncMock(return_value=upstream_response_mock)
     client_mock.aclose = AsyncMock()
@@ -517,8 +674,9 @@ async def test_proxy_llm_responses_forwards_chat_completions_to_provider(
         "app.services.llm_proxy_service.httpx.AsyncClient",
         return_value=client_mock,
     ):
-        response = await proxy_llm_responses(request_mock, test_db, test_user)
+        response = await _proxy(request_mock, test_user)
 
+    await _consume_body(response)
     assert response.status_code == 200
     sent_request = client_mock.send.call_args[0][0]
     assert str(sent_request.url) == "https://api.example.com/v1/chat/completions"
@@ -557,10 +715,12 @@ async def test_proxy_llm_responses_prefers_responses_format_over_openai_protocol
     upstream_response_mock.status_code = 200
     upstream_response_mock.headers = {"content-type": "text/event-stream"}
 
-    async def fake_aiter_raw():
+    async def fake_aiter_raw(*, chunk_size: int | None = None):
+        assert chunk_size is not None
         yield b"data: ok\n\n"
 
     upstream_response_mock.aiter_raw = fake_aiter_raw
+    upstream_response_mock.aclose = AsyncMock()
     client_mock = AsyncMock()
     client_mock.send = AsyncMock(return_value=upstream_response_mock)
     client_mock.aclose = AsyncMock()
@@ -569,8 +729,9 @@ async def test_proxy_llm_responses_prefers_responses_format_over_openai_protocol
         "app.services.llm_proxy_service.httpx.AsyncClient",
         return_value=client_mock,
     ):
-        response = await proxy_llm_responses(request_mock, test_db, test_user)
+        response = await _proxy(request_mock, test_user)
 
+    await _consume_body(response)
     assert response.status_code == 200
     sent_request = client_mock.send.call_args[0][0]
     assert str(sent_request.url) == "https://api.example.com/v1/responses"
@@ -604,7 +765,7 @@ async def test_proxy_llm_responses_rejects_openai_responses_protocol_with_chat_c
     )
 
     with pytest.raises(HTTPException) as exc_info:
-        await proxy_llm_responses(request_mock, test_db, test_user)
+        await _proxy(request_mock, test_user)
 
     assert exc_info.value.status_code == 400
     assert "conflicting" in exc_info.value.detail.lower()
@@ -639,7 +800,7 @@ async def test_proxy_llm_responses_rejects_claude_protocol_with_responses_format
     )
 
     with pytest.raises(HTTPException) as exc_info:
-        await proxy_llm_responses(request_mock, test_db, test_user)
+        await _proxy(request_mock, test_user)
 
     assert exc_info.value.status_code == 400
     assert "conflicting" in exc_info.value.detail.lower()
@@ -678,10 +839,12 @@ async def test_proxy_llm_responses_forwards_anthropic_messages_to_provider(
     upstream_response_mock.status_code = 200
     upstream_response_mock.headers = {"content-type": "text/event-stream"}
 
-    async def fake_aiter_raw():
+    async def fake_aiter_raw(*, chunk_size: int | None = None):
+        assert chunk_size is not None
         yield b"data: ok\n\n"
 
     upstream_response_mock.aiter_raw = fake_aiter_raw
+    upstream_response_mock.aclose = AsyncMock()
     client_mock = AsyncMock()
     client_mock.send = AsyncMock(return_value=upstream_response_mock)
     client_mock.aclose = AsyncMock()
@@ -690,8 +853,9 @@ async def test_proxy_llm_responses_forwards_anthropic_messages_to_provider(
         "app.services.llm_proxy_service.httpx.AsyncClient",
         return_value=client_mock,
     ):
-        response = await proxy_llm_responses(request_mock, test_db, test_user)
+        response = await _proxy(request_mock, test_user)
 
+    await _consume_body(response)
     assert response.status_code == 200
     sent_request = client_mock.send.call_args[0][0]
     assert str(sent_request.url) == "https://api.anthropic.com/v1/messages"
@@ -730,10 +894,12 @@ async def test_proxy_llm_responses_does_not_duplicate_anthropic_version_path(
     upstream_response_mock.status_code = 200
     upstream_response_mock.headers = {"content-type": "text/event-stream"}
 
-    async def fake_aiter_raw():
+    async def fake_aiter_raw(*, chunk_size: int | None = None):
+        assert chunk_size is not None
         yield b"data: ok\n\n"
 
     upstream_response_mock.aiter_raw = fake_aiter_raw
+    upstream_response_mock.aclose = AsyncMock()
     client_mock = AsyncMock()
     client_mock.send = AsyncMock(return_value=upstream_response_mock)
     client_mock.aclose = AsyncMock()
@@ -742,8 +908,9 @@ async def test_proxy_llm_responses_does_not_duplicate_anthropic_version_path(
         "app.services.llm_proxy_service.httpx.AsyncClient",
         return_value=client_mock,
     ):
-        response = await proxy_llm_responses(request_mock, test_db, test_user)
+        response = await _proxy(request_mock, test_user)
 
+    await _consume_body(response)
     assert response.status_code == 200
     sent_request = client_mock.send.call_args[0][0]
     assert str(sent_request.url) == "https://api.anthropic.com/v1/messages"
@@ -789,10 +956,12 @@ async def test_proxy_llm_responses_infers_anthropic_endpoint_from_env_model(
     upstream_response_mock.status_code = 200
     upstream_response_mock.headers = {"content-type": "application/json"}
 
-    async def fake_aiter_raw():
+    async def fake_aiter_raw(*, chunk_size: int | None = None):
+        assert chunk_size is not None
         yield b'{"content":[{"type":"text","text":"a screenshot"}]}'
 
     upstream_response_mock.aiter_raw = fake_aiter_raw
+    upstream_response_mock.aclose = AsyncMock()
     client_mock = AsyncMock()
     client_mock.send = AsyncMock(return_value=upstream_response_mock)
     client_mock.aclose = AsyncMock()
@@ -801,8 +970,9 @@ async def test_proxy_llm_responses_infers_anthropic_endpoint_from_env_model(
         "app.services.llm_proxy_service.httpx.AsyncClient",
         return_value=client_mock,
     ):
-        response = await proxy_llm_responses(request_mock, test_db, test_user)
+        response = await _proxy(request_mock, test_user)
 
+    await _consume_body(response)
     assert response.status_code == 200
     sent_request = client_mock.send.call_args[0][0]
     assert str(sent_request.url) == "https://api.example.com/v1/messages"
@@ -840,10 +1010,12 @@ async def test_proxy_llm_responses_forwards_responses_to_provider(
     upstream_response_mock.status_code = 200
     upstream_response_mock.headers = {"content-type": "text/event-stream"}
 
-    async def fake_aiter_raw():
+    async def fake_aiter_raw(*, chunk_size: int | None = None):
+        assert chunk_size is not None
         yield b"data: ok\n\n"
 
     upstream_response_mock.aiter_raw = fake_aiter_raw
+    upstream_response_mock.aclose = AsyncMock()
     client_mock = AsyncMock()
     client_mock.send = AsyncMock(return_value=upstream_response_mock)
     client_mock.aclose = AsyncMock()
@@ -852,8 +1024,9 @@ async def test_proxy_llm_responses_forwards_responses_to_provider(
         "app.services.llm_proxy_service.httpx.AsyncClient",
         return_value=client_mock,
     ):
-        response = await proxy_llm_responses(request_mock, test_db, test_user)
+        response = await _proxy(request_mock, test_user)
 
+    await _consume_body(response)
     assert response.status_code == 200
     sent_request = client_mock.send.call_args[0][0]
     assert str(sent_request.url) == "https://api.example.com/v1/responses"
@@ -887,7 +1060,7 @@ async def test_proxy_llm_responses_rejects_unsupported_model_protocol(
     )
 
     with pytest.raises(HTTPException) as exc_info:
-        await proxy_llm_responses(request_mock, test_db, test_user)
+        await _proxy(request_mock, test_user)
 
     assert exc_info.value.status_code == 400
     assert "unsupported-model" in exc_info.value.detail

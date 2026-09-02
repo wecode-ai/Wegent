@@ -24,6 +24,7 @@ from app.services.execution.agents.image.providers.base import (
 @pytest.mark.asyncio
 async def test_generated_image_returns_one_hour_download_url() -> None:
     token_info = SimpleNamespace(user_id=7, task_id=8, subtask_id=9)
+    db = MagicMock()
     provider = MagicMock()
     provider.generate = AsyncMock(
         return_value=ImageGenerationResult(
@@ -33,6 +34,10 @@ async def test_generated_image_returns_one_hour_download_url() -> None:
     )
 
     with (
+        patch(
+            "app.db.session.SessionLocal",
+            return_value=db,
+        ),
         patch(
             "app.services.execution.agents.image.generation_service."
             "resolve_generation_context",
@@ -65,7 +70,6 @@ async def test_generated_image_returns_one_hour_download_url() -> None:
         ),
     ):
         result = await ImageGenerationService().generate(
-            db=MagicMock(),
             token_info=token_info,
             prompt="draw a lighthouse",
         )

@@ -6,14 +6,16 @@
 
 from __future__ import annotations
 
-import asyncio
+import copy
 import logging
+from dataclasses import dataclass
 from typing import Any
 
 from fastapi import HTTPException, status
-from sqlalchemy.orm import Session, make_transient
+from sqlalchemy.orm import Session
 
 from app.core.constants import CLIENT_ORIGIN_WEWORK
+from app.core.web_background_tasks import web_background_task_manager
 from app.models.kind import Kind
 from app.models.subtask import Subtask
 from app.models.task import TaskResource
@@ -27,9 +29,9 @@ from app.services.chat.config import is_deep_research_protocol
 from app.services.chat.rag import process_context_and_rag
 from app.services.chat.storage import (
     TaskCreationParams,
-    create_chat_task,
     get_task_with_access_check,
 )
+from app.services.chat.storage.task_manager import create_chat_task_ids_nonblocking
 from app.services.chat.task_device_resolution import (
     resolve_chat_task_device_id,
     resolve_local_executor_device_id,
@@ -40,107 +42,268 @@ from app.services.chat.trigger import (
     should_trigger_ai_response,
     trigger_ai_response_unified,
 )
-from app.services.chat.wework_task_defaults import apply_wework_task_defaults
+from app.services.chat.wework_task_defaults import (
+    apply_wework_task_defaults_nonblocking,
+)
 from app.services.device_service import device_service
+from app.stores.tasks import subtask_store, task_store
 
 logger = logging.getLogger(__name__)
 
 
+@dataclass(frozen=True)
+class _DeviceChatUserDefaults:
+    id: int
+    preferences: Any
+
+
+@dataclass(frozen=True)
+class _DeviceChatPreparation:
+    user: _DeviceChatUserDefaults
+    team_id: int
+    existing_task_id: int | None
+    trigger_ai: bool
+    params: TaskCreationParams
+
+
+@dataclass(frozen=True)
+class _DeviceChatTrigger:
+    task: TaskResource
+    assistant_subtask: Subtask
+    team: Kind
+    user: User
+
+
+@dataclass(frozen=True)
+class _DeviceChatAfterCreation:
+    message_id: int
+    trigger: _DeviceChatTrigger | None
+
+
 async def create_device_chat_task(
     *,
-    db: Session,
-    user: User,
+    user_id: int,
     request: DeviceChatTaskRequest,
     auth_token: str = "",
 ) -> DeviceChatTaskResponse:
     """Create or continue a device chat task from a REST request."""
 
-    team = _get_team(db, request.team_id)
-    existing_task = _get_existing_task(
-        db,
-        task_id=request.task_id,
-        user_id=user.id,
-    )
-    if request.task_id and is_deep_research_protocol(db, team):
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=(
-                "Deep Research does not support follow-up questions. "
-                "Please start a new conversation."
-            ),
-        )
+    from app.services.chat.storage.db import run_sync_in_executor
 
-    trigger_ai = should_trigger_ai_response(
-        existing_task.json if existing_task and existing_task.json else {},
-        request.message,
-        team.name,
-        request_is_group_chat=False,
+    preparation = await run_sync_in_executor(
+        _prepare_device_chat_request,
+        user_id,
+        request,
     )
     _, rag_prompt = await process_context_and_rag(
         message=request.message,
         contexts=request.contexts,
-        should_trigger_ai=trigger_ai,
-        user_id=user.id,
-        db=db,
+        should_trigger_ai=preparation.trigger_ai,
+        user_id=user_id,
+        db=None,
     )
 
-    params = _build_task_creation_params(request)
-    if existing_task is not None:
-        params.client_origin = existing_task.client_origin or params.client_origin
-    elif request.client_origin == CLIENT_ORIGIN_WEWORK:
-        params = await apply_wework_task_defaults(db, user=user, params=params)
-    params.device_id = _resolve_device_id(
-        db=db,
-        user_id=user.id,
-        params=params,
-        task=existing_task,
-        allow_default=existing_task is None and not request.device_id,
+    params = preparation.params
+    if (
+        preparation.existing_task_id is None
+        and request.client_origin == CLIENT_ORIGIN_WEWORK
+    ):
+        params = await apply_wework_task_defaults_nonblocking(
+            user=preparation.user,  # type: ignore[arg-type]
+            params=params,
+        )
+    params.device_id = await run_sync_in_executor(
+        _resolve_device_id_with_session,
+        user_id,
+        params,
+        preparation.existing_task_id,
+        preparation.existing_task_id is None and not request.device_id,
     )
 
-    result = await create_chat_task(
-        db=db,
-        user=user,
-        team=team,
+    result = await create_chat_task_ids_nonblocking(
+        user_id=user_id,
+        team_id=preparation.team_id,
         message=request.message,
         params=params,
         task_id=request.task_id,
-        should_trigger_ai=trigger_ai,
+        should_trigger_ai=preparation.trigger_ai,
         rag_prompt=rag_prompt,
-        source="web",
+        detach_memory_save=True,
     )
-    _link_contexts_to_user_subtask(
-        db=db,
-        user=user,
-        task=result.task,
-        user_subtask=result.user_subtask,
-        request=request,
+    after_creation = await run_sync_in_executor(
+        _prepare_device_chat_after_creation,
+        user_id,
+        preparation.team_id,
+        result.task_id,
+        result.user_subtask_id,
+        result.assistant_subtask_id,
+        request,
     )
 
-    if result.ai_triggered and result.assistant_subtask:
-        _schedule_ai_response(
-            db=db,
-            user=user,
-            team=team,
-            task=result.task,
-            assistant_subtask=result.assistant_subtask,
-            user_subtask=result.user_subtask,
+    if result.ai_triggered and after_creation.trigger is not None:
+        trigger = after_creation.trigger
+        await _schedule_ai_response(
+            user=trigger.user,
+            team=trigger.team,
+            task=trigger.task,
+            assistant_subtask=trigger.assistant_subtask,
             message=request.message,
             payload=request,
             device_id=params.device_id,
+            user_subtask_id=result.user_subtask_id,
             auth_token=auth_token,
         )
 
     return DeviceChatTaskResponse(
-        taskId=result.task.id,
-        userSubtaskId=result.user_subtask.id,
-        assistantSubtaskId=(
-            result.assistant_subtask.id if result.assistant_subtask else None
-        ),
-        messageId=result.user_subtask.message_id,
+        taskId=result.task_id,
+        userSubtaskId=result.user_subtask_id,
+        assistantSubtaskId=result.assistant_subtask_id,
+        messageId=after_creation.message_id,
         aiTriggered=result.ai_triggered,
         deviceId=params.device_id,
-        chatUrl=f"/devices/chat?taskId={result.task.id}",
+        chatUrl=f"/devices/chat?taskId={result.task_id}",
     )
+
+
+def _prepare_device_chat_request(
+    user_id: int,
+    request: DeviceChatTaskRequest,
+) -> _DeviceChatPreparation:
+    """Validate storage state and return values safe to cross the DB worker boundary."""
+
+    from app.services.chat.storage.db import get_db_session
+
+    with get_db_session() as db:
+        user = db.query(User).filter(User.id == user_id).first()
+        if not user:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="User not found",
+            )
+        team = _get_team(db, request.team_id)
+        existing_task = _get_existing_task(
+            db,
+            task_id=request.task_id,
+            user_id=user_id,
+        )
+        if request.task_id and is_deep_research_protocol(db, team):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=(
+                    "Deep Research does not support follow-up questions. "
+                    "Please start a new conversation."
+                ),
+            )
+
+        trigger_ai = should_trigger_ai_response(
+            (
+                copy.deepcopy(existing_task.json)
+                if existing_task and existing_task.json
+                else {}
+            ),
+            request.message,
+            team.name,
+            request_is_group_chat=False,
+        )
+        params = _build_task_creation_params(request)
+        if existing_task is not None:
+            params.client_origin = existing_task.client_origin or params.client_origin
+        return _DeviceChatPreparation(
+            user=_DeviceChatUserDefaults(
+                id=user.id,
+                preferences=copy.deepcopy(user.preferences),
+            ),
+            team_id=team.id,
+            existing_task_id=existing_task.id if existing_task else None,
+            trigger_ai=trigger_ai,
+            params=copy.deepcopy(params),
+        )
+
+
+def _resolve_device_id_with_session(
+    user_id: int,
+    params: TaskCreationParams,
+    task_id: int | None,
+    allow_default: bool,
+) -> str:
+    """Resolve the execution device in a worker-owned database transaction."""
+
+    from app.services.chat.storage.db import get_db_session
+
+    with get_db_session() as db:
+        task = _get_existing_task(db, task_id=task_id, user_id=user_id)
+        return _resolve_device_id(
+            db=db,
+            user_id=user_id,
+            params=params,
+            task=task,
+            allow_default=allow_default,
+        )
+
+
+def _prepare_device_chat_after_creation(
+    user_id: int,
+    team_id: int,
+    task_id: int,
+    user_subtask_id: int,
+    assistant_subtask_id: int | None,
+    request: DeviceChatTaskRequest,
+) -> _DeviceChatAfterCreation:
+    """Link contexts and detach the models needed by the async trigger."""
+
+    from app.services.chat.storage.db import get_db_session
+
+    with get_db_session() as db:
+        user = db.query(User).filter(User.id == user_id).first()
+        team = _get_team(db, team_id)
+        task = task_store.get_owned_task_by_state(
+            db,
+            task_id=task_id,
+            user_id=user_id,
+            state=TaskResource.STATE_ACTIVE,
+        )
+        user_subtask = subtask_store.get_by_id(db, subtask_id=user_subtask_id)
+        if user_subtask is not None and user_subtask.task_id != task_id:
+            user_subtask = None
+        if not user or not task or not user_subtask:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Created device chat task state was not found",
+            )
+
+        _link_contexts_to_user_subtask(
+            db=db,
+            user=user,
+            task=task,
+            user_subtask=user_subtask,
+            request=request,
+        )
+        db.flush()
+        message_id = user_subtask.message_id
+        if assistant_subtask_id is None:
+            return _DeviceChatAfterCreation(message_id=message_id, trigger=None)
+
+        assistant_subtask = subtask_store.get_by_id(db, subtask_id=assistant_subtask_id)
+        if assistant_subtask is not None and assistant_subtask.task_id != task_id:
+            assistant_subtask = None
+        if not assistant_subtask:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Created assistant subtask was not found",
+            )
+
+        for model in (task, team, assistant_subtask, user):
+            db.refresh(model)
+            db.expunge(model)
+        return _DeviceChatAfterCreation(
+            message_id=message_id,
+            trigger=_DeviceChatTrigger(
+                task=task,
+                assistant_subtask=assistant_subtask,
+                team=team,
+                user=user,
+            ),
+        )
 
 
 def _get_team(db: Session, team_id: int) -> Kind:
@@ -192,6 +355,7 @@ def _build_task_creation_params(request: DeviceChatTaskRequest) -> TaskCreationP
         device_id=request.device_id,
         project_id=request.project_id,
         client_origin=request.client_origin,
+        source="web",
         generate_params=_generate_params_as_dict(request),
     )
 
@@ -277,31 +441,20 @@ def _link_contexts_to_user_subtask(
     )
 
 
-def _schedule_ai_response(
+async def _schedule_ai_response(
     *,
-    db: Session,
     user: User,
     team: Kind,
     task: TaskResource,
     assistant_subtask: Subtask,
-    user_subtask: Subtask,
     message: str,
     payload: DeviceChatTaskRequest,
     device_id: str | None,
+    user_subtask_id: int,
     auth_token: str,
 ) -> None:
-    db.refresh(task)
-    db.refresh(team)
-    db.refresh(assistant_subtask)
-    db.refresh(user)
-
-    make_transient(task)
-    make_transient(team)
-    make_transient(assistant_subtask)
-    make_transient(user)
-
-    asyncio.create_task(
-        _run_ai_response(
+    await web_background_task_manager.submit(
+        lambda: _run_ai_response(
             task=task,
             assistant_subtask=assistant_subtask,
             team=team,
@@ -309,9 +462,10 @@ def _schedule_ai_response(
             message=message,
             payload=payload,
             device_id=device_id,
-            user_subtask_id=user_subtask.id,
+            user_subtask_id=user_subtask_id,
             auth_token=auth_token,
-        )
+        ),
+        name=f"device-chat-ai-trigger-{assistant_subtask.id}",
     )
 
 

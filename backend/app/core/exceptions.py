@@ -5,6 +5,10 @@
 from fastapi import HTTPException, status
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
+from starlette.exceptions import HTTPException as StarletteHTTPException
+
+from app.core.bounded_executor import BoundedExecutorOverloaded
+from app.core.payload_codec import run_payload_codec
 
 
 def _make_json_serializable(value):
@@ -73,26 +77,79 @@ class CustomHTTPException(HTTPException):
         self.error_code = error_code
 
 
+def _build_json_response(
+    status_code: int,
+    content: dict,
+    headers: dict[str, str] | None = None,
+) -> JSONResponse:
+    return JSONResponse(
+        status_code=status_code,
+        content=content,
+        headers=headers,
+    )
+
+
+def _build_validation_response(exc: RequestValidationError) -> JSONResponse:
+    return _build_json_response(
+        status.HTTP_422_UNPROCESSABLE_ENTITY,
+        {
+            "error_code": status.HTTP_422_UNPROCESSABLE_ENTITY,
+            "detail": "Request parameter validation failed",
+            "errors": _make_json_serializable(exc.errors()),
+        },
+    )
+
+
 async def http_exception_handler(request, exc: HTTPException):
     """HTTP exception handler"""
-    return JSONResponse(
-        status_code=exc.status_code,
-        content={
-            "error_code": getattr(exc, "error_code", exc.status_code),
-            "detail": exc.detail,
-        },
+    content = {
+        "error_code": getattr(exc, "error_code", exc.status_code),
+        "detail": exc.detail,
+    }
+    return await run_payload_codec(
+        _build_json_response,
+        exc.status_code,
+        content,
+        payload_hint=content,
+        force_offload=True,
+    )
+
+
+async def framework_http_exception_handler(
+    request,
+    exc: StarletteHTTPException,
+) -> JSONResponse:
+    """Preserve FastAPI's HTTP error envelope without loop-side encoding."""
+    content = {"detail": exc.detail}
+    return await run_payload_codec(
+        _build_json_response,
+        exc.status_code,
+        content,
+        exc.headers,
+        payload_hint=content,
+        force_offload=True,
     )
 
 
 async def validation_exception_handler(request, exc: RequestValidationError):
     """Request validation exception handler"""
+    return await run_payload_codec(
+        _build_validation_response,
+        exc,
+        payload_hint=exc,
+        force_offload=True,
+    )
+
+
+async def executor_overload_exception_handler(request, exc: BoundedExecutorOverloaded):
+    """Reject overload instead of retaining unbounded Uvicorn waiters."""
     return JSONResponse(
-        status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+        status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
         content={
-            "error_code": status.HTTP_422_UNPROCESSABLE_ENTITY,
-            "detail": "Request parameter validation failed",
-            "errors": _make_json_serializable(exc.errors()),
+            "error_code": status.HTTP_503_SERVICE_UNAVAILABLE,
+            "detail": "Service is temporarily overloaded",
         },
+        headers={"Retry-After": "1"},
     )
 
 

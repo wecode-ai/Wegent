@@ -5,7 +5,7 @@
 import json
 
 import pytest
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, sessionmaker
 
 from app.models.kind import Kind
 from app.models.user import User
@@ -276,7 +276,20 @@ async def test_import_auth_json_from_device_encrypts_device_file(
     test_db: Session,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    from app.db import session as db_session
+
+    monkeypatch.setattr(
+        db_session,
+        "SessionLocal",
+        sessionmaker(
+            bind=test_db.get_bind(),
+            expire_on_commit=False,
+            join_transaction_mode="create_savepoint",
+        ),
+    )
+
     async def fake_execute_configured_device_command(**kwargs):
+        assert kwargs["db"] is None
         assert kwargs["command_key"] == "read_runtime_auth_file"
         assert (
             kwargs["env"]["WEGENT_RUNTIME_CONFIG_TARGET_PATH"] == "~/.codex/auth.json"
@@ -299,7 +312,6 @@ async def test_import_auth_json_from_device_encrypts_device_file(
     )
 
     response = await user_runtime_config_service.import_auth_json_from_device(
-        test_db,
         user_id=103,
         runtime="codex",
         device_id="device-1",
@@ -334,7 +346,6 @@ async def test_import_auth_json_from_device_uses_script_error_detail(
 
     with pytest.raises(UserRuntimeConfigSyncError, match="does not exist"):
         await user_runtime_config_service.import_auth_json_from_device(
-            test_db,
             user_id=104,
             runtime="codex",
             device_id="device-1",

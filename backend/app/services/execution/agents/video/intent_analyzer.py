@@ -13,6 +13,8 @@ import logging
 from dataclasses import dataclass
 from typing import Literal, Optional
 
+from app.services.chat.storage.db import run_sync_in_executor
+
 from ..base_intent_analyzer import BaseIntentAnalyzer
 
 logger = logging.getLogger(__name__)
@@ -26,6 +28,51 @@ class VideoIntentResult:
     should_use_image: bool
     image_mode: Optional[Literal["first_frame", "last_frame", "reference"]] = None
     reference_image: Optional[str] = None
+
+
+@dataclass(frozen=True)
+class _VideoIntentHistory:
+    prev_prompt: str
+    prev_image: Optional[str]
+
+
+def _load_video_intent_history(
+    task_id: int,
+    exclude_subtask_ids: Optional[list],
+) -> _VideoIntentHistory | None:
+    from app.db.session import SessionLocal
+    from app.models.subtask import SubtaskRole
+    from app.stores.tasks import subtask_store
+
+    db = SessionLocal()
+    try:
+        subtasks = subtask_store.list_by_task_ordered(
+            db,
+            task_id=task_id,
+            exclude_subtask_ids=exclude_subtask_ids,
+        )
+        if len(subtasks) < 2:
+            return None
+
+        prev_user, prev_ai = None, None
+        for subtask in reversed(subtasks):
+            if subtask.role == SubtaskRole.ASSISTANT and not prev_ai:
+                prev_ai = subtask
+            elif subtask.role == SubtaskRole.USER and not prev_user:
+                prev_user = subtask
+            if prev_user and prev_ai:
+                break
+        if not prev_user or not prev_ai:
+            return None
+
+        prev_result = prev_ai.result or {}
+        prev_image = prev_result.get("image") if isinstance(prev_result, dict) else None
+        return _VideoIntentHistory(
+            prev_prompt=prev_user.prompt or "",
+            prev_image=prev_image if isinstance(prev_image, str) else None,
+        )
+    finally:
+        db.close()
 
 
 INTENT_PROMPT = """You are a video generation intent analysis assistant. The user is in a multi-turn video generation conversation.
@@ -74,70 +121,39 @@ class VideoIntentAnalyzer(BaseIntentAnalyzer):
         Returns:
             VideoIntentResult with merged prompt and image info
         """
-        from app.db.session import SessionLocal
-        from app.models.subtask import SubtaskRole
-        from app.stores.tasks import subtask_store
-
-        db = SessionLocal()
-        try:
-            # Get previous messages (exclude current subtask pair to avoid self-duplication)
-            subtasks = subtask_store.list_by_task_ordered(
-                db,
-                task_id=task_id,
-                exclude_subtask_ids=exclude_subtask_ids,
+        history = await run_sync_in_executor(
+            _load_video_intent_history,
+            task_id,
+            exclude_subtask_ids,
+        )
+        if history is None:
+            return VideoIntentResult(
+                merged_prompt=current_prompt,
+                should_use_image=False,
             )
 
-            if len(subtasks) < 2:
-                return VideoIntentResult(
-                    merged_prompt=current_prompt,
-                    should_use_image=False,
-                )
-
-            # Find previous user and AI messages
-            prev_user, prev_ai = None, None
-            for st in reversed(subtasks):
-                if st.role == SubtaskRole.ASSISTANT and not prev_ai:
-                    prev_ai = st
-                elif st.role == SubtaskRole.USER and not prev_user:
-                    prev_user = st
-                if prev_user and prev_ai:
-                    break
-
-            if not prev_user or not prev_ai:
-                return VideoIntentResult(
-                    merged_prompt=current_prompt,
-                    should_use_image=False,
-                )
-
-            prev_prompt = prev_user.prompt or ""
-            prev_result = prev_ai.result or {}
-            prev_image = prev_result.get("image")
-            has_image = prev_image is not None
-
-            # If no secondary model, use simple merge
-            if not secondary_model_config:
-                logger.warning(
-                    "[VideoIntentAnalyzer] No secondary model, using simple merge"
-                )
-                return VideoIntentResult(
-                    merged_prompt=f"{prev_prompt}\n\n{current_prompt}",
-                    should_use_image=has_image,
-                    image_mode="reference" if has_image else None,
-                    reference_image=prev_image,
-                )
-
-            # Call LLM for intent analysis
-            intent = await self._call_llm(
-                prev_prompt, current_prompt, has_image, secondary_model_config
+        has_image = history.prev_image is not None
+        if not secondary_model_config:
+            logger.warning(
+                "[VideoIntentAnalyzer] No secondary model, using simple merge"
+            )
+            return VideoIntentResult(
+                merged_prompt=f"{history.prev_prompt}\n\n{current_prompt}",
+                should_use_image=has_image,
+                image_mode="reference" if has_image else None,
+                reference_image=history.prev_image,
             )
 
-            if intent.should_use_image and has_image:
-                intent.reference_image = prev_image
+        intent = await self._call_llm(
+            history.prev_prompt,
+            current_prompt,
+            has_image,
+            secondary_model_config,
+        )
+        if intent.should_use_image and has_image:
+            intent.reference_image = history.prev_image
 
-            return intent
-
-        finally:
-            db.close()
+        return intent
 
     async def _call_llm(
         self,

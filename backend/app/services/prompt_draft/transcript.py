@@ -13,6 +13,13 @@ from sqlalchemy.orm import Session
 from app.models.subtask import SubtaskRole
 from app.stores.tasks import subtask_store
 
+PROMPT_DRAFT_MAX_SUBTASKS = 256
+PROMPT_DRAFT_MAX_CONTEXT_BYTES = 1024 * 1024
+
+
+class PromptDraftTranscriptTooLargeError(ValueError):
+    """Raised before an oversized conversation enters the Web IPC payload."""
+
 
 def _extract_text_blocks(content: Any) -> list[str]:
     texts: list[str] = []
@@ -135,17 +142,28 @@ def collect_conversation_blocks(db: Session, task_id: int) -> list[tuple[str, st
         db,
         task_id=task_id,
         order_by="created_at",
+        limit=PROMPT_DRAFT_MAX_SUBTASKS + 1,
     )
+    if len(subtasks) > PROMPT_DRAFT_MAX_SUBTASKS:
+        raise PromptDraftTranscriptTooLargeError("prompt_draft_conversation_too_large")
 
     blocks: list[tuple[str, str]] = []
+    context_bytes = 0
     for subtask in subtasks:
+        new_blocks: list[tuple[str, str]] = []
         if subtask.role == SubtaskRole.USER and subtask.prompt:
             content = subtask.prompt.strip()
             if content:
-                blocks.append(("user", content))
-            continue
+                new_blocks.append(("user", content))
+        elif subtask.role == SubtaskRole.ASSISTANT:
+            new_blocks.extend(extract_assistant_turn_blocks(subtask.result))
 
-        if subtask.role == SubtaskRole.ASSISTANT:
-            blocks.extend(extract_assistant_turn_blocks(subtask.result))
+        for role, content in new_blocks:
+            context_bytes += len(role.encode("utf-8")) + len(content.encode("utf-8"))
+            if context_bytes > PROMPT_DRAFT_MAX_CONTEXT_BYTES:
+                raise PromptDraftTranscriptTooLargeError(
+                    "prompt_draft_conversation_too_large"
+                )
+            blocks.append((role, content))
 
     return blocks

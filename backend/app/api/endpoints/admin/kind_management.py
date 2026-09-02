@@ -33,7 +33,7 @@ router = APIRouter()
 
 
 @router.get("/users/{user_id}/kinds/{kinds}")
-async def admin_list_user_resources(
+def admin_list_user_resources(
     user_id: int = Path(..., description="User ID"),
     kinds: str = Path(
         ...,
@@ -62,7 +62,7 @@ async def admin_list_user_resources(
 
 
 @router.get("/users/username/{user_name}/kinds/{kinds}")
-async def admin_list_user_resources_by_username(
+def admin_list_user_resources_by_username(
     user_name: str = Path(..., description="User name"),
     kinds: str = Path(
         ...,
@@ -92,7 +92,7 @@ async def admin_list_user_resources_by_username(
 
 
 @router.get("/users/{user_id}/kinds/{kinds}/{name}")
-async def admin_get_user_resource(
+def admin_get_user_resource(
     user_id: int = Path(..., description="User ID"),
     kinds: str = Path(
         ...,
@@ -127,7 +127,7 @@ async def admin_get_user_resource(
 
 
 @router.get("/users/username/{user_name}/kinds/{kinds}/{name}")
-async def admin_get_user_resource_by_username(
+def admin_get_user_resource_by_username(
     user_name: str = Path(..., description="User name"),
     kinds: str = Path(
         ...,
@@ -163,7 +163,7 @@ async def admin_get_user_resource_by_username(
 
 
 @router.post("/users/{user_id}/kinds/{kinds}", status_code=status.HTTP_201_CREATED)
-async def admin_create_resource_for_user(
+def admin_create_resource_for_user(
     user_id: int = Path(..., description="User ID"),
     kinds: str = Path(
         ...,
@@ -198,7 +198,7 @@ async def admin_create_resource_for_user(
 
 
 @router.put("/users/{user_id}/kinds/{kinds}/{name}")
-async def admin_update_user_resource(
+def admin_update_user_resource(
     user_id: int = Path(..., description="User ID"),
     kinds: str = Path(
         ...,
@@ -238,7 +238,7 @@ async def admin_update_user_resource(
 @router.delete(
     "/users/{user_id}/kinds/{kinds}/{name}", status_code=status.HTTP_204_NO_CONTENT
 )
-async def admin_delete_user_resource(
+def admin_delete_user_resource(
     user_id: int = Path(..., description="User ID"),
     kinds: str = Path(
         ...,
@@ -270,7 +270,7 @@ async def admin_delete_user_resource(
 
 
 @router.post("/users/{user_id}/kinds/batch/apply", response_model=BatchResponse)
-async def admin_apply_resources_for_user(
+def admin_apply_resources_for_user(
     user_id: int = Path(..., description="User ID"),
     namespace: str = Query("default", description="Resource namespace"),
     resources: List[Dict[str, Any]] = None,
@@ -316,7 +316,7 @@ async def admin_apply_resources_for_user(
 
 
 @router.post("/users/{user_id}/kinds/batch/delete", response_model=BatchResponse)
-async def admin_delete_resources_for_user(
+def admin_delete_resources_for_user(
     user_id: int = Path(..., description="User ID"),
     namespace: str = Query("default", description="Resource namespace"),
     resources: List[Dict[str, Any]] = None,

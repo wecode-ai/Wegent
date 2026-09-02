@@ -18,6 +18,7 @@ import logging
 from fastapi import APIRouter, HTTPException, status
 from pydantic import BaseModel, Field
 
+from app.core.payload_codec import dump_model
 from app.services.tables import DataTableService, TableQueryRequest
 from app.services.tables.providers import DingTalkProvider  # noqa: F401
 
@@ -68,7 +69,7 @@ async def query_table(request: InternalTableQueryRequest):
         service = DataTableService()
         result = await service.query_table(query_request)
 
-        return result.model_dump()
+        return await dump_model(result)
 
     except Exception as e:
         logger.error(f"[internal_query_table] Error: {e}", exc_info=True)

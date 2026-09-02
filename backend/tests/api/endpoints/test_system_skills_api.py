@@ -10,7 +10,6 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from app.api.dependencies import get_db
 from app.api.endpoints import system_skills
 from app.core import security
 from app.schemas.system_skills import (
@@ -53,7 +52,6 @@ class StubSystemSkillProviderService:
     async def list_system_skills(
         self,
         *,
-        db: Any,
         user_id: int,
         user_name: str,
         provider_key: str | None,
@@ -64,7 +62,6 @@ class StubSystemSkillProviderService:
     ) -> SystemSkillListResponse:
         self.list_calls.append(
             {
-                "db": db,
                 "user_id": user_id,
                 "user_name": user_name,
                 "provider_key": provider_key,
@@ -102,11 +99,10 @@ class StubSystemSkillProviderService:
     async def install_system_skill(
         self,
         *,
-        db: Any,
         user_id: int,
         request: SystemSkillInstallRequest,
     ) -> InstalledSkill:
-        self.install_calls.append({"db": db, "user_id": user_id, "request": request})
+        self.install_calls.append({"user_id": user_id, "request": request})
         return InstalledSkill(
             metadata={"name": "weibo-wehot", "namespace": "default"},
             spec=InstalledSkillSpec(
@@ -124,16 +120,12 @@ class StubSystemSkillProviderService:
             ),
         )
 
-    def install_personal_skill(
+    def install_personal_skill_for_user(
         self,
-        *,
-        db: Any,
         user_id: int,
         request: PersonalSkillInstallRequest,
     ) -> InstalledSkill:
-        self.install_personal_calls.append(
-            {"db": db, "user_id": user_id, "request": request}
-        )
+        self.install_personal_calls.append({"user_id": user_id, "request": request})
         return InstalledSkill(
             metadata={
                 "name": "personal-excel-helper",
@@ -154,8 +146,8 @@ class StubSystemSkillProviderService:
             ),
         )
 
-    def list_installed_system_skills(
-        self, *, db: Any, user_id: int
+    def list_installed_system_skills_for_user(
+        self, user_id: int
     ) -> InstalledSkillListResponse:
         return InstalledSkillListResponse(
             items=[
@@ -178,17 +170,14 @@ class StubSystemSkillProviderService:
             ]
         )
 
-    def update_installed_system_skill(
+    def update_installed_system_skill_for_user(
         self,
-        *,
-        db: Any,
         user_id: int,
         installed_id: int,
         request: SystemSkillUpdateInstalledRequest,
     ) -> InstalledSkill:
         self.update_calls.append(
             {
-                "db": db,
                 "user_id": user_id,
                 "installed_id": installed_id,
                 "request": request,
@@ -211,16 +200,12 @@ class StubSystemSkillProviderService:
             ),
         )
 
-    def uninstall_installed_system_skill(
+    def uninstall_installed_system_skill_for_user(
         self,
-        *,
-        db: Any,
         user_id: int,
         installed_id: int,
     ) -> None:
-        self.uninstall_calls.append(
-            {"db": db, "user_id": user_id, "installed_id": installed_id}
-        )
+        self.uninstall_calls.append({"user_id": user_id, "installed_id": installed_id})
 
 
 @pytest.fixture
@@ -231,16 +216,12 @@ def stub_service(monkeypatch: pytest.MonkeyPatch) -> StubSystemSkillProviderServ
 
 
 @pytest.fixture
-def system_skills_client(stub_service: StubSystemSkillProviderService) -> TestClient:
+def system_skills_client(
+    stub_service: StubSystemSkillProviderService,
+) -> TestClient:
     app = FastAPI()
     app.include_router(system_skills.router, prefix="/api/system-skills")
 
-    db = object()
-
-    def override_get_db():
-        yield db
-
-    app.dependency_overrides[get_db] = override_get_db
     app.dependency_overrides[security.get_current_user] = lambda: SimpleNamespace(
         id=123,
         user_name="api-user",

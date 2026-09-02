@@ -23,10 +23,10 @@ from uuid import uuid4
 
 from fastapi import HTTPException
 from pydantic import ValidationError
-from sqlalchemy.orm import Session
 
 from app.core.cache import cache_manager
 from app.core.config import settings
+from app.core.payload_codec import run_payload_codec
 from app.db.session import SessionLocal
 from app.models.kind import Kind
 from app.models.user import User
@@ -66,11 +66,11 @@ from app.services.channels.model_selection import (
     is_claude_provider,
     model_selection_manager,
 )
-from app.services.chat.wework_task_defaults import extract_task_device_id
+from app.services.chat.storage.db import run_sync_in_executor
 from app.services.im import task_continuation_service as im_task_continuation_service
 from app.services.im.session_service import im_session_service
 from app.services.readers.kinds import KindType, kindReader
-from app.stores.tasks import task_store
+from app.stores.tasks import subtask_store, task_store
 
 logger = logging.getLogger(__name__)
 
@@ -110,6 +110,425 @@ class UserMappingConfig:
 
     mode: str  # "select_user", "staff_id", "email", etc.
     config: Optional[Dict[str, Any]] = None
+
+
+@dataclass(frozen=True)
+class ChannelUserRef:
+    """Scalar user identity safe across async and worker boundaries."""
+
+    id: int
+
+
+@dataclass(frozen=True)
+class _TeamResolution:
+    team_id: Optional[int]
+    clear_selected_team: bool = False
+
+
+@dataclass(frozen=True)
+class _PrivateTaskPlan:
+    """Detached inputs required to persist and dispatch one private IM turn."""
+
+    team_id: int
+    params: Any
+
+
+def _bind_private_task_sync(user_id: int, task_id: int) -> str:
+    db = SessionLocal()
+    try:
+        task = im_task_continuation_service.validate_personal_wework_task(
+            db,
+            user_id,
+            task_id,
+        )
+        return im_task_continuation_service.get_task_title(task)
+    finally:
+        db.close()
+
+
+def _prepare_existing_private_task_sync(
+    user_id: int,
+    task_id: int,
+    message: str,
+    message_source: Dict[str, Any],
+) -> _PrivateTaskPlan:
+    db = SessionLocal()
+    try:
+        task = im_task_continuation_service.validate_personal_wework_task(
+            db,
+            user_id,
+            task_id,
+        )
+        team = im_task_continuation_service.get_task_team(db, task)
+        params = im_task_continuation_service.build_existing_task_params(
+            task,
+            message=message,
+            message_source=message_source,
+        )
+        return _PrivateTaskPlan(team_id=int(team.id), params=params)
+    finally:
+        db.close()
+
+
+def _prepare_new_private_task_sync(
+    user_id: int,
+    team_id: int,
+    message: str,
+    project_id: Optional[int],
+    message_source: Dict[str, Any],
+    selected_device_type: str,
+    selected_device_id: Optional[str],
+) -> _PrivateTaskPlan:
+    from app.core.constants import CLIENT_ORIGIN_WEWORK
+    from app.services.chat.storage.task_manager import TaskCreationParams
+    from app.services.chat.wework_task_defaults import (
+        apply_wework_task_storage_defaults,
+    )
+
+    db = SessionLocal()
+    try:
+        user = db.get(User, user_id)
+        team = db.get(Kind, team_id)
+        if user is None:
+            raise ValueError("User not found")
+        if team is None or team.kind != "Team" or not team.is_active:
+            raise ValueError("Team not found")
+        params = TaskCreationParams(
+            message=message,
+            task_type="task",
+            is_group_chat=False,
+            project_id=project_id,
+            client_origin=CLIENT_ORIGIN_WEWORK,
+            source="im",
+            message_source=message_source,
+        )
+        params = apply_wework_task_storage_defaults(
+            db,
+            user=user,
+            params=params,
+            selected_device_type=selected_device_type,
+            selected_device_id=selected_device_id,
+        )
+        return _PrivateTaskPlan(team_id=int(team.id), params=params)
+    finally:
+        db.close()
+
+
+def _mark_private_im_task_response_failed_sync(
+    task_id: int,
+    assistant_subtask_id: int,
+    error_message: str,
+) -> None:
+    from app.models.subtask import Subtask, SubtaskStatus
+    from app.services.task_status import mark_task_failed
+
+    db = SessionLocal()
+    try:
+        task = task_store.get_by_id(db, task_id=task_id)
+        assistant_subtask = subtask_store.get_by_id(db, subtask_id=assistant_subtask_id)
+        if task is None or assistant_subtask is None:
+            return
+        mark_task_failed(task, error_message)
+        assistant_subtask.status = SubtaskStatus.FAILED
+        assistant_subtask.progress = 100
+        assistant_subtask.error_message = error_message
+        assistant_subtask.completed_at = datetime.now()
+        db.commit()
+    except Exception:
+        db.rollback()
+        raise
+    finally:
+        db.close()
+
+
+def _get_task_updated_at_sync(task_id: int) -> Optional[datetime]:
+    db = SessionLocal()
+    try:
+        task = task_store.get_by_id(db, task_id=task_id)
+        return task.updated_at if task else None
+    finally:
+        db.close()
+
+
+def _resolve_chat_team_id_sync(
+    user_id: int,
+    selected_team_id: Optional[int],
+    default_team_id: Optional[int],
+) -> _TeamResolution:
+    db = SessionLocal()
+    try:
+        if selected_team_id is not None:
+            team = (
+                db.query(Kind)
+                .filter(
+                    Kind.id == selected_team_id,
+                    Kind.kind == "Team",
+                    Kind.is_active == True,
+                )
+                .first()
+            )
+            if team:
+                return _TeamResolution(team_id=int(team.id))
+
+        if default_team_id is None:
+            return _TeamResolution(
+                team_id=None,
+                clear_selected_team=selected_team_id is not None,
+            )
+        team = (
+            db.query(Kind)
+            .filter(
+                Kind.id == default_team_id,
+                Kind.kind == "Team",
+                Kind.is_active == True,
+            )
+            .first()
+        )
+        return _TeamResolution(
+            team_id=int(team.id) if team else None,
+            clear_selected_team=selected_team_id is not None,
+        )
+    finally:
+        db.close()
+
+
+def _resolve_task_mode_team_id_sync(
+    user_id: int,
+    default_team_id: Optional[int],
+) -> Optional[int]:
+    db = SessionLocal()
+    try:
+        config_value = settings.DEFAULT_TEAM_TASK
+        if config_value and config_value.strip():
+            name, separator, namespace = config_value.strip().partition("#")
+            if name.strip():
+                team = kindReader.get_by_name_and_namespace(
+                    db,
+                    user_id,
+                    KindType.TEAM,
+                    namespace.strip() if separator else "default",
+                    name.strip(),
+                )
+                if team:
+                    return int(team.id)
+        if default_team_id is None:
+            return None
+        team = (
+            db.query(Kind)
+            .filter(
+                Kind.id == default_team_id,
+                Kind.kind == "Team",
+                Kind.is_active == True,
+            )
+            .first()
+        )
+        return int(team.id) if team else None
+    finally:
+        db.close()
+
+
+def _persist_im_media_sync(
+    user_id: int,
+    subtask_id: int,
+    images: List[Dict[str, str]],
+    files: List[Dict[str, Any]],
+) -> List[Dict[str, Any]]:
+    import base64
+
+    from app.services.context.context_service import ContextService
+
+    db = SessionLocal()
+    attachment_metas: List[Dict[str, Any]] = []
+    context_service = ContextService()
+    try:
+        for index, image in enumerate(images):
+            binary_data = base64.b64decode(image["base64_data"])
+            mime_type = image.get("mime_type", "image/png")
+            extension = BaseChannelHandler._MIME_TO_EXT.get(mime_type, ".png")
+            filename = f"im_image_{index + 1}{extension}"
+            context, _ = context_service.upload_attachment(
+                db=db,
+                user_id=user_id,
+                filename=filename,
+                binary_data=binary_data,
+                subtask_id=subtask_id,
+            )
+            attachment_metas.append(
+                {"id": int(context.id), "original_filename": filename}
+            )
+        for file_info in files:
+            context, _ = context_service.upload_attachment(
+                db=db,
+                user_id=user_id,
+                filename=file_info["filename"],
+                binary_data=file_info["binary_data"],
+                subtask_id=subtask_id,
+            )
+            attachment_metas.append(
+                {
+                    "id": int(context.id),
+                    "original_filename": file_info["filename"],
+                }
+            )
+        db.commit()
+        return attachment_metas
+    except Exception:
+        db.rollback()
+        raise
+    finally:
+        db.close()
+
+
+def _resolve_device_model_override_sync(
+    user_id: int,
+    selected_model_name: Optional[str],
+    selected_model_type: Optional[str],
+) -> tuple[Optional[str], Optional[str]]:
+    from app.services.model_aggregation_service import model_aggregation_service
+
+    db = SessionLocal()
+    try:
+        user = db.query(User).filter(User.id == user_id).first()
+        if not user:
+            return selected_model_name, selected_model_type
+        all_models = model_aggregation_service.list_available_models(
+            db=db,
+            current_user=user,
+            shell_type=None,
+            include_config=False,
+            scope="personal",
+            model_category_type="llm",
+        )
+        if selected_model_name:
+            for model in all_models:
+                if model.get("name") == selected_model_name and is_claude_provider(
+                    model.get("provider")
+                ):
+                    return selected_model_name, selected_model_type
+
+        default_model_name = settings.IM_CHANNEL_DEVICE_DEFAULT_MODEL.strip()
+        if default_model_name:
+            for model in all_models:
+                model_name = model.get("name", "")
+                display_name = model.get("displayName") or ""
+                if (
+                    model_name == default_model_name
+                    or display_name == default_model_name
+                ) and is_claude_provider(model.get("provider")):
+                    return model.get("name"), model.get("type", "public")
+        return selected_model_name, selected_model_type
+    finally:
+        db.close()
+
+
+def _load_im_local_devices_sync(user_id: int) -> List[Dict[str, Any]]:
+    """Load detached local-device descriptors without touching Redis."""
+
+    db = SessionLocal()
+    try:
+        devices = (
+            db.query(Kind)
+            .filter(
+                Kind.user_id == user_id,
+                Kind.kind == "Device",
+                Kind.namespace == "default",
+                Kind.is_active == True,
+            )
+            .all()
+        )
+        result: List[Dict[str, Any]] = []
+        for device in devices:
+            spec = device.json.get("spec", {}) if isinstance(device.json, dict) else {}
+            if spec.get("deviceType", "local") != "local":
+                continue
+            result.append(
+                {
+                    "id": int(device.id),
+                    "device_id": str(device.name),
+                    "name": str(spec.get("displayName") or device.name),
+                }
+            )
+        return result
+    finally:
+        db.close()
+
+
+def _load_im_models_sync(user_id: int) -> List[Dict[str, Any]]:
+    from app.services.model_aggregation_service import model_aggregation_service
+
+    db = SessionLocal()
+    try:
+        user = db.get(User, user_id)
+        if user is None:
+            return []
+        models = model_aggregation_service.list_available_models(
+            db=db,
+            current_user=user,
+            shell_type=None,
+            include_config=False,
+            scope="personal",
+            model_category_type="llm",
+        )
+        return [dict(model) for model in models]
+    finally:
+        db.close()
+
+
+def _load_im_teams_sync(user_id: int) -> List[Dict[str, Any]]:
+    from app.services.adapters.team_kinds import team_kinds_service
+
+    db = SessionLocal()
+    try:
+        return [
+            dict(team)
+            for team in team_kinds_service.get_user_teams(
+                db=db,
+                user_id=user_id,
+                scope="all",
+            )
+        ]
+    finally:
+        db.close()
+
+
+def _load_team_display_sync(
+    selected_team_id: Optional[int],
+    default_team_id: Optional[int],
+) -> tuple[str, bool]:
+    """Return display name plus whether a stale selection must be cleared."""
+
+    db = SessionLocal()
+    try:
+        if selected_team_id is not None:
+            selected = (
+                db.query(Kind)
+                .filter(
+                    Kind.id == selected_team_id,
+                    Kind.kind == "Team",
+                    Kind.is_active == True,
+                )
+                .first()
+            )
+            if selected is not None:
+                spec = (
+                    selected.json.get("spec", {})
+                    if isinstance(selected.json, dict)
+                    else {}
+                )
+                return (
+                    str(spec.get("displayName") or selected.name) + " (用户选择)",
+                    False,
+                )
+        default = db.get(Kind, default_team_id) if default_team_id else None
+        if default is None or default.kind != "Team" or not default.is_active:
+            return "未配置", selected_team_id is not None
+        spec = default.json.get("spec", {}) if isinstance(default.json, dict) else {}
+        return (
+            str(spec.get("displayName") or default.name),
+            selected_team_id is not None,
+        )
+    finally:
+        db.close()
 
 
 # Type variables for generic types
@@ -190,6 +609,31 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
             )
         return UserMappingConfig(mode="select_user")
 
+    async def get_default_team_id_nonblocking(self) -> Optional[int]:
+        """Load dynamic channel team configuration outside the event loop."""
+
+        if self._get_default_team_id is None:
+            return None
+        return await run_sync_in_executor(self._get_default_team_id)
+
+    async def get_default_model_name_nonblocking(self) -> Optional[str]:
+        """Load dynamic channel model configuration outside the event loop."""
+
+        if self._get_default_model_name is None:
+            return None
+        return await run_sync_in_executor(self._get_default_model_name)
+
+    async def get_user_mapping_config_nonblocking(self) -> UserMappingConfig:
+        """Load dynamic channel user mapping outside the event loop."""
+
+        if self._get_user_mapping_config is None:
+            return UserMappingConfig(mode="select_user")
+        config = await run_sync_in_executor(self._get_user_mapping_config)
+        return UserMappingConfig(
+            mode=config.get("mode", "select_user"),
+            config=config.get("config"),
+        )
+
     def _build_message_source_metadata(self) -> Dict[str, Any]:
         """Build provider-level source metadata for messages from IM channels."""
         channel_type = self._channel_type.value
@@ -217,21 +661,9 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
         pass
 
     @abstractmethod
-    async def resolve_user(
-        self, db: Session, message_context: MessageContext
-    ) -> Optional[User]:
-        """Resolve channel user to Wegent user.
+    async def resolve_user_id(self, message_context: MessageContext) -> Optional[int]:
+        """Resolve a user without retaining ORM state on the event loop."""
 
-        This method should be implemented by each channel to handle
-        channel-specific user resolution logic.
-
-        Args:
-            db: Database session
-            message_context: Parsed message context
-
-        Returns:
-            Wegent User or None if not found
-        """
         pass
 
     @abstractmethod
@@ -422,23 +854,20 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
         # Check timeout if configured
         timeout_minutes = settings.IM_CHANNEL_CONVERSATION_TIMEOUT_MINUTES
         if timeout_minutes > 0:
-            # Query task's updated_at from database
-            db = SessionLocal()
-            try:
-                task = task_store.get_by_id(db, task_id=task_id)
-                if task and task.updated_at:
-                    now = datetime.now()
-                    elapsed_minutes = (now - task.updated_at).total_seconds() / 60
-                    if elapsed_minutes > timeout_minutes:
-                        # Timeout exceeded, delete old conversation and return None
-                        await cache_manager.delete(key)
-                        self.logger.info(
-                            f"[{self._channel_type.value}Handler] Conversation timeout for user {user_id}: "
-                            f"elapsed={elapsed_minutes:.1f}min, timeout={timeout_minutes}min"
-                        )
-                        return None, True  # auto_new_conversation = True
-            finally:
-                db.close()
+            updated_at = await run_sync_in_executor(
+                _get_task_updated_at_sync,
+                task_id,
+            )
+            if updated_at:
+                now = datetime.now()
+                elapsed_minutes = (now - updated_at).total_seconds() / 60
+                if elapsed_minutes > timeout_minutes:
+                    await cache_manager.delete(key)
+                    self.logger.info(
+                        f"[{self._channel_type.value}Handler] Conversation timeout for user {user_id}: "
+                        f"elapsed={elapsed_minutes:.1f}min, timeout={timeout_minutes}min"
+                    )
+                    return None, True
 
         return task_id, False
 
@@ -476,124 +905,68 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
     ) -> None:
         await self._delete_conversation_task_id(conversation_id, user_id)
 
-    def _get_default_team(self, db: Session, user_id: int) -> Optional[Kind]:
-        """Get the default team for this channel.
+    async def _get_selected_or_default_team_id(self, user_id: int) -> Optional[int]:
+        """Resolve the selected/default team with DB work outside the loop."""
 
-        Args:
-            db: Database session
-            user_id: User ID
-
-        Returns:
-            Team Kind object or None
-        """
-        team_id = self.default_team_id
-        if not team_id:
-            self.logger.warning(
-                f"[{self._channel_type.value}Handler] No default_team_id configured"
-            )
-            return None
-
-        team = (
-            db.query(Kind)
-            .filter(
-                Kind.id == team_id,
-                Kind.kind == "Team",
-                Kind.is_active == True,
-            )
-            .first()
-        )
-
-        if not team:
-            self.logger.warning(
-                f"[{self._channel_type.value}Handler] Default team not found: id={team_id}"
-            )
-
-        return team
-
-    def _get_task_mode_team(self, db: Session, user_id: int) -> Optional[Kind]:
-        """Get the default team for task mode (device/cloud execution).
-
-        Uses the DEFAULT_TEAM_TASK config (e.g. "wegent-wework#default") to look up
-        the team by name and namespace, matching the behavior of the PC/Web frontend.
-        Falls back to the channel's default_team_id if not configured.
-
-        Args:
-            db: Database session
-            user_id: User ID
-
-        Returns:
-            Team Kind object or None
-        """
-        config_value = settings.DEFAULT_TEAM_TASK
-        if not config_value or not config_value.strip():
-            return self._get_default_team(db, user_id)
-
-        parts = config_value.strip().split("#", 1)
-        name = parts[0].strip()
-        namespace = parts[1].strip() if len(parts) > 1 else "default"
-
-        if not name:
-            return self._get_default_team(db, user_id)
-
-        team = kindReader.get_by_name_and_namespace(
-            db, user_id, KindType.TEAM, namespace, name
-        )
-
-        if not team:
-            self.logger.warning(
-                f"[{self._channel_type.value}Handler] Task mode team not found: "
-                f"name={name}, namespace={namespace}, user_id={user_id}. "
-                f"Falling back to channel default team."
-            )
-            return self._get_default_team(db, user_id)
-
-        return team
-
-    async def _get_selected_or_default_team(
-        self, db: Session, user_id: int
-    ) -> Optional[Kind]:
-        """Get user's selected team or fall back to default team.
-
-        This method checks if the user has manually selected a team via /agents
-        command. If so, returns that team. Otherwise, falls back to the
-        channel's configured default team.
-
-        Args:
-            db: Database session
-            user_id: User ID
-
-        Returns:
-            Team Kind object or None
-        """
         from app.services.channels.team_selection import team_selection_manager
 
-        # Check if user has a manually selected team
         selection = await team_selection_manager.get_selection(user_id)
-        if selection:
-            team = (
-                db.query(Kind)
-                .filter(
-                    Kind.id == selection.team_id,
-                    Kind.kind == "Team",
-                    Kind.is_active == True,
-                )
-                .first()
-            )
-            if team:
-                self.logger.info(
-                    f"[{self._channel_type.value}Handler] Using user-selected team: "
-                    f"{team.name} (id={team.id})"
-                )
-                return team
-            else:
-                self.logger.warning(
-                    f"[{self._channel_type.value}Handler] User-selected team not found "
-                    f"or inactive: id={selection.team_id}, clearing selection"
-                )
-                await team_selection_manager.clear_selection(user_id)
+        default_team_id = await self.get_default_team_id_nonblocking()
+        resolution = await run_sync_in_executor(
+            _resolve_chat_team_id_sync,
+            user_id,
+            selection.team_id if selection else None,
+            default_team_id,
+        )
+        if resolution.clear_selected_team:
+            await team_selection_manager.clear_selection(user_id)
+        return resolution.team_id
 
-        # Fall back to default team
-        return self._get_default_team(db, user_id)
+    async def _get_task_mode_team_id(self, user_id: int) -> Optional[int]:
+        default_team_id = await self.get_default_team_id_nonblocking()
+        return await run_sync_in_executor(
+            _resolve_task_mode_team_id_sync,
+            user_id,
+            default_team_id,
+        )
+
+    async def _get_im_local_devices(self, user_id: int) -> List[Dict[str, Any]]:
+        from app.services.device_service import device_service
+
+        devices = await run_sync_in_executor(_load_im_local_devices_sync, user_id)
+        online_infos = await asyncio.gather(
+            *(
+                device_service.get_device_online_info(user_id, device["device_id"])
+                for device in devices
+            )
+        )
+        return [
+            {
+                **device,
+                "status": (str(info.get("status") or "online") if info else "offline"),
+            }
+            for device, info in zip(devices, online_infos)
+        ]
+
+    async def _get_im_models(self, user_id: int) -> List[Dict[str, Any]]:
+        return await run_sync_in_executor(_load_im_models_sync, user_id)
+
+    async def _persist_im_media_nonblocking(
+        self,
+        *,
+        user_id: int,
+        subtask_id: int,
+        message_context: MessageContext,
+    ) -> List[Dict[str, Any]]:
+        if not message_context.images and not message_context.files:
+            return []
+        return await run_sync_in_executor(
+            _persist_im_media_sync,
+            user_id,
+            subtask_id,
+            message_context.images,
+            message_context.files,
+        )
 
     async def _get_user_model_override(
         self, user_id: int
@@ -614,70 +987,23 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
             return model_selection.model_name, model_selection.model_type
 
         # Fall back to channel's default model
-        if self.default_model_name:
-            return self.default_model_name, None
-
-        return None, None
-
-    async def _get_device_mode_model_override(
-        self, db: Session, user: User
-    ) -> tuple[Optional[str], Optional[str]]:
-        """Get model override for device mode.
-
-        For device mode, if user hasn't selected a Claude model,
-        use the configured default device model instead.
-
-        Args:
-            db: Database session
-            user: Wegent user
-
-        Returns:
-            Tuple of (model_name, model_type) or (None, None) if no override
-        """
-        from app.core.config import settings
-        from app.services.model_aggregation_service import model_aggregation_service
-
-        model_selection = await model_selection_manager.get_selection(user.id)
-
-        # Get all available models to check provider accurately
-        all_models = model_aggregation_service.list_available_models(
-            db=db,
-            current_user=user,
-            shell_type=None,
-            include_config=False,
-            scope="personal",
-            model_category_type="llm",
-        )
-
-        # If user has selected a model, check if it's Claude from the model list
-        if model_selection:
-            for model in all_models:
-                if model.get("name") == model_selection.model_name:
-                    if is_claude_provider(model.get("provider")):
-                        # User selected a Claude model, use it
-                        return model_selection.model_name, model_selection.model_type
-                    break  # Found the model but it's not Claude
-
-        # User hasn't selected a Claude model, check if there's a default device model
-        default_model_name = settings.IM_CHANNEL_DEVICE_DEFAULT_MODEL.strip()
+        default_model_name = await self.get_default_model_name_nonblocking()
         if default_model_name:
-            for model in all_models:
-                m_name = model.get("name", "")
-                m_display = model.get("displayName") or ""
-                if (
-                    m_name == default_model_name or m_display == default_model_name
-                ) and is_claude_provider(model.get("provider")):
-                    self.logger.info(
-                        f"[{self._channel_type.value}Handler] Using default device model "
-                        f"for user {user.id}: {default_model_name}"
-                    )
-                    return model.get("name"), model.get("type", "public")
-
-        # Fall back to user's selection (even if not Claude)
-        if model_selection:
-            return model_selection.model_name, model_selection.model_type
+            return default_model_name, None
 
         return None, None
+
+    async def _get_device_mode_model_override_nonblocking(
+        self,
+        user_id: int,
+    ) -> tuple[Optional[str], Optional[str]]:
+        model_selection = await model_selection_manager.get_selection(user_id)
+        return await run_sync_in_executor(
+            _resolve_device_model_override_sync,
+            user_id,
+            model_selection.model_name if model_selection else None,
+            model_selection.model_type if model_selection else None,
+        )
 
     async def handle_message(self, raw_data: Any) -> bool:
         """Handle an incoming message.
@@ -711,12 +1037,9 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
             await self.send_text_reply(message_context, "消息内容为空，请重新发送")
             return False
 
-        # Resolve user with a short-lived db session
-        db = SessionLocal()
-        db.expire_on_commit = False
         try:
-            user = await self.resolve_user(db, message_context)
-            if not user:
+            user_id = await self.resolve_user_id(message_context)
+            if user_id is None:
                 self.logger.warning(
                     f"[{self._channel_type.value}Handler] User not found: sender_id={message_context.sender_id}"
                 )
@@ -724,11 +1047,11 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
                     message_context, "用户未注册，请先登录 Wegent 系统"
                 )
                 return False
+            user = ChannelUserRef(id=user_id)
 
             im_session = None
             if self._is_private_conversation(message_context):
                 im_session = await im_session_service.get_or_create_private_session(
-                    db=db,
                     user_id=user.id,
                     channel_type=self._channel_type.value,
                     channel_id=self._channel_id,
@@ -739,7 +1062,6 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
                 )
 
                 if await self._route_private_im_session(
-                    db=db,
                     user=user,
                     im_session=im_session,
                     message_context=message_context,
@@ -750,7 +1072,6 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
             parsed_cmd = parse_command(message_context.content)
             if parsed_cmd:
                 await self._handle_command(
-                    db=db,
                     user=user,
                     command=parsed_cmd,
                     message_context=message_context,
@@ -761,8 +1082,6 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
                 f"[{self._channel_type.value}Handler] Error resolving user or handling command: {e}"
             )
             return False
-        finally:
-            db.close()
 
         # Process as chat message (uses its own db sessions for short operations)
         try:
@@ -779,8 +1098,7 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
 
     async def _handle_command(
         self,
-        db: Session,
-        user: User,
+        user: ChannelUserRef,
         command: Any,
         message_context: MessageContext,
     ) -> None:
@@ -808,25 +1126,19 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
             await self.send_text_reply(message_context, HELP_MESSAGE)
 
         elif command.command == CommandType.DEVICES:
-            await self._handle_devices_command(
-                db, user, command.argument, message_context
-            )
+            await self._handle_devices_command(user, command.argument, message_context)
 
         elif command.command == CommandType.USE:
-            await self._handle_use_command(db, user, command.argument, message_context)
+            await self._handle_use_command(user, command.argument, message_context)
 
         elif command.command == CommandType.STATUS:
-            await self._handle_status_command(db, user, message_context)
+            await self._handle_status_command(user, message_context)
 
         elif command.command == CommandType.MODELS:
-            await self._handle_model_command(
-                db, user, command.argument, message_context
-            )
+            await self._handle_model_command(user, command.argument, message_context)
 
         elif command.command == CommandType.AGENTS:
-            await self._handle_agent_command(
-                db, user, command.argument, message_context
-            )
+            await self._handle_agent_command(user, command.argument, message_context)
 
         elif command.command in {
             CommandType.BIND,
@@ -846,15 +1158,13 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
 
     async def _route_private_im_session(
         self,
-        db: Session,
-        user: User,
+        user: ChannelUserRef,
         im_session: Any,
         message_context: MessageContext,
     ) -> bool:
         from app.services.im.interaction_service import im_interaction_service
 
         return await im_interaction_service.route_private_message(
-            db=db,
             user=user,
             im_session=im_session,
             message_context=message_context,
@@ -863,14 +1173,12 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
 
     async def execute_private_im_bind_task(
         self,
-        db: Session,
-        user: User,
+        user: ChannelUserRef,
         im_session: Any,
         task_id: Optional[int],
         message_context: MessageContext,
     ) -> None:
         await self._execute_private_im_bind_task(
-            db=db,
             user=user,
             im_session=im_session,
             task_id=task_id,
@@ -880,8 +1188,7 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
     async def _execute_private_im_bind_task(
         self,
         *,
-        db: Session,
-        user: User,
+        user: ChannelUserRef,
         im_session: Any,
         task_id: Optional[int],
         message_context: MessageContext,
@@ -893,8 +1200,10 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
             return
 
         try:
-            task = im_task_continuation_service.validate_personal_wework_task(
-                db, user.id, task_id
+            title = await run_sync_in_executor(
+                _bind_private_task_sync,
+                user.id,
+                task_id,
             )
         except HTTPException:
             self.logger.exception(
@@ -917,15 +1226,14 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
             raise
 
         await im_session_service.bind_active_task(
-            db, session=im_session, task_id=task.id
+            session=im_session,
+            task_id=task_id,
         )
-        title = im_task_continuation_service.get_task_title(task)
         await self.send_text_reply(message_context, f"已切换到任务：{title}。")
 
     async def execute_private_im_continue_task(
         self,
-        db: Session,
-        user: User,
+        user: ChannelUserRef,
         im_session: Any,
         task_id: Optional[int],
         message: str,
@@ -933,7 +1241,6 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
         runtime_task: Optional[dict[str, Any]] = None,
     ) -> None:
         await self._execute_private_im_continue_task(
-            db=db,
             user=user,
             im_session=im_session,
             task_id=task_id,
@@ -945,8 +1252,7 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
     async def _execute_private_im_continue_task(
         self,
         *,
-        db: Session,
-        user: User,
+        user: ChannelUserRef,
         im_session: Any,
         task_id: Optional[int],
         message: str,
@@ -955,7 +1261,6 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
     ) -> None:
         if runtime_task is not None:
             await self._execute_private_im_continue_runtime_task(
-                db=db,
                 user=user,
                 im_session=im_session,
                 message=message,
@@ -969,7 +1274,6 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
                 im_session, "active_runtime_task", None
             ):
                 await self._execute_private_im_continue_runtime_task(
-                    db=db,
                     user=user,
                     im_session=im_session,
                     message=message,
@@ -981,10 +1285,14 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
             return
 
         try:
-            task = im_task_continuation_service.validate_personal_wework_task(
-                db, user.id, task_id
+            message_source = self._build_private_im_message_source(im_session)
+            plan = await run_sync_in_executor(
+                _prepare_existing_private_task_sync,
+                user.id,
+                task_id,
+                message,
+                message_source,
             )
-            team = im_task_continuation_service.get_task_team(db, task)
         except HTTPException:
             self.logger.exception(
                 "[%sHandler] Active private IM task is unavailable: user_id=%s task_id=%s",
@@ -992,7 +1300,7 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
                 user.id,
                 task_id,
             )
-            await im_session_service.clear_active_task(db, session=im_session)
+            await im_session_service.clear_active_task(session=im_session)
             await self.send_text_reply(
                 message_context, "当前任务不可用，请使用 /switch 重新选择任务。"
             )
@@ -1007,14 +1315,18 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
             )
             raise
 
-        message_source = self._build_private_im_message_source(im_session)
+        from app.services.chat.storage.task_manager import (
+            create_chat_task_ids_nonblocking,
+        )
+
         try:
-            result = await im_task_continuation_service.append_message_to_task(
-                db=db,
-                user=user,
-                task_id=task.id,
+            result = await create_chat_task_ids_nonblocking(
+                user_id=user.id,
+                team_id=plan.team_id,
                 message=message,
-                message_source=message_source,
+                params=plan.params,
+                task_id=task_id,
+                should_trigger_ai=True,
             )
         except HTTPException as exc:
             if exc.status_code == 400 and exc.detail == "Task is still running":
@@ -1024,38 +1336,26 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
                 )
                 return
             raise
-        params = getattr(result, "task_params", None)
-        if params is None:
-            params = await im_task_continuation_service.resolve_existing_task_params(
-                db,
-                user=user,
-                task=task,
-                message=message,
-                message_source=message_source,
-            )
-        await self._persist_private_im_task_media(
-            db=db,
+        await self._persist_im_media_nonblocking(
             user_id=user.id,
-            user_subtask_id=result.user_subtask.id,
+            subtask_id=result.user_subtask_id,
             message_context=message_context,
         )
         await self._trigger_private_im_task_response(
-            db=db,
-            task=result.task,
-            assistant_subtask=result.assistant_subtask,
-            team=team,
-            user=user,
-            user_subtask_id=result.user_subtask.id,
+            task_id=result.task_id,
+            assistant_subtask_id=result.assistant_subtask_id,
+            team_id=plan.team_id,
+            user_id=user.id,
+            user_subtask_id=result.user_subtask_id,
             message=message,
             message_context=message_context,
-            params=params,
+            params=plan.params,
         )
 
     async def _execute_private_im_continue_runtime_task(
         self,
         *,
-        db: Session,
-        user: User,
+        user: ChannelUserRef,
         im_session: Any,
         message: str,
         message_context: MessageContext,
@@ -1085,7 +1385,7 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
                 self._channel_type.value,
                 user.id,
             )
-            await im_session_service.clear_active_task(db, session=im_session)
+            await im_session_service.clear_active_task(session=im_session)
             await self.send_text_reply(
                 message_context, "当前本地任务不可用,请回到 Wework 重新选择。"
             )
@@ -1112,8 +1412,7 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
             streaming_emitter=streaming_emitter,
         )
         try:
-            response = await runtime_work_service.send_runtime_message(
-                db=db,
+            response = await runtime_work_service.send_runtime_message_nonblocking(
                 user_id=user.id,
                 request=RuntimeSendRequest(
                     address=address,
@@ -1155,7 +1454,7 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
                 user.id,
                 runtime_task.get("localTaskId"),
             )
-            await im_session_service.clear_active_task(db, session=im_session)
+            await im_session_service.clear_active_task(session=im_session)
             await self._emit_private_im_runtime_stream_error(
                 streaming_emitter=streaming_emitter,
                 task_id=callback_key,
@@ -1240,15 +1539,13 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
 
     async def execute_private_im_create_task(
         self,
-        db: Session,
-        user: User,
+        user: ChannelUserRef,
         im_session: Any,
         project_id: Optional[int],
         message: str,
         message_context: MessageContext,
     ) -> None:
         await self._execute_private_im_create_task(
-            db=db,
             user=user,
             im_session=im_session,
             project_id=project_id,
@@ -1259,40 +1556,43 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
     async def _execute_private_im_create_task(
         self,
         *,
-        db: Session,
-        user: User,
+        user: ChannelUserRef,
         im_session: Any,
         project_id: Optional[int],
         message: str,
         message_context: MessageContext,
     ) -> None:
-        from app.services.chat.storage.task_manager import create_chat_task
+        from app.services.chat.storage.task_manager import (
+            create_chat_task_ids_nonblocking,
+        )
 
-        team = self._get_task_mode_team(db, user.id)
-        if not team:
+        team_id = await self._get_task_mode_team_id(user.id)
+        if team_id is None:
             await self.send_text_reply(message_context, "配置错误: 未配置默认智能体")
             return
 
         message_source = self._build_private_im_message_source(im_session)
-        params = await im_task_continuation_service.build_new_task_params(
-            db,
-            user=user,
-            message=message,
-            project_id=project_id,
-            task_type="task",
-            message_source=message_source,
+        selection = await device_selection_manager.get_selection(user.id)
+        plan = await run_sync_in_executor(
+            _prepare_new_private_task_sync,
+            user.id,
+            team_id,
+            message,
+            project_id,
+            message_source,
+            selection.device_type.value,
+            selection.device_id,
         )
-        result = await create_chat_task(
-            db=db,
-            user=user,
-            team=team,
+        result = await create_chat_task_ids_nonblocking(
+            user_id=user.id,
+            team_id=plan.team_id,
             message=message,
-            params=params,
+            params=plan.params,
             should_trigger_ai=bool(message.strip()),
-            source="im",
         )
         await im_session_service.bind_active_task(
-            db, session=im_session, task_id=result.task.id
+            session=im_session,
+            task_id=result.task_id,
         )
 
         if not message.strip():
@@ -1307,22 +1607,20 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
         else:
             await self.send_text_reply(message_context, TASK_CREATED_RUNNING_NOTICE)
 
-        await self._persist_private_im_task_media(
-            db=db,
+        await self._persist_im_media_nonblocking(
             user_id=user.id,
-            user_subtask_id=result.user_subtask.id,
+            subtask_id=result.user_subtask_id,
             message_context=message_context,
         )
         await self._trigger_private_im_task_response(
-            db=db,
-            task=result.task,
-            assistant_subtask=result.assistant_subtask,
-            team=team,
-            user=user,
-            user_subtask_id=result.user_subtask.id,
+            task_id=result.task_id,
+            assistant_subtask_id=result.assistant_subtask_id,
+            team_id=plan.team_id,
+            user_id=user.id,
+            user_subtask_id=result.user_subtask_id,
             message=message,
             message_context=message_context,
-            params=params,
+            params=plan.params,
             initial_stream_content=initial_stream_content,
         )
 
@@ -1361,63 +1659,35 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
             )
         )
 
-    async def _persist_private_im_task_media(
-        self,
-        *,
-        db: Session,
-        user_id: int,
-        user_subtask_id: int,
-        message_context: MessageContext,
-    ) -> None:
-        if message_context.images:
-            self._persist_im_images_as_attachments(
-                db=db,
-                user_id=user_id,
-                subtask_id=user_subtask_id,
-                images=message_context.images,
-            )
-
-        if message_context.files:
-            self._persist_im_files_as_attachments(
-                db=db,
-                user_id=user_id,
-                subtask_id=user_subtask_id,
-                files=message_context.files,
-            )
-
-        db.commit()
-
     async def _trigger_private_im_task_response(
         self,
         *,
-        db: Session,
-        task: Any,
-        assistant_subtask: Any,
-        team: Kind,
-        user: User,
+        task_id: int,
+        assistant_subtask_id: Optional[int],
+        team_id: int,
+        user_id: int,
         user_subtask_id: int,
         message: str,
         message_context: MessageContext,
         params: Any,
         initial_stream_content: Optional[str] = None,
     ) -> None:
-        if assistant_subtask is None:
+        if assistant_subtask_id is None:
             return
 
-        task_id = task.id
-        device_id = extract_task_device_id(task) or getattr(params, "device_id", None)
+        device_id = getattr(params, "device_id", None)
         streaming_emitter = await self.create_streaming_emitter(message_context)
         if streaming_emitter:
             response_emitter = streaming_emitter
             self._prepare_streaming_emitter(task_id, streaming_emitter)
             await streaming_emitter.emit_start(
                 task_id=task_id,
-                subtask_id=assistant_subtask.id,
+                subtask_id=assistant_subtask_id,
             )
             await self._emit_initial_stream_content(
                 streaming_emitter,
                 task_id=task_id,
-                subtask_id=assistant_subtask.id,
+                subtask_id=assistant_subtask_id,
                 content=initial_stream_content,
             )
         else:
@@ -1443,10 +1713,10 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
                 response_emitter=response_emitter,
             )
             await trigger_ai_response_unified(
-                task=task,
-                assistant_subtask=assistant_subtask,
-                team=team,
-                user=user,
+                task=task_id,
+                assistant_subtask=assistant_subtask_id,
+                team=team_id,
+                user=user_id,
                 message=(message or "") + IM_CHANNEL_CONTEXT_HINT,
                 payload=self._build_chat_payload(
                     params,
@@ -1464,13 +1734,13 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
                 "task_id=%s, subtask_id=%s",
                 self._channel_type.value,
                 task_id,
-                assistant_subtask.id,
+                assistant_subtask_id,
             )
-            self._mark_private_im_task_response_failed(
-                db,
-                task=task,
-                assistant_subtask=assistant_subtask,
-                error_message=str(exc),
+            await run_sync_in_executor(
+                _mark_private_im_task_response_failed_sync,
+                task_id,
+                assistant_subtask_id,
+                str(exc),
             )
             await self.send_text_reply(
                 message_context,
@@ -1495,35 +1765,14 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
         if response:
             await self.send_text_reply(message_context, response)
 
-    def _mark_private_im_task_response_failed(
-        self,
-        db: Session,
-        *,
-        task: Any,
-        assistant_subtask: Any,
-        error_message: str,
-    ) -> None:
-        from app.models.subtask import SubtaskStatus
-        from app.services.task_status import mark_task_failed
-
-        mark_task_failed(task, error_message)
-        assistant_subtask.status = SubtaskStatus.FAILED
-        assistant_subtask.progress = 100
-        assistant_subtask.error_message = error_message
-        assistant_subtask.completed_at = datetime.now()
-        db.commit()
-
     async def _handle_devices_command(
         self,
-        db: Session,
-        user: User,
+        user: ChannelUserRef,
         argument: Optional[str],
         message_context: MessageContext,
     ) -> None:
         """Handle /devices command - list devices or switch to a device."""
-        from app.services.device_service import device_service
-
-        devices = await device_service.get_all_devices(db, user.id)
+        devices = await self._get_im_local_devices(user.id)
         online_devices = [d for d in devices if d["status"] != "offline"]
 
         # With argument - switch to specified device
@@ -1576,8 +1825,8 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
                 return
 
             # Get model for device mode (uses default Claude if user hasn't selected one)
-            override_model_name, _ = await self._get_device_mode_model_override(
-                db, user
+            override_model_name, _ = (
+                await self._get_device_mode_model_override_nonblocking(user.id)
             )
 
             # Check if we have a valid Claude model for device mode
@@ -1595,18 +1844,9 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
                     return
 
             # Get display name for the model
-            from app.services.model_aggregation_service import model_aggregation_service
-
             model_display_name = override_model_name or "默认模型"
             if override_model_name:
-                all_models = model_aggregation_service.list_available_models(
-                    db=db,
-                    current_user=user,
-                    shell_type=None,
-                    include_config=False,
-                    scope="personal",
-                    model_category_type="llm",
-                )
+                all_models = await self._get_im_models(user.id)
                 for m in all_models:
                     if m.get("name") == override_model_name:
                         model_display_name = m.get("displayName") or override_model_name
@@ -1682,15 +1922,14 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
 
     async def _handle_use_command(
         self,
-        db: Session,
-        user: User,
+        user: ChannelUserRef,
         argument: Optional[str],
         message_context: MessageContext,
     ) -> None:
         """Handle /use command - show status or switch execution mode."""
         # No argument - show current status with mode switching tips
         if not argument:
-            await self._handle_status_command(db, user, message_context)
+            await self._handle_status_command(user, message_context)
             return
 
         argument = argument.strip().lower()
@@ -1715,7 +1954,8 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
             model_selection = await model_selection_manager.get_selection(user.id)
             if model_selection:
                 return model_selection.display_name or model_selection.model_name
-            return self.default_model_name or "默认模型"
+            default_model_name = await self.get_default_model_name_nonblocking()
+            return default_model_name or "默认模型"
 
         # Chat mode
         if argument == "chat":
@@ -1743,7 +1983,7 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
 
         # Device mode - use last selected device
         if argument == "device":
-            await self._handle_use_device_mode(db, user, message_context)
+            await self._handle_use_device_mode(user, message_context)
             return
 
         # Unknown argument
@@ -1758,14 +1998,12 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
 
     async def _handle_use_device_mode(
         self,
-        db: Session,
-        user: User,
+        user: ChannelUserRef,
         message_context: MessageContext,
     ) -> None:
         """Handle /use device - switch to last selected device."""
         from app.core.config import settings
         from app.services.device_service import device_service
-        from app.services.model_aggregation_service import model_aggregation_service
 
         # Check if current model is Claude (required for device mode)
         model_selection = await model_selection_manager.get_selection(user.id)
@@ -1777,24 +2015,18 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
 
         # If not Claude, check if there's a default device model to use temporarily
         if not is_claude:
+            default_model_name = await self.get_default_model_name_nonblocking()
             current_model_display = (
                 model_selection.display_name or model_selection.model_name
                 if model_selection
-                else self.default_model_name or "默认模型"
+                else default_model_name or "默认模型"
             )
 
             # Check if there's a default device mode model configured
             default_model_name = settings.IM_CHANNEL_DEVICE_DEFAULT_MODEL.strip()
             if default_model_name:
                 # Try to find the default model in available models
-                all_models = model_aggregation_service.list_available_models(
-                    db=db,
-                    current_user=user,
-                    shell_type=None,
-                    include_config=False,
-                    scope="personal",
-                    model_category_type="llm",
-                )
+                all_models = await self._get_im_models(user.id)
                 default_model = None
                 for model in all_models:
                     m_name = model.get("name", "")
@@ -1824,14 +2056,7 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
 
             # If still not Claude, show available options
             if not is_claude:
-                all_models = model_aggregation_service.list_available_models(
-                    db=db,
-                    current_user=user,
-                    shell_type=None,
-                    include_config=False,
-                    scope="personal",
-                    model_category_type="llm",
-                )
+                all_models = await self._get_im_models(user.id)
                 claude_models = [
                     m for m in all_models if is_claude_provider(m.get("provider"))
                 ]
@@ -1894,7 +2119,7 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
                 return
 
         # No previous device selection - check if there's only one online device
-        devices = await device_service.get_all_devices(db, user.id)
+        devices = await self._get_im_local_devices(user.id)
         online_devices = [d for d in devices if d["status"] != "offline"]
 
         if len(online_devices) == 1:
@@ -1929,8 +2154,7 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
 
     async def _handle_status_command(
         self,
-        db: Session,
-        user: User,
+        user: ChannelUserRef,
         message_context: MessageContext,
     ) -> None:
         """Handle /status command - show current status."""
@@ -1964,62 +2188,26 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
         from app.services.channels.team_selection import team_selection_manager
 
         team_selection = await team_selection_manager.get_selection(user.id)
-        if team_selection:
-            team = (
-                db.query(Kind)
-                .filter(
-                    Kind.id == team_selection.team_id,
-                    Kind.kind == "Team",
-                    Kind.is_active == True,
-                )
-                .first()
-            )
-            if team:
-                team_json = team.json or {}
-                team_spec = team_json.get("spec", {})
-                display = team_spec.get("displayName") or team.name
-                team_name = f"{display} (用户选择)"
-            else:
-                # Selected team no longer exists, clear it
-                await team_selection_manager.clear_selection(user.id)
-                team = self._get_default_team(db, user.id)
-                if team:
-                    team_json = team.json or {}
-                    team_spec = team_json.get("spec", {})
-                    team_name = team_spec.get("displayName") or team.name
-                else:
-                    team_name = "未配置"
-        else:
-            team = self._get_default_team(db, user.id)
-            if team:
-                team_json = team.json or {}
-                team_spec = team_json.get("spec", {})
-                team_name = team_spec.get("displayName") or team.name
-            else:
-                team_name = "未配置"
+        default_team_id = await self.get_default_team_id_nonblocking()
+        team_name, clear_team_selection = await run_sync_in_executor(
+            _load_team_display_sync,
+            team_selection.team_id if team_selection else None,
+            default_team_id,
+        )
+        if clear_team_selection:
+            await team_selection_manager.clear_selection(user.id)
 
         # Get model selection
         # For device mode, show the actual model that will be used (may be default device model)
         model_selection = await model_selection_manager.get_selection(user.id)
+        default_model_name = await self.get_default_model_name_nonblocking()
         if selection.device_type == DeviceType.LOCAL:
             # In device mode, use _get_device_mode_model_override to get the actual model
-            override_model_name, _ = await self._get_device_mode_model_override(
-                db, user
+            override_model_name, _ = (
+                await self._get_device_mode_model_override_nonblocking(user.id)
             )
             if override_model_name:
-                # Find the display name for this model
-                from app.services.model_aggregation_service import (
-                    model_aggregation_service,
-                )
-
-                all_models = model_aggregation_service.list_available_models(
-                    db=db,
-                    current_user=user,
-                    shell_type=None,
-                    include_config=False,
-                    scope="personal",
-                    model_category_type="llm",
-                )
+                all_models = await self._get_im_models(user.id)
                 model_name = override_model_name
                 for m in all_models:
                     if m.get("name") == override_model_name:
@@ -2028,11 +2216,11 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
             elif model_selection:
                 model_name = model_selection.display_name or model_selection.model_name
             else:
-                model_name = self.default_model_name or "默认模型"
+                model_name = default_model_name or "默认模型"
         elif model_selection:
             model_name = model_selection.display_name or model_selection.model_name
         else:
-            model_name = self.default_model_name or "默认模型"
+            model_name = default_model_name or "默认模型"
 
         message = STATUS_TEMPLATE.format(
             mode=mode,
@@ -2045,8 +2233,7 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
 
     async def _handle_model_command(
         self,
-        db: Session,
-        user: User,
+        user: ChannelUserRef,
         argument: Optional[str],
         message_context: MessageContext,
     ) -> None:
@@ -2055,21 +2242,12 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
         In device mode, only Claude models are shown since device execution
         requires Claude Code which only supports Claude/Anthropic models.
         """
-        from app.services.model_aggregation_service import model_aggregation_service
-
         # Check current execution mode
         selection = await device_selection_manager.get_selection(user.id)
         is_device_mode = selection.device_type == DeviceType.LOCAL
 
         # Get available models
-        all_models = model_aggregation_service.list_available_models(
-            db=db,
-            current_user=user,
-            shell_type=None,  # No shell type filter for IM channels
-            include_config=False,
-            scope="personal",
-            model_category_type="llm",  # Only list LLM models
-        )
+        all_models = await self._get_im_models(user.id)
 
         if not all_models:
             await self.send_text_reply(message_context, MODELS_HEADER + MODELS_EMPTY)
@@ -2204,8 +2382,7 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
 
     async def _handle_agent_command(
         self,
-        db: Session,
-        user: User,
+        user: ChannelUserRef,
         argument: Optional[str],
         message_context: MessageContext,
     ) -> None:
@@ -2221,18 +2398,13 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
             argument: Optional argument (team index, name, or 'default')
             message_context: Message context
         """
-        from app.services.adapters.team_kinds import team_kinds_service
         from app.services.channels.team_selection import (
             TeamSelection,
             team_selection_manager,
         )
 
         # Get all user's teams (personal + shared + system)
-        teams = team_kinds_service.get_user_teams(
-            db=db,
-            user_id=user.id,
-            scope="all",
-        )
+        teams = await run_sync_in_executor(_load_im_teams_sync, user.id)
 
         if not teams:
             await self.send_text_reply(
@@ -2254,11 +2426,13 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
                     message_context.conversation_id, user.id
                 )
 
-                default_team = self._get_default_team(db, user.id)
-                if default_team:
-                    team_json = default_team.json or {}
-                    team_spec = team_json.get("spec", {})
-                    display_name = team_spec.get("displayName") or default_team.name
+                default_team_id = await self.get_default_team_id_nonblocking()
+                display_name, _ = await run_sync_in_executor(
+                    _load_team_display_sync,
+                    None,
+                    default_team_id,
+                )
+                if display_name != "未配置":
                     await self.send_text_reply(
                         message_context,
                         f"✅ 已恢复使用系统默认智能体: **{display_name}**\n\n"
@@ -2335,6 +2509,7 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
         # No argument - list teams
         current_selection = await team_selection_manager.get_selection(user.id)
         current_team_id = current_selection.team_id if current_selection else None
+        default_team_id = await self.get_default_team_id_nonblocking()
 
         message = AGENTS_HEADER + "\n"
 
@@ -2348,7 +2523,7 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
             status_parts = []
             if team_id == current_team_id:
                 status_parts.append("⭐ 当前")
-            if team_id == self.default_team_id:
+            if team_id == default_team_id:
                 status_parts.append("系统默认")
 
             status_str = " - " + ", ".join(status_parts) if status_parts else ""
@@ -2365,7 +2540,7 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
 
     async def _process_chat_message(
         self,
-        user: User,
+        user: ChannelUserRef,
         message_context: MessageContext,
     ) -> None:
         """Process message based on device selection.
@@ -2388,7 +2563,7 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
 
     async def _process_chat_mode(
         self,
-        user: User,
+        user: ChannelUserRef,
         message_context: MessageContext,
     ) -> None:
         """Process message in Chat Shell mode (direct LLM conversation)."""
@@ -2402,7 +2577,7 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
 
     async def _process_device_mode(
         self,
-        user: User,
+        user: ChannelUserRef,
         device_selection: DeviceSelection,
         message_context: MessageContext,
     ) -> None:
@@ -2426,53 +2601,37 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
             )
             return
 
-        # Use short-lived db session for database operations
-        db = SessionLocal()
-        try:
-            team = self._get_task_mode_team(db, user.id)
-            if not team:
-                await self.send_text_reply(
-                    message_context, "配置错误: 未配置默认智能体"
-                )
-                return
+        team_id = await self._get_task_mode_team_id(user.id)
+        if team_id is None:
+            await self.send_text_reply(message_context, "配置错误: 未配置默认智能体")
+            return
 
-            response = await self._create_and_process_device_task(
-                db=db,
-                user=user,
-                team=team,
-                device_id=device_id,
-                message_context=message_context,
-            )
-        finally:
-            db.close()
+        response = await self._create_and_process_device_task(
+            user=user,
+            team_id=team_id,
+            device_id=device_id,
+            message_context=message_context,
+        )
 
         if response:
             await self.send_text_reply(message_context, response)
 
     async def _process_cloud_mode(
         self,
-        user: User,
+        user: ChannelUserRef,
         message_context: MessageContext,
     ) -> None:
         """Process message for cloud executor execution."""
-        # Use short-lived db session for database operations
-        db = SessionLocal()
-        try:
-            team = self._get_task_mode_team(db, user.id)
-            if not team:
-                await self.send_text_reply(
-                    message_context, "配置错误: 未配置默认智能体"
-                )
-                return
+        team_id = await self._get_task_mode_team_id(user.id)
+        if team_id is None:
+            await self.send_text_reply(message_context, "配置错误: 未配置默认智能体")
+            return
 
-            response = await self._create_and_process_cloud_task(
-                db=db,
-                user=user,
-                team=team,
-                message_context=message_context,
-            )
-        finally:
-            db.close()
+        response = await self._create_and_process_cloud_task(
+            user=user,
+            team_id=team_id,
+            message_context=message_context,
+        )
 
         if response:
             await self.send_text_reply(message_context, response)
@@ -2497,131 +2656,6 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
             return "[图片]"
         return ""
 
-    def _persist_im_files_as_attachments(
-        self,
-        db: Session,
-        user_id: int,
-        subtask_id: int,
-        files: List[Dict[str, Any]],
-    ) -> List[int]:
-        """Persist IM channel files as SubtaskContext attachments.
-
-        Downloads from IM channels (DingTalk, Feishu, etc.) provide files as
-        binary data. This method saves them into the subtask_contexts table
-        so they are processed (text extraction) and available for the AI.
-
-        Args:
-            db: Database session (must be open, caller handles commit)
-            user_id: Owner user ID
-            subtask_id: User subtask ID to link the files to
-            files: List of file dicts with filename and binary_data
-
-        Returns:
-            List of attachment metadata dicts for executor (id, original_filename)
-        """
-        from app.services.context.context_service import ContextService
-
-        context_service = ContextService()
-        attachment_metas: List[Dict[str, Any]] = []
-
-        for file_info in files:
-            try:
-                context, _ = context_service.upload_attachment(
-                    db=db,
-                    user_id=user_id,
-                    filename=file_info["filename"],
-                    binary_data=file_info["binary_data"],
-                    subtask_id=subtask_id,
-                )
-                attachment_metas.append(
-                    {
-                        "id": context.id,
-                        "original_filename": file_info["filename"],
-                    }
-                )
-                self.logger.info(
-                    "[%sHandler] Persisted IM file as attachment: "
-                    "context_id=%d, subtask_id=%d, filename=%s, size=%d bytes",
-                    self._channel_type.value,
-                    context.id,
-                    subtask_id,
-                    file_info["filename"],
-                    len(file_info["binary_data"]),
-                )
-            except Exception as e:
-                self.logger.error(
-                    "[%sHandler] Failed to persist IM file %s: %s",
-                    self._channel_type.value,
-                    file_info.get("filename", "unknown"),
-                    e,
-                )
-                continue
-
-        return attachment_metas
-
-    def _persist_im_images_as_attachments(
-        self,
-        db: Session,
-        user_id: int,
-        subtask_id: int,
-        images: List[Dict[str, str]],
-    ) -> List[int]:
-        """Persist IM channel images as SubtaskContext attachments.
-
-        Downloads from IM channels (DingTalk, Feishu, etc.) provide images as
-        base64-encoded data. This method saves them into the subtask_contexts
-        table so they can be displayed when viewing the task on PC/Web.
-
-        Args:
-            db: Database session (must be open, caller handles commit)
-            user_id: Owner user ID
-            subtask_id: User subtask ID to link the images to
-            images: List of image dicts with mime_type and base64_data
-
-        Returns:
-            List of created SubtaskContext IDs
-        """
-        import base64
-
-        from app.services.context.context_service import ContextService
-
-        context_service = ContextService()
-        created_ids: List[int] = []
-
-        for idx, img in enumerate(images):
-            try:
-                binary_data = base64.b64decode(img["base64_data"])
-                mime_type = img.get("mime_type", "image/png")
-                ext = self._MIME_TO_EXT.get(mime_type, ".png")
-                filename = f"im_image_{idx + 1}{ext}"
-
-                context, _ = context_service.upload_attachment(
-                    db=db,
-                    user_id=user_id,
-                    filename=filename,
-                    binary_data=binary_data,
-                    subtask_id=subtask_id,
-                )
-                created_ids.append(context.id)
-                self.logger.info(
-                    "[%sHandler] Persisted IM image as attachment: "
-                    "context_id=%d, subtask_id=%d, size=%d bytes",
-                    self._channel_type.value,
-                    context.id,
-                    subtask_id,
-                    len(binary_data),
-                )
-            except Exception as e:
-                self.logger.error(
-                    "[%sHandler] Failed to persist IM image %d: %s",
-                    self._channel_type.value,
-                    idx,
-                    e,
-                )
-                continue
-
-        return created_ids
-
     @staticmethod
     def _build_vision_content(
         text: str, images: List[Dict[str, str]]
@@ -2645,7 +2679,7 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
 
     async def _create_and_process_chat(
         self,
-        user: User,
+        user: ChannelUserRef,
         message_context: MessageContext,
     ) -> Optional[str]:
         """Create a chat task and process it through the AI system.
@@ -2663,7 +2697,7 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
         """
         from app.services.chat.storage.task_manager import (
             TaskCreationParams,
-            create_task_and_subtasks,
+            create_chat_task_ids_nonblocking,
         )
 
         message = message_context.content
@@ -2696,80 +2730,43 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
                 await self._get_conversation_task_id(conversation_id, user.id)
             )
 
-        # Use short-lived db session for database operations only
-        db = SessionLocal()
-        # Prevent attribute expiration after commit so ORM objects remain usable
-        db.expire_on_commit = False
-        try:
-            team = await self._get_selected_or_default_team(db, user.id)
-            if not team:
-                return "配置错误: 未配置默认智能体"
+        team_id = await self._get_selected_or_default_team_id(user.id)
+        if team_id is None:
+            return "配置错误: 未配置默认智能体"
 
-            result = await create_task_and_subtasks(
-                db=db,
-                user=user,
-                team=team,
-                message=message,
-                params=params,
-                task_id=existing_task_id,
-                should_trigger_ai=True,
+        result = await create_chat_task_ids_nonblocking(
+            user_id=user.id,
+            team_id=team_id,
+            message=message,
+            params=params,
+            task_id=existing_task_id,
+            should_trigger_ai=True,
+        )
+        if result.assistant_subtask_id is None:
+            self.logger.error(
+                "[%sHandler] Failed to create assistant subtask",
+                self._channel_type.value,
             )
+            return None
 
-            if not result.assistant_subtask:
-                self.logger.error(
-                    f"[{self._channel_type.value}Handler] Failed to create assistant subtask"
-                )
-                return None
-
-            if conversation_id:
-                await self._set_conversation_task_id(
-                    conversation_id, user.id, result.task.id
-                )
-
-            self.logger.info(
-                f"[{self._channel_type.value}Handler] Task created: task_id={result.task.id}, "
-                f"subtask_id={result.assistant_subtask.id}"
+        task_id = result.task_id
+        if conversation_id:
+            await self._set_conversation_task_id(
+                conversation_id,
+                user.id,
+                task_id,
             )
-
-            # Persist IM channel images as attachments for PC/Web display
-            if message_context.images:
-                self._persist_im_images_as_attachments(
-                    db=db,
-                    user_id=user.id,
-                    subtask_id=result.user_subtask.id,
-                    images=message_context.images,
-                )
-
-            # Persist IM channel files as attachments
-            if message_context.files:
-                self._persist_im_files_as_attachments(
-                    db=db,
-                    user_id=user.id,
-                    subtask_id=result.user_subtask.id,
-                    files=message_context.files,
-                )
-
-            # Extract needed data from ORM objects before closing session
-            task_id = result.task.id
-            user_subtask_id = result.user_subtask.id
-
-            # Commit and detach ORM objects before closing session
-            # expire_on_commit=False ensures attributes remain accessible
-            db.commit()
-
-            # Detach objects from session so they can be used after close
-            db.expunge_all()
-
-            # Store detached ORM objects for use after session close
-            trigger_data = {
-                "task": result.task,
-                "assistant_subtask": result.assistant_subtask,
-                "team": team,
-                "user": user,
-                "user_subtask_id": user_subtask_id,
-            }
-        finally:
-            db.close()
+        await self._persist_im_media_nonblocking(
+            user_id=user.id,
+            subtask_id=result.user_subtask_id,
+            message_context=message_context,
+        )
+        self.logger.info(
+            "[%sHandler] Task created: task_id=%s, subtask_id=%s",
+            self._channel_type.value,
+            task_id,
+            result.assistant_subtask_id,
+        )
 
         # Create emitters (outside db session)
         streaming_emitter = await self.create_streaming_emitter(message_context)
@@ -2782,7 +2779,7 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
             # is available in Redis for cross-pod emitter reconstruction.
             await streaming_emitter.emit_start(
                 task_id=task_id,
-                subtask_id=trigger_data["assistant_subtask"].id,
+                subtask_id=result.assistant_subtask_id,
             )
         else:
             response_emitter = SyncResponseEmitter()
@@ -2819,9 +2816,7 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
         # will read them from the DB and inject as vision content automatically,
         # following the same path as PC-uploaded image attachments.
         ai_message = (message or "") + IM_CHANNEL_CONTEXT_HINT
-        dispatch_device_id = extract_task_device_id(trigger_data["task"]) or getattr(
-            params, "device_id", None
-        )
+        dispatch_device_id = result.device_id or getattr(params, "device_id", None)
         dispatch_result_emitter = self._select_dispatch_result_emitter(
             device_id=dispatch_device_id,
             streaming_emitter=streaming_emitter,
@@ -2829,15 +2824,15 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
         )
 
         await trigger_ai_response_unified(
-            task=trigger_data["task"],
-            assistant_subtask=trigger_data["assistant_subtask"],
-            team=trigger_data["team"],
-            user=trigger_data["user"],
+            task=task_id,
+            assistant_subtask=result.assistant_subtask_id,
+            team=team_id,
+            user=user.id,
             message=ai_message,
             payload=self._build_chat_payload(params, override_model_name),
             task_room=task_room,
             namespace=None,
-            user_subtask_id=trigger_data["user_subtask_id"],
+            user_subtask_id=result.user_subtask_id,
             result_emitter=dispatch_result_emitter,
         )
 
@@ -2902,18 +2897,17 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
 
     async def _create_and_process_device_task(
         self,
-        db: Session,
-        user: User,
-        team: Kind,
+        user: ChannelUserRef,
+        team_id: int,
         device_id: str,
         message_context: MessageContext,
     ) -> Optional[str]:
         """Create a task and route it to a local device for execution."""
         from app.services.chat.storage.task_manager import (
             TaskCreationParams,
-            create_task_and_subtasks,
+            create_chat_task_ids_nonblocking,
         )
-        from app.services.device_router import route_task_to_device
+        from app.services.device_router import route_task_to_device_nonblocking
 
         message = message_context.content
         conversation_id = message_context.conversation_id
@@ -2922,7 +2916,7 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
 
         # Get model for device mode (uses default Claude if user hasn't selected one)
         override_model_name, override_model_type = (
-            await self._get_device_mode_model_override(db, user)
+            await self._get_device_mode_model_override_nonblocking(user.id)
         )
 
         params = TaskCreationParams(
@@ -2947,41 +2941,32 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
                 await self._get_conversation_task_id(conversation_id, user.id)
             )
 
-        result = await create_task_and_subtasks(
-            db=db,
-            user=user,
-            team=team,
+        result = await create_chat_task_ids_nonblocking(
+            user_id=user.id,
+            team_id=team_id,
             message=message,
             params=params,
             task_id=existing_task_id,
             should_trigger_ai=True,
         )
 
-        if not result.assistant_subtask:
+        if result.assistant_subtask_id is None:
             return "创建任务失败，请重试"
 
-        # Persist IM channel images as attachments for PC/Web display
-        if message_context.images:
-            self._persist_im_images_as_attachments(
-                db=db,
-                user_id=user.id,
-                subtask_id=result.user_subtask.id,
-                images=message_context.images,
-            )
-
-        # Persist IM channel files as attachments
-        file_attachment_metas: List[Dict[str, Any]] = []
-        if message_context.files:
-            file_attachment_metas = self._persist_im_files_as_attachments(
-                db=db,
-                user_id=user.id,
-                subtask_id=result.user_subtask.id,
-                files=message_context.files,
-            )
+        attachment_metas = await self._persist_im_media_nonblocking(
+            user_id=user.id,
+            subtask_id=result.user_subtask_id,
+            message_context=message_context,
+        )
+        file_attachment_metas = (
+            attachment_metas[-len(message_context.files) :]
+            if message_context.files
+            else []
+        )
 
         if conversation_id:
             await self._set_conversation_task_id(
-                conversation_id, user.id, result.task.id
+                conversation_id, user.id, result.task_id
             )
 
         # Notify user if auto-starting new conversation due to timeout
@@ -2999,19 +2984,19 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
         # streaming events from the executor can update the same card.
         streaming_emitter = await self.create_streaming_emitter(message_context)
         if streaming_emitter:
-            self._prepare_streaming_emitter(result.task.id, streaming_emitter)
+            self._prepare_streaming_emitter(result.task_id, streaming_emitter)
             await streaming_emitter.emit_start(
-                task_id=result.task.id,
-                subtask_id=result.assistant_subtask.id,
+                task_id=result.task_id,
+                subtask_id=result.assistant_subtask_id,
                 shell_type="ClaudeCode",
             )
             await self._emit_initial_stream_content(
                 streaming_emitter,
-                task_id=result.task.id,
-                subtask_id=result.assistant_subtask.id,
+                task_id=result.task_id,
+                subtask_id=result.assistant_subtask_id,
                 content=(
                     f"任务已发送到设备 **{device_id[:8]}**\n\n"
-                    f"任务 ID: {result.task.id}\n"
+                    f"任务 ID: {result.task_id}\n"
                     "状态: 正在执行\n\n"
                     "任务完成后将自动发送结果。"
                 ),
@@ -3019,22 +3004,23 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
 
         # Build message for device: vision content if images present
         if message_context.images:
-            device_message = self._build_vision_content(
-                message or "", message_context.images
+            device_message = await run_payload_codec(
+                self._build_vision_content,
+                message or "",
+                message_context.images,
+                payload_hint=(message, message_context.images),
             )
         else:
             device_message = None  # Let route_task_to_device use subtask.prompt
 
         try:
-            await route_task_to_device(
-                db=db,
+            await route_task_to_device_nonblocking(
                 user_id=user.id,
                 device_id=device_id,
-                task=result.task,
-                subtask=result.assistant_subtask,
-                team=team,
-                user=user,
-                user_subtask=result.user_subtask,
+                task_id=result.task_id,
+                subtask_id=result.assistant_subtask_id,
+                team_id=team_id,
+                user_subtask_id=result.user_subtask_id,
                 message=device_message,
                 attachments=file_attachment_metas or None,
             )
@@ -3042,7 +3028,7 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
             # Save callback info and register the streaming emitter so that
             # executor callback events can update the same AI Card.
             await self._register_streaming_emitter(
-                task_id=result.task.id,
+                task_id=result.task_id,
                 streaming_emitter=streaming_emitter,
                 message_context=message_context,
             )
@@ -3057,15 +3043,14 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
 
     async def _create_and_process_cloud_task(
         self,
-        db: Session,
-        user: User,
-        team: Kind,
+        user: ChannelUserRef,
+        team_id: int,
         message_context: MessageContext,
     ) -> Optional[str]:
         """Create a task for cloud executor execution."""
         from app.services.chat.storage.task_manager import (
             TaskCreationParams,
-            create_task_and_subtasks,
+            create_chat_task_ids_nonblocking,
         )
         from app.services.execution import schedule_dispatch
 
@@ -3101,40 +3086,27 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
                 await self._get_conversation_task_id(conversation_id, user.id)
             )
 
-        result = await create_task_and_subtasks(
-            db=db,
-            user=user,
-            team=team,
+        result = await create_chat_task_ids_nonblocking(
+            user_id=user.id,
+            team_id=team_id,
             message=message,
             params=params,
             task_id=existing_task_id,
             should_trigger_ai=True,
         )
 
-        if not result.assistant_subtask:
+        if result.assistant_subtask_id is None:
             return "创建任务失败，请重试"
 
-        # Persist IM channel images as attachments for PC/Web display
-        if message_context.images:
-            self._persist_im_images_as_attachments(
-                db=db,
-                user_id=user.id,
-                subtask_id=result.user_subtask.id,
-                images=message_context.images,
-            )
-
-        # Persist IM channel files as attachments
-        if message_context.files:
-            self._persist_im_files_as_attachments(
-                db=db,
-                user_id=user.id,
-                subtask_id=result.user_subtask.id,
-                files=message_context.files,
-            )
+        await self._persist_im_media_nonblocking(
+            user_id=user.id,
+            subtask_id=result.user_subtask_id,
+            message_context=message_context,
+        )
 
         if conversation_id:
             await self._set_conversation_task_id(
-                conversation_id, user.id, result.task.id
+                conversation_id, user.id, result.task_id
             )
 
         # Notify user if auto-starting new conversation due to timeout
@@ -3147,38 +3119,38 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
                 f"⏰ 距离上次对话已超过 {timeout_minutes} 分钟，已自动开始新对话",
             )
 
-        schedule_dispatch(result.task.id)
+        schedule_dispatch(result.task_id)
 
         # Send acknowledgment. Do NOT call emit_done() here - keep the AI Card
         # open so that streaming events from the executor can update it.
         streaming_emitter = await self.create_streaming_emitter(message_context)
         if streaming_emitter:
-            self._prepare_streaming_emitter(result.task.id, streaming_emitter)
+            self._prepare_streaming_emitter(result.task_id, streaming_emitter)
             await streaming_emitter.emit_start(
-                task_id=result.task.id,
-                subtask_id=result.assistant_subtask.id,
+                task_id=result.task_id,
+                subtask_id=result.assistant_subtask_id,
                 shell_type="ClaudeCode",
             )
             await self._emit_initial_stream_content(
                 streaming_emitter,
-                task_id=result.task.id,
-                subtask_id=result.assistant_subtask.id,
+                task_id=result.task_id,
+                subtask_id=result.assistant_subtask_id,
                 content=(
                     "⏳ 任务已提交到云端执行队列\n\n"
-                    f"任务 ID: {result.task.id}\n"
+                    f"任务 ID: {result.task_id}\n"
                     "状态: 等待执行\n\n"
                     "任务完成后将收到通知。"
                 ),
             )
             # Register emitter so callback events reuse the same AI Card
             await self._register_streaming_emitter(
-                task_id=result.task.id,
+                task_id=result.task_id,
                 streaming_emitter=streaming_emitter,
                 message_context=message_context,
             )
         else:
             return (
                 f"✅ 任务已提交到云端执行队列\n\n"
-                f"任务 ID: {result.task.id}\n"
+                f"任务 ID: {result.task_id}\n"
                 "任务完成后将收到通知。"
             )

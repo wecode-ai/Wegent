@@ -8,7 +8,9 @@ Correction service implementation.
 Provides business logic for AI correction functionality.
 """
 
+import copy
 import logging
+from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, Callable, Optional
 
@@ -18,6 +20,113 @@ from app.models.subtask import Subtask, SubtaskRole
 from app.stores.tasks import subtask_store
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True)
+class CorrectionPreparation:
+    """Detached correction inputs loaded before the model call starts."""
+
+    subtask_id: int
+    message_id: int
+    existing_correction: Optional[dict[str, Any]]
+    model_config: dict[str, Any]
+    history: list[dict[str, str]]
+
+
+def _prepare_correction_sync(
+    user_id: int,
+    user_name: str,
+    task_id: int,
+    message_id: int,
+    correction_model_id: str,
+    force_retry: bool,
+) -> CorrectionPreparation:
+    """Validate and snapshot one correction request in a worker-owned session."""
+    from fastapi import HTTPException
+
+    from app.models.task import TaskResource
+    from app.services.chat.config.model_resolver import (
+        _find_model,
+        extract_and_process_model_config,
+    )
+    from app.services.chat.storage.db import get_db_session
+    from app.stores.tasks import task_access_store, task_store
+
+    with get_db_session() as db:
+        task = task_store.get_owned_task_by_state(
+            db,
+            task_id=task_id,
+            user_id=user_id,
+            state=TaskResource.STATE_ACTIVE,
+        )
+        if not task and not task_access_store.is_member(
+            db,
+            task_id=task_id,
+            user_id=user_id,
+        ):
+            raise HTTPException(status_code=404, detail="Task not found")
+
+        subtask = subtask_store.get_by_id(db, subtask_id=message_id)
+        if (
+            not subtask
+            or subtask.task_id != task_id
+            or subtask.role != SubtaskRole.ASSISTANT
+        ):
+            raise HTTPException(status_code=404, detail="AI message not found")
+
+        existing_correction = copy.deepcopy(get_existing_correction(subtask))
+        if existing_correction and not force_retry:
+            return CorrectionPreparation(
+                subtask_id=subtask.id,
+                message_id=subtask.message_id,
+                existing_correction=existing_correction,
+                model_config={},
+                history=[],
+            )
+
+        model_spec = _find_model(db, correction_model_id, user_id)
+        if not model_spec:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Correction model '{correction_model_id}' not found",
+            )
+
+        return CorrectionPreparation(
+            subtask_id=subtask.id,
+            message_id=subtask.message_id,
+            existing_correction=existing_correction,
+            model_config=copy.deepcopy(
+                extract_and_process_model_config(
+                    model_spec=model_spec,
+                    user_id=user_id,
+                    user_name=user_name,
+                )
+            ),
+            history=build_chat_history(db, task_id, subtask.message_id),
+        )
+
+
+async def prepare_correction(
+    *,
+    user_id: int,
+    user_name: str,
+    task_id: int,
+    message_id: int,
+    correction_model_id: str,
+    force_retry: bool,
+) -> CorrectionPreparation:
+    """Load correction inputs without retaining a request Session."""
+    from app.services.chat.storage.db import run_sync_in_executor
+
+    return await run_sync_in_executor(
+        _prepare_correction_sync,
+        user_id,
+        user_name,
+        task_id,
+        message_id,
+        correction_model_id,
+        force_retry,
+    )
 
 
 def get_existing_correction(subtask: Subtask) -> Optional[dict]:
@@ -81,28 +190,23 @@ def build_chat_history(
     return history
 
 
-async def evaluate_and_save_correction(
-    db: Session,
-    subtask: Subtask,
+async def evaluate_correction(
+    *,
     original_question: str,
     original_answer: str,
-    model_config: dict,
-    correction_model_id: str,
+    model_config: dict[str, Any],
     history: Optional[list[dict[str, str]]] = None,
     tools: Optional[list] = None,
     on_progress: Optional[Callable[[str, Optional[str]], Any]] = None,
     on_chunk: Optional[Callable[[str, str, int], Any]] = None,
 ) -> dict:
     """
-    Evaluate and save correction for a subtask.
+    Evaluate one correction without retaining database state across the model call.
 
     Args:
-        db: Database session
-        subtask: The subtask to correct
         original_question: Original user question
         original_answer: Original AI answer
         model_config: Model configuration dict
-        correction_model_id: ID of the correction model
         history: Optional chat history
         tools: Optional tools for correction
         on_progress: Optional progress callback
@@ -124,31 +228,58 @@ async def evaluate_and_save_correction(
         on_chunk=on_chunk,
     )
 
-    # Get model display name for persistence
-    model_display_name = model_config.get("model_id", correction_model_id)
-
-    # Save correction to subtask.result for persistence
-    subtask_result = subtask.result or {}
-    if not isinstance(subtask_result, dict):
-        subtask_result = {}
-
-    subtask_result["correction"] = {
-        "model_id": correction_model_id,
-        "model_name": model_display_name,
-        "scores": llm_result["scores"],
-        "corrections": llm_result["corrections"],
-        "summary": llm_result["summary"],
-        "improved_answer": llm_result["improved_answer"],
-        "is_correct": llm_result["is_correct"],
-        "corrected_at": datetime.utcnow().isoformat() + "Z",
-    }
-
-    subtask_store.update_result(db, subtask=subtask, result=subtask_result)
-    db.commit()
-
-    logger.info(f"Saved correction result for subtask {subtask.id} to database")
-
     return llm_result
+
+
+def _save_correction_sync(
+    subtask_id: int,
+    correction_model_id: str,
+    model_display_name: str,
+    llm_result: dict[str, Any],
+) -> None:
+    """Reload and update the subtask inside one database worker."""
+    from app.services.chat.storage.db import get_db_session
+
+    llm_result = copy.deepcopy(llm_result)
+    with get_db_session() as db:
+        subtask = subtask_store.get_by_id(db, subtask_id=subtask_id)
+        if subtask is None:
+            raise RuntimeError("Correction target no longer exists")
+        subtask_result = copy.deepcopy(subtask.result or {})
+        if not isinstance(subtask_result, dict):
+            subtask_result = {}
+        subtask_result["correction"] = {
+            "model_id": correction_model_id,
+            "model_name": model_display_name,
+            "scores": llm_result["scores"],
+            "corrections": llm_result["corrections"],
+            "summary": llm_result["summary"],
+            "improved_answer": llm_result["improved_answer"],
+            "is_correct": llm_result["is_correct"],
+            "corrected_at": datetime.utcnow().isoformat() + "Z",
+        }
+        subtask_store.update_result(db, subtask=subtask, result=subtask_result)
+        db.commit()
+        logger.info("Saved correction result for subtask %s", subtask.id)
+
+
+async def save_correction(
+    *,
+    subtask_id: int,
+    correction_model_id: str,
+    model_config: dict[str, Any],
+    llm_result: dict[str, Any],
+) -> None:
+    """Persist a completed correction in the shared bounded DB executor."""
+    from app.services.chat.storage.db import run_sync_in_executor
+
+    await run_sync_in_executor(
+        _save_correction_sync,
+        subtask_id,
+        correction_model_id,
+        str(model_config.get("model_id", correction_model_id)),
+        llm_result,
+    )
 
 
 def delete_correction_from_subtask(db: Session, subtask: Subtask) -> bool:

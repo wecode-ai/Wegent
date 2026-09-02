@@ -3,11 +3,52 @@
 # SPDX-License-Identifier: Apache-2.0
 
 import asyncio
+import threading
 from unittest.mock import AsyncMock, call, patch
 
 import pytest
 
 from shared.models import EventType, ExecutionEvent
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("event_type", "status"),
+    [
+        (EventType.DONE.value, "COMPLETED"),
+        (EventType.ERROR.value, "FAILED"),
+        (EventType.CANCELLED.value, "CANCELLED"),
+    ],
+)
+async def test_terminal_is_not_forwarded_when_persistence_fails(
+    event_type: str,
+    status: str,
+) -> None:
+    from app.services.execution.emitters.status_updating import StatusUpdatingEmitter
+
+    wrapped = AsyncMock()
+    emitter = StatusUpdatingEmitter(wrapped=wrapped, task_id=101, subtask_id=202)
+    terminal = ExecutionEvent(
+        type=event_type,
+        task_id=101,
+        subtask_id=202,
+        error="failed" if event_type == EventType.ERROR.value else None,
+    )
+
+    with (
+        patch(
+            "app.services.execution.emitters.status_updating.collect_completed_result",
+            new=AsyncMock(return_value={"status": status}),
+        ),
+        patch(
+            "app.services.execution.emitters.status_updating.persist_completed_result",
+            new=AsyncMock(side_effect=RuntimeError("database unavailable")),
+        ),
+        pytest.raises(RuntimeError, match="database unavailable"),
+    ):
+        await emitter.emit(terminal)
+
+    wrapped.emit.assert_not_awaited()
 
 
 @pytest.mark.asyncio
@@ -281,6 +322,7 @@ async def test_done_event_waits_for_in_progress_background_flush(monkeypatch):
     async def add_stream_content(**_kwargs):
         flush_started.set()
         await release_flush.wait()
+        return True
 
     mock_session_manager.add_stream_content.side_effect = add_stream_content
 
@@ -309,6 +351,104 @@ async def test_done_event_waits_for_in_progress_background_flush(monkeypatch):
         await done_task
 
     emitter._handle_done.assert_awaited_once_with(done)
+
+
+@pytest.mark.asyncio
+async def test_stream_storage_buffer_applies_backpressure_at_hard_limit(
+    monkeypatch,
+) -> None:
+    """A stalled Redis write must not allow per-stream memory to grow forever."""
+    from app.services.execution.emitters import status_updating
+    from app.services.execution.emitters.status_updating import StatusUpdatingEmitter
+
+    monkeypatch.setattr(
+        status_updating,
+        "STREAMING_STORAGE_FLUSH_INTERVAL_SECONDS",
+        3600.0,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        status_updating,
+        "STREAMING_STORAGE_BUFFER_MAX_CHARS",
+        4,
+        raising=False,
+    )
+
+    wrapped = AsyncMock()
+    emitter = StatusUpdatingEmitter(wrapped=wrapped, task_id=101, subtask_id=202)
+    mock_session_manager = AsyncMock()
+    redis_write_started = asyncio.Event()
+    release_redis_write = asyncio.Event()
+
+    async def add_stream_content(**_kwargs) -> bool:
+        redis_write_started.set()
+        await release_redis_write.wait()
+        return True
+
+    mock_session_manager.add_stream_content.side_effect = add_stream_content
+    event = ExecutionEvent(
+        type=EventType.CHUNK.value,
+        task_id=101,
+        subtask_id=202,
+        content="four",
+    )
+
+    with patch("app.services.chat.storage.session_manager", mock_session_manager):
+        emit_task = asyncio.create_task(emitter.emit(event))
+        await asyncio.wait_for(redis_write_started.wait(), timeout=1)
+
+        assert not emit_task.done()
+        assert emitter._stream_storage_buffer_chars == 0
+        wrapped.emit.assert_not_awaited()
+
+        release_redis_write.set()
+        await emit_task
+        await emitter.close()
+
+    wrapped.emit.assert_awaited_once_with(event)
+
+
+@pytest.mark.asyncio
+async def test_redis_rejection_restores_buffer_and_blocks_terminal(monkeypatch):
+    """A failed stream write must not be discarded or followed by DONE."""
+    from app.services.execution.emitters import status_updating
+    from app.services.execution.emitters.status_updating import (
+        StatusUpdatingEmitter,
+        StreamStoragePersistenceError,
+    )
+
+    monkeypatch.setattr(
+        status_updating,
+        "STREAMING_STORAGE_FLUSH_INTERVAL_SECONDS",
+        3600.0,
+        raising=False,
+    )
+    wrapped = AsyncMock()
+    emitter = StatusUpdatingEmitter(wrapped=wrapped, task_id=101, subtask_id=202)
+    emitter._handle_done = AsyncMock()
+    session_manager = AsyncMock()
+    session_manager.add_stream_content.return_value = False
+    chunk = ExecutionEvent(
+        type=EventType.CHUNK.value,
+        task_id=101,
+        subtask_id=202,
+        content="must survive",
+    )
+    done = ExecutionEvent(
+        type=EventType.DONE.value,
+        task_id=101,
+        subtask_id=202,
+    )
+
+    with patch("app.services.chat.storage.session_manager", session_manager):
+        await emitter.emit(chunk)
+        with pytest.raises(StreamStoragePersistenceError):
+            await emitter.emit(done)
+
+    assert emitter._stream_storage_buffer_chars == len("must survive")
+    assert [item.content for item in emitter._stream_storage_buffer] == ["must survive"]
+    emitter._handle_done.assert_not_awaited()
+    wrapped.emit.assert_awaited_once_with(chunk)
 
 
 @pytest.mark.asyncio
@@ -528,6 +668,70 @@ async def test_direct_block_updates_are_persisted_before_done():
 
 
 @pytest.mark.asyncio
+async def test_status_updated_snapshot_is_persisted_by_status_owner():
+    from app.services.execution.emitters import StatusUpdatingEmitter
+
+    wrapped = AsyncMock()
+    emitter = StatusUpdatingEmitter(wrapped=wrapped, task_id=101, subtask_id=202)
+    mock_session_manager = AsyncMock()
+    event = ExecutionEvent(
+        type=EventType.STATUS_UPDATED.value,
+        task_id=101,
+        subtask_id=202,
+        data={
+            "phase": "after_tool_end",
+            "context_metrics": {"remaining_percent": 38},
+            "context_compaction": {
+                "type": "summary_compact",
+                "status": "started",
+            },
+        },
+    )
+
+    with patch("app.services.chat.storage.session_manager", mock_session_manager):
+        await emitter.emit(event)
+
+    mock_session_manager.save_context_metrics.assert_awaited_once_with(
+        202,
+        {
+            "task_id": 101,
+            "subtask_id": 202,
+            "phase": "after_tool_end",
+            "context_metrics": {"remaining_percent": 38},
+            "context_compaction": {
+                "type": "summary_compact",
+                "status": "started",
+            },
+        },
+    )
+    wrapped.emit.assert_awaited_once_with(event)
+
+
+@pytest.mark.asyncio
+async def test_status_snapshot_cache_failure_does_not_stop_forwarding():
+    from app.services.execution.emitters import StatusUpdatingEmitter
+
+    wrapped = AsyncMock()
+    emitter = StatusUpdatingEmitter(wrapped=wrapped, task_id=101, subtask_id=202)
+    mock_session_manager = AsyncMock()
+    mock_session_manager.save_context_metrics.side_effect = RuntimeError("redis down")
+    event = ExecutionEvent(
+        type=EventType.STATUS_UPDATED.value,
+        task_id=101,
+        subtask_id=202,
+        data={
+            "phase": "after_tool_end",
+            "context_metrics": {"remaining_percent": 38},
+        },
+    )
+
+    with patch("app.services.chat.storage.session_manager", mock_session_manager):
+        await emitter.emit(event)
+
+    wrapped.emit.assert_awaited_once_with(event)
+
+
+@pytest.mark.asyncio
 async def test_interactive_form_tool_result_persists_render_payload_on_real_tool_block():
     from app.services.execution.emitters import StatusUpdatingEmitter
 
@@ -613,6 +817,55 @@ async def test_interactive_form_tool_result_persists_render_payload_on_real_tool
         tool_protocol="mcp_call",
         server_label="wegent-interactive-form-question",
     )
+
+
+@pytest.mark.asyncio
+async def test_interactive_form_projection_never_runs_on_event_loop(monkeypatch):
+    from app.services.execution.emitters import status_updating as module
+
+    started = threading.Event()
+    release = threading.Event()
+    worker_threads: list[int] = []
+
+    def blocking_projection(event):
+        del event
+        worker_threads.append(threading.get_ident())
+        started.set()
+        release.wait(timeout=5)
+        return None
+
+    monkeypatch.setattr(
+        module,
+        "build_interactive_form_render_payload",
+        blocking_projection,
+    )
+    wrapped = AsyncMock()
+    emitter = module.StatusUpdatingEmitter(
+        wrapped=wrapped,
+        task_id=101,
+        subtask_id=202,
+    )
+    event = ExecutionEvent(
+        type=EventType.TOOL_RESULT.value,
+        task_id=101,
+        subtask_id=202,
+        tool_use_id="tool-1",
+        tool_name="interactive_form_question",
+        tool_input={"questions": []},
+    )
+
+    with patch("app.services.chat.storage.session_manager", AsyncMock()):
+        task = asyncio.create_task(emitter.emit(event))
+        for _ in range(200):
+            if started.is_set():
+                break
+            await asyncio.sleep(0.005)
+        assert started.is_set()
+        assert worker_threads == [worker_threads[0]]
+        assert worker_threads[0] != threading.get_ident()
+        assert not task.done()
+        release.set()
+        await task
 
 
 @pytest.mark.asyncio

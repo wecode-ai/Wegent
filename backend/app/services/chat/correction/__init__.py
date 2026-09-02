@@ -9,15 +9,21 @@ Provides AI correction functionality for chat responses.
 """
 
 from .service import (
+    CorrectionPreparation,
     apply_correction_to_subtask,
     build_chat_history,
     delete_correction_from_subtask,
-    evaluate_and_save_correction,
+    evaluate_correction,
     get_existing_correction,
+    prepare_correction,
+    save_correction,
 )
 
 __all__ = [
-    "evaluate_and_save_correction",
+    "CorrectionPreparation",
+    "prepare_correction",
+    "evaluate_correction",
+    "save_correction",
     "get_existing_correction",
     "delete_correction_from_subtask",
     "apply_correction_to_subtask",

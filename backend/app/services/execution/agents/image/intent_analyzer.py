@@ -13,6 +13,8 @@ import logging
 from dataclasses import dataclass
 from typing import Optional
 
+from app.services.chat.storage.db import run_sync_in_executor
+
 from ..base_intent_analyzer import BaseIntentAnalyzer
 
 logger = logging.getLogger(__name__)
@@ -26,6 +28,55 @@ class ImageIntentResult:
     should_use_image: bool
     reference_image: Optional[str] = None
     is_followup: bool = False
+
+
+@dataclass(frozen=True)
+class _ImageIntentHistory:
+    previous_prompt: str
+    reference_image: Optional[str]
+
+
+def _load_image_intent_history(
+    task_id: int,
+    exclude_subtask_ids: Optional[list],
+) -> _ImageIntentHistory | None:
+    """Load and detach the previous image turn in a worker-owned session."""
+    from app.db.session import SessionLocal
+    from app.models.subtask import SubtaskRole
+    from app.stores.tasks import subtask_store
+
+    db = SessionLocal()
+    try:
+        subtasks = subtask_store.list_by_task_ordered(
+            db,
+            task_id=task_id,
+            exclude_subtask_ids=exclude_subtask_ids,
+        )
+        if len(subtasks) < 2:
+            return None
+
+        previous_user = None
+        previous_assistant = None
+        for subtask in reversed(subtasks):
+            if subtask.role == SubtaskRole.ASSISTANT and previous_assistant is None:
+                previous_assistant = subtask
+            elif subtask.role == SubtaskRole.USER and previous_user is None:
+                previous_user = subtask
+            if previous_user is not None and previous_assistant is not None:
+                break
+        if previous_user is None or previous_assistant is None:
+            return None
+
+        previous_result = previous_assistant.result or {}
+        reference_image = ImageIntentAnalyzer()._extract_reference_image_url(
+            previous_result
+        )
+        return _ImageIntentHistory(
+            previous_prompt=previous_user.prompt or "",
+            reference_image=reference_image,
+        )
+    finally:
+        db.close()
 
 
 INTENT_PROMPT = """You are an image generation intent analysis assistant. The user is in a multi-turn image generation conversation.
@@ -69,175 +120,36 @@ class ImageIntentAnalyzer(BaseIntentAnalyzer):
         Returns:
             ImageIntentResult with merged prompt and reference image info
         """
-        from app.db.session import SessionLocal
-        from app.models.subtask import SubtaskRole
-        from app.stores.tasks import subtask_store
-
-        db = SessionLocal()
-        try:
-            # Retrieve relevant subtask history
-            subtasks = subtask_store.list_by_task_ordered(
-                db,
-                task_id=task_id,
-                exclude_subtask_ids=exclude_subtask_ids,
+        history = await run_sync_in_executor(
+            _load_image_intent_history,
+            task_id,
+            exclude_subtask_ids,
+        )
+        if history is None or history.reference_image is None:
+            return ImageIntentResult(
+                merged_prompt=current_prompt,
+                should_use_image=False,
+                is_followup=False,
             )
 
-            # Debug: show basic history snapshot for follow-up detection
-            # Note: keep logs minimal and avoid leaking user content.
-            logger.info(
-                "[ImageIntentAnalyzer] History loaded: task_id=%s, total_subtasks=%d, exclude_ids=%s",
-                task_id,
-                len(subtasks),
-                exclude_subtask_ids or [],
+        if not secondary_model_config:
+            return ImageIntentResult(
+                merged_prompt=f"{history.previous_prompt}\n\n{current_prompt}",
+                should_use_image=True,
+                reference_image=history.reference_image,
+                is_followup=True,
             )
 
-            if len(subtasks) < 2:
-                # Not enough history - this is the first message
-                logger.info(
-                    "[ImageIntentAnalyzer] Not enough history for follow-up: task_id=%s",
-                    task_id,
-                )
-                return ImageIntentResult(
-                    merged_prompt=current_prompt,
-                    should_use_image=False,
-                    is_followup=False,
-                )
-
-            # Find most recent user + AI subtask pair
-            prev_user, prev_ai = None, None
-            for st in reversed(subtasks):
-                if st.role == SubtaskRole.ASSISTANT and not prev_ai:
-                    prev_ai = st
-                elif st.role == SubtaskRole.USER and not prev_user:
-                    prev_user = st
-                if prev_user and prev_ai:
-                    break
-
-            if not prev_user or not prev_ai:
-                logger.info(
-                    "[ImageIntentAnalyzer] Cannot find (prev_user, prev_ai) pair: task_id=%s, prev_user=%s, prev_ai=%s",
-                    task_id,
-                    getattr(prev_user, "id", None),
-                    getattr(prev_ai, "id", None),
-                )
-                return ImageIntentResult(
-                    merged_prompt=current_prompt,
-                    should_use_image=False,
-                    is_followup=False,
-                )
-
-            logger.info(
-                "[ImageIntentAnalyzer] Selected prev pair: task_id=%s, prev_user_id=%s(msg_id=%s), prev_ai_id=%s(msg_id=%s)",
-                task_id,
-                prev_user.id,
-                getattr(prev_user, "message_id", None),
-                prev_ai.id,
-                getattr(prev_ai, "message_id", None),
-            )
-
-            prev_prompt = prev_user.prompt or ""
-            prev_result = prev_ai.result or {}
-
-            # Debug: summarize previous AI result blocks
-            try:
-                blocks = (
-                    prev_result.get("blocks", [])
-                    if isinstance(prev_result, dict)
-                    else []
-                )
-                block_types = []
-                for b in blocks[:10]:
-                    if isinstance(b, dict):
-                        block_types.append(b.get("type"))
-                logger.info(
-                    "[ImageIntentAnalyzer] Prev AI result summary: task_id=%s, prev_ai_id=%s, blocks_count=%d, block_types=%s",
-                    task_id,
-                    prev_ai.id,
-                    len(blocks),
-                    block_types,
-                )
-            except Exception as e:
-                logger.debug(
-                    "[ImageIntentAnalyzer] Failed to summarize prev_ai.result: task_id=%s, err=%s",
-                    task_id,
-                    e,
-                )
-
-            # Check if previous AI result contains image attachment IDs
-            reference_image_url = self._extract_reference_image_url(prev_result)
-            has_image = reference_image_url is not None
-
-            if has_image and reference_image_url:
-                safe_preview = (
-                    "data_url"
-                    if reference_image_url.startswith("data:")
-                    else reference_image_url[:120]
-                )
-                logger.info(
-                    "[ImageIntentAnalyzer] Resolved reference image for task=%s: %s",
-                    task_id,
-                    safe_preview,
-                )
-
-            # No previous image result means this is a brand-new generation
-            if not has_image:
-                logger.info(
-                    "[ImageIntentAnalyzer] No usable previous image found: task_id=%s, prev_ai_id=%s (treat as non-followup)",
-                    task_id,
-                    prev_ai.id,
-                )
-                return ImageIntentResult(
-                    merged_prompt=current_prompt,
-                    should_use_image=False,
-                    is_followup=False,
-                )
-
-            logger.info(
-                "[ImageIntentAnalyzer] has_image=true, proceed intent analysis: task_id=%s, prev_ai_id=%s",
-                task_id,
-                prev_ai.id,
-            )
-
-            # This is a follow-up (previous turn had an image result)
-            # If no secondary model is configured, use simple merge with image
-            if not secondary_model_config:
-                logger.warning(
-                    "[ImageIntentAnalyzer] No secondary model, using simple merge"
-                )
-                return ImageIntentResult(
-                    merged_prompt=f"{prev_prompt}\n\n{current_prompt}",
-                    should_use_image=True,
-                    reference_image=reference_image_url,
-                    is_followup=True,
-                )
-
-            # Use secondary LLM for intelligent intent analysis
-            logger.info(
-                "[ImageIntentAnalyzer] Calling secondary LLM for intent: task_id=%s, has_image=%s",
-                task_id,
-                has_image,
-            )
-            intent = await self._analyze_with_llm(
-                prev_prompt=prev_prompt,
-                current_prompt=current_prompt,
-                has_image=has_image,
-                model_config=secondary_model_config,
-            )
-            logger.info(
-                "[ImageIntentAnalyzer] Secondary LLM result: task_id=%s, should_use_image=%s, merged_prompt_len=%d",
-                task_id,
-                intent.should_use_image,
-                len(intent.merged_prompt or ""),
-            )
-
-            if intent.should_use_image and has_image:
-                intent.reference_image = reference_image_url
-            intent.is_followup = True
-
-            return intent
-
-        finally:
-            db.close()
+        intent = await self._analyze_with_llm(
+            prev_prompt=history.previous_prompt,
+            current_prompt=current_prompt,
+            has_image=True,
+            model_config=secondary_model_config,
+        )
+        if intent.should_use_image:
+            intent.reference_image = history.reference_image
+        intent.is_followup = True
+        return intent
 
     def _extract_reference_image_url(self, prev_result: dict) -> Optional[str]:
         """Extract a usable image reference from the previous assistant result.

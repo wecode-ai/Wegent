@@ -65,7 +65,7 @@ async def test_launch_schedules_execution():
     )
     assert prepare_session.call_args.kwargs["task_params"].title == "简报"
     mark_artifact.assert_called_once_with(session.task, "artifact-1", 2)
-    schedule_execution.assert_called_once_with(request)
+    schedule_execution.assert_awaited_once_with(request)
     assert result.task_id == 31
     assert result.assistant_subtask_id == 41
 

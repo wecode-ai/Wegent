@@ -11,6 +11,7 @@ import requests
 from pydantic import BaseModel
 
 from app.core.config import settings
+from app.core.payload_codec import encode_http_json
 
 logger = logging.getLogger(__name__)
 
@@ -106,15 +107,20 @@ class WebhookNotificationService:
             headers = self._replace_username_placeholder(
                 headers, notification.user_name
             )
+            request_body = await encode_http_json(payload)
 
             async with httpx.AsyncClient(timeout=self.timeout) as client:
                 if self.http_method == "POST":
                     response = await client.post(
-                        self.endpoint_url, json=payload, headers=headers
+                        self.endpoint_url,
+                        content=request_body,
+                        headers=headers,
                     )
                 elif self.http_method == "PUT":
                     response = await client.put(
-                        self.endpoint_url, json=payload, headers=headers
+                        self.endpoint_url,
+                        content=request_body,
+                        headers=headers,
                     )
                 else:
                     logger.error(f"Unsupported HTTP method: {self.http_method}")

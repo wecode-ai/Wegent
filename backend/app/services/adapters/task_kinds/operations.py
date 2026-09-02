@@ -11,6 +11,7 @@ This module contains methods for creating, updating, deleting, and canceling tas
 import asyncio
 import json as json_lib
 import logging
+from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, Callable, Dict, Optional
 
@@ -20,6 +21,8 @@ from sqlalchemy.orm import Session
 
 import app.stores.tasks as task_stores
 from app.core.config import settings
+from app.core.payload_codec import decode_sync_response_text, encode_http_json
+from app.core.web_background_tasks import web_background_task_manager
 from app.models.kind import Kind
 from app.models.project import Project
 from app.models.subtask import SubtaskStatus
@@ -46,6 +49,13 @@ from .converters import convert_to_task_dict
 from .helpers import create_subtasks
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True)
+class _CancelTaskPlan:
+    response: Dict[str, Any]
+    background_kind: Optional[str] = None
+    background_arg: Optional[int] = None
 
 
 class TaskOperationsMixin:
@@ -812,17 +822,13 @@ class TaskOperationsMixin:
 
         # Close device sessions for device tasks
         for device_id in device_ids:
-            try:
-                logger.info(
-                    f"deleting task - sending close-session to device: device_id={device_id}, task_id={task_id}"
-                )
-                # Send close-session event to device via WebSocket
-                # Use the same pattern as memory cleanup to handle async operation
-                self._schedule_close_session_to_device(user_id, device_id, task_id)
-            except Exception as e:
-                logger.warning(
-                    f"Failed to send close-session to device {device_id}: {str(e)}"
-                )
+            logger.info(
+                "deleting task - scheduling close-session to device: "
+                "device_id=%s, task_id=%s",
+                device_id,
+                task_id,
+            )
+            self._schedule_close_session_to_device(user_id, device_id, task_id)
 
         # Update all subtasks to DELETE status
         task_stores.subtask_store.mark_task_subtasks_deleted(
@@ -1154,54 +1160,72 @@ class TaskOperationsMixin:
         db.commit()
         return None
 
-    async def cancel_task(
+    async def cancel_task_nonblocking(
         self,
-        db: Session,
         *,
         task_id: int,
         user_id: int,
         background_task_runner: Optional[Callable] = None,
     ) -> Dict[str, Any]:
-        """
-        Cancel a running task or close session for completed device tasks.
-        """
-        # Verify user owns this task
+        """Cancel a task without retaining a synchronous Session on the loop."""
+        from app.services.chat.storage.db import run_sync_in_executor
+
+        plan = await run_sync_in_executor(
+            self._prepare_cancel_task_from_store,
+            task_id,
+            user_id,
+        )
+        if background_task_runner and plan.background_kind == "chat":
+            background_task_runner(self._call_chat_shell_cancel, plan.background_arg)
+        elif background_task_runner and plan.background_kind == "executor":
+            background_task_runner(self._call_executor_cancel, plan.background_arg)
+        return plan.response
+
+    def _prepare_cancel_task_from_store(
+        self,
+        task_id: int,
+        user_id: int,
+    ) -> _CancelTaskPlan:
+        from app.services.chat.storage.db import get_db_session
+
+        with get_db_session() as db:
+            return self._prepare_cancel_task_sync(db, task_id, user_id)
+
+    def _prepare_cancel_task_sync(
+        self,
+        db: Session,
+        task_id: int,
+        user_id: int,
+    ) -> _CancelTaskPlan:
         task_dict = self.get_task_detail(db=db, task_id=task_id, user_id=user_id)
         if not task_dict:
             raise HTTPException(status_code=404, detail="Task not found")
 
         current_status = task_dict.get("status", "")
-        final_states = ["COMPLETED", "FAILED", "CANCELLED", "DELETE"]
-
-        # Task is already in final state, cannot cancel
-        if current_status in final_states:
+        if current_status in {"COMPLETED", "FAILED", "CANCELLED", "DELETE"}:
             logger.warning(
-                f"Task {task_id} is already in final state {current_status}, cannot cancel"
+                "Task %s is already in final state %s, cannot cancel",
+                task_id,
+                current_status,
             )
             raise HTTPException(
                 status_code=400,
                 detail=f"Task is already {current_status.lower()}, cannot cancel",
             )
-
         if current_status == "CANCELLING":
-            logger.info(f"Task {task_id} is already being cancelled")
-            return {
-                "message": "Task is already being cancelled",
-                "status": "CANCELLING",
-            }
+            logger.info("Task %s is already being cancelled", task_id)
+            return _CancelTaskPlan(
+                response={
+                    "message": "Task is already being cancelled",
+                    "status": "CANCELLING",
+                }
+            )
 
-        # Check if this is a Chat Shell task
         is_chat_shell = self._is_chat_shell_task(db, task_id)
-        logger.info(f"Task {task_id} is_chat_shell={is_chat_shell}")
-
+        logger.info("Task %s is_chat_shell=%s", task_id, is_chat_shell)
         if is_chat_shell:
-            return await self._cancel_chat_shell_task(
-                db, task_id, user_id, background_task_runner
-            )
-        else:
-            return await self._cancel_executor_task(
-                db, task_id, user_id, background_task_runner
-            )
+            return self._cancel_chat_shell_task_sync(db, task_id, user_id)
+        return self._cancel_executor_task_sync(db, task_id, user_id)
 
     def _is_chat_shell_task(self, db: Session, task_id: int) -> bool:
         """Check if a task is a Chat Shell task."""
@@ -1214,22 +1238,18 @@ class TaskOperationsMixin:
                 return source == "chat_shell"
         return False
 
-    async def _cancel_chat_shell_task(
+    def _cancel_chat_shell_task_sync(
         self,
         db: Session,
         task_id: int,
         user_id: int,
-        background_task_runner: Optional[Callable],
-    ) -> Dict[str, Any]:
+    ) -> _CancelTaskPlan:
         """Cancel a Chat Shell task."""
         running_subtask = task_stores.subtask_store.get_running_assistant_for_user(
             db, task_id=task_id, user_id=user_id
         )
 
         if running_subtask:
-            if background_task_runner:
-                background_task_runner(self._call_chat_shell_cancel, running_subtask.id)
-
             task_stores.subtask_store.update_fields(
                 db,
                 subtask=running_subtask,
@@ -1254,7 +1274,14 @@ class TaskOperationsMixin:
                 logger.error(
                     f"Failed to update Chat Shell task {task_id} status: {str(e)}"
                 )
-            return {"message": "Chat stopped successfully", "status": "CANCELLED"}
+            return _CancelTaskPlan(
+                response={
+                    "message": "Chat stopped successfully",
+                    "status": "CANCELLED",
+                },
+                background_kind="chat",
+                background_arg=running_subtask.id,
+            )
         else:
             try:
                 self.update_task(
@@ -1266,15 +1293,19 @@ class TaskOperationsMixin:
             except Exception as e:
                 logger.error(f"Failed to update task {task_id} status: {str(e)}")
 
-            return {"message": "No running stream to cancel", "status": "COMPLETED"}
+            return _CancelTaskPlan(
+                response={
+                    "message": "No running stream to cancel",
+                    "status": "COMPLETED",
+                }
+            )
 
-    async def _cancel_executor_task(
+    def _cancel_executor_task_sync(
         self,
         db: Session,
         task_id: int,
         user_id: int,
-        background_task_runner: Optional[Callable],
-    ) -> Dict[str, Any]:
+    ) -> _CancelTaskPlan:
         """Cancel an executor-based task."""
         try:
             self.update_task(
@@ -1292,18 +1323,24 @@ class TaskOperationsMixin:
                 status_code=500, detail=f"Failed to update task status: {str(e)}"
             ) from e
 
-        if background_task_runner:
-            background_task_runner(self._call_executor_cancel, task_id)
-
-        return {"message": "Cancel request accepted", "status": "CANCELLED"}
+        return _CancelTaskPlan(
+            response={
+                "message": "Cancel request accepted",
+                "status": "CANCELLED",
+            },
+            background_kind="executor",
+            background_arg=task_id,
+        )
 
     async def _call_executor_cancel(self, task_id: int):
         """Background task to call executor_manager cancel API."""
         try:
             async with httpx.AsyncClient() as client:
+                request_body = await encode_http_json({"task_id": task_id})
                 response = await client.post(
                     settings.EXECUTOR_CANCEL_TASK_URL,
-                    json={"task_id": task_id},
+                    content=request_body,
+                    headers={"Content-Type": "application/json"},
                     timeout=60.0,
                 )
                 response.raise_for_status()
@@ -1312,12 +1349,13 @@ class TaskOperationsMixin:
                 )
         except httpx.HTTPStatusError as e:
             response = e.response
+            response_text = await decode_sync_response_text(response)
             logger.error(
                 "Error calling executor_manager to cancel task %s: "
                 "status_code=%s body=%s",
                 task_id,
                 response.status_code,
-                response.text[:1000],
+                response_text[:1000],
             )
         except Exception as e:
             logger.error(
@@ -1417,78 +1455,18 @@ class TaskOperationsMixin:
         )
 
     def _cleanup_task_memories(self, user_id: int, task_id: int) -> None:
-        """
-        Clean up long-term memories associated with a task.
-
-        This is a fire-and-forget operation that runs in background
-        and doesn't block task deletion.
-
-        Args:
-            user_id: User ID who owns the task
-            task_id: Task ID being deleted
-        """
-        import asyncio
-
+        """Submit memory cleanup to the bounded Web background owner."""
         from app.services.memory import get_memory_manager
 
         memory_manager = get_memory_manager()
         if not memory_manager.is_enabled:
             return
-
-        def _log_cleanup_exception(task_or_future):
-            """Log any exceptions from cleanup task."""
-            try:
-                if hasattr(task_or_future, "exception"):
-                    exc = task_or_future.exception()
-                    if exc:
-                        logger.error(
-                            "[delete_task] Memory cleanup failed for task %d: %s",
-                            task_id,
-                            exc,
-                            exc_info=exc,
-                        )
-            except Exception:
-                logger.exception("[delete_task] Error checking cleanup task status")
-
-        # Try to get the running event loop
-        try:
-            loop = asyncio.get_running_loop()
-            cleanup_task = loop.create_task(
-                memory_manager.cleanup_task_memories(
-                    user_id=str(user_id), task_id=str(task_id)
-                )
-            )
-            cleanup_task.add_done_callback(_log_cleanup_exception)
-            logger.info(
-                "[delete_task] Started background task to cleanup memories for task %d",
-                task_id,
-            )
-        except RuntimeError:
-            # No event loop running - try to schedule on main loop
-            try:
-                from app.services.chat.webpage_ws_chat_emitter import (
-                    get_main_event_loop,
-                )
-
-                main_loop = get_main_event_loop()
-                if main_loop and main_loop.is_running():
-                    future = asyncio.run_coroutine_threadsafe(
-                        memory_manager.cleanup_task_memories(
-                            user_id=str(user_id), task_id=str(task_id)
-                        ),
-                        main_loop,
-                    )
-                    future.add_done_callback(_log_cleanup_exception)
-                    logger.info(
-                        "[delete_task] Scheduled memory cleanup on main loop for task %d",
-                        task_id,
-                    )
-                else:
-                    logger.warning(
-                        "[delete_task] Cannot cleanup memories: no running event loop"
-                    )
-            except Exception as e:
-                logger.warning("[delete_task] Failed to schedule memory cleanup: %s", e)
+        web_background_task_manager.submit_from_sync(
+            lambda: memory_manager.cleanup_task_memories(
+                user_id=str(user_id), task_id=str(task_id)
+            ),
+            name=f"delete-task-memory-cleanup-{task_id}",
+        )
 
     async def _send_close_session_to_device_async(
         self, user_id: int, device_id: str, task_id: int
@@ -1535,76 +1513,13 @@ class TaskOperationsMixin:
     def _schedule_close_session_to_device(
         self, user_id: int, device_id: str, task_id: int
     ) -> None:
-        """
-        Schedule sending close-session event to a device.
-
-        This is a fire-and-forget operation that runs in background
-        and doesn't block task deletion.
-
-        Args:
-            user_id: User ID who owns the task
-            device_id: Device ID to send the event to
-            task_id: Task ID being deleted
-        """
-        import asyncio
-
-        def _log_close_session_exception(task_or_future):
-            """Log any exceptions from close-session task."""
-            try:
-                if hasattr(task_or_future, "exception"):
-                    exc = task_or_future.exception()
-                    if exc:
-                        logger.error(
-                            "[delete_task] Close-session failed for device %s, task %d: %s",
-                            device_id,
-                            task_id,
-                            exc,
-                            exc_info=exc,
-                        )
-            except Exception:
-                logger.exception(
-                    "[delete_task] Error checking close-session task status"
-                )
-
-        # Try to get the running event loop
-        try:
-            loop = asyncio.get_running_loop()
-            close_session_task = loop.create_task(
-                self._send_close_session_to_device_async(user_id, device_id, task_id)
-            )
-            close_session_task.add_done_callback(_log_close_session_exception)
-            logger.info(
-                "[delete_task] Started background task to close device session for task %d, device %s",
-                task_id,
-                device_id,
-            )
-        except RuntimeError:
-            # No event loop running - try to schedule on main loop
-            try:
-                from app.services.chat.webpage_ws_chat_emitter import (
-                    get_main_event_loop,
-                )
-
-                main_loop = get_main_event_loop()
-                if main_loop and main_loop.is_running():
-                    future = asyncio.run_coroutine_threadsafe(
-                        self._send_close_session_to_device_async(
-                            user_id, device_id, task_id
-                        ),
-                        main_loop,
-                    )
-                    future.add_done_callback(_log_close_session_exception)
-                    logger.info(
-                        "[delete_task] Scheduled close-session on main loop for task %d, device %s",
-                        task_id,
-                        device_id,
-                    )
-                else:
-                    logger.warning(
-                        "[delete_task] Cannot send close-session: no running event loop"
-                    )
-            except Exception as e:
-                logger.warning("[delete_task] Failed to schedule close-session: %s", e)
+        """Submit device notification to the bounded Web background owner."""
+        web_background_task_manager.submit_from_sync(
+            lambda: self._send_close_session_to_device_async(
+                user_id, device_id, task_id
+            ),
+            name=f"delete-task-close-device-session-{task_id}-{device_id}",
+        )
 
     def set_preserve_executor(
         self, db: Session, *, task_id: int, user_id: int, preserve: bool

@@ -716,7 +716,7 @@ def test_crossing_processing_boundary_starts_orchestrated_issue_workflow(
         json={"title": "Start workflow from board", "status": "inbox"},
     ).json()
     dispatch = AsyncMock()
-    monkeypatch.setattr(project_automation_execution, "dispatch", dispatch)
+    monkeypatch.setattr(project_automation_execution, "dispatch_nonblocking", dispatch)
 
     response = test_client.patch(
         f"/api/v1/loop-items/{created['id']}",
@@ -772,7 +772,7 @@ def test_ai_issue_created_in_pending_waits_for_configuration_then_starts(
     }
     test_db.commit()
     dispatch = AsyncMock()
-    monkeypatch.setattr(project_automation_execution, "dispatch", dispatch)
+    monkeypatch.setattr(project_automation_execution, "dispatch_nonblocking", dispatch)
 
     created_response = test_client.post(
         f"/api/v1/cloud-projects/{delivery_project.id}/loop-items",
@@ -843,7 +843,7 @@ def test_updating_assigned_issue_execution_config_wakes_cloud_executor(
         refresh,
     )
     monkeypatch.setattr(
-        "app.services.board_team_execution.dispatch_board_team_assignment",
+        "app.services.board_team_execution.dispatch_board_team_assignment_nonblocking",
         dispatch,
     )
     monkeypatch.setattr(
@@ -887,7 +887,7 @@ def test_non_ai_issue_created_in_inbox_emits_task_created_automation(
         MagicMock(return_value=[rule]),
     )
     monkeypatch.setattr(
-        "app.services.project_automations.project_automation_processor.process",
+        "app.services.project_automations.project_automation_processor.process_nonblocking",
         process,
     )
 
@@ -901,7 +901,7 @@ def test_non_ai_issue_created_in_inbox_emits_task_created_automation(
     created = response.json()
     assert created["status"] == "inbox"
     process.assert_awaited_once()
-    event = process.await_args.args[1]
+    event = process.await_args.args[0]
     assert event.event_type == "task.created"
     assert event.project_id == str(delivery_project.id)
     assert event.subject_id == created["id"]
@@ -915,7 +915,7 @@ def test_non_ai_issue_created_in_inbox_emits_task_created_automation(
 
     assert updated.status_code == 200
     assert process.await_count == 2
-    status_event = process.await_args_list[1].args[1]
+    status_event = process.await_args_list[1].args[0]
     assert status_event.event_type == "task.status_changed"
     assert status_event.subject_id == created["id"]
 
@@ -1035,12 +1035,12 @@ def test_status_update_requires_one_automation_before_entering_processing(
         matching,
     )
     monkeypatch.setattr(
-        "app.services.project_automations.project_automation_processor.process",
+        "app.services.project_automations.project_automation_processor.process_nonblocking",
         process,
     )
     monkeypatch.setattr(
         deliveries_endpoint.issue_workflow_start_service,
-        "start",
+        "start_nonblocking",
         start,
     )
 
@@ -1151,7 +1151,7 @@ def test_issue_creation_dispatches_only_the_selected_matching_automation(
     )
     process = AsyncMock(return_value=1)
     monkeypatch.setattr(
-        "app.services.project_automations.project_automation_processor.process",
+        "app.services.project_automations.project_automation_processor.process_nonblocking",
         process,
     )
 
@@ -1178,12 +1178,12 @@ def test_issue_created_in_inbox_starts_its_existing_workflow(
     process = AsyncMock(return_value=0)
     start = AsyncMock(return_value=1)
     monkeypatch.setattr(
-        "app.services.project_automations.project_automation_processor.process",
+        "app.services.project_automations.project_automation_processor.process_nonblocking",
         process,
     )
     monkeypatch.setattr(
         deliveries_endpoint.issue_workflow_start_service,
-        "start",
+        "start_nonblocking",
         start,
     )
 
@@ -1213,7 +1213,7 @@ def test_issue_created_in_inbox_starts_its_existing_workflow(
     assert response.status_code == 201
     assert response.json()["status"] == "inbox"
     start.assert_awaited_once()
-    assert start.await_args.kwargs["item"].id == response.json()["id"]
+    assert start.await_args.kwargs["item_id"] == response.json()["id"]
 
 
 def test_pausing_planning_cancels_active_ai_manager(
@@ -1265,7 +1265,7 @@ def test_pausing_planning_cancels_active_ai_manager(
     cancel_run = AsyncMock(return_value={"id": manager_run.id, "status": "cancelled"})
     monkeypatch.setattr(
         deliveries_endpoint.project_automation_service,
-        "cancel_run",
+        "cancel_run_nonblocking",
         cancel_run,
     )
 
@@ -1278,10 +1278,9 @@ def test_pausing_planning_cancels_active_ai_manager(
     assert response.status_code == 200
     assert response.json()["status"] == "paused"
     cancel_run.assert_awaited_once_with(
-        test_db,
-        str(delivery_project.id),
-        manager_run.id,
-        test_user.id,
+        project_id=str(delivery_project.id),
+        run_id=manager_run.id,
+        user_id=test_user.id,
     )
     resume_response = test_client.post(
         f"/api/v1/loop-items/{issue.id}/workflow-plan/resume",
@@ -1340,7 +1339,7 @@ def test_pausing_planning_does_not_claim_success_without_runtime_confirmation(
     test_db.commit()
     monkeypatch.setattr(
         deliveries_endpoint.project_automation_service,
-        "cancel_run",
+        "cancel_run_nonblocking",
         AsyncMock(
             side_effect=HTTPException(
                 status_code=502,
@@ -1476,11 +1475,17 @@ def test_workflow_task_binding_requires_a_ready_non_automated_stage(
         },
     }
     test_db.commit()
-    item = test_client.post(
-        f"/api/v1/cloud-projects/{delivery_project.id}/loop-items",
-        headers=_auth(test_token),
-        json={"title": "Workflow binding"},
-    ).json()
+
+    def create_item(title: str) -> dict:
+        response = test_client.post(
+            f"/api/v1/cloud-projects/{delivery_project.id}/loop-items",
+            headers=_auth(test_token),
+            json={"title": title},
+        )
+        assert response.status_code == 201
+        return response.json()
+
+    item = create_item("Blocked workflow binding")
 
     blocked = test_client.post(
         f"/api/v1/loop-items/{item['id']}/tasks",
@@ -1493,6 +1498,7 @@ def test_workflow_task_binding_requires_a_ready_non_automated_stage(
     )
     assert blocked.status_code == 409
 
+    item = create_item("Automated workflow binding")
     automatic = test_client.post(
         f"/api/v1/loop-items/{item['id']}/tasks",
         headers=_auth(test_token),
@@ -1504,6 +1510,7 @@ def test_workflow_task_binding_requires_a_ready_non_automated_stage(
     )
     assert automatic.status_code == 422
 
+    item = create_item("Ready workflow binding")
     first = test_client.post(
         f"/api/v1/loop-items/{item['id']}/tasks",
         headers=_auth(test_token),

@@ -186,14 +186,13 @@ jobs:
           case "$PYTHON_VERSION" in
             3.10)
               (cd shared && uv sync --dev)
-              (cd backend && uv sync)
               ;;
             3.11)
               (cd shared && uv sync --dev)
-              (cd backend && uv sync --dev)
               (cd executor_manager && uv sync --dev)
               ;;
             3.12)
+              (cd backend && uv sync --dev)
               (cd knowledge_engine && uv sync --dev)
               ;;
           esac

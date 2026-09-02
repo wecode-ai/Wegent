@@ -19,15 +19,10 @@ from fastapi import (
 )
 from fastapi.responses import StreamingResponse
 from jose import JWTError, jwt
-from sqlalchemy.orm import Session
 
-from app.api.dependencies import get_db
 from app.core import security
 from app.core.config import settings
-from app.db.session import get_db_session
-from app.models.plugin_marketplace import Plugin, PluginDeviceInstallation
-from app.models.subtask import SubtaskStatus
-from app.models.task import TaskResource
+from app.core.payload_codec import dump_models, run_payload_codec
 from app.models.user import User
 from app.schemas.device import DeviceCapabilitySyncResponse
 from app.schemas.installed_plugin import (
@@ -56,33 +51,28 @@ from app.schemas.installed_plugin import (
     PluginSubmissionItem,
 )
 from app.services.auth.task_token import TaskTokenInfo, verify_task_token
+from app.services.chat.storage.db import run_sync_in_executor
 from app.services.device.capability_sync_service import (
     DeviceCapabilityResolutionError,
     DeviceCapabilitySyncError,
     device_capability_sync_service,
 )
-from app.services.installed_plugin_service import installed_plugin_service
 from app.services.plugin_device_installation_service import (
     plugin_device_installation_service,
 )
-from app.services.plugin_marketplace_service import plugin_marketplace_service
+from app.services.plugin_endpoint_db import plugin_endpoint_db
 from app.services.plugin_package_parser import MAX_PLUGIN_PACKAGE_SIZE_BYTES
 from app.services.plugin_package_storage import PluginPackageStorageError
-from app.stores.tasks import subtask_store, task_store
 
 router = APIRouter(tags=["plugins"])
 logger = logging.getLogger(__name__)
 PLUGIN_UPLOAD_CHUNK_SIZE_BYTES = 1024 * 1024
-ACTIVE_PLUGIN_SUBMISSION_SUBTASK_STATUSES = (
-    SubtaskStatus.PENDING,
-    SubtaskStatus.RUNNING,
-    SubtaskStatus.PENDING_CONFIRMATION,
-)
 
 
 @dataclass(frozen=True)
 class PluginSubmissionAuth:
-    user: User
+    user_id: int
+    user_role: str
     task_token: TaskTokenInfo | None = None
 
 
@@ -99,81 +89,53 @@ def _task_token_from_authorization(authorization: str) -> TaskTokenInfo | None:
     return verify_task_token(token)
 
 
-def _get_plugin_submission_auth(
+async def _get_plugin_submission_auth(
     request: Request,
-    db: Session = Depends(get_db),
     current_user: User = Depends(security.get_current_user_jwt_apikey_tasktoken),
 ) -> PluginSubmissionAuth:
     """Restrict task-token submission access to its live Task execution."""
+    user_id = current_user.id
+    user_role = current_user.role
+    del current_user
     if request.headers.get("X-API-Key", "").strip():
-        return PluginSubmissionAuth(user=current_user)
+        return PluginSubmissionAuth(user_id=user_id, user_role=user_role)
 
-    token_info = _task_token_from_authorization(
-        request.headers.get("Authorization", "")
+    authorization = request.headers.get("Authorization", "")
+    token_info = await run_payload_codec(
+        _task_token_from_authorization,
+        authorization,
+        payload_hint=authorization,
+        force_offload=True,
     )
     if token_info is None:
-        return PluginSubmissionAuth(user=current_user)
+        return PluginSubmissionAuth(user_id=user_id, user_role=user_role)
 
-    task = task_store.get_by_id_for_update(
-        db,
-        task_id=token_info.task_id,
-        owner_user_id=current_user.id,
+    await run_sync_in_executor(
+        plugin_endpoint_db.validate_task_token,
+        user_id,
+        token_info,
     )
-    subtask = subtask_store.get_basic_by_id_for_update(
-        db,
-        subtask_id=token_info.subtask_id,
-        owner_user_id=current_user.id,
-    )
-    if (
-        task is None
-        or task.kind != "Task"
-        or task.is_active not in TaskResource.is_active_query()
-        or subtask is None
-        or subtask.task_id != token_info.task_id
-        or subtask.user_id != current_user.id
-        or subtask.status not in ACTIVE_PLUGIN_SUBMISSION_SUBTASK_STATUSES
-    ):
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Task token is no longer active",
-            headers={"WWW-Authenticate": "Bearer"},
-        )
-    return PluginSubmissionAuth(user=current_user, task_token=token_info)
-
-
-def _ensure_submission_matches_task_token(
-    db: Session,
-    *,
-    auth: PluginSubmissionAuth,
-    submission_id: int,
-) -> None:
-    if auth.task_token is None:
-        return
-    plugin_marketplace_service.ensure_submission_task_binding(
-        db,
-        user_id=auth.user.id,
-        submission_id=submission_id,
-        task_id=auth.task_token.task_id,
-        subtask_id=auth.task_token.subtask_id,
+    return PluginSubmissionAuth(
+        user_id=user_id,
+        user_role=user_role,
+        task_token=token_info,
     )
 
 
 @router.get("/installed", response_model=InstalledPluginListResponse)
-def list_installed_plugins(
+async def list_installed_plugins(
     device_id: str | None = None,
-    db: Session = Depends(get_db),
     current_user: User = Depends(security.get_current_user),
 ) -> InstalledPluginListResponse:
     """List Claude Code plugins installed by the current user."""
     # Keep list read-only. Catalog repair runs on install/sync paths instead of
     # every marketplace open.
-    return plugin_marketplace_service.enrich_installed_list(
-        db,
-        installed_plugin_service.list_installed_plugins(
-            db=db,
-            user_id=current_user.id,
-        ),
-        device_id=device_id,
+    user_id = current_user.id
+    del current_user
+    return await run_sync_in_executor(
+        plugin_endpoint_db.list_installed,
+        user_id,
+        device_id,
     )
 
 
@@ -181,57 +143,45 @@ def list_installed_plugins(
     "/installed/auto-update-batch",
     response_model=PluginAutoUpdateBatchResponse,
 )
-def auto_update_installed_plugins(
-    db: Session = Depends(get_db),
+async def auto_update_installed_plugins(
     current_user: User = Depends(security.get_current_user),
 ) -> PluginAutoUpdateBatchResponse:
     """Advance one bounded batch of cloud marketplace plugin installations."""
-    return plugin_marketplace_service.auto_update_batch(
-        db,
-        user_id=current_user.id,
+    user_id = current_user.id
+    del current_user
+    return await run_sync_in_executor(
+        plugin_endpoint_db.auto_update_batch,
+        user_id,
     )
 
 
 @router.post("/installed/sync-device", response_model=PluginDeviceSyncResponse)
 async def sync_installed_plugins_to_device(
     device_id: str,
-    db: Session = Depends(get_db),
     current_user: User = Depends(security.get_current_user),
 ) -> PluginDeviceSyncResponse:
     """Push account desired plugins to one device and refresh device rows."""
     normalized_device_id = device_id.strip()
     if not normalized_device_id:
         raise HTTPException(status_code=400, detail="device_id is required")
-
-    # Repair stale catalog refs before building desired state / pushing packages.
-    # Close the request session before awaiting the device round-trip so the
-    # connection is not held for the Socket.IO acknowledgement timeout.
-    plugin_marketplace_service.reconcile_stale_installed_catalog_refs(
-        db, user_id=current_user.id
+    user_id = current_user.id
+    del current_user
+    plan = await run_sync_in_executor(
+        plugin_endpoint_db.prepare_device_sync,
+        user_id,
+        normalized_device_id,
     )
-    pending_count = plugin_device_installation_service.ensure_pending_for_device(
-        db,
-        user_id=current_user.id,
-        device_id=normalized_device_id,
-    )
-    payload = device_capability_sync_service.build_desired_capabilities(
-        db,
-        user_id=current_user.id,
-        device_id=normalized_device_id,
-    )
-    db.close()
     result = await device_capability_sync_service.sync_device_payload(
-        user_id=current_user.id,
+        user_id=user_id,
         device_id=normalized_device_id,
-        payload=payload,
+        payload=plan.payload,
     )
-    with get_db_session() as record_db:
-        plugin_device_installation_service.record_device_sync_result(
-            record_db,
-            user_id=current_user.id,
-            result=result,
-        )
-    mode = str(payload.get("mode") or "replace")
+    await run_sync_in_executor(
+        plugin_endpoint_db.record_device_sync,
+        user_id,
+        result,
+    )
+    mode = str(plan.payload.get("mode") or "replace")
     errors = list(result.errors or [])
     if result.error:
         errors.append({"device_id": result.device_id, "error": result.error})
@@ -250,38 +200,39 @@ async def sync_installed_plugins_to_device(
     )
     logger.info(
         "Device plugin sync completed: user_id=%s device_id=%s pending=%s success=%s",
-        current_user.id,
+        user_id,
         normalized_device_id,
-        pending_count,
+        plan.pending_count,
         result.success,
     )
     return PluginDeviceSyncResponse(
         deviceId=normalized_device_id,
-        pendingCount=pending_count,
+        pendingCount=plan.pending_count,
         sync=sync,
     )
 
 
 @router.post("/installed/report-device", response_model=PluginDeviceReportResponse)
-def report_installed_plugins_on_device(
+async def report_installed_plugins_on_device(
     payload: PluginDeviceReportRequest,
     device_id: str,
-    db: Session = Depends(get_db),
     current_user: User = Depends(security.get_current_user),
 ) -> PluginDeviceReportResponse:
     """Acknowledge locally present plugins on one device without pushing packages."""
     normalized_device_id = device_id.strip()
     if not normalized_device_id:
         raise HTTPException(status_code=400, detail="device_id is required")
-    acknowledged_ids = plugin_device_installation_service.acknowledge_local_installs(
-        db,
-        user_id=current_user.id,
-        device_id=normalized_device_id,
-        reported_plugins=payload.plugins,
+    user_id = current_user.id
+    del current_user
+    acknowledged_ids = await run_sync_in_executor(
+        plugin_endpoint_db.report_device,
+        user_id,
+        normalized_device_id,
+        payload.plugins,
     )
     logger.info(
         "Device plugin status reported: user_id=%s device_id=%s acknowledged=%s",
-        current_user.id,
+        user_id,
         normalized_device_id,
         len(acknowledged_ids),
     )
@@ -297,7 +248,10 @@ def get_plugin_marketplace_capabilities(
     current_user: User = Depends(security.get_current_user),
 ) -> PluginMarketplaceCapabilities:
     return PluginMarketplaceCapabilities(
-        canPublish=_can_publish(current_user),
+        canPublish=_can_publish(
+            user_id=current_user.id,
+            user_role=current_user.role,
+        ),
         canSharePersonalPlugins=True,
     )
 
@@ -310,40 +264,41 @@ def get_plugin_marketplace_capabilities(
 async def upload_plugin(
     file: UploadFile = File(...),
     enabled: bool = Form(True),
-    db: Session = Depends(get_db),
     current_user: User = Depends(security.get_current_user),
 ) -> InstalledPlugin:
     """Upload and install a Claude Code plugin ZIP package."""
-    if current_user.role != "admin" or not settings.PLUGIN_LEGACY_UPLOAD_ENABLED:
+    user_id = current_user.id
+    user_role = current_user.role
+    del current_user
+    if user_role != "admin" or not settings.PLUGIN_LEGACY_UPLOAD_ENABLED:
         raise HTTPException(
             status_code=410,
             detail="Direct cloud upload is retired; create locally or publish a submission",
         )
     logger.info(
         "Plugin upload requested: user_id=%s filename=%s enabled=%s",
-        current_user.id,
+        user_id,
         file.filename,
         enabled,
     )
     content = await _read_plugin_upload(file)
-    installed = installed_plugin_service.upload_plugin(
-        db=db,
-        user_id=current_user.id,
-        package_bytes=content,
-        filename=file.filename or "plugin.zip",
-        enabled=enabled,
+    installed = await run_sync_in_executor(
+        plugin_endpoint_db.upload,
+        user_id,
+        content,
+        file.filename or "plugin.zip",
+        enabled,
     )
-    await _sync_global_capabilities(db, current_user.id)
+    await _sync_global_capabilities(user_id)
     return installed
 
 
 @router.get("/marketplace", response_model=PluginMarketplaceListResponse)
-def list_marketplace_plugins(
+async def list_marketplace_plugins(
     q: str | None = None,
     source: str | None = None,
     listing_type: str | None = None,
     device_id: str | None = None,
-    db: Session = Depends(get_db),
     current_user: User | None = Depends(security.get_current_user_optional),
 ) -> PluginMarketplaceListResponse:
     """List Codex-compatible plugins published to the Wegent marketplace.
@@ -352,41 +307,47 @@ def list_marketplace_plugins(
     - Authenticated users see installation status and device-specific info
     - Unauthenticated users see all available plugins without installation status
     """
-    return plugin_marketplace_service.list_plugins(
-        db,
-        user_id=current_user.id if current_user else None,
-        query=q,
-        source=source,
-        listing_type=listing_type,
-        device_id=device_id,
+    user_id = current_user.id if current_user else None
+    del current_user
+    return await run_sync_in_executor(
+        plugin_endpoint_db.list_marketplace,
+        user_id,
+        q,
+        source,
+        listing_type,
+        device_id,
     )
 
 
 @router.get("/marketplace/{plugin_id}", response_model=PluginMarketplaceItem)
-def get_marketplace_plugin(
+async def get_marketplace_plugin(
     plugin_id: int,
     device_id: str | None = None,
-    db: Session = Depends(get_db),
     current_user: User = Depends(security.get_current_user),
 ) -> PluginMarketplaceItem:
-    return plugin_marketplace_service.get_plugin(
-        db,
-        plugin_id=plugin_id,
-        user_id=current_user.id,
-        device_id=device_id,
+    user_id = current_user.id
+    del current_user
+    return await run_sync_in_executor(
+        plugin_endpoint_db.get_marketplace,
+        plugin_id,
+        user_id,
+        device_id,
     )
 
 
 @router.get(
     "/marketplace/{plugin_id}/releases", response_model=PluginReleaseListResponse
 )
-def list_marketplace_plugin_releases(
+async def list_marketplace_plugin_releases(
     plugin_id: int,
-    db: Session = Depends(get_db),
     current_user: User = Depends(security.get_current_user),
 ) -> PluginReleaseListResponse:
-    return plugin_marketplace_service.list_releases(
-        db, plugin_id=plugin_id, user_id=current_user.id
+    user_id = current_user.id
+    del current_user
+    return await run_sync_in_executor(
+        plugin_endpoint_db.list_releases,
+        plugin_id,
+        user_id,
     )
 
 
@@ -394,15 +355,16 @@ def list_marketplace_plugin_releases(
     "/marketplace/{plugin_id}/access",
     response_model=PluginAccessResponse,
 )
-def get_marketplace_plugin_access(
+async def get_marketplace_plugin_access(
     plugin_id: int,
-    db: Session = Depends(get_db),
     current_user: User = Depends(security.get_current_user),
 ) -> PluginAccessResponse:
-    return plugin_marketplace_service.get_plugin_access(
-        db,
-        plugin_id=plugin_id,
-        user_id=current_user.id,
+    user_id = current_user.id
+    del current_user
+    return await run_sync_in_executor(
+        plugin_endpoint_db.get_access,
+        plugin_id,
+        user_id,
     )
 
 
@@ -413,58 +375,58 @@ def get_marketplace_plugin_access(
 async def update_marketplace_plugin_access(
     plugin_id: int,
     request: PluginAccessUpdateRequest,
-    db: Session = Depends(get_db),
     current_user: User = Depends(security.get_current_user),
 ) -> PluginAccessResponse:
-    access, revoked_installs = plugin_marketplace_service.update_plugin_access(
-        db,
-        plugin_id=plugin_id,
-        user_id=current_user.id,
-        request=request,
+    user_id = current_user.id
+    del current_user
+    plan = await run_sync_in_executor(
+        plugin_endpoint_db.update_access,
+        plugin_id,
+        user_id,
+        request,
     )
-    for recipient_user_id, installed_id in revoked_installs:
+    for recipient_user_id, installed_id in plan.revoked_installs:
         try:
-            plugin_device_installation_service.mark_uninstalling(
-                db,
-                user_id=recipient_user_id,
-                installed_kind_id=installed_id,
+            await run_sync_in_executor(
+                plugin_endpoint_db.mark_uninstalling,
+                recipient_user_id,
+                installed_id,
             )
             result = await _sync_global_capabilities(
-                db,
                 recipient_user_id,
                 required_installed_kind_id=installed_id,
                 expect_installed=False,
             )
-            plugin_device_installation_service.record_uninstall_response(
-                db,
-                user_id=recipient_user_id,
-                installed_kind_id=installed_id,
-                response=result,
+            await run_sync_in_executor(
+                plugin_endpoint_db.record_uninstall,
+                recipient_user_id,
+                installed_id,
+                result,
             )
         except Exception:
-            db.rollback()
             logger.exception(
                 "Plugin share revocation sync failed: plugin_id=%s user_id=%s",
                 plugin_id,
                 recipient_user_id,
             )
-    access.revocationPendingCount = len(revoked_installs)
-    return access
+    plan.access.revocationPendingCount = len(plan.revoked_installs)
+    return plan.access
 
 
 @router.get(
     "/marketplace/{plugin_id}/delete-impact",
     response_model=PluginDeleteImpactResponse,
 )
-def get_marketplace_plugin_delete_impact(
+async def get_marketplace_plugin_delete_impact(
     plugin_id: int,
-    db: Session = Depends(get_db),
     current_user: User = Depends(security.get_current_user),
 ) -> PluginDeleteImpactResponse:
-    return plugin_marketplace_service.get_personal_plugin_delete_impact(
-        db,
-        plugin_id=plugin_id,
-        user_id=current_user.id,
+    user_id = current_user.id
+    del current_user
+    return await run_sync_in_executor(
+        plugin_endpoint_db.delete_impact,
+        plugin_id,
+        user_id,
     )
 
 
@@ -475,50 +437,45 @@ def get_marketplace_plugin_delete_impact(
 async def delete_marketplace_plugin(
     plugin_id: int,
     request: PluginDeleteRequest,
-    db: Session = Depends(get_db),
     current_user: User = Depends(security.get_current_user),
 ) -> PluginDeleteResponse:
-    installations = plugin_marketplace_service.delete_owned_personal_plugin(
-        db,
-        plugin_id=plugin_id,
-        user_id=current_user.id,
-        impact_revision=request.impactRevision,
-        revoke_and_delete=request.revokeAndDelete,
+    user_id = current_user.id
+    del current_user
+    installations = await run_sync_in_executor(
+        plugin_endpoint_db.delete_marketplace,
+        plugin_id,
+        user_id,
+        request,
     )
     for installation_user_id, installed_id in installations:
         try:
-            plugin_device_installation_service.mark_uninstalling(
-                db,
-                user_id=installation_user_id,
-                installed_kind_id=installed_id,
+            await run_sync_in_executor(
+                plugin_endpoint_db.mark_uninstalling,
+                installation_user_id,
+                installed_id,
             )
             result = await _sync_global_capabilities(
-                db,
                 installation_user_id,
                 required_installed_kind_id=installed_id,
                 expect_installed=False,
             )
-            plugin_device_installation_service.record_uninstall_response(
-                db,
-                user_id=installation_user_id,
-                installed_kind_id=installed_id,
-                response=result,
+            await run_sync_in_executor(
+                plugin_endpoint_db.record_uninstall,
+                installation_user_id,
+                installed_id,
+                result,
             )
         except Exception:
-            db.rollback()
             logger.exception(
                 "Deleted plugin uninstall sync failed: plugin_id=%s user_id=%s",
                 plugin_id,
                 installation_user_id,
             )
-    installation_ids = [installed_id for _, installed_id in installations]
-    pending_device_count = 0
-    if installation_ids:
-        pending_device_count = (
-            db.query(PluginDeviceInstallation.id)
-            .filter(PluginDeviceInstallation.installed_kind_id.in_(installation_ids))
-            .count()
-        )
+    installation_ids = tuple(installed_id for _, installed_id in installations)
+    pending_device_count = await run_sync_in_executor(
+        plugin_endpoint_db.pending_device_count,
+        installation_ids,
+    )
     return PluginDeleteResponse(pendingDeviceCount=pending_device_count)
 
 
@@ -526,16 +483,17 @@ async def delete_marketplace_plugin(
     "/marketplace/{plugin_id}/copy",
     response_model=PluginCopyResponse,
 )
-def copy_marketplace_plugin(
+async def copy_marketplace_plugin(
     plugin_id: int,
-    db: Session = Depends(get_db),
     current_user: User = Depends(security.get_current_user),
 ) -> PluginCopyResponse:
+    user_id = current_user.id
+    del current_user
     try:
-        return plugin_marketplace_service.plugin_copy_descriptor(
-            db,
-            plugin_id=plugin_id,
-            user_id=current_user.id,
+        return await run_sync_in_executor(
+            plugin_endpoint_db.copy_descriptor,
+            plugin_id,
+            user_id,
         )
     except PluginPackageStorageError as exc:
         raise HTTPException(
@@ -552,7 +510,6 @@ async def install_marketplace_plugin(
     marketplace_id: int,
     release_id: int | None = None,
     device_id: str | None = None,
-    db: Session = Depends(get_db),
     current_user: User = Depends(security.get_current_user),
 ) -> PluginMarketplaceInstallResponse:
     """Install a marketplace plugin for the current user.
@@ -561,41 +518,39 @@ async def install_marketplace_plugin(
     a full replace can fail because of an unrelated plugin while the new install
     is already desired; do not 502 and leave the marketplace UI stuck.
     """
-    plugin = plugin_marketplace_service.install(
-        db,
-        user_id=current_user.id,
-        plugin_id=marketplace_id,
-        release_id=release_id,
+    user_id = current_user.id
+    del current_user
+    plan = await run_sync_in_executor(
+        plugin_endpoint_db.install_marketplace,
+        marketplace_id,
+        user_id,
+        release_id,
     )
-    installed_id = int(plugin.metadata["labels"]["id"])
-    if plugin.spec.releaseId is not None:
+    if plan.release_id is not None:
         await plugin_device_installation_service.ensure_pending_for_all_devices(
-            db,
-            user_id=current_user.id,
-            installed_kind_id=installed_id,
-            desired_release_id=plugin.spec.releaseId,
+            user_id=user_id,
+            installed_kind_id=plan.installed_id,
+            desired_release_id=plan.release_id,
         )
     sync = await _sync_global_capabilities(
-        db,
-        current_user.id,
+        user_id,
         required_device_id=device_id,
-        required_installed_kind_id=installed_id,
+        required_installed_kind_id=plan.installed_id,
         expect_installed=True,
         require_device_success=False,
     )
     sync = await _ensure_installed_plugin_on_device(
-        db,
-        user_id=current_user.id,
+        user_id=user_id,
         device_id=device_id,
-        installed_id=installed_id,
+        installed_id=plan.installed_id,
         previous=sync,
     )
-    enriched = plugin_marketplace_service.enrich_installed_list(
-        db,
-        InstalledPluginListResponse(items=[plugin]),
-        device_id=device_id,
+    enriched = await run_sync_in_executor(
+        plugin_endpoint_db.enrich_installed,
+        plan.plugin,
+        device_id,
     )
-    return PluginMarketplaceInstallResponse(plugin=enriched.items[0], sync=sync)
+    return PluginMarketplaceInstallResponse(plugin=enriched, sync=sync)
 
 
 @router.post(
@@ -605,74 +560,63 @@ async def install_marketplace_plugin(
 async def ensure_builtin_plugin_installed(
     plugin_key: str,
     request: BuiltinPluginInstallRequest,
-    db: Session = Depends(get_db),
     current_user: User = Depends(security.get_current_user),
 ) -> PluginMarketplaceInstallResponse:
     """Install a bundled plugin from the v2 marketplace catalog."""
-    item = db.query(Plugin).filter(Plugin.slug == plugin_key).first()
-    if not item:
-        return await _ensure_legacy_builtin_plugin_installed(
-            plugin_key=plugin_key,
-            request=request,
-            db=db,
-            user_id=current_user.id,
-        )
-    plugin = plugin_marketplace_service.install(
-        db,
-        user_id=current_user.id,
-        plugin_id=item.id,
+    user_id = current_user.id
+    del current_user
+    plan = await run_sync_in_executor(
+        plugin_endpoint_db.ensure_builtin,
+        plugin_key,
+        user_id,
     )
-    installed_id = int(plugin.metadata["labels"]["id"])
-    if plugin.spec.releaseId is not None:
+    if plan.legacy:
+        return await _ensure_legacy_builtin_plugin_installed(
+            request=request,
+            plugin=plan.plugin,
+            installed_id=plan.installed_id,
+            user_id=user_id,
+        )
+    if plan.release_id is not None:
         await plugin_device_installation_service.ensure_pending_for_all_devices(
-            db,
-            user_id=current_user.id,
-            installed_kind_id=installed_id,
-            desired_release_id=plugin.spec.releaseId,
+            user_id=user_id,
+            installed_kind_id=plan.installed_id,
+            desired_release_id=plan.release_id,
         )
     sync = await _sync_global_capabilities(
-        db,
-        current_user.id,
+        user_id,
         required_device_id=request.device_id,
-        required_installed_kind_id=installed_id,
+        required_installed_kind_id=plan.installed_id,
         expect_installed=True,
         require_device_success=False,
     )
     sync = await _ensure_installed_plugin_on_device(
-        db,
-        user_id=current_user.id,
+        user_id=user_id,
         device_id=request.device_id,
-        installed_id=installed_id,
+        installed_id=plan.installed_id,
         previous=sync,
     )
-    enriched = plugin_marketplace_service.enrich_installed_list(
-        db,
-        InstalledPluginListResponse(items=[plugin]),
-        device_id=request.device_id,
+    enriched = await run_sync_in_executor(
+        plugin_endpoint_db.enrich_installed,
+        plan.plugin,
+        request.device_id,
     )
-    return PluginMarketplaceInstallResponse(plugin=enriched.items[0], sync=sync)
+    return PluginMarketplaceInstallResponse(plugin=enriched, sync=sync)
 
 
 async def _ensure_legacy_builtin_plugin_installed(
     *,
-    plugin_key: str,
     request: BuiltinPluginInstallRequest,
-    db: Session,
+    plugin: InstalledPlugin,
+    installed_id: int,
     user_id: int,
 ) -> PluginMarketplaceInstallResponse:
-    plugin = installed_plugin_service.install_builtin_plugin(
-        db=db,
-        user_id=user_id,
-        plugin_key=plugin_key,
-    )
     if request.device_id is None:
-        sync = await _sync_global_capabilities(db, user_id)
+        sync = await _sync_global_capabilities(user_id)
         return PluginMarketplaceInstallResponse(plugin=plugin, sync=sync)
 
-    installed_id = int(plugin.metadata["labels"]["id"])
     try:
         sync = await device_capability_sync_service.sync_installed_plugin_to_device(
-            db,
             user_id=user_id,
             device_id=request.device_id,
             installed_plugin_id=installed_id,
@@ -702,25 +646,18 @@ async def _read_plugin_upload(file: UploadFile) -> bytes:
 
 
 @router.get("/installed/{installed_id}/download")
-def download_installed_plugin(
+async def download_installed_plugin(
     installed_id: int,
-    db: Session = Depends(get_db),
     current_user: User = Depends(security.get_current_user_jwt_apikey_tasktoken),
 ) -> StreamingResponse:
     """Download a user's installed plugin package for local executor sync."""
+    user_id = current_user.id
+    del current_user
     try:
-        package_bytes, filename = (
-            plugin_marketplace_service.release_package_for_install(
-                db, user_id=current_user.id, installed_id=installed_id
-            )
-        )
-    except HTTPException as exc:
-        if exc.status_code != 404:
-            raise
-        package_bytes, filename = installed_plugin_service.package_data_for_download(
-            db=db,
-            user_id=current_user.id,
-            installed_id=installed_id,
+        package_bytes, filename = await run_sync_in_executor(
+            plugin_endpoint_db.download_package,
+            user_id,
+            installed_id,
         )
     except PluginPackageStorageError as exc:
         raise HTTPException(
@@ -741,59 +678,48 @@ async def update_installed_plugin(
     installed_id: int,
     request: InstalledPluginUpdateRequest,
     device_id: str | None = None,
-    db: Session = Depends(get_db),
     current_user: User = Depends(security.get_current_user),
 ) -> InstalledPlugin:
     """Update an installed plugin's runtime state, metadata, or update policy."""
-    if request.releaseId is not None:
-        installed = plugin_marketplace_service.update_release(
-            db,
-            user_id=current_user.id,
-            installed_id=installed_id,
-            release_id=request.releaseId,
-        )
-    else:
-        installed = installed_plugin_service.update_installed_plugin(
-            db=db,
-            user_id=current_user.id,
-            installed_id=installed_id,
-            request=request,
-        )
-    if installed.spec.releaseId is not None:
+    user_id = current_user.id
+    del current_user
+    plan = await run_sync_in_executor(
+        plugin_endpoint_db.update_installed,
+        user_id,
+        installed_id,
+        request,
+    )
+    if plan.release_id is not None:
         await plugin_device_installation_service.ensure_pending_for_all_devices(
-            db,
-            user_id=current_user.id,
+            user_id=user_id,
             installed_kind_id=installed_id,
-            desired_release_id=installed.spec.releaseId,
+            desired_release_id=plan.release_id,
             reset_failures=request.releaseId is not None,
         )
     await _sync_global_capabilities(
-        db,
-        current_user.id,
+        user_id,
         required_device_id=device_id,
         required_installed_kind_id=installed_id,
         expect_installed=True,
         require_device_success=False,
     )
     await _ensure_installed_plugin_on_device(
-        db,
-        user_id=current_user.id,
+        user_id=user_id,
         device_id=device_id,
         installed_id=installed_id,
         manual_retry=request.releaseId is not None,
     )
-    return plugin_marketplace_service.enrich_installed_list(
-        db,
-        InstalledPluginListResponse(items=[installed]),
-        device_id=device_id,
-    ).items[0]
+    return await run_sync_in_executor(
+        plugin_endpoint_db.enrich_installed,
+        plan.plugin,
+        device_id,
+    )
 
 
 @router.delete("/installed/{installed_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def uninstall_installed_plugin(
     installed_id: int,
     device_id: str | None = None,
-    db: Session = Depends(get_db),
     current_user: User = Depends(security.get_current_user),
 ) -> None:
     """Uninstall a user-scoped Claude Code plugin.
@@ -802,42 +728,29 @@ async def uninstall_installed_plugin(
     rejected or offline device must not leave the marketplace UI stuck on an
     installed / sync-failed state after the Kind row is already inactive.
     """
-    plugin_device_installation_service.mark_uninstalling(
-        db, user_id=current_user.id, installed_kind_id=installed_id
+    user_id = current_user.id
+    del current_user
+    await run_sync_in_executor(
+        plugin_endpoint_db.begin_uninstall,
+        user_id,
+        installed_id,
     )
-    try:
-        installed_plugin_service.uninstall_installed_plugin(
-            db=db,
-            user_id=current_user.id,
-            installed_id=installed_id,
-        )
-    except HTTPException as exc:
-        if exc.status_code != status.HTTP_404_NOT_FOUND:
-            raise
-        # Idempotent: Kind may already be inactive after a prior partial uninstall.
     result = await _sync_global_capabilities(
-        db,
-        current_user.id,
+        user_id,
         required_device_id=device_id,
         required_installed_kind_id=installed_id,
         expect_installed=False,
         require_device_success=False,
     )
-    plugin_device_installation_service.record_uninstall_response(
-        db,
-        user_id=current_user.id,
-        installed_kind_id=installed_id,
-        response=result,
-    )
-    plugin_device_installation_service.clear_installations(
-        db,
-        user_id=current_user.id,
-        installed_kind_id=installed_id,
+    await run_sync_in_executor(
+        plugin_endpoint_db.finalize_uninstall,
+        user_id,
+        installed_id,
+        result,
     )
 
 
 async def _ensure_installed_plugin_on_device(
-    db: Session,
     *,
     user_id: int,
     device_id: str | None,
@@ -848,29 +761,17 @@ async def _ensure_installed_plugin_on_device(
     """Retry a single-plugin merge when the global replace left the device short."""
     if not device_id:
         return previous
-    device_row = (
-        db.query(PluginDeviceInstallation)
-        .filter(
-            PluginDeviceInstallation.installed_kind_id == installed_id,
-            PluginDeviceInstallation.device_id == device_id,
-        )
-        .first()
+    should_retry = await run_sync_in_executor(
+        plugin_endpoint_db.should_retry_device_install,
+        device_id,
+        installed_id,
+        manual_retry,
     )
-    if device_row and device_row.state == "installed":
-        return previous
-    if (
-        not manual_retry
-        and device_row
-        and plugin_device_installation_service.auto_update_blocked_release_id(
-            device_row,
-            desired_release_id=device_row.desired_release_id,
-        )
-    ):
+    if not should_retry:
         return previous
     try:
         merge_sync = (
             await device_capability_sync_service.sync_installed_plugin_to_device(
-                db,
                 user_id=user_id,
                 device_id=device_id,
                 installed_plugin_id=installed_id,
@@ -889,14 +790,15 @@ async def _ensure_installed_plugin_on_device(
             exc,
         )
         return previous
-    plugin_device_installation_service.record_sync_response(
-        db, user_id=user_id, response=merge_sync
+    await run_sync_in_executor(
+        plugin_endpoint_db.record_merge_sync,
+        user_id,
+        merge_sync,
     )
     return merge_sync
 
 
 async def _sync_global_capabilities(
-    db: Session,
     user_id: int,
     *,
     required_device_id: str | None = None,
@@ -905,7 +807,6 @@ async def _sync_global_capabilities(
     require_device_success: bool = True,
 ) -> DeviceCapabilitySyncResponse:
     result = await device_capability_sync_service.sync_user_global_capabilities(
-        db,
         user_id=user_id,
     )
     logger.info(
@@ -915,8 +816,13 @@ async def _sync_global_capabilities(
         result.failed,
         result.skipped,
     )
-    plugin_device_installation_service.record_sync_response(
-        db, user_id=user_id, response=result
+    materialization_matches = await run_sync_in_executor(
+        plugin_endpoint_db.record_global_sync,
+        user_id,
+        result,
+        required_device_id,
+        required_installed_kind_id,
+        expect_installed,
     )
     required_result = next(
         (item for item in result.results if item.device_id == required_device_id),
@@ -925,28 +831,17 @@ async def _sync_global_capabilities(
     required_device_failed = bool(
         required_device_id and (not required_result or not required_result.success)
     )
-    required_materialization_failed = False
-    if required_device_id and required_installed_kind_id is not None:
-        device_row = (
-            db.query(PluginDeviceInstallation)
-            .filter(
-                PluginDeviceInstallation.installed_kind_id
-                == required_installed_kind_id,
-                PluginDeviceInstallation.device_id == required_device_id,
-            )
-            .first()
-        )
-        materialized = bool(device_row and device_row.state == "installed")
-        required_materialization_failed = materialized != expect_installed
+    required_materialization_failed = not materialization_matches
     if require_device_success and (
         required_device_failed or required_materialization_failed
     ):
+        projected_results = await dump_models(result.results)
         raise HTTPException(
             status_code=502,
             detail={
                 "code": "PLUGIN_DEVICE_SYNC_FAILED",
                 "message": "Plugin saved but one or more devices failed to synchronize",
-                "results": [item.model_dump() for item in result.results],
+                "results": projected_results,
             },
         )
     if not require_device_success and (
@@ -961,16 +856,16 @@ async def _sync_global_capabilities(
     return result
 
 
-def _can_publish(current_user: User) -> bool:
+def _can_publish(*, user_id: int, user_role: str) -> bool:
     return bool(
-        current_user.role == "admin"
+        user_role == "admin"
         or settings.PLUGIN_PUBLISH_ENABLED
-        or current_user.id in settings.PLUGIN_PUBLISH_USER_IDS
+        or user_id in settings.PLUGIN_PUBLISH_USER_IDS
     )
 
 
-def _ensure_publish_allowed(current_user: User) -> None:
-    if not _can_publish(current_user):
+def _ensure_publish_allowed(*, user_id: int, user_role: str) -> None:
+    if not _can_publish(user_id=user_id, user_role=user_role):
         raise HTTPException(status_code=403, detail="Plugin publishing is not enabled")
 
 
@@ -979,27 +874,21 @@ def _ensure_publish_allowed(current_user: User) -> None:
     response_model=PluginSubmissionInitResponse,
     status_code=status.HTTP_201_CREATED,
 )
-def init_plugin_submission(
+async def init_plugin_submission(
     request: PluginSubmissionInitRequest,
-    db: Session = Depends(get_db),
     auth: PluginSubmissionAuth = Depends(_get_plugin_submission_auth),
 ) -> PluginSubmissionInitResponse:
-    current_user = auth.user
     visibility = request.visibility or (
         "personal" if request.purpose == "restricted_share" else "workspace"
     )
     if visibility in {"workspace", "public"}:
-        _ensure_publish_allowed(current_user)
+        _ensure_publish_allowed(user_id=auth.user_id, user_role=auth.user_role)
     try:
-        return plugin_marketplace_service.init_submission(
-            db,
-            user_id=current_user.id,
-            request=request,
-            task_binding=(
-                (auth.task_token.task_id, auth.task_token.subtask_id)
-                if auth.task_token
-                else None
-            ),
+        return await run_sync_in_executor(
+            plugin_endpoint_db.init_submission,
+            auth.user_id,
+            request,
+            auth.task_token,
         )
     except PluginPackageStorageError as exc:
         raise HTTPException(
@@ -1011,70 +900,49 @@ def init_plugin_submission(
     "/submissions/{submission_id}/complete",
     response_model=PluginSubmissionCompleteResponse,
 )
-def complete_plugin_submission(
+async def complete_plugin_submission(
     submission_id: int,
-    db: Session = Depends(get_db),
     auth: PluginSubmissionAuth = Depends(_get_plugin_submission_auth),
 ) -> PluginSubmissionCompleteResponse:
-    current_user = auth.user
-    _ensure_submission_matches_task_token(db, auth=auth, submission_id=submission_id)
-    existing = plugin_marketplace_service.get_submission(
-        db,
-        user_id=current_user.id,
-        submission_id=submission_id,
-    )
-    if existing.purpose == "marketplace_publish":
-        _ensure_publish_allowed(current_user)
     try:
-        item = plugin_marketplace_service.complete_submission(
-            db, user_id=current_user.id, submission_id=submission_id
+        return await run_sync_in_executor(
+            plugin_endpoint_db.complete_submission,
+            submission_id,
+            auth.user_id,
+            auth.task_token,
+            _can_publish(user_id=auth.user_id, user_role=auth.user_role),
         )
     except PluginPackageStorageError as exc:
         raise HTTPException(
             status_code=503, detail="Plugin package storage unavailable"
         ) from exc
-    plugin = None
-    if item.status in {"approved", "pending"}:
-        try:
-            plugin = plugin_marketplace_service.get_plugin(
-                db,
-                plugin_id=item.pluginId,
-                user_id=current_user.id,
-            )
-        except HTTPException:
-            plugin = None
-    return PluginSubmissionCompleteResponse(submission=item, plugin=plugin)
 
 
 @router.post(
     "/submissions/{submission_id}/cancel",
     response_model=PluginSubmissionItem,
 )
-def cancel_plugin_submission(
+async def cancel_plugin_submission(
     submission_id: int,
-    db: Session = Depends(get_db),
     auth: PluginSubmissionAuth = Depends(_get_plugin_submission_auth),
 ) -> PluginSubmissionItem:
-    current_user = auth.user
-    _ensure_submission_matches_task_token(db, auth=auth, submission_id=submission_id)
-    return plugin_marketplace_service.cancel_submission(
-        db,
-        user_id=current_user.id,
-        submission_id=submission_id,
+    return await run_sync_in_executor(
+        plugin_endpoint_db.cancel_submission,
+        submission_id,
+        auth.user_id,
+        auth.task_token,
     )
 
 
 @router.get("/submissions/{submission_id}", response_model=PluginSubmissionItem)
-def get_plugin_submission(
+async def get_plugin_submission(
     submission_id: int,
-    db: Session = Depends(get_db),
     auth: PluginSubmissionAuth = Depends(_get_plugin_submission_auth),
 ) -> PluginSubmissionItem:
-    current_user = auth.user
-    _ensure_submission_matches_task_token(db, auth=auth, submission_id=submission_id)
-    return plugin_marketplace_service.get_submission(
-        db,
-        user_id=current_user.id,
-        submission_id=submission_id,
-        is_admin=current_user.role == "admin",
+    return await run_sync_in_executor(
+        plugin_endpoint_db.get_submission,
+        submission_id,
+        auth.user_id,
+        auth.user_role,
+        auth.task_token,
     )

@@ -4,6 +4,8 @@
 
 """Unit tests for compact DingTalk AI Card progress."""
 
+import asyncio
+import threading
 from unittest.mock import AsyncMock
 
 import dingtalk_stream
@@ -445,3 +447,80 @@ async def test_display_throttle_does_not_drop_shared_progress(
 
     state = cache.structured["channel:streaming_content:task-2:progress"]
     assert state["recent"] == ["工具完成：Read"]
+
+
+@pytest.mark.asyncio
+async def test_blocking_card_sdk_keeps_loop_responsive_and_fails_closed(
+    emitter, card_factory
+):
+    await emitter.emit_start(task_id=1, subtask_id=2)
+    card = card_factory[0]
+    entered = threading.Event()
+    release = threading.Event()
+    calls: list[str] = []
+
+    def blocking_stream(content, append=False):
+        calls.append(content)
+        entered.set()
+        release.wait(timeout=1)
+
+    card.ai_streaming = blocking_stream
+    emitter.CARD_IO_TIMEOUT_SECONDS = 0.05
+    ticks = 0
+    stop = False
+
+    async def ticker() -> None:
+        nonlocal ticks
+        while not stop:
+            ticks += 1
+            await asyncio.sleep(0)
+
+    ticker_task = asyncio.create_task(ticker())
+    emit_task = asyncio.create_task(
+        emitter.emit_chunk(task_id=1, subtask_id=2, content="blocked", offset=0)
+    )
+    try:
+        while not entered.is_set():
+            await asyncio.sleep(0)
+        ticks_before = ticks
+        await asyncio.sleep(0.01)
+        assert ticks > ticks_before
+
+        await emit_task
+        assert emitter._card_io_failed is True
+
+        await emitter.emit_chunk(task_id=1, subtask_id=2, content="later", offset=7)
+        assert calls == ["blocked"]
+    finally:
+        release.set()
+        stop = True
+        await ticker_task
+
+
+@pytest.mark.asyncio
+async def test_large_card_truncation_keeps_loop_responsive(
+    emitter, monkeypatch: pytest.MonkeyPatch
+):
+    entered = threading.Event()
+    release = threading.Event()
+    original_truncate = emitter_module._truncate_text
+
+    def blocking_truncate(content, limit, suffix):
+        entered.set()
+        assert release.wait(timeout=2)
+        return original_truncate(content, limit, suffix)
+
+    monkeypatch.setattr(emitter_module, "_truncate_text", blocking_truncate)
+    truncate_task = asyncio.create_task(emitter._truncate_final("x" * (32 * 1024**2)))
+    while not entered.is_set():
+        await asyncio.sleep(0)
+
+    ticks = 0
+    for _ in range(10):
+        await asyncio.sleep(0)
+        ticks += 1
+
+    assert ticks == 10
+    release.set()
+    result = await truncate_task
+    assert len(result) == emitter.MAX_FINAL_CONTENT_LENGTH

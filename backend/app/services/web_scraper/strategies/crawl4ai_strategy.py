@@ -10,6 +10,8 @@ from typing import Any, Callable
 
 import httpx
 
+from app.core.blocking_work import run_knowledge_io
+from app.core.bounded_executor import BoundedExecutorOverloaded
 from app.services.web_scraper.classifier import ScrapeResultClassifier
 from app.services.web_scraper.models import (
     ERROR_SSRF_BLOCKED,
@@ -95,10 +97,11 @@ class Crawl4AIScrapeStrategy:
             direct_result = await self._crawl_once(
                 url, policy, profile, None, proxy_plan, False, guard
             )
-            direct_quality = self._quality_evaluator.evaluate(
-                direct_result.markdown, policy, direct_result.quality_level
+            direct_decision = await run_knowledge_io(
+                self._classify_result,
+                direct_result,
+                policy,
             )
-            direct_decision = self._classifier.classify(direct_result, direct_quality)
             if (
                 direct_decision.status not in PROXY_RETRY_STATUSES
                 or not proxy_plan.has_proxy
@@ -113,8 +116,12 @@ class Crawl4AIScrapeStrategy:
                 True,
                 guard,
             )
-            return self._select_fallback_result(
-                direct_result, direct_decision, proxy_result, policy
+            return await run_knowledge_io(
+                self._select_fallback_result,
+                direct_result,
+                direct_decision,
+                proxy_result,
+                policy,
             )
 
         return await self._crawl_once(
@@ -158,6 +165,18 @@ class Crawl4AIScrapeStrategy:
             return direct_result
         return proxy_result
 
+    def _classify_result(
+        self,
+        result: InternalScrapeResult,
+        policy: ScrapePolicy,
+    ) -> ScrapeDecision:
+        quality = self._quality_evaluator.evaluate(
+            result.markdown,
+            policy,
+            result.quality_level,
+        )
+        return self._classifier.classify(result, quality)
+
     @trace_async(
         span_name="web_scraper.crawl4ai.crawl_once",
         tracer_name="web_scraper",
@@ -178,9 +197,19 @@ class Crawl4AIScrapeStrategy:
         try:
             await self._validate_redirect_chain(url, proxy_plan, guard, use_proxy)
             crawler = await self._crawler_provider()
-            run_config = self._build_run_config(policy, profile, proxy_config)
+            run_config = await run_knowledge_io(
+                self._build_run_config,
+                policy,
+                profile,
+                proxy_config,
+            )
             result = await crawler.arun(url=url, config=run_config)
-            return self._to_internal_result(url, result, guard)
+            return await run_knowledge_io(
+                self._to_internal_result,
+                url,
+                result,
+                guard,
+            )
         except WebScraperSecurityError as exc:
             return InternalScrapeResult(
                 url=url,
@@ -194,6 +223,8 @@ class Crawl4AIScrapeStrategy:
                 success=False,
                 error_message="Crawl4AI request timed out",
             )
+        except BoundedExecutorOverloaded:
+            raise
         except Exception as exc:
             logger.warning(
                 "Crawl4AI scrape failed for %s: %s", redact_url_for_logging(url), exc
@@ -220,15 +251,24 @@ class Crawl4AIScrapeStrategy:
                     headers={"Range": "bytes=0-0"},
                 ) as response:
                     if response.status_code not in REDIRECT_STATUS_CODES:
-                        guard.validate_final_url(url, str(response.url))
+                        await run_knowledge_io(
+                            guard.validate_final_url,
+                            url,
+                            str(response.url),
+                        )
                         return
 
                     location = response.headers.get("location")
                     if not location:
-                        guard.validate_final_url(url, str(response.url))
+                        await run_knowledge_io(
+                            guard.validate_final_url,
+                            url,
+                            str(response.url),
+                        )
                         return
 
-                    current_url = guard.validate_redirect_target(
+                    current_url = await run_knowledge_io(
+                        guard.validate_redirect_target,
                         url,
                         str(response.url),
                         location,

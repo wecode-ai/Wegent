@@ -2,7 +2,9 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-from unittest.mock import AsyncMock, MagicMock
+import asyncio
+import threading
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -23,16 +25,64 @@ from shared.models import RuntimeRetrieverConfig
 @pytest.mark.asyncio
 async def test_local_gateway_query_delegates_to_local_retrieval_executor():
     gateway = LocalRagGateway()
-    gateway._retrieval_executor = AsyncMock(
-        return_value={"mode": "rag_retrieval", "records": [], "total": 0}
-    )
-    db = MagicMock()
-
+    plan = object()
     spec = QueryRuntimeSpec(knowledge_base_ids=[1], query="q")
-    result = await gateway.query(spec, db=db)
+    with (
+        patch(
+            "app.services.rag.local_gateway.run_knowledge_db_phase",
+            new_callable=AsyncMock,
+            return_value=plan,
+        ) as mock_db_phase,
+        patch(
+            "app.services.rag.local_gateway."
+            "RetrievalService.execute_prepared_local_retrieval",
+            new_callable=AsyncMock,
+            return_value={"mode": "rag_retrieval", "records": [], "total": 0},
+        ) as mock_execute,
+    ):
+        result = await gateway.query(spec)
 
     assert result["mode"] == "rag_retrieval"
-    gateway._retrieval_executor.assert_awaited_once_with(spec, db=db)
+    mock_db_phase.assert_awaited_once()
+    assert mock_db_phase.await_args.args[1] is spec
+    mock_execute.assert_awaited_once_with(plan)
+
+
+@pytest.mark.asyncio
+async def test_local_gateway_query_worker_owns_and_closes_session():
+    gateway = LocalRagGateway()
+    worker_db = MagicMock()
+    worker_thread_names: list[str] = []
+    plan = object()
+
+    def prepare(db, spec):
+        del spec
+        worker_thread_names.append(threading.current_thread().name)
+        assert db is worker_db
+        return plan
+
+    spec = QueryRuntimeSpec(knowledge_base_ids=[1], query="q")
+    with (
+        patch(
+            "app.services.knowledge.web_db.db_session.SessionLocal",
+            return_value=worker_db,
+        ),
+        patch(
+            "app.services.rag.local_gateway._prepare_query_with_worker_session",
+            side_effect=prepare,
+        ),
+        patch(
+            "app.services.rag.local_gateway."
+            "RetrievalService.execute_prepared_local_retrieval",
+            new_callable=AsyncMock,
+            return_value={"records": []},
+        ),
+    ):
+        result = await gateway.query(spec)
+
+    assert result == {"records": []}
+    assert worker_thread_names[0].startswith("wegent-db")
+    worker_db.close.assert_called_once()
 
 
 @pytest.mark.asyncio
@@ -169,11 +219,49 @@ async def test_local_gateway_list_chunks_delegates_to_chunk_listing_executor():
 
 
 @pytest.mark.asyncio
-async def test_local_gateway_query_requires_db():
+async def test_local_gateway_query_is_loop_responsive():
     gateway = LocalRagGateway()
+    started = threading.Event()
+    release = threading.Event()
+    worker_db = MagicMock()
+    plan = object()
 
-    with pytest.raises(ValueError, match="db is required"):
-        await gateway.query(QueryRuntimeSpec(knowledge_base_ids=[1], query="q"))
+    def blocking_prepare(db, spec):
+        del db, spec
+        started.set()
+        assert release.wait(timeout=1)
+        return plan
+
+    with (
+        patch(
+            "app.services.knowledge.web_db.db_session.SessionLocal",
+            return_value=worker_db,
+        ),
+        patch(
+            "app.services.rag.local_gateway._prepare_query_with_worker_session",
+            side_effect=blocking_prepare,
+        ),
+        patch(
+            "app.services.rag.local_gateway."
+            "RetrievalService.execute_prepared_local_retrieval",
+            new_callable=AsyncMock,
+            return_value={"records": []},
+        ),
+    ):
+        task = asyncio.create_task(
+            gateway.query(QueryRuntimeSpec(knowledge_base_ids=[1], query="q"))
+        )
+        for _ in range(100):
+            if started.is_set():
+                break
+            await asyncio.sleep(0.001)
+        assert started.is_set()
+
+        loop_ticked = asyncio.Event()
+        asyncio.get_running_loop().call_soon(loop_ticked.set)
+        await asyncio.wait_for(loop_ticked.wait(), timeout=0.1)
+        release.set()
+        assert await task == {"records": []}
 
 
 @pytest.mark.asyncio

@@ -5,9 +5,9 @@
 
 from __future__ import annotations
 
-import asyncio
 import logging
 import secrets
+from dataclasses import dataclass
 from datetime import datetime
 
 from fastapi import HTTPException, status
@@ -32,6 +32,7 @@ from app.schemas.project_automation import (
     ProjectAutomationUpdate,
     ProjectAutomationWorkflowMigration,
 )
+from app.services.chat.storage.db import get_db_session, run_sync_in_executor
 from app.services.cloud_projects.access import require_cloud_project_role
 from app.services.cloud_projects.service import cloud_project_service
 from app.services.loop_item_executions.service import loop_item_execution_service
@@ -64,6 +65,15 @@ from app.services.share import team_share_service
 from app.services.workflow_stage_context import workflow_stage_context_resolver
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True)
+class _CancelRunPlan:
+    run_id: str
+    result: dict | None = None
+    runtime_execution_id: int | None = None
+    managed_task_id: int | None = None
+    managed_user_id: int | None = None
 
 
 def _canonical_event_config(
@@ -608,6 +618,40 @@ class ProjectAutomationService:
             run, str(_metadata(rule).get("timezone") or "Asia/Shanghai")
         )
 
+    async def run_now_nonblocking(
+        self,
+        *,
+        project_id: str,
+        automation_id: str,
+        user_id: int,
+    ) -> dict:
+        """Create and dispatch one manual run through detached scalar phases."""
+
+        run_id = await run_sync_in_executor(
+            self._prepare_manual_run_from_store,
+            project_id,
+            automation_id,
+            user_id,
+        )
+        await project_automation_execution.dispatch_nonblocking(run_id=run_id)
+        return await run_sync_in_executor(self._run_view_from_store, run_id)
+
+    def _prepare_manual_run_from_store(
+        self,
+        project_id: str,
+        automation_id: str,
+        user_id: int,
+    ) -> str:
+        with get_db_session() as db:
+            require_cloud_project_role(db, project_id, user_id, BaseRole.Developer)
+            rule = self._rule(db, project_id, automation_id)
+            if _metadata(rule).get("trigger_type") == "workflow":
+                raise HTTPException(
+                    status.HTTP_409_CONFLICT,
+                    "Workflow automations can only run from a workflow stage",
+                )
+            return str(self._create_run(db, rule, "manual", utcnow()).id)
+
     async def run_for_workflow_node(
         self,
         db: Session,
@@ -617,6 +661,71 @@ class ProjectAutomationService:
         workflow_node_id: str,
         user_id: int,
     ) -> dict:
+        run = self._prepare_workflow_node_run(
+            db,
+            project_id=project_id,
+            automation_id=automation_id,
+            item_id=item_id,
+            workflow_node_id=workflow_node_id,
+            user_id=user_id,
+        )
+        rule = self._rule(db, project_id, automation_id)
+        await project_automation_execution.dispatch(db, rule, run)
+        return self._run_view(
+            run, str(_metadata(rule).get("timezone") or "Asia/Shanghai")
+        )
+
+    async def run_for_workflow_node_nonblocking(
+        self,
+        *,
+        project_id: str,
+        automation_id: str,
+        item_id: str,
+        workflow_node_id: str,
+        user_id: int,
+    ) -> dict:
+        """Persist and dispatch a workflow rule without blocking the caller loop."""
+
+        run_id = await run_sync_in_executor(
+            self._prepare_workflow_node_run_from_store,
+            project_id,
+            automation_id,
+            item_id,
+            workflow_node_id,
+            user_id,
+        )
+        await project_automation_execution.dispatch_nonblocking(run_id=run_id)
+        return await run_sync_in_executor(self._run_view_from_store, run_id)
+
+    def _prepare_workflow_node_run_from_store(
+        self,
+        project_id: str,
+        automation_id: str,
+        item_id: str,
+        workflow_node_id: str,
+        user_id: int,
+    ) -> str:
+        with get_db_session() as db:
+            run = self._prepare_workflow_node_run(
+                db,
+                project_id=project_id,
+                automation_id=automation_id,
+                item_id=item_id,
+                workflow_node_id=workflow_node_id,
+                user_id=user_id,
+            )
+            return str(run.id)
+
+    def _prepare_workflow_node_run(
+        self,
+        db: Session,
+        *,
+        project_id: str,
+        automation_id: str,
+        item_id: str,
+        workflow_node_id: str,
+        user_id: int,
+    ) -> ProjectAutomationRun:
         require_cloud_project_role(db, project_id, user_id, BaseRole.Developer)
         rule = self._rule(db, project_id, automation_id)
         item = (
@@ -695,10 +804,22 @@ class ProjectAutomationService:
         )
         db.commit()
         db.refresh(run)
-        await project_automation_execution.dispatch(db, rule, run)
-        return self._run_view(
-            run, str(_metadata(rule).get("timezone") or "Asia/Shanghai")
-        )
+        return run
+
+    def _run_view_from_store(self, run_id: str) -> dict:
+        """Load a run projection inside a worker-owned session."""
+
+        with get_db_session() as db:
+            run = db.get(ProjectAutomationRun, run_id)
+            if run is None:
+                raise RuntimeError("Automation run is unavailable")
+            rule = db.get(ProjectAutomationRule, run.parent_id)
+            timezone_name = (
+                str(_metadata(rule).get("timezone") or "Asia/Shanghai")
+                if rule is not None
+                else "Asia/Shanghai"
+            )
+            return self._run_view(run, timezone_name)
 
     async def run_ai_workflow_manager(
         self,
@@ -714,6 +835,95 @@ class ProjectAutomationService:
         execution_config: dict | None,
     ) -> dict:
         """Run one workflow manager without re-entering its parent flow."""
+
+        run = self._prepare_ai_workflow_manager_run(
+            db,
+            project_id=project_id,
+            automation_id=automation_id,
+            item=item,
+            workflow_run_id=workflow_run_id,
+            workflow_plan_version=workflow_plan_version,
+            user_id=user_id,
+            coordinator_prompt=coordinator_prompt,
+            execution_config=execution_config,
+        )
+        rule = self._rule(db, project_id, automation_id)
+        await project_automation_execution.dispatch(db, rule, run)
+        return self._run_view(
+            run,
+            str(_metadata(rule).get("timezone") or "Asia/Shanghai"),
+        )
+
+    async def run_ai_workflow_manager_nonblocking(
+        self,
+        *,
+        project_id: str,
+        automation_id: str,
+        item_id: str,
+        workflow_run_id: str,
+        workflow_plan_version: int | None,
+        user_id: int,
+        coordinator_prompt: str,
+        execution_config: dict | None,
+    ) -> dict:
+        """Create and dispatch an AI workflow manager through scalar phases."""
+
+        run_id = await run_sync_in_executor(
+            self._prepare_ai_workflow_manager_run_from_store,
+            project_id,
+            automation_id,
+            item_id,
+            workflow_run_id,
+            workflow_plan_version,
+            user_id,
+            coordinator_prompt,
+            execution_config,
+        )
+        await project_automation_execution.dispatch_nonblocking(run_id=run_id)
+        return await run_sync_in_executor(self._run_view_from_store, run_id)
+
+    def _prepare_ai_workflow_manager_run_from_store(
+        self,
+        project_id: str,
+        automation_id: str,
+        item_id: str,
+        workflow_run_id: str,
+        workflow_plan_version: int | None,
+        user_id: int,
+        coordinator_prompt: str,
+        execution_config: dict | None,
+    ) -> str:
+        with get_db_session() as db:
+            item = db.get(LoopItem, item_id)
+            if item is None or str(item.cloud_project_id) != str(project_id):
+                raise HTTPException(status.HTTP_404_NOT_FOUND, "Issue not found")
+            run = self._prepare_ai_workflow_manager_run(
+                db,
+                project_id=project_id,
+                automation_id=automation_id,
+                item=item,
+                workflow_run_id=workflow_run_id,
+                workflow_plan_version=workflow_plan_version,
+                user_id=user_id,
+                coordinator_prompt=coordinator_prompt,
+                execution_config=execution_config,
+            )
+            return str(run.id)
+
+    def _prepare_ai_workflow_manager_run(
+        self,
+        db: Session,
+        *,
+        project_id: str,
+        automation_id: str,
+        item: LoopItem,
+        workflow_run_id: str,
+        workflow_plan_version: int | None,
+        user_id: int,
+        coordinator_prompt: str,
+        execution_config: dict | None,
+    ) -> ProjectAutomationRun:
+        """Persist the manager run without performing async dispatch."""
 
         require_cloud_project_role(db, project_id, user_id, BaseRole.Developer)
         rule = self._rule(db, project_id, automation_id)
@@ -745,11 +955,7 @@ class ProjectAutomationService:
         }
         db.commit()
         db.refresh(run)
-        await project_automation_execution.dispatch(db, rule, run)
-        return self._run_view(
-            run,
-            str(_metadata(rule).get("timezone") or "Asia/Shanghai"),
-        )
+        return run
 
     @staticmethod
     def _workflow_parent_run_id(item: LoopItem) -> str | None:
@@ -764,6 +970,57 @@ class ProjectAutomationService:
     async def run_direct_workflow_node(
         self,
         db: Session,
+        project_id: str,
+        item_id: str,
+        workflow_node_id: str,
+        user_id: int,
+    ) -> dict:
+        return self._run_direct_workflow_node(
+            db,
+            project_id=project_id,
+            item_id=item_id,
+            workflow_node_id=workflow_node_id,
+            user_id=user_id,
+        )
+
+    async def run_direct_workflow_node_nonblocking(
+        self,
+        *,
+        project_id: str,
+        item_id: str,
+        workflow_node_id: str,
+        user_id: int,
+    ) -> dict:
+        """Queue a direct workflow stage in a worker-owned transaction."""
+
+        return await run_sync_in_executor(
+            self._run_direct_workflow_node_from_store,
+            project_id,
+            item_id,
+            workflow_node_id,
+            user_id,
+        )
+
+    def _run_direct_workflow_node_from_store(
+        self,
+        project_id: str,
+        item_id: str,
+        workflow_node_id: str,
+        user_id: int,
+    ) -> dict:
+        with get_db_session() as db:
+            return self._run_direct_workflow_node(
+                db,
+                project_id=project_id,
+                item_id=item_id,
+                workflow_node_id=workflow_node_id,
+                user_id=user_id,
+            )
+
+    def _run_direct_workflow_node(
+        self,
+        db: Session,
+        *,
         project_id: str,
         item_id: str,
         workflow_node_id: str,
@@ -962,6 +1219,61 @@ class ProjectAutomationService:
             run, str(_metadata(rule).get("timezone") or "Asia/Shanghai")
         )
 
+    async def retry_run_nonblocking(
+        self,
+        *,
+        project_id: str,
+        run_id: str,
+        user_id: int,
+    ) -> dict:
+        """Authorize, repair, and retry a run without a request-owned Session."""
+
+        authorized_run_id = await run_sync_in_executor(
+            self._authorize_retry_from_store,
+            project_id,
+            run_id,
+            user_id,
+        )
+        try:
+            await project_automation_processor.retry_nonblocking(
+                run_id=authorized_run_id,
+                requested_by_user_id=user_id,
+            )
+        except AutomationRunNotRetryable as exc:
+            raise HTTPException(status.HTTP_409_CONFLICT, str(exc)) from exc
+        return await run_sync_in_executor(
+            self._run_view_from_store,
+            authorized_run_id,
+        )
+
+    def _authorize_retry_from_store(
+        self,
+        project_id: str,
+        run_id: str,
+        user_id: int,
+    ) -> str:
+        with get_db_session() as db:
+            require_cloud_project_role(db, project_id, user_id, BaseRole.Developer)
+            run = db.get(ProjectAutomationRun, run_id)
+            if run is None or str(run.cloud_project_id) != str(project_id):
+                raise HTTPException(
+                    status.HTTP_404_NOT_FOUND,
+                    "Automation run not found",
+                )
+            loop_item_execution_service.reconcile_automation_run_projection(
+                db,
+                run_id=run_id,
+            )
+            db.expire_all()
+            run = db.get(ProjectAutomationRun, run_id)
+            if run is None:
+                raise HTTPException(
+                    status.HTTP_404_NOT_FOUND,
+                    "Automation run not found",
+                )
+            self._rule(db, project_id, str(run.parent_id))
+            return str(run.id)
+
     def list_runs(
         self, db: Session, project_id: str, automation_id: str, user_id: int
     ) -> list[dict]:
@@ -1022,9 +1334,65 @@ class ProjectAutomationService:
             visible_rows = [row for row in rows if self._is_visible_run(row)][:100]
         return [self._run_view(row, timezone_name) for row in visible_rows]
 
-    async def cancel_run(
-        self, db: Session, project_id: str, run_id: str, user_id: int
+    async def cancel_run_nonblocking(
+        self,
+        *,
+        project_id: str,
+        run_id: str,
+        user_id: int,
     ) -> dict:
+        """Cancel one run without carrying a request Session across I/O."""
+
+        plan = await run_sync_in_executor(
+            self._prepare_cancel_run_from_store,
+            project_id,
+            run_id,
+            user_id,
+        )
+        if plan.result is not None:
+            return plan.result
+        if plan.runtime_execution_id is not None:
+            confirmed = await run_sync_in_executor(
+                self._emit_runtime_cancel_from_store,
+                plan.runtime_execution_id,
+            )
+            if not confirmed:
+                raise HTTPException(
+                    status.HTTP_502_BAD_GATEWAY,
+                    "Runtime did not confirm cancellation",
+                )
+        elif plan.managed_task_id is not None and plan.managed_user_id is not None:
+            from app.services.project_automation_managed_execution import (
+                project_automation_managed_execution_service,
+            )
+
+            cancelled = await project_automation_managed_execution_service.cancel(
+                task_id=plan.managed_task_id,
+                user_id=plan.managed_user_id,
+            )
+            if not cancelled:
+                raise HTTPException(
+                    status.HTTP_409_CONFLICT,
+                    "Managed automation execution could not be cancelled",
+                )
+        return await run_sync_in_executor(self._run_view_from_store, plan.run_id)
+
+    def _prepare_cancel_run_from_store(
+        self,
+        project_id: str,
+        run_id: str,
+        user_id: int,
+    ) -> _CancelRunPlan:
+        with get_db_session() as db:
+            return self._prepare_cancel_run(db, project_id, run_id, user_id)
+
+    def _prepare_cancel_run(
+        self,
+        db: Session,
+        project_id: str,
+        run_id: str,
+        user_id: int,
+    ) -> _CancelRunPlan:
         require_cloud_project_role(db, project_id, user_id, BaseRole.Developer)
         run = db.get(ProjectAutomationRun, run_id)
         if run is None or str(run.cloud_project_id) != str(project_id):
@@ -1048,7 +1416,10 @@ class ProjectAutomationService:
                 if rule is not None
                 else "Asia/Shanghai"
             )
-            return self._run_view(run, timezone_name)
+            return _CancelRunPlan(
+                run_id=str(run.id),
+                result=self._run_view(run, timezone_name),
+            )
         if run.status not in {"pending", "queued", "waiting_device", "running"}:
             raise HTTPException(
                 status.HTTP_409_CONFLICT, "Automation run cannot be cancelled"
@@ -1092,51 +1463,23 @@ class ProjectAutomationService:
                 note="Automation run cancelled by user",
             )
             if execution.status == "cancel_requested":
-                from app.tasks.robot_queue_tasks import emit_runtime_cancels
-
-                execution_id = execution.id
-                db.expunge(execution)
-                db.rollback()
-                confirmed_execution_ids = await asyncio.to_thread(
-                    emit_runtime_cancels,
-                    [execution],
+                return _CancelRunPlan(
+                    run_id=str(run.id),
+                    runtime_execution_id=execution.id,
                 )
-                if execution_id not in confirmed_execution_ids:
-                    raise HTTPException(
-                        status.HTTP_502_BAD_GATEWAY,
-                        "Runtime did not confirm cancellation",
-                    )
             db.refresh(run)
-            return self._run_view(run, timezone_name)
+            return _CancelRunPlan(
+                run_id=str(run.id),
+                result=self._run_view(run, timezone_name),
+            )
 
         if run.backend_task_id:
-            from app.services.project_automation_managed_execution import (
-                project_automation_managed_execution_service,
+            return _CancelRunPlan(
+                run_id=str(run.id),
+                managed_task_id=int(run.backend_task_id),
+                # Runtime cancellation uses the durable Task owner identity.
+                managed_user_id=run.created_by_user_id,
             )
-
-            cancelled = await project_automation_managed_execution_service.cancel(
-                task_id=int(run.backend_task_id),
-                # Project authorization belongs to the requester, while the
-                # canonical Wegent Task is owned by the rule creator. Runtime
-                # cancellation must use that durable owner identity.
-                user_id=run.created_by_user_id,
-            )
-            if not cancelled:
-                raise HTTPException(
-                    status.HTTP_409_CONFLICT,
-                    "Managed automation execution could not be cancelled",
-                )
-            # Managed execution owns its durable Task lifecycle in independent
-            # sessions. End this request session's read transaction before
-            # loading the projection it just committed; expiring objects alone
-            # still reads from the old MySQL REPEATABLE READ snapshot.
-            db.rollback()
-            run = db.get(ProjectAutomationRun, run_id)
-            if run is None:
-                raise HTTPException(
-                    status.HTTP_404_NOT_FOUND, "Automation run not found"
-                )
-            return self._run_view(run, timezone_name)
 
         run.status = "cancelled"
         run.version += 1
@@ -1153,7 +1496,21 @@ class ProjectAutomationService:
         )
         db.commit()
         db.refresh(run)
-        return self._run_view(run, timezone_name)
+        return _CancelRunPlan(
+            run_id=str(run.id),
+            result=self._run_view(run, timezone_name),
+        )
+
+    @staticmethod
+    def _emit_runtime_cancel_from_store(execution_id: int) -> bool:
+        from app.tasks.robot_queue_tasks import emit_runtime_cancels
+
+        with get_db_session() as db:
+            execution = db.get(LoopItemExecution, execution_id)
+            if execution is None:
+                return False
+            db.expunge(execution)
+        return execution_id in emit_runtime_cancels([execution])
 
     async def check_due(self, db: Session) -> int:
         now = utcnow()

@@ -9,11 +9,9 @@ This module provides REST API endpoints for managing Subscription configurations
 and their background executions.
 """
 
-import hashlib
-import hmac
 import logging
 from datetime import datetime
-from typing import Any, Dict, List, Optional
+from typing import List, Optional
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request, status
 from sqlalchemy.orm import Session
@@ -338,7 +336,6 @@ async def trigger_subscription_webhook(
     webhook_token: str,
     request: Request,
     x_webhook_signature: Optional[str] = Header(None, alias="X-Webhook-Signature"),
-    db: Session = Depends(get_db),
 ):
     """
     Trigger a Subscription via webhook.
@@ -356,73 +353,11 @@ async def trigger_subscription_webhook(
     2. Compute HMAC-SHA256 using the webhook secret
     3. Set header: X-Webhook-Signature: sha256=<hex_digest>
     """
-    # Get the subscription first to check if signature verification is required
-    subscription = subscription_service.get_subscription_by_webhook_token(
-        db, webhook_token=webhook_token
-    )
-    if not subscription:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Subscription not found or disabled",
-        )
-
-    # Get internal data for webhook secret
-    internal = subscription.json.get("_internal", {})
-    webhook_secret = internal.get("webhook_secret")
-
-    # Read the raw body for signature verification
     body = await request.body()
-
-    # Verify signature if the subscription has a secret configured
-    if webhook_secret:
-        if not x_webhook_signature:
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Missing X-Webhook-Signature header",
-            )
-
-        # Parse signature (format: sha256=<hex_digest>)
-        if not x_webhook_signature.startswith("sha256="):
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Invalid signature format. Expected: sha256=<hex_digest>",
-            )
-
-        provided_signature = x_webhook_signature[7:]  # Remove "sha256=" prefix
-
-        # Compute expected signature
-        expected_signature = hmac.new(
-            webhook_secret.encode("utf-8"),
-            body,
-            hashlib.sha256,
-        ).hexdigest()
-
-        # Constant-time comparison to prevent timing attacks
-        if not hmac.compare_digest(provided_signature, expected_signature):
-            logger.warning(
-                f"[webhook] Invalid signature for subscription {subscription.id}, "
-                f"token={webhook_token[:8]}..."
-            )
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Invalid signature",
-            )
-
-    # Parse the payload
-    payload: Dict[str, Any] = {}
-    if body:
-        try:
-            import json
-
-            payload = json.loads(body)
-        except json.JSONDecodeError:
-            # If not valid JSON, treat as empty payload
-            pass
-
-    return subscription_service.trigger_subscription_by_webhook(
-        db=db,
+    return await subscription_service.trigger_subscription_webhook_nonblocking(
         webhook_token=webhook_token,
-        payload=payload,
+        body=body,
+        signature=x_webhook_signature,
     )
 
 

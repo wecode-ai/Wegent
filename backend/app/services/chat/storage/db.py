@@ -18,7 +18,6 @@ Other modules can use run_sync_in_executor() to wrap their sync DB functions.
 
 import asyncio
 import logging
-from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime
@@ -27,6 +26,7 @@ from typing import Any, Callable, Dict, Generator, Optional, TypeVar
 from sqlalchemy.orm import Session
 
 import app.stores.tasks as task_stores
+from app.core.bounded_executor import BoundedExecutor
 from app.models.subtask import Subtask
 from app.models.task import TaskResource
 from app.schemas.kind import TaskStatus
@@ -34,9 +34,14 @@ from app.services.adapters.collaboration_strategy import CollaborationStrategy
 
 logger = logging.getLogger(__name__)
 
-# Thread pool for database operations
-# Increased max_workers to handle concurrent DB operations across the application
-_db_executor = ThreadPoolExecutor(max_workers=20)
+_DB_EXECUTOR_MAX_WORKERS = 20
+_DB_EXECUTOR_MAX_IN_FLIGHT = 40
+
+_db_executor = BoundedExecutor(
+    max_workers=_DB_EXECUTOR_MAX_WORKERS,
+    max_in_flight=_DB_EXECUTOR_MAX_IN_FLIGHT,
+    thread_name_prefix="wegent-db",
+)
 
 # Terminal statuses that mark completion
 _TERMINAL_STATUSES = frozenset(["COMPLETED", "FAILED", "CANCELLED"])
@@ -82,7 +87,7 @@ class DatabaseHandler:
 
     async def _run_in_executor(self, func: Callable[..., T], *args: Any) -> T:
         """Run a synchronous function in the thread pool executor."""
-        return await asyncio.get_event_loop().run_in_executor(_db_executor, func, *args)
+        return await run_sync_in_executor(func, *args)
 
     async def update_subtask_status(
         self,
@@ -410,7 +415,7 @@ async def run_sync_in_executor(func: Callable[..., T], *args: Any) -> T:
     Returns:
         The return value of the synchronous function
     """
-    return await asyncio.get_event_loop().run_in_executor(_db_executor, func, *args)
+    return await _db_executor.run(func, *args)
 
 
 def get_db_session() -> Generator[Session, None, None]:
@@ -470,8 +475,6 @@ def with_session_in_executor(func: Callable[..., T]) -> Callable[..., T]:
             with _db_session() as db:
                 return func(db, *args, **kwargs)
 
-        return await asyncio.get_event_loop().run_in_executor(
-            _db_executor, run_with_session
-        )
+        return await run_sync_in_executor(run_with_session)
 
     return wrapper

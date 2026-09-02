@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+import json
 from unittest.mock import MagicMock
 
 import httpx
@@ -37,6 +38,10 @@ def _build_response(
 ) -> httpx.Response:
     request = httpx.Request("POST", url)
     return httpx.Response(status_code, json=json_body, request=request)
+
+
+def _posted_json(kwargs: dict) -> dict:
+    return json.loads(kwargs["content"])
 
 
 @pytest.mark.asyncio
@@ -84,7 +89,7 @@ async def test_remote_gateway_index_document_posts_reference_mode_request(
     post_mock.assert_awaited_once()
     args, kwargs = post_mock.await_args
     assert args[0] == "http://knowledge-runtime/internal/rag/index"
-    assert kwargs["json"] == {
+    assert _posted_json(kwargs) == {
         "knowledge_base_id": 1,
         "user_id": 3,
         "document_id": 2,
@@ -213,7 +218,7 @@ async def test_remote_gateway_query_posts_reference_mode_request(mocker) -> None
     }
     args, kwargs = post_mock.await_args
     assert args[0] == "http://knowledge-runtime/internal/rag/query"
-    assert kwargs["json"] == {
+    assert _posted_json(kwargs) == {
         "knowledge_base_ids": [1],
         "user_id": 8,
         "query": "release checklist",
@@ -274,12 +279,13 @@ async def test_remote_gateway_query_posts_runtime_overrides(mocker) -> None:
     await gateway.query(spec)
 
     _, kwargs = post_mock.await_args
-    assert kwargs["json"]["search_hints"] == {
+    posted_json = _posted_json(kwargs)
+    assert posted_json["search_hints"] == {
         "semantic_query": "How to verify the release checklist?",
         "keywords": ["release", "checklist"],
         "phrases": ["release checklist"],
     }
-    assert kwargs["json"]["knowledge_base_retrieval_overrides"] == [
+    assert posted_json["knowledge_base_retrieval_overrides"] == [
         {
             "knowledge_base_id": 1,
             "retrieval_config": {
@@ -385,7 +391,7 @@ async def test_remote_gateway_delete_posts_reference_mode_request(mocker) -> Non
     assert result == {"status": "accepted", "knowledge_id": "1"}
     args, kwargs = post_mock.await_args
     assert args[0] == "http://knowledge-runtime/internal/rag/delete-document-index"
-    assert kwargs["json"] == {
+    assert _posted_json(kwargs) == {
         "knowledge_base_id": 1,
         "user_id": 7,
         "document_ref": "9",
@@ -422,7 +428,7 @@ async def test_remote_gateway_purge_index_posts_reference_mode_request(
     assert result == {"status": "deleted", "knowledge_id": "1", "deleted_chunks": 8}
     args, kwargs = post_mock.await_args
     assert args[0] == "http://knowledge-runtime/internal/rag/purge-knowledge-index"
-    assert kwargs["json"] == {
+    assert _posted_json(kwargs) == {
         "knowledge_base_id": 1,
         "user_id": 7,
     }
@@ -456,7 +462,7 @@ async def test_remote_gateway_drop_index_posts_reference_mode_request(mocker) ->
     assert result == {"status": "dropped", "knowledge_id": "1", "index_name": "kb_1"}
     args, kwargs = post_mock.await_args
     assert args[0] == "http://knowledge-runtime/internal/rag/drop-knowledge-index"
-    assert kwargs["json"] == {
+    assert _posted_json(kwargs) == {
         "knowledge_base_id": 1,
         "user_id": 7,
     }
@@ -520,7 +526,7 @@ async def test_remote_gateway_list_chunks_posts_reference_mode_request(mocker) -
     }
     args, kwargs = post_mock.await_args
     assert args[0] == "http://knowledge-runtime/internal/rag/all-chunks"
-    assert kwargs["json"] == {
+    assert _posted_json(kwargs) == {
         "knowledge_base_id": 1,
         "user_id": 8,
         "max_chunks": 1000,
@@ -623,7 +629,7 @@ async def test_gateway_no_auth_header_when_token_empty(mocker, monkeypatch) -> N
 
     args, kwargs = post_mock.await_args
     # When token is empty, headers should be empty dict
-    assert kwargs.get("headers") == {}
+    assert kwargs["headers"] == {"Content-Type": "application/json"}
 
 
 @pytest.mark.asyncio

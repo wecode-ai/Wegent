@@ -18,6 +18,8 @@ import json
 import logging
 from typing import Any
 
+from app.core.payload_codec import run_payload_codec
+from app.core.shutdown import shutdown_manager
 from shared.clients.gemini_interaction import (
     GeminiInteractionClient,
     GeminiInteractionError,
@@ -65,33 +67,34 @@ class ResearchAgent(PollingAgent):
         """
         from app.services.chat.storage.session import session_manager
 
-        cancel_event = await session_manager.register_stream(request.subtask_id)
-
+        await shutdown_manager.register_stream(request.subtask_id)
         task_id = request.task_id
         subtask_id = request.subtask_id
         message_id = request.message_id
-
-        # Send START event
-        await emitter.emit_start(
-            task_id=task_id,
-            subtask_id=subtask_id,
-            message_id=message_id,
-            data={"shell_type": "Chat"},
-        )
-
         model_config = request.model_config or {}
         gemini_base_url = model_config.get("base_url") or DEFAULT_GEMINI_BASE_URL
         agent = model_config.get("model_id", DEFAULT_DEEP_RESEARCH_AGENT)
-
-        gemini_client = GeminiInteractionClient(
-            base_url=gemini_base_url,
-            api_key=model_config.get("api_key", ""),
-            default_headers=model_config.get("default_headers", {}),
-        )
-
         offset = 0
+        session_registered = False
 
         try:
+            cancel_event = await session_manager.register_stream(subtask_id)
+            session_registered = True
+
+            # Send START event
+            await emitter.emit_start(
+                task_id=task_id,
+                subtask_id=subtask_id,
+                message_id=message_id,
+                data={"shell_type": "Chat"},
+            )
+
+            gemini_client = GeminiInteractionClient(
+                base_url=gemini_base_url,
+                api_key=model_config.get("api_key", ""),
+                default_headers=model_config.get("default_headers", {}),
+            )
+
             # Step 1: Create deep research job
             input_text = (
                 request.prompt
@@ -231,7 +234,11 @@ class ResearchAgent(PollingAgent):
             )
 
         finally:
-            await session_manager.unregister_stream(subtask_id)
+            try:
+                if session_registered:
+                    await session_manager.unregister_stream(subtask_id)
+            finally:
+                await shutdown_manager.unregister_stream(subtask_id)
 
     async def _fetch_thought_summaries(
         self,
@@ -254,7 +261,11 @@ class ResearchAgent(PollingAgent):
                 interaction_id, stream_timeout=THOUGHT_STREAM_TIMEOUT
             ):
                 try:
-                    data = json.loads(event_data_str)
+                    data = await run_payload_codec(
+                        json.loads,
+                        event_data_str,
+                        payload_hint=event_data_str,
+                    )
                 except json.JSONDecodeError:
                     continue
 
@@ -277,7 +288,11 @@ class ResearchAgent(PollingAgent):
                                 clean = clean[:-3]
                             clean = clean.strip()
                             try:
-                                summaries = json.loads(clean)
+                                summaries = await run_payload_codec(
+                                    json.loads,
+                                    clean,
+                                    payload_hint=clean,
+                                )
                                 if isinstance(summaries, list):
                                     thought_summaries = [
                                         {
@@ -327,7 +342,11 @@ class ResearchAgent(PollingAgent):
                 interaction_id, stream_timeout=REPORT_STREAM_TIMEOUT
             ):
                 try:
-                    data = json.loads(event_data_str)
+                    data = await run_payload_codec(
+                        json.loads,
+                        event_data_str,
+                        payload_hint=event_data_str,
+                    )
                 except json.JSONDecodeError:
                     continue
 

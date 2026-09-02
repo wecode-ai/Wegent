@@ -14,7 +14,7 @@ def test_retriever_test_connection_tests_storage_directly(
     test_token: str,
 ):
     mock_backend = AsyncMock()
-    # test_connection is called via asyncio.to_thread, so it must be a sync function
+    # Connection checks run in the bounded knowledge I/O executor.
     mock_backend.test_connection = lambda: True
 
     with patch(

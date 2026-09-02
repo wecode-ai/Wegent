@@ -6,7 +6,9 @@ import io
 import zipfile
 
 import pytest
+from sqlalchemy.orm import sessionmaker
 
+from app.db import session as db_session
 from app.models.kind import Kind
 from app.models.skill_binary import SkillBinary
 from app.schemas.system_skills import (
@@ -25,6 +27,19 @@ from app.services.system_skill_providers.providers.base import (
     SystemSkillProviderResult,
 )
 from app.services.system_skill_providers.service import SystemSkillProviderService
+
+
+@pytest.fixture(autouse=True)
+def worker_session_factory(test_db, monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setattr(
+        db_session,
+        "SessionLocal",
+        sessionmaker(
+            bind=test_db.get_bind(),
+            expire_on_commit=False,
+            join_transaction_mode="create_savepoint",
+        ),
+    )
 
 
 class StaticSystemSkillProvider(SystemSkillProvider):
@@ -330,7 +345,6 @@ async def test_list_system_skills_returns_not_installed_state(test_db, test_user
     service = _build_service(StaticSystemSkillProvider())
 
     response = await service.list_system_skills(
-        db=test_db,
         user_id=test_user.id,
         user_name=test_user.user_name,
         provider_key="builtin",
@@ -355,7 +369,6 @@ async def test_list_system_skills_merges_installed_but_disabled_state(
     service = _build_service(StaticSystemSkillProvider())
 
     response = await service.list_system_skills(
-        db=test_db,
         user_id=test_user.id,
         user_name=test_user.user_name,
         provider_key="builtin",
@@ -377,7 +390,6 @@ async def test_list_system_skills_keeps_provider_errors_partial(test_db, test_us
     service = _build_service(StaticSystemSkillProvider(), FailingSystemSkillProvider())
 
     response = await service.list_system_skills(
-        db=test_db,
         user_id=test_user.id,
         user_name=test_user.user_name,
         provider_key=None,
@@ -419,7 +431,6 @@ async def test_list_system_skills_applies_global_pagination_across_providers(
     service = _build_service(first_provider, second_provider)
 
     first_page = await service.list_system_skills(
-        db=test_db,
         user_id=test_user.id,
         user_name=test_user.user_name,
         provider_key=None,
@@ -429,7 +440,6 @@ async def test_list_system_skills_applies_global_pagination_across_providers(
         page_size=2,
     )
     second_page = await service.list_system_skills(
-        db=test_db,
         user_id=test_user.id,
         user_name=test_user.user_name,
         provider_key=None,
@@ -455,7 +465,6 @@ async def test_list_system_skills_ignores_matching_skill_definition_without_inst
     service = _build_service(StaticSystemSkillProvider())
 
     response = await service.list_system_skills(
-        db=test_db,
         user_id=test_user.id,
         user_name=test_user.user_name,
         provider_key="builtin",
@@ -488,7 +497,6 @@ async def test_list_system_skills_reports_token_required_provider_without_fetchi
     service = _build_service(provider)
 
     response = await service.list_system_skills(
-        db=test_db,
         user_id=test_user.id,
         user_name=test_user.user_name,
         provider_key=None,
@@ -514,7 +522,6 @@ async def test_install_system_skill_downloads_skill_and_creates_installed_state(
     service = _build_service(provider)
 
     installed = await service.install_system_skill(
-        db=test_db,
         user_id=test_user.id,
         request=SystemSkillInstallRequest(
             providerKey="builtin",

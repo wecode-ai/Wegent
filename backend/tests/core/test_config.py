@@ -212,6 +212,47 @@ class TestSettings:
         assert s.ACCESS_TOKEN_EXPIRE_MINUTES == 60
         assert s.MAX_RUNNING_TASKS_PER_USER == 5
 
+    @pytest.mark.parametrize(
+        ("web_limit", "websocket_limit", "stream_limit", "http_reserve"),
+        [
+            (0, 1, 1, 1),
+            (512, 0, 192, 64),
+            (512, 256, 0, 64),
+            (512, 256, 192, 0),
+            (512, 256, 193, 64),
+            (512, 257, 192, 64),
+        ],
+    )
+    def test_web_admission_limits_fail_fast(
+        self,
+        web_limit: int,
+        websocket_limit: int,
+        stream_limit: int,
+        http_reserve: int,
+    ) -> None:
+        with pytest.raises(ValidationError, match="WEB_MAX_"):
+            build_settings(
+                WEB_MAX_CONCURRENCY=web_limit,
+                WEB_MAX_WEBSOCKET_CONNECTIONS=websocket_limit,
+                WEB_MAX_STREAM_CONNECTIONS=stream_limit,
+                WEB_HTTP_CONCURRENCY_RESERVE=http_reserve,
+            )
+
+    def test_web_admission_reserves_ordinary_http_capacity(self) -> None:
+        configured = build_settings(
+            WEB_MAX_CONCURRENCY=400,
+            WEB_MAX_WEBSOCKET_CONNECTIONS=200,
+            WEB_MAX_STREAM_CONNECTIONS=136,
+            WEB_HTTP_CONCURRENCY_RESERVE=64,
+        )
+
+        assert (
+            configured.WEB_MAX_WEBSOCKET_CONNECTIONS
+            + configured.WEB_MAX_STREAM_CONNECTIONS
+            + configured.WEB_HTTP_CONCURRENCY_RESERVE
+            == configured.WEB_MAX_CONCURRENCY
+        )
+
     def test_rag_runtime_mode_defaults_to_local_for_all_operations(self):
         """Test RAG runtime mode defaults to local across operations."""
         s = build_settings()

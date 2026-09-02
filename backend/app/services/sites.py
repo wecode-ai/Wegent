@@ -10,6 +10,11 @@ from uuid import uuid4
 import httpx
 
 from app.core.config import settings
+from app.core.payload_codec import (
+    decode_sync_response_json,
+    decode_sync_response_text,
+    encode_http_json,
+)
 from app.schemas.site import (
     SiteAppType,
     SiteListItem,
@@ -71,13 +76,16 @@ class SitesService:
             )
         if headers:
             request_headers.update(headers)
+        request_body = await encode_http_json(json) if json is not None else None
+        if request_body is not None:
+            request_headers.setdefault("Content-Type", "application/json")
         try:
             async with httpx.AsyncClient(timeout=self._timeout_seconds) as client:
                 response = await client.request(
                     method,
                     f"{self._base_url()}{path}",
                     params=params,
-                    json=json,
+                    content=request_body,
                     headers=request_headers or None,
                 )
         except SitesNotAvailableError:
@@ -88,24 +96,25 @@ class SitesService:
         if response.is_error:
             raise SitesUpstreamResponseError(
                 response.status_code,
-                self._response_detail(response),
+                await self._response_detail(response),
             )
         if response.status_code == 204:
             return None
 
         try:
-            return response.json()
+            return await decode_sync_response_json(response)
         except ValueError as exc:
             raise SitesUpstreamUnavailableError(
                 "Sites service returned an invalid response"
             ) from exc
 
     @staticmethod
-    def _response_detail(response: httpx.Response) -> Any:
+    async def _response_detail(response: httpx.Response) -> Any:
         try:
-            payload = response.json()
+            payload = await decode_sync_response_json(response)
         except ValueError:
-            return response.text or f"Sites request failed: HTTP {response.status_code}"
+            response_text = await decode_sync_response_text(response)
+            return response_text or f"Sites request failed: HTTP {response.status_code}"
 
         if isinstance(payload, dict) and "detail" in payload:
             return payload["detail"]

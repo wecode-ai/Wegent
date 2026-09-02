@@ -74,9 +74,7 @@ class ImageAgent(PollingAgent):
         """
         from app.services.chat.storage.session import session_manager
 
-        cancel_event = await session_manager.register_stream(request.subtask_id)
         await shutdown_manager.register_stream(request.subtask_id)
-
         task_id = request.task_id
         subtask_id = request.subtask_id
         message_id = request.message_id
@@ -85,8 +83,12 @@ class ImageAgent(PollingAgent):
 
         # Generate unique block ID for image block
         image_block_id = f"image-{uuid.uuid4().hex[:8]}"
+        session_registered = False
 
         try:
+            cancel_event = await session_manager.register_stream(subtask_id)
+            session_registered = True
+
             # Emit START event
             await emitter.emit_start(
                 task_id=task_id,
@@ -309,8 +311,11 @@ class ImageAgent(PollingAgent):
             )
 
         finally:
-            await session_manager.unregister_stream(subtask_id)
-            await shutdown_manager.unregister_stream(subtask_id)
+            try:
+                if session_registered:
+                    await session_manager.unregister_stream(subtask_id)
+            finally:
+                await shutdown_manager.unregister_stream(subtask_id)
 
     def _extract_reference_images(self, request: ExecutionRequest) -> List[str]:
         """Extract reference images from request.attachments (legacy input).

@@ -24,7 +24,7 @@ from app.core.cache import cache_manager
 from app.core.config import settings
 from app.models.kind import Kind
 from app.schemas.device import DeviceConnectionMode, DeviceType
-from app.services.device.base_provider import BaseDeviceProvider
+from app.services.device.base_provider import BaseDeviceProvider, DeviceRecord
 from app.services.device.display_name import (
     resolve_device_display_name,
     set_device_display_name,
@@ -405,9 +405,29 @@ class LocalDeviceProvider(BaseDeviceProvider):
             .all()
         )
 
-        # Filter local devices and collect device IDs
+        return await self.list_device_records(
+            tuple(
+                DeviceRecord(
+                    id=device.id,
+                    name=device.name,
+                    json=device.json,
+                )
+                for device in devices
+            ),
+            user_id,
+            include_offline,
+        )
+
+    async def list_device_records(
+        self,
+        records: tuple[DeviceRecord, ...],
+        user_id: int,
+        include_offline: bool = True,
+    ) -> List[Dict[str, Any]]:
+        """Enrich detached local Device records from Redis and version state."""
+
         local_devices = []
-        for device_kind in devices:
+        for device_kind in records:
             spec = device_kind.json.get("spec", {})
             device_type = spec.get("deviceType", DeviceType.LOCAL.value)
             if device_type == self.device_type.value:

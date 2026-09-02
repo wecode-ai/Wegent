@@ -2,16 +2,23 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
+import threading
+
 import pytest
 from fastapi import status
 from fastapi.exceptions import RequestValidationError
 from pydantic import BaseModel, ValidationError
+from starlette.exceptions import HTTPException as StarletteHTTPException
 
+import app.core.exceptions as exception_module
+from app.core.bounded_executor import BoundedExecutorOverloaded
 from app.core.exceptions import (
     ConflictException,
     CustomHTTPException,
     NotFoundException,
     ValidationException,
+    executor_overload_exception_handler,
+    framework_http_exception_handler,
     http_exception_handler,
     python_exception_handler,
     validation_exception_handler,
@@ -177,6 +184,20 @@ class TestExceptionHandlers:
         assert response_body["error_code"] == status.HTTP_500_INTERNAL_SERVER_ERROR
         assert response_body["detail"] == "Internal server error"
 
+    async def test_executor_overload_exception_handler(self):
+        response = await executor_overload_exception_handler(
+            request=None,
+            exc=BoundedExecutorOverloaded("full"),
+        )
+
+        assert response.status_code == status.HTTP_503_SERVICE_UNAVAILABLE
+        assert response.headers["retry-after"] == "1"
+        response_body = eval(response.body.decode())
+        assert response_body == {
+            "error_code": status.HTTP_503_SERVICE_UNAVAILABLE,
+            "detail": "Service is temporarily overloaded",
+        }
+
     async def test_exception_handlers_return_json_response(self):
         """Test that all exception handlers return JSONResponse"""
         from fastapi.responses import JSONResponse
@@ -188,3 +209,47 @@ class TestExceptionHandlers:
         exc2 = Exception("Error")
         response2 = await python_exception_handler(None, exc2)
         assert isinstance(response2, JSONResponse)
+
+    async def test_validation_response_build_runs_off_event_loop(self, monkeypatch):
+        event_loop_thread = threading.get_ident()
+        original = exception_module._build_validation_response
+
+        def checked_build(exc):
+            assert threading.get_ident() != event_loop_thread
+            return original(exc)
+
+        monkeypatch.setattr(
+            exception_module,
+            "_build_validation_response",
+            checked_build,
+        )
+        exc = RequestValidationError(
+            errors=[
+                {
+                    "type": "missing",
+                    "loc": ("body", "name"),
+                    "msg": "Field required",
+                    "input": {},
+                }
+            ]
+        )
+
+        response = await validation_exception_handler(None, exc)
+
+        assert response.status_code == status.HTTP_422_UNPROCESSABLE_ENTITY
+
+    async def test_framework_http_exception_preserves_default_envelope_and_headers(
+        self,
+    ):
+        response = await framework_http_exception_handler(
+            None,
+            StarletteHTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Authentication required",
+                headers={"WWW-Authenticate": "Bearer"},
+            ),
+        )
+
+        assert response.status_code == status.HTTP_401_UNAUTHORIZED
+        assert response.headers["www-authenticate"] == "Bearer"
+        assert response.body == b'{"detail":"Authentication required"}'

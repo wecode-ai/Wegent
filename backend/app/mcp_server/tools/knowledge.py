@@ -20,11 +20,15 @@ Tools are declared using @mcp_tool decorator which provides:
 """
 
 import logging
+from copy import deepcopy
+from dataclasses import dataclass
 from typing import Any, Dict, Optional
 
 from pydantic import ValidationError
 from sqlalchemy.orm import Session
 
+from app.core.blocking_work import run_mcp_tool
+from app.core.payload_codec import validate_model
 from app.db.session import SessionLocal
 from app.mcp_server.auth import TaskTokenInfo
 from app.mcp_server.tools.decorator import build_mcp_tools_dict, mcp_tool
@@ -43,6 +47,108 @@ from app.services.knowledge.orchestrator import (
 from shared.models import SearchHints
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True)
+class _KnowledgeSearchPreparation:
+    user_id: int | None
+    user_name: str | None
+    document_ids: list[int] | None
+    terminal_result: Dict[str, Any] | None = None
+
+
+def _prepare_knowledge_search(
+    *,
+    token_info: TaskTokenInfo,
+    knowledge_base_id: int,
+    query: str,
+    document_ids: Optional[list[int]],
+    folder_ids: Optional[list[int]],
+    include_subfolders: bool,
+) -> _KnowledgeSearchPreparation:
+    """Resolve access and scope in a worker, returning detached primitives."""
+    db = SessionLocal()
+    try:
+        user = _get_read_user_for_knowledge_base(db, token_info, knowledge_base_id)
+        if user is None:
+            return _KnowledgeSearchPreparation(
+                user_id=None,
+                user_name=None,
+                document_ids=None,
+                terminal_result={
+                    "error": "User not found",
+                    "query": query,
+                    "chunks": [],
+                    "sources": [],
+                    "total": 0,
+                },
+            )
+
+        scope_specified = folder_ids is not None or document_ids is not None
+        resolved_document_ids = document_ids
+        if scope_specified:
+            resolved_document_ids = (
+                KnowledgeFolderService.resolve_document_ids_for_scope(
+                    db=db,
+                    knowledge_base_id=knowledge_base_id,
+                    user_id=user.id,
+                    folder_ids=folder_ids,
+                    document_ids=document_ids,
+                    include_subfolders=include_subfolders,
+                )
+            )
+            if not resolved_document_ids:
+                return _KnowledgeSearchPreparation(
+                    user_id=user.id,
+                    user_name=user.user_name,
+                    document_ids=[],
+                    terminal_result={
+                        "query": query,
+                        "chunks": [],
+                        "sources": [],
+                        "total": 0,
+                        "mode": "rag_retrieval",
+                    },
+                )
+
+        return _KnowledgeSearchPreparation(
+            user_id=user.id,
+            user_name=user.user_name,
+            document_ids=resolved_document_ids if scope_specified else None,
+        )
+    finally:
+        db.close()
+
+
+def _format_knowledge_search_result(
+    result: Dict[str, Any],
+    query: str,
+) -> Dict[str, Any]:
+    chunks = result.get("records", [])
+    sources = []
+    seen_docs = set()
+    for chunk in chunks:
+        doc_key = (chunk.get("knowledge_base_id"), chunk.get("document_id"))
+        if doc_key in seen_docs:
+            continue
+        seen_docs.add(doc_key)
+        sources.append(
+            {
+                "document_id": chunk.get("document_id"),
+                "document_name": chunk.get("document_name", "Unknown"),
+                "knowledge_base_id": chunk.get("knowledge_base_id"),
+                "knowledge_base_name": chunk.get("knowledge_base_name", "Unknown"),
+            }
+        )
+    return deepcopy(
+        {
+            "query": result.get("query", query),
+            "chunks": chunks,
+            "sources": sources,
+            "total": result.get("total", 0),
+            "mode": result.get("mode", "rag_retrieval"),
+        }
+    )
 
 
 def _get_user_from_token(db: Session, token_info: TaskTokenInfo) -> Optional[User]:
@@ -133,7 +239,7 @@ async def search_knowledge_base(
 
     if search_hints is not None:
         try:
-            search_hints = SearchHints.model_validate(search_hints)
+            search_hints = await validate_model(SearchHints, search_hints)
         except ValidationError as exc:
             return {
                 "error": f"Invalid search_hints: {exc}",
@@ -143,81 +249,32 @@ async def search_knowledge_base(
                 "total": 0,
             }
 
-    db = SessionLocal()
     try:
-        user = _get_read_user_for_knowledge_base(db, token_info, knowledge_base_id)
-        if not user:
-            return {
-                "error": "User not found",
-                "query": query,
-                "chunks": [],
-                "sources": [],
-                "total": 0,
-            }
+        preparation = await run_mcp_tool(
+            _prepare_knowledge_search,
+            token_info=token_info,
+            knowledge_base_id=knowledge_base_id,
+            query=query,
+            document_ids=document_ids,
+            folder_ids=folder_ids,
+            include_subfolders=include_subfolders,
+        )
+        if preparation.terminal_result is not None:
+            return preparation.terminal_result
 
-        scope_specified = folder_ids is not None or document_ids is not None
-        resolved_document_ids = document_ids
-        if scope_specified:
-            resolved_document_ids = (
-                KnowledgeFolderService.resolve_document_ids_for_scope(
-                    db=db,
-                    knowledge_base_id=knowledge_base_id,
-                    user_id=user.id,
-                    folder_ids=folder_ids,
-                    document_ids=document_ids,
-                    include_subfolders=include_subfolders,
-                )
-            )
-            if not resolved_document_ids:
-                return {
-                    "query": query,
-                    "chunks": [],
-                    "sources": [],
-                    "total": 0,
-                    "mode": "rag_retrieval",
-                }
-
-        result = await knowledge_orchestrator.retrieve_knowledge(
-            db=db,
-            user=user,
+        if preparation.user_id is None:
+            raise RuntimeError("Knowledge search preparation did not resolve a user")
+        result = await knowledge_orchestrator.retrieve_knowledge_for_user(
+            user_id=preparation.user_id,
+            user_name=preparation.user_name,
             knowledge_base_id=knowledge_base_id,
             query=query,
             search_hints=search_hints,
             max_results=max_results,
-            document_ids=resolved_document_ids if scope_specified else None,
+            document_ids=preparation.document_ids,
             route_mode="rag_retrieval",
         )
-
-        # Convert retrieve_knowledge format to MCP expected format
-        # retrieve_knowledge returns: records, total, mode, query, knowledge_base_id, total_estimated_tokens
-        # MCP expects: chunks, sources, total, mode, query
-        chunks = result.get("records", [])
-
-        # Build sources from chunks
-        sources = []
-        seen_docs = set()
-        for chunk in chunks:
-            doc_key = (chunk.get("knowledge_base_id"), chunk.get("document_id"))
-            if doc_key not in seen_docs:
-                seen_docs.add(doc_key)
-                sources.append(
-                    {
-                        "document_id": chunk.get("document_id"),
-                        "document_name": chunk.get("document_name", "Unknown"),
-                        "knowledge_base_id": chunk.get("knowledge_base_id"),
-                        "knowledge_base_name": chunk.get(
-                            "knowledge_base_name", "Unknown"
-                        ),
-                    }
-                )
-
-        return {
-            "query": result.get("query", query),
-            "chunks": chunks,
-            "sources": sources,
-            "total": result.get("total", 0),
-            "mode": result.get("mode", "rag_retrieval"),
-        }
+        return await run_mcp_tool(_format_knowledge_search_result, result, query)
 
     except ValueError as e:
         logger.warning(f"[MCP] search_knowledge_base validation error: {e}")
@@ -238,9 +295,6 @@ async def search_knowledge_base(
             "sources": [],
             "total": 0,
         }
-
-    finally:
-        db.close()
 
 
 @mcp_tool(

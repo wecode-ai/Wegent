@@ -17,8 +17,10 @@ import requests
 from fastapi import HTTPException
 from requests.auth import HTTPBasicAuth, HTTPDigestAuth
 
+from app.core.blocking_work import run_repository_io
 from app.core.cache import cache_manager
 from app.core.config import settings
+from app.core.payload_codec import run_payload_codec
 from app.models.user import User
 from app.repository.interfaces.repository_provider import RepositoryProvider
 from app.schemas.github import Branch, Repository
@@ -123,6 +125,20 @@ class GerritProvider(RepositoryProvider):
             return response_text[4:]
         return response_text
 
+    def _decode_json_response(self, response: requests.Response) -> Any:
+        response_text = self._strip_xssi_prefix(response.text)
+        if not response_text:
+            return None
+        return requests.models.complexjson.loads(response_text)
+
+    async def _decode_json_response_async(self, response: requests.Response) -> Any:
+        return await run_payload_codec(
+            self._decode_json_response,
+            response,
+            payload_hint=response.content,
+            force_offload=True,
+        )
+
     def _make_request(
         self,
         method: str,
@@ -212,7 +228,7 @@ class GerritProvider(RepositoryProvider):
 
         headers = {"Accept": "application/json", "Content-Type": "application/json"}
 
-        response = await asyncio.to_thread(
+        response = await run_repository_io(
             requests.request,
             method,
             url,
@@ -284,7 +300,7 @@ class GerritProvider(RepositoryProvider):
             try:
                 # Gerrit API: List projects
                 # GET /projects/?d to list all projects with descriptions
-                response = self._make_request(
+                response = await self._make_request_async(
                     method="GET",
                     url=f"{api_base_url}/projects/",
                     username=user_name,
@@ -293,13 +309,7 @@ class GerritProvider(RepositoryProvider):
                     params={"d": ""},  # Include descriptions
                 )
 
-                # Parse response and strip XSSI prefix
-                response_text = self._strip_xssi_prefix(response.text)
-                projects = (
-                    requests.models.complexjson.loads(response_text)
-                    if response_text
-                    else {}
-                )
+                projects = await self._decode_json_response_async(response) or {}
 
                 # Convert Gerrit projects to standard format
                 repos = []
@@ -398,7 +408,7 @@ class GerritProvider(RepositoryProvider):
 
             # Get branches from Gerrit API
             # GET /projects/{project-name}/branches/
-            response = self._make_request(
+            response = await self._make_request_async(
                 method="GET",
                 url=f"{api_base_url}/projects/{encoded_project}/branches/",
                 username=user_name,
@@ -406,17 +416,16 @@ class GerritProvider(RepositoryProvider):
                 auth_type=auth_type,
             )
 
-            # Parse response and strip XSSI prefix
-            response_text = self._strip_xssi_prefix(response.text)
-            branches_data = (
-                requests.models.complexjson.loads(response_text)
-                if response_text
-                else []
-            )
+            branches_data = await self._decode_json_response_async(response) or []
 
             # Get default branch (HEAD ref)
-            default_branch_name = self._get_default_branch(
-                repo_name, git_domain, user_name, git_token, auth_type
+            default_branch_name = await run_repository_io(
+                self._get_default_branch,
+                repo_name,
+                git_domain,
+                user_name,
+                git_token,
+                auth_type,
             )
 
             branches = []
@@ -760,13 +769,7 @@ class GerritProvider(RepositoryProvider):
                 params={"d": ""},  # Include descriptions
             )
 
-            # Parse response and strip XSSI prefix
-            response_text = self._strip_xssi_prefix(response.text)
-            projects = (
-                requests.models.complexjson.loads(response_text)
-                if response_text
-                else {}
-            )
+            projects = await self._decode_json_response_async(response) or {}
 
             # Convert to standard format
             all_repos = []
@@ -974,7 +977,7 @@ class GerritProvider(RepositoryProvider):
             if topic:
                 change_input["topic"] = topic
 
-            response = self._make_request(
+            response = await self._make_request_async(
                 method="POST",
                 url=f"{api_base_url}/changes/",
                 username=user_name,
@@ -983,13 +986,7 @@ class GerritProvider(RepositoryProvider):
                 json_data=change_input,
             )
 
-            # Parse response and strip XSSI prefix
-            response_text = self._strip_xssi_prefix(response.text)
-            change_data = (
-                requests.models.complexjson.loads(response_text)
-                if response_text
-                else {}
-            )
+            change_data = await self._decode_json_response_async(response) or {}
 
             return {
                 "id": change_data.get("id", ""),

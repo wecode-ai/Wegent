@@ -8,9 +8,12 @@ from typing import List, Optional
 import httpx
 from sqlalchemy.orm import Session
 
+from app.core.bounded_executor import BoundedExecutorOverloaded
+from app.core.payload_codec import run_payload_codec
 from app.schemas.installed_mcp import InstalledMCPServerConfig, MCPInstallCatalogItem
 from app.schemas.mcp_providers import MCPProviderInfo, MCPServer
 from app.schemas.user import UserPreferences
+from app.services.chat.storage.db import get_db_session, run_sync_in_executor
 from app.services.installed_mcp_service import installed_mcp_service
 from app.services.mcp_providers.core.registry import MCPProviderRegistry
 from app.services.mcp_providers.security import decrypt_mcp_provider_key
@@ -82,7 +85,6 @@ class MCPProviderService:
         provider_key: str,
         preferences: Optional[UserPreferences],
         user_name: Optional[str] = None,
-        db: Optional[Session] = None,
         user_id: Optional[int] = None,
     ) -> tuple[bool, str, List[MCPServer], Optional[str]]:
         """Sync MCP servers from a provider"""
@@ -107,7 +109,12 @@ class MCPProviderService:
 
             # Decrypt the token
             try:
-                token = decrypt_mcp_provider_key(raw_value)
+                token = await run_payload_codec(
+                    decrypt_mcp_provider_key,
+                    raw_value,
+                    payload_hint=raw_value,
+                    force_offload=True,
+                )
             except ValueError:
                 return (
                     False,
@@ -175,14 +182,16 @@ class MCPProviderService:
                 provider_key,
                 len(servers),
             )
-            if db is not None and user_id is not None:
-                servers = MCPProviderService.apply_install_state_to_servers(
-                    db=db,
-                    user_id=user_id,
-                    provider_key=provider_key,
-                    servers=servers,
+            if user_id is not None:
+                servers = await run_sync_in_executor(
+                    MCPProviderService._apply_install_state_for_user,
+                    user_id,
+                    provider_key,
+                    servers,
                 )
             return True, f"Successfully synced {len(servers)} servers", servers, None
+        except BoundedExecutorOverloaded:
+            raise
         except httpx.ProxyError as e:
             MCPProviderService.logger.warning(
                 "Syncing MCP servers proxy error: provider_key=%s proxy_env_present=%s error=%s",
@@ -236,6 +245,21 @@ class MCPProviderService:
                 error_details,
             )
             return False, "Failed to sync servers", [], error_details
+
+    @staticmethod
+    def _apply_install_state_for_user(
+        user_id: int,
+        provider_key: str,
+        servers: List[MCPServer],
+    ) -> List[MCPServer]:
+        """Merge install state in a DB worker with a worker-owned session."""
+        with get_db_session() as db:
+            return MCPProviderService.apply_install_state_to_servers(
+                db=db,
+                user_id=user_id,
+                provider_key=provider_key,
+                servers=servers,
+            )
 
     @staticmethod
     def apply_install_state_to_servers(

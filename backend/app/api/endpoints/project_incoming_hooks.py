@@ -7,6 +7,7 @@ from fastapi import APIRouter, Depends, Request, status
 from sqlalchemy.orm import Session
 
 from app.api.dependencies import get_db
+from app.core.payload_codec import validate_model
 from app.core.security import get_current_user
 from app.models.delivery import ProjectIncomingHook
 from app.models.user import User
@@ -113,13 +114,12 @@ def rotate_incoming_hook(
 async def receive_project_incoming_hook(
     token: str,
     request: Request,
-    db: Session = Depends(get_db),
 ) -> ProjectIncomingReceipt:
-    result = await project_incoming_hook_service.receive(
-        db,
+    raw_body = await request.body()
+    result = await project_incoming_hook_service.receive_nonblocking(
         token,
-        await request.body(),
+        raw_body,
         request.headers.get("content-type", ""),
-        request.headers,
+        dict(request.headers),
     )
-    return ProjectIncomingReceipt.model_validate(result)
+    return await validate_model(ProjectIncomingReceipt, result)

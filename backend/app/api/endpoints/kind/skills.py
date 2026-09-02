@@ -10,8 +10,8 @@ import hashlib
 import io
 import json
 import logging
-import zipfile
-from typing import Any, Dict, List, Optional
+from functools import partial
+from typing import Any, BinaryIO, Dict, List, Optional
 from urllib.parse import quote
 
 from fastapi import (
@@ -35,6 +35,8 @@ logger = logging.getLogger(__name__)
 
 from app.api.dependencies import get_db
 from app.core import security
+from app.core.bounded_executor import BoundedExecutor
+from app.db import session as db_session
 from app.models.kind import Kind
 from app.models.user import User
 from app.schemas.kind import (
@@ -62,8 +64,20 @@ from app.services.group_permission import check_group_permission
 from app.services.marketplace_tag_service import marketplace_tag_service
 from app.services.resource_library_service import resource_library_service
 from app.services.skill_binding_service import skill_binding_service
+from app.services.skill_service import SkillValidator
 
 router = APIRouter(prefix="/kinds/skills")
+
+SKILL_UPLOAD_CHUNK_SIZE = 1024 * 1024
+SKILL_UPLOAD_FILENAME_MAX_LENGTH = 255
+SKILL_RESOURCE_NAME_MAX_LENGTH = 100
+MARKETPLACE_TAGS_JSON_MAX_LENGTH = 4096
+_SKILL_UPLOAD_EXECUTOR = BoundedExecutor(
+    max_workers=2,
+    max_in_flight=2,
+    max_waiters=4,
+    thread_name_prefix="wegent-skill-upload",
+)
 
 
 class GroupSkillBindingBatchRequest(BaseModel):
@@ -263,6 +277,212 @@ def _resolve_manageable_skill(
     )
 
 
+def _skill_upload_source(file: UploadFile) -> tuple[str, BinaryIO]:
+    """Validate cheap multipart metadata before bounded worker admission."""
+    filename = file.filename or ""
+    if not filename.endswith(".zip"):
+        raise HTTPException(status_code=400, detail="File must be a ZIP package (.zip)")
+    if len(filename) > SKILL_UPLOAD_FILENAME_MAX_LENGTH:
+        raise HTTPException(status_code=400, detail="ZIP filename is too long")
+    if file.size is not None and file.size > SkillValidator.MAX_SIZE:
+        raise HTTPException(status_code=413, detail="Skill package is too large")
+    return filename, file.file
+
+
+def _read_skill_upload_limited(file_object: BinaryIO) -> bytes:
+    """Read one spooled Skill archive without crossing its compressed-size limit."""
+    binary_data = bytearray()
+    file_object.seek(0)
+    while True:
+        remaining = SkillValidator.MAX_SIZE - len(binary_data)
+        chunk = file_object.read(min(SKILL_UPLOAD_CHUNK_SIZE, remaining + 1))
+        if not chunk:
+            return bytes(binary_data)
+        if len(chunk) > remaining:
+            raise HTTPException(status_code=413, detail="Skill package is too large")
+        binary_data.extend(chunk)
+
+
+def _load_upload_user(db: Session, user_id: int, *, require_admin: bool) -> User:
+    user = db.query(User).filter(User.id == user_id, User.is_active.is_(True)).first()
+    if user is None:
+        raise HTTPException(status_code=401, detail="Could not validate credentials")
+    if require_admin and user.role != "admin":
+        raise HTTPException(status_code=403, detail="Admin access required")
+    return user
+
+
+def _create_skill_upload_sync(
+    file_object: BinaryIO,
+    *,
+    filename: str,
+    name: str,
+    namespace: str,
+    user_id: int,
+) -> Skill:
+    file_content = _read_skill_upload_limited(file_object)
+    with db_session.SessionLocal() as db:
+        _load_upload_user(db, user_id, require_admin=False)
+        return skill_kinds_service.create_skill(
+            db=db,
+            name=name.strip(),
+            namespace=namespace,
+            file_content=file_content,
+            file_name=filename,
+            user_id=user_id,
+        )
+
+
+def _create_public_skill_upload_sync(
+    file_object: BinaryIO,
+    *,
+    filename: str,
+    name: str,
+    marketplace_tags: str,
+    user_id: int,
+) -> Dict[str, Any]:
+    file_content = _read_skill_upload_limited(file_object)
+    if len(marketplace_tags) > MARKETPLACE_TAGS_JSON_MAX_LENGTH:
+        raise HTTPException(
+            status_code=400, detail="Marketplace tags JSON is too large"
+        )
+    try:
+        parsed_marketplace_tags = json.loads(marketplace_tags)
+    except json.JSONDecodeError as exc:
+        raise HTTPException(
+            status_code=400,
+            detail="Marketplace tags must be a JSON array",
+        ) from exc
+    if not isinstance(parsed_marketplace_tags, list) or not all(
+        isinstance(tag, str) for tag in parsed_marketplace_tags
+    ):
+        raise HTTPException(
+            status_code=400,
+            detail="Marketplace tags must be a JSON array of strings",
+        )
+
+    with db_session.SessionLocal() as db:
+        current_user = _load_upload_user(db, user_id, require_admin=True)
+        validated_marketplace_tags = marketplace_tag_service.validate_resource_tags(
+            db,
+            parsed_marketplace_tags,
+            require_nonempty=True,
+        )
+        skill = skill_kinds_service.create_skill(
+            db=db,
+            name=name.strip(),
+            namespace="default",
+            file_content=file_content,
+            file_name=filename,
+            user_id=0,
+            add_to_user_default=False,
+        )
+        skill_id = int(skill.metadata.labels.get("id", 0))
+        resource_library_service.update_publication(
+            db,
+            listing_id=skill_id,
+            request=ResourceLibraryPublicationUpdateRequest(
+                tags=validated_marketplace_tags,
+            ),
+            current_user=current_user,
+        )
+        response = public_skill_service.get_skill_by_id(db, skill_id=skill_id)
+        if response is None:
+            raise RuntimeError("Created public Skill could not be reloaded")
+        return response
+
+
+def _public_skill_response(skill: Skill) -> Dict[str, Any]:
+    return {
+        "id": int(skill.metadata.labels.get("id", 0)),
+        "name": skill.metadata.name,
+        "namespace": skill.metadata.namespace,
+        "description": skill.spec.description,
+        "prompt": skill.spec.prompt,
+        "version": skill.spec.version,
+        "author": skill.spec.author,
+        "tags": skill.spec.tags,
+        "bindShells": skill.spec.bindShells,
+        "is_active": True,
+        "is_public": True,
+        "created_at": None,
+        "updated_at": None,
+    }
+
+
+def _update_public_skill_upload_sync(
+    file_object: BinaryIO,
+    *,
+    filename: str,
+    skill_id: int,
+    user_id: int,
+) -> Dict[str, Any]:
+    file_content = _read_skill_upload_limited(file_object)
+    with db_session.SessionLocal() as db:
+        _load_upload_user(db, user_id, require_admin=True)
+        existing_skill = (
+            db.query(Kind)
+            .filter(
+                Kind.id == skill_id,
+                Kind.user_id == 0,
+                Kind.kind == "Skill",
+                Kind.is_active.is_(True),
+            )
+            .first()
+        )
+        if existing_skill is None:
+            raise HTTPException(status_code=404, detail="Public skill not found")
+        skill = skill_kinds_service.update_skill(
+            db=db,
+            skill_id=skill_id,
+            user_id=0,
+            file_content=file_content,
+            file_name=filename,
+        )
+        return _public_skill_response(skill)
+
+
+def _update_skill_upload_sync(
+    file_object: BinaryIO,
+    *,
+    filename: str,
+    skill_id: int,
+    user_id: int,
+) -> Skill:
+    file_content = _read_skill_upload_limited(file_object)
+    with db_session.SessionLocal() as db:
+        current_user = _load_upload_user(db, user_id, require_admin=False)
+        skill_kind = _resolve_manageable_skill(
+            db=db,
+            skill_id=skill_id,
+            current_user=current_user,
+            action="update",
+        )
+        return skill_kinds_service.update_skill(
+            db=db,
+            skill_id=skill_id,
+            user_id=skill_kind.user_id,
+            file_content=file_content,
+            file_name=filename,
+        )
+
+
+def _delete_skill_sync(skill_id: int, user_id: int) -> None:
+    with db_session.SessionLocal() as db:
+        current_user = _load_upload_user(db, user_id, require_admin=False)
+        skill_kind = _resolve_manageable_skill(
+            db=db,
+            skill_id=skill_id,
+            current_user=current_user,
+            action="delete",
+        )
+        skill_kinds_service.delete_skill(
+            db=db,
+            skill_id=skill_id,
+            user_id=skill_kind.user_id,
+        )
+
+
 # Request/Response schemas for new endpoints
 class PublicSkillCreate(BaseModel):
     """Schema for creating a public skill"""
@@ -376,10 +596,19 @@ class SkillReferencesResponse(BaseModel):
 @router.post("/upload", response_model=Skill, status_code=201)
 async def upload_skill(
     file: UploadFile = File(..., description="Skill ZIP package (max 10MB)"),
-    name: str = Form(..., description="Skill name (unique)"),
-    namespace: str = Form("default", description="Namespace"),
+    name: str = Form(
+        ...,
+        min_length=1,
+        max_length=SKILL_RESOURCE_NAME_MAX_LENGTH,
+        description="Skill name",
+    ),
+    namespace: str = Form(
+        "default",
+        min_length=1,
+        max_length=SKILL_RESOURCE_NAME_MAX_LENGTH,
+        description="Namespace",
+    ),
     current_user: User = Depends(_get_current_user_or_skill_identity),
-    db: Session = Depends(get_db),
 ):
     """
     Upload and create a new Skill.
@@ -407,24 +636,20 @@ async def upload_skill(
     - Skill folder name must match the ZIP file name (without .zip extension)
     - SKILL.md must be located inside the skill folder
     """
-    # Validate file type
-    if not file.filename.endswith(".zip"):
-        raise HTTPException(status_code=400, detail="File must be a ZIP package (.zip)")
-
-    # Read file content
-    file_content = await file.read()
-
-    # Create skill using service
-    skill = skill_kinds_service.create_skill(
-        db=db,
-        name=name.strip(),
-        namespace=namespace,
-        file_content=file_content,
-        file_name=file.filename,
-        user_id=current_user.id,
+    filename, file_object = _skill_upload_source(file)
+    del file
+    user_id = int(current_user.id)
+    del current_user
+    return await _SKILL_UPLOAD_EXECUTOR.run(
+        partial(
+            _create_skill_upload_sync,
+            file_object,
+            filename=filename,
+            name=name,
+            namespace=namespace,
+            user_id=user_id,
+        )
     )
-
-    return skill
 
 
 @router.get("", response_model=SkillList)
@@ -812,10 +1037,18 @@ def delete_public_skill(
 @router.post("/public/upload", response_model=Dict[str, Any], status_code=201)
 async def upload_public_skill(
     file: UploadFile = File(..., description="Skill ZIP package (max 10MB)"),
-    name: str = Form(..., description="Skill name (unique)"),
-    marketplace_tags: str = Form("[]", description="JSON array of marketplace tag IDs"),
+    name: str = Form(
+        ...,
+        min_length=1,
+        max_length=SKILL_RESOURCE_NAME_MAX_LENGTH,
+        description="Skill name",
+    ),
+    marketplace_tags: str = Form(
+        "[]",
+        max_length=MARKETPLACE_TAGS_JSON_MAX_LENGTH,
+        description="JSON array of marketplace tag IDs",
+    ),
     current_user: User = Depends(security.get_admin_user),
-    db: Session = Depends(get_db),
 ):
     """
     Upload and create a new public Skill ZIP package (admin only).
@@ -839,54 +1072,20 @@ async def upload_public_skill(
     ---
     ```
     """
-    # Validate file type
-    if not file.filename.endswith(".zip"):
-        raise HTTPException(status_code=400, detail="File must be a ZIP package (.zip)")
-
-    try:
-        parsed_marketplace_tags = json.loads(marketplace_tags)
-    except json.JSONDecodeError as exc:
-        raise HTTPException(
-            status_code=400,
-            detail="Marketplace tags must be a JSON array",
-        ) from exc
-    if not isinstance(parsed_marketplace_tags, list) or not all(
-        isinstance(tag, str) for tag in parsed_marketplace_tags
-    ):
-        raise HTTPException(
-            status_code=400,
-            detail="Marketplace tags must be a JSON array of strings",
+    filename, file_object = _skill_upload_source(file)
+    del file
+    user_id = int(current_user.id)
+    del current_user
+    return await _SKILL_UPLOAD_EXECUTOR.run(
+        partial(
+            _create_public_skill_upload_sync,
+            file_object,
+            filename=filename,
+            name=name,
+            marketplace_tags=marketplace_tags,
+            user_id=user_id,
         )
-    validated_marketplace_tags = marketplace_tag_service.validate_resource_tags(
-        db,
-        parsed_marketplace_tags,
-        require_nonempty=True,
     )
-
-    # Read file content
-    file_content = await file.read()
-
-    # Create public skill using service with user_id=0
-    skill = skill_kinds_service.create_skill(
-        db=db,
-        name=name.strip(),
-        namespace="default",
-        file_content=file_content,
-        file_name=file.filename,
-        user_id=0,  # Public skill
-        add_to_user_default=False,
-    )
-
-    skill_id = int(skill.metadata.labels.get("id", 0))
-    resource_library_service.update_publication(
-        db,
-        listing_id=skill_id,
-        request=ResourceLibraryPublicationUpdateRequest(
-            tags=validated_marketplace_tags,
-        ),
-        current_user=current_user,
-    )
-    return public_skill_service.get_skill_by_id(db, skill_id=skill_id)
 
 
 @router.put("/public/{skill_id}/upload", response_model=Dict[str, Any])
@@ -894,7 +1093,6 @@ async def update_public_skill_with_upload(
     skill_id: int,
     file: UploadFile = File(..., description="New Skill ZIP package (max 10MB)"),
     current_user: User = Depends(security.get_admin_user),
-    db: Session = Depends(get_db),
 ):
     """
     Update a public Skill by uploading a new ZIP package (admin only).
@@ -910,53 +1108,19 @@ async def update_public_skill_with_upload(
 
     The Skill name and namespace cannot be changed.
     """
-    # Verify this is a public skill (user_id=0)
-    existing_skill = (
-        db.query(Kind)
-        .filter(
-            Kind.id == skill_id,
-            Kind.user_id == 0,
-            Kind.kind == "Skill",
-            Kind.is_active == True,  # noqa: E712
+    filename, file_object = _skill_upload_source(file)
+    del file
+    user_id = int(current_user.id)
+    del current_user
+    return await _SKILL_UPLOAD_EXECUTOR.run(
+        partial(
+            _update_public_skill_upload_sync,
+            file_object,
+            filename=filename,
+            skill_id=skill_id,
+            user_id=user_id,
         )
-        .first()
     )
-
-    if not existing_skill:
-        raise HTTPException(status_code=404, detail="Public skill not found")
-
-    # Validate file type
-    if not file.filename.endswith(".zip"):
-        raise HTTPException(status_code=400, detail="File must be a ZIP package (.zip)")
-
-    # Read file content
-    file_content = await file.read()
-
-    # Update public skill using service with user_id=0
-    skill = skill_kinds_service.update_skill(
-        db=db,
-        skill_id=skill_id,
-        user_id=0,  # Public skill
-        file_content=file_content,
-        file_name=file.filename,
-    )
-
-    # Convert to dict format for consistency with other public skill endpoints
-    return {
-        "id": int(skill.metadata.labels.get("id", 0)),
-        "name": skill.metadata.name,
-        "namespace": skill.metadata.namespace,
-        "description": skill.spec.description,
-        "prompt": skill.spec.prompt,
-        "version": skill.spec.version,
-        "author": skill.spec.author,
-        "tags": skill.spec.tags,
-        "bindShells": skill.spec.bindShells,
-        "is_active": True,
-        "is_public": True,
-        "created_at": None,
-        "updated_at": None,
-    }
 
 
 @router.get("/public/{skill_id}/download")
@@ -1046,33 +1210,8 @@ def get_public_skill_content(
     if not binary_data:
         raise HTTPException(status_code=404, detail="Public skill binary not found")
 
-    # Extract SKILL.md content from ZIP
     try:
-        with zipfile.ZipFile(io.BytesIO(binary_data), "r") as zip_file:
-            # Find SKILL.md file
-            skill_md_content = None
-            for file_info in zip_file.filelist:
-                # Skip directory entries
-                if file_info.filename.endswith("/"):
-                    continue
-                # Check if this is SKILL.md (in format: skill-folder/SKILL.md)
-                if file_info.filename.endswith("SKILL.md"):
-                    path_parts = file_info.filename.split("/")
-                    # SKILL.md must be in a subdirectory (skill-folder/SKILL.md)
-                    if len(path_parts) == 2:
-                        with zip_file.open(file_info) as f:
-                            skill_md_content = f.read().decode("utf-8", errors="ignore")
-                        break
-
-            if not skill_md_content:
-                raise HTTPException(
-                    status_code=404, detail="SKILL.md not found in skill package"
-                )
-
-            return {"content": skill_md_content}
-
-    except zipfile.BadZipFile:
-        raise HTTPException(status_code=400, detail="Corrupted ZIP file")
+        return {"content": SkillValidator.extract_skill_markdown(binary_data)}
     except HTTPException:
         raise
     except Exception as e:
@@ -1908,7 +2047,6 @@ async def update_skill(
     skill_id: int,
     file: UploadFile = File(..., description="New Skill ZIP package (max 10MB)"),
     current_user: User = Depends(_get_current_user_or_skill_identity),
-    db: Session = Depends(get_db),
 ):
     """
     Update Skill by uploading a new ZIP package.
@@ -1923,37 +2061,25 @@ async def update_skill(
 
     The Skill name and namespace cannot be changed.
     """
-    # Validate file type
-    if not file.filename.endswith(".zip"):
-        raise HTTPException(status_code=400, detail="File must be a ZIP package (.zip)")
-
-    # Read file content
-    file_content = await file.read()
-
-    # Update skill
-    skill_kind = _resolve_manageable_skill(
-        db=db,
-        skill_id=skill_id,
-        current_user=current_user,
-        action="update",
+    filename, file_object = _skill_upload_source(file)
+    del file
+    user_id = int(current_user.id)
+    del current_user
+    return await _SKILL_UPLOAD_EXECUTOR.run(
+        partial(
+            _update_skill_upload_sync,
+            file_object,
+            filename=filename,
+            skill_id=skill_id,
+            user_id=user_id,
+        )
     )
-
-    skill = skill_kinds_service.update_skill(
-        db=db,
-        skill_id=skill_id,
-        user_id=skill_kind.user_id,
-        file_content=file_content,
-        file_name=file.filename,
-    )
-
-    return skill
 
 
 @router.delete("/{skill_id}", status_code=204)
 def delete_skill(
     skill_id: int,
     current_user: User = Depends(security.get_current_user),
-    db: Session = Depends(get_db),
 ):
     """
     Delete Skill.
@@ -1965,15 +2091,5 @@ def delete_skill(
 
     Returns 400 error if the Skill is referenced by any Ghost.
     """
-    skill_kind = _resolve_manageable_skill(
-        db=db,
-        skill_id=skill_id,
-        current_user=current_user,
-        action="delete",
-    )
-
-    # Use the original user_id for deletion to bypass the service-level check
-    skill_kinds_service.delete_skill(
-        db=db, skill_id=skill_id, user_id=skill_kind.user_id
-    )
+    _delete_skill_sync(skill_id, int(current_user.id))
     return None

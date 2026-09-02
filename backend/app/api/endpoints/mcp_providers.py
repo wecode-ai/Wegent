@@ -11,6 +11,7 @@ from sqlalchemy.orm import Session
 
 from app.api.dependencies import get_db
 from app.core import security
+from app.core.payload_codec import run_payload_codec
 from app.schemas.mcp_providers import (
     MCPProviderKeysRequest,
     MCPProviderKeysResponse,
@@ -31,8 +32,18 @@ router = APIRouter(tags=["mcp-providers"])
 logger = setup_logger("api.mcp_providers")
 
 
+def _mcp_tool_infos(raw_tools: list) -> list[MCPToolInfo]:
+    return [
+        MCPToolInfo(
+            name=getattr(tool, "name", ""),
+            description=getattr(tool, "description", ""),
+        )
+        for tool in raw_tools
+    ]
+
+
 @router.get("", response_model=MCPProviderListResponse)
-async def list_mcp_providers(
+def list_mcp_providers(
     current_user: UserInDB = Depends(security.get_current_user),
 ) -> MCPProviderListResponse:
     """List all available MCP providers"""
@@ -78,13 +89,12 @@ async def test_mcp_connection(
     try:
         config = {request.server_name: server_config}
         raw_tools = await asyncio.wait_for(_connect_and_get_tools(config), timeout=15)
-        tools = [
-            MCPToolInfo(
-                name=getattr(tool, "name", ""),
-                description=getattr(tool, "description", ""),
-            )
-            for tool in raw_tools
-        ]
+        tools = await run_payload_codec(
+            _mcp_tool_infos,
+            raw_tools,
+            payload_hint=raw_tools,
+            force_offload=True,
+        )
         return MCPTestResponse(success=True, tools=tools)
     except asyncio.TimeoutError:
         return MCPTestResponse(success=False, error="Connection timed out (15s)")
@@ -95,12 +105,16 @@ async def test_mcp_connection(
 @router.post("/{provider_key}/servers", response_model=MCPServerListResponse)
 async def get_provider_servers(
     provider_key: str,
-    db: Session = Depends(get_db),
     current_user: UserInDB = Depends(security.get_current_user),
 ) -> MCPServerListResponse:
     """Get MCP servers from a specific provider"""
     # Parse preferences from JSON string
-    parsed_prefs = _parse_user_preferences(current_user.preferences)
+    parsed_prefs = await run_payload_codec(
+        _parse_user_preferences,
+        current_user.preferences,
+        payload_hint=current_user.preferences,
+        force_offload=True,
+    )
 
     logger.info(
         "Syncing MCP servers requested: provider_key=%s user_id=%s",
@@ -111,7 +125,6 @@ async def get_provider_servers(
         provider_key=provider_key,
         preferences=parsed_prefs,
         user_name=current_user.user_name,
-        db=db,
         user_id=current_user.id,
     )
     logger.info(
@@ -132,7 +145,7 @@ async def get_provider_servers(
 
 
 @router.put("/keys", response_model=MCPProviderKeysResponse)
-async def update_mcp_provider_keys(
+def update_mcp_provider_keys(
     keys: MCPProviderKeysRequest,
     db: Session = Depends(get_db),
     current_user: UserInDB = Depends(security.get_current_user),

@@ -7,6 +7,7 @@ import logging
 import secrets
 import time
 import uuid
+from dataclasses import dataclass
 
 import jwt  # pip install pyjwt
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -17,7 +18,9 @@ from sqlalchemy.orm import Session
 from app.api.dependencies import get_db
 from app.core.cache import cache_manager
 from app.core.config import settings
+from app.core.payload_codec import run_payload_codec
 from app.core.security import create_access_token
+from app.db.session import SessionLocal
 from app.models.user import User
 from app.schemas.user import (
     CLILoginInitRequest,
@@ -26,10 +29,8 @@ from app.schemas.user import (
     LoginResponse,
     UserAuthTypeResponse,
 )
-from app.services.k_batch import (
-    apply_default_resources_async,
-    apply_default_resources_sync,
-)
+from app.services.chat.storage.db import run_sync_in_executor
+from app.services.k_batch import apply_default_resources_sync
 from app.services.oidc import oidc_service
 
 logger = logging.getLogger(__name__)
@@ -73,6 +74,88 @@ def _build_frontend_url(path: str, frontend_base_path: str | None = None) -> str
     return f"{base_url}{app_base_path}{normalized_path}"
 
 
+def _encode_state(payload: dict) -> str:
+    """Sign one OIDC state payload outside the serving event loop."""
+    return jwt.encode(payload, STATE_JWT_SECRET, algorithm="HS256")
+
+
+def _decode_state(state: str) -> dict:
+    """Authenticate one OIDC state payload outside the serving event loop."""
+    return jwt.decode(state, STATE_JWT_SECRET, algorithms=["HS256"])
+
+
+@dataclass(frozen=True)
+class _OIDCUserAuth:
+    """Detached identity and token returned by the database worker."""
+
+    user_id: int
+    user_name: str
+    access_token: str
+
+
+def _upsert_oidc_user(user_name: str, email: str, source: str) -> _OIDCUserAuth:
+    """Persist one OIDC identity in a worker-owned session."""
+    from app.core import security
+
+    created = False
+    with SessionLocal() as db:
+        user = db.scalar(select(User).where(User.user_name == user_name))
+        if user is None:
+            user = User(
+                user_name=user_name,
+                email=email,
+                is_active=True,
+                password_hash=security.get_password_hash(str(uuid.uuid4())),
+                git_info=[],
+                auth_source="oidc",
+            )
+            db.add(user)
+            created = True
+        else:
+            if user.email != email:
+                user.email = email
+            if user.auth_source == "unknown":
+                user.auth_source = "oidc"
+
+        db.commit()
+        db.refresh(user)
+        if not user.is_active:
+            logger.warning(
+                "OIDC user is inactive: source=%s user_id=%s user_name=%s",
+                source,
+                user.id,
+                user.user_name,
+            )
+            raise RuntimeError("User not active")
+
+        user_id = int(user.id)
+        persisted_user_name = str(user.user_name)
+
+    if created:
+        apply_default_resources_sync(user_id)
+        logger.info(
+            "Created OIDC user: source=%s user_id=%s user_name=%s",
+            source,
+            user_id,
+            persisted_user_name,
+        )
+    else:
+        logger.info(
+            "Found OIDC user: source=%s user_id=%s user_name=%s",
+            source,
+            user_id,
+            persisted_user_name,
+        )
+
+    return _OIDCUserAuth(
+        user_id=user_id,
+        user_name=persisted_user_name,
+        access_token=create_access_token(
+            data={"sub": persisted_user_name, "user_id": user_id}
+        ),
+    )
+
+
 @router.get("/login")
 async def oidc_login(
     redirect: str = Query(None, description="Optional redirect URL after login"),
@@ -97,7 +180,12 @@ async def oidc_login(
             "redirect": redirect,  # Store redirect URL in state
             "frontend_base_path": _normalize_frontend_base_path(frontend_base_path),
         }
-        state = jwt.encode(payload, STATE_JWT_SECRET, algorithm="HS256")
+        state = await run_payload_codec(
+            _encode_state,
+            payload,
+            payload_hint=payload,
+            force_offload=True,
+        )
         auth_url = await oidc_service.get_authorization_url(state, nonce)
 
         logger.info(
@@ -118,7 +206,6 @@ async def oidc_callback(
     code: str = Query(..., description="Authorization code"),
     state: str = Query(..., description="State parameter"),
     error: str = Query(None, description="Error information"),
-    db: Session = Depends(get_db),
 ):
     """
     OpenID Connect callback handler
@@ -136,7 +223,12 @@ async def oidc_callback(
     redirect_after_login = None
     frontend_base_path = None
     try:
-        payload = jwt.decode(state, STATE_JWT_SECRET, algorithms=["HS256"])
+        payload = await run_payload_codec(
+            _decode_state,
+            state,
+            payload_hint=state,
+            force_offload=True,
+        )
         nonce = payload["nonce"]
         redirect_after_login = payload.get("redirect")
         frontend_base_path = payload.get("frontend_base_path")
@@ -188,59 +280,25 @@ async def oidc_callback(
         # Find or create user
         user_name = email.split("@")[0] if "@" in email else user_id
 
-        user = db.scalar(select(User).where(User.user_name == user_name))
-
-        if not user:
-            from app.core import security
-
-            user = User(
-                user_name=user_name,
-                email=email,
-                is_active=True,
-                password_hash=security.get_password_hash(str(uuid.uuid4())),
-                git_info=[],
-                auth_source="oidc",
-            )
-            db.add(user)
-            db.commit()
-            db.refresh(user)
-            logger.info(
-                f"Created new OIDC user: user_id={user.id}, user_name={user.user_name}"
-            )
-
-            # Apply default resources synchronously for new OIDC users
-            apply_default_resources_sync(user.id)
-        else:
-            if user.email != email:
-                user.email = email
-            # Update auth_source if it was unknown
-            if user.auth_source == "unknown":
-                user.auth_source = "oidc"
-            db.commit()
-            db.refresh(user)
-            logger.info(
-                f"Found existing OIDC user: user_id={user.id}, user_name={user.user_name}"
-            )
-
-        if not user.is_active:
-            logger.warning(
-                f"User not active: user_id={user.id}, user_name={user.user_name}"
-            )
-            raise Exception("User not active")
-
-        jwt_token = create_access_token(
-            data={"sub": user.user_name, "user_id": user.id}
+        authenticated = await run_sync_in_executor(
+            _upsert_oidc_user,
+            user_name,
+            email,
+            "browser",
         )
 
         logger.info(
-            f"OIDC login success: user_id={user.id}, user_name={user.user_name}"
+            "OIDC login success: user_id=%s user_name=%s",
+            authenticated.user_id,
+            authenticated.user_name,
         )
 
         # Build redirect URL with optional redirect parameter
         from urllib.parse import quote
 
         redirect_url = _build_frontend_url(
-            f"/login/oidc?access_token={jwt_token}&token_type=bearer&login_success=true",
+            "/login/oidc?access_token="
+            f"{authenticated.access_token}&token_type=bearer&login_success=true",
             frontend_base_path,
         )
         if redirect_after_login:
@@ -276,7 +334,7 @@ async def get_oidc_metadata():
 
 
 @router.get("/user-auth-type", response_model=UserAuthTypeResponse)
-async def get_user_auth_type(
+def get_user_auth_type(
     username: str = Query(..., description="Username to query"),
     db: Session = Depends(get_db),
 ):
@@ -328,7 +386,12 @@ async def cli_oidc_login_init(request: CLILoginInitRequest):
             "exp": now + STATE_EXPIRE_TIME,
             "cli_session_id": session_id,
         }
-        state = jwt.encode(payload, STATE_JWT_SECRET, algorithm="HS256")
+        state = await run_payload_codec(
+            _encode_state,
+            payload,
+            payload_hint=payload,
+            force_offload=True,
+        )
         auth_url = await oidc_service.get_authorization_url_for_cli(state, nonce)
 
         logger.info(f"CLI OIDC login initialized: session_id={session_id}")
@@ -346,7 +409,6 @@ async def cli_oidc_callback(
     code: str = Query(..., description="Authorization code"),
     state: str = Query(..., description="State parameter"),
     error: str = Query(None, description="Error information"),
-    db: Session = Depends(get_db),
 ):
     """
     CLI OIDC callback handler.
@@ -355,7 +417,12 @@ async def cli_oidc_callback(
     """
     # Decode state to get session_id
     try:
-        payload = jwt.decode(state, STATE_JWT_SECRET, algorithms=["HS256"])
+        payload = await run_payload_codec(
+            _decode_state,
+            state,
+            payload_hint=state,
+            force_offload=True,
+        )
         nonce = payload["nonce"]
         session_id = payload.get("cli_session_id")
         now = int(time.time())
@@ -412,39 +479,11 @@ async def cli_oidc_callback(
 
         # Find or create user
         user_name = email.split("@")[0] if "@" in email else user_id
-        user = db.scalar(select(User).where(User.user_name == user_name))
-
-        if not user:
-            from app.core import security
-
-            user = User(
-                user_name=user_name,
-                email=email,
-                is_active=True,
-                password_hash=security.get_password_hash(str(uuid.uuid4())),
-                git_info=[],
-                auth_source="oidc",
-            )
-            db.add(user)
-            db.commit()
-            db.refresh(user)
-            logger.info(f"Created new OIDC user via CLI: user_name={user.user_name}")
-
-            # Apply default resources synchronously for new CLI OIDC users
-            apply_default_resources_sync(user.id)
-        else:
-            if user.email != email:
-                user.email = email
-            if user.auth_source == "unknown":
-                user.auth_source = "oidc"
-            db.commit()
-            db.refresh(user)
-
-        if not user.is_active:
-            raise Exception("User not active")
-
-        jwt_token = create_access_token(
-            data={"sub": user.user_name, "user_id": user.id}
+        authenticated = await run_sync_in_executor(
+            _upsert_oidc_user,
+            user_name,
+            email,
+            "cli",
         )
 
         # Store token in Redis session
@@ -452,13 +491,13 @@ async def cli_oidc_callback(
             session_key,
             {
                 "status": "success",
-                "access_token": jwt_token,
-                "username": user.user_name,
+                "access_token": authenticated.access_token,
+                "username": authenticated.user_name,
             },
             expire=CLI_SESSION_EXPIRE_SECONDS,
         )
 
-        logger.info(f"CLI OIDC login success: user_name={user.user_name}")
+        logger.info("CLI OIDC login success: user_name=%s", authenticated.user_name)
         return _cli_callback_success_page()
 
     except Exception as e:

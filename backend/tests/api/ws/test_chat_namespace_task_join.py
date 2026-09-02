@@ -53,17 +53,17 @@ async def test_task_join_replays_cached_context_metrics_for_active_stream() -> N
             "app.api.ws.chat_namespace.get_active_streaming",
             AsyncMock(return_value={"subtask_id": 55}),
         ),
-        patch(
-            "app.api.ws.chat_namespace.session_manager.get_streaming_content",
-            AsyncMock(return_value="hello"),
-        ),
-        patch(
-            "app.api.ws.chat_namespace.session_manager.get_blocks",
-            AsyncMock(return_value=[]),
-        ),
-        patch(
-            "app.api.ws.chat_namespace.session_manager.get_context_metrics",
-            AsyncMock(return_value=cached_metrics),
+        patch.object(
+            chat_namespace.web_stream_worker_client,
+            "execute",
+            AsyncMock(
+                return_value={
+                    "content": "hello",
+                    "cursor": 5,
+                    "blocks": [],
+                    "context_metrics": cached_metrics,
+                }
+            ),
         ),
     ):
         result = await namespace.on_task_join(

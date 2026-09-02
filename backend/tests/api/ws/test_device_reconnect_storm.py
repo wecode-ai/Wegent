@@ -8,8 +8,18 @@ from unittest.mock import AsyncMock
 import pytest
 
 from app.api.ws import device_namespace
-from app.api.ws.device_namespace import DeviceNamespace
+from app.api.ws.device_namespace import DeviceNamespace, DeviceRegistrationFingerprint
+from app.core.web_background_tasks import WebBackgroundTaskManager
 from app.schemas.device import DeviceType
+
+
+@pytest.fixture(autouse=True)
+async def background_manager(monkeypatch):
+    manager = WebBackgroundTaskManager(max_concurrency=4, max_outstanding=16)
+    monkeypatch.setattr(device_namespace, "web_background_task_manager", manager)
+    manager.start()
+    yield manager
+    await manager.shutdown()
 
 
 @pytest.mark.asyncio
@@ -434,6 +444,40 @@ def test_connection_rate_limit_tracks_attempt_window():
 
     reset_at = 100.0 + device_namespace.DEVICE_CONNECT_RATE_LIMIT_WINDOW_SECONDS + 0.1
     assert namespace._is_connection_rate_limited(key, now=reset_at) is False
+
+
+def test_connection_rate_limit_key_map_is_strictly_bounded(monkeypatch):
+    namespace = DeviceNamespace()
+    monkeypatch.setattr(device_namespace, "DEVICE_CONNECT_RATE_LIMIT_MAX_KEYS", 2)
+
+    assert namespace._is_connection_rate_limited("ip:first", now=100.0) is False
+    assert namespace._is_connection_rate_limited("ip:second", now=100.0) is False
+    assert namespace._is_connection_rate_limited("ip:third", now=100.0) is False
+
+    assert tuple(namespace._connection_attempts) == ("ip:second", "ip:third")
+
+
+def test_registration_debounce_key_map_is_strictly_bounded(monkeypatch):
+    namespace = DeviceNamespace()
+    fingerprint = DeviceRegistrationFingerprint(
+        display_name="Device",
+        client_ip="127.0.0.1",
+        device_type=DeviceType.LOCAL.value,
+        bind_shell="claudecode",
+        runtime_transfer_host="",
+        runtime_instance_id="",
+        app_device_id="",
+    )
+    monkeypatch.setattr(device_namespace, "DEVICE_REGISTER_DEBOUNCE_MAX_KEYS", 2)
+
+    namespace._remember_registration(1, "first", fingerprint, "First")
+    namespace._remember_registration(1, "second", fingerprint, "Second")
+    namespace._remember_registration(1, "third", fingerprint, "Third")
+
+    assert tuple(namespace._recent_registrations) == (
+        (1, "second"),
+        (1, "third"),
+    )
 
 
 @pytest.mark.asyncio

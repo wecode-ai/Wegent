@@ -102,7 +102,7 @@ async def test_quick_launch_returns_system_functions_and_favorite_agents(monkeyp
         "get_team_by_id",
         fake_get_team_by_id,
     )
-    response = await users_endpoint.get_user_quick_launch(
+    response = users_endpoint.get_user_quick_launch(
         db=db,
         current_user=current_user,
     )
@@ -235,7 +235,7 @@ async def test_prepare_quick_launch_preset_copies_source_attachments(monkeypatch
         fake_copy_attachment_for_user,
     )
 
-    response = await users_endpoint.prepare_quick_launch_preset(
+    response = users_endpoint.prepare_quick_launch_preset(
         request=QuickLaunchPreparePresetRequest(
             function_id="create_ppt",
             preset_id="roadmap",

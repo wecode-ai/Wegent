@@ -11,7 +11,8 @@ from pydantic import ValidationError
 from app.api.endpoints.internal.rag import (
     InternalRetrieveRequest,
     KnowledgeBaseScopePayload,
-    _execute_scoped_retrieve,
+    _execute_prepared_internal_retrieve,
+    _prepare_internal_retrieve,
     _validate_document_ids_against_scopes,
 )
 
@@ -78,7 +79,7 @@ def test_internal_retrieve_request_accepts_search_hints() -> None:
 
 
 @pytest.mark.asyncio
-async def test_execute_scoped_retrieve_empty_restricted_scope_returns_empty_total():
+async def test_prepared_scoped_retrieve_empty_scope_returns_empty_total():
     request = InternalRetrieveRequest(
         query="q",
         knowledge_base_scopes=[
@@ -90,14 +91,10 @@ async def test_execute_scoped_retrieve_empty_restricted_scope_returns_empty_tota
         ],
     )
 
-    result = await _execute_scoped_retrieve(
-        request=request,
-        db=MagicMock(),
-        scopes=request.knowledge_base_scopes,
-        resolved_document_ids=[],
-        runtime_context=None,
-        restricted_mode=False,
-        persistence_context=None,
+    prepared = _prepare_internal_retrieve(MagicMock(), request)
+    result = await _execute_prepared_internal_retrieve(
+        prepared,
+        request.max_results,
     )
 
     assert result["records"] == []
@@ -109,7 +106,7 @@ async def test_execute_scoped_retrieve_empty_restricted_scope_returns_empty_tota
 
 
 @pytest.mark.asyncio
-async def test_execute_scoped_retrieve_includes_total_for_scoped_results(monkeypatch):
+async def test_prepared_scoped_retrieve_includes_total_for_results(monkeypatch):
     request = InternalRetrieveRequest(
         query="q",
         max_results=2,
@@ -128,7 +125,7 @@ async def test_execute_scoped_retrieve_includes_total_for_scoped_results(monkeyp
         assert kwargs["scope"].document_ids == [101]
         return runtime_spec
 
-    async def mock_execute_query_with_remote_fallback(spec, db):
+    async def mock_execute_query_with_remote_fallback(spec):
         assert spec is runtime_spec
         return {
             "mode": "rag_retrieval",
@@ -145,14 +142,10 @@ async def test_execute_scoped_retrieve_includes_total_for_scoped_results(monkeyp
         mock_execute_query_with_remote_fallback,
     )
 
-    result = await _execute_scoped_retrieve(
-        request=request,
-        db=MagicMock(),
-        scopes=request.knowledge_base_scopes,
-        resolved_document_ids=[],
-        runtime_context=None,
-        restricted_mode=False,
-        persistence_context=None,
+    prepared = _prepare_internal_retrieve(MagicMock(), request)
+    result = await _execute_prepared_internal_retrieve(
+        prepared,
+        request.max_results,
     )
 
     assert result["total"] == 1
@@ -160,7 +153,7 @@ async def test_execute_scoped_retrieve_includes_total_for_scoped_results(monkeyp
 
 
 @pytest.mark.asyncio
-async def test_execute_scoped_retrieve_uses_no_scope_for_unrestricted_kb(monkeypatch):
+async def test_prepared_scoped_retrieve_uses_no_scope_for_unrestricted_kb(monkeypatch):
     request = InternalRetrieveRequest(
         query="q",
         max_results=2,
@@ -178,7 +171,7 @@ async def test_execute_scoped_retrieve_uses_no_scope_for_unrestricted_kb(monkeyp
         assert kwargs["scope"] is None
         return runtime_spec
 
-    async def mock_execute_query_with_remote_fallback(spec, db):
+    async def mock_execute_query_with_remote_fallback(spec):
         assert spec is runtime_spec
         return {
             "mode": "rag_retrieval",
@@ -195,14 +188,10 @@ async def test_execute_scoped_retrieve_uses_no_scope_for_unrestricted_kb(monkeyp
         mock_execute_query_with_remote_fallback,
     )
 
-    result = await _execute_scoped_retrieve(
-        request=request,
-        db=MagicMock(),
-        scopes=request.knowledge_base_scopes,
-        resolved_document_ids=[],
-        runtime_context=None,
-        restricted_mode=False,
-        persistence_context=None,
+    prepared = _prepare_internal_retrieve(MagicMock(), request)
+    result = await _execute_prepared_internal_retrieve(
+        prepared,
+        request.max_results,
     )
 
     assert result["total"] == 0

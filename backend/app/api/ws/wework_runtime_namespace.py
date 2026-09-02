@@ -6,6 +6,7 @@
 
 import logging
 import uuid
+from dataclasses import dataclass
 from typing import Any, Optional
 
 import socketio
@@ -14,8 +15,10 @@ from pydantic import ValidationError
 from socketio.exceptions import ConnectionRefusedError
 
 from app.api.ws.connection_utils import enter_connect_room, save_connect_session
+from app.api.ws.context_decorators import websocket_validation_error_message
 from app.api.ws.decorators import trace_websocket_event
 from app.core.config import settings
+from app.core.payload_codec import dump_model, run_payload_codec
 from app.schemas.project_chat import (
     ProjectChatAgentFailure,
     ProjectChatAgentStart,
@@ -44,7 +47,7 @@ from app.services.device.runtime_route import (
 )
 from app.services.device.runtime_rpc_service import (
     RuntimeRpcError,
-    encode_runtime_rpc_response,
+    encode_runtime_rpc_response_nonblocking,
     runtime_rpc_service,
 )
 from app.services.project_chat.service import project_chat_service
@@ -74,6 +77,14 @@ RUNTIME_EXECUTION_REQUEST_KEYS = (
     "friendlyTitleExecutionRequest",
     "friendly_title_execution_request",
 )
+
+
+@dataclass(frozen=True)
+class _AuthenticatedRuntimeUser:
+    user_id: int
+    user_name: str
+    user_email: str
+    token_exp: int | None
 
 
 def wework_runtime_user_room(user_id: int) -> str:
@@ -175,7 +186,7 @@ class WeworkRuntimeNamespace(socketio.AsyncNamespace):
             logger.warning("[Wework Runtime WS] Missing token in auth sid=%s", sid)
             raise ConnectionRefusedError("Missing authentication token")
 
-        user = verify_jwt_token(token)
+        user = await run_sync_in_executor(_authenticate_runtime_token, token)
         if not user:
             logger.warning("[Wework Runtime WS] Invalid JWT token sid=%s", sid)
             raise ConnectionRefusedError("Invalid or expired token")
@@ -184,25 +195,29 @@ class WeworkRuntimeNamespace(socketio.AsyncNamespace):
             self,
             sid,
             session_data={
-                "user_id": user.id,
+                "user_id": user.user_id,
                 "user_name": user.user_name,
-                "user_email": user.email or "",
+                "user_email": user.user_email,
                 "request_id": request_id,
-                "token_exp": get_token_expiry(token),
+                "token_exp": user.token_exp,
                 "auth_token": token,
             },
             logger=logger,
             log_prefix="[Wework Runtime WS]",
         )
-        set_user_context(user_id=str(user.id), user_name=user.user_name)
+        set_user_context(user_id=str(user.user_id), user_name=user.user_name)
         await enter_connect_room(
             self,
             sid,
-            wework_runtime_user_room(user.id),
+            wework_runtime_user_room(user.user_id),
             logger=logger,
             log_prefix="[Wework Runtime WS]",
         )
-        logger.info("[Wework Runtime WS] Connected user=%s sid=%s", user.id, sid)
+        logger.info(
+            "[Wework Runtime WS] Connected user=%s sid=%s",
+            user.user_id,
+            sid,
+        )
 
     async def on_runtime_request(self, sid: str, data: dict) -> dict:
         """Relay one app IPC-style runtime request to an online executor."""
@@ -277,7 +292,10 @@ class WeworkRuntimeNamespace(socketio.AsyncNamespace):
                 details=error["details"],
             )
         try:
-            result = encode_runtime_rpc_response(result, method=method)
+            result = await encode_runtime_rpc_response_nonblocking(
+                result,
+                method=method,
+            )
         except RuntimeRpcError as exc:
             return ipc_error(
                 data,
@@ -296,14 +314,14 @@ class WeworkRuntimeNamespace(socketio.AsyncNamespace):
         if identity is None:
             return project_chat_error("UNAUTHENTICATED", "Not authenticated")
         try:
-            request = ProjectChatSubscribe.model_validate(project_chat_payload(data))
+            request = await validate_project_chat_payload(ProjectChatSubscribe, data)
             messages = await run_sync_in_executor(
                 _subscribe_project_chat_sync,
                 int(identity["user_id"]),
                 request,
             )
         except (ValidationError, HTTPException) as exc:
-            return project_chat_exception_ack(exc)
+            return await project_chat_exception_ack(exc, data)
 
         room = project_chat_room(request.project_id, request.task_id)
         await self.enter_room(sid, room)
@@ -324,9 +342,9 @@ class WeworkRuntimeNamespace(socketio.AsyncNamespace):
         """Leave one project chat or task-thread room."""
 
         try:
-            request = ProjectChatSubscribe.model_validate(project_chat_payload(data))
+            request = await validate_project_chat_payload(ProjectChatSubscribe, data)
         except ValidationError as exc:
-            return project_chat_exception_ack(exc)
+            return await project_chat_exception_ack(exc, data)
         await self.leave_room(
             sid, project_chat_room(request.project_id, request.task_id)
         )
@@ -339,7 +357,7 @@ class WeworkRuntimeNamespace(socketio.AsyncNamespace):
         if identity is None:
             return project_chat_error("UNAUTHENTICATED", "Not authenticated")
         try:
-            request = ProjectChatSend.model_validate(project_chat_payload(data))
+            request = await validate_project_chat_payload(ProjectChatSend, data)
             result = await run_sync_in_executor(
                 _send_project_chat_sync,
                 int(identity["user_id"]),
@@ -347,7 +365,7 @@ class WeworkRuntimeNamespace(socketio.AsyncNamespace):
                 request,
             )
         except (ValidationError, HTTPException) as exc:
-            return project_chat_exception_ack(exc)
+            return await project_chat_exception_ack(exc, data)
 
         if result["created"]:
             message = result["message"]
@@ -376,14 +394,14 @@ class WeworkRuntimeNamespace(socketio.AsyncNamespace):
         if identity is None:
             return project_chat_error("UNAUTHENTICATED", "Not authenticated")
         try:
-            request = ProjectChatAgentStart.model_validate(project_chat_payload(data))
+            request = await validate_project_chat_payload(ProjectChatAgentStart, data)
             message = await run_sync_in_executor(
                 _start_project_chat_agent_sync,
                 int(identity["user_id"]),
                 request,
             )
         except (ValidationError, HTTPException) as exc:
-            return project_chat_exception_ack(exc)
+            return await project_chat_exception_ack(exc, data)
         await emit_project_chat_message(self, message)
         return {"ok": True, "result": message}
 
@@ -394,14 +412,14 @@ class WeworkRuntimeNamespace(socketio.AsyncNamespace):
         if identity is None:
             return project_chat_error("UNAUTHENTICATED", "Not authenticated")
         try:
-            request = ProjectChatAgentFailure.model_validate(project_chat_payload(data))
+            request = await validate_project_chat_payload(ProjectChatAgentFailure, data)
             message = await run_sync_in_executor(
                 _fail_project_chat_agent_sync,
                 int(identity["user_id"]),
                 request,
             )
         except (ValidationError, HTTPException) as exc:
-            return project_chat_exception_ack(exc)
+            return await project_chat_exception_ack(exc, data)
         await emit_project_chat_message(self, message)
         return {"ok": True, "result": message}
 
@@ -412,8 +430,9 @@ class WeworkRuntimeNamespace(socketio.AsyncNamespace):
         if identity is None:
             return project_chat_error("UNAUTHENTICATED", "Not authenticated")
         try:
-            request = ProjectChatAutomationManagerContinuation.model_validate(
-                project_chat_payload(data)
+            request = await validate_project_chat_payload(
+                ProjectChatAutomationManagerContinuation,
+                data,
             )
             message = await run_sync_in_executor(
                 _start_project_chat_manager_continuation_sync,
@@ -421,7 +440,7 @@ class WeworkRuntimeNamespace(socketio.AsyncNamespace):
                 request,
             )
         except (ValidationError, HTTPException) as exc:
-            return project_chat_exception_ack(exc)
+            return await project_chat_exception_ack(exc, data)
         await emit_project_chat_message(self, message)
         return {"ok": True, "result": message}
 
@@ -432,22 +451,21 @@ class WeworkRuntimeNamespace(socketio.AsyncNamespace):
         if identity is None:
             return project_chat_error("UNAUTHENTICATED", "Not authenticated")
         try:
-            request = ProjectChatWegentContinuation.model_validate(
-                project_chat_payload(data)
+            request = await validate_project_chat_payload(
+                ProjectChatWegentContinuation,
+                data,
             )
             from app.services.board_team_continuation import (
                 board_team_continuation_service,
             )
 
-            with get_db_session() as db:
-                result = await board_team_continuation_service.start(
-                    db,
-                    user_id=int(identity["user_id"]),
-                    request=request,
-                )
-                message = result.message.model_dump(mode="json", by_alias=True)
+            result = await board_team_continuation_service.start_nonblocking(
+                user_id=int(identity["user_id"]),
+                request=request,
+            )
+            message = await dump_model(result.message, mode="json", by_alias=True)
         except (ValidationError, HTTPException) as exc:
-            return project_chat_exception_ack(exc)
+            return await project_chat_exception_ack(exc, data)
         if result.created:
             await emit_project_chat_message(self, message)
         return {"ok": True, "result": message}
@@ -612,6 +630,30 @@ def project_chat_payload(data: Any) -> dict[str, Any]:
     return payload
 
 
+def _validate_project_chat_payload(
+    payload_class: type,
+    data: Any,
+) -> Any:
+    """Normalize and validate one Wework chat payload in a codec worker."""
+
+    return payload_class.model_validate(project_chat_payload(data))
+
+
+async def validate_project_chat_payload(
+    payload_class: type,
+    data: Any,
+) -> Any:
+    """Keep Wework chat normalization and Pydantic work off the Web loop."""
+
+    return await run_payload_codec(
+        _validate_project_chat_payload,
+        payload_class,
+        data,
+        payload_hint=data,
+        force_offload=True,
+    )
+
+
 def project_chat_room(project_id: str, task_id: str | None) -> str:
     if task_id:
         return f"{PROJECT_CHAT_TASK_ROOM_PREFIX}{project_id}:{task_id}"
@@ -634,15 +676,31 @@ def project_chat_error(code: str, message: str) -> dict[str, Any]:
     return {"ok": False, "error": {"code": code, "message": message}}
 
 
-def project_chat_exception_ack(exc: ValidationError | HTTPException) -> dict[str, Any]:
+async def project_chat_exception_ack(
+    exc: ValidationError | HTTPException,
+    data: Any,
+) -> dict[str, Any]:
     if isinstance(exc, ValidationError):
-        return project_chat_error("INVALID_MESSAGE", str(exc))
+        message = await websocket_validation_error_message(exc, data)
+        return project_chat_error("INVALID_MESSAGE", message)
     code = {
         403: "SCOPE_FORBIDDEN",
         404: "SCOPE_NOT_FOUND",
         409: "MESSAGE_CONFLICT",
     }.get(exc.status_code, "INVALID_MESSAGE")
     return project_chat_error(code, str(exc.detail))
+
+
+def _authenticate_runtime_token(token: str) -> _AuthenticatedRuntimeUser | None:
+    user = verify_jwt_token(token)
+    if not user:
+        return None
+    return _AuthenticatedRuntimeUser(
+        user_id=user.id,
+        user_name=user.user_name,
+        user_email=user.email or "",
+        token_exp=get_token_expiry(token),
+    )
 
 
 def _subscribe_project_chat_sync(

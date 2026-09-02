@@ -54,17 +54,19 @@ async def test_fetch_all_servers_posts_mcprouter_pagination_body() -> None:
     assert requests[0].url.query == b""
 
 
-def test_check_response_accepts_mcprouter_zero_code() -> None:
+@pytest.mark.anyio
+async def test_check_response_accepts_mcprouter_zero_code() -> None:
     client = MCPProviderHTTPClient(MCPROUTER_CONFIG)
     response = httpx.Response(
         200,
         json={"code": 0, "message": "ok", "data": {"servers": []}},
     )
 
-    assert client._check_response(response)["code"] == 0
+    assert (await client._check_response(response))["code"] == 0
 
 
-def test_check_response_rejects_mcprouter_nonzero_code() -> None:
+@pytest.mark.anyio
+async def test_check_response_rejects_mcprouter_nonzero_code() -> None:
     client = MCPProviderHTTPClient(MCPROUTER_CONFIG)
     response = httpx.Response(
         200,
@@ -72,7 +74,7 @@ def test_check_response_rejects_mcprouter_nonzero_code() -> None:
     )
 
     with pytest.raises(HTTPClientError) as exc_info:
-        client._check_response(response)
+        await client._check_response(response)
 
     assert exc_info.value.code == "api_error"
     assert exc_info.value.message == "Invalid request"

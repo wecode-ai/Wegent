@@ -8,13 +8,48 @@ Additional decorators for WebSocket event handlers to reduce code intrusion.
 
 import logging
 from functools import wraps
-from typing import Callable, Optional, Type
+from typing import Any, Callable, Optional, Type, TypeVar
 
 from pydantic import ValidationError
 
+from app.core.payload_codec import run_payload_codec
 from shared.telemetry.context import set_task_context
 
 logger = logging.getLogger(__name__)
+
+PayloadT = TypeVar("PayloadT")
+
+
+async def validate_websocket_payload(
+    payload_class: Type[PayloadT],
+    data: Any,
+) -> PayloadT:
+    """Validate one bounded Socket.IO payload outside the Uvicorn event loop."""
+
+    return await run_payload_codec(
+        payload_class.model_validate,
+        data,
+        payload_hint=data,
+        force_offload=True,
+    )
+
+
+async def websocket_validation_error_message(
+    error: ValidationError,
+    data: Any,
+) -> str:
+    """Render validation details without scanning attacker input on the loop."""
+
+    return await run_payload_codec(
+        _format_validation_error,
+        error,
+        payload_hint=data,
+        force_offload=True,
+    )
+
+
+def _format_validation_error(error: ValidationError) -> str:
+    return f"Invalid payload: {error}"
 
 
 def auto_task_context(
@@ -78,10 +113,10 @@ def auto_task_context(
         async def wrapper(self, sid: str, data: dict):
             # Validate payload
             try:
-                payload = payload_class(**data)
+                payload = await validate_websocket_payload(payload_class, data)
             except ValidationError as e:
-                error_msg = f"Invalid payload: {e}"
-                logger.error(f"[WS] {func.__name__} validation error: {e}")
+                error_msg = await websocket_validation_error_message(e, data)
+                logger.error("[WS] %s validation error: %s", func.__name__, error_msg)
                 return {"error": error_msg}
 
             # Extract and set task context
@@ -151,10 +186,10 @@ def auto_payload_validation(payload_class: Type):
         async def wrapper(self, sid: str, data: dict):
             # Validate payload
             try:
-                payload = payload_class(**data)
+                payload = await validate_websocket_payload(payload_class, data)
             except ValidationError as e:
-                error_msg = f"Invalid payload: {e}"
-                logger.error(f"[WS] {func.__name__} validation error: {e}")
+                error_msg = await websocket_validation_error_message(e, data)
+                logger.error("[WS] %s validation error: %s", func.__name__, error_msg)
                 return {"error": error_msg}
 
             # Call original function with validated payload

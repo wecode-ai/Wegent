@@ -4,6 +4,7 @@
 
 from unittest.mock import ANY, AsyncMock, MagicMock, patch
 
+from app.core.bounded_executor import BoundedExecutorOverloaded
 from app.services.rag.remote_gateway import RemoteRagGatewayError
 from app.services.rag.runtime_specs import (
     DropKnowledgeIndexRuntimeSpec,
@@ -14,6 +15,31 @@ from app.services.rag.runtime_specs import (
 
 def _auth_header(token: str) -> dict[str, str]:
     return {"Authorization": f"Bearer {token}"}
+
+
+def test_public_rag_executor_overload_returns_503(test_client, test_token: str):
+    payload = {
+        "query": "release checklist",
+        "knowledge_id": "7",
+        "retriever_ref": {"name": "retriever-a", "namespace": "default"},
+        "embedding_model_ref": {
+            "model_name": "embed-a",
+            "model_namespace": "default",
+        },
+    }
+
+    with patch(
+        "app.api.endpoints.rag.run_knowledge_db_phase",
+        new_callable=AsyncMock,
+        side_effect=BoundedExecutorOverloaded("full"),
+    ):
+        response = test_client.post(
+            "/api/rag/retrieve",
+            headers=_auth_header(test_token),
+            json=payload,
+        )
+
+    assert response.status_code == 503
 
 
 def test_public_rag_retrieve_uses_gateway_runtime_spec(
@@ -120,7 +146,7 @@ def test_public_rag_retrieve_uses_gateway_runtime_spec(
         metadata_condition=payload["metadata_condition"],
     )
     mock_get_gateway.assert_called_once()
-    gateway.query.assert_awaited_once_with(runtime_spec, db=ANY)
+    gateway.query.assert_awaited_once_with(runtime_spec)
 
 
 def test_public_rag_chunks_returns_paginated_index_chunks(
@@ -195,7 +221,7 @@ def test_public_rag_chunks_returns_paginated_index_chunks(
         query="list_index_chunks",
     )
     mock_get_gateway.assert_called_once()
-    gateway.list_chunks.assert_awaited_once_with(runtime_spec, db=ANY)
+    gateway.list_chunks.assert_awaited_once_with(runtime_spec)
 
 
 def test_public_rag_index_contents_delete_routes_runtime_spec(
@@ -246,7 +272,7 @@ def test_public_rag_index_contents_delete_routes_runtime_spec(
         user_name=ANY,
     )
     mock_get_gateway.assert_called_once()
-    gateway.purge_knowledge_index.assert_awaited_once_with(runtime_spec, db=ANY)
+    gateway.purge_knowledge_index.assert_awaited_once_with(runtime_spec)
 
 
 def test_public_rag_index_delete_routes_runtime_spec(
@@ -297,7 +323,7 @@ def test_public_rag_index_delete_routes_runtime_spec(
         user_name=ANY,
     )
     mock_get_gateway.assert_called_once()
-    gateway.drop_knowledge_index.assert_awaited_once_with(runtime_spec, db=ANY)
+    gateway.drop_knowledge_index.assert_awaited_once_with(runtime_spec)
 
 
 def test_public_rag_index_delete_returns_conflict_for_shared_strategy(

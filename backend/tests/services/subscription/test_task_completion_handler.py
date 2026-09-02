@@ -1,3 +1,5 @@
+import asyncio
+import threading
 from contextlib import contextmanager
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -8,6 +10,11 @@ from app.schemas.subscription import (
     BackgroundExecutionStatus,
     SubscriptionExecutionTargetType,
 )
+
+
+async def _wait_for_thread(started: threading.Event) -> None:
+    while not started.is_set():
+        await asyncio.sleep(0)
 
 
 @pytest.mark.asyncio
@@ -49,6 +56,7 @@ async def test_completed_managed_subscription_deletes_executor_immediately():
     subtask_query = MagicMock()
     subtask_query.filter.return_value = subtask_query
     subtask_query.all.return_value = [subtask]
+    subtask_query.first.return_value = subtask
 
     db = MagicMock()
 
@@ -167,6 +175,7 @@ async def test_auto_delete_task_without_background_execution_deletes_executor():
     subtask_query = MagicMock()
     subtask_query.filter.return_value = subtask_query
     subtask_query.all.return_value = [subtask]
+    subtask_query.first.return_value = subtask
 
     db = MagicMock()
 
@@ -325,6 +334,7 @@ async def test_completed_subscription_deletes_executor_without_managed_target():
     subtask_query = MagicMock()
     subtask_query.filter.return_value = subtask_query
     subtask_query.all.return_value = [subtask]
+    subtask_query.first.return_value = subtask
 
     db = MagicMock()
 
@@ -447,6 +457,9 @@ async def test_completed_subscription_deletes_sandbox_runtime_immediately():
                 return []
             return list(self._items)
 
+        def first(self):
+            return self._items[0] if self._items else None
+
     db = MagicMock()
 
     def query_side_effect(model):
@@ -516,3 +529,47 @@ async def test_completed_subscription_deletes_sandbox_runtime_immediately():
     executor_service.delete_executor_task_async.assert_not_awaited()
     assert subtask.executor_deleted_at is True
     db.commit.assert_called()
+
+
+@pytest.mark.asyncio
+async def test_task_completion_database_phase_does_not_block_event_loop():
+    """Slow synchronous completion storage must run outside the Uvicorn loop."""
+    from app.core.events import TaskCompletedEvent
+    from app.services.subscription.task_completion_handler import (
+        SubscriptionTaskCompletionHandler,
+        _TaskCompletionPlan,
+    )
+
+    handler = SubscriptionTaskCompletionHandler()
+    started = threading.Event()
+    release = threading.Event()
+
+    def blocking_prepare(_event):
+        started.set()
+        release.wait()
+        return _TaskCompletionPlan()
+
+    event = TaskCompletedEvent(
+        task_id=44,
+        subtask_id=33,
+        user_id=1,
+        status="COMPLETED",
+        result={"value": "done"},
+        error=None,
+    )
+    safety_release = threading.Timer(2, release.set)
+    safety_release.start()
+    try:
+        with patch.object(
+            handler,
+            "_prepare_task_completion_sync",
+            side_effect=blocking_prepare,
+        ):
+            completion = asyncio.create_task(handler.on_task_completed(event))
+            await asyncio.wait_for(_wait_for_thread(started), timeout=0.5)
+            assert not completion.done()
+            release.set()
+            await completion
+    finally:
+        release.set()
+        safety_release.cancel()

@@ -13,6 +13,7 @@ from sqlalchemy.orm import Session
 
 from app.api.dependencies import get_db
 from app.core import security
+from app.core.payload_codec import dump_model
 from app.models.user import User
 from app.schemas.knowledge import (
     KnowledgeDocumentListResponse,
@@ -77,7 +78,6 @@ def get_table_document(
 async def query_table(
     request: dict,
     current_user: User = Depends(security.get_current_user),
-    db: Session = Depends(get_db),
 ):
     """
     Query table data.
@@ -116,7 +116,7 @@ async def query_table(
         service = DataTableService()
         result = await service.query_table(query_request)
 
-        return result.model_dump()
+        return await dump_model(result)
 
     except Exception as e:
         logger.error(f"[query_table] Error: {e}", exc_info=True)
@@ -130,7 +130,6 @@ async def query_table(
 async def validate_table_url(
     data: TableUrlValidationRequest,
     current_user: User = Depends(security.get_current_user),
-    db: Session = Depends(get_db),
 ):
     """
     Validate a table URL and extract metadata.

@@ -36,7 +36,7 @@ class MCPServersResponse(BaseModel):
 
 
 @router.get("/{bot_name}/mcp", response_model=MCPServersResponse)
-async def get_bot_mcp_servers(
+def get_bot_mcp_servers(
     bot_name: str,
     namespace: str = Query(default="default", description="Bot namespace"),
     db: Session = Depends(get_db),

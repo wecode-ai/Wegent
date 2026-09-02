@@ -37,7 +37,7 @@ def _retriever_to_response(r: dict) -> PublicRetrieverResponse:
 
 
 @router.get("/public-retrievers", response_model=PublicRetrieverListResponse)
-async def list_public_retrievers(
+def list_public_retrievers(
     page: int = Query(1, ge=1),
     limit: int = Query(20, ge=1, le=1000),
     db: Session = Depends(get_db),
@@ -65,7 +65,7 @@ async def list_public_retrievers(
     response_model=PublicRetrieverResponse,
     status_code=status.HTTP_201_CREATED,
 )
-async def create_public_retriever(
+def create_public_retriever(
     retriever_data: Retriever,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_admin_user),
@@ -80,7 +80,7 @@ async def create_public_retriever(
 
 
 @router.put("/public-retrievers/{retriever_id}", response_model=PublicRetrieverResponse)
-async def update_public_retriever(
+def update_public_retriever(
     retriever_data: Retriever,
     retriever_id: int = Path(..., description="Retriever ID"),
     db: Session = Depends(get_db),
@@ -101,7 +101,7 @@ async def update_public_retriever(
 @router.delete(
     "/public-retrievers/{retriever_id}", status_code=status.HTTP_204_NO_CONTENT
 )
-async def delete_public_retriever(
+def delete_public_retriever(
     retriever_id: int = Path(..., description="Retriever ID"),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_admin_user),

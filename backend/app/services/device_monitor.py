@@ -23,6 +23,7 @@ from typing import Optional
 
 from app.core.distributed_lock import distributed_lock
 from app.db.session import SessionLocal
+from app.services.chat.storage.db import run_sync_in_executor
 from app.services.device_service import device_service
 from app.services.execution.dispatcher import execution_dispatcher
 from app.services.execution.emitters import WebSocketResultEmitter
@@ -146,7 +147,7 @@ async def check_and_mark_failed_subtasks() -> int:
         Number of subtasks marked as failed
     """
     try:
-        candidates = await asyncio.to_thread(_list_running_device_subtasks)
+        candidates = await run_sync_in_executor(_list_running_device_subtasks)
         offline_candidates = [
             candidate
             for candidate in candidates
@@ -156,7 +157,7 @@ async def check_and_mark_failed_subtasks() -> int:
         ]
         if not offline_candidates:
             return 0
-        marked_ids = await asyncio.to_thread(
+        marked_ids = await run_sync_in_executor(
             _mark_subtasks_failed,
             offline_candidates,
         )

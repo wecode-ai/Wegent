@@ -269,7 +269,7 @@ vim .env  # 编辑配置
 mysql -u root -p -e "CREATE DATABASE IF NOT EXISTS task_manager CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;"
 
 # 运行后端服务
-uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+HOST=0.0.0.0 PORT=8000 uv run python -m app.runtime
 ```
 
 > **管理员密码**: 首次启动会自动创建 `admin` 管理员账号，但不会写入默认密码。默认情况下，`CHECK_SYSTEM_INITIALIZATION_STATUS=True` 会让后端启动时把初始化状态加载到内存，第一次打开登录页时系统会强制进入管理员密码设置流程；完成设置后才能登录和继续使用系统。特殊部署需要跳过该检查时，可设置 `CHECK_SYSTEM_INITIALIZATION_STATUS=False`。

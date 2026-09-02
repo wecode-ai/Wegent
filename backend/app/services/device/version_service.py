@@ -14,6 +14,7 @@ from typing import Optional
 
 from app.core.cache import cache_manager
 from app.core.config import settings
+from app.core.web_background_tasks import web_background_task_manager
 from app.services.device.version_checker import (
     GithubVersionChecker,
     RegistryVersionChecker,
@@ -66,14 +67,17 @@ class ExecutorVersionService:
             logger.debug(f"Using cached executor version: {cached}")
             return cached
 
-        self._start_refresh()
+        await self._start_refresh()
         return None
 
-    def _start_refresh(self) -> None:
+    async def _start_refresh(self) -> None:
         """Start one process-local refresh without delaying the caller."""
         if self._refresh_task and not self._refresh_task.done():
             return
-        self._refresh_task = asyncio.create_task(self._refresh_version())
+        self._refresh_task = await web_background_task_manager.submit(
+            self._refresh_version,
+            name="executor-version-refresh",
+        )
 
     async def _refresh_version(self) -> None:
         """Refresh the cached version and suppress repeated remote failures."""

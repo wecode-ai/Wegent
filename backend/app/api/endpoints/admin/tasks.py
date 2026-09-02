@@ -25,7 +25,7 @@ router = APIRouter()
     response_model=TaskInDB,
     status_code=status.HTTP_201_CREATED,
 )
-async def create_task_for_user_id(
+def create_task_for_user_id(
     task: TaskCreate,
     task_id: Optional[int] = None,
     user_id: int = Path(..., description="User ID"),
@@ -49,7 +49,7 @@ async def create_task_for_user_id(
     response_model=TaskInDB,
     status_code=status.HTTP_201_CREATED,
 )
-async def create_task_for_user_by_username(
+def create_task_for_user_by_username(
     task: TaskCreate,
     task_id: Optional[int] = None,
     user_name: str = Path(..., description="User name"),
@@ -69,7 +69,7 @@ async def create_task_for_user_by_username(
 
 
 @router.post("/generate-admin-token", response_model=Token)
-async def generate_admin_token(
+def generate_admin_token(
     db: Session = Depends(get_db), current_user: User = Depends(get_admin_user)
 ):
     """

@@ -20,6 +20,7 @@ from fastapi.responses import Response
 from pydantic import BaseModel
 
 from app.core import security
+from app.core.payload_codec import run_payload_codec
 from app.models.user import User
 from app.services.skill_market import (
     ISkillMarketProvider,
@@ -89,6 +90,15 @@ class ErrorResponse(BaseModel):
     details: Optional[Dict[str, Any]] = None
 
 
+def _project_search_result(result: Any) -> SearchResultResponse:
+    return SearchResultResponse(
+        total=result.total,
+        page=result.page,
+        pageSize=result.pageSize,
+        skills=[MarketSkillResponse(**asdict(skill)) for skill in result.skills],
+    )
+
+
 def _resolve_provider(provider_key: Optional[str]) -> ISkillMarketProvider:
     if provider_key:
         provider = skill_market_registry.get_provider(provider_key)
@@ -125,7 +135,7 @@ def _resolve_provider(provider_key: Optional[str]) -> ISkillMarketProvider:
 
 
 @router.get("/providers", response_model=ProvidersResponse)
-async def list_providers(
+def list_providers(
     current_user: User = Depends(security.get_current_user),
 ) -> ProvidersResponse:
     """List registered skill market providers."""
@@ -143,7 +153,7 @@ async def list_providers(
 
 
 @router.get("/available", response_model=AvailableResponse)
-async def check_availability(
+def check_availability(
     current_user: User = Depends(security.get_current_user),
 ) -> AvailableResponse:
     """
@@ -200,11 +210,11 @@ async def search_skills(
     try:
         result = await market_provider.search(params)
 
-        return SearchResultResponse(
-            total=result.total,
-            page=result.page,
-            pageSize=result.pageSize,
-            skills=[MarketSkillResponse(**asdict(skill)) for skill in result.skills],
+        return await run_payload_codec(
+            _project_search_result,
+            result,
+            payload_hint=result,
+            force_offload=True,
         )
     except Exception as e:
         error_message = str(e)

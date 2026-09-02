@@ -2,7 +2,6 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 import pytest
@@ -32,8 +31,7 @@ async def test_start_device_terminal_uses_requested_path(monkeypatch):
     response = await devices.start_device_terminal(
         "device-2",
         payload=devices.DeviceSessionCreate(path=" /workspace/worktrees/9/project38 "),
-        db=object(),
-        current_user=SimpleNamespace(id=7),
+        current_user=devices._DeviceUser(id=7),
     )
 
     assert response.path == "/workspace/worktrees/9/project38"
@@ -69,8 +67,7 @@ async def test_start_device_code_server_uses_requested_path(monkeypatch):
     response = await devices.start_device_code_server(
         "device-2",
         payload=devices.DeviceSessionCreate(path=" /workspace/worktrees/9/project38 "),
-        db=object(),
-        current_user=SimpleNamespace(id=7),
+        current_user=devices._DeviceUser(id=7),
     )
 
     assert response.path == "/workspace/worktrees/9/project38"
@@ -106,8 +103,7 @@ async def test_start_device_code_server_uses_executor_default_workspace(monkeypa
     response = await devices.start_device_code_server(
         "device-2",
         payload=None,
-        db=object(),
-        current_user=SimpleNamespace(id=7),
+        current_user=devices._DeviceUser(id=7),
     )
 
     assert response.path == "/home/wegent/.wecode/wegent-executor/workspace"
@@ -140,8 +136,7 @@ async def test_start_device_terminal_uses_executor_default_workspace(monkeypatch
     response = await devices.start_device_terminal(
         "device-2",
         payload=None,
-        db=object(),
-        current_user=SimpleNamespace(id=7),
+        current_user=devices._DeviceUser(id=7),
     )
 
     assert response.path == "/home/wegent/.wecode/wegent-executor/workspace"

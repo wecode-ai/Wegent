@@ -7,6 +7,8 @@
 import logging
 import secrets
 from contextlib import suppress
+from copy import deepcopy
+from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Any, Literal
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
@@ -37,6 +39,11 @@ SESSION_RPC_EVENTS = {
 DeviceSessionType = Literal["terminal", "code_server"]
 
 
+@dataclass(frozen=True)
+class _DeviceSessionTarget:
+    spec: dict[str, Any]
+
+
 class DeviceSessionError(RuntimeError):
     """Raised when a local device session cannot be started."""
 
@@ -51,7 +58,6 @@ class LocalDeviceSessionService:
     async def start_session(
         self,
         *,
-        db: Any,
         user_id: int,
         device_id: str,
         project_id: int,
@@ -62,13 +68,11 @@ class LocalDeviceSessionService:
         allow_app_device: bool = True,
     ) -> dict[str, Any]:
         """Ask an online local device to start an interactive project session."""
-        device_kind = device_service.get_device_by_device_id(db, user_id, device_id)
-        if not device_kind:
-            raise DeviceSessionNotFoundError("Device not found or access denied")
-        if not allow_app_device and not remote_control_is_enabled(
-            device_kind_type(device_kind)
-        ):
-            raise DeviceSessionError(REMOTE_CONTROL_DISABLED_MESSAGE)
+        target = await self._load_target(
+            user_id=user_id,
+            device_id=device_id,
+            allow_app_device=allow_app_device,
+        )
 
         online_info = await device_service.get_device_online_info(user_id, device_id)
         if not online_info:
@@ -162,11 +166,54 @@ class LocalDeviceSessionService:
         result = _ensure_session_url_token(result, access_token)
         result = await _rewrite_cloud_localhost_url(
             result,
-            device_kind,
+            target.spec,
             online_info.get("runtime_transfer_host"),
         )
         result.setdefault("transport", "url")
         return result
+
+    async def _load_target(
+        self,
+        *,
+        user_id: int,
+        device_id: str,
+        allow_app_device: bool,
+    ) -> _DeviceSessionTarget:
+        from app.services.chat.storage.db import run_sync_in_executor
+
+        return await run_sync_in_executor(
+            self._load_target_with_session,
+            user_id,
+            device_id,
+            allow_app_device,
+        )
+
+    def _load_target_with_session(
+        self,
+        user_id: int,
+        device_id: str,
+        allow_app_device: bool,
+    ) -> _DeviceSessionTarget:
+        from app.services.chat.storage.db import get_db_session
+
+        with get_db_session() as db:
+            device_kind = device_service.get_device_by_device_id(
+                db,
+                user_id,
+                device_id,
+            )
+            if not device_kind:
+                raise DeviceSessionNotFoundError("Device not found or access denied")
+            if not allow_app_device and not remote_control_is_enabled(
+                device_kind_type(device_kind)
+            ):
+                raise DeviceSessionError(REMOTE_CONTROL_DISABLED_MESSAGE)
+            spec = (
+                device_kind.json.get("spec", {})
+                if isinstance(device_kind.json, dict)
+                else {}
+            )
+            return _DeviceSessionTarget(spec=deepcopy(spec))
 
     def _build_session_id(
         self, session_type: DeviceSessionType, project_id: int
@@ -218,14 +265,14 @@ def _ensure_session_url_token(
 
 async def _rewrite_cloud_localhost_url(
     result: dict[str, Any],
-    device_kind: Any,
+    device_spec: dict[str, Any],
     runtime_transfer_host: Any = None,
 ) -> dict[str, Any]:
     """Rewrite cloud session URLs that point to device-local localhost."""
     url = result.get("url")
     if not isinstance(url, str) or not url:
         return result
-    spec = getattr(device_kind, "json", {}).get("spec", {})
+    spec = device_spec
     if spec.get("deviceType", DeviceType.LOCAL.value) != DeviceType.CLOUD.value:
         return result
 
