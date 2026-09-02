@@ -229,7 +229,7 @@ export default function DevicesPage() {
                 <DeviceSection
                   title={t('wework_devices_section')}
                   icon={AppWindow}
-                  devices={sortedDevices}
+                  devices={visibleDevices}
                   type="app"
                   emptyMessage={t('no_wework_devices')}
                 >

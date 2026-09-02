@@ -613,8 +613,9 @@ export async function verifyWeworkAppDeviceRegistrationFlow(control, cloudEnviro
   assert.ok(appDevice.runtime_instance_id, 'The app device did not expose a Runtime identity')
   assert.ok(appDevice.app_device_id, 'The app device did not expose its physical app identity')
   assert.equal(
-    (await cloudEnvironment.devices()).filter(device => device.device_id === appDevice.device_id)
-      .length,
+    (await cloudEnvironment.devices()).filter(
+      device => device.device_type === 'app' && device.app_device_id === appDevice.app_device_id
+    ).length,
     1,
     'Wework created a duplicate app device registration'
   )

@@ -18,7 +18,7 @@ from shared.models.execution import (
 
 
 @pytest.mark.asyncio
-async def test_dispatch_allows_app_device_task_execution():
+async def test_dispatch_allows_app_device_task_execution() -> None:
     dispatcher = ExecutionDispatcher()
     request = ExecutionRequest(
         task_id=1,
@@ -179,7 +179,7 @@ async def test_dispatch_websocket_passes_skill_identity_token_in_payload():
 
 
 @pytest.mark.asyncio
-async def test_dispatch_websocket_uses_git_credentials_configured_on_device():
+async def test_dispatch_websocket_uses_git_credentials_configured_on_device() -> None:
     dispatcher = ExecutionDispatcher()
     request = ExecutionRequest(
         task_id=1,
