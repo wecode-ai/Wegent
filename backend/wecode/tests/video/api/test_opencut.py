@@ -197,7 +197,7 @@ def test_storycut_bundle_contains_timeline_media_and_overlay_tracks(
     monkeypatch,
 ) -> None:
     monkeypatch.setattr(
-        "wecode.video.api.opencut.settings.WEGENT_SOCKET_URL",
+        "wecode.video.api.opencut.settings.FRONTEND_URL",
         "http://10.2.3.4:8400",
     )
 
@@ -235,7 +235,7 @@ def test_storycut_bundle_uses_opencut_proxy_for_local_wegent_image(
     monkeypatch,
 ) -> None:
     monkeypatch.setattr(
-        "wecode.video.api.opencut.settings.WEGENT_SOCKET_URL",
+        "wecode.video.api.opencut.settings.FRONTEND_URL",
         "http://10.218.17.35:8500",
     )
     timeline = _timeline()
@@ -301,7 +301,7 @@ def test_track_merge_prefers_clip_id_over_shared_signed_url() -> None:
 
 def test_storycut_bundle_keeps_https_wegent_image_source(monkeypatch) -> None:
     monkeypatch.setattr(
-        "wecode.video.api.opencut.settings.WEGENT_SOCKET_URL",
+        "wecode.video.api.opencut.settings.FRONTEND_URL",
         "https://wegent.example.com",
     )
     timeline = _timeline()
@@ -327,7 +327,7 @@ def test_storycut_bundle_keeps_https_wegent_image_source(monkeypatch) -> None:
 
 def test_storycut_bundle_uses_direct_https_for_weibo_video(monkeypatch) -> None:
     monkeypatch.setattr(
-        "wecode.video.api.opencut.settings.WEGENT_SOCKET_URL",
+        "wecode.video.api.opencut.settings.FRONTEND_URL",
         "http://10.2.3.4:8400",
     )
     timeline = {
