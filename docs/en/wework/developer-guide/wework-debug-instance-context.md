@@ -45,7 +45,7 @@ The macOS development launcher prepares a copy-on-write Electron App Bundle for
 each display name. Task shells use their injected title directly; terminals
 started from an existing runtime worktree can recover the title from the local
 runtime index. The launcher then updates the Bundle metadata and renames the
-main executable to the development instance identifier. The Dock hover label
+main executable to `WEWORK_DEV_EXECUTABLE_NAME`, the filesystem-safe Dock title. The Dock hover label
 therefore shows a value such as `Fix subscriptions · 5275`, while the icon badge
 shows `5275`. The renamed development Bundle remains in source hot-reload mode
 instead of switching to packaged resources.

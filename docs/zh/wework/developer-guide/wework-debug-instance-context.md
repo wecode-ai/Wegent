@@ -41,7 +41,8 @@ Wework 支持从一个正在运行的 Wework 内置 Terminal 中启动另一个�
 
 macOS 开发启动脚本会为每个显示名称准备写时复制的 Electron App Bundle。任务
 shell 直接使用注入的标题；从已有 runtime worktree 启动的终端也可以从本地运行时
-索引恢复标题。脚本随后设置 Bundle 元数据并将主可执行文件重命名为开发实例标识，
+索引恢复标题。脚本随后设置 Bundle 元数据，并将主可执行文件重命名为
+`WEWORK_DEV_EXECUTABLE_NAME`，即适合文件系统使用的 Dock 标题。
 因此 Dock 悬浮名称会显示类似 `修复订阅市场 · 5275`，图标角标则显示 `5275`。
 重命名后的开发 Bundle 仍按源码热更新模式运行，不会切换到正式打包资源。
 

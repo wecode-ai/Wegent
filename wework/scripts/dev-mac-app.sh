@@ -210,9 +210,17 @@ export WEWORK_DEV_INSTANCE_LABEL="${DEV_IDENTITY_FIELDS[3]}"
 export WEWORK_DEV_DOCK_TITLE="${DEV_IDENTITY_FIELDS[4]}"
 export WEWORK_DEV_EXECUTABLE_NAME="${DEV_IDENTITY_FIELDS[5]}"
 export WEWORK_APP_IDENTIFIER="${WEWORK_DEV_APP_IDENTIFIER:-io.wecode.wework.dev.$WEWORK_DEV_INSTANCE_ID}"
-export WEWORK_USER_DATA_DIR="$(
+if ! WEWORK_USER_DATA_DIR="$(
   node "$SCRIPT_DIR/resolve-dev-user-data.mjs" "$PROJECT_DIR" "${WEWORK_DEV_USER_DATA_DIR:-}"
-)"
+)"; then
+  echo "Error: failed to resolve the development user data directory." >&2
+  exit 1
+fi
+if [ -z "$WEWORK_USER_DATA_DIR" ]; then
+  echo "Error: resolved development user data directory is empty." >&2
+  exit 1
+fi
+export WEWORK_USER_DATA_DIR
 unset WEWORK_DEV_APP_IDENTIFIER
 unset WEWORK_DEV_USER_DATA_DIR
 export VITE_WEWORK_DEV_TITLE="$WEWORK_DEV_TITLE"

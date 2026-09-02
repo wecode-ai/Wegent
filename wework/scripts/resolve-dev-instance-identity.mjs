@@ -42,7 +42,7 @@ export function findPersistedRuntimeTaskTitle(index, workspacePath) {
   if (!runtimeTaskId) return null
 
   const task = index?.tasks?.[runtimeTaskId]
-  if (!task || task.archived === true) return null
+  if (!task || task.archived === true || task.status === 'archived') return null
   return normalizeSingleLine(task.title) || null
 }
 

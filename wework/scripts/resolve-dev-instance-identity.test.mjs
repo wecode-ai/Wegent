@@ -87,12 +87,19 @@ describe('resolve development instance identity', () => {
     const index = {
       tasks: {
         'runtime-527542697': {
-          archived: true,
-          title: 'Archived task',
+          status: 'archived',
+          title: 'Legacy archived task',
         },
       },
     }
 
+    expect(
+      findPersistedRuntimeTaskTitle(index, '/tmp/worktrees/runtime-527542697/Wegent')
+    ).toBeNull()
+    index.tasks['runtime-527542697'] = {
+      archived: true,
+      title: 'Archived task',
+    }
     expect(
       findPersistedRuntimeTaskTitle(index, '/tmp/worktrees/runtime-527542697/Wegent')
     ).toBeNull()

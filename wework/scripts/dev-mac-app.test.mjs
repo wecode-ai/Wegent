@@ -20,6 +20,9 @@ describe('dev-mac-app', () => {
     expect(source).not.toContain(
       'node "$SCRIPT_DIR/resolve-dev-user-data.mjs" "$PROJECT_DIR" "${WEWORK_USER_DATA_DIR:-}"'
     )
+    expect(source).toContain('if ! WEWORK_USER_DATA_DIR="$(')
+    expect(source).toContain('if [ -z "$WEWORK_USER_DATA_DIR" ]; then')
+    expect(source).toContain('export WEWORK_USER_DATA_DIR')
     expect(source).toContain('unset WEWORK_DEV_APP_IDENTIFIER')
     expect(source).toContain('unset WEWORK_DEV_USER_DATA_DIR')
     expect(source).toContain('export WEWORK_DEV_INSTANCE_ID="${DEV_IDENTITY_FIELDS[2]}"')
