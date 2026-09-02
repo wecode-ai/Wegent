@@ -45,6 +45,7 @@ describe('AI_VERIFY_ACTIONS', () => {
       'remove-storage': 'removeLocalStorageItem',
       origin: 'getLocationOrigin',
       'restart-core-dsh': 'restartCoreDsh',
+      'terminal-input': 'terminalInput',
       'terminal-snapshot': 'readLocalTerminalSnapshot',
       reload: 'reloadApp',
       'close-to-tray': 'closeMainWindowToTray',

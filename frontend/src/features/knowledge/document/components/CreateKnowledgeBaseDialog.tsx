@@ -167,7 +167,6 @@ export function CreateKnowledgeBaseDialog({
   )
   const profileAppliedRef = useRef(false)
   const retrievalConfigChangedRef = useRef(false)
-  const [profileFallbackReason, setProfileFallbackReason] = useState<string | null>(null)
   const [error, setError] = useState('')
   const [accordionValue, setAccordionValue] = useState<string>('')
   const [maxCalls, setMaxCalls] = useState(10)
@@ -195,7 +194,6 @@ export function CreateKnowledgeBaseDialog({
       setRetrievalConfig(createDefaultRetrievalConfig())
       profileAppliedRef.current = false
       retrievalConfigChangedRef.current = false
-      setProfileFallbackReason(null)
     }
   }, [open, initialKbType, defaultGroupId])
 
@@ -213,11 +211,8 @@ export function CreateKnowledgeBaseDialog({
           }
           return
         }
-        setProfileFallbackReason(profile.health.fallback_reason ?? '')
       })
-      .catch(() => {
-        if (!cancelled) setProfileFallbackReason('')
-      })
+      .catch(() => undefined)
     return () => {
       cancelled = true
     }
@@ -419,13 +414,6 @@ export function CreateKnowledgeBaseDialog({
               </button>
             ))}
           </div>
-          {profileFallbackReason !== null && (
-            <p className="text-sm text-warning" data-testid="knowledge-retrieval-profile-fallback">
-              {t(
-                `knowledge:document.retrievalProfile.fallbackReasons.${profileFallbackReason || 'unavailable'}`
-              )}
-            </p>
-          )}
           <KnowledgeBaseForm
             advancedExtras={
               kind === 'code' ? (

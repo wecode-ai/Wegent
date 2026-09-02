@@ -493,16 +493,16 @@ async function cmdReviewOpen(args) {
     console.error('Error: --path is required for review-open command')
     return 1
   }
-  if (!['plan', 'qa', 'recheck'].includes(args.reviewPhase)) {
-    console.error('Error: --phase must be plan, qa, or recheck')
+  if (!['plan', 'plan_amendment', 'qa', 'recheck'].includes(args.reviewPhase)) {
+    console.error('Error: --phase must be plan, plan_amendment, qa, or recheck')
     return 1
   }
-  if (args.reviewPhase === 'plan' && !args.writingPlanFile) {
-    console.error('Error: --writing-plan-file is required for a plan review handoff')
+  if (['plan', 'plan_amendment'].includes(args.reviewPhase) && !args.writingPlanFile) {
+    console.error('Error: --writing-plan-file is required for a plan or amendment review handoff')
     return 1
   }
-  if (args.reviewPhase !== 'plan' && args.writingPlanFile) {
-    console.error('Error: --writing-plan-file is valid only for a plan review handoff')
+  if (!['plan', 'plan_amendment'].includes(args.reviewPhase) && args.writingPlanFile) {
+    console.error('Error: --writing-plan-file is valid only for a plan or amendment review handoff')
     return 1
   }
   const handoffPath = path.resolve(args.handoffFile)
@@ -578,8 +578,8 @@ async function cmdReview(args) {
     console.error('Error: --path is required for review command')
     return 1
   }
-  if (!['plan', 'qa', 'recheck'].includes(args.reviewPhase)) {
-    console.error('Error: --phase must be plan, qa, or recheck')
+  if (!['plan', 'plan_amendment', 'qa', 'recheck'].includes(args.reviewPhase)) {
+    console.error('Error: --phase must be plan, plan_amendment, qa, or recheck')
     return 1
   }
   if (!['passed', 'changes_requested'].includes(args.reviewStatus)) {
@@ -656,8 +656,8 @@ async function cmdReviewStatus(args) {
     console.error('Error: --generation-id and --phase are required.')
     return 1
   }
-  if (!['plan', 'qa', 'recheck'].includes(args.reviewPhase)) {
-    console.error('Error: --phase must be plan, qa, or recheck')
+  if (!['plan', 'plan_amendment', 'qa', 'recheck'].includes(args.reviewPhase)) {
+    console.error('Error: --phase must be plan, plan_amendment, qa, or recheck')
     return 1
   }
 
@@ -930,7 +930,7 @@ Commands:
   validate-mermaid  Validate Mermaid blocks in Markdown before submission
   read      Print a page's current content
   remove    Declare wiki pages as gone
-  review    Record a full-rebuild plan, QA, or recheck checkpoint
+  review    Record a full-rebuild plan, plan amendment, QA, or recheck checkpoint
   review-open  Persist the Writer handoff before synchronous Reviewer delegation
   review-status  Print the persisted Reviewer state for one phase
   complete  Mark wiki generation as completed
@@ -967,13 +967,13 @@ Remove Options:
   --path               Page path to remove. Repeat for several pages.
 
 Review Options:
-  --phase              One of: plan, qa, recheck
+  --phase              One of: plan, plan_amendment, qa, recheck
   --review-status      One of: passed, changes_requested
   --path               Checked or planned page path. Repeat for several pages.
   --focus-path         Core deep-dive page selected by plan review. Repeat as needed.
   --summary            Short evidence-based review conclusion
   --handoff-file       Markdown handoff file required by review-open
-  --writing-plan-file  JSON page-ownership plan required by Plan review-open
+  --writing-plan-file  JSON page-ownership plan required by Plan or amendment review-open
   --findings-file      Actionable Markdown findings for changes_requested
 
 Complete Options:

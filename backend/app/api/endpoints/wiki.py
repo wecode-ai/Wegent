@@ -212,7 +212,7 @@ def save_wiki_generation_review(
     caller: User = Depends(_internal_caller),
     wiki_db: Session = Depends(get_wiki_db),
 ):
-    """Record the plan, QA, or bounded recheck for a full Code Wiki rebuild."""
+    """Record a persisted review verdict for a coordinated Code Wiki rebuild."""
     _assert_caller_may_write_generation(wiki_db, caller, payload.generation_id)
     return wiki_service.record_generation_review(wiki_db, payload)
 
@@ -231,7 +231,7 @@ def open_wiki_generation_review(
 @internal_router.get("/generations/{generation_id}/review")
 def get_wiki_generation_review(
     generation_id: int,
-    phase: str = Query(..., pattern="^(plan|qa|recheck)$"),
+    phase: str = Query(..., pattern="^(plan|plan_amendment|qa|recheck)$"),
     caller: User = Depends(_internal_caller),
     wiki_db: Session = Depends(get_wiki_db),
 ):

@@ -2,7 +2,13 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-use std::{collections::BTreeMap, io, path::Path, process::Stdio, time::Duration};
+use std::{
+    collections::BTreeMap,
+    io,
+    path::{Path, PathBuf},
+    process::Stdio,
+    time::Duration,
+};
 
 use serde::Serialize;
 use tokio::{io::AsyncWriteExt, process::Command, time::sleep};
@@ -22,8 +28,8 @@ pub async fn execute_command_hook<T: Serialize>(
     input: &T,
 ) -> CommandHookOutcome {
     let script = platform_command(config);
-    let script = match resolve_command(script, plugin_dir) {
-        Ok(script) => script,
+    let resolved = match resolve_command(script, plugin_dir) {
+        Ok(resolved) => resolved,
         Err(error) => return failed_outcome(error.to_string()),
     };
     let stdin = match serde_json::to_vec(input) {
@@ -31,7 +37,10 @@ pub async fn execute_command_hook<T: Serialize>(
         Err(error) => return failed_outcome(error.to_string()),
     };
     let timeout_seconds = config.timeout.clamp(1, MAX_TIMEOUT_SECONDS);
-    let mut command = shell_command(&script);
+    let mut command = match resolved {
+        ResolvedHookCommand::Executable { program } => executable_command(program),
+        ResolvedHookCommand::Shell(script) => shell_command(&script),
+    };
     command
         .current_dir(cwd)
         .env_clear()
@@ -103,7 +112,15 @@ fn platform_target() -> String {
     format!("{}-{}", std::env::consts::OS, std::env::consts::ARCH)
 }
 
-fn resolve_command(command: &str, plugin_dir: &Path) -> io::Result<String> {
+enum ResolvedHookCommand {
+    /// Spawn a resolved plugin binary directly without a shell so Windows does
+    /// not allocate a new visible console for the process or its children.
+    Executable { program: PathBuf },
+    /// Run an arbitrary command line through the platform shell.
+    Shell(String),
+}
+
+fn resolve_command(command: &str, plugin_dir: &Path) -> io::Result<ResolvedHookCommand> {
     let trimmed = command.trim();
     if trimmed.is_empty() {
         return Err(io::Error::new(
@@ -112,11 +129,14 @@ fn resolve_command(command: &str, plugin_dir: &Path) -> io::Result<String> {
         ));
     }
     let Some((program, suffix)) = split_program(trimmed) else {
-        return Ok(trimmed.to_owned());
+        return Ok(ResolvedHookCommand::Shell(trimmed.to_owned()));
     };
+    if !program.contains('/') && !program.contains('\\') {
+        return Ok(ResolvedHookCommand::Shell(trimmed.to_owned()));
+    }
     let path = Path::new(program);
-    if path.is_absolute() || (!program.contains('/') && !program.contains('\\')) {
-        return Ok(trimmed.to_owned());
+    if path.is_absolute() {
+        return Ok(ResolvedHookCommand::Shell(trimmed.to_owned()));
     }
     let candidate = plugin_dir.join(path);
     let canonical = candidate.canonicalize()?;
@@ -127,7 +147,14 @@ fn resolve_command(command: &str, plugin_dir: &Path) -> io::Result<String> {
             "relative hook command escapes plugin directory",
         ));
     }
-    Ok(format!("{}{}", shell_invoke(&canonical), suffix))
+    if suffix.trim().is_empty() {
+        return Ok(ResolvedHookCommand::Executable { program: canonical });
+    }
+    Ok(ResolvedHookCommand::Shell(format!(
+        "{}{}",
+        shell_quote(&canonical),
+        suffix
+    )))
 }
 
 fn split_program(command: &str) -> Option<(&str, &str)> {
@@ -148,21 +175,26 @@ fn shell_quote(path: &Path) -> String {
     format!("'{}'", path.to_string_lossy().replace('\'', "''"))
 }
 
-#[cfg(unix)]
-fn shell_invoke(path: &Path) -> String {
-    shell_quote(path)
-}
-
-#[cfg(windows)]
-fn shell_invoke(path: &Path) -> String {
-    format!("& {}", shell_quote(path))
+fn executable_command(program: PathBuf) -> Command {
+    let program = program.to_string_lossy().into_owned();
+    let (program, prefix_args) = crate::process::spawn_program_parts(&program);
+    let mut command = Command::new(program);
+    command.args(prefix_args);
+    crate::process::hide_windows_console(&mut command);
+    command
 }
 
 fn shell_command(script: &str) -> Command {
     #[cfg(windows)]
     {
-        let mut command = Command::new("powershell");
-        command.args(["-NoProfile", "-NonInteractive", "-Command", script]);
+        let mut command = Command::new("cmd");
+        command.args(["/S", "/C"]);
+        // cmd /S strips the first and last quote of the command line, so
+        // wrapping the script in quotes preserves inner quoting such as
+        // resolved plugin binary paths that contain spaces. Passing the script
+        // as a raw argument also prevents Rust from escaping those inner
+        // quotes into backslash forms that cmd does not understand.
+        command.raw_arg(format!("\"{}\"", script));
         crate::process::hide_windows_console(&mut command);
         command
     }
@@ -281,7 +313,7 @@ mod tests {
 
     #[cfg(windows)]
     #[tokio::test]
-    async fn runs_bundled_relative_command_through_powershell() {
+    async fn runs_bundled_relative_command_without_a_shell() {
         let directory = tempdir().unwrap();
         let system_root = std::env::var("SystemRoot").unwrap_or_else(|_| r"C:\Windows".to_owned());
         let source = Path::new(&system_root).join("System32").join("whoami.exe");
@@ -320,45 +352,31 @@ mod tests {
     }
 
     #[test]
-    fn resolves_relative_plugin_binaries_through_the_platform_shell() {
+    fn resolves_relative_plugin_binaries_without_a_shell() {
         let directory = tempdir().unwrap();
         let tool = directory.path().join("bin/tool");
         fs::create_dir_all(tool.parent().unwrap()).unwrap();
         fs::write(&tool, "placeholder").unwrap();
 
         let resolved = resolve_command("./bin/tool", directory.path()).unwrap();
-        #[cfg(windows)]
-        assert!(
-            resolved.starts_with("& '"),
-            "unexpected invocation: {resolved}"
-        );
-        #[cfg(not(windows))]
-        assert!(
-            resolved.starts_with('\''),
-            "unexpected invocation: {resolved}"
-        );
-        assert!(resolved.contains("bin/tool") || resolved.contains("bin\\tool"));
-        assert!(resolved.ends_with('\''));
-
-        let with_args = resolve_command("./bin/tool --flag value", directory.path()).unwrap();
-        assert!(with_args.ends_with(" --flag value"));
+        match resolved {
+            ResolvedHookCommand::Executable { program } => {
+                assert!(program.starts_with(directory.path().canonicalize().unwrap()));
+            }
+            ResolvedHookCommand::Shell(_) => {
+                panic!("expected the plugin binary to resolve for direct execution")
+            }
+        }
     }
 
-    #[cfg(windows)]
     #[test]
-    fn quotes_powershell_paths_with_single_quotes() {
-        assert_eq!(
-            shell_quote(Path::new(r"C:\dir with space\it's.exe")),
-            r"'C:\dir with space\it''s.exe'"
-        );
-    }
+    fn keeps_commands_with_arguments_in_the_shell() {
+        let directory = tempdir().unwrap();
+        let tool = directory.path().join("bin/tool");
+        fs::create_dir_all(tool.parent().unwrap()).unwrap();
+        fs::write(&tool, "placeholder").unwrap();
 
-    #[cfg(not(windows))]
-    #[test]
-    fn quotes_sh_paths_with_single_quotes() {
-        assert_eq!(
-            shell_quote(Path::new("/dir with space/it's.sh")),
-            "'/dir with space/it'\\''s.sh'"
-        );
+        let resolved = resolve_command("./bin/tool --flag", directory.path()).unwrap();
+        assert!(matches!(resolved, ResolvedHookCommand::Shell(_)));
     }
 }

@@ -4,6 +4,7 @@
 
 /** Codes the server states in its own words; anything else is external text. */
 const TRANSLATABLE = new Set([
+  'cancelled_by_user',
   'task_ended_without_report',
   'task_not_created',
   'worker_abandoned',

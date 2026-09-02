@@ -35,11 +35,12 @@ Wework 支持从一个正在运行的 Wework 内置 Terminal 中启动另一个�
 - `WEWORK_DEV_BRANCH`: 当前 Git branch，detached HEAD 时为空。
 - `WEWORK_APP_IDENTIFIER`: 当前 Electron 应用身份。默认根据 worktree 路径生成，用于隔离单实例锁、应用数据和 macOS 菜单栏图标位置；只有明确需要复用某个应用身份时才应手动覆盖。
 
-macOS 托盘必须使用 Electron 默认生成的菜单栏 item 身份，不要向 `Tray`
-构造函数传入自定义 GUID。iBar 等菜单栏管理器会按默认 item 名称和应用
-identifier 保存显示规则；后续增加 GUID 会把同一应用识别为新图标，使用户
-已有的“始终显示”设置失效。调试实例仍通过不同的
-`WEWORK_APP_IDENTIFIER` 与正式版和其他 worktree 隔离。
+macOS 托盘会根据 `WEWORK_APP_IDENTIFIER` 派生稳定的 UUID v5，并作为
+`Tray` GUID 传给 Electron。Electron 会把该 GUID 写入原生
+`NSStatusItem.autosaveName`，使 iBar 等菜单栏管理器在应用重启后仍识别为同一
+菜单栏 item。正式版 UUID 已被回归测试锁定；调试实例则通过不同的
+`WEWORK_APP_IDENTIFIER` 与正式版和其他 worktree 隔离。不要修改 UUID
+namespace 或改用随机 GUID，否则会再次重置用户的菜单栏显示规则。
 
 脚本也会把这些值导出为 `VITE_WEWORK_*`，供前端在运行时显示。
 

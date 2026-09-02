@@ -1,6 +1,6 @@
 ---
 description: "Submit wiki documentation pages to Wegent backend API. Simplifies the HTTP POST process for wiki content submission."
-version: "2.0.3"
+version: "2.0.4"
 author: "Wegent Team"
 tags: ["wiki", "documentation", "api", "submission"]
 bindShells: ["ClaudeCode"]
@@ -83,7 +83,7 @@ Remove an accidental page before completing the run.
    failed merely because it asks for a diagram correction.
 5. In a coordinated full rebuild, follow each returned `nextAction` and
    `reviewPolicy`. The default `plan_only` path publishes after a passed Plan and an
-   exact completed page set. The reserved `plan_and_qa` path additionally requires
+   exact effective page set. The reserved `plan_and_qa` path additionally requires
    passed QA, or QA changes followed by passed Recheck.
 Do not report the generation as complete until the response says it was published, or
 use `fail` with an accurate error when the run cannot continue.
@@ -186,7 +186,8 @@ handoff. The Reviewer reads it with `review-status`, then runs `review`. A
 `changes_requested` verdict requires a contract-formatted `--findings-file`. Command
 output is the complete persisted state, including `generationId`, `phase`, `state`,
 `attempt`, `nextAction`, the durable handoff and verdict, plus page-level Writing Plan
-progress after Plan passes.
+progress after Plan passes. When a passed amendment exists, `effectivePlan` is the
+authoritative page set and Writing Plan.
 
 See `REVIEW_CONTRACT.md` for the phase-specific commands and templates.
 
