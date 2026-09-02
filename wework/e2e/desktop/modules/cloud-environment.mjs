@@ -19,6 +19,7 @@ import {
   appendProcessOutput,
   assert,
   commandOutput,
+  commandOutputAsync,
   createServer,
   dirname,
   fetchJson,
@@ -371,7 +372,7 @@ class RealCloudEnvironment {
       `${JSON.stringify({ name: slug, version, description: `Desktop E2E ${slug}` }, null, 2)}\n`,
       'utf8'
     )
-    const output = commandOutput(
+    const output = await commandOutputAsync(
       'uv',
       [
         'run',
