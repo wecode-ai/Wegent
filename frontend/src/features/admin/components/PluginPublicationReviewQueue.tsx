@@ -40,7 +40,7 @@ import {
 } from '@/components/ui/select'
 import { useToast } from '@/hooks/use-toast'
 import { useTranslation } from '@/hooks/useTranslation'
-import { formatUTCDate } from '@/lib/utils'
+import { formatUTC8DateTime } from '@/lib/utils'
 import PluginPublicationReviewDrawer from './PluginPublicationReviewDrawer'
 import { PluginPublicationRiskTag, PluginPublicationStatusTag } from './PluginPublicationStatus'
 
@@ -206,8 +206,8 @@ export default function PluginPublicationReviewQueue() {
   const replaceUrlParams = useCallback(
     (changes: Record<string, string | null>) => {
       const params = new URLSearchParams(latestParamsRef.current)
-      params.set('tab', 'marketplace')
-      params.set('view', 'plugin-publications')
+      params.set('tab', 'wework-plugin-publications')
+      params.delete('view')
       Object.entries(changes).forEach(([key, value]) => {
         if (value === null || value === '') params.delete(key)
         else params.set(key, value)
@@ -430,7 +430,7 @@ export default function PluginPublicationReviewQueue() {
                   </span>
                   <span>
                     {t('marketplace_management.plugin_publications.queue.submitted_at', {
-                      time: formatUTCDate(item.submittedAt),
+                      time: formatUTC8DateTime(item.submittedAt),
                     })}
                   </span>
                   <span className="flex items-center gap-1.5">

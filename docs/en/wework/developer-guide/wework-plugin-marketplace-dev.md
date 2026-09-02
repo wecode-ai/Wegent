@@ -6,7 +6,7 @@ sidebar_position: 21
 
 For developers who need to build, migrate, or publish Wework plugins. See [Plugin Marketplace V2](./plugin-marketplace-v2.md) for architecture and operations, [Codex Plugin Runtime](./wework-codex-plugins.md) for local runtime details, and [Plugin Icon Guide](./wework-plugin-icons.md) for light/dark logos.
 
-> Implementation status (2026-08-29): the current feature branch implements the section 4 Wework two-scope interaction, Request/Revision history, Web review, Draft MR materialization, and restricted Release API. New enterprise requests no longer use a people allowlist. Legacy Submission remains only for personal restricted-share upload and draining historical rows. **Production is not enabled**: revocation/rotation of the old token, HTTPS, protected master/environment, Code Owner approvals, project-locked native Windows/macOS Runners, and a new Release credential still require external P0 verification.
+> Implementation status (2026-08-29): the current feature branch implements the section 4 Wework two-scope interaction, Request/Revision history, Web review, MR materialization, and restricted Release API. New enterprise requests no longer use a people allowlist. Legacy Submission remains only for personal restricted-share upload and draining historical rows. **Production is not enabled**: revocation/rotation of the old token, HTTPS, protected master/environment, Code Owner approvals, project-locked native Windows/macOS Runners, and a new Release credential still require external P0 verification.
 
 ## 1. Mental model
 
@@ -33,7 +33,7 @@ flowchart LR
   test --> apply[Request company-wide visibility]
   apply --> snapshot[Immutable personal-version snapshot]
   snapshot --> admin[Web administrator review]
-  admin --> mr[GitLab Draft MR]
+  admin --> mr[GitLab MR]
   mr --> pipeline[Code review and Pipeline]
   pipeline --> release[Restricted Release API]
   release --> mysql[(MySQL Plugin/Release)]
@@ -143,7 +143,7 @@ Each plugin lives under `<checkout>/plugins/<slug>/` and is registered in
 
 Developers create a branch and submit a Merge Request directly. When a non-technical user requests company-wide
 visibility from Wework, an administrator accepts it in the Web review console. The system materializes that immutable
-snapshot on a controlled branch and creates a Draft MR. Both entry paths share the same code review, compatibility
+snapshot on a controlled branch and creates a MR. Both entry paths share the same code review, compatibility
 checks, and release Pipeline from the MR onward.
 
 Build and scan locally:
@@ -207,16 +207,16 @@ The user-facing progress has five fixed stages:
 1. **Submit request**: create the request and persist its immutable snapshot;
 2. **Automated checks**: validate package structure, security, and declaration consistency;
 3. **Administrator review**: administrators review risks and return or accept only in the Web console;
-4. **Code review**: acceptance creates a GitLab Draft MR for human review, risk checks, and Windows/macOS compatibility tests;
+4. **Code review**: acceptance creates a GitLab MR for human review, risk checks, and Windows/macOS compatibility tests;
 5. **Release**: after the MR is merged into protected `master`, its Pipeline calls the restricted Release API.
 
-Administrator acceptance **only creates a Draft MR; it does not publish**. A returned request must identify the reason
+Administrator acceptance **only creates a MR; it does not publish**. A returned request must identify the reason
 and risk items. The submitter reads the status in Wework, updates the personal source, and submits a new revision.
 
 ### 4.3 Developers submitting a GitLab MR directly
 
 Developers can add or update `plugins/<slug>/` directly in the internal `wework-plugins` repository, update the marketplace
-registry, and open an MR. Draft MRs generated from non-technical submissions and developer-authored MRs use the same checks
+registry, and open an MR. MRs generated from non-technical submissions and developer-authored MRs use the same checks
 from this point onward. There must be no administrator-only direct-publish bypass around GitLab.
 
 One MR contains one version of one plugin. The MR Pipeline must include at least:
@@ -235,11 +235,11 @@ MR jobs, the Wework client, and the Web admin console must not receive release c
 verifies the reviewed commit, then calls the internal Release API:
 
 ```http
-Authorization: Bearer <scoped-release-token>
+Authorization: Bearer <release-token>
 ```
 
 This is a service-to-service machine credential, not a user sign-in system or general administrator token. It reuses the
-existing API-key lifecycle with `key_type=plugin_release` and is limited to the `plugins:release` scope, an allowed GitLab project, protected `master` ref, and target enterprise.
+existing API-key lifecycle with a dedicated `key_type=plugin_release`. The target is fixed to the enterprise catalog; the GitLab project and protected `master` ref are server configuration validated against live GitLab proof.
 It must support expiry, rotation, revocation, and auditing, and be stored as a GitLab masked and protected variable.
 GitLab webhooks use a separate signature or token only to synchronize MR, Pipeline, and release status; they cannot replace
 the Release Token to publish.
@@ -260,7 +260,7 @@ Publishing rules:
 
 ### 4.5 Withdrawal, deletion, and rollback
 
-- Before an MR is merged, the submitter can withdraw a company-wide request from Wework. If a Draft MR exists, the system closes or marks it cancelled as well.
+- Before an MR is merged, the submitter can withdraw a company-wide request from Wework. If a MR exists, the system closes or marks it cancelled as well.
 - Deleting a personal plugin with an unmerged request first withdraws that request, then uninstalls and removes personal source. It must not leave an orphaned pending MR.
 - After merge or once release has started, a personal user cannot withdraw the enterprise version. Deleting the personal source affects only that source; an administrator owns enterprise deactivation or rollback.
 - A failed Pipeline or release does not advance the enterprise catalog's `latest_release_id`; the existing version remains available.
@@ -320,7 +320,7 @@ uv run python scripts/publish_official_plugin.py /path/to/plugin --dry-run
 # 3. Choose a publish path
 # - Non-technical maintainer: request company-wide visibility in Wework
 # - Developer maintainer: submit an MR in the internal wework-plugins repository
-# Both share code review, compatibility tests, and protected master Pipeline from the Draft MR onward
+# Both share code review, compatibility tests, and protected master Pipeline from the MR onward
 ```
 
 Acceptance criteria:
@@ -361,7 +361,7 @@ Publishing rules:
 
 - Final S3 keys are immutable; staging needs lifecycle cleanup.
 - Sharing with selected members or departments requires package scanning. Company-wide visibility requires administrator review, GitLab code review, and a protected-branch Pipeline.
-- The administrator console can only return a request or create a Draft MR; it cannot construct an enterprise Release directly.
+- The administrator console can only return a request or create a MR; it cannot construct an enterprise Release directly.
 - Release credentials are visible only to protected master jobs and must never appear in logs, webhooks, or build artifacts.
 - Every enterprise release retains provenance.
 - Truly offline-critical capabilities belong in Executor / built-in hooks, not as marketplace plugins baked into the client installer.
@@ -379,7 +379,7 @@ No. Regular users only see the cloud catalog. Enterprise-internal content must e
 
 **Why is a plugin not installable company-wide immediately after administrator acceptance?**
 
-Acceptance means product and risk review passed and creates a Draft MR. Code review, Windows/macOS compatibility tests, merge into protected master, and the release Pipeline still have to complete.
+Acceptance means product and risk review passed and creates a MR. Code review, Windows/macOS compatibility tests, merge into protected master, and the release Pipeline still have to complete.
 
 **Can I keep editing and sharing my personal plugin during review?**
 

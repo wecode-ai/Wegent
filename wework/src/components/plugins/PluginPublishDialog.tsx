@@ -4,7 +4,6 @@ import {
   ChevronLeft,
   ChevronRight,
   Globe2,
-  Search,
   ShieldCheck,
   Users,
   X,
@@ -14,13 +13,16 @@ import {
   useMemo,
   useRef,
   useState,
+  type Dispatch,
   type KeyboardEvent as ReactKeyboardEvent,
+  type SetStateAction,
 } from 'react'
 import type { PluginShareGroupSearchItem, PluginShareUserSearchItem } from '@/api/plugins'
 import { Button } from '@/components/ui/button'
 import { useTranslation } from '@/hooks/useTranslation'
 import { cn } from '@/lib/utils'
 import type { PluginAccessResponse, PluginAccessTarget } from '@/types/api'
+import { PluginShareTargetSearch } from './PluginShareTargetSearch'
 
 export interface PluginPublicationRiskDeclaration {
   externalNetworkAccess: boolean
@@ -113,6 +115,243 @@ const RISK_ROWS = [
   },
 ] as const
 
+function normalizeDomains(value: string): string[] {
+  return value
+    .split(/[\s,，;；]+/)
+    .map(domain => domain.trim().toLowerCase())
+    .filter(Boolean)
+}
+
+function normalizeList(value: string): string[] {
+  return value
+    .split(/[\n,，;；]+/)
+    .map(item => item.trim())
+    .filter(Boolean)
+}
+
+interface PluginPublicationRiskStepProps {
+  riskDeclaration: PluginPublicationRiskDeclaration
+  setRiskDeclaration: Dispatch<SetStateAction<PluginPublicationRiskDeclaration>>
+  applicationAuthorization: boolean
+  setApplicationAuthorization: Dispatch<SetStateAction<boolean>>
+  domainsText: string
+  setDomainsText: Dispatch<SetStateAction<string>>
+  commandExamplesText: string
+  setCommandExamplesText: Dispatch<SetStateAction<string>>
+  applicationPermissionsText: string
+  setApplicationPermissionsText: Dispatch<SetStateAction<string>>
+  testNotes: string
+  setTestNotes: Dispatch<SetStateAction<string>>
+}
+
+function PluginPublicationRiskStep({
+  riskDeclaration,
+  setRiskDeclaration,
+  applicationAuthorization,
+  setApplicationAuthorization,
+  domainsText,
+  setDomainsText,
+  commandExamplesText,
+  setCommandExamplesText,
+  applicationPermissionsText,
+  setApplicationPermissionsText,
+  testNotes,
+  setTestNotes,
+}: PluginPublicationRiskStepProps) {
+  const { t } = useTranslation('common')
+  const testNotesAreBlank = testNotes.length > 0 && !testNotes.trim()
+
+  return (
+    <div data-testid="plugin-publication-step-risk" className="space-y-5">
+      <p className="text-sm leading-5 text-text-secondary">
+        {t(
+          'workbench.plugins_publication_risk_intro',
+          '请如实声明插件行为。系统会把声明与 Manifest 和包扫描结果交叉校验。'
+        )}
+      </p>
+      <div className="overflow-hidden rounded-xl border border-border/30">
+        <label className="flex items-start justify-between gap-4 border-b border-border/25 px-4 py-4">
+          <span>
+            <span className="block text-sm font-medium text-text-primary">
+              {t('workbench.plugins_publication_risk_network', '访问外部网络')}
+            </span>
+            <span className="mt-1 block text-xs text-text-muted">
+              {t('workbench.plugins_publication_risk_network_hint', '访问企业外部服务或域名')}
+            </span>
+          </span>
+          <input
+            type="checkbox"
+            checked={riskDeclaration.externalNetworkAccess}
+            data-testid="plugin-publication-risk-network"
+            className="mt-1 h-4 w-4 accent-neutral-900"
+            onChange={event =>
+              setRiskDeclaration(current => ({
+                ...current,
+                externalNetworkAccess: event.target.checked,
+              }))
+            }
+          />
+        </label>
+        {riskDeclaration.externalNetworkAccess ? (
+          <label className="block border-b border-border/25 bg-surface/50 px-4 py-3">
+            <span className="text-xs font-medium text-text-secondary">
+              {t('workbench.plugins_publication_external_domains', '外部域名')}
+            </span>
+            <input
+              value={domainsText}
+              data-testid="plugin-publication-external-domains"
+              className="mt-2 h-10 w-full rounded-lg border border-border bg-background px-3 text-sm outline-none focus:border-focus/70 focus:ring-2 focus:ring-focus/15"
+              placeholder="api.example.com"
+              onChange={event => setDomainsText(event.target.value)}
+            />
+          </label>
+        ) : null}
+        {RISK_ROWS.map(row => {
+          const testId =
+            row.key === 'executesCommands'
+              ? 'plugin-publication-risk-command'
+              : row.key === 'readsOrWritesLocalFiles'
+                ? 'plugin-publication-risk-files'
+                : 'plugin-publication-risk-credentials'
+          return (
+            <div key={row.key} className="border-b border-border/25">
+              <label className="flex items-start justify-between gap-4 px-4 py-4">
+                <span>
+                  <span className="block text-sm font-medium text-text-primary">
+                    {t('workbench.plugins_publication_risk_' + row.key, row.label)}
+                  </span>
+                  <span className="mt-1 block text-xs text-text-muted">
+                    {t('workbench.plugins_publication_risk_' + row.key + '_hint', row.hint)}
+                  </span>
+                </span>
+                <input
+                  type="checkbox"
+                  checked={riskDeclaration[row.key]}
+                  data-testid={testId}
+                  className="mt-1 h-4 w-4 accent-neutral-900"
+                  onChange={event =>
+                    setRiskDeclaration(current => ({
+                      ...current,
+                      [row.key]: event.target.checked,
+                    }))
+                  }
+                />
+              </label>
+              {row.key === 'executesCommands' && riskDeclaration.executesCommands ? (
+                <label className="block bg-surface/50 px-4 pb-3">
+                  <span className="text-xs font-medium text-text-secondary">
+                    {t('workbench.plugins_publication_command_examples', '命令或脚本示例')}
+                  </span>
+                  <textarea
+                    value={commandExamplesText}
+                    rows={3}
+                    data-testid="plugin-publication-command-examples"
+                    className="mt-2 w-full resize-none rounded-lg border border-border bg-background px-3 py-2 text-sm outline-none focus:border-focus/70 focus:ring-2 focus:ring-focus/15"
+                    placeholder="node scripts/check.js"
+                    onChange={event => setCommandExamplesText(event.target.value)}
+                  />
+                </label>
+              ) : null}
+            </div>
+          )
+        })}
+        <div>
+          <label className="flex items-start justify-between gap-4 px-4 py-4">
+            <span>
+              <span className="block text-sm font-medium text-text-primary">
+                {t('workbench.plugins_publication_risk_application', '需要应用授权')}
+              </span>
+              <span className="mt-1 block text-xs text-text-muted">
+                {t(
+                  'workbench.plugins_publication_risk_application_hint',
+                  '例如 OAuth、连接器或本地二维码授权'
+                )}
+              </span>
+            </span>
+            <input
+              type="checkbox"
+              checked={applicationAuthorization}
+              data-testid="plugin-publication-risk-application"
+              className="mt-1 h-4 w-4 accent-neutral-900"
+              onChange={event => setApplicationAuthorization(event.target.checked)}
+            />
+          </label>
+          {applicationAuthorization ? (
+            <label className="block bg-surface/50 px-4 pb-3">
+              <span className="text-xs font-medium text-text-secondary">
+                {t('workbench.plugins_publication_application_permissions', '应用与权限列表')}
+              </span>
+              <textarea
+                value={applicationPermissionsText}
+                rows={3}
+                data-testid="plugin-publication-application-permissions"
+                className="mt-2 w-full resize-none rounded-lg border border-border bg-background px-3 py-2 text-sm outline-none focus:border-focus/70 focus:ring-2 focus:ring-focus/15"
+                placeholder="GitLab OAuth: read_api"
+                onChange={event => setApplicationPermissionsText(event.target.value)}
+              />
+            </label>
+          ) : null}
+        </div>
+      </div>
+      <label className="block space-y-2">
+        <span className="text-sm font-medium text-text-primary">
+          {t('workbench.plugins_publication_test_notes', '测试说明')}
+        </span>
+        <textarea
+          value={testNotes}
+          data-testid="plugin-publication-test-notes"
+          rows={5}
+          required
+          maxLength={1000}
+          aria-invalid={testNotesAreBlank}
+          aria-describedby="plugin-publication-test-notes-help"
+          className={cn(
+            'w-full resize-none rounded-xl border bg-background px-3 py-2 text-sm outline-none focus:ring-2',
+            testNotesAreBlank
+              ? 'border-red-500/50 focus:border-red-500/70 focus:ring-red-500/15'
+              : 'border-border focus:border-focus/70 focus:ring-focus/15'
+          )}
+          placeholder={t(
+            'workbench.plugins_publication_test_notes_placeholder',
+            '说明已验证的平台、场景和结果'
+          )}
+          onChange={event => setTestNotes(event.target.value)}
+        />
+        <span
+          id="plugin-publication-test-notes-help"
+          data-testid="plugin-publication-test-notes-help"
+          className={cn('block text-xs', testNotesAreBlank ? 'text-red-600' : 'text-text-muted')}
+        >
+          {testNotesAreBlank
+            ? t('workbench.plugins_publication_test_notes_required', '测试说明不能为空')
+            : t(
+                'workbench.plugins_publication_test_notes_hint',
+                '必填，请说明已验证的平台、场景和结果'
+              )}
+        </span>
+      </label>
+      <label className="block space-y-2">
+        <span className="text-sm font-medium text-text-primary">
+          {t('workbench.plugins_publication_additional_notes', '补充说明')}
+        </span>
+        <textarea
+          value={riskDeclaration.additionalNotes}
+          data-testid="plugin-publication-additional-notes"
+          rows={3}
+          maxLength={2000}
+          className="w-full resize-none rounded-xl border border-border bg-background px-3 py-2 text-sm outline-none focus:border-focus/70 focus:ring-2 focus:ring-focus/15"
+          onChange={event =>
+            setRiskDeclaration(current => ({
+              ...current,
+              additionalNotes: event.target.value,
+            }))
+          }
+        />
+      </label>
+    </div>
+  )
+}
+
 export function PluginPublishDialog({
   pluginName,
   pluginVersion = '0.1.0',
@@ -134,10 +373,6 @@ export function PluginPublishDialog({
   const [enterpriseStep, setEnterpriseStep] = useState<EnterpriseStep>(1)
   const [targets, setTargets] = useState<PluginAccessTarget[]>(initialAccess?.targets ?? [])
   const [allowCopy, setAllowCopy] = useState(initialAccess?.allowCopy ?? false)
-  const [query, setQuery] = useState('')
-  const [users, setUsers] = useState<PluginShareUserSearchItem[]>([])
-  const [groups, setGroups] = useState<PluginShareGroupSearchItem[]>([])
-  const [searching, setSearching] = useState(false)
   const [releaseNotes, setReleaseNotes] = useState('')
   const [riskDeclaration, setRiskDeclaration] =
     useState<PluginPublicationRiskDeclaration>(EMPTY_RISK_DECLARATION)
@@ -150,15 +385,10 @@ export function PluginPublishDialog({
   // The id stays stable while this dialog remains open so a transport retry
   // replays the same logical submit. Reopening the dialog starts a new request.
   const publicationAttemptIdRef = useRef(createOperationAttemptId())
-  const dialogRef = useRef<HTMLElement>(null)
   const restrictedIntentRef = useRef<HTMLButtonElement>(null)
   const enterpriseIntentRef = useRef<HTMLButtonElement>(null)
-  const restrictedSearchRef = useRef<HTMLInputElement>(null)
-  const enterpriseTitleRef = useRef<HTMLHeadingElement>(null)
 
   useEffect(() => {
-    const previousFocus =
-      document.activeElement instanceof HTMLElement ? document.activeElement : null
     const handleEscape = (event: KeyboardEvent) => {
       if (event.key !== 'Escape' || publishing) return
       event.preventDefault()
@@ -167,68 +397,16 @@ export function PluginPublishDialog({
     document.addEventListener('keydown', handleEscape)
     return () => {
       document.removeEventListener('keydown', handleEscape)
-      previousFocus?.focus()
     }
   }, [onClose, publishing])
 
-  useEffect(() => {
-    queueMicrotask(() => {
-      if (screen === 'restricted') {
-        restrictedSearchRef.current?.focus()
-        return
-      }
-      if (screen === 'enterprise') {
-        enterpriseTitleRef.current?.focus()
-        return
-      }
-      const selectedIntentRef = intent === 'enterprise' ? enterpriseIntentRef : restrictedIntentRef
-      selectedIntentRef.current?.focus()
-    })
-  }, [enterpriseStep, intent, screen])
-
-  useEffect(() => {
-    const normalized = query.trim()
-    if (!normalized || screen !== 'restricted') return
-    let current = true
-    queueMicrotask(() => {
-      if (current) setSearching(true)
-    })
-    Promise.all([searchUsers(normalized), searchGroups(normalized)])
-      .then(([nextUsers, nextGroups]) => {
-        if (!current) return
-        setUsers(nextUsers)
-        setGroups(nextGroups)
-      })
-      .finally(() => {
-        if (current) setSearching(false)
-      })
-    return () => {
-      current = false
-    }
-  }, [query, screen, searchGroups, searchUsers])
-
-  const normalizedDomains = useMemo(
-    () =>
-      domainsText
-        .split(/[\s,，;；]+/)
-        .map(domain => domain.trim().toLowerCase())
-        .filter(Boolean),
-    [domainsText]
-  )
+  const normalizedDomains = useMemo(() => normalizeDomains(domainsText), [domainsText])
   const normalizedCommandExamples = useMemo(
-    () =>
-      commandExamplesText
-        .split(/[\n,，;；]+/)
-        .map(item => item.trim())
-        .filter(Boolean),
+    () => normalizeList(commandExamplesText),
     [commandExamplesText]
   )
   const normalizedApplicationPermissions = useMemo(
-    () =>
-      applicationPermissionsText
-        .split(/[\n,，;；]+/)
-        .map(item => item.trim())
-        .filter(Boolean),
+    () => normalizeList(applicationPermissionsText),
     [applicationPermissionsText]
   )
   const riskStepInvalid =
@@ -236,7 +414,6 @@ export function PluginPublishDialog({
     (riskDeclaration.externalNetworkAccess && normalizedDomains.length === 0) ||
     (riskDeclaration.executesCommands && normalizedCommandExamples.length === 0) ||
     (applicationAuthorization && normalizedApplicationPermissions.length === 0)
-
   const addTarget = (target: PluginAccessTarget) => {
     setTargets(current =>
       current.some(
@@ -245,27 +422,6 @@ export function PluginPublishDialog({
         ? current
         : [...current, target]
     )
-    setQuery('')
-  }
-
-  const trapDialogFocus = (event: ReactKeyboardEvent<HTMLElement>) => {
-    if (event.key !== 'Tab') return
-    const focusable = Array.from(
-      dialogRef.current?.querySelectorAll<HTMLElement>(
-        'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'
-      ) ?? []
-    )
-    if (focusable.length === 0) return
-    const currentIndex = focusable.indexOf(document.activeElement as HTMLElement)
-    const nextIndex = event.shiftKey
-      ? currentIndex <= 0
-        ? focusable.length - 1
-        : currentIndex - 1
-      : currentIndex === focusable.length - 1
-        ? 0
-        : currentIndex + 1
-    event.preventDefault()
-    focusable[nextIndex]?.focus()
   }
 
   const handleIntentKeyDown = (event: ReactKeyboardEvent<HTMLButtonElement>) => {
@@ -335,25 +491,24 @@ export function PluginPublishDialog({
       t('workbench.plugins_publication_step_confirm', '确认提交'),
     ]
     return (
-      <div className="plugin-dialog-overlay fixed inset-0 z-modal flex justify-end">
+      <div
+        data-testid="plugin-publication-overlay"
+        className="plugin-dialog-overlay fixed inset-0 z-modal flex justify-end"
+        onClick={event => {
+          if (!publishing && event.target === event.currentTarget) onClose()
+        }}
+      >
         <section
-          ref={dialogRef}
           role="dialog"
           aria-modal="true"
           aria-labelledby="plugin-publication-title"
           data-testid="plugin-publication-drawer"
           className="flex h-full w-full max-w-[480px] flex-col border-l border-border/30 bg-background shadow-xl"
-          onKeyDown={trapDialogFocus}
         >
           <header className="border-b border-border/25 px-5 pb-4 pt-5">
             <div className="flex items-start justify-between gap-4">
               <div>
-                <h2
-                  ref={enterpriseTitleRef}
-                  id="plugin-publication-title"
-                  tabIndex={-1}
-                  className="heading-small text-text-primary outline-none"
-                >
+                <h2 id="plugin-publication-title" className="heading-small text-text-primary">
                   {t('workbench.plugins_publication_title', '申请企业全员发布')}
                 </h2>
                 <p className="mt-1 text-sm text-text-secondary">
@@ -404,7 +559,7 @@ export function PluginPublishDialog({
             </ol>
           </header>
 
-          <div className="min-h-0 flex-1 overflow-y-auto px-5 py-5">
+          <div className="min-h-0 flex-1 overflow-y-auto px-5 py-5 [contain:layout_paint]">
             {enterpriseStep === 1 ? (
               <div data-testid="plugin-publication-step-version" className="space-y-5">
                 <div className="rounded-2xl bg-surface px-4 py-4">
@@ -450,187 +605,21 @@ export function PluginPublishDialog({
             ) : null}
 
             {enterpriseStep === 2 ? (
-              <div data-testid="plugin-publication-step-risk" className="space-y-5">
-                <p className="text-sm leading-5 text-text-secondary">
-                  {t(
-                    'workbench.plugins_publication_risk_intro',
-                    '请如实声明插件行为。系统会把声明与 Manifest 和包扫描结果交叉校验。'
-                  )}
-                </p>
-                <div className="overflow-hidden rounded-xl border border-border/30">
-                  <label className="flex items-start justify-between gap-4 border-b border-border/25 px-4 py-4">
-                    <span>
-                      <span className="block text-sm font-medium text-text-primary">
-                        {t('workbench.plugins_publication_risk_network', '访问外部网络')}
-                      </span>
-                      <span className="mt-1 block text-xs text-text-muted">
-                        {t(
-                          'workbench.plugins_publication_risk_network_hint',
-                          '访问企业外部服务或域名'
-                        )}
-                      </span>
-                    </span>
-                    <input
-                      type="checkbox"
-                      checked={riskDeclaration.externalNetworkAccess}
-                      data-testid="plugin-publication-risk-network"
-                      className="mt-1 h-4 w-4 accent-neutral-900"
-                      onChange={event =>
-                        setRiskDeclaration(current => ({
-                          ...current,
-                          externalNetworkAccess: event.target.checked,
-                        }))
-                      }
-                    />
-                  </label>
-                  {riskDeclaration.externalNetworkAccess ? (
-                    <label className="block border-b border-border/25 bg-surface/50 px-4 py-3">
-                      <span className="text-xs font-medium text-text-secondary">
-                        {t('workbench.plugins_publication_external_domains', '外部域名')}
-                      </span>
-                      <input
-                        value={domainsText}
-                        data-testid="plugin-publication-external-domains"
-                        className="mt-2 h-10 w-full rounded-lg border border-border bg-background px-3 text-sm outline-none focus:border-focus/70 focus:ring-2 focus:ring-focus/15"
-                        placeholder="api.example.com"
-                        onChange={event => setDomainsText(event.target.value)}
-                      />
-                    </label>
-                  ) : null}
-                  {RISK_ROWS.map(row => {
-                    const testId =
-                      row.key === 'executesCommands'
-                        ? 'plugin-publication-risk-command'
-                        : row.key === 'readsOrWritesLocalFiles'
-                          ? 'plugin-publication-risk-files'
-                          : 'plugin-publication-risk-credentials'
-                    return (
-                      <div key={row.key} className="border-b border-border/25">
-                        <label className="flex items-start justify-between gap-4 px-4 py-4">
-                          <span>
-                            <span className="block text-sm font-medium text-text-primary">
-                              {t('workbench.plugins_publication_risk_' + row.key, row.label)}
-                            </span>
-                            <span className="mt-1 block text-xs text-text-muted">
-                              {t(
-                                'workbench.plugins_publication_risk_' + row.key + '_hint',
-                                row.hint
-                              )}
-                            </span>
-                          </span>
-                          <input
-                            type="checkbox"
-                            checked={riskDeclaration[row.key]}
-                            data-testid={testId}
-                            className="mt-1 h-4 w-4 accent-neutral-900"
-                            onChange={event =>
-                              setRiskDeclaration(current => ({
-                                ...current,
-                                [row.key]: event.target.checked,
-                              }))
-                            }
-                          />
-                        </label>
-                        {row.key === 'executesCommands' && riskDeclaration.executesCommands ? (
-                          <label className="block bg-surface/50 px-4 pb-3">
-                            <span className="text-xs font-medium text-text-secondary">
-                              {t(
-                                'workbench.plugins_publication_command_examples',
-                                '命令或脚本示例'
-                              )}
-                            </span>
-                            <textarea
-                              value={commandExamplesText}
-                              rows={3}
-                              data-testid="plugin-publication-command-examples"
-                              className="mt-2 w-full resize-none rounded-lg border border-border bg-background px-3 py-2 text-sm outline-none focus:border-focus/70 focus:ring-2 focus:ring-focus/15"
-                              placeholder="node scripts/check.js"
-                              onChange={event => setCommandExamplesText(event.target.value)}
-                            />
-                          </label>
-                        ) : null}
-                      </div>
-                    )
-                  })}
-                  <div>
-                    <label className="flex items-start justify-between gap-4 px-4 py-4">
-                      <span>
-                        <span className="block text-sm font-medium text-text-primary">
-                          {t('workbench.plugins_publication_risk_application', '需要应用授权')}
-                        </span>
-                        <span className="mt-1 block text-xs text-text-muted">
-                          {t(
-                            'workbench.plugins_publication_risk_application_hint',
-                            '例如 OAuth、连接器或本地二维码授权'
-                          )}
-                        </span>
-                      </span>
-                      <input
-                        type="checkbox"
-                        checked={applicationAuthorization}
-                        data-testid="plugin-publication-risk-application"
-                        className="mt-1 h-4 w-4 accent-neutral-900"
-                        onChange={event => setApplicationAuthorization(event.target.checked)}
-                      />
-                    </label>
-                    {applicationAuthorization ? (
-                      <label className="block bg-surface/50 px-4 pb-3">
-                        <span className="text-xs font-medium text-text-secondary">
-                          {t(
-                            'workbench.plugins_publication_application_permissions',
-                            '应用与权限列表'
-                          )}
-                        </span>
-                        <textarea
-                          value={applicationPermissionsText}
-                          rows={3}
-                          data-testid="plugin-publication-application-permissions"
-                          className="mt-2 w-full resize-none rounded-lg border border-border bg-background px-3 py-2 text-sm outline-none focus:border-focus/70 focus:ring-2 focus:ring-focus/15"
-                          placeholder="GitLab OAuth: read_api"
-                          onChange={event => setApplicationPermissionsText(event.target.value)}
-                        />
-                      </label>
-                    ) : null}
-                  </div>
-                </div>
-                <label className="block space-y-2">
-                  <span className="text-sm font-medium text-text-primary">
-                    {t('workbench.plugins_publication_test_notes', '测试说明')}
-                  </span>
-                  <textarea
-                    value={testNotes}
-                    data-testid="plugin-publication-test-notes"
-                    rows={5}
-                    maxLength={1000}
-                    className="w-full resize-none rounded-xl border border-border bg-background px-3 py-2 text-sm outline-none focus:border-focus/70 focus:ring-2 focus:ring-focus/15"
-                    placeholder={t(
-                      'workbench.plugins_publication_test_notes_placeholder',
-                      '说明已验证的平台、场景和结果'
-                    )}
-                    onChange={event => setTestNotes(event.target.value)}
-                  />
-                </label>
-                <label className="block space-y-2">
-                  <span className="text-sm font-medium text-text-primary">
-                    {t('workbench.plugins_publication_additional_notes', '补充说明')}
-                  </span>
-                  <textarea
-                    value={riskDeclaration.additionalNotes}
-                    data-testid="plugin-publication-additional-notes"
-                    rows={3}
-                    maxLength={2000}
-                    className="w-full resize-none rounded-xl border border-border bg-background px-3 py-2 text-sm outline-none focus:border-focus/70 focus:ring-2 focus:ring-focus/15"
-                    onChange={event =>
-                      setRiskDeclaration(current => ({
-                        ...current,
-                        additionalNotes: event.target.value,
-                      }))
-                    }
-                  />
-                </label>
-              </div>
+              <PluginPublicationRiskStep
+                riskDeclaration={riskDeclaration}
+                setRiskDeclaration={setRiskDeclaration}
+                applicationAuthorization={applicationAuthorization}
+                setApplicationAuthorization={setApplicationAuthorization}
+                domainsText={domainsText}
+                setDomainsText={setDomainsText}
+                commandExamplesText={commandExamplesText}
+                setCommandExamplesText={setCommandExamplesText}
+                applicationPermissionsText={applicationPermissionsText}
+                setApplicationPermissionsText={setApplicationPermissionsText}
+                testNotes={testNotes}
+                setTestNotes={setTestNotes}
+              />
             ) : null}
-
             {enterpriseStep === 3 ? (
               <div data-testid="plugin-publication-step-confirm" className="space-y-5">
                 <dl className="overflow-hidden rounded-xl border border-border/30 text-sm">
@@ -689,7 +678,7 @@ export function PluginPublishDialog({
                     {t('workbench.plugins_publication_release_notes', '版本说明')}
                   </h3>
                   <p className="whitespace-pre-wrap rounded-xl bg-surface px-3 py-3 text-sm leading-5 text-text-secondary">
-                    {releaseNotes.trim()}
+                    {releaseNotes}
                   </p>
                 </div>
                 <div className="space-y-2">
@@ -779,7 +768,7 @@ export function PluginPublishDialog({
                     targets: [],
                     allowCopy: false,
                     operationAttemptId: publicationAttemptIdRef.current,
-                    releaseNotes: releaseNotes.trim(),
+                    releaseNotes,
                     testNotes: testNotes.trim(),
                     riskDeclaration: {
                       ...riskDeclaration,
@@ -811,13 +800,11 @@ export function PluginPublishDialog({
   return (
     <div className="plugin-dialog-overlay fixed inset-0 z-modal flex items-end justify-center p-0 sm:items-center sm:p-4">
       <section
-        ref={dialogRef}
         role="dialog"
         aria-modal="true"
         aria-labelledby="plugin-share-intent-title"
         data-testid={screen === 'intent' ? 'plugin-share-intent-dialog' : 'plugin-share-dialog'}
         className="plugin-dialog-surface w-full max-w-lg rounded-b-none p-5 sm:rounded-b-[20px]"
-        onKeyDown={trapDialogFocus}
       >
         <header className="flex items-start justify-between gap-4">
           <div>
@@ -986,72 +973,11 @@ export function PluginPublishDialog({
           </div>
         ) : (
           <div className="mt-5">
-            <label className="relative block">
-              <span className="sr-only">
-                {t('workbench.plugins_share_search', '搜索成员或部门')}
-              </span>
-              <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-text-muted" />
-              <input
-                ref={restrictedSearchRef}
-                value={query}
-                data-testid="plugin-share-search"
-                className="h-11 w-full rounded-lg border border-border bg-background pl-9 pr-3 text-sm outline-none focus:border-focus/70 focus:ring-2 focus:ring-focus/15"
-                placeholder={t('workbench.plugins_share_search', '搜索成员或部门')}
-                onChange={event => setQuery(event.target.value)}
-              />
-            </label>
-            {query.trim() ? (
-              <div
-                data-testid="plugin-share-search-results"
-                className="mt-2 max-h-48 overflow-y-auto rounded-xl border border-border/30 p-1"
-              >
-                {searching ? (
-                  <p className="px-3 py-2 text-sm text-text-muted">
-                    {t('workbench.plugins_share_searching', '正在搜索…')}
-                  </p>
-                ) : null}
-                {users.map(user => (
-                  <button
-                    key={'user-' + user.id}
-                    type="button"
-                    data-testid={'plugin-share-user-' + user.id}
-                    className="flex min-h-11 w-full items-center justify-between rounded-lg px-3 text-left hover:bg-surface"
-                    onClick={() =>
-                      addTarget({
-                        entityType: 'user',
-                        entityId: String(user.id),
-                        displayName: user.user_name,
-                      })
-                    }
-                  >
-                    <span className="text-sm font-medium">{user.user_name}</span>
-                    <span className="text-xs text-text-muted">
-                      {t('workbench.plugins_share_member', '成员')}
-                    </span>
-                  </button>
-                ))}
-                {groups.map(group => (
-                  <button
-                    key={'namespace-' + group.id}
-                    type="button"
-                    data-testid={'plugin-share-namespace-' + group.id}
-                    className="flex min-h-11 w-full items-center justify-between rounded-lg px-3 text-left hover:bg-surface"
-                    onClick={() =>
-                      addTarget({
-                        entityType: 'namespace',
-                        entityId: String(group.id),
-                        displayName: group.display_name || group.name,
-                      })
-                    }
-                  >
-                    <span className="text-sm font-medium">{group.display_name || group.name}</span>
-                    <span className="text-xs text-text-muted">
-                      {t('workbench.plugins_share_department', '部门')}
-                    </span>
-                  </button>
-                ))}
-              </div>
-            ) : null}
+            <PluginShareTargetSearch
+              searchUsers={searchUsers}
+              searchGroups={searchGroups}
+              onSelect={addTarget}
+            />
 
             <div className="mt-3 flex flex-wrap gap-2" data-testid="plugin-share-targets">
               {targets.map(target => (
@@ -1145,7 +1071,7 @@ export function PluginPublishDialog({
                 : intent === 'restricted'
                   ? t('workbench.plugins_share_select_people', '选择成员或部门')
                   : activePublication?.canCreateRevision
-                    ? t('workbench.plugins_publication_create_revision', '提交新 Revision')
+                    ? t('workbench.plugins_publication_create_revision', '提交新修订版')
                     : t('workbench.plugins_publication_continue', '继续填写发布申请')}
             </Button>
           ) : (

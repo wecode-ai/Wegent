@@ -8,7 +8,6 @@ import json
 import zipfile
 from datetime import datetime, timedelta, timezone
 
-import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session
 
@@ -48,12 +47,6 @@ def _release_key(db: Session, user: User) -> str:
             key_prefix="wg-plugin...",
             name="Plugin release test",
             key_type=KEY_TYPE_PLUGIN_RELEASE,
-            scopes_json=["plugins:release"],
-            restrictions_json={
-                "projectIds": ["42"],
-                "catalogNamespaces": ["enterprise"],
-                "environments": ["production"],
-            },
             expires_at=(
                 datetime.now(timezone.utc).replace(tzinfo=None) + timedelta(days=1)
             ),
@@ -155,7 +148,7 @@ def test_release_endpoint_accepts_exact_multipart_envelope(
     assert captured["release_key_id"] == release_key.id
 
 
-def test_release_endpoint_rejects_wrong_key_scope_and_artifact_hash(
+def test_release_endpoint_rejects_wrong_key_type_and_artifact_hash(
     test_client: TestClient,
     test_db: Session,
     test_user: User,
@@ -222,6 +215,35 @@ def test_release_endpoint_requires_bearer_authorization_scheme(
 
     assert response.status_code == 401
     assert response.headers["www-authenticate"] == "Bearer"
+
+
+def test_release_endpoint_requires_configured_gitlab_project(
+    test_client: TestClient,
+    test_db: Session,
+    test_user: User,
+    monkeypatch,
+):
+    package = _plugin_zip()
+    raw_key = _release_key(test_db, test_user)
+    metadata = _metadata(package)
+    monkeypatch.setattr(settings, "PLUGIN_PUBLICATION_GITLAB_PROJECT_ID", "")
+
+    response = test_client.post(
+        RELEASE_URL,
+        files={
+            "metadata": (None, json.dumps(metadata), "application/json"),
+            "package": ("plugin.zip", package, "application/zip"),
+        },
+        headers={
+            "Authorization": f"Bearer {raw_key}",
+            "Idempotency-Key": expected_release_idempotency_key(metadata),
+        },
+    )
+
+    assert response.status_code == 503
+    assert response.json()["detail"] == (
+        "Plugin publication GitLab project is not configured"
+    )
 
 
 def test_release_endpoint_rejects_malformed_idempotency_key(

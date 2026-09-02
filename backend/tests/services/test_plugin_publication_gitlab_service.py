@@ -30,7 +30,7 @@ def _package(slug: str = "draft-test", *, risk_body: str | None = None) -> bytes
                 {
                     "name": slug,
                     "version": "1.0.0",
-                    "description": "Draft MR test",
+                    "description": "MR test",
                 }
             ),
         )
@@ -245,7 +245,7 @@ class PreoccupiedClient(FakeClient):
         return super().request(method, url, **kwargs)
 
 
-def test_materialization_writes_exact_risk_marker_and_draft_mr() -> None:
+def test_materialization_writes_exact_risk_marker_and_review_ready_mr() -> None:
     package = _package()
     calls: list = []
     service = PluginPublicationGitLabService(
@@ -273,6 +273,8 @@ def test_materialization_writes_exact_risk_marker_and_draft_mr() -> None:
         request_id=12,
         revision=3,
         slug="draft-test",
+        plugin_name="发布测试插件",
+        version="1.0.0",
         snapshot_sha256="b" * 64,
         source_tree_sha256=tree_sha256,
         package=package,
@@ -336,7 +338,13 @@ def test_materialization_writes_exact_risk_marker_and_draft_mr() -> None:
         for method, url, kwargs in calls
         if method == "POST" and url.endswith("/merge_requests")
     )
-    assert merge_request_payload["title"].startswith("Draft:")
+    assert merge_request_payload["title"] == (
+        "Plugin publication: 发布测试插件 (draft-test) v1.0.0"
+    )
+    assert not merge_request_payload["title"].startswith("Draft:")
+    assert "- Name: 发布测试插件" in merge_request_payload["description"]
+    assert "- Slug: `draft-test`" in merge_request_payload["description"]
+    assert "- Version: `v1.0.0`" in merge_request_payload["description"]
     assert result.merge_request_iid == 8
 
 
@@ -357,6 +365,8 @@ def test_materialization_updates_only_the_matching_marketplace_entry() -> None:
         request_id=12,
         revision=3,
         slug="existing-plugin",
+        plugin_name="Existing Plugin",
+        version="1.0.0",
         snapshot_sha256="b" * 64,
         source_tree_sha256=canonical_source_tree_sha256(package),
         package=package,
@@ -483,6 +493,8 @@ def test_materialization_requires_the_configured_dedicated_identity() -> None:
             request_id=12,
             revision=3,
             slug="draft-test",
+            plugin_name="Draft Test",
+            version="1.0.0",
             snapshot_sha256="b" * 64,
             source_tree_sha256=canonical_source_tree_sha256(package),
             package=package,
@@ -516,6 +528,8 @@ def test_materialization_rejects_preoccupied_branch_or_merge_request(
             request_id=12,
             revision=3,
             slug="draft-test",
+            plugin_name="Draft Test",
+            version="1.0.0",
             snapshot_sha256="b" * 64,
             source_tree_sha256=canonical_source_tree_sha256(package),
             package=package,

@@ -11,7 +11,6 @@ from sqlalchemy import (
     Boolean,
     Column,
     DateTime,
-    ForeignKey,
     Index,
     Integer,
     String,
@@ -38,11 +37,7 @@ class PluginPublicationRequest(Base):
     __tablename__ = "plugin_publication_requests"
 
     id = Column(big_integer_id_type(), primary_key=True, autoincrement=True)
-    source_plugin_id = Column(
-        big_integer_id_type(),
-        ForeignKey("plugins.id", ondelete="RESTRICT"),
-        nullable=False,
-    )
+    source_plugin_id = Column(big_integer_id_type(), nullable=False, default=0)
     target_plugin_id = Column(big_integer_id_type(), nullable=False, default=0)
     submitter_user_id = Column(big_integer_id_type(), nullable=False, default=0)
     current_revision_id = Column(big_integer_id_type(), nullable=False, default=0)
@@ -88,11 +83,7 @@ class PluginPublicationRevision(Base):
     __tablename__ = "plugin_publication_revisions"
 
     id = Column(big_integer_id_type(), primary_key=True, autoincrement=True)
-    request_id = Column(
-        big_integer_id_type(),
-        ForeignKey("plugin_publication_requests.id", ondelete="CASCADE"),
-        nullable=False,
-    )
+    request_id = Column(big_integer_id_type(), nullable=False, default=0)
     revision = Column(Integer, nullable=False, default=1)
     source_release_id = Column(big_integer_id_type(), nullable=False, default=0)
     requested_version = Column(String(50), nullable=False, default="")
@@ -162,11 +153,7 @@ class PluginPublicationCheck(Base):
     __tablename__ = "plugin_publication_checks"
 
     id = Column(big_integer_id_type(), primary_key=True, autoincrement=True)
-    revision_id = Column(
-        big_integer_id_type(),
-        ForeignKey("plugin_publication_revisions.id", ondelete="CASCADE"),
-        nullable=False,
-    )
+    revision_id = Column(big_integer_id_type(), nullable=False, default=0)
     stage = Column(String(40), nullable=False, default="automatic")
     check_code = Column(String(100), nullable=False, default="")
     title = Column(String(200), nullable=False, default="")
@@ -201,11 +188,7 @@ class PluginPublicationEvent(Base):
     __tablename__ = "plugin_publication_events"
 
     id = Column(big_integer_id_type(), primary_key=True, autoincrement=True)
-    revision_id = Column(
-        big_integer_id_type(),
-        ForeignKey("plugin_publication_revisions.id", ondelete="CASCADE"),
-        nullable=False,
-    )
+    revision_id = Column(big_integer_id_type(), nullable=False, default=0)
     event_type = Column(String(100), nullable=False, default="")
     actor_type = Column(String(30), nullable=False, default="system")
     actor_id = Column(big_integer_id_type(), nullable=False, default=0)

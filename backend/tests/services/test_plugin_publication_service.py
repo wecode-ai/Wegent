@@ -165,6 +165,7 @@ class FakeGitLab:
     def __init__(self) -> None:
         self.calls: list[dict] = []
         self.verification_calls: list[dict] = []
+        self.closed_merge_request_iids: list[int] = []
 
     def materialize(self, **kwargs) -> GitLabMaterialization:
         self.calls.append(kwargs)
@@ -184,7 +185,7 @@ class FakeGitLab:
         return self.materialize(**kwargs)
 
     def close_merge_request(self, *, merge_request_iid: int) -> None:
-        del merge_request_iid
+        self.closed_merge_request_iids.append(merge_request_iid)
 
     def verify_release_provenance(self, **kwargs) -> None:
         self.verification_calls.append(kwargs)
@@ -282,6 +283,51 @@ def _create_and_complete(
         revision_number=1,
     )
     return upload, detail
+
+
+def _accept_and_fail_pipeline(
+    service: PluginPublicationService,
+    db,
+    *,
+    user_id: int,
+    admin_user: User,
+    storage: FakeStorage,
+):
+    package = _plugin_zip()
+    upload, _ = _create_and_complete(service, db, user_id, storage, package=package)
+    accepted = service.accept_request(
+        db,
+        admin_user=admin_user,
+        request_id=upload.requestId,
+        payload=AcceptPluginPublicationRequest(
+            currentRevision=1,
+            acknowledgedWarningCodes=[],
+        ),
+    )
+    service.record_gitlab_event(
+        db,
+        event_id=f"pipeline-failed-{upload.requestId}",
+        event_name="Pipeline Hook",
+        expected_project_id="42",
+        payload={
+            "project": {"id": 42},
+            "object_attributes": {
+                "id": 301,
+                "ref": accepted.gitlab.sourceBranch,
+                "sha": accepted.gitlab.commitSha,
+                "status": "failed",
+            },
+            "builds": [
+                {
+                    "name": "wework-linux",
+                    "stage": "verify",
+                    "status": "failed",
+                    "failure_reason": "script_failure",
+                }
+            ],
+        },
+    )
+    return upload, package
 
 
 def test_request_activation_locks_submitter_row_for_capacity_serialization() -> None:
@@ -873,7 +919,7 @@ def test_request_list_filters_submission_time_and_orders_pending_before_terminal
     assert invalid_window.value.status_code == 422
 
 
-def test_admin_accept_creates_one_draft_mr_and_requires_warning_acknowledgement(
+def test_admin_accept_creates_one_mr_and_requires_warning_acknowledgement(
     test_db, test_user, test_admin_user
 ):
     storage = FakeStorage()
@@ -892,6 +938,9 @@ def test_admin_accept_creates_one_draft_mr_and_requires_warning_acknowledgement(
         },
     )
     assert detail.status == "awaiting_admin"
+    source_plugin = test_db.get(Plugin, upload.sourcePluginId)
+    source_plugin.display_name = "Test Plugin"
+    test_db.commit()
     admin_detail = service.get_request(
         test_db,
         user_id=None,
@@ -925,6 +974,8 @@ def test_admin_accept_creates_one_draft_mr_and_requires_warning_acknowledgement(
     assert accepted.status == "draft_mr_open"
     assert accepted.gitlab.mergeRequestIid == 7
     assert len(gitlab.calls) == 1
+    assert gitlab.calls[0]["plugin_name"] == "Test Plugin"
+    assert gitlab.calls[0]["version"] == "1.0.0"
     assert gitlab.calls[0]["risk_declaration"]["externalNetworkAccess"] is True
     personal_releases = (
         test_db.query(PluginRelease)
@@ -1222,9 +1273,43 @@ def test_gitlab_events_are_project_bound_and_monotonic(
                 "sha": materialized_sha,
                 "status": "failed",
             },
+            "builds": [
+                {
+                    "name": "wework-linux",
+                    "stage": "verify",
+                    "status": "failed",
+                    "failure_reason": "script_failure",
+                    "web_url": "https://git.invalid/jobs/301",
+                    "trace": "PRIVATE-TOKEN=must-not-be-projected",
+                },
+                {
+                    "name": "wework-release",
+                    "stage": "release",
+                    "status": "skipped",
+                },
+            ],
         },
     )
     assert failed.status == "code_changes_requested"
+    assert failed.actionEligibility.canReturn is True
+    failure_event = next(
+        event for event in failed.events if event.eventType == "gitlab.pipeline_failed"
+    )
+    assert failure_event.actorType == "pipeline"
+    assert [detail.model_dump() for detail in failure_event.failureDetails] == [
+        {
+            "jobName": "wework-linux",
+            "stage": "verify",
+            "status": "failed",
+            "reason": "script_failure",
+            "jobUrl": "https://git.invalid/jobs/301",
+        }
+    ]
+    assert "PRIVATE-TOKEN" not in failure_event.model_dump_json()
+    owner_failed = service.get_request(
+        test_db, user_id=test_user.id, request_id=upload.requestId
+    )
+    assert owner_failed.actionEligibility.canCreateRevision is True
 
     failed_pipeline_late_running = service.record_gitlab_event(
         test_db,
@@ -1387,6 +1472,7 @@ def test_closed_merge_request_is_terminal_and_allows_a_new_revision(
         expected_project_id="42",
         payload={
             "project": {"id": 42},
+            "user": {"name": "Code Reviewer", "username": "reviewer"},
             "object_attributes": {"iid": 7, "state": "closed"},
         },
     )
@@ -1395,6 +1481,13 @@ def test_closed_merge_request_is_terminal_and_allows_a_new_revision(
         test_db, user_id=test_user.id, request_id=upload.requestId
     )
     assert owner_detail.actionEligibility.canCreateRevision is True
+    closed_event = next(
+        event
+        for event in owner_detail.events
+        if event.eventType == "gitlab.merge_request_closed"
+    )
+    assert closed_event.actorName == "Code Reviewer"
+    assert "without a supplied reason" in closed_event.message
 
     late_success = service.record_gitlab_event(
         test_db,
@@ -1410,6 +1503,82 @@ def test_closed_merge_request_is_terminal_and_allows_a_new_revision(
         },
     )
     assert late_success.status == "closed"
+
+
+def test_pipeline_failure_can_be_returned_with_an_admin_reason(
+    test_db, test_user, test_admin_user
+):
+    storage = FakeStorage()
+    gitlab = FakeGitLab()
+    service = PluginPublicationService(storage=storage, gitlab=gitlab)
+    upload, _ = _accept_and_fail_pipeline(
+        service,
+        test_db,
+        user_id=test_user.id,
+        admin_user=test_admin_user,
+        storage=storage,
+    )
+
+    returned = service.return_request(
+        test_db,
+        admin_user=test_admin_user,
+        request_id=upload.requestId,
+        payload=ReturnPluginPublicationRequest(
+            currentRevision=1,
+            reason="Pipeline 检查未通过，请修复 Linux 打包脚本",
+            requiredChanges=["修复 wework-linux 任务"],
+        ),
+    )
+
+    assert returned.status == "changes_requested"
+    assert gitlab.closed_merge_request_iids == [7]
+    event = next(
+        item for item in returned.events if item.eventType == "admin.changes_requested"
+    )
+    assert event.message == "Pipeline 检查未通过，请修复 Linux 打包脚本"
+    assert event.requiredChanges == ["修复 wework-linux 任务"]
+
+
+def test_pipeline_failure_allows_a_new_revision_and_closes_the_previous_mr(
+    test_db, test_user, test_admin_user
+):
+    storage = FakeStorage()
+    gitlab = FakeGitLab()
+    service = PluginPublicationService(storage=storage, gitlab=gitlab)
+    upload, _ = _accept_and_fail_pipeline(
+        service,
+        test_db,
+        user_id=test_user.id,
+        admin_user=test_admin_user,
+        storage=storage,
+    )
+    package_v2 = _plugin_zip("1.0.1")
+
+    created = service.create_revision(
+        test_db,
+        user_id=test_user.id,
+        request_id=upload.requestId,
+        payload=PluginPublicationRevisionCreateRequest(
+            requestedVersion="1.0.1",
+            filename="plugin.zip",
+            snapshotSha256=hashlib.sha256(package_v2).hexdigest(),
+            sizeBytes=len(package_v2),
+            releaseNotes="修复 Pipeline 失败",
+            testNotes="已重新验证 Linux 打包",
+        ),
+    )
+
+    assert created.revision.number == 2
+    assert gitlab.closed_merge_request_iids == [7]
+    previous = (
+        test_db.query(PluginPublicationRevision)
+        .filter(
+            PluginPublicationRevision.request_id == upload.requestId,
+            PluginPublicationRevision.revision == 1,
+        )
+        .one()
+    )
+    assert previous.merge_request_status == "closed"
 
 
 def test_release_service_requires_authenticated_principal_identity():

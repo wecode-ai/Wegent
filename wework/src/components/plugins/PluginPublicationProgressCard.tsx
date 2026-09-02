@@ -1,4 +1,4 @@
-import { Check, Circle, ExternalLink, RotateCcw, XCircle } from 'lucide-react'
+import { Check, Circle, ExternalLink, XCircle } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { useTranslation } from '@/hooks/useTranslation'
 import { cn } from '@/lib/utils'
@@ -39,8 +39,8 @@ function publicationStatusLabel(
     admin_review: '管理员审核中',
     changes_requested: '已退回修改',
     admin_accepted: '管理员已接受',
-    materializing: '正在创建 Draft MR',
-    draft_mr_open: 'Draft MR 已创建',
+    materializing: '正在创建 MR',
+    draft_mr_open: 'MR 已创建',
     ci_running: '代码检查中',
     code_changes_requested: '代码需修改',
     merge_ready: '等待合并',
@@ -121,19 +121,20 @@ export function PluginPublicationProgressCard({
               {publication.status === 'changes_requested' ||
               publication.status === 'code_changes_requested'
                 ? t('workbench.plugins_publication_fix_and_resubmit', '修复并重新提交')
-                : t('workbench.plugins_publication_create_revision', '提交新 Revision')}
+                : t('workbench.plugins_publication_create_revision', '提交新修订版')}
             </Button>
           ) : null}
           {onWithdraw && publication.actionEligibility.canWithdraw ? (
             <Button
               type="button"
               size="sm"
-              variant="ghost"
+              variant="outline"
+              className="border-red-500/40 text-red-600 hover:border-red-500/60 hover:bg-red-500/10 hover:text-red-700"
               disabled={withdrawing}
               data-testid={'plugin-publication-withdraw-' + publication.id}
               onClick={onWithdraw}
             >
-              <RotateCcw />
+              <XCircle aria-hidden="true" />
               {withdrawing
                 ? t('workbench.plugins_publication_withdrawing', '正在撤回…')
                 : t('workbench.plugins_publication_withdraw', '撤回')}

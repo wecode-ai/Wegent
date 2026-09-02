@@ -203,6 +203,14 @@ class PluginPublicationCheckItem(BaseModel):
     acknowledged: bool
 
 
+class PluginPublicationFailureDetail(BaseModel):
+    jobName: str
+    stage: str | None = None
+    status: str
+    reason: str | None = None
+    jobUrl: str | None = None
+
+
 class PluginPublicationEventItem(BaseModel):
     id: int
     eventType: str
@@ -212,6 +220,7 @@ class PluginPublicationEventItem(BaseModel):
     actorName: str | None = None
     message: str
     requiredChanges: list[str] = Field(default_factory=list)
+    failureDetails: list[PluginPublicationFailureDetail] = Field(default_factory=list)
     createdAt: datetime
 
 

@@ -134,6 +134,25 @@ describe('mergeMarketplaceCatalog', () => {
     })
   })
 
+  test('preserves a legacy public owners local personal source', () => {
+    const legacyPublicOwner = {
+      ...cloudPlugin(),
+      visibility: 'public' as const,
+      sourceProvider: 'user' as const,
+    }
+
+    const merged = mergeMarketplaceCatalog([legacyPublicOwner], [localCatalogPlugin()], [])
+
+    expect(merged).toHaveLength(1)
+    expect(merged[0]).toMatchObject({
+      id: 4,
+      localPersonalSource: {
+        marketplacePath: '/Users/test/plugins/personal-marketplace.json',
+        pluginName: 'dev-tools',
+      },
+    })
+  })
+
   test('keeps distinct cloud plugins that share a display name', () => {
     const duplicateName = {
       ...cloudPlugin(),

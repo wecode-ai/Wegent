@@ -7,9 +7,9 @@ API Key schemas for request/response validation.
 """
 
 from datetime import datetime
-from typing import List, Literal, Optional
+from typing import List, Optional
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field
 
 
 class APIKeyCreate(BaseModel):
@@ -106,25 +106,11 @@ class ServiceKeyListResponse(BaseModel):
 
 
 class PluginReleaseKeyCreate(BaseModel):
-    """Create a short-lived key for one protected GitLab release job."""
+    """Create a short-lived key for protected GitLab release jobs."""
 
     name: str = Field(..., min_length=1, max_length=100)
     description: Optional[str] = Field(default=None, max_length=500)
     expiresAt: datetime
-    projectIds: List[str] = Field(min_length=1, max_length=20)
-    environments: List[Literal["production"]] = Field(
-        default_factory=lambda: ["production"], min_length=1
-    )
-
-    @field_validator("projectIds")
-    @classmethod
-    def normalize_project_ids(cls, values: List[str]) -> List[str]:
-        normalized = list(
-            dict.fromkeys(value.strip() for value in values if value.strip())
-        )
-        if not normalized:
-            raise ValueError("projectIds must contain at least one project")
-        return normalized
 
 
 class PluginReleaseKeyResponse(BaseModel):
@@ -132,9 +118,6 @@ class PluginReleaseKeyResponse(BaseModel):
     name: str
     keyPrefix: str
     description: Optional[str] = None
-    scopes: List[str]
-    projectIds: List[str]
-    environments: List[str]
     expiresAt: datetime
     lastUsedAt: datetime
     createdAt: datetime

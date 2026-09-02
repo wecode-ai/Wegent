@@ -396,6 +396,7 @@ describe('PluginPublicationReviewDrawer', () => {
       'skills/sina-email/SKILL.md'
     )
     expect(screen.getByTestId('plugin-publication-capabilities')).toHaveTextContent('Write')
+    expect(screen.getByText('2026-08-29 09:00:00')).toBeInTheDocument()
 
     fireEvent.click(screen.getByTestId('plugin-publication-revision-2'))
 
@@ -411,6 +412,8 @@ describe('PluginPublicationReviewDrawer', () => {
       screen.getByTestId('plugin-publication-check-HISTORICAL_WINDOWS_TEST')
     ).toHaveTextContent('revision-2-windows-job')
     expect(screen.getByText('Revision 2 returned for Windows fixes')).toBeInTheDocument()
+    expect(screen.getByText(/2026-08-28 11:00:00/)).toBeInTheDocument()
+    expect(screen.queryByText(/2026-08-28T03:00:00Z/)).not.toBeInTheDocument()
     expect(screen.getByText('wework/publication-41-r2')).toBeInTheDocument()
     expect(screen.queryByTestId('plugin-publication-accept')).not.toBeInTheDocument()
 
@@ -418,5 +421,54 @@ describe('PluginPublicationReviewDrawer', () => {
     await waitFor(() =>
       expect(mockedPublicationApis.getPublicationRequest).toHaveBeenCalledWith(41, undefined, 3)
     )
+  })
+
+  it('shows safe Pipeline failure details and allows an administrator to return it', async () => {
+    mockedPublicationApis.getPublicationRequest.mockResolvedValueOnce({
+      ...detailFixture,
+      status: 'code_changes_requested',
+      stage: 'code_review',
+      events: [
+        {
+          id: 901,
+          eventType: 'gitlab.pipeline_failed',
+          actorType: 'pipeline',
+          message: 'GitLab Pipeline did not pass',
+          failureDetails: [
+            {
+              jobName: 'wework-linux',
+              stage: 'verify',
+              status: 'failed',
+              reason: 'script_failure',
+              jobUrl: 'https://git.example.com/jobs/301',
+            },
+          ],
+          createdAt: '2026-08-29T03:00:00Z',
+        },
+      ],
+      actionEligibility: {
+        canReturn: true,
+        canAccept: false,
+        canReconcile: true,
+        blockedReasons: [],
+      },
+    })
+
+    render(
+      <PluginPublicationReviewDrawer
+        requestId={41}
+        onOpenChange={jest.fn()}
+        onRequestUpdated={jest.fn()}
+      />
+    )
+
+    expect(await screen.findByTestId('plugin-publication-event-failures-901')).toHaveTextContent(
+      'wework-linux · verify'
+    )
+    expect(screen.getByRole('link', { name: /open_failed_job/ })).toHaveAttribute(
+      'href',
+      'https://git.example.com/jobs/301'
+    )
+    expect(screen.getByTestId('plugin-publication-return')).toBeVisible()
   })
 })

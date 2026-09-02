@@ -65,6 +65,10 @@ const MarketplaceManagement = dynamic(
   () => import('@/features/admin/components/MarketplaceManagement'),
   { ssr: false }
 )
+const PluginPublicationReviewQueue = dynamic(
+  () => import('@/features/admin/components/PluginPublicationReviewQueue'),
+  { ssr: false }
+)
 const BackgroundExecutionMonitorPanel = dynamic(
   () => import('@/features/admin/components/BackgroundExecutionMonitorPanel'),
   { ssr: false }
@@ -114,6 +118,9 @@ function AdminContent() {
   // Get initial tab from URL
   const getInitialTab = (): AdminTabId => {
     const tab = searchParams.get('tab')
+    if (tab === 'marketplace' && searchParams.get('view') === 'plugin-publications') {
+      return 'wework-plugin-publications'
+    }
     if (
       tab &&
       [
@@ -128,6 +135,7 @@ function AdminContent() {
         'templates',
         'api-keys',
         'marketplace',
+        'wework-plugin-publications',
         'system-config',
         'im-channels',
         'connector-apps',
@@ -142,6 +150,16 @@ function AdminContent() {
   }
 
   const [activeTab, setActiveTab] = useState<AdminTabId>(getInitialTab)
+
+  useEffect(() => {
+    if (searchParams.get('tab') !== 'marketplace') return
+    if (searchParams.get('view') !== 'plugin-publications') return
+
+    const params = new URLSearchParams(searchParams.toString())
+    params.set('tab', 'wework-plugin-publications')
+    params.delete('view')
+    router.replace(`?${params.toString()}`, { scroll: false })
+  }, [router, searchParams])
 
   // Mobile sidebar state
   const [isMobileSidebarOpen, setIsMobileSidebarOpen] = useState(false)
@@ -199,6 +217,8 @@ function AdminContent() {
         return <ApiKeyManagement />
       case 'marketplace':
         return <MarketplaceManagement />
+      case 'wework-plugin-publications':
+        return <PluginPublicationReviewQueue />
       case 'system-config':
         return <SystemConfigPanel />
       case 'im-channels':

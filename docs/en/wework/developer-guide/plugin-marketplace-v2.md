@@ -6,7 +6,7 @@ sidebar_position: 20
 
 For plugin development, open-source migration, and local integration, start with the [Plugin Marketplace Developer Guide](./wework-plugin-marketplace-dev.md). This document is the **implementation and acceptance contract** for Wework plugin sharing, enterprise-wide publication, GitLab review, and marketplace Releases.
 
-> Implementation status (2026-08-29): the implementation includes the two-intent UI, ACL and publication-state loading, Request/Revision/Check/Event domain, Web review queue, Draft MR materialization, restricted Release API, and local verification. **This does not mean production rollout is approved or deployed.** Revocation and rotation of the old token, HTTPS, protected master/environment, Code Owner approvals, project-locked native Windows/macOS Runners, and a new Release credential remain external P0 configuration and acceptance work in the real GitLab/production environment. Section 10 records the implemented boundary and activation gates.
+> Implementation status (2026-08-29): the implementation includes the two-intent UI, ACL and publication-state loading, Request/Revision/Check/Event domain, Web review queue, MR materialization, restricted Release API, and local verification. **This does not mean production rollout is approved or deployed.** Revocation and rotation of the old token, HTTPS, protected master/environment, Code Owner approvals, project-locked native Windows/macOS Runners, and a new Release credential remain external P0 configuration and acceptance work in the real GitLab/production environment. Section 10 records the implemented boundary and activation gates.
 
 ## 1. Locked product and technical decisions
 
@@ -21,7 +21,7 @@ Any change to these decisions must update this document, the API contract, inter
 5. Every authenticated personal-plugin owner may request enterprise publication. Eligibility is not granted through a user allowlist. The server still enforces ownership, active-request count, package-size, and security policies.
 6. Everyone publication uses a three-step right drawer: **Confirm version → Permissions and risks → Confirm submission**. Submission freezes an immutable snapshot, revision, and SHA256. Later personal edits cannot mutate that revision.
 7. The user-facing progress has five stable stages: **Submit request → Automated checks → Administrator review → Code review → Release**.
-8. The Web administration console is the human-review surface. An administrator may return or accept a revision. Accept only materializes that revision into a GitLab branch and creates a Draft MR; it never creates a marketplace Release directly.
+8. The Web administration console is the human-review surface. An administrator may return or accept a revision. Accept only materializes that revision into a GitLab branch and creates a MR; it never creates a marketplace Release directly.
 9. A non-technical user submits from Wework, while a developer may open a GitLab MR directly. Both routes use the same checks, merge rules, and release path from the MR onward.
 10. The personal source and enterprise edition are distinct Plugin identities. During review, the personal source remains editable, chat-capable, shareable, and installable. Enterprise publication never transfers, mutates, or deletes it.
 11. **A protected master Pipeline is the only automatic release trigger.** GitLab Webhooks only synchronize MR/Pipeline state and trigger reconciliation for missing events; they do not publish.
@@ -80,11 +80,11 @@ Submit request → Automated checks → Administrator review → Code review →
 - Before approval, the user may withdraw, while the personal plugin remains usable and shareable.
 - An automated-check failure shows a stable error code, evidence path, and remediation.
 - An administrator return shows required changes and allows the next revision from a new snapshot.
-- Code review shows Draft MR, Pipeline, and Windows/macOS check state, with a GitLab link when the viewer has access.
+- Code review shows MR, Pipeline, and Windows/macOS check state, with a GitLab link when the viewer has access.
 - A release failure leaves the previous enterprise version available and supports an idempotent operator retry; it never asks the user to overwrite an old revision.
 - After release, the personal source remains under Personal creations and the independent enterprise edition appears under Enterprise.
 
-Deleting a personal source with an unmerged request must first withdraw that request in the same confirmation flow; deletion is blocked if withdrawal or Draft MR closure fails. Once code is merged or published, deleting the personal source affects only that source; it cannot delete the enterprise edition, GitLab record, request revision, or historical Release.
+Deleting a personal source with an unmerged request must first withdraw that request in the same confirmation flow; deletion is blocked if withdrawal or MR closure fails. Once code is merged or published, deleting the personal source affects only that source; it cannot delete the enterprise edition, GitLab record, request revision, or historical Release.
 
 ### 2.5 Web administration console
 
@@ -93,7 +93,7 @@ Regular users complete sharing and submission in Wework. The Web surface is only
 - paginated lists and filters for status, risk, submitter, plugin, and time;
 - immutable revision details, SHA256, permission declarations, automated evidence, history, and GitLab state;
 - Return for changes, with a required reason and required-change list;
-- Accept and create Draft MR, enabled only with no blockers and explicit acknowledgement of every warning; the action is idempotent;
+- Accept and create MR, enabled only with no blockers and explicit acknowledgement of every warning; the action is idempotent;
 - retry and reconciliation controls after GitLab materialization failures;
 - complete actor, timestamp, and state-event audit history.
 
@@ -112,20 +112,20 @@ flowchart LR
   E --> F[Automated checks]
   F --> G[Web administrator review]
   G -->|Return| H[Submit a new revision]
-  G -->|Accept| I[Materialize branch + Draft MR]
+  G -->|Accept| I[Materialize branch + MR]
   J[Developer opens MR] --> K[Shared GitLab MR Pipeline]
   I --> K
   K --> L[Code review + Windows/macOS gates]
   L --> M[Merge protected master]
   M --> N[master Pipeline]
-  N -->|scoped release token| O[Release API]
+  N -->|dedicated release token| O[Release API]
   O --> P[Independent enterprise Plugin/Release]
 ```
 
 Four boundaries must remain distinct:
 
 1. **Personal restricted sharing**: cloud scan plus ACL, no human review, and no GitLab.
-2. **Non-technical enterprise submission**: Wework snapshot → Web review → automatically created Draft MR.
+2. **Non-technical enterprise submission**: Wework snapshot → Web review → automatically created MR.
 3. **Developer enterprise submission**: directly created MR, sharing the exact same gates from the MR onward.
 4. **Wework-official public plugins**: a separate P1 `public`-catalog flow, not implemented in this phase.
 
@@ -294,7 +294,7 @@ sequenceDiagram
   U->>API: Submit snapshot/revision from three-step drawer
   API->>API: Repackage, SHA256, automated checks
   A->>API: Return or accept current revision
-  API->>GL: On acceptance, create controlled branch + Draft MR
+  API->>GL: On acceptance, create controlled branch + MR
   GL->>CI: MR Pipeline
   CI->>CI: Risks, tests, Windows, macOS
   GL->>CI: Merge to protected master starts master Pipeline
@@ -302,7 +302,7 @@ sequenceDiagram
   R->>R: Revalidate and idempotently publish enterprise Release
 ```
 
-The GitLab materializer writes only a server-validated snapshot to the controlled `plugins/<slug>/` path and updates the controlled catalog registry. Branch names, paths, and commit messages must not concatenate unvalidated user input. Draft MR creation uses a request/revision idempotency key and records project, branch, MR IID, and commit SHA.
+The GitLab materializer writes only a server-validated snapshot to the controlled `plugins/<slug>/` path and updates the controlled catalog registry. Branch names, paths, and commit messages must not concatenate unvalidated user input. MR creation uses a request/revision idempotency key and records project, branch, MR IID, and commit SHA.
 
 ### 6.3 Developer-direct GitLab submission
 
@@ -373,7 +373,7 @@ Normal uninstall removes the confirmed runtime entry and installation record but
 | GET    | `/admin/plugins/publication-requests`                              | Paginated administrator list, filters, and counts                                     |
 | GET    | `/admin/plugins/publication-requests/{id}`                         | Complete administrator evidence and event view                                        |
 | POST   | `/admin/plugins/publication-requests/{id}/return`                  | Return the current revision with required reason and changes                          |
-| POST   | `/admin/plugins/publication-requests/{id}/accept`                  | Idempotently materialize a branch and Draft MR; never publish                         |
+| POST   | `/admin/plugins/publication-requests/{id}/accept`                  | Idempotently materialize a branch and MR; never publish                         |
 | POST   | `/admin/plugins/publication-requests/{id}/reconcile`               | Retry materialization or actively reconcile GitLab state                              |
 
 ### 7.3 Internal APIs
@@ -401,11 +401,11 @@ Historical processing entry points remain only to drain existing rows:
 
 ## 8. Machine authentication and security boundary
 
-`Authorization: Bearer <scoped-release-token>` is a service-to-service credential, not a new user sign-in system. Reuse existing API-key primitives for random creation, hash-only storage, one-time secret display, expiry, disablement, last-used time, and audit, and add a dedicated `key_type=plugin_release` with a `plugins:release` scope:
+`Authorization: Bearer <release-token>` is a service-to-service credential, not a new user sign-in system. Reuse existing API-key primitives for random creation, hash-only storage, one-time secret display, expiry, disablement, last-used time, and audit, with a dedicated `key_type=plugin_release`:
 
 - it can call only `/internal/plugins/releases`; regular APIs explicitly reject the type;
 - it cannot impersonate a user through `wegent-username` or a similar header and uses a fixed release service principal;
-- it may be constrained by GitLab project, `catalog_namespace=enterprise`, environment, and source;
+- the Release API fixes `catalog_namespace=enterprise`; the GitLab project and target branch are server configuration validated against live GitLab proof, not API-key attributes;
 - it has a required expiry and supports overlapping rotation and immediate revocation;
 - it exists only in a protected and masked GitLab CI variable readable by the protected-master release job;
 - logs record only key ID/prefix and service principal, never the raw value.
@@ -430,9 +430,9 @@ For this phase:
 | Area                   | Current branch implementation                                                                                                                                                                   |
 | ---------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Wework                 | Two scopes, three-step application drawer, five-stage progress, complete Request/Revision history, and a ready gate that waits for both ACL and publication state before submission             |
-| Backend                | `catalog_namespace`, personal/enterprise origin links, Request/Revision/Check/Event, user/admin/internal APIs, idempotent Draft MR materialization, and status-only Webhooks                    |
-| Web                    | Publication queue and filters, revision evidence detail, return for changes, confirmed Accept and create Draft MR, retry, and reconciliation                                                    |
-| Release                | `plugin_release` + `plugins:release` machine identity, Bearer-only internal endpoint, trusted GitLab/master provenance checks, idempotency, and preservation of the previous enterprise version |
+| Backend                | `catalog_namespace`, personal/enterprise origin links, Request/Revision/Check/Event, user/admin/internal APIs, idempotent MR materialization, and status-only Webhooks                    |
+| Web                    | Publication queue and filters, revision evidence detail, return for changes, confirmed Accept and create MR, retry, and reconciliation                                                    |
+| Release                | dedicated `plugin_release` machine identity, Bearer-only internal endpoint, trusted GitLab/master provenance checks, idempotency, and preservation of the previous enterprise version             |
 | Compatibility boundary | Legacy `/plugins/submissions` accepts `restricted_share + personal` only; legacy direct review and its script exist solely to drain historical records and are never used by the new flow       |
 
 The current branch adds a new Alembic revision for namespaces, origin links, and publication-domain tables, with upgrade → downgrade → upgrade and collision-blocking coverage. Local tests prove the code and migration implementation only; they do not replace real production configuration or an end-to-end publication rehearsal.
@@ -443,7 +443,7 @@ The current branch adds a new Alembic revision for namespaces, origin links, and
 2. Configure and verify protected `master`, a protected environment, Code Owner approval rules, and protected/masked variables in the real GitLab project.
 3. Configure project-locked native Windows and macOS Runners. A missing, skipped, or static-only platform check must block merge.
 4. Create a new `plugin_release` credential through the approved key-management path, expose it only to the protected-master release job, and prove that MR jobs cannot read it.
-5. Rehearse personal sharing, initial/resubmitted revisions, administrator return/accept, Draft MR, both native Runners, merge, publication, replay, failure, and rollback in the real environment.
+5. Rehearse personal sharing, initial/resubmitted revisions, administrator return/accept, MR, both native Runners, merge, publication, replay, failure, and rollback in the real environment.
 
 ### 10.3 Legacy-path closure
 
@@ -465,7 +465,7 @@ The current branch adds a new Alembic revision for namespaces, origin links, and
 
 ### Review and GitLab
 
-- Administrator return requires a reason. Repeating acceptance returns the same Draft MR and never creates a Release.
+- Administrator return requires a reason. Repeating acceptance returns the same MR and never creates a Release.
 - Non-technical submissions and developer MRs run the same gates from the MR Pipeline onward.
 - Risk checks expose stable code, severity, evidence, and execution environment; declaration/scan mismatches block.
 - Windows and macOS checks run on matching native Runners; a skipped check cannot show passed.

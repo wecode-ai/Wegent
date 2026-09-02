@@ -65,6 +65,8 @@ class PluginPublicationGitLabGateway(Protocol):
         request_id: int,
         revision: int,
         slug: str,
+        plugin_name: str,
+        version: str,
         snapshot_sha256: str,
         source_tree_sha256: str,
         package: bytes,
@@ -141,6 +143,8 @@ class PluginPublicationGitLabService:
         request_id: int,
         revision: int,
         slug: str,
+        plugin_name: str,
+        version: str,
         snapshot_sha256: str,
         source_tree_sha256: str,
         package: bytes,
@@ -262,12 +266,19 @@ class PluginPublicationGitLabService:
                 json={
                     "source_branch": source_branch,
                     "target_branch": self.target_branch,
-                    "title": (
-                        f"Draft: Plugin publication: {slug} " f"{snapshot_sha256[:12]}"
+                    "title": self._merge_request_title(
+                        plugin_name=plugin_name,
+                        slug=slug,
+                        version=version,
                     ),
                     "description": (
-                        f"Wework publication request #{request_id}, "
-                        f"revision {revision}.\n\n"
+                        "## Plugin information\n\n"
+                        f"- Name: {self._single_line(plugin_name) or slug}\n"
+                        f"- Slug: `{slug}`\n"
+                        f"- Version: `v{version.removeprefix('v')}`\n"
+                        f"- Request: `#{request_id}`\n"
+                        f"- Revision: `{revision}`\n\n"
+                        f"Wework publication request #{request_id}, revision {revision}.\n\n"
                         f"Snapshot SHA256: `{snapshot_sha256}`\n\n"
                         f"<!-- Wegent-Materializer-Binding: {binding} -->"
                     ),
@@ -286,6 +297,16 @@ class PluginPublicationGitLabService:
             )
             return self._materialization(merge_request, source_branch)
 
+    @staticmethod
+    def _single_line(value: str) -> str:
+        return " ".join(value.split())
+
+    def _merge_request_title(self, *, plugin_name: str, slug: str, version: str) -> str:
+        display_name = self._single_line(plugin_name) or slug
+        normalized_version = self._single_line(version).removeprefix("v")
+        version_suffix = f" v{normalized_version}" if normalized_version else ""
+        return f"Plugin publication: {display_name} ({slug}){version_suffix}"
+
     def reconcile(
         self,
         *,
@@ -302,7 +323,7 @@ class PluginPublicationGitLabService:
             merge_request = self._find_merge_request(client, source_branch)
             if not merge_request:
                 raise PluginPublicationGitLabError(
-                    "Controlled Draft MR was not found for this revision"
+                    "Controlled MR was not found for this revision"
                 )
             binding = self._materializer_binding(
                 identity=identity,

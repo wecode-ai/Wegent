@@ -17,7 +17,7 @@ user intents:
   root is selectable as a department; there is no separate organization scope.
 - **Everyone in the enterprise** creates a workspace-publication request. It is
   never an immediate visibility change. The submitted version is frozen, passes
-  automatic checks and administrator review, enters GitLab as a Draft MR, and is
+  automatic checks and administrator review, enters GitLab as a MR, and is
   published only from the protected `master` pipeline.
 
 `public` remains a system-owned scope for official public plugins. Ordinary
@@ -53,7 +53,7 @@ public catalog is a P1 decision and is not part of the enterprise workflow.
 - Publish a first-party plugin from a reviewed source directory.
 - Share a personal plugin with selected users or departments after scanning.
 - Submit an immutable personal-plugin version for enterprise publication.
-- Let administrators return an application or accept it into a GitLab Draft MR.
+- Let administrators return an application or accept it into a GitLab MR.
 - Converge non-technical submissions and developer-authored changes on the same
   GitLab review, compatibility, and protected release pipeline.
 - Mirror an explicitly configured HTTPS upstream.
@@ -67,13 +67,13 @@ return or deterministic automated-check failure is resubmitted as a new immutabl
 revision in that Request; upload, transport, and infrastructure failures retry the
 same revision idempotently. After publication, a higher personal version starts a
 new Request. Editing the personal source never mutates a revision already under
-review, and `code_changes_requested` is fixed by a developer in the same Draft MR.
+review, and `code_changes_requested` is fixed by a developer in the same MR.
 
 ## Implementation boundary
 
 The implementation includes publication requests and immutable revisions,
 separate personal and enterprise identities, the two-scope Wework flow, the Web
-administrator queue, Draft MR materialization, and the restricted release
+administrator queue, MR materialization, and the restricted release
 endpoint. Wework waits for both ACL and publication state before opening the
 **Share & publish** scope dialog, and retains complete Request/Revision history
 rather than collapsing a plugin to one request.

@@ -126,7 +126,7 @@ Use the same five stages everywhere:
 5. Release
 
 Stage labels must not imply that administrator acceptance publishes a plugin.
-After acceptance, show the Draft MR and GitLab checks. Use child status text for
+After acceptance, show the MR and GitLab checks. Use child status text for
 `changes requested`, `CI failed`, `waiting for merge`, `publishing`,
 `publish failed`, and `withdrawn` without changing the canonical stage names.
 
@@ -146,12 +146,12 @@ a Published Request is terminal, applying with a higher personal version creates
 a new Request starting at revision 1.
 
 After `code_changes_requested`, show that a developer is updating the current
-Draft MR. Do not offer a non-technical author **Create new revision** for that
+MR. Do not offer a non-technical author **Create new revision** for that
 state. A new revision is reserved for administrator return or deterministic
 automated-check failure before GitLab code review.
 
 If the owner deletes the personal source before merge, the confirmation flow
-first withdraws the request and closes or cancels any Draft MR; deletion is
+first withdraws the request and closes or cancels any MR; deletion is
 blocked if cleanup fails. After merge, deletion affects only the personal source
 and never removes the enterprise edition or historical publication evidence.
 
@@ -172,10 +172,10 @@ arbitrary event payload.
 The two primary decisions are:
 
 - **Return for changes**, requiring actionable reasons;
-- **Accept and create Draft MR**, enabled only for the current revision with no
+- **Accept and create MR**, enabled only for the current revision with no
   blockers and required warnings acknowledged.
 
-The acceptance confirmation must state that it creates a Draft MR and does not
+The acceptance confirmation must state that it creates a MR and does not
 publish to the enterprise catalog.
 
 ### Identity and ownership
@@ -211,6 +211,6 @@ workflow documented in `wework/AGENTS.md`.
 
 Verify the whole sequence at real desktop dimensions: personal detail → Share →
 selected-recipient picker or three-step application → progress/revision states →
-Web administrator return/accept → Draft MR/checks → enterprise consumer detail.
+Web administrator return/accept → MR/checks → enterprise consumer detail.
 The sequence must preserve all existing detail-page actions not restricted by
 source ownership.

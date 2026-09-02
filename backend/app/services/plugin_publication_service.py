@@ -44,6 +44,7 @@ from app.schemas.plugin_publication import (
     PluginPublicationCreateRequest,
     PluginPublicationDeclaration,
     PluginPublicationEventItem,
+    PluginPublicationFailureDetail,
     PluginPublicationGitLabState,
     PluginPublicationRequestDetail,
     PluginPublicationRequestListResponse,
@@ -108,6 +109,7 @@ GITLAB_EVENT_LOCKED_PUBLICATION_STATUSES = {
 REVISION_CREATABLE_PUBLICATION_STATUSES = {
     "changes_requested",
     "automatic_check_failed",
+    "code_changes_requested",
     "publish_failed",
     "withdrawn",
     "closed",
@@ -289,6 +291,24 @@ class PluginPublicationService:
                 status_code=409,
                 detail="A new revision is not allowed in the current state",
             )
+        current_revision = self._current_revision(db, request)
+        if (
+            current_revision.merge_request_iid
+            and current_revision.merge_request_status not in {"closed", "merged"}
+        ):
+            try:
+                self.gitlab.close_merge_request(
+                    merge_request_iid=current_revision.merge_request_iid
+                )
+                current_revision.merge_request_status = "closed"
+            except PluginPublicationGitLabError as exc:
+                raise HTTPException(
+                    status_code=502,
+                    detail=(
+                        "The previous MR could not be closed; "
+                        "a new revision was not created"
+                    ),
+                ) from exc
         if request.aggregate_status in TERMINAL_PUBLICATION_STATUSES:
             active_requests = self._lock_active_requests_with_capacity(
                 db, user_id=user_id
@@ -655,12 +675,11 @@ class PluginPublicationService:
                 self.gitlab.close_merge_request(
                     merge_request_iid=revision.merge_request_iid
                 )
+                revision.merge_request_status = "closed"
             except PluginPublicationGitLabError as exc:
                 raise HTTPException(
                     status_code=502,
-                    detail=(
-                        "Draft MR could not be closed; publication was not withdrawn"
-                    ),
+                    detail=("MR could not be closed; publication was not withdrawn"),
                 ) from exc
         request.aggregate_status = "withdrawn"
         revision.status = "withdrawn"
@@ -690,10 +709,26 @@ class PluginPublicationService:
         )
         if request.aggregate_status == "changes_requested":
             return self._detail(db, request, is_admin=True)
-        if request.aggregate_status not in ADMIN_REVIEW_STATUSES:
+        if request.aggregate_status not in ADMIN_REVIEW_STATUSES | {
+            "code_changes_requested"
+        }:
             raise HTTPException(
                 status_code=409, detail="Request is not awaiting administrator review"
             )
+        if revision.merge_request_iid and revision.merge_request_status not in {
+            "closed",
+            "merged",
+        }:
+            try:
+                self.gitlab.close_merge_request(
+                    merge_request_iid=revision.merge_request_iid
+                )
+                revision.merge_request_status = "closed"
+            except PluginPublicationGitLabError as exc:
+                raise HTTPException(
+                    status_code=502,
+                    detail="MR could not be closed; request was not returned",
+                ) from exc
         request.aggregate_status = "changes_requested"
         revision.status = "changes_requested"
         self._event(
@@ -774,7 +809,7 @@ class PluginPublicationService:
             actor_type="admin",
             actor_id=admin_user.id,
             actor_name=admin_user.user_name,
-            message="Administrator accepted the revision for Draft MR materialization",
+            message="Administrator accepted the revision for MR materialization",
             payload={"acknowledgedWarningCodes": sorted(acknowledged)},
         )
         db.commit()
@@ -890,19 +925,22 @@ class PluginPublicationService:
         transition_applied = event_can_mutate and self._apply_gitlab_event_status(
             request, revision, event_name, payload
         )
+        projected_event = self._project_gitlab_event(
+            event_name=event_name,
+            payload=payload,
+            transition_applied=transition_applied,
+        )
         self._event(
             db,
             revision_id=revision.id,
-            event_type=(
-                "gitlab.event_received"
-                if transition_applied
-                else "gitlab.event_ignored"
-            ),
-            actor_type="gitlab",
-            message=f"GitLab event synchronized: {event_name}",
+            event_type=projected_event["event_type"],
+            actor_type=projected_event["actor_type"],
+            actor_name=projected_event["actor_name"],
+            message=projected_event["message"],
             payload={
                 "eventName": event_name,
                 "state": revision.status,
+                **projected_event["payload"],
                 "reason": (
                     ""
                     if transition_applied
@@ -921,6 +959,91 @@ class PluginPublicationService:
         )
         db.commit()
         return self._detail(db, request, is_admin=True)
+
+    def _project_gitlab_event(
+        self,
+        *,
+        event_name: str,
+        payload: dict[str, Any],
+        transition_applied: bool,
+    ) -> dict[str, Any]:
+        if not transition_applied:
+            return {
+                "event_type": "gitlab.event_ignored",
+                "actor_type": "gitlab",
+                "actor_name": None,
+                "message": f"GitLab event ignored: {event_name}",
+                "payload": {},
+            }
+        attributes = payload.get("object_attributes") or {}
+        normalized_event = event_name.lower()
+        if "pipeline" in normalized_event and str(
+            attributes.get("status") or ""
+        ).lower() in {"failed", "canceled"}:
+            return {
+                "event_type": "gitlab.pipeline_failed",
+                "actor_type": "pipeline",
+                "actor_name": None,
+                "message": "GitLab Pipeline did not pass",
+                "payload": {
+                    "pipelineStatus": str(attributes.get("status") or ""),
+                    "failureDetails": self._pipeline_failure_details(payload),
+                },
+            }
+        if "merge request" in normalized_event and (
+            str(attributes.get("state") or "").lower() == "closed"
+            or str(attributes.get("action") or "").lower() == "close"
+        ):
+            user = payload.get("user") or {}
+            actor_name = str(user.get("name") or user.get("username") or "").strip()
+            return {
+                "event_type": "gitlab.merge_request_closed",
+                "actor_type": "gitlab",
+                "actor_name": actor_name or None,
+                "message": "GitLab merge request was closed without a supplied reason",
+                "payload": {"reasonProvided": False},
+            }
+        return {
+            "event_type": "gitlab.event_received",
+            "actor_type": "gitlab",
+            "actor_name": None,
+            "message": f"GitLab event synchronized: {event_name}",
+            "payload": {},
+        }
+
+    def _pipeline_failure_details(
+        self, payload: dict[str, Any]
+    ) -> list[dict[str, str]]:
+        raw_builds = payload.get("builds")
+        if not isinstance(raw_builds, list):
+            return []
+        details: list[dict[str, str]] = []
+        for raw_build in raw_builds[:50]:
+            if not isinstance(raw_build, dict):
+                continue
+            status = str(raw_build.get("status") or "").strip().lower()
+            if status not in {"failed", "canceled"}:
+                continue
+            job_name = str(raw_build.get("name") or "").strip()[:200]
+            if not job_name:
+                continue
+            detail = {
+                "jobName": job_name,
+                "status": status,
+            }
+            stage = str(raw_build.get("stage") or "").strip()[:200]
+            reason = str(raw_build.get("failure_reason") or "").strip()[:500]
+            job_url = str(
+                raw_build.get("web_url") or raw_build.get("url") or ""
+            ).strip()
+            if stage:
+                detail["stage"] = stage
+            if reason:
+                detail["reason"] = reason
+            if job_url.startswith(("https://", "http://")):
+                detail["jobUrl"] = job_url[:2000]
+            details.append(detail)
+        return details
 
     @trace_sync("plugin.publication.release", "backend.plugin_publication")
     def publish_enterprise_release(
@@ -1592,6 +1715,12 @@ class PluginPublicationService:
                 request_id=request.id,
                 revision=revision.revision,
                 slug=source_plugin.slug,
+                plugin_name=(
+                    source_plugin.display_name
+                    or source_plugin.name
+                    or source_plugin.slug
+                ),
+                version=revision.requested_version,
                 snapshot_sha256=revision.snapshot_sha256,
                 source_tree_sha256=revision.source_tree_sha256,
                 package=package,
@@ -1641,7 +1770,7 @@ class PluginPublicationService:
                 revision_id=revision.id,
                 event_type="gitlab.materialization_ignored",
                 actor_type="system",
-                message="Draft MR materialization finished after request state changed",
+                message="MR materialization finished after request state changed",
                 payload={
                     "mergeRequestIid": materialization.merge_request_iid,
                     "currentStatus": request.aggregate_status,
@@ -1655,7 +1784,7 @@ class PluginPublicationService:
             revision_id=revision.id,
             event_type="gitlab.draft_mr_created",
             actor_type="system",
-            message=f"Draft MR !{materialization.merge_request_iid} created",
+            message=f"MR !{materialization.merge_request_iid} created",
             payload={
                 "mergeRequestUrl": materialization.merge_request_url,
                 "commitSha": materialization.commit_sha,
@@ -1675,7 +1804,7 @@ class PluginPublicationService:
             )
         except PluginPublicationGitLabError:
             logger.warning(
-                "Failed to close stale publication Draft MR: iid=%s",
+                "Failed to close stale publication MR: iid=%s",
                 materialization.merge_request_iid,
                 exc_info=True,
             )
@@ -2287,9 +2416,8 @@ class PluginPublicationService:
 
     def _event_item(self, event: PluginPublicationEvent) -> PluginPublicationEventItem:
         required_changes: list[str] = []
-        if event.event_type == "admin.changes_requested" and isinstance(
-            event.payload_json, dict
-        ):
+        failure_details: list[PluginPublicationFailureDetail] = []
+        if isinstance(event.payload_json, dict):
             raw_changes = event.payload_json.get("requiredChanges")
             if isinstance(raw_changes, list):
                 required_changes = [
@@ -2297,6 +2425,17 @@ class PluginPublicationService:
                     for value in raw_changes[:100]
                     if isinstance(value, str) and value.strip()
                 ]
+            raw_failures = event.payload_json.get("failureDetails")
+            if isinstance(raw_failures, list):
+                for value in raw_failures[:50]:
+                    if not isinstance(value, dict):
+                        continue
+                    try:
+                        failure_details.append(
+                            PluginPublicationFailureDetail.model_validate(value)
+                        )
+                    except ValueError:
+                        continue
         return PluginPublicationEventItem(
             id=event.id,
             eventType=event.event_type,
@@ -2304,6 +2443,7 @@ class PluginPublicationService:
             actorName=event.actor_name or None,
             message=event.message,
             requiredChanges=required_changes,
+            failureDetails=failure_details,
             createdAt=event.created_at,
         )
 
@@ -2395,7 +2535,10 @@ class PluginPublicationService:
                 and request.aggregate_status == "published"
                 and bool(request.target_plugin_id)
             ),
-            canReturn=is_admin and in_admin_review,
+            canReturn=is_admin
+            and (
+                in_admin_review or request.aggregate_status == "code_changes_requested"
+            ),
             canAccept=is_admin and in_admin_review and not blocked,
             canReconcile=(
                 is_admin and request.aggregate_status in CODE_REVIEW_STATUSES

@@ -75,7 +75,7 @@ idempotently. Only one Request may be active for a personal source. After a
 Published Request is terminal, publishing a higher version creates a new Request
 starting at revision 1.
 
-Administrator acceptance creates a GitLab Draft MR and records the accepted
+Administrator acceptance creates a GitLab MR and records the accepted
 revision. It is not publication approval. The administrator service must reject
 acceptance when blocking findings remain or required warnings were not
 acknowledged.
@@ -83,7 +83,7 @@ acknowledged.
 ## Converge in GitLab
 
 Non-technical authors submit through Wework; the backend materializes an accepted
-immutable snapshot into a review branch and Draft MR. Developers may create a
+immutable snapshot into a review branch and MR. Developers may create a
 branch and MR directly in the internal plugin repository. From that point both
 paths use exactly the same controls:
 
@@ -100,7 +100,7 @@ timeline, and a scheduled reconciliation job may repair missed events, but
 neither is an independent publication trigger.
 
 After `code_changes_requested`, a developer fixes the existing controlled branch
-and Draft MR and reruns its Pipeline. A non-technical author does not create a
+and MR and reruns its Pipeline. A non-technical author does not create a
 publication revision for code-review changes. If the accepted immutable snapshot
 itself must change, end the current code-review flow and submit through a new
 Request/Revision flow.
@@ -124,15 +124,16 @@ The protected `master` release job packages the exact merged commit and calls th
 backend release endpoint with:
 
 ```http
-Authorization: Bearer <scoped-release-token>
+Authorization: Bearer <release-token>
 ```
 
-`plugin_release` is a dedicated type with the `plugins:release` scope in the
-existing Wegent API-key lifecycle, not a new authentication system.
+`plugin_release` is a dedicated type in the existing Wegent API-key lifecycle,
+not a new authentication system.
 Administrators create one with `POST /api/admin/plugin-release-keys`, list keys
 with `GET /api/admin/plugin-release-keys`, and disable or re-enable one with
-`POST /api/admin/plugin-release-keys/{id}/toggle-status`. Creation restricts
-project IDs, the `production` environment, and expiry. The raw `wg-...` value is
+`POST /api/admin/plugin-release-keys/{id}/toggle-status`. Creation takes a name,
+optional description, and expiry. The GitLab project and target branch are
+server-side publication configuration and are not stored on the key. The raw `wg-...` value is
 shown once, only its hash is stored, and the value is saved as a protected and
 masked GitLab CI variable. It cannot impersonate users or call ordinary APIs.
 Rotate by creating and validating a replacement before disabling the old key.
@@ -238,13 +239,13 @@ uv run python scripts/review_plugin_submission.py \
 ```
 
 Its `approve` operation immediately publishes the Release. It must not be called
-from the new Web administrator flow and must not be relabeled as “create Draft
+from the new Web administrator flow and must not be relabeled as “create an
 MR.” Legacy `/plugins/submissions` now accepts only
 `restricted_share + personal`; it cannot create a new enterprise request. Retain
 the review command only while draining or migrating historical pending rows,
 then remove it together with the old direct-review endpoint. New requests are
 returned or accepted through the publication-request service; acceptance only
-creates the Draft MR.
+creates the MR.
 
 ## Release checklist
 
@@ -254,11 +255,11 @@ creates the Draft MR.
 - Release notes and test notes satisfy the trimmed `1–2000` and `1–1000` limits.
 - Every declared permission is consistent with the package evidence.
 - Blocking findings are absent and administrator-confirmed warnings are audited.
-- The accepted revision is the one materialized in the Draft MR.
+- The accepted revision is the one materialized in the MR.
 - Source review, risk checks, and native Windows/macOS checks pass for the exact
   commit being merged.
 - The protected `master` job is the only automated release trigger.
-- The release job uses a scoped `plugin_release` key; MR jobs cannot read it.
+- The release job uses a dedicated `plugin_release` key; MR jobs cannot read it.
 - Workflow and Release calls use their required idempotency-key contracts.
 - Webhook deliveries only synchronize/reconcile state and are replay-safe.
 - No sensitive or generated local files are present.

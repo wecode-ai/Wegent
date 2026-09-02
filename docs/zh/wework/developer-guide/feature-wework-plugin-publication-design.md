@@ -31,7 +31,7 @@ sidebar_position: 21
 2. 范围只提供「指定成员或部门」和「全员可见」两个选择。“组织”是根部门，不是第三个范围。
 3. 任意已登录且拥有个人插件的用户都可提交全员发布申请，不使用投稿白名单。
 4. 定向分享无需人工审核；全员发布必须经过自动检查、管理员审核、GitLab 代码审核和受保护分支发布。
-5. 管理员“接受”只创建 Draft MR，不直接发布。
+5. 管理员“接受”只创建 MR，不直接发布。
 6. 提交后锁定 snapshot、revision、版本和 SHA256。个人原件仍可编辑、对话、定向分享和生成新版本。
 7. 个人原件和企业版是两个 Plugin 身份，允许个人 `v1.3.0` 与企业 `v1.2.0` 同时存在。
 8. 企业发布失败不得影响当前在线企业版本；重复发布同一版本/同一 SHA 必须幂等。
@@ -79,9 +79,9 @@ flowchart TD
   K --> L[Web 管理员审核]
   L -->|退回修改| M[作者修改个人原件并创建新 revision]
   M --> G
-  L -->|接受| N[创建 GitLab Draft MR]
+  L -->|接受| N[创建 GitLab MR]
   N --> O[代码评审 + Windows/macOS CI]
-  O -->|需修改| O1[开发者在同一 Draft MR 修复]
+  O -->|需修改| O1[开发者在同一 MR 修复]
   O1 --> O
   O -->|合并 master| P[protected master Pipeline 发布]
   P -->|成功| Q[企业内部市场新版本]
@@ -292,12 +292,12 @@ flowchart TD
 - 五阶段纵向时间线；
 - 每个阶段的时间、操作者、检查项、证据和稳定错误码；
 - 管理员退回原因；
-- Draft MR、Pipeline、Windows/macOS Job 链接和状态；
+- MR、Pipeline、Windows/macOS Job 链接和状态；
 - 发布结果和企业版本链接；
 - 完整申请历史和历史 revision 切换，只读查看；客户端重启后也必须可从服务端恢复已退回、已撤回、失败和已发布记录；
 - 当前个人原件与企业版的双向来源链接；链接使用服务端持久化的来源 Plugin ID，不以名称或本地内存状态猜测。
 
-**动作**按状态出现：「撤回申请」「创建新 revision」「打开 Draft MR」「查看企业版本」。退回修改或确定性自动检查失败时允许在原 Request 创建新 revision；`code_changes_requested` 由开发者在当前 Draft MR 中修复，不向非技术作者提供新 revision 动作。外链激活前必须明确目标是 GitLab。
+**动作**按状态出现：「撤回申请」「创建新 revision」「打开 MR」「查看企业版本」。退回修改或确定性自动检查失败时允许在原 Request 创建新 revision；`code_changes_requested` 由开发者在当前 MR 中修复，不向非技术作者提供新 revision 动作。外链激活前必须明确目标是 GitLab。
 
 ## 5. Web 管理后台页面规范
 
@@ -335,7 +335,7 @@ flowchart TD
 **动作**：
 
 - 「退回修改」为次要危险动作；
-- 「接受并创建 Draft MR」为唯一主动作；
+- 「接受并创建 MR」为唯一主动作；
 - 存在阻断项或警告未逐项确认时，主动作禁用并解释原因；
 - 页面没有「发布」按钮。
 
@@ -348,27 +348,27 @@ flowchart TD
 - 明确说明旧 revision 保留且不可编辑；
 - 提交后状态更新为「已退回修改」，作者在 Wework 查看并新建 revision。
 
-### S12. 接受并创建 Draft MR
+### S12. 接受并创建 MR
 
 确认 Dialog 展示插件、revision、SHA256、目标仓库和目标目录。管理员确认后：
 
 1. 后端以 request/revision 幂等键物化受控分支；
-2. 创建或复用 Draft MR；
+2. 创建或复用 MR；
 3. 回写 branch、commit SHA、MR IID/URL；
 4. 状态进入「代码审核」。
 
-GitLab 失败时详情页保留管理员已接受事实，显示错误和「重试创建 Draft MR」；重试不能产生第二个 MR。
+GitLab 失败时详情页保留管理员已接受事实，显示错误和「重试创建 MR」；重试不能产生第二个 MR。
 
 ## 6. GitLab、发布与企业使用页面状态
 
 ### S13. 代码审核
 
-Wework 与 Web 使用相同状态投影：Draft MR、评审中、需修改、CI 运行、合并就绪、已合并。每个 MR 只允许一个插件的一个版本。
+Wework 与 Web 使用相同状态投影：MR、评审中、需修改、CI 运行、合并就绪、已合并。每个 MR 只允许一个插件的一个版本。
 
 - MR Pipeline 必须包含确定性打包、风险检查、测试、原生 Windows、原生 macOS。
 - 缺少 Runner 显示「阻断/未运行」，不能显示通过。
 - MR 修改后必须更新记录的 commit SHA；发布只接受最终合并 SHA 对应的 artifact。
-- `code_changes_requested` 后由开发者在同一个受控分支和 Draft MR 中修复并重新运行 Pipeline，不回到 Wework 创建新 revision；若必须更换已接受的不可变投稿快照，应先结束当前代码审核流程，再按新的 Request/Revision 流程重新投稿。
+- `code_changes_requested` 后由开发者在同一个受控分支和 MR 中修复并重新运行 Pipeline，不回到 Wework 创建新 revision；若必须更换已接受的不可变投稿快照，应先结束当前代码审核流程，再按新的 Request/Revision 流程重新投稿。
 
 ### S14. 发布
 
@@ -402,11 +402,11 @@ Wework 与 Web 使用相同状态投影：Draft MR、评审中、需修改、CI 
 | -------------------------- | ------------------------------------------------------------------------------ |
 | 上传或快照未完成           | 可取消临时 revision，并清理未引用对象                                          |
 | 已提交、未创建 MR          | 可撤回申请，保留审计事件；`materializing` 期间禁止撤回                         |
-| Draft MR 未合并            | 撤回时先关闭 MR；关闭失败则撤回失败                                            |
+| MR 未合并            | 撤回时先关闭 MR；关闭失败则撤回失败                                            |
 | 删除个人原件且有未合并申请 | 同一确认中先撤回/关 MR；任何一步失败均阻止删除                                 |
 | 已合并或已发布             | 不允许通过删除个人原件回滚企业版                                               |
 | 管理员退回                 | 旧 revision 只读；修复后新建 revision                                          |
-| CI/代码评审失败            | 开发者在同一受控分支/Draft MR 修复并生成新 commit，不由非技术作者创建 revision |
+| CI/代码评审失败            | 开发者在同一受控分支/MR 修复并生成新 commit，不由非技术作者创建 revision |
 | 发布失败                   | 重试相同 version/SHA；保留当前企业 latest release                              |
 
 ## 8. 视觉与响应式规范
@@ -465,7 +465,7 @@ Wework 与 Web 使用相同状态投影：Draft MR、评审中、需修改、CI 
   - `POST /api/admin/plugins/publication-requests/{requestId}/reconcile`
 - 客户端为每次“逻辑提交”生成 `operationAttemptId`：同一次传输失败后的重试复用该 ID，关闭并重新打开申请或重新发起一次显式对账时生成新 ID；键同时包含完整申请载荷指纹。撤回键必须包含当前 revision，避免后续新 revision 被旧撤回响应命中；GitLab 对账每次显式操作使用新的 attempt，避免同 revision 永久重放旧状态。
 - 个人原件和企业版使用不同 namespace/Plugin ID。企业 slug 必须绑定唯一 `origin_plugin_id`；另一个个人来源不得向已有企业 slug 追加版本。历史 `origin_plugin_id = 0` 数据必须显式迁移或拒绝认领，不能静默转移所有权。
-- 管理员接受进入 `materializing` 后暂时禁止撤回，直到受控分支/MR 创建或失败已对账；不得出现“申请已撤回但 Draft MR 仍打开”的状态。
+- 管理员接受进入 `materializing` 后暂时禁止撤回，直到受控分支/MR 创建或失败已对账；不得出现“申请已撤回但 MR 仍打开”的状态。
 - 一旦产生个人/企业 namespace 拆分后、会违反旧全局 slug 唯一约束的数据，数据库 downgrade 必须先执行 preflight 并明确阻止不安全回退，不能在恢复旧唯一索引时中途失败或丢数据。
 
 ### 10.2 GitLab 受控分支、MR 与包检查
@@ -480,12 +480,12 @@ Wework 与 Web 使用相同状态投影：Draft MR、评审中、需修改、CI 
 ### 10.3 发布授权、可信证明与状态同步
 
 - release job 只允许在受保护 `master` 上、且变更包含 `plugins/**` 时运行；普通分支、无插件变更或仅修改 CI/脚本时不得取得 release 凭据或调用发布接口。
-- release API 只接受 `Authorization: Bearer <token>`。token 必须是独立的 `plugin_release` 机器凭据并具有 `plugins:release` scope，不接受裸 token、普通用户会话或用户身份模拟。
-- `plugin_release` 凭据通过管理员 API `POST /api/admin/plugin-release-keys` 创建，通过 `GET /api/admin/plugin-release-keys` 查询，并通过 `POST /api/admin/plugin-release-keys/{id}/toggle-status` 停用或重新启用。创建时必须限制 GitLab project、`production` 环境和过期时间；原始 `wg-...` 值只返回一次，轮换时先创建并验证新键，再停用旧键。
+- release API 只接受 `Authorization: Bearer <token>`。token 必须是独立的 `plugin_release` 机器凭据，不接受裸 token、普通用户会话或用户身份模拟。
+- `plugin_release` 凭据通过管理员 API `POST /api/admin/plugin-release-keys` 创建，通过 `GET /api/admin/plugin-release-keys` 查询，并通过 `POST /api/admin/plugin-release-keys/{id}/toggle-status` 停用或重新启用。创建时只填写名称、可选描述和过期时间；原始 `wg-...` 值只返回一次，轮换时先创建并验证新键，再停用旧键。GitLab project 和目标分支是服务端发布通道配置，不存入凭据。
 - protected master Release 请求还必须携带精确的 `Idempotency-Key`：`wework-plugin-v1:<64hex>`，其摘要由 project ID、最终 commit SHA 和 artifact SHA256 共同派生；服务端重新计算并校验该键。
 - 服务端不得信任调用方自报的 project/ref/SHA/Pipeline 字符串。必须校验配置允许的 GitLab project、受保护 `master` ref、最终合并 SHA 和 Pipeline；再从该 exact commit 读取 `plugins/<slug>`，对包含 `.wework-publication.json`、`plugin-risk.json` 在内的完整规范化文件树与上传 ZIP 做路径、内容和执行位比对。发布幂等记录同时绑定可信证明和已认证 `plugin_release` key 的数据库 ID；不同调用主体不能复用同一个发布幂等键。
 - Webhook 只做单调状态同步和对账：Pipeline 事件必须匹配当前 revision 的受控 commit SHA，较小 Pipeline ID 和同一 Pipeline 已到达终态后的迟到状态不得推进；Webhook 丢失不得成为永久发布阻断，也不能把 Webhook 当作发布授权。
-- 企业投稿不使用人员白名单或全局启停开关；Request API 随 Backend 部署即对已登录的个人插件所有者开放，内部 `/plugins/releases` 始终由 scoped Release Key、受保护 `master` 和可信制品校验控制。因此必须先完成真实 GitLab、Runner、审批、TLS 和凭据轮换验证，再协调部署 Backend、Wework 与 Web 管理端。
+- 企业投稿不使用人员白名单或全局启停开关；Request API 随 Backend 部署即对已登录的个人插件所有者开放，内部 `/plugins/releases` 始终由专用 Release Key、服务端配置的 GitLab project、受保护 `master` 和可信制品校验控制。因此必须先完成真实 GitLab、Runner、审批、TLS 和凭据轮换验证，再协调部署 Backend、Wework 与 Web 管理端。
 - GitLab protected environment、Code Owner/审批规则、受保护变量以及原生 Windows/macOS Runner 是生产启用前的外部 P0。未在真实 GitLab 配置并验证之前，即使本地测试和打包全部通过，也只能称为“实现已验证”，不能称为“生产发布已启用”。
 
 ### 10.4 凭据迁移边界
@@ -513,7 +513,7 @@ Wework 与 Web 使用相同状态投影：Draft MR、评审中、需修改、CI 
 | `PluginWorkspaceConversationResult.tsx` / `executor/src/plugin_workspace_cli.rs` | Task 工作区入口透传真实版本；定向分享继续走旧 submission，企业全员必须走新 publication request + immutable revision API                     |
 | `frontend/src/app/admin/page.tsx`                                                | 新增管理员审核 Tab                                                                                                                          |
 | `frontend/src/features/admin/`                                                   | 新增队列、详情、退回与接受组件                                                                                                              |
-| Backend publication domain                                                       | 新表、新状态机、自动检查、GitLab 物化、Webhook 对账和 scoped release endpoint                                                               |
+| Backend publication domain                                                       | 新表、新状态机、自动检查、GitLab 物化、Webhook 对账和专用 release endpoint                                                                   |
 
 新增交互元素必须有稳定 `data-testid`；已有详情页选择器保持不变，除非同一变更同步更新单测和桌面 E2E。
 
@@ -527,9 +527,9 @@ Wework 与 Web 使用相同状态投影：Draft MR、评审中、需修改、CI 
 4. 三步申请的必填、风险阻断、返回上一步和关闭恢复均正确；版本说明/测试说明的空白与 `2000/1000` 字符边界在客户端和 API 一致。
 5. 提交后个人继续编辑不会改变 revision/SHA。
 6. 同一个人源插件只允许一个活动 Request；退回或确定性自动检查失败后在原 Request 创建新 revision；已发布后更高版本创建新 Request 并保留旧 Request。
-7. 管理员阻断项不可接受；退回原因必填；接受只创建一个 Draft MR。
+7. 管理员阻断项不可接受；退回原因必填；接受只创建一个 MR。
 8. Windows/macOS 未运行时流程阻断。
-9. 合并前撤回关闭 Draft MR；关闭失败阻止撤回和个人删除。
+9. 合并前撤回关闭 MR；关闭失败阻止撤回和个人删除。
 10. 发布失败保留企业旧版本；幂等重试不创建重复 Release。
 11. 个人版与企业版可同时展示、安装和独立删除/卸载。
 12. 接收者和企业普通用户看不到分享、投稿、编辑或删除入口。
@@ -537,11 +537,11 @@ Wework 与 Web 使用相同状态投影：Draft MR、评审中、需修改、CI 
 14. ACL 加载完成前不展示可提交表单；加载失败不能用空 ACL 覆盖已有授权。
 15. 客户端重启后仍能查看终态申请、完整 revision 历史和个人/企业双向链接。
 16. 受控分支 marker 缺失/不匹配、插件 MR 混改 CI/脚本、ZIP 多根或全仓 Secret scan 失败均阻断。
-17. release API 拒绝非 Bearer、scope 错误和不可信 project/ref/SHA/Pipeline 证明；Webhook 乱序不会回退状态。
+17. release API 拒绝非 Bearer、错误 key type 和不可信 project/ref/SHA/Pipeline 证明；Webhook 乱序不会回退状态。
 18. `materializing` 撤回、企业 slug 跨来源追加和不安全数据库 downgrade 均被显式阻止。
 19. 七个 publication mutation 缺少幂等键时返回 `422`；同键同资源/载荷精确重放，同键不同资源/载荷返回 `409`，显式对账使用新 attempt。
 20. 根部门仅在 `include_organization=true` 时返回且遵循访问权限；申请人和管理员都能通过专用 `requiredChanges` 查看退回修改项，响应不泄露任意事件 payload。
-21. 自动检查的传输/基础设施失败可对原 revision 幂等重试；确定性内容失败只能修复后新建 revision；`code_changes_requested` 在同一 Draft MR 修复。
+21. 自动检查的传输/基础设施失败可对原 revision 幂等重试；确定性内容失败只能修复后新建 revision；`code_changes_requested` 在同一 MR 修复。
 
 ### 12.2 真实桌面与设计 QA
 

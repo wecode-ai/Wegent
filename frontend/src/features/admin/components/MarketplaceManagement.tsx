@@ -5,14 +5,11 @@
 'use client'
 
 import { useCallback, useEffect, useState } from 'react'
-import { useRouter, useSearchParams } from 'next/navigation'
 import {
   Bot,
   CheckCircle2,
   ChevronLeft,
   ChevronRight,
-  ClipboardCheck,
-  LayoutGrid,
   Loader2,
   MessageSquareText,
   Sparkles,
@@ -42,25 +39,13 @@ import { ResourceIcon } from '@/features/resource-library/components/ResourceIco
 import { useToast } from '@/hooks/use-toast'
 import { useTranslation } from '@/hooks/useTranslation'
 import { cn } from '@/lib/utils'
-import PluginPublicationReviewQueue from './PluginPublicationReviewQueue'
 
 const PAGE_SIZE = 50
 const FEATURED_RECOMMENDATION_SCORE = 80
 
-type MarketplaceManagementView = 'resources' | 'plugin-publications'
-
-function getManagementView(value: string | null): MarketplaceManagementView {
-  return value === 'plugin-publications' ? 'plugin-publications' : 'resources'
-}
-
 export default function MarketplaceManagement() {
   const { t } = useTranslation('admin')
   const { toast } = useToast()
-  const router = useRouter()
-  const searchParams = useSearchParams()
-  const [managementView, setManagementView] = useState<MarketplaceManagementView>(() =>
-    getManagementView(searchParams.get('view'))
-  )
   const [resourceType, setResourceType] = useState<AdminMarketplaceResourceType>('agent')
   const [items, setItems] = useState<AdminMarketplaceResource[]>([])
   const [page, setPage] = useState(1)
@@ -83,12 +68,7 @@ export default function MarketplaceManagement() {
     parsedRecommendationScore >= 0 &&
     parsedRecommendationScore <= 100
 
-  useEffect(() => {
-    setManagementView(getManagementView(searchParams.get('view')))
-  }, [searchParams])
-
   const loadResources = useCallback(async () => {
-    if (managementView !== 'resources') return
     setLoading(true)
     try {
       const response = await adminApis.getMarketplaceResources(resourceType, page, PAGE_SIZE)
@@ -107,7 +87,7 @@ export default function MarketplaceManagement() {
     } finally {
       setLoading(false)
     }
-  }, [managementView, page, resourceType, t, toast])
+  }, [page, resourceType, t, toast])
 
   useEffect(() => {
     void loadResources()
@@ -118,23 +98,6 @@ export default function MarketplaceManagement() {
     setPage(1)
     setEditingScoreItemId(null)
     setEditingExampleItemId(null)
-  }
-
-  const handleManagementViewChange = (value: string) => {
-    const nextView = getManagementView(value)
-    setManagementView(nextView)
-    setEditingScoreItemId(null)
-    setEditingExampleItemId(null)
-
-    const params = new URLSearchParams(searchParams.toString())
-    params.set('tab', 'marketplace')
-    if (nextView === 'resources') {
-      params.delete('view')
-      params.delete('request')
-    } else {
-      params.set('view', nextView)
-    }
-    router.replace(`?${params.toString()}`, { scroll: false })
   }
 
   const openRecommendationScoreDialog = (item: AdminMarketplaceResource) => {
@@ -332,96 +295,69 @@ export default function MarketplaceManagement() {
         <p className="mt-1 text-sm text-text-muted">{t('marketplace_management.description')}</p>
       </div>
 
-      <Tabs value={managementView} onValueChange={handleManagementViewChange}>
-        <TabsList className="grid h-auto w-full grid-cols-2 border border-border bg-surface p-1 shadow-sm sm:w-auto sm:max-w-xl">
-          <TabsTrigger
-            value="resources"
-            className="min-h-11 data-[state=active]:bg-primary data-[state=active]:text-white"
-            data-testid="marketplace-management-view-resources"
-          >
-            <LayoutGrid className="mr-2 h-4 w-4" aria-hidden />
-            {t('marketplace_management.resource_view')}
-          </TabsTrigger>
-          <TabsTrigger
-            value="plugin-publications"
-            className="min-h-11 data-[state=active]:bg-primary data-[state=active]:text-white"
-            data-testid="admin-plugin-publications-tab"
-          >
-            <ClipboardCheck className="mr-2 h-4 w-4" aria-hidden />
-            {t('marketplace_management.plugin_publication_view')}
-          </TabsTrigger>
-        </TabsList>
-
-        <TabsContent value="resources" className="mt-5 space-y-5">
-          <Tabs value={resourceType} onValueChange={handleTypeChange}>
-            <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-              <TabsList className="grid w-full grid-cols-2 border border-border bg-surface shadow-sm sm:w-auto sm:min-w-80">
-                <TabsTrigger
-                  value="agent"
-                  className="data-[state=active]:bg-primary data-[state=active]:text-white"
-                  data-testid="marketplace-management-tab-agent"
-                >
-                  <Bot className="mr-2 h-4 w-4" aria-hidden />
-                  {t('marketplace_management.agent_tab')}
-                </TabsTrigger>
-                <TabsTrigger
-                  value="skill"
-                  className="data-[state=active]:bg-primary data-[state=active]:text-white"
-                  data-testid="marketplace-management-tab-skill"
-                >
-                  <Sparkles className="mr-2 h-4 w-4" aria-hidden />
-                  {t('marketplace_management.skill_tab')}
-                </TabsTrigger>
-              </TabsList>
-              {!loading && (
-                <span className="text-sm text-text-muted">
-                  {t('marketplace_management.resource_count', { count: total })}
-                </span>
-              )}
-            </div>
-            <TabsContent value="agent" className="mt-4">
-              {resourceType === 'agent' ? renderList() : null}
-            </TabsContent>
-            <TabsContent value="skill" className="mt-4">
-              {resourceType === 'skill' ? renderList() : null}
-            </TabsContent>
-          </Tabs>
-
-          {!loading && totalPages > 1 && (
-            <div className="flex items-center justify-center gap-3">
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                disabled={page <= 1}
-                onClick={() => setPage(current => current - 1)}
-                data-testid="marketplace-management-previous-page"
-              >
-                <ChevronLeft className="h-4 w-4" aria-hidden />
-                {t('marketplace_management.previous')}
-              </Button>
-              <span className="text-sm text-text-muted">
-                {t('marketplace_management.pagination', { page, totalPages })}
-              </span>
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                disabled={page >= totalPages}
-                onClick={() => setPage(current => current + 1)}
-                data-testid="marketplace-management-next-page"
-              >
-                {t('marketplace_management.next')}
-                <ChevronRight className="h-4 w-4" aria-hidden />
-              </Button>
-            </div>
+      <Tabs value={resourceType} onValueChange={handleTypeChange}>
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+          <TabsList className="grid w-full grid-cols-2 border border-border bg-surface shadow-sm sm:w-auto sm:min-w-80">
+            <TabsTrigger
+              value="agent"
+              className="data-[state=active]:bg-primary data-[state=active]:text-white"
+              data-testid="marketplace-management-tab-agent"
+            >
+              <Bot className="mr-2 h-4 w-4" aria-hidden />
+              {t('marketplace_management.agent_tab')}
+            </TabsTrigger>
+            <TabsTrigger
+              value="skill"
+              className="data-[state=active]:bg-primary data-[state=active]:text-white"
+              data-testid="marketplace-management-tab-skill"
+            >
+              <Sparkles className="mr-2 h-4 w-4" aria-hidden />
+              {t('marketplace_management.skill_tab')}
+            </TabsTrigger>
+          </TabsList>
+          {!loading && (
+            <span className="text-sm text-text-muted">
+              {t('marketplace_management.resource_count', { count: total })}
+            </span>
           )}
+        </div>
+        <TabsContent value="agent" className="mt-4">
+          {resourceType === 'agent' ? renderList() : null}
         </TabsContent>
-
-        <TabsContent value="plugin-publications" className="mt-5">
-          {managementView === 'plugin-publications' ? <PluginPublicationReviewQueue /> : null}
+        <TabsContent value="skill" className="mt-4">
+          {resourceType === 'skill' ? renderList() : null}
         </TabsContent>
       </Tabs>
+
+      {!loading && totalPages > 1 && (
+        <div className="flex items-center justify-center gap-3">
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            disabled={page <= 1}
+            onClick={() => setPage(current => current - 1)}
+            data-testid="marketplace-management-previous-page"
+          >
+            <ChevronLeft className="h-4 w-4" aria-hidden />
+            {t('marketplace_management.previous')}
+          </Button>
+          <span className="text-sm text-text-muted">
+            {t('marketplace_management.pagination', { page, totalPages })}
+          </span>
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            disabled={page >= totalPages}
+            onClick={() => setPage(current => current + 1)}
+            data-testid="marketplace-management-next-page"
+          >
+            {t('marketplace_management.next')}
+            <ChevronRight className="h-4 w-4" aria-hidden />
+          </Button>
+        </div>
+      )}
 
       <Dialog
         open={editingScoreItem !== null}

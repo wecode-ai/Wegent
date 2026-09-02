@@ -1,7 +1,8 @@
-import { Check, Circle, ExternalLink, FileWarning, RotateCcw, X } from 'lucide-react'
+import { Check, Circle, ExternalLink, FileWarning, RotateCcw, X, XCircle } from 'lucide-react'
 import { useEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from 'react'
 import { Button } from '@/components/ui/button'
 import { useTranslation } from '@/hooks/useTranslation'
+import { formatUTC8DateTime } from '@/lib/utc-date'
 import { cn } from '@/lib/utils'
 import type {
   PluginPublicationCheckItem,
@@ -74,6 +75,13 @@ export function PluginPublicationProgressDrawer({
   const localizedCheckStatus = (status: PluginPublicationCheckItem['status']) =>
     t(`workbench.plugins_publication_check_status_${status}`, status)
   const localizedEventMessage = (event: PluginPublicationRequestItem['events'][number]) => {
+    if (event.eventType === 'gitlab.merge_request_closed') {
+      return event.actorName
+        ? t('workbench.plugins_publication_mr_closed_by', {
+            actor: event.actorName,
+          })
+        : t('workbench.plugins_publication_mr_closed_no_actor')
+    }
     const label = t(
       `workbench.plugins_publication_event_${event.eventType.replaceAll('.', '_')}`,
       event.eventType
@@ -81,6 +89,18 @@ export function PluginPublicationProgressDrawer({
     return event.eventType === 'admin.changes_requested' && event.message
       ? `${label}：${event.message}`
       : label
+  }
+  const localizedFailureReason = (reason?: string | null, status?: string) => {
+    if (!reason) {
+      return t(
+        `workbench.plugins_publication_pipeline_failure_reason_${status || 'failed'}`,
+        status || 'failed'
+      )
+    }
+    return t(
+      `workbench.plugins_publication_pipeline_failure_reason_${reason.replaceAll('.', '_')}`,
+      reason
+    )
   }
 
   useEffect(() => {
@@ -124,7 +144,20 @@ export function PluginPublicationProgressDrawer({
   }
 
   return (
-    <div className="plugin-dialog-overlay fixed inset-0 z-modal flex justify-end">
+    <div
+      data-testid="plugin-publication-progress-overlay"
+      className="plugin-dialog-overlay fixed inset-0 z-modal flex justify-end"
+      onClick={event => {
+        if (
+          !loading &&
+          !withdrawing &&
+          !confirmingWithdraw &&
+          event.target === event.currentTarget
+        ) {
+          onClose()
+        }
+      }}
+    >
       <section
         ref={drawerRef}
         role="dialog"
@@ -140,7 +173,8 @@ export function PluginPublicationProgressDrawer({
               {t('workbench.plugins_publication_progress', '企业全员发布进度')}
             </h2>
             <p className="mt-1 text-sm text-text-secondary">
-              {publication.pluginName} · v{revision.requestedVersion} · revision {revision.number}
+              {publication.pluginName} · v{revision.requestedVersion} ·{' '}
+              {t('workbench.plugins_publication_revision', '修订版')} {revision.number}
             </p>
           </div>
           <Button
@@ -214,7 +248,7 @@ export function PluginPublicationProgressDrawer({
             <dl className="overflow-hidden rounded-xl border border-border/30 text-sm">
               {[
                 [t('workbench.plugins_publication_request_id', '申请编号'), String(publication.id)],
-                [t('workbench.plugins_publication_revision', 'Revision'), String(revision.number)],
+                [t('workbench.plugins_publication_revision', '修订版'), String(revision.number)],
                 [
                   t('workbench.plugins_publication_confirm_version', '版本'),
                   revision.requestedVersion,
@@ -267,7 +301,8 @@ export function PluginPublicationProgressDrawer({
                   >
                     <span className="flex items-center justify-between gap-3">
                       <span className="font-medium text-text-primary">
-                        Revision {item.number} · v{item.requestedVersion}
+                        {t('workbench.plugins_publication_revision', '修订版')} {item.number} · v
+                        {item.requestedVersion}
                       </span>
                       <span className="text-xs text-text-muted">
                         {t('workbench.plugins_publication_status_' + item.status, item.status)}
@@ -372,7 +407,7 @@ export function PluginPublicationProgressDrawer({
                       className="inline-flex items-center gap-1 text-blue-600 hover:underline"
                       data-testid="plugin-publication-progress-mr-link"
                     >
-                      {t('workbench.plugins_publication_open_mr', '打开 Draft MR')}
+                      {t('workbench.plugins_publication_open_mr', '打开 MR')}
                       <ExternalLink className="h-3.5 w-3.5" />
                     </a>
                   ) : null}
@@ -410,7 +445,42 @@ export function PluginPublicationProgressDrawer({
                         ))}
                       </ul>
                     ) : null}
-                    <p className="mt-0.5 text-xs text-text-muted">{event.createdAt}</p>
+                    {event.failureDetails?.length ? (
+                      <ul
+                        className="mt-2 space-y-2"
+                        data-testid={`plugin-publication-event-failures-${event.id}`}
+                      >
+                        {event.failureDetails.map((failure, index) => (
+                          <li
+                            key={`${failure.jobName}-${failure.stage || ''}-${index}`}
+                            className="rounded-lg border border-border/40 bg-surface-secondary px-3 py-2"
+                          >
+                            <p className="text-xs font-medium text-text-primary">
+                              {failure.jobName}
+                              {failure.stage ? ` · ${failure.stage}` : ''}
+                            </p>
+                            <p className="mt-0.5 text-xs text-text-secondary">
+                              {localizedFailureReason(failure.reason, failure.status)}
+                            </p>
+                            {failure.jobUrl ? (
+                              <a
+                                href={failure.jobUrl}
+                                target="_blank"
+                                rel="noreferrer"
+                                className="mt-1 inline-flex items-center gap-1 text-xs text-blue-600 hover:underline"
+                                data-testid={`plugin-publication-failed-job-${event.id}-${index}`}
+                              >
+                                {t('workbench.plugins_publication_open_failed_job')}
+                                <ExternalLink className="h-3.5 w-3.5" />
+                              </a>
+                            ) : null}
+                          </li>
+                        ))}
+                      </ul>
+                    ) : null}
+                    <p className="mt-0.5 text-xs text-text-muted">
+                      {formatUTC8DateTime(event.createdAt)}
+                    </p>
                   </div>
                 </li>
               ))}
@@ -424,7 +494,7 @@ export function PluginPublicationProgressDrawer({
               <p className="text-sm leading-5 text-text-secondary">
                 {t(
                   'workbench.plugins_publication_withdraw_confirm',
-                  '撤回后，尚未合并的 Draft MR 会一并关闭；当前 revision 和审核记录仍会保留。'
+                  '撤回后，尚未合并的 MR 会一并关闭；当前修订版和审核记录仍会保留。'
                 )}
               </p>
               <div className="flex justify-end gap-2">
@@ -439,7 +509,7 @@ export function PluginPublicationProgressDrawer({
                 </Button>
                 <Button
                   type="button"
-                  variant="outline"
+                  variant="destructive"
                   disabled={withdrawing}
                   data-testid="plugin-publication-withdraw-confirm"
                   onClick={onWithdraw}
@@ -467,10 +537,12 @@ export function PluginPublicationProgressDrawer({
                   <Button
                     type="button"
                     variant="outline"
+                    className="border-red-500/40 text-red-600 hover:border-red-500/60 hover:bg-red-500/10 hover:text-red-700"
                     disabled={withdrawing}
                     data-testid="plugin-publication-progress-withdraw"
                     onClick={() => setConfirmingWithdraw(true)}
                   >
+                    <XCircle aria-hidden="true" />
                     {t('workbench.plugins_publication_withdraw', '撤回申请')}
                   </Button>
                 ) : null}
@@ -483,7 +555,7 @@ export function PluginPublicationProgressDrawer({
                     {publication.status === 'changes_requested' ||
                     publication.status === 'code_changes_requested'
                       ? t('workbench.plugins_publication_fix_and_resubmit', '修复并重新提交')
-                      : t('workbench.plugins_publication_create_revision', '提交新 Revision')}
+                      : t('workbench.plugins_publication_create_revision', '提交新修订版')}
                   </Button>
                 ) : null}
                 {onViewEnterprise && publication.actionEligibility.canViewEnterprisePlugin ? (

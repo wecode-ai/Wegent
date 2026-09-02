@@ -35,7 +35,6 @@ from app.schemas.plugin_publication import (
 )
 from app.services.auth.plugin_release_key import (
     PluginReleasePrincipal,
-    ensure_plugin_release_allowed,
     verify_plugin_release_key,
 )
 from app.services.plugin_package_parser import (
@@ -66,12 +65,6 @@ async def publish_plugin_release(
     validate_release_idempotency_key_format(idempotency_key)
     provenance = release_metadata.source
     _ensure_protected_master(provenance)
-    ensure_plugin_release_allowed(
-        principal,
-        project_id=provenance.projectId,
-        catalog_namespace="enterprise",
-        environment="production",
-    )
     package_bytes = await _read_package(package)
     if release_metadata.artifact.file != (package.filename or ""):
         raise HTTPException(status_code=422, detail="Artifact filename mismatch")
@@ -159,7 +152,12 @@ def _gitlab_project_id(payload: dict[str, Any]) -> str:
 
 def _ensure_protected_master(provenance: PluginReleaseProvenance) -> None:
     configured_project = settings.PLUGIN_PUBLICATION_GITLAB_PROJECT_ID
-    if configured_project and provenance.projectId != configured_project:
+    if not configured_project:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Plugin publication GitLab project is not configured",
+        )
+    if provenance.projectId != configured_project:
         raise HTTPException(status_code=403, detail="Release project is not configured")
     target_branch = settings.PLUGIN_PUBLICATION_GITLAB_TARGET_BRANCH
     allowed_refs = {target_branch, f"refs/heads/{target_branch}"}

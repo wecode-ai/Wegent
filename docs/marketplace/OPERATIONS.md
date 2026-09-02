@@ -28,7 +28,7 @@ approval of that still-undecided path.
 - Configure the approved internal GitLab project, protected `master` branch,
   native Windows/macOS runners, MR rules, webhook secret, and reconciliation job
   before deploying enterprise publication requests.
-- Create a scoped `plugin_release` machine key and store its raw value only as a
+- Create a dedicated `plugin_release` machine key and store its raw value only as a
   protected, masked variable available to the protected `master` release job.
 
 Relevant storage settings include:
@@ -81,18 +81,20 @@ Legacy `/plugins/submissions` accepts `restricted_share + personal` only.
 
 ## Release credential operations
 
-`plugin_release` with the `plugins:release` scope extends the existing API-key
-lifecycle. It must use the same one-time raw-key display, hashed storage, expiry,
+The dedicated `plugin_release` type extends the existing API-key lifecycle. It
+must use the same one-time raw-key display, hashed storage, expiry,
 disablement, prefix display, last-used timestamp, and audit behavior as other API
 keys, with a separate dependency that accepts only this type.
 
 - Create: `POST /api/admin/plugin-release-keys` with `name`, optional
-  `description`, `expiresAt`, one or more `projectIds`, and
-  `environments: ["production"]`.
+  `description`, and `expiresAt`.
 - List without raw values: `GET /api/admin/plugin-release-keys`.
 - Disable or re-enable: `POST /api/admin/plugin-release-keys/{id}/toggle-status`.
 - The raw `wg-...` key is returned only by the successful create response. Store
   it immediately in the protected GitLab variable; it cannot be retrieved later.
+- Configure the one allowed GitLab project and target branch on the Backend. The
+  release endpoint rejects calls when the project is not configured and verifies
+  the submitted provenance against GitLab independently of the credential.
 
 - Do not give the key a `wegent-username`; it cannot impersonate a user.
 - Do not reuse a personal key, general service key, or
@@ -136,7 +138,7 @@ its own migration state before using these tables. Operationally verify:
 
 - the current revision points to the expected source Release and SHA-256;
 - `changes_requested` never rewrites an earlier revision;
-- administrator acceptance records a Draft MR but no enterprise Release;
+- administrator acceptance records a MR but no enterprise Release;
 - MR/pipeline/master commit facts correspond to the same accepted revision;
 - `published` links to the enterprise Plugin/Release and exact artifact SHA.
 - workflow idempotency rows bind principal, operation, resource, request
@@ -233,18 +235,18 @@ attempt instead.
 
 ### GitLab code review requests changes
 
-A developer fixes the existing controlled branch and Draft MR, creates a new
+A developer fixes the existing controlled branch and MR, creates a new
 commit, and reruns its Pipeline. Do not ask a non-technical author to create a new
 publication revision for `code_changes_requested`. If the accepted immutable
 snapshot itself must change, end the current code-review flow and submit through a
 new Request/Revision flow.
 
-### Draft MR was not created
+### MR was not created
 
 Check the publication event log and materialization idempotency key before
 retrying. A retry must reuse the existing branch/MR when the accepted revision is
 unchanged. Verify GitLab project permissions without exposing access tokens in
-logs. Draft MR creation is not publication and must not change catalog visibility.
+logs. MR creation is not publication and must not change catalog visibility.
 
 ### Pipeline passed but the plugin was not published
 
@@ -288,20 +290,20 @@ out-of-order status events. It does not build or publish packages.
 
 The feature implementation already adds the namespace/origin migration,
 publication Request/Revision/Check/Event records, the two-intent Wework client,
-Web review, Draft MR materialization, status-only Webhooks, and the scoped release
+Web review, MR materialization, status-only Webhooks, and the dedicated release
 endpoint. Deploy it in this order:
 
 1. Complete the production-activation gates below: protected GitLab resources,
    native Runners, HTTPS, materializer identity, Webhook, reconciliation, and the
-   scoped Release key. Prove MR jobs cannot read the Release credential.
+   dedicated Release key. Prove MR jobs cannot read the Release credential.
 2. Back up and apply the new Alembic revision, then verify namespace backfill,
-   origin links, foreign keys, and historical Release/install references.
+   origin links, indexes, and historical Release/install references.
 3. Coordinate the Backend, two-intent Wework client, and Web review rollout. The
    Request API is available to authenticated personal-plugin owners immediately
    after Backend deployment; there is no later switch-on step.
 4. Keep personal `restricted_share` upload and ACL APIs operational; verify that
    legacy submissions reject `workspace/public`.
-5. Run the full real-environment rehearsal for submission, return, Draft MR,
+5. Run the full real-environment rehearsal for submission, return, MR,
    native checks, merge, release, replay, failure, and rollback before accepting
    the rollout as production-ready.
 6. Drain or migrate historical pending submissions, observe old-client traffic,
@@ -326,7 +328,7 @@ All of the following are external P0 gates:
 - create a fresh `plugin_release` key and prove it is available only to the
   protected-master release job, never to MR pipelines;
 - rehearse personal sharing, initial and replacement revisions, administrator
-  return/accept, Draft MR creation, both native jobs, merge, release, duplicate
+  return/accept, MR creation, both native jobs, merge, release, duplicate
   Webhook/API delivery, exact idempotency replay and conflict, release failure,
   withdrawal before merge, and rollback;
 - verify the client and API reject blank/overlong release and test notes, the root
@@ -343,7 +345,7 @@ enabled.
 - Restrict administrator endpoints to trusted operators.
 - Allow only reviewed HTTPS upstreams.
 - Rotate object-storage and OAuth credentials regularly.
-- Rotate scoped release keys and make them unavailable to MR pipelines.
+- Rotate release keys and make them unavailable to MR pipelines.
 - Keep presigned URL lifetimes short.
 - Audit changes to visibility, grants, upstream configuration, and review state.
 - Audit immutable revision SHA, risk acknowledgements, GitLab commit/artifact,

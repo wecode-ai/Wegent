@@ -41,15 +41,11 @@ router = APIRouter()
 def _plugin_release_key_response(
     api_key: APIKey, *, created_by: str | None = None
 ) -> PluginReleaseKeyResponse:
-    restrictions = dict(api_key.restrictions_json or {})
     return PluginReleaseKeyResponse(
         id=api_key.id,
         name=api_key.name,
         keyPrefix=api_key.key_prefix,
         description=api_key.description,
-        scopes=list(api_key.scopes_json or []),
-        projectIds=[str(value) for value in restrictions.get("projectIds") or []],
-        environments=[str(value) for value in restrictions.get("environments") or []],
         expiresAt=api_key.expires_at,
         lastUsedAt=api_key.last_used_at,
         createdAt=api_key.created_at,
@@ -110,14 +106,6 @@ def create_plugin_release_key(
         name=request.name,
         key_type=KEY_TYPE_PLUGIN_RELEASE,
         description=request.description or "",
-        scopes_json=["plugins:release"],
-        restrictions_json={
-            "projectIds": request.projectIds,
-            "catalogNamespaces": ["enterprise"],
-            "environments": [
-                value.strip() for value in request.environments if value.strip()
-            ],
-        },
         expires_at=expires_at,
     )
     db.add(api_key)

@@ -6,7 +6,7 @@ sidebar_position: 20
 
 面向插件开发、开源迁移和本地联调，请先阅读[插件市场开发指南](./wework-plugin-marketplace-dev.md)。本文定义 Wework 插件分享、企业全员发布、GitLab 审核和市场 Release 的**实现与验收合同**。
 
-> 实现状态（2026-08-29）：当前实现已落地双范围交互、ACL 与发布状态加载、Request/Revision/Check/Event 领域、Web 审核队列、Draft MR 物化、受限 Release API 及本地测试。**这不等于已获准或已部署生产**：旧 Token 吊销与轮换、HTTPS、protected master/environment、Code Owner 审批、project-locked 原生 Windows/macOS Runner 和新 Release 凭据均需在真实 GitLab/生产环境完成 P0 配置与验证。第 10 节记录已实现边界和上线门禁。
+> 实现状态（2026-08-29）：当前实现已落地双范围交互、ACL 与发布状态加载、Request/Revision/Check/Event 领域、Web 审核队列、MR 物化、受限 Release API 及本地测试。**这不等于已获准或已部署生产**：旧 Token 吊销与轮换、HTTPS、protected master/environment、Code Owner 审批、project-locked 原生 Windows/macOS Runner 和新 Release 凭据均需在真实 GitLab/生产环境完成 P0 配置与验证。第 10 节记录已实现边界和上线门禁。
 
 ## 1. 冻结的产品与技术决策
 
@@ -21,7 +21,7 @@ sidebar_position: 20
 5. 任意已登录的个人插件所有者都可以提交企业全员发布申请，不使用用户白名单授予投稿资格。服务端仍执行所有权、活动申请数、包大小和安全策略校验。
 6. 全员发布使用三步右侧抽屉：**确认版本 → 权限与风险 → 确认提交**。提交后固化不可变 snapshot、revision 和 SHA256；继续编辑个人插件不会改变已提交内容。
 7. 用户侧统一展示五个阶段：**提交申请 → 自动检查 → 管理员审核 → 代码审核 → 发布**。
-8. Web 管理后台是人工审核入口。管理员可以退回或接受；“接受”只把当前 revision 物化为 GitLab 分支并创建 Draft MR，绝不直接生成市场 Release。
+8. Web 管理后台是人工审核入口。管理员可以退回或接受；“接受”只把当前 revision 物化为 GitLab 分支并创建 MR，绝不直接生成市场 Release。
 9. 非技术用户从 Wework 投稿，技术用户可直接提交 GitLab MR；两条路径从 MR 开始复用同一套检查、合并和发布流水线。
 10. 个人原件与企业版是两个独立 Plugin 身份。审核期间个人原件仍可编辑、立即对话、定向分享和安装；发布企业版不会改变、转移或删除个人原件。
 11. **受保护的 master Pipeline 是唯一自动发布触发者。** GitLab Webhook 只同步 MR/Pipeline 状态和触发丢失事件的对账，不直接发布。
@@ -80,11 +80,11 @@ sidebar_position: 20
 - 审核前：可撤回；个人插件仍可正常使用和分享。
 - 自动检查失败：展示稳定错误码、证据文件和修复建议。
 - 管理员退回：展示退回原因和待修改项，允许从新 snapshot 创建下一 revision。
-- 代码审核：展示 Draft MR、Pipeline 和 Windows/macOS 检查状态；有权限时可跳转 GitLab。
+- 代码审核：展示 MR、Pipeline 和 Windows/macOS 检查状态；有权限时可跳转 GitLab。
 - 发布失败：企业旧版本继续可用，允许管理员/发布人员重试同一幂等发布；不得要求用户覆盖旧 revision。
 - 发布成功：个人原件继续位于「个人创建」，独立企业版出现在「企业内部」。
 
-删除个人原件时，尚未合并的申请必须在同一确认流程中先撤回；撤回或 Draft MR 关闭失败时阻止删除。已经合并或发布后，删除只影响个人原件，不删除企业版、GitLab 记录、申请 revision 或历史 Release。
+删除个人原件时，尚未合并的申请必须在同一确认流程中先撤回；撤回或 MR 关闭失败时阻止删除。已经合并或发布后，删除只影响个人原件，不删除企业版、GitLab 记录、申请 revision 或历史 Release。
 
 ### 2.5 Web 管理后台
 
@@ -93,7 +93,7 @@ sidebar_position: 20
 - 列表：状态、风险、提交人、插件、时间筛选和分页；
 - 详情：不可变 revision、SHA256、权限声明、自动检查证据、变更历史和 GitLab 状态；
 - 「退回修改」：原因和待修改项必填；
-- 「接受并创建 Draft MR」：无阻断检查、警告已逐项确认时可用；操作必须幂等；
+- 「接受并创建 MR」：无阻断检查、警告已逐项确认时可用；操作必须幂等；
 - GitLab 物化失败后的重试和状态对账入口；
 - 完整的操作人、时间和状态事件审计。
 
@@ -112,20 +112,20 @@ flowchart LR
   E --> F[自动检查]
   F --> G[Web 管理员审核]
   G -->|退回| H[新 revision 重投]
-  G -->|接受| I[物化分支 + Draft MR]
+  G -->|接受| I[物化分支 + MR]
   J[开发者直接 MR] --> K[共享 GitLab MR Pipeline]
   I --> K
   K --> L[代码审核 + Windows/macOS 门禁]
   L --> M[合并 protected master]
   M --> N[master Pipeline]
-  N -->|scoped release token| O[Release API]
+  N -->|dedicated release token| O[Release API]
   O --> P[独立企业 Plugin/Release]
 ```
 
 四条边界必须分开：
 
 1. **个人定向分享**：云端扫描 + ACL，无人工审核，无 GitLab。
-2. **非技术用户企业投稿**：Wework snapshot → Web 初审 → 自动创建 Draft MR。
+2. **非技术用户企业投稿**：Wework snapshot → Web 初审 → 自动创建 MR。
 3. **开发者企业投稿**：直接创建 MR；从 MR 检查开始与非技术路径完全一致。
 4. **Wework 官方公开插件**：`public` 目录的 P1 独立流程，本期不实现。
 
@@ -294,7 +294,7 @@ sequenceDiagram
   U->>API: 三步抽屉提交 snapshot/revision
   API->>API: 重新打包、SHA256、自动检查
   A->>API: 退回或接受当前 revision
-  API->>GL: 接受后创建受控分支 + Draft MR
+  API->>GL: 接受后创建受控分支 + MR
   GL->>CI: MR Pipeline
   CI->>CI: 风险、测试、Windows、macOS
   GL->>CI: 合并 protected master 后启动 master Pipeline
@@ -302,7 +302,7 @@ sequenceDiagram
   R->>R: 再校验并幂等发布企业 Release
 ```
 
-GitLab 物化服务只把服务端已验证 snapshot 写入约定的 `plugins/<slug>/` 并更新受控清单；分支名、路径、commit message 等不能直接拼接未经校验的用户输入。创建 Draft MR 必须使用 request/revision 幂等键，并写回 project、branch、MR IID 和 commit SHA。
+GitLab 物化服务只把服务端已验证 snapshot 写入约定的 `plugins/<slug>/` 并更新受控清单；分支名、路径、commit message 等不能直接拼接未经校验的用户输入。创建 MR 必须使用 request/revision 幂等键，并写回 project、branch、MR IID 和 commit SHA。
 
 ### 6.3 开发者直接 GitLab 投稿
 
@@ -368,7 +368,7 @@ HTTP 接口不得启动 `publish_official_plugin.py` 子进程，也不得复制
 | GET  | `/admin/plugins/publication-requests`                              | 管理员分页、筛选和汇总                              |
 | GET  | `/admin/plugins/publication-requests/{id}`                         | 管理员查看完整证据和事件                            |
 | POST | `/admin/plugins/publication-requests/{id}/return`                  | 必填原因和修改项，退回当前 revision                 |
-| POST | `/admin/plugins/publication-requests/{id}/accept`                  | 幂等物化分支并创建 Draft MR，不发布                 |
+| POST | `/admin/plugins/publication-requests/{id}/accept`                  | 幂等物化分支并创建 MR，不发布                 |
 | POST | `/admin/plugins/publication-requests/{id}/reconcile`               | 重试物化或主动对账 GitLab 状态                      |
 
 ### 7.3 内部接口
@@ -394,11 +394,11 @@ HTTP 接口不得启动 `publish_official_plugin.py` 子进程，也不得复制
 
 ## 8. 机器认证和安全边界
 
-`Authorization: Bearer <scoped-release-token>` 是服务到服务凭据，不是新用户登录体系。实现应复用现有 API Key 的随机生成、只存哈希、原文仅返回一次、到期、禁用、最后使用时间和审计能力，并增加专用 `key_type=plugin_release` 和 `plugins:release` scope：
+`Authorization: Bearer <release-token>` 是服务到服务凭据，不是新用户登录体系。实现复用现有 API Key 的随机生成、只存哈希、原文仅返回一次、到期、禁用、最后使用时间和审计能力，并使用专用 `key_type=plugin_release`：
 
 - 只能访问 `/internal/plugins/releases`；普通 API 明确拒绝该 key type；
 - 不允许使用 `wegent-username` 等方式模拟用户；使用固定发布服务主体；
-- 可限制 GitLab project、目标 `catalog_namespace=enterprise`、环境和来源；
+- Release API 固定发布到 `catalog_namespace=enterprise`；GitLab project 与目标分支由服务端配置，并结合 GitLab 实时证明校验，不保存在 API Key 上；
 - 必须设置有效期，支持双 Key 轮换和立即吊销；
 - 仅保存在 GitLab protected + masked CI variable；只有 protected master release job 可读取；
 - 日志只记录 key ID/前缀和发布主体，不记录原文。
@@ -423,9 +423,9 @@ Webhook Secret 与 Release Token 是两套凭据。Webhook 接口还必须校验
 | 领域     | 当前分支实现                                                                                                                         |
 | -------- | ------------------------------------------------------------------------------------------------------------------------------------ |
 | Wework   | 个人详情双范围、三步申请抽屉、五阶段进度、完整 Request/Revision 历史，以及 ACL 与发布状态都加载完成后才允许提交的 ready gate         |
-| Backend  | `catalog_namespace`、个人/企业来源关联、Request/Revision/Check/Event、用户/管理员/内部 API、幂等 Draft MR 物化与只同步状态的 Webhook |
-| Web      | 发布申请队列、筛选、revision 证据详情、退回修改、确认后接受并创建 Draft MR、重试与对账                                               |
-| Release  | `plugin_release` + `plugins:release` 机器身份、Bearer-only 内部接口、受信 GitLab/master provenance 检查、幂等与企业旧版本保留        |
+| Backend  | `catalog_namespace`、个人/企业来源关联、Request/Revision/Check/Event、用户/管理员/内部 API、幂等 MR 物化与只同步状态的 Webhook |
+| Web      | 发布申请队列、筛选、revision 证据详情、退回修改、确认后接受并创建 MR、重试与对账                                               |
+| Release  | `plugin_release` 专用机器身份、Bearer-only 内部接口、受信 GitLab/master provenance 检查、幂等与企业旧版本保留                    |
 | 兼容边界 | 旧 `/plugins/submissions` 只允许 `restricted_share + personal`；旧管理员直接 review 和脚本仅用于处理历史记录，新企业申请不得调用     |
 
 新 Alembic revision 已在当前分支添加命名空间、来源关联和发布领域表，并覆盖 upgrade → downgrade → upgrade 及冲突阻断验证。本地测试只证明代码和迁移实现，不能替代真实生产配置与端到端发布彩排。
@@ -436,7 +436,7 @@ Webhook Secret 与 Release Token 是两套凭据。Webhook 接口还必须校验
 2. 在真实 GitLab 项目中配置并验证 protected `master`、protected environment、Code Owner 审批规则和受保护/脱敏变量。
 3. 配置 project-locked 的原生 Windows 与 macOS Runner；缺失、跳过或只做静态扫描均必须阻断合并。
 4. 通过受批准的密钥管理路径创建新 `plugin_release` 凭据，只注入 protected master release job，并验证 MR job 不可读。
-5. 在真实环境完成个人分享、新建/重投 revision、管理员退回/接受、Draft MR、双平台 Runner、合并、发布、重放、失败与回滚的端到端彩排。
+5. 在真实环境完成个人分享、新建/重投 revision、管理员退回/接受、MR、双平台 Runner、合并、发布、重放、失败与回滚的端到端彩排。
 
 ### 10.3 历史路径收口
 
@@ -458,7 +458,7 @@ Webhook Secret 与 Release Token 是两套凭据。Webhook 接口还必须校验
 
 ### 审核和 GitLab
 
-- Web 管理员退回必须填写原因；接受操作重复调用只得到同一个 Draft MR，且不会产生 Release。
+- Web 管理员退回必须填写原因；接受操作重复调用只得到同一个 MR，且不会产生 Release。
 - 非技术投稿与开发者 MR 从 MR Pipeline 开始执行同一套门禁。
 - 风险检查输出稳定 code、severity、证据和执行环境；声明与扫描不一致会阻断。
 - Windows 与 macOS 检查由对应原生 Runner 执行；未执行不得显示通过。

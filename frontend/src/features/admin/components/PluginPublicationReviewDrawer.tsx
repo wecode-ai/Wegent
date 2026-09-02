@@ -61,7 +61,7 @@ import { Tag } from '@/components/ui/tag'
 import { Textarea } from '@/components/ui/textarea'
 import { useToast } from '@/hooks/use-toast'
 import { useTranslation } from '@/hooks/useTranslation'
-import { formatUTCDate } from '@/lib/utils'
+import { formatUTC8DateTime } from '@/lib/utils'
 import {
   PluginPublicationCheckTags,
   PluginPublicationRiskTag,
@@ -133,6 +133,10 @@ const EVENT_MESSAGE_KEYS: Record<string, string> = {
   'gitlab.event_received':
     'marketplace_management.plugin_publications.events.gitlab_event_received',
   'gitlab.event_ignored': 'marketplace_management.plugin_publications.events.gitlab_event_ignored',
+  'gitlab.pipeline_failed':
+    'marketplace_management.plugin_publications.events.gitlab_pipeline_failed',
+  'gitlab.merge_request_closed':
+    'marketplace_management.plugin_publications.events.gitlab_merge_request_closed',
   'release.published': 'marketplace_management.plugin_publications.events.release_published',
   'release.failed': 'marketplace_management.plugin_publications.events.release_failed',
 }
@@ -206,11 +210,28 @@ export default function PluginPublicationReviewDrawer({
   )
   const localizedEventMessage = useCallback(
     (event: AdminPluginPublicationRequestDetail['events'][number]) => {
+      if (event.eventType === 'gitlab.merge_request_closed') {
+        return event.actorName
+          ? t('marketplace_management.plugin_publications.events.gitlab_merge_request_closed_by', {
+              actor: event.actorName,
+            })
+          : t('marketplace_management.plugin_publications.events.gitlab_merge_request_closed')
+      }
       const key = EVENT_MESSAGE_KEYS[event.eventType]
       const label = key ? t(key) : event.message || event.eventType
       return event.eventType === 'admin.changes_requested' && event.message
         ? `${label}: ${event.message}`
         : label
+    },
+    [t]
+  )
+  const localizedFailureReason = useCallback(
+    (reason?: string | null, status?: string) => {
+      const value = reason || status || 'failed'
+      return t(
+        `marketplace_management.plugin_publications.pipeline_failure_reasons.${value.replace(/\./g, '_')}`,
+        value
+      )
     },
     [t]
   )
@@ -615,7 +636,7 @@ export default function PluginPublicationReviewDrawer({
                       />
                       <DetailField
                         label={t('marketplace_management.plugin_publications.fields.submitted_at')}
-                        value={formatUTCDate(detail.submittedAt)}
+                        value={formatUTC8DateTime(detail.submittedAt)}
                       />
                     </dl>
                     {detail.revision.releaseNotes ? (
@@ -986,12 +1007,47 @@ export default function PluginPublicationReviewDrawer({
                                 ))}
                               </ul>
                             ) : null}
+                            {event.failureDetails?.length ? (
+                              <ul
+                                className="mt-2 space-y-2"
+                                data-testid={`plugin-publication-event-failures-${event.id}`}
+                              >
+                                {event.failureDetails.map((failure, index) => (
+                                  <li
+                                    key={`${failure.jobName}-${failure.stage || ''}-${index}`}
+                                    className="rounded-lg border border-border bg-surface-secondary px-3 py-2"
+                                  >
+                                    <p className="text-sm font-medium text-text-primary">
+                                      {failure.jobName}
+                                      {failure.stage ? ` · ${failure.stage}` : ''}
+                                    </p>
+                                    <p className="mt-1 text-sm text-text-secondary">
+                                      {localizedFailureReason(failure.reason, failure.status)}
+                                    </p>
+                                    {failure.jobUrl ? (
+                                      <a
+                                        href={failure.jobUrl}
+                                        target="_blank"
+                                        rel="noreferrer"
+                                        className="mt-1 inline-flex items-center gap-1 text-sm text-primary hover:underline"
+                                        data-testid={`plugin-publication-failed-job-${event.id}-${index}`}
+                                      >
+                                        {t(
+                                          'marketplace_management.plugin_publications.detail.open_failed_job'
+                                        )}
+                                        <ExternalLink className="h-4 w-4" aria-hidden />
+                                      </a>
+                                    ) : null}
+                                  </li>
+                                ))}
+                              </ul>
+                            ) : null}
                             <p className="mt-1 text-xs text-text-muted">
                               {event.actorName ||
                                 t(
                                   `marketplace_management.plugin_publications.actor_types.${event.actorType}`
                                 )}{' '}
-                              · {formatUTCDate(event.createdAt)}
+                              · {formatUTC8DateTime(event.createdAt)}
                             </p>
                           </li>
                         ))}

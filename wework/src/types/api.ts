@@ -2490,7 +2490,16 @@ export interface PluginPublicationEventItem {
   actorName?: string | null
   message: string
   requiredChanges?: string[]
+  failureDetails?: PluginPublicationFailureDetail[]
   createdAt: string
+}
+
+export interface PluginPublicationFailureDetail {
+  jobName: string
+  stage?: string | null
+  status: string
+  reason?: string | null
+  jobUrl?: string | null
 }
 
 export interface PluginPublicationGitLabState {

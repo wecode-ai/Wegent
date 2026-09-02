@@ -6,7 +6,7 @@ sidebar_position: 21
 
 面向需要开发、迁移或发布 Wework 插件的同学。架构细节见 [插件市场 V2](./plugin-marketplace-v2.md)；本机 Codex 运行时细节见 [Codex 插件运行时](./wework-codex-plugins.md)；亮色/暗色图标见 [插件图标指南](./wework-plugin-icons.md)。
 
-> 实现状态（2026-08-29）：当前功能分支已实现第 4 章的 Wework 双范围交互、Request/Revision 历史、Web 审核、Draft MR 物化和受限 Release API，新企业申请不再使用人员白名单。旧 Submission 只保留个人定向分享上传和历史记录清退用途。**生产尚未启用**；上线前仍需在外部完成旧 Token 吊销/轮换、HTTPS、protected master/environment、Code Owner 审批、project-locked 原生 Windows/macOS Runner 和新 Release 凭据的 P0 验证。
+> 实现状态（2026-08-29）：当前功能分支已实现第 4 章的 Wework 双范围交互、Request/Revision 历史、Web 审核、MR 物化和受限 Release API，新企业申请不再使用人员白名单。旧 Submission 只保留个人定向分享上传和历史记录清退用途。**生产尚未启用**；上线前仍需在外部完成旧 Token 吊销/轮换、HTTPS、protected master/environment、Code Owner 审批、project-locked 原生 Windows/macOS Runner 和新 Release 凭据的 P0 验证。
 
 ## 1. 先建立正确心智模型
 
@@ -33,7 +33,7 @@ flowchart LR
   test --> apply[申请全员可见]
   apply --> snapshot[个人版本不可变快照]
   snapshot --> admin[Web 管理员审核]
-  admin --> mr[GitLab Draft MR]
+  admin --> mr[GitLab MR]
   mr --> pipeline[代码审核与 Pipeline]
   pipeline --> release[受限 Release API]
   release --> mysql[(MySQL Plugin/Release)]
@@ -140,7 +140,7 @@ description: Review a merge request and summarize risks
 开发、评审和 CI；Backend / Wework **不会**在启动时扫描它。
 
 开发人员直接创建分支并提交 Merge Request。非技术用户在 Wework 申请全员可见后，管理员在
-Web 审核台接受申请，系统会把该不可变快照落到受控分支并创建 Draft MR。两种入口从 MR 开始
+Web 审核台接受申请，系统会把该不可变快照落到受控分支并创建 MR。两种入口从 MR 开始
 共用完全相同的代码审核、兼容性检查和发布 Pipeline。
 
 本地只构建扫描：
@@ -201,16 +201,16 @@ pnpm --filter wework dev:mac -- --executor-isolation
 1. **提交申请**：创建申请并保存不可变快照；
 2. **自动检查**：包结构、安全扫描和声明一致性校验；
 3. **管理员审核**：管理员只在 Web 审核台查看风险、退回或接受；
-4. **代码审核**：接受后系统创建 GitLab Draft MR，执行人工代码评审、风险检查以及 Windows / macOS 兼容检测；
+4. **代码审核**：接受后系统创建 GitLab MR，执行人工代码评审、风险检查以及 Windows / macOS 兼容检测；
 5. **发布**：MR 合入受保护的 `master` 后，由 Pipeline 调用受限 Release API 发布企业版本。
 
-管理员接受申请**只创建 Draft MR，不直接发布**。退回必须记录原因和风险项；提交者在 Wework
+管理员接受申请**只创建 MR，不直接发布**。退回必须记录原因和风险项；提交者在 Wework
 查看状态、修改个人源码后，以新的 revision 重新提交。
 
 ### 4.3 开发人员直接提交 GitLab MR
 
 开发人员可以直接在内部 `wework-plugins` 仓库新增或修改 `plugins/<slug>/`，同步更新市场注册表
-并发起 MR。非技术投稿生成的 Draft MR 与开发人员 MR 从这里开始走同一套检查；不得维护一条
+并发起 MR。非技术投稿生成的 MR 与开发人员 MR 从这里开始走同一套检查；不得维护一条
 可以绕过 GitLab 的“管理员直接发布”旁路。
 
 一个 MR 只包含一个插件的一个版本。MR Pipeline 至少包含：
@@ -228,12 +228,12 @@ MR Job、Wework 客户端和 Web 管理后台都不能取得发布凭据。发�
 commit，然后调用内部 Release API：
 
 ```http
-Authorization: Bearer <scoped-release-token>
+Authorization: Bearer <release-token>
 ```
 
 这是服务到服务的机器凭据，不是用户登录体系或通用管理员 Token。实现复用现有 API Key 生命周期，
-新增 `key_type=plugin_release`，并至少限制为 `plugins:release` scope、指定 GitLab project、受保护 `master` ref 和目标企业；必须具有过期、
-轮换、撤销和审计能力，并作为 GitLab masked + protected variable 保存。GitLab Webhook 使用
+并使用专用 `key_type=plugin_release`。目标固定为企业目录，GitLab project 与受保护 `master` ref 由服务端配置和 GitLab 实时证明校验；
+凭据必须具有过期、轮换、撤销和审计能力，并作为 GitLab masked + protected variable 保存。GitLab Webhook 使用
 独立签名或 Token，只同步 MR、Pipeline 和发布状态，不能代替 Release Token 发版。
 
 Release API 与 `OfficialPluginPublisher` 都复用
@@ -248,7 +248,7 @@ Release API 与 `OfficialPluginPublisher` 都复用
 
 ### 4.5 撤回、删除与回滚
 
-- 在 MR 合入前，提交者可以从 Wework 撤回全员发布申请；已经创建 Draft MR 时，系统同时关闭或标记取消该 MR。
+- 在 MR 合入前，提交者可以从 Wework 撤回全员发布申请；已经创建 MR 时，系统同时关闭或标记取消该 MR。
 - 删除仍有未合并申请的个人插件时，必须先撤回申请，再卸载并删除个人源码，不能留下无来源的待发布 MR。
 - MR 已合并或已经进入发布后，个人用户不能撤回企业版本。删除个人原件只影响个人插件，不删除已发布企业版；企业版下架或回滚由管理员执行。
 - Pipeline 或发布失败时不推进企业目录的 `latest_release_id`，现有可用版本继续服务。
@@ -307,7 +307,7 @@ uv run python scripts/publish_official_plugin.py /path/to/plugin --dry-run
 # 3. 选择发布路径
 # - 非技术维护者：在 Wework 申请全员可见
 # - 开发维护者：在内部 wework-plugins 仓库提交 MR
-# 两者从 Draft MR 起共用代码审核、兼容性检测和 protected master Pipeline
+# 两者从 MR 起共用代码审核、兼容性检测和 protected master Pipeline
 ```
 
 验收标准：
@@ -346,7 +346,7 @@ Wework 官方公开插件的最终方案。
 
 - final S3 key 不可覆盖；staging 需生命周期清理。
 - 指定成员或部门分享必须通过包扫描；全员可见必须完成管理员审核、GitLab 代码审核和受保护分支 Pipeline。
-- 管理员后台只能退回或创建 Draft MR，不能直接构造企业 Release。
+- 管理员后台只能退回或创建 MR，不能直接构造企业 Release。
 - 发布凭据只对 protected master Job 可见；日志、Webhook 和构建产物中不得包含 Token。
 - 所有企业发布必须保留 provenance 审计。
 - 真正离线必备能力应做进 Executor / 内置 hook，不要伪装成市场插件强塞进安装包。
@@ -364,7 +364,7 @@ Wework 官方公开插件的最终方案。
 
 **为什么管理员接受后还不能全员安装？**
 
-接受只代表产品和风险初审通过，并会创建 Draft MR。还要完成代码审核、Windows / macOS 兼容检测、合入 protected master 和发布 Pipeline。
+接受只代表产品和风险初审通过，并会创建 MR。还要完成代码审核、Windows / macOS 兼容检测、合入 protected master 和发布 Pipeline。
 
 **审核期间能否继续修改和分享个人插件？**
 

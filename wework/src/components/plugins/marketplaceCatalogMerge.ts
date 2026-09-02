@@ -144,7 +144,10 @@ export function mergeMarketplaceCatalog(
     const normalizedName = item.name.toLowerCase()
     cloudNames.add(normalizedName)
     cloudKeysByCatalogId.set(String(item.id), cloudKey)
-    if (item.accessRole === 'owner' && item.visibility === 'personal') {
+    if (
+      item.accessRole === 'owner' &&
+      (item.visibility === 'personal' || item.sourceProvider === 'user')
+    ) {
       ownedPersonalCloudKeysByName.set(normalizedName, cloudKey)
     }
   }

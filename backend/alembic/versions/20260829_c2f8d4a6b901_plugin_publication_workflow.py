@@ -1,7 +1,7 @@
 """Add enterprise plugin publication workflow.
 
 Revision ID: c2f8d4a6b901
-Revises: 7a4c2e9f1b30
+Revises: d6e7f8a9b0c1
 Create Date: 2026-08-29
 """
 
@@ -15,7 +15,7 @@ from sqlalchemy.dialects import mysql
 from alembic import op
 
 revision: str = "c2f8d4a6b901"
-down_revision: Union[str, Sequence[str], None] = "7a4c2e9f1b30"
+down_revision: Union[str, Sequence[str], None] = "d6e7f8a9b0c1"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
@@ -423,52 +423,6 @@ def upgrade() -> None:
         ["publication_revision_id"],
     )
 
-    op.add_column(
-        "api_keys",
-        sa.Column(
-            "scopes_json",
-            sa.JSON(),
-            nullable=True,
-            comment="Machine-readable API key scopes",
-        ),
-    )
-    op.add_column(
-        "api_keys",
-        sa.Column(
-            "restrictions_json",
-            sa.JSON(),
-            nullable=True,
-            comment="API key project, namespace, and environment restrictions",
-        ),
-    )
-    if bind.dialect.name == "mysql":
-        op.execute(
-            sa.text(
-                "UPDATE api_keys SET scopes_json = JSON_ARRAY() "
-                "WHERE scopes_json IS NULL"
-            )
-        )
-        op.execute(
-            sa.text(
-                "UPDATE api_keys SET restrictions_json = JSON_OBJECT() "
-                "WHERE restrictions_json IS NULL"
-            )
-        )
-    else:
-        op.execute(
-            sa.text("UPDATE api_keys SET scopes_json = '[]' WHERE scopes_json IS NULL")
-        )
-        op.execute(
-            sa.text(
-                "UPDATE api_keys SET restrictions_json = '{}' "
-                "WHERE restrictions_json IS NULL"
-            )
-        )
-    op.alter_column("api_keys", "scopes_json", existing_type=sa.JSON(), nullable=False)
-    op.alter_column(
-        "api_keys", "restrictions_json", existing_type=sa.JSON(), nullable=False
-    )
-
     op.create_table(
         "plugin_publication_requests",
         sa.Column(
@@ -482,6 +436,7 @@ def upgrade() -> None:
             "source_plugin_id",
             _bigint(),
             nullable=False,
+            server_default="0",
             comment="Source personal plugin ID",
         ),
         sa.Column(
@@ -549,12 +504,6 @@ def upgrade() -> None:
             ),
             comment="Last workflow update time",
         ),
-        sa.ForeignKeyConstraint(
-            ["source_plugin_id"],
-            ["plugins.id"],
-            name="fk_plugin_publication_request_source_plugin",
-            ondelete="RESTRICT",
-        ),
         comment="Enterprise plugin publication request aggregates",
         mysql_charset="utf8mb4",
         mysql_engine="InnoDB",
@@ -583,6 +532,7 @@ def upgrade() -> None:
             "request_id",
             _bigint(),
             nullable=False,
+            server_default="0",
             comment="Owning request ID",
         ),
         sa.Column(
@@ -810,12 +760,6 @@ def upgrade() -> None:
         sa.UniqueConstraint(
             "request_id", "revision", name="uniq_plugin_publication_revision"
         ),
-        sa.ForeignKeyConstraint(
-            ["request_id"],
-            ["plugin_publication_requests.id"],
-            name="fk_plugin_publication_revision_request",
-            ondelete="CASCADE",
-        ),
         comment="Immutable enterprise publication snapshots",
         mysql_charset="utf8mb4",
         mysql_engine="InnoDB",
@@ -844,6 +788,7 @@ def upgrade() -> None:
             "revision_id",
             _bigint(),
             nullable=False,
+            server_default="0",
             comment="Checked revision ID",
         ),
         sa.Column(
@@ -948,12 +893,6 @@ def upgrade() -> None:
         sa.UniqueConstraint(
             "revision_id", "check_code", name="uniq_plugin_publication_check"
         ),
-        sa.ForeignKeyConstraint(
-            ["revision_id"],
-            ["plugin_publication_revisions.id"],
-            name="fk_plugin_publication_check_revision",
-            ondelete="CASCADE",
-        ),
         comment="Publication check evidence by stable code",
         mysql_charset="utf8mb4",
         mysql_engine="InnoDB",
@@ -977,6 +916,7 @@ def upgrade() -> None:
             "revision_id",
             _bigint(),
             nullable=False,
+            server_default="0",
             comment="Related revision ID",
         ),
         sa.Column(
@@ -1036,12 +976,6 @@ def upgrade() -> None:
         ),
         sa.UniqueConstraint(
             "external_event_id", name="uniq_plugin_publication_external_event"
-        ),
-        sa.ForeignKeyConstraint(
-            ["revision_id"],
-            ["plugin_publication_revisions.id"],
-            name="fk_plugin_publication_event_revision",
-            ondelete="CASCADE",
         ),
         comment="Append-only publication workflow audit events",
         mysql_charset="utf8mb4",
@@ -1261,8 +1195,6 @@ def downgrade() -> None:
     op.drop_table("plugin_publication_revisions")
     op.drop_table("plugin_publication_requests")
 
-    op.drop_column("api_keys", "restrictions_json")
-    op.drop_column("api_keys", "scopes_json")
     op.drop_index("idx_plugin_releases_publication", table_name="plugin_releases")
     op.drop_column("plugin_releases", "source_commit_sha")
     op.drop_column("plugin_releases", "publication_revision_id")

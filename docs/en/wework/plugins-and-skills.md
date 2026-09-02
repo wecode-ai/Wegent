@@ -59,7 +59,7 @@ The plugin detail page shows five stages:
 1. **Submit request**: save an immutable snapshot of the submitted version;
 2. **Automated checks**: inspect package structure, sensitive files, and risk declarations;
 3. **Administrator review**: an enterprise administrator returns or accepts the request in the Web admin console;
-4. **Code review**: acceptance creates a GitLab Draft MR for risk, Windows, and macOS compatibility checks;
+4. **Code review**: acceptance creates a GitLab MR for risk, Windows, and macOS compatibility checks;
 5. **Release**: after merge into protected master, the Pipeline publishes the enterprise version.
 
 Administrator acceptance only starts code review; it does not mean the plugin is published. Regular users submit and
@@ -104,7 +104,7 @@ Choose a Wework model while installing from the marketplace. Apps imported from 
 You can delete a plugin that you created or imported from the **…** menu in its detail page. If the plugin is installed, Wework uninstalls it before deleting the local plugin source.
 
 If the plugin has a company-wide request that has not been merged into master, deletion first withdraws the request. The
-system also closes or marks any generated Draft MR as cancelled before uninstalling and deleting the personal source.
+system also closes or marks any generated MR as cancelled before uninstalling and deleting the personal source.
 After merge or enterprise release, the personal user cannot withdraw that enterprise version. Deleting the personal
 source then affects only that source and its member/department shares; it does not delete the enterprise version under
 Enterprise. An administrator owns enterprise deactivation, removal, and rollback.

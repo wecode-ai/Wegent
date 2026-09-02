@@ -14,7 +14,7 @@ Plugin source
   -> choose personal sharing or enterprise publication
   -> personal: upload/validate/scan package -> selected-recipient ACL
   -> enterprise: author declarations -> final submit and immutable revision
-       -> automated checks -> administrator decision -> GitLab Draft MR
+       -> automated checks -> administrator decision -> GitLab MR
        -> risk, Windows, and macOS pipeline gates
        -> protected master publication -> enterprise catalog release
   -> account installation intent
@@ -118,7 +118,7 @@ The Wework application drawer has three steps:
 Submitting does not change the source plugin's visibility. The creator may keep
 using, editing, or sharing the personal plugin; subsequent edits do not mutate
 the submitted revision. Deleting it before merge first withdraws the request and
-closes or cancels any Draft MR, and deletion is blocked if that cleanup fails.
+closes or cancels any MR, and deletion is blocked if that cleanup fails.
 After merge, deleting the personal source cannot remove the enterprise edition.
 
 The canonical five product stages are:
@@ -131,7 +131,7 @@ Automated checks run after final submission and before administrator review,
 producing stable `pass`, `confirm`, or `block` findings. An administrator may
 return the current revision with required changes, or accept it only when blockers
 are absent and required warnings are acknowledged. Acceptance creates a GitLab
-Draft MR; it does not create a catalog release. An administrator return or
+MR; it does not create a catalog release. An administrator return or
 deterministic content-check failure is corrected as a new immutable revision in
 the same Request. Upload, transport, and infrastructure failures retry the same
 revision idempotently. A personal source has only one active Request; after a
@@ -143,8 +143,8 @@ Non-technical authors enter through Wework. Developers may author directly in th
 internal plugin repository. Both paths converge before code review: the accepted
 snapshot is materialized as repository source, then the same MR policies,
 pipeline checks, protected branch, and release service apply. After
-`code_changes_requested`, a developer fixes and reruns the same controlled Draft
-MR; a non-technical author does not create a new publication revision for that
+`code_changes_requested`, a developer fixes and reruns the same controlled MR;
+a non-technical author does not create a new publication revision for that
 GitLab review state.
 
 ### Protected publication
@@ -152,7 +152,7 @@ GitLab review state.
 The sole automatic publication trigger is the protected `master` pipeline. MR
 pipelines perform risk and real Windows/macOS compatibility checks but cannot
 read the release credential. After merge, the protected pipeline packages the
-exact master commit and calls the backend release API with a scoped
+exact master commit and calls the backend release API with a dedicated
 `plugin_release` machine key. GitLab webhooks only synchronize and reconcile MR,
 pipeline, and merge status; they never independently publish a package.
 
@@ -219,16 +219,17 @@ personal source or the last good enterprise release.
 
 ## Authentication and trust boundaries
 
-The release API uses a dedicated `plugin_release` machine-key type with the
-`plugins:release` scope in the existing API-key lifecycle. It is a scoped credential, not a new authentication
-system: the raw `wg-...` value is returned once, only its hash is stored, and it
+The release API uses a dedicated `plugin_release` machine-key type in the
+existing API-key lifecycle. It is not a new authentication system: the raw
+`wg-...` value is returned once, only its hash is stored, and it
 supports expiry, disablement, rotation, prefix display, and last-used audit. It
 must not impersonate a user and must be rejected by ordinary API-key endpoints.
 
 Store the value as a protected and masked GitLab variable available only to the
 protected `master` release job. Do not reuse personal keys, generic service keys,
 or the deployment-wide internal service token. The release endpoint fixes the
-target to the enterprise catalog and validates project, commit, artifact SHA,
+target to the enterprise catalog. The allowed GitLab project and target branch
+are server-side configuration; the endpoint validates project, commit, artifact SHA,
 manifest identity, and semantic version rather than trusting caller-supplied
 visibility.
 

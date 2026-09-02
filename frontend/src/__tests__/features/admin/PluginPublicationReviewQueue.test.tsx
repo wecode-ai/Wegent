@@ -9,7 +9,7 @@ import { adminPluginPublicationApis } from '@/apis/admin-plugin-publications'
 import PluginPublicationReviewQueue from '@/features/admin/components/PluginPublicationReviewQueue'
 
 const mockRouterReplace = jest.fn()
-let mockSearchParams = new URLSearchParams('tab=marketplace&view=plugin-publications')
+let mockSearchParams = new URLSearchParams('tab=wework-plugin-publications')
 const mockToast = jest.fn()
 const mockT = (key: string, values?: Record<string, unknown>) =>
   values ? `${key}:${JSON.stringify(values)}` : key
@@ -46,7 +46,7 @@ const mockedPublicationApis = adminPluginPublicationApis as jest.Mocked<
 describe('PluginPublicationReviewQueue', () => {
   beforeEach(() => {
     jest.clearAllMocks()
-    mockSearchParams = new URLSearchParams('tab=marketplace&view=plugin-publications')
+    mockSearchParams = new URLSearchParams('tab=wework-plugin-publications')
     mockedPublicationApis.listPublicationRequests.mockResolvedValue({
       items: [
         {
@@ -64,7 +64,7 @@ describe('PluginPublicationReviewQueue', () => {
           warningCount: 1,
           submittedAt: '2026-08-29T01:00:00Z',
           updatedAt: '2026-08-29T02:00:00Z',
-          gitlabStatus: 'Draft MR · Pipeline pending',
+          gitlabStatus: 'MR · Pipeline pending',
           waitingDurationSeconds: 7200,
         },
       ],
@@ -96,7 +96,10 @@ describe('PluginPublicationReviewQueue', () => {
       'v1.2.0 · Revision 3'
     )
     expect(screen.getByTestId('plugin-publication-review-row-41')).toHaveTextContent(
-      'Draft MR · Pipeline pending'
+      'MR · Pipeline pending'
+    )
+    expect(screen.getByTestId('plugin-publication-review-row-41')).toHaveTextContent(
+      '2026-08-29 09:00:00'
     )
     expect(screen.getByTestId('plugin-publication-review-row-41')).toHaveTextContent(
       'marketplace_management.plugin_publications.queue.waiting_hours'
@@ -105,16 +108,15 @@ describe('PluginPublicationReviewQueue', () => {
 
     expect(screen.getByTestId('mock-plugin-publication-drawer')).toHaveTextContent('41')
     await waitFor(() =>
-      expect(mockRouterReplace).toHaveBeenCalledWith(
-        '?tab=marketplace&view=plugin-publications&request=41',
-        { scroll: false }
-      )
+      expect(mockRouterReplace).toHaveBeenCalledWith('?tab=wework-plugin-publications&request=41', {
+        scroll: false,
+      })
     )
   })
 
   it('restores all queue filters from the URL and syncs time changes back to it', async () => {
     mockSearchParams = new URLSearchParams(
-      'tab=marketplace&view=plugin-publications&status=ci_running&risk=high&submitter=alice&query=mail&submittedAfter=2026-08-01&submittedBefore=2026-08-29&page=2'
+      'tab=wework-plugin-publications&status=ci_running&risk=high&submitter=alice&query=mail&submittedAfter=2026-08-01&submittedBefore=2026-08-29&page=2'
     )
 
     render(<PluginPublicationReviewQueue />)
@@ -142,7 +144,7 @@ describe('PluginPublicationReviewQueue', () => {
     })
 
     expect(mockRouterReplace).toHaveBeenCalledWith(
-      '?tab=marketplace&view=plugin-publications&status=ci_running&risk=high&submitter=alice&query=mail&submittedAfter=2026-08-05&submittedBefore=2026-08-29',
+      '?tab=wework-plugin-publications&status=ci_running&risk=high&submitter=alice&query=mail&submittedAfter=2026-08-05&submittedBefore=2026-08-29',
       { scroll: false }
     )
     await waitFor(() =>

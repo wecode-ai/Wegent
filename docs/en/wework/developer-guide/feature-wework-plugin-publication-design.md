@@ -31,7 +31,7 @@ Regular users do not need to understand Git, MRs, or Pipelines. Administrators d
 2. Scope offers exactly two choices: **Specific members or departments** and **Everyone**. “Organization” is the root department, not a third scope.
 3. Any signed-in user who owns a personal plugin may submit an enterprise-wide publication request. There is no submission allowlist.
 4. Targeted sharing requires no human review. Enterprise-wide publication must pass automated checks, administrator review, GitLab code review, and protected-branch release.
-5. Administrator “acceptance” only creates a Draft MR; it does not publish directly.
+5. Administrator “acceptance” only creates a MR; it does not publish directly.
 6. Submission freezes the snapshot, revision, version, and SHA256. The personal source remains editable, chat-capable, available for targeted sharing, and able to produce a new version.
 7. The personal source and enterprise edition are two Plugin identities, allowing personal `v1.3.0` and enterprise `v1.2.0` to coexist.
 8. An enterprise publication failure must not affect the currently available enterprise version. Repeated publication of the same version and same SHA must be idempotent.
@@ -79,9 +79,9 @@ flowchart TD
   K --> L[Web administrator review]
   L -->|Return for changes| M[Author edits personal source and creates new revision]
   M --> G
-  L -->|Accept| N[Create GitLab Draft MR]
+  L -->|Accept| N[Create GitLab MR]
   N --> O[Code review + Windows/macOS CI]
-  O -->|Changes required| O1[Developer fixes the same Draft MR]
+  O -->|Changes required| O1[Developer fixes the same MR]
   O1 --> O
   O -->|Merge master| P[Protected master Pipeline publishes]
   P -->|Succeeded| Q[New version in enterprise marketplace]
@@ -292,12 +292,12 @@ Submit request  ✓  Automated checks  ✓  Administrator review  ●  Code revi
 - five-stage vertical timeline;
 - time, actor, checks, evidence, and stable error code for each stage;
 - administrator return reason;
-- Draft MR, Pipeline, and Windows/macOS Job links and states;
+- MR, Pipeline, and Windows/macOS Job links and states;
 - release result and enterprise-version link;
 - the complete request history and read-only switching among historical revisions; after a client restart, records in Returned, Withdrawn, Failed, and Published states must still be recoverable from the server;
 - bidirectional source links between the current personal source and enterprise edition, using server-persisted source Plugin IDs rather than name matching or local in-memory state.
 
-**Actions** appear by state: **Withdraw request**, **Create new revision**, **Open Draft MR**, and **View enterprise version**. Administrator return or a deterministic automated-check failure allows a new revision in the same Request. After `code_changes_requested`, the developer fixes the current Draft MR; do not offer a new-revision action to a non-technical author. Before activating an external link, clearly identify GitLab as the destination.
+**Actions** appear by state: **Withdraw request**, **Create new revision**, **Open MR**, and **View enterprise version**. Administrator return or a deterministic automated-check failure allows a new revision in the same Request. After `code_changes_requested`, the developer fixes the current MR; do not offer a new-revision action to a non-technical author. Before activating an external link, clearly identify GitLab as the destination.
 
 ## 5. Web administration page specification
 
@@ -335,7 +335,7 @@ The administrator reviews an explicit `request / revision / version / SHA256`. T
 **Actions**:
 
 - **Return for changes** is a secondary destructive action;
-- **Accept and create Draft MR** is the only primary action;
+- **Accept and create MR** is the only primary action;
 - with blockers or warnings that have not been individually acknowledged, disable the primary action and explain why;
 - the page has no **Publish** button.
 
@@ -348,27 +348,27 @@ Open a confirmation Dialog:
 - explicitly state that the old revision remains and cannot be edited;
 - after submission, update the state to **Returned for changes**; the author views it in Wework and creates a new revision.
 
-### S12. Accept and create Draft MR
+### S12. Accept and create MR
 
 The confirmation Dialog shows the plugin, revision, SHA256, target repository, and target directory. After administrator confirmation:
 
 1. the backend materializes a controlled branch using request/revision as the idempotency key;
-2. create or reuse a Draft MR;
+2. create or reuse a MR;
 3. write back branch, commit SHA, and MR IID/URL;
 4. transition to **Code review**.
 
-If GitLab fails, preserve the fact that the administrator accepted the request, show the error and **Retry creating Draft MR** on details, and ensure a retry cannot create a second MR.
+If GitLab fails, preserve the fact that the administrator accepted the request, show the error and **Retry creating MR** on details, and ensure a retry cannot create a second MR.
 
 ## 6. GitLab, release, and enterprise-use page states
 
 ### S13. Code review
 
-Wework and Web use the same state projection: Draft MR, In review, Changes required, CI running, Ready to merge, and Merged. Each MR may contain only one version of one plugin.
+Wework and Web use the same state projection: MR, In review, Changes required, CI running, Ready to merge, and Merged. Each MR may contain only one version of one plugin.
 
 - The MR Pipeline must include deterministic packaging, risk checks, tests, native Windows, and native macOS.
 - A missing Runner appears as **Blocked/Not run**, never as passed.
 - MR updates must update the recorded commit SHA. Release accepts only the artifact corresponding to the final merged SHA.
-- After `code_changes_requested`, a developer fixes the same controlled branch and Draft MR and reruns its Pipeline; the flow does not return to Wework to create a new revision. If the accepted immutable submission snapshot itself must change, end the current code-review flow and submit through a new Request/Revision flow.
+- After `code_changes_requested`, a developer fixes the same controlled branch and MR and reruns its Pipeline; the flow does not return to Wework to create a new revision. If the accepted immutable submission snapshot itself must change, end the current code-review flow and submit through a new Request/Revision flow.
 
 ### S14. Release
 
@@ -402,11 +402,11 @@ When a personal plugin is edited from `v1.2.0` to `v1.3.0`:
 | ------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------- |
 | Upload or snapshot is incomplete                  | The temporary revision may be cancelled, and unreferenced objects are cleaned up                                                  |
 | Submitted, no MR created                          | The request may be withdrawn while preserving audit events; withdrawal is disabled during `materializing`                         |
-| Draft MR is not merged                            | Withdrawal closes the MR first; if closing fails, withdrawal fails                                                                |
+| MR is not merged                            | Withdrawal closes the MR first; if closing fails, withdrawal fails                                                                |
 | Deleting personal source with an unmerged request | Withdraw/close the MR in the same confirmation; failure of any step prevents deletion                                             |
 | Merged or published                               | Deleting the personal source cannot be used to roll back the enterprise edition                                                   |
 | Returned by administrator                         | The old revision is read-only; create a new revision after fixing                                                                 |
-| CI/code review failed                             | A developer fixes the same controlled branch/Draft MR and creates a new commit; a non-technical author does not create a revision |
+| CI/code review failed                             | A developer fixes the same controlled branch/MR and creates a new commit; a non-technical author does not create a revision |
 | Release failed                                    | Retry the same version/SHA and preserve the current enterprise latest Release                                                     |
 
 ## 8. Visual and responsive specifications
@@ -465,7 +465,7 @@ When a personal plugin is edited from `v1.2.0` to `v1.3.0`:
   - `POST /api/admin/plugins/publication-requests/{requestId}/reconcile`
 - The client creates an `operationAttemptId` for each logical submission: a transport retry reuses it, while reopening the request form or starting a new explicit reconciliation creates a new one; the key also includes the complete request-payload fingerprint. Withdrawal keys include the current revision so a later revision cannot replay an earlier withdrawal, and every explicit GitLab reconciliation uses a new attempt so the same revision can observe newer remote state.
 - Personal sources and enterprise editions use different namespaces/Plugin IDs. An enterprise slug is bound to exactly one `origin_plugin_id`; another personal source cannot append versions to that enterprise slug. Legacy rows with `origin_plugin_id = 0` must be explicitly migrated or rejected for claiming; ownership must never move silently.
-- Once administrator acceptance enters `materializing`, temporarily disable withdrawal until controlled-branch/MR creation or failure has been reconciled. A Withdrawn request with an open Draft MR is invalid.
+- Once administrator acceptance enters `materializing`, temporarily disable withdrawal until controlled-branch/MR creation or failure has been reconciled. A Withdrawn request with an open MR is invalid.
 - After namespace-split data exists that would violate the legacy global slug uniqueness constraint, database downgrade must run a preflight and explicitly block the unsafe rollback. It must not fail halfway through recreating the old unique index or lose data.
 
 ### 10.2 Controlled GitLab branches, MRs, and package checks
@@ -480,12 +480,12 @@ When a personal plugin is edited from `v1.2.0` to `v1.3.0`:
 ### 10.3 Release authorization, trusted proof, and status synchronization
 
 - The release job runs only on protected `master` and only when changes include `plugins/**`. A normal branch, no-plugin change, or CI/script-only change must not obtain release credentials or call the release API.
-- The release API accepts only `Authorization: Bearer <token>`. The token is a dedicated `plugin_release` machine credential with the `plugins:release` scope; bare tokens, ordinary user sessions, and user impersonation are rejected.
-- Create a `plugin_release` credential with `POST /api/admin/plugin-release-keys`, list credentials with `GET /api/admin/plugin-release-keys`, and disable or re-enable one with `POST /api/admin/plugin-release-keys/{id}/toggle-status`. Creation restricts the GitLab project, the `production` environment, and expiry; the raw `wg-...` value is returned only once. Rotate by creating and validating a new key before disabling the old one.
+- The release API accepts only `Authorization: Bearer <token>`. The token is a dedicated `plugin_release` machine credential; bare tokens, ordinary user sessions, and user impersonation are rejected.
+- Create a `plugin_release` credential with `POST /api/admin/plugin-release-keys`, list credentials with `GET /api/admin/plugin-release-keys`, and disable or re-enable one with `POST /api/admin/plugin-release-keys/{id}/toggle-status`. Creation takes a name, optional description, and expiry only; the raw `wg-...` value is returned once. Rotate by creating and validating a new key before disabling the old one. The GitLab project and target branch are server-side publication-channel configuration, not credential fields.
 - A protected-master Release request also carries the exact `Idempotency-Key` form `wework-plugin-v1:<64hex>`. Its digest is derived from the project ID, final commit SHA, and artifact SHA256, and the server recomputes and verifies it.
 - The server must not trust caller-asserted project/ref/SHA/Pipeline strings. It validates the configured GitLab project, protected `master` ref, final merged SHA, and Pipeline, then reads `plugins/<slug>` from that exact commit and compares path, content, and executable mode for the complete canonical file tree—including `.wework-publication.json` and `plugin-risk.json`—with the uploaded ZIP. The durable release idempotency binding includes both this trusted proof and the authenticated `plugin_release` key database ID, so another caller cannot reuse the same key.
 - Webhooks perform monotonic status synchronization and reconciliation only. A Pipeline event must match the controlled commit SHA of the current revision; a smaller Pipeline ID or a late state after the same Pipeline reached a terminal state cannot advance the workflow. A lost Webhook must not permanently block release, and a Webhook is never release authorization.
-- Enterprise submission has neither a people allowlist nor a global enable/disable switch. The Request API becomes available to authenticated personal-plugin owners as soon as the Backend is deployed, while internal `/plugins/releases` is always constrained by the scoped Release Key, protected `master`, and trusted-artifact validation. Complete the real GitLab, Runner, approval, TLS, and credential-rotation prerequisites before coordinating the Backend, Wework, and Web-admin rollout.
+- Enterprise submission has neither a people allowlist nor a global enable/disable switch. The Request API becomes available to authenticated personal-plugin owners as soon as the Backend is deployed, while internal `/plugins/releases` is always constrained by the dedicated Release Key, server-configured GitLab project, protected `master`, and trusted-artifact validation. Complete the real GitLab, Runner, approval, TLS, and credential-rotation prerequisites before coordinating the Backend, Wework, and Web-admin rollout.
 - GitLab protected environments, Code Owner/approval rules, protected variables, and native Windows/macOS Runners are external P0 prerequisites for production enablement. Until they are configured and verified in the real GitLab project, passing all local tests and packaging means only **implementation verified**, never **production publication enabled**.
 
 ### 10.4 Credential migration boundary
@@ -513,7 +513,7 @@ When a personal plugin is edited from `v1.2.0` to `v1.3.0`:
 | `PluginWorkspaceConversationResult.tsx` / `executor/src/plugin_workspace_cli.rs` | Preserve the actual Task-workspace version; keep restricted sharing on legacy submission, but route enterprise publication through the new immutable publication request/revision API  |
 | `frontend/src/app/admin/page.tsx`                                                | Add the administrator review Tab                                                                                                                                                       |
 | `frontend/src/features/admin/`                                                   | Add queue, details, return, and accept components                                                                                                                                      |
-| Backend publication domain                                                       | Add tables, state machine, automated checks, GitLab materialization, Webhook reconciliation, and scoped release endpoint                                                               |
+| Backend publication domain                                                       | Add tables, state machine, automated checks, GitLab materialization, Webhook reconciliation, and dedicated release endpoint                                                            |
 
 New interactive elements must have stable `data-testid` values. Preserve existing detail-page selectors unless the same change updates unit tests and desktop E2E coverage.
 
@@ -527,9 +527,9 @@ New interactive elements must have stable `data-testid` values. Preserve existin
 4. Required fields, risk blockers, Previous navigation, and close/recovery all work correctly in the three-step request flow; client and API enforce trimmed nonblank release/test notes and the `2000/1000` character limits.
 5. Editing the personal source after submission does not change the revision/SHA.
 6. Only one active Request exists for the same personal source plugin; create a new revision in that Request after return or deterministic automated-check failure, and create a new Request for a higher version after publication while preserving the old Request.
-7. An administrator cannot accept with blockers; return reason is required; acceptance creates only one Draft MR.
+7. An administrator cannot accept with blockers; return reason is required; acceptance creates only one MR.
 8. The flow is blocked when Windows/macOS checks do not run.
-9. Withdrawal before merge closes the Draft MR; failure to close prevents withdrawal and personal-source deletion.
+9. Withdrawal before merge closes the MR; failure to close prevents withdrawal and personal-source deletion.
 10. Release failure preserves the old enterprise version; idempotent retry does not create a duplicate Release.
 11. Personal and enterprise editions can be displayed, installed, and deleted/uninstalled independently.
 12. Recipients and ordinary enterprise users cannot see Share, submission, edit, or delete entries.
@@ -537,11 +537,11 @@ New interactive elements must have stable `data-testid` values. Preserve existin
 14. No submittable form appears before ACL loading completes; a load failure cannot overwrite existing grants with an empty ACL.
 15. After a client restart, terminal requests, complete revision history, and personal/enterprise bidirectional links remain available.
 16. A missing/mismatched controlled-branch marker, a plugin MR mixed with CI/script changes, a multi-root ZIP, or a full-repository secret-scan failure blocks the flow.
-17. The release API rejects non-Bearer auth, the wrong scope, and untrusted project/ref/SHA/Pipeline proof; out-of-order Webhooks cannot regress state.
+17. The release API rejects non-Bearer auth, the wrong key type, and untrusted project/ref/SHA/Pipeline proof; out-of-order Webhooks cannot regress state.
 18. Withdrawal during `materializing`, cross-origin append to an enterprise slug, and an unsafe database downgrade are explicitly blocked.
 19. Each of the seven publication mutations returns `422` without an idempotency key; same key/resource/payload replay is exact, a key reused with different resource/payload returns `409`, and explicit reconciliation uses a new attempt.
 20. The root department is returned only with `include_organization=true` and subject to access control. Requesters and administrators both see return requirements through the dedicated `requiredChanges` field, and event responses do not leak arbitrary payloads.
-21. Upload/transport/infrastructure failures can idempotently retry the original revision; deterministic content failures require a fixed new revision; `code_changes_requested` is fixed in the same Draft MR.
+21. Upload/transport/infrastructure failures can idempotently retry the original revision; deterministic content failures require a fixed new revision; `code_changes_requested` is fixed in the same MR.
 
 ### 12.2 Real desktop and design QA
 

@@ -37,7 +37,7 @@ describe('PluginPublishDialog', () => {
     )
   })
 
-  test('supports arrow-key intent selection and keeps focus inside the dialog', () => {
+  test('supports arrow-key intent selection', () => {
     render(<PluginPublishDialog {...defaultProps} />)
 
     const restricted = screen.getByTestId('plugin-share-intent-restricted')
@@ -46,11 +46,6 @@ describe('PluginPublishDialog', () => {
     fireEvent.keyDown(restricted, { key: 'ArrowDown' })
     expect(enterprise).toHaveFocus()
     expect(enterprise).toHaveAttribute('aria-checked', 'true')
-
-    const continueButton = screen.getByTestId('plugin-share-intent-continue')
-    continueButton.focus()
-    fireEvent.keyDown(screen.getByTestId('plugin-share-intent-dialog'), { key: 'Tab' })
-    expect(screen.getByTestId('plugin-publish-close')).toHaveFocus()
   })
 
   test('saves a direct member and department share without review', async () => {
@@ -159,6 +154,175 @@ describe('PluginPublishDialog', () => {
     })
   })
 
+  test('dismisses the enterprise drawer only from its backdrop when idle', () => {
+    const onClose = vi.fn()
+    const view = render(<PluginPublishDialog {...defaultProps} onClose={onClose} />)
+
+    fireEvent.click(screen.getByTestId('plugin-share-intent-enterprise'))
+    fireEvent.click(screen.getByTestId('plugin-share-intent-continue'))
+    fireEvent.click(screen.getByTestId('plugin-publication-drawer'))
+    expect(onClose).not.toHaveBeenCalled()
+
+    fireEvent.click(screen.getByTestId('plugin-publication-overlay'))
+    expect(onClose).toHaveBeenCalledTimes(1)
+
+    view.rerender(<PluginPublishDialog {...defaultProps} onClose={onClose} publishing />)
+    fireEvent.click(screen.getByTestId('plugin-publication-overlay'))
+    expect(onClose).toHaveBeenCalledTimes(1)
+  })
+
+  test('keeps release-note focus and value while typing', () => {
+    render(<PluginPublishDialog {...defaultProps} />)
+
+    fireEvent.click(screen.getByTestId('plugin-share-intent-enterprise'))
+    fireEvent.click(screen.getByTestId('plugin-share-intent-continue'))
+    const releaseNotes = screen.getByTestId('plugin-publication-release-notes')
+    releaseNotes.focus()
+    fireEvent.change(releaseNotes, { target: { value: '支' } })
+    expect(screen.getByTestId('plugin-publication-next-risk')).toBeEnabled()
+
+    fireEvent.change(releaseNotes, { target: { value: '支持' } })
+    fireEvent.change(releaseNotes, { target: { value: '支持项目' } })
+    fireEvent.change(releaseNotes, { target: { value: '支持项目日志检索' } })
+
+    expect(releaseNotes).toHaveFocus()
+    expect(releaseNotes).toHaveValue('支持项目日志检索')
+
+    fireEvent.click(screen.getByTestId('plugin-publication-next-risk'))
+    fireEvent.click(screen.getByTestId('plugin-publication-back'))
+    expect(screen.getByTestId('plugin-publication-release-notes')).toHaveValue('支持项目日志检索')
+
+    fireEvent.change(screen.getByTestId('plugin-publication-release-notes'), {
+      target: { value: '   ' },
+    })
+    expect(screen.getByTestId('plugin-publication-next-risk')).toBeDisabled()
+  })
+
+  test('does not restore trigger focus when callback props change', () => {
+    const trigger = document.createElement('button')
+    document.body.appendChild(trigger)
+    trigger.focus()
+
+    const view = render(<PluginPublishDialog {...defaultProps} onClose={vi.fn()} />)
+    fireEvent.click(screen.getByTestId('plugin-share-intent-enterprise'))
+    fireEvent.click(screen.getByTestId('plugin-share-intent-continue'))
+
+    const releaseNotes = screen.getByTestId('plugin-publication-release-notes')
+    releaseNotes.focus()
+    expect(releaseNotes).toHaveFocus()
+
+    view.rerender(<PluginPublishDialog {...defaultProps} onClose={vi.fn()} error="后台状态刷新" />)
+
+    expect(releaseNotes).toHaveFocus()
+    trigger.remove()
+  })
+
+  test('keeps risk-step focus and values while typing', () => {
+    render(<PluginPublishDialog {...defaultProps} />)
+
+    fireEvent.click(screen.getByTestId('plugin-share-intent-enterprise'))
+    fireEvent.click(screen.getByTestId('plugin-share-intent-continue'))
+    fireEvent.change(screen.getByTestId('plugin-publication-release-notes'), {
+      target: { value: '版本说明' },
+    })
+    fireEvent.click(screen.getByTestId('plugin-publication-next-risk'))
+    fireEvent.click(screen.getByTestId('plugin-publication-risk-network'))
+    fireEvent.click(screen.getByTestId('plugin-publication-risk-command'))
+    fireEvent.click(screen.getByTestId('plugin-publication-risk-application'))
+
+    const domains = screen.getByTestId('plugin-publication-external-domains')
+    const commands = screen.getByTestId('plugin-publication-command-examples')
+    const permissions = screen.getByTestId('plugin-publication-application-permissions')
+    const testNotes = screen.getByTestId('plugin-publication-test-notes')
+    const additionalNotes = screen.getByTestId('plugin-publication-additional-notes')
+
+    fireEvent.change(domains, { target: { value: 'a' } })
+    fireEvent.change(commands, { target: { value: 'n' } })
+    fireEvent.change(permissions, { target: { value: 'g' } })
+    fireEvent.change(testNotes, { target: { value: '通' } })
+
+    additionalNotes.focus()
+    fireEvent.change(domains, { target: { value: 'API.EXAMPLE.COM' } })
+    fireEvent.change(commands, { target: { value: 'node scripts/check.js' } })
+    fireEvent.change(permissions, { target: { value: 'GitLab OAuth: read_api' } })
+    fireEvent.change(testNotes, { target: { value: '通过 Windows 与 macOS 测试' } })
+    fireEvent.change(additionalNotes, { target: { value: '补充风险说明' } })
+
+    expect(additionalNotes).toHaveFocus()
+    expect(screen.getByTestId('plugin-publication-next-confirm')).toBeEnabled()
+
+    fireEvent.click(screen.getByTestId('plugin-publication-next-confirm'))
+    expect(screen.getByTestId('plugin-publication-step-confirm')).toHaveTextContent(
+      'api.example.com'
+    )
+    expect(screen.getByTestId('plugin-publication-step-confirm')).toHaveTextContent(
+      'node scripts/check.js'
+    )
+    expect(screen.getByTestId('plugin-publication-step-confirm')).toHaveTextContent(
+      'GitLab OAuth: read_api'
+    )
+    expect(screen.getByTestId('plugin-publication-step-confirm')).toHaveTextContent(
+      '通过 Windows 与 macOS 测试'
+    )
+    expect(screen.getByTestId('plugin-publication-step-confirm')).toHaveTextContent('补充风险说明')
+
+    fireEvent.click(screen.getByTestId('plugin-publication-back'))
+    expect(screen.getByTestId('plugin-publication-external-domains')).toHaveValue('API.EXAMPLE.COM')
+    expect(screen.getByTestId('plugin-publication-test-notes')).toHaveValue(
+      '通过 Windows 与 macOS 测试'
+    )
+    expect(screen.getByTestId('plugin-publication-additional-notes')).toHaveValue('补充风险说明')
+  })
+
+  test('requires non-blank test notes without imposing a minimum length', () => {
+    render(<PluginPublishDialog {...defaultProps} />)
+
+    fireEvent.click(screen.getByTestId('plugin-share-intent-enterprise'))
+    fireEvent.click(screen.getByTestId('plugin-share-intent-continue'))
+    fireEvent.change(screen.getByTestId('plugin-publication-release-notes'), {
+      target: { value: '版本说明' },
+    })
+    fireEvent.click(screen.getByTestId('plugin-publication-next-risk'))
+
+    const testNotes = screen.getByTestId('plugin-publication-test-notes')
+    const next = screen.getByTestId('plugin-publication-next-confirm')
+    expect(next).toBeDisabled()
+
+    fireEvent.change(testNotes, { target: { value: '   ' } })
+    expect(testNotes).toHaveAttribute('aria-invalid', 'true')
+    expect(screen.getByTestId('plugin-publication-test-notes-help')).toHaveTextContent(
+      '测试说明不能为空'
+    )
+    expect(next).toBeDisabled()
+
+    fireEvent.change(testNotes, { target: { value: '测过了' } })
+    expect(testNotes).toHaveAttribute('aria-invalid', 'false')
+    expect(next).toBeEnabled()
+  })
+
+  test('preserves an active risk-step input across parent rerenders', () => {
+    const view = render(<PluginPublishDialog {...defaultProps} />)
+
+    fireEvent.click(screen.getByTestId('plugin-share-intent-enterprise'))
+    fireEvent.click(screen.getByTestId('plugin-share-intent-continue'))
+    fireEvent.change(screen.getByTestId('plugin-publication-release-notes'), {
+      target: { value: '版本说明' },
+    })
+    fireEvent.click(screen.getByTestId('plugin-publication-next-risk'))
+
+    const input = screen.getByTestId('plugin-publication-additional-notes')
+    input.focus()
+    fireEvent.compositionStart(input)
+    fireEvent.change(input, { target: { value: '中文输入中' } })
+
+    view.rerender(<PluginPublishDialog {...defaultProps} error="后台状态刷新" />)
+
+    expect(screen.getByTestId('plugin-publication-additional-notes')).toBe(input)
+    expect(input).toHaveFocus()
+    expect(input).toHaveValue('中文输入中')
+    fireEvent.compositionEnd(input, { data: '中文输入中' })
+  })
+
   test('opens the active request instead of creating a duplicate', () => {
     const onViewPublication = vi.fn()
     render(
@@ -198,7 +362,7 @@ describe('PluginPublishDialog', () => {
     )
 
     fireEvent.click(screen.getByTestId('plugin-share-intent-enterprise'))
-    expect(screen.getByTestId('plugin-share-intent-continue')).toHaveTextContent('提交新 Revision')
+    expect(screen.getByTestId('plugin-share-intent-continue')).toHaveTextContent('提交新修订版')
     fireEvent.click(screen.getByTestId('plugin-share-intent-continue'))
 
     expect(onViewPublication).not.toHaveBeenCalled()

@@ -9,7 +9,6 @@ from __future__ import annotations
 import hashlib
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import Any
 
 from fastapi import Depends, Header, HTTPException, status
 from fastapi.security.utils import get_authorization_scheme_param
@@ -17,8 +16,6 @@ from sqlalchemy.orm import Session
 
 from app.api.dependencies import get_db
 from app.models.api_key import KEY_TYPE_PLUGIN_RELEASE, APIKey
-
-PLUGIN_RELEASE_SCOPE = "plugins:release"
 
 
 def _utcnow_naive() -> datetime:
@@ -31,8 +28,6 @@ class PluginReleasePrincipal:
     key_id: int
     key_name: str
     key_prefix: str
-    scopes: frozenset[str]
-    restrictions: dict[str, Any]
 
 
 def verify_plugin_release_key(
@@ -64,41 +59,10 @@ def verify_plugin_release_key(
             detail="Plugin release token is invalid or expired",
             headers={"WWW-Authenticate": "Bearer"},
         )
-    scopes = frozenset(str(scope) for scope in (record.scopes_json or []))
-    if PLUGIN_RELEASE_SCOPE not in scopes:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Plugin release token is missing plugins:release scope",
-        )
     record.last_used_at = _utcnow_naive()
     db.commit()
     return PluginReleasePrincipal(
         key_id=record.id,
         key_name=record.name,
         key_prefix=record.key_prefix,
-        scopes=scopes,
-        restrictions=dict(record.restrictions_json or {}),
     )
-
-
-def ensure_plugin_release_allowed(
-    principal: PluginReleasePrincipal,
-    *,
-    project_id: str,
-    catalog_namespace: str = "enterprise",
-    environment: str = "production",
-) -> None:
-    restrictions = principal.restrictions
-    project_ids = {str(value) for value in restrictions.get("projectIds") or []}
-    namespaces = {str(value) for value in restrictions.get("catalogNamespaces") or []}
-    environments = {str(value) for value in restrictions.get("environments") or []}
-    if not project_ids or project_id not in project_ids:
-        raise HTTPException(status_code=403, detail="Release project is not allowed")
-    if not namespaces or catalog_namespace not in namespaces:
-        raise HTTPException(
-            status_code=403, detail="Release catalog namespace is not allowed"
-        )
-    if not environments or environment not in environments:
-        raise HTTPException(
-            status_code=403, detail="Release environment is not allowed"
-        )

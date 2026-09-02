@@ -66,7 +66,7 @@ export function DeletePersonalPluginDialog({
           {publicationActive
             ? t('workbench.plugins_delete_active_publication_description', {
                 name: pluginName,
-                defaultValue: `「${pluginName}」仍有进行中的企业全员发布申请。确认后会先撤回申请并关闭尚未合并的 Draft MR；只有撤回成功才会继续删除个人插件。已发布的企业版本不受影响。`,
+                defaultValue: `「${pluginName}」仍有进行中的企业全员发布申请。确认后会先撤回申请并关闭尚未合并的 MR；只有撤回成功才会继续删除个人插件。已发布的企业版本不受影响。`,
               })
             : published && !impact
               ? t('workbench.plugins_delete_impact_loading', '正在检查插件的使用情况…')

@@ -4,6 +4,7 @@
 
 import enAdmin from '@/i18n/locales/en/admin.json'
 import zhAdmin from '@/i18n/locales/zh-CN/admin.json'
+import { initI18n } from '@/i18n/setup'
 
 function collectKeys(value: unknown, prefix = ''): string[] {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return [prefix]
@@ -24,7 +25,18 @@ describe('plugin publication review i18n', () => {
     expect(zh.actions.reconcile).toBeTruthy()
     expect(zh.accept_dialog.not_publish_notice).toBeTruthy()
     expect(en.accept_dialog.not_publish_notice).toBeTruthy()
-    expect(zhAdmin.marketplace_management.plugin_publication_view).toBeTruthy()
-    expect(enAdmin.marketplace_management.plugin_publication_view).toBeTruthy()
+    expect(zhAdmin.tabs.wework_plugin_publications).toBeTruthy()
+    expect(enAdmin.tabs.wework_plugin_publications).toBeTruthy()
+  })
+
+  it('loads marketplace and Wework review labels through the admin namespace', async () => {
+    const i18n = await initI18n()
+    await i18n.changeLanguage('zh-CN')
+
+    expect(i18n.t('tabs.marketplace', { ns: 'admin' })).toBe('Wegent 市场管理')
+    expect(i18n.t('tabs.wework_plugin_publications', { ns: 'admin' })).toBe('Wework 插件审核')
+    expect(i18n.t('marketplace_management.plugin_publications.title', { ns: 'admin' })).toBe(
+      'Wework 插件发布审核'
+    )
   })
 })
