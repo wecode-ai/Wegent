@@ -318,7 +318,12 @@ async def _call_model_once(
                 json=body,
             )
         response.raise_for_status()
-        return _MODEL_TEXT_EXTRACTORS[provider](response.json())
+        response_payload = response.json()
+        logger.info(
+            "prompt_protection_model_response %s",
+            json.dumps(response_payload, ensure_ascii=True, sort_keys=True),
+        )
+        return _MODEL_TEXT_EXTRACTORS[provider](response_payload)
 
 
 class HttpPromptProtectionModelAdapter:

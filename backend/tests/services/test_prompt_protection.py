@@ -113,15 +113,30 @@ def _evaluation_kwargs(model_adapter=None) -> dict:
 
 
 @pytest.mark.asyncio
-async def test_model_call_keeps_credentials_out_of_request_body(monkeypatch):
+async def test_model_call_logs_complete_response_without_credentials(
+    monkeypatch,
+    caplog: pytest.LogCaptureFixture,
+):
     captured = {}
+    response_payload = {
+        "choices": [
+            {
+                "finish_reason": "stop",
+                "message": {
+                    "content": "ALLOW",
+                    "reasoning_content": "complete reasoning",
+                },
+            }
+        ],
+        "usage": {"completion_tokens": 12},
+    }
 
     class FakeResponse:
         def raise_for_status(self):
             return None
 
         def json(self):
-            return {"choices": [{"message": {"content": "ALLOW"}}]}
+            return response_payload
 
     class FakeClient:
         def __init__(self, *, timeout):
@@ -140,17 +155,28 @@ async def test_model_call_keeps_credentials_out_of_request_body(monkeypatch):
     monkeypatch.setattr(prompt_protection.httpx, "AsyncClient", FakeClient)
     model_config = _evaluation_kwargs()["model_config"]
 
-    result = await prompt_protection._call_model_once(
-        model_config=model_config,
-        protected_input='{"user_input":"hello"}',
-        timeout=10,
-    )
+    with caplog.at_level(logging.INFO, logger=prompt_protection.__name__):
+        result = await prompt_protection._call_model_once(
+            model_config=model_config,
+            protected_input='{"user_input":"hello"}',
+            timeout=10,
+        )
 
     assert result == "ALLOW"
     assert captured["headers"]["Authorization"] == "Bearer secret-key"
     assert "secret-key" not in json.dumps(captured["body"])
     assert "api_key" not in captured["body"]
     assert captured["body"]["stream"] is False
+    message = next(
+        record.getMessage()
+        for record in caplog.records
+        if record.getMessage().startswith("prompt_protection_model_response ")
+    )
+    logged_response = json.loads(
+        message.removeprefix("prompt_protection_model_response ")
+    )
+    assert logged_response == response_payload
+    assert "secret-key" not in message
 
 
 @pytest.mark.asyncio
