@@ -21,6 +21,21 @@
       return approvalRequired(action, risk, startedAt, warnings, target, before, preflight)
     }
 
+    if (input.previewOnly) {
+      return {
+        ok: true,
+        action,
+        backend: 'wkwebview-js',
+        previewOnly: true,
+        target: {
+          ...target.summary,
+          ...preflight.summary,
+        },
+        elapsedMs: elapsed(startedAt),
+        warnings,
+      }
+    }
+
     const execution = executeAction(action, target.element, input.text || '')
     warnings.push(...execution.warnings)
     if (!execution.ok) return failure(action, execution, startedAt, warnings, target, before)

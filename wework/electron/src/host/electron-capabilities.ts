@@ -45,6 +45,7 @@ import {
   saveCustomWorkspaceOpener,
 } from './local-workspace-openers.js'
 import type { DesktopHostEventBroker } from './desktop-host-events.js'
+import type { SecureValueStore } from './secure-value-store.js'
 import type { BrowserAnnotationController } from './browser-annotation-controller.js'
 import { RotatingLog } from '../runtime/rotating-log.js'
 
@@ -59,6 +60,7 @@ export interface ElectronDesktopServices {
   feedback: FeedbackBundleManager
   openRuntimeTask: (taskAddressId: string) => void
   plugins: WorkbenchPluginManager
+  secureStorage: SecureValueStore
   cleanupStaleTemporaryImages: () => Promise<void>
   coreDshPlugins: () => CoreDshPluginService | null
   updatePreferences?: (patch: Record<string, unknown>) => Promise<Record<string, unknown>>
@@ -123,7 +125,8 @@ export interface ElectronE2EHost {
     executorPid: number | null
     workbenchRuntimes: unknown[]
   }
-  rendererStartupReady: () => void | Promise<void>
+  rendererStartupReady: (source: 'task-list' | 'other') => void | Promise<void>
+  rendererStartupFailed: () => void | Promise<void>
   startupSplashSnapshot: () => StartupSplashSnapshot | null
   trayActivate: (activation: TrayActivation) => boolean
   traySetState: (state: TrayMenuState) => void
@@ -180,6 +183,7 @@ export function createElectronCapabilityRouter(
       workbenchRuntimes: [],
     }),
     rendererStartupReady: () => undefined,
+    rendererStartupFailed: () => undefined,
     startupSplashSnapshot: () => null,
     trayActivate: () => false,
     traySetState: () => undefined,
@@ -210,7 +214,12 @@ export function createElectronCapabilityRouter(
   router.register('desktop.events', params =>
     desktopServices.events.read(integerParam(params, 'after') ?? 0)
   )
-  router.register('renderer.startupReady', () => e2eHost.rendererStartupReady())
+  router.register('renderer.startupReady', params =>
+    e2eHost.rendererStartupReady(
+      optionalStringParam(params, 'source') === 'task-list' ? 'task-list' : 'other'
+    )
+  )
+  router.register('renderer.startupFailed', () => e2eHost.rendererStartupFailed())
   router.register('diagnostics.filePreview', params => {
     const event = recordParam(params, 'event')
     return filePreviewLog.write('supervisor', JSON.stringify(event))
@@ -297,6 +306,12 @@ export function createElectronCapabilityRouter(
       booleanParam(params, 'approved') ?? false
     )
   )
+  router.register('browser.notifyAgentCursorArrived', params =>
+    browser.notifyAgentCursorArrived(
+      stringParam(params, 'label'),
+      integerParam(params, 'moveSequence') ?? 0
+    )
+  )
   router.register('browser.close', params =>
     browser.close(stringParam(params, 'label'), optionalStringParam(params, 'expectedNativeLabel'))
   )
@@ -319,6 +334,48 @@ export function createElectronCapabilityRouter(
   router.register('browser.deleteDownload', params =>
     browser.deleteDownload(stringParam(params, 'id'))
   )
+  router.register('browser.setRequestHeaderRule', params =>
+    browser.setRequestHeaderRule({
+      id: stringParam(params, 'id'),
+      origins: stringArrayParam(params, 'origins') ?? [],
+      pathPrefixes: stringArrayParam(params, 'pathPrefixes') ?? [],
+      headers: stringRecordParam(params, 'headers'),
+      expiresAt: nullableIntegerParam(params, 'expiresAt'),
+      allowInsecure: booleanParam(params, 'allowInsecure') ?? false,
+    })
+  )
+  router.register('browser.removeRequestHeaderRule', params =>
+    browser.removeRequestHeaderRule(stringParam(params, 'id'))
+  )
+  router.register('browser.createBackgroundPage', params =>
+    browser.createBackgroundPage(stringParam(params, 'id'))
+  )
+  router.register('browser.navigateBackgroundPage', params =>
+    browser.navigateBackgroundPage(stringParam(params, 'id'), stringParam(params, 'url'))
+  )
+  router.register('browser.setBackgroundPageUserAgent', params =>
+    browser.setBackgroundPageUserAgent(stringParam(params, 'id'), stringParam(params, 'userAgent'))
+  )
+  router.register('browser.backgroundPageState', params =>
+    browser.backgroundPageState(stringParam(params, 'id'))
+  )
+  router.register('browser.closeBackgroundPage', params =>
+    browser.closeBackgroundPage(stringParam(params, 'id'))
+  )
+  router.register('secureStorage.get', params =>
+    desktopServices.secureStorage.get(stringParam(params, 'key'))
+  )
+  router.register('secureStorage.set', async params => {
+    await desktopServices.secureStorage.set(
+      stringParam(params, 'key'),
+      stringParam(params, 'value')
+    )
+    return { stored: true }
+  })
+  router.register('secureStorage.delete', async params => {
+    await desktopServices.secureStorage.delete(stringParam(params, 'key'))
+    return { deleted: true }
+  })
   router.register('clipboard.readWorkspacePaths', async params => {
     const fallbackPaths = stringArrayParam(params, 'fallbackPaths') ?? []
     const nativePayloads = clipboard

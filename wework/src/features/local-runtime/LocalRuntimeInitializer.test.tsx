@@ -13,11 +13,16 @@ import {
 import { LocalRuntimeInitializer } from './LocalRuntimeInitializer'
 
 const runtimeTokenPostMock = vi.hoisted(() => vi.fn())
+const desktopHostInvokeMock = vi.hoisted(() => vi.fn())
 
 vi.mock('@/api/http', () => ({
   createHttpClient: vi.fn(() => ({
     post: runtimeTokenPostMock,
   })),
+}))
+
+vi.mock('@/api/dsh/desktopHost', () => ({
+  invokeDesktopHost: desktopHostInvokeMock,
 }))
 
 vi.mock('@/desktop/localExecutor', () => ({
@@ -55,6 +60,8 @@ describe('LocalRuntimeInitializer', () => {
     disconnectMock.mockReset()
     ensureMock.mockReset()
     readLogMock.mockReset()
+    desktopHostInvokeMock.mockReset()
+    desktopHostInvokeMock.mockResolvedValue(undefined)
     runtimeTokenPostMock.mockReset()
     runtimeTokenPostMock.mockResolvedValue({
       auth_token: 'runtime-task-token',
@@ -508,6 +515,9 @@ describe('LocalRuntimeInitializer', () => {
 
     expect(await screen.findByTestId('local-runtime-error')).toHaveTextContent('stdio unavailable')
     expect(screen.getByText('~/.wework/logs/executor.log')).toBeInTheDocument()
+    await waitFor(() =>
+      expect(desktopHostInvokeMock).toHaveBeenCalledWith('renderer.startupFailed')
+    )
 
     await userEvent.click(screen.getByTestId('local-runtime-retry-button'))
 

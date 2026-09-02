@@ -8,6 +8,7 @@ import gzip
 import hashlib
 import json
 import os
+import shlex
 import subprocess
 import sys
 from pathlib import Path
@@ -1006,6 +1007,76 @@ def test_local_device_command_registry_default_includes_workspace_file_commands(
     assert read_definition is not None
     assert read_definition.post_processor == "json"
     assert "MAX_BYTES = 262144" in read_definition.command
+
+
+def test_branch_diff_prefers_fork_parent_default_branch(tmp_path: Path) -> None:
+    """Fork branches should compare with their parent base instead of stale origin."""
+    from app.services.device.command_registry import resolve_local_device_command
+
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _run_git(repo, "init", "-q")
+    _run_git(repo, "config", "user.email", "tests@example.com")
+    _run_git(repo, "config", "user.name", "Tests")
+    (repo / "README.md").write_text("base\n", encoding="utf-8")
+    _run_git(repo, "add", "--all")
+    _run_git(repo, "commit", "-qm", "initial")
+    _run_git(repo, "branch", "-M", "main")
+    stale_origin_main = _run_git(repo, "rev-parse", "HEAD").decode().strip()
+
+    _run_git(repo, "remote", "add", "origin", "https://example.com/fork.git")
+    _run_git(repo, "update-ref", "refs/remotes/origin/main", stale_origin_main)
+    _run_git(
+        repo,
+        "symbolic-ref",
+        "refs/remotes/origin/HEAD",
+        "refs/remotes/origin/main",
+    )
+
+    canonical_lines = "".join(f"canonical-{index}\n" for index in range(300))
+    (repo / "canonical.txt").write_text(canonical_lines, encoding="utf-8")
+    _run_git(repo, "add", "--all")
+    _run_git(repo, "commit", "-qm", "canonical update")
+    canonical_main = _run_git(repo, "rev-parse", "HEAD").decode().strip()
+
+    _run_git(repo, "remote", "add", "upstream", "https://example.com/parent.git")
+    _run_git(repo, "update-ref", "refs/remotes/upstream/main", canonical_main)
+    _run_git(
+        repo,
+        "symbolic-ref",
+        "refs/remotes/upstream/HEAD",
+        "refs/remotes/upstream/main",
+    )
+
+    _run_git(repo, "checkout", "-qb", "feature/fork-base")
+    (repo / "feature.txt").write_text("one\ntwo\nthree\n", encoding="utf-8")
+    _run_git(repo, "add", "--all")
+    _run_git(repo, "commit", "-qm", "feature change")
+
+    shortstat_definition = resolve_local_device_command("git_branch_diff_shortstat", {})
+    diff_definition = resolve_local_device_command("git_branch_diff", {})
+    assert shortstat_definition is not None
+    assert diff_definition is not None
+
+    shortstat = subprocess.run(
+        shlex.split(shortstat_definition.command),
+        cwd=repo,
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout
+    diff = subprocess.run(
+        shlex.split(diff_definition.command),
+        cwd=repo,
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout
+
+    assert "1 file changed" in shortstat
+    assert "3 insertions(+)" in shortstat
+    assert "canonical.txt" not in diff
+    assert "feature.txt" in diff
 
 
 def test_remote_command_policy_separates_read_only_and_mutating_keys():

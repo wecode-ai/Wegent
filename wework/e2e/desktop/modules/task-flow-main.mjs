@@ -30,6 +30,7 @@ import {
   verifyBackgroundTaskPlanRestoration,
   verifyFollowUpMessageRestoration,
   verifyForegroundGuidanceScroll,
+  verifyEnvironmentPanelScrollStability,
   verifyLastUserMessageEdit,
   verifyPausedQueueLifecycle,
   verifyQueuedFollowUpNavigation,
@@ -64,6 +65,12 @@ import { DesktopE2EServer } from './desktop-server.mjs'
 import { resolveElectronLaunchArguments } from './electron-launch-arguments.mjs'
 
 import {
+  clearDesktopE2EResultActive,
+  compactDesktopE2EResult,
+  markDesktopE2EResultActive,
+} from '../result-retention.mjs'
+
+import {
   verifyActiveGoalIdleUnreadLifecycle,
   verifyBusyTurnGoalHandoff,
   verifyGoalRestartRecoveryLifecycle,
@@ -73,6 +80,7 @@ import {
 import {
   ensureTaskRowVisible,
   verifyConcurrentTaskMemory,
+  verifyLocalMarkdownImage,
   verifyMemoryGrowth,
   verifyToolBlockChronologicalOrder,
 } from './memory-tool-flows.mjs'
@@ -880,6 +888,7 @@ async function main() {
   validateDesktopSegmentOptions()
   const runsProjectPluginE2E = DESKTOP_SEGMENT === 'project-ai-settings'
   await mkdir(resultDir, { recursive: true })
+  await markDesktopE2EResultActive(resultDir, { ownerProcessId: process.pid })
   console.log(`[desktop-e2e] result directory: ${resultDir}`)
   const workspacePath = join(resultDir, 'workspace')
   const secondaryProjectPath = join(resultDir, 'secondary-project-root')
@@ -987,6 +996,7 @@ async function main() {
   let cloudEnvironment
   let phase = 'startup'
   let desktopScenarioVerified = false
+  let testFailed = false
   try {
     await control.start()
     if (RUNS_PLUGIN_E2E) {
@@ -1096,6 +1106,7 @@ async function main() {
       DEVICE_SESSION_GATEWAY_PORT: '0',
       VITE_WEWORK_E2E: 'true',
       WEWORK_E2E_BACKGROUND_WINDOW: process.env.WEWORK_E2E_BACKGROUND_WINDOW ?? '1',
+      WEWORK_E2E_DISABLE_COMPONENT_UPDATES: '1',
       ...(DESKTOP_SEGMENT === 'local-file-preview'
         ? { WEWORK_E2E_LOCAL_FILE_READ_DELAY_MS: '1500' }
         : {}),
@@ -1168,6 +1179,10 @@ async function main() {
         env: appEnvironment,
         stdio: ['ignore', 'pipe', 'pipe'],
         detached: process.platform !== 'win32',
+      })
+      await markDesktopE2EResultActive(resultDir, {
+        applicationProcessId: child.pid,
+        ownerProcessId: process.pid,
       })
       await Promise.all([
         appendProcessOutput(child.stdout, appLogPath),
@@ -3101,6 +3116,38 @@ last_updated = "2026-07-30T00:00:00Z"`
       }
     }
 
+    if (shouldRunDesktopCheckpoint('environment-panel-scroll')) {
+      phase = 'environment-panel-scroll'
+      await control.command('click', '[data-testid="new-chat-button"]')
+      await control.command('waitFor', ACTIVE_COMPOSER_SELECTOR, {
+        timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+      })
+      await selectE2EModel(control, DEFAULT_MODEL_ID, DEFAULT_MODEL_LABEL)
+      control.setScenario('turn_navigation')
+      const environmentPanelTurnCount = E2E_TRANSCRIPT_PAGE_SIZE + 4
+      for (let index = 0; index < environmentPanelTurnCount; index += 1) {
+        const turnNumber = index + 1
+        await sendPrompt(
+          control,
+          ACTIVE_COMPOSER_SELECTOR,
+          `${TURN_NAVIGATION_REGRESSION_PROMPT_PREFIX}_${turnNumber}`
+        )
+        await control.command(
+          'waitFor',
+          `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="message-assistant"]`,
+          {
+            text: `${TURN_NAVIGATION_REGRESSION_COMPLETION_PREFIX}_${turnNumber}`,
+            timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+          }
+        )
+      }
+      await verifyEnvironmentPanelScrollStability(control)
+      if (shouldStopAfterDesktopCheckpoint('environment-panel-scroll')) {
+        console.log(`Wework desktop environment-panel-scroll E2E passed. Evidence: ${resultDir}`)
+        return
+      }
+    }
+
     if (shouldRunDesktopCheckpoint('conversation-state')) {
       await ensureExperimentalFeaturesEnabled(control)
       if (!taskRowTestId) {
@@ -3888,6 +3935,12 @@ last_updated = "2026-07-30T00:00:00Z"`
       phase = 'standalone-view-image'
       await verifyStandaloneViewImageTask({ composerSelector, control, projectRowSelector })
 
+      phase = 'local-markdown-image'
+      await verifyLocalMarkdownImage({
+        composerSelector,
+        control,
+      })
+
       if (desktopScenario) {
         phase = 'desktop-extension-scenario'
         desktopScenarioVerified = true
@@ -3938,6 +3991,7 @@ last_updated = "2026-07-30T00:00:00Z"`
     )
     console.log(`Wework desktop task-flow E2E passed. Diagnostics: ${resultDir}`)
   } catch (error) {
+    testFailed = true
     await writeFile(
       join(resultDir, 'model-requests.json'),
       `${JSON.stringify(control.modelRequests, null, 2)}\n`,
@@ -4003,19 +4057,65 @@ last_updated = "2026-07-30T00:00:00Z"`
     )
     throw error
   } finally {
-    await cloudEnvironment?.stop()
-    await blockingNetworkProxy?.stop()
-    await stopDesktopAppProcess(app)
-    await control.close()
-    await desktopScenario?.cleanup?.()
-    await rm(codexSqliteHome, {
-      recursive: true,
-      force: true,
-      maxRetries: process.platform === 'win32' ? 20 : 0,
-      retryDelay: 100,
+    const teardownFailures = []
+    const runTeardownStep = async (label, action) => {
+      try {
+        await action()
+      } catch (error) {
+        teardownFailures.push({ error, label })
+      }
+    }
+    await runTeardownStep('cloud environment', async () => cloudEnvironment?.stop())
+    await runTeardownStep('blocking network proxy', async () => blockingNetworkProxy?.stop())
+    await runTeardownStep('desktop application', async () => stopDesktopAppProcess(app))
+    await runTeardownStep('desktop controller', async () => control.close())
+    await runTeardownStep('desktop scenario', async () => desktopScenario?.cleanup?.())
+    await runTeardownStep('Codex SQLite home', async () =>
+      rm(codexSqliteHome, {
+        recursive: true,
+        force: true,
+        maxRetries: process.platform === 'win32' ? 20 : 0,
+        retryDelay: 100,
+      })
+    )
+    await runTeardownStep('macOS Launch Services registration', async () => {
+      if (appBundlePath && process.platform === 'darwin') {
+        spawnSync(MACOS_LAUNCH_SERVICES_REGISTER, ['-u', appBundlePath])
+      }
     })
-    if (appBundlePath && process.platform === 'darwin') {
-      spawnSync(MACOS_LAUNCH_SERVICES_REGISTER, ['-u', appBundlePath])
+    let cleanupError
+    if (teardownFailures.length === 0) {
+      try {
+        const removed = await compactDesktopE2EResult(resultDir)
+        if (removed > 0) {
+          console.log(`[desktop-e2e] removed ${removed} transient runtime artifacts`)
+        }
+      } catch (error) {
+        cleanupError = error
+      }
+      try {
+        await clearDesktopE2EResultActive(resultDir)
+      } catch (error) {
+        cleanupError ??= error
+      }
+    }
+    if (testFailed) {
+      for (const failure of teardownFailures) {
+        console.error(`[desktop-e2e] ${failure.label} teardown failed: ${String(failure.error)}`)
+      }
+      if (cleanupError) {
+        console.error(`[desktop-e2e] result cleanup failed: ${String(cleanupError)}`)
+      }
+    } else {
+      if (teardownFailures.length > 0) {
+        throw new AggregateError(
+          teardownFailures.map(failure => failure.error),
+          `Desktop E2E teardown failed: ${teardownFailures
+            .map(failure => failure.label)
+            .join(', ')}`
+        )
+      }
+      if (cleanupError) throw cleanupError
     }
   }
 }

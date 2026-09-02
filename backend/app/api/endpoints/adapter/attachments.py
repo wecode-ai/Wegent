@@ -26,7 +26,7 @@ from fastapi import (
     Request,
     UploadFile,
 )
-from fastapi.responses import RedirectResponse, Response, StreamingResponse
+from fastapi.responses import RedirectResponse, StreamingResponse
 from jose import JWTError, jwt
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
@@ -34,6 +34,7 @@ from sqlalchemy.orm import Session
 from app.api.dependencies import get_db
 from app.core import security
 from app.core.config import settings
+from app.db.session import SessionLocal
 from app.models.subtask_context import ContextType
 from app.models.task import TaskResource
 from app.models.user import User
@@ -94,6 +95,7 @@ router = APIRouter()
 ATTACHMENT_PREVIEW_TEXT_LIMIT = 4000
 REMOTE_MEDIA_TIMEOUT = 120.0
 REMOTE_MEDIA_CHUNK_SIZE = 1024 * 1024
+ATTACHMENT_STREAM_CHUNK_SIZE = 1024 * 1024
 DOWNLOAD_TOKEN_EXPIRE_SECONDS = 300
 DOWNLOAD_TOKEN_SCOPE = "attachment_download"
 
@@ -202,6 +204,73 @@ async def _stream_external_attachment(
         default_media_type=playback.media_type,
         range_header=range_header,
         disposition=disposition,
+    )
+
+
+def _load_stored_attachment_binary_data(attachment_id: int) -> Optional[bytes]:
+    """Load attachment bytes with a session owned by the current worker thread."""
+    with SessionLocal() as db:
+        context = context_service.get_context_optional(
+            db=db,
+            context_id=attachment_id,
+        )
+        if context is None:
+            return None
+        return context_service.get_attachment_binary_data(db=db, context=context)
+
+
+async def _stream_stored_attachment(
+    context, *, disposition: str = "attachment"
+) -> StreamingResponse:
+    """Read blocking storage off the event loop and stream bounded chunks."""
+    attachment_id = context.id
+    filename = context.original_filename
+    media_type = context.mime_type or "application/octet-stream"
+    storage_backend = context.storage_backend
+    storage_key = context.storage_key
+
+    try:
+        binary_data = await asyncio.to_thread(
+            _load_stored_attachment_binary_data,
+            attachment_id,
+        )
+    except Exception as exc:
+        logger.error(
+            "Failed to retrieve binary data for attachment %s",
+            attachment_id,
+            exc_info=True,
+        )
+        raise HTTPException(
+            status_code=500,
+            detail="Failed to retrieve attachment data",
+        ) from exc
+
+    if binary_data is None:
+        logger.error(
+            "Failed to retrieve binary data for attachment %s, "
+            "storage_backend=%s, storage_key=%s",
+            attachment_id,
+            storage_backend,
+            storage_key,
+        )
+        raise HTTPException(
+            status_code=500,
+            detail="Failed to retrieve attachment data",
+        )
+
+    async def iter_bytes():
+        for offset in range(0, len(binary_data), ATTACHMENT_STREAM_CHUNK_SIZE):
+            yield binary_data[offset : offset + ATTACHMENT_STREAM_CHUNK_SIZE]
+            await asyncio.sleep(0)
+
+    return StreamingResponse(
+        iter_bytes(),
+        media_type=media_type,
+        headers={
+            "Content-Disposition": _build_content_disposition(filename, disposition),
+            "Content-Length": str(len(binary_data)),
+            "X-Accel-Buffering": "no",
+        },
     )
 
 
@@ -936,31 +1005,9 @@ async def download_attachment(
                     ),
                 )
 
-    # Get binary data from the appropriate storage backend
-    binary_data = context_service.get_attachment_binary_data(
-        db=db,
-        context=context,
-    )
-
-    if binary_data is None:
-        logger.error(
-            f"Failed to retrieve binary data for attachment {attachment_id}, "
-            f"storage_backend={context.storage_backend}, "
-            f"storage_key={context.storage_key}"
-        )
-        raise HTTPException(
-            status_code=500, detail="Failed to retrieve attachment data"
-        )
-
-    return Response(
-        content=binary_data,
-        media_type=context.mime_type,
-        headers={
-            "Content-Disposition": _build_content_disposition(
-                context.original_filename,
-                "inline" if download_purpose == "playback" else "attachment",
-            )
-        },
+    return await _stream_stored_attachment(
+        context,
+        disposition="inline" if download_purpose == "playback" else "attachment",
     )
 
 
@@ -1019,29 +1066,7 @@ async def executor_download_attachment(
     if external_response is not None:
         return external_response
 
-    # Get binary data from the appropriate storage backend
-    binary_data = context_service.get_attachment_binary_data(
-        db=db,
-        context=context,
-    )
-
-    if binary_data is None:
-        logger.error(
-            f"Failed to retrieve binary data for attachment {attachment_id}, "
-            f"storage_backend={context.storage_backend}, "
-            f"storage_key={context.storage_key}"
-        )
-        raise HTTPException(
-            status_code=500, detail="Failed to retrieve attachment data"
-        )
-
-    return Response(
-        content=binary_data,
-        media_type=context.mime_type,
-        headers={
-            "Content-Disposition": _build_content_disposition(context.original_filename)
-        },
-    )
+    return await _stream_stored_attachment(context)
 
 
 @router.delete("/{attachment_id}")
@@ -1309,26 +1334,9 @@ async def public_download_attachment(
     if external_response is not None:
         return external_response
 
-    # Get binary data
-    binary_data = context_service.get_attachment_binary_data(db=db, context=context)
-
-    if binary_data is None:
-        logger.error(
-            f"[PublicDownload] Failed to retrieve binary data for attachment {attachment_id}"
-        )
-        raise HTTPException(
-            status_code=500, detail="Failed to retrieve attachment data"
-        )
-
     logger.info(
-        f"[PublicDownload] Downloaded attachment {attachment_id} "
-        f"via signed public link"
+        "[PublicDownload] Streaming attachment %s via signed public link",
+        attachment_id,
     )
 
-    return Response(
-        content=binary_data,
-        media_type=context.mime_type,
-        headers={
-            "Content-Disposition": _build_content_disposition(context.original_filename)
-        },
-    )
+    return await _stream_stored_attachment(context)

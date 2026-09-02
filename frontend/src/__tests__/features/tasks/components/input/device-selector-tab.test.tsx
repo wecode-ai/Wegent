@@ -168,6 +168,16 @@ describe('DeviceSelectorTab', () => {
     expect(mockSetSelectedDeviceId).not.toHaveBeenCalledWith('other-online')
   })
 
+  it('falls back to cloud when the account default is not exposed to Wegent', async () => {
+    mockDefaultExecutionTarget = 'app-device'
+    mockDevices = [createDevice({ device_id: 'available-device' })]
+
+    render(<DeviceSelectorTab />)
+
+    await waitFor(() => expect(mockSetSelectedDeviceId).toHaveBeenCalledWith(null))
+    expect(mockSetSelectedDeviceId).not.toHaveBeenCalledWith('app-device')
+  })
+
   it('renders an existing task target read-only without changing draft selection', () => {
     mockSelectedDeviceId = 'stale-draft-device'
     mockDevices = [createDevice({ device_id: 'task-device', name: 'Task Device' })]

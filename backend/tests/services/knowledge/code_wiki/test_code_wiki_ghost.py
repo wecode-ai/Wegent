@@ -69,6 +69,7 @@ def test_the_writer_recovers_the_durable_reviewer_verdict(system_prompt: str) ->
     assert "remaining ready state" in normalized_prompt
     assert "Do not sleep, poll" in normalized_prompt
     assert "never submits a Reviewer verdict" in normalized_prompt
+    assert "Only the Coordinator may open a Plan amendment" in normalized_prompt
 
 
 def test_how_much_to_read_is_bounded(system_prompt: str):

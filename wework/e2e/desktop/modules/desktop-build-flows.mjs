@@ -913,11 +913,31 @@ async function verifyCloudProjectFlow(
     'The real cloud executor did not create the verification artifact'
   )
   const taskRowTestId = await waitForTaskRowByText(control, 'WEWORK_DESKTOP_E2E_CLOUD_TASK')
+  const runningTaskTestId = taskRowTestId.replace(
+    'runtime-local-task-row-',
+    'runtime-local-task-running-'
+  )
   await control.command('click', `[data-testid="${taskRowTestId}"]`)
+  await waitForSnapshot(
+    control,
+    value =>
+      value.testIds.includes(runningTaskTestId) &&
+      value.testIds.includes('pause-response-button') &&
+      !value.testIds.includes('send-message-button'),
+    'The initial cloud task did not remain active while streaming text',
+    DEFAULT_STEP_TIMEOUT_MS
+  )
   await control.command('waitFor', '[data-testid="message-assistant"]', {
     text: CLOUD_COMPLETION_TEXT,
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
+  control.releaseCloudInitialResponse()
+  await waitForSnapshot(
+    control,
+    value => !value.testIds.includes(runningTaskTestId),
+    'The initial cloud task did not settle after its streamed response completed',
+    DEFAULT_STEP_TIMEOUT_MS
+  )
   await captureVerificationScreenshot(control, 'cloud-05-initial-task-completed.png')
 
   await openBottomWorkspaceTerminal(control, 'The historical cloud task')
@@ -955,10 +975,6 @@ async function verifyCloudProjectFlow(
   await closeBottomWorkspacePanel(control)
 
   control.setScenario('cloud_follow_up')
-  const runningTaskTestId = taskRowTestId.replace(
-    'runtime-local-task-row-',
-    'runtime-local-task-running-'
-  )
   const unreadTaskTestId = taskRowTestId.replace(
     'runtime-local-task-row-',
     'runtime-local-task-unread-dot-'
@@ -974,12 +990,15 @@ async function verifyCloudProjectFlow(
     value =>
       value.testIds.includes(runningTaskTestId) &&
       value.testIds.includes('pause-response-button') &&
-      value.testIds.includes('thinking-indicator') &&
       !value.testIds.includes('send-message-button') &&
       !value.testIds.includes(unreadTaskTestId),
-    'The cloud follow-up task did not render a consistent sidebar, composer, and message state',
+    'The cloud follow-up task did not remain active while streaming text',
     DEFAULT_STEP_TIMEOUT_MS
   )
+  await control.command('waitFor', '[data-testid="message-assistant"]', {
+    text: CLOUD_FOLLOW_UP_COMPLETION_TEXT,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
   control.releaseCloudFollowUpResponse()
   await control.command('click', `[data-testid="${taskRowTestId}"]`)
   await control.command('waitFor', '[data-testid="message-assistant"]', {

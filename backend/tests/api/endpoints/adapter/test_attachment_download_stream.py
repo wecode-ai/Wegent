@@ -2,6 +2,7 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
+import threading
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
 
@@ -20,6 +21,8 @@ def _local_video() -> SimpleNamespace:
         original_filename="local.mp4",
         file_extension=".mp4",
         mime_type="video/mp4",
+        storage_backend="mysql",
+        storage_key="attachments/43",
         type_data={"storage_backend": "mysql"},
     )
 
@@ -87,6 +90,41 @@ async def test_stream_remote_media_forwards_range_and_streams_chunks(monkeypatch
     assert response.headers["x-accel-buffering"] == "no"
     assert response.headers["content-disposition"] == (
         'attachment; filename="generated.mp4"'
+    )
+
+
+@pytest.mark.asyncio
+async def test_stream_stored_attachment_reads_in_worker_and_streams_chunks(
+    monkeypatch,
+):
+    main_thread_id = threading.get_ident()
+    worker_thread_ids = []
+    payload = b"a" * attachments.ATTACHMENT_STREAM_CHUNK_SIZE + b"tail"
+
+    def load_binary_data(attachment_id):
+        assert attachment_id == 43
+        worker_thread_ids.append(threading.get_ident())
+        return payload
+
+    monkeypatch.setattr(
+        attachments,
+        "_load_stored_attachment_binary_data",
+        load_binary_data,
+    )
+
+    response = await attachments._stream_stored_attachment(_local_video())
+    chunks = [chunk async for chunk in response.body_iterator]
+
+    assert worker_thread_ids
+    assert worker_thread_ids[0] != main_thread_id
+    assert chunks == [
+        b"a" * attachments.ATTACHMENT_STREAM_CHUNK_SIZE,
+        b"tail",
+    ]
+    assert response.headers["content-length"] == str(len(payload))
+    assert response.headers["x-accel-buffering"] == "no"
+    assert response.headers["content-disposition"] == (
+        'attachment; filename="local.mp4"'
     )
 
 

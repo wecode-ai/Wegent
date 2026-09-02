@@ -106,7 +106,11 @@ def _review(
             phase=phase,
             status=status,
             paths=review_paths,
-            focus_paths=(focus_paths or ["index"]) if phase == "plan" else [],
+            focus_paths=(
+                (focus_paths if focus_paths is not None else ["index"])
+                if phase in {"plan", "plan_amendment"}
+                else []
+            ),
             summary=f"{phase} {status}",
             findings=(
                 "## Finding\n- Path: index\n- Required change: add detail"
@@ -192,6 +196,143 @@ def test_plan_only_completes_after_the_exact_planned_page_set(test_db, test_user
     assert quality_gate_reason(generation, _pages()) == ""
 
 
+def test_passed_plan_amendment_becomes_the_effective_page_set(test_db, test_user):
+    generation = _generation(test_db, test_user)
+    generation.ext["qualityReview"]["policy"] = PLAN_ONLY_REVIEW_POLICY
+    _page(test_db, generation, "index")
+    _review(
+        test_db,
+        generation,
+        "plan",
+        "passed",
+        paths=["index", "architecture"],
+        focus_paths=["architecture"],
+    )
+
+    state = _open(
+        test_db,
+        generation,
+        "plan_amendment",
+        paths=["index", "architecture", "architecture/runtime"],
+        handoff="# Plan amendment\n\nAdd the runtime lifecycle page.",
+    )
+
+    assert state["state"] == "ready"
+    assert state["effectivePlan"]["paths"] == ["architecture", "index"]
+    state = _review(
+        test_db,
+        generation,
+        "plan_amendment",
+        "passed",
+        paths=["index", "architecture", "architecture/runtime"],
+        focus_paths=["architecture/runtime"],
+    )
+    _page(test_db, generation, "architecture")
+    _page(test_db, generation, "architecture/runtime")
+
+    assert state["nextAction"] == "write_pages_then_complete"
+    assert state["effectivePlan"] == {
+        "phase": "plan_amendment",
+        "paths": ["architecture", "architecture/runtime", "index"],
+        "focusPaths": ["architecture", "architecture/runtime"],
+        "writingPlan": {
+            "mode": "coordinator",
+            "coordinatorPaths": ["architecture", "architecture/runtime", "index"],
+            "workPackages": [],
+        },
+    }
+    assert writing_progress(test_db, generation)["missingPaths"] == []
+    assert (
+        quality_gate_reason(
+            generation,
+            [
+                PageSource(path="index", title="index", content="body"),
+                PageSource(path="architecture", title="architecture", content="body"),
+                PageSource(
+                    path="architecture/runtime", title="runtime", content="body"
+                ),
+            ],
+        )
+        == ""
+    )
+    with pytest.raises(HTTPException, match="amendment is already closed"):
+        _open(
+            test_db,
+            generation,
+            "plan_amendment",
+            paths=[
+                "index",
+                "architecture",
+                "architecture/runtime",
+                "operations",
+            ],
+        )
+
+
+def test_plan_amendment_must_add_paths_and_settle_before_publication(
+    test_db, test_user
+):
+    generation = _generation(test_db, test_user)
+    _page(test_db, generation, "index")
+    _review(test_db, generation, "plan", "passed")
+
+    with pytest.raises(HTTPException, match="must add paths"):
+        _open(test_db, generation, "plan_amendment", paths=["index"])
+
+    _open(test_db, generation, "plan_amendment", paths=["index", "operations"])
+    assert "unresolved plan amendment" in quality_gate_reason(generation, _pages())
+
+
+def test_plan_amendment_cannot_retroactively_approve_a_written_page(test_db, test_user):
+    generation = _generation(test_db, test_user)
+    _page(test_db, generation, "index")
+    _review(test_db, generation, "plan", "passed")
+    _page(test_db, generation, "operations")
+
+    with pytest.raises(HTTPException, match="before writing its added pages"):
+        _open(test_db, generation, "plan_amendment", paths=["index", "operations"])
+
+
+def test_plan_amendment_can_keep_the_original_focus_paths(test_db, test_user):
+    generation = _generation(test_db, test_user)
+    _review(test_db, generation, "plan", "passed", focus_paths=["index"])
+    _open(test_db, generation, "plan_amendment", paths=["index", "operations"])
+
+    state = _review(
+        test_db,
+        generation,
+        "plan_amendment",
+        "passed",
+        paths=["index", "operations"],
+        focus_paths=[],
+    )
+
+    assert state["effectivePlan"]["focusPaths"] == ["index"]
+
+
+def test_plan_amendment_is_rejected_before_plan_or_after_qa_starts(test_db, test_user):
+    generation = _generation(test_db, test_user)
+
+    assert (
+        review_state(generation, phase="plan_amendment")["nextAction"]
+        == "complete_plan_review_first"
+    )
+
+    with pytest.raises(HTTPException, match="only after the plan review passes"):
+        _open(test_db, generation, "plan_amendment", paths=["index", "operations"])
+
+    _page(test_db, generation, "index")
+    _review(test_db, generation, "plan", "passed")
+    assert (
+        review_state(generation, phase="plan_amendment")["nextAction"]
+        == "continue_writing"
+    )
+    _open(test_db, generation, "qa")
+
+    with pytest.raises(HTTPException, match="not allowed after QA has started"):
+        _open(test_db, generation, "plan_amendment", paths=["index", "operations"])
+
+
 def test_repeating_the_same_verdict_is_idempotent(test_db, test_user):
     generation = _generation(test_db, test_user)
     _page(test_db, generation, "index")
@@ -271,6 +412,26 @@ def test_qa_requires_a_passed_plan(test_db, test_user):
     _page(test_db, generation, "index")
 
     with pytest.raises(HTTPException, match="only after the plan review passes"):
+        _open(test_db, generation, "qa")
+
+
+def test_qa_requires_an_open_plan_amendment_to_pass(test_db, test_user):
+    generation = _generation(test_db, test_user)
+    _page(test_db, generation, "index")
+    _review(test_db, generation, "plan", "passed")
+
+    _open(test_db, generation, "plan_amendment", paths=["index", "operations"])
+    with pytest.raises(HTTPException, match="only after the Plan amendment passes"):
+        _open(test_db, generation, "qa")
+
+    _review(
+        test_db,
+        generation,
+        "plan_amendment",
+        "changes_requested",
+        paths=["index", "operations"],
+    )
+    with pytest.raises(HTTPException, match="only after the Plan amendment passes"):
         _open(test_db, generation, "qa")
 
 
