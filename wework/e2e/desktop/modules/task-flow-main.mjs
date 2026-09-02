@@ -65,6 +65,12 @@ import { DesktopE2EServer } from './desktop-server.mjs'
 import { resolveElectronLaunchArguments } from './electron-launch-arguments.mjs'
 
 import {
+  clearDesktopE2EResultActive,
+  compactDesktopE2EResult,
+  markDesktopE2EResultActive,
+} from '../result-retention.mjs'
+
+import {
   verifyActiveGoalIdleUnreadLifecycle,
   verifyBusyTurnGoalHandoff,
   verifyGoalRestartRecoveryLifecycle,
@@ -882,6 +888,7 @@ async function main() {
   validateDesktopSegmentOptions()
   const runsProjectPluginE2E = DESKTOP_SEGMENT === 'project-ai-settings'
   await mkdir(resultDir, { recursive: true })
+  await markDesktopE2EResultActive(resultDir)
   console.log(`[desktop-e2e] result directory: ${resultDir}`)
   const workspacePath = join(resultDir, 'workspace')
   const secondaryProjectPath = join(resultDir, 'secondary-project-root')
@@ -989,6 +996,7 @@ async function main() {
   let cloudEnvironment
   let phase = 'startup'
   let desktopScenarioVerified = false
+  let testFailed = false
   try {
     await control.start()
     if (RUNS_PLUGIN_E2E) {
@@ -3979,6 +3987,7 @@ last_updated = "2026-07-30T00:00:00Z"`
     )
     console.log(`Wework desktop task-flow E2E passed. Diagnostics: ${resultDir}`)
   } catch (error) {
+    testFailed = true
     await writeFile(
       join(resultDir, 'model-requests.json'),
       `${JSON.stringify(control.modelRequests, null, 2)}\n`,
@@ -4044,19 +4053,49 @@ last_updated = "2026-07-30T00:00:00Z"`
     )
     throw error
   } finally {
-    await cloudEnvironment?.stop()
-    await blockingNetworkProxy?.stop()
-    await stopDesktopAppProcess(app)
-    await control.close()
-    await desktopScenario?.cleanup?.()
-    await rm(codexSqliteHome, {
-      recursive: true,
-      force: true,
-      maxRetries: process.platform === 'win32' ? 20 : 0,
-      retryDelay: 100,
-    })
-    if (appBundlePath && process.platform === 'darwin') {
-      spawnSync(MACOS_LAUNCH_SERVICES_REGISTER, ['-u', appBundlePath])
+    let teardownError
+    try {
+      await cloudEnvironment?.stop()
+      await blockingNetworkProxy?.stop()
+      await stopDesktopAppProcess(app)
+      await control.close()
+      await desktopScenario?.cleanup?.()
+      await rm(codexSqliteHome, {
+        recursive: true,
+        force: true,
+        maxRetries: process.platform === 'win32' ? 20 : 0,
+        retryDelay: 100,
+      })
+      if (appBundlePath && process.platform === 'darwin') {
+        spawnSync(MACOS_LAUNCH_SERVICES_REGISTER, ['-u', appBundlePath])
+      }
+    } catch (error) {
+      teardownError = error
+    }
+    let cleanupError
+    try {
+      const removed = await compactDesktopE2EResult(resultDir)
+      if (removed > 0) {
+        console.log(`[desktop-e2e] removed ${removed} transient runtime artifacts`)
+      }
+    } catch (error) {
+      cleanupError = error
+    }
+    try {
+      await clearDesktopE2EResultActive(resultDir)
+    } catch (error) {
+      cleanupError ??= error
+    }
+    if (testFailed) {
+      if (teardownError) {
+        console.error(`[desktop-e2e] process teardown failed: ${String(teardownError)}`)
+      }
+      if (cleanupError) {
+        console.error(`[desktop-e2e] result cleanup failed: ${String(cleanupError)}`)
+      }
+    } else {
+      if (teardownError) throw teardownError
+      if (cleanupError) throw cleanupError
     }
   }
 }
