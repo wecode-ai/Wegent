@@ -340,6 +340,43 @@ def apply_workflow_nodes(
         if node.get("status") in COMPLETED_NODE_STATUSES and node.get("id")
     }
     for node in nodes:
+        if node.get("loop_id"):
+            continue
+        if node.get("node_type") == "branch":
+            continue
+        dependencies = node.get("depends_on")
+        dependencies = dependencies if isinstance(dependencies, list) else []
+        if node.get("status") == "blocked" and all(
+            str(dependency) in completed for dependency in dependencies
+        ):
+            node["status"] = "ready"
+    from app.services.workflow_loop_runtime import (
+        advance_loops,
+        advance_root_branches,
+        catch_up_branch_events,
+    )
+
+    def _arm_catch_up(loop: dict, branch: dict, body: list[dict]) -> None:
+        catch_up_branch_events(
+            db,
+            item,
+            loop=loop,
+            branch=branch,
+            nodes=body,
+        )
+
+    advance_loops(nodes, on_branch_armed=_arm_catch_up)
+    advance_root_branches(nodes)
+    completed = {
+        str(node.get("id"))
+        for node in nodes
+        if node.get("status") in COMPLETED_NODE_STATUSES and node.get("id")
+    }
+    for node in nodes:
+        if node.get("loop_id"):
+            continue
+        if node.get("node_type") == "branch":
+            continue
         dependencies = node.get("depends_on")
         dependencies = dependencies if isinstance(dependencies, list) else []
         if node.get("status") == "blocked" and all(
@@ -358,7 +395,10 @@ def apply_workflow_nodes(
         node.get("status") in COMPLETED_NODE_STATUSES for node in required
     ):
         projected_status = "in_review"
-    elif any(node.get("status") in {"running", "changes_requested"} for node in nodes):
+    elif any(
+        node.get("status") in {"running", "changes_requested", "waiting", "reacting"}
+        for node in nodes
+    ):
         projected_status = "in_progress"
     else:
         projected_status = "pending"
@@ -401,7 +441,7 @@ def workflow_automation_run_state(
     if not isinstance(raw_workflow, dict):
         raise RuntimeError("Workflow automation Issue has no workflow snapshot")
     workflow = IssueWorkflowInstance.model_validate({**raw_workflow, "nodes": nodes})
-    required = [node for node in workflow.nodes if node.required]
+    required = [node for node in workflow.nodes if node.required and not node.loop_id]
     if not required:
         return "succeeded", ""
 
@@ -451,6 +491,8 @@ def workflow_automation_run_state(
             "awaiting_approval",
             "awaiting_deliverables",
             "changes_requested",
+            "waiting",
+            "reacting",
         }
         for state in states
     ):

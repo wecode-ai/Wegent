@@ -796,6 +796,127 @@ async def test_complete_flow_dispatch_uses_issue_workflow_engine_for_every_trigg
 
 
 @pytest.mark.asyncio
+async def test_event_workflow_projects_completed_start_before_dispatching_loop(
+    test_db,
+    test_user,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project = CloudProject(
+        project_key="FLOWLOOP",
+        name="Event loop flow project",
+        created_by_user_id=test_user.id,
+        storage_prefix="projects/event-loop-flow",
+    )
+    test_db.add(project)
+    test_db.flush()
+    item = LoopItem(
+        cloud_project_id=project.id,
+        title="Event loop Issue",
+        description="",
+        status="inbox",
+        created_by_user_id=test_user.id,
+        metadata_json={},
+    )
+    rule = ProjectAutomationRule(
+        cloud_project_id=project.id,
+        title="Event loop flow",
+        description="Run the loop workflow",
+        status="enabled",
+        created_by_user_id=test_user.id,
+        metadata_json={
+            "trigger_type": "event",
+            "event_config": {
+                "runtime_workflow_definition": {
+                    "version": 1,
+                    "stage_mode": "dag",
+                    "advancement_policy": "manual",
+                    "execution_config": {
+                        "execution_device_id": "local-device",
+                        "model": "gpt-5.6-codex",
+                        "workspace_binding": {"type": "standalone"},
+                    },
+                    "nodes": [
+                        {
+                            "id": "start",
+                            "name": "触发",
+                            "node_type": "event",
+                            "role": "start",
+                            "depends_on": [],
+                        },
+                        {
+                            "id": "implement",
+                            "name": "实现",
+                            "execution_mode": "robot",
+                            "workspace_policy": "none",
+                            "depends_on": ["start"],
+                        },
+                        {
+                            "id": "loop",
+                            "name": "修复循环",
+                            "node_type": "loop",
+                            "depends_on": ["implement"],
+                            "body_node_ids": ["loop-start", "loop-end"],
+                            "loop_config": {"max_attempts": 5},
+                        },
+                        {
+                            "id": "loop-start",
+                            "name": "循环开始",
+                            "node_type": "loop_start",
+                            "loop_id": "loop",
+                            "depends_on": [],
+                        },
+                        {
+                            "id": "loop-end",
+                            "name": "循环结束",
+                            "node_type": "loop_end",
+                            "loop_id": "loop",
+                            "depends_on": ["loop-start"],
+                        },
+                    ],
+                }
+            },
+            "action": "execute",
+            "role": {"source": "generic", "agent_id": None},
+            "runtime": {"source": "runtime_user", "user_id": test_user.id},
+            "timezone": "Asia/Shanghai",
+        },
+    )
+    test_db.add_all([item, rule])
+    test_db.flush()
+    run = ProjectAutomationRun(
+        cloud_project_id=project.id,
+        parent_id=rule.id,
+        task_id=item.id,
+        task_title=item.title,
+        source="event",
+        status="pending",
+        created_by_user_id=test_user.id,
+        metadata_json={"scheduled_for": datetime(2026, 9, 2).isoformat()},
+    )
+    test_db.add(run)
+    test_db.commit()
+
+    async def assert_projected_start(_db, **kwargs) -> int:
+        workflow = kwargs["item"].metadata_json["workflow"]
+        by_id = {node["id"]: node for node in workflow["nodes"]}
+        assert by_id["start"]["status"] == "completed"
+        assert by_id["implement"]["status"] == "ready"
+        assert by_id["loop"]["status"] == "blocked"
+        assert by_id["loop-start"]["status"] == "blocked"
+        return 1
+
+    monkeypatch.setattr(issue_workflow_start_service, "start", assert_projected_start)
+
+    await project_automation_execution.dispatch(test_db, rule, run)
+
+    test_db.refresh(item)
+    test_db.refresh(run)
+    by_id = {node["id"]: node for node in item.metadata_json["workflow"]["nodes"]}
+    assert by_id["implement"]["status"] == "ready"
+    assert run.status == "pending"
+
+
+@pytest.mark.asyncio
 async def test_scheduled_workflow_creates_issue_binds_dag_and_queues_automatic_node(
     test_db,
     test_user,

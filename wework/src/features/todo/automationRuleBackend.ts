@@ -6,6 +6,7 @@ import type {
 } from '@/api/projectAutomations'
 import type {
   ProjectAutomationExecutionTarget,
+  ProjectEventCollectionMode,
   ProjectEventSourceType,
 } from '@/api/projectIncomingHooks'
 import type {
@@ -34,7 +35,7 @@ export interface AutomationUiStep {
   id: string
   name: string
   prompt: string
-  kind: 'task' | 'dynamic'
+  kind: 'task' | 'dynamic' | 'loop' | 'branch'
   dependencies: string[]
   dependencyContext: Record<string, WorkflowContextSource[]>
   x: number
@@ -56,6 +57,20 @@ export interface AutomationUiStep {
   executionConfig: WorkflowExecutionConfig | null
   executionConfigOverride: boolean
   approvalPolicy?: 'required' | 'automatic'
+  nodeType?: 'task' | 'event' | 'loop' | 'loopStart' | 'branch' | 'loopEnd'
+  role?: 'start' | null
+  loopId?: string | null
+  bodyNodeIds?: string[]
+  loopConfig?: {
+    maxAttempts: number
+    timeoutSeconds: number | null
+  } | null
+  branchConditions?: Array<{
+    eventType: string
+    handlerNodeIds: string[]
+    sourceType?: ProjectEventSourceType | ''
+    collectionMode?: ProjectEventCollectionMode | ''
+  }>
   subgraph: AutomationUiGraph | null
 }
 
@@ -66,6 +81,7 @@ export interface AutomationUiGraph {
 export interface AutomationUiTrigger {
   type: 'event' | 'schedule'
   source: ProjectEventSourceType
+  collectionMode?: ProjectEventCollectionMode
   startMode: 'immediate' | 'status'
   event:
     | 'created'
@@ -210,7 +226,20 @@ function normalizeStoredStep(
 ): AutomationUiStep {
   const item = isRecord(value) ? value : {}
   const id = typeof item.id === 'string' ? item.id : `step-${index + 1}`
-  const kind = item.kind === 'dynamic' ? 'dynamic' : 'task'
+  const kind =
+    item.kind === 'dynamic' || item.kind === 'loop' || item.kind === 'branch' ? item.kind : 'task'
+  const nodeType =
+    item.nodeType === 'event' ||
+    item.nodeType === 'loop' ||
+    item.nodeType === 'loopStart' ||
+    item.nodeType === 'branch' ||
+    item.nodeType === 'loopEnd'
+      ? item.nodeType
+      : kind === 'loop'
+        ? 'loop'
+        : kind === 'branch'
+          ? 'branch'
+          : 'task'
   const executionMode = item.executionMode === 'manual' ? 'manual' : 'automatic'
   const executionEnvironment = item.executionEnvironment === 'cloud' ? 'cloud' : 'local'
   const legacyStages = recordArray(item.dagStages)
@@ -293,33 +322,62 @@ function normalizeStoredStep(
       : null,
     executionConfigOverride: item.executionConfigOverride === true,
     approvalPolicy: item.approvalPolicy === 'automatic' ? 'automatic' : 'required',
+    nodeType,
+    role: item.role === 'start' ? 'start' : null,
+    loopId: typeof item.loopId === 'string' ? item.loopId : null,
+    bodyNodeIds: stringArray(item.bodyNodeIds),
+    loopConfig:
+      isRecord(item.loopConfig) &&
+      (typeof item.loopConfig.maxAttempts === 'number' ||
+        item.loopConfig.timeoutSeconds === null ||
+        typeof item.loopConfig.timeoutSeconds === 'number')
+        ? {
+            maxAttempts:
+              typeof item.loopConfig.maxAttempts === 'number'
+                ? Math.max(0, item.loopConfig.maxAttempts)
+                : 5,
+            timeoutSeconds:
+              typeof item.loopConfig.timeoutSeconds === 'number'
+                ? Math.max(1, item.loopConfig.timeoutSeconds)
+                : null,
+          }
+        : null,
+    branchConditions: recordArray(item.branchConditions).map(condition => ({
+      eventType: typeof condition.eventType === 'string' ? condition.eventType : '',
+      handlerNodeIds: stringArray(condition.handlerNodeIds),
+      sourceType: normalizeBranchSourceType(condition.sourceType),
+      collectionMode: normalizeBranchCollectionMode(condition.collectionMode),
+    })),
     subgraph: null,
   }
-  step.subgraph =
-    kind === 'dynamic'
-      ? {
-          nodes: subgraphNodes.map((node, childIndex) => {
-            const stage = normalizeStoredStep(node, childIndex)
-            return {
-              ...stage,
-              environment: '',
-              executionEnvironment: 'local',
-              executionDeviceId: null,
-              runtimeProfileId: null,
-              model: '',
-              modelType: null,
-              modelOptions: {},
-              plugins: [],
-              projectPlugins: [],
-              workspacePolicy: 'none',
-              executionConfig: null,
-              executionConfigOverride: false,
-              approvalPolicy: undefined,
-              subgraph: null,
-            }
-          }),
+  if (kind === 'dynamic') {
+    step.subgraph = {
+      nodes: subgraphNodes.map((node, childIndex) => {
+        const stage = normalizeStoredStep(node, childIndex)
+        return {
+          ...stage,
+          environment: '',
+          executionEnvironment: 'local',
+          executionDeviceId: null,
+          runtimeProfileId: null,
+          model: '',
+          modelType: null,
+          modelOptions: {},
+          plugins: [],
+          projectPlugins: [],
+          workspacePolicy: 'none',
+          executionConfig: null,
+          executionConfigOverride: false,
+          approvalPolicy: undefined,
+          subgraph: null,
         }
-      : null
+      }),
+    }
+  } else if (kind === 'loop') {
+    step.subgraph = {
+      nodes: subgraphNodes.map((node, childIndex) => normalizeStoredStep(node, childIndex)),
+    }
+  }
   return step
 }
 
@@ -435,6 +493,26 @@ const TRIGGER_SOURCE_TYPES = new Set<ProjectEventSourceType>([
   'generic',
 ])
 
+const BRANCH_COLLECTION_MODES = new Set<ProjectEventCollectionMode>([
+  'webhook',
+  'poll',
+  'internal',
+  'hybrid',
+])
+
+function normalizeBranchSourceType(value: unknown): ProjectEventSourceType | '' {
+  return typeof value === 'string' && TRIGGER_SOURCE_TYPES.has(value as ProjectEventSourceType)
+    ? (value as ProjectEventSourceType)
+    : ''
+}
+
+function normalizeBranchCollectionMode(value: unknown): ProjectEventCollectionMode | '' {
+  return typeof value === 'string' &&
+    BRANCH_COLLECTION_MODES.has(value as ProjectEventCollectionMode)
+    ? (value as ProjectEventCollectionMode)
+    : ''
+}
+
 function normalizeTriggerSource(rule: ProjectAutomationRule): ProjectEventSourceType {
   const stored = rule.eventConfig.source_type ?? rule.eventConfig.sourceType
   if (typeof stored === 'string' && TRIGGER_SOURCE_TYPES.has(stored as ProjectEventSourceType)) {
@@ -450,6 +528,12 @@ function normalizeTriggerSource(rule: ProjectAutomationRule): ProjectEventSource
         ? rule.eventConfig.subscriptionId
         : null
   return subscriptionId ? 'generic' : 'wework'
+}
+
+function normalizeCollectionMode(rule: ProjectAutomationRule): ProjectEventCollectionMode {
+  const stored = rule.eventConfig.collection_mode ?? rule.eventConfig.collectionMode
+  if (stored === 'webhook' || stored === 'poll' || stored === 'hybrid') return stored
+  return 'webhook'
 }
 
 export function automationRuleFromBackend(rule: ProjectAutomationRule): AutomationUiRule {
@@ -479,6 +563,7 @@ export function automationRuleFromBackend(rule: ProjectAutomationRule): Automati
     trigger: {
       type: rule.triggerType === 'schedule' ? 'schedule' : 'event',
       source,
+      collectionMode: normalizeCollectionMode(rule),
       startMode,
       event: externalEvent ?? (startMode === 'status' ? 'status_changed' : 'created'),
       tags: Array.isArray(rule.eventConfig.tags)
@@ -558,7 +643,14 @@ function workflowNodesFromLegacy(
   const nodesById = new Map(definition.nodes.map(node => [node.id, node]))
   const depthMemo = new Map<string, number>()
   const rowsByDepth = new Map<number, number>()
-  return definition.nodes.map(node => {
+  const bodyByLoop = new Map<string, WorkflowNodeDefinition[]>()
+  for (const node of definition.nodes) {
+    if (!node.loop_id) continue
+    const body = bodyByLoop.get(node.loop_id) ?? []
+    body.push(node)
+    bodyByLoop.set(node.loop_id, body)
+  }
+  const toStep = (node: WorkflowNodeDefinition, rowOverride?: number): AutomationUiStep => {
     const referencedRule = node.automation_rule_id
       ? backendRules.find(rule => rule.id === node.automation_rule_id)
       : null
@@ -571,11 +663,38 @@ function workflowNodesFromLegacy(
       id: node.id,
       name: node.name,
       prompt: node.prompt || referencedRule?.prompt || '',
-      kind: 'task',
-      dependencies: [...node.depends_on],
+      kind: node.node_type === 'loop' ? 'loop' : node.node_type === 'branch' ? 'branch' : 'task',
+      nodeType:
+        node.node_type === 'event'
+          ? 'event'
+          : node.node_type === 'loop'
+            ? 'loop'
+            : node.node_type === 'loop_start'
+              ? 'loopStart'
+              : node.node_type === 'branch'
+                ? 'branch'
+                : node.node_type === 'loop_end'
+                  ? 'loopEnd'
+                  : 'task',
+      role: node.role === 'start' ? 'start' : null,
+      loopId: node.loop_id ?? null,
+      bodyNodeIds: [...(node.body_node_ids ?? [])],
+      loopConfig: node.loop_config
+        ? {
+            maxAttempts: node.loop_config.max_attempts ?? 5,
+            timeoutSeconds: node.loop_config.timeout_seconds ?? null,
+          }
+        : null,
+      branchConditions: (node.branch_conditions ?? []).map(condition => ({
+        eventType: condition.event_type,
+        handlerNodeIds: [...(condition.handler_node_ids ?? [])],
+        sourceType: normalizeBranchSourceType(condition.source_type),
+        collectionMode: normalizeBranchCollectionMode(condition.collection_mode),
+      })),
+      dependencies: [...node.depends_on].filter(dependencyId => dependencyId !== 'start'),
       dependencyContext: { ...(node.dependency_context ?? {}) },
-      x: 440 + depth * 420,
-      y: 150 + row * 150,
+      x: 440 + (rowOverride ?? depth) * 420,
+      y: 150 + (rowOverride ?? row) * 150,
       deliverables: (node.required_deliverables ?? []).map(requirement => ({
         id: requirement.id,
         name: requirement.name,
@@ -610,7 +729,21 @@ function workflowNodesFromLegacy(
       executionConfigOverride: node.execution_config_override ?? false,
       subgraph: null,
     }
-  })
+  }
+  const steps: AutomationUiStep[] = []
+  for (const node of definition.nodes) {
+    if (node.node_type === 'event' || node.loop_id) continue
+    if (node.node_type === 'loop') {
+      const bodyNodes = bodyByLoop.get(node.id) ?? []
+      steps.push({
+        ...toStep(node),
+        subgraph: { nodes: bodyNodes.map((bodyNode, index) => toStep(bodyNode, index)) },
+      })
+      continue
+    }
+    steps.push(toStep(node))
+  }
+  return steps
 }
 
 export function automationRuleFromLegacyWorkflow(
@@ -766,6 +899,37 @@ function workflowNodeFromUi(
     id: node.id,
     name: node.name,
     prompt: node.prompt,
+    node_type:
+      node.nodeType === 'event'
+        ? 'event'
+        : node.nodeType === 'loop'
+          ? 'loop'
+          : node.nodeType === 'loopStart'
+            ? 'loop_start'
+            : node.nodeType === 'branch'
+              ? 'branch'
+              : node.nodeType === 'loopEnd'
+                ? 'loop_end'
+                : 'task',
+    role: node.role === 'start' ? 'start' : undefined,
+    loop_id: node.loopId ?? undefined,
+    body_node_ids: node.nodeType === 'loop' ? [...(node.bodyNodeIds ?? [])] : undefined,
+    loop_config:
+      node.nodeType === 'loop' && node.loopConfig
+        ? {
+            max_attempts: node.loopConfig.maxAttempts,
+            timeout_seconds: node.loopConfig.timeoutSeconds,
+          }
+        : undefined,
+    branch_conditions:
+      node.nodeType === 'branch'
+        ? (node.branchConditions ?? []).map(condition => ({
+            event_type: condition.eventType,
+            handler_node_ids: [...condition.handlerNodeIds],
+            source_type: condition.sourceType || undefined,
+            collection_mode: condition.collectionMode || undefined,
+          }))
+        : undefined,
     execution_mode: node.executionMode === 'automatic' ? 'robot' : 'human',
     depends_on: [...node.dependencies],
     dependency_context: Object.fromEntries(
@@ -814,6 +978,80 @@ export function legacyWorkflowFromAutomationRule(
       nodes: (dynamicNode.subgraph?.nodes ?? []).map(node => workflowNodeFromUi(node, false)),
     }
   }
+  const startConfig = ((): WorkflowNodeDefinition['start_config'] => {
+    if (rule.trigger.type === 'event') {
+      return {
+        trigger_type: 'event',
+        event_type: rule.trigger.event ?? null,
+        cron_expression: null,
+        source_type: rule.trigger.source ?? null,
+      }
+    }
+    return {
+      trigger_type: 'schedule',
+      event_type: null,
+      cron_expression: buildCron(rule.trigger),
+      source_type: null,
+    }
+  })()
+  const loopNodes: WorkflowNodeDefinition[] = []
+  const topLevelNodes: WorkflowNodeDefinition[] = rule.steps.flatMap(step => {
+    if (step.kind !== 'loop') {
+      return [workflowNodeFromUi(step)]
+    }
+    const bodySteps = step.subgraph?.nodes ?? []
+    const bodyNodes = bodySteps.map(bodyStep => ({
+      ...workflowNodeFromUi(bodyStep),
+      node_type:
+        bodyStep.nodeType === 'loopStart'
+          ? ('loop_start' as const)
+          : bodyStep.nodeType === 'branch'
+            ? ('branch' as const)
+            : bodyStep.nodeType === 'loopEnd'
+              ? ('loop_end' as const)
+              : ('task' as const),
+      loop_id: step.id,
+      depends_on: bodyStep.nodeType === 'loopStart' ? [] : [...(bodyStep.dependencies ?? [])],
+      branch_conditions:
+        bodyStep.nodeType === 'branch'
+          ? (bodyStep.branchConditions ?? []).map(condition => ({
+              event_type: condition.eventType,
+              handler_node_ids: [...condition.handlerNodeIds],
+            }))
+          : undefined,
+    }))
+    loopNodes.push(...bodyNodes)
+    return [
+      {
+        ...workflowNodeFromUi(step),
+        node_type: 'loop' as const,
+        body_node_ids: bodyNodes.map(bodyNode => bodyNode.id),
+        depends_on: step.dependencies.length > 0 ? [...step.dependencies] : ['start'],
+      },
+    ]
+  })
+  const startNode: WorkflowNodeDefinition = {
+    id: 'start',
+    name: '开始',
+    prompt: '',
+    node_type: 'event',
+    role: 'start',
+    start_config: startConfig,
+    execution_mode: 'human',
+    depends_on: [],
+    dependency_context: {},
+    required: false,
+    required_deliverables: [],
+    workspace_policy: 'none',
+    automation_rule_id: null,
+    execution_config: null,
+    execution_config_override: false,
+  }
+  const rewired = topLevelNodes.map(node => ({
+    ...node,
+    depends_on:
+      node.node_type !== 'loop' && node.depends_on.length === 0 ? ['start'] : node.depends_on,
+  }))
   return {
     version: Math.max(1, previous?.version ?? 1),
     stage_mode: rule.steps.length ? 'dag' : 'none',
@@ -822,7 +1060,7 @@ export function legacyWorkflowFromAutomationRule(
     approval_policy: previous?.approval_policy ?? 'required',
     ai_automation_rule_id: null,
     execution_config: previous?.execution_config ?? null,
-    nodes: rule.steps.map(node => workflowNodeFromUi(node)),
+    nodes: [startNode, ...rewired, ...loopNodes],
   }
 }
 
@@ -867,7 +1105,11 @@ function storedStepFromUi(node: AutomationUiStep): Record<string, unknown> {
         ? {
             nodes: (node.subgraph?.nodes ?? []).map(storedStageConstraint),
           }
-        : null,
+        : node.kind === 'loop'
+          ? {
+              nodes: (node.subgraph?.nodes ?? []).map(storedStepFromUi),
+            }
+          : null,
   }
 }
 
@@ -881,7 +1123,7 @@ function flowPrompt(rule: AutomationUiRule): string {
         ? `\n前置节点：${step.dependencies.join('、')}`
         : ''
       const subgraph =
-        step.kind === 'dynamic' && step.subgraph?.nodes.length
+        (step.kind === 'dynamic' || step.kind === 'loop') && step.subgraph?.nodes.length
           ? `\n子图：\n${describeNodes(step.subgraph.nodes, depth + 1).join('\n')}`
           : ''
       return `${'  '.repeat(depth)}${index + 1}. ${step.name}\n${'  '.repeat(depth)}${step.prompt}${deliverables}${dependencies}${subgraph}`
@@ -916,6 +1158,7 @@ export function automationInputFromUi(
       ...(externalEventTrigger
         ? {
             source_type: rule.trigger.source,
+            collection_mode: rule.trigger.collectionMode ?? 'webhook',
             subscription_id: rule.trigger.subscriptionId,
             execution_target: rule.trigger.executionTarget,
             target_branches: rule.trigger.targetBranches ?? [],

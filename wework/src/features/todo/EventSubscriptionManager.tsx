@@ -2,7 +2,6 @@ import { Check, Copy, RefreshCw, Webhook, X } from 'lucide-react'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type {
   ProjectEventCollectionMode,
-  ProjectEventSourceCatalogItem,
   ProjectEventSourceType,
   ProjectIncomingEvent,
   ProjectIncomingHook,
@@ -18,27 +17,18 @@ type IncomingHookApi = ReturnType<typeof createProjectIncomingHookApi>
 
 interface SubscriptionDraft {
   name: string
-  collectionMode: ProjectEventCollectionMode
   resourceUrl: string
   pollIntervalSeconds: number
   credentialRef: string
 }
 
-function emptyDraft(catalog?: ProjectEventSourceCatalogItem): SubscriptionDraft {
+function emptyDraft(): SubscriptionDraft {
   return {
     name: '',
-    collectionMode: catalog?.collectionModes[0] ?? 'webhook',
     resourceUrl: '',
     pollIntervalSeconds: 300,
     credentialRef: '',
   }
-}
-
-function collectionModeLabel(mode: ProjectEventCollectionMode): string {
-  if (mode === 'webhook') return 'Webhook'
-  if (mode === 'poll') return 'Polling'
-  if (mode === 'hybrid') return 'Webhook + Polling'
-  return 'Internal'
 }
 
 function subscriptionResourceLabel(subscription: ProjectIncomingHook): string {
@@ -55,22 +45,24 @@ export function EventSubscriptionManager({
   api,
   projectId,
   sourceType,
+  collectionMode,
   sourceLabel,
-  catalog,
+  cascadeIndex = 2,
   value,
   onChange,
 }: {
   api?: IncomingHookApi
   projectId?: string
   sourceType: ProjectEventSourceType
+  collectionMode: ProjectEventCollectionMode
   sourceLabel: (sourceType: ProjectEventSourceType) => string
-  catalog?: ProjectEventSourceCatalogItem
+  cascadeIndex?: number
   value: string | null
   onChange: (subscriptionId: string | null) => void
 }) {
   const { t } = useTranslation('common')
   const [subscriptions, setSubscriptions] = useState<ProjectIncomingHook[]>([])
-  const [draft, setDraft] = useState<SubscriptionDraft>(() => emptyDraft(catalog))
+  const [draft, setDraft] = useState<SubscriptionDraft>(emptyDraft)
   const [editorOpen, setEditorOpen] = useState(false)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -90,7 +82,9 @@ export function EventSubscriptionManager({
     if (!api || !projectId) return
     try {
       const list = await api.list(projectId)
-      const scoped = list.filter(item => item.sourceType === sourceType)
+      const scoped = list.filter(
+        item => item.sourceType === sourceType && item.collectionMode === collectionMode
+      )
       setSubscriptions(scoped)
       const current = valueRef.current
       const selected = scoped.find(item => item.id === current)
@@ -101,7 +95,7 @@ export function EventSubscriptionManager({
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : t('todo.event_subscription_load_failed'))
     }
-  }, [api, projectId, sourceType, t])
+  }, [api, projectId, sourceType, collectionMode, t])
 
   useEffect(() => {
     valueRef.current = value
@@ -115,7 +109,7 @@ export function EventSubscriptionManager({
   }, [load])
 
   async function createSubscription() {
-    const needsCredential = draft.collectionMode === 'poll' || draft.collectionMode === 'hybrid'
+    const needsCredential = collectionMode === 'poll' || collectionMode === 'hybrid'
     if (
       !api ||
       !projectId ||
@@ -131,12 +125,12 @@ export function EventSubscriptionManager({
       const subscription = await api.create(projectId, {
         name: draft.name.trim() || `${sourceLabel(sourceType)} subscription`,
         sourceType,
-        collectionMode: draft.collectionMode,
+        collectionMode,
         resource: {
           url: draft.resourceUrl.trim(),
         },
         pollIntervalSeconds:
-          draft.collectionMode === 'poll' || draft.collectionMode === 'hybrid'
+          collectionMode === 'poll' || collectionMode === 'hybrid'
             ? draft.pollIntervalSeconds
             : null,
         credentialRef: draft.credentialRef.trim() || null,
@@ -151,7 +145,7 @@ export function EventSubscriptionManager({
       await load()
       onChangeRef.current(subscription.id)
       setEditorOpen(false)
-      setDraft(emptyDraft(catalog))
+      setDraft(emptyDraft())
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : t('todo.event_subscription_create_failed'))
     } finally {
@@ -250,7 +244,7 @@ export function EventSubscriptionManager({
     <div className="grid gap-2">
       <label className={automationClass('panel-field')}>
         <span>
-          <i className={automationClass('cascade-index')}>2</i>
+          <i className={automationClass('cascade-index')}>{cascadeIndex}</i>
           {t('todo.automation_event_subscription')}
         </span>
         <div className="flex items-center gap-2">
@@ -290,26 +284,6 @@ export function EventSubscriptionManager({
         >
           <div className="grid gap-3 sm:grid-cols-2">
             <label className="text-sm text-text-secondary">
-              <span className="mb-1 block">{t('todo.event_subscription_mode')}</span>
-              <select
-                data-testid="event-subscription-mode"
-                value={draft.collectionMode}
-                onChange={event =>
-                  setDraft(current => ({
-                    ...current,
-                    collectionMode: event.target.value as ProjectEventCollectionMode,
-                  }))
-                }
-                className="h-9 w-full rounded-lg border border-border bg-background px-3"
-              >
-                {(catalog?.collectionModes ?? []).map(mode => (
-                  <option key={mode} value={mode}>
-                    {collectionModeLabel(mode)}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <label className="text-sm text-text-secondary">
               <span className="mb-1 block">{t('todo.event_subscription_name')}</span>
               <input
                 data-testid="event-subscription-name"
@@ -334,7 +308,7 @@ export function EventSubscriptionManager({
                 className="h-9 w-full rounded-lg border border-border bg-background px-3"
               />
             </label>
-            {draft.collectionMode === 'poll' || draft.collectionMode === 'hybrid' ? (
+            {collectionMode === 'poll' || collectionMode === 'hybrid' ? (
               <>
                 <label className="text-sm text-text-secondary">
                   <span className="mb-1 block">{t('todo.event_subscription_interval')}</span>
@@ -386,7 +360,7 @@ export function EventSubscriptionManager({
               disabled={
                 busy ||
                 !draft.resourceUrl.trim() ||
-                ((draft.collectionMode === 'poll' || draft.collectionMode === 'hybrid') &&
+                ((collectionMode === 'poll' || collectionMode === 'hybrid') &&
                   !draft.credentialRef.trim())
               }
               onClick={() => void createSubscription()}

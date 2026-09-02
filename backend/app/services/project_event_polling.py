@@ -515,32 +515,6 @@ class GitLabEventPoller(_HttpPoller):
                     occurred_at=occurred_at or None,
                 )
             )
-        approvals = await self._get(
-            client,
-            f"{api_base}/projects/{project}/merge_requests/{iid}/approvals",
-            headers=headers,
-        )
-        if isinstance(approvals, dict):
-            approved_by = approvals.get("approved_by")
-            for approval in approved_by if isinstance(approved_by, list) else []:
-                user = _mapping(_mapping(approval).get("user"))
-                user_id = user.get("id")
-                if user_id is None:
-                    continue
-                changes.append(
-                    PolledInput(
-                        identity=f"approval:{iid}:{user_id}:{head_sha}",
-                        title=f"gitlab: approval !{iid}",
-                        payload={
-                            "object_kind": "approval",
-                            "object_attributes": _gitlab_merge_request_payload(detail),
-                            "project": project_payload,
-                            "user": dict(user),
-                        },
-                        headers={"x-gitlab-event": "Approval Hook"},
-                        occurred_at=_text(detail.get("updated_at")) or None,
-                    )
-                )
         return changes
 
 

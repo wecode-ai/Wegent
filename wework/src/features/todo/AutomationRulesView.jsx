@@ -8,10 +8,12 @@ import {
   CheckCircle2,
   ChevronDown,
   Circle,
+  CircleDot,
   Clock3,
   Cloud,
   Code2,
   Copy,
+  Flag,
   FolderKanban,
   GitBranch,
   History,
@@ -20,6 +22,7 @@ import {
   MoreHorizontal,
   Plus,
   Puzzle,
+  Repeat,
   Search,
   Sparkles,
   Tag,
@@ -36,6 +39,14 @@ import { AutomationWorkflowCanvas } from './AutomationWorkflowCanvas.jsx'
 import { automationClass } from './automationStyles'
 import { eventTypeLabel } from './eventTypeLabel'
 import { EventSubscriptionManager } from './EventSubscriptionManager'
+import {
+  BRANCH_HANDLER_ROW_GAP,
+  OUTER_NODE_GAP,
+  OUTER_NODE_HEIGHT,
+  OUTER_NODE_WIDTH,
+  loopBodyNodeSize,
+  stepCanvasSize,
+} from './canvasGeometry'
 
 const ACTIVE_RUN_STATUSES = new Set([
   'pending',
@@ -53,6 +64,8 @@ const DELIVERABLE_TYPE_OPTIONS = [
   { value: 'pull_request', label: 'PR/MR' },
   { value: 'url', label: '链接' },
 ]
+const BRANCH_HANDLER_COLUMN_GAP = OUTER_NODE_WIDTH + OUTER_NODE_GAP // matches addStep column spacing
+const LOOP_BODY_HANDLER_COLUMN_GAP = 260 // matches loop body column spacing
 
 function runMatchesFilter(status, filter) {
   if (filter === 'all') return true
@@ -104,6 +117,12 @@ function createExecutionNode({
   executionConfigOverride = false,
   approvalPolicy = undefined,
   subgraph = null,
+  nodeType = 'task',
+  role = null,
+  loopId = null,
+  bodyNodeIds = [],
+  loopConfig = null,
+  branchConditions = [],
 }) {
   return {
     id,
@@ -132,6 +151,12 @@ function createExecutionNode({
     executionConfigOverride,
     approvalPolicy,
     subgraph,
+    nodeType,
+    role,
+    loopId,
+    bodyNodeIds,
+    loopConfig,
+    branchConditions,
   }
 }
 
@@ -251,6 +276,195 @@ function createDynamicAllocationNode(executionCatalog, id = `step-${Date.now()}`
   })
 }
 
+function createLoopNode(id = `loop-${Date.now()}`) {
+  const bodyId = `loop-start-${Date.now()}`
+  return createExecutionNode({
+    id,
+    kind: 'loop',
+    name: '修复循环',
+    prompt: '',
+    dependencies: [],
+    dependencyContext: {},
+    executionMode: 'manual',
+    workspacePolicy: 'none',
+    nodeType: 'loop',
+    bodyNodeIds: [bodyId],
+    loopConfig: {
+      maxAttempts: 5,
+      timeoutSeconds: null,
+    },
+    subgraph: {
+      nodes: [
+        createExecutionNode({
+          id: bodyId,
+          name: '循环开始',
+          kind: 'task',
+          nodeType: 'loopStart',
+          executionMode: 'manual',
+          workspacePolicy: 'none',
+          dependencies: [],
+          dependencyContext: {},
+          x: 0,
+          y: 0,
+        }),
+      ],
+    },
+  })
+}
+
+function createLoopBodyNode(executionCatalog, loopId, kind) {
+  const id = `loop-body-${Date.now()}`
+  if (kind === 'branch') {
+    return createExecutionNode({
+      id,
+      name: '分支',
+      kind: 'task',
+      nodeType: 'branch',
+      loopId,
+      executionMode: 'manual',
+      workspacePolicy: 'none',
+      dependencies: [],
+      dependencyContext: {},
+      x: 240,
+      y: 0,
+      branchConditions: [],
+    })
+  }
+  if (kind === 'loopEnd') {
+    return createExecutionNode({
+      id,
+      name: '循环结束',
+      kind: 'task',
+      nodeType: 'loopEnd',
+      loopId,
+      executionMode: 'manual',
+      workspacePolicy: 'none',
+      dependencies: [],
+      dependencyContext: {},
+      x: 240,
+      y: 90,
+    })
+  }
+  return createExecutionNode({
+    ...defaultExecutionConfiguration(executionCatalog),
+    id,
+    name: '',
+    prompt: '',
+    kind: 'task',
+    nodeType: 'task',
+    loopId,
+    dependencies: [],
+    dependencyContext: {},
+    x: 240,
+    y: 90,
+  })
+}
+
+function createBranchNode(id = `branch-${Date.now()}`) {
+  return createExecutionNode({
+    id,
+    kind: 'branch',
+    name: '分支',
+    prompt: '',
+    dependencies: [],
+    dependencyContext: {},
+    executionMode: 'manual',
+    workspacePolicy: 'none',
+    nodeType: 'branch',
+    branchConditions: [],
+  })
+}
+
+function createBranchHandlerNode(executionCatalog, kind, id) {
+  if (kind === 'dynamic') return createDynamicAllocationNode(executionCatalog, id)
+  if (kind === 'loop') return createLoopNode(id)
+  if (kind === 'branch') return createBranchNode(id)
+  return createExecutionNode({
+    ...defaultExecutionConfiguration(executionCatalog),
+    id,
+    name: '',
+    prompt: '',
+  })
+}
+
+function createLoopBranchHandlerNode(executionCatalog, loopId, kind) {
+  if (kind === 'branch') return createLoopBodyNode(executionCatalog, loopId, 'branch')
+  if (kind === 'loopEnd') return createLoopBodyNode(executionCatalog, loopId, 'loopEnd')
+  return createLoopBodyNode(executionCatalog, loopId, 'task')
+}
+
+function insertStepAfter(
+  container,
+  anchorId,
+  node,
+  { gap, condition = null, alignY = null, stack = false, nodeSize = stepCanvasSize }
+) {
+  const branchIndex = container.findIndex(candidate => candidate.id === anchorId)
+  if (branchIndex < 0) return null
+  const anchor = container[branchIndex]
+  const nodeId = node.id
+  const insertionX = (anchor.x ?? 0) + gap
+  // Condition handlers already added to this branch stay in the handler column
+  // so new handlers stack downward instead of pushing the column to the right.
+  const handlerIds = new Set(
+    (anchor.branchConditions ?? []).flatMap(condition => condition.handlerNodeIds ?? [])
+  )
+  let insertionY
+  if (alignY != null) {
+    insertionY = alignY
+  } else if (stack) {
+    const stackedHandlers = container.filter(candidate => handlerIds.has(candidate.id))
+    if (stackedHandlers.length > 0) {
+      const bottomY = Math.max(
+        ...stackedHandlers.map(candidate => (candidate.y ?? 0) + nodeSize(candidate).height)
+      )
+      insertionY = bottomY + BRANCH_HANDLER_ROW_GAP
+    } else {
+      insertionY = anchor.y ?? 0
+    }
+  } else {
+    insertionY = anchor.y ?? 0
+  }
+  const inserted = {
+    ...node,
+    x: insertionX,
+    y: insertionY,
+    dependencies: [anchorId],
+    dependencyContext: { [anchorId]: ['final_result', 'deliveries'] },
+  }
+  const next = []
+  container.forEach((node, index) => {
+    let value = node
+    if (!stack || !handlerIds.has(node.id)) {
+      if (node.x >= insertionX) value = { ...value, x: value.x + gap }
+    }
+    if (node.id === anchorId && condition) {
+      value = {
+        ...value,
+        branchConditions: [
+          ...(value.branchConditions ?? []),
+          { ...condition, handlerNodeIds: [nodeId] },
+        ],
+      }
+    }
+    next.push(value)
+    if (index === branchIndex) next.push(inserted)
+  })
+  return { container: next, nodeId }
+}
+
+function findBranchOwner(steps, branchId) {
+  const topStep = steps.find(step => step.id === branchId && step.kind === 'branch')
+  if (topStep) return { type: 'top', step: topStep }
+  const loopStep = steps.find(
+    step =>
+      step.kind === 'loop' &&
+      (step.subgraph?.nodes ?? []).some(node => node.id === branchId && node.nodeType === 'branch')
+  )
+  if (loopStep) return { type: 'loop', step: loopStep }
+  return null
+}
+
 function createStageConstraint(overrides) {
   return createExecutionNode({
     id: overrides.id,
@@ -280,6 +494,7 @@ const automationTemplates = [
     trigger: {
       type: 'event',
       source: 'wework',
+      collectionMode: 'webhook',
       startMode: 'immediate',
       event: 'created',
       tags: ['自动开发'],
@@ -640,12 +855,21 @@ export function AutomationRulesView({
 
   const dirty = JSON.stringify(draft) !== savedSnapshot
 
+  const viewRef = useRef(view)
+  viewRef.current = view
+  const dirtyRef = useRef(dirty)
+  dirtyRef.current = dirty
+
   useEffect(() => {
     setRules(backendRules)
     setDraft(current => {
       if (!current.persisted) return current
       const refreshed = backendRules.find(rule => rule.id === current.id)
-      return refreshed ? cloneRule(refreshed) : current
+      if (!refreshed) return current
+      // Keep any unsaved work while the editor is open. The rules list can
+      // refresh in the background without clobbering the user's draft.
+      if (viewRef.current === 'editor' && dirtyRef.current) return current
+      return cloneRule(refreshed)
     })
   }, [backendRules])
 
@@ -802,10 +1026,21 @@ export function AutomationRulesView({
       nodes.some(
         node =>
           !node.name.trim() ||
-          (node.kind === 'dynamic' && hasUnnamedNode(node.subgraph?.nodes ?? []))
+          ((node.kind === 'dynamic' || node.kind === 'loop') &&
+            hasUnnamedNode(node.subgraph?.nodes ?? []))
       )
     if (hasUnnamedNode(draft.steps)) {
       notify('请填写所有执行节点名称')
+      return null
+    }
+    const hasEmptyBranchEvent = nodes =>
+      nodes.some(
+        node =>
+          (node.branchConditions ?? []).some(condition => !(condition.eventType ?? '').trim()) ||
+          hasEmptyBranchEvent(node.subgraph?.nodes ?? [])
+      )
+    if (hasEmptyBranchEvent(draft.steps)) {
+      notify('请为每个分支选择事件类型')
       return null
     }
     setSaving(true)
@@ -866,12 +1101,16 @@ export function AutomationRulesView({
     const step =
       kind === 'dynamic'
         ? createDynamicAllocationNode(executionCatalog)
-        : createExecutionNode({
-            ...defaultExecutionConfiguration(executionCatalog),
-            id: `step-${Date.now()}`,
-            name: '',
-            prompt: '',
-          })
+        : kind === 'loop'
+          ? createLoopNode()
+          : kind === 'branch'
+            ? createBranchNode()
+            : createExecutionNode({
+                ...defaultExecutionConfiguration(executionCatalog),
+                id: `step-${Date.now()}`,
+                name: '',
+                prompt: '',
+              })
     updateDraft(current => {
       const anchorIndex = anchorStepId
         ? current.steps.findIndex(candidate => candidate.id === anchorStepId)
@@ -880,11 +1119,21 @@ export function AutomationRulesView({
       if (anchorStepId && !anchor) return current
       if (placement === 'before' && !anchor) return current
 
-      const insertionX = placement === 'before' ? (anchor?.x ?? 440) : anchor ? anchor.x + 420 : 440
+      const anchorSize = anchor
+        ? stepCanvasSize(anchor)
+        : { width: OUTER_NODE_WIDTH, height: OUTER_NODE_HEIGHT }
+      const stepSize = stepCanvasSize(step)
+      const insertionX =
+        placement === 'before'
+          ? (anchor?.x ?? 440)
+          : anchor
+            ? anchor.x + anchorSize.width + OUTER_NODE_GAP
+            : 440
       const insertionY = anchor?.y ?? 226
+      const shift = Math.max(OUTER_NODE_WIDTH + OUTER_NODE_GAP, stepSize.width + OUTER_NODE_GAP)
       const shifted = current.steps.map(candidate =>
         candidate.id !== anchor?.id && candidate.x >= insertionX
-          ? { ...candidate, x: candidate.x + 420 }
+          ? { ...candidate, x: candidate.x + shift }
           : candidate
       )
       const inheritedDependencies =
@@ -947,26 +1196,35 @@ export function AutomationRulesView({
     setSelectedNode({ type: 'step', id: step.id })
   }
 
-  const removeSelectedStep = () => {
-    if (selectedNode.type !== 'step') return
+  const removeStep = (stepId = selectedNode.id) => {
+    if (!stepId) return
     updateDraft(current => {
-      const removed = current.steps.find(step => step.id === selectedNode.id)
+      const removed = current.steps.find(step => step.id === stepId)
       if (!removed) return current
       return {
         ...current,
         steps: current.steps
-          .filter(step => step.id !== selectedNode.id)
+          .filter(step => step.id !== stepId)
           .map(step => {
-            if (!step.dependencies.includes(selectedNode.id)) return step
+            const cleanedConditions = (step.branchConditions ?? [])
+              .map(condition => ({
+                ...condition,
+                handlerNodeIds: condition.handlerNodeIds.filter(id => id !== stepId),
+              }))
+              .filter(condition => condition.handlerNodeIds.length > 0)
+            if (!step.dependencies.includes(stepId)) {
+              return { ...step, branchConditions: cleanedConditions }
+            }
             const dependencies = Array.from(
               new Set([
-                ...step.dependencies.filter(dependencyId => dependencyId !== selectedNode.id),
+                ...step.dependencies.filter(dependencyId => dependencyId !== stepId),
                 ...removed.dependencies,
               ])
             )
             return {
               ...step,
               dependencies,
+              branchConditions: cleanedConditions,
               dependencyContext: Object.fromEntries(
                 dependencies.map(dependencyId => [
                   dependencyId,
@@ -1005,7 +1263,7 @@ export function AutomationRulesView({
           onDraftChange={updateDraft}
           onSave={saveRule}
           onAddStep={addStep}
-          onRemoveStep={removeSelectedStep}
+          onRemoveStep={removeStep}
           onOpenPluginMenu={preparePluginMenu}
         />
       </div>
@@ -1577,6 +1835,20 @@ function WorkflowEditor({
       : null
   const selectedDagStage =
     selectedDagParent?.subgraph?.nodes.find(stage => stage.id === selectedNode.stageId) ?? null
+  const selectedLoopParent =
+    selectedNode.type === 'loopBody'
+      ? (draft.steps.find(step => step.id === selectedNode.loopId) ?? null)
+      : null
+  const selectedLoopBody =
+    selectedLoopParent?.subgraph?.nodes.find(bodyStep => bodyStep.id === selectedNode.bodyId) ??
+    null
+  const eventTypeOptions = useMemo(
+    () =>
+      Array.from(
+        new Set((eventSourceCatalog ?? []).flatMap(source => source.event_types ?? []))
+      ).sort(),
+    [eventSourceCatalog]
+  )
   const hasSelectedNode = selectedNode.type !== 'none'
   const showRightPanel = editorSection === 'runs' || hasSelectedNode
 
@@ -1711,23 +1983,23 @@ function WorkflowEditor({
     onSelectNode({ type: 'dagStage', stepId, stageId: id })
   }
 
-  const removeDagStage = () => {
-    if (!selectedDagParent || !selectedDagStage) return
+  const removeDagStage = (stepId = selectedDagParent?.id, stageId = selectedDagStage?.id) => {
+    if (!stepId || !stageId) return
     onDraftChange(current => ({
       ...current,
       steps: current.steps.map(step =>
-        step.id === selectedDagParent.id
+        step.id === stepId
           ? {
               ...step,
               subgraph: {
                 nodes: step.subgraph.nodes
-                  .filter(stage => stage.id !== selectedDagStage.id)
+                  .filter(stage => stage.id !== stageId)
                   .map(stage => ({
                     ...stage,
-                    dependencies: stage.dependencies.filter(id => id !== selectedDagStage.id),
+                    dependencies: stage.dependencies.filter(id => id !== stageId),
                     dependencyContext: Object.fromEntries(
                       Object.entries(stage.dependencyContext).filter(
-                        ([dependencyId]) => dependencyId !== selectedDagStage.id
+                        ([dependencyId]) => dependencyId !== stageId
                       )
                     ),
                   })),
@@ -1736,7 +2008,7 @@ function WorkflowEditor({
           : step
       ),
     }))
-    onSelectNode({ type: 'step', id: selectedDagParent.id })
+    onSelectNode({ type: 'step', id: stepId })
   }
 
   const toggleDagDependency = (stepId, stageId, dependencyId) => {
@@ -1792,6 +2064,158 @@ function WorkflowEditor({
     }))
   }
 
+  const insertLoopBodyNode = (loopId, anchorBodyId = null, placement = 'after', kind = 'task') => {
+    const bodyStep = createLoopBodyNode(executionCatalog, loopId, kind)
+    onDraftChange(current => ({
+      ...current,
+      steps: current.steps.map(step => {
+        if (step.id !== loopId) return step
+        const body = [...(step.subgraph?.nodes ?? [])]
+        const anchorIndex = anchorBodyId
+          ? body.findIndex(candidate => candidate.id === anchorBodyId)
+          : -1
+        const anchor = anchorIndex >= 0 ? body[anchorIndex] : null
+        const loopStart = body.find(candidate => candidate.nodeType === 'loopStart')
+        const insertionX = anchor ? anchor.x + 260 : 0
+        const insertionY = anchor?.y ?? body.length * 120
+        const inserted = {
+          ...bodyStep,
+          x: insertionX,
+          y: insertionY,
+          dependencies:
+            kind === 'branch' && loopStart ? [loopStart.id] : anchorBodyId ? [anchorBodyId] : [],
+        }
+        const next = [...body]
+        next.splice(
+          anchorIndex >= 0 ? anchorIndex + (placement === 'after' ? 1 : 0) : next.length,
+          0,
+          inserted
+        )
+        return {
+          ...step,
+          bodyNodeIds: [...(step.bodyNodeIds ?? []), inserted.id],
+          subgraph: { nodes: next },
+        }
+      }),
+    }))
+    onSelectNode({ type: 'loopBody', loopId, bodyId: bodyStep.id })
+  }
+
+  const toggleLoopBodyDependency = (loopId, targetBodyId, sourceBodyId) => {
+    onDraftChange(current => ({
+      ...current,
+      steps: current.steps.map(step => {
+        if (step.id !== loopId) return step
+        return {
+          ...step,
+          subgraph: {
+            nodes: (step.subgraph?.nodes ?? []).map(bodyStep =>
+              bodyStep.id === targetBodyId
+                ? {
+                    ...bodyStep,
+                    dependencies: bodyStep.dependencies.includes(sourceBodyId)
+                      ? bodyStep.dependencies.filter(id => id !== sourceBodyId)
+                      : [...bodyStep.dependencies, sourceBodyId],
+                    dependencyContext: bodyStep.dependencies.includes(sourceBodyId)
+                      ? Object.fromEntries(
+                          Object.entries(bodyStep.dependencyContext ?? {}).filter(
+                            ([id]) => id !== sourceBodyId
+                          )
+                        )
+                      : {
+                          ...(bodyStep.dependencyContext ?? {}),
+                          [sourceBodyId]: ['final_result', 'deliveries'],
+                        },
+                  }
+                : bodyStep
+            ),
+          },
+        }
+      }),
+    }))
+  }
+
+  const moveLoopBodyNode = (loopId, bodyId, x, y) => {
+    onDraftChange(current => ({
+      ...current,
+      steps: current.steps.map(step =>
+        step.id === loopId
+          ? {
+              ...step,
+              subgraph: {
+                nodes: (step.subgraph?.nodes ?? []).map(bodyStep =>
+                  bodyStep.id === bodyId ? { ...bodyStep, x, y } : bodyStep
+                ),
+              },
+            }
+          : step
+      ),
+    }))
+  }
+
+  const updateLoopBodyStep = (key, value) => {
+    if (selectedNode.type !== 'loopBody') return
+    onDraftChange(current => ({
+      ...current,
+      steps: current.steps.map(step =>
+        step.id === selectedNode.loopId
+          ? {
+              ...step,
+              subgraph: {
+                nodes: (step.subgraph?.nodes ?? []).map(bodyStep =>
+                  bodyStep.id === selectedNode.bodyId ? { ...bodyStep, [key]: value } : bodyStep
+                ),
+              },
+            }
+          : step
+      ),
+    }))
+  }
+
+  const removeLoopBodyStep = (loopId = selectedNode.loopId, bodyId = selectedNode.bodyId) => {
+    if (!loopId || !bodyId) return
+    onDraftChange(current => ({
+      ...current,
+      steps: current.steps.map(step => {
+        if (step.id !== loopId) return step
+        return {
+          ...step,
+          bodyNodeIds: (step.bodyNodeIds ?? []).filter(id => id !== bodyId),
+          subgraph: {
+            nodes: (step.subgraph?.nodes ?? [])
+              .filter(bodyStep => bodyStep.id !== bodyId)
+              .map(bodyStep => ({
+                ...bodyStep,
+                dependencies: bodyStep.dependencies.filter(id => id !== bodyId),
+                dependencyContext: Object.fromEntries(
+                  Object.entries(bodyStep.dependencyContext ?? {}).filter(([id]) => id !== bodyId)
+                ),
+                branchConditions: (bodyStep.branchConditions ?? []).map(condition => ({
+                  ...condition,
+                  handlerNodeIds: condition.handlerNodeIds.filter(id => id !== bodyId),
+                })),
+              })),
+          },
+        }
+      }),
+    }))
+    onSelectNode({ type: 'none' })
+  }
+
+  const deleteCanvasNode = node => {
+    if (node.type === 'dagStage') {
+      const [, stepId, stageId] = node.id.split(':')
+      removeDagStage(stepId, stageId)
+      return
+    }
+    if (node.type === 'loopBody' || node.type === 'loopBranch' || node.type === 'loopMarker') {
+      const [, loopId, bodyId] = node.id.split(':')
+      removeLoopBodyStep(loopId, bodyId)
+      return
+    }
+    onRemoveStep(node.id)
+  }
+
   const toggleStepDependency = (targetId, dependencyId) => {
     onDraftChange(current => ({
       ...current,
@@ -1821,6 +2245,79 @@ function WorkflowEditor({
       ...current,
       steps: current.steps.map(step => (step.id === stepId ? { ...step, x, y } : step)),
     }))
+  }
+
+  const addBranchHandler = (
+    branchId,
+    { kind = 'task', eventType = '', sourceType = '', collectionMode = '', select = 'branch' }
+  ) => {
+    const branchOwner = findBranchOwner(draft.steps, branchId)
+    if (!branchOwner) return
+
+    let handlerNode
+    let handlerId
+    if (branchOwner.type === 'top') {
+      handlerId = `step-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
+      handlerNode = createBranchHandlerNode(executionCatalog, kind, handlerId)
+    } else {
+      handlerNode = createLoopBranchHandlerNode(executionCatalog, branchOwner.step.id, kind)
+      handlerId = handlerNode.id
+    }
+
+    if (branchOwner.type === 'top') {
+      onDraftChange(current => {
+        const result = insertStepAfter(current.steps, branchId, handlerNode, {
+          gap: BRANCH_HANDLER_COLUMN_GAP,
+          condition: { eventType, sourceType, collectionMode },
+          stack: true,
+        })
+        if (!result) return current
+        return { ...current, steps: result.container }
+      })
+    } else {
+      onDraftChange(current => ({
+        ...current,
+        steps: current.steps.map(step => {
+          if (step.id !== branchOwner.step.id) return step
+          const result = insertStepAfter(step.subgraph?.nodes ?? [], branchId, handlerNode, {
+            gap: LOOP_BODY_HANDLER_COLUMN_GAP,
+            condition: { eventType, sourceType, collectionMode },
+            stack: true,
+            nodeSize: loopBodyNodeSize,
+          })
+          if (!result) return step
+          return {
+            ...step,
+            bodyNodeIds: [...(step.bodyNodeIds ?? []), result.nodeId],
+            subgraph: { nodes: result.container },
+          }
+        }),
+      }))
+    }
+
+    if (select === 'handler') {
+      if (branchOwner.type === 'top') onSelectNode({ type: 'step', id: handlerId })
+      else onSelectNode({ type: 'loopBody', loopId: branchOwner.step.id, bodyId: handlerId })
+    } else {
+      if (branchOwner.type === 'top') onSelectNode({ type: 'step', id: branchId })
+      else onSelectNode({ type: 'loopBody', loopId: branchOwner.step.id, bodyId: branchId })
+    }
+  }
+
+  const addBranchContinuation = (branchId, kind = 'task') => {
+    const branchOwner = findBranchOwner(draft.steps, branchId)
+    if (!branchOwner || branchOwner.type !== 'top') return
+
+    const nodeId = `step-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
+    const continuationNode = createBranchHandlerNode(executionCatalog, kind, nodeId)
+    onDraftChange(current => {
+      const result = insertStepAfter(current.steps, branchId, continuationNode, {
+        gap: BRANCH_HANDLER_COLUMN_GAP,
+      })
+      if (!result) return current
+      return { ...current, steps: result.container }
+    })
+    onSelectNode({ type: 'step', id: nodeId })
   }
 
   const insertNode = (anchorStepId, placement, kind) => {
@@ -1942,11 +2439,19 @@ function WorkflowEditor({
               selectedNode={selectedNode}
               onSelectNode={onSelectNode}
               onInsertNode={insertNode}
+              onAddBranchHandler={addBranchHandler}
+              onAddBranchContinuation={addBranchContinuation}
+              eventTypeOptions={eventTypeOptions}
+              eventSourceCatalog={eventSourceCatalog}
               onAddDagStage={addDagStage}
               onToggleDagDependency={toggleDagDependency}
               onMoveDagStage={moveDagStage}
               onToggleStepDependency={toggleStepDependency}
               onMoveStep={moveStep}
+              onInsertLoopBodyNode={insertLoopBodyNode}
+              onToggleLoopBodyDependency={toggleLoopBodyDependency}
+              onMoveLoopBodyNode={moveLoopBodyNode}
+              onDeleteNode={deleteCanvasNode}
             />
           </main>
         ) : (
@@ -1973,7 +2478,11 @@ function WorkflowEditor({
                   <span
                     className={automationClass(
                       `node-icon ${
-                        selectedStep?.kind === 'dynamic' ? 'coordinator' : selectedNode.type
+                        selectedStep?.kind === 'branch' || selectedLoopBody?.nodeType === 'branch'
+                          ? 'branch'
+                          : selectedStep?.kind === 'dynamic' || selectedStep?.kind === 'loop'
+                            ? 'coordinator'
+                            : selectedNode.type
                       }`
                     )}
                   >
@@ -1981,6 +2490,16 @@ function WorkflowEditor({
                       <TriggerIcon size={17} />
                     ) : selectedStep?.kind === 'dynamic' ? (
                       <Sparkles size={17} />
+                    ) : selectedStep?.kind === 'loop' ? (
+                      <Repeat size={17} />
+                    ) : selectedStep?.kind === 'branch' ? (
+                      <Webhook size={17} />
+                    ) : selectedLoopBody?.nodeType === 'branch' ? (
+                      <Webhook size={17} />
+                    ) : selectedLoopBody?.nodeType === 'loopStart' ? (
+                      <CircleDot size={17} />
+                    ) : selectedLoopBody?.nodeType === 'loopEnd' ? (
+                      <Flag size={17} />
                     ) : (
                       <Box size={17} />
                     )}
@@ -1993,7 +2512,19 @@ function WorkflowEditor({
                           ? selectedDagStage.name
                           : selectedStep?.kind === 'dynamic'
                             ? 'AI 动态分配'
-                            : selectedStep?.name || '未命名执行节点'}
+                            : selectedStep?.kind === 'loop'
+                              ? selectedStep?.name || '未命名循环'
+                              : selectedStep?.kind === 'branch'
+                                ? selectedStep?.name || '分支'
+                                : selectedLoopBody?.nodeType === 'branch'
+                                  ? selectedLoopBody.name || '分支'
+                                  : selectedLoopBody?.nodeType === 'loopStart'
+                                    ? selectedLoopBody.name || '循环开始'
+                                    : selectedLoopBody?.nodeType === 'loopEnd'
+                                      ? selectedLoopBody.name || '循环结束'
+                                      : selectedLoopBody
+                                        ? selectedLoopBody.name || '循环体内执行节点'
+                                        : selectedStep?.name || '未命名执行节点'}
                     </strong>
                     <small>
                       {selectedNode.type === 'trigger'
@@ -2002,7 +2533,19 @@ function WorkflowEditor({
                           ? 'DAG 子图执行节点'
                           : selectedStep?.kind === 'dynamic'
                             ? '运行时拆解并分配具体任务'
-                            : '执行节点设置'}
+                            : selectedStep?.kind === 'loop'
+                              ? '循环等待事件并反复处理'
+                              : selectedStep?.kind === 'branch'
+                                ? '等待事件并按条件路由'
+                                : selectedLoopBody?.nodeType === 'branch'
+                                  ? '等待事件并按条件路由'
+                                  : selectedLoopBody?.nodeType === 'loopStart'
+                                    ? '循环体入口'
+                                    : selectedLoopBody?.nodeType === 'loopEnd'
+                                      ? '执行到这里跳出循环'
+                                      : selectedLoopBody
+                                        ? '循环体内的执行节点'
+                                        : '执行节点设置'}
                     </small>
                   </div>
                   <button
@@ -2079,7 +2622,7 @@ function WorkflowEditor({
                           step={selectedDagStage}
                           executionCatalog={executionCatalog}
                           onChange={updateDagStage}
-                          onDelete={removeDagStage}
+                          onDelete={() => removeDagStage()}
                           onOpenPluginMenu={onOpenPluginMenu}
                           constraint
                           supplemental={
@@ -2096,7 +2639,75 @@ function WorkflowEditor({
                         coordinator={selectedStep}
                         executionCatalog={executionCatalog}
                         onChange={updateStep}
-                        onDelete={onRemoveStep}
+                        onDelete={() => onRemoveStep()}
+                        onOpenPluginMenu={onOpenPluginMenu}
+                      />
+                    ) : selectedStep?.kind === 'loop' ? (
+                      <LoopSettings
+                        step={selectedStep}
+                        onChange={updateStep}
+                        onDelete={() => onRemoveStep()}
+                      />
+                    ) : selectedStep?.kind === 'branch' ? (
+                      <BranchSettings
+                        step={selectedStep}
+                        bodyNodes={draft.steps}
+                        eventTypeOptions={eventTypeOptions}
+                        eventSourceCatalog={eventSourceCatalog}
+                        onChange={updateStep}
+                        onDelete={() => onRemoveStep()}
+                        onAddBranchHandler={addBranchHandler}
+                      />
+                    ) : selectedLoopBody?.nodeType === 'branch' ? (
+                      <BranchSettings
+                        step={selectedLoopBody}
+                        bodyNodes={selectedLoopParent?.subgraph?.nodes ?? []}
+                        eventTypeOptions={eventTypeOptions}
+                        eventSourceCatalog={eventSourceCatalog}
+                        onChange={updateLoopBodyStep}
+                        onDelete={() => removeLoopBodyStep()}
+                        onAddBranchHandler={addBranchHandler}
+                      />
+                    ) : selectedLoopBody?.nodeType === 'loopStart' ? (
+                      <div className={automationClass('panel-settings')}>
+                        <p className={automationClass('execution-hint')}>
+                          循环开始是循环体的入口节点。循环每次回到这里开始新一轮等待与处理，不可删除。
+                        </p>
+                      </div>
+                    ) : selectedLoopBody?.nodeType === 'loopEnd' ? (
+                      <div className={automationClass('panel-settings')}>
+                        <label className={automationClass('panel-field')}>
+                          <span>
+                            <Flag size={14} />
+                            节点名称
+                          </span>
+                          <input
+                            data-testid="loop-end-node-name"
+                            value={selectedLoopBody.name}
+                            onChange={event => updateLoopBodyStep('name', event.target.value)}
+                          />
+                        </label>
+                        <p className={automationClass('execution-hint')}>
+                          执行到这里会跳出整个循环，继续循环节点之后的工作流。
+                        </p>
+                        <div className={automationClass('panel-danger-zone compact')}>
+                          <button
+                            type="button"
+                            className={automationClass('delete-step')}
+                            data-testid="loop-end-node-delete"
+                            onClick={removeLoopBodyStep}
+                          >
+                            <Trash2 size={14} />
+                            删除循环结束
+                          </button>
+                        </div>
+                      </div>
+                    ) : selectedLoopBody ? (
+                      <StepSettings
+                        step={selectedLoopBody}
+                        executionCatalog={executionCatalog}
+                        onChange={updateLoopBodyStep}
+                        onDelete={() => removeLoopBodyStep()}
                         onOpenPluginMenu={onOpenPluginMenu}
                       />
                     ) : (
@@ -2104,7 +2715,7 @@ function WorkflowEditor({
                         step={selectedStep}
                         executionCatalog={executionCatalog}
                         onChange={updateStep}
-                        onDelete={onRemoveStep}
+                        onDelete={() => onRemoveStep()}
                         onOpenPluginMenu={onOpenPluginMenu}
                       />
                     )}
@@ -2283,19 +2894,35 @@ function TriggerSettings({
   const presentation = triggerPresentation(trigger, t)
   const TriggerIcon = trigger.type === 'schedule' ? Clock3 : Webhook
   const startMode = trigger.startMode ?? 'immediate'
-  const triggerKind = trigger.type === 'schedule' ? 'schedule' : trigger.source
+  const isSchedule = trigger.type === 'schedule'
+  const isWework = trigger.source === 'wework'
+  const isGeneric = trigger.source === 'generic'
+  const collectionMode = trigger.collectionMode ?? 'webhook'
+  const triggerKind = isSchedule
+    ? 'schedule'
+    : isWework
+      ? 'wework'
+      : isGeneric
+        ? 'generic'
+        : collectionMode
   const selectedSource = eventSourceCatalog.find(source => source.sourceType === trigger.source)
-  const catalogWework = eventSourceCatalog.find(source => source.sourceType === 'wework')
-  const sourceTriggerOptions = [
-    catalogWework ?? { sourceType: 'wework', eventTypes: [], executionTargets: [] },
-    ...eventSourceCatalog.filter(
-      item => item.sourceType !== 'generic' && item.sourceType !== 'wework'
-    ),
-  ]
+  const platformSources = mode =>
+    eventSourceCatalog.filter(
+      item =>
+        item.sourceType !== 'wework' &&
+        item.sourceType !== 'generic' &&
+        (item.collectionModes ?? []).includes(mode)
+    )
+  const candidatePlatforms = platformSources(triggerKind)
+  const hasPlatformStep =
+    (triggerKind === 'webhook' || triggerKind === 'poll') && candidatePlatforms.length > 0
+  const selectedPlatforms = hasPlatformStep ? candidatePlatforms : []
   const sourceLabel = sourceType => {
     const labels = {
       schedule: t('todo.automation_trigger_schedule_label'),
       wework: t('todo.automation_trigger_wework_label'),
+      webhook: t('todo.automation_trigger_webhook_label'),
+      poll: t('todo.automation_trigger_poll_label'),
       github: t('todo.automation_trigger_github_label'),
       gitlab: t('todo.automation_trigger_gitlab_label'),
       generic: t('todo.automation_trigger_generic_label'),
@@ -2319,6 +2946,38 @@ function TriggerSettings({
     onChange('subscriptionId', subscriptionId)
     onChange('event', selectedSource?.eventTypes[0] ?? 'change_request.checks_failed')
     onChange('executionTarget', selectedSource?.executionTargets[0] ?? 'continue_binding')
+  }
+
+  const applyPlatform = sourceType => {
+    const source = eventSourceCatalog.find(item => item.sourceType === sourceType)
+    onChange('source', sourceType)
+    onChange('subscriptionId', null)
+    onChange('event', source?.eventTypes[0] ?? 'change_request.checks_failed')
+    onChange('executionTarget', source?.executionTargets[0] ?? 'continue_binding')
+  }
+
+  const handleTriggerKindChange = value => {
+    if (value === 'schedule') {
+      onChange('type', 'schedule')
+      return
+    }
+    onChange('type', 'event')
+    if (value === 'wework') {
+      onChange('source', 'wework')
+      onChange('collectionMode', null)
+      onChange('subscriptionId', null)
+      onChange('event', trigger.startMode === 'status' ? 'status_changed' : 'created')
+      return
+    }
+    // Webhook and polling are collection mechanisms; keep the current platform
+    // when it supports the new mechanism and fall back to the first one otherwise.
+    const platforms = platformSources(value)
+    const nextSource =
+      selectedSource && platforms.some(item => item.sourceType === selectedSource.sourceType)
+        ? selectedSource.sourceType
+        : (platforms[0]?.sourceType ?? 'github')
+    onChange('collectionMode', value)
+    applyPlatform(nextSource)
   }
 
   return (
@@ -2347,32 +3006,13 @@ function TriggerSettings({
         <select
           data-testid="automation-trigger-type"
           value={triggerKind}
-          onChange={event => {
-            const value = event.target.value
-            if (value === 'schedule') {
-              onChange('type', 'schedule')
-              return
-            }
-            const source = eventSourceCatalog.find(item => item.sourceType === value)
-            onChange('type', 'event')
-            onChange('source', value)
-            if (value === 'wework') {
-              onChange('subscriptionId', null)
-              onChange('event', trigger.startMode === 'status' ? 'status_changed' : 'created')
-              return
-            }
-            onChange('subscriptionId', null)
-            onChange('event', source?.eventTypes[0] ?? 'change_request.checks_failed')
-            onChange('executionTarget', source?.executionTargets[0] ?? 'continue_binding')
-          }}
+          onChange={event => handleTriggerKindChange(event.target.value)}
         >
           <option value="schedule">{t('todo.automation_trigger_schedule_label')}</option>
-          {sourceTriggerOptions.map(item => (
-            <option key={item.sourceType} value={item.sourceType}>
-              {sourceLabel(item.sourceType)}
-            </option>
-          ))}
-          {trigger.source === 'generic' ? (
+          <option value="wework">{t('todo.automation_trigger_wework_label')}</option>
+          <option value="webhook">{t('todo.automation_trigger_webhook_label')}</option>
+          <option value="poll">{t('todo.automation_trigger_poll_label')}</option>
+          {isGeneric ? (
             <option value="generic" disabled>
               {t('todo.automation_trigger_generic_label')}
             </option>
@@ -2449,19 +3089,39 @@ function TriggerSettings({
         </section>
       ) : trigger.source !== 'wework' ? (
         <section className={automationClass('schedule-settings')}>
+          {selectedPlatforms.length ? (
+            <label className={automationClass('panel-field')}>
+              <span>
+                <i className={automationClass('cascade-index')}>2</i>
+                {t('todo.automation_trigger_platform')}
+              </span>
+              <select
+                data-testid="automation-trigger-platform"
+                value={trigger.source}
+                onChange={event => applyPlatform(event.target.value)}
+              >
+                {selectedPlatforms.map(item => (
+                  <option key={item.sourceType} value={item.sourceType}>
+                    {sourceLabel(item.sourceType)}
+                  </option>
+                ))}
+              </select>
+            </label>
+          ) : null}
           <EventSubscriptionManager
-            key={trigger.source}
+            key={`${collectionMode}:${trigger.source}`}
             api={projectIncomingHookApi}
             projectId={projectId}
             sourceType={trigger.source}
+            collectionMode={collectionMode}
             sourceLabel={sourceLabel}
-            catalog={selectedSource}
+            cascadeIndex={hasPlatformStep ? 3 : 2}
             value={trigger.subscriptionId}
             onChange={handleSubscriptionChange}
           />
           <label className={automationClass('panel-field')}>
             <span>
-              <i className={automationClass('cascade-index')}>3</i>
+              <i className={automationClass('cascade-index')}>{hasPlatformStep ? 4 : 3}</i>
               {t('todo.automation_event_type')}
             </span>
             <select
@@ -2476,9 +3136,17 @@ function TriggerSettings({
               ))}
             </select>
           </label>
+          {trigger.event === 'change_request.comment_created' ? (
+            <p
+              className={automationClass('execution-hint')}
+              data-testid="automation-event-comment-loop-hint"
+            >
+              {t('todo.automation_event_comment_loop_hint')}
+            </p>
+          ) : null}
           <label className={automationClass('panel-field')}>
             <span>
-              <i className={automationClass('cascade-index')}>4</i>
+              <i className={automationClass('cascade-index')}>{hasPlatformStep ? 5 : 4}</i>
               {t('todo.automation_execution_target')}
             </span>
             <select
@@ -2864,6 +3532,372 @@ function CoordinatorSettings({
         >
           <Trash2 size={14} />
           删除 AI 动态分配节点
+        </button>
+      </div>
+    </div>
+  )
+}
+
+function LoopSettings({ step, onChange, onDelete }) {
+  const loopConfig = normalizeLoopConfig(step.loopConfig)
+  const updateLoopConfig = next => onChange('loopConfig', next)
+  return (
+    <div className={automationClass('panel-settings')}>
+      <label className={automationClass('panel-field')}>
+        <span>
+          <Repeat size={14} />
+          循环名称
+        </span>
+        <input
+          data-testid="loop-node-name"
+          value={step.name}
+          placeholder="例如：修复 CI 直到合入"
+          onChange={event => onChange('name', event.target.value)}
+        />
+      </label>
+
+      <div className={automationClass('node-model-settings')}>
+        <label className={automationClass('panel-field')}>
+          <span>
+            <Repeat size={14} />
+            最大循环次数（0 = 无限）
+          </span>
+          <input
+            data-testid="loop-max-attempts"
+            type="number"
+            min={0}
+            value={loopConfig.maxAttempts}
+            onChange={event =>
+              updateLoopConfig({
+                ...loopConfig,
+                maxAttempts: Math.max(0, Number(event.target.value) || 0),
+              })
+            }
+          />
+        </label>
+        <label className={automationClass('panel-field')}>
+          <span>
+            <Clock3 size={14} />
+            超时秒数（留空关闭）
+          </span>
+          <input
+            data-testid="loop-timeout-seconds"
+            type="number"
+            min={1}
+            value={loopConfig.timeoutSeconds ?? ''}
+            placeholder="关闭"
+            onChange={event =>
+              updateLoopConfig({
+                ...loopConfig,
+                timeoutSeconds:
+                  event.target.value === '' ? null : Math.max(1, Number(event.target.value) || 1),
+              })
+            }
+          />
+        </label>
+      </div>
+      <p className={automationClass('execution-hint')}>
+        循环从「循环开始」进入；执行到「循环结束」、达到最大循环次数或超时即退出；也可用强行推进人工跳出。
+      </p>
+      <div className={automationClass('panel-danger-zone compact')}>
+        <button
+          type="button"
+          className={automationClass('delete-step')}
+          data-testid="loop-node-delete"
+          onClick={onDelete}
+        >
+          <Trash2 size={14} />
+          删除循环
+        </button>
+      </div>
+    </div>
+  )
+}
+
+const branchHandlerPresentation = {
+  task: { label: '执行任务', Icon: Box },
+  dynamic: { label: 'AI 动态分配', Icon: Sparkles },
+  loop: { label: '循环', Icon: Repeat },
+  branch: { label: '分支', Icon: Webhook },
+}
+
+function normalizeLoopConfig(config) {
+  return {
+    maxAttempts: Number.isFinite(config?.maxAttempts) ? config.maxAttempts : 5,
+    timeoutSeconds: config?.timeoutSeconds ?? null,
+  }
+}
+
+function BranchSettings({
+  step,
+  bodyNodes,
+  eventTypeOptions,
+  eventSourceCatalog = [],
+  onChange,
+  onDelete,
+  onAddBranchHandler,
+}) {
+  const { t } = useTranslation('common')
+  const conditions = step.branchConditions ?? []
+  const updateCondition = (index, key, value) => {
+    onChange(
+      'branchConditions',
+      conditions.map((condition, candidate) =>
+        candidate === index ? { ...condition, [key]: value } : condition
+      )
+    )
+  }
+  const patchCondition = (index, patch) => {
+    onChange(
+      'branchConditions',
+      conditions.map((condition, candidate) =>
+        candidate === index ? { ...condition, ...patch } : condition
+      )
+    )
+  }
+  const removeHandler = (index, handlerId) => {
+    const condition = conditions[index]
+    updateCondition(
+      index,
+      'handlerNodeIds',
+      condition.handlerNodeIds.filter(id => id !== handlerId)
+    )
+  }
+  const platformSources = mode =>
+    eventSourceCatalog.filter(
+      item =>
+        item.sourceType !== 'wework' &&
+        item.sourceType !== 'generic' &&
+        (item.collectionModes ?? []).includes(mode)
+    )
+  const changeConditionMode = (index, mode) => {
+    const fallback = platformSources(mode)[0]
+    patchCondition(index, {
+      collectionMode: mode,
+      sourceType: fallback?.sourceType ?? '',
+      eventType: fallback?.eventTypes?.[0] ?? '',
+    })
+  }
+  const changeConditionPlatform = (index, sourceType) => {
+    const source = eventSourceCatalog.find(item => item.sourceType === sourceType)
+    patchCondition(index, {
+      sourceType,
+      eventType: source?.eventTypes?.[0] ?? '',
+    })
+  }
+  return (
+    <div className={automationClass('panel-settings')}>
+      <label className={automationClass('panel-field')}>
+        <span>
+          <Webhook size={14} />
+          分支名称
+        </span>
+        <input
+          data-testid="branch-node-name"
+          value={step.name}
+          onChange={event => onChange('name', event.target.value)}
+        />
+      </label>
+      <p className={automationClass('execution-hint')}>
+        分支节点会等待事件出现；命中条件后路由到对应处理节点。位于循环体内时，处理完回到分支继续等待，直到循环结束；位于主流程时，处理完成后分支结束。
+      </p>
+      <div className={automationClass('branch-conditions')}>
+        <span className={automationClass('branch-conditions-heading')}>分支条件</span>
+        {conditions.length === 0 ? (
+          <div className={automationClass('branch-conditions-empty')}>
+            还没有分支，可通过画布中的「新建分支」或右侧加号添加。
+          </div>
+        ) : (
+          conditions.map((condition, index) => {
+            const handlerNodes = (condition.handlerNodeIds ?? [])
+              .map(handlerId => bodyNodes.find(candidate => candidate.id === handlerId))
+              .filter(Boolean)
+            const candidateNodes = bodyNodes.filter(
+              candidate =>
+                candidate.id !== step.id &&
+                candidate.kind === 'task' &&
+                (!candidate.nodeType || candidate.nodeType === 'task') &&
+                !condition.handlerNodeIds.includes(candidate.id)
+            )
+            const conditionMode = condition.collectionMode || 'webhook'
+            const candidatePlatforms = platformSources(conditionMode)
+            const hasPlatforms = candidatePlatforms.length > 0
+            const selectedSource = eventSourceCatalog.find(
+              item =>
+                item.sourceType === condition.sourceType &&
+                (item.collectionModes ?? []).includes(conditionMode)
+            )
+            const sourceEventTypes = selectedSource?.eventTypes?.length
+              ? selectedSource.eventTypes
+              : eventTypeOptions
+            const sourceLabel = sourceType => {
+              const labels = {
+                webhook: t('todo.automation_trigger_webhook_label'),
+                poll: t('todo.automation_trigger_poll_label'),
+                github: t('todo.automation_trigger_github_label'),
+                gitlab: t('todo.automation_trigger_gitlab_label'),
+              }
+              return labels[sourceType] ?? sourceType
+            }
+            return (
+              <div className={automationClass('branch-condition-card')} key={`condition-${index}`}>
+                <div className={automationClass('branch-condition-head')}>
+                  <em>分支 {index + 1}</em>
+                  <button
+                    type="button"
+                    className={automationClass('branch-condition-remove')}
+                    data-testid={`branch-condition-remove-${index}`}
+                    aria-label={`移除分支 ${index + 1}`}
+                    onClick={() =>
+                      onChange(
+                        'branchConditions',
+                        conditions.filter((_, candidate) => candidate !== index)
+                      )
+                    }
+                  >
+                    <Trash2 size={13} />
+                  </button>
+                </div>
+                <div className={automationClass('branch-condition-source')}>
+                  <label className={automationClass('panel-field')}>
+                    <span>
+                      <i className={automationClass('cascade-index')}>1</i>
+                      触发来源
+                    </span>
+                    <select
+                      data-testid={`branch-condition-source-${index}`}
+                      value={conditionMode}
+                      onChange={event => changeConditionMode(index, event.target.value)}
+                    >
+                      <option value="webhook">{t('todo.automation_trigger_webhook_label')}</option>
+                      <option value="poll">{t('todo.automation_trigger_poll_label')}</option>
+                    </select>
+                  </label>
+                  {hasPlatforms ? (
+                    <label className={automationClass('panel-field')}>
+                      <span>
+                        <i className={automationClass('cascade-index')}>2</i>
+                        {t('todo.automation_trigger_platform')}
+                      </span>
+                      <select
+                        data-testid={`branch-condition-platform-${index}`}
+                        value={condition.sourceType ?? ''}
+                        onChange={event => changeConditionPlatform(index, event.target.value)}
+                      >
+                        {candidatePlatforms.map(item => (
+                          <option key={item.sourceType} value={item.sourceType}>
+                            {sourceLabel(item.sourceType)}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                  ) : null}
+                  <label className={automationClass('panel-field')}>
+                    <span>
+                      <i className={automationClass('cascade-index')}>{hasPlatforms ? 3 : 2}</i>
+                      事件类型
+                    </span>
+                    <select
+                      data-testid={`branch-condition-event-${index}`}
+                      value={condition.eventType}
+                      onChange={event => updateCondition(index, 'eventType', event.target.value)}
+                    >
+                      <option value="">选择事件</option>
+                      {sourceEventTypes.map(eventType => (
+                        <option key={eventType} value={eventType}>
+                          {eventTypeLabel(eventType, t)}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                </div>
+                <div className={automationClass('branch-condition-handlers')}>
+                  <span>处理节点</span>
+                  <div className={automationClass('branch-handler-chips')}>
+                    {handlerNodes.length === 0 ? (
+                      <small className={automationClass('branch-handler-empty')}>
+                        尚未指定处理节点
+                      </small>
+                    ) : (
+                      handlerNodes.map(handler => {
+                        const { Icon } =
+                          branchHandlerPresentation[handler.kind] ?? branchHandlerPresentation.task
+                        return (
+                          <span className={automationClass('branch-handler-chip')} key={handler.id}>
+                            <Icon size={12} />
+                            <em>{handler.name || '未命名节点'}</em>
+                            <button
+                              type="button"
+                              aria-label={`移除处理节点 ${handler.name || '未命名节点'}`}
+                              onClick={() => removeHandler(index, handler.id)}
+                            >
+                              <X size={12} />
+                            </button>
+                          </span>
+                        )
+                      })
+                    )}
+                  </div>
+                  {candidateNodes.length > 0 ? (
+                    <PopupMenu
+                      testId={`branch-add-handler-${index}`}
+                      trigger={
+                        <span className={automationClass('branch-add-handler')}>
+                          <Plus size={13} />
+                          指定已有节点
+                        </span>
+                      }
+                    >
+                      {close => (
+                        <>
+                          {candidateNodes.map(candidate => (
+                            <button
+                              type="button"
+                              key={candidate.id}
+                              className="flex h-8 w-full items-center gap-2 rounded-lg px-2.5 text-left text-xs text-text-secondary hover:bg-muted hover:text-text-primary"
+                              data-testid={`branch-add-handler-${index}-${candidate.id}`}
+                              onClick={() => {
+                                updateCondition(index, 'handlerNodeIds', [
+                                  ...condition.handlerNodeIds,
+                                  candidate.id,
+                                ])
+                                close()
+                              }}
+                            >
+                              <Box size={14} />
+                              {candidate.name || '未命名节点'}
+                            </button>
+                          ))}
+                        </>
+                      )}
+                    </PopupMenu>
+                  ) : null}
+                </div>
+              </div>
+            )
+          })
+        )}
+      </div>
+      <button
+        type="button"
+        className={automationClass('branch-add-condition')}
+        data-testid="branch-add-condition"
+        onClick={() =>
+          onAddBranchHandler(step.id, { kind: 'task', eventType: '', select: 'branch' })
+        }
+      >
+        <Plus size={14} />
+        新建分支
+      </button>
+      <div className={automationClass('panel-danger-zone compact')}>
+        <button
+          type="button"
+          className={automationClass('delete-step')}
+          data-testid="branch-node-delete"
+          onClick={onDelete}
+        >
+          <Trash2 size={14} />
+          删除分支节点
         </button>
       </div>
     </div>

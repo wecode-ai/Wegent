@@ -37,7 +37,6 @@ AutomationEventType = Literal[
     "change_request.checks_failed",
     "change_request.merge_conflict",
     "change_request.review_submitted",
-    "change_request.approved",
     "change_request.comment_created",
     "document.changed",
 ]

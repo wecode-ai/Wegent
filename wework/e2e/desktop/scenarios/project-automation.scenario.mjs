@@ -203,6 +203,7 @@ const EVENT_SOURCE_CATALOG = [
       'change_request.merge_conflict',
       'change_request.review_submitted',
       'change_request.comment_created',
+      'change_request.merged',
     ],
     executionTargets: ['continue_binding', 'create_issue'],
     nameKey: 'event_sources.github.name',
@@ -215,8 +216,8 @@ const EVENT_SOURCE_CATALOG = [
     eventTypes: [
       'change_request.checks_failed',
       'change_request.merge_conflict',
-      'change_request.review_submitted',
       'change_request.comment_created',
+      'change_request.merged',
     ],
     executionTargets: ['continue_binding', 'create_issue'],
     nameKey: 'event_sources.gitlab.name',
@@ -1783,6 +1784,62 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
     )
     assert.equal(unifiedGraphNodes[1].kind, 'dynamic')
     assert.equal(unifiedGraphNodes[1].subgraph.nodes.length, 1)
+
+    await control.command('click', '[data-testid="automation-editor-back"]')
+    await control.command('waitFor', '[data-testid="automation-create-rule"]', {
+      timeoutMs: uiTimeoutMs,
+      visible: true,
+    })
+    await control.command('click', '[data-testid="automation-create-rule"]')
+    await control.command('waitFor', '[data-testid="automation-rule-editor"]', {
+      timeoutMs: uiTimeoutMs,
+    })
+    await control.command('click', '[data-testid="automation-node-insert-after-trigger"]')
+    await control.command('click', '[data-testid="automation-node-insert-after-loop-trigger"]')
+    await control.command('waitFor', '[data-testid^="automation-node-insert-after-loop-start-"]', {
+      timeoutMs: uiTimeoutMs,
+      visible: true,
+    })
+    await control.command('click', '[data-testid^="automation-node-insert-after-loop-start-"]')
+    await control.command(
+      'click',
+      '[data-testid^="automation-node-insert-after-branch-loop-start-"]'
+    )
+    const loopBranchSnapshot = await waitForValue(
+      async () =>
+        JSON.parse(await control.command('snapshot', '[data-testid="automation-rule-editor"]')),
+      snapshot => snapshot.testIds.some(testId => testId.startsWith('loop-body-node-loop-body-')),
+      'The loop branch node was not created',
+      uiTimeoutMs
+    )
+    const loopBranchTestId = loopBranchSnapshot.testIds.find(testId =>
+      testId.startsWith('loop-body-node-loop-body-')
+    )
+    const loopBranchId = loopBranchTestId.replace('loop-body-node-', '')
+    await control.command('click', `[data-testid="automation-node-insert-after-${loopBranchId}"]`)
+    await control.command(
+      'click',
+      `[data-testid="automation-node-insert-after-branch-${loopBranchId}"]`
+    )
+    await waitForValue(
+      async () =>
+        JSON.parse(await control.command('snapshot', '[data-testid="automation-rule-editor"]')),
+      snapshot =>
+        snapshot.testIds.filter(testId => testId.startsWith('loop-body-node-loop-body-')).length ===
+        2,
+      'The loop branch right-side plus did not create another branch node',
+      uiTimeoutMs
+    )
+    await control.command('click', `[data-testid="automation-node-insert-after-${loopBranchId}"]`)
+    await control.command(
+      'click',
+      `[data-testid="automation-node-insert-after-loopEnd-${loopBranchId}"]`
+    )
+    await control.command('waitFor', '[aria-label="循环结束"]', {
+      timeoutMs: uiTimeoutMs,
+      visible: true,
+    })
+    await captureScreenshot(control, 'project-automation-loop-branch-insertions.png')
 
     await disableRule(projectId, unifiedRule)
     const projectWithWorkflow = await cloudRequest(`/api/v1/cloud-projects/${projectId}`)

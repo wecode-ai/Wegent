@@ -21,6 +21,7 @@ import {
   Play,
   Plus,
   RefreshCw,
+  Repeat,
   UserRound,
   XCircle,
 } from 'lucide-react'
@@ -78,10 +79,22 @@ interface RuntimeStageNodeData extends Record<string, unknown> {
   onSelect: (stageId: string) => void
 }
 
+interface RuntimeLoopNodeData extends Record<string, unknown> {
+  stage: WorkflowNodeInstance
+  selected: boolean
+  childSelected: boolean
+  onSelect: (stageId: string) => void
+}
+
 type RuntimeStageFlowNode = Node<RuntimeStageNodeData, 'runtimeStage'>
+type RuntimeLoopFlowNode = Node<RuntimeLoopNodeData, 'runtimeLoop'>
+type RuntimeFlowNode = RuntimeStageFlowNode | RuntimeLoopFlowNode
 
 const NODE_WIDTH = 208
 const NODE_HEIGHT = 112
+const LOOP_MIN_WIDTH = 560
+const LOOP_HEADER_HEIGHT = 68
+const LOOP_BODY_PADDING = 28
 const CURRENT_STAGE_FIT_VIEW_OPTIONS = {
   padding: 0.25,
   maxZoom: 1,
@@ -155,7 +168,133 @@ const RuntimeStageNodeCard = memo(function RuntimeStageNodeCard({
   )
 })
 
-const nodeTypes = { runtimeStage: RuntimeStageNodeCard }
+const RuntimeLoopNodeCard = memo(function RuntimeLoopNodeCard({
+  data,
+}: NodeProps<RuntimeLoopFlowNode>) {
+  const { t } = useTranslation('common')
+  const { stage, selected, childSelected, onSelect } = data
+  const statusLabel = workflowNodeStatusLabel(t, stage.status)
+
+  return (
+    <section
+      data-testid={`cloud-todo-workflow-loop-${stage.id}`}
+      className={cn(
+        'issue-workflow-loop relative h-full w-full',
+        (selected || childSelected) && 'is-selected'
+      )}
+    >
+      <Handle type="target" position={Position.Left} className="!invisible" />
+      <button
+        type="button"
+        data-testid={`cloud-todo-workflow-loop-header-${stage.id}`}
+        onClick={() => onSelect(stage.id)}
+        className="issue-workflow-loop-header"
+      >
+        <span className="issue-workflow-loop-icon">
+          <Repeat className="h-4 w-4" />
+        </span>
+        <span className="min-w-0">
+          <small>{t('todo.workflow_loop', '循环')}</small>
+          <strong>{stage.name}</strong>
+        </span>
+        <span className={cn('issue-workflow-status', `is-${stage.status.replaceAll('_', '-')}`)}>
+          {isWorkflowNodeCompleted(stage.status) ? <Check className="h-3 w-3" /> : null}
+          {statusLabel}
+        </span>
+      </button>
+      <Handle type="source" position={Position.Right} className="!invisible" />
+    </section>
+  )
+})
+
+const nodeTypes = {
+  runtimeStage: RuntimeStageNodeCard,
+  runtimeLoop: RuntimeLoopNodeCard,
+}
+
+function workflowEdge(
+  source: WorkflowNodeInstance,
+  target: WorkflowNodeInstance,
+  completed: boolean
+): Edge {
+  const color = completed ? 'rgb(0 162 64 / 0.55)' : 'rgb(var(--color-text-muted) / 0.45)'
+  return {
+    id: `${source.id}-${target.id}`,
+    source: source.id,
+    target: target.id,
+    markerEnd: { type: MarkerType.ArrowClosed, color },
+    style: { stroke: color, strokeWidth: 1.5 },
+  }
+}
+
+function loopBodyLayout(
+  loop: WorkflowNodeInstance,
+  body: WorkflowNodeInstance[],
+  tasks: WorkflowTaskBinding[],
+  selectedStageId: string | null,
+  onSelect: (stageId: string) => void
+): {
+  width: number
+  height: number
+  nodes: RuntimeStageFlowNode[]
+  edges: Edge[]
+} {
+  const bodyById = new Map(body.map(node => [node.id, node]))
+  const edges = body.flatMap(node =>
+    node.depends_on.flatMap(dependencyId => {
+      const dependency = bodyById.get(dependencyId)
+      return dependency
+        ? [workflowEdge(dependency, node, isWorkflowNodeCompleted(dependency.status))]
+        : []
+    })
+  )
+  const laidOut = layoutWorkflowGraph(
+    body.map(
+      (stage): RuntimeStageFlowNode => ({
+        id: stage.id,
+        type: 'runtimeStage',
+        position: { x: 0, y: 0 },
+        data: {
+          stage,
+          tasks: tasks.filter(task => task.workflow_node_id === stage.id),
+          selected: stage.id === selectedStageId,
+          onSelect,
+        },
+      })
+    ),
+    edges,
+    {
+      nodeWidth: NODE_WIDTH,
+      nodeHeight: NODE_HEIGHT,
+      rankSep: 64,
+      nodeSep: 28,
+    }
+  ) as RuntimeStageFlowNode[]
+  const minX = Math.min(...laidOut.map(node => node.position.x), 0)
+  const minY = Math.min(...laidOut.map(node => node.position.y), 0)
+  const bodyWidth = Math.max(
+    NODE_WIDTH,
+    ...laidOut.map(node => node.position.x - minX + NODE_WIDTH)
+  )
+  const bodyHeight = Math.max(
+    NODE_HEIGHT,
+    ...laidOut.map(node => node.position.y - minY + NODE_HEIGHT)
+  )
+  return {
+    width: Math.max(LOOP_MIN_WIDTH, bodyWidth + LOOP_BODY_PADDING * 2),
+    height: LOOP_HEADER_HEIGHT + bodyHeight + LOOP_BODY_PADDING * 2,
+    edges,
+    nodes: laidOut.map(node => ({
+      ...node,
+      parentId: loop.id,
+      extent: 'parent',
+      position: {
+        x: node.position.x - minX + LOOP_BODY_PADDING,
+        y: node.position.y - minY + LOOP_HEADER_HEIGHT + LOOP_BODY_PADDING,
+      },
+    })),
+  }
+}
 
 export function IssueWorkflowDag({
   nodes,
@@ -190,7 +329,7 @@ export function IssueWorkflowDag({
     currentStageId: string | null
   } | null>(null)
   const graphContainerRef = useRef<HTMLDivElement | null>(null)
-  const flowInstanceRef = useRef<ReactFlowInstance<RuntimeStageFlowNode, Edge> | null>(null)
+  const flowInstanceRef = useRef<ReactFlowInstance<RuntimeFlowNode, Edge> | null>(null)
   const currentStageId = useMemo(() => getCurrentWorkflowNode(nodes)?.id ?? null, [nodes])
   const effectiveSelectedStageId =
     stageSelection?.currentStageId === currentStageId &&
@@ -202,40 +341,79 @@ export function IssueWorkflowDag({
     : undefined
   const graph = useMemo(() => {
     const nodesById = new Map(nodes.map(node => [node.id, node]))
-    const edges: Edge[] = nodes.flatMap(node =>
-      node.depends_on.map(dependency => {
-        const completed = isWorkflowNodeCompleted(nodesById.get(dependency)?.status ?? 'blocked')
-        const color = completed ? 'rgb(0 162 64 / 0.55)' : 'rgb(var(--color-text-muted) / 0.45)'
-        return {
-          id: `${dependency}-${node.id}`,
-          source: dependency,
-          target: node.id,
-          markerEnd: { type: MarkerType.ArrowClosed, color },
-          style: { stroke: color, strokeWidth: 1.5 },
-        }
+    const topLevelStages = nodes.filter(node => !node.loop_id)
+    const topLevelIds = new Set(topLevelStages.map(node => node.id))
+    const edges: Edge[] = topLevelStages.flatMap(node =>
+      node.depends_on.flatMap(dependencyId => {
+        const dependency = nodesById.get(dependencyId)
+        return dependency && topLevelIds.has(dependencyId)
+          ? [workflowEdge(dependency, node, isWorkflowNodeCompleted(dependency.status))]
+          : []
       })
     )
-    const flowNodes: RuntimeStageFlowNode[] = nodes.map(stage => ({
-      id: stage.id,
-      type: 'runtimeStage',
-      position: { x: 0, y: 0 },
-      data: {
-        stage,
-        tasks: tasks.filter(task => task.workflow_node_id === stage.id),
-        selected: stage.id === effectiveSelectedStageId,
-        onSelect: stageId => setStageSelection({ stageId, currentStageId }),
+    const selectStage = (stageId: string) => setStageSelection({ stageId, currentStageId })
+    const loopLayouts = new Map(
+      topLevelStages
+        .filter(stage => stage.node_type === 'loop')
+        .map(loop => {
+          const bodyIds = new Set(loop.body_node_ids ?? [])
+          const body = nodes.filter(
+            node => node.loop_id === loop.id || (bodyIds.size > 0 && bodyIds.has(node.id))
+          )
+          return [
+            loop.id,
+            loopBodyLayout(loop, body, tasks, effectiveSelectedStageId, selectStage),
+          ] as const
+        })
+    )
+    const flowNodes: RuntimeFlowNode[] = topLevelStages.map(stage => {
+      const loopLayout = loopLayouts.get(stage.id)
+      if (stage.node_type === 'loop' && loopLayout) {
+        return {
+          id: stage.id,
+          type: 'runtimeLoop',
+          position: { x: 0, y: 0 },
+          style: { width: loopLayout.width, height: loopLayout.height },
+          data: {
+            stage,
+            selected: stage.id === effectiveSelectedStageId,
+            childSelected: loopLayout.nodes.some(node => node.data.selected),
+            onSelect: selectStage,
+          },
+        }
+      }
+      return {
+        id: stage.id,
+        type: 'runtimeStage',
+        position: { x: 0, y: 0 },
+        data: {
+          stage,
+          tasks: tasks.filter(task => task.workflow_node_id === stage.id),
+          selected: stage.id === effectiveSelectedStageId,
+          onSelect: selectStage,
+        },
+      }
+    })
+    const laidOutTopLevel = layoutWorkflowGraph(flowNodes, edges, {
+      nodeWidth: NODE_WIDTH,
+      nodeHeight: NODE_HEIGHT,
+      nodeSize: node => {
+        const loopLayout = loopLayouts.get(node.id)
+        return loopLayout
+          ? { width: loopLayout.width, height: loopLayout.height }
+          : { width: NODE_WIDTH, height: NODE_HEIGHT }
       },
-    }))
+    }) as RuntimeFlowNode[]
     return {
-      edges,
-      nodes: layoutWorkflowGraph(flowNodes, edges, {
-        nodeWidth: NODE_WIDTH,
-        nodeHeight: NODE_HEIGHT,
-      }) as RuntimeStageFlowNode[],
+      edges: [...edges, ...Array.from(loopLayouts.values()).flatMap(layout => layout.edges)],
+      nodes: [
+        ...laidOutTopLevel,
+        ...Array.from(loopLayouts.values()).flatMap(layout => layout.nodes),
+      ],
     }
   }, [currentStageId, effectiveSelectedStageId, nodes, tasks])
   const focusCurrentStage = useCallback(
-    (instance: ReactFlowInstance<RuntimeStageFlowNode, Edge>, duration = 0) => {
+    (instance: ReactFlowInstance<RuntimeFlowNode, Edge>, duration = 0) => {
       void instance.fitView({
         ...CURRENT_STAGE_FIT_VIEW_OPTIONS,
         duration,

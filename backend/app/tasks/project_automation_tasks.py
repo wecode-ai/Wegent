@@ -16,6 +16,7 @@ from app.services.project_incoming_hooks import (
     check_pending_project_incoming_events_sync,
     process_project_incoming_event_sync,
 )
+from app.services.workflow_loop_runtime import scan_loop_timeouts
 
 logger = logging.getLogger(__name__)
 
@@ -58,6 +59,19 @@ def check_pending_project_incoming_events() -> int:
 )
 def check_due_project_event_subscriptions() -> int:
     return check_due_project_event_subscriptions_sync()
+
+
+@celery_app.task(name="app.tasks.project_automation_tasks.scan_workflow_loop_timeouts")
+def scan_workflow_loop_timeouts() -> int:
+    db = SessionLocal()
+    try:
+        return scan_loop_timeouts(db)
+    except Exception:
+        db.rollback()
+        logger.exception("Workflow loop timeout scan failed")
+        return 0
+    finally:
+        db.close()
 
 
 @celery_app.task(

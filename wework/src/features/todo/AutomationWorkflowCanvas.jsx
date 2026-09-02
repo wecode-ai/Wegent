@@ -11,32 +11,64 @@ import {
   getBezierPath,
   useNodesState,
   useReactFlow,
+  useStore,
   useViewport,
 } from '@xyflow/react'
 import {
   Box,
   ChevronRight,
+  CircleDot,
   Clock3,
+  Flag,
   Focus,
   GitBranch,
   Hand,
   Minus,
   MousePointer2,
   Plus,
+  Repeat,
   Sparkles,
   Webhook,
 } from 'lucide-react'
+import { useTranslation } from '@/hooks/useTranslation'
 import { automationClass } from './automationStyles'
+import { eventTypeLabel } from './eventTypeLabel'
+import {
+  DYNAMIC_NODE_WIDTH,
+  DYNAMIC_NODE_HEIGHT,
+  GROUP_HEADER_HEIGHT,
+  GROUP_MIN_WIDTH,
+  LOOP_HEADER_HEIGHT,
+  OUTER_NODE_HEIGHT,
+  OUTER_NODE_WIDTH,
+  STAGE_HEIGHT,
+  STAGE_WIDTH,
+  branchNodeHeight,
+  loopBodyNodeSize,
+} from './canvasGeometry'
 
-const OUTER_NODE_WIDTH = 300
-const OUTER_NODE_HEIGHT = 88
-const OUTER_NODE_GAP = 120
-const DYNAMIC_NODE_WIDTH = 300
-const DYNAMIC_NODE_HEIGHT = 132
-const GROUP_MIN_WIDTH = 560
-const GROUP_HEADER_HEIGHT = 88
-const STAGE_WIDTH = 150
-const STAGE_HEIGHT = 66
+const INSERT_ITEM_DEFS = {
+  task: { label: '执行任务', Icon: Box },
+  dynamic: { label: 'AI 动态分配', Icon: Sparkles },
+  loop: { label: '循环', Icon: Repeat },
+  branch: { label: '分支', Icon: Webhook },
+  loopEnd: { label: '循环结束', Icon: Flag },
+}
+
+const TOP_LEVEL_INSERT_KINDS = ['task', 'dynamic', 'loop', 'branch']
+const BRANCH_HANDLER_KINDS = TOP_LEVEL_INSERT_KINDS
+const LOOP_BODY_INSERT_KINDS = ['task', 'branch', 'loopEnd']
+const LOOP_BRANCH_HANDLER_KINDS = LOOP_BODY_INSERT_KINDS
+
+function selectNodeFromMouse(event, onSelect) {
+  if (
+    (event.button != null && event.button !== 0) ||
+    (event.target instanceof Element && event.target.closest('.nodrag, .nopan'))
+  ) {
+    return
+  }
+  onSelect()
+}
 
 const HorizontalHandles = ({ hidden = true }) => (
   <>
@@ -56,8 +88,8 @@ const HorizontalHandles = ({ hidden = true }) => (
 const WorkflowNodeInsertControl = memo(function WorkflowNodeInsertControl({
   nodeId,
   placement,
-  onAddTask,
-  onAddDynamic,
+  kinds,
+  onInsert,
 }) {
   const [open, setOpen] = useState(false)
   const placementLabel = placement === 'before' ? '之前' : '之后'
@@ -80,28 +112,23 @@ const WorkflowNodeInsertControl = memo(function WorkflowNodeInsertControl({
       </button>
       {open ? (
         <div className={automationClass(`workflow-node-insert-menu nodrag nopan ${placement}`)}>
-          <button
-            type="button"
-            data-testid={`automation-node-insert-${placement}-task-${nodeId}`}
-            onClick={() => {
-              onAddTask()
-              setOpen(false)
-            }}
-          >
-            <Box size={14} />
-            执行任务
-          </button>
-          <button
-            type="button"
-            data-testid={`automation-node-insert-${placement}-dynamic-${nodeId}`}
-            onClick={() => {
-              onAddDynamic()
-              setOpen(false)
-            }}
-          >
-            <Sparkles size={14} />
-            AI 动态分配
-          </button>
+          {kinds.map(kind => {
+            const { label, Icon } = INSERT_ITEM_DEFS[kind]
+            return (
+              <button
+                key={kind}
+                type="button"
+                data-testid={`automation-node-insert-${placement}-${kind}-${nodeId}`}
+                onClick={() => {
+                  onInsert(placement, kind)
+                  setOpen(false)
+                }}
+              >
+                <Icon size={14} />
+                {label}
+              </button>
+            )
+          })}
         </div>
       ) : null}
     </div>
@@ -111,6 +138,7 @@ const WorkflowNodeInsertControl = memo(function WorkflowNodeInsertControl({
 const WorkflowNodeInsertControls = memo(function WorkflowNodeInsertControls({
   nodeId,
   allowBefore = true,
+  kinds = TOP_LEVEL_INSERT_KINDS,
   onInsert,
 }) {
   return (
@@ -119,28 +147,226 @@ const WorkflowNodeInsertControls = memo(function WorkflowNodeInsertControls({
         <WorkflowNodeInsertControl
           nodeId={nodeId}
           placement="before"
-          onAddTask={() => onInsert('before', 'task')}
-          onAddDynamic={() => onInsert('before', 'dynamic')}
+          kinds={kinds}
+          onInsert={onInsert}
         />
       ) : null}
       <WorkflowNodeInsertControl
         nodeId={nodeId}
         placement="after"
-        onAddTask={() => onInsert('after', 'task')}
-        onAddDynamic={() => onInsert('after', 'dynamic')}
+        kinds={kinds}
+        onInsert={onInsert}
       />
     </>
   )
 })
 
-const TriggerCanvasNode = memo(function TriggerCanvasNode({ data }) {
+const BranchNewControl = memo(function BranchNewControl({
+  branchId,
+  kinds,
+  eventTypeOptions,
+  eventSourceCatalog = [],
+  onAddBranchHandler,
+}) {
+  const { t } = useTranslation('common')
+  const [open, setOpen] = useState(false)
+  const [kind, setKind] = useState(kinds[0])
+  const [collectionMode, setCollectionMode] = useState('webhook')
+  const [sourceType, setSourceType] = useState('')
+  const [eventType, setEventType] = useState('')
+
+  const platformSources = mode =>
+    eventSourceCatalog.filter(
+      item =>
+        item.sourceType !== 'wework' &&
+        item.sourceType !== 'generic' &&
+        (item.collectionModes ?? []).includes(mode)
+    )
+  const candidatePlatforms = platformSources(collectionMode)
+  const selectedSource = eventSourceCatalog.find(
+    item => item.sourceType === sourceType && (item.collectionModes ?? []).includes(collectionMode)
+  )
+  const sourceEventTypes = selectedSource?.eventTypes?.length
+    ? selectedSource.eventTypes
+    : eventTypeOptions
+  const sourceLabel = sourceTypeValue => {
+    const labels = {
+      webhook: t('todo.automation_trigger_webhook_label'),
+      poll: t('todo.automation_trigger_poll_label'),
+      github: t('todo.automation_trigger_github_label'),
+      gitlab: t('todo.automation_trigger_gitlab_label'),
+    }
+    return labels[sourceTypeValue] ?? sourceTypeValue
+  }
+  const changeMode = mode => {
+    const fallback = platformSources(mode)[0]
+    setCollectionMode(mode)
+    setSourceType(fallback?.sourceType ?? '')
+    setEventType(fallback?.eventTypes?.[0] ?? '')
+  }
+  const changePlatform = value => {
+    const source = eventSourceCatalog.find(item => item.sourceType === value)
+    setSourceType(value)
+    setEventType(source?.eventTypes?.[0] ?? '')
+  }
+
+  return (
+    <div
+      className={automationClass('react-flow-branch-new')}
+      onPointerDown={event => event.stopPropagation()}
+      onClick={event => event.stopPropagation()}
+    >
+      <button
+        type="button"
+        className={automationClass('react-flow-branch-new-trigger nodrag nopan')}
+        data-testid={`branch-new-${branchId}`}
+        aria-label="新建分支"
+        aria-expanded={open}
+        onClick={() => setOpen(current => !current)}
+      >
+        <Plus size={13} />
+        新建分支
+      </button>
+      {open ? (
+        <div className={automationClass('react-flow-branch-new-menu nodrag nopan')}>
+          <label>
+            <span>节点类型</span>
+            <select
+              data-testid={`branch-new-kind-${branchId}`}
+              value={kind}
+              onChange={event => setKind(event.target.value)}
+            >
+              {kinds.map(candidate => (
+                <option key={candidate} value={candidate}>
+                  {INSERT_ITEM_DEFS[candidate].label}
+                </option>
+              ))}
+            </select>
+          </label>
+          <div className={automationClass('react-flow-branch-new-condition')}>
+            <label>
+              <span>触发来源</span>
+              <select
+                data-testid={`branch-new-source-${branchId}`}
+                value={collectionMode}
+                onChange={event => changeMode(event.target.value)}
+              >
+                <option value="webhook">{t('todo.automation_trigger_webhook_label')}</option>
+                <option value="poll">{t('todo.automation_trigger_poll_label')}</option>
+              </select>
+            </label>
+            {candidatePlatforms.length > 0 ? (
+              <label>
+                <span>平台</span>
+                <select
+                  data-testid={`branch-new-platform-${branchId}`}
+                  value={sourceType}
+                  onChange={event => changePlatform(event.target.value)}
+                >
+                  {candidatePlatforms.map(candidate => (
+                    <option key={candidate.sourceType} value={candidate.sourceType}>
+                      {sourceLabel(candidate.sourceType)}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            ) : null}
+            <label>
+              <span>事件类型</span>
+              <select
+                data-testid={`branch-new-event-${branchId}`}
+                value={eventType}
+                onChange={event => setEventType(event.target.value)}
+              >
+                <option value="">选择事件</option>
+                {sourceEventTypes.map(candidate => (
+                  <option key={candidate} value={candidate}>
+                    {eventTypeLabel(candidate, t)}
+                  </option>
+                ))}
+              </select>
+            </label>
+          </div>
+          <button
+            type="button"
+            className={automationClass('react-flow-branch-new-confirm')}
+            data-testid={`branch-new-confirm-${branchId}`}
+            onClick={() => {
+              onAddBranchHandler(branchId, {
+                kind,
+                eventType,
+                sourceType,
+                collectionMode,
+                select: 'handler',
+              })
+              setOpen(false)
+            }}
+          >
+            创建分支
+          </button>
+        </div>
+      ) : null}
+    </div>
+  )
+})
+
+const BranchContinuationControl = memo(function BranchContinuationControl({
+  branchId,
+  kinds,
+  onInsertContinuation,
+}) {
+  const [open, setOpen] = useState(false)
+  return (
+    <div
+      className={automationClass('react-flow-branch-continuation')}
+      onPointerDown={event => event.stopPropagation()}
+      onClick={event => event.stopPropagation()}
+    >
+      <button
+        type="button"
+        className={automationClass('react-flow-branch-continuation-trigger nodrag nopan')}
+        data-testid={`branch-continuation-${branchId}`}
+        aria-label="添加完成后继续节点"
+        aria-expanded={open}
+        onClick={() => setOpen(current => !current)}
+      >
+        <Plus size={12} />
+      </button>
+      {open ? (
+        <div className={automationClass('react-flow-branch-continuation-menu nodrag nopan')}>
+          {kinds.map(candidate => {
+            const { label, Icon } = INSERT_ITEM_DEFS[candidate]
+            return (
+              <button
+                key={candidate}
+                type="button"
+                onClick={() => {
+                  onInsertContinuation(branchId, candidate)
+                  setOpen(false)
+                }}
+              >
+                <Icon size={13} />
+                {label}
+              </button>
+            )
+          })}
+        </div>
+      ) : null}
+    </div>
+  )
+})
+
+const TriggerCanvasNode = memo(function TriggerCanvasNode({ data, selected }) {
   const TriggerIcon = data.triggerType === 'schedule' ? Clock3 : Webhook
   return (
-    <article className={automationClass(`workflow-node-shell ${data.selected ? 'selected' : ''}`)}>
+    <article
+      className={automationClass(`workflow-node-shell ${selected ? 'selected' : ''}`)}
+      onMouseDownCapture={event => selectNodeFromMouse(event, data.onSelect)}
+    >
       <HorizontalHandles />
       <button
         type="button"
-        className={automationClass(`flow-node trigger ${data.selected ? 'selected' : ''}`)}
+        className={automationClass(`flow-node trigger ${selected ? 'selected' : ''}`)}
         data-testid="automation-trigger-node"
         onClick={data.onSelect}
       >
@@ -166,13 +392,16 @@ function executionSummary(environment, model) {
   return [normalizedEnvironment, model].filter(Boolean).join(' · ') || '尚未配置执行环境'
 }
 
-const ExecutionCanvasNode = memo(function ExecutionCanvasNode({ data }) {
+const ExecutionCanvasNode = memo(function ExecutionCanvasNode({ data, selected }) {
   return (
-    <article className={automationClass(`workflow-node-shell ${data.selected ? 'selected' : ''}`)}>
+    <article
+      className={automationClass(`workflow-node-shell ${selected ? 'selected' : ''}`)}
+      onMouseDownCapture={event => selectNodeFromMouse(event, data.onSelect)}
+    >
       <HorizontalHandles />
       <button
         type="button"
-        className={automationClass(`flow-node step ${data.selected ? 'selected' : ''}`)}
+        className={automationClass(`flow-node step ${selected ? 'selected' : ''}`)}
         data-testid={`execution-node-${data.step.id}`}
         onClick={data.onSelect}
       >
@@ -195,14 +424,15 @@ const ExecutionCanvasNode = memo(function ExecutionCanvasNode({ data }) {
   )
 })
 
-const DynamicCanvasNode = memo(function DynamicCanvasNode({ data }) {
+const DynamicCanvasNode = memo(function DynamicCanvasNode({ data, selected }) {
   return (
     <article
-      className={automationClass(`workflow-node-shell ${data.selected ? 'selected' : ''}`)}
+      className={automationClass(`workflow-node-shell ${selected ? 'selected' : ''}`)}
       data-testid={`ai-allocation-node-${data.step.id}`}
+      onMouseDownCapture={event => selectNodeFromMouse(event, data.onSelect)}
     >
       <HorizontalHandles />
-      <div className={automationClass(`dynamic-flow-node ${data.selected ? 'selected' : ''}`)}>
+      <div className={automationClass(`dynamic-flow-node ${selected ? 'selected' : ''}`)}>
         <button
           type="button"
           className={automationClass('dynamic-node-main')}
@@ -233,11 +463,12 @@ const DynamicCanvasNode = memo(function DynamicCanvasNode({ data }) {
   )
 })
 
-const DynamicGroupCanvasNode = memo(function DynamicGroupCanvasNode({ data }) {
+const DynamicGroupCanvasNode = memo(function DynamicGroupCanvasNode({ data, selected }) {
   return (
     <section
-      className={automationClass(`react-flow-dynamic-group ${data.selected ? 'selected' : ''}`)}
+      className={automationClass(`react-flow-dynamic-group ${selected ? 'selected' : ''}`)}
       data-testid={`ai-allocation-node-${data.step.id}`}
+      onMouseDownCapture={event => selectNodeFromMouse(event, data.onSelect)}
     >
       <HorizontalHandles />
       <WorkflowNodeInsertControls nodeId={data.step.id} onInsert={data.onInsert} />
@@ -266,11 +497,12 @@ const DynamicGroupCanvasNode = memo(function DynamicGroupCanvasNode({ data }) {
   )
 })
 
-const DagStageCanvasNode = memo(function DagStageCanvasNode({ data }) {
+const DagStageCanvasNode = memo(function DagStageCanvasNode({ data, selected }) {
   return (
     <article
-      className={automationClass(`react-flow-stage-node ${data.selected ? 'selected' : ''}`)}
+      className={automationClass(`react-flow-stage-node ${selected ? 'selected' : ''}`)}
       data-testid={`dag-stage-container-${data.stage.id}`}
+      onMouseDownCapture={event => selectNodeFromMouse(event, data.onSelect)}
     >
       <Handle
         type="target"
@@ -325,6 +557,261 @@ const DagStageCanvasNode = memo(function DagStageCanvasNode({ data }) {
         className={automationClass('react-flow-stage-handle source')}
       />
     </article>
+  )
+})
+
+const BranchConditionRows = memo(function BranchConditionRows({ step }) {
+  const { t } = useTranslation('common')
+  const conditions = step.branchConditions ?? []
+  return (
+    <div className={automationClass('react-flow-branch-conditions')}>
+      {conditions.length === 0 ? (
+        <div className={automationClass('react-flow-branch-empty')}>
+          还没有分支，点击下方「新建分支」添加
+        </div>
+      ) : (
+        conditions.map((condition, index) => (
+          <div
+            className={automationClass('react-flow-branch-condition-row')}
+            key={`${condition.eventType}-${index}`}
+          >
+            <em>分支 {index + 1}</em>
+            <span>
+              {eventTypeLabel(condition.eventType, t) || '未选择事件'}
+              <i>{(condition.handlerNodeIds ?? []).length} 个节点</i>
+            </span>
+            <Handle
+              type="source"
+              id={`cond-${index}`}
+              position={Position.Right}
+              className={automationClass('react-flow-branch-handle')}
+            />
+          </div>
+        ))
+      )}
+    </div>
+  )
+})
+
+const BranchNodeHeader = memo(function BranchNodeHeader({ step, testId, onSelect }) {
+  return (
+    <button
+      type="button"
+      className={automationClass('react-flow-branch-header')}
+      data-testid={testId}
+      onClick={onSelect}
+    >
+      <span className={automationClass('node-icon branch', '!size-7 !rounded-md')}>
+        <Webhook size={14} />
+      </span>
+      <span>
+        <strong>{step.name || '分支'}</strong>
+        <small>按事件路由 · {(step.branchConditions ?? []).length} 个条件</small>
+      </span>
+    </button>
+  )
+})
+
+const BranchCanvasNode = memo(function BranchCanvasNode({ data, selected }) {
+  const {
+    step,
+    onSelect,
+    onAddBranchHandler,
+    onAddBranchContinuation,
+    eventTypeOptions,
+    eventSourceCatalog,
+  } = data
+  return (
+    <article
+      className={automationClass(`workflow-node-shell ${selected ? 'selected' : ''}`)}
+      onMouseDownCapture={event => selectNodeFromMouse(event, onSelect)}
+    >
+      <Handle
+        type="target"
+        position={Position.Left}
+        className={automationClass('automation-hidden-handle')}
+      />
+      <div
+        className={automationClass(`react-flow-branch-node ${selected ? 'selected' : ''}`)}
+        data-testid={`branch-node-${step.id}`}
+      >
+        <BranchNodeHeader step={step} testId={`branch-node-main-${step.id}`} onSelect={onSelect} />
+        <BranchConditionRows step={step} />
+        <BranchNewControl
+          branchId={step.id}
+          kinds={BRANCH_HANDLER_KINDS}
+          eventTypeOptions={eventTypeOptions ?? []}
+          eventSourceCatalog={eventSourceCatalog ?? []}
+          onAddBranchHandler={onAddBranchHandler}
+        />
+        <div className={automationClass('react-flow-branch-footer')}>
+          <span>完成后继续</span>
+          <BranchContinuationControl
+            branchId={step.id}
+            kinds={BRANCH_HANDLER_KINDS}
+            onInsertContinuation={onAddBranchContinuation}
+          />
+          <Handle
+            type="source"
+            id="default"
+            position={Position.Right}
+            className={automationClass('react-flow-branch-handle')}
+          />
+        </div>
+      </div>
+      <WorkflowNodeInsertControls
+        nodeId={step.id}
+        allowBefore={false}
+        kinds={BRANCH_HANDLER_KINDS}
+        onInsert={(placement, kind) =>
+          onAddBranchHandler(step.id, { kind, eventType: '', select: 'branch' })
+        }
+      />
+    </article>
+  )
+})
+
+const LoopBranchCanvasNode = memo(function LoopBranchCanvasNode({ data, selected }) {
+  const { step, onSelect, onAddBranchHandler, eventTypeOptions, eventSourceCatalog } = data
+  return (
+    <article
+      className={automationClass(`react-flow-branch-node ${selected ? 'selected' : ''}`)}
+      onMouseDownCapture={event => selectNodeFromMouse(event, onSelect)}
+    >
+      <Handle
+        type="target"
+        position={Position.Left}
+        className={automationClass('automation-hidden-handle')}
+      />
+      <BranchNodeHeader step={step} testId={`loop-body-node-${step.id}`} onSelect={onSelect} />
+      <BranchConditionRows step={step} />
+      <BranchNewControl
+        branchId={step.id}
+        kinds={LOOP_BRANCH_HANDLER_KINDS}
+        eventTypeOptions={eventTypeOptions ?? []}
+        eventSourceCatalog={eventSourceCatalog ?? []}
+        onAddBranchHandler={onAddBranchHandler}
+      />
+      <WorkflowNodeInsertControls
+        nodeId={step.id}
+        allowBefore={false}
+        kinds={LOOP_BODY_INSERT_KINDS}
+        onInsert={(placement, kind) =>
+          onAddBranchHandler(step.id, { kind, eventType: '', select: 'branch' })
+        }
+      />
+    </article>
+  )
+})
+
+const LoopMarkerCanvasNode = memo(function LoopMarkerCanvasNode({ data, selected }) {
+  const { step, onSelect, onInsert } = data
+  const isStart = step.nodeType === 'loopStart'
+  return (
+    <article
+      className={automationClass(`react-flow-loop-marker-node ${selected ? 'selected' : ''}`)}
+      title={step.name || (isStart ? '循环开始' : '循环结束')}
+      onMouseDownCapture={event => selectNodeFromMouse(event, onSelect)}
+    >
+      <HorizontalHandles />
+      <button
+        type="button"
+        className={automationClass(
+          `react-flow-loop-marker-main ${isStart ? 'start' : 'end'} ${selected ? 'selected' : ''}`
+        )}
+        data-testid={`loop-body-node-${step.id}`}
+        aria-label={step.name || (isStart ? '循环开始' : '循环结束')}
+        onClick={onSelect}
+      >
+        {isStart ? <CircleDot size={18} /> : <Flag size={16} />}
+      </button>
+      <WorkflowNodeInsertControls
+        nodeId={step.id}
+        allowBefore={false}
+        kinds={LOOP_BODY_INSERT_KINDS}
+        onInsert={onInsert}
+      />
+    </article>
+  )
+})
+
+const LoopBodyCanvasNode = memo(function LoopBodyCanvasNode({ data, selected }) {
+  const { step, onSelect, onInsert } = data
+  const caption =
+    step.executionMode === 'automatic' ? executionSummary(step.environment, step.model) : '手动执行'
+  return (
+    <article
+      className={automationClass(`react-flow-loop-body-node ${selected ? 'selected' : ''}`)}
+      onMouseDownCapture={event => selectNodeFromMouse(event, onSelect)}
+    >
+      <HorizontalHandles />
+      <button
+        type="button"
+        className={automationClass('react-flow-loop-body-main')}
+        data-testid={`loop-body-node-${step.id}`}
+        onClick={onSelect}
+      >
+        <span className={automationClass('node-icon')}>
+          <Box size={14} />
+        </span>
+        <span>
+          <strong>{step.name || '未命名节点'}</strong>
+          <small>{caption}</small>
+        </span>
+      </button>
+      <WorkflowNodeInsertControls
+        nodeId={step.id}
+        allowBefore={false}
+        kinds={LOOP_BODY_INSERT_KINDS}
+        onInsert={onInsert}
+      />
+    </article>
+  )
+})
+
+const LoopGroupCanvasNode = memo(function LoopGroupCanvasNode({ id, data, selected }) {
+  const { step, onSelect, onInsert } = data
+  const childSelected = useStore(
+    useCallback(state => state.nodes.some(node => node.parentId === id && node.selected), [id])
+  )
+  const highlighted = selected || childSelected
+  const loopConfig = step.loopConfig ?? {
+    maxAttempts: 5,
+    timeoutSeconds: null,
+  }
+  const attemptSummary =
+    (loopConfig.maxAttempts ?? 5) === 0 ? '无限次' : `最多 ${loopConfig.maxAttempts ?? 5} 次`
+  const timeoutSummary = loopConfig.timeoutSeconds ? ` · ${loopConfig.timeoutSeconds}s 超时` : ''
+  return (
+    <section
+      className={automationClass(`react-flow-loop-group ${highlighted ? 'selected' : ''}`)}
+      data-testid={`loop-node-${step.id}`}
+      onMouseDownCapture={event => selectNodeFromMouse(event, onSelect)}
+    >
+      <HorizontalHandles />
+      <WorkflowNodeInsertControls nodeId={step.id} onInsert={onInsert} />
+      <div className={automationClass('react-flow-loop-body-area')} />
+      <div className={automationClass('react-flow-loop-header')}>
+        <button
+          type="button"
+          className={automationClass('react-flow-loop-header-main')}
+          data-testid={`loop-node-main-${step.id}`}
+          onClick={onSelect}
+        >
+          <span className={automationClass('node-icon coordinator')}>
+            <Repeat size={15} />
+          </span>
+          <span>
+            <small>循环</small>
+            <strong>{step.name || '未命名循环'}</strong>
+            <em>
+              {attemptSummary}
+              {timeoutSummary}
+            </em>
+          </span>
+        </button>
+      </div>
+    </section>
   )
 })
 
@@ -395,6 +882,11 @@ const nodeTypes = {
   dynamic: DynamicCanvasNode,
   dynamicGroup: DynamicGroupCanvasNode,
   dagStage: DagStageCanvasNode,
+  branch: BranchCanvasNode,
+  loopGroup: LoopGroupCanvasNode,
+  loopBranch: LoopBranchCanvasNode,
+  loopMarker: LoopMarkerCanvasNode,
+  loopBody: LoopBodyCanvasNode,
 }
 
 const edgeTypes = {
@@ -481,11 +973,19 @@ export function AutomationWorkflowCanvas({
   selectedNode,
   onSelectNode,
   onInsertNode,
+  onAddBranchHandler,
+  onAddBranchContinuation,
+  eventTypeOptions,
+  eventSourceCatalog = [],
   onAddDagStage,
   onToggleDagDependency,
   onMoveDagStage,
   onToggleStepDependency,
   onMoveStep,
+  onInsertLoopBodyNode,
+  onToggleLoopBodyDependency,
+  onMoveLoopBodyNode,
+  onDeleteNode,
 }) {
   const [interactionMode, setInteractionMode] = useState('hand')
 
@@ -506,7 +1006,6 @@ export function AutomationWorkflowCanvas({
         triggerType: draft.trigger.type,
         title: trigger.label,
         meta: trigger.detail,
-        selected: selectedNode.type === 'trigger',
         onSelect: () => onSelectNode({ type: 'trigger' }),
         onInsert: (placement, kind) => onInsertNode(null, placement, kind),
       },
@@ -519,9 +1018,6 @@ export function AutomationWorkflowCanvas({
 
       if (step.kind === 'dynamic') {
         const subgraphNodes = step.subgraph?.nodes ?? []
-        const selected =
-          (selectedNode.type === 'step' && selectedNode.id === step.id) ||
-          (selectedNode.type === 'dagStage' && selectedNode.stepId === step.id)
         if (subgraphNodes.length === 0) {
           nodes.push({
             id: step.id,
@@ -532,7 +1028,6 @@ export function AutomationWorkflowCanvas({
             },
             data: {
               step,
-              selected,
               onSelect: () => onSelectNode({ type: 'step', id: step.id }),
               onInsert: (placement, kind) => onInsertNode(step.id, placement, kind),
               onAddFirstStage: () => onAddDagStage(step.id),
@@ -558,7 +1053,6 @@ export function AutomationWorkflowCanvas({
             },
             data: {
               step,
-              selected,
               onSelect: () => onSelectNode({ type: 'step', id: step.id }),
               onInsert: (placement, kind) => onInsertNode(step.id, placement, kind),
             },
@@ -580,10 +1074,6 @@ export function AutomationWorkflowCanvas({
                 stepId: step.id,
                 stage,
                 index: stageIndex,
-                selected:
-                  selectedNode.type === 'dagStage' &&
-                  selectedNode.stepId === step.id &&
-                  selectedNode.stageId === stage.id,
                 onSelect: () =>
                   onSelectNode({ type: 'dagStage', stepId: step.id, stageId: stage.id }),
                 onInsert: placement => onAddDagStage(step.id, stage.id, placement),
@@ -609,6 +1099,118 @@ export function AutomationWorkflowCanvas({
             })
           })
         }
+      } else if (step.kind === 'loop') {
+        const bodySteps = step.subgraph?.nodes ?? []
+        const graphWidth = Math.max(
+          GROUP_MIN_WIDTH,
+          ...bodySteps.map(bodyStep => (bodyStep.x ?? 0) + loopBodyNodeSize(bodyStep).width + 56)
+        )
+        const graphHeight = Math.max(
+          220,
+          ...bodySteps.map(bodyStep => (bodyStep.y ?? 0) + loopBodyNodeSize(bodyStep).height + 48)
+        )
+        const groupHeight = LOOP_HEADER_HEIGHT + graphHeight
+        nodes.push({
+          id: step.id,
+          type: 'loopGroup',
+          position: {
+            x: stepX,
+            y: stepY,
+          },
+          data: {
+            step,
+            onSelect: () => onSelectNode({ type: 'step', id: step.id }),
+            onInsert: (placement, kind) => onInsertNode(step.id, placement, kind),
+          },
+          style: { width: graphWidth, height: groupHeight },
+        })
+        bodySteps.forEach(bodyStep => {
+          const bodyNodeId = `loop:${step.id}:${bodyStep.id}`
+          const bodySize = loopBodyNodeSize(bodyStep)
+          const bodyType =
+            bodyStep.nodeType === 'branch'
+              ? 'loopBranch'
+              : bodyStep.nodeType === 'loopStart' || bodyStep.nodeType === 'loopEnd'
+                ? 'loopMarker'
+                : 'loopBody'
+          nodes.push({
+            id: bodyNodeId,
+            type: bodyType,
+            parentId: step.id,
+            extent: 'parent',
+            position: {
+              x: (bodyStep.x ?? 0) + 20,
+              y: (bodyStep.y ?? 0) + LOOP_HEADER_HEIGHT,
+            },
+            data: {
+              step: bodyStep,
+              loopId: step.id,
+              onSelect: () =>
+                onSelectNode({ type: 'loopBody', loopId: step.id, bodyId: bodyStep.id }),
+              onInsert: (placement, kind) =>
+                onInsertLoopBodyNode(step.id, bodyStep.id, placement, kind),
+              onAddBranchHandler,
+              eventTypeOptions,
+              eventSourceCatalog,
+            },
+            style: { width: bodySize.width, height: bodySize.height },
+          })
+        })
+        bodySteps.forEach(bodyStep => {
+          ;(bodyStep.dependencies ?? []).forEach(dependencyId => {
+            const dependency = bodySteps.find(candidate => candidate.id === dependencyId)
+            if (!dependency || dependency.nodeType === 'branch') return
+            edges.push({
+              id: `loop-edge:${step.id}:${dependencyId}:${bodyStep.id}`,
+              source: `loop:${step.id}:${dependencyId}`,
+              target: `loop:${step.id}:${bodyStep.id}`,
+              type: 'dify',
+              data: {
+                kind: 'loopBody',
+                loopId: step.id,
+                sourceBodyId: dependencyId,
+                targetBodyId: bodyStep.id,
+              },
+            })
+          })
+        })
+        bodySteps
+          .filter(bodyStep => bodyStep.nodeType === 'branch')
+          .forEach(branchStep => {
+            ;(branchStep.branchConditions ?? []).forEach((condition, conditionIndex) => {
+              ;(condition.handlerNodeIds ?? []).forEach(handlerId => {
+                if (!bodySteps.some(candidate => candidate.id === handlerId)) return
+                edges.push({
+                  id: `branch-edge:${step.id}:${branchStep.id}:${conditionIndex}:${handlerId}`,
+                  source: `loop:${step.id}:${branchStep.id}`,
+                  sourceHandle: `cond-${conditionIndex}`,
+                  target: `loop:${step.id}:${handlerId}`,
+                  type: 'dify',
+                  selectable: false,
+                  deletable: false,
+                  data: { kind: 'branchHandler' },
+                })
+              })
+            })
+          })
+      } else if (step.kind === 'branch') {
+        nodes.push({
+          id: step.id,
+          type: 'branch',
+          position: {
+            x: stepX,
+            y: stepY,
+          },
+          data: {
+            step,
+            onSelect: () => onSelectNode({ type: 'step', id: step.id }),
+            onAddBranchHandler,
+            onAddBranchContinuation,
+            eventTypeOptions,
+            eventSourceCatalog,
+          },
+          style: { width: OUTER_NODE_WIDTH, height: branchNodeHeight(step, { footer: true }) },
+        })
       } else {
         nodes.push({
           id: step.id,
@@ -619,7 +1221,6 @@ export function AutomationWorkflowCanvas({
           },
           data: {
             step,
-            selected: selectedNode.type === 'step' && selectedNode.id === step.id,
             onSelect: () => onSelectNode({ type: 'step', id: step.id }),
             onInsert: (placement, kind) => onInsertNode(step.id, placement, kind),
           },
@@ -630,9 +1231,17 @@ export function AutomationWorkflowCanvas({
       const dependencies = step.dependencies.filter(dependencyId => stepIds.has(dependencyId))
       const sources = dependencies.length ? dependencies : ['trigger']
       sources.forEach(sourceId => {
+        const sourceStep = draft.steps.find(candidate => candidate.id === sourceId)
+        if (sourceStep?.kind === 'branch') {
+          const isConditionHandler = (sourceStep.branchConditions ?? []).some(condition =>
+            (condition.handlerNodeIds ?? []).includes(step.id)
+          )
+          if (isConditionHandler) return
+        }
         edges.push({
           id: `outer-edge:${sourceId}:${step.id}`,
           source: sourceId,
+          sourceHandle: sourceStep?.kind === 'branch' ? 'default' : undefined,
           target: step.id,
           type: 'dify',
           selectable: sourceId !== 'trigger',
@@ -643,20 +1252,63 @@ export function AutomationWorkflowCanvas({
           },
         })
       })
+      if (step.kind === 'branch') {
+        ;(step.branchConditions ?? []).forEach((condition, conditionIndex) => {
+          ;(condition.handlerNodeIds ?? []).forEach(handlerId => {
+            if (!stepIds.has(handlerId)) return
+            edges.push({
+              id: `branch-edge:${step.id}:${conditionIndex}:${handlerId}`,
+              source: step.id,
+              sourceHandle: `cond-${conditionIndex}`,
+              target: handlerId,
+              type: 'dify',
+              selectable: false,
+              deletable: false,
+              data: { kind: 'branchHandler' },
+            })
+          })
+        })
+      }
     })
 
     return { nodes, edges }
   }, [
     draft,
+    eventTypeOptions,
+    onAddBranchContinuation,
+    onAddBranchHandler,
     onAddDagStage,
+    onInsertLoopBodyNode,
     onInsertNode,
     onSelectNode,
-    selectedNode,
     trigger.detail,
     trigger.label,
   ])
 
   const [nodes, setNodes, onNodesChange] = useNodesState(graph.nodes)
+
+  // Mirror the editor's selection model onto React Flow's native node
+  // selection. Unchanged nodes keep object identity so only the two nodes
+  // whose selection actually flips re-render.
+  useEffect(() => {
+    const selectedId =
+      selectedNode.type === 'trigger'
+        ? 'trigger'
+        : selectedNode.type === 'step'
+          ? selectedNode.id
+          : selectedNode.type === 'dagStage'
+            ? `dag:${selectedNode.stepId}:${selectedNode.stageId}`
+            : selectedNode.type === 'loopBody'
+              ? `loop:${selectedNode.loopId}:${selectedNode.bodyId}`
+              : null
+    setNodes(currentNodes =>
+      currentNodes.map(node =>
+        node.selected === (node.id === selectedId)
+          ? node
+          : { ...node, selected: node.id === selectedId }
+      )
+    )
+  }, [selectedNode, setNodes])
 
   useEffect(() => {
     setNodes(currentNodes => {
@@ -665,13 +1317,14 @@ export function AutomationWorkflowCanvas({
         const current = currentById.get(node.id)
         if (!current) return node
 
-        const authoredStageMoved =
-          node.type === 'dagStage' &&
-          (node.data.stage.x !== current.data.stage.x || node.data.stage.y !== current.data.stage.y)
-
+        // The graph derived from the draft is the single source of truth for
+        // node layout. React Flow only owns transient interaction state
+        // (selection, drag-in-progress); never let its already-rendered
+        // positions shadow an edited draft, otherwise newly inserted nodes
+        // stack on top of pre-existing ones because the stale position wins.
         return {
           ...node,
-          position: authoredStageMoved ? node.position : current.position,
+          position: current.dragging ? current.position : node.position,
           selected: current.selected,
           dragging: current.dragging,
         }
@@ -691,17 +1344,41 @@ export function AutomationWorkflowCanvas({
         )
         return
       }
-      if (node.type === 'execution' || node.type === 'dynamic' || node.type === 'dynamicGroup') {
+      if (node.type === 'loopBody' || node.type === 'loopBranch' || node.type === 'loopMarker') {
+        const { loopId, step } = node.data
+        onMoveLoopBodyNode(
+          loopId,
+          step.id,
+          Math.max(0, Math.round(node.position.x - 20)),
+          Math.max(0, Math.round(node.position.y - LOOP_HEADER_HEIGHT))
+        )
+        return
+      }
+      if (
+        node.type === 'execution' ||
+        node.type === 'dynamic' ||
+        node.type === 'dynamicGroup' ||
+        node.type === 'loopGroup' ||
+        node.type === 'branch'
+      ) {
         onMoveStep(node.id, Math.round(node.position.x), Math.round(node.position.y))
       }
     },
-    [onMoveDagStage, onMoveStep]
+    [onMoveDagStage, onMoveLoopBodyNode, onMoveStep]
   )
 
   const onConnect = useCallback(
     connection => {
       const sourceNode = nodes.find(node => node.id === connection.source)
       const targetNode = nodes.find(node => node.id === connection.target)
+      // Branch condition handles only route through settings; the default
+      // handle carries the continuation dependency.
+      if (sourceNode?.type === 'loopBranch') {
+        return
+      }
+      if (sourceNode?.type === 'branch' && connection.sourceHandle !== 'default') {
+        return
+      }
       if (
         sourceNode?.type === 'dagStage' &&
         targetNode?.type === 'dagStage' &&
@@ -722,15 +1399,44 @@ export function AutomationWorkflowCanvas({
       if (
         sourceNode?.type !== 'execution' &&
         sourceNode?.type !== 'dynamic' &&
-        sourceNode?.type !== 'dynamicGroup'
+        sourceNode?.type !== 'dynamicGroup' &&
+        sourceNode?.type !== 'branch' &&
+        sourceNode?.type !== 'loopBranch' &&
+        sourceNode?.type !== 'loopMarker' &&
+        sourceNode?.type !== 'loopBody'
       ) {
         return
       }
       if (
         targetNode?.type !== 'execution' &&
         targetNode?.type !== 'dynamic' &&
-        targetNode?.type !== 'dynamicGroup'
+        targetNode?.type !== 'dynamicGroup' &&
+        targetNode?.type !== 'branch' &&
+        targetNode?.type !== 'loopBranch' &&
+        targetNode?.type !== 'loopMarker' &&
+        targetNode?.type !== 'loopBody'
       ) {
+        return
+      }
+      if (
+        (sourceNode?.type === 'loopBody' ||
+          sourceNode?.type === 'loopBranch' ||
+          sourceNode?.type === 'loopMarker') &&
+        (targetNode?.type === 'loopBody' ||
+          targetNode?.type === 'loopBranch' ||
+          targetNode?.type === 'loopMarker') &&
+        sourceNode.data.loopId === targetNode.data.loopId
+      ) {
+        const loop = draft.steps.find(item => item.id === sourceNode.data.loopId)
+        const bodyNodes = loop?.subgraph?.nodes ?? []
+        if (
+          !loop ||
+          createsCycle(bodyNodes, sourceNode.data.step.id, targetNode.data.step.id) ||
+          targetNode.data.step.dependencies.includes(sourceNode.data.step.id)
+        ) {
+          return
+        }
+        onToggleLoopBodyDependency(loop.id, targetNode.data.step.id, sourceNode.data.step.id)
         return
       }
       const targetStep = draft.steps.find(step => step.id === targetNode.id)
@@ -752,12 +1458,26 @@ export function AutomationWorkflowCanvas({
         if (edge.data?.kind === 'dag') {
           onToggleDagDependency(edge.data.stepId, edge.data.targetStageId, edge.data.sourceStageId)
         }
+        if (edge.data?.kind === 'loopBody') {
+          onToggleLoopBodyDependency(
+            edge.data.loopId,
+            edge.data.targetBodyId,
+            edge.data.sourceBodyId
+          )
+        }
         if (edge.data?.kind === 'outerDependency') {
           onToggleStepDependency(edge.data.targetStepId, edge.data.sourceStepId)
         }
       })
     },
     [onToggleDagDependency, onToggleStepDependency]
+  )
+
+  const onNodesDelete = useCallback(
+    nodes => {
+      nodes.forEach(node => onDeleteNode(node))
+    },
+    [onDeleteNode]
   )
 
   return (
@@ -782,9 +1502,16 @@ export function AutomationWorkflowCanvas({
         nodeTypes={nodeTypes}
         edgeTypes={edgeTypes}
         onNodesChange={onNodesChange}
+        onNodeClick={(event, node) => {
+          if (event.target instanceof Element && event.target.closest('.nodrag, .nopan')) {
+            return
+          }
+          node.data.onSelect?.()
+        }}
         onNodeDragStop={onNodeDragStop}
         onConnect={onConnect}
         onEdgesDelete={onEdgesDelete}
+        onNodesDelete={onNodesDelete}
         connectionLineComponent={DifyConnectionLine}
         nodesDraggable
         nodesConnectable

@@ -15,6 +15,13 @@ from app.schemas.runtime_work import (
 )
 
 WorkflowContextSource = Literal["final_result", "deliveries", "activity"]
+WorkflowNodeType = Literal["task", "event", "loop", "loop_start", "branch", "loop_end"]
+WorkflowLoopExitReason = Literal[
+    "loop_end",
+    "max_attempts",
+    "timeout",
+    "forced",
+]
 WorkflowOrchestrationStatus = Literal[
     "idle",
     "planning",
@@ -39,6 +46,8 @@ DeliverableValueType = Literal[
 WorkflowNodeStatus = Literal[
     "blocked",
     "ready",
+    "waiting",
+    "reacting",
     "queued",
     "running",
     "awaiting_approval",
@@ -222,6 +231,64 @@ class DeliverableRequirement(BaseModel):
         return self
 
 
+class WorkflowStartConfig(BaseModel):
+    """Trigger configuration snapshotted on the first (start) event node."""
+
+    trigger_type: Literal["schedule", "event", "workflow"] = "event"
+    event_type: str | None = Field(default=None, max_length=100)
+    cron_expression: str | None = Field(default=None, max_length=200)
+    source_type: str | None = Field(default=None, max_length=50)
+
+
+class WorkflowBranchCondition(BaseModel):
+    """One event condition routed to its handler nodes (loop body or top-level)."""
+
+    event_type: str = Field(min_length=1, max_length=100)
+    handler_node_ids: list[str] = Field(default_factory=list, max_length=50)
+    # Describes how the event is delivered and from which platform. These are
+    # scoping metadata for the condition picker; routing still keys on event_type.
+    source_type: str | None = Field(default=None, max_length=50)
+    collection_mode: str | None = Field(default=None, max_length=50)
+
+
+class WorkflowLoopBreakCondition(BaseModel):
+    """One variable comparison that may terminate a loop iteration."""
+
+    id: str = Field(min_length=1, max_length=64, pattern=r"^[A-Za-z0-9_-]+$")
+    variable: str = Field(min_length=1, max_length=100)
+    operator: Literal[
+        "==", "!=", ">", ">=", "<", "<=", "contains", "startsWith", "endsWith"
+    ] = "=="
+    value: str = Field(default="", max_length=10_000)
+
+
+class WorkflowLoopVariable(BaseModel):
+    """A value that persists across loop iterations, exposed to body tasks."""
+
+    id: str = Field(min_length=1, max_length=64, pattern=r"^[A-Za-z0-9_-]+$")
+    label: str = Field(min_length=1, max_length=100)
+    var_type: Literal["string", "number", "boolean"] = "string"
+    value: str = Field(default="", max_length=100_000)
+
+
+class WorkflowLoopConfig(BaseModel):
+    """Loop container limits. max_attempts == 0 means unlimited."""
+
+    max_attempts: int = Field(default=5, ge=0, le=10_000)
+    timeout_seconds: int | None = Field(default=None, ge=1, le=31_536_000)
+    # Declarative break condition evaluated after every loop iteration. The
+    # variable may reference a loop variable or the built-in "event.type"
+    # (the last routed event's type). break_logical_operator combines the
+    # conditions; an empty list means the loop runs to max_attempts/timeout.
+    break_logical_operator: Literal["and", "or"] = "and"
+    break_conditions: list[WorkflowLoopBreakCondition] = Field(
+        default_factory=list, max_length=20
+    )
+    loop_variables: list[WorkflowLoopVariable] = Field(
+        default_factory=list, max_length=50
+    )
+
+
 class WorkflowNodeDefinition(BaseModel):
     id: str = Field(min_length=1, max_length=64, pattern=r"^[A-Za-z0-9_-]+$")
     name: str = Field(min_length=1, max_length=100)
@@ -229,6 +296,18 @@ class WorkflowNodeDefinition(BaseModel):
     # Kept only to read workflow definitions written by older clients. Stage
     # nodes are task categories, not executor kinds.
     kind: Literal["my_task", "automation", "ai"] | None = None
+    node_type: WorkflowNodeType = "task"
+    # Event nodes use role="start" when placed first; start_config mirrors the
+    # rule-level trigger that operationalizes subscriptions and scheduling.
+    role: Literal["start"] | None = None
+    start_config: WorkflowStartConfig | None = None
+    # Loop body nodes carry the owning loop id; loop nodes list their body ids.
+    loop_id: str | None = None
+    body_node_ids: list[str] = Field(default_factory=list, max_length=50)
+    loop_config: WorkflowLoopConfig | None = None
+    branch_conditions: list[WorkflowBranchCondition] = Field(
+        default_factory=list, max_length=20
+    )
     execution_mode: Literal["human", "robot"] = "human"
     depends_on: list[str] = Field(default_factory=list, max_length=50)
     dependency_context: dict[str, list[WorkflowContextSource]] = Field(
@@ -256,6 +335,15 @@ class WorkflowNodeDefinition(BaseModel):
 
     @model_validator(mode="after")
     def validate_execution_configuration(self) -> "WorkflowNodeDefinition":
+        if self.node_type == "event" and self.role != "start":
+            raise ValueError("event nodes must use role=start")
+        if self.role == "start" and self.node_type != "event":
+            raise ValueError("role=start requires an event node")
+        if self.node_type in {"loop", "loop_start", "branch", "loop_end"}:
+            if self.automation_rule_id:
+                raise ValueError("workflow control nodes cannot own automation runs")
+            if self.execution_config is not None or self.execution_config_override:
+                raise ValueError("workflow control nodes cannot define execution")
         if self.automation_rule_id and self.execution_mode != "robot":
             raise ValueError("workflow automation rule requires robot execution")
         if unknown := set(self.dependency_context) - set(self.depends_on):
@@ -293,6 +381,7 @@ class ProjectWorkflowDefinition(BaseModel):
 
     @model_validator(mode="after")
     def validate_dag(self) -> "ProjectWorkflowDefinition":
+        self._validate_node_roles_and_loops()
         if self.advancement_policy == "ai" and not self.ai_automation_rule_id:
             raise ValueError("AI advancement requires an AI automation rule")
         if self.advancement_policy == "ai":
@@ -336,9 +425,126 @@ class ProjectWorkflowDefinition(BaseModel):
             visit(node_id)
         return self
 
+    def _validate_node_roles_and_loops(self) -> None:
+        node_ids = [node.id for node in self.nodes]
+        known = set(node_ids)
+        start_nodes = [
+            node
+            for node in self.nodes
+            if node.node_type == "event" and node.role == "start"
+        ]
+        if len(start_nodes) > 1:
+            raise ValueError("workflow can have at most one start event node")
+        if start_nodes:
+            start = start_nodes[0]
+            if start.depends_on:
+                raise ValueError("start event node cannot depend on other nodes")
+            if self.nodes[0].id != start.id:
+                raise ValueError("start event node must be the first workflow node")
+        loops = [node for node in self.nodes if node.node_type == "loop"]
+        loop_ids = {node.id for node in loops}
+        for loop in loops:
+            if loop.loop_id:
+                raise ValueError("loop containers cannot be nested")
+            body = loop.body_node_ids
+            if not body:
+                raise ValueError("loop containers need a body")
+            if unknown := set(body) - known:
+                raise ValueError(
+                    "loop body references unknown nodes: " + ", ".join(sorted(unknown))
+                )
+            body_by_id = {node.id: node for node in self.nodes if node.id in set(body)}
+            for node_id in body:
+                node = body_by_id[node_id]
+                if node.loop_id != loop.id:
+                    raise ValueError(
+                        f"loop body node {node_id} is not scoped to {loop.id}"
+                    )
+                if node.node_type == "loop":
+                    raise ValueError("loop containers cannot be nested")
+                if unknown := set(node.depends_on) - set(body):
+                    raise ValueError(
+                        f"loop body node {node_id} depends outside its loop: "
+                        + ", ".join(sorted(unknown))
+                    )
+        scoped = {node.loop_id for node in self.nodes if node.loop_id is not None}
+        if unknown := scoped - loop_ids:
+            raise ValueError(
+                "workflow nodes reference unknown loops: " + ", ".join(sorted(unknown))
+            )
+        for loop in loops:
+            body_nodes = [
+                node for node in self.nodes if node.id in set(loop.body_node_ids)
+            ]
+            if len([node for node in body_nodes if node.node_type == "loop_start"]) > 1:
+                raise ValueError("loop containers must contain at most one loop_start")
+            for branch in (node for node in body_nodes if node.node_type == "branch"):
+                _validate_branch_conditions(
+                    branch,
+                    allowed_handler_ids=set(loop.body_node_ids),
+                    handler_scope="loop",
+                )
+        top_level_ids = {node.id for node in self.nodes if node.loop_id is None}
+        node_by_id = {node.id: node for node in self.nodes}
+        root_branches = [
+            node
+            for node in self.nodes
+            if node.node_type == "branch" and node.loop_id is None
+        ]
+        for branch in root_branches:
+            _validate_branch_conditions(
+                branch,
+                allowed_handler_ids=top_level_ids - {branch.id},
+                handler_scope="top-level",
+            )
+            for condition in branch.branch_conditions:
+                for handler_id in condition.handler_node_ids:
+                    if node_by_id[handler_id].node_type != "task":
+                        raise ValueError(
+                            f"branch handler {handler_id} must be a task node"
+                        )
+
+
+def _validate_branch_conditions(
+    branch: WorkflowNodeDefinition,
+    *,
+    allowed_handler_ids: set[str],
+    handler_scope: str,
+) -> None:
+    if not branch.branch_conditions:
+        raise ValueError("branch nodes need at least one condition")
+    seen_handlers: dict[str, str] = {}
+    seen_events: set[str] = set()
+    for condition in branch.branch_conditions:
+        if condition.event_type in seen_events:
+            raise ValueError(
+                f"branch condition duplicates event {condition.event_type}"
+            )
+        seen_events.add(condition.event_type)
+        if unknown := set(condition.handler_node_ids) - allowed_handler_ids:
+            raise ValueError(
+                f"branch handler outside {handler_scope}: " + ", ".join(sorted(unknown))
+            )
+        for handler_id in condition.handler_node_ids:
+            if owner := seen_handlers.get(handler_id):
+                raise ValueError(
+                    f"branch handler {handler_id} is shared by "
+                    f"{owner} and {condition.event_type}"
+                )
+            seen_handlers[handler_id] = condition.event_type
+
 
 class WorkflowNodeInstance(WorkflowNodeDefinition):
     status: WorkflowNodeStatus = "blocked"
+    loop_state: Literal["idle", "active", "completed"] = "idle"
+    attempts: int = 0
+    active_condition: str | None = Field(default=None, max_length=100)
+    pending_events: list[dict[str, Any]] = Field(default_factory=list, max_length=100)
+    loop_deadline: datetime | None = None
+    exit_reason: WorkflowLoopExitReason | None = None
+    last_event: dict[str, Any] | None = None
+    activated_at: datetime | None = None
+    catch_up_done: bool = False
     task_binding_id: str | None = Field(default=None, max_length=64)
     task_ids: list[str] = Field(default_factory=list, max_length=100)
     task_statuses: dict[str, str] = Field(default_factory=dict)
@@ -400,6 +606,13 @@ class IssueWorkflowInstance(BaseModel):
                     name=node.name,
                     prompt=node.prompt,
                     kind=node.kind,
+                    node_type=node.node_type,
+                    role=node.role,
+                    start_config=node.start_config,
+                    loop_id=node.loop_id,
+                    body_node_ids=node.body_node_ids,
+                    loop_config=node.loop_config,
+                    branch_conditions=node.branch_conditions,
                     execution_mode=node.execution_mode,
                     depends_on=node.depends_on,
                     dependency_context=node.dependency_context,
@@ -442,8 +655,14 @@ class IssueWorkflowInstance(BaseModel):
 def instantiate_workflow(
     definition: ProjectWorkflowDefinition,
 ) -> IssueWorkflowInstance:
-    roots = {node.id for node in definition.nodes if not node.depends_on}
-    return IssueWorkflowInstance(
+    roots = {
+        node.id
+        for node in definition.nodes
+        if not node.depends_on
+        and not node.loop_id
+        and node.node_type not in {"loop_start", "branch"}
+    }
+    instance = IssueWorkflowInstance(
         definition_version=definition.version,
         stage_mode=definition.stage_mode,
         advancement_policy=definition.advancement_policy,
@@ -454,10 +673,34 @@ def instantiate_workflow(
         nodes=[
             WorkflowNodeInstance(
                 **node.model_dump(),
-                status="ready" if node.id in roots else "blocked",
+                status=(
+                    "completed"
+                    if node.node_type == "event" and node.role == "start"
+                    else "ready" if node.id in roots else "blocked"
+                ),
+                loop_state=(
+                    "idle"
+                    if node.node_type == "loop"
+                    else (
+                        "completed"
+                        if node.node_type == "event" and node.role == "start"
+                        else "idle"
+                    )
+                ),
             )
             for node in (definition.nodes if definition.stage_mode == "dag" else [])
         ],
+    )
+    from app.services.workflow_loop_runtime import advance_loops, advance_root_branches
+
+    advanced = [node.model_dump(mode="json") for node in instance.nodes]
+    advance_loops(advanced)
+    advance_root_branches(advanced)
+    return IssueWorkflowInstance(
+        **{
+            **instance.model_dump(mode="json"),
+            "nodes": advanced,
+        }
     )
 
 

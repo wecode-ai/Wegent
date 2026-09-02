@@ -151,15 +151,20 @@ Use the date-time picker to select execution time:
 
 ## 🔔 Event Trigger
 
-Trigger execution through external events, suitable for integration with other systems. In the automation configuration, the **trigger source** is split by platform into specific types instead of one generic “external event”:
+Trigger execution through external events, suitable for integration with other systems. In the automation configuration, the **trigger source** first picks how events are collected, then picks the specific platform:
 
 - **Issue trigger**: an internal Issue is created or changes status within the workspace.
+- **Webhook**: the platform pushes events to the system-generated receiving endpoint, suitable for real-time responses.
+- **Polling**: the system pulls Change Request events from the platform at a fixed interval, suitable when configuring a webhook is inconvenient.
+
+After selecting Webhook or Polling, choose the specific platform:
+
 - **GitHub**: observe Change Request events on a repository.
 - **GitLab**: observe Change Request events on a project.
 
-### Show the subscription resource inline after selecting a source
+### Show the subscription resource inline after selecting a trigger
 
-After selecting a source such as GitHub or GitLab, the automation configuration directly shows the event subscription for that source:
+After selecting Webhook / Polling and confirming a GitHub or GitLab platform, the automation configuration directly shows the event subscription for that platform:
 
 - **Observed resource**: the repository/project name and address being observed.
 - **Webhook URL**: the system-generated receiving endpoint for platform callbacks.

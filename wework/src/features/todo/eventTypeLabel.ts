@@ -8,8 +8,8 @@ const EVENT_TYPE_LABEL_KEYS: Record<string, string> = {
   'change_request.checks_failed': 'todo.event_type_checks_failed',
   'change_request.merge_conflict': 'todo.event_type_merge_conflict',
   'change_request.review_submitted': 'todo.event_type_review_submitted',
-  'change_request.approved': 'todo.event_type_approved',
   'change_request.comment_created': 'todo.event_type_comment_created',
+  'change_request.merged': 'todo.event_type_merged',
   'document.changed': 'todo.event_type_document_changed',
 }
 

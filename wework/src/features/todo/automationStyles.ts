@@ -114,7 +114,7 @@ const recipes: Record<string, string> = {
   'flow-node':
     'grid h-full w-full grid-cols-[38px_minmax(0,1fr)_18px] items-center gap-3 rounded-xl border border-border/80 bg-background p-3 text-left text-text-primary shadow-sm transition-[border-color,box-shadow] duration-150 hover:border-border hover:shadow-md [&.selected]:border-focus [&.selected]:shadow-md [&.selected]:ring-1 [&.selected]:ring-focus/20 [&>svg]:-rotate-90 [&>svg]:text-text-muted',
   'node-icon':
-    'grid size-9 shrink-0 place-items-center rounded-lg bg-muted text-text-secondary [&.trigger]:bg-focus [&.trigger]:text-white [&.step]:bg-violet-600 [&.step]:text-white [&.coordinator]:bg-violet-600 [&.coordinator]:text-white',
+    'grid size-9 shrink-0 place-items-center rounded-lg bg-muted text-text-secondary [&.trigger]:bg-focus [&.trigger]:text-white [&.step]:bg-violet-600 [&.step]:text-white [&.coordinator]:bg-violet-600 [&.coordinator]:text-white [&.branch]:bg-focus/15 [&.branch]:text-focus',
   'flow-node-copy':
     'grid min-w-0 gap-1 [&_small]:text-xs [&_small]:text-text-muted [&_strong]:truncate [&_strong]:text-sm [&_strong]:font-medium [&>span]:truncate [&>span]:text-xs [&>span]:text-text-muted',
   'dynamic-flow-node':
@@ -144,6 +144,48 @@ const recipes: Record<string, string> = {
     'grid size-7 place-items-center rounded-full border border-focus bg-background text-focus shadow-md transition-transform hover:scale-110 hover:bg-focus hover:text-white',
   'workflow-node-insert-menu':
     'absolute top-8 z-40 grid w-44 gap-1 rounded-xl border border-border bg-popover p-1 shadow-xl [&.before]:left-0 [&.after]:right-0 [&_button]:flex [&_button]:h-8 [&_button]:items-center [&_button]:gap-2 [&_button]:rounded-lg [&_button]:px-2 [&_button]:text-xs [&_button]:text-text-secondary [&_button:hover]:bg-muted [&_button:hover]:text-text-primary',
+  'react-flow-loop-group':
+    'relative h-full w-full rounded-2xl border border-border/80 bg-background/70 shadow-sm transition-[border-color,box-shadow] duration-150 [&.selected]:border-focus [&.selected]:shadow-md [&.selected]:ring-1 [&.selected]:ring-focus/20 [&.selected_.workflow-node-insert]:pointer-events-auto [&.selected_.workflow-node-insert]:opacity-100 [&:hover_.workflow-node-insert]:pointer-events-auto [&:hover_.workflow-node-insert]:opacity-100 [&:focus-within_.workflow-node-insert]:pointer-events-auto [&:focus-within_.workflow-node-insert]:opacity-100',
+  'react-flow-loop-header':
+    'grid h-[64px] w-full grid-cols-[minmax(0,1fr)_auto] items-center gap-3 px-3.5 pt-1',
+  'react-flow-loop-header-main':
+    'grid min-w-0 cursor-grab grid-cols-[32px_minmax(0,1fr)] items-center gap-2.5 border-0 bg-transparent p-0 text-left text-text-primary active:cursor-grabbing [&>span:last-child]:grid [&>span:last-child]:min-w-0 [&>span:last-child]:gap-0.5 [&_small]:text-xs [&_small]:text-text-muted [&_strong]:truncate [&_strong]:text-sm [&_strong]:font-medium [&_em]:truncate [&_em]:text-xs [&_em]:not-italic [&_em]:text-text-muted',
+  'react-flow-loop-body-area':
+    'pointer-events-none absolute inset-x-3 bottom-3 top-[72px] rounded-xl border border-border/50 bg-muted/35',
+  'react-flow-loop-body-node':
+    'relative h-full w-full rounded-xl border border-border/80 bg-background shadow-sm transition-[border-color,box-shadow] duration-150 [&.selected]:border-focus [&.selected]:shadow-md [&.selected]:ring-1 [&.selected]:ring-focus/20 [&.selected_.workflow-node-insert]:pointer-events-auto [&.selected_.workflow-node-insert]:opacity-100 [&:hover_.workflow-node-insert]:pointer-events-auto [&:hover_.workflow-node-insert]:opacity-100 [&:focus-within_.workflow-node-insert]:pointer-events-auto [&:focus-within_.workflow-node-insert]:opacity-100',
+  'react-flow-loop-marker-node':
+    'relative grid h-full w-full place-items-center [&.selected_.workflow-node-insert]:pointer-events-auto [&.selected_.workflow-node-insert]:opacity-100 [&:hover_.workflow-node-insert]:pointer-events-auto [&:hover_.workflow-node-insert]:opacity-100 [&:focus-within_.workflow-node-insert]:pointer-events-auto [&:focus-within_.workflow-node-insert]:opacity-100',
+  'react-flow-loop-marker-main':
+    'grid size-11 cursor-grab place-items-center rounded-xl border shadow-sm transition-[border-color,box-shadow,transform] duration-150 hover:scale-105 active:cursor-grabbing [&.start]:rounded-full [&.start]:border-focus/50 [&.start]:bg-focus/15 [&.start]:text-focus [&.end]:border-border-strong [&.end]:bg-muted [&.end]:text-text-secondary [&.selected]:border-focus [&.selected]:shadow-md [&.selected]:ring-2 [&.selected]:ring-focus/20',
+  'react-flow-loop-body-main':
+    'grid h-full w-full cursor-grab grid-cols-[26px_minmax(0,1fr)] items-center gap-2 rounded-xl border-0 bg-transparent p-2 text-left text-text-primary active:cursor-grabbing [&>span:first-child]:grid [&>span:first-child]:size-6 [&>span:first-child]:place-items-center [&>span:first-child]:rounded-md [&>span:first-child]:bg-muted [&>span:first-child]:text-text-secondary [&>span:last-child]:grid [&>span:last-child]:min-w-0 [&>span:last-child]:gap-0.5 [&_strong]:truncate [&_strong]:text-xs [&_strong]:font-medium [&_small]:truncate [&_small]:text-xs [&_small]:text-text-muted',
+  'react-flow-branch-node':
+    'relative h-full w-full rounded-xl border border-border/80 bg-background text-text-primary shadow-sm transition-[border-color,box-shadow] duration-150 [&.selected]:border-focus [&.selected]:shadow-md [&.selected]:ring-1 [&.selected]:ring-focus/20 [&.selected_.workflow-node-insert]:pointer-events-auto [&.selected_.workflow-node-insert]:opacity-100 [&:hover_.workflow-node-insert]:pointer-events-auto [&:hover_.workflow-node-insert]:opacity-100 [&:focus-within_.workflow-node-insert]:pointer-events-auto [&:focus-within_.workflow-node-insert]:opacity-100',
+  'react-flow-branch-header':
+    'grid h-[46px] w-full cursor-grab grid-cols-[28px_minmax(0,1fr)] items-center gap-2 rounded-t-xl border-0 border-b border-border/60 bg-transparent px-2.5 text-left text-text-primary active:cursor-grabbing [&>span:last-child]:grid [&>span:last-child]:min-w-0 [&>span:last-child]:gap-0.5 [&_strong]:truncate [&_strong]:text-xs [&_strong]:font-medium [&_small]:truncate [&_small]:text-xs [&_small]:text-text-muted',
+  'react-flow-branch-conditions': 'grid py-1.5',
+  'react-flow-branch-condition-row':
+    'relative grid h-[30px] grid-cols-[44px_minmax(0,1fr)] items-center gap-2 pl-3 pr-4 [&>em]:text-xs [&>em]:not-italic [&>em]:text-text-muted [&>span]:truncate [&>span]:text-xs [&>span]:text-text-secondary [&>span>i]:ml-1 [&>span>i]:text-xs [&>span>i]:not-italic [&>span>i]:text-text-muted',
+  'react-flow-branch-empty': 'grid h-[30px] place-items-center text-xs text-text-muted',
+  'react-flow-branch-new': 'relative grid h-[34px] place-items-center border-t border-border/50',
+  'react-flow-branch-new-trigger':
+    'inline-flex h-6 items-center gap-1 rounded-md px-2 text-xs text-text-secondary transition-colors hover:bg-muted hover:text-text-primary',
+  'react-flow-branch-new-menu':
+    'absolute bottom-9 left-2 z-40 grid w-72 gap-2 rounded-xl border border-border bg-popover p-2.5 shadow-xl [&_label]:grid [&_label]:gap-1 [&_label>span]:text-xs [&_label>span]:text-text-muted [&_select]:h-8 [&_select]:w-full [&_select]:rounded-lg [&_select]:border [&_select]:border-border [&_select]:bg-background [&_select]:px-2 [&_select]:text-xs [&_select]:text-text-primary [&_select]:outline-none',
+  'react-flow-branch-new-condition':
+    'grid gap-2 rounded-lg border border-border/60 bg-muted/25 p-2.5',
+  'react-flow-branch-new-confirm':
+    'inline-flex h-8 items-center justify-center rounded-lg bg-text-primary px-3 text-xs font-medium text-background transition-colors hover:bg-text-primary/90',
+  'react-flow-branch-continuation': 'relative',
+  'react-flow-branch-continuation-trigger':
+    'grid size-5 place-items-center rounded-md text-text-muted transition-colors hover:bg-muted hover:text-text-primary',
+  'react-flow-branch-continuation-menu':
+    'absolute bottom-8 right-8 z-40 grid w-40 gap-1 rounded-xl border border-border bg-popover p-1 shadow-xl [&_button]:flex [&_button]:h-8 [&_button]:items-center [&_button]:gap-2 [&_button]:rounded-lg [&_button]:px-2 [&_button]:text-xs [&_button]:text-text-secondary [&_button:hover]:bg-muted [&_button:hover]:text-text-primary',
+  'react-flow-branch-footer':
+    'relative grid h-[32px] grid-cols-[minmax(0,1fr)_auto] items-center gap-2 border-t border-border/60 pl-3 pr-6 text-xs text-text-muted',
+  'react-flow-branch-handle':
+    '!absolute !-right-[5px] !top-1/2 !h-3.5 !w-2 !-translate-y-1/2 !rounded-sm !border-2 !border-background !bg-focus',
   'canvas-mode-controls': `!left-[var(--automation-panel-gap)] !top-14 !m-0 grid h-16 w-8 grid-rows-2 overflow-hidden ${FLOATING_SURFACE}`,
   'canvas-mode-button':
     'grid h-full w-full place-items-center text-text-muted transition-colors hover:bg-muted hover:text-text-primary [&.active]:bg-focus/10 [&.active]:text-focus',
@@ -171,6 +213,8 @@ const recipes: Record<string, string> = {
     'm-5 grid place-items-center gap-2 rounded-xl bg-muted/45 px-5 py-8 text-center [&_strong]:text-sm [&_strong]:font-medium [&_span]:text-xs [&_span]:text-text-muted [&_button]:mt-2 h-8 rounded-lg bg-background px-3 text-xs shadow-sm hover:bg-muted',
   'panel-settings': 'grid gap-4 p-5',
   'panel-section': 'grid gap-4 border-b border-border/60 px-5 py-5',
+  'panel-section-title':
+    'flex items-center gap-2 [&>small]:text-xs [&>small]:font-normal [&>small]:text-text-muted [&>small:last-child]:ml-1 [&>span]:text-focus',
   'panel-danger-zone': 'px-5 py-5 [&.compact]:p-0 [&.compact]:pt-1',
   'prominent-trigger':
     'flex gap-3 rounded-xl bg-muted/45 p-4 text-text-secondary [&_div]:grid [&_div]:gap-1 [&_strong]:text-sm [&_strong]:font-medium [&_strong]:text-text-primary [&_span]:text-xs [&_span]:text-text-muted',
@@ -221,6 +265,28 @@ const recipes: Record<string, string> = {
   'execution-mode':
     'border-0 p-0 [&_legend]:mb-3 [&_legend]:text-sm [&_legend]:font-medium [&>div]:grid [&>div]:grid-cols-2 [&>div]:gap-2 [&_button]:flex [&_button]:h-10 [&_button]:items-center [&_button]:justify-center [&_button]:gap-2 [&_button]:rounded-lg [&_button]:border [&_button]:border-transparent [&_button]:bg-muted/60 [&_button]:text-sm [&_button]:text-text-secondary [&_button]:transition-colors [&_button:hover]:bg-muted [&_button:hover]:text-text-primary [&_button.selected]:border-focus/60 [&_button.selected]:bg-focus/10 [&_button.selected]:text-focus',
   'execution-hint': 'text-xs leading-relaxed text-text-muted',
+  'branch-conditions': 'grid gap-3',
+  'branch-conditions-heading': 'text-xs font-medium text-text-secondary',
+  'branch-conditions-empty':
+    'rounded-lg border border-dashed border-border bg-muted/30 px-3 py-4 text-xs leading-relaxed text-text-muted',
+  'branch-condition-card':
+    'grid gap-3 rounded-xl border border-border bg-background p-3.5 shadow-sm transition-[border-color,box-shadow] duration-150 hover:border-border-strong',
+  'branch-condition-head':
+    'flex items-center justify-between gap-2 [&>em]:text-sm [&>em]:not-italic [&>em]:font-medium [&>em]:text-text-primary',
+  'branch-condition-remove':
+    'grid size-7 place-items-center rounded-lg text-text-muted transition-colors hover:bg-background hover:text-destructive',
+  'branch-condition-source':
+    'grid gap-3 rounded-lg border border-border/60 bg-muted/25 p-3 [&_label]:grid [&_label]:gap-1.5 [&_label>span]:flex [&_label>span]:items-center [&_label>span]:gap-2 [&_label>span]:text-xs [&_label>span]:text-text-secondary [&_select]:h-9 [&_select]:w-full [&_select]:rounded-lg [&_select]:border [&_select]:border-transparent [&_select]:bg-background [&_select]:px-3 [&_select]:text-sm [&_select]:text-text-primary [&_select]:outline-none [&_select]:transition-colors [&_select:hover]:bg-muted [&_select:focus]:border-focus/60',
+  'branch-condition-handlers':
+    'grid gap-2 border-t border-border/60 pt-3 [&>span]:text-xs [&>span]:text-text-muted',
+  'branch-handler-chips': 'flex flex-wrap gap-2',
+  'branch-handler-empty': 'text-xs text-text-muted',
+  'branch-handler-chip':
+    'inline-flex h-7 items-center gap-1.5 rounded-md bg-background px-2 text-xs text-text-secondary shadow-sm [&_svg]:shrink-0 [&_svg]:text-focus [&_em]:max-w-40 [&_em]:truncate [&_em]:not-italic [&_button]:grid [&_button]:size-4 [&_button]:place-items-center [&_button]:rounded [&_button]:text-text-muted [&_button:hover]:text-destructive',
+  'branch-add-handler':
+    'inline-flex h-7 w-fit items-center gap-1 rounded-md border border-dashed border-border bg-transparent px-2 text-xs text-text-secondary transition-colors hover:bg-muted hover:text-text-primary',
+  'branch-add-condition':
+    'mt-1 inline-flex h-9 w-full items-center justify-center gap-2 rounded-lg border border-dashed border-border bg-transparent text-sm text-text-secondary transition-colors hover:border-focus/35 hover:bg-focus/5 hover:text-text-primary',
   'required-node':
     'flex items-center gap-2 text-sm text-text-secondary [&_input]:size-4 [&_input]:accent-focus',
   'panel-help':

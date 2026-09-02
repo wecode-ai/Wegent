@@ -126,6 +126,12 @@ celery_app.conf.update(
             ),
             "schedule": float(settings.FLOW_SCHEDULER_INTERVAL_SECONDS),
         },
+        "scan-workflow-loop-timeouts": {
+            "task": (
+                "app.tasks.project_automation_tasks." "scan_workflow_loop_timeouts"
+            ),
+            "schedule": float(settings.FLOW_SCHEDULER_INTERVAL_SECONDS),
+        },
         "scan-stale-index-tasks": {
             "task": "app.tasks.knowledge_tasks.scan_stale_index_tasks",
             "schedule": 5 * 60,  # every 5 minutes

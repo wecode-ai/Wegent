@@ -75,7 +75,13 @@ vi.mock('@xyflow/react', () => ({
     zoomOnDoubleClick,
     panOnDrag,
   }: {
-    nodes: Array<{ id: string; type: string; data: Record<string, unknown> }>
+    nodes: Array<{
+      id: string
+      type: string
+      parentId?: string
+      style?: { width?: number; height?: number }
+      data: Record<string, unknown>
+    }>
     nodeTypes: Record<string, ComponentType<{ data: Record<string, unknown> }>>
     children?: ReactNode
     onInit?: (instance: { fitView: typeof fitView }) => void
@@ -108,6 +114,9 @@ vi.mock('@xyflow/react', () => ({
             <div
               key={node.id}
               data-testid={`mock-flow-node-${node.id}`}
+              data-parent-id={node.parentId}
+              data-width={node.style?.width}
+              data-height={node.style?.height}
               onClick={event => onNodeClick?.(event, node)}
             >
               <NodeComponent data={node.data} />
@@ -199,6 +208,52 @@ describe('IssueWorkflowDag', () => {
     expect(flow).toHaveAttribute('data-zoom-on-pinch', 'false')
     expect(flow).toHaveAttribute('data-zoom-on-double-click', 'false')
     expect(flow).toHaveAttribute('data-pan-on-drag', 'false')
+  })
+
+  test('renders loop body nodes inside the loop container', () => {
+    render(
+      <IssueWorkflowDag
+        nodes={[
+          stage('start', { node_type: 'event', status: 'completed', required: false }),
+          stage('loop', {
+            node_type: 'loop',
+            depends_on: ['start'],
+            body_node_ids: ['loop-start', 'branch', 'loop-end'],
+          }),
+          stage('loop-start', {
+            node_type: 'loop_start',
+            loop_id: 'loop',
+            status: 'completed',
+          }),
+          stage('branch', {
+            node_type: 'branch',
+            loop_id: 'loop',
+            depends_on: ['loop-start'],
+            status: 'waiting',
+          }),
+          stage('loop-end', {
+            node_type: 'loop_end',
+            loop_id: 'loop',
+            depends_on: ['branch'],
+            status: 'blocked',
+          }),
+          stage('after', { depends_on: ['loop'], status: 'blocked' }),
+        ]}
+        tasks={[]}
+      />
+    )
+
+    expect(screen.getByTestId('cloud-todo-workflow-loop-loop')).toBeInTheDocument()
+    expect(
+      Number(screen.getByTestId('mock-flow-node-loop').getAttribute('data-width'))
+    ).toBeGreaterThanOrEqual(560)
+    expect(screen.getByTestId('mock-flow-node-loop-start')).toHaveAttribute(
+      'data-parent-id',
+      'loop'
+    )
+    expect(screen.getByTestId('mock-flow-node-branch')).toHaveAttribute('data-parent-id', 'loop')
+    expect(screen.getByTestId('mock-flow-node-loop-end')).toHaveAttribute('data-parent-id', 'loop')
+    expect(screen.getByTestId('mock-flow-node-after')).not.toHaveAttribute('data-parent-id')
   })
 
   test('shows the execution failure reason in the failed stage details', () => {

@@ -661,7 +661,7 @@ def mark_loop_item_read(
     "/loop-items/{item_id}/workflow-nodes/{workflow_node_id}/decision",
     response_model=LoopItemResponse,
 )
-def decide_loop_item_workflow_node(
+async def decide_loop_item_workflow_node(
     item_id: str,
     workflow_node_id: str,
     values: WorkflowNodeDecisionRequest,
@@ -675,6 +675,23 @@ def decide_loop_item_workflow_node(
         values=values,
         user_id=current_user.id,
     )
+    from app.services.project_automations import project_automation_service
+    from app.services.workflow_loop_runtime import forced_loop_handler_run_ids
+
+    for run_id in forced_loop_handler_run_ids(item):
+        try:
+            await project_automation_service.cancel_run(
+                db,
+                str(item.cloud_project_id),
+                run_id,
+                current_user.id,
+            )
+        except Exception:
+            logger.exception(
+                "Loop force advance cancel failed item=%s run=%s",
+                item_id,
+                run_id,
+            )
     publish_loop_item_changed(
         db,
         item=item,

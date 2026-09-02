@@ -52,6 +52,7 @@ _SOURCES = {
             "change_request.merge_conflict",
             "change_request.review_submitted",
             "change_request.comment_created",
+            "change_request.merged",
         ),
         execution_targets=("continue_binding", "create_issue"),
         name_key="event_sources.github.name",
@@ -64,8 +65,8 @@ _SOURCES = {
         event_types=(
             "change_request.checks_failed",
             "change_request.merge_conflict",
-            "change_request.approved",
             "change_request.comment_created",
+            "change_request.merged",
         ),
         execution_targets=("continue_binding", "create_issue"),
         name_key="event_sources.gitlab.name",
@@ -318,6 +319,28 @@ def _github_events(
 
     if event_name == "pull_request":
         change_request = _mapping(payload.get("pull_request"))
+        if (
+            _text(payload.get("action")).lower() == "closed"
+            and change_request.get("merged") is True
+        ):
+            subject = _github_change_request(resource, change_request)
+            return (
+                [
+                    NormalizedProjectEvent(
+                        event_type="change_request.merged",
+                        source_type="github",
+                        resource=resource,
+                        subject=subject,
+                        payload={
+                            "raw_event": event_name,
+                            "action": "closed",
+                            "merged_at": change_request.get("merged_at"),
+                        },
+                    )
+                ]
+                if subject
+                else []
+            )
         mergeable_state = _text(change_request.get("mergeable_state")).lower()
         if change_request.get("mergeable") is not False and mergeable_state not in {
             "dirty",
@@ -443,19 +466,24 @@ def _gitlab_events(
 
     if event_name in {"merge request hook", "merge_request"}:
         attributes = _mapping(payload.get("object_attributes"))
-        action = _text(attributes.get("action")).lower()
-        if action in {"approved", "approval"}:
+        if _text(attributes.get("state")).lower() == "merged":
             subject = _gitlab_change_request(resource, attributes)
-            return _change_request_event(
-                "change_request.approved",
-                "gitlab",
-                resource,
-                subject,
-                {
-                    "raw_event": "approval",
-                    "action": action,
-                    "author": _gitlab_author(payload.get("user")),
-                },
+            return (
+                [
+                    NormalizedProjectEvent(
+                        event_type="change_request.merged",
+                        source_type="gitlab",
+                        resource=resource,
+                        subject=subject,
+                        payload={
+                            "raw_event": event_name,
+                            "action": "merge",
+                            "merged_at": attributes.get("merged_at"),
+                        },
+                    )
+                ]
+                if subject
+                else []
             )
         merge_status = (
             _text(attributes.get("detailed_merge_status"))
@@ -495,22 +523,6 @@ def _gitlab_events(
             },
         )
 
-    if event_name in {"approval hook", "merge request approval hook"}:
-        subject = _gitlab_change_request(
-            resource,
-            _mapping(payload.get("object_attributes"))
-            or _mapping(payload.get("merge_request")),
-        )
-        return _change_request_event(
-            "change_request.approved",
-            "gitlab",
-            resource,
-            subject,
-            {
-                "raw_event": "approval",
-                "author": _gitlab_author(payload.get("user")),
-            },
-        )
     return []
 
 
