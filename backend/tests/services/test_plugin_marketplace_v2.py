@@ -586,7 +586,7 @@ def test_uploading_restricted_update_keeps_the_published_release_visible(
 
 
 def test_personal_submission_identity_is_independent_from_official_slug(
-    test_db, test_user
+    test_db, test_user, monkeypatch
 ):
     official = Plugin(
         catalog_namespace="wework-official",
@@ -606,6 +606,7 @@ def test_personal_submission_identity_is_independent_from_official_slug(
     test_db.commit()
 
     package = _plugin_zip()
+    _mock_package_storage(monkeypatch, {}, package)
     initialized = PluginMarketplaceService().init_submission(
         test_db,
         user_id=test_user.id,
