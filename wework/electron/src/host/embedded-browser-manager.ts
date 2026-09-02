@@ -51,6 +51,7 @@ interface BrowserEntry {
   requestedUrl: string | null
   previewDisplayUrl: string | null
   previewSourceUrl: string | null
+  awaitingInitialNavigation: boolean
   ownsDeviceMetricsDebugger: boolean
   navigationError: BrowserPageState['navigationError']
   historyId: string | null
@@ -402,6 +403,7 @@ export class EmbeddedBrowserManager {
       requestedUrl: validBrowserUrl(input.url),
       previewDisplayUrl: null,
       previewSourceUrl: null,
+      awaitingInitialNavigation: input.url !== 'about:blank',
       ownsDeviceMetricsDebugger: false,
       navigationError: null,
       historyId: null,
@@ -452,6 +454,11 @@ export class EmbeddedBrowserManager {
       if (entry.historyId) void this.history.backfillTitle(entry.historyId, title)
     })
     contents.on('did-navigate', (_event, url) => {
+      if (entry.awaitingInitialNavigation && url === 'about:blank') {
+        emitPageState()
+        return
+      }
+      entry.awaitingInitialNavigation = false
       if (url !== entry.previewDisplayUrl) {
         entry.requestedUrl = url
         entry.previewDisplayUrl = null

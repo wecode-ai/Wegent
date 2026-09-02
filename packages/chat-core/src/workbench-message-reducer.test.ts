@@ -955,6 +955,11 @@ describe('reduceWorkbenchMessages', () => {
       }
     })
 
+    expect(state[0].blocks).toMatchObject([
+      { id: 'thinking-1', contentTruncated: true },
+      { id: 'tool-1', toolOutputTruncated: true }
+    ])
+
     state = reduceWorkbenchMessages(state, {
       type: 'block_updated',
       subtaskId: '9',

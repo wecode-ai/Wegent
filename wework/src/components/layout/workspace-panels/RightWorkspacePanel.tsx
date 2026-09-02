@@ -130,6 +130,7 @@ export interface RightWorkspaceBrowserState {
   label: string
   nativeLabel?: string | null
   browserSessionId: string
+  url: string | null
   title: string | null
   faviconUrl: string | null
   isLoading: boolean
@@ -283,6 +284,10 @@ function RightWorkspaceBrowserPanelSlot({
     (title: string | null) => onBrowserStateChange(tab, { title }),
     [onBrowserStateChange, tab]
   )
+  const handleUrlChange = useCallback(
+    (url: string | null) => onBrowserStateChange(tab, { url }),
+    [onBrowserStateChange, tab]
+  )
   const handleNativeLabelChange = useCallback(
     (nativeLabel: string | null) => onBrowserStateChange(tab, { nativeLabel }),
     [onBrowserStateChange, tab]
@@ -295,6 +300,7 @@ function RightWorkspaceBrowserPanelSlot({
       hideToolbar={Boolean(state.developmentPreview)}
       label={state.label}
       browserTabId={tab}
+      initialUrl={state.url}
       openRequest={state.openRequest}
       codeCommentCount={codeCommentCount}
       codeCommentContexts={codeCommentContexts}
@@ -307,6 +313,7 @@ function RightWorkspaceBrowserPanelSlot({
       onLoadingChange={handleLoadingChange}
       onAgentActiveChange={handleAgentActiveChange}
       onTitleChange={handleTitleChange}
+      onUrlChange={handleUrlChange}
       onNativeLabelChange={handleNativeLabelChange}
     />
   )
@@ -756,7 +763,10 @@ export const RightWorkspacePanel = memo(function RightWorkspacePanel({
               tab={tab}
               active={visible && activeView === tab}
               backgroundActive={
-                backgrounded && activeView === tab && browserState.openRequest?.source === 'agent'
+                backgrounded &&
+                activeView === tab &&
+                (browserState.openRequest?.source === 'agent' ||
+                  Boolean(browserState.developmentPreview))
               }
               state={browserState}
               codeCommentCount={codeCommentCount}

@@ -423,6 +423,43 @@ describe('EmbeddedBrowserManager lifecycle', () => {
     await rm(directory, { recursive: true, force: true })
   })
 
+  test('ignores the webview bootstrap navigation while opening a restored URL', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'wework-browser-manager-'))
+    const manager = new EmbeddedBrowserManager(directory)
+    const contents = new FakeWebContents()
+    let finishNavigation: (() => void) | undefined
+    contents.loadURL.mockImplementation(
+      url =>
+        new Promise(resolve => {
+          finishNavigation = () => {
+            contents.commitUrl(url)
+            contents.emit('did-navigate', {}, url)
+            resolve()
+          }
+        })
+    )
+    manager.attach('workspace-browser', contents as unknown as WebContents)
+
+    const opening = manager.open({
+      label: 'workspace-browser',
+      url: 'https://example.test/restored',
+      bounds: { x: 0, y: 0, width: 800, height: 600 },
+      visible: true,
+      navigateExisting: true,
+    })
+    await vi.waitFor(() => expect(contents.loadURL).toHaveBeenCalledOnce())
+
+    contents.emit('did-navigate', {}, 'about:blank')
+
+    expect(manager.state('workspace-browser').url).toBe('https://example.test/restored')
+
+    finishNavigation?.()
+    await expect(opening).resolves.toMatchObject({
+      url: 'https://example.test/restored',
+    })
+    await rm(directory, { recursive: true, force: true })
+  })
+
   test('closes an attached browser even before it is opened', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'wework-browser-manager-'))
     const manager = new EmbeddedBrowserManager(directory)

@@ -526,6 +526,16 @@ impl CodexAppServerClient {
     }
 
     fn shutdown_transient_process_in_background(&self, process_generation: u64) {
+        self.shutdown_transient_process_in_background_with_observer(process_generation, |_| {});
+    }
+
+    fn shutdown_transient_process_in_background_with_observer<F>(
+        &self,
+        process_generation: u64,
+        observe_pending_requests: F,
+    ) where
+        F: Fn(usize) + Send + 'static,
+    {
         let client = self.clone();
         tokio::spawn(async move {
             loop {
@@ -539,7 +549,9 @@ impl CodexAppServerClient {
                 {
                     Ok(_) => return,
                     Err((active_turn_count, _)) if active_turn_count > 0 => return,
-                    Err((0, _)) => {}
+                    Err((0, pending_request_count)) => {
+                        observe_pending_requests(pending_request_count);
+                    }
                     Err(_) => return,
                 }
             }

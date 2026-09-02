@@ -185,6 +185,7 @@ export interface WorkspaceBrowserPanelProps {
   hideToolbar?: boolean
   label?: string
   browserTabId?: string
+  initialUrl?: string | null
   openRequest?: EmbeddedBrowserOpenRequest | null
   codeCommentCount?: number
   codeCommentContexts?: CodeCommentContext[]
@@ -200,6 +201,7 @@ export interface WorkspaceBrowserPanelProps {
   onFaviconChange?: (faviconUrl: string | null) => void
   onLoadingChange?: (isLoading: boolean) => void
   onTitleChange?: (title: string | null) => void
+  onUrlChange?: (url: string | null) => void
   onAgentActiveChange?: (agentActive: boolean) => void
 }
 
@@ -344,6 +346,7 @@ export function WorkspaceBrowserTabPanel({
   hideToolbar = false,
   label = 'workspace-browser',
   browserTabId = label,
+  initialUrl = null,
   openRequest,
   codeCommentCount = 0,
   codeCommentContexts = [],
@@ -356,6 +359,7 @@ export function WorkspaceBrowserTabPanel({
   onFaviconChange,
   onLoadingChange,
   onTitleChange,
+  onUrlChange,
   onAgentActiveChange,
 }: WorkspaceBrowserPanelProps) {
   const { t } = useTranslation('common')
@@ -366,6 +370,7 @@ export function WorkspaceBrowserTabPanel({
   const nativeBrowserOpeningGenerationRef = useRef<number | null>(null)
   const nativeBrowserLifecycleGenerationRef = useRef(0)
   const currentUrlRef = useRef<string | null>(null)
+  const persistedUrlRef = useRef<string | null>(initialUrl)
   const pendingNavigationUrlRef = useRef<string | null>(null)
   const activePageUrlRef = useRef<string | null>(null)
   const addressInputRef = useRef<HTMLInputElement | null>(null)
@@ -402,10 +407,10 @@ export function WorkspaceBrowserTabPanel({
   const occlusionSnapshotReadyRef = useRef(true)
   const occlusionSnapshotFallbackTimerRef = useRef<number | null>(null)
   const embeddedBrowserOccludedRef = useRef(false)
-  const [address, setAddress] = useState('')
-  const [currentUrl, setCurrentUrl] = useState<string | null>(null)
+  const [address, setAddress] = useState(initialUrl ?? '')
+  const [currentUrl, setCurrentUrl] = useState<string | null>(initialUrl)
   const [browserOpenAttempt, setBrowserOpenAttempt] = useState(0)
-  const [pageUrl, setPageUrl] = useState<string | null>(null)
+  const [pageUrl, setPageUrl] = useState<string | null>(initialUrl)
   const [status, setStatus] = useState<BrowserStatus>('idle')
   const [error, setError] = useState<string | null>(null)
   const [navigationError, setNavigationError] = useState<EmbeddedBrowserNavigationError | null>(
@@ -549,6 +554,15 @@ export function WorkspaceBrowserTabPanel({
       reconcileDownloadSnapshot(nativeLabel)
     },
     [onNativeLabelChange, reconcileDownloadSnapshot]
+  )
+
+  const reportUrlChange = useCallback(
+    (url: string | null) => {
+      if (persistedUrlRef.current === url) return
+      persistedUrlRef.current = url
+      onUrlChange?.(url)
+    },
+    [onUrlChange]
   )
 
   useLayoutEffect(() => {
@@ -740,6 +754,7 @@ export function WorkspaceBrowserTabPanel({
       setCurrentUrl(null)
       setPageUrl(null)
       setAddress('')
+      reportUrlChange(null)
       setStatus('ready')
       setError(null)
       setInvalidTlsCertificate(null)
@@ -774,7 +789,13 @@ export function WorkspaceBrowserTabPanel({
       disposed = true
       unlisten?.()
     }
-  }, [onDownloadActivityChange, onFaviconChange, onNativeLabelChange, onTitleChange])
+  }, [
+    onDownloadActivityChange,
+    onFaviconChange,
+    onNativeLabelChange,
+    onTitleChange,
+    reportUrlChange,
+  ])
 
   useEffect(() => {
     if (!active || !nativeLabelRef.current) return
@@ -787,6 +808,7 @@ export function WorkspaceBrowserTabPanel({
       if (pendingNavigationUrl && url && url !== pendingNavigationUrl) return
       activePageUrlRef.current = url
       setPageUrl(url)
+      reportUrlChange(url)
       if (url) {
         if (!addressEditingRef.current && document.activeElement !== addressInputRef.current) {
           setAddress(url)
@@ -799,7 +821,7 @@ export function WorkspaceBrowserTabPanel({
       onTitleChange?.(null)
       onFaviconChange?.(null)
     },
-    [onFaviconChange, onTitleChange]
+    [onFaviconChange, onTitleChange, reportUrlChange]
   )
 
   useEffect(() => {
@@ -1305,6 +1327,14 @@ export function WorkspaceBrowserTabPanel({
       }
       await setEmbeddedBrowserBounds({ x: 0, y: 0, width: 1, height: 1 }, false, openingLabel, true)
     }
+    let retryAfterLifecycleChange = false
+    const scheduleLifecycleRetry = () => {
+      retryAfterLifecycleChange =
+        mountedRef.current &&
+        browserRuntimeActiveRef.current &&
+        !nativeBrowserOpenRef.current &&
+        Boolean(currentUrlRef.current)
+    }
     const recoverBrowserFromPageState = async () => {
       const recoveryDelays = [0, 120, 300, 600]
       for (const delay of recoveryDelays) {
@@ -1313,7 +1343,10 @@ export function WorkspaceBrowserTabPanel({
         }
         try {
           const pageState = await readEmbeddedBrowserPageState(openingLabel)
-          if (isAbandoned()) return true
+          if (isAbandoned()) {
+            scheduleLifecycleRetry()
+            return true
+          }
           adoptNativeLabel(pageState.nativeLabel, openingLabel)
           setInvalidTlsCertificate(pageState.invalidTlsCertificate ?? null)
           nativeBrowserOpenRef.current = true
@@ -1339,7 +1372,10 @@ export function WorkspaceBrowserTabPanel({
         const measuredBounds = active && host ? getElementBounds(host) : null
         const visible = measuredBounds !== null
         const bounds = measuredBounds ?? { x: 0, y: 0, width: 1, height: 1 }
-        if (isAbandoned()) return
+        if (isAbandoned()) {
+          scheduleLifecycleRetry()
+          return
+        }
 
         logBrowserOpenDiagnostic('host_ready', {
           active,
@@ -1372,6 +1408,7 @@ export function WorkspaceBrowserTabPanel({
             : await openEmbeddedBrowser(nativeOpeningUrl, bounds, openingLabel, false, !active)
         if (isAbandoned()) {
           await closeEmbeddedBrowser(openingLabel, pageState.nativeLabel).catch(() => undefined)
+          scheduleLifecycleRetry()
           logBrowserOpenDiagnostic('lifecycle_cancelled', {
             active,
             label: openingLabel,
@@ -1424,10 +1461,16 @@ export function WorkspaceBrowserTabPanel({
           if (await recoverBrowserFromPageState()) return
           setStatus('error')
           setError(t('workbench.browser_open_failed'))
+        } else {
+          scheduleLifecycleRetry()
         }
       } finally {
-        if (nativeBrowserOpeningGenerationRef.current === lifecycleGeneration) {
+        const releasedOpening = nativeBrowserOpeningGenerationRef.current === lifecycleGeneration
+        if (releasedOpening) {
           nativeBrowserOpeningGenerationRef.current = null
+        }
+        if (releasedOpening && retryAfterLifecycleChange) {
+          setBrowserOpenAttempt(attempt => attempt + 1)
         }
       }
     }

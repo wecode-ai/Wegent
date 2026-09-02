@@ -258,12 +258,20 @@ async fn transient_shutdown_waits_for_concurrent_requests_to_finish() {
     let (response_tx, _response_rx) = oneshot::channel();
     pending.lock().await.insert(7, response_tx);
     client.state.lock().await.process = Some(process);
+    let pending_observed = Arc::new(tokio::sync::Notify::new());
+    let notify_pending_observed = Arc::clone(&pending_observed);
 
-    client.shutdown_transient_process_in_background(1);
-    sleep(Duration::from_millis(
-        CODEX_APP_SERVER_TRANSIENT_SHUTDOWN_RETRY_MILLIS * 2,
-    ))
-    .await;
+    client.shutdown_transient_process_in_background_with_observer(
+        1,
+        move |pending_request_count| {
+            if pending_request_count > 0 {
+                notify_pending_observed.notify_one();
+            }
+        },
+    );
+    timeout(Duration::from_secs(1), pending_observed.notified())
+        .await
+        .expect("transient shutdown should observe the pending request");
     assert_eq!(unsafe { libc::kill(child_id as libc::pid_t, 0) }, 0);
 
     pending.lock().await.clear();

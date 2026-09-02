@@ -454,6 +454,7 @@ function normalizeRightWorkspaceBrowserState(
     label: state?.label ?? label,
     nativeLabel: state?.nativeLabel ?? null,
     browserSessionId: state?.browserSessionId ?? getRightWorkspaceBrowserLabelSuffix(tab),
+    url: state?.url ?? state?.openRequest?.url ?? null,
     title: state?.title ?? null,
     faviconUrl: state?.faviconUrl ?? null,
     isLoading: state?.isLoading ?? false,
@@ -1480,6 +1481,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     ): RightWorkspaceBrowserState => ({
       label: browserLabelForRightWorkspaceTab(defaultEmbeddedBrowserLabel, tab),
       browserSessionId: getRightWorkspaceBrowserLabelSuffix(tab),
+      url: null,
       title: null,
       faviconUrl: null,
       isLoading: false,
@@ -2984,6 +2986,10 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
             targetLabel: stateLabel,
           }
         : null
+      const stateUrl =
+        overrides.url !== undefined
+          ? overrides.url
+          : (normalizedRequest?.url ?? existingState?.url ?? null)
 
       setBrowserStates(current => {
         const currentState = current[tab]
@@ -2993,12 +2999,14 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
             ? {
                 ...currentState,
                 ...overrides,
+                url: stateUrl,
                 openRequest: normalizedRequest ?? currentState.openRequest,
               }
             : createBrowserTabState(tab, {
                 label: stateLabel,
                 browserSessionId:
                   request?.browserSessionId ?? getRightWorkspaceBrowserLabelSuffix(tab),
+                url: stateUrl,
                 openRequest: normalizedRequest,
                 ...overrides,
               }),
@@ -3027,6 +3035,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
       updateBrowserState(tab, {
         nativeLabel: null,
         isLoading: false,
+        url: null,
         openRequest: null,
       })
     },
@@ -3093,6 +3102,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
           return
         }
         updateBrowserState(tab, {
+          url: running.webUrl!,
           openRequest: {
             id: `smart-app-development-preview-${installationId}-${Date.now()}`,
             url: running.webUrl!,
