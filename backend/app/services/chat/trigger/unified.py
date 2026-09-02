@@ -848,6 +848,8 @@ def _prompt_protection_context(
     team_crd = TeamCRD.model_validate(team.json)
     if not team_crd.spec.promptProtectionEnabled or not isinstance(message, str):
         return None
+    if team_crd.spec.collaborationModel == "pipeline":
+        return None
 
     shell_type = _request_shell_type(request)
     if shell_type != "Chat":

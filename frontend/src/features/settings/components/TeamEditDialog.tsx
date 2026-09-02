@@ -895,10 +895,10 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
   }, [shells])
 
   const advancedPromptProtectionSupported = useMemo(() => {
-    if (leaderBotId === null) return false
+    if (mode === 'pipeline' || leaderBotId === null) return false
     const leader = filteredBots.find((bot: Bot) => bot.id === leaderBotId)
     return getActualShellType(leader?.shell_type || '', shellMap) === 'Chat'
-  }, [filteredBots, leaderBotId, shellMap])
+  }, [filteredBots, leaderBotId, mode, shellMap])
 
   // Leader change handler
   const onLeaderChange = (botId: number) => {

@@ -307,6 +307,7 @@ describe('TeamEditDialog display name', () => {
 
   it('loads, toggles, and saves Team-level prompt protection in the advanced editor', async () => {
     const team = makeTeam()
+    team.workflow = { mode: 'coordinate' }
     team.prompt_protection_enabled = true
     mockedUpdateTeam.mockResolvedValue({ ...team, prompt_protection_enabled: false })
 
@@ -385,6 +386,7 @@ describe('TeamEditDialog display name', () => {
 
   it('hides prompt protection in the advanced editor for non-Chat leaders', async () => {
     const team = makeTeam()
+    team.workflow = { mode: 'coordinate' }
 
     render(
       <TeamEditDialog
@@ -394,6 +396,26 @@ describe('TeamEditDialog display name', () => {
         setTeams={jest.fn()}
         editingTeamId={team.id}
         bots={[makeBot()]}
+        setBots={jest.fn()}
+        toast={jest.fn()}
+      />
+    )
+
+    await screen.findByRole('button', { name: 'Save' })
+    expect(screen.queryByTestId('advanced-prompt-protection-setting')).not.toBeInTheDocument()
+  })
+
+  it('hides prompt protection in the advanced editor for pipeline teams', async () => {
+    const team = makeTeam()
+
+    render(
+      <TeamEditDialog
+        open
+        onClose={jest.fn()}
+        teams={[team]}
+        setTeams={jest.fn()}
+        editingTeamId={team.id}
+        bots={[makeBot('Chat')]}
         setBots={jest.fn()}
         toast={jest.fn()}
       />

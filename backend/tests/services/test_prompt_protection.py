@@ -364,7 +364,7 @@ def test_setup_failure_logs_content_free_fail_open_decision(
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("collaboration_model", ["solo", "coordinate", "pipeline"])
+@pytest.mark.parametrize("collaboration_model", ["solo", "coordinate"])
 async def test_unified_trigger_blocks_before_dispatch(monkeypatch, collaboration_model):
     from app.api.ws import chat_namespace as _chat_namespace
     from app.services.chat.trigger import unified
@@ -445,56 +445,6 @@ async def test_unified_trigger_blocks_before_dispatch(monkeypatch, collaboration
     assert gate_kwargs["model_config"] is request.model_config
 
 
-def test_pipeline_prompt_protection_uses_entrypoint_as_handoff_boundary():
-    from app.api.ws import chat_namespace as _chat_namespace
-    from app.services.chat.trigger import unified
-
-    assert _chat_namespace is not None
-
-    request = ExecutionRequest(
-        task_id=22,
-        subtask_id=33,
-        bot=[{"shell_type": "Chat"}],
-        model_config={"model_id": "selected-model"},
-    )
-    team = SimpleNamespace(
-        id=11,
-        name="pipeline-support",
-        namespace="default",
-        json={
-            "apiVersion": "agent.wecode.io/v1",
-            "kind": "Team",
-            "metadata": {"name": "pipeline-support", "namespace": "default"},
-            "spec": {
-                "members": [],
-                "collaborationModel": "pipeline",
-                "promptProtectionEnabled": True,
-            },
-        },
-    )
-    kwargs = {
-        "request": request,
-        "task": SimpleNamespace(id=22),
-        "assistant_subtask": SimpleNamespace(id=33),
-        "team": team,
-        "user": SimpleNamespace(id=44),
-        "message": "user request",
-        "entrypoint": PromptProtectionEntrypoint.WEB_USER_MESSAGE,
-    }
-
-    assert (
-        unified._prompt_protection_context(**kwargs, previous_bot_id=None) is not None
-    )
-    assert unified._prompt_protection_context(**kwargs, previous_bot_id=101) is not None
-    assert (
-        unified._prompt_protection_context(
-            **{**kwargs, "entrypoint": None},
-            previous_bot_id=101,
-        )
-        is None
-    )
-
-
 def test_openapi_responses_prompt_protection_uses_explicit_entrypoint():
     from app.api.ws import chat_namespace as _chat_namespace
     from app.services.chat.trigger import unified
@@ -539,48 +489,6 @@ def test_openapi_responses_prompt_protection_uses_explicit_entrypoint():
     assert actual_shell_type == "Chat"
     assert context.entrypoint == "openapi_responses:Chat"
     assert context.model_id == "selected-model"
-
-
-@pytest.mark.asyncio
-@pytest.mark.parametrize("previous_bot_id", [101, None])
-async def test_pipeline_next_stage_does_not_protect_internal_handoff(
-    monkeypatch: pytest.MonkeyPatch,
-    previous_bot_id: int | None,
-) -> None:
-    from app.services.chat import pipeline_advance
-
-    trigger_kwargs = {}
-    scheduled = []
-
-    async def trigger(**kwargs):
-        trigger_kwargs.update(kwargs)
-
-    monkeypatch.setattr(pipeline_advance, "trigger_ai_response_unified", trigger)
-    monkeypatch.setattr(pipeline_advance, "make_transient", lambda value: None)
-    monkeypatch.setattr(
-        pipeline_advance.asyncio,
-        "create_task",
-        lambda coroutine: scheduled.append(coroutine),
-    )
-
-    pipeline_advance._trigger_next_stage(
-        db=MagicMock(),
-        task=SimpleNamespace(id=22),
-        team=SimpleNamespace(id=11),
-        assistant_subtask=SimpleNamespace(id=33),
-        user=SimpleNamespace(id=44),
-        message="internal handoff",
-        payload=SimpleNamespace(),
-        task_room="task:22",
-        user_subtask_id=32,
-        auth_token="token",
-        previous_bot_id=previous_bot_id,
-    )
-    assert len(scheduled) == 1
-    await scheduled[0]
-
-    assert trigger_kwargs["previous_bot_id"] == previous_bot_id
-    assert trigger_kwargs["prompt_protection_entrypoint"] is None
 
 
 @pytest.mark.asyncio
@@ -723,15 +631,17 @@ async def test_blocked_turn_does_not_emit_completion_when_persistence_fails(
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    ("prompt_protection_enabled", "entrypoint", "shell_type"),
+    ("prompt_protection_enabled", "entrypoint", "shell_type", "collaboration_model"),
     [
-        (False, PromptProtectionEntrypoint.WEB_USER_MESSAGE, "Chat"),
-        (True, None, "Chat"),
-        (True, PromptProtectionEntrypoint.WEB_USER_MESSAGE, "ClaudeCode"),
-        (True, PromptProtectionEntrypoint.WEB_USER_MESSAGE, "Agno"),
-        (True, PromptProtectionEntrypoint.OPENAPI_RESPONSES, "ClaudeCode"),
-        (True, PromptProtectionEntrypoint.OPENAPI_RESPONSES, "Agno"),
-        (True, PromptProtectionEntrypoint.OPENAPI_RESPONSES, "Dify"),
+        (False, PromptProtectionEntrypoint.WEB_USER_MESSAGE, "Chat", "solo"),
+        (True, None, "Chat", "solo"),
+        (True, PromptProtectionEntrypoint.WEB_USER_MESSAGE, "ClaudeCode", "solo"),
+        (True, PromptProtectionEntrypoint.WEB_USER_MESSAGE, "Agno", "solo"),
+        (True, PromptProtectionEntrypoint.OPENAPI_RESPONSES, "ClaudeCode", "solo"),
+        (True, PromptProtectionEntrypoint.OPENAPI_RESPONSES, "Agno", "solo"),
+        (True, PromptProtectionEntrypoint.OPENAPI_RESPONSES, "Dify", "solo"),
+        (True, PromptProtectionEntrypoint.WEB_USER_MESSAGE, "Chat", "pipeline"),
+        (True, PromptProtectionEntrypoint.OPENAPI_RESPONSES, "Chat", "pipeline"),
     ],
     ids=[
         "disabled-web-entrypoint",
@@ -741,6 +651,8 @@ async def test_blocked_turn_does_not_emit_completion_when_persistence_fails(
         "enabled-api-claude-code",
         "enabled-api-agno",
         "enabled-api-dify",
+        "enabled-web-pipeline",
+        "enabled-api-pipeline",
     ],
 )
 async def test_unified_trigger_skips_gate_outside_enabled_protected_entrypoint(
@@ -748,6 +660,7 @@ async def test_unified_trigger_skips_gate_outside_enabled_protected_entrypoint(
     prompt_protection_enabled,
     entrypoint,
     shell_type,
+    collaboration_model,
 ):
     from app.api.ws import chat_namespace as _chat_namespace
     from app.services.chat.trigger import unified
@@ -766,11 +679,16 @@ async def test_unified_trigger_skips_gate_outside_enabled_protected_entrypoint(
     )
     evaluate = AsyncMock()
     monkeypatch.setattr(unified, "evaluate_prompt_protection", evaluate)
+    monkeypatch.setattr(
+        unified,
+        "_prompt_protection_system_prompt",
+        MagicMock(return_value="raw prompt"),
+    )
     dispatcher = MagicMock()
     dispatcher.dispatch = AsyncMock()
     team_spec = {
         "members": [],
-        "collaborationModel": "solo",
+        "collaborationModel": collaboration_model,
     }
     if prompt_protection_enabled:
         team_spec["promptProtectionEnabled"] = True
