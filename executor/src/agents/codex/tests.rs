@@ -260,6 +260,9 @@ fn persistent_app_server_uses_codex_deferred_mcp_tools() {
     assert!(config
         .config_overrides
         .contains(&CODEX_DISABLE_TOOL_CALL_MCP_ELICITATION_OVERRIDE.to_owned()));
+    assert!(config
+        .config_overrides
+        .contains(&CODEX_ENABLE_UPDATE_PLAN_OVERRIDE.to_owned()));
 }
 
 #[test]
@@ -811,6 +814,9 @@ fn codex_launch_config_enables_streaming_patch_updates() {
     assert!(launch_config
         .config_overrides
         .contains(&CODEX_DISABLE_TOOL_CALL_MCP_ELICITATION_OVERRIDE.to_owned()));
+    assert!(launch_config
+        .config_overrides
+        .contains(&CODEX_ENABLE_UPDATE_PLAN_OVERRIDE.to_owned()));
 }
 
 #[test]
