@@ -2658,11 +2658,8 @@ function ChatAreaContent({
       >
         {/* Center area for input when no messages (and not in inputAlwaysAtBottom mode) */}
         {!hasMessages && !inputAlwaysAtBottom && (
-          <div
-            className="flex-1 flex items-center justify-center w-full"
-            style={{ marginBottom: '12vh' }}
-          >
-            <div ref={floatingInputRef} className="w-full max-w-4xl mx-auto px-4 sm:px-6">
+          <div className="flex w-full flex-1 items-start justify-center pt-[8dvh] md:items-center md:pt-0 md:[margin-bottom:12vh]">
+            <div ref={floatingInputRef} className="mx-auto w-full max-w-4xl px-3 sm:px-6">
               {taskType !== 'knowledge' && (
                 <SloganDisplay slogan={chatState.randomSlogan} project={activeProject} />
               )}
