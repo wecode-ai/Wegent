@@ -1064,9 +1064,11 @@ jobs:
           name: wework-mobile-ios-e2e-build
           path: .ci-artifacts/wework-mobile-ios-e2e
 
-      - name: Create Simulator and install Mobile application
+      - name: Create iOS Simulator
+        run: .github/scripts/create-wework-mobile-ios-simulator.sh
+
+      - name: Install Mobile application
         run: |
-          .github/scripts/create-wework-mobile-ios-simulator.sh
           mkdir -p .ci-artifacts/wework-mobile-ios-app
           ditto -x -k \
             .ci-artifacts/wework-mobile-ios-e2e/Wegent.app.zip \
