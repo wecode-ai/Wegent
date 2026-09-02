@@ -87,9 +87,7 @@ async fn idle_shutdown_skips_a_newer_thread_generation() {
         .await;
 
     assert_eq!(
-        client
-            .restart_if_idle_for_generation(Some(generation))
-            .await,
+        client.restart_if_idle_for_generation(generation).await,
         Ok(false)
     );
     assert_eq!(
@@ -107,9 +105,7 @@ async fn idle_shutdown_clears_current_generation_without_a_process() {
     let generation = client.mark_thread_idle("thread-1").await.unwrap();
 
     assert_eq!(
-        client
-            .restart_if_idle_for_generation(Some(generation))
-            .await,
+        client.restart_if_idle_for_generation(generation).await,
         Ok(false)
     );
     assert!(client.state.lock().await.thread_generations.is_empty());
@@ -125,7 +121,7 @@ async fn idle_shutdown_waits_while_a_turn_is_starting() {
 
     assert_eq!(
         client
-            .restart_if_idle_for_generation(Some(previous_generation))
+            .restart_if_idle_for_generation(previous_generation)
             .await,
         Ok(false)
     );
@@ -138,11 +134,7 @@ async fn idle_shutdown_waits_while_a_turn_is_starting() {
 }
 
 #[cfg(unix)]
-#[tokio::test]
-async fn idle_shutdown_terminates_the_app_server_process_group() {
-    let client = CodexAppServerClient::new("codex-idle-shutdown-process-test");
-    let generation = client.begin_turn_request().await;
-    client.finish_turn_request(generation).await;
+fn spawn_sleeping_test_app_server() -> (CodexAppServerProcess, u32) {
     let mut command = Command::new("/bin/sh");
     command
         .arg("-c")
@@ -162,6 +154,45 @@ async fn idle_shutdown_terminates_the_app_server_process_group() {
         notifications: CodexNotificationHub::new(),
         reader_task: tokio::spawn(async {}),
     };
+    (process, child_id)
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn stale_provider_restart_ignores_only_the_current_starting_turn() {
+    let client = CodexAppServerClient::new("codex-stale-provider-restart-test");
+    let current_generation = client.begin_turn_request().await;
+    let other_generation = client.begin_turn_request().await;
+    let (process, _) = spawn_sleeping_test_app_server();
+
+    client.state.lock().await.process = Some(process);
+
+    assert_eq!(
+        client
+            .restart_if_idle_for_starting_turn(current_generation)
+            .await,
+        Err((1, 0))
+    );
+    assert!(client.state.lock().await.process.is_some());
+
+    client.finish_turn_request(other_generation).await;
+    assert_eq!(
+        client
+            .restart_if_idle_for_starting_turn(current_generation)
+            .await,
+        Ok(())
+    );
+    assert!(client.state.lock().await.process.is_none());
+    client.finish_turn_request(current_generation).await;
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn idle_shutdown_terminates_the_app_server_process_group() {
+    let client = CodexAppServerClient::new("codex-idle-shutdown-process-test");
+    let generation = client.begin_turn_request().await;
+    client.finish_turn_request(generation).await;
+    let (process, child_id) = spawn_sleeping_test_app_server();
 
     {
         let mut state = client.state.lock().await;
@@ -171,9 +202,7 @@ async fn idle_shutdown_terminates_the_app_server_process_group() {
     let (process_generation, _notification_rx) = client.subscribe_notifications().await.unwrap();
     assert_eq!(process_generation, 1);
     assert_eq!(
-        client
-            .restart_if_idle_for_generation(Some(generation))
-            .await,
+        client.restart_if_idle_for_generation(generation).await,
         Ok(true)
     );
     assert!(client.state.lock().await.process.is_none());

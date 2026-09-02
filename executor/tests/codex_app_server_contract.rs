@@ -481,6 +481,7 @@ async fn codex_auxiliary_rpc_and_task_share_one_proxy_configured_app_server() {
 async fn codex_app_server_receives_normalized_developer_path() {
     let _lock = env_lock().await;
     let _path = EnvGuard::set("PATH", "/usr/bin:/bin");
+    let _runtime_bin = EnvGuard::set("WEWORK_RUNTIME_BIN", "");
     let _extra_paths = EnvGuard::set("WEGENT_EXTRA_PATHS", "/custom/bin:/opt/homebrew/bin");
     let log_path = std::env::temp_dir().join(format!(
         "wegent-executor-codex-path-rpc-{}.jsonl",

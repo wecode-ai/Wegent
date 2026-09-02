@@ -412,13 +412,27 @@ impl CodexAppServerClient {
         Ok(())
     }
 
-    async fn restart_if_idle(&self) -> Result<(), (usize, usize)> {
-        self.restart_if_idle_for_generation(None).await.map(|_| ())
+    async fn restart_if_idle_for_starting_turn(
+        &self,
+        turn_generation: u64,
+    ) -> Result<(), (usize, usize)> {
+        self.restart_if_idle_with_constraints(None, Some(turn_generation))
+            .await
+            .map(|_| ())
     }
 
     async fn restart_if_idle_for_generation(
         &self,
+        expected_generation: u64,
+    ) -> Result<bool, (usize, usize)> {
+        self.restart_if_idle_with_constraints(Some(expected_generation), None)
+            .await
+    }
+
+    async fn restart_if_idle_with_constraints(
+        &self,
         expected_generation: Option<u64>,
+        ignored_starting_generation: Option<u64>,
     ) -> Result<bool, (usize, usize)> {
         let process = {
             let mut state = self.state.lock().await;
@@ -427,8 +441,13 @@ impl CodexAppServerClient {
             }) {
                 return Ok(false);
             }
+            let ignored_starting_turn_count =
+                usize::from(ignored_starting_generation.is_some_and(|generation| {
+                    state.starting_turn_generations.contains(&generation)
+                }));
             let active_turn_count = state.active_threads.values().sum::<usize>()
-                + state.starting_turn_generations.len();
+                + state.starting_turn_generations.len()
+                - ignored_starting_turn_count;
             let Some(process) = state.process.as_ref() else {
                 state.thread_generations.clear();
                 return Ok(false);
@@ -784,7 +803,7 @@ impl CodexAppServerClient {
         let idle_seconds = codex_app_server_idle_shutdown_seconds();
         loop {
             sleep(Duration::from_secs(idle_seconds)).await;
-            match self.restart_if_idle_for_generation(Some(generation)).await {
+            match self.restart_if_idle_for_generation(generation).await {
                 Ok(true) => {
                     log_executor_event(
                         "codex shared app-server idle shutdown completed",
@@ -1576,6 +1595,7 @@ async fn run_codex_app_server_turn_on_shared_client(
                     &launch_config,
                     &request.task_id,
                     &request.subtask_id,
+                    turn_generation,
                 )
                 .await?;
                 thread_fields.push(("thread_id", thread_id.clone()));
@@ -4887,6 +4907,7 @@ async fn request_shared_thread_id_with_provider_recovery(
     launch_config: &CodexLaunchConfig,
     task_id: &str,
     subtask_id: &str,
+    turn_generation: u64,
 ) -> Result<String, String> {
     let response = client.request(operation, params.clone()).await?;
     let provider_error = match thread_id_from_response(
@@ -4911,7 +4932,10 @@ async fn request_shared_thread_id_with_provider_recovery(
     let mut fields = task_fields(task_id, subtask_id);
     fields.push(("operation", operation.to_owned()));
     fields.push(("error", provider_error.clone()));
-    match client.restart_if_idle().await {
+    match client
+        .restart_if_idle_for_starting_turn(turn_generation)
+        .await
+    {
         Ok(()) => {
             log_executor_event(
                 "codex shared stale thread provider recovery restarting",
