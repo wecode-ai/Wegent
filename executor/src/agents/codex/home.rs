@@ -131,7 +131,6 @@ pub(crate) fn replace_config(config_path: &Path, content: String) -> Result<(), 
         .map_err(|error| format!("failed to create Codex config temp file: {error}"))?;
     temporary
         .write_all(content.as_bytes())
-        .and_then(|()| temporary.as_file().sync_all())
         .map_err(|error| format!("failed to write Codex config temp file: {error}"))?;
     if let Ok(metadata) = fs::metadata(config_path) {
         fs::set_permissions(temporary.path(), metadata.permissions()).map_err(|error| {
@@ -153,6 +152,10 @@ pub(crate) fn replace_config(config_path: &Path, content: String) -> Result<(), 
             },
         )?;
     }
+    temporary
+        .as_file()
+        .sync_all()
+        .map_err(|error| format!("failed to sync Codex config temp file: {error}"))?;
     temporary.persist(config_path).map_err(|error| {
         format!(
             "failed to replace Codex config {}: {}",
@@ -160,6 +163,18 @@ pub(crate) fn replace_config(config_path: &Path, content: String) -> Result<(), 
             error.error
         )
     })?;
+    sync_parent_directory(parent)
+        .map_err(|error| format!("failed to sync Codex config directory: {error}"))?;
+    Ok(())
+}
+
+#[cfg(unix)]
+fn sync_parent_directory(parent: &Path) -> std::io::Result<()> {
+    fs::File::open(parent)?.sync_all()
+}
+
+#[cfg(not(unix))]
+fn sync_parent_directory(_parent: &Path) -> std::io::Result<()> {
     Ok(())
 }
 
