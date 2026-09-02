@@ -1,3 +1,4 @@
+import { spawn } from 'node:child_process'
 import { readdirSync, readFileSync } from 'node:fs'
 
 const PROCESS_STOP_TIMEOUT_MS = 10_000
@@ -107,7 +108,7 @@ export function processIsAlive(processId) {
   return true
 }
 
-function isProcessGroupRunning(processGroupId) {
+export function processGroupIsAlive(processGroupId) {
   try {
     process.kill(-processGroupId, 0)
     if (process.platform === 'linux') {
@@ -126,10 +127,10 @@ function isProcessGroupRunning(processGroupId) {
 async function waitForProcessGroupExit(processGroupId, timeoutMs) {
   const startedAt = Date.now()
   while (Date.now() - startedAt < timeoutMs) {
-    if (!isProcessGroupRunning(processGroupId)) return true
+    if (!processGroupIsAlive(processGroupId)) return true
     await new Promise(resolvePromise => setTimeout(resolvePromise, PROCESS_GROUP_POLL_INTERVAL_MS))
   }
-  return !isProcessGroupRunning(processGroupId)
+  return !processGroupIsAlive(processGroupId)
 }
 
 export async function stopProcess(child) {
@@ -145,7 +146,11 @@ export async function stopProcess(child) {
 
 export async function stopProcessGroup(child) {
   if (!child) return
-  if (process.platform === 'win32' || !Number.isInteger(child.pid)) {
+  if (process.platform === 'win32') {
+    await stopWindowsProcessTree(child)
+    return
+  }
+  if (!Number.isInteger(child.pid)) {
     await stopProcess(child)
     return
   }
@@ -166,6 +171,23 @@ export async function stopProcessGroup(child) {
   if (!(await waitForProcessGroupExit(processGroupId, PROCESS_STOP_TIMEOUT_MS))) {
     throw new Error(`Timed out waiting for process group ${processGroupId} to exit`)
   }
+}
+
+export function windowsTaskkillArguments(processId) {
+  return ['/PID', String(processId), '/T', '/F']
+}
+
+async function stopWindowsProcessTree(child) {
+  if (child.exitCode !== null || child.signalCode !== null || !Number.isInteger(child.pid)) return
+  const killer = spawn('taskkill', windowsTaskkillArguments(child.pid), {
+    stdio: 'ignore',
+    windowsHide: true,
+  })
+  await new Promise((resolvePromise, reject) => {
+    killer.once('error', reject)
+    killer.once('close', resolvePromise)
+  })
+  await waitForProcessExit(child, PROCESS_STOP_TIMEOUT_MS)
 }
 
 function signalProcessGroup(processGroupId, signal) {

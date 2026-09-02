@@ -1,6 +1,7 @@
 import { chmod, cp, mkdir, readFile, readdir, rm, writeFile } from 'node:fs/promises'
 import { join, resolve } from 'node:path'
 import semver from 'semver'
+import { hashComponentPath } from './component-update-manager.js'
 import { runtimeNodeArgs } from './electron-node-runtime.js'
 
 export const CORE_DSH_VERSION = '0.1.1-rc.2'
@@ -9,6 +10,8 @@ const PROFILE_STAMP = '.wework-runtime.json'
 const CORE_PLUGIN_PACKAGES = [
   ['@wegent/dsh-app-wework', 'wework-app'],
   ['@wegent/dsh-electron-host', 'wework-electron-host'],
+  ['@wegent/dsh-browser-runtime', 'wework-browser-runtime'],
+  ['@wegent/dsh-secure-storage', 'wework-secure-storage'],
   ['@wegent/dsh-executor-runtime', 'wework-executor-runtime'],
   ['@wegent/dsh-terminal-runtime', 'wework-terminal-runtime'],
   ['@wegent/dsh-ui-core-apps', 'wework-ui-core-apps'],
@@ -19,11 +22,13 @@ const CORE_PLUGIN_PACKAGES = [
   ['@wegent/dsh-ui-cloud-work', 'wework-ui-cloud-work'],
 ] as const
 type CorePluginPackage = (typeof CORE_PLUGIN_PACKAGES)[number][0]
-const CORE_UI_DEPENDENCIES = CORE_PLUGIN_PACKAGES.slice(4).map(([packageName]) => packageName)
+const CORE_UI_DEPENDENCIES = CORE_PLUGIN_PACKAGES.slice(6).map(([packageName]) => packageName)
 const REMOVED_CORE_DEPENDENCIES = ['@wegent/dsh-sidebar-example'] as const
 const CORE_HOST_BUNDLES = [
   '@deepseek-ai/dsh-base',
   '@wegent/dsh-electron-host',
+  '@wegent/dsh-browser-runtime',
+  '@wegent/dsh-secure-storage',
   '@wegent/dsh-terminal-runtime',
   '@wegent/dsh-app-wework',
   '@deepseek-ai/dsh-web-app',
@@ -47,6 +52,7 @@ interface RuntimeIdentity {
 
 interface ProfileStamp extends RuntimeIdentity {
   managedUiPlugins: boolean
+  corePluginsFingerprint: string
 }
 
 export interface BundledDshRuntime {
@@ -100,10 +106,14 @@ export async function prepareCoreDshLaunch(options: PrepareCoreDshOptions): Prom
   const nodeCommand = options.environment.WEWORK_NODE_PATH?.trim() || 'node'
   const dshHome = resolve(options.dataDirectory, 'dsh-core')
   const managedUiPlugins = !usesEmptyUiPluginProfile(options.environment)
+  const corePluginsFingerprint =
+    options.environment.WEWORK_CORE_PLUGINS_SHA256?.trim() ||
+    (await hashComponentPath(resolve(pluginsRoot)))
   await prepareProfile({
     runtime,
     dshHome,
     managedUiPlugins,
+    corePluginsFingerprint,
   })
   return {
     command: nodeCommand,
@@ -184,6 +194,7 @@ async function prepareProfile(options: {
   runtime: CoreDshRuntime
   dshHome: string
   managedUiPlugins: boolean
+  corePluginsFingerprint: string
 }): Promise<void> {
   const profileRoot = join(options.dshHome, 'profiles', PROFILE_NAME)
   const workspacePath = join(profileRoot, 'pnpm-workspace.yaml')
@@ -192,6 +203,7 @@ async function prepareProfile(options: {
     role: 'core',
     sourceFingerprint: options.runtime.sourceFingerprint,
     managedUiPlugins: options.managedUiPlugins,
+    corePluginsFingerprint: options.corePluginsFingerprint,
   }
   const managedDependencies = managedCoreDependencies(options.runtime, options.managedUiPlugins)
   const managedDependencyNames = Object.keys(managedDependencies)
@@ -279,6 +291,7 @@ async function prepareProfile(options: {
   for (const packageName of managedDependencyNames) {
     const source = options.runtime.pluginRoots[packageName as CorePluginPackage]
     const destination = join(profileRoot, 'node_modules', ...packageName.split('/'))
+    await rm(destination, { recursive: true, force: true })
     await cp(source, destination, { recursive: true })
   }
   await ensureNodePtySpawnHelpersExecutable(profileRoot)
@@ -512,7 +525,8 @@ async function stampMatches(path: string, expected: ProfileStamp): Promise<boole
     return (
       current.dshVersion === expected.dshVersion &&
       current.sourceFingerprint === expected.sourceFingerprint &&
-      current.managedUiPlugins === expected.managedUiPlugins
+      current.managedUiPlugins === expected.managedUiPlugins &&
+      current.corePluginsFingerprint === expected.corePluginsFingerprint
     )
   } catch {
     return false

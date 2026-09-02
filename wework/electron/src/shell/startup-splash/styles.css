@@ -1,5 +1,9 @@
 :root {
   color-scheme: light;
+  --text-code-sm: 11px;
+  --text-xs: 12px;
+  --text-base: 14px;
+  --text-lg: 16px;
   font-family:
     ui-sans-serif,
     -apple-system,
@@ -33,8 +37,133 @@ body {
   place-items: center;
 }
 
-.splash {
+.startup-stage {
   position: relative;
+  width: min(760px, calc(100vw - 64px));
+  height: min(520px, calc(100vh - 80px));
+  min-height: 360px;
+  opacity: 0;
+  transform: scale(0.985);
+}
+
+:root[data-animation-ready='true'] .startup-stage {
+  animation: stage-enter 620ms cubic-bezier(0.2, 0.8, 0.2, 1) both;
+}
+
+.ambient-workflow {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+  pointer-events: none;
+}
+
+.ambient-path {
+  fill: none;
+  stroke: rgb(23 23 23 / 8%);
+  stroke-width: 1;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-dasharray: 1 7;
+  vector-effect: non-scaling-stroke;
+}
+
+.ambient-path-primary,
+.ambient-path-secondary {
+  stroke-dasharray: 240;
+  stroke-dashoffset: 240;
+}
+
+:root[data-animation-ready='true'] .ambient-path-primary {
+  animation: ambient-line-arrive 820ms 100ms ease-out both;
+}
+
+:root[data-animation-ready='true'] .ambient-path-secondary {
+  animation: ambient-line-arrive 820ms 180ms ease-out both;
+}
+
+.ambient-node {
+  fill: #fafafa;
+  stroke: rgb(23 23 23 / 14%);
+  stroke-width: 1;
+  opacity: 0;
+  transform-box: fill-box;
+  transform-origin: center;
+}
+
+.ambient-node-accent {
+  fill: #7c3aed;
+  stroke: none;
+}
+
+:root[data-animation-ready='true'] .ambient-node {
+  animation:
+    ambient-node-arrive 380ms 400ms ease-out both,
+    ambient-node-breathe 3.2s 900ms ease-in-out infinite;
+}
+
+:root[data-animation-ready='true'] .ambient-node-two,
+:root[data-animation-ready='true'] .ambient-node-four {
+  animation-delay: 500ms, 1.1s;
+}
+
+.stage-corner {
+  position: absolute;
+  width: 28px;
+  height: 28px;
+  opacity: 0;
+}
+
+.stage-corner::before,
+.stage-corner::after {
+  position: absolute;
+  content: '';
+  background: rgb(23 23 23 / 9%);
+  border-radius: 999px;
+}
+
+.stage-corner::before {
+  width: 28px;
+  height: 1px;
+}
+
+.stage-corner::after {
+  width: 1px;
+  height: 28px;
+}
+
+.stage-corner-top-left {
+  top: 64px;
+  left: 64px;
+}
+
+.stage-corner-top-right {
+  top: 64px;
+  right: 64px;
+  transform: rotate(90deg);
+}
+
+.stage-corner-bottom-left {
+  bottom: 64px;
+  left: 64px;
+  transform: rotate(-90deg);
+}
+
+.stage-corner-bottom-right {
+  right: 64px;
+  bottom: 64px;
+  transform: rotate(180deg);
+}
+
+:root[data-animation-ready='true'] .stage-corner {
+  animation: corner-arrive 500ms 260ms ease-out both;
+}
+
+.splash {
+  position: absolute;
+  top: 50%;
+  left: 50%;
   display: flex;
   width: 392px;
   height: 232px;
@@ -46,6 +175,21 @@ body {
   border-radius: 22px;
   background: rgb(250 250 250 / 97%);
   box-shadow: 0 8px 24px rgb(0 0 0 / 12%);
+  opacity: 0;
+  transform: translate(-50%, calc(-50% + 12px)) scale(0.97);
+  transition: height 220ms ease;
+}
+
+:root[data-recovery-visible='true'] .splash {
+  height: 304px;
+}
+
+:root[data-confirmation-visible='true'] .splash {
+  height: 286px;
+}
+
+:root[data-animation-ready='true'] .splash {
+  animation: splash-enter 560ms 90ms cubic-bezier(0.2, 0.85, 0.25, 1) both;
 }
 
 .workbench-scene {
@@ -317,7 +461,7 @@ body[data-stage='2'] .monitor-status {
 
 .splash h1 {
   margin: 0;
-  font-size: 16px;
+  font-size: var(--text-lg);
   font-weight: 500;
   letter-spacing: -0.015em;
 }
@@ -325,7 +469,7 @@ body[data-stage='2'] .monitor-status {
 .splash p {
   margin: 4px 0 0;
   color: rgb(23 23 23 / 62%);
-  font-size: 12px;
+  font-size: var(--text-xs);
   line-height: 16px;
   transition:
     opacity 140ms ease,
@@ -361,6 +505,98 @@ body[data-stage='2'] .monitor-status {
   background: #7c3aed;
 }
 
+.startup-recovery {
+  width: 100%;
+  margin-top: 10px;
+  padding: 0 24px;
+}
+
+.startup-actions,
+.startup-confirmation-actions {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+}
+
+.startup-button,
+.startup-link-button {
+  border: 0;
+  font: inherit;
+  cursor: pointer;
+}
+
+.startup-button {
+  min-height: 30px;
+  padding: 6px 11px;
+  color: #383838;
+  border: 1px solid rgb(23 23 23 / 12%);
+  border-radius: 8px;
+  background: #fff;
+  font-size: var(--text-xs);
+}
+
+.startup-button-primary {
+  color: #fff;
+  border-color: #303030;
+  background: #303030;
+}
+
+.startup-button-danger {
+  color: #fff;
+  border-color: #dc2626;
+  background: #dc2626;
+}
+
+.startup-link-button {
+  padding: 5px 2px;
+  color: #1677c8;
+  background: transparent;
+  font-size: var(--text-xs);
+}
+
+.startup-button:focus-visible,
+.startup-link-button:focus-visible {
+  outline: 2px solid #339cff;
+  outline-offset: 2px;
+}
+
+.startup-button:disabled,
+.startup-link-button:disabled {
+  cursor: wait;
+  opacity: 0.55;
+}
+
+.startup-action-error {
+  margin: 7px 0 0;
+  color: #b91c1c;
+  font-size: var(--text-code-sm);
+}
+
+.startup-confirmation {
+  width: calc(100% - 48px);
+  text-align: center;
+}
+
+.startup-confirmation h2 {
+  margin: 4px 0 0;
+  font-size: var(--text-base);
+  font-weight: 600;
+}
+
+.startup-confirmation p {
+  margin: 8px auto 12px;
+  max-width: 330px;
+  line-height: 17px;
+}
+
+:root[data-confirmation-visible='true'] .workbench-scene,
+:root[data-confirmation-visible='true'] .splash-copy,
+:root[data-confirmation-visible='true'] .stage-indicator,
+:root[data-confirmation-visible='true'] .startup-recovery {
+  display: none;
+}
+
 @keyframes floor-arrive {
   from {
     stroke-dashoffset: 266;
@@ -368,6 +604,73 @@ body[data-stage='2'] .monitor-status {
 
   to {
     stroke-dashoffset: 0;
+  }
+}
+
+@keyframes stage-enter {
+  from {
+    opacity: 0;
+    transform: scale(0.985);
+  }
+
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+@keyframes splash-enter {
+  from {
+    opacity: 0;
+    transform: translate(-50%, calc(-50% + 12px)) scale(0.97);
+    box-shadow: 0 2px 8px rgb(0 0 0 / 4%);
+  }
+
+  to {
+    opacity: 1;
+    transform: translate(-50%, -50%) scale(1);
+    box-shadow: 0 8px 24px rgb(0 0 0 / 12%);
+  }
+}
+
+@keyframes ambient-line-arrive {
+  to {
+    stroke-dashoffset: 0;
+  }
+}
+
+@keyframes ambient-node-arrive {
+  from {
+    opacity: 0;
+    transform: scale(0.5);
+  }
+
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+@keyframes ambient-node-breathe {
+  0%,
+  100% {
+    opacity: 0.55;
+  }
+
+  50% {
+    opacity: 1;
+  }
+}
+
+@keyframes corner-arrive {
+  from {
+    opacity: 0;
+    clip-path: inset(0 100% 100% 0);
+  }
+
+  to {
+    opacity: 1;
+    clip-path: inset(0);
   }
 }
 
@@ -558,6 +861,25 @@ body[data-stage='2'] .monitor-status {
 }
 
 :root[data-theme='dark'] {
+  .ambient-path {
+    stroke: rgb(255 255 255 / 9%);
+  }
+
+  .ambient-node {
+    fill: #171717;
+    stroke: rgb(255 255 255 / 16%);
+  }
+
+  .ambient-node-accent {
+    fill: #8b5cf6;
+    stroke: none;
+  }
+
+  .stage-corner::before,
+  .stage-corner::after {
+    background: rgb(255 255 255 / 10%);
+  }
+
   .splash {
     color: #f5f5f5;
     background: rgb(23 23 23 / 97%);
@@ -617,9 +939,40 @@ body[data-stage='2'] .monitor-status {
   .stage-dot {
     background: rgb(255 255 255 / 16%);
   }
+
+  .startup-button {
+    color: #e5e5e5;
+    border-color: rgb(255 255 255 / 16%);
+    background: #262626;
+  }
+
+  .startup-button-primary {
+    color: #181818;
+    border-color: #f3f3f3;
+    background: #f3f3f3;
+  }
+
+  .startup-button-danger {
+    color: #fff;
+    border-color: #dc2626;
+    background: #dc2626;
+  }
+
+  .startup-link-button {
+    color: #66b8ff;
+  }
+
+  .startup-action-error {
+    color: #fca5a5;
+  }
 }
 
 @media (prefers-reduced-motion: reduce) {
+  .startup-stage,
+  .splash,
+  .ambient-path,
+  .ambient-node,
+  .stage-corner,
   .floor-line,
   .robot,
   .robot-head,
@@ -637,6 +990,26 @@ body[data-stage='2'] .monitor-status {
   .robot-sparks,
   .assembly-piece {
     animation: none;
+  }
+
+  .startup-stage {
+    opacity: 1;
+    transform: none;
+  }
+
+  .splash {
+    opacity: 1;
+    transform: translate(-50%, -50%);
+  }
+
+  .ambient-path-primary,
+  .ambient-path-secondary {
+    stroke-dashoffset: 0;
+  }
+
+  .ambient-node,
+  .stage-corner {
+    opacity: 1;
   }
 
   .floor-line {

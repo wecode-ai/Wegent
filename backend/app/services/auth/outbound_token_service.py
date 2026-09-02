@@ -8,7 +8,7 @@ import logging
 import uuid
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
-from typing import Optional
+from typing import Any, Optional
 
 import jwt
 from cryptography.hazmat.primitives import serialization
@@ -17,6 +17,11 @@ from sqlalchemy.orm import Session
 
 from app.models.kind import Kind
 from app.models.user import User
+from app.schemas.oauth_provider import (
+    OAUTH_ACCESS_TOKEN_TTL_SECONDS,
+    OAUTH_AUDIENCE,
+    OAUTH_CLIENT_KIND,
+)
 from app.schemas.token_issuer import (
     SigningKeyCreateRequest,
     SigningKeyKind,
@@ -88,29 +93,9 @@ class OutboundTokenService:
         self, db: Session, payload: SigningKeyCreateRequest
     ) -> SigningKeyResponse:
         self._ensure_unique_name(db, SIGNING_KEY_KIND, payload.name)
-        private_key_pem, public_key_pem = self._generate_rsa_keypair()
-        kid = self._generate_kid()
-        resource = SigningKeyKind(
-            metadata={
-                "name": payload.name,
-                "namespace": SYSTEM_NAMESPACE,
-            },
-            spec={
-                "algorithm": "RS256",
-                "kid": kid,
-                "privateKeyEncrypted": encrypt_sensitive_data(private_key_pem),
-                "publicKeyPem": public_key_pem,
-                "description": payload.description or "",
-            },
-            status={"state": "Available"},
-        )
-        row = Kind(
-            user_id=SYSTEM_USER_ID,
-            kind=SIGNING_KEY_KIND,
+        row = self._build_signing_key_row(
             name=payload.name,
-            namespace=SYSTEM_NAMESPACE,
-            json=resource.model_dump(),
-            is_active=True,
+            description=payload.description or "",
         )
         db.add(row)
         db.commit()
@@ -196,34 +181,85 @@ class OutboundTokenService:
                 "Cannot enable token issuer with a disabled signing key",
                 error_code="TOKEN_ISSUER_REQUIRES_ACTIVE_SIGNING_KEY",
             )
-        resource = TokenIssuerKind(
-            metadata={
-                "name": payload.name,
-                "namespace": SYSTEM_NAMESPACE,
-            },
-            spec={
-                "signingKeyRef": {"kindId": payload.signing_key_id},
-                "issuer": payload.issuer,
-                "audience": payload.audience,
-                "defaultTtlSeconds": payload.default_ttl_seconds,
-                "maxTtlSeconds": payload.max_ttl_seconds,
-                "enabled": payload.enabled,
-                "description": payload.description or "",
-            },
-            status={"state": "Available" if payload.enabled else "Disabled"},
-        )
-        row = Kind(
-            user_id=SYSTEM_USER_ID,
-            kind=TOKEN_ISSUER_KIND,
+        row = self._build_token_issuer_row(
             name=payload.name,
-            namespace=SYSTEM_NAMESPACE,
-            json=resource.model_dump(),
-            is_active=payload.enabled,
+            signing_key_id=payload.signing_key_id,
+            issuer=payload.issuer,
+            audience=payload.audience,
+            default_ttl_seconds=payload.default_ttl_seconds,
+            max_ttl_seconds=payload.max_ttl_seconds,
+            enabled=payload.enabled,
+            description=payload.description or "",
         )
         db.add(row)
         db.commit()
         db.refresh(row)
         return self._to_token_issuer_response(db, row)
+
+    def ensure_oauth_provider_token_issuer(
+        self,
+        db: Session,
+        *,
+        issuer: str,
+        audience: str,
+    ) -> int:
+        issuer_rows = (
+            db.query(Kind)
+            .filter(
+                Kind.kind == TOKEN_ISSUER_KIND,
+                Kind.user_id == SYSTEM_USER_ID,
+                Kind.namespace == SYSTEM_NAMESPACE,
+                Kind.is_active == True,  # noqa: E712
+            )
+            .order_by(Kind.created_at.asc())
+            .all()
+        )
+        for issuer_row in issuer_rows:
+            resource = TokenIssuerKind.model_validate(issuer_row.json)
+            if (
+                not resource.spec.enabled
+                or resource.spec.issuer != issuer
+                or resource.spec.audience != audience
+            ):
+                continue
+            signing_key = (
+                db.query(Kind)
+                .filter(
+                    Kind.id == resource.spec.signingKeyRef.kindId,
+                    Kind.kind == SIGNING_KEY_KIND,
+                    Kind.user_id == SYSTEM_USER_ID,
+                    Kind.namespace == SYSTEM_NAMESPACE,
+                    Kind.is_active == True,  # noqa: E712
+                )
+                .first()
+            )
+            if signing_key:
+                if resource.spec.maxTtlSeconds < OAUTH_ACCESS_TOKEN_TTL_SECONDS:
+                    resource.spec.maxTtlSeconds = OAUTH_ACCESS_TOKEN_TTL_SECONDS
+                    issuer_row.json = resource.model_dump()
+                    db.flush()
+                return issuer_row.id
+
+        suffix = uuid.uuid4().hex[:8]
+        signing_key = self._build_signing_key_row(
+            name=f"oauth-provider-key-{suffix}",
+            description="Managed automatically for the external OAuth provider",
+        )
+        db.add(signing_key)
+        db.flush()
+        token_issuer = self._build_token_issuer_row(
+            name=f"oauth-provider-issuer-{suffix}",
+            signing_key_id=signing_key.id,
+            issuer=issuer,
+            audience=audience,
+            default_ttl_seconds=OAUTH_ACCESS_TOKEN_TTL_SECONDS,
+            max_ttl_seconds=OAUTH_ACCESS_TOKEN_TTL_SECONDS,
+            enabled=True,
+            description="Managed automatically for the external OAuth provider",
+        )
+        db.add(token_issuer)
+        db.flush()
+        return token_issuer.id
 
     def update_token_issuer(
         self, db: Session, issuer_id: int, payload: TokenIssuerUpdateRequest
@@ -270,6 +306,12 @@ class OutboundTokenService:
             raise OutboundTokenValidationError(
                 "default_ttl_seconds must be <= max_ttl_seconds"
             )
+        self._validate_oauth_client_issuer_policy(
+            db,
+            issuer_id=issuer_id,
+            audience=payload.audience or resource.spec.audience,
+            max_ttl_seconds=max_ttl,
+        )
         resource.spec.defaultTtlSeconds = default_ttl
         resource.spec.maxTtlSeconds = max_ttl
         if payload.description is not None:
@@ -332,8 +374,71 @@ class OutboundTokenService:
         row = self._get_kind_or_raise(
             db, TOKEN_ISSUER_KIND, issuer_id, TokenIssuerNotFoundError
         )
+        referenced_clients = self._get_oauth_client_references(db, issuer_id)
+        if referenced_clients:
+            names = ", ".join(client.name for client in referenced_clients[:3])
+            raise OutboundTokenValidationError(
+                f"Token issuer '{row.name}' is still referenced by OAuth client(s): {names}",
+                error_code="TOKEN_ISSUER_DELETE_BLOCKED_BY_OAUTH_CLIENT",
+            )
         db.delete(row)
         db.commit()
+
+    def _validate_oauth_client_issuer_policy(
+        self,
+        db: Session,
+        *,
+        issuer_id: int,
+        audience: str,
+        max_ttl_seconds: int,
+    ) -> None:
+        clients = self._get_oauth_client_references(db, issuer_id)
+        if not clients:
+            return
+        if audience != OAUTH_AUDIENCE:
+            raise OutboundTokenValidationError(
+                f"OAuth client TokenIssuer audience must remain '{OAUTH_AUDIENCE}'",
+                error_code="TOKEN_ISSUER_AUDIENCE_REQUIRED_BY_OAUTH_CLIENT",
+            )
+        client_ttls: list[int] = []
+        for client in clients:
+            spec = client.json.get("spec") if isinstance(client.json, dict) else None
+            access_ttl = (
+                spec.get("accessTtlSeconds") if isinstance(spec, dict) else None
+            )
+            if (
+                isinstance(access_ttl, bool)
+                or not isinstance(access_ttl, int)
+                or access_ttl < 60
+                or access_ttl > OAUTH_ACCESS_TOKEN_TTL_SECONDS
+            ):
+                raise OutboundTokenValidationError(
+                    f"OAuth client '{client.name}' has an invalid access TTL",
+                    error_code="OAUTH_CLIENT_INVALID_ACCESS_TTL",
+                )
+            client_ttls.append(access_ttl)
+        largest_client_ttl = max(client_ttls)
+        if max_ttl_seconds < largest_client_ttl:
+            raise OutboundTokenValidationError(
+                "TokenIssuer maximum TTL cannot be lower than a referenced OAuth client TTL",
+                error_code="TOKEN_ISSUER_MAX_TTL_REQUIRED_BY_OAUTH_CLIENT",
+            )
+
+    def _get_oauth_client_references(self, db: Session, issuer_id: int) -> list[Kind]:
+        rows = (
+            db.query(Kind)
+            .filter(
+                Kind.kind == OAUTH_CLIENT_KIND,
+                Kind.namespace == SYSTEM_NAMESPACE,
+            )
+            .all()
+        )
+        return [
+            row
+            for row in rows
+            if row.json.get("spec", {}).get("tokenIssuerRef", {}).get("kindId")
+            == issuer_id
+        ]
 
     def issue_token(
         self,
@@ -409,6 +514,62 @@ class OutboundTokenService:
             expires_at=claims["exp"],
         )
 
+    def sign_claims(
+        self,
+        db: Session,
+        *,
+        issuer_id: int,
+        subject: str,
+        expires_in: int,
+        claims: dict[str, Any],
+        headers: dict[str, str] | None = None,
+    ) -> TokenIssueResponse:
+        """Sign constrained deployment claims with an existing TokenIssuer."""
+        issuer_row = self._get_kind_or_raise(
+            db, TOKEN_ISSUER_KIND, issuer_id, TokenIssuerNotFoundError
+        )
+        issuer = TokenIssuerKind.model_validate(issuer_row.json)
+        if not issuer.spec.enabled or not issuer_row.is_active:
+            raise OutboundTokenValidationError("Token issuer is disabled")
+        if expires_in <= 0 or expires_in > issuer.spec.maxTtlSeconds:
+            raise OutboundTokenValidationError("Requested TTL exceeds issuer policy")
+
+        signing_key = self._resolve_signing_key_for_issuance(
+            db, issuer.spec.signingKeyRef.kindId
+        )
+        issued_at = datetime.now(timezone.utc)
+        expires_at = issued_at + timedelta(seconds=expires_in)
+        reserved = {
+            "iss": issuer.spec.issuer,
+            "sub": subject,
+            "aud": issuer.spec.audience,
+            "iat": int(issued_at.timestamp()),
+            "exp": int(expires_at.timestamp()),
+            "jti": str(uuid.uuid4()),
+            "issuer_id": issuer_row.id,
+        }
+        reserved.update(
+            {key: value for key, value in claims.items() if key not in reserved}
+        )
+        token = jwt.encode(
+            reserved,
+            signing_key.private_key_pem,
+            algorithm="RS256",
+            headers={
+                **(headers or {}),
+                "alg": signing_key.resource.spec.algorithm,
+                "kid": signing_key.resource.spec.kid,
+            },
+        )
+        return TokenIssueResponse(
+            access_token=token,
+            expires_in=expires_in,
+            issuer_id=issuer_row.id,
+            kid=signing_key.resource.spec.kid,
+            issued_at=reserved["iat"],
+            expires_at=reserved["exp"],
+        )
+
     def _collect_extra_claims(
         self,
         db: Session,
@@ -466,6 +627,62 @@ class OutboundTokenService:
             is_active=row.is_active and resource.spec.enabled,
             created_at=row.created_at,
             updated_at=row.updated_at,
+        )
+
+    def _build_signing_key_row(self, *, name: str, description: str) -> Kind:
+        private_key_pem, public_key_pem = self._generate_rsa_keypair()
+        resource = SigningKeyKind(
+            metadata={"name": name, "namespace": SYSTEM_NAMESPACE},
+            spec={
+                "algorithm": "RS256",
+                "kid": self._generate_kid(),
+                "privateKeyEncrypted": encrypt_sensitive_data(private_key_pem),
+                "publicKeyPem": public_key_pem,
+                "description": description,
+            },
+            status={"state": "Available"},
+        )
+        return Kind(
+            user_id=SYSTEM_USER_ID,
+            kind=SIGNING_KEY_KIND,
+            name=name,
+            namespace=SYSTEM_NAMESPACE,
+            json=resource.model_dump(),
+            is_active=True,
+        )
+
+    @staticmethod
+    def _build_token_issuer_row(
+        *,
+        name: str,
+        signing_key_id: int,
+        issuer: str,
+        audience: str,
+        default_ttl_seconds: int,
+        max_ttl_seconds: int,
+        enabled: bool,
+        description: str,
+    ) -> Kind:
+        resource = TokenIssuerKind(
+            metadata={"name": name, "namespace": SYSTEM_NAMESPACE},
+            spec={
+                "signingKeyRef": {"kindId": signing_key_id},
+                "issuer": issuer,
+                "audience": audience,
+                "defaultTtlSeconds": default_ttl_seconds,
+                "maxTtlSeconds": max_ttl_seconds,
+                "enabled": enabled,
+                "description": description,
+            },
+            status={"state": "Available" if enabled else "Disabled"},
+        )
+        return Kind(
+            user_id=SYSTEM_USER_ID,
+            kind=TOKEN_ISSUER_KIND,
+            name=name,
+            namespace=SYSTEM_NAMESPACE,
+            json=resource.model_dump(),
+            is_active=enabled,
         )
 
     def _resolve_signing_key_for_issuance(

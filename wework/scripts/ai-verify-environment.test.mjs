@@ -1,8 +1,21 @@
 import { describe, expect, test } from 'vitest'
 import path from 'node:path'
-import { buildAiVerifyEnvironment } from './ai-verify-environment.mjs'
+import {
+  buildAiVerifyEnvironment,
+  isolateAiVerifyRuntimeEnvironment,
+} from './ai-verify-environment.mjs'
 
 describe('buildAiVerifyEnvironment', () => {
+  test('removes inherited packaged runtime overrides before a source build', () => {
+    expect(
+      isolateAiVerifyRuntimeEnvironment({
+        PATH: '/usr/bin',
+        WEGENT_EXECUTOR_BINARY: '/tmp/installed-executor',
+        WEWORK_EXECUTOR_PATH: '/Applications/WeWork.app/Contents/Resources/bin/wegent-executor',
+      })
+    ).toEqual({ PATH: '/usr/bin' })
+  })
+
   test('isolates Codex, executor, stdio gateway, and Wework app preferences', () => {
     const environment = buildAiVerifyEnvironment(
       {
@@ -16,6 +29,7 @@ describe('buildAiVerifyEnvironment', () => {
         WEGENT_EXECUTOR_BINARY: '/tmp/foreign-executor',
         WEGENT_EXECUTOR_SOURCE_DIR: '/tmp/foreign-source',
         ELECTRON_RUN_AS_NODE: '1',
+        WEWORK_COMPONENT_RESOURCES_ROOT: '/tmp/foreign-components',
         WEWORK_EXECUTOR_PATH: '/Applications/WeWork.app/Contents/Resources/bin/wegent-executor',
         WEWORK_EXECUTOR_SIDECAR: '/tmp/foreign-sidecar',
         WEWORK_HARNESS_RUNTIME_ROOT: '/tmp/foreign-harness-runtime',
@@ -61,6 +75,7 @@ describe('buildAiVerifyEnvironment', () => {
     expect(environment.CODEX_BINARY_PATH).toBeUndefined()
     expect(environment.DWS_BINARY_PATH).toBeUndefined()
     expect(environment.ELECTRON_RUN_AS_NODE).toBeUndefined()
+    expect(environment.WEWORK_COMPONENT_RESOURCES_ROOT).toBeUndefined()
     expect(environment.WEWORK_EXECUTOR_PATH).toBeUndefined()
     expect(environment.WEWORK_EXECUTOR_SIDECAR).toBeUndefined()
     expect(environment.WEWORK_HARNESS_RUNTIME_ROOT).toBeUndefined()

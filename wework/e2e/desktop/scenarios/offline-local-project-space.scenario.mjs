@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 
 import { ensureExperimentalFeaturesEnabled } from '../modules/preferences-automation-flows.mjs'
+import { captureVerificationScreenshot } from '../modules/workspace-flows.mjs'
 
 const PROJECT_NAME = '离线本地项目空间'
 const TASK_NAME = '离线本地任务'
@@ -57,10 +58,50 @@ export function createDesktopScenario({ uiTimeoutMs }) {
       await control.command('clickWhenEnabled', '[data-testid="cloud-project-create-confirm"]', {
         timeoutMs: uiTimeoutMs,
       })
-
-      await control.command('waitFor', '[data-testid="cloud-todo-column-inbox"]', {
+      await control.command('waitFor', '[data-testid="cloud-project-name"]', {
+        visible: false,
+        stableMs: 250,
         timeoutMs: uiTimeoutMs,
       })
+      await control.command('waitFor', '[data-testid="cloud-project-header-title"]', {
+        text: PROJECT_NAME,
+        visible: true,
+        timeoutMs: uiTimeoutMs,
+      })
+
+      await control.command('waitFor', '[data-testid="cloud-todo-column-empty-add-inbox"]', {
+        timeoutMs: uiTimeoutMs,
+      })
+      await control.command('waitFor', '[data-testid="cloud-board-quick-start"]', {
+        text: '快速上手',
+        timeoutMs: uiTimeoutMs,
+      })
+      const emptyGuideSnapshot = JSON.parse(
+        await control.command('snapshot', '[data-testid="cloud-board-quick-start"]')
+      )
+      assert.ok(
+        emptyGuideSnapshot.text.includes('创建第一个 Issue'),
+        'The empty board guide did not explain the first creation step'
+      )
+      await captureVerificationScreenshot(
+        control,
+        'board-quick-start-01-empty-board.png',
+        '[data-testid="cloud-todo-workspace"]'
+      )
+      await control.command('click', '[data-testid="cloud-board-quick-start-create-action"]')
+      await control.command('waitFor', '[data-testid="workspace-issue-composer"]', {
+        timeoutMs: uiTimeoutMs,
+      })
+      await control.command('waitFor', '[data-testid="workspace-issue-templates"]', {
+        text: '从模板开始',
+        timeoutMs: uiTimeoutMs,
+      })
+      await captureVerificationScreenshot(
+        control,
+        'board-quick-start-02-creation-templates.png',
+        '[data-testid="workspace-issue-composer"]'
+      )
+      await control.command('press', 'body', { key: 'Escape' })
       await control.command('click', '[data-testid="cloud-todo-column-empty-add-inbox"]')
       await control.command('waitFor', '[data-testid="cloud-todo-column-quick-create-inbox"]', {
         timeoutMs: uiTimeoutMs,
@@ -73,6 +114,9 @@ export function createDesktopScenario({ uiTimeoutMs }) {
         timeoutMs: uiTimeoutMs,
       })
       await control.command('press', 'body', { key: 'Escape' })
+      await control.command('waitFor', '[data-testid="cloud-todo-column-empty-add-inbox"]', {
+        timeoutMs: uiTimeoutMs,
+      })
       await control.command('click', '[data-testid="cloud-todo-column-empty-add-inbox"]')
       await control.command('waitFor', '[data-testid="cloud-todo-column-quick-create-inbox"]', {
         timeoutMs: uiTimeoutMs,
@@ -105,10 +149,35 @@ export function createDesktopScenario({ uiTimeoutMs }) {
           ].some(prefix => testId.startsWith(prefix))
       )
       assert.ok(taskCardTestId, 'The newly created local task card was not present in the board')
+      await control.command('waitFor', '[data-testid="cloud-board-quick-start-create"]', {
+        timeoutMs: uiTimeoutMs,
+      })
+      assert.equal(
+        await control.command('getAttribute', '[data-testid="cloud-board-quick-start-create"]', {
+          value: 'data-complete',
+        }),
+        'true',
+        'Creating the first board item did not complete the guide creation step'
+      )
       await control.command('click', `[data-testid="${taskCardTestId}"]`)
       await control.command('waitFor', '[data-testid="cloud-todo-detail"]', {
         timeoutMs: uiTimeoutMs,
       })
+      await control.command('waitFor', '[data-testid="cloud-board-quick-start-open"]', {
+        timeoutMs: uiTimeoutMs,
+      })
+      assert.equal(
+        await control.command('getAttribute', '[data-testid="cloud-board-quick-start-open"]', {
+          value: 'data-complete',
+        }),
+        'true',
+        'Opening the first board item did not complete the guide detail step'
+      )
+      await captureVerificationScreenshot(
+        control,
+        'board-quick-start-03-item-details.png',
+        '[data-testid="cloud-todo-workspace"]'
+      )
       await control.command('fill', '[data-testid="cloud-todo-detail-title"]', {
         value: UPDATED_TASK_NAME,
       })
@@ -120,6 +189,40 @@ export function createDesktopScenario({ uiTimeoutMs }) {
         text: UPDATED_TASK_NAME,
         timeoutMs: uiTimeoutMs,
       })
+      await control.command('drag', `[data-testid="${taskCardTestId}"]`, {
+        target: '[data-testid="cloud-todo-column-dropzone-pending"]',
+        timeoutMs: uiTimeoutMs,
+      })
+      await control.command('waitFor', '[data-testid="cloud-board-quick-start-complete"]', {
+        text: '快速上手已完成',
+        timeoutMs: uiTimeoutMs,
+      })
+      await captureVerificationScreenshot(
+        control,
+        'board-quick-start-04-advanced.png',
+        '[data-testid="cloud-todo-workspace"]'
+      )
+      let advancedSnapshot = JSON.parse(await control.command('snapshot', 'body'))
+      if (advancedSnapshot.testIds.includes('ai-chat-modal-close')) {
+        await control.command('click', '[data-testid="ai-chat-modal-close"]')
+        advancedSnapshot = JSON.parse(await control.command('snapshot', 'body'))
+      }
+      if (advancedSnapshot.testIds.includes('cloud-todo-detail-close')) {
+        await control.command('click', '[data-testid="cloud-todo-detail-close"]')
+      }
+      await control.command(
+        'waitFor',
+        '[data-testid="cloud-todo-column-pending"] [data-testid^="cloud-todo-card-"]',
+        {
+          text: UPDATED_TASK_NAME,
+          timeoutMs: uiTimeoutMs,
+        }
+      )
+      await captureVerificationScreenshot(
+        control,
+        'board-quick-start-05-ready-column.png',
+        '[data-testid="cloud-todo-workspace"]'
+      )
       await control.command('click', '[data-testid="cloud-project-files-view"]')
       await control.command('waitFor', '[data-testid="cloud-files-upload"]', {
         timeoutMs: uiTimeoutMs,

@@ -12,7 +12,6 @@ import {
   FolderPlus,
   Globe2,
   GitCompareArrows,
-  Grid3X3,
   Laptop,
   Loader2,
   MessageCircle,
@@ -20,7 +19,6 @@ import {
   MessageSquarePlus,
   Pause,
   Pin,
-  Plug,
   Plus,
   RotateCw,
   Search,
@@ -56,6 +54,7 @@ import { AppReleaseNotesDialog } from '@/features/app-update/AppReleaseNotesDial
 import { useOptionalAppUpdate } from '@/features/app-update/app-update-context'
 import type { WeworkInstalledReleaseNotes } from '@/features/app-update/app-release-notes'
 import type { WeworkDshSidebarNavigationItem } from '@/features/dsh-runtime/dshSidebarNavigation'
+import { DshIcon } from '@/features/dsh-runtime/DshIcon'
 import { WEWORK_DSH_SLOTS } from '@/features/dsh-runtime/dshUiSlots'
 import { useDshSlotEntries } from '@/features/dsh-runtime/useDshSlotEntries'
 import { getRuntimeTaskReminderItemKey } from '@/features/workbench/runtimeTaskReminders'
@@ -81,6 +80,7 @@ import {
   useRuntimeTaskLifecycleStoreSnapshot,
 } from '@/features/workbench/runtimeTaskLifecycle'
 import { CloudConnectionDialog } from '@/features/cloud-connection/CloudConnectionDialog'
+import type { CloudConnectionStatus } from '@/features/cloud-connection/cloudConnectionStorage'
 import { useOptionalCloudConnection } from '@/features/cloud-connection/useCloudConnection'
 import { DshSidebarNavigationSurface } from '@/features/dsh-runtime/DshSidebarNavigationSurface'
 import { prefetchDshSidebarNavigation } from '@/features/dsh-runtime/dshSidebarNavigation'
@@ -402,11 +402,6 @@ interface ArchiveConversationsConfirmDialogProps {
 const RUNTIME_ARCHIVE_UNDO_DELAY_MS = 3000
 const EMPTY_RUNTIME_TASK_KEYS: ReadonlySet<string> = new Set()
 const EMPTY_SPLIT_GROUP_MEMBERSHIPS: Readonly<Record<string, WorkbenchSplitGroupMembership>> = {}
-const DSH_SIDEBAR_NAVIGATION_ICONS = {
-  'alarm-clock': AlarmClock,
-  applications: Grid3X3,
-  plug: Plug,
-} as const
 const PROJECT_APPEARANCE_COLORS = [
   'blue',
   'green',
@@ -1032,7 +1027,7 @@ function getImNotificationSessionLabel(
 function getGlobalImNotificationTitle(
   t: ReturnType<typeof useTranslation>['t'],
   settings: RuntimeIMNotificationSettingsResponse | null | undefined,
-  cloudStatus?: 'disconnected' | 'connecting' | 'connected' | 'expired' | 'error'
+  cloudStatus?: CloudConnectionStatus
 ): string {
   if (cloudStatus === 'disconnected') {
     return t(
@@ -1046,7 +1041,7 @@ function getGlobalImNotificationTitle(
       '登录云端后可开启离开电脑提醒'
     )
   }
-  if (cloudStatus === 'connecting') {
+  if (cloudStatus === 'restoring' || cloudStatus === 'connecting') {
     return t('workbench.cloud_connection_connecting', '正在连接云端')
   }
 
@@ -1106,7 +1101,7 @@ function GlobalImNotificationBell({
   }, [menuContainerRef])
   const targetLabel = getImNotificationSessionLabel(imNotificationSettings)
   const enabled = Boolean(imNotificationSettings?.global.enabled)
-  const connecting = cloud.status === 'connecting'
+  const connecting = cloud.status === 'restoring' || cloud.status === 'connecting'
   const requiresCloudLogin = !cloud.isConnected
   const needsSession = cloud.isConnected && !targetLabel
   const notifying = enabled && cloud.isConnected && Boolean(targetLabel)
@@ -1259,7 +1254,7 @@ function GlobalImNotificationBell({
                   type="button"
                   data-testid="sidebar-global-im-notification-settings-button"
                   onClick={openSessionSettings}
-                  className="h-8 rounded-md px-2.5 text-xs font-medium text-text-secondary hover:bg-muted hover:text-text-primary"
+                  className="h-8 shrink-0 whitespace-nowrap rounded-md px-2.5 text-xs font-medium text-text-secondary hover:bg-muted hover:text-text-primary"
                 >
                   {t('workbench.away_im_reminder_change_session', '更换会话')}
                 </button>
@@ -1721,7 +1716,10 @@ function RuntimeTaskRow({
                 ? 'page'
                 : undefined
           }
-          onClick={handleOpen}
+          onClick={event => {
+            if (event.detail > 1) return
+            handleOpen()
+          }}
           onContextMenu={event => {
             event.preventDefault()
             event.stopPropagation()
@@ -2172,7 +2170,7 @@ function RuntimeTaskRow({
             data-testid={`runtime-local-task-archive-toast-${task.taskId}`}
             role="status"
             aria-live="polite"
-            className="fixed left-1/2 top-5 z-[200] flex max-w-[calc(100vw-32px)] -translate-x-1/2 items-center gap-1 rounded-2xl border border-border bg-surface px-4 py-2 text-sm text-text-primary shadow-lg"
+            className="electron-titlebar-interactive-region pointer-events-auto fixed left-1/2 top-5 z-[200] flex max-w-[calc(100vw-32px)] -translate-x-1/2 items-center gap-1 rounded-2xl border border-border bg-surface px-4 py-2 text-sm text-text-primary shadow-lg"
           >
             <button
               type="button"
@@ -4056,11 +4054,16 @@ export function DesktopSidebar({
                   )
                 }
 
-                const Icon = DSH_SIDEBAR_NAVIGATION_ICONS[item.icon ?? 'applications'] ?? Grid3X3
                 return (
                   <DesktopSidebarNavItem
                     key={item.id}
-                    icon={Icon}
+                    iconElement={
+                      <DshIcon
+                        name={item.icon}
+                        aria-hidden="true"
+                        className="h-4 w-4 text-current"
+                      />
+                    }
                     label={t(item.labelKey ?? item.id, item.label)}
                     testId={item.testId ?? `dsh-sidebar-navigation-${item.id}`}
                     selected={activeItem === (item.activeItem ?? item.id)}

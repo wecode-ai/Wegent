@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { Dispatch } from 'react'
+import { invokeDesktopHost } from '@/api/dsh/desktopHost'
 import type { ExecutorClient } from '@/api/executorAccess'
+import { getDesktopWindowLabel, isElectronRuntime } from '@/lib/runtime-environment'
 import { getPreferredStandaloneDeviceId } from '@/lib/device-selection'
 import type {
   DeviceInfo,
@@ -590,10 +592,19 @@ export function useWorkbenchDataRefresh({
 
     async function bootstrap() {
       const bootstrapRevision = ++workListRefreshRevisionRef.current
+      console.info('[startup][renderer]', {
+        step: 'device-list-load',
+        status: 'started',
+      })
       const devicesResult = await timedWorkbenchBootstrapRequest(
         'devices',
         executorClient.commands.listDevices()
       )
+      console.info('[startup][renderer]', {
+        step: 'device-list-load',
+        status: devicesResult.status === 'fulfilled' ? 'completed' : 'failed',
+        elapsedMs: Math.round(nowMs() - startedAt),
+      })
 
       if (cancelled) return
       window.clearTimeout(slowTimer)
@@ -622,11 +633,32 @@ export function useWorkbenchDataRefresh({
         standaloneDeviceId,
       })
 
+      const runtimeWorkStartedAt = nowMs()
+      console.info('[startup][renderer]', {
+        step: 'task-list-load',
+        status: 'started',
+      })
       void timedWorkbenchBootstrapRequest(
         'runtimeWork',
         executorClient.runtime.listRuntimeWork()
       ).then(runtimeWorkResult => {
         if (cancelled) return
+        console.info('[startup][renderer]', {
+          step: 'task-list-load',
+          status: runtimeWorkResult.status === 'fulfilled' ? 'completed' : 'failed',
+          elapsedMs: Math.round(nowMs() - runtimeWorkStartedAt),
+          taskCount:
+            runtimeWorkResult.status === 'fulfilled' ? runtimeWorkResult.value.totalTasks : 0,
+        })
+        if (
+          runtimeWorkResult.status === 'rejected' &&
+          isElectronRuntime() &&
+          getDesktopWindowLabel() === 'main'
+        ) {
+          void invokeDesktopHost<void>('renderer.startupFailed').catch(error => {
+            console.error('[Wework] Failed to report task-list startup failure:', error)
+          })
+        }
         const runtimeWork =
           runtimeWorkResult.status === 'fulfilled'
             ? applyRuntimeTaskOverrides(runtimeWorkResult.value, true)
@@ -670,6 +702,12 @@ export function useWorkbenchDataRefresh({
 
   const refreshWorkLists: RefreshWorkLists = useCallback(
     async options => {
+      if (options?.unarchivedTasks?.length) {
+        const unarchivedTaskKeys = new Set(options.unarchivedTasks.map(getRuntimeTaskRouteKey))
+        archivedRuntimeTaskAddressesRef.current = archivedRuntimeTaskAddressesRef.current.filter(
+          address => !unarchivedTaskKeys.has(getRuntimeTaskRouteKey(address))
+        )
+      }
       const refreshRevision = ++workListRefreshRevisionRef.current
       const [devicesResult, runtimeWorkResult] = await Promise.all([
         executorClient.commands.listDevices().catch(error => {

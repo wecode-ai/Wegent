@@ -31,12 +31,13 @@ from app.models.delivery import (
 from app.models.dingtalk_doc import DingtalkSyncedNode
 from app.models.im_session import IMPrivateSession, IMSessionMode, IMSessionState
 from app.models.kind import Kind
-from app.models.knowledge import KnowledgeDocument
+from app.models.knowledge import KnowledgeDocument, KnowledgeDocumentExternalSource
 from app.models.knowledge_artifact import KnowledgeArtifactRecord
 from app.models.loop_item_execution import LoopItemExecution
 from app.models.marketplace_resource import MarketplaceResource
 from app.models.namespace import Namespace
 from app.models.namespace_member import NamespaceMember
+from app.models.oauth_refresh_token import OAuthRefreshToken
 from app.models.plugin_marketplace import (
     Plugin,
     PluginDeviceInstallation,
@@ -106,7 +107,9 @@ __all__ = [
     "Namespace",
     "NamespaceMember",
     "APIKey",
+    "OAuthRefreshToken",
     "KnowledgeDocument",
+    "KnowledgeDocumentExternalSource",
     "KnowledgeArtifactRecord",
     "Project",
     "ProjectChatMessage",

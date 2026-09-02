@@ -9,7 +9,7 @@ Compatible with OpenAI Responses API format.
 
 from typing import Any, Dict, List, Literal, Optional, Union
 
-from pydantic import BaseModel, Field, conint, conlist
+from pydantic import BaseModel, ConfigDict, Field, conint, conlist
 
 # Maximum number of attachment IDs allowed per request
 MAX_ATTACHMENT_IDS = 100
@@ -197,12 +197,48 @@ class ReasoningConfig(BaseModel):
     )
 
 
+class GenerationOptions(BaseModel):
+    """Request-scoped image or video generation options."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    size: Optional[str] = Field(
+        default=None,
+        min_length=1,
+        description="Image output size, for example '1024x1024'.",
+    )
+    resolution: Optional[str] = Field(
+        default=None,
+        min_length=1,
+        description="Video output resolution, for example '1080p'.",
+    )
+    ratio: Optional[str] = Field(
+        default=None,
+        min_length=1,
+        description="Video aspect ratio, for example '16:9'.",
+    )
+    duration: Optional[int] = Field(
+        default=None,
+        gt=0,
+        description="Video duration in seconds.",
+    )
+    generation_mode_id: Optional[str] = Field(
+        default=None,
+        min_length=1,
+        description="Video generation mode identifier.",
+    )
+
+
 class WegentOptions(BaseModel):
     """Wegent-specific request options for Responses API."""
 
     include_task_context: bool = Field(
         default=False,
         description="Whether to emit the Wegent extension event response.task_context in streaming mode.",
+    )
+    generation: Optional[GenerationOptions] = Field(
+        default=None,
+        description="Request-scoped image or video generation options.",
     )
 
 
@@ -308,11 +344,36 @@ class ShellCallOutputItem(BaseModel):
     input: Dict[str, Any] = Field(default_factory=dict)
 
 
+class ImageGenerationCallOutputItem(BaseModel):
+    """Generated image output item."""
+
+    type: Literal["image_generation_call"] = "image_generation_call"
+    id: str
+    status: Literal["in_progress", "completed", "failed"]
+    image_urls: List[str] = Field(default_factory=list)
+    image_download_urls: List[str] = Field(default_factory=list)
+    image_attachment_ids: List[int] = Field(default_factory=list)
+    metadata: Dict[str, Any] = Field(default_factory=dict)
+
+
+class VideoGenerationCallOutputItem(BaseModel):
+    """Wegent extension output item for generated video."""
+
+    type: Literal["wegent_video_generation_call"] = "wegent_video_generation_call"
+    id: str
+    status: Literal["in_progress", "completed", "failed"]
+    video_url: Optional[str] = None
+    video_attachment_id: Optional[int] = None
+    metadata: Dict[str, Any] = Field(default_factory=dict)
+
+
 ResponseOutputItem = Union[
     OutputMessage,
     FunctionCallOutputItem,
     MCPCallOutputItem,
     ShellCallOutputItem,
+    ImageGenerationCallOutputItem,
+    VideoGenerationCallOutputItem,
 ]
 
 

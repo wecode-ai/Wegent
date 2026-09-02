@@ -138,6 +138,32 @@ export interface CodeWikiPageNode {
 
 export interface CodeWikiPageTree {
   pages: CodeWikiPageNode[]
+  /** The published version the returned navigation belongs to; zero means none. */
+  published_generation_id?: number
+}
+
+export type CodeWikiProgressStage =
+  | 'generating'
+  | 'planning'
+  | 'plan_review'
+  | 'revising_plan'
+  | 'writing'
+  | 'qa_review'
+  | 'repairing'
+  | 'recheck'
+  | 'publishing'
+  | 'finishing'
+
+export interface CodeWikiRunProgress {
+  /** Derived from persisted handoffs and verdicts; it is not a second workflow state. */
+  stage: CodeWikiProgressStage
+  /** Zero when the run does not use the coordinated four-step review flow. */
+  current_step: number
+  total_steps: number
+  /** Candidate pages written so far. Existing published pages are not counted. */
+  pages_written: number
+  /** Planned page count once the Plan handoff exists. */
+  pages_total: number
 }
 
 /**
@@ -165,6 +191,8 @@ export interface CodeWikiRunStatus {
    * rather than reported as the wiki being busy.
    */
   is_stale: boolean
+  /** Present only while a generation is running. */
+  progress?: CodeWikiRunProgress | null
   last_published_at?: string | null
   last_published_commit: string
 }

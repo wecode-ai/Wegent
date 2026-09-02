@@ -6,6 +6,7 @@ type SmartAppsSection = 'marketplace' | 'owned'
 
 interface SmartAppsSectionNavProps {
   active: SmartAppsSection
+  onNavigate?: (path: string) => void
 }
 
 const sections: Array<{
@@ -25,7 +26,7 @@ const sections: Array<{
   },
 ]
 
-export function SmartAppsSectionNav({ active }: SmartAppsSectionNavProps) {
+export function SmartAppsSectionNav({ active, onNavigate = navigateTo }: SmartAppsSectionNavProps) {
   const { t } = useTranslation('common')
 
   return (
@@ -53,7 +54,8 @@ export function SmartAppsSectionNav({ active }: SmartAppsSectionNavProps) {
                 : 'text-text-secondary hover:bg-background/60 hover:text-text-primary'
             )}
             onClick={() => {
-              if (!selected) navigateTo(section.path)
+              if (selected) return
+              onNavigate(section.path)
             }}
           >
             {label}

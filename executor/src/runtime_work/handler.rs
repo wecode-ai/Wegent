@@ -18,7 +18,7 @@ use std::{
 use chrono::Local;
 use futures_util::{stream, StreamExt};
 use serde_json::{json, Map, Value};
-use tokio::sync::{broadcast, mpsc, oneshot, Mutex as AsyncMutex};
+use tokio::sync::{broadcast, mpsc, oneshot, Mutex as AsyncMutex, Semaphore};
 use tokio::time::sleep;
 
 use crate::{
@@ -41,9 +41,72 @@ use crate::{
     protocol::ExecutionRequest,
     runner::ExecutionOutcome,
     server::{executor_loopback_base_url, harness_context, local_model_proxy},
+    task_runtime::LocalTaskStore,
 };
 
 const WORKTREE_RECONCILIATION_RETRY_INTERVAL: Duration = Duration::from_secs(5);
+const DEFAULT_RESTORE_STARTUP_CONCURRENCY: usize = 2;
+const RESTORE_STARTUP_CONCURRENCY_ENV: &str = "WEGENT_RUNTIME_RESTORE_CONCURRENCY";
+const RESTORED_TURN_MARKER: &str = "wegent_restore_after_restart";
+const RESTORE_STARTUP_TIMEOUT: Duration = Duration::from_secs(120);
+
+enum RestoreStartupState {
+    Waiting {
+        _permit: tokio::sync::OwnedSemaphorePermit,
+    },
+    Active,
+    TimedOut,
+    Finished,
+}
+
+struct RestoreStartupGate {
+    state: Mutex<RestoreStartupState>,
+}
+
+impl RestoreStartupGate {
+    fn new(permit: tokio::sync::OwnedSemaphorePermit) -> Arc<Self> {
+        Arc::new(Self {
+            state: Mutex::new(RestoreStartupState::Waiting { _permit: permit }),
+        })
+    }
+
+    fn try_activate(&self) -> bool {
+        let mut state = self
+            .state
+            .lock()
+            .expect("restore startup state lock should not be poisoned");
+        if !matches!(*state, RestoreStartupState::Waiting { .. }) {
+            return false;
+        }
+        *state = RestoreStartupState::Active;
+        true
+    }
+
+    fn try_timeout(&self) -> bool {
+        let mut state = self
+            .state
+            .lock()
+            .expect("restore startup state lock should not be poisoned");
+        if !matches!(*state, RestoreStartupState::Waiting { .. }) {
+            return false;
+        }
+        *state = RestoreStartupState::TimedOut;
+        true
+    }
+
+    fn finish(&self) {
+        let mut state = self
+            .state
+            .lock()
+            .expect("restore startup state lock should not be poisoned");
+        if matches!(
+            *state,
+            RestoreStartupState::Waiting { .. } | RestoreStartupState::Active
+        ) {
+            *state = RestoreStartupState::Finished;
+        }
+    }
+}
 
 mod archives;
 mod automation_rpc;
@@ -141,6 +204,22 @@ const CODEX_OFFICIAL_PROVIDER_NAME: &str = "CodeX";
 const DEFAULT_MAX_CONCURRENT_TASKS: usize = 10;
 const MIN_MAX_CONCURRENT_TASKS: usize = 1;
 const MAX_MAX_CONCURRENT_TASKS: usize = 20;
+
+fn restore_startup_concurrency(max_concurrent_tasks: usize) -> usize {
+    let configured = env::var(RESTORE_STARTUP_CONCURRENCY_ENV)
+        .ok()
+        .and_then(|value| value.trim().parse::<usize>().ok());
+    normalized_restore_startup_concurrency(configured, max_concurrent_tasks)
+}
+
+fn normalized_restore_startup_concurrency(
+    configured: Option<usize>,
+    max_concurrent_tasks: usize,
+) -> usize {
+    configured
+        .unwrap_or(DEFAULT_RESTORE_STARTUP_CONCURRENCY)
+        .clamp(1, max_concurrent_tasks.max(1))
+}
 
 fn worktree_error_code(error: &str) -> &'static str {
     [
@@ -282,9 +361,7 @@ fn standalone_chat_workspace_path(
         return None;
     }
     let segment = workspace_segment(local_task_id);
-    let path = home_dir()
-        .join("Documents")
-        .join("Codex")
+    let path = standalone_workspace_root()
         .join(Local::now().format("%Y-%m-%d").to_string())
         .join(segment);
     if let Err(error) = fs::create_dir_all(&path) {
@@ -295,6 +372,13 @@ fn standalone_chat_workspace_path(
         return None;
     }
     Some(path.display().to_string())
+}
+
+fn standalone_workspace_root() -> PathBuf {
+    env::var_os("WEGENT_STANDALONE_WORKSPACE_ROOT")
+        .filter(|value| !value.is_empty())
+        .map(PathBuf::from)
+        .unwrap_or_else(|| home_dir().join("Documents").join("Codex"))
 }
 
 fn is_standalone_chat_workspace(request: &ExecutionRequest) -> bool {
@@ -458,6 +542,7 @@ pub struct RuntimeWorkRpcHandler {
     next_execution_id: Arc<AtomicU64>,
     task_send_gates: Arc<Mutex<HashMap<String, Weak<AsyncMutex<()>>>>>,
     turn_scheduler: Arc<Mutex<RuntimeTurnScheduler>>,
+    restore_startup_semaphore: Arc<Semaphore>,
     turn_queue_operation: Arc<AsyncMutex<()>>,
     turn_queue_path: Arc<PathBuf>,
     preparing_worktree_turns: Arc<Mutex<HashMap<String, PreparingWorktreeTurn>>>,
@@ -470,6 +555,7 @@ pub struct RuntimeWorkRpcHandler {
     notification_router: Arc<Mutex<Option<tokio::task::JoinHandle<()>>>>,
     archived_delete_tx: mpsc::UnboundedSender<RuntimeTaskLink>,
     automation_store: AutomationStore,
+    task_store_path: Arc<PathBuf>,
     store: RuntimeWorkStore,
     worktrees: WorktreeManager,
     worktree_reconciliation_state: Arc<AsyncMutex<WorktreeReconciliationState>>,
@@ -484,10 +570,18 @@ pub struct RuntimeWorkRpcHandler {
     backend_connection: Arc<Mutex<Option<ConnectionConfig>>>,
 }
 
-#[derive(Default)]
 struct CodexRuntimeProxyConfig {
     initialized: bool,
     proxy_url: Option<String>,
+}
+
+impl Default for CodexRuntimeProxyConfig {
+    fn default() -> Self {
+        Self {
+            initialized: true,
+            proxy_url: None,
+        }
+    }
 }
 
 #[derive(Default)]
@@ -615,6 +709,26 @@ impl RuntimeWorkRpcHandler {
                 log_executor_event("runtime turn queue restore failed", &[("error", error)]);
                 VecDeque::new()
             });
+        for turn in &mut queued_turns {
+            turn.request
+                .extra
+                .insert(RESTORED_TURN_MARKER.to_owned(), Value::Bool(true));
+        }
+        let restored_turn_count = queued_turns.len();
+        let restore_startup_concurrency =
+            restore_startup_concurrency(runtime_settings.max_concurrent_tasks);
+        if restored_turn_count > 0 {
+            log_executor_event(
+                "runtime persisted turn startup ramp configured",
+                &[
+                    ("restored_turn_count", restored_turn_count.to_string()),
+                    (
+                        "restore_startup_concurrency",
+                        restore_startup_concurrency.to_string(),
+                    ),
+                ],
+            );
+        }
         let removed_worktree_turn_count =
             turns::remove_worktree_turns_after_restart(&worktrees, &mut queued_turns);
         if removed_worktree_turn_count > 0 {
@@ -638,6 +752,7 @@ impl RuntimeWorkRpcHandler {
                 runtime_settings.max_concurrent_tasks,
                 queued_turns,
             ))),
+            restore_startup_semaphore: Arc::new(Semaphore::new(restore_startup_concurrency)),
             turn_queue_operation: Arc::new(AsyncMutex::new(())),
             turn_queue_path: Arc::new(turn_queue_path),
             preparing_worktree_turns: Arc::new(Mutex::new(HashMap::new())),
@@ -650,6 +765,7 @@ impl RuntimeWorkRpcHandler {
             notification_router: Arc::new(Mutex::new(None)),
             archived_delete_tx,
             automation_store: AutomationStore::from_env(),
+            task_store_path: Arc::new(LocalTaskStore::default_path()),
             store,
             worktrees,
             worktree_reconciliation_state: Arc::new(AsyncMutex::new(
@@ -750,7 +866,6 @@ impl RuntimeWorkRpcHandler {
         match method {
             "runtime.tasks.list" => self.list_tasks().await,
             "runtime.tasks.running_count" => Ok(self.running_task_count()),
-            "runtime.tasks.status.replay" => self.replay_task_statuses(payload).await,
             "runtime.tasks.search" => self.search_tasks(payload).await,
             "runtime.tasks.transcript" => self.transcript(payload).await,
             "runtime.tasks.create" => self.create_task(payload).await,
@@ -802,6 +917,15 @@ impl RuntimeWorkRpcHandler {
             "runtime.codex.models.list" => self.list_codex_models(payload).await,
             "runtime.codex.ensure_started" => self.ensure_codex_started().await,
             "runtime.codex.catalog.custom.write" => self.write_custom_codex_catalog(payload).await,
+            "runtime.codex.catalog.overrides.read" => {
+                self.read_codex_model_overrides(payload).await
+            }
+            "runtime.codex.catalog.overrides.write" => {
+                self.write_codex_model_override(payload).await
+            }
+            "runtime.codex.catalog.overrides.delete" => {
+                self.delete_codex_model_override(payload).await
+            }
             "runtime.codex.instructions.read" => self.read_codex_instructions().await,
             "runtime.codex.instructions.write" => self.write_codex_instructions(payload).await,
             "runtime.codex.personality.read" => self.read_codex_personality().await,

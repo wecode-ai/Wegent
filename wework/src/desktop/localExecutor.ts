@@ -1,4 +1,5 @@
 import {
+  DshExecutorTransportError,
   describeDshExecutor,
   requestDshExecutor,
   subscribeDshExecutorEvents,
@@ -68,6 +69,14 @@ export interface LocalExecutorBackendConnection {
   socketBaseUrl: string
   authToken: string
   runtimeAuthToken?: string | null
+  deviceType: 'app' | 'remote'
+}
+
+interface LocalExecutorBackendStatus {
+  configured: boolean
+  connected: boolean
+  backend_url: string | null
+  socket_url: string | null
 }
 
 export interface BundledPluginMarketplace {
@@ -75,11 +84,15 @@ export interface BundledPluginMarketplace {
   path: string
   pluginCount: number
   defaultPluginNames?: string[]
+  contentHash: string
 }
 
+let ensureLocalExecutorAvailablePromise: Promise<LocalExecutorStatus> | null = null
 let ensureLocalExecutorStartedPromise: Promise<LocalExecutorStatus> | null = null
+let availableLocalExecutorStatus: LocalExecutorStatus | null = null
 let initializedLocalExecutorStatus: LocalExecutorStatus | null = null
 let initializedBundledPluginMarketplace: BundledPluginMarketplace | null = null
+let initializeBundledPluginMarketplacePromise: Promise<BundledPluginMarketplace> | null = null
 let reconciledBundledPluginMarketplaceKey = ''
 let reconcilingBundledPluginMarketplaceKey = ''
 let reconcileBundledPluginMarketplacePromise: Promise<void> | null = null
@@ -133,6 +146,7 @@ async function reconcileBundledPluginMarketplace(
   const reconciliationKey = [
     runtimeInstanceId || 'current-runtime',
     normalizedMarketplacePath(marketplace.path),
+    marketplace.contentHash,
   ].join(':')
   if (reconciledBundledPluginMarketplaceKey === reconciliationKey) return
 
@@ -188,6 +202,7 @@ export async function ensureBundledPluginMarketplaceRegistered(): Promise<void> 
   const reconciliationKey = [
     status.runtimeInstanceId || 'current-runtime',
     normalizedMarketplacePath(marketplace.path),
+    marketplace.contentHash,
   ].join(':')
   if (
     reconciledBundledPluginMarketplaceKey === reconciliationKey ||
@@ -215,7 +230,8 @@ export async function ensureBundledPluginInstalled(pluginName: string): Promise<
   const normalizedPluginName = pluginName.trim()
   if (!normalizedPluginName) throw new Error('Bundled plugin name is required')
   await ensureLocalExecutorStarted()
-  const marketplace = initializedBundledPluginMarketplace
+  const marketplace =
+    initializedBundledPluginMarketplace ?? (await initializeBundledPluginMarketplace())
   if (!marketplace?.defaultPluginNames?.includes(normalizedPluginName)) {
     throw new Error(`Bundled plugin ${normalizedPluginName} is not installed by default`)
   }
@@ -226,10 +242,59 @@ export function getInitializedBundledPluginMarketplace(): BundledPluginMarketpla
   return initializedBundledPluginMarketplace
 }
 
+export function ensureLocalExecutorAvailable(): Promise<LocalExecutorStatus> {
+  if (availableLocalExecutorStatus && isExecutorHealthy(availableLocalExecutorStatus)) {
+    return Promise.resolve(availableLocalExecutorStatus)
+  }
+  if (!ensureLocalExecutorAvailablePromise) {
+    ensureLocalExecutorAvailablePromise = describeDshExecutor()
+      .then(description => {
+        const status: LocalExecutorStatus = {
+          running: true,
+          ready: true,
+          deviceId: description.device_id,
+          runtimeInstanceId: description.runtime_instance_id,
+          version: description.version,
+        }
+        availableLocalExecutorStatus = status
+        return status
+      })
+      .finally(() => {
+        ensureLocalExecutorAvailablePromise = null
+      })
+  }
+  return ensureLocalExecutorAvailablePromise
+}
+
+export function initializeBundledPluginMarketplace(): Promise<BundledPluginMarketplace> {
+  if (initializedBundledPluginMarketplace) {
+    return Promise.resolve(initializedBundledPluginMarketplace)
+  }
+  if (!initializeBundledPluginMarketplacePromise) {
+    initializeBundledPluginMarketplacePromise = ensureLocalExecutorAvailable()
+      .then(() =>
+        requestDshExecutor<BundledPluginMarketplace>(
+          'executor.plugins.initialize_bundled_marketplace'
+        )
+      )
+      .then(marketplace => {
+        initializedBundledPluginMarketplace = marketplace
+        return marketplace
+      })
+      .finally(() => {
+        initializeBundledPluginMarketplacePromise = null
+      })
+  }
+  return initializeBundledPluginMarketplacePromise
+}
+
 export function ensureLocalExecutorStarted(): Promise<LocalExecutorStatus> {
+  if (initializedLocalExecutorStatus && isExecutorHealthy(initializedLocalExecutorStatus)) {
+    return Promise.resolve(initializedLocalExecutorStatus)
+  }
   if (!ensureLocalExecutorStartedPromise) {
     ensureLocalExecutorStartedPromise = (async () => {
-      const description = await describeDshExecutor()
+      const available = await ensureLocalExecutorAvailable()
       const proxyUrl = getLocalProxyUrl().trim()
       await requestDshExecutor('runtime.codex.runtime_config.update', {
         proxyUrl: proxyUrl || null,
@@ -237,19 +302,14 @@ export function ensureLocalExecutorStarted(): Promise<LocalExecutorStatus> {
       const codexStartup = await requestDshExecutor<CodexStartupStatus>(
         'runtime.codex.ensure_started'
       )
-      const marketplace = await requestDshExecutor<BundledPluginMarketplace>(
-        'executor.plugins.initialize_bundled_marketplace'
-      )
-      initializedBundledPluginMarketplace = marketplace
+      await initializeBundledPluginMarketplace()
       const status: LocalExecutorStatus = {
-        running: true,
+        ...available,
         ready: codexStartup.ready,
-        deviceId: description.device_id,
-        runtimeInstanceId: description.runtime_instance_id,
         codexInitializeElapsedMs: codexStartup.initializeElapsedMs,
-        version: description.version,
       }
       initializedLocalExecutorStatus = status
+      availableLocalExecutorStatus = status
       return status
     })().finally(() => {
       ensureLocalExecutorStartedPromise = null
@@ -260,20 +320,26 @@ export function ensureLocalExecutorStarted(): Promise<LocalExecutorStatus> {
 }
 
 export function resetLocalExecutorStateForTests(): void {
+  ensureLocalExecutorAvailablePromise = null
   ensureLocalExecutorStartedPromise = null
+  availableLocalExecutorStatus = null
   initializedLocalExecutorStatus = null
   initializedBundledPluginMarketplace = null
+  initializeBundledPluginMarketplacePromise = null
   reconciledBundledPluginMarketplaceKey = ''
   reconcilingBundledPluginMarketplaceKey = ''
   reconcileBundledPluginMarketplacePromise = null
 }
 
 export function getLocalExecutorStatus(): Promise<LocalExecutorStatus> {
-  return ensureLocalExecutorStarted()
+  return ensureLocalExecutorAvailable()
 }
 
 export async function readLocalExecutorLog(): Promise<LocalExecutorLog> {
-  const status = await ensureLocalExecutorStarted()
+  const [status, backendStatus] = await Promise.all([
+    ensureLocalExecutorAvailable(),
+    requestDshExecutor<LocalExecutorBackendStatus>('executor.backend.status', {}),
+  ])
   return {
     path: 'Electron managed executor log',
     content: 'Executor diagnostics are managed by the Electron runtime.',
@@ -287,9 +353,9 @@ export async function readLocalExecutorLog(): Promise<LocalExecutorLog> {
     sidecarPath: '',
     currentDir: '',
     executorHome: '',
-    backendUrl: null,
-    socketUrl: null,
-    hasBackendAuthToken: false,
+    backendUrl: backendStatus.backend_url,
+    socketUrl: backendStatus.socket_url,
+    hasBackendAuthToken: backendStatus.configured,
     pendingRequestCount: 0,
     status,
   }
@@ -310,12 +376,13 @@ export function connectLocalExecutorToBackend(
     socket_url: connection.socketBaseUrl,
     auth_token: connection.authToken,
     runtime_auth_token: connection.runtimeAuthToken ?? null,
-  }).then(() => ensureLocalExecutorStarted())
+    device_type: connection.deviceType,
+  }).then(() => ensureLocalExecutorAvailable())
 }
 
 export function disconnectLocalExecutorFromBackend(): Promise<LocalExecutorStatus> {
   return requestDshExecutor('executor.backend.configure', {}).then(() =>
-    ensureLocalExecutorStarted()
+    ensureLocalExecutorAvailable()
   )
 }
 
@@ -324,6 +391,13 @@ export function requestLocalExecutor<T = unknown>(
   params: Record<string, unknown> = {}
 ): Promise<T> {
   return requestDshExecutor<T>(method, params).catch((cause: unknown) => {
+    if (isExecutorTransportFailure(cause)) {
+      availableLocalExecutorStatus = null
+      initializedLocalExecutorStatus = null
+      initializedBundledPluginMarketplace = null
+      initializeBundledPluginMarketplacePromise = null
+      reconciledBundledPluginMarketplaceKey = ''
+    }
     console.error('[local-ipc] request failed', {
       method,
       paramsKeys: Object.keys(params ?? {}),
@@ -333,6 +407,11 @@ export function requestLocalExecutor<T = unknown>(
     })
     throw cause
   })
+}
+
+function isExecutorTransportFailure(cause: unknown): boolean {
+  if (!(cause instanceof DshExecutorTransportError)) return true
+  return cause.retryable || cause.code === 'protocol_mismatch' || /^http_\d+$/.test(cause.code)
 }
 
 export function subscribeLocalExecutorEvents(

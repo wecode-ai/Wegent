@@ -1,6 +1,7 @@
-import { invokeDesktopHost } from '@/api/dsh/desktopHost'
+import { invokeDesktopHost, subscribeDesktopHostEvents } from '@/api/dsh/desktopHost'
 import { normalizeBrowserUrl } from './browser-url'
 import { isElectronRuntime } from './runtime-environment'
+import type { BrowserAnnotationState } from '@/types/browser-annotation'
 
 type UnlistenFn = () => void
 
@@ -19,7 +20,9 @@ export const EMBEDDED_BROWSER_INVALID_TLS_CERTIFICATE_EVENT =
 export const EMBEDDED_BROWSER_DEBUG_PANEL_VISIBILITY_EVENT = 'wework:debug-panel-visibility-change'
 export const EMBEDDED_BROWSER_OCCLUSION_EVENT = 'wework:embedded-browser-occlusion-change'
 export const EMBEDDED_BROWSER_AGENT_STATE_EVENT = 'wework:embedded-browser-agent-state'
+export const EMBEDDED_BROWSER_AGENT_CURSOR_EVENT = 'wework:embedded-browser-agent-cursor'
 export const EMBEDDED_BROWSER_POPUP_EVENT = 'wework:embedded-browser-popup'
+export const EMBEDDED_BROWSER_ANNOTATION_STATE_EVENT = 'wework:embedded-browser-annotation-state'
 
 export function browserDiagnosticUrl(value: string): string {
   try {
@@ -106,6 +109,16 @@ export interface EmbeddedBrowserAgentStateEvent {
   createdAtUnixMs: number
 }
 
+export interface EmbeddedBrowserAgentCursorEvent {
+  label: string
+  visible: boolean
+  x: number
+  y: number
+  animateMovement: boolean
+  moveSequence: number
+  createdAtUnixMs: number
+}
+
 export interface EmbeddedBrowserAgentApproval {
   approvalId: string
   risk: string
@@ -128,6 +141,14 @@ export interface EmbeddedBrowserPopupRequest {
   warning: string | null
 }
 
+export interface EmbeddedBrowserAnnotationRequest {
+  label: string
+  nativeLabel: string
+  mode: 'quick' | 'batch'
+  x: number
+  y: number
+}
+
 export interface EmbeddedBrowserInvalidTlsCertificateEvent {
   nativeLabel: string
   url: string
@@ -138,7 +159,9 @@ export interface EmbeddedBrowserInvalidTlsCertificateEvent {
 interface ElectronBrowserHostEvent {
   sequence: number
   type:
+    | 'agent-cursor'
     | 'agent-state'
+    | 'annotation-request'
     | 'close-request'
     | 'download'
     | 'local-file-preview'
@@ -148,20 +171,12 @@ interface ElectronBrowserHostEvent {
   payload: Record<string, unknown>
 }
 
-interface ElectronBrowserHostEventBatch {
-  events: ElectronBrowserHostEvent[]
-  latestSequence: number
-  historyLost: boolean
-}
-
 type ElectronBrowserEventHandler = (event: Record<string, unknown>) => void
 const electronBrowserEventHandlers = new Map<
   ElectronBrowserHostEvent['type'],
   Set<ElectronBrowserEventHandler>
 >()
-let electronBrowserEventAfter = 0
-let electronBrowserEventPolling = false
-let electronBrowserEventTimer: number | null = null
+let electronBrowserEventUnlisten: UnlistenFn | null = null
 
 export function listenEmbeddedBrowserInvalidTlsCertificates(
   handler: (event: EmbeddedBrowserInvalidTlsCertificateEvent) => void
@@ -176,6 +191,24 @@ export function listenEmbeddedBrowserPopupRequests(
 ): Promise<UnlistenFn> | null {
   if (!canUseEmbeddedBrowser()) return null
   return listenElectronBrowserEvents('popup', handler)
+}
+
+export function listenEmbeddedBrowserAnnotationRequests(
+  handler: (request: EmbeddedBrowserAnnotationRequest) => void
+): Promise<UnlistenFn> | null {
+  if (!canUseEmbeddedBrowser()) return null
+  return listenElectronBrowserEvents('annotation-request', handler)
+}
+
+export function listenEmbeddedBrowserAnnotationState(
+  handler: (state: BrowserAnnotationState) => void
+): Promise<UnlistenFn> | null {
+  if (!canUseEmbeddedBrowser()) return null
+  const unlisten = subscribeDesktopHostEvents(event => {
+    if (event.type !== 'browser.annotation-state') return
+    handler(event.payload as unknown as BrowserAnnotationState)
+  })
+  return Promise.resolve(unlisten)
 }
 
 export async function pauseEmbeddedBrowserDownload(id: string): Promise<void> {
@@ -195,6 +228,16 @@ export async function setEmbeddedBrowserAgentControlPaused(
   label = DEFAULT_EMBEDDED_BROWSER_LABEL
 ): Promise<void> {
   await invokeDesktopHost<void>('browser.setAgentControlPaused', { label, paused })
+}
+
+export async function notifyEmbeddedBrowserAgentCursorArrived(
+  label: string,
+  moveSequence: number
+): Promise<void> {
+  await invokeDesktopHost<void>('browser.notifyAgentCursorArrived', {
+    label,
+    moveSequence,
+  })
 }
 
 export async function resolveEmbeddedBrowserAgentApproval(
@@ -238,40 +281,27 @@ function listenElectronBrowserEvents<EventPayload>(
   const handlers = electronBrowserEventHandlers.get(type) ?? new Set<ElectronBrowserEventHandler>()
   handlers.add(wrappedHandler)
   electronBrowserEventHandlers.set(type, handlers)
-  startElectronBrowserEventPolling()
+  startElectronBrowserEventListening()
 
   return Promise.resolve(() => {
     const currentHandlers = electronBrowserEventHandlers.get(type)
     currentHandlers?.delete(wrappedHandler)
     if (currentHandlers?.size === 0) electronBrowserEventHandlers.delete(type)
-    if (electronBrowserEventHandlers.size > 0 || electronBrowserEventTimer === null) return
-    window.clearInterval(electronBrowserEventTimer)
-    electronBrowserEventTimer = null
+    if (electronBrowserEventHandlers.size > 0 || electronBrowserEventUnlisten === null) return
+    electronBrowserEventUnlisten()
+    electronBrowserEventUnlisten = null
   })
 }
 
-function startElectronBrowserEventPolling(): void {
-  if (electronBrowserEventTimer !== null) return
-  void pollElectronBrowserEvents()
-  electronBrowserEventTimer = window.setInterval(() => void pollElectronBrowserEvents(), 250)
-}
-
-async function pollElectronBrowserEvents(): Promise<void> {
-  if (electronBrowserEventPolling || electronBrowserEventHandlers.size === 0) return
-  electronBrowserEventPolling = true
-  try {
-    const batch = await invokeDesktopHost<ElectronBrowserHostEventBatch>('browser.events', {
-      after: electronBrowserEventAfter,
-    })
-    for (const event of batch.events) {
-      electronBrowserEventHandlers.get(event.type)?.forEach(handler => handler(event.payload))
-    }
-    electronBrowserEventAfter = batch.latestSequence
-  } catch (error) {
-    console.error('[Wework] Failed to poll Electron browser events', error)
-  } finally {
-    electronBrowserEventPolling = false
-  }
+function startElectronBrowserEventListening(): void {
+  if (electronBrowserEventUnlisten !== null) return
+  electronBrowserEventUnlisten = subscribeDesktopHostEvents(event => {
+    if (event.type !== 'browser.event') return
+    const browserEvent = event.payload as unknown as ElectronBrowserHostEvent
+    electronBrowserEventHandlers
+      .get(browserEvent.type)
+      ?.forEach(handler => handler(browserEvent.payload))
+  })
 }
 
 export function listenEmbeddedBrowserCloseRequests(
@@ -286,6 +316,13 @@ export function listenEmbeddedBrowserAgentState(
 ): Promise<UnlistenFn> | null {
   if (!canUseEmbeddedBrowser()) return null
   return listenElectronBrowserEvents('agent-state', handler)
+}
+
+export function listenEmbeddedBrowserAgentCursor(
+  handler: (event: EmbeddedBrowserAgentCursorEvent) => void
+): Promise<UnlistenFn> | null {
+  if (!canUseEmbeddedBrowser()) return null
+  return listenElectronBrowserEvents('agent-cursor', handler)
 }
 
 export function canUseEmbeddedBrowser(): boolean {
@@ -364,6 +401,44 @@ export async function captureEmbeddedBrowserSnapshot(
   label = DEFAULT_EMBEDDED_BROWSER_LABEL
 ): Promise<string> {
   return invokeDesktopHost<string>('browser.capture', { label })
+}
+
+export async function startEmbeddedBrowserAnnotation(
+  mode: 'quick' | 'batch',
+  label = DEFAULT_EMBEDDED_BROWSER_LABEL,
+  point?: { x: number; y: number }
+): Promise<void> {
+  await invokeDesktopHost<void>('browser.annotation.start', {
+    label,
+    mode,
+    x: point?.x ?? null,
+    y: point?.y ?? null,
+  })
+}
+
+export async function stopEmbeddedBrowserAnnotation(
+  label = DEFAULT_EMBEDDED_BROWSER_LABEL
+): Promise<void> {
+  await invokeDesktopHost<void>('browser.annotation.stop', { label })
+}
+
+export async function clearEmbeddedBrowserAnnotations(
+  label = DEFAULT_EMBEDDED_BROWSER_LABEL
+): Promise<void> {
+  await invokeDesktopHost<void>('browser.annotation.clear', { label })
+}
+
+export async function readEmbeddedBrowserAnnotationState(
+  label = DEFAULT_EMBEDDED_BROWSER_LABEL
+): Promise<BrowserAnnotationState> {
+  return invokeDesktopHost<BrowserAnnotationState>('browser.annotation.state', { label })
+}
+
+export async function setEmbeddedBrowserAnnotationOriginalView(
+  enabled: boolean,
+  label = DEFAULT_EMBEDDED_BROWSER_LABEL
+): Promise<void> {
+  await invokeDesktopHost<void>('browser.annotation.setOriginalView', { label, enabled })
 }
 
 export async function navigateEmbeddedBrowser(

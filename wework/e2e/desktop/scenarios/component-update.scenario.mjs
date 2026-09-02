@@ -9,7 +9,11 @@ import { pipeline } from 'node:stream/promises'
 
 const MARKER_NAME = 'e2e-component-update.marker'
 
-export async function createDesktopScenario({ electronUserDataDirectory, resultDir, uiTimeoutMs }) {
+export async function createDesktopScenario({
+  electronUserDataDirectory,
+  resultDir,
+  workbenchReadyTimeoutMs,
+}) {
   const appBinary = resolve(process.env.WEWORK_E2E_APP_BIN ?? '')
   const resourcesRoot = resolveResourcesRoot(appBinary)
   const packaged = JSON.parse(await readFile(join(resourcesRoot, 'components.json'), 'utf8'))
@@ -101,6 +105,7 @@ export async function createDesktopScenario({ electronUserDataDirectory, resultD
   return {
     usesReleasePackageRuntimeAssets: true,
     appEnvironment: {
+      WEWORK_E2E_DISABLE_COMPONENT_UPDATES: '0',
       WEWORK_UPDATE_BASE_URL: origin,
     },
 
@@ -110,7 +115,7 @@ export async function createDesktopScenario({ electronUserDataDirectory, resultD
 
     async verify(control) {
       await control.command('waitFor', '[data-testid="app-shell"]', {
-        timeoutMs: uiTimeoutMs,
+        timeoutMs: workbenchReadyTimeoutMs,
       })
       const statePath = join(electronUserDataDirectory, 'managed-components', 'state.json')
       await waitFor(async () => {
@@ -121,7 +126,7 @@ export async function createDesktopScenario({ electronUserDataDirectory, resultD
       assert.equal(typeof restartDesktopApp, 'function')
       await restartDesktopApp()
       await control.command('waitFor', '[data-testid="app-shell"]', {
-        timeoutMs: uiTimeoutMs,
+        timeoutMs: workbenchReadyTimeoutMs,
       })
       const state = await waitFor(async () => {
         const candidate = await readJson(statePath)

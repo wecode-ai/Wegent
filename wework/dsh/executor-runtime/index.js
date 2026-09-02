@@ -1,5 +1,8 @@
+import { randomUUID } from 'node:crypto'
+import { Transform, Writable } from 'node:stream'
+import { pipeline } from 'node:stream/promises'
 import { ExecutorRuntimeClient, ExecutorRuntimeError } from './executor-runtime-client.js'
-import { LocalEndpointEventStream } from './local-endpoint-event-stream.js'
+import { LocalEndpointEventByteStream } from './local-endpoint-event-stream.js'
 import { ExecutorSessionProjector } from './session-projector.js'
 import { ExecutorSessionProjectionStream } from './session-projection-stream.js'
 
@@ -8,6 +11,8 @@ export const inject = ['webServer', 'sessions']
 
 const BASE_PATH = '/wework/executor/v1'
 const MAX_REQUEST_BODY_BYTES = 1024 * 1024
+const MAX_EVENT_FRAME_BYTES = 16 * 1024 * 1024
+const SLOW_CONSUMER_TIMEOUT_MS = 30_000
 
 export async function apply(ctx) {
   const client = ExecutorRuntimeClient.fromEnvironment()
@@ -24,7 +29,7 @@ export async function apply(ctx) {
     return () => projectionStream.stop()
   }, 'wework-executor-runtime: session projection')
   register(ctx, BASE_PATH, (req, res) => describe(req, res, client))
-  register(ctx, `${BASE_PATH}/rpc`, (req, res) => rpc(req, res, client))
+  register(ctx, `${BASE_PATH}/rpc`, (req, res) => handleExecutorRpc(req, res, client))
   register(ctx, `${BASE_PATH}/events`, (req, res) => handleExecutorEvents(req, res))
 }
 
@@ -57,94 +62,192 @@ async function describe(req, res, client) {
   }
 }
 
-async function rpc(req, res, client) {
+export async function handleExecutorRpc(req, res, client) {
   if (!trustedBrowserRequest(req)) return forbidden(res)
   if (req.method !== 'POST') return methodNotAllowed(res, 'POST')
+  const startedAt = Date.now()
+  let requestId = requestIdFromRequest(req)
+  let method = '<invalid>'
   try {
     const body = await readJsonBody(req)
     if (!isRecord(body) || typeof body.method !== 'string' || !isRecord(body.params)) {
       throw new ExecutorRuntimeError('invalid_params', 'Request must contain method and params')
     }
-    const result = await client.request(body.method, body.params)
-    sendJson(res, 200, { ok: true, result: result ?? null })
+    requestId = requestId ?? requestIdFromBody(body) ?? randomUUID()
+    method = body.method
+    console.info('[wework-executor-runtime] RPC request started', {
+      request_id: requestId,
+      method,
+    })
+    const result = await client.request(body.method, body.params, undefined, requestId)
+    console.info('[wework-executor-runtime] RPC request finished', {
+      request_id: requestId,
+      method,
+      elapsed_ms: Date.now() - startedAt,
+      ok: true,
+    })
+    sendJson(res, 200, { ok: true, result: result ?? null }, false, requestId)
   } catch (error) {
-    sendError(res, error)
+    requestId ??= randomUUID()
+    console.error('[wework-executor-runtime] RPC request failed', {
+      request_id: requestId,
+      method,
+      elapsed_ms: Date.now() - startedAt,
+      error: error instanceof Error ? error.message : String(error),
+    })
+    sendError(res, error, requestId)
   }
 }
 
 export async function handleExecutorEvents(
   req,
   res,
-  createEventStream = options => LocalEndpointEventStream.fromEnvironment(options)
+  createEventStream = options => LocalEndpointEventByteStream.fromEnvironment(options),
+  options = {}
 ) {
   if (!trustedBrowserRequest(req)) return forbidden(res)
   if (req.method !== 'GET') return methodNotAllowed(res, 'GET')
   const after = eventCursor(req)
+  const replayExisting = shouldReplayExistingEvents(req)
   let active = true
   let eventStream = null
+  let source = null
   const disconnect = () => {
     if (!active) return
     active = false
+    source?.destroy()
     eventStream?.stop()
   }
-  req.once('close', disconnect)
+  req.once('aborted', disconnect)
   res.once('close', disconnect)
-  res.on('error', disconnect)
+  res.once('error', disconnect)
   try {
+    eventStream = createEventStream({
+      afterSequence: after,
+      replayExisting,
+    })
+    source = await eventStream.start()
+    if (!active || res.writableEnded || res.destroyed) return
     res.writeHead(200, {
       'content-type': 'text/event-stream',
       'cache-control': 'no-cache, no-store',
       connection: 'keep-alive',
     })
-    const writeChunk = chunk => {
-      if (!active || res.writableEnded || res.destroyed) {
-        disconnect()
-        return false
-      }
-      const writable = res.write(chunk)
-      if (!writable) {
-        disconnect()
-        if (!res.writableEnded && !res.destroyed) res.end()
-      }
-      return writable
-    }
-    writeChunk(': connected\n\n')
-    if (!active) return
-    eventStream = createEventStream({
-      afterSequence: after,
-      onEvent(event) {
-        if (
-          event.protocolVersion !== 1 ||
-          !Number.isSafeInteger(event.sequence) ||
-          typeof event.event !== 'string'
-        ) {
-          disconnect()
-          if (!res.writableEnded && !res.destroyed) res.end()
-          return
-        }
-        writeChunk(`id: ${event.sequence}\ndata: ${JSON.stringify(event)}\n\n`)
-      },
-      onClose() {
-        disconnect()
-        if (!res.writableEnded && !res.destroyed) res.end()
-      },
-    })
-    await eventStream.start()
+    await pipeline(
+      source,
+      new NdjsonSseTransform(),
+      new SseResponseSink(res, options.slowConsumerTimeoutMs ?? SLOW_CONSUMER_TIMEOUT_MS)
+    )
   } catch (error) {
     disconnect()
     if (!res.headersSent) sendError(res, error)
-    else if (!res.writableEnded && !res.destroyed) {
-      res.end(`event: error\ndata: ${JSON.stringify(errorBody(error))}\n\n`)
-    }
+    else if (!res.writableEnded && !res.destroyed) res.end()
+  } finally {
+    eventStream?.stop()
+    req.off('aborted', disconnect)
+    res.off('close', disconnect)
+    res.off('error', disconnect)
   }
 }
 
 function eventCursor(req) {
   const header = singleHeader(req.headers['last-event-id'])
   const query = new URL(req.url ?? '/', 'http://localhost').searchParams.get('after')
-  const value = header ?? query ?? '0'
+  const value = query ?? header ?? '0'
   const parsed = Number(value)
   return Number.isSafeInteger(parsed) && parsed >= 0 ? parsed : 0
+}
+
+function shouldReplayExistingEvents(req) {
+  return new URL(req.url ?? '/', 'http://localhost').searchParams.get('replay') !== '0'
+}
+
+class NdjsonSseTransform extends Transform {
+  constructor() {
+    super()
+    this.buffer = Buffer.alloc(0)
+    this.push(Buffer.from(': connected\n\n'))
+  }
+
+  _transform(chunk, _encoding, callback) {
+    this.buffer = this.buffer.length === 0 ? chunk : Buffer.concat([this.buffer, chunk])
+    if (this.buffer.byteLength > MAX_EVENT_FRAME_BYTES && this.buffer.indexOf(0x0a) < 0) {
+      callback(new Error('Executor event frame exceeds size limit'))
+      return
+    }
+    let newline = this.buffer.indexOf(0x0a)
+    while (newline >= 0) {
+      const line = this.buffer.subarray(0, newline)
+      this.buffer = this.buffer.subarray(newline + 1)
+      if (line.length > 0) {
+        if (line.byteLength > MAX_EVENT_FRAME_BYTES) {
+          callback(new Error('Executor event frame exceeds size limit'))
+          return
+        }
+        this.push(Buffer.concat([Buffer.from('data: '), line, Buffer.from('\n\n')]))
+      }
+      newline = this.buffer.indexOf(0x0a)
+    }
+    callback()
+  }
+
+  _flush(callback) {
+    if (this.buffer.length > 0) {
+      if (this.buffer.byteLength > MAX_EVENT_FRAME_BYTES) {
+        callback(new Error('Executor event frame exceeds size limit'))
+        return
+      }
+      this.push(Buffer.concat([Buffer.from('data: '), this.buffer, Buffer.from('\n\n')]))
+    }
+    callback()
+  }
+}
+
+class SseResponseSink extends Writable {
+  constructor(response, slowConsumerTimeoutMs) {
+    super()
+    this.response = response
+    this.slowConsumerTimeoutMs = slowConsumerTimeoutMs
+    this.drainTimer = null
+  }
+
+  _write(chunk, _encoding, callback) {
+    if (this.response.writableEnded || this.response.destroyed) {
+      callback(new Error('SSE response is closed'))
+      return
+    }
+    if (this.response.write(chunk)) {
+      callback()
+      return
+    }
+    const onDrain = () => {
+      this.clearDrainTimer()
+      callback()
+    }
+    this.response.once('drain', onDrain)
+    this.drainTimer = setTimeout(() => {
+      this.response.off('drain', onDrain)
+      this.drainTimer = null
+      callback(new ExecutorRuntimeError('slow_consumer', 'SSE consumer remained blocked', true))
+    }, this.slowConsumerTimeoutMs)
+  }
+
+  _final(callback) {
+    this.clearDrainTimer()
+    if (!this.response.writableEnded && !this.response.destroyed) this.response.end()
+    callback()
+  }
+
+  _destroy(error, callback) {
+    this.clearDrainTimer()
+    if (!this.response.writableEnded && !this.response.destroyed) this.response.end()
+    callback(error)
+  }
+
+  clearDrainTimer() {
+    if (this.drainTimer) clearTimeout(this.drainTimer)
+    this.drainTimer = null
+  }
 }
 
 async function readJsonBody(req) {
@@ -181,7 +284,7 @@ function trustedBrowserRequest(req) {
   }
 }
 
-function sendError(res, error) {
+function sendError(res, error, requestId) {
   const body = errorBody(error)
   const status = ['invalid_json', 'invalid_params', 'request_too_large'].includes(body.error.code)
     ? 400
@@ -190,7 +293,7 @@ function sendError(res, error) {
       : body.error.retryable
         ? 503
         : 500
-  sendJson(res, status, body)
+  sendJson(res, status, body, false, requestId)
 }
 
 function errorBody(error) {
@@ -213,12 +316,13 @@ function errorBody(error) {
   }
 }
 
-function sendJson(res, status, value, head = false) {
+function sendJson(res, status, value, head = false, requestId) {
   const body = JSON.stringify(value)
   res.writeHead(status, {
     'content-type': 'application/json; charset=utf-8',
     'cache-control': 'no-store',
     'content-length': Buffer.byteLength(body),
+    ...(requestId ? { 'x-request-id': requestId } : {}),
   })
   res.end(head ? undefined : body)
 }
@@ -237,6 +341,21 @@ function methodNotAllowed(res, allow) {
 
 function singleHeader(value) {
   return Array.isArray(value) ? value[0] : value
+}
+
+function requestIdFromRequest(req) {
+  return normalizedRequestId(singleHeader(req.headers['x-request-id']))
+}
+
+function requestIdFromBody(body) {
+  return normalizedRequestId(body.id) ?? normalizedRequestId(body.request_id)
+}
+
+function normalizedRequestId(value) {
+  if (typeof value !== 'string') return null
+  const normalized = value.trim()
+  if (!normalized || normalized.length > 128 || /[^\x20-\x7e]/.test(normalized)) return null
+  return normalized
 }
 
 function isRecord(value) {

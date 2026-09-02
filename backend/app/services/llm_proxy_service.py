@@ -52,6 +52,11 @@ PROTECTED_UPSTREAM_HEADER_MARKERS = (
     "secret",
     "token",
 )
+LLM_PROXY_STREAM_HEADERS = {
+    "Cache-Control": "no-cache",
+    "Connection": "keep-alive",
+    "X-Accel-Buffering": "no",
+}
 
 
 def _resolve_upstream_target(
@@ -435,4 +440,5 @@ async def proxy_llm_responses(
         response_stream(),
         status_code=upstream_response.status_code,
         media_type=content_type,
+        headers=LLM_PROXY_STREAM_HEADERS,
     )

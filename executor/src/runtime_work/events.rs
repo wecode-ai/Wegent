@@ -9,10 +9,13 @@ use std::{
 };
 
 use serde_json::{json, Map, Value};
+use sha2::{Digest, Sha256};
 use tokio::sync::broadcast;
 
 use crate::{
-    agents::mcp_server_elicitation_request_user_input_params, logging::log_executor_event,
+    agents::mcp_server_elicitation_request_user_input_params,
+    codex_phase::{codex_phase_is_final, CodexAgentMessagePhaseTracker},
+    logging::log_executor_event,
     protocol::ExecutionRequest,
 };
 
@@ -243,6 +246,8 @@ struct EventEmitContext<'a> {
 
 #[derive(Default)]
 pub(crate) struct CodexNotificationEventMapper {
+    active_output_item_id: Option<String>,
+    agent_message_phases: CodexAgentMessagePhaseTracker,
     subagent_item_ids: BTreeSet<String>,
     root_thread_id: Option<String>,
     process_text: Option<ProcessTextStream>,
@@ -289,10 +294,14 @@ impl CodexNotificationEventMapper {
                 if self.is_subagent_delta(notification.params) {
                     return;
                 }
+                let resolved_phase = self
+                    .agent_message_phases
+                    .phase_for_delta(notification.params);
                 self.emit_text_chunk(
                     &emit_context,
                     &notification.method,
                     notification.params,
+                    resolved_phase.as_deref(),
                     None,
                 );
             }
@@ -307,6 +316,7 @@ impl CodexNotificationEventMapper {
                     &notification.method,
                     notification.params,
                     Some("analysis"),
+                    None,
                 );
             }
             "item/started" => {
@@ -315,6 +325,7 @@ impl CodexNotificationEventMapper {
                     self.remember_subagent_item(notification.params);
                     return;
                 }
+                self.agent_message_phases.observe_item(notification.params);
                 let emitted_tool = emit_tool_start(
                     event_tx,
                     device_id,
@@ -406,6 +417,24 @@ impl CodexNotificationEventMapper {
                     self.forget_subagent_item(notification.params);
                     return;
                 }
+                let item_id = notification_item_id(notification.params);
+                let tracked_phase = self
+                    .agent_message_phases
+                    .phase_for_item(notification.params);
+                let active_output_matches = item_id
+                    .as_deref()
+                    .is_some_and(|item_id| self.active_output_item_id.as_deref() == Some(item_id));
+                let can_reuse_active_output_id = item_id.is_none()
+                    && codex_phase_is_final(tracked_phase.as_deref())
+                    && self.active_output_item_id.is_some();
+                let resolved_phase = if active_output_matches || can_reuse_active_output_id {
+                    Some("finalanswer".to_owned())
+                } else {
+                    tracked_phase
+                };
+                let output_item_id_fallback = can_reuse_active_output_id
+                    .then(|| self.active_output_item_id.clone())
+                    .flatten();
                 if is_context_compaction_notification(notification.params) {
                     self.emit_context_compaction_once(&emit_context, notification.params);
                     return;
@@ -417,10 +446,13 @@ impl CodexNotificationEventMapper {
                     &emit_context,
                     &notification.method,
                     notification.params,
-                    None,
+                    resolved_phase.as_deref(),
+                    output_item_id_fallback.as_deref(),
                 ) {
+                    self.agent_message_phases.forget_item(notification.params);
                     return;
                 }
+                self.agent_message_phases.forget_item(notification.params);
                 if is_completed_plan_item(notification.params) {
                     self.reset_process_text();
                     if let Some(text) = plan_item_text(notification.params) {
@@ -891,8 +923,57 @@ impl CodexNotificationEventMapper {
         method: &str,
         params: &Value,
         resolved_phase: Option<&str>,
+        output_item_id_fallback: Option<&str>,
     ) -> bool {
-        match map_text_chunk(method, params, resolved_phase) {
+        match map_text_chunk(method, params, resolved_phase, output_item_id_fallback) {
+            Ok(Some(TextChunkMapping::OutputDelta { item_id, delta })) => {
+                self.active_output_item_id = Some(item_id.clone());
+                log_stream_text_mapping(
+                    emit_context.local_task_id,
+                    method,
+                    "emit_output_delta",
+                    resolved_phase,
+                    params,
+                    &delta,
+                );
+                emit_response_event(
+                    emit_context.event_tx,
+                    emit_context.device_id,
+                    "response.output_text.delta",
+                    emit_context.local_task_id,
+                    emit_context.request,
+                    json!({
+                        "item_id": item_id,
+                        "delta": delta,
+                    }),
+                );
+                true
+            }
+            Ok(Some(TextChunkMapping::OutputCompleted { item_id, text })) => {
+                if self.active_output_item_id.as_deref() == Some(item_id.as_str()) {
+                    self.active_output_item_id = None;
+                }
+                log_text_mapping(
+                    emit_context.local_task_id,
+                    method,
+                    "emit_output_completed",
+                    resolved_phase,
+                    params,
+                    &text,
+                );
+                emit_response_event(
+                    emit_context.event_tx,
+                    emit_context.device_id,
+                    "response.output_text.done",
+                    emit_context.local_task_id,
+                    emit_context.request,
+                    json!({
+                        "item_id": item_id,
+                        "text": text,
+                    }),
+                );
+                true
+            }
             Ok(Some(TextChunkMapping::ProcessDelta {
                 process_kind,
                 block_type,
@@ -1248,6 +1329,7 @@ fn log_unhandled_codex_raw_message(
 ) {
     let raw = serde_json::to_string(message)
         .unwrap_or_else(|error| format!("<failed to serialize raw message: {error}>"));
+    let raw_hash = format!("{:x}", Sha256::digest(raw.as_bytes()));
     log_executor_event(
         "codex unhandled raw message",
         &[
@@ -1255,7 +1337,8 @@ fn log_unhandled_codex_raw_message(
             ("task_id", task_id.to_owned()),
             ("subtask_id", subtask_id.to_owned()),
             ("method", method.to_owned()),
-            ("raw", raw),
+            ("raw_len", raw.len().to_string()),
+            ("raw_sha256", raw_hash),
         ],
     );
 }
@@ -2806,7 +2889,7 @@ mod tests {
     }
 
     #[test]
-    fn keeps_streamed_final_text_as_one_process_block_when_completed_as_commentary() {
+    fn keeps_streamed_output_text_consistent_when_completion_is_reclassified() {
         let (event_tx, mut event_rx) = broadcast::channel(4);
         let request = ExecutionRequest {
             task_id: "7".to_owned(),
@@ -2857,19 +2940,17 @@ mod tests {
 
         let created = event_rx
             .try_recv()
-            .expect("streamed process text should be emitted");
+            .expect("streamed output text should be emitted");
         let completed = event_rx
             .try_recv()
-            .expect("completed process text should be emitted");
+            .expect("completed output text should be emitted");
 
-        assert_eq!(created["event"], "response.block.created");
-        assert_eq!(created["payload"]["data"]["block"]["id"], "msg-progress");
-        assert_eq!(created["payload"]["data"]["block"]["type"], "text");
-        assert_eq!(completed["event"], "response.block.updated");
-        assert_eq!(completed["payload"]["data"]["block_id"], "msg-progress");
-        assert!(completed["payload"]["data"]["updates"]["content"].is_null());
-        assert!(completed["payload"]["data"]["updates"]["content_delta"].is_null());
-        assert_eq!(completed["payload"]["data"]["updates"]["status"], "done");
+        assert_eq!(created["event"], "response.output_text.delta");
+        assert_eq!(created["payload"]["data"]["item_id"], "msg-progress");
+        assert_eq!(created["payload"]["data"]["delta"], "I will inspect.");
+        assert_eq!(completed["event"], "response.output_text.done");
+        assert_eq!(completed["payload"]["data"]["item_id"], "msg-progress");
+        assert_eq!(completed["payload"]["data"]["text"], "I will inspect.");
         assert!(event_rx.try_recv().is_err());
     }
 
@@ -2894,7 +2975,7 @@ mod tests {
                     "item": {
                         "id": "msg-noisy",
                         "type": "agentMessage",
-                        "phase": "final_answer",
+                        "phase": "commentary",
                         "text": ""
                     }
                 }
@@ -2926,7 +3007,7 @@ mod tests {
                     "item": {
                         "id": "msg-noisy",
                         "type": "agentMessage",
-                        "phase": "final_answer",
+                        "phase": "commentary",
                         "text": "NOISY_COMPLETE"
                     }
                 }
@@ -3200,7 +3281,7 @@ mod tests {
 
     #[test]
     fn maps_codex_started_final_agent_message_deltas_to_output_text() {
-        let (event_tx, mut event_rx) = broadcast::channel(4);
+        let (event_tx, mut event_rx) = broadcast::channel(5);
         let request = ExecutionRequest {
             task_id: "7".to_owned(),
             subtask_id: "8".to_owned(),
@@ -3271,6 +3352,23 @@ mod tests {
             "local-1",
             &request,
             json!({
+                "method": "item/completed",
+                "params": {
+                    "item": {
+                        "id": "msg-final",
+                        "type": "agentMessage",
+                        "phase": "final_answer",
+                        "text": "Done. More."
+                    }
+                }
+            }),
+        );
+        mapper.map(
+            &Some(event_tx.clone()),
+            "device-1",
+            "local-1",
+            &request,
+            json!({
                 "method": "thread/started",
                 "params": {
                     "thread": {
@@ -3295,17 +3393,20 @@ mod tests {
 
         let first_event = event_rx.try_recv().expect("first event should be emitted");
         let second_event = event_rx.try_recv().expect("second event should be emitted");
+        let completed_event = event_rx
+            .try_recv()
+            .expect("completed final text should be emitted");
         let next_event = event_rx
             .try_recv()
             .expect("next turn event should be emitted");
-        assert_eq!(first_event["event"], "response.block.created");
-        assert_eq!(first_event["payload"]["data"]["block"]["type"], "text");
-        assert_eq!(first_event["payload"]["data"]["block"]["content"], "Done.");
-        assert_eq!(second_event["event"], "response.block.updated");
-        assert_eq!(
-            second_event["payload"]["data"]["updates"]["content_delta"],
-            " More."
-        );
+        assert_eq!(first_event["event"], "response.output_text.delta");
+        assert_eq!(first_event["payload"]["data"]["item_id"], "msg-final");
+        assert_eq!(first_event["payload"]["data"]["delta"], "Done.");
+        assert_eq!(second_event["event"], "response.output_text.delta");
+        assert_eq!(second_event["payload"]["data"]["delta"], " More.");
+        assert_eq!(completed_event["event"], "response.output_text.done");
+        assert_eq!(completed_event["payload"]["data"]["item_id"], "msg-final");
+        assert_eq!(completed_event["payload"]["data"]["text"], "Done. More.");
         assert_eq!(next_event["event"], "response.block.created");
         assert_eq!(next_event["payload"]["data"]["block"]["type"], "text");
         assert_eq!(next_event["payload"]["data"]["block"]["content"], "Next.");
@@ -3469,8 +3570,9 @@ mod tests {
         );
 
         let event = event_rx.try_recv().expect("root event should be emitted");
-        assert_eq!(event["event"], "response.block.created");
-        assert_eq!(event["payload"]["data"]["block"]["content"], "root");
+        assert_eq!(event["event"], "response.output_text.delta");
+        assert_eq!(event["payload"]["data"]["item_id"], "msg-root");
+        assert_eq!(event["payload"]["data"]["delta"], "root");
         assert!(event_rx.try_recv().is_err());
     }
 
@@ -4200,7 +4302,7 @@ mod tests {
     }
 
     #[test]
-    fn keeps_completed_final_agent_message_as_process_text_until_turn_completion() {
+    fn emits_completed_final_agent_message_as_output_text() {
         let (event_tx, mut event_rx) = broadcast::channel(4);
         let request = ExecutionRequest {
             task_id: "7".to_owned(),
@@ -4229,18 +4331,18 @@ mod tests {
 
         let event = event_rx
             .try_recv()
-            .expect("process text event should be emitted");
-        assert_eq!(event["event"], "response.block.created");
+            .expect("output text event should be emitted");
+        assert_eq!(event["event"], "response.output_text.done");
         assert_eq!(
-            event["payload"]["data"]["block"]["content"],
+            event["payload"]["data"]["text"],
             "Completed without a streaming delta."
         );
-        assert_eq!(event["payload"]["data"]["block"]["id"], "msg-final");
+        assert_eq!(event["payload"]["data"]["item_id"], "msg-final");
         assert!(event_rx.try_recv().is_err());
     }
 
     #[test]
-    fn keeps_completed_final_agent_messages_as_process_text_until_turn_completion() {
+    fn emits_each_completed_final_agent_message_as_output_text() {
         let (event_tx, mut event_rx) = broadcast::channel(4);
         let request = ExecutionRequest {
             task_id: "7".to_owned(),
@@ -4274,23 +4376,17 @@ mod tests {
 
         let first = event_rx
             .try_recv()
-            .expect("first process text event should be emitted");
+            .expect("first output text event should be emitted");
         let second = event_rx
             .try_recv()
-            .expect("second process text event should be emitted");
+            .expect("second output text event should be emitted");
 
-        assert_eq!(first["event"], "response.block.created");
-        assert_eq!(
-            first["payload"]["data"]["block"]["content"],
-            "先完成真机验证。"
-        );
-        assert_eq!(first["payload"]["data"]["block"]["id"], "msg-first");
-        assert_eq!(second["event"], "response.block.created");
-        assert_eq!(
-            second["payload"]["data"]["block"]["content"],
-            "主路径验证通过。"
-        );
-        assert_eq!(second["payload"]["data"]["block"]["id"], "msg-second");
+        assert_eq!(first["event"], "response.output_text.done");
+        assert_eq!(first["payload"]["data"]["text"], "先完成真机验证。");
+        assert_eq!(first["payload"]["data"]["item_id"], "msg-first");
+        assert_eq!(second["event"], "response.output_text.done");
+        assert_eq!(second["payload"]["data"]["text"], "主路径验证通过。");
+        assert_eq!(second["payload"]["data"]["item_id"], "msg-second");
         assert!(event_rx.try_recv().is_err());
     }
 
@@ -4409,7 +4505,7 @@ mod tests {
             .expect("the final item should settle commentary");
         let final_text = event_rx
             .try_recv()
-            .expect("final process event should be emitted");
+            .expect("final output delta should be emitted");
 
         assert_eq!(process["event"], "response.block.created");
         assert_eq!(process["payload"]["data"]["block"]["type"], "text");
@@ -4431,20 +4527,21 @@ mod tests {
             process_completed["payload"]["data"]["updates"]["status"],
             "done"
         );
-        assert_eq!(final_text["event"], "response.block.created");
+        assert_eq!(final_text["event"], "response.output_text.delta");
+        assert_eq!(final_text["payload"]["data"]["item_id"], "msg-final");
         assert_eq!(
-            final_text["payload"]["data"]["block"]["content"],
+            final_text["payload"]["data"]["delta"],
             "Current directory: /tmp/project"
         );
         let completed = event_rx
             .try_recv()
-            .expect("completed process snapshot should be emitted");
-        assert_eq!(completed["event"], "response.block.created");
+            .expect("completed output text should be emitted");
+        assert_eq!(completed["event"], "response.output_text.done");
+        assert_eq!(completed["payload"]["data"]["item_id"], "msg-final");
         assert_eq!(
-            completed["payload"]["data"]["block"]["content"],
+            completed["payload"]["data"]["text"],
             "Current directory: /tmp/project"
         );
-        assert_eq!(completed["payload"]["data"]["block"]["status"], "done");
         assert!(event_rx.try_recv().is_err());
     }
 

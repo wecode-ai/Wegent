@@ -84,7 +84,8 @@ async function waitForEmbeddedBrowserVisibility(
           value: label,
         })
       )
-      if (lastState.visible === expectedVisible && lastState.url && lastState.isLoading === false) {
+      const ready = expectedVisible ? lastState.url && lastState.isLoading === false : true
+      if (lastState.visible === expectedVisible && ready) {
         return lastState
       }
     } catch {
@@ -248,6 +249,15 @@ export async function createDesktopScenario({ captureScreenshot, resultDir, uiTi
       assert.deepEqual(officialItem?.releaseExtensions?.['com.weibo.build'], {
         pipeline: 'desktop-e2e-official',
       })
+      const officialDownload = await ownerRequest(
+        `/api/smart-apps/marketplace/${officialItem.id}/download`,
+        { method: 'POST' }
+      )
+      assert.match(
+        officialDownload.downloadUrl,
+        new RegExp(`^/api/smart-apps/marketplace/${officialItem.id}/artifact\\?token=`),
+        'Smart app download descriptor did not use the Backend artifact proxy'
+      )
       const [recipient, stranger] = await Promise.all(
         [RECIPIENT_NAME, STRANGER_NAME].map(user_name =>
           ownerRequest('/api/admin/users', {
@@ -1054,6 +1064,23 @@ export async function createDesktopScenario({ captureScreenshot, resultDir, uiTi
           timeoutMs: uiTimeoutMs,
         }
       )
+      await captureScreenshot(control, 'harness-apps-08a-workbench-loaded.png', 'body')
+      await control.command('click', '[data-testid="workspace-tab-add"]')
+      await control.command('waitFor', '[data-testid="workspace-tab-add-menu"]', {
+        visible: true,
+        stableMs: 300,
+        timeoutMs: uiTimeoutMs,
+      })
+      await captureScreenshot(control, 'harness-apps-08b-workbench-add-menu.png', 'body')
+      await control.command('press', 'body', { key: 'Escape' })
+      await control.command('contextMenu', `[data-testid="workspace-tab-select-${appTabId}"]`)
+      await control.command('waitFor', '[data-testid="workspace-tab-context-menu"]', {
+        visible: true,
+        stableMs: 300,
+        timeoutMs: uiTimeoutMs,
+      })
+      await captureScreenshot(control, 'harness-apps-08c-workbench-context-menu.png', 'body')
+      await control.command('press', 'body', { key: 'Escape' })
       const appWorkspaceSnapshot = JSON.parse(await control.command('snapshot', 'body'))
       assert.ok(
         appWorkspaceSnapshot.location.includes(APP_ROUTE),
@@ -1139,7 +1166,11 @@ export async function createDesktopScenario({ captureScreenshot, resultDir, uiTi
           timeoutMs: uiTimeoutMs,
         }
       )
-      await control.command('waitFor', `[data-testid="harness-app-open-${INSTALLATION_ID}"]`, {
+      const managedAppCard = `${activeWorkspaceContentSelector} [data-testid="smart-app-created-item-${INSTALLATION_ID}"]`
+      const managedAppOpen = `${managedAppCard} [data-testid="harness-app-open-${INSTALLATION_ID}"]`
+      const managedAppStart = `${managedAppCard} [data-testid="harness-app-start-${INSTALLATION_ID}"]`
+      const managedAppActions = `${managedAppCard} [data-testid="smart-app-actions-${INSTALLATION_ID}"]`
+      await control.command('waitFor', managedAppOpen, {
         timeoutMs: uiTimeoutMs,
       })
       await captureScreenshot(control, 'harness-apps-09-running.png', 'body')
@@ -1151,7 +1182,13 @@ export async function createDesktopScenario({ captureScreenshot, resultDir, uiTi
         uiTimeoutMs,
         'Closing a running Harness app tab left its app surface mounted'
       )
-      await control.command('click', `[data-testid="harness-app-open-${INSTALLATION_ID}"]`)
+      await control.command('waitFor', managedAppStart, {
+        enabled: true,
+        timeoutMs: 30_000,
+      })
+      await control.command('clickWhenEnabled', managedAppStart, {
+        timeoutMs: 30_000,
+      })
       await control.command('waitFor', appSurface, {
         timeoutMs: 30_000,
       })
@@ -1168,10 +1205,11 @@ export async function createDesktopScenario({ captureScreenshot, resultDir, uiTi
           timeoutMs: uiTimeoutMs,
         }
       )
-      await control.command(
-        'click',
-        `[data-testid="smart-app-created-item-${INSTALLATION_ID}"]:has([data-testid="harness-app-open-${INSTALLATION_ID}"]) [data-testid="smart-app-actions-${INSTALLATION_ID}"]`
-      )
+      await control.command('waitFor', managedAppOpen, {
+        visible: true,
+        timeoutMs: 30_000,
+      })
+      await control.command('click', managedAppActions)
       await control.command('waitFor', `[data-testid="smart-app-stop-menu-${INSTALLATION_ID}"]`, {
         timeoutMs: uiTimeoutMs,
       })
@@ -1231,14 +1269,14 @@ export async function createDesktopScenario({ captureScreenshot, resultDir, uiTi
         timeoutMs: uiTimeoutMs,
       })
       await control.command('click', '[data-testid="workspace-tab-add-smart-app"]')
-      await control.command('click', '[data-testid="smart-apps-section-owned"]')
-      await control.command('waitFor', `[data-testid="harness-app-open-${INSTALLATION_ID}"]`, {
-        timeoutMs: uiTimeoutMs,
-      })
       await control.command(
         'click',
-        `[data-testid="smart-app-created-item-${INSTALLATION_ID}"]:has([data-testid="harness-app-open-${INSTALLATION_ID}"]) [data-testid="smart-app-actions-${INSTALLATION_ID}"]`
+        `${activeWorkspaceContentSelector} [data-testid="smart-apps-section-owned"]`
       )
+      await control.command('waitFor', managedAppOpen, {
+        timeoutMs: uiTimeoutMs,
+      })
+      await control.command('click', managedAppActions)
       await control.command('waitFor', `[data-testid="smart-app-stop-menu-${INSTALLATION_ID}"]`, {
         timeoutMs: uiTimeoutMs,
       })
@@ -1248,17 +1286,22 @@ export async function createDesktopScenario({ captureScreenshot, resultDir, uiTi
       })
       await captureScreenshot(control, 'harness-apps-12-direct-add-stopped.png', 'body')
 
-      await control.command('click', '[data-testid="smart-apps-section-marketplace"]')
+      const marketplaceSectionSelector = `${activeWorkspaceContentSelector} [data-testid="smart-apps-section-marketplace"]`
+      await control.command('click', marketplaceSectionSelector)
+      await control.command('waitFor', `${marketplaceSectionSelector}[aria-current="page"]`, {
+        stableMs: 1000,
+        timeoutMs: uiTimeoutMs,
+      })
       await control.command(
         'waitFor',
-        '[data-testid="smart-apps-section-marketplace"][aria-current="page"]',
+        `${activeWorkspaceContentSelector} [data-testid="smart-apps-marketplace-page"]`,
         {
           stableMs: 1000,
           timeoutMs: uiTimeoutMs,
         }
       )
-      await control.command('waitFor', '[data-testid="smart-apps-marketplace-page"]', {
-        stableMs: 1000,
+      const marketplaceActionsSelector = `${activeWorkspaceContentSelector} [data-testid="smart-app-marketplace-actions-1"]`
+      await control.command('waitFor', marketplaceActionsSelector, {
         timeoutMs: uiTimeoutMs,
       })
       const returnedMarketplaceSnapshot = JSON.parse(await control.command('snapshot', 'body'))
@@ -1269,10 +1312,7 @@ export async function createDesktopScenario({ captureScreenshot, resultDir, uiTi
       )
       await captureScreenshot(control, 'harness-apps-15-returned-to-marketplace.png', 'body')
 
-      await control.command(
-        'click',
-        `${activeWorkspaceContentSelector} [data-testid="smart-app-marketplace-actions-1"]`
-      )
+      await control.command('click', marketplaceActionsSelector)
       await control.command('waitFor', '[data-testid="smart-app-remove-local-market-1"]', {
         timeoutMs: uiTimeoutMs,
       })

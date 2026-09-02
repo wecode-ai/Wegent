@@ -13,6 +13,7 @@
  */
 
 import * as http from 'http'
+import { handleEmbeddingRequest } from './mock-embedding'
 import { handleProviderMcpHttpRequest, providerMcpToolCallCount } from './mock-provider-mcp'
 
 interface CapturedRequest {
@@ -747,6 +748,8 @@ const server = http.createServer((req, res) => {
     if (handleProviderMcpHttpRequest(req, res, body, PORT)) {
       return
     }
+
+    if (handleEmbeddingRequest(req, res, body)) return
 
     // Check for image_url in messages
     if (parsedBody?.messages) {

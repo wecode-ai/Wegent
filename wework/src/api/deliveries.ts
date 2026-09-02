@@ -1107,16 +1107,6 @@ export function createDeliveryApi(client: HttpClient) {
         { action, reason }
       )
     },
-    bindProjectTask(
-      projectId: CloudProjectIdInput,
-      task: RuntimeTaskAddress,
-      taskTitle?: string | null
-    ): Promise<void> {
-      return client.post(`/v1/cloud-projects/${projectId}/tasks`, {
-        ...task,
-        ...(taskTitle ? { taskTitle } : {}),
-      })
-    },
     trackProjectTask(
       projectId: CloudProjectIdInput,
       task: RuntimeTaskAddress,
@@ -1127,7 +1117,7 @@ export function createDeliveryApi(client: HttpClient) {
         const trackingKey = projectTaskTrackingKey(projectId, task)
         try {
           const existing = await api.findCloudContextForTask(task)
-          if (existing.loop_item_id) {
+          if (existing.loop_item_id && String(existing.project.id) === String(projectId)) {
             pendingTrackedItems.delete(trackingKey)
             return { item: await api.getLoopItem(existing.loop_item_id) }
           }
@@ -1181,23 +1171,7 @@ export function createDeliveryApi(client: HttpClient) {
         })
         if (!context.loop_item_id) return null
         const item = context.loop_item ?? (await api.getLoopItem(context.loop_item_id))
-        if (executionStatus !== 'queued' && item.workflow && context.workflow_node_id) {
-          const updated = await client.patch<CloudLoopItem>(
-            '/v1/runtime-tasks/cloud-context/status',
-            {
-              ...task,
-              status: executionStatus,
-            }
-          )
-          console.info('[IssueTaskStatusSync] workflow task status persisted', {
-            deviceId: task.deviceId,
-            taskId: task.taskId,
-            executionStatus,
-            loopItemId: updated.id,
-            workflowNodeId: context.workflow_node_id,
-          })
-          return updated
-        }
+        if (item.workflow && context.workflow_node_id) return item
         if (item.execution_id != null) return item
         if (executionStatus === 'succeeded') {
           const bindings = await api.listTaskBindings(item.id)

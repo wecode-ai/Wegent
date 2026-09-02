@@ -4,20 +4,20 @@
 
 'use client'
 
+import { ExternalDocumentBadge } from './ExternalDocumentBadge'
+
 import {
-  FileText,
   Trash2,
   Pencil,
   ExternalLink,
-  Table2,
   MoreVertical,
-  Globe,
   CloudDownload,
   RotateCcw,
   Download,
   FolderInput,
 } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
+import { DocumentFormatIcon } from '@/components/icons/DocumentFormatIcon'
 import { Checkbox } from '@/components/ui/checkbox'
 import {
   DropdownMenu,
@@ -32,6 +32,7 @@ import type { KnowledgeDocument } from '@/types/knowledge'
 import { useTranslation } from '@/hooks/useTranslation'
 import { formatDate } from '@/utils/dateTime'
 import { getProcessingErrorMessage } from '../utils/processing-error'
+import { getExternalSourceInfo } from '../utils/documentUtils'
 import { toast } from '@/hooks/use-toast'
 import { useMultimodalDocActions } from '@/features/knowledge/multimodal/hooks/useMultimodalDocActions'
 import {
@@ -173,8 +174,8 @@ export function DocumentItem({
 
   const handleOpenLink = (e: React.MouseEvent) => {
     e.stopPropagation()
-    const url = document.source_config?.url
-    if (url && typeof url === 'string') {
+    const url = sourceUrl
+    if (url) {
       window.open(url, '_blank', 'noopener,noreferrer')
     }
   }
@@ -227,12 +228,19 @@ export function DocumentItem({
     isConverting ||
     isPendingConversion
   const showIndexingState = isReindexing || isBackendIndexing
+  const isExternal = document.source_type === 'external'
+  // External documents retry through the dedicated import-retry entry, which
+  // fetches the provider's latest body before replacing the attachment and
+  // reindexing. Regular documents reindex from failed or not-indexed states.
   const canReindex =
-    ragConfigured &&
-    !isTable &&
     !!onReindex &&
-    (isIndexFailed || isNotIndexed) &&
-    !showIndexingState
+    !showIndexingState &&
+    (isExternal ? isIndexFailed : ragConfigured && !isTable && (isIndexFailed || isNotIndexed))
+  // The same control serves as "retry import" for external documents; the
+  // DocumentList handler routes external documents to the retry entry.
+  const reindexActionLabel = isExternal
+    ? t('knowledge:document.document.retryImport')
+    : t('knowledge:document.document.reindex')
 
   // Multimodal (video/image) document actions — re-analyze gate + handler.
   const { canReanalyze, handleReanalyze } = useMultimodalDocActions(
@@ -245,13 +253,19 @@ export function DocumentItem({
   const EXCEL_FILE_SIZE_LIMIT = 2 * 1024 * 1024 // 2MB
   const isExcel = ['xls', 'xlsx'].includes(document.file_extension?.toLowerCase() || '')
   const isExcelExceedingSizeLimit = isExcel && document.file_size > EXCEL_FILE_SIZE_LIMIT
-  // URL for table or web documents
+  // URL for table, web and imported external documents
+  const externalSource = getExternalSourceInfo(document)
   const sourceUrl =
-    (isTable || isWeb) &&
-    document.source_config?.url &&
-    typeof document.source_config.url === 'string'
-      ? document.source_config.url
-      : null
+    isTable || isWeb
+      ? document.source_config?.url && typeof document.source_config.url === 'string'
+        ? document.source_config.url
+        : null
+      : isExternal && typeof externalSource?.url === 'string'
+        ? externalSource.url
+        : null
+  // The provider rejected the initial import because the source disappeared
+  // or access was revoked. The failed placeholder remains retryable.
+  const isExternalSourceInaccessible = isExternal && externalSource?.status === 'inaccessible'
 
   // Get display name - for web documents, remove .md extension
   const displayName =
@@ -377,6 +391,8 @@ export function DocumentItem({
                 >
                   {t('knowledge:document.document.type.web')}
                 </Badge>
+              ) : isExternal ? (
+                <ExternalDocumentBadge className="text-[9px] px-1 py-0" />
               ) : (
                 <span className="text-[9px] text-text-muted uppercase">
                   {document.file_extension}
@@ -458,13 +474,11 @@ export function DocumentItem({
           <div
             className={`p-1 bg-primary/10 rounded ${canManage ? 'group-hover:opacity-0' : ''} transition-opacity`}
           >
-            {isTable ? (
-              <Table2 className="w-3 h-3 text-primary" />
-            ) : isWeb ? (
-              <Globe className="w-3 h-3 text-primary" />
-            ) : (
-              <FileText className="w-3 h-3 text-primary" />
-            )}
+            <DocumentFormatIcon
+              extension={document.file_extension}
+              sourceType={document.source_type}
+              className="h-3 w-3"
+            />
           </div>
           {/* More actions dropdown - shown on hover, replaces icon */}
           {canManage && hasManageActions && (
@@ -510,7 +524,7 @@ export function DocumentItem({
                         ? t('knowledge:document.document.reindexing')
                         : isNotIndexed
                           ? t('knowledge:document.document.index')
-                          : t('knowledge:document.document.reindex')}
+                          : reindexActionLabel}
                     </DropdownMenuItem>
                   )}
                   <ReanalyzeDropdownItem
@@ -572,13 +586,10 @@ export function DocumentItem({
       >
         {/* File icon */}
         <div className="flex-shrink-0">
-          {isTable ? (
-            <Table2 className="w-4 h-4 text-primary" />
-          ) : isWeb ? (
-            <Globe className="w-4 h-4 text-primary" />
-          ) : (
-            <FileText className="w-4 h-4 text-primary" />
-          )}
+          <DocumentFormatIcon
+            extension={document.file_extension}
+            sourceType={document.source_type}
+          />
         </div>
 
         {/* File name */}
@@ -635,8 +646,32 @@ export function DocumentItem({
           >
             {t('knowledge:document.document.type.web')}
           </Badge>
+        ) : isExternal ? (
+          <ExternalDocumentBadge />
         ) : (
           <span className="text-xs text-text-muted uppercase">{document.file_extension}</span>
+        )}
+        {isExternalSourceInaccessible && (
+          <TooltipProvider>
+            <Tooltip delayDuration={200}>
+              <TooltipTrigger asChild>
+                <Badge
+                  variant="default"
+                  size="sm"
+                  className="ml-1 cursor-help whitespace-nowrap bg-red-500/10 text-red-600 border-red-500/20"
+                  data-testid="external-source-inaccessible"
+                >
+                  {t('knowledge:document.document.sourceInaccessible')}
+                </Badge>
+              </TooltipTrigger>
+              <TooltipContent side="top" className="max-w-xs">
+                <p className="text-xs">
+                  {externalSource?.last_error ||
+                    t('knowledge:document.document.sourceInaccessibleHint')}
+                </p>
+              </TooltipContent>
+            </Tooltip>
+          </TooltipProvider>
         )}
       </div>
 
@@ -798,9 +833,13 @@ export function DocumentItem({
                   title={
                     showIndexingState
                       ? t('knowledge:document.document.reindexing')
-                      : t('knowledge:document.document.reindex')
+                      : reindexActionLabel
                   }
-                  data-testid={`reindex-document-${document.id}`}
+                  data-testid={
+                    isExternal
+                      ? `retry-import-document-${document.id}`
+                      : `reindex-document-${document.id}`
+                  }
                 >
                   <RotateCcw className={`w-4 h-4 ${showIndexingState ? 'animate-spin' : ''}`} />
                 </button>

@@ -1,11 +1,10 @@
 import assert from 'node:assert/strict'
-import { execFile } from 'node:child_process'
 import { constants } from 'node:fs'
 import { access } from 'node:fs/promises'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { promisify } from 'node:util'
 
+import { localHarnessCliPath, localHarnessCliVersion } from '../modules/local-harness-cli.mjs'
 import {
   responseCompleted,
   responseCreated,
@@ -15,7 +14,6 @@ import {
 const ACTIVE_WORKBENCH_SELECTOR =
   '[data-testid="desktop-workbench-main"][data-active-workbench-pane="true"]'
 const CENTRAL_HARNESS_SELECTOR = '[data-testid="central-harness-terminal"]'
-const execFileAsync = promisify(execFile)
 const REPOSITORY_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '../../../..')
 const HARNESS_BIN_DIR = join(REPOSITORY_ROOT, '.github', 'claude-code-cli', 'node_modules', '.bin')
 const CLAUDE_PARALLEL_TOOL_PROMPT = 'Run the parallel Claude tool regression'
@@ -23,17 +21,17 @@ const CLAUDE_PARALLEL_TOOL_COMPLETION = 'Parallel Claude tools completed'
 const CLAUDE_PARALLEL_TOOL_CALLS = [
   {
     id: 'call_00_wework_parallel',
-    command: "printf 'call-00'",
+    command: 'true',
     description: 'Complete the first parallel tool immediately',
   },
   {
     id: 'call_01_wework_parallel',
-    command: "sleep 0.4; printf 'call-01'",
+    command: 'sleep 0.4',
     description: 'Complete the second parallel tool last',
   },
   {
     id: 'call_02_wework_parallel',
-    command: "sleep 0.15; printf 'call-02'",
+    command: 'sleep 0.15',
     description: 'Complete the third parallel tool second',
   },
 ]
@@ -50,17 +48,16 @@ const HARNESS_PROMPT_MATCHERS = [
 
 async function resolveHarnessExecutables() {
   const executables = {
-    openCodeExecutable: join(HARNESS_BIN_DIR, 'opencode'),
-    claudeCodeExecutable: join(HARNESS_BIN_DIR, 'claude'),
-    kimiCodeExecutable: join(HARNESS_BIN_DIR, 'kimi'),
+    openCodeExecutable: localHarnessCliPath(HARNESS_BIN_DIR, 'opencode'),
+    claudeCodeExecutable: localHarnessCliPath(HARNESS_BIN_DIR, 'claude'),
+    kimiCodeExecutable: localHarnessCliPath(HARNESS_BIN_DIR, 'kimi'),
   }
   await Promise.all(
     Object.values(executables).map(executablePath => access(executablePath, constants.X_OK))
   )
   const versions = await Promise.all(
     Object.values(executables).map(async executablePath => {
-      const { stdout } = await execFileAsync(executablePath, ['--version'])
-      const firstLine = stdout.trim().split('\n')[0] ?? ''
+      const firstLine = await localHarnessCliVersion(executablePath)
       const match = firstLine.match(/\d+\.\d+\.\d+/)
       return match ? match[0] : firstLine
     })
@@ -392,6 +389,7 @@ async function startHarness({
   readyScreenshot,
   presentation = 'terminal',
   expectedAssistantText = 'Local harness CLI reply',
+  responseTimeoutMs = timeoutMs,
 }) {
   await control.command(
     'click',
@@ -456,10 +454,65 @@ async function startHarness({
       `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="message-assistant"]`,
       {
         text: expectedAssistantText,
-        timeoutMs,
+        timeoutMs: responseTimeoutMs,
       }
     )
   }
+}
+
+async function verifyMacKeybindings(control, timeoutMs) {
+  if (process.platform !== 'darwin') return
+
+  const terminalSelector =
+    `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="workspace-terminal-window"] ` +
+    '[data-testid="embedded-local-terminal"]'
+  const terminalTextareaSelector = `${terminalSelector} .xterm-helper-textarea`
+  const terminalLineSelector = `${terminalSelector} .xterm-accessibility-tree [role="listitem"]`
+
+  await control.command('waitFor', terminalLineSelector, { timeoutMs })
+  await control.command('terminalInput', terminalSelector, { value: 'bindkey -e\r' })
+
+  await control.command('terminalInput', terminalSelector, { value: 'echo option-left omega' })
+  await control.command('press', terminalTextareaSelector, { key: 'Alt+ArrowLeft' })
+  await control.command('terminalInput', terminalSelector, { value: 'X\r' })
+  await control.command('waitFor', terminalLineSelector, {
+    text: 'option-left Xomega',
+    timeoutMs,
+  })
+
+  await control.command('terminalInput', terminalSelector, { value: 'echo option-right omega' })
+  await control.command('terminalInput', terminalSelector, { value: '\x01' })
+  await control.command('press', terminalTextareaSelector, { key: 'Alt+ArrowRight' })
+  await control.command('terminalInput', terminalSelector, { value: 'X\r' })
+  await control.command('waitFor', terminalLineSelector, {
+    text: 'Xoption-right omega',
+    timeoutMs,
+  })
+
+  await control.command('terminalInput', terminalSelector, { value: 'X=WRONG\r' })
+  await control.command('terminalInput', terminalSelector, { value: 'echo noop' })
+  await control.command('press', terminalTextareaSelector, { key: 'Meta+ArrowLeft' })
+  await control.command('terminalInput', terminalSelector, { value: 'X=RIGHT;\r' })
+  await control.command('terminalInput', terminalSelector, {
+    value: 'echo "<command-left:$X>"\r',
+  })
+  await control.command('waitFor', terminalLineSelector, {
+    text: '<command-left:RIGHT>',
+    timeoutMs,
+  })
+
+  await control.command('terminalInput', terminalSelector, { value: 'X=WRONG\r' })
+  await control.command('terminalInput', terminalSelector, { value: 'echo' })
+  await control.command('terminalInput', terminalSelector, { value: '\x01' })
+  await control.command('press', terminalTextareaSelector, { key: 'Meta+ArrowRight' })
+  await control.command('terminalInput', terminalSelector, { value: ';X=RIGHT\r' })
+  await control.command('terminalInput', terminalSelector, {
+    value: 'echo "<command-right:$X>"\r',
+  })
+  await control.command('waitFor', terminalLineSelector, {
+    text: '<command-right:RIGHT>',
+    timeoutMs,
+  })
 }
 
 async function verifyHarnessWorkbenchChrome({
@@ -468,6 +521,7 @@ async function verifyHarnessWorkbenchChrome({
   timeoutMs,
   captureWorkbench,
   screenshot,
+  verifyMacKeybindings: shouldVerifyMacKeybindings = false,
 }) {
   const titleSelector = '[data-testid="workbench-pane-task-title"]'
   const rightPanelToggleSelector = '[data-testid="toggle-right-workspace-panel-button"]'
@@ -541,6 +595,9 @@ async function verifyHarnessWorkbenchChrome({
     bottomPanelMetrics.scrollHeight > 0,
     `${title} opened a bottom workspace panel without content`
   )
+  if (shouldVerifyMacKeybindings) {
+    await verifyMacKeybindings(control, timeoutMs)
+  }
   await captureWorkbench(control, screenshot)
 
   await control.command('click', bottomPanelToggleSelector)
@@ -662,6 +719,7 @@ export async function createDesktopScenario({ captureScreenshot, uiTimeoutMs, wo
         timeoutMs: uiTimeoutMs,
         captureWorkbench: capturePage,
         screenshot: 'local-harness-08-opencode-workbench-panels.png',
+        verifyMacKeybindings: true,
       })
       await waitForRequests(
         harnessModelRequests,
@@ -730,6 +788,7 @@ export async function createDesktopScenario({ captureScreenshot, uiTimeoutMs, wo
         readyScreenshot: 'local-harness-17-claude-code-ready.png',
         presentation: 'conversation',
         expectedAssistantText: CLAUDE_PARALLEL_TOOL_COMPLETION,
+        responseTimeoutMs: Math.max(uiTimeoutMs, 30_000),
       })
       await waitForRequests(
         harnessModelRequests,

@@ -49,6 +49,8 @@ import { invokeDesktopHost } from '@/api/dsh/desktopHost'
 import { suspendDshTerminalEventDelivery } from '@/api/dsh/terminalTransport'
 import { requestLocalExecutor } from '@/desktop/localExecutor'
 import { flushDesktopLocalStoragePersistence } from '@/desktop/localStoragePersistence'
+import { downloadPendingWeworkUpdate } from '@/lib/app-updater'
+import { createTrayTaskMenuId } from '@/desktop/trayTaskMenuId'
 
 const DEFAULT_WAIT_TIMEOUT_MS = 5000
 const LOCAL_MODEL_SEND_CIRCUIT_BREAKER_ERROR = 'WEWORK_E2E_LOCAL_MODEL_SEND_CIRCUIT_OPEN'
@@ -63,6 +65,9 @@ interface DesktopControlResult {
 
 interface ScrollStabilitySamplePoint {
   anchorTop: number
+  clientHeight: number
+  scrollHeight: number
+  scrollOrigin: 'bottom' | 'top'
   scrollTop: number
   time: number
 }
@@ -154,6 +159,23 @@ function embeddedBrowserStorageInput(command: DesktopControlCommand) {
     key: input.key,
     label: input.label.trim(),
     value: input.value ?? '',
+  }
+}
+
+function reloadMainWindowLocalStorageInput(
+  command: DesktopControlCommand
+): { key: string; value: string } | null {
+  if (!command.value || command.value === 'capture') return null
+  const input = JSON.parse(command.value) as {
+    localStorage?: { key?: string; value?: string }
+  }
+  if (!input.localStorage) return null
+  if (!input.localStorage.key) {
+    throw new Error('reloadMainWindow localStorage requires a key')
+  }
+  return {
+    key: input.localStorage.key,
+    value: input.localStorage.value ?? '',
   }
 }
 
@@ -342,17 +364,10 @@ async function seedDesktopE2ECloudConnection(): Promise<void> {
   const localModelsCatalogReady =
     runtimeConfig.localModelsCatalogReady ??
     import.meta.env.VITE_WEWORK_E2E_LOCAL_MODELS_CATALOG_READY === 'true'
-  const token =
-    runtimeConfig.cloudToken ??
-    import.meta.env.VITE_WEWORK_E2E_CLOUD_TOKEN?.trim() ??
-    'wework-desktop-e2e-cloud-token'
-
   const config = normalizeCloudBackendUrl(backendUrl)
   saveStoredCloudConnection({
     ...config,
     webUrl: config.backendUrl,
-    token,
-    tokenExpiresAt: null,
     user: {
       id: 9001,
       user_name: 'wework-desktop-e2e-cloud-user',
@@ -495,6 +510,7 @@ function desktopControlElementMetrics(selector: string): string {
         right: rect.right,
         scrollHeight: element.scrollHeight,
         scrollLeft: element.scrollLeft,
+        scrollOrigin: element.dataset.scrollOrigin === 'bottom' ? 'bottom' : 'top',
         scrollTop: element.scrollTop,
         scrollWidth: element.scrollWidth,
         top: rect.top,
@@ -502,6 +518,16 @@ function desktopControlElementMetrics(selector: string): string {
       }
     })
   )
+}
+
+function desktopControlContentScrollTop(element: HTMLElement): number {
+  if (element.dataset.scrollOrigin !== 'bottom') return element.scrollTop
+  return Math.max(0, element.scrollHeight - element.clientHeight + element.scrollTop)
+}
+
+function desktopControlDomScrollTop(element: HTMLElement, contentScrollTop: number): number {
+  if (element.dataset.scrollOrigin !== 'bottom') return contentScrollTop
+  return contentScrollTop - Math.max(0, element.scrollHeight - element.clientHeight)
 }
 
 function desktopControlSnapshot(selector = 'body'): string {
@@ -869,6 +895,7 @@ async function startDesktopControlDrag(command: DesktopControlCommand): Promise<
 async function endDesktopControlDrag(command: DesktopControlCommand): Promise<string> {
   const activeDrag = activeDesktopControlDrag
   if (!activeDrag) throw new Error('No desktop control drag is active')
+  const startedAt = performance.now()
   const targetSelector = command.target ?? activeDrag.targetSelector
   const target = findDesktopControlElements(targetSelector)[0]
   if (!target) throw new Error(`Unable to find target selector "${targetSelector}"`)
@@ -886,6 +913,17 @@ async function endDesktopControlDrag(command: DesktopControlCommand): Promise<st
       ...endOptions,
       buttons: 0,
     })
+    if (command.waitForSelector) {
+      await waitForDesktopControlElement({
+        ...command,
+        selector: command.waitForSelector,
+        visible: true,
+      })
+      return JSON.stringify({
+        durationMs: Math.round(performance.now() - startedAt),
+        sourceText: activeDrag.sourceText,
+      })
+    }
     return activeDrag.sourceText
   } finally {
     activeDesktopControlDrag = null
@@ -895,6 +933,63 @@ async function endDesktopControlDrag(command: DesktopControlCommand): Promise<st
 async function dragDesktopControlElement(command: DesktopControlCommand): Promise<string> {
   await startDesktopControlDrag(command)
   return endDesktopControlDrag(command)
+}
+
+let activeDesktopControlDataTransfer: {
+  source: HTMLElement
+  transfer: DataTransfer
+} | null = null
+
+function dispatchDesktopControlDragEvent(
+  element: HTMLElement,
+  type: string,
+  transfer: DataTransfer
+) {
+  const rect = element.getBoundingClientRect()
+  const event = new DragEvent(type, {
+    bubbles: true,
+    cancelable: true,
+    clientX: rect.left + rect.width / 2,
+    clientY: rect.top + rect.height / 2,
+    composed: true,
+  })
+  Object.defineProperty(event, 'dataTransfer', { value: transfer })
+  element.dispatchEvent(event)
+}
+
+function startDesktopControlDataTransfer(command: DesktopControlCommand): string {
+  if (activeDesktopControlDataTransfer) {
+    throw new Error('A data-transfer drag is already active')
+  }
+  const source = findDesktopControlElements(command.selector)[0]
+  if (!source) throw new Error(`Unable to find selector "${command.selector}"`)
+  const transfer = new DataTransfer()
+  dispatchDesktopControlDragEvent(source, 'dragstart', transfer)
+  activeDesktopControlDataTransfer = { source, transfer }
+  return source.textContent?.trim() ?? ''
+}
+
+function endDesktopControlDataTransfer(command: DesktopControlCommand): string {
+  const activeDrag = activeDesktopControlDataTransfer
+  if (!activeDrag) throw new Error('No data-transfer drag is active')
+
+  try {
+    if (!command.target) throw new Error('Data-transfer drag requires a target selector')
+    const target = findDesktopControlElements(command.target)[0]
+    if (!target) throw new Error(`Unable to find target selector "${command.target}"`)
+    dispatchDesktopControlDragEvent(target, 'dragenter', activeDrag.transfer)
+    dispatchDesktopControlDragEvent(target, 'dragover', activeDrag.transfer)
+    dispatchDesktopControlDragEvent(target, 'drop', activeDrag.transfer)
+    return activeDrag.source.textContent?.trim() ?? ''
+  } finally {
+    dispatchDesktopControlDragEvent(activeDrag.source, 'dragend', activeDrag.transfer)
+    activeDesktopControlDataTransfer = null
+  }
+}
+
+function dragDesktopControlDataTransfer(command: DesktopControlCommand): string {
+  startDesktopControlDataTransfer(command)
+  return endDesktopControlDataTransfer(command)
 }
 
 function contextMenuDesktopControlElement(selector: string): string {
@@ -908,6 +1003,47 @@ function contextMenuDesktopControlElement(selector: string): string {
     })
   )
   return element.textContent?.trim() ?? ''
+}
+
+async function doubleClickDesktopControlElement(selector: string): Promise<string> {
+  const dispatchClick = (element: HTMLElement, detail: number) => {
+    const pressedOptions = {
+      ...desktopControlEventOptions(element),
+      button: 0,
+      buttons: 1,
+      detail,
+    }
+    const releasedOptions = { ...pressedOptions, buttons: 0 }
+    dispatchDesktopControlPointerEvent(element, 'pointerdown', pressedOptions)
+    element.dispatchEvent(new MouseEvent('mousedown', pressedOptions))
+    dispatchDesktopControlPointerEvent(element, 'pointerup', releasedOptions)
+    element.dispatchEvent(new MouseEvent('mouseup', releasedOptions))
+    element.dispatchEvent(new MouseEvent('click', releasedOptions))
+  }
+
+  const firstElement = findDesktopControlElements(selector)[0]
+  if (!firstElement) throw new Error(`Unable to find selector "${selector}"`)
+  if (!desktopControlElementEnabled(firstElement)) {
+    throw new Error(`Selector "${selector}" is disabled`)
+  }
+  dispatchClick(firstElement, 1)
+  await waitForDesktopControlTick()
+
+  const secondElement = findDesktopControlElements(selector)[0]
+  if (!secondElement) throw new Error(`Unable to find selector "${selector}" after first click`)
+  if (!desktopControlElementEnabled(secondElement)) {
+    throw new Error(`Selector "${selector}" became disabled after first click`)
+  }
+  dispatchClick(secondElement, 2)
+  secondElement.dispatchEvent(
+    new MouseEvent('dblclick', {
+      ...desktopControlEventOptions(secondElement),
+      button: 0,
+      buttons: 0,
+      detail: 2,
+    })
+  )
+  return secondElement.textContent?.trim() ?? ''
 }
 
 async function waitForDesktopControlElement(command: DesktopControlCommand): Promise<string> {
@@ -1016,23 +1152,149 @@ function fillDesktopControlElement(element: HTMLElement, value: string) {
 }
 
 function selectDesktopControlText(selector: string, value: string): string {
-  const element = findDesktopControlElements(selector)[0]
-  if (!element) throw new Error(`Unable to find selector "${selector}"`)
-  const walker = document.createTreeWalker(element, NodeFilter.SHOW_TEXT)
-  let node = walker.nextNode()
-  while (node && !node.textContent?.includes(value)) node = walker.nextNode()
-  if (!node) throw new Error(`Unable to find text "${value}" inside selector "${selector}"`)
+  const elements = findDesktopControlElements(selector)
+  const wholeElement = value
+    ? elements.find(element => element.textContent?.trim() === value)
+    : undefined
+  if (wholeElement) {
+    const range = document.createRange()
+    range.selectNodeContents(wholeElement)
+    const selection = window.getSelection()
+    selection?.removeAllRanges()
+    selection?.addRange(range)
+    document.dispatchEvent(new Event('selectionchange'))
+    document.dispatchEvent(new PointerEvent('pointerup', { bubbles: true }))
+    return value
+  }
+  let selectedNode: Node | null = null
+  let selectedValue = value
+  let fallbackNode: Node | null = null
+  for (const element of elements) {
+    const walker = document.createTreeWalker(element, NodeFilter.SHOW_TEXT)
+    let node = walker.nextNode()
+    while (node) {
+      const text = node.textContent ?? ''
+      if (value && text.trim() === value) {
+        selectedNode = node
+        break
+      }
+      if (value && !fallbackNode && text.includes(value)) fallbackNode = node
+      if (!value && text.trim()) {
+        selectedNode = node
+        selectedValue = text.trim()
+        break
+      }
+      node = walker.nextNode()
+    }
+    if (selectedNode) break
+  }
+  selectedNode ??= fallbackNode
+  if (!selectedNode) {
+    throw new Error(
+      value
+        ? `Unable to find text "${value}" inside selector "${selector}"`
+        : `Unable to find non-empty text inside selector "${selector}"`
+    )
+  }
 
-  const start = node.textContent?.indexOf(value) ?? -1
+  const start = selectedNode.textContent?.indexOf(selectedValue) ?? -1
   const range = document.createRange()
-  range.setStart(node, start)
-  range.setEnd(node, start + value.length)
+  range.setStart(selectedNode, start)
+  range.setEnd(selectedNode, start + selectedValue.length)
   const selection = window.getSelection()
   selection?.removeAllRanges()
   selection?.addRange(range)
   document.dispatchEvent(new Event('selectionchange'))
   document.dispatchEvent(new PointerEvent('pointerup', { bubbles: true }))
+  return selectedValue
+}
+
+type XtermAutomationTarget = HTMLElement & {
+  __weworkInputForE2E?: (value: string) => void
+  __weworkSelectTextForE2E?: (value: string) => string
+}
+
+function findXtermAutomationTarget(root: HTMLElement | null): XtermAutomationTarget | null {
+  if (!root) return null
+  const candidates = [root, ...root.querySelectorAll<HTMLElement>('*')]
+  return (
+    candidates.find(candidate => {
+      const target = candidate as XtermAutomationTarget
+      return Boolean(target.__weworkInputForE2E || target.__weworkSelectTextForE2E)
+    }) ?? null
+  )
+}
+
+function selectDesktopControlTerminalText(selector: string, value: string): string {
+  const lines = findDesktopControlElements(selector)
+  let line: HTMLElement | undefined
+  for (let index = lines.length - 1; index >= 0; index -= 1) {
+    if (lines[index]?.textContent?.includes(value)) {
+      line = lines[index]
+      break
+    }
+  }
+  if (!line) throw new Error(`Unable to find terminal text "${value}" inside "${selector}"`)
+  const terminalRoot = line.closest<HTMLElement>(
+    '[data-testid="embedded-local-terminal"], [data-testid="remote-terminal"]'
+  )
+  const selectedText =
+    findXtermAutomationTarget(terminalRoot)?.__weworkSelectTextForE2E?.(value) ?? ''
+  if (selectedText !== value) {
+    throw new Error(`Unable to select terminal text "${value}" from the xterm buffer`)
+  }
+  return selectedText
+}
+
+function inputDesktopControlTerminal(selector: string, value: string): string {
+  const terminalRoot = findDesktopControlElements(selector)[0]
+  const target = findXtermAutomationTarget(terminalRoot ?? null)
+  if (!target?.__weworkInputForE2E) {
+    throw new Error(`Unable to locate the xterm input bridge inside "${selector}"`)
+  }
+  target.__weworkInputForE2E(value)
   return value
+}
+
+function setDesktopControlSelectionOffset(selector: string, value: string): string {
+  const element = findDesktopControlElements(selector)[0]
+  if (!element) throw new Error(`Unable to find selector "${selector}"`)
+  const trimmedValue = value.trim()
+  const offset = Number(trimmedValue)
+  if (trimmedValue === '' || !Number.isInteger(offset) || offset < 0) {
+    throw new Error('setSelectionOffset requires a non-negative integer')
+  }
+
+  element.focus()
+  const range = document.createRange()
+  const walker = document.createTreeWalker(element, NodeFilter.SHOW_TEXT)
+  let remaining = offset
+  let node = walker.nextNode()
+  while (node) {
+    const length = node.textContent?.length ?? 0
+    if (remaining <= length) {
+      range.setStart(node, remaining)
+      range.collapse(true)
+      const selection = window.getSelection()
+      selection?.removeAllRanges()
+      selection?.addRange(range)
+      document.dispatchEvent(new Event('selectionchange'))
+      return String(offset)
+    }
+    remaining -= length
+    node = walker.nextNode()
+  }
+
+  if (offset === 0) {
+    range.selectNodeContents(element)
+    range.collapse(true)
+    const selection = window.getSelection()
+    selection?.removeAllRanges()
+    selection?.addRange(range)
+    document.dispatchEvent(new Event('selectionchange'))
+    return '0'
+  }
+  throw new Error(`Selection offset ${offset} exceeds the text length`)
 }
 
 function dropDesktopControlFile(command: DesktopControlCommand): string {
@@ -1073,6 +1335,23 @@ function pasteDesktopControlFile(command: DesktopControlCommand): string {
   Object.defineProperty(event, 'clipboardData', { value: transfer })
   element.dispatchEvent(event)
   return filename
+}
+
+function pasteDesktopControlText(command: DesktopControlCommand): string {
+  const element = findDesktopControlElements(command.selector)[0]
+  if (!element) throw new Error(`Unable to find selector "${command.selector}"`)
+  const text = command.value ?? ''
+  const transfer = new DataTransfer()
+  transfer.setData('text/plain', text)
+  const event = new ClipboardEvent('paste', {
+    bubbles: true,
+    cancelable: true,
+    composed: true,
+  })
+  Object.defineProperty(event, 'clipboardData', { value: transfer })
+  element.focus()
+  element.dispatchEvent(event)
+  return text
 }
 
 function dispatchDesktopControlPaths(
@@ -1168,6 +1447,20 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
           label: command.value,
         })
       )
+    case 'setEmbeddedBrowserAgentControlPaused': {
+      const input = JSON.parse(command.value ?? '{}') as {
+        label?: string
+        paused?: boolean
+      }
+      if (!input.label?.trim()) {
+        throw new Error('setEmbeddedBrowserAgentControlPaused requires label')
+      }
+      await invokeDesktopHost('browser.setAgentControlPaused', {
+        label: input.label,
+        paused: input.paused ?? false,
+      })
+      return ''
+    }
     case 'verifyEmbeddedBrowserDetachedInspector':
       return JSON.stringify(
         await invokeDesktopHost('e2e.verifyEmbeddedBrowserDetachedInspector', {
@@ -1178,8 +1471,15 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
       return ''
     case 'requestMainWindowClose':
       return ''
-    case 'reloadMainWindow':
-      return command.value === 'capture' ? captureDesktopControlScreenshot(command.selector) : ''
+    case 'reloadMainWindow': {
+      if (command.value === 'capture') return captureDesktopControlScreenshot(command.selector)
+      const storageInput = reloadMainWindowLocalStorageInput(command)
+      if (storageInput) {
+        window.localStorage.setItem(storageInput.key, storageInput.value)
+      }
+      await flushDesktopLocalStoragePersistence()
+      return ''
+    }
     case 'getTestIdOrder':
       return desktopControlTestIdOrder(command.selector)
     case 'reorderRuntimeProjectTasks':
@@ -1205,12 +1505,23 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
         return pressDesktopControlKey(command.target ?? command.selector, command.key)
       }
       return ''
+    case 'activateRuntimeTaskCompletionNotification': {
+      const address = JSON.parse(command.value ?? '{}') as RuntimeTaskAddress
+      await invokeDesktopHost('e2e.activateRuntimeTaskNotification', {
+        taskAddressId: createTrayTaskMenuId(address),
+      })
+      return ''
+    }
     case 'getSystemNotifications':
       return JSON.stringify(
         (
           globalThis as typeof globalThis & {
             __WEWORK_E2E_SYSTEM_NOTIFICATIONS__?: {
-              notifications: Array<{ title: string; body: string }>
+              notifications: Array<{
+                title: string
+                body: string
+                address?: RuntimeTaskAddress
+              }>
             }
           }
         ).__WEWORK_E2E_SYSTEM_NOTIFICATIONS__?.notifications ?? []
@@ -1218,7 +1529,11 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
     case 'clearSystemNotifications': {
       const root = globalThis as typeof globalThis & {
         __WEWORK_E2E_SYSTEM_NOTIFICATIONS__?: {
-          notifications: Array<{ title: string; body: string }>
+          notifications: Array<{
+            title: string
+            body: string
+            address?: RuntimeTaskAddress
+          }>
         }
       }
       root.__WEWORK_E2E_SYSTEM_NOTIFICATIONS__ = { notifications: [] }
@@ -1259,6 +1574,10 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
         },
       ])
       return turnId
+    }
+    case 'getRuntimeConversationMessages': {
+      const address = JSON.parse(command.value ?? '{}') as RuntimeTaskAddress
+      return JSON.stringify(getRuntimeConversationMessagesForLogicalAddress(address))
     }
     case 'storeLocalProxyUrl':
       return JSON.stringify(saveLocalProxyUrl(command.value?.trim() ?? ''))
@@ -1379,8 +1698,16 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
       return ''
     case 'drag':
       return dragDesktopControlElement(command)
+    case 'dragDataTransfer':
+      return dragDesktopControlDataTransfer(command)
+    case 'dragDataTransferStart':
+      return startDesktopControlDataTransfer(command)
+    case 'dragDataTransferEnd':
+      return endDesktopControlDataTransfer(command)
     case 'contextMenu':
       return contextMenuDesktopControlElement(command.selector)
+    case 'doubleClick':
+      return doubleClickDesktopControlElement(command.selector)
     case 'dragStart':
       return startDesktopControlDrag(command)
     case 'dragEnd':
@@ -1393,6 +1720,8 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
       return pasteDesktopControlFile(command)
     case 'pastePaths':
       return dispatchDesktopControlPaths(command, 'paste')
+    case 'pasteText':
+      return pasteDesktopControlText(command)
     case 'waitFor':
       return waitForDesktopControlElement(command)
     case 'getText':
@@ -1447,7 +1776,7 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
         scrollEvents: [],
         stop: () => {},
       }
-      const capture = (time: number) => {
+      const capture = (time: number): ScrollStabilitySamplePoint | null => {
         const anchors = findDesktopControlElements(command.selector)
         const anchor = options.anchorText
           ? anchors.find(candidate => candidate.textContent?.includes(options.anchorText ?? ''))
@@ -1455,6 +1784,9 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
         if (!anchor) return null
         return {
           anchorTop: anchor.getBoundingClientRect().top,
+          clientHeight: scroller.clientHeight,
+          scrollHeight: scroller.scrollHeight,
+          scrollOrigin: scroller.dataset.scrollOrigin === 'bottom' ? 'bottom' : 'top',
           scrollTop: scroller.scrollTop,
           time: time - startedAt,
         }
@@ -1563,6 +1895,9 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
       return desktopControlSnapshot(command.selector)
     case 'getClipboardText':
       return invokeDesktopHost<string>('e2e.getClipboardText')
+    case 'downloadPendingAppUpdate':
+      await downloadPendingWeworkUpdate()
+      return 'downloaded'
     case 'scrollIntoView': {
       const elements = findDesktopControlElements(command.selector)
       const element = command.visible ? elements.find(desktopControlElementRendered) : elements[0]
@@ -1605,7 +1940,10 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
           deltaY: 120,
         })
       )
-      element.scrollTop = element.scrollHeight
+      element.scrollTop =
+        element.dataset.scrollOrigin === 'bottom'
+          ? 0
+          : Math.max(0, element.scrollHeight - element.clientHeight)
       element.dispatchEvent(new Event('scroll', { bubbles: true }))
       return String(element.scrollTop)
     }
@@ -1625,7 +1963,11 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
           deltaY: -Math.max(120, distance),
         })
       )
-      scroller.scrollTop = Math.max(0, scroller.scrollHeight - scroller.clientHeight - distance)
+      const maxScrollTop = Math.max(0, scroller.scrollHeight - scroller.clientHeight)
+      scroller.scrollTop =
+        scroller.dataset.scrollOrigin === 'bottom'
+          ? -Math.min(distance, maxScrollTop)
+          : Math.max(0, maxScrollTop - distance)
       scroller.dispatchEvent(new Event('scroll', { bubbles: true }))
       return String(scroller.scrollTop)
     }
@@ -1638,18 +1980,65 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
       }
 
       const maxScrollTop = Math.max(0, scroller.scrollHeight - scroller.clientHeight)
-      const nextScrollTop = maxScrollTop * ratio
+      const nextContentScrollTop = maxScrollTop * ratio
+      const currentContentScrollTop = desktopControlContentScrollTop(scroller)
       scroller.dispatchEvent(
         new WheelEvent('wheel', {
           bubbles: true,
           cancelable: true,
           composed: true,
-          deltaY: nextScrollTop < scroller.scrollTop ? -120 : 120,
+          deltaY: nextContentScrollTop < currentContentScrollTop ? -120 : 120,
         })
       )
-      scroller.scrollTop = nextScrollTop
+      scroller.scrollTop = desktopControlDomScrollTop(scroller, nextContentScrollTop)
       scroller.dispatchEvent(new Event('scroll', { bubbles: true }))
       return String(scroller.scrollTop)
+    }
+    case 'sampleRapidScrollContent': {
+      const scroller = findDesktopControlElements(command.selector)[0]
+      if (!scroller) throw new Error(`Unable to find selector "${command.selector}"`)
+      const options = JSON.parse(command.value ?? '{}') as {
+        contentSelector?: string
+        ratios?: number[]
+      }
+      const contentSelector = options.contentSelector?.trim()
+      if (!contentSelector) {
+        throw new Error('sampleRapidScrollContent requires contentSelector')
+      }
+      const ratios = options.ratios ?? []
+      if (
+        ratios.length === 0 ||
+        ratios.some(ratio => !Number.isFinite(ratio) || ratio < 0 || ratio > 1)
+      ) {
+        throw new Error('sampleRapidScrollContent requires ratios between 0 and 1')
+      }
+
+      const maxScrollTop = Math.max(0, scroller.scrollHeight - scroller.clientHeight)
+      const viewport = scroller.getBoundingClientRect()
+      const samples = ratios.map(ratio => {
+        const nextContentScrollTop = maxScrollTop * ratio
+        const currentContentScrollTop = desktopControlContentScrollTop(scroller)
+        scroller.dispatchEvent(
+          new WheelEvent('wheel', {
+            bubbles: true,
+            cancelable: true,
+            composed: true,
+            deltaY: nextContentScrollTop < currentContentScrollTop ? -120 : 120,
+          })
+        )
+        scroller.scrollTop = desktopControlDomScrollTop(scroller, nextContentScrollTop)
+        scroller.dispatchEvent(new Event('scroll', { bubbles: true }))
+
+        const hasVisibleContent = Array.from(
+          scroller.querySelectorAll<HTMLElement>(contentSelector)
+        ).some(element => {
+          if (!element.textContent?.trim()) return false
+          const bounds = element.getBoundingClientRect()
+          return bounds.bottom > viewport.top && bounds.top < viewport.bottom
+        })
+        return { hasVisibleContent, ratio, scrollTop: scroller.scrollTop }
+      })
+      return JSON.stringify(samples)
     }
     case 'click': {
       const elements = findDesktopControlElements(command.selector)
@@ -1914,6 +2303,12 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
     }
     case 'selectText':
       return selectDesktopControlText(command.selector, command.value ?? '')
+    case 'selectTerminalText':
+      return selectDesktopControlTerminalText(command.selector, command.value ?? '')
+    case 'terminalInput':
+      return inputDesktopControlTerminal(command.selector, command.value ?? '')
+    case 'setSelectionOffset':
+      return setDesktopControlSelectionOffset(command.selector, command.value ?? '')
   }
 
   const extensionResult = await desktopControlExtension.execute(command)
@@ -1953,7 +2348,6 @@ async function runDesktopControlClient(url: string, windowLabel: string): Promis
     fetch(`${url}/commands?clientId=${encodeURIComponent(clientId)}&wait=1`, {
       headers: desktopControlHeaders(),
     })
-  await invokeDesktopHost('e2e.focusWindow', { windowLabel })
   let commandRequest = pollForCommand()
   await waitForDesktopControlTick()
   const readyResponse = await fetch(`${url}/ready`, {

@@ -135,6 +135,13 @@ to the current task, that empty result must not clear the lifecycle Goal
 status. This lets an active Goal continue to constrain task lifecycle even
 when stream settlement races ahead of Goal persistence.
 
+When restoring a runtime task from the URL, the pane may initially know only
+the device ID and task ID before the task list hydrates its workspace, thread,
+and runtime fields. Goal and transcript loading must run again after that
+address hydration, while both addresses still belong to the same stable task
+identity. Rehydration must not create a new conversation or replay turn
+lifecycle events that were already processed.
+
 ### Claude Code Conversation Executor
 
 Claude Code uses the same ordinary runtime-task conversation UI as Codex in
@@ -355,6 +362,15 @@ protocol characters must never appear as ordinary response text. They may be
 converted into visible citations only after the matching metadata and
 interaction component are available.
 
+Assistant Markdown images in Electron chat may reference a local absolute path
+or a `file://` URL. The renderer must read the file through the Electron file
+bridge and display it through a Blob URL; an HTTP page must not load the
+`file://` resource directly. The image file must still exist when the message
+is rendered, and read failures show an explicit image error placeholder. After
+changing this path, run the CI-covered desktop `rendering-extensions`
+checkpoint, which reads a real PNG from the system temporary directory and
+asserts that the final image uses a Blob URL.
+
 ## Guidance Message Order
 
 Running Codex LocalTasks can send a queued message as native guidance. Guidance is user input inside the current turn, not a new follow-up turn, so the UI must insert the local user message inside the active assistant as soon as guidance sending starts:
@@ -413,6 +429,26 @@ panel actions, right-workspace title, and feedback entry.
 The desktop workbench caches up to 20 regular panes so messages, composer drafts, and local UI state survive switches between parallel tasks. Once the limit is exceeded, inactive panes are evicted in least-recently-used order. Panes for running tasks and panes with pinned terminals remain mounted outside the regular cache limit until the task finishes or the terminal is unpinned. Maintain this boundary through the existing `CachedWorkbenchPaneStack` LRU and pinning mechanisms; do not add a second pane cache in the layout.
 
 The message area stores each task's reading position by `conversationKey`. During a task switch, restoration realigns the saved message anchor throughout the layout stabilization window; programmatic `scroll` events in that window must not overwrite the snapshot. An explicit wheel or touch gesture must cancel restoration immediately. Changes to this path must cover the real desktop flow “scroll to the middle of a long response → switch to another task → switch back” and retain screenshots from before the switch, after the switch, and after restoration.
+
+## Project Task Status Synchronization
+
+After a Wework runtime task is bound to a project-space task, the frontend keeps exactly one status synchronization path:
+
+1. `RuntimeTaskLifecycleStore` produces the lifecycle snapshot for the current runtime task.
+2. `WorkbenchProvider` converts that snapshot into `runtimeTaskTrackingStatus` and calls `reconcileProjectTaskTrackingStatus`.
+3. `reconcileProjectTaskTrackingStatus` derives one target status from the bound task's current status and execution status, then updates it through the project-space storage owner.
+4. The fixed Task tab is the only UI owner of this synchronization path. Changing the bound task reruns the same reconciler and must not write status directly.
+
+Running execution maps to `in_progress`. Terminal outcomes such as success, failure, and cancellation map to `in_review` for user confirmation. Archiving also reuses the same reconciler for final convergence. Backend runtime event projection owns project automation workflow status, so the renderer must not issue a separate status PATCH that competes with it.
+
+The following paths are obsolete and must not be restored:
+
+- scanning and replaying task status during renderer startup;
+- exposing replay RPCs such as `runtime.tasks.status.replay` in Wework, Backend, or Executor;
+- letting the renderer write cloud workflow status through `cloud-context/status`;
+- letting boards, detail views, or other tabs infer and write task status from local messages or runtime lists.
+
+After changing this path, run `pnpm --filter wework e2e:desktop -- --segment task-status-sync`. This real Electron checkpoint binds the fixed task and verifies that a running task appears only in the In Progress column, then appears only in the Awaiting Confirmation column after execution settles.
 
 ## Audit Result
 

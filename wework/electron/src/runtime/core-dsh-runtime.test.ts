@@ -81,6 +81,7 @@ describe('core DSH runtime', () => {
       environment: {
         PATH: '/usr/bin',
         WEWORK_CORE_PLUGIN_ROOT: runtime.pluginsRoot,
+        WEWORK_CORE_PLUGINS_SHA256: 'f'.repeat(64),
         WEWORK_NODE_PATH: '/managed/node',
       },
       port: 3080,
@@ -91,6 +92,7 @@ describe('core DSH runtime', () => {
       environment: {
         PATH: '/usr/bin',
         WEWORK_CORE_PLUGIN_ROOT: runtime.pluginsRoot,
+        WEWORK_CORE_PLUGINS_SHA256: 'f'.repeat(64),
         WEWORK_NODE_PATH: '/managed/node',
       },
       port: 3081,
@@ -113,8 +115,10 @@ describe('core DSH runtime', () => {
     ).toMatchObject({
       dependencies: {
         '@wegent/dsh-app-wework': expect.stringContaining('wework-app'),
+        '@wegent/dsh-browser-runtime': expect.stringContaining('wework-browser-runtime'),
         '@wegent/dsh-electron-host': expect.stringContaining('wework-electron-host'),
         '@wegent/dsh-executor-runtime': expect.stringContaining('wework-executor-runtime'),
+        '@wegent/dsh-secure-storage': expect.stringContaining('wework-secure-storage'),
         '@wegent/dsh-terminal-runtime': expect.stringContaining('wework-terminal-runtime'),
         '@wegent/dsh-ui-core-apps': expect.stringContaining('wework-ui-core-apps'),
         '@wegent/dsh-ui-core-settings': expect.stringContaining('wework-ui-core-settings'),
@@ -128,6 +132,8 @@ describe('core DSH runtime', () => {
           bundles: [
             '@deepseek-ai/dsh-base',
             '@wegent/dsh-electron-host',
+            '@wegent/dsh-browser-runtime',
+            '@wegent/dsh-secure-storage',
             '@wegent/dsh-terminal-runtime',
             '@wegent/dsh-app-wework',
             '@deepseek-ai/dsh-web-app',
@@ -154,6 +160,7 @@ describe('core DSH runtime', () => {
       managedUiPlugins: true,
       role: 'core',
       sourceFingerprint: 'a'.repeat(64),
+      corePluginsFingerprint: 'f'.repeat(64),
     })
     const profileModules = join(
       dataDirectory,
@@ -196,6 +203,263 @@ describe('core DSH runtime', () => {
     await root.remove()
   })
 
+  test('refreshes the profile when only the host fingerprint changes', async () => {
+    const root = await temporaryDirectory('core-dsh-host-change-')
+    const firstRuntime = await writeRuntime(root.path, CORE_DSH_VERSION, 'a')
+    const dataDirectory = join(root.path, 'data')
+    const environment = {
+      PATH: '/usr/bin',
+      WEWORK_CORE_PLUGINS_SHA256: 'f'.repeat(64),
+      WEWORK_NODE_PATH: '/managed/node',
+    }
+    await prepareCoreDshLaunch({
+      runtimeRoot: firstRuntime.root,
+      dataDirectory,
+      environment: {
+        ...environment,
+        WEWORK_CORE_PLUGIN_ROOT: firstRuntime.pluginsRoot,
+      },
+      port: 3080,
+    })
+    const secondRuntime = await writeRuntime(root.path, CORE_DSH_VERSION, 'b')
+    const second = await prepareCoreDshLaunch({
+      runtimeRoot: secondRuntime.root,
+      dataDirectory,
+      environment: {
+        ...environment,
+        WEWORK_CORE_PLUGIN_ROOT: secondRuntime.pluginsRoot,
+      },
+      port: 3081,
+    })
+
+    const profileRoot = join(second.dshHome, 'profiles', 'wework-core')
+    const manifest = JSON.parse(await readFile(join(profileRoot, 'package.json'), 'utf8'))
+    expect(manifest.dependencies['@wegent/dsh-app-wework']).toBe(
+      `file:${secondRuntime.pluginRoots['@wegent/dsh-app-wework']}`
+    )
+    expect(
+      JSON.parse(await readFile(join(profileRoot, '.wework-runtime.json'), 'utf8'))
+    ).toMatchObject({
+      sourceFingerprint: 'b'.repeat(64),
+      corePluginsFingerprint: 'f'.repeat(64),
+    })
+    await root.remove()
+  })
+
+  test('keeps managed copies untouched when the fingerprint matches on restart', async () => {
+    const root = await temporaryDirectory('core-dsh-fast-path-')
+    const runtime = await writeRuntime(root.path, CORE_DSH_VERSION, 'a')
+    const dataDirectory = join(root.path, 'data')
+    const environment = {
+      PATH: '/usr/bin',
+      WEWORK_CORE_PLUGIN_ROOT: runtime.pluginsRoot,
+      WEWORK_CORE_PLUGINS_SHA256: 'f'.repeat(64),
+      WEWORK_NODE_PATH: '/managed/node',
+    }
+    const launch = await prepareCoreDshLaunch({
+      runtimeRoot: runtime.root,
+      dataDirectory,
+      environment,
+      port: 3080,
+    })
+    const pluginCopyRoot = join(
+      launch.dshHome,
+      'profiles',
+      'wework-core',
+      'node_modules',
+      '@wegent',
+      'dsh-app-wework'
+    )
+    await writeFile(join(pluginCopyRoot, 'local-helper.js'), 'local')
+
+    await prepareCoreDshLaunch({
+      runtimeRoot: runtime.root,
+      dataDirectory,
+      environment,
+      port: 3081,
+    })
+
+    await expect(readFile(join(pluginCopyRoot, 'local-helper.js'), 'utf8')).resolves.toBe('local')
+    await root.remove()
+  })
+
+  test('re-syncs managed plugin copies when only the plugin fingerprint changes', async () => {
+    const root = await temporaryDirectory('core-dsh-plugin-change-')
+    const runtime = await writeRuntime(root.path, CORE_DSH_VERSION, 'a')
+    const dataDirectory = join(root.path, 'data')
+    const environment = {
+      PATH: '/usr/bin',
+      WEWORK_CORE_PLUGIN_ROOT: runtime.pluginsRoot,
+      WEWORK_NODE_PATH: '/managed/node',
+    }
+    const first = await prepareCoreDshLaunch({
+      runtimeRoot: runtime.root,
+      dataDirectory,
+      environment,
+      port: 3080,
+    })
+    const profileRoot = join(first.dshHome, 'profiles', 'wework-core')
+    const stampPath = join(profileRoot, '.wework-runtime.json')
+    const firstFingerprint = (
+      JSON.parse(await readFile(stampPath, 'utf8')) as { corePluginsFingerprint: string }
+    ).corePluginsFingerprint
+    await writeFile(
+      join(runtime.pluginRoots['@wegent/dsh-app-wework'], 'package.json'),
+      '{"name":"@wegent/dsh-app-wework","version":"2.0.0"}\n'
+    )
+
+    const second = await prepareCoreDshLaunch({
+      runtimeRoot: runtime.root,
+      dataDirectory,
+      environment,
+      port: 3081,
+    })
+
+    const secondFingerprint = (
+      JSON.parse(await readFile(stampPath, 'utf8')) as { corePluginsFingerprint: string }
+    ).corePluginsFingerprint
+    expect(secondFingerprint).not.toBe(firstFingerprint)
+    expect(
+      await readFile(
+        join(
+          second.dshHome,
+          'profiles',
+          'wework-core',
+          'node_modules',
+          '@wegent',
+          'dsh-app-wework',
+          'package.json'
+        ),
+        'utf8'
+      )
+    ).toBe('{"name":"@wegent/dsh-app-wework","version":"2.0.0"}\n')
+    await root.remove()
+  })
+
+  test('upgrades a legacy stamp without the plugin fingerprint', async () => {
+    const root = await temporaryDirectory('core-dsh-legacy-stamp-')
+    const runtime = await writeRuntime(root.path, CORE_DSH_VERSION, 'a')
+    const dataDirectory = join(root.path, 'data')
+    const environment = {
+      PATH: '/usr/bin',
+      WEWORK_CORE_PLUGIN_ROOT: runtime.pluginsRoot,
+      WEWORK_CORE_PLUGINS_SHA256: 'f'.repeat(64),
+      WEWORK_NODE_PATH: '/managed/node',
+    }
+    const launch = await prepareCoreDshLaunch({
+      runtimeRoot: runtime.root,
+      dataDirectory,
+      environment,
+      port: 3080,
+    })
+    const stampPath = join(launch.dshHome, 'profiles', 'wework-core', '.wework-runtime.json')
+    const legacy = JSON.parse(await readFile(stampPath, 'utf8')) as Record<string, unknown>
+    delete legacy.corePluginsFingerprint
+    await writeFile(stampPath, JSON.stringify(legacy))
+
+    await prepareCoreDshLaunch({
+      runtimeRoot: runtime.root,
+      dataDirectory,
+      environment,
+      port: 3081,
+    })
+
+    expect(JSON.parse(await readFile(stampPath, 'utf8'))).toEqual({
+      dshVersion: CORE_DSH_VERSION,
+      managedUiPlugins: true,
+      role: 'core',
+      sourceFingerprint: 'a'.repeat(64),
+      corePluginsFingerprint: 'f'.repeat(64),
+    })
+    await root.remove()
+  })
+
+  test('removes stale managed files when refreshing the profile', async () => {
+    const root = await temporaryDirectory('core-dsh-stale-managed-file-')
+    const runtime = await writeRuntime(root.path, CORE_DSH_VERSION, 'a')
+    const dataDirectory = join(root.path, 'data')
+    const environment = {
+      PATH: '/usr/bin',
+      WEWORK_CORE_PLUGIN_ROOT: runtime.pluginsRoot,
+      WEWORK_NODE_PATH: '/managed/node',
+    }
+    const launch = await prepareCoreDshLaunch({
+      runtimeRoot: runtime.root,
+      dataDirectory,
+      environment,
+      port: 3080,
+    })
+    const pluginCopyRoot = join(
+      launch.dshHome,
+      'profiles',
+      'wework-core',
+      'node_modules',
+      '@wegent',
+      'dsh-app-wework'
+    )
+    await writeFile(join(pluginCopyRoot, 'stale-helper.js'), 'stale')
+    await writeFile(
+      join(runtime.pluginRoots['@wegent/dsh-app-wework'], 'package.json'),
+      '{"name":"@wegent/dsh-app-wework","version":"2.0.0"}\n'
+    )
+
+    await prepareCoreDshLaunch({
+      runtimeRoot: runtime.root,
+      dataDirectory,
+      environment,
+      port: 3081,
+    })
+
+    await expect(readFile(join(pluginCopyRoot, 'stale-helper.js'), 'utf8')).rejects.toMatchObject({
+      code: 'ENOENT',
+    })
+    expect(await readFile(join(pluginCopyRoot, 'package.json'), 'utf8')).toBe(
+      '{"name":"@wegent/dsh-app-wework","version":"2.0.0"}\n'
+    )
+    await root.remove()
+  })
+
+  test('falls back to a deterministic plugins-root fingerprint', async () => {
+    const root = await temporaryDirectory('core-dsh-fallback-fingerprint-')
+    const runtime = await writeRuntime(root.path, CORE_DSH_VERSION, 'a')
+    const dataDirectory = join(root.path, 'data')
+    const environment = {
+      PATH: '/usr/bin',
+      WEWORK_CORE_PLUGIN_ROOT: runtime.pluginsRoot,
+      WEWORK_NODE_PATH: '/managed/node',
+    }
+    const stampPath = join(
+      dataDirectory,
+      'dsh-core',
+      'profiles',
+      'wework-core',
+      '.wework-runtime.json'
+    )
+    await prepareCoreDshLaunch({
+      runtimeRoot: runtime.root,
+      dataDirectory,
+      environment,
+      port: 3080,
+    })
+    const first = (
+      JSON.parse(await readFile(stampPath, 'utf8')) as { corePluginsFingerprint: string }
+    ).corePluginsFingerprint
+    expect(first).toMatch(/^[0-9a-f]{64}$/)
+    await rm(stampPath)
+
+    await prepareCoreDshLaunch({
+      runtimeRoot: runtime.root,
+      dataDirectory,
+      environment,
+      port: 3081,
+    })
+    expect(
+      (JSON.parse(await readFile(stampPath, 'utf8')) as { corePluginsFingerprint: string })
+        .corePluginsFingerprint
+    ).toBe(first)
+    await root.remove()
+  })
+
   test('prepares an empty UI plugin profile for desktop E2E composition coverage', async () => {
     const root = await temporaryDirectory('core-dsh-empty-ui-profile-')
     const runtime = await writeRuntime(root.path, CORE_DSH_VERSION, 'e')
@@ -218,12 +482,16 @@ describe('core DSH runtime', () => {
     expect(Object.keys(manifest.dependencies)).toEqual([
       '@wegent/dsh-app-wework',
       '@wegent/dsh-electron-host',
+      '@wegent/dsh-browser-runtime',
+      '@wegent/dsh-secure-storage',
       '@wegent/dsh-executor-runtime',
       '@wegent/dsh-terminal-runtime',
     ])
     expect(manifest.dsh.profile.bundles).toEqual([
       '@deepseek-ai/dsh-base',
       '@wegent/dsh-electron-host',
+      '@wegent/dsh-browser-runtime',
+      '@wegent/dsh-secure-storage',
       '@wegent/dsh-terminal-runtime',
       '@wegent/dsh-app-wework',
       '@deepseek-ai/dsh-web-app',
@@ -468,6 +736,8 @@ async function writeRuntime(
     [
       ['@wegent/dsh-app-wework', 'wework-app'],
       ['@wegent/dsh-electron-host', 'wework-electron-host'],
+      ['@wegent/dsh-browser-runtime', 'wework-browser-runtime'],
+      ['@wegent/dsh-secure-storage', 'wework-secure-storage'],
       ['@wegent/dsh-executor-runtime', 'wework-executor-runtime'],
       ['@wegent/dsh-terminal-runtime', 'wework-terminal-runtime'],
       ['@wegent/dsh-ui-core-apps', 'wework-ui-core-apps'],

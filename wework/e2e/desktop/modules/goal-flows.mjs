@@ -264,8 +264,9 @@ async function verifyActiveGoalIdleUnreadLifecycle({ composerSelector, control, 
       snapshot.testIds.includes(goalRunningTestId) &&
       snapshot.testIds.includes('pause-response-button') &&
       !snapshot.testIds.includes('send-message-button') &&
-      !snapshot.testIds.includes(goalUnreadTestId),
-    'A stale coarse transcript running flag hid the active turn from the sidebar'
+      !snapshot.testIds.includes(goalUnreadTestId) &&
+      snapshot.text.includes(GOAL_IDLE_INITIAL_TEXT),
+    'A stale coarse transcript running flag hid the active turn or its restored transcript'
   )
   const staleTranscriptDebugSnapshot = await waitForWorkbenchDebugState(
     control,

@@ -12,11 +12,13 @@ export const APP_BASE_PATH = '/wework/app'
 const API_PROXY_PATH = '/wework/api'
 const SOCKET_PROXY_PATH = '/wework/socket.io'
 const DEEP_LINK_PARAMETER = '__wework_route'
+const HOT_RELOAD_BUILD_ID_FILE = '.wework-build-id'
 const configuredWebRoot = process.env.WEWORK_APP_WEB_ROOT?.trim()
 const webRoot = configuredWebRoot
   ? resolve(configuredWebRoot)
   : resolve(dirname(fileURLToPath(import.meta.url)), 'web')
 const indexPath = join(webRoot, 'index.html')
+const hotReloadBuildIdPath = join(webRoot, HOT_RELOAD_BUILD_ID_FILE)
 
 const MIME_TYPES = {
   '.css': 'text/css; charset=utf-8',
@@ -38,28 +40,8 @@ const MIME_TYPES = {
 
 export function apply(ctx) {
   const backendUrl = resolveBackendUrl(process.env)
-  const assets = weworkIndexAssets(readFileSync(indexPath, 'utf8'))
-  const developmentReload = injectDevelopmentReload('', process.env, fileBuildId(indexPath))
   ctx.on('webserver/index-inject', table => {
-    table.push(
-      {
-        kind: 'html',
-        placement: 'head',
-        html: assets.head,
-      },
-      {
-        kind: 'html',
-        placement: 'body',
-        html: `<script src="${APP_BASE_PATH}/runtime-config.js"></script>`,
-      }
-    )
-    if (developmentReload) {
-      table.push({
-        kind: 'html',
-        placement: 'body',
-        html: developmentReload,
-      })
-    }
+    table.push(...weworkIndexInjection(process.env, indexPath))
   })
   register(ctx, 'prefix', APP_BASE_PATH, serveWeworkApp)
   if (!backendUrl) return
@@ -131,7 +113,7 @@ export async function serveWeworkApp(req, res) {
     if (req.method === 'HEAD' && process.env.WEWORK_APP_HOT_RELOAD === '1') {
       res.writeHead(200, {
         'cache-control': 'no-store',
-        'x-wework-app-build-id': fileBuildId(indexPath),
+        'x-wework-app-build-id': hotReloadBuildId(hotReloadBuildIdPath, indexPath),
       })
       res.end()
       return
@@ -147,7 +129,7 @@ export async function serveWeworkApp(req, res) {
   const metadata = await stat(asset)
   res.writeHead(200, {
     'content-type': MIME_TYPES[extname(asset)] ?? 'application/octet-stream',
-    'cache-control': 'public, max-age=31536000, immutable',
+    'cache-control': weworkAssetCacheControl(process.env),
     'content-length': metadata.size,
   })
   if (req.method === 'HEAD') {
@@ -177,9 +159,54 @@ export function injectDevelopmentReload(html, environment, buildId) {
   return html.includes('</head>') ? html.replace('</head>', `${script}</head>`) : `${script}${html}`
 }
 
+export function weworkIndexInjection(environment = process.env, appIndexPath = indexPath) {
+  const assets = weworkIndexAssets(readFileSync(appIndexPath, 'utf8'))
+  const developmentReload = injectDevelopmentReload(
+    '',
+    environment,
+    hotReloadBuildId(join(dirname(appIndexPath), HOT_RELOAD_BUILD_ID_FILE), appIndexPath)
+  )
+  const injection = [
+    {
+      kind: 'html',
+      placement: 'head',
+      html: assets.head,
+    },
+    {
+      kind: 'html',
+      placement: 'body',
+      html: `<script src="${APP_BASE_PATH}/runtime-config.js"></script>`,
+    },
+  ]
+  if (developmentReload) {
+    injection.push({
+      kind: 'html',
+      placement: 'body',
+      html: developmentReload,
+    })
+  }
+  return injection
+}
+
 function fileBuildId(path) {
   const metadata = statSync(path, { bigint: true })
   return `${metadata.mtimeNs}:${metadata.size}`
+}
+
+function hotReloadBuildId(buildIdPath, appIndexPath) {
+  try {
+    const buildId = readFileSync(buildIdPath, 'utf8').trim()
+    if (buildId) return buildId
+  } catch (error) {
+    if (error?.code !== 'ENOENT') throw error
+  }
+  return fileBuildId(appIndexPath)
+}
+
+export function weworkAssetCacheControl(environment = process.env) {
+  return environment.WEWORK_APP_HOT_RELOAD === '1'
+    ? 'no-store'
+    : 'public, max-age=31536000, immutable'
 }
 
 export function injectRuntimeConfig(html, environment = process.env, windowLabel = 'main') {

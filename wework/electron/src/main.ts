@@ -1,8 +1,8 @@
 import {
   app,
   BrowserWindow,
-  clipboard,
   dialog,
+  globalShortcut,
   ipcMain,
   Menu,
   nativeImage,
@@ -12,7 +12,6 @@ import {
   session,
   shell,
   Tray,
-  WebContentsView,
   webContents,
   type MenuItemConstructorOptions,
   type OpenDialogOptions,
@@ -31,6 +30,7 @@ import {
   createElectronCapabilityRouter,
 } from './host/electron-capabilities.js'
 import { HostPipeServer } from './host/host-pipe.js'
+import { DesktopHostEventBroker } from './host/desktop-host-events.js'
 import { requiresMacosQuitWorkaround } from './host/macos-quit-workaround.js'
 import { RendererHealthService } from './host/renderer-health.js'
 import { SmartAppManager, type SmartAppRuntimeHost } from './host/smart-app-manager.js'
@@ -44,14 +44,11 @@ import {
   EmbeddedBrowserManager,
 } from './host/embedded-browser-manager.js'
 import { EmbeddedBrowserBridge } from './host/embedded-browser-bridge.js'
+import { ComputerUseService } from './host/computer-use-service.js'
+import { restoreComputerUseAfterStartup } from './host/computer-use-startup.js'
 import { materializeBundledRuntimes } from './runtime/bundled-runtime-materializer.js'
-import {
-  WorkbenchTabController,
-  type WorkbenchTabView,
-  type WorkbenchViewBounds,
-} from './host/workbench-tab-controller.js'
 import { waitForRendererSelector } from './host/renderer-readiness.js'
-import { desktopWindowFrameOptions, workbenchDshBounds } from './host/window-layout.js'
+import { desktopWindowFrameOptions } from './host/window-layout.js'
 import { createSingleFlight, presentWindow } from './host/window-presentation.js'
 import { DesktopRuntime } from './runtime/desktop-runtime.js'
 import { FeedbackBundleManager } from './host/feedback-bundle-manager.js'
@@ -59,22 +56,29 @@ import { WorkbenchPluginManager } from './host/workbench-plugin-manager.js'
 import {
   resolveStartupSplashTheme,
   StartupSplash,
+  startupSplashBlocksMainWindowActivation,
   type StartupSplashTheme,
 } from './host/startup-splash.js'
+import { assertStartupRecoverySender, StartupRecoveryService } from './host/startup-recovery.js'
 import { ElectronTrayManager, type TrayAction } from './host/tray-manager.js'
 import { createTrayIcon } from './host/tray-icon.js'
+import { trayGuidForApplicationId } from './host/tray-guid.js'
 import { TrayNativeStatusController } from './host/tray-native-status.js'
 import { WindowClosePolicy, type WindowCloseDecision } from './host/window-close-policy.js'
 import { AppUpdateService } from './host/app-update-service.js'
-import { installNativeContextMenu } from './host/image-context-menu.js'
+import { AppUpdateLogger } from './host/app-update-logger.js'
+import { CloudCredentialError, CloudCredentialService } from './host/cloud-credential-service.js'
 import {
   cleanupStaleTemporaryImages,
-  materializeTemporaryImage,
-  resolveRendererImageContext,
-  scheduleTemporaryImageCleanup,
+  createNativeContextMenuActions,
+  installContextMenu,
 } from './host/image-context-actions.js'
 import { SystemResumeBridge } from './host/system-resume-bridge.js'
-import { ComponentUpdateManager } from './runtime/component-update-manager.js'
+import {
+  prepareDesktopComponents,
+  shouldStageDesktopComponentUpdates,
+  type DesktopComponentUpdateController,
+} from './runtime/desktop-components.js'
 import {
   prepareElectronNodeRuntime,
   resolveConfiguredNodePath,
@@ -84,6 +88,12 @@ import {
   applyBrandRuntimeEnvironment,
   type BrandRuntimeMetadata,
 } from './runtime/brand-runtime-environment.js'
+import { keepDesktopE2EInBackground } from './host/e2e-window-policy.js'
+import { GlobalShortcutController } from './host/global-shortcut-controller.js'
+import { resolveDshAppRoute } from './host/dsh-app-route.js'
+import { BrowserAnnotationController } from './host/browser-annotation-controller.js'
+import { LogRetentionService, type LogCleanupResult } from './runtime/log-retention.js'
+import { SecureValueStore } from './host/secure-value-store.js'
 
 const packageRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const packageMetadata = createRequire(import.meta.url)('../package.json') as {
@@ -91,35 +101,61 @@ const packageMetadata = createRequire(import.meta.url)('../package.json') as {
   weworkUpdateBaseUrl?: string
 } & BrandRuntimeMetadata
 const dshPreloadPath = resolve(packageRoot, 'dist/dsh-preload.cjs')
+const startupSplashPreloadPath = resolve(packageRoot, 'dist/startup-splash-preload.cjs')
+const browserAnnotationPreloadPath = resolve(packageRoot, 'dist/browser-annotation-preload.cjs')
 const developmentResourcesRoot = resolve(packageRoot, '..', 'resources')
 const { autoUpdater } = electronUpdater
 const execFileAsync = promisify(execFile)
+const keepE2EWindowInBackground = keepDesktopE2EInBackground(process.env, process.platform)
 const updateBaseUrl =
   process.env.WEWORK_UPDATE_BASE_URL?.trim() ||
   packageMetadata.weworkUpdateBaseUrl?.trim() ||
   'https://github.com/wecode-ai/Wegent/releases/download/wework-updater'
-const applicationId = packageMetadata.weworkAppId?.trim() || 'io.wecode.wework'
+const applicationId =
+  process.env.WEWORK_APP_IDENTIFIER?.trim() ||
+  packageMetadata.weworkAppId?.trim() ||
+  'io.wecode.wework'
+const DEFAULT_POPOUT_WINDOW_SHORTCUT = 'Alt+Shift+Space'
+const startupStartedAt = performance.now()
 
-const userDataPath =
-  process.env.WEWORK_USER_DATA_DIR?.trim() || join(app.getPath('appData'), applicationId)
-app.setPath('userData', resolve(userDataPath))
+function logStartupStep(
+  step: string,
+  status: 'started' | 'completed' | 'failed',
+  details: Record<string, unknown> = {}
+): void {
+  console.info('[startup]', {
+    step,
+    status,
+    elapsedMs: Math.round(performance.now() - startupStartedAt),
+    ...details,
+  })
+}
+
+const configuredUserDataPath = process.env.WEWORK_USER_DATA_DIR?.trim()
+const userDataPath = resolve(configuredUserDataPath || join(app.getPath('appData'), applicationId))
+app.setPath('userData', userDataPath)
+if (configuredUserDataPath) app.setAppLogsPath(join(userDataPath, 'logs'))
 
 let mainWindow: BrowserWindow | null = null
+let startupSplashWindow: BrowserWindow | null = null
 const workspaceWindows = new Map<string, BrowserWindow>()
 const dshWindowLabels = new Map<number, string>()
-let attachedDshView: WebContentsView | null = null
 let primaryDshLoaded = false
 let primaryDshSecurityInstalled = false
 let desktopRuntime: DesktopRuntime | null = null
-let workbenchTabs: WorkbenchTabController<ElectronWorkbenchView> | null = null
 let smartApps: SmartAppManager | null = null
 let embeddedBrowser: EmbeddedBrowserManager | null = null
 let embeddedBrowserBridge: EmbeddedBrowserBridge | null = null
+let browserAnnotations: BrowserAnnotationController | null = null
+let computerUse: ComputerUseService | null = null
 let workbenchPlugins: WorkbenchPluginManager | null = null
 let systemDragWindow: BrowserWindow | null = null
+let pendingSystemDragWindow: BrowserWindow | null = null
+let systemDragWindowCreationPromise: Promise<BrowserWindow> | null = null
 let popoutWindow: BrowserWindow | null = null
 let popoutWindowCreationPromise: Promise<BrowserWindow> | null = null
 let popoutWindowReadyPromise: Promise<void> | null = null
+let popoutShortcut: GlobalShortcutController | null = null
 let systemDragContext: { conversationTitle: string | null } = { conversationTitle: null }
 let pendingSystemDrops: Array<{
   action: 'new-chat' | 'follow-up' | 'stash'
@@ -129,37 +165,77 @@ let pendingSystemDrops: Array<{
 let runtimeError: string | null = null
 let runtimePhase: 'initializing' | 'ready' | 'failed' = 'initializing'
 let runtimeStartPromise: Promise<void> | null = null
+let computerUseStartupScheduled = false
 let electronNodeRuntimePromise: Promise<ElectronNodeRuntime> | null = null
 let quitting = false
 let shutdownPromise: Promise<void> | null = null
-let mainWindowCloseRequestRevision = 0
 let dockVisible = true
+let e2eForegroundActivationAllowed = false
 let preferences: PreferencesStore | null = null
+let rendererStorage: RendererStorageStore | null = null
+let cloudCredentials: CloudCredentialService | null = null
 let windowClosePolicy: WindowClosePolicy | null = null
 let startupSplash: StartupSplash | null = null
-let componentUpdates: ComponentUpdateManager | null = null
+let startupRecovery: StartupRecoveryService | null = null
+let componentUpdates: DesktopComponentUpdateController | null = null
 let trayManager: ElectronTrayManager<Electron.Menu | null, Tray> | null = null
 let trayNativeStatus: TrayNativeStatusController | null = null
-let pendingTrayActions: TrayAction[] = []
+const desktopHostEvents = new DesktopHostEventBroker()
 const pendingEmbeddedBrowserAttachments = new Map<
   number,
   Array<{ label: string; partition: string }>
 >()
 const rendererHealth = new RendererHealthService()
 const systemSleep = new SystemSleepController()
+const appUpdateLogger = new AppUpdateLogger(join(app.getPath('logs'), 'app-update.log'))
+const executorHome =
+  process.env.WEGENT_EXECUTOR_HOME?.trim() || join(app.getPath('home'), '.wework')
+const logRetention = new LogRetentionService({
+  directories: [
+    app.getPath('logs'),
+    join(executorHome, 'logs'),
+    ...(process.env.WEGENT_EXECUTOR_LOG_DIR?.trim()
+      ? [process.env.WEGENT_EXECUTOR_LOG_DIR.trim()]
+      : []),
+  ],
+  onResult: reportLogCleanup,
+})
+autoUpdater.logger = appUpdateLogger
 const appUpdates = new AppUpdateService({
   updater: autoUpdater,
   currentVersion: () => app.getVersion(),
   isPackaged: () => app.isPackaged,
-  prepareInstall: prepareApplicationShutdown,
+  prepareInstall: async () => {
+    await prepareApplicationShutdown()
+    await appUpdateLogger
+      .flush()
+      .catch(error =>
+        console.error('[app-update] failed to flush updater log before installation', error)
+      )
+  },
   updateBaseUrl,
 })
 const systemResume = new SystemResumeBridge(powerMonitor, () => webContents.getAllWebContents())
 const hasSingleInstanceLock = app.requestSingleInstanceLock()
 
+if (keepE2EWindowInBackground) {
+  app.setActivationPolicy('prohibited')
+}
+
 if (!hasSingleInstanceLock) app.quit()
 
+function focusStartupSplashIfActive(): boolean {
+  const snapshot = startupSplash?.snapshot()
+  if (!startupSplashBlocksMainWindowActivation(snapshot ?? null)) return false
+
+  const target = startupSplashWindow
+  if (target && !target.isDestroyed() && target.isVisible()) target.focus()
+  return true
+}
+
 app.on('second-instance', () => {
+  if (keepE2EWindowInBackground) return
+  if (focusStartupSplashIfActive()) return
   if (!mainWindow) return
   if (mainWindow.isMinimized()) mainWindow.restore()
   mainWindow.show()
@@ -172,29 +248,7 @@ rendererHealth.on('change', () => {
 
 function secureDshContents(contents: WebContents, dshUrl: string): void {
   const allowedOrigin = new URL(dshUrl).origin
-  installNativeContextMenu(
-    contents,
-    items => Menu.buildFromTemplate(items),
-    {
-      copyPath: path => clipboard.writeText(path),
-      openImage: async image => {
-        const temporaryPath = image.localPath
-          ? null
-          : await materializeTemporaryImage(contents, image)
-        const path = image.localPath ?? temporaryPath
-        if (!path) throw new Error('Image path is unavailable')
-        const error = await shell.openPath(path)
-        if (temporaryPath) scheduleTemporaryImageCleanup(temporaryPath)
-        if (error) throw new Error(error)
-      },
-      reportError: (action, error) => {
-        console.error(`[context-menu] ${action} failed`, error)
-      },
-      resolveImageContext: params => resolveRendererImageContext(contents, params),
-      showItemInFolder: path => shell.showItemInFolder(path),
-    },
-    app.getLocale()
-  )
+  installContextMenu(contents, 'app')
   contents.setWindowOpenHandler(({ url }) => {
     const target = new URL(url)
     if (target.origin === allowedOrigin) return { action: 'allow' }
@@ -228,7 +282,7 @@ function secureDshContents(contents: WebContents, dshUrl: string): void {
     pendingEmbeddedBrowserAttachments.set(contents.id, queue)
     params.partition = EMBEDDED_BROWSER_PARTITION
     webPreferences.session = session.fromPartition(EMBEDDED_BROWSER_PARTITION)
-    delete webPreferences.preload
+    webPreferences.preload = browserAnnotationPreloadPath
     delete params.allowpopups
     delete params.disablewebsecurity
     delete params.webpreferences
@@ -267,9 +321,21 @@ function secureDshContents(contents: WebContents, dshUrl: string): void {
       ownerId: contents.id,
     })
     embeddedBrowser.attach(pending.label, guestContents)
+    const browserManager = embeddedBrowser
+    installContextMenu(
+      guestContents,
+      'browser',
+      createNativeContextMenuActions(guestContents, url =>
+        browserManager.requestPopupTab(pending.label, url)
+      )
+    )
   })
   contents.once('destroyed', () => pendingEmbeddedBrowserAttachments.delete(contents.id))
 }
+
+ipcMain.on('wework:browser-annotation-event', (event, payload: unknown) => {
+  browserAnnotations?.handleRuntimeEvent(event.sender.id, payload)
+})
 
 function embeddedBrowserRouteFromParams(
   params: Record<string, unknown>
@@ -336,86 +402,15 @@ function installDshWindowLabelHeaders(): void {
   })
 }
 
-function secureDshView(view: WebContentsView, dshUrl: string): void {
-  secureDshContents(view.webContents, dshUrl)
-}
-
 function layoutPrimaryView(): void {
-  workbenchTabs?.layout()
   embeddedBrowser?.layoutAll()
-}
-
-function workbenchViewBounds(): WorkbenchViewBounds {
-  const [width, height] = mainWindow?.getContentSize() ?? [0, 0]
-  return workbenchDshBounds({ width, height })
-}
-
-function showWorkbenchView(view: WebContentsView | null): void {
-  if (!mainWindow || attachedDshView === view) return
-  if (attachedDshView) {
-    mainWindow.contentView.removeChildView(attachedDshView)
-  }
-  attachedDshView = view
-  if (view) {
-    mainWindow.contentView.addChildView(view)
-    view.setBounds(workbenchViewBounds())
-  }
-}
-
-class ElectronWorkbenchView implements WorkbenchTabView {
-  readonly nativeView: WebContentsView
-
-  constructor() {
-    this.nativeView = new WebContentsView({
-      webPreferences: {
-        backgroundThrottling: false,
-        preload: dshPreloadPath,
-        nodeIntegration: false,
-        contextIsolation: true,
-        sandbox: true,
-      },
-    })
-  }
-
-  load(url: string): Promise<void> {
-    secureDshView(this.nativeView, url)
-    return this.nativeView.webContents.loadURL(url)
-  }
-
-  setBounds(bounds: WorkbenchViewBounds): void {
-    this.nativeView.setBounds(bounds)
-  }
-
-  evaluate(expression: string): Promise<unknown> {
-    return this.nativeView.webContents.executeJavaScript(expression, true)
-  }
-
-  capture(): Promise<string> {
-    return captureWebContentsDataUrl(this.nativeView.webContents)
-  }
-
-  close(): void {
-    if (attachedDshView === this.nativeView) showWorkbenchView(null)
-    if (!this.nativeView.webContents.isDestroyed()) {
-      this.nativeView.webContents.close()
-    }
-  }
-
-  onRendererGone(listener: (reason: string) => void): () => void {
-    const handler = (_event: Electron.Event, details: Electron.RenderProcessGoneDetails) =>
-      listener(details.reason)
-    this.nativeView.webContents.on('render-process-gone', handler)
-    return () => {
-      if (!this.nativeView.webContents.isDestroyed()) {
-        this.nativeView.webContents.off('render-process-gone', handler)
-      }
-    }
-  }
 }
 
 const loadPrimaryDshView = createSingleFlight(async (): Promise<void> => {
   if (!mainWindow || !desktopRuntime) return
+  if (!desktopRuntime.state().ready) return
   if (primaryDshLoaded) return
+  logStartupStep('primary-renderer-load', 'started')
   rendererHealth.loading()
   const dshUrl = desktopRuntime.coreDshUrl()
   const contents = mainWindow.webContents
@@ -428,7 +423,7 @@ const loadPrimaryDshView = createSingleFlight(async (): Promise<void> => {
     primaryDshLoaded = true
     runtimeError = null
     rendererHealth.ready()
-    mainWindow?.show()
+    logStartupStep('primary-renderer-load', 'completed')
   })
   contents.on('unresponsive', () => rendererHealth.unresponsive())
   contents.on('responsive', () => rendererHealth.responsive())
@@ -446,8 +441,14 @@ const loadPrimaryDshView = createSingleFlight(async (): Promise<void> => {
     })
   })
   try {
-    await startupSplash?.close({
-      capturePath: process.env.WEWORK_E2E_STARTUP_SPLASH_CAPTURE?.trim(),
+    await rendererStorage?.prepareOrigin(new URL(dshUrl).origin, {
+      clearAll: () => contents.session.clearData({ dataTypes: ['localStorage'] }),
+      clearOrigin: origin =>
+        contents.session.clearData({
+          dataTypes: ['localStorage'],
+          origins: [origin],
+          originMatchingMode: 'origin-in-all-contexts',
+        }),
     })
     await contents.loadURL(dshUrl, {
       extraHeaders: 'X-Wework-Window-Label: main',
@@ -455,17 +456,25 @@ const loadPrimaryDshView = createSingleFlight(async (): Promise<void> => {
   } catch (error) {
     primaryDshLoaded = false
     rendererHealth.failed('renderer_load_failed')
+    logStartupStep('primary-renderer-load', 'failed')
     throw error
   }
 })
+
+function disposeSystemDragWindow(): void {
+  systemDragWindow?.destroy()
+  pendingSystemDragWindow?.destroy()
+  systemDragWindow = null
+  pendingSystemDragWindow = null
+  systemDragWindowCreationPromise = null
+}
 
 function disposeCoreDshViews(): void {
   for (const workspaceWindow of workspaceWindows.values()) {
     if (!workspaceWindow.isDestroyed()) workspaceWindow.destroy()
   }
   workspaceWindows.clear()
-  systemDragWindow?.destroy()
-  systemDragWindow = null
+  disposeSystemDragWindow()
   popoutWindow?.destroy()
   popoutWindow = null
   popoutWindowCreationPromise = null
@@ -558,11 +567,23 @@ async function ensureAuxiliaryWindow(
   if (!desktopRuntime) throw new Error('Core desktop runtime is unavailable')
   const existing = kind === 'system-drag-panel' ? systemDragWindow : popoutWindow
   if (existing && !existing.isDestroyed()) return existing
+  if (kind === 'system-drag-panel' && systemDragWindowCreationPromise) {
+    return systemDragWindowCreationPromise
+  }
   if (kind === 'popout-window' && popoutWindowCreationPromise) {
     return popoutWindowCreationPromise
   }
   const creationPromise = createAuxiliaryWindow(kind)
-  if (kind === 'system-drag-panel') return creationPromise
+  if (kind === 'system-drag-panel') {
+    systemDragWindowCreationPromise = creationPromise
+    try {
+      return await creationPromise
+    } finally {
+      if (systemDragWindowCreationPromise === creationPromise) {
+        systemDragWindowCreationPromise = null
+      }
+    }
+  }
   popoutWindowCreationPromise = creationPromise
   try {
     return await creationPromise
@@ -578,10 +599,16 @@ async function createAuxiliaryWindow(
 ): Promise<BrowserWindow> {
   if (!desktopRuntime) throw new Error('Core desktop runtime is unavailable')
   const isSystemDrag = kind === 'system-drag-panel'
-  const target = new URL(isSystemDrag ? 'system-drag' : 'popout', desktopRuntime.coreDshUrl())
+  const target = resolveDshAppRoute(
+    desktopRuntime.coreDshUrl(),
+    isSystemDrag ? 'system-drag' : 'popout'
+  )
   const auxiliaryWindow = new BrowserWindow({
     width: isSystemDrag ? 440 : 470,
     height: isSystemDrag ? 60 : 112,
+    parent: isSystemDrag
+      ? (BrowserWindow.getFocusedWindow() ?? mainWindow ?? undefined)
+      : undefined,
     resizable: false,
     frame: false,
     transparent: true,
@@ -589,6 +616,7 @@ async function createAuxiliaryWindow(
     alwaysOnTop: true,
     skipTaskbar: isSystemDrag,
     show: false,
+    type: isSystemDrag && process.platform === 'darwin' ? 'panel' : undefined,
     backgroundColor: '#00000000',
     webPreferences: {
       backgroundThrottling: false,
@@ -598,11 +626,25 @@ async function createAuxiliaryWindow(
       sandbox: true,
     },
   })
+  if (isSystemDrag) pendingSystemDragWindow = auxiliaryWindow
   secureDshContents(auxiliaryWindow.webContents, desktopRuntime.coreDshUrl())
   registerDshWindowLabel(auxiliaryWindow.webContents, kind)
+  auxiliaryWindow.webContents.on('did-fail-load', (_event, code, description, url) => {
+    console.error('[auxiliary-window] renderer failed to load', {
+      kind,
+      code,
+      description,
+      url,
+    })
+  })
+  auxiliaryWindow.webContents.on('render-process-gone', (_event, details) => {
+    console.error('[auxiliary-window] renderer process exited', { kind, ...details })
+  })
   auxiliaryWindow.on('closed', () => {
-    if (kind === 'system-drag-panel') systemDragWindow = null
-    else {
+    if (kind === 'system-drag-panel') {
+      if (systemDragWindow === auxiliaryWindow) systemDragWindow = null
+      if (pendingSystemDragWindow === auxiliaryWindow) pendingSystemDragWindow = null
+    } else {
       if (popoutWindow === auxiliaryWindow) popoutWindow = null
       if (popoutWindowReadyPromise === readinessPromise) {
         popoutWindowReadyPromise = null
@@ -615,6 +657,15 @@ async function createAuxiliaryWindow(
       extraHeaders: `X-Wework-Window-Label: ${kind}`,
     })
     if (isSystemDrag) {
+      readinessPromise = waitForRendererSelector(
+        auxiliaryWindow.webContents,
+        '[data-testid="system-drag-panel"]'
+      )
+      await readinessPromise
+      if (pendingSystemDragWindow !== auxiliaryWindow || auxiliaryWindow.isDestroyed()) {
+        throw new Error('System drag panel creation was disposed')
+      }
+      pendingSystemDragWindow = null
       systemDragWindow = auxiliaryWindow
     } else {
       popoutWindow = auxiliaryWindow
@@ -623,10 +674,13 @@ async function createAuxiliaryWindow(
         '[data-testid="popout-workbench-page"]'
       )
       popoutWindowReadyPromise = readinessPromise
-      void readinessPromise.catch(() => {})
+      void readinessPromise.catch(error => {
+        console.error('[popout-window] renderer failed to become ready', error)
+      })
     }
     return auxiliaryWindow
   } catch (error) {
+    if (pendingSystemDragWindow === auxiliaryWindow) pendingSystemDragWindow = null
     if (!auxiliaryWindow.isDestroyed()) auxiliaryWindow.destroy()
     throw error
   }
@@ -634,14 +688,27 @@ async function createAuxiliaryWindow(
 
 async function showSystemDragPanel(): Promise<void> {
   const target = await ensureAuxiliaryWindow('system-drag-panel')
+  const owner = BrowserWindow.getFocusedWindow() ?? mainWindow
+  if (owner && owner !== target && target.getParentWindow() !== owner) {
+    target.setParentWindow(owner)
+  }
+  target.setAlwaysOnTop(true, 'pop-up-menu')
+  if (process.platform === 'darwin') {
+    target.setVisibleOnAllWorkspaces(true, {
+      visibleOnFullScreen: true,
+      skipTransformProcessType: true,
+    })
+  }
   const display = screen.getDisplayNearestPoint(screen.getCursorScreenPoint())
   const x = Math.round(display.workArea.x + (display.workArea.width - 440) / 2)
   target.setPosition(x, display.workArea.y + 8)
   target.showInactive()
+  target.moveTop()
 }
 
 async function showPopoutWindow(): Promise<void> {
   const target = await ensureAuxiliaryWindow('popout-window')
+  await popoutWindowReadyPromise
   const display = screen.getDisplayNearestPoint(screen.getCursorScreenPoint())
   target.setPosition(
     Math.round(display.workArea.x + (display.workArea.width - 470) / 2),
@@ -650,7 +717,36 @@ async function showPopoutWindow(): Promise<void> {
   presentWindow(target)
 }
 
+function resolvePopoutShortcut(preferenceRecord: Record<string, unknown>): string | null {
+  if (!Object.prototype.hasOwnProperty.call(preferenceRecord, 'popoutWindowShortcut')) {
+    return DEFAULT_POPOUT_WINDOW_SHORTCUT
+  }
+  const value = preferenceRecord.popoutWindowShortcut
+  return typeof value === 'string' && value.trim() ? value.trim() : null
+}
+
+async function updateDesktopPreferences(
+  patch: Record<string, unknown>
+): Promise<Record<string, unknown>> {
+  const store = requiredPreferences()
+  if (!Object.prototype.hasOwnProperty.call(patch, 'popoutWindowShortcut')) {
+    return store.update(patch)
+  }
+
+  const previousPreferences = await store.read()
+  const previousShortcut = resolvePopoutShortcut(previousPreferences)
+  const nextShortcut = resolvePopoutShortcut(patch)
+  popoutShortcut?.configure(nextShortcut)
+  try {
+    return await store.update(patch)
+  } catch (error) {
+    popoutShortcut?.configure(previousShortcut)
+    throw error
+  }
+}
+
 async function createWindow(startupTheme: StartupSplashTheme): Promise<void> {
+  logStartupStep('windows-create', 'started', { theme: startupTheme })
   mainWindow = new BrowserWindow({
     ...desktopWindowFrameOptions(),
     width: 1440,
@@ -667,30 +763,47 @@ async function createWindow(startupTheme: StartupSplashTheme): Promise<void> {
       webviewTag: true,
     },
   })
+  startupSplashWindow = new BrowserWindow({
+    ...desktopWindowFrameOptions(),
+    width: 1440,
+    height: 960,
+    title: 'Wework',
+    backgroundColor: startupTheme === 'dark' ? '#101316' : '#fafafa',
+    show: false,
+    webPreferences: {
+      preload: startupSplashPreloadPath,
+      nodeIntegration: false,
+      contextIsolation: true,
+      sandbox: true,
+    },
+  })
   startupSplash = new StartupSplash({
     window: {
-      isDestroyed: () => mainWindow?.isDestroyed() ?? true,
-      isVisible: () => mainWindow?.isVisible() ?? false,
-      once: (event, listener) => {
-        if (event === 'closed') mainWindow?.once('closed', listener)
-        else mainWindow?.once('ready-to-show', listener)
+      close: () => startupSplashWindow?.close(),
+      isDestroyed: () => startupSplashWindow?.isDestroyed() ?? true,
+      isVisible: () => startupSplashWindow?.isVisible() ?? false,
+      on: (_event, listener) => startupSplashWindow?.on('close', listener),
+      once: (_event, listener) => startupSplashWindow?.once('closed', listener),
+      show: () => {
+        if (!keepE2EWindowInBackground) startupSplashWindow?.show()
       },
-      show: () => mainWindow?.show(),
       webContents: {
         capturePage: async () => {
-          if (!mainWindow) throw new Error('Main window is unavailable')
-          return mainWindow.webContents.capturePage()
+          if (!startupSplashWindow) throw new Error('Startup splash window is unavailable')
+          return startupSplashWindow.webContents.capturePage()
         },
         executeJavaScript: async code => {
-          if (!mainWindow) throw new Error('Main window is unavailable')
-          return mainWindow.webContents.executeJavaScript(code)
+          if (!startupSplashWindow) throw new Error('Startup splash window is unavailable')
+          return startupSplashWindow.webContents.executeJavaScript(code)
         },
-        isDestroyed: () => mainWindow?.webContents.isDestroyed() ?? true,
+        isDestroyed: () => startupSplashWindow?.webContents.isDestroyed() ?? true,
       },
     },
     theme: startupTheme,
   })
-  const startupShown = startupSplash.show()
+  startupSplashWindow.on('closed', () => {
+    startupSplashWindow = null
+  })
   mainWindow.on('resize', layoutPrimaryView)
   mainWindow.on('close', event => {
     if (quitting) return
@@ -698,15 +811,25 @@ async function createWindow(startupTheme: StartupSplashTheme): Promise<void> {
     void handleMainWindowCloseRequest()
   })
   mainWindow.on('closed', () => {
-    attachedDshView = null
     primaryDshLoaded = false
     primaryDshSecurityInstalled = false
     mainWindow = null
   })
-  await mainWindow.loadFile(resolve(packageRoot, 'dist/shell/index.html'), {
+  const mainShellLoading = mainWindow.loadFile(resolve(packageRoot, 'dist/shell/index.html'), {
     query: { theme: startupTheme },
   })
-  await startupShown
+  logStartupStep('startup-splash-load', 'started')
+  await startupSplashWindow.loadFile(resolve(packageRoot, 'dist/shell/startup-splash/index.html'), {
+    query: { theme: startupTheme },
+  })
+  logStartupStep('startup-splash-load', 'completed')
+  logStartupStep('startup-splash-show', 'started')
+  await startupSplash.show()
+  logStartupStep('startup-splash-show', 'completed')
+  logStartupStep('main-shell-load', 'started')
+  await mainShellLoading
+  logStartupStep('main-shell-load', 'completed')
+  logStartupStep('windows-create', 'completed')
 }
 
 async function setDockVisible(visible: boolean): Promise<void> {
@@ -729,7 +852,7 @@ async function applyWindowCloseDecision(decision: WindowCloseDecision): Promise<
       requestApplicationShutdown(() => app.quit())
       return
     case 'show-close-to-tray-confirmation':
-      mainWindowCloseRequestRevision += 1
+      desktopHostEvents.publish('window.close-to-tray-requested', {})
       return
     case 'hide-to-background':
       await hideMainWindowToBackground()
@@ -748,9 +871,13 @@ async function handleMainWindowCloseRequest(): Promise<void> {
 async function hideMainWindowToBackground(): Promise<void> {
   const target = mainWindow
   if (!target || target.isDestroyed()) return
-  console.log(`windowWillClose: electron close-to-tray revision=${mainWindowCloseRequestRevision}`)
+  console.log('windowWillClose: electron close-to-tray')
   target.hide()
   if (process.platform === 'darwin') {
+    if (keepE2EWindowInBackground) {
+      e2eForegroundActivationAllowed = false
+      app.setActivationPolicy('prohibited')
+    }
     app.hide()
     await setDockVisible(false)
   }
@@ -768,8 +895,13 @@ async function cancelMainWindowClose(): Promise<void> {
 }
 
 async function reactivateMainWindow(): Promise<void> {
+  if (focusStartupSplashIfActive()) return
   const target = mainWindow
   if (!target || target.isDestroyed()) return
+  if (keepE2EWindowInBackground) {
+    e2eForegroundActivationAllowed = true
+    app.setActivationPolicy('regular')
+  }
   await setDockVisible(true)
   await loadPrimaryDshView()
   if (target.isMinimized()) target.restore()
@@ -786,15 +918,16 @@ function dispatchTrayAction(action: TrayAction): void {
     console.error('[window] failed to handle tray action', error)
   })
   if (action.type === 'open-settings' || action.type === 'open-task') {
-    pendingTrayActions.push(action)
+    desktopHostEvents.publish('tray.action', action)
   }
 }
 
 function createTrayManager(): ElectronTrayManager<Electron.Menu | null, Tray> {
   const resourcesRoot = app.isPackaged ? process.resourcesPath : developmentResourcesRoot
   const iconPath = join(resourcesRoot, 'icons', '128x128.png')
+  const trayGuid = trayGuidForApplicationId(applicationId)
   return new ElectronTrayManager({
-    createTray: () => new Tray(createTrayIcon(nativeImage, iconPath)),
+    createTray: () => new Tray(createTrayIcon(nativeImage, iconPath), trayGuid),
     buildMenu: template => Menu.buildFromTemplate(template as MenuItemConstructorOptions[]),
     dispatchAction: dispatchTrayAction,
     applyIcon: (tray, state) => {
@@ -810,6 +943,55 @@ function createTrayManager(): ElectronTrayManager<Electron.Menu | null, Tray> {
 }
 
 function installIpc(): void {
+  ipcMain.handle('startup-recovery:retry', event => {
+    assertStartupRecoverySender(event.sender.id, startupSplashWindow?.webContents.id ?? null)
+    logStartupStep('startup-recovery-retry', 'started')
+    return requiredStartupRecovery().run('retry')
+  })
+  ipcMain.handle('startup-recovery:recover-workbench', event => {
+    assertStartupRecoverySender(event.sender.id, startupSplashWindow?.webContents.id ?? null)
+    logStartupStep('startup-recovery-workbench', 'started')
+    return requiredStartupRecovery().run('workbench')
+  })
+  ipcMain.handle('startup-recovery:reset-app-state', event => {
+    assertStartupRecoverySender(event.sender.id, startupSplashWindow?.webContents.id ?? null)
+    logStartupStep('startup-recovery-app-state', 'started')
+    return requiredStartupRecovery().run('app-state')
+  })
+  ipcMain.handle('cloud-credentials:get-device-public-key', () =>
+    requiredCloudCredentials().devicePublicKey()
+  )
+  ipcMain.handle('cloud-credentials:claim-authorization', async (_event, input: unknown) => {
+    try {
+      if (!input || typeof input !== 'object' || Array.isArray(input)) {
+        throw new CloudCredentialError('request_failed', 'Authorization input is invalid')
+      }
+      const value = input as Record<string, unknown>
+      return {
+        ok: true,
+        value: await requiredCloudCredentials().claimAuthorization({
+          apiBaseUrl: requiredText(value.apiBaseUrl, 'apiBaseUrl'),
+          sessionId: requiredText(value.sessionId, 'sessionId'),
+          pollToken: requiredText(value.pollToken, 'pollToken'),
+        }),
+      }
+    } catch (error) {
+      return cloudCredentialFailure(error)
+    }
+  })
+  ipcMain.handle('cloud-credentials:refresh-access-token', async (_event, apiBaseUrl: unknown) => {
+    try {
+      return {
+        ok: true,
+        value: await requiredCloudCredentials().refreshAccessToken(
+          requiredText(apiBaseUrl, 'apiBaseUrl')
+        ),
+      }
+    } catch (error) {
+      return cloudCredentialFailure(error)
+    }
+  })
+  ipcMain.handle('cloud-credentials:clear', () => requiredCloudCredentials().clear())
   ipcMain.handle('runtime:get-state', () => ({
     ...(desktopRuntime?.state() ?? {
       coreDshUrl: null,
@@ -862,6 +1044,7 @@ function installIpc(): void {
 }
 
 async function shutdown(): Promise<void> {
+  await logRetention.stop()
   systemResume.stop()
   systemSleep.stop()
   trayNativeStatus?.stop()
@@ -872,21 +1055,25 @@ async function shutdown(): Promise<void> {
     if (!workspaceWindow.isDestroyed()) workspaceWindow.destroy()
   }
   workspaceWindows.clear()
-  systemDragWindow?.destroy()
-  systemDragWindow = null
+  disposeSystemDragWindow()
   popoutWindow?.destroy()
   popoutWindow = null
   popoutWindowCreationPromise = null
   popoutWindowReadyPromise = null
+  popoutShortcut?.dispose()
+  popoutShortcut = null
   embeddedBrowser?.stop()
   const plugins = workbenchPlugins
   workbenchPlugins = null
+  browserAnnotations = null
   const browserBridge = embeddedBrowserBridge
   embeddedBrowserBridge = null
+  const computerUseService = computerUse
+  computerUse = null
   await Promise.allSettled([
     browserBridge?.stop(),
+    computerUseService?.stop(),
     plugins?.shutdown(),
-    workbenchTabs?.stop(),
     desktopRuntime?.stop(),
   ])
 }
@@ -903,22 +1090,23 @@ function prepareApplicationShutdown(): Promise<void> {
 }
 
 function smartAppRuntimeHost(): SmartAppRuntimeHost | null {
-  if (!workbenchTabs) return null
+  if (!desktopRuntime) return null
   return {
     open: async launch => {
-      await workbenchTabs?.open(launch)
+      await desktopRuntime?.openWorkbenchRuntime(launch)
     },
-    close: tabId => workbenchTabs?.close(tabId) ?? Promise.resolve(),
-    activate: tabId => workbenchTabs?.activate(tabId),
-    runningTabIds: () => new Set(workbenchTabs?.list().map(item => item.tabId) ?? []),
+    close: tabId => desktopRuntime?.closeWorkbenchRuntime(tabId) ?? Promise.resolve(),
+    runningTabIds: () =>
+      new Set(desktopRuntime?.diagnostics().workbenchRuntimes.map(item => item.tabId) ?? []),
   }
 }
 
 async function configureDesktopRuntime(): Promise<void> {
   if (desktopRuntime) return
+  logStartupStep('runtime-configure', 'started')
   const environment = await desktopEnvironment()
   if (!preferences) throw new Error('Desktop preferences are unavailable')
-  const rendererStorage = new RendererStorageStore(app.getPath('userData'))
+  if (!rendererStorage) throw new Error('Renderer storage is unavailable')
   workbenchPlugins = new WorkbenchPluginManager()
   const feedback = new FeedbackBundleManager({
     appVersion: () => app.getVersion(),
@@ -926,12 +1114,27 @@ async function configureDesktopRuntime(): Promise<void> {
     downloadsDirectory: app.getPath('downloads'),
     logDirectories: [app.getPath('logs')],
   })
-  embeddedBrowser = new EmbeddedBrowserManager(app.getPath('userData'))
+  const secureStorage = new SecureValueStore(app.getPath('userData'))
+  embeddedBrowser = new EmbeddedBrowserManager(app.getPath('userData'), event => {
+    desktopHostEvents.publish('browser.event', { ...event })
+  })
+  browserAnnotations = new BrowserAnnotationController({
+    browser: embeddedBrowser,
+    publish: state => {
+      desktopHostEvents.publish(
+        'browser.annotation-state',
+        state as unknown as Record<string, unknown>
+      )
+    },
+  })
   embeddedBrowserBridge = new EmbeddedBrowserBridge(
     embeddedBrowser,
     environment.WEGENT_EXECUTOR_HOME?.trim() || join(app.getPath('home'), '.wework')
   )
-  await embeddedBrowserBridge.start()
+  environment.WEWORK_EMBEDDED_BROWSER_BRIDGE_RUNTIME_FILE = await embeddedBrowserBridge.start()
+  computerUse = new ComputerUseService(
+    environment.WEGENT_EXECUTOR_HOME?.trim() || join(app.getPath('home'), '.wework')
+  )
   const runtimeRoot = environment.WEWORK_HARNESS_RUNTIME_ROOT?.trim()
   if (runtimeRoot) {
     smartApps = new SmartAppManager({
@@ -968,11 +1171,23 @@ async function configureDesktopRuntime(): Promise<void> {
         preferences,
         rendererStorage,
         embeddedBrowser,
+        computerUse,
         {
           coreDshPlugins: () => desktopRuntime,
           appUpdates,
+          browserAnnotations,
+          cleanupStaleTemporaryImages,
+          events: desktopHostEvents,
           feedback,
+          openRuntimeTask: taskAddressId =>
+            dispatchTrayAction({
+              type: 'open-task',
+              source: 'notification',
+              taskId: taskAddressId,
+            }),
           plugins: workbenchPlugins,
+          secureStorage,
+          updatePreferences: updateDesktopPreferences,
         },
         {
           captureTarget: windowLabel =>
@@ -983,10 +1198,6 @@ async function configureDesktopRuntime(): Promise<void> {
                 : windowLabel === 'system-drag-panel'
                   ? (systemDragWindow?.webContents ?? null)
                   : (workspaceWindows.get(windowLabel)?.webContents ?? null),
-          closeRequestState: after => ({
-            requested: mainWindowCloseRequestRevision > after,
-            revision: mainWindowCloseRequestRevision,
-          }),
           cancelCloseToTray: cancelMainWindowClose,
           closeToTray: closeMainWindowToTray,
           focusWindow: windowLabel => {
@@ -996,6 +1207,21 @@ async function configureDesktopRuntime(): Promise<void> {
           },
           hideMainWindow: hideMainWindowToBackground,
           dockVisible: () => dockVisible,
+          rendererStartupReady: async source => {
+            if (!mainWindow || mainWindow.isDestroyed()) return
+            logStartupStep('renderer-startup-ready', 'completed', { source })
+            if (!keepE2EWindowInBackground) mainWindow.show()
+            logStartupStep('main-window-show', 'completed')
+            await startupSplash?.close({
+              capturePath: process.env.WEWORK_E2E_STARTUP_SPLASH_CAPTURE?.trim(),
+            })
+            logStartupStep('startup-splash-close', 'completed')
+            scheduleComputerUseStartup()
+          },
+          rendererStartupFailed: () => {
+            logStartupStep('renderer-startup', 'failed')
+            return startupSplash?.showError()
+          },
           startupSplashSnapshot: () => startupSplash?.snapshot() ?? null,
           trayActivate: activation => trayManager?.activate(activation) ?? false,
           traySetState: state => {
@@ -1003,11 +1229,6 @@ async function configureDesktopRuntime(): Promise<void> {
             void trayNativeStatus?.refresh()
           },
           traySnapshot: () => trayManager?.snapshot() ?? null,
-          takePendingTrayActions: () => {
-            const actions = pendingTrayActions
-            pendingTrayActions = []
-            return actions
-          },
           openWorkspace: openWorkspaceWindow,
           popoutWindowSnapshot: () => ({
             exists: Boolean(popoutWindow && !popoutWindow.isDestroyed()),
@@ -1023,20 +1244,12 @@ async function configureDesktopRuntime(): Promise<void> {
             await popoutWindowReadyPromise
             return captureWebContentsDataUrl(target.webContents)
           },
-          captureWorkbench: tabId => {
-            if (!workbenchTabs) throw new Error('Workbench tabs are unavailable')
-            return workbenchTabs.capture(tabId)
-          },
           completeSystemDragDrop: async payload => {
             pendingSystemDrops.push(payload)
             await showPopoutWindow()
           },
           dismissPopout: () => popoutWindow?.hide(),
           dismissSystemDragPanel: () => systemDragWindow?.hide(),
-          evaluateWorkbench: (tabId, expression) => {
-            if (!workbenchTabs) throw new Error('Workbench tabs are unavailable')
-            return workbenchTabs.evaluate(tabId, expression)
-          },
           getSystemDragContext: () => systemDragContext,
           runtimeDiagnostics: () =>
             desktopRuntime?.diagnostics() ?? {
@@ -1051,7 +1264,10 @@ async function configureDesktopRuntime(): Promise<void> {
           setSystemSleepEnabled: enabled => systemSleep.setEnabled(enabled),
           setSystemSleepTaskActive: (source, active) => systemSleep.setTaskActive(source, active),
           showPopout: showPopoutWindow,
-          showSystemDragPanel,
+          showSystemDragPanel: () =>
+            showSystemDragPanel().catch(error => {
+              console.error('Failed to show system drag panel:', error)
+            }),
           systemDragPanelVisible: () =>
             Boolean(
               systemDragWindow && !systemDragWindow.isDestroyed() && systemDragWindow.isVisible()
@@ -1085,16 +1301,23 @@ async function configureDesktopRuntime(): Promise<void> {
     },
     apply: status => trayManager?.setNativeStatus(status),
   })
-  workbenchTabs = new WorkbenchTabController({
-    runtime: desktopRuntime,
-    surface: {
-      bounds: workbenchViewBounds,
-      show: view => showWorkbenchView(view?.nativeView ?? null),
-    },
-    createView: () => new ElectronWorkbenchView(),
-  })
-  workbenchTabs.on('change', () => {
-    mainWindow?.webContents.send('runtime:changed')
+  logStartupStep('runtime-configure', 'completed')
+}
+
+function scheduleComputerUseStartup(): void {
+  if (computerUseStartupScheduled || quitting) return
+  const service = computerUse
+  const store = preferences
+  if (!service || !store) return
+  computerUseStartupScheduled = true
+  setImmediate(() => {
+    void restoreComputerUseAfterStartup({
+      isShuttingDown: () => quitting || computerUse !== service,
+      readPreferences: () => store.read(),
+      setEnabled: enabled => service.setEnabled(enabled),
+    }).catch(error => {
+      console.error('[computer-use] lazy startup failed', error)
+    })
   })
 }
 
@@ -1104,24 +1327,32 @@ function notifyRuntimeChanged(): void {
 
 function startDesktopRuntime(): Promise<void> {
   if (runtimeStartPromise) return runtimeStartPromise
+  logStartupStep('desktop-runtime-start', 'started')
   runtimePhase = 'initializing'
   runtimeError = null
   notifyRuntimeChanged()
   runtimeStartPromise = (async () => {
     await configureDesktopRuntime()
+    logStartupStep('core-dsh-start', 'started')
     await desktopRuntime?.start()
+    logStartupStep('core-dsh-start', 'completed')
     trayNativeStatus?.start()
     await loadPrimaryDshView()
+    logStartupStep('component-update-confirmation', 'started')
     await componentUpdates?.confirmStartup()
+    logStartupStep('component-update-confirmation', 'completed')
     runtimePhase = 'ready'
-    void componentUpdates
-      ?.stageAvailableUpdate()
-      .then(staged => {
-        if (staged) console.log('[components] update staged for the next application restart')
-      })
-      .catch(error => {
-        console.error('[components] update check failed', error)
-      })
+    logStartupStep('desktop-runtime-start', 'completed')
+    if (shouldStageDesktopComponentUpdates(process.env)) {
+      void componentUpdates
+        ?.stageAvailableUpdate()
+        .then(staged => {
+          if (staged) console.log('[components] update staged for the next application restart')
+        })
+        .catch(error => {
+          console.error('[components] update check failed', error)
+        })
+    }
   })()
     .catch(async error => {
       if (await componentUpdates?.rollbackStartup()) {
@@ -1132,10 +1363,14 @@ function startDesktopRuntime(): Promise<void> {
       }
       runtimePhase = 'failed'
       runtimeError = error instanceof Error ? error.message : String(error)
+      logStartupStep('desktop-runtime-start', 'failed', {
+        errorType: error instanceof Error ? error.name : typeof error,
+      })
       console.error('[runtime] startup failed', error)
-      mainWindow?.show()
-      void startupSplash?.close().catch(splashError => {
-        console.error('[startup-splash] failed to close after runtime failure', splashError)
+      void startupSplash?.showError().catch(async splashError => {
+        console.error('[startup-splash] failed to show runtime failure', splashError)
+        if (!keepE2EWindowInBackground) mainWindow?.show()
+        await startupSplash?.close()
       })
     })
     .finally(() => {
@@ -1147,12 +1382,39 @@ function startDesktopRuntime(): Promise<void> {
 
 if (hasSingleInstanceLock) {
   app.whenReady().then(async () => {
-    await cleanupStaleTemporaryImages().catch(error => {
-      console.error('[context-menu] failed to remove stale temporary images', error)
-    })
+    logStartupStep('electron-ready', 'completed')
+    logStartupStep('log-retention-start', 'started')
+    await logRetention.start()
+    logStartupStep('log-retention-start', 'completed')
+    if (keepE2EWindowInBackground) {
+      app.hide()
+      app.dock?.hide()
+      dockVisible = false
+    }
     preferences = new PreferencesStore(app.getPath('userData'))
+    rendererStorage = new RendererStorageStore(app.getPath('userData'))
+    logStartupStep('desktop-stores-create', 'completed')
+    popoutShortcut = new GlobalShortcutController(globalShortcut, showPopoutWindow, error =>
+      console.error('[popout-window] global shortcut failed', error)
+    )
+    cloudCredentials = new CloudCredentialService(app.getPath('userData'))
+    startupRecovery = new StartupRecoveryService({
+      rendererStorage,
+      preferences,
+      cloudCredentials,
+      clearCache: () => session.defaultSession.clearCache(),
+      clearAppStorage: () =>
+        session.defaultSession.clearStorageData({
+          storages: ['serviceworkers', 'cachestorage'],
+        }),
+      log: logStartupStep,
+      relaunch: () => app.relaunch(),
+      shutdown: () => requestApplicationShutdown(() => app.exit(0)),
+    })
+    logStartupStep('startup-recovery-install', 'completed')
     installDshWindowLabelHeaders()
     installIpc()
+    logStartupStep('desktop-ipc-install', 'completed')
     systemResume.start()
     windowClosePolicy = new WindowClosePolicy({
       read: async () => {
@@ -1172,11 +1434,33 @@ if (hasSingleInstanceLock) {
     createdTrayManager.create()
     trayManager = createdTrayManager
     const startupPreferences = await preferences.read()
+    logStartupStep('startup-preferences-read', 'completed')
+    try {
+      popoutShortcut.configure(resolvePopoutShortcut(startupPreferences))
+    } catch (error) {
+      console.warn('[popout-window] failed to register global shortcut', error)
+    }
     await createWindow(
       resolveStartupSplashTheme(startupPreferences.appearanceMode, nativeTheme.shouldUseDarkColors)
     )
     void startDesktopRuntime()
   })
+}
+
+function reportLogCleanup(result: LogCleanupResult): void {
+  if (result.removedFiles > 0) {
+    console.info('[logs] retention cleanup completed', {
+      remainingBytes: result.remainingBytes,
+      removedBytes: result.removedBytes,
+      removedFiles: result.removedFiles,
+      scannedFiles: result.scannedFiles,
+    })
+  }
+  if (result.failures.length > 0) {
+    console.warn('[logs] retention cleanup had failures', {
+      failureCount: result.failures.length,
+    })
+  }
 }
 
 async function desktopEnvironment(): Promise<NodeJS.ProcessEnv> {
@@ -1186,13 +1470,17 @@ async function desktopEnvironment(): Promise<NodeJS.ProcessEnv> {
     !app.isPackaged && configuredComponentResourcesRoot
       ? resolve(configuredComponentResourcesRoot)
       : resourcesRoot
-  componentUpdates ??= new ComponentUpdateManager({
-    resourcesRoot: componentResourcesRoot,
-    dataDirectory: app.getPath('userData'),
-    updateBaseUrl,
-    currentAppVersion: app.getVersion(),
+  const preparedComponents = await prepareDesktopComponents({
+    isPackaged: app.isPackaged,
+    managerOptions: {
+      resourcesRoot: componentResourcesRoot,
+      dataDirectory: app.getPath('userData'),
+      updateBaseUrl,
+      currentAppVersion: app.getVersion(),
+    },
   })
-  const components = await componentUpdates.prepareStartup()
+  componentUpdates = preparedComponents.manager
+  const components = preparedComponents.paths
   const developmentRuntimeRoot = resolve(
     packageRoot,
     '..',
@@ -1203,7 +1491,7 @@ async function desktopEnvironment(): Promise<NodeJS.ProcessEnv> {
   const configuredRuntimeRoot = process.env.WEWORK_HARNESS_RUNTIME_ROOT?.trim()
   const runtimeRoot = configuredRuntimeRoot
     ? configuredRuntimeRoot
-    : app.isPackaged
+    : components
       ? await materializeBundledRuntimes(components.coreDsh, packagedHarnessRuntimePaths().cache, [
           'core',
         ])
@@ -1213,21 +1501,28 @@ async function desktopEnvironment(): Promise<NodeJS.ProcessEnv> {
     {
       ...nodeRuntime.environment,
       WEWORK_HARNESS_RUNTIME_ROOT: runtimeRoot,
-      WEWORK_HARNESS_RESOURCE_ROOT: components.coreDsh,
-      WEWORK_CORE_PLUGIN_ROOT: components.weworkCorePlugins,
+      ...(components
+        ? {
+            WEWORK_HARNESS_RESOURCE_ROOT: components.coreDsh,
+            WEWORK_CORE_PLUGIN_ROOT: components.weworkCorePlugins,
+            WEWORK_CORE_PLUGINS_SHA256: components.contentSha256.weworkCorePlugins,
+          }
+        : {}),
       WEGENT_BUNDLED_PLUGIN_MARKETPLACE_DIR: join(
-        componentResourcesRoot,
-        'bundled-plugins',
+        components?.bundledPlugins ?? join(componentResourcesRoot, 'bundled-plugins'),
         'wework-personal'
       ),
-      ...(process.env.WEWORK_EXECUTOR_PATH?.trim()
+      ...(process.env.WEWORK_EXECUTOR_PATH?.trim() || !components
         ? {}
         : existsSync(components.executor)
           ? { WEWORK_EXECUTOR_PATH: components.executor }
           : {}),
-      ...(process.env.CODEX_BINARY_PATH?.trim() || !existsSync(components.codex)
+      ...(process.env.CODEX_BINARY_PATH?.trim() || !components || !existsSync(components.codex)
         ? {}
         : { CODEX_BINARY_PATH: components.codex, CODEX_BIN: components.codex }),
+      ...(process.env.DWS_BINARY_PATH?.trim() || !components || !existsSync(components.dws)
+        ? {}
+        : { DWS_BINARY_PATH: components.dws }),
     },
     packageMetadata,
     app.getPath('home')
@@ -1273,6 +1568,44 @@ function requiredPreferences(): PreferencesStore {
   return preferences
 }
 
+function requiredCloudCredentials(): CloudCredentialService {
+  if (!cloudCredentials) throw new Error('Desktop cloud credentials are unavailable')
+  return cloudCredentials
+}
+
+function requiredStartupRecovery(): StartupRecoveryService {
+  if (!startupRecovery) throw new Error('Startup recovery is unavailable')
+  return startupRecovery
+}
+
+function requiredText(value: unknown, name: string): string {
+  if (typeof value !== 'string' || !value.trim()) {
+    throw new CloudCredentialError('request_failed', `${name} must be a non-empty string`)
+  }
+  return value.trim()
+}
+
+function cloudCredentialFailure(error: unknown): {
+  ok: false
+  error: { code: string; message: string; status: number | null }
+} {
+  const credentialError =
+    error instanceof CloudCredentialError
+      ? error
+      : new CloudCredentialError(
+          'request_failed',
+          error instanceof Error ? error.message : String(error)
+        )
+  return {
+    ok: false,
+    error: {
+      code: credentialError.code,
+      message: credentialError.message,
+      status: credentialError.status,
+    },
+  }
+}
+
 function packagedHarnessRuntimePaths(): { cache: string } {
   return {
     cache: join(app.getPath('userData'), 'managed-runtimes', 'dsh'),
@@ -1284,12 +1617,17 @@ app.on('window-all-closed', () => {
 })
 
 app.on('activate', () => {
+  if (keepE2EWindowInBackground && !e2eForegroundActivationAllowed) return
   void reactivateMainWindow().catch(error => {
     console.error('[window] failed to reactivate main window', error)
   })
 })
 
 app.on('did-become-active', () => {
+  if (keepE2EWindowInBackground && !e2eForegroundActivationAllowed) {
+    app.hide()
+    return
+  }
   if (mainWindow?.isVisible()) return
   void reactivateMainWindow().catch(error => {
     console.error('[window] failed to restore inactive main window', error)

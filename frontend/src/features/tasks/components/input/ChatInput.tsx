@@ -297,7 +297,16 @@ export default function ChatInput({
     if (autoFocus && !isInputDisabled && editableRef.current) {
       // Use setTimeout to ensure the DOM is fully rendered
       const timer = setTimeout(() => {
-        editableRef.current?.focus()
+        const activeElement = document.activeElement
+        const canTakeFocus =
+          !activeElement ||
+          activeElement === document.body ||
+          activeElement === document.documentElement
+
+        // Do not steal focus after the user or an overlay has focused another control.
+        if (canTakeFocus) {
+          editableRef.current?.focus()
+        }
       }, 100)
       return () => clearTimeout(timer)
     }
@@ -845,7 +854,7 @@ export default function ChatInput({
                     suppressContentEditableWarning
                   />
                 </TooltipTrigger>
-                <TooltipContent side="top" className="text-xs">
+                <TooltipContent side="top" className="hidden text-xs md:block">
                   <p>{tooltipText}</p>
                 </TooltipContent>
               </Tooltip>

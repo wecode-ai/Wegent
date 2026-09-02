@@ -100,6 +100,7 @@ export function createDesktopScenario({
   captureScreenshot,
   executorHome,
   uiTimeoutMs,
+  workbenchReadyTimeoutMs,
   workspacePath,
 }) {
   let active = false
@@ -159,7 +160,12 @@ export function createDesktopScenario({
 
     async verify(control) {
       active = true
-      await createSingleRootLocalProject(control, workspacePath, 'runtime-terminal-convergence')
+      await createSingleRootLocalProject(
+        control,
+        workspacePath,
+        'runtime-terminal-convergence',
+        workbenchReadyTimeoutMs
+      )
       await control.command('waitFor', COMPOSER_SELECTOR, { timeoutMs: uiTimeoutMs })
       const knownRows = new Set(
         JSON.parse(await control.command('snapshot', 'body')).testIds.filter(testId =>

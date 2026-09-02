@@ -1,5 +1,6 @@
 import '@testing-library/jest-dom'
-import { render, screen, waitFor } from '@testing-library/react'
+import { act, render, screen, waitFor } from '@testing-library/react'
+import type { ReactNode } from 'react'
 
 import ChatInput from '@/features/tasks/components/input/ChatInput'
 
@@ -12,6 +13,15 @@ jest.mock('@/hooks/useTranslation', () => ({
 
 jest.mock('@/features/layout/hooks/useMediaQuery', () => ({
   useIsMobile: () => false,
+}))
+
+jest.mock('@/components/ui/tooltip', () => ({
+  TooltipProvider: ({ children }: { children: ReactNode }) => <>{children}</>,
+  Tooltip: ({ children }: { children: ReactNode }) => <>{children}</>,
+  TooltipTrigger: ({ children }: { children: ReactNode }) => <>{children}</>,
+  TooltipContent: ({ children, className }: { children: ReactNode; className?: string }) => (
+    <div className={className}>{children}</div>
+  ),
 }))
 
 jest.mock('@/features/common/UserContext', () => ({
@@ -40,6 +50,57 @@ jest.mock('@/features/tasks/components/chat/SkillFlyAnimation', () => ({
 }))
 
 describe('ChatInput external focus', () => {
+  afterEach(() => {
+    jest.useRealTimers()
+  })
+
+  test('auto focuses when no other control has focus', () => {
+    jest.useFakeTimers()
+    render(
+      <ChatInput
+        message=""
+        setMessage={jest.fn()}
+        handleSendMessage={jest.fn()}
+        isLoading={false}
+        autoFocus
+      />
+    )
+
+    const input = screen.getByTestId('message-input')
+    expect(input).not.toHaveFocus()
+
+    act(() => jest.advanceTimersByTime(100))
+
+    expect(input).toHaveFocus()
+  })
+
+  test('does not steal focus from another control after delayed auto focus was scheduled', () => {
+    jest.useFakeTimers()
+    render(
+      <>
+        <button type="button" data-testid="external-control">
+          External control
+        </button>
+        <ChatInput
+          message=""
+          setMessage={jest.fn()}
+          handleSendMessage={jest.fn()}
+          isLoading={false}
+          autoFocus
+        />
+      </>
+    )
+
+    const externalControl = screen.getByTestId('external-control')
+    const input = screen.getByTestId('message-input')
+    externalControl.focus()
+
+    act(() => jest.advanceTimersByTime(100))
+
+    expect(externalControl).toHaveFocus()
+    expect(input).not.toHaveFocus()
+  })
+
   test('moves the cursor to the end when focusAtEndSignal changes', async () => {
     const props = {
       setMessage: jest.fn(),
@@ -59,5 +120,18 @@ describe('ChatInput external focus', () => {
     expect(range?.collapsed).toBe(true)
     expect(range?.startContainer).toBe(input.firstChild)
     expect(range?.startOffset).toBe('quick phrase'.length)
+  })
+
+  test('hides keyboard shortcut guidance below the desktop breakpoint', () => {
+    render(
+      <ChatInput
+        message=""
+        setMessage={jest.fn()}
+        handleSendMessage={jest.fn()}
+        isLoading={false}
+      />
+    )
+
+    expect(screen.getByText('chat:send_shortcut').parentElement).toHaveClass('hidden', 'md:block')
   })
 })

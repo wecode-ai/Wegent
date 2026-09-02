@@ -31,6 +31,11 @@ export async function createDesktopScenario({ captureScreenshot, uiTimeoutMs }) 
     async verify(control) {
       const tray = JSON.parse(await control.command('getTraySnapshot', 'body'))
       assert.equal(tray.created, true, 'The Electron Tray was not created')
+      assert.match(
+        tray.guid,
+        /^[0-9a-f]{8}-[0-9a-f]{4}-5[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/,
+        'The Electron Tray did not expose a persistent application GUID'
+      )
       assert.ok(
         tray.menu.some(item => item.id === 'settings'),
         'The Electron Tray did not expose Settings'

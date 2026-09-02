@@ -36,15 +36,18 @@ import { debugComposerEvent, textMetrics } from './composerDebug'
 import type { QuickPhrase } from '@/desktop/appPreferences'
 import type { CloudProject } from '@/api/deliveries'
 import {
+  hasWorkspacePathDragData,
   resolveDataTransferWorkspacePaths,
   resolveStoredWorkspacePaths,
 } from '@/lib/workspace-path-transfer'
 import { mergePopoutWorkspaceProjects } from '@/features/workbench/popoutWorkspaceContext'
+import { hasSelectedTextDragData } from '@/lib/selected-text-drag'
 import type {
   ComposerCloudMentionCandidate,
   ComposerConversationMentionCandidate,
 } from './composerMentionCandidates'
 import type { ComposerExternalMentionCandidate } from './composerTextareaTypes'
+import type { ModelSelectorCloseReason } from './model-selector-types'
 import { applyWorkspacePathTransfer } from './composerPathTransfer'
 import styles from './ProjectChatComposer.module.css'
 
@@ -68,7 +71,7 @@ interface ProjectChatComposerProps {
   activeModel?: UnifiedModel | null
   selectedModelOptions: ModelOptions
   modelSelectorOpenSignal?: number
-  onModelSelectorOpenChange?: (open: boolean) => void
+  onModelSelectorOpenChange?: (open: boolean, closeReason?: ModelSelectorCloseReason) => void
   isModelSelectionReady: boolean
   attachments: Attachment[]
   codeComments?: CodeCommentContext[]
@@ -123,7 +126,11 @@ interface ProjectChatComposerProps {
 }
 
 function hasDraggedFiles(dataTransfer: DataTransfer): boolean {
-  return Array.from(dataTransfer.types).includes('Files')
+  return Array.from(dataTransfer.types).includes('Files') || hasWorkspacePathDragData(dataTransfer)
+}
+
+function hasComposerDragData(dataTransfer: DataTransfer): boolean {
+  return hasDraggedFiles(dataTransfer) || hasSelectedTextDragData(dataTransfer)
 }
 
 export const ProjectChatComposer = forwardRef<ComposerTextareaHandle, ProjectChatComposerProps>(
@@ -212,6 +219,9 @@ export const ProjectChatComposer = forwardRef<ComposerTextareaHandle, ProjectCha
     useImperativeHandle(
       ref,
       () => ({
+        get element() {
+          return composerRef.current?.element ?? null
+        },
         focus: () => composerRef.current?.focus(),
         getValue: () => composerRef.current?.getValue() ?? value,
         setValue: (nextValue, selectionOffset) =>
@@ -268,25 +278,27 @@ export const ProjectChatComposer = forwardRef<ComposerTextareaHandle, ProjectCha
     )
 
     const handleDragOver: DragEventHandler<HTMLFormElement> = event => {
-      if (!hasDraggedFiles(event.dataTransfer)) return
+      if (!hasComposerDragData(event.dataTransfer)) return
 
       event.preventDefault()
       event.dataTransfer.dropEffect = disabled ? 'none' : 'copy'
-      setIsDraggingFiles(!disabled)
+      setIsDraggingFiles(!disabled && hasDraggedFiles(event.dataTransfer))
     }
     const handleDrop: DragEventHandler<HTMLFormElement> = event => {
-      if (!hasDraggedFiles(event.dataTransfer)) return
+      if (!hasComposerDragData(event.dataTransfer)) return
 
       event.preventDefault()
       setIsDraggingFiles(false)
       if (disabled) return
 
       const currentValue = getLiveValue()
-      void resolveDataTransferWorkspacePaths(
-        event.dataTransfer,
-        'drop',
-        workspaceTarget?.workspaceSource
-      ).then(transfer =>
+      if (hasSelectedTextDragData(event.dataTransfer)) {
+        const text = event.dataTransfer.getData('text/plain')
+        if (!text) return
+        handleComposerChange(currentValue ? `${currentValue}\n${text}` : text)
+        return
+      }
+      void resolveDataTransferWorkspacePaths(event.dataTransfer, 'drop').then(transfer =>
         applyWorkspacePathTransfer(currentValue, transfer, handleComposerChange, onFileSelect)
       )
     }

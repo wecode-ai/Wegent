@@ -118,7 +118,7 @@ original origin before checking that all three values were restored. This makes
 the regression exercise desktop persistence across origins instead of an
 ordinary read within the same renderer process.
 
-The main desktop flow's short-conversation layout regression stores `short-conversation-00-ready.png`, `short-conversation-01-prompt-filled.png`, `short-conversation-02-completed-top-aligned.png`, and `short-conversation-layout-metrics.json`. The final screenshot and metrics are captured after switching away and reopening the conversation. The gate requires the first message to remain within `160px` of the message viewport's top edge. For focused local diagnosis, run `node wework/e2e/desktop/task-flow.e2e.mjs --short-conversation-only`; the same check remains part of the regular `e2e:desktop` flow rather than a separate CI entrypoint.
+The main desktop flow's short-conversation layout regression stores `short-conversation-00-ready.png`, `short-conversation-01-prompt-filled.png`, `short-conversation-02-completed-top-aligned.png`, and `short-conversation-layout-metrics.json`. The final screenshot and metrics are captured after switching away and reopening the conversation. The gate requires the first message to remain within `160px` of the message viewport's top edge. For focused local diagnosis, run `node wework/e2e/desktop/run-checkpoints.mjs --short-conversation-only`; the same check remains part of the regular `e2e:desktop` flow rather than a separate CI entrypoint.
 
 The main desktop runner also supports execution through ordered checkpoints.
 The checkpoints are `remote-device-onboarding`, `workspace-tabs`,
@@ -126,8 +126,9 @@ The checkpoints are `remote-device-onboarding`, `workspace-tabs`,
 `telemetry-consent`, `automation-lifecycle`, `project-automation`,
 `project-assignment-notification`, `offline-local-project-space`,
 `core-dsh-plugin-management`, `plugin-auto-update`, `plugin-workspace-publication`,
-`project-ai-settings`, `model-routing`, `permission-modes`, `core-task-flow`,
-`task-attachments`, `cloud-git-worktree`, `cloud-worktree-capability`,
+`project-ai-settings`, `model-routing`, `permission-modes`, `computer-use`,
+`task-status-sync`, `task-board-association`, `core-task-flow`, `task-attachments`,
+`cloud-git-worktree`, `cloud-worktree-capability`,
 `cloud-worktree-create`, `cloud-worktree-queued-cancel`, `cloud-worktree-tools`,
 `cloud-worktree-archive-restore`, `cloud-worktree-device-restart`,
 `context-compaction`, `runtime-task-queue`, `runtime-terminal-convergence`,
@@ -190,8 +191,14 @@ the pipeline tail. Merge queue validates
 the final commit that enters `main`, so Tests, Lint, Platform E2E, and Wework E2E
 do not repeat the same validation after the merge through a `push main` trigger. The
 mapping lives in `.github/scripts/classify-wework-desktop-e2e.sh` and must be updated when new
-feature coverage is registered. Segment commands are also useful for focused
-local iteration:
+feature coverage is registered. When adding a `DESKTOP_CHECKPOINTS` entry, also
+add it to a Core, Cloud, or formal-release catalog, assign it to a shard, map
+the relevant source paths to the smallest applicable coverage, and update both
+the matrix expectations and focused classifier assertions in
+`.github/scripts/test-classify-ci-changes.sh`. The classifier rejects a
+checkpoint that exists only in the runner without CI catalog coverage, preventing
+locally runnable coverage that GitHub CI never invokes. Segment commands are also
+useful for focused local iteration:
 
 ```bash
 pnpm --filter wework e2e:desktop -- --segment automation-lifecycle
@@ -256,7 +263,7 @@ steps; startup, workbench recovery, and the model protocol matrix keep their
 dedicated limits. Set `WEWORK_E2E_STEP_TIMEOUT_MS` to temporarily adjust the
 global default for ordinary steps in a slower diagnostic environment.
 
-The main desktop flow also covers pasting or dropping ordinary files and folders from Finder. The composer must render file and folder path chips without creating an attachment badge. The request sent to Codex must contain the matching absolute paths without inlining file contents. The top quick-send window uses the same rule and reads bytes only for image attachments. Both scenarios use ordinary small files. For focused local diagnosis, run `node wework/e2e/desktop/task-flow.e2e.mjs --pasted-workspace-paths-only` or `node wework/e2e/desktop/task-flow.e2e.mjs --dropped-workspace-paths-only`.
+The main desktop flow also covers pasting or dropping ordinary files and folders from Finder. The composer must render file and folder path chips without creating an attachment badge. The request sent to Codex must contain the matching absolute paths without inlining file contents. This decision depends on whether the native desktop transfer resolves a file path; the composer must not switch to attachment upload early only because its current workspace is marked as remote. The top quick-send window uses the same rule and reads bytes only for image attachments. Both scenarios use ordinary small files. For focused local diagnosis, run `node wework/e2e/desktop/run-checkpoints.mjs --pasted-workspace-paths-only` or `node wework/e2e/desktop/run-checkpoints.mjs --dropped-workspace-paths-only`.
 
 Following the cc-switch conversion boundary, the mock strictly validates what reaches the model side: authentication, model ID, stream settings, message history, tool choice, shell tools, and either the `apply_patch` Lark grammar or its function wrapper. Any incorrect field returns a non-2xx response and fails the test. The desktop test stores a follow-up screenshot for each interface plus the complete `model-requests.json`; GitHub Actions uploads desktop diagnostics on both success and failure.
 
@@ -266,11 +273,33 @@ The environment needs Rust, Electron build dependencies, and a real Codex binary
 CODEX_BIN=/absolute/path/to/codex pnpm --filter wework e2e:desktop
 ```
 
-Optional `WEWORK_E2E_EXECUTOR_BIN` and `WEWORK_E2E_APP_BIN` reuse already-built real Executor and Electron application binaries. A supplied application must be built with the desktop E2E Vite environment variables. The lifecycle scenarios share one application launch to control CI duration. Test artifacts, captured model requests, and failure diagnostics are stored in `wework/test-results/desktop-e2e/`.
+When binaries are not configured, the desktop runner first runs
+`ai:verify:electron:build`, validates the packaged real Electron application and
+its bundled Executor, and then starts the selected scenario. Optional
+`WEWORK_E2E_EXECUTOR_BIN` and `WEWORK_E2E_APP_BIN` must be set together to reuse
+already-built real binaries. A supplied application must be built with the
+desktop E2E Vite environment variables. The lifecycle scenarios share one
+application launch to control CI duration. Test artifacts, captured model
+requests, and failure diagnostics are stored in
+`wework/test-results/desktop-e2e/`. Each scenario retains logs, screenshots,
+requests, and UI state while removing copied application bundles, Executor
+homes, extracted runtimes, and rebuildable Electron caches. The runner also
+compacts inactive result directories left by interrupted runs so repeated local
+execution does not continuously consume disk space.
+
+The local runner writes complete stdout and stderr from the prerequisite
+Electron and Executor build to
+`wework/test-results/desktop-e2e/desktop-build-<pid>.log`. The terminal shows
+only the build stage, a liveness message every 30 seconds, elapsed time, and the
+log path so package installation, compilation, and signing output do not bury
+checkpoint results. On build failure, the terminal also prints a bounded tail
+of the log. Test output remains live after the scenario starts.
+
+`ai:verify:electron:build` shares immutable Harness Runtime archives across worktrees. The default archive cache is `~/Library/Caches/wegent/harness-runtime` on macOS, `${XDG_CACHE_HOME:-~/.cache}/wegent/harness-runtime` on Linux, and `%LOCALAPPDATA%\wegent/harness-runtime` on Windows. Materialized development runtimes remain under `wework/node_modules/.cache/harness-runtime-dev` in the current worktree so mutable state is not shared across source trees. Set `WEWORK_HARNESS_RUNTIME_ASSET_CACHE_ROOT` to override the archive cache. If a build only sets the legacy `WEWORK_HARNESS_RUNTIME_CACHE_ROOT`, that value is translated into an archive-only cache override and does not move the current worktree's materialized runtime.
 
 Before launching Electron, desktop E2E removes inherited task, IPC, Node, and Harness runtime variables so a development Wework or Codex session cannot leak personal runtime paths into the test application. To select a Core DSH runtime explicitly for focused diagnosis, set `WEWORK_E2E_HARNESS_RUNTIME_ROOT`; the runner validates that directory and passes it to the test application as `WEWORK_HARNESS_RUNTIME_ROOT`. Do not pass `WEWORK_HARNESS_RUNTIME_ROOT` directly to the test command.
 
-On macOS, desktop E2E launches a temporary `.app` bundle in the background through `open -g`. The test-only `WEWORK_E2E_BACKGROUND_WINDOW=1` setting keeps the Electron main window hidden, prohibits application activation, and hides its Dock icon. Background throttling is disabled for the hidden WebView, so DOM control, timers, and snapshots continue to work. After the controller connects, the runner also asserts that the test application is not the current foreground process, preventing focus-stealing regressions. Only the desktop E2E runner injects this variable; normal development and production launches are unchanged.
+On macOS, desktop E2E injects the test-only `WEWORK_E2E_BACKGROUND_WINDOW=1` setting by default. It keeps the Electron main window hidden, prohibits application activation, and hides its Dock icon. Background throttling is disabled for the hidden WebView, so DOM control, timers, and snapshots continue to work. Set `WEWORK_E2E_BACKGROUND_WINDOW=0` explicitly when foreground window inspection is required. This setting affects desktop E2E only; normal development and production launches are unchanged.
 
 The cloud-project scenario starts a real Backend, Redis, and a real Executor registered as a remote device. It exercises real authentication, device RPC, task persistence, and project deletion while covering project creation, task execution, conversation restoration, follow-up, and project removal. The scenario also verifies all three model protocols through the Backend proxy for cloud Model CRDs, plus local-executor use of Codex and cloud models under the same connected account. Only provider model endpoints are simulated; Backend HTTP and WebSocket APIs must not be mocked. To shorten cold startup, the Executor build runs in parallel with Backend, Redis, and database preparation, while remote Executor registration runs in parallel with the Electron application build. Application startup still waits for both prerequisite groups to finish. Project cleanup must wait until the task is no longer running; rendered assistant text does not mean the final task state has been persisted. Python 3.11, `uv`, and `redis-server` are required to run this scenario.
 
@@ -502,14 +531,22 @@ pnpm --filter wework e2e:desktop:memory
 ```
 
 The repository includes a basic workflow at `.github/workflows/wework-e2e.yml`. It runs when Wework, `packages/chat-core`, the pnpm lockfile, or the workflow itself changes.
-Regular draft PRs do not run browser or Linux desktop E2E. Merge queue runs the
-complete browser and Linux desktop suites before a commit enters `main`; `main`
-does not repeat checks that already passed for the merge group. The macOS memory
-gate runs by default only on scheduled and manual runs. Add the `ci:memory`
-label when a PR must validate the memory boundary. Applying that
-label starts only the memory gate and does not repeat browser or Linux desktop
-E2E. Applying `ci:all` runs browser, Linux desktop, and macOS memory E2E even
-when the PR's changed paths would not normally select Wework E2E. The workflow
-also runs a complete regression every day at 04:00 UTC.
+Linux and Windows Desktop Core E2E consume the same shard matrix produced by
+the classifier; a complete classification runs all 17 Core shards on both
+platforms. The Windows job builds native `WeWork.exe`,
+`wegent-executor.exe`, and `codex.exe` artifacts on `windows-latest` before
+running checkpoints. A cross-platform package or a single Windows smoke test is
+not equivalent coverage.
+
+Regular draft PRs do not run browser or desktop E2E. Merge queue runs the
+complete browser plus Linux and Windows Desktop Core suites before a commit
+enters `main`; `main` does not repeat checks that already passed for the merge
+group. The macOS memory gate runs by default only on scheduled and manual runs.
+Add the `ci:memory` label when a PR must validate the memory boundary. Applying that
+label starts only the memory gate and does not repeat browser, Linux desktop, or
+Windows desktop E2E. Applying `ci:all` runs browser, Linux desktop, Windows
+desktop, and macOS memory E2E even when the PR's changed paths would not
+normally select Wework E2E. The workflow also runs a complete regression every
+day at 04:00 UTC.
 
 Authenticated flows should create users and data through backend APIs before the test, then use real login or a real token injection. Do not mock backend HTTP responses in Playwright.

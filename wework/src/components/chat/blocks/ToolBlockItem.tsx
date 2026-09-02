@@ -12,10 +12,7 @@ import type { ProcessingBlock, ToolBlock } from '@/types/workbench'
 import type { WorkspaceFileOpenOptions } from '@/types/workspace-files'
 import { AssistantMarkdown } from '../AssistantMarkdown'
 import { AssistantPlanCard, type AssistantPlanOpenRequest } from '../AssistantPlanCard'
-import {
-  localPathFromMarkdownImageSrc,
-  resolveDirectMarkdownImageSrc,
-} from '../assistantMarkdownLinks'
+import { localMarkdownImagePath, resolveDirectMarkdownImageSrc } from '../assistantMarkdownLinks'
 import { parseUnifiedDiff } from '../parseUnifiedDiff'
 import {
   getToolActivityFilePaths,
@@ -950,6 +947,7 @@ function ProcessTextBlockItem({
     <div
       className="min-w-0 overflow-x-hidden text-chat text-text-secondary"
       data-processing-block-id={block.id}
+      data-message-selectable-text
       role={isRunning ? 'status' : undefined}
       aria-live={isRunning ? 'polite' : undefined}
       aria-label={isRunning ? t('process_text.running') : undefined}
@@ -1367,8 +1365,7 @@ function ImageViewBlockDetail({ block }: { block: ToolBlock }) {
 function useResolvedImageViewSource(source?: string): string | null {
   const electronLocalPath = useMemo(() => {
     if (!source || !isElectronRuntime()) return null
-    const path = localPathFromMarkdownImageSrc(source)
-    return path.startsWith('/') || /^[a-zA-Z]:[\\/]/.test(path) ? path : null
+    return localMarkdownImagePath(source)
   }, [source])
   const [electronImage, setElectronImage] = useState<{
     path: string

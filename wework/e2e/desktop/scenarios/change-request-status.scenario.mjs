@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { execFile } from 'node:child_process'
 import { chmod, mkdir, writeFile } from 'node:fs/promises'
-import { join } from 'node:path'
+import { delimiter, join } from 'node:path'
 import { promisify } from 'node:util'
 import { waitForAttribute } from '../modules/workspace-flows.mjs'
 
@@ -41,44 +41,89 @@ async function configureGitFixture(workspacePath) {
 
 async function createGitHubCliFixture(homePath) {
   const binPath = join(homePath, '.wework-e2e-bin')
-  const executablePath = join(binPath, 'gh')
+  const fixturePath = join(binPath, 'gh.mjs')
+  const executablePath = join(binPath, process.platform === 'win32' ? 'gh.cmd' : 'gh')
   await mkdir(binPath, { recursive: true })
   await writeFile(
-    executablePath,
-    `#!/bin/sh
-state="$(cat "$HOME/${STATE_FILE}" 2>/dev/null || printf pending)"
-if [ "$state" = "unavailable" ]; then
-  printf 'gh: command not found\\n' >&2
-  exit 127
-fi
-if [ "$state" = "pending" ]; then
-  checks_state='PENDING'
-  pr_state='OPEN'
-elif [ "$state" = "success" ]; then
-  checks_state='SUCCESS'
-  pr_state='OPEN'
-elif [ "$state" = "failure" ]; then
-  checks_state='FAILURE'
-  pr_state='OPEN'
-else
-  checks_state='SUCCESS'
-  pr_state='MERGED'
-fi
-case "$*" in
-  *graphql*)
-    printf '{"data":{"repository":{"pr0":{"state":"%s","isDraft":false,"mergedAt":%s,"updatedAt":"2026-08-20T08:00:00Z","mergeable":"MERGEABLE","mergeStateStatus":"CLEAN","statusCheckRollup":{"state":"%s"},"mergeQueueEntry":null,"timelineItems":{"nodes":[]}}}}}\\n' "$pr_state" "$([ "$state" = "merged" ] && printf '"2026-08-20T08:00:00Z"' || printf null)" "$checks_state"
-    ;;
-  *pulls?state=all*)
-    printf '[{"number":2631,"html_url":"https://github.com/wecode-ai/Wegent/pull/2631","title":"feat(wework): show pull request status","state":"%s","draft":false,"head":{"ref":"feature/change-request-status"},"updated_at":"2026-08-20T08:00:00Z","merged_at":%s}]\\n' "$([ "$state" = "merged" ] && printf closed || printf '%s' "$pr_state" | tr '[:upper:]' '[:lower:]')" "$([ "$state" = "merged" ] && printf '"2026-08-20T08:00:00Z"' || printf null)"
-    ;;
-  *)
-    printf '[{"number":2631,"url":"https://github.com/wecode-ai/Wegent/pull/2631","title":"feat(wework): show pull request status","state":"%s","isDraft":false,"statusCheckRollup":{"state":"%s"}}]\\n' "$pr_state" "$checks_state"
-    ;;
-esac
+    fixturePath,
+    `import { readFileSync } from 'node:fs'
+import { join } from 'node:path'
+
+const home = process.env.HOME ?? process.env.USERPROFILE ?? ''
+let state = 'pending'
+try {
+  state = readFileSync(join(home, '${STATE_FILE}'), 'utf8').trim()
+} catch {}
+
+if (state === 'unavailable') {
+  console.error('gh: command not found')
+  process.exit(127)
+}
+
+const checksState =
+  state === 'pending' ? 'PENDING' : state === 'failure' ? 'FAILURE' : 'SUCCESS'
+const prState = state === 'merged' ? 'MERGED' : 'OPEN'
+const mergedAt = state === 'merged' ? '2026-08-20T08:00:00Z' : null
+const args = process.argv.slice(2).join(' ')
+
+if (args.includes('graphql')) {
+  console.log(
+    JSON.stringify({
+      data: {
+        repository: {
+          pr0: {
+            state: prState,
+            isDraft: false,
+            mergedAt,
+            updatedAt: '2026-08-20T08:00:00Z',
+            mergeable: 'MERGEABLE',
+            mergeStateStatus: 'CLEAN',
+            statusCheckRollup: { state: checksState },
+            mergeQueueEntry: null,
+            timelineItems: { nodes: [] },
+          },
+        },
+      },
+    })
+  )
+} else if (args.includes('pulls?state=all')) {
+  console.log(
+    JSON.stringify([
+      {
+        number: 2631,
+        html_url: 'https://github.com/wecode-ai/Wegent/pull/2631',
+        title: 'feat(wework): show pull request status',
+        state: state === 'merged' ? 'closed' : prState.toLowerCase(),
+        draft: false,
+        head: { ref: 'feature/change-request-status' },
+        updated_at: '2026-08-20T08:00:00Z',
+        merged_at: mergedAt,
+      },
+    ])
+  )
+} else {
+  console.log(
+    JSON.stringify([
+      {
+        number: 2631,
+        url: 'https://github.com/wecode-ai/Wegent/pull/2631',
+        title: 'feat(wework): show pull request status',
+        state: prState,
+        isDraft: false,
+        statusCheckRollup: { state: checksState },
+      },
+    ])
+  )
+}
 `
   )
-  await chmod(executablePath, 0o755)
-  process.env.PATH = `${binPath}:${process.env.PATH ?? ''}`
+  if (process.platform === 'win32') {
+    await writeFile(executablePath, '@echo off\r\nnode "%~dp0gh.mjs" %*\r\n')
+  } else {
+    await writeFile(executablePath, '#!/bin/sh\nexec node "$(dirname "$0")/gh.mjs" "$@"\n')
+    await chmod(executablePath, 0o755)
+  }
+  process.env.PATH = `${binPath}${delimiter}${process.env.PATH ?? ''}`
 }
 
 async function createLocalProject(control, workspacePath, timeoutMs) {
@@ -285,6 +330,13 @@ export async function createDesktopScenario({
         timeoutMs: uiTimeoutMs,
       })
       await control.command('waitFor', ENVIRONMENT_BUTTON, { timeoutMs: uiTimeoutMs })
+      if (
+        Number(
+          await control.command('getElementCount', '[data-testid="environment-info-popover"]')
+        ) === 0
+      ) {
+        await control.command('click', ENVIRONMENT_BUTTON)
+      }
       await control.command('waitFor', '[data-testid="environment-info-popover"]')
       await capture(control, 'change-request-status-01-task-created.png')
 

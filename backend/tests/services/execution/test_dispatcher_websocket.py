@@ -8,8 +8,54 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from app.services.device.remote_control_policy import (
+    REMOTE_CONTROL_DISABLED_MESSAGE,
+    RemoteControlDisabledError,
+)
 from app.services.execution.dispatcher import ExecutionDispatcher
 from app.services.execution.router import CommunicationMode, ExecutionTarget
+from shared.models import ExecutionRequest
+
+
+@pytest.mark.asyncio
+async def test_dispatch_rejects_app_only_device_before_task_emit():
+    dispatcher = ExecutionDispatcher()
+    request = ExecutionRequest(
+        task_id=1,
+        subtask_id=2,
+        message_id=3,
+        user={"id": 9, "name": "user9"},
+        user_id=9,
+        user_name="user9",
+        bot=[{"shell_type": "ClaudeCode"}],
+    )
+
+    with (
+        patch(
+            "app.services.execution.dispatcher.ensure_remote_control_enabled_for_device",
+            side_effect=RemoteControlDisabledError(REMOTE_CONTROL_DISABLED_MESSAGE),
+        ) as ensure_remote_control,
+        patch.object(dispatcher, "_recover_executor_if_needed", AsyncMock()) as recover,
+        patch.object(dispatcher.router, "route") as route,
+        patch.object(dispatcher, "_dispatch_websocket", AsyncMock()) as dispatch,
+    ):
+        with pytest.raises(
+            RemoteControlDisabledError,
+            match=REMOTE_CONTROL_DISABLED_MESSAGE,
+        ):
+            await dispatcher.dispatch(
+                request,
+                device_id="app-device",
+                emitter=AsyncMock(),
+            )
+
+    ensure_remote_control.assert_called_once_with(
+        user_id=9,
+        device_id="app-device",
+    )
+    recover.assert_not_awaited()
+    route.assert_not_called()
+    dispatch.assert_not_awaited()
 
 
 @pytest.mark.asyncio

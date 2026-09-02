@@ -24,6 +24,8 @@ import { isAppDeviceRegistration, isCurrentAppDeviceId } from '@/lib/app-device-
 import { isCloudDevice, isRemoteDevice, isUsableDevice } from '@/lib/device-capabilities'
 import { readElectronLocalFile } from '@/lib/electron-local-file'
 import { logRuntimeTaskCreateStage } from '@/lib/runtime-create-diagnostics'
+import { getWorkbenchDeviceIds } from '@/lib/workbench-device'
+import type { LocalExecutorEvent } from '@/desktop/localExecutor'
 import {
   EMPTY_RUNTIME_WORK,
   mergeDeviceLists,
@@ -99,7 +101,7 @@ export interface HybridWorkbenchServicesOptions {
   socketBaseUrl: string
   socketPath: string
   token: string
-  user?: User
+  user: User
 }
 
 function runtimeAddressDebug(address: RuntimeTaskAddress): Record<string, unknown> {
@@ -312,6 +314,27 @@ function cloudDeviceIdFromData(data?: Record<string, unknown> | null): string | 
   return stringField(address, 'deviceId') ?? stringField(address, 'device_id')
 }
 
+function projectCloudRuntimeEventDeviceId(
+  event: LocalExecutorEvent,
+  devices: DeviceInfo[]
+): LocalExecutorEvent {
+  const eventDeviceId = cloudDeviceIdFromData(event.payload)
+  if (!eventDeviceId) return event
+
+  const device = devices.find(candidate => getWorkbenchDeviceIds(candidate).includes(eventDeviceId))
+  const logicalDeviceId = device?.device_id.trim()
+  if (!logicalDeviceId || logicalDeviceId === eventDeviceId) return event
+
+  return {
+    ...event,
+    payload: {
+      ...event.payload,
+      deviceId: logicalDeviceId,
+      device_id: logicalDeviceId,
+    },
+  }
+}
+
 export function createHybridWorkbenchServices(
   options: HybridWorkbenchServicesOptions
 ): WorkbenchServices {
@@ -459,6 +482,7 @@ export function createHybridWorkbenchServices(
       {
         resolveDeviceId: async data => cloudDeviceIdFromData(data) ?? logicalDeviceId,
         cloudModelGateway,
+        user: options.user,
         transportLabel: 'Cloud',
         syncConfiguredModelCatalog: true,
         requestModelCatalogSync: requestCloudModelCatalogSync,
@@ -774,6 +798,24 @@ export function createHybridWorkbenchServices(
       return cloudServices.deviceApi.createDockerRemoteDeviceCommand(data)
     },
   }
+  const projectSpaceDeviceApi: WorkbenchServices['deviceApi'] = {
+    ...hybridDeviceApi,
+    async listDevices(requestOptions) {
+      const localDevices = await listLocalDevices(requestOptions?.signal)
+      let cloudDevices: DeviceInfo[] = []
+      try {
+        cloudDevices = await listCloudDevices(requestOptions?.signal)
+      } catch (error) {
+        console.warn(
+          '[Wework] Failed to load cloud devices for project execution configuration',
+          error
+        )
+      }
+      return mergeDeviceLists(localDevices, cloudDevices) as Awaited<
+        ReturnType<WorkbenchServices['deviceApi']['listDevices']>
+      >
+    },
+  }
 
   const hybridRuntimeWorkApi: NonNullable<WorkbenchServices['runtimeWorkApi']> = {
     prepareRuntimeModel(data) {
@@ -781,9 +823,6 @@ export function createHybridWorkbenchServices(
     },
     async listRuntimeWork(requestOptions) {
       return listLocalRuntimeWork(requestOptions?.signal)
-    },
-    replayRuntimeTaskStatuses(data) {
-      return runtimeApiForDevice(data.deviceId).then(api => api.replayRuntimeTaskStatuses(data))
     },
     getKeybindings() {
       return localServices.runtimeWorkApi!.getKeybindings()
@@ -1236,7 +1275,10 @@ export function createHybridWorkbenchServices(
       const deviceId = cloudDeviceIdFromData(params)
       return cloudRuntimeIpc.request(method, params, deviceId)
     },
-    subscribe: cloudRuntimeIpc.subscribe,
+    subscribe: handler =>
+      cloudRuntimeIpc.subscribe(event => {
+        handler(projectCloudRuntimeEventDeviceId(event, rememberedCloudDevices))
+      }),
   })
   const hybridChatStream: WorkbenchServices['chatStream'] = {
     subscribe(handlers) {
@@ -1309,6 +1351,7 @@ export function createHybridWorkbenchServices(
       cloud: cloudServices.projectSpaceDetailServices?.cloud
         ? {
             ...cloudServices.projectSpaceDetailServices.cloud,
+            deviceApi: projectSpaceDeviceApi,
             pluginApi: projectPluginApi,
           }
         : undefined,

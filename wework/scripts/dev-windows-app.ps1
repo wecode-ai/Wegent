@@ -317,6 +317,12 @@ $env:WEWORK_HARNESS_RUNTIME_ROOT = if ($env:WEWORK_HARNESS_RUNTIME_ROOT) {
 } else {
   Join-Path $env:WEWORK_HARNESS_RUNTIME_CACHE_ROOT 'harness-runtime-dev'
 }
+# Serve the freshly built Wework app and auto-reload when it changes, matching
+# dev-mac-app.sh. Dev loads the UI plugin from the packaged core plugin root,
+# which the dev flow does not rebuild; pointing the plugin at the current Vite
+# output keeps the running desktop app in sync with the source tree.
+$env:WEWORK_APP_HOT_RELOAD = '1'
+$env:WEWORK_APP_WEB_ROOT = Join-Path $WEWORK_DIR 'dsh\app-wework\web'
 
 if ($env:WEWORK_DEV_CODEX_BINARY) {
   $env:CODEX_BINARY_PATH = $env:WEWORK_DEV_CODEX_BINARY
@@ -347,6 +353,8 @@ function Print-Configuration {
   Write-Host "  RUSTC_WRAPPER=$env:RUSTC_WRAPPER"
   Write-Host "  WEGENT_EXECUTOR_HOME=$env:WEGENT_EXECUTOR_HOME"
   Write-Host "  WEWORK_HARNESS_RUNTIME_ROOT=$env:WEWORK_HARNESS_RUNTIME_ROOT"
+  Write-Host "  WEWORK_APP_HOT_RELOAD=$env:WEWORK_APP_HOT_RELOAD"
+  Write-Host "  WEWORK_APP_WEB_ROOT=$env:WEWORK_APP_WEB_ROOT"
   Write-Host "  CODEX_BINARY_PATH=$env:CODEX_BINARY_PATH"
   Write-Host "  DWS_BINARY_PATH=$env:DWS_BINARY_PATH"
 }
@@ -363,7 +371,6 @@ try {
     if ($LASTEXITCODE -ne 0) {
       Fail 'Error: failed to prepare the Electron workspace.'
     }
-    node electron/node_modules/electron/install.js
     New-Item -ItemType Directory -Force -Path 'electron\resources' | Out-Null
     foreach ($resource in @('icons', 'bundled-plugins')) {
       $target = Join-Path $WEWORK_DIR "resources\$resource"
@@ -405,6 +412,29 @@ try {
     if (-not (Test-Path $env:DWS_BINARY_PATH)) {
       Fail "Error: DWS binary is not available: $env:DWS_BINARY_PATH"
     }
+    $WATCH_READY_FILE = Join-Path $env:TEMP ("wework-app-watch-" + [guid]::NewGuid().ToString('N') + ".ready")
+    $WATCH_OUT_LOG = Join-Path $env:TEMP "wework-app-watch-$PID.out.log"
+    $WATCH_ERR_LOG = Join-Path $env:TEMP "wework-app-watch-$PID.err.log"
+    $env:WEWORK_APP_WATCH_READY_FILE = $WATCH_READY_FILE
+    $nodePath = (Get-Command node -ErrorAction Stop).Source
+    $WATCH_PROCESS = Start-Process -FilePath $nodePath -ArgumentList @(Join-Path $SCRIPT_DIR 'dev-wework-app-watch.mjs') -WorkingDirectory $WEWORK_DIR -WindowStyle Hidden -RedirectStandardOutput $WATCH_OUT_LOG -RedirectStandardError $WATCH_ERR_LOG -PassThru
+    $watchDeadline = (Get-Date).AddSeconds(90)
+    $watchReady = $false
+    while ((Get-Date) -lt $watchDeadline) {
+      if ($WATCH_PROCESS.HasExited) {
+        Get-Content -LiteralPath $WATCH_ERR_LOG -Tail 20 -ErrorAction SilentlyContinue | ForEach-Object { Write-Host "    $_" }
+        Fail 'Error: Wework application build watcher exited before becoming ready.'
+      }
+      if ((Test-Path $WATCH_READY_FILE) -and [bool](Get-Content -LiteralPath $WATCH_READY_FILE -Raw -ErrorAction SilentlyContinue)) {
+        $watchReady = $true
+        break
+      }
+      Start-Sleep -Milliseconds 250
+    }
+    if (-not $watchReady) {
+      Get-Content -LiteralPath $WATCH_ERR_LOG -Tail 20 -ErrorAction SilentlyContinue | ForEach-Object { Write-Host "    $_" }
+      Fail 'Error: Wework application build watcher did not become ready.'
+    }
     if ($ELECTRON_ARGS.Count -gt 0) {
       pnpm --dir electron dev -- $ELECTRON_ARGS
     } else {
@@ -414,6 +444,12 @@ try {
     Pop-Location
   }
 } finally {
+  if ($WATCH_PROCESS -and -not $WATCH_PROCESS.HasExited) {
+    Stop-Process -Id $WATCH_PROCESS.Id -Force -ErrorAction SilentlyContinue
+  }
+  if ($WATCH_READY_FILE -and (Test-Path $WATCH_READY_FILE)) {
+    Remove-Item -LiteralPath $WATCH_READY_FILE -Force -ErrorAction SilentlyContinue
+  }
   if ($ISOLATED_EXECUTOR_HOME) {
     Remove-Item -LiteralPath $ISOLATED_EXECUTOR_HOME -Recurse -Force -ErrorAction SilentlyContinue
   }

@@ -196,7 +196,13 @@ function makeRequest(url, options, body) {
             let errorMsg = `HTTP ${res.statusCode}`
             try {
               const errorDetail = JSON.parse(data)
-              errorMsg = errorDetail.detail || errorMsg
+              const detail = errorDetail.detail
+              if (detail && typeof detail === 'object') {
+                errorMsg = detail.message || errorMsg
+                resolve({ status: 'error', message: errorMsg, detail })
+                return
+              }
+              errorMsg = detail || errorMsg
             } catch {
               errorMsg = data || errorMsg
             }
@@ -220,6 +226,18 @@ function makeRequest(url, options, body) {
     }
     req.end()
   })
+}
+
+function isTerminalGenerationError(result) {
+  return result.status === 'error' && result.detail?.code === 'generation_not_writable'
+}
+
+function printTerminalGenerationError(result) {
+  const detail = result.detail
+  console.error(
+    `❌ Generation ${detail.generationStatus} (failure code: ${detail.failureCode || 'none'}). ` +
+    'Do not retry wiki_submit or continue this agent. Stop now; start a new Code Wiki generation.'
+  )
 }
 
 /**
@@ -248,6 +266,46 @@ async function readPage(endpoint, token, generationId, pagePath) {
     { method: 'GET', headers: { Authorization: `Bearer ${token}` } },
     null
   )
+}
+
+/**
+ * Derive the review checkpoint endpoint from the write endpoint.
+ * @param {string} endpoint - Write endpoint URL
+ * @returns {string}
+ */
+function reviewEndpoint(endpoint) {
+  const suffix = /\/generations\/contents\/?$/
+  if (!suffix.test(endpoint)) {
+    console.error(`Error: cannot derive the review URL from endpoint '${endpoint}'.`)
+    console.error("It must end in '/generations/contents'.")
+    process.exit(1)
+  }
+  return endpoint.replace(suffix, '/generations/review')
+}
+
+/**
+ * Derive the review handoff endpoint from the write endpoint.
+ * @param {string} endpoint - Write endpoint URL
+ * @returns {string}
+ */
+function reviewOpenEndpoint(endpoint) {
+  return `${reviewEndpoint(endpoint)}/open`
+}
+
+/**
+ * Derive the persisted review state endpoint from the write endpoint.
+ * @param {string} endpoint - Write endpoint URL
+ * @param {string} generationId - Generation identity
+ * @returns {string}
+ */
+function reviewStatusEndpoint(endpoint, generationId) {
+  const suffix = /\/generations\/contents\/?$/
+  if (!suffix.test(endpoint)) {
+    console.error(`Error: cannot derive the review URL from endpoint '${endpoint}'.`)
+    console.error("It must end in '/generations/contents'.")
+    process.exit(1)
+  }
+  return endpoint.replace(suffix, `/generations/${generationId}/review`)
 }
 
 /**
@@ -328,6 +386,10 @@ async function cmdSubmit(args) {
   const result = await submitSections(endpoint, token, generationId, [section])
 
   if (result.status === 'error') {
+    if (isTerminalGenerationError(result)) {
+      printTerminalGenerationError(result)
+      return 3
+    }
     console.error(`❌ Error: ${result.message}`)
     return 1
   }
@@ -408,6 +470,212 @@ async function cmdRemove(args) {
   }
 
   console.log(`✅ Removed ${args.paths.length} page(s): ${args.paths.join(', ')}`)
+  return 0
+}
+
+/**
+ * Persist the Writer handoff for one review attempt.
+ * @param {object} args - Command arguments
+ * @returns {Promise<number>}
+ */
+async function cmdReviewOpen(args) {
+  const endpoint = getWikiEndpoint(args.endpoint)
+  const token = getAuthToken(args.token)
+  if (!token) {
+    console.error('Error: Authorization token is required. It can be obtained from TASK_INFO, WIKI_TOKEN env var, or --token argument.')
+    return 1
+  }
+  if (!args.generationId || !args.reviewPhase || !args.summary || !args.handoffFile) {
+    console.error('Error: --generation-id, --phase, --summary, and --handoff-file are required.')
+    return 1
+  }
+  if (!args.paths.length) {
+    console.error('Error: --path is required for review-open command')
+    return 1
+  }
+  if (!['plan', 'plan_amendment', 'qa', 'recheck'].includes(args.reviewPhase)) {
+    console.error('Error: --phase must be plan, plan_amendment, qa, or recheck')
+    return 1
+  }
+  if (['plan', 'plan_amendment'].includes(args.reviewPhase) && !args.writingPlanFile) {
+    console.error('Error: --writing-plan-file is required for a plan or amendment review handoff')
+    return 1
+  }
+  if (!['plan', 'plan_amendment'].includes(args.reviewPhase) && args.writingPlanFile) {
+    console.error('Error: --writing-plan-file is valid only for a plan or amendment review handoff')
+    return 1
+  }
+  const handoffPath = path.resolve(args.handoffFile)
+  if (!fs.existsSync(handoffPath)) {
+    console.error(`Error: Handoff file not found: ${args.handoffFile}`)
+    return 1
+  }
+  let writingPlan = null
+  if (args.writingPlanFile) {
+    const writingPlanPath = path.resolve(args.writingPlanFile)
+    if (!fs.existsSync(writingPlanPath)) {
+      console.error(`Error: Writing Plan file not found: ${args.writingPlanFile}`)
+      return 1
+    }
+    try {
+      writingPlan = JSON.parse(fs.readFileSync(writingPlanPath, 'utf-8'))
+    } catch {
+      console.error('Error: --writing-plan-file must contain valid JSON')
+      return 1
+    }
+  }
+
+  const payload = {
+    generation_id: parseInt(args.generationId, 10),
+    phase: args.reviewPhase,
+    paths: args.paths,
+    summary: args.summary,
+    handoff: fs.readFileSync(handoffPath, 'utf-8'),
+  }
+  if (writingPlan) {
+    payload.writing_plan = writingPlan
+  }
+  const result = await makeRequest(
+    reviewOpenEndpoint(endpoint),
+    {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${token}`,
+        'Content-Type': 'application/json',
+      },
+    },
+    JSON.stringify(payload)
+  )
+  if (result.status === 'error') {
+    if (isTerminalGenerationError(result)) {
+      printTerminalGenerationError(result)
+      return 3
+    }
+    console.error(`❌ Error: ${result.message}`)
+    return 1
+  }
+  console.log(JSON.stringify(result))
+  return 0
+}
+
+/**
+ * Record a Reviewer verdict for a coordinated full rebuild.
+ * @param {object} args - Command arguments
+ * @returns {Promise<number>}
+ */
+async function cmdReview(args) {
+  const endpoint = getWikiEndpoint(args.endpoint)
+  const token = getAuthToken(args.token)
+  if (!token) {
+    console.error('Error: Authorization token is required. It can be obtained from TASK_INFO, WIKI_TOKEN env var, or --token argument.')
+    return 1
+  }
+  if (!args.generationId || !args.reviewPhase || !args.reviewStatus || !args.summary) {
+    console.error('Error: --generation-id, --phase, --review-status, and --summary are required.')
+    return 1
+  }
+  if (!args.paths.length) {
+    console.error('Error: --path is required for review command')
+    return 1
+  }
+  if (!['plan', 'plan_amendment', 'qa', 'recheck'].includes(args.reviewPhase)) {
+    console.error('Error: --phase must be plan, plan_amendment, qa, or recheck')
+    return 1
+  }
+  if (!['passed', 'changes_requested'].includes(args.reviewStatus)) {
+    console.error('Error: --review-status must be passed or changes_requested')
+    return 1
+  }
+  if (args.reviewPhase === 'plan' && args.reviewStatus === 'passed' && !args.focusPaths.length) {
+    console.error('Error: --focus-path is required for a plan review')
+    return 1
+  }
+  if (args.reviewStatus === 'changes_requested' && !args.findingsFile) {
+    console.error('Error: --findings-file is required when changes are requested')
+    return 1
+  }
+  if (args.reviewStatus === 'passed' && args.findingsFile) {
+    console.error('Error: --findings-file is only valid when changes are requested')
+    return 1
+  }
+  let findings = null
+  if (args.findingsFile) {
+    const findingsPath = path.resolve(args.findingsFile)
+    if (!fs.existsSync(findingsPath)) {
+      console.error(`Error: Findings file not found: ${args.findingsFile}`)
+      return 1
+    }
+    findings = fs.readFileSync(findingsPath, 'utf-8')
+  }
+
+  const result = await makeRequest(
+    reviewEndpoint(endpoint),
+    {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${token}`,
+        'Content-Type': 'application/json',
+      },
+    },
+    JSON.stringify({
+      generation_id: parseInt(args.generationId, 10),
+      phase: args.reviewPhase,
+      status: args.reviewStatus,
+      paths: args.paths,
+      focus_paths: args.focusPaths,
+      summary: args.summary,
+      findings,
+    })
+  )
+
+  if (result.status === 'error') {
+    if (isTerminalGenerationError(result)) {
+      printTerminalGenerationError(result)
+      return 3
+    }
+    console.error(`❌ Error: ${result.message}`)
+    return 1
+  }
+  console.log(JSON.stringify(result))
+  return 0
+}
+
+/**
+ * Print the persisted Reviewer state for one phase.
+ * @param {object} args - Command arguments
+ * @returns {Promise<number>}
+ */
+async function cmdReviewStatus(args) {
+  const endpoint = getWikiEndpoint(args.endpoint)
+  const token = getAuthToken(args.token)
+  if (!token) {
+    console.error('Error: Authorization token is required. It can be obtained from TASK_INFO, WIKI_TOKEN env var, or --token argument.')
+    return 1
+  }
+  if (!args.generationId || !args.reviewPhase) {
+    console.error('Error: --generation-id and --phase are required.')
+    return 1
+  }
+  if (!['plan', 'plan_amendment', 'qa', 'recheck'].includes(args.reviewPhase)) {
+    console.error('Error: --phase must be plan, plan_amendment, qa, or recheck')
+    return 1
+  }
+
+  const url = `${reviewStatusEndpoint(endpoint, args.generationId)}?phase=${encodeURIComponent(args.reviewPhase)}`
+  const result = await makeRequest(
+    url,
+    { method: 'GET', headers: { Authorization: `Bearer ${token}` } },
+    null
+  )
+  if (result.status === 'error') {
+    if (isTerminalGenerationError(result)) {
+      printTerminalGenerationError(result)
+      return 3
+    }
+    console.error(`❌ Error: ${result.message}`)
+    return 1
+  }
+  console.log(JSON.stringify(result))
   return 0
 }
 
@@ -526,6 +794,7 @@ function parseArgs(argv) {
     title: null,
     path: null,
     paths: [],
+    focusPaths: [],
     file: null,
     content: null,
     ext: null,
@@ -534,6 +803,12 @@ function parseArgs(argv) {
     tokensUsed: null,
     errorMessage: null,
     headCommit: null,
+    reviewPhase: null,
+    reviewStatus: null,
+    handoffFile: null,
+    writingPlanFile: null,
+    findingsFile: null,
+    summary: null,
   }
 
   let i = 2 // Skip 'node' and script name
@@ -567,8 +842,29 @@ function parseArgs(argv) {
         args.path = argv[++i]
         args.paths.push(args.path)
         break
+      case '--focus-path':
+        args.focusPaths.push(argv[++i])
+        break
       case '--head-commit':
         args.headCommit = argv[++i]
+        break
+      case '--phase':
+        args.reviewPhase = argv[++i]
+        break
+      case '--review-status':
+        args.reviewStatus = argv[++i]
+        break
+      case '--summary':
+        args.summary = argv[++i]
+        break
+      case '--handoff-file':
+        args.handoffFile = argv[++i]
+        break
+      case '--writing-plan-file':
+        args.writingPlanFile = argv[++i]
+        break
+      case '--findings-file':
+        args.findingsFile = argv[++i]
         break
       case '--file':
       case '-f':
@@ -582,10 +878,16 @@ function parseArgs(argv) {
         args.ext = argv[++i]
         break
       case '--structure-order':
-        // Collect all following non-flag arguments
+        // Collect all following non-flag arguments. Documentation examples use a
+        // comma-separated list, while a shell may also pass paths separately. Keep
+        // both forms equivalent so an otherwise valid page order cannot collapse
+        // into one nonexistent path at publication time.
         i++
         while (i < argv.length && !argv[i].startsWith('-')) {
-          args.structureOrder.push(argv[i])
+          for (const path of argv[i].split(',')) {
+            const normalized = path.trim()
+            if (normalized) args.structureOrder.push(normalized)
+          }
           i++
         }
         i-- // Back up one since the loop will increment
@@ -628,6 +930,9 @@ Commands:
   validate-mermaid  Validate Mermaid blocks in Markdown before submission
   read      Print a page's current content
   remove    Declare wiki pages as gone
+  review    Record a full-rebuild plan, plan amendment, QA, or recheck checkpoint
+  review-open  Persist the Writer handoff before synchronous Reviewer delegation
+  review-status  Print the persisted Reviewer state for one phase
   complete  Mark wiki generation as completed
   fail      Mark wiki generation as failed
 
@@ -661,9 +966,19 @@ Read Options:
 Remove Options:
   --path               Page path to remove. Repeat for several pages.
 
+Review Options:
+  --phase              One of: plan, plan_amendment, qa, recheck
+  --review-status      One of: passed, changes_requested
+  --path               Checked or planned page path. Repeat for several pages.
+  --focus-path         Core deep-dive page selected by plan review. Repeat as needed.
+  --summary            Short evidence-based review conclusion
+  --handoff-file       Markdown handoff file required by review-open
+  --writing-plan-file  JSON page-ownership plan required by Plan or amendment review-open
+  --findings-file      Actionable Markdown findings for changes_requested
+
 Complete Options:
   --head-commit        Commit that was documented, from \`git rev-parse HEAD\`
-  --structure-order    Ordered list of section identifiers
+  --structure-order    Ordered paths, comma- or whitespace-separated
   --model              Model name used for generation
   --tokens-used        Number of tokens used
 
@@ -675,6 +990,9 @@ Examples:
   node wiki_submit.js validate-mermaid --file ./page.md
   node wiki_submit.js read --generation-id 123 --path architecture/backend > current.md
   node wiki_submit.js remove --generation-id 123 --path modules/legacy-sync
+  node wiki_submit.js review-open --generation-id 123 --phase plan --path index --path architecture --summary "Proposed wiki plan" --handoff-file /tmp/wiki-plan.md --writing-plan-file /tmp/wiki-writing-plan.json
+  node wiki_submit.js review --generation-id 123 --phase plan --review-status passed --path index --path architecture --focus-path architecture --summary "Plan covers entry points and identifies its core deep dive"
+  node wiki_submit.js review-status --generation-id 123 --phase plan
   node wiki_submit.js complete --generation-id 123 --head-commit $(git rev-parse HEAD)
   node wiki_submit.js fail --generation-id 123 --error-message "Failed to analyze repository"
 `)
@@ -716,6 +1034,15 @@ async function main() {
     case 'remove':
       exitCode = await cmdRemove(args)
       break
+    case 'review':
+      exitCode = await cmdReview(args)
+      break
+    case 'review-open':
+      exitCode = await cmdReviewOpen(args)
+      break
+    case 'review-status':
+      exitCode = await cmdReviewStatus(args)
+      break
     case 'complete':
       exitCode = await cmdComplete(args)
       break
@@ -735,4 +1062,8 @@ async function main() {
   process.exit(exitCode)
 }
 
-main()
+if (require.main === module) {
+  main()
+}
+
+module.exports = { parseArgs }
