@@ -89,6 +89,17 @@ import { getDocumentProtection } from '@/apis/knowledge'
 export { deletedFolderAffectsActiveFolder, folderTreeContainsId }
 export { shouldDisableDocumentBatchActions } from '../hooks/useKnowledgeResourceSelection'
 
+const failClosedDocumentProtection: DocumentProtection = {
+  original_download_allowed: false,
+  copy_allowed: false,
+  watermark_text: null,
+}
+
+interface DocumentProtectionState {
+  requestKey: string | null
+  protection: DocumentProtection
+}
+
 export function resolveCurrentDocumentSnapshot(
   selectedDocument: KnowledgeDocument | null,
   documents: KnowledgeDocument[]
@@ -266,10 +277,12 @@ export function DocumentList({
   readOnly = false,
 }: DocumentListProps) {
   const { t } = useTranslation('knowledge')
-  const [documentProtection, setDocumentProtection] = useState<DocumentProtection>({
-    original_download_allowed: false,
-    copy_allowed: false,
-    watermark_text: null as string | null,
+  const documentProtectionRequestKey = `${knowledgeBase.id}:${String(
+    knowledgeBase.allow_document_download
+  )}`
+  const [documentProtectionState, setDocumentProtectionState] = useState<DocumentProtectionState>({
+    requestKey: null,
+    protection: failClosedDocumentProtection,
   })
   const [searchQuery, setSearchQuery] = useState('')
   const [sortField, setSortField] = useState<SortField>('createdAt')
@@ -282,24 +295,36 @@ export function DocumentList({
 
   useEffect(() => {
     let cancelled = false
+    setDocumentProtectionState({
+      requestKey: null,
+      protection: failClosedDocumentProtection,
+    })
     void getDocumentProtection(knowledgeBase.id)
       .then(protection => {
-        if (!cancelled) setDocumentProtection(protection)
+        if (!cancelled) {
+          setDocumentProtectionState({
+            requestKey: documentProtectionRequestKey,
+            protection,
+          })
+        }
       })
       .catch(() => {
         if (!cancelled) {
-          setDocumentProtection({
-            original_download_allowed: false,
-            copy_allowed: false,
-            watermark_text: null,
+          setDocumentProtectionState({
+            requestKey: null,
+            protection: failClosedDocumentProtection,
           })
         }
       })
     return () => {
       cancelled = true
     }
-  }, [knowledgeBase.allow_document_download, knowledgeBase.id])
+  }, [documentProtectionRequestKey, knowledgeBase.id])
 
+  const documentProtection =
+    documentProtectionState.requestKey === documentProtectionRequestKey
+      ? documentProtectionState.protection
+      : failClosedDocumentProtection
   const allowDownload = documentProtection.original_download_allowed
 
   // Folder state
