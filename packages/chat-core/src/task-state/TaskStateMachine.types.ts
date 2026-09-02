@@ -83,9 +83,6 @@ export interface UnifiedMessage {
     retrieval_summary?: RetrievalSummaryPayload
     reasoning_content?: string
     reasoning_chunk?: string
-    policy_blocked?: boolean
-    error_type?: string
-    error_message?: string
     blocks?: MessageBlock[]
     context_metrics?: ContextMetricsSnapshot
     /** Video generation config (stored in user message subtask for display) */
@@ -257,14 +254,7 @@ export type Event =
       subtaskId: number
       block: Partial<MessageBlock> & { id: string }
     }
-  | {
-      type: 'CHAT_ERROR'
-      subtaskId: number
-      error: string
-      messageId?: number
-      errorType?: string
-      allowTerminalMessageUpdate?: boolean
-    }
+  | { type: 'CHAT_ERROR'; subtaskId: number; error: string; messageId?: number; errorType?: string }
   | { type: 'CHAT_CANCELLED'; subtaskId: number }
   | { type: 'SEND_ACCEPTED'; acceptedAt: string }
   | { type: 'TASK_STATUS_RECEIVED'; taskStatus: ApiTaskStatus; updatedAt?: string }

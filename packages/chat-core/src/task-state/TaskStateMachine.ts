@@ -381,21 +381,8 @@ export class TaskStateMachine {
   /**
    * Handle chat:error event
    */
-  handleChatError(
-    subtaskId: number,
-    error: string,
-    messageId?: number,
-    errorType?: string,
-    options?: { allowTerminalMessageUpdate?: boolean }
-  ): void {
-    this.dispatch({
-      type: 'CHAT_ERROR',
-      subtaskId,
-      error,
-      messageId,
-      errorType,
-      allowTerminalMessageUpdate: options?.allowTerminalMessageUpdate,
-    })
+  handleChatError(subtaskId: number, error: string, messageId?: number, errorType?: string): void {
+    this.dispatch({ type: 'CHAT_ERROR', subtaskId, error, messageId, errorType })
   }
 
   /**

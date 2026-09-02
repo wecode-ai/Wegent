@@ -9,8 +9,6 @@
  * keyword matching as fallback.
  */
 
-import { PROMPT_PROTECTION_BLOCKED_ERROR_TYPE } from '@/types/socket'
-
 export type ErrorType =
   | 'context_length_exceeded'
   | 'quota_exceeded'
@@ -30,7 +28,6 @@ export type ErrorType =
   | 'model_protocol_error'
   | 'invalid_role'
   | 'permission_denied'
-  | 'prompt_protection_blocked'
   | 'generic_error'
 
 export interface ParsedError {
@@ -61,7 +58,6 @@ const VALID_BACKEND_TYPES = new Set<string>([
   'model_protocol_error',
   'invalid_role',
   'permission_denied',
-  PROMPT_PROTECTION_BLOCKED_ERROR_TYPE,
   'generic_error',
 ])
 
@@ -86,7 +82,6 @@ const BACKEND_TYPE_MAP: Record<string, ErrorType> = {
   model_protocol_error: 'model_protocol_error',
   invalid_role: 'invalid_role',
   permission_denied: 'permission_denied',
-  [PROMPT_PROTECTION_BLOCKED_ERROR_TYPE]: 'prompt_protection_blocked',
   generic_error: 'generic_error',
 }
 
@@ -107,7 +102,7 @@ export function parseError(error: Error | string, backendType?: string): ParsedE
       type,
       message: errorMessage,
       originalError: errorMessage,
-      retryable: type !== 'prompt_protection_blocked',
+      retryable: true,
     }
   }
 
@@ -375,8 +370,6 @@ export function getErrorDisplayMessage(
       return t('errors.invalid_role')
     case 'permission_denied':
       return t('errors.permission_denied')
-    case 'prompt_protection_blocked':
-      return t('errors.prompt_protection_blocked')
     default:
       return t('errors.generic_error')
   }

@@ -374,8 +374,6 @@ export interface ChatErrorPayload {
   task_id?: number
 }
 
-export const PROMPT_PROTECTION_BLOCKED_ERROR_TYPE = 'PROMPT_PROTECTION_BLOCKED'
-
 export interface ChatCancelledPayload {
   task_id: number
   subtask_id: number

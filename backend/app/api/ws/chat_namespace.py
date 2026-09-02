@@ -30,6 +30,7 @@ from app.api.ws.context_decorators import auto_task_context
 from app.api.ws.decorators import trace_websocket_event
 from app.api.ws.events import (
     ChatCancelPayload,
+    ChatDonePayload,
     ChatErrorPayload,
     ChatGuideAck,
     ChatGuidePayload,
@@ -201,10 +202,10 @@ async def _finalize_blocked_ai_trigger(
     *,
     task_id: int,
     assistant_subtask_id: int,
-) -> None:
+) -> Dict[str, Any]:
     """Finish a blocked turn, falling back to a terminal failure."""
     try:
-        await finalize_prompt_protection_block(
+        return await finalize_prompt_protection_block(
             task_id=task_id,
             subtask_id=assistant_subtask_id,
         )
@@ -231,6 +232,7 @@ async def _finalize_blocked_ai_trigger(
                 assistant_subtask_id,
                 type(fallback_exc).__name__,
             )
+        raise
 
 
 async def _handle_prompt_protection_block(
@@ -242,10 +244,13 @@ async def _handle_prompt_protection_block(
     task_room: str,
 ) -> None:
     """Persist a blocked turn before sending best-effort notifications."""
-    await _finalize_blocked_ai_trigger(
-        task_id=task_id,
-        assistant_subtask_id=assistant_subtask.id,
-    )
+    try:
+        final_result = await _finalize_blocked_ai_trigger(
+            task_id=task_id,
+            assistant_subtask_id=assistant_subtask.id,
+        )
+    except Exception:
+        return
     try:
         await namespace.emit(
             ServerEvents.CHAT_START,
@@ -259,11 +264,11 @@ async def _handle_prompt_protection_block(
             room=task_room,
         )
         await namespace.emit(
-            ServerEvents.CHAT_ERROR,
-            ChatErrorPayload(
+            ServerEvents.CHAT_DONE,
+            ChatDonePayload(
                 subtask_id=assistant_subtask.id,
-                error=BLOCKED_MESSAGE,
-                type=BLOCKED_ERROR_CODE,
+                offset=len(BLOCKED_MESSAGE),
+                result=sanitize_client_payload(final_result),
                 message_id=assistant_subtask.message_id,
                 task_id=task_id,
             ).model_dump(),

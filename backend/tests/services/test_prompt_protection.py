@@ -497,7 +497,10 @@ def test_pipeline_prompt_protection_uses_entrypoint_as_handoff_boundary():
 
 @pytest.mark.parametrize("shell_type", ["Chat", "ClaudeCode", "Agno", "Dify"])
 def test_openapi_responses_prompt_protection_uses_explicit_entrypoint(shell_type):
+    from app.api.ws import chat_namespace as _chat_namespace
     from app.services.chat.trigger import unified
+
+    assert _chat_namespace is not None
 
     request = ExecutionRequest(
         task_id=22,
@@ -600,10 +603,11 @@ async def test_blocked_turn_falls_back_to_failed_finalization(
         finalize_failure,
     )
 
-    await chat_namespace._finalize_blocked_ai_trigger(
-        task_id=22,
-        assistant_subtask_id=33,
-    )
+    with pytest.raises(RuntimeError, match="persistence failed"):
+        await chat_namespace._finalize_blocked_ai_trigger(
+            task_id=22,
+            assistant_subtask_id=33,
+        )
 
     finalize_block.assert_awaited_once_with(task_id=22, subtask_id=33)
     finalize_failure.assert_awaited_once_with(
@@ -623,7 +627,8 @@ async def test_blocked_turn_finalizes_when_notification_fails(
     namespace = SimpleNamespace(
         emit=AsyncMock(side_effect=RuntimeError("notification failed"))
     )
-    finalize = AsyncMock()
+    final_result = {"value": "该请求无法处理，请调整问题后再试。"}
+    finalize = AsyncMock(return_value=final_result)
     monkeypatch.setattr(chat_namespace, "_finalize_blocked_ai_trigger", finalize)
 
     await chat_namespace._handle_prompt_protection_block(
@@ -648,13 +653,22 @@ async def test_blocked_turn_finalizes_before_notifications(
 ) -> None:
     from app.api.ws import chat_namespace
 
-    events: list[str] = []
+    events: list[tuple[str, dict[str, Any]]] = []
 
     async def emit(event: str, payload: dict[str, Any], *, room: str) -> None:
-        events.append(event)
+        events.append((event, payload))
 
-    async def finalize(**kwargs: Any) -> None:
-        events.append("finalize")
+    final_result = {
+        "value": "该请求无法处理，请调整问题后再试。",
+        "policy_blocked": True,
+        "error_type": "PROMPT_PROTECTION_BLOCKED",
+        "error_message": "该请求无法处理，请调整问题后再试。",
+        "polling_url": "https://internal.example/status",
+    }
+
+    async def finalize(**kwargs: Any) -> dict[str, Any]:
+        events.append(("finalize", kwargs))
+        return final_result
 
     monkeypatch.setattr(chat_namespace, "_finalize_blocked_ai_trigger", finalize)
 
@@ -670,11 +684,42 @@ async def test_blocked_turn_finalizes_before_notifications(
         task_room="task:22",
     )
 
-    assert events == [
+    assert [event for event, _ in events] == [
         "finalize",
         chat_namespace.ServerEvents.CHAT_START,
-        chat_namespace.ServerEvents.CHAT_ERROR,
+        chat_namespace.ServerEvents.CHAT_DONE,
     ]
+    assert events[-1][1]["result"] == {
+        "value": "该请求无法处理，请调整问题后再试。",
+        "policy_blocked": True,
+        "error_type": "PROMPT_PROTECTION_BLOCKED",
+        "error_message": "该请求无法处理，请调整问题后再试。",
+    }
+
+
+@pytest.mark.asyncio
+async def test_blocked_turn_does_not_emit_completion_when_persistence_fails(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from app.api.ws import chat_namespace
+
+    namespace = SimpleNamespace(emit=AsyncMock())
+    finalize = AsyncMock(side_effect=RuntimeError("persistence failed"))
+    monkeypatch.setattr(chat_namespace, "_finalize_blocked_ai_trigger", finalize)
+
+    await chat_namespace._handle_prompt_protection_block(
+        namespace=namespace,
+        task_id=22,
+        assistant_subtask=SimpleNamespace(id=33, message_id=44),
+        blocked=PromptProtectionBlocked(
+            ("purpose_violation",),
+            bot_name="support",
+            shell_type="Chat",
+        ),
+        task_room="task:22",
+    )
+
+    namespace.emit.assert_not_awaited()
 
 
 @pytest.mark.asyncio
@@ -750,7 +795,7 @@ async def test_blocked_turn_is_persisted_completed_for_follow_up(monkeypatch):
     from app.services.chat.trigger import lifecycle
 
     blocked_result = {
-        "value": "",
+        "value": "该请求无法处理，请调整问题后再试。",
         "policy_blocked": True,
         "error_type": "PROMPT_PROTECTION_BLOCKED",
         "error_message": "该请求无法处理，请调整问题后再试。",
@@ -760,7 +805,7 @@ async def test_blocked_turn_is_persisted_completed_for_follow_up(monkeypatch):
     monkeypatch.setattr(lifecycle, "collect_completed_result", collect)
     monkeypatch.setattr(lifecycle, "persist_completed_result", persist)
 
-    await chat_namespace.finalize_prompt_protection_block(
+    result = await chat_namespace.finalize_prompt_protection_block(
         task_id=22,
         subtask_id=33,
     )
@@ -776,6 +821,7 @@ async def test_blocked_turn_is_persisted_completed_for_follow_up(monkeypatch):
         status="COMPLETED",
         result=blocked_result,
     )
+    assert result is blocked_result
 
 
 def test_device_chat_does_not_select_web_prompt_protection_entrypoint():

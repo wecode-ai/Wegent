@@ -225,13 +225,6 @@ describe('errorParser', () => {
         expect(result.type).toBe('llm_error')
         expect(result.retryable).toBe(true)
       })
-
-      it('should classify prompt-protection blocks as non-retryable', () => {
-        const result = parseError('该请求无法处理，请调整问题后再试。', 'PROMPT_PROTECTION_BLOCKED')
-
-        expect(result.type).toBe('prompt_protection_blocked')
-        expect(result.retryable).toBe(false)
-      })
     })
 
     describe('generic errors', () => {
@@ -365,7 +358,6 @@ describe('errorParser', () => {
         'errors.payload_too_large': 'Payload too large',
         'errors.network_error': 'Network error',
         'errors.timeout_error': 'Timeout error',
-        'errors.prompt_protection_blocked': 'Request blocked by prompt protection',
         'errors.generic_error': 'Generic error',
       }
       return translations[key] || key
@@ -395,16 +387,6 @@ describe('errorParser', () => {
       it('should return friendly message for forbidden errors', () => {
         const message = getErrorDisplayMessage('forbidden', mockT)
         expect(message).toBe('Access forbidden')
-      })
-
-      it('should return a dedicated prompt-protection message', () => {
-        const message = getErrorDisplayMessage(
-          '该请求无法处理，请调整问题后再试。',
-          mockT,
-          'PROMPT_PROTECTION_BLOCKED'
-        )
-
-        expect(message).toBe('Request blocked by prompt protection')
       })
     })
 

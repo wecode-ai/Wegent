@@ -131,19 +131,6 @@ export function buildMessagesFromSubtasks({
     const hasFrontendError =
       existingMessage && existingMessage.status === 'error' && existingMessage.error
     const subtaskResult = subtask.result as UnifiedMessage['result']
-    const isPolicyBlocked = subtaskResult?.policy_blocked === true
-    const resultErrorType = subtaskResult?.error_type
-    const resultErrorMessage = subtaskResult?.error_message
-    const resolvedError = isPolicyBlocked
-      ? resultErrorMessage
-      : hasFrontendError
-        ? existingMessage?.error
-        : subtask.error_message || undefined
-    const resolvedErrorType = isPolicyBlocked
-      ? resultErrorType
-      : hasFrontendError
-        ? existingMessage?.errorType
-        : resultErrorType
 
     if (!isUserMessage && subtask.status === 'RUNNING') {
       const existingAiMessage = messages.get(messageId)
@@ -198,10 +185,7 @@ export function buildMessagesFromSubtasks({
     if (existingSnapshotMessage && !isUserMessage) {
       const backendContent = typeof subtaskResult?.value === 'string' ? subtaskResult.value : ''
       const nextStatus: MessageStatus =
-        subtask.status === 'FAILED' ||
-        subtask.status === 'CANCELLED' ||
-        hasFrontendError ||
-        isPolicyBlocked
+        subtask.status === 'FAILED' || subtask.status === 'CANCELLED' || hasFrontendError
           ? 'error'
           : 'completed'
 
@@ -215,8 +199,10 @@ export function buildMessagesFromSubtasks({
         messageId: subtask.message_id,
         subtaskStatus: subtask.status,
         result: subtaskResult,
-        error: resolvedError,
-        errorType: resolvedErrorType,
+        error: hasFrontendError ? existingMessage?.error : subtask.error_message || undefined,
+        errorType: hasFrontendError
+          ? existingMessage?.errorType
+          : ((subtaskResult as Record<string, unknown>)?.error_type as string | undefined),
         isReasoningStreaming: false,
       })
       continue
@@ -237,7 +223,7 @@ export function buildMessagesFromSubtasks({
     let status: MessageStatus = 'completed'
     if (subtask.status === 'FAILED' || subtask.status === 'CANCELLED') {
       status = 'error'
-    } else if (hasFrontendError || isPolicyBlocked) {
+    } else if (hasFrontendError) {
       status = 'error'
     }
 
@@ -246,6 +232,14 @@ export function buildMessagesFromSubtasks({
       : typeof subtaskResult?.value === 'string'
         ? subtaskResult.value
         : ''
+
+    const errorField = hasFrontendError
+      ? existingMessage?.error
+      : subtask.error_message || undefined
+
+    const errorTypeField = hasFrontendError
+      ? existingMessage?.errorType
+      : ((subtaskResult as Record<string, unknown>)?.error_type as string | undefined)
 
     messages.set(messageId, {
       id: messageId,
@@ -265,8 +259,8 @@ export function buildMessagesFromSubtasks({
       shouldShowSender: isGroupChat && isUserMessage,
       subtaskStatus: subtask.status,
       result: subtaskResult,
-      error: resolvedError,
-      errorType: resolvedErrorType,
+      error: errorField,
+      errorType: errorTypeField,
     })
   }
 

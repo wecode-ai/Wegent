@@ -649,24 +649,27 @@ async def finalize_prompt_protection_block(
     *,
     subtask_id: int,
     task_id: int,
-) -> None:
+) -> Dict[str, Any]:
     """Complete a policy-blocked assistant turn while keeping its Task reusable."""
     result = await collect_completed_result(
         subtask_id,
         status="COMPLETED",
         result={
-            "value": "",
+            "value": BLOCKED_MESSAGE,
             "policy_blocked": True,
             "error_type": BLOCKED_ERROR_CODE,
             "error_message": BLOCKED_MESSAGE,
         },
     )
+    if result is None:
+        raise RuntimeError("Prompt-protection completion produced no result")
     await persist_completed_result(
         subtask_id=subtask_id,
         task_id=task_id,
         status="COMPLETED",
         result=result,
     )
+    return result
 
 
 async def _persist_standalone_workspace_path(
