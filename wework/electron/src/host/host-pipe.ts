@@ -12,7 +12,7 @@ import {
 
 const REQUEST_FD = 3
 const RESPONSE_FD = 4
-const MAX_FRAME_BYTES = 1024 * 1024
+const MAX_FRAME_BYTES = 64 * 1024 * 1024
 
 interface HostPipeSession {
   input: Readable

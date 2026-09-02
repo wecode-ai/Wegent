@@ -641,12 +641,11 @@ export function ChatInputCard({
       {/* Chat Input Card */}
       <div
         data-testid="chat-input-card"
-        className={`relative w-full max-w-[820px] mx-auto rounded-3xl border bg-base shadow-card-hover transition-colors flex flex-col justify-start ${isDragging ? 'border-primary ring-2 ring-primary/20' : 'border-primary/40'}`}
+        className={`relative mx-auto flex min-h-[112px] w-full max-w-[820px] flex-col justify-start rounded-2xl border bg-base shadow-card-hover transition-colors md:min-h-[146px] md:rounded-3xl ${isDragging ? 'border-primary ring-2 ring-primary/20' : 'border-primary/40'}`}
         onDragEnter={onDragEnter}
         onDragLeave={onDragLeave}
         onDragOver={onDragOver}
         onDrop={onDrop}
-        style={{ minHeight: '146px' }}
       >
         {/* Device Selector Tab - positioned at top left inside card, connected to border */}
         {!shouldHideChatInput && (
@@ -777,12 +776,14 @@ export function ChatInputCard({
               tipText={tipText}
               badge={
                 selectedTeam && !isUsingDefaultTeam ? (
-                  <SelectedTeamBadge
-                    team={selectedTeam}
-                    showClearButton={!hasMessages}
-                    onClear={onRestoreDefaultTeam}
-                    onEdit={onEditTeam}
-                  />
+                  <span className="hidden md:contents">
+                    <SelectedTeamBadge
+                      team={selectedTeam}
+                      showClearButton={!hasMessages}
+                      onClear={onRestoreDefaultTeam}
+                      onEdit={onEditTeam}
+                    />
+                  </span>
                 ) : undefined
               }
               isGroupChat={isGroupChat}
@@ -831,6 +832,15 @@ export function ChatInputCard({
             selectedTeam={selectedTeam}
             teams={teams}
             onTeamChange={onTeamChange}
+            onClearTeam={onRestoreDefaultTeam}
+            showClearTeamButton={Boolean(
+              !shouldHideChatInput &&
+              selectedTeam &&
+              !isUsingDefaultTeam &&
+              !hasMessages &&
+              !hideSelectors &&
+              onRestoreDefaultTeam
+            )}
             onTeamsRefresh={onTeamsRefresh}
             selectedModel={selectedModel}
             setSelectedModel={setSelectedModel}

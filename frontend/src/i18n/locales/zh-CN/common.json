@@ -325,6 +325,7 @@
     "active": "活跃",
     "inactive": "非活跃",
     "select_team": "选择一个智能体",
+    "clear_selection": "移除当前智能体",
     "recently_used": "最近使用",
     "search_team": "搜索智能体...",
     "no_bots": "没有机器人",

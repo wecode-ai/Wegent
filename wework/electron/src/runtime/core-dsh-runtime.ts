@@ -10,6 +10,8 @@ const PROFILE_STAMP = '.wework-runtime.json'
 const CORE_PLUGIN_PACKAGES = [
   ['@wegent/dsh-app-wework', 'wework-app'],
   ['@wegent/dsh-electron-host', 'wework-electron-host'],
+  ['@wegent/dsh-browser-runtime', 'wework-browser-runtime'],
+  ['@wegent/dsh-secure-storage', 'wework-secure-storage'],
   ['@wegent/dsh-executor-runtime', 'wework-executor-runtime'],
   ['@wegent/dsh-terminal-runtime', 'wework-terminal-runtime'],
   ['@wegent/dsh-ui-core-apps', 'wework-ui-core-apps'],
@@ -20,11 +22,13 @@ const CORE_PLUGIN_PACKAGES = [
   ['@wegent/dsh-ui-cloud-work', 'wework-ui-cloud-work'],
 ] as const
 type CorePluginPackage = (typeof CORE_PLUGIN_PACKAGES)[number][0]
-const CORE_UI_DEPENDENCIES = CORE_PLUGIN_PACKAGES.slice(4).map(([packageName]) => packageName)
+const CORE_UI_DEPENDENCIES = CORE_PLUGIN_PACKAGES.slice(6).map(([packageName]) => packageName)
 const REMOVED_CORE_DEPENDENCIES = ['@wegent/dsh-sidebar-example'] as const
 const CORE_HOST_BUNDLES = [
   '@deepseek-ai/dsh-base',
   '@wegent/dsh-electron-host',
+  '@wegent/dsh-browser-runtime',
+  '@wegent/dsh-secure-storage',
   '@wegent/dsh-terminal-runtime',
   '@wegent/dsh-app-wework',
   '@deepseek-ai/dsh-web-app',

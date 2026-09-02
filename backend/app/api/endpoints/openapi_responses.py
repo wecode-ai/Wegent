@@ -289,6 +289,19 @@ def _execution_model_type(execution_request: Any) -> str:
     return str(model_config.get("modelType") or "").lower()
 
 
+def _validate_generation_options_model(
+    request_body: ResponseCreateInput,
+    execution_request: Any,
+) -> None:
+    """Reject OpenAPI generation options for non-generation execution models."""
+    if _generation_options(request_body) is None:
+        return
+    if _execution_model_type(execution_request) not in {"image", "video"}:
+        raise ValueError(
+            "Generation options are only supported for image or video models"
+        )
+
+
 def _should_run_in_background(
     *,
     requested_background: bool,
@@ -744,6 +757,7 @@ async def _create_non_streaming_response_unified(
             generation_params=_generation_options(request_body),
             attachment_ids=linked_attachment_ids,
         )
+        _validate_generation_options_model(request_body, execution_request)
     except ExternalRefValidationError as e:
         logger.warning("Failed to build execution request: %s", e)
         await _persist_terminal_failure(
@@ -1131,6 +1145,7 @@ async def _create_streaming_response_unified(
             generation_params=_generation_options(request_body),
             attachment_ids=linked_attachment_ids,
         )
+        _validate_generation_options_model(request_body, execution_request)
         try:
             await enforce_prompt_protection(
                 request=execution_request,

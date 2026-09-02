@@ -291,7 +291,11 @@ async function fillEditorElement(bridge, selector, value) {
     text: value,
     timeoutMs: 5_000,
   })
-  assert.equal(result.ok, true, `Could not fill in-page annotation editor control: ${selector}`)
+  assert.equal(
+    result.ok,
+    true,
+    `Could not fill in-page annotation editor control: ${selector}; result=${JSON.stringify(result)}`
+  )
 }
 
 async function captureBrowserScreenshot(bridge, resultDir, name) {
@@ -469,8 +473,8 @@ async function enterElementAnnotationMode(control, bridge, uiTimeoutMs) {
         return layer ? getComputedStyle(layer).backgroundColor : null
       })()`
     ),
-    'rgba(0, 105, 251, 0.08)',
-    'Starting annotation mode did not cover the unselected page with the blue annotation layer'
+    'rgba(0, 0, 0, 0)',
+    'Starting annotation mode added a full-page color overlay'
   )
 }
 
@@ -762,6 +766,12 @@ async function clickMarker(bridge) {
   )
 }
 
+async function resumeAgentControl(control, browserLabel) {
+  await control.command('setEmbeddedBrowserAgentControlPaused', 'body', {
+    value: JSON.stringify({ label: browserLabel, paused: false }),
+  })
+}
+
 async function verifyCore(
   control,
   executorHome,
@@ -771,7 +781,7 @@ async function verifyCore(
   resultDir
 ) {
   const fixtureUrl = `${control.url}${FIXTURE_PATH}`
-  const { bridge } = await setupBrowser(
+  const { bridge, browserLabel } = await setupBrowser(
     control,
     executorHome,
     fixtureUrl,
@@ -785,6 +795,18 @@ async function verifyCore(
   })
 
   await enterElementAnnotationMode(control, bridge, uiTimeoutMs)
+  const spaFixtureUrl = await pageValue(
+    bridge,
+    `(() => {
+      history.pushState({}, '', '${FIXTURE_PATH}?view=latest')
+      return location.href
+    })()`
+  )
+  assert.equal(
+    spaFixtureUrl,
+    `${fixtureUrl}?view=latest`,
+    'The fixture did not complete same-document navigation before annotation'
+  )
   control.activateWindow('main')
   await captureScreenshot(control, 'browser-annotation-01-mode-active.png')
   await hoverElementAnnotationTarget(bridge, '#annotation-primary', uiTimeoutMs)
@@ -803,10 +825,43 @@ async function verifyCore(
     'The comment editor was not mounted inside the annotated page Shadow DOM'
   )
   assert.equal(
+    await pageValue(
+      bridge,
+      annotationRootExpression(`root => root.activeElement?.getAttribute('data-testid') ?? null`)
+    ),
+    'browser-annotation-comment-input',
+    'The first annotation editor lost focus after the screenshot state synchronized'
+  )
+  assert.equal(
     await pageValue(bridge, `document.querySelector('#page-click-state')?.textContent`),
     'not-clicked',
     'Selecting a target triggered the page action'
   )
+  assert.equal(
+    await pageValue(
+      bridge,
+      `document.dispatchEvent(new KeyboardEvent('keydown', {
+        bubbles: true,
+        cancelable: true,
+        key: 'Escape',
+      }))`
+    ),
+    false,
+    'Escape was not consumed while the annotation editor was open'
+  )
+  await waitForPageValue(
+    bridge,
+    annotationRootExpression(
+      `root => Boolean(root.querySelector(${JSON.stringify(OVERLAY_INPUT_SELECTOR)}))`
+    ),
+    false,
+    uiTimeoutMs,
+    'Escape did not close the annotation editor'
+  )
+  await control.command('waitFor', BROWSER_ANNOTATION_CLOSE_SELECTOR, {
+    timeoutMs: uiTimeoutMs,
+  })
+  await selectElementAnnotationTarget(control, bridge, '#annotation-primary', uiTimeoutMs)
   await submitOverlayComment(
     control,
     bridge,
@@ -877,6 +932,7 @@ async function verifyCore(
   await captureScreenshot(control, 'browser-annotation-03d-three-annotations.png')
 
   await clickMarker(bridge)
+  await resumeAgentControl(control, browserLabel)
   await waitForEditorElement(bridge, OVERLAY_INPUT_SELECTOR, uiTimeoutMs)
   await captureBrowserScreenshot(bridge, resultDir, 'browser-annotation-04-edit-card.png')
   await fillEditorElement(bridge, OVERLAY_INPUT_SELECTOR, 'Edited browser annotation comment')
@@ -885,6 +941,7 @@ async function verifyCore(
   await waitForAnnotationSave(control, bridge, editRevision, uiTimeoutMs)
 
   await clickMarker(bridge)
+  await resumeAgentControl(control, browserLabel)
   await waitForEditorElement(bridge, OVERLAY_DELETE_SELECTOR, uiTimeoutMs)
   const deleteRevision = await browserAnnotationRevision(control)
   await clickEditorElement(bridge, OVERLAY_DELETE_SELECTOR)
@@ -942,6 +999,25 @@ async function verifyCore(
     'Clearing annotations left a marker in the page'
   )
   await captureBrowserScreenshot(bridge, resultDir, 'browser-annotation-08-cleared.png')
+  assert.equal(
+    await pageValue(
+      bridge,
+      `document.dispatchEvent(new KeyboardEvent('keydown', {
+        bubbles: true,
+        cancelable: true,
+        key: 'Escape',
+      }))`
+    ),
+    false,
+    'Escape was not consumed while annotation mode was active'
+  )
+  await waitForElementCount(
+    control,
+    BROWSER_ANNOTATION_CLOSE_SELECTOR,
+    0,
+    uiTimeoutMs,
+    'Escape did not exit annotation mode'
+  )
 }
 
 async function verifyAnchors(control, executorHome, uiTimeoutMs, modelResponseTimeoutMs) {

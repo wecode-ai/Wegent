@@ -5,7 +5,15 @@
 'use client'
 
 import React, { useState, useEffect, useMemo } from 'react'
-import { Check, ChevronLeft, ChevronRight, Search, Settings } from 'lucide-react'
+import {
+  Check,
+  ChevronLeft,
+  ChevronRight,
+  Lock,
+  Search,
+  Settings,
+  SlidersHorizontal,
+} from 'lucide-react'
 import { useRouter } from 'next/navigation'
 import { useTranslation } from '@/hooks/useTranslation'
 import { cn } from '@/lib/utils'
@@ -55,6 +63,7 @@ interface MobileModelSelectorProps {
   taskId?: number | null
   taskModelId?: string | null
   modelCategoryType?: ModelCategoryType
+  triggerVariant?: 'compact' | 'settings-row'
 }
 
 /**
@@ -73,6 +82,7 @@ export default function MobileModelSelector({
   taskId,
   taskModelId,
   modelCategoryType = 'llm',
+  triggerVariant = 'compact',
 }: MobileModelSelectorProps) {
   const { t } = useTranslation()
   const router = useRouter()
@@ -357,19 +367,46 @@ export default function MobileModelSelector({
         <button
           type="button"
           disabled={isDisabled}
+          data-testid="mobile-model-selector-trigger"
           className={cn(
-            'flex w-full items-center min-w-0 max-w-full rounded-full px-3 py-2 h-9',
-            'border transition-colors overflow-hidden',
-            modelSelection.isModelRequired
-              ? 'border-error text-error bg-error/5'
-              : 'border-border bg-base text-text-primary',
+            'flex w-full items-center min-w-0 max-w-full text-left transition-colors overflow-hidden',
+            triggerVariant === 'settings-row'
+              ? 'min-h-14 gap-3 px-3 py-2.5 hover:bg-hover active:bg-hover'
+              : 'h-11 rounded-xl border px-3 py-2',
+            triggerVariant === 'compact' &&
+              (modelSelection.isModelRequired
+                ? 'border-error text-error bg-error/5'
+                : 'border-border bg-base text-text-primary'),
             modelSelection.isLoading || externalLoading ? 'animate-pulse' : '',
             'focus:outline-none focus:ring-0',
             'active:opacity-70',
-            'disabled:cursor-not-allowed disabled:opacity-50'
+            'disabled:cursor-not-allowed disabled:opacity-60'
           )}
         >
-          <span className="flex-1 truncate text-xs min-w-0">{modelSelection.getDisplayText()}</span>
+          {triggerVariant === 'settings-row' ? (
+            <>
+              <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-surface text-text-secondary">
+                <SlidersHorizontal className="h-5 w-5" aria-hidden="true" />
+              </span>
+              <span className="min-w-0 flex-1">
+                <span className="block truncate text-sm font-medium text-text-primary">
+                  {t('common:models.label', '模型')}
+                </span>
+                <span className="mt-0.5 block truncate text-xs text-text-muted">
+                  {modelSelection.getDisplayText()}
+                </span>
+              </span>
+              {isDisabled ? (
+                <Lock className="h-4 w-4 shrink-0 text-text-muted" aria-hidden="true" />
+              ) : (
+                <ChevronRight className="h-4 w-4 shrink-0 text-text-muted" aria-hidden="true" />
+              )}
+            </>
+          ) : (
+            <span className="flex-1 truncate text-xs min-w-0">
+              {modelSelection.getDisplayText()}
+            </span>
+          )}
         </button>
       </DrawerTrigger>
 
@@ -407,7 +444,7 @@ export default function MobileModelSelector({
               onFocus={() => setIsSearchFocused(true)}
               onBlur={() => setIsSearchFocused(false)}
               className={cn(
-                'w-full h-9 pl-9 pr-3 rounded-lg',
+                'w-full h-11 pl-9 pr-3 rounded-lg',
                 'bg-[#e5e5ea] dark:bg-[#2c2c2e]',
                 'text-sm text-text-primary placeholder:text-[#8e8e93]',
                 'border-0 outline-none focus:ring-0'

@@ -137,11 +137,14 @@ def _apply_generation_params(
     model_config: Dict[str, Any],
     generate_params: Any,
 ) -> None:
-    """Validate generation options against the selected model type and apply them."""
+    """Apply generation options when the execution model directly generates media."""
     if generate_params is None:
         return
 
     model_type = str(model_config.get("modelType") or "").strip().lower()
+    if model_type not in {"image", "video"}:
+        return
+
     if model_type == "image":
         unsupported = [
             name
@@ -157,10 +160,6 @@ def _apply_generation_params(
         if _generation_param(generate_params, "size") is not None:
             raise ValueError("Video generation does not support option: size")
         apply_video_generation_params(model_config, generate_params)
-    else:
-        raise ValueError(
-            "Generation options are only supported for image or video models"
-        )
 
     logger.info(
         "[build_execution_request] Generation params applied: "

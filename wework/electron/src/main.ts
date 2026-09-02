@@ -45,6 +45,7 @@ import {
 } from './host/embedded-browser-manager.js'
 import { EmbeddedBrowserBridge } from './host/embedded-browser-bridge.js'
 import { ComputerUseService } from './host/computer-use-service.js'
+import { restoreComputerUseAfterStartup } from './host/computer-use-startup.js'
 import { materializeBundledRuntimes } from './runtime/bundled-runtime-materializer.js'
 import { waitForRendererSelector } from './host/renderer-readiness.js'
 import { desktopWindowFrameOptions } from './host/window-layout.js'
@@ -58,8 +59,10 @@ import {
   startupSplashBlocksMainWindowActivation,
   type StartupSplashTheme,
 } from './host/startup-splash.js'
+import { assertStartupRecoverySender, StartupRecoveryService } from './host/startup-recovery.js'
 import { ElectronTrayManager, type TrayAction } from './host/tray-manager.js'
 import { createTrayIcon } from './host/tray-icon.js'
+import { trayGuidForApplicationId } from './host/tray-guid.js'
 import { TrayNativeStatusController } from './host/tray-native-status.js'
 import { WindowClosePolicy, type WindowCloseDecision } from './host/window-close-policy.js'
 import { AppUpdateService } from './host/app-update-service.js'
@@ -73,6 +76,7 @@ import {
 import { SystemResumeBridge } from './host/system-resume-bridge.js'
 import {
   prepareDesktopComponents,
+  shouldStageDesktopComponentUpdates,
   type DesktopComponentUpdateController,
 } from './runtime/desktop-components.js'
 import {
@@ -89,6 +93,7 @@ import { GlobalShortcutController } from './host/global-shortcut-controller.js'
 import { resolveDshAppRoute } from './host/dsh-app-route.js'
 import { BrowserAnnotationController } from './host/browser-annotation-controller.js'
 import { LogRetentionService, type LogCleanupResult } from './runtime/log-retention.js'
+import { SecureValueStore } from './host/secure-value-store.js'
 
 const packageRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const packageMetadata = createRequire(import.meta.url)('../package.json') as {
@@ -96,6 +101,7 @@ const packageMetadata = createRequire(import.meta.url)('../package.json') as {
   weworkUpdateBaseUrl?: string
 } & BrandRuntimeMetadata
 const dshPreloadPath = resolve(packageRoot, 'dist/dsh-preload.cjs')
+const startupSplashPreloadPath = resolve(packageRoot, 'dist/startup-splash-preload.cjs')
 const browserAnnotationPreloadPath = resolve(packageRoot, 'dist/browser-annotation-preload.cjs')
 const developmentResourcesRoot = resolve(packageRoot, '..', 'resources')
 const { autoUpdater } = electronUpdater
@@ -110,6 +116,20 @@ const applicationId =
   packageMetadata.weworkAppId?.trim() ||
   'io.wecode.wework'
 const DEFAULT_POPOUT_WINDOW_SHORTCUT = 'Alt+Shift+Space'
+const startupStartedAt = performance.now()
+
+function logStartupStep(
+  step: string,
+  status: 'started' | 'completed' | 'failed',
+  details: Record<string, unknown> = {}
+): void {
+  console.info('[startup]', {
+    step,
+    status,
+    elapsedMs: Math.round(performance.now() - startupStartedAt),
+    ...details,
+  })
+}
 
 const configuredUserDataPath = process.env.WEWORK_USER_DATA_DIR?.trim()
 const userDataPath = resolve(configuredUserDataPath || join(app.getPath('appData'), applicationId))
@@ -145,15 +165,18 @@ let pendingSystemDrops: Array<{
 let runtimeError: string | null = null
 let runtimePhase: 'initializing' | 'ready' | 'failed' = 'initializing'
 let runtimeStartPromise: Promise<void> | null = null
+let computerUseStartupScheduled = false
 let electronNodeRuntimePromise: Promise<ElectronNodeRuntime> | null = null
 let quitting = false
 let shutdownPromise: Promise<void> | null = null
 let dockVisible = true
 let e2eForegroundActivationAllowed = false
 let preferences: PreferencesStore | null = null
+let rendererStorage: RendererStorageStore | null = null
 let cloudCredentials: CloudCredentialService | null = null
 let windowClosePolicy: WindowClosePolicy | null = null
 let startupSplash: StartupSplash | null = null
+let startupRecovery: StartupRecoveryService | null = null
 let componentUpdates: DesktopComponentUpdateController | null = null
 let trayManager: ElectronTrayManager<Electron.Menu | null, Tray> | null = null
 let trayNativeStatus: TrayNativeStatusController | null = null
@@ -387,6 +410,7 @@ const loadPrimaryDshView = createSingleFlight(async (): Promise<void> => {
   if (!mainWindow || !desktopRuntime) return
   if (!desktopRuntime.state().ready) return
   if (primaryDshLoaded) return
+  logStartupStep('primary-renderer-load', 'started')
   rendererHealth.loading()
   const dshUrl = desktopRuntime.coreDshUrl()
   const contents = mainWindow.webContents
@@ -399,6 +423,7 @@ const loadPrimaryDshView = createSingleFlight(async (): Promise<void> => {
     primaryDshLoaded = true
     runtimeError = null
     rendererHealth.ready()
+    logStartupStep('primary-renderer-load', 'completed')
   })
   contents.on('unresponsive', () => rendererHealth.unresponsive())
   contents.on('responsive', () => rendererHealth.responsive())
@@ -416,12 +441,22 @@ const loadPrimaryDshView = createSingleFlight(async (): Promise<void> => {
     })
   })
   try {
+    await rendererStorage?.prepareOrigin(new URL(dshUrl).origin, {
+      clearAll: () => contents.session.clearData({ dataTypes: ['localStorage'] }),
+      clearOrigin: origin =>
+        contents.session.clearData({
+          dataTypes: ['localStorage'],
+          origins: [origin],
+          originMatchingMode: 'origin-in-all-contexts',
+        }),
+    })
     await contents.loadURL(dshUrl, {
       extraHeaders: 'X-Wework-Window-Label: main',
     })
   } catch (error) {
     primaryDshLoaded = false
     rendererHealth.failed('renderer_load_failed')
+    logStartupStep('primary-renderer-load', 'failed')
     throw error
   }
 })
@@ -711,6 +746,7 @@ async function updateDesktopPreferences(
 }
 
 async function createWindow(startupTheme: StartupSplashTheme): Promise<void> {
+  logStartupStep('windows-create', 'started', { theme: startupTheme })
   mainWindow = new BrowserWindow({
     ...desktopWindowFrameOptions(),
     width: 1440,
@@ -735,6 +771,7 @@ async function createWindow(startupTheme: StartupSplashTheme): Promise<void> {
     backgroundColor: startupTheme === 'dark' ? '#101316' : '#fafafa',
     show: false,
     webPreferences: {
+      preload: startupSplashPreloadPath,
       nodeIntegration: false,
       contextIsolation: true,
       sandbox: true,
@@ -781,11 +818,18 @@ async function createWindow(startupTheme: StartupSplashTheme): Promise<void> {
   const mainShellLoading = mainWindow.loadFile(resolve(packageRoot, 'dist/shell/index.html'), {
     query: { theme: startupTheme },
   })
+  logStartupStep('startup-splash-load', 'started')
   await startupSplashWindow.loadFile(resolve(packageRoot, 'dist/shell/startup-splash/index.html'), {
     query: { theme: startupTheme },
   })
+  logStartupStep('startup-splash-load', 'completed')
+  logStartupStep('startup-splash-show', 'started')
   await startupSplash.show()
+  logStartupStep('startup-splash-show', 'completed')
+  logStartupStep('main-shell-load', 'started')
   await mainShellLoading
+  logStartupStep('main-shell-load', 'completed')
+  logStartupStep('windows-create', 'completed')
 }
 
 async function setDockVisible(visible: boolean): Promise<void> {
@@ -881,8 +925,9 @@ function dispatchTrayAction(action: TrayAction): void {
 function createTrayManager(): ElectronTrayManager<Electron.Menu | null, Tray> {
   const resourcesRoot = app.isPackaged ? process.resourcesPath : developmentResourcesRoot
   const iconPath = join(resourcesRoot, 'icons', '128x128.png')
+  const trayGuid = trayGuidForApplicationId(applicationId)
   return new ElectronTrayManager({
-    createTray: () => new Tray(createTrayIcon(nativeImage, iconPath)),
+    createTray: () => new Tray(createTrayIcon(nativeImage, iconPath), trayGuid),
     buildMenu: template => Menu.buildFromTemplate(template as MenuItemConstructorOptions[]),
     dispatchAction: dispatchTrayAction,
     applyIcon: (tray, state) => {
@@ -898,6 +943,21 @@ function createTrayManager(): ElectronTrayManager<Electron.Menu | null, Tray> {
 }
 
 function installIpc(): void {
+  ipcMain.handle('startup-recovery:retry', event => {
+    assertStartupRecoverySender(event.sender.id, startupSplashWindow?.webContents.id ?? null)
+    logStartupStep('startup-recovery-retry', 'started')
+    return requiredStartupRecovery().run('retry')
+  })
+  ipcMain.handle('startup-recovery:recover-workbench', event => {
+    assertStartupRecoverySender(event.sender.id, startupSplashWindow?.webContents.id ?? null)
+    logStartupStep('startup-recovery-workbench', 'started')
+    return requiredStartupRecovery().run('workbench')
+  })
+  ipcMain.handle('startup-recovery:reset-app-state', event => {
+    assertStartupRecoverySender(event.sender.id, startupSplashWindow?.webContents.id ?? null)
+    logStartupStep('startup-recovery-app-state', 'started')
+    return requiredStartupRecovery().run('app-state')
+  })
   ipcMain.handle('cloud-credentials:get-device-public-key', () =>
     requiredCloudCredentials().devicePublicKey()
   )
@@ -1043,9 +1103,10 @@ function smartAppRuntimeHost(): SmartAppRuntimeHost | null {
 
 async function configureDesktopRuntime(): Promise<void> {
   if (desktopRuntime) return
+  logStartupStep('runtime-configure', 'started')
   const environment = await desktopEnvironment()
   if (!preferences) throw new Error('Desktop preferences are unavailable')
-  const rendererStorage = new RendererStorageStore(app.getPath('userData'))
+  if (!rendererStorage) throw new Error('Renderer storage is unavailable')
   workbenchPlugins = new WorkbenchPluginManager()
   const feedback = new FeedbackBundleManager({
     appVersion: () => app.getVersion(),
@@ -1053,6 +1114,7 @@ async function configureDesktopRuntime(): Promise<void> {
     downloadsDirectory: app.getPath('downloads'),
     logDirectories: [app.getPath('logs')],
   })
+  const secureStorage = new SecureValueStore(app.getPath('userData'))
   embeddedBrowser = new EmbeddedBrowserManager(app.getPath('userData'), event => {
     desktopHostEvents.publish('browser.event', { ...event })
   })
@@ -1073,8 +1135,6 @@ async function configureDesktopRuntime(): Promise<void> {
   computerUse = new ComputerUseService(
     environment.WEGENT_EXECUTOR_HOME?.trim() || join(app.getPath('home'), '.wework')
   )
-  const savedPreferences = await preferences.read()
-  await computerUse.setEnabled(savedPreferences.computerUseEnabled === true)
   const runtimeRoot = environment.WEWORK_HARNESS_RUNTIME_ROOT?.trim()
   if (runtimeRoot) {
     smartApps = new SmartAppManager({
@@ -1126,6 +1186,7 @@ async function configureDesktopRuntime(): Promise<void> {
               taskId: taskAddressId,
             }),
           plugins: workbenchPlugins,
+          secureStorage,
           updatePreferences: updateDesktopPreferences,
         },
         {
@@ -1146,12 +1207,20 @@ async function configureDesktopRuntime(): Promise<void> {
           },
           hideMainWindow: hideMainWindowToBackground,
           dockVisible: () => dockVisible,
-          rendererStartupReady: async () => {
+          rendererStartupReady: async source => {
             if (!mainWindow || mainWindow.isDestroyed()) return
+            logStartupStep('renderer-startup-ready', 'completed', { source })
             if (!keepE2EWindowInBackground) mainWindow.show()
+            logStartupStep('main-window-show', 'completed')
             await startupSplash?.close({
               capturePath: process.env.WEWORK_E2E_STARTUP_SPLASH_CAPTURE?.trim(),
             })
+            logStartupStep('startup-splash-close', 'completed')
+            scheduleComputerUseStartup()
+          },
+          rendererStartupFailed: () => {
+            logStartupStep('renderer-startup', 'failed')
+            return startupSplash?.showError()
           },
           startupSplashSnapshot: () => startupSplash?.snapshot() ?? null,
           trayActivate: activation => trayManager?.activate(activation) ?? false,
@@ -1232,6 +1301,24 @@ async function configureDesktopRuntime(): Promise<void> {
     },
     apply: status => trayManager?.setNativeStatus(status),
   })
+  logStartupStep('runtime-configure', 'completed')
+}
+
+function scheduleComputerUseStartup(): void {
+  if (computerUseStartupScheduled || quitting) return
+  const service = computerUse
+  const store = preferences
+  if (!service || !store) return
+  computerUseStartupScheduled = true
+  setImmediate(() => {
+    void restoreComputerUseAfterStartup({
+      isShuttingDown: () => quitting || computerUse !== service,
+      readPreferences: () => store.read(),
+      setEnabled: enabled => service.setEnabled(enabled),
+    }).catch(error => {
+      console.error('[computer-use] lazy startup failed', error)
+    })
+  })
 }
 
 function notifyRuntimeChanged(): void {
@@ -1240,24 +1327,32 @@ function notifyRuntimeChanged(): void {
 
 function startDesktopRuntime(): Promise<void> {
   if (runtimeStartPromise) return runtimeStartPromise
+  logStartupStep('desktop-runtime-start', 'started')
   runtimePhase = 'initializing'
   runtimeError = null
   notifyRuntimeChanged()
   runtimeStartPromise = (async () => {
     await configureDesktopRuntime()
+    logStartupStep('core-dsh-start', 'started')
     await desktopRuntime?.start()
+    logStartupStep('core-dsh-start', 'completed')
     trayNativeStatus?.start()
     await loadPrimaryDshView()
+    logStartupStep('component-update-confirmation', 'started')
     await componentUpdates?.confirmStartup()
+    logStartupStep('component-update-confirmation', 'completed')
     runtimePhase = 'ready'
-    void componentUpdates
-      ?.stageAvailableUpdate()
-      .then(staged => {
-        if (staged) console.log('[components] update staged for the next application restart')
-      })
-      .catch(error => {
-        console.error('[components] update check failed', error)
-      })
+    logStartupStep('desktop-runtime-start', 'completed')
+    if (shouldStageDesktopComponentUpdates(process.env)) {
+      void componentUpdates
+        ?.stageAvailableUpdate()
+        .then(staged => {
+          if (staged) console.log('[components] update staged for the next application restart')
+        })
+        .catch(error => {
+          console.error('[components] update check failed', error)
+        })
+    }
   })()
     .catch(async error => {
       if (await componentUpdates?.rollbackStartup()) {
@@ -1268,10 +1363,14 @@ function startDesktopRuntime(): Promise<void> {
       }
       runtimePhase = 'failed'
       runtimeError = error instanceof Error ? error.message : String(error)
+      logStartupStep('desktop-runtime-start', 'failed', {
+        errorType: error instanceof Error ? error.name : typeof error,
+      })
       console.error('[runtime] startup failed', error)
-      if (!keepE2EWindowInBackground) mainWindow?.show()
-      void startupSplash?.close().catch(splashError => {
-        console.error('[startup-splash] failed to close after runtime failure', splashError)
+      void startupSplash?.showError().catch(async splashError => {
+        console.error('[startup-splash] failed to show runtime failure', splashError)
+        if (!keepE2EWindowInBackground) mainWindow?.show()
+        await startupSplash?.close()
       })
     })
     .finally(() => {
@@ -1283,19 +1382,39 @@ function startDesktopRuntime(): Promise<void> {
 
 if (hasSingleInstanceLock) {
   app.whenReady().then(async () => {
+    logStartupStep('electron-ready', 'completed')
+    logStartupStep('log-retention-start', 'started')
     await logRetention.start()
+    logStartupStep('log-retention-start', 'completed')
     if (keepE2EWindowInBackground) {
       app.hide()
       app.dock?.hide()
       dockVisible = false
     }
     preferences = new PreferencesStore(app.getPath('userData'))
+    rendererStorage = new RendererStorageStore(app.getPath('userData'))
+    logStartupStep('desktop-stores-create', 'completed')
     popoutShortcut = new GlobalShortcutController(globalShortcut, showPopoutWindow, error =>
       console.error('[popout-window] global shortcut failed', error)
     )
     cloudCredentials = new CloudCredentialService(app.getPath('userData'))
+    startupRecovery = new StartupRecoveryService({
+      rendererStorage,
+      preferences,
+      cloudCredentials,
+      clearCache: () => session.defaultSession.clearCache(),
+      clearAppStorage: () =>
+        session.defaultSession.clearStorageData({
+          storages: ['serviceworkers', 'cachestorage'],
+        }),
+      log: logStartupStep,
+      relaunch: () => app.relaunch(),
+      shutdown: () => requestApplicationShutdown(() => app.exit(0)),
+    })
+    logStartupStep('startup-recovery-install', 'completed')
     installDshWindowLabelHeaders()
     installIpc()
+    logStartupStep('desktop-ipc-install', 'completed')
     systemResume.start()
     windowClosePolicy = new WindowClosePolicy({
       read: async () => {
@@ -1315,6 +1434,7 @@ if (hasSingleInstanceLock) {
     createdTrayManager.create()
     trayManager = createdTrayManager
     const startupPreferences = await preferences.read()
+    logStartupStep('startup-preferences-read', 'completed')
     try {
       popoutShortcut.configure(resolvePopoutShortcut(startupPreferences))
     } catch (error) {
@@ -1451,6 +1571,11 @@ function requiredPreferences(): PreferencesStore {
 function requiredCloudCredentials(): CloudCredentialService {
   if (!cloudCredentials) throw new Error('Desktop cloud credentials are unavailable')
   return cloudCredentials
+}
+
+function requiredStartupRecovery(): StartupRecoveryService {
+  if (!startupRecovery) throw new Error('Startup recovery is unavailable')
+  return startupRecovery
 }
 
 function requiredText(value: unknown, name: string): string {

@@ -20,6 +20,7 @@ const testState = vi.hoisted(() => ({
     getSelection: ReturnType<typeof vi.fn>
     getSelectionPosition: ReturnType<typeof vi.fn>
     hasSelection: ReturnType<typeof vi.fn>
+    attachCustomKeyEventHandler: ReturnType<typeof vi.fn>
     onData: ReturnType<typeof vi.fn>
     onResize: ReturnType<typeof vi.fn>
     onScroll: ReturnType<typeof vi.fn>
@@ -85,6 +86,7 @@ vi.mock('@xterm/xterm', () => ({
       getSelection: vi.fn(() => ''),
       getSelectionPosition: vi.fn(() => undefined),
       hasSelection: vi.fn(() => false),
+      attachCustomKeyEventHandler: vi.fn(),
       onData: vi.fn((handler: (data: string) => void) => {
         dataHandlers.push(handler)
         return { dispose: vi.fn() }
