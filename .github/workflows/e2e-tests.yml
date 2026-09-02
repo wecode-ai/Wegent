@@ -892,8 +892,11 @@ jobs:
           PY
           )
           test -x executor/target/release/wegent-executor
-          WEGENT_AUTH_TOKEN="$TOKEN" \
-            nohup executor/target/release/wegent-executor > executor/local-executor.log 2>&1 &
+          nohup env \
+            -u GIT_TOKEN_AES_KEY \
+            -u GIT_TOKEN_AES_IV \
+            WEGENT_AUTH_TOKEN="$TOKEN" \
+            executor/target/release/wegent-executor > executor/local-executor.log 2>&1 &
           echo $! > executor/local-executor.pid
 
       - name: Start Executor Manager
