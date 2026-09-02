@@ -352,6 +352,7 @@
     "model_protocol_error": "模型协议不匹配：当前模型不支持此请求格式，请切换兼容的模型",
     "invalid_role": "模型参数异常：消息角色格式不兼容，建议切换模型",
     "permission_denied": "无权限使用当前模型，请切换到有权限的模型",
+    "prompt_protection_blocked": "请求已被提示词防护拦截，请调整问题后再试",
     "error_details": "错误详情",
     "copy_diagnostic": "复制诊断信息给开发者",
     "copy_diagnostic_success": "诊断信息已复制到剪贴板",

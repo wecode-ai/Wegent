@@ -28,6 +28,7 @@ export type ErrorType =
   | 'model_protocol_error'
   | 'invalid_role'
   | 'permission_denied'
+  | 'prompt_protection_blocked'
   | 'generic_error'
 
 export interface ParsedError {
@@ -58,6 +59,7 @@ const VALID_BACKEND_TYPES = new Set<string>([
   'model_protocol_error',
   'invalid_role',
   'permission_denied',
+  'PROMPT_PROTECTION_BLOCKED',
   'generic_error',
 ])
 
@@ -82,6 +84,7 @@ const BACKEND_TYPE_MAP: Record<string, ErrorType> = {
   model_protocol_error: 'model_protocol_error',
   invalid_role: 'invalid_role',
   permission_denied: 'permission_denied',
+  PROMPT_PROTECTION_BLOCKED: 'prompt_protection_blocked',
   generic_error: 'generic_error',
 }
 
@@ -102,7 +105,7 @@ export function parseError(error: Error | string, backendType?: string): ParsedE
       type,
       message: errorMessage,
       originalError: errorMessage,
-      retryable: true,
+      retryable: type !== 'prompt_protection_blocked',
     }
   }
 
@@ -370,6 +373,8 @@ export function getErrorDisplayMessage(
       return t('errors.invalid_role')
     case 'permission_denied':
       return t('errors.permission_denied')
+    case 'prompt_protection_blocked':
+      return t('errors.prompt_protection_blocked')
     default:
       return t('errors.generic_error')
   }

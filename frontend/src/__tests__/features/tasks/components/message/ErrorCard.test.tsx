@@ -93,6 +93,27 @@ describe('ErrorCard', () => {
     expect(mockGetRecommendedModels).toHaveBeenCalledWith('rate_limit')
   })
 
+  it('does not offer retry for prompt-protection blocks', () => {
+    render(
+      <ErrorCard
+        error="该请求无法处理，请调整问题后再试。"
+        errorType="PROMPT_PROTECTION_BLOCKED"
+        subtaskId={42}
+        taskId={100}
+        timestamp={1000}
+        message={{
+          ...createErrorMessage(1000, '该请求无法处理，请调整问题后再试。'),
+          errorType: 'PROMPT_PROTECTION_BLOCKED',
+        }}
+        isLastErrorMessage={true}
+        onRetry={jest.fn()}
+      />
+    )
+
+    expect(screen.getByText('errors.prompt_protection_blocked')).toBeInTheDocument()
+    expect(screen.queryByTestId('error-card-retry')).not.toBeInTheDocument()
+  })
+
   it('reopens a new last-error instance after switch-model retry fails again', async () => {
     const user = userEvent.setup()
     const onRetryWithModel = jest.fn().mockResolvedValue(true)

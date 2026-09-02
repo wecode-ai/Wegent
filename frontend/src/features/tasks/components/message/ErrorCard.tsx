@@ -152,7 +152,7 @@ export function ErrorCard({
   )
 
   const showNewConversation = NEW_CONVERSATION_ERROR_TYPES.has(parsedError.type)
-  const showRetry = !!onRetry && !areRecommendationsLoading
+  const showRetry = parsedError.retryable !== false && !!onRetry && !areRecommendationsLoading
 
   const hintKey = useMemo(() => {
     switch (parsedError.type) {
