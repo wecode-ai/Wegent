@@ -295,7 +295,7 @@ export function SitesPage({ onNavigate, search = window.location.search }: Sites
   ])
   const pluginApi = useMemo(() => {
     if (!isLocalFirst) {
-      return createPluginApi(createHttpClient({ baseUrl: apiBaseUrl }))
+      return createPluginApi(createHttpClient({ baseUrl: apiBaseUrl }), apiBaseUrl)
     }
     if (!cloudConnection.isConnected || !cloudConnection.apiBaseUrl || !cloudConnection.token) {
       return null
@@ -307,7 +307,8 @@ export function SitesPage({ onNavigate, search = window.location.search }: Sites
         baseUrl: cloudConnection.apiBaseUrl,
         getToken: () => token,
         redirectOnUnauthorized: false,
-      })
+      }),
+      cloudConnection.apiBaseUrl
     )
   }, [
     apiBaseUrl,

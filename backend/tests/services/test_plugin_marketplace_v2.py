@@ -205,13 +205,6 @@ def _write_official_source(
     return root
 
 
-def _presigned_upload(
-    stored_packages: dict[str, bytes], package: bytes, key: str
-) -> tuple[str, datetime]:
-    stored_packages[key] = package
-    return f"https://store/{key}", datetime.now(timezone.utc)
-
-
 def _mock_package_storage(
     monkeypatch, stored_packages: dict[str, bytes], package: bytes | None = None
 ) -> None:
@@ -223,13 +216,14 @@ def _mock_package_storage(
         stored_packages[key] = data
         return True
 
-    if package is not None:
-        monkeypatch.setattr(
-            plugin_package_storage,
-            "presign_upload",
-            lambda key: _presigned_upload(stored_packages, package, key),
-        )
-    monkeypatch.setattr(plugin_package_storage, "get", lambda key: stored_packages[key])
+    def get(key: str) -> bytes:
+        if key in stored_packages:
+            return stored_packages[key]
+        if package is not None:
+            return package
+        raise KeyError(key)
+
+    monkeypatch.setattr(plugin_package_storage, "get", get)
     monkeypatch.setattr(
         plugin_package_storage,
         "put",
@@ -292,6 +286,39 @@ def _device_install(test_db, user_id: int) -> tuple[Kind, PluginRelease]:
     test_db.add(installed)
     test_db.commit()
     return installed, release
+
+
+def test_submission_upload_uses_backend_ticket_and_stores_validated_package(
+    test_db, test_user, monkeypatch
+):
+    service = PluginMarketplaceService()
+    package = _plugin_zip()
+    stored_packages: dict[str, bytes] = {}
+    _mock_package_storage(monkeypatch, stored_packages)
+    initialized = service.init_submission(
+        test_db,
+        user_id=test_user.id,
+        request=PluginSubmissionInitRequest(
+            slug="backend-upload",
+            displayName="Backend Upload",
+            version="1.0.0",
+            filename="backend-upload.zip",
+            sha256=hashlib.sha256(package).hexdigest(),
+            sizeBytes=len(package),
+        ),
+    )
+
+    service.upload_submission_package(
+        test_db,
+        user_id=test_user.id,
+        submission_id=initialized.submissionId,
+        package=package,
+    )
+
+    assert initialized.uploadUrl.startswith(
+        f"/api/plugins/submissions/{initialized.submissionId}/artifact?token="
+    )
+    assert list(stored_packages.values()) == [package]
 
 
 def test_submission_review_publishes_immutable_release_without_install_copy(

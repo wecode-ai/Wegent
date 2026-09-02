@@ -65,6 +65,9 @@ from app.schemas.installed_plugin import (
     PluginUpstreamItem,
     PluginUpstreamListResponse,
 )
+from app.services.marketplace_submission_upload import (
+    build_marketplace_submission_upload_url,
+)
 from app.services.plugin_marketplace_identity import marketplace_name_for_visibility
 from app.services.plugin_package_parser import plugin_package_parser
 from app.services.plugin_package_scanner import (
@@ -895,8 +898,10 @@ class PluginMarketplaceService:
             )
             db.add(submission)
             db.flush()
-            upload_url, expires_at = plugin_package_storage.presign_upload(
-                release.storage_key
+            upload_url, expires_at = build_marketplace_submission_upload_url(
+                kind="plugin",
+                submission_id=submission.id,
+                user_id=user_id,
             )
             db.commit()
         except Exception:
@@ -1044,6 +1049,23 @@ class PluginMarketplaceService:
             return
         if visibility in {"workspace", "public"}:
             plugin.visibility = visibility
+
+    def upload_submission_package(
+        self,
+        db: Session,
+        *,
+        user_id: int,
+        submission_id: int,
+        package: bytes,
+    ) -> None:
+        submission = self._owned_submission(db, user_id, submission_id)
+        if submission.status != "uploading":
+            raise HTTPException(status_code=409, detail="Submission is not uploading")
+        release = db.get(PluginRelease, submission.release_id)
+        if not release:
+            raise HTTPException(status_code=404, detail="Submission release not found")
+        self._validate_uploaded_package(release, package)
+        plugin_package_storage.put(release.storage_key, package)
 
     def _requested_visibility_for_release(
         self, release: PluginRelease, *, fallback: str

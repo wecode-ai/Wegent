@@ -85,17 +85,14 @@ def _mock_storage(monkeypatch, package: bytes) -> dict[str, bytes]:
         values[key] = value
         return created
 
-    def presign_upload(key):
-        values[key] = package
-        return f"https://upload/{key}", datetime.now(timezone.utc)
-
     monkeypatch.setattr(marketplace_artifact_storage, "put", put)
     monkeypatch.setattr(marketplace_artifact_storage, "put_immutable", put_immutable)
-    monkeypatch.setattr(marketplace_artifact_storage, "get", lambda key: values[key])
+    monkeypatch.setattr(
+        marketplace_artifact_storage, "get", lambda key: values.get(key, package)
+    )
     monkeypatch.setattr(
         marketplace_artifact_storage, "delete", lambda key: values.pop(key, None)
     )
-    monkeypatch.setattr(marketplace_artifact_storage, "presign_upload", presign_upload)
     monkeypatch.setattr(
         marketplace_artifact_storage,
         "presign_download",
@@ -131,6 +128,29 @@ def _submission(
             )
         ],
     )
+
+
+def test_submission_upload_uses_backend_ticket_and_stores_validated_package(
+    test_db, test_user, monkeypatch
+):
+    recipient = _user(test_db, "upload-recipient")
+    package = _package()
+    values = _mock_storage(monkeypatch, package)
+
+    initialized = smart_app_marketplace_service.init_submission(
+        test_db, user_id=test_user.id, request=_submission(package, recipient)
+    )
+    smart_app_marketplace_service.upload_submission_package(
+        test_db,
+        submission_id=initialized.submissionId,
+        user_id=test_user.id,
+        package=package,
+    )
+
+    assert initialized.uploadUrl.startswith(
+        f"/api/smart-apps/submissions/{initialized.submissionId}/artifact?token="
+    )
+    assert package in values.values()
 
 
 def test_user_publication_is_visible_only_to_owner_and_recipient(
