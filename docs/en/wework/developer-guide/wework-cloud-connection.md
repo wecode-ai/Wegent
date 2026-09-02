@@ -25,7 +25,14 @@ unsent drafts, layout state, and other UI preferences backed by `localStorage`
 therefore remain available. The main process serializes updates, writes through
 atomic file replacement, and uses mode `0600` on Unix. Explicitly disconnecting,
 deleting a configuration, or clearing its state also removes the durable copy.
-The web app, which has no Electron host, does not use this desktop mirror.
+The web app, which has no Electron host, does not use this desktop mirror. Before
+loading a new Core DSH origin, the main process also removes Chromium
+`localStorage` belonging to the previous origin. When a durable snapshot exists
+without origin metadata, it performs one full migration cleanup; later launches
+clear only the previously recorded `scheme://host:port`. The current origin is
+stored in `renderer-local-storage-origins.json`, and renderer recreation on the
+same origin does not clear storage again. Browser storage remains untouched before
+the first durable snapshot exists so migration data is not lost.
 
 Users may enter either the Backend root URL or an `/api` URL. The frontend normalizes that input into HTTP API and Socket.IO connection settings. Connecting first checks `/health`, then calls `/auth/wework/sessions` to create a short-lived authorization session. Backend returns a complete `authorize_url`; local Wework opens that cloud authorization page in the embedded authorization browser and polls the session result with the client-only `poll_token`.
 

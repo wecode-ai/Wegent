@@ -16,6 +16,7 @@ import { useTheme } from '@/features/theme/ThemeProvider'
 import TopNavigation from '@/features/layout/TopNavigation'
 import { GithubStarButton } from '@/features/layout/GithubStarButton'
 import type { Message } from '@/features/tasks/components/message'
+import { TaskRightPanelRenderer, useTaskRightPanel } from '@/features/tasks/components/right-panel'
 import { useTranslation } from '@/hooks/useTranslation'
 import type { User, SubtaskContextBrief } from '@/types/api'
 import { InAppBrowserGuard } from '@/components/InAppBrowserGuard'
@@ -41,6 +42,8 @@ function SharedTaskContent() {
   const [error, setError] = useState<string | null>(null)
   const [currentUser, setCurrentUser] = useState<User | null>(null)
   const [showInAppBrowserGuard, setShowInAppBrowserGuard] = useState(false)
+  const { request: rightPanelRequest, close: closeRightPanel } = useTaskRightPanel()
+  const rightPanelOffsetClassName = rightPanelRequest ? 'lg:mr-[720px]' : ''
 
   // Check if user is logged in
   const isLoggedIn = !!getToken()
@@ -335,7 +338,7 @@ function SharedTaskContent() {
         </TopNavigation>
 
         {/* Main content area */}
-        <div className="flex-1 overflow-y-auto custom-scrollbar">
+        <div className={`flex-1 overflow-y-auto custom-scrollbar ${rightPanelOffsetClassName}`}>
           <div className="w-full max-w-3xl mx-auto flex flex-col px-4 py-6">
             {/* Task title and sharer info */}
             <div className="mb-6">
@@ -396,6 +399,15 @@ function SharedTaskContent() {
             </div>
           </div>
         </div>
+        {rightPanelRequest ? (
+          <aside
+            className="fixed inset-x-0 bottom-0 top-14 z-50 min-h-0 bg-surface lg:left-auto lg:w-[720px] lg:border-l lg:border-border"
+            data-task-right-panel
+            data-testid="shared-task-right-panel"
+          >
+            <TaskRightPanelRenderer request={rightPanelRequest} onClose={closeRightPanel} />
+          </aside>
+        ) : null}
       </div>
     </>
   )

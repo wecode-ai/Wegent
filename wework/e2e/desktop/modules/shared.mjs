@@ -23,6 +23,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url'
 
 import { DESKTOP_CHECKPOINTS, PLUGIN_SEGMENTS } from '../checkpoints.mjs'
 import { processIsAlive, stopProcess, stopProcessGroup } from '../process-lifecycle.mjs'
+import { resolveDesktopE2EResultRoot } from '../result-retention.mjs'
 import { loadDesktopScenario } from '../scenario-loader.mjs'
 import { waitForSnapshot } from './conversation-layout.mjs'
 import { sendPrompt } from './conversation-navigation.mjs'
@@ -258,6 +259,10 @@ const ARTIFACT_CONTENT = 'CODEX_EXECUTED_REAL_TOOL'
 const IMAGE_ARTIFACT_NAME = 'wework-e2e-image.png'
 const VIEW_IMAGE_PROMPT = 'WEWORK_DESKTOP_E2E_VIEW_IMAGE: inspect the verification image.'
 const VIEW_IMAGE_COMPLETION_TEXT = 'WEWORK_DESKTOP_E2E_VIEW_IMAGE_COMPLETE'
+const LOCAL_MARKDOWN_IMAGE_PROMPT =
+  'WEWORK_DESKTOP_E2E_LOCAL_MARKDOWN_IMAGE: render the temporary image.'
+const LOCAL_MARKDOWN_IMAGE_FILENAME = `wework-e2e-assistant-markdown-image-${randomUUID()}.png`
+const LOCAL_MARKDOWN_IMAGE_ALT = 'WEWORK_DESKTOP_E2E_LOCAL_MARKDOWN_IMAGE_ALT'
 const VISION_SIDECAR_PROMPT =
   'WEWORK_DESKTOP_E2E_VISION_SIDECAR: describe the attached verification image.'
 const VISION_SIDECAR_DESCRIPTION = 'The verification image is a solid red square.'
@@ -520,9 +525,7 @@ const repoDir = resolve(weworkDir, '..')
 const toolDetailsMcpServerPath = join(weworkDir, 'e2e', 'utils', 'tool-details-mcp-server.mjs')
 const mcpElicitationServerPath = join(weworkDir, 'e2e', 'utils', 'mcp-elicitation-server.mjs')
 const runId = `${new Date().toISOString().replace(/[:.]/g, '-')}-${process.pid}`
-const resultRoot = process.env.WEWORK_E2E_RESULT_ROOT?.trim()
-  ? resolve(process.env.WEWORK_E2E_RESULT_ROOT.trim())
-  : join(weworkDir, 'test-results', 'desktop-e2e')
+const resultRoot = resolveDesktopE2EResultRoot(weworkDir)
 const resultDir = join(resultRoot, runId)
 
 const OFFICIAL_PLUGIN_REPOSITORY = 'https://github.com/openai/plugins.git'
@@ -1580,6 +1583,9 @@ export {
   IMAGE_ARTIFACT_NAME,
   VIEW_IMAGE_PROMPT,
   VIEW_IMAGE_COMPLETION_TEXT,
+  LOCAL_MARKDOWN_IMAGE_PROMPT,
+  LOCAL_MARKDOWN_IMAGE_FILENAME,
+  LOCAL_MARKDOWN_IMAGE_ALT,
   VISION_SIDECAR_PROMPT,
   VISION_SIDECAR_DESCRIPTION,
   VISION_SIDECAR_COMPLETION_TEXT,

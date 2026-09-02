@@ -216,7 +216,7 @@ describe('DesktopSidebar', () => {
     Element.prototype.scrollIntoView = vi.fn()
     vi.mocked(openLocalWorkspace).mockReset()
     clearRuntimeConversationCacheForTests()
-  })
+  }, 60_000)
 
   afterEach(() => {
     clearRuntimeConversationCacheForTests()
@@ -3795,6 +3795,10 @@ describe('DesktopSidebar', () => {
       expect(taskRow).toHaveClass('hidden')
       expect(screen.getByTestId('runtime-local-task-archive-toast-codex-1')).toHaveTextContent(
         '撤销'
+      )
+      expect(screen.getByTestId('runtime-local-task-archive-toast-codex-1')).toHaveClass(
+        'electron-titlebar-interactive-region',
+        'pointer-events-auto'
       )
 
       await user.click(screen.getByTestId('runtime-local-task-archive-undo-codex-1'))

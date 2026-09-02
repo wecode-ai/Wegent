@@ -388,6 +388,53 @@ async def test_runtime_notification_failure_does_not_break_wework_relay(
 
 
 @pytest.mark.asyncio
+async def test_runtime_event_projects_app_device_id_to_logical_device_id(monkeypatch):
+    namespace = DeviceNamespace()
+    sio = AsyncMock()
+    forward = AsyncMock()
+    monkeypatch.setattr(
+        namespace,
+        "get_session",
+        AsyncMock(
+            return_value={
+                "user_id": 7,
+                "device_id": "local-device",
+                "logical_device_id": "local-device",
+            }
+        ),
+    )
+    monkeypatch.setattr(
+        device_namespace,
+        "run_sync_in_executor",
+        AsyncMock(return_value=None),
+    )
+    monkeypatch.setattr(device_namespace, "get_sio", lambda: sio)
+    monkeypatch.setattr(
+        namespace._local_task_responses,
+        "forward_runtime_event_to_channels",
+        forward,
+    )
+
+    result = await namespace.on_runtime_event(
+        "device-sid",
+        {
+            "event": "response.completed",
+            "payload": {
+                "deviceId": "electron-device-1",
+                "taskId": "runtime-task-1",
+                "data": {"value": "done"},
+            },
+        },
+    )
+
+    assert result == {"success": True}
+    relayed = sio.emit.await_args.args[1]["payload"]
+    assert relayed["deviceId"] == "local-device"
+    assert relayed["device_id"] == "local-device"
+    assert forward.await_args.kwargs["device_id"] == "local-device"
+
+
+@pytest.mark.asyncio
 async def test_device_runtime_event_persists_project_chat_before_browser_relay(
     monkeypatch,
 ):
@@ -841,6 +888,51 @@ async def test_device_command_relay_resolves_logical_device_route(monkeypatch):
     assert result == {"success": True, "stdout": "/workspace"}
     execute.assert_awaited_once()
     assert execute.await_args.kwargs["device_id"] == "runtime-cloud"
+
+
+@pytest.mark.asyncio
+async def test_device_command_relay_rejects_app_device_when_remote_control_is_disabled(
+    monkeypatch,
+):
+    from app.schemas.device import DeviceType
+    from app.services.device.runtime_route import RuntimeRoute
+
+    route = RuntimeRoute(
+        logical_device_id="app-device",
+        runtime_device_id="app-device",
+        runtime_instance_id="runtime-instance-1",
+        device_type=DeviceType.APP,
+        socket_id="socket-1",
+        online_info={"socket_id": "socket-1"},
+    )
+    monkeypatch.setattr(
+        wework_runtime_namespace.runtime_route_resolver,
+        "resolve",
+        AsyncMock(return_value=route),
+    )
+    execute = AsyncMock(return_value={"success": True})
+    monkeypatch.setattr(
+        wework_runtime_namespace.local_device_command_service,
+        "execute_command",
+        execute,
+    )
+    monkeypatch.setattr(
+        wework_runtime_namespace,
+        "resolve_local_device_command",
+        lambda *_args: SimpleNamespace(command="pwd"),
+    )
+
+    with pytest.raises(wework_runtime_namespace.RuntimeRpcError) as exc_info:
+        await wework_runtime_namespace.relay_ipc_request(
+            user_id=7,
+            device_id="app-device",
+            method="device.execute_command",
+            params={"command_key": "pwd"},
+            timeout_seconds=30,
+        )
+
+    assert exc_info.value.code == "remote_control_disabled"
+    execute.assert_not_awaited()
 
 
 @pytest.mark.asyncio

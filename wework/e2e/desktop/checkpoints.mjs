@@ -47,6 +47,7 @@ export const DESKTOP_CHECKPOINTS = [
   'goal-lifecycle',
   'supervisor-lifecycle',
   'resilience',
+  'environment-panel-scroll',
   'conversation-state',
   'temporary-chat',
   'workspace-attachments',
@@ -59,6 +60,10 @@ export const DESKTOP_CHECKPOINTS = [
   'browser-multi-tabs',
   'embedded-browser',
   'browser-toolbar-actions',
+  'browser-annotation',
+  'browser-annotation-core',
+  'browser-annotation-anchors',
+  'browser-annotation-design',
 ]
 
 export const PLUGIN_SEGMENTS = [

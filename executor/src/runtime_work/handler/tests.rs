@@ -3330,6 +3330,7 @@ fn paginated_transcript_does_not_restore_a_presentation_from_a_newer_page() {
         &mut provider_messages,
         presentations,
         &page_messages,
+        &[],
         false,
         true,
     );
@@ -3368,6 +3369,7 @@ fn paginated_transcript_restores_a_missing_presentation_inside_the_current_page(
         &mut provider_messages,
         presentations,
         &page_messages,
+        &[],
         true,
         true,
     );
@@ -3375,6 +3377,36 @@ fn paginated_transcript_restores_a_missing_presentation_inside_the_current_page(
     assert_eq!(provider_messages.len(), 3);
     assert_eq!(provider_messages[1]["content"], "Middle instruction");
     assert_eq!(provider_messages[1]["turnId"], "turn-last");
+}
+
+#[test]
+fn paginated_transcript_restores_a_presentation_for_an_empty_turn_on_the_current_page() {
+    let mut provider_messages = Vec::new();
+    let presentations = vec![json!({
+        "clientUserMessageId": "client-user-interrupted",
+        "content": "Instruction archived before the provider stored its user item",
+        "createdAt": 200,
+        "ensureVisible": true,
+        "references": [],
+        "turnId": "turn-interrupted"
+    })];
+
+    attach_user_message_presentations_for_page(
+        &mut provider_messages,
+        presentations,
+        &[],
+        &["turn-interrupted".to_owned()],
+        false,
+        true,
+    );
+
+    assert_eq!(provider_messages.len(), 1);
+    assert_eq!(provider_messages[0]["role"], "user");
+    assert_eq!(provider_messages[0]["turnId"], "turn-interrupted");
+    assert_eq!(
+        provider_messages[0]["content"],
+        "Instruction archived before the provider stored its user item"
+    );
 }
 
 #[test]
@@ -4330,10 +4362,10 @@ async fn execution_mapper_does_not_rebind_queued_notification_to_new_active_turn
     let event = event_rx
         .try_recv()
         .expect("the global router should emit the historical turn once");
-    assert_eq!(event["event"], "response.block.created");
+    assert_eq!(event["event"], "response.output_text.done");
     assert_eq!(event["payload"]["subtaskId"], "turn-initial");
     assert_eq!(
-        event["payload"]["data"]["block"]["content"],
+        event["payload"]["data"]["text"],
         "Initial goal turn complete"
     );
     assert!(

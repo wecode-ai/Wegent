@@ -28,12 +28,13 @@ import {
   closeEmbeddedBrowser,
   consumeEmbeddedBrowserLabelTransfer,
   deleteEmbeddedBrowserDownload,
+  clearEmbeddedBrowserAnnotations,
+  listenEmbeddedBrowserAnnotationState,
   listenEmbeddedBrowserAgentState,
   listenEmbeddedBrowserAnnotationRequests,
   listenEmbeddedBrowserCloseRequests,
   EMBEDDED_BROWSER_DEBUG_PANEL_VISIBILITY_EVENT,
   EMBEDDED_BROWSER_OCCLUSION_EVENT,
-  evalEmbeddedBrowser,
   evalEmbeddedBrowserJson,
   goBackEmbeddedBrowser,
   goForwardEmbeddedBrowser,
@@ -41,10 +42,12 @@ import {
   listenEmbeddedBrowserLocalFilePreview,
   listenEmbeddedBrowserPageStateChanges,
   isEmbeddedBrowserLabelTransferred,
+  listenEmbeddedBrowserAgentCursor,
   navigateEmbeddedBrowser,
   openEmbeddedBrowser,
   pauseEmbeddedBrowserDownload,
   readEmbeddedBrowserPageState,
+  readEmbeddedBrowserAnnotationState,
   reloadEmbeddedBrowser,
   resumeEmbeddedBrowserDownload,
   resolveEmbeddedBrowserAgentApproval,
@@ -52,8 +55,12 @@ import {
   setEmbeddedBrowserBounds,
   setEmbeddedBrowserDeviceMetrics,
   setEmbeddedBrowserZoom,
+  setEmbeddedBrowserAnnotationOriginalView,
+  startEmbeddedBrowserAnnotation,
+  stopEmbeddedBrowserAnnotation,
   type EmbeddedBrowserAgentStateEvent,
   type EmbeddedBrowserAnnotationRequest,
+  type EmbeddedBrowserAgentCursorEvent,
   type EmbeddedBrowserDataKind,
   type EmbeddedBrowserBounds,
   type EmbeddedBrowserDownloadEvent,
@@ -69,7 +76,7 @@ import {
 } from '@/lib/embedded-browser-download-store'
 import { openExternalUrl } from '@/lib/external-links'
 import { fileManagerRevealLabel } from '@/lib/file-manager'
-import { revealLocalFile } from '@/lib/local-terminal'
+import { openLocalFile, revealLocalFile } from '@/lib/local-terminal'
 import { normalizeBrowserUrl } from '@/lib/browser-url'
 import { navigateTo } from '@/lib/navigation'
 import { BROWSER_ZOOM_DEFAULT_PERCENT, zoomPercentToScaleFactor } from '@/lib/browser-zoom'
@@ -100,34 +107,25 @@ import {
 import { cn } from '@/lib/utils'
 import { useTranslation } from '@/hooks/useTranslation'
 import type { CodeCommentContext } from '@/types/workspace-files'
-import type { BrowserAnnotationScope } from '@/types/browser-annotation'
-import { defaultAppearance, useOptionalAppearance } from '@/features/appearance'
-import { resolveAppearanceMode } from '@/features/appearance/applyAppearance'
-import { track } from '@/telemetry/client'
-import { browserAnnotationInjectionScript as createBrowserAnnotationInjectionScript } from './browser-annotation/injection-script'
 import type {
-  BrowserAnnotationCommand,
-  BrowserAnnotationSnapshot,
-  PageAnnotationDto,
+  BrowserAnnotationComment,
+  BrowserAnnotationScope,
+  BrowserAnnotationState,
 } from '@/types/browser-annotation'
-import { browserSnapshotToContexts } from '@/lib/browser-annotation-context'
+import { track } from '@/telemetry/client'
+import type { BrowserAnnotationCommand } from '@/types/browser-annotation'
+import { browserAnnotationStateToContexts } from '@/lib/browser-annotation-context'
 import { isElectronRuntime } from '@/lib/runtime-environment'
 import { ElectronEmbeddedBrowserView } from './ElectronEmbeddedBrowserView'
 
 const EMBEDDED_BROWSER_STATE_INTERVAL_MS = 1000
-const BROWSER_ANNOTATION_STATE_INTERVAL_MS = 100
 const EMBEDDED_BROWSER_BOUNDS_DEBOUNCE_MS = 80
 const EMBEDDED_BROWSER_VISIBLE_HOST_TIMEOUT_MS = 12_000
 const EMBEDDED_BROWSER_VISIBLE_HOST_INTERVAL_MS = 50
 const EMBEDDED_BROWSER_POST_OPEN_SYNC_DELAYS_MS = [0, 120, 300, 600]
 const BROWSER_CLEAR_STARTED_NOTICE_MIN_MS = 600
+const DOWNLOAD_PEEK_DURATION_MS = 8000
 const BROWSER_ANNOTATION_LOG_PREFIX = '[Wework][BrowserAnnotation]'
-const BROWSER_ANNOTATION_CLEANUP_SCRIPT = `(() => {
-  try { window.__WEWORK_BROWSER_ANNOTATION__?.destroy?.(); } catch (_) {}
-  document.getElementById('__wework_browser_annotation_layer__')?.remove();
-  document.querySelectorAll('[data-wework-annotation]').forEach((node) => node.remove());
-  return true;
-})()`
 
 interface BrowserOcclusionState {
   documentOverlayOccluded: boolean
@@ -201,6 +199,7 @@ export interface WorkspaceBrowserPanelProps {
   onFaviconChange?: (faviconUrl: string | null) => void
   onLoadingChange?: (isLoading: boolean) => void
   onTitleChange?: (title: string | null) => void
+  onAgentActiveChange?: (agentActive: boolean) => void
 }
 
 export const WorkspaceBrowserPanel = WorkspaceBrowserTabPanel
@@ -208,6 +207,7 @@ export const WorkspaceBrowserPanel = WorkspaceBrowserTabPanel
 type BrowserStatus = 'idle' | 'loading' | 'ready' | 'error'
 type BrowserDownload = EmbeddedBrowserDownloadEvent
 type BrowserAgentState = EmbeddedBrowserAgentStateEvent
+type BrowserAgentCursor = EmbeddedBrowserAgentCursorEvent
 type BrowserOpenDiagnosticStage =
   | 'request_consumed'
   | 'host_ready'
@@ -265,7 +265,7 @@ function formatDownloadBytes(bytes: number | null) {
 }
 
 function shouldShowAgentState(state: BrowserAgentState | null) {
-  return Boolean(state && state.status !== 'idle')
+  return Boolean(state && ['paused', 'needs_user', 'error'].includes(state.status))
 }
 
 function getElementBounds(element: HTMLElement): EmbeddedBrowserBounds | null {
@@ -354,10 +354,11 @@ export function WorkspaceBrowserTabPanel({
   onFaviconChange,
   onLoadingChange,
   onTitleChange,
+  onAgentActiveChange,
 }: WorkspaceBrowserPanelProps) {
   const { t } = useTranslation('common')
-  const appearance = useOptionalAppearance()?.appearance ?? defaultAppearance
   const electronRuntime = isElectronRuntime()
+  const browserPanelRef = useRef<HTMLDivElement | null>(null)
   const browserHostRef = useRef<HTMLDivElement | null>(null)
   const nativeBrowserOpenRef = useRef(false)
   const nativeBrowserOpeningRef = useRef(false)
@@ -367,15 +368,6 @@ export function WorkspaceBrowserTabPanel({
   const addressInputRef = useRef<HTMLInputElement | null>(null)
   const addressEditingRef = useRef(false)
   const annotationModeRef = useRef(false)
-  const annotationFlowRef = useRef<EmbeddedBrowserAnnotationRequest['mode']>('batch')
-  const quickAnnotationBaselineRef = useRef<{
-    pageSessionId: string
-    revision: number
-    annotationCount: number
-  } | null>(null)
-  const annotationCleanupPromiseRef = useRef<Promise<void> | null>(null)
-  const annotationInjectionOwnerRef = useRef<number | null>(null)
-  const annotationRequestGenerationRef = useRef(0)
   const currentLabelRef = useRef(label)
   const activeRef = useRef(active)
   const nativeLabelRef = useRef<string | null>(null)
@@ -385,13 +377,11 @@ export function WorkspaceBrowserTabPanel({
   const mountedRef = useRef(true)
   const pageStateRequestGenerationRef = useRef(0)
   const lastAnnotationCommandSequenceRef = useRef(0)
-  const annotationSnapshotRef = useRef<{ pageSessionId: string; revision: number } | null>(null)
   const handledOpenRequestIdRef = useRef<string | null>(null)
   const activeOpenRequestIdRef = useRef<string | null>(null)
   const syncBoundsTimerRef = useRef<number | null>(null)
   const syncBoundsAnimationFrameRef = useRef<number | null>(null)
   const postOpenSyncTimerRefs = useRef<number[]>([])
-  const annotationEmptyPollLogCountRef = useRef(0)
   const [browserOcclusion, dispatchBrowserOcclusion] = useReducer(browserOcclusionReducer, {
     documentOverlayOccluded: false,
     generation: 0,
@@ -417,13 +407,32 @@ export function WorkspaceBrowserTabPanel({
     null
   )
   const [annotationMode, setAnnotationMode] = useState(false)
-  const [annotations, setAnnotations] = useState<PageAnnotationDto[]>([])
-  const [, setAnnotationScope] = useState<BrowserAnnotationScope | null>(null)
+  const [annotations, setAnnotations] = useState<BrowserAnnotationComment[]>([])
+  const [annotationRevision, setAnnotationRevision] = useState(0)
+  const [annotationRuntimeRevision, setAnnotationRuntimeRevision] = useState(0)
+  const [annotationOriginalView, setAnnotationOriginalView] = useState(false)
+  const annotationStateVersionRef = useRef<{
+    pageSessionId: string | null
+    revision: number
+    runtimeRevision: number
+  }>({ pageSessionId: null, revision: -1, runtimeRevision: -1 })
   const [discardDialogOpen, setDiscardDialogOpen] = useState(false)
   const [discardingAnnotations, setDiscardingAnnotations] = useState(false)
   const [originalViewHeld, setOriginalViewHeld] = useState(false)
   const [downloads, setDownloads] = useState<BrowserDownload[]>([])
   const [downloadsOpen, setDownloadsOpen] = useState(false)
+  const [downloadPeek, setDownloadPeek] = useState<{
+    id: string
+    fileName: string
+    path: string | null
+    status: 'finished' | 'failed'
+  } | null>(null)
+
+  useEffect(() => {
+    if (!downloadPeek) return
+    const timer = window.setTimeout(() => setDownloadPeek(null), DOWNLOAD_PEEK_DURATION_MS)
+    return () => window.clearTimeout(timer)
+  }, [downloadPeek])
   const [localFilePreviewToast, setLocalFilePreviewToast] = useState<{
     id: number
     message: string
@@ -435,6 +444,7 @@ export function WorkspaceBrowserTabPanel({
   } | null>(null)
   const [clearingDataKind, setClearingDataKind] = useState<EmbeddedBrowserDataKind | null>(null)
   const [agentState, setAgentState] = useState<BrowserAgentState | null>(null)
+  const [agentCursor, setAgentCursor] = useState<BrowserAgentCursor | null>(null)
   const [invalidTlsCertificate, setInvalidTlsCertificate] =
     useState<EmbeddedBrowserInvalidTlsCertificateEvent | null>(null)
   const deviceFitScaleRef = useRef(1)
@@ -468,7 +478,7 @@ export function WorkspaceBrowserTabPanel({
     browserOcclusion.overlayIds.size > 0 ||
     (active && Boolean(currentUrl) && browserOcclusion.documentOverlayOccluded)
   const pendingCommentContextCount = Math.max(codeCommentCount, codeCommentContexts.length)
-  const hasQueuedTweaks = annotations.some(annotation => annotation.adjustments.length > 0)
+  const hasQueuedTweaks = annotations.some(annotation => annotation.designChanges.length > 0)
   const originalViewEnabled = annotationMode && hasQueuedTweaks && originalViewHeld
 
   useEffect(() => {
@@ -493,14 +503,22 @@ export function WorkspaceBrowserTabPanel({
       if (download.status === 'deleted') return remaining
       return [download, ...remaining].slice(0, 10)
     })
-    setDownloadsOpen(true)
+    // Codex-style interaction: the downloads list never opens itself. A
+    // transient peek card surfaces completion or failure and dismisses itself.
+    if (download.status === 'finished' || download.status === 'failed') {
+      setDownloadPeek({
+        id: `${download.id}-${Date.now()}`,
+        fileName: download.path?.split(/[\\/]/).pop() || download.url,
+        path: download.path,
+        status: download.status,
+      })
+    }
   }, [])
 
   const reconcileDownloadSnapshot = useCallback(
     (nativeLabel: string) => {
       const snapshot = readEmbeddedBrowserDownloadSnapshot(nativeLabel).slice(0, 10)
       setDownloads(snapshot)
-      setDownloadsOpen(snapshot.length > 0)
       activeDownloadIdsRef.current = new Set(
         snapshot
           .filter(download => download.status === 'started' || download.status === 'progress')
@@ -533,7 +551,6 @@ export function WorkspaceBrowserTabPanel({
     return () => {
       mountedRef.current = false
       pageStateRequestGenerationRef.current += 1
-      annotationRequestGenerationRef.current += 1
       if (occlusionSnapshotFallbackTimerRef.current !== null) {
         window.clearTimeout(occlusionSnapshotFallbackTimerRef.current)
         occlusionSnapshotFallbackTimerRef.current = null
@@ -545,7 +562,6 @@ export function WorkspaceBrowserTabPanel({
     currentLabelRef.current = label
     activeRef.current = active
     pageStateRequestGenerationRef.current += 1
-    annotationRequestGenerationRef.current += 1
   }, [active, label])
 
   useEffect(() => {
@@ -603,6 +619,42 @@ export function WorkspaceBrowserTabPanel({
       unlisten?.()
     }
   }, [])
+
+  useEffect(() => {
+    const listener = listenEmbeddedBrowserAgentCursor(event => {
+      if (event.label !== currentLabelRef.current) return
+      setAgentCursor(event)
+    })
+    if (!listener) return undefined
+    let disposed = false
+    let unlisten: (() => void) | null = null
+    void listener
+      .then(nextUnlisten => {
+        if (disposed) {
+          nextUnlisten()
+          return
+        }
+        unlisten = nextUnlisten
+      })
+      .catch(error => {
+        console.error('Failed to listen for embedded browser agent cursor:', error)
+      })
+    return () => {
+      disposed = true
+      unlisten?.()
+    }
+  }, [])
+
+  useEffect(() => {
+    onAgentActiveChange?.(agentState?.status === 'running' || Boolean(agentCursor?.visible))
+  }, [agentCursor?.visible, agentState?.status, onAgentActiveChange])
+
+  useEffect(
+    () => () => {
+      onAgentActiveChange?.(false)
+    },
+    [onAgentActiveChange]
+  )
 
   useEffect(() => {
     const listener = listenEmbeddedBrowserInvalidTlsCertificates(certificate => {
@@ -678,7 +730,6 @@ export function WorkspaceBrowserTabPanel({
       activePageUrlRef.current = null
       annotationModeRef.current = false
       pageStateRequestGenerationRef.current += 1
-      annotationRequestGenerationRef.current += 1
       setCurrentUrl(null)
       setPageUrl(null)
       setAddress('')
@@ -694,6 +745,7 @@ export function WorkspaceBrowserTabPanel({
       setClearDataNotice(null)
       setClearingDataKind(null)
       setAgentState(null)
+      setAgentCursor(null)
       onTitleChange?.(null)
       onFaviconChange?.(null)
     })
@@ -744,67 +796,13 @@ export function WorkspaceBrowserTabPanel({
   )
 
   useEffect(() => {
-    async function reconcilePageState(expectedNativeLabel: string): Promise<void> {
-      const annotationGeneration = annotationRequestGenerationRef.current
-      let annotationSessionActive = false
-      try {
-        annotationSessionActive = await evalEmbeddedBrowserJson<boolean>(
-          `(() => {
-            const annotation = window.__WEWORK_BROWSER_ANNOTATION__
-            return Boolean(
-              annotation?.scope?.browserTabId === ${JSON.stringify(browserTabId)} &&
-              annotation.scope.url === window.location.href
-            )
-          })()`,
-          label
-        )
-      } catch {
-        // A real navigation can replace the document while this check is running.
-      }
-      if (
-        !mountedRef.current ||
-        !annotationModeRef.current ||
-        annotationRequestGenerationRef.current !== annotationGeneration ||
-        nativeLabelRef.current !== expectedNativeLabel
-      ) {
-        return
-      }
-      if (annotationSessionActive) return
-      try {
-        const pageState = await readEmbeddedBrowserPageState(label)
-        if (!mountedRef.current || pageState.nativeLabel !== expectedNativeLabel) return
-        applyPageState(pageState, true)
-      } catch (error) {
-        console.error('Failed to reconcile embedded browser page state:', error)
-      }
-    }
-
-    function applyPageState(pageState: EmbeddedBrowserPageState, authoritative: boolean): void {
+    function applyPageState(pageState: EmbeddedBrowserPageState): void {
       if (pageState.label && pageState.label !== currentLabelRef.current) return
       if (nativeLabelRef.current && pageState.nativeLabel !== nativeLabelRef.current) return
       applyNativePageStatus(pageState)
       if (pageState.isLoading) return
       setInvalidTlsCertificate(pageState.invalidTlsCertificate ?? null)
       const nextUrl = pageState.url || currentUrlRef.current
-      if (
-        annotationModeRef.current &&
-        nextUrl &&
-        activePageUrlRef.current &&
-        nextUrl !== activePageUrlRef.current
-      ) {
-        if (!authoritative) {
-          void reconcilePageState(pageState.nativeLabel)
-          return
-        }
-        annotationSnapshotRef.current = null
-        annotationRequestGenerationRef.current += 1
-        annotationModeRef.current = false
-        setAnnotations([])
-        setAnnotationScope(null)
-        setAnnotationMode(false)
-        setOriginalViewHeld(false)
-        void evalEmbeddedBrowser('window.__WEWORK_BROWSER_ANNOTATION__?.suspend?.() ?? true', label)
-      }
       if (nextUrl && pendingNavigationUrlRef.current === nextUrl) {
         pendingNavigationUrlRef.current = null
       }
@@ -816,7 +814,7 @@ export function WorkspaceBrowserTabPanel({
     }
 
     const listener = listenEmbeddedBrowserPageStateChanges(pageState => {
-      applyPageState(pageState, false)
+      applyPageState(pageState)
     })
     if (!listener) return undefined
     let disposed = false
@@ -836,7 +834,7 @@ export function WorkspaceBrowserTabPanel({
       disposed = true
       unlisten?.()
     }
-  }, [applyNativePageStatus, browserTabId, label, onFaviconChange, onTitleChange, updatePageUrl])
+  }, [applyNativePageStatus, onFaviconChange, onTitleChange, updatePageUrl])
 
   const syncEmbeddedBrowserBounds = useCallback(
     async (visible = active) => {
@@ -943,49 +941,6 @@ export function WorkspaceBrowserTabPanel({
     await setEmbeddedBrowserBounds({ x: 0, y: 0, width: 1, height: 1 }, false, label)
   }, [embeddedBrowserAvailable, label])
 
-  const cleanupAnnotationLayer = useCallback((targetLabel: string) => {
-    const previousCleanup = annotationCleanupPromiseRef.current ?? Promise.resolve()
-    const cleanupPromise = previousCleanup
-      .then(() => evalEmbeddedBrowser(BROWSER_ANNOTATION_CLEANUP_SCRIPT, targetLabel))
-      .then(() => undefined)
-      .catch(error => {
-        console.error('Failed to close embedded browser annotation layer:', error)
-      })
-    annotationCleanupPromiseRef.current = cleanupPromise
-    void cleanupPromise.finally(() => {
-      if (annotationCleanupPromiseRef.current === cleanupPromise) {
-        annotationCleanupPromiseRef.current = null
-      }
-    })
-    return cleanupPromise
-  }, [])
-
-  const suspendAnnotationLayer = useCallback(async (targetLabel: string) => {
-    try {
-      await evalEmbeddedBrowser(
-        'window.__WEWORK_BROWSER_ANNOTATION__?.suspend?.() ?? true',
-        targetLabel
-      )
-    } catch (error) {
-      console.error('Failed to suspend embedded browser annotation layer:', error)
-    }
-  }, [])
-
-  const cleanupInvalidatedAnnotationRequest = useCallback(
-    async (requestGeneration: number, targetLabel: string) => {
-      if (
-        !mountedRef.current ||
-        currentLabelRef.current !== targetLabel ||
-        annotationInjectionOwnerRef.current !== requestGeneration
-      ) {
-        return
-      }
-      annotationInjectionOwnerRef.current = null
-      await cleanupAnnotationLayer(targetLabel)
-    },
-    [cleanupAnnotationLayer]
-  )
-
   const exitAnnotationMode = useCallback(() => {
     logBrowserAnnotation('exit annotation mode', {
       label,
@@ -993,14 +948,65 @@ export function WorkspaceBrowserTabPanel({
       pendingCommentContextCount,
       nativeBrowserOpen: nativeBrowserOpenRef.current,
     })
-    annotationRequestGenerationRef.current += 1
     annotationModeRef.current = false
-    annotationFlowRef.current = 'batch'
-    quickAnnotationBaselineRef.current = null
     setAnnotationMode(false)
     setOriginalViewHeld(false)
-    void suspendAnnotationLayer(label)
-  }, [currentUrl, label, pendingCommentContextCount, suspendAnnotationLayer])
+    void stopEmbeddedBrowserAnnotation(label).catch(error => {
+      console.error('Failed to stop embedded browser annotation:', error)
+    })
+  }, [currentUrl, label, pendingCommentContextCount])
+
+  useEffect(() => {
+    annotationStateVersionRef.current = {
+      pageSessionId: null,
+      revision: -1,
+      runtimeRevision: -1,
+    }
+  }, [label])
+
+  const applyAnnotationState = useCallback(
+    (state: BrowserAnnotationState) => {
+      if (state.label !== label) return false
+      const incomingRuntimeRevision = state.runtimeRevision ?? 0
+      const incomingPageSessionId = state.scope?.pageSessionId ?? null
+      const currentVersion = annotationStateVersionRef.current
+      const staleRuntime = incomingRuntimeRevision < currentVersion.runtimeRevision
+      const staleRevision =
+        incomingRuntimeRevision === currentVersion.runtimeRevision &&
+        state.revision < currentVersion.revision
+      const stalePageSession =
+        incomingRuntimeRevision === currentVersion.runtimeRevision &&
+        currentVersion.pageSessionId !== null &&
+        incomingPageSessionId !== currentVersion.pageSessionId
+      if (staleRuntime || staleRevision || stalePageSession) return false
+      annotationStateVersionRef.current = {
+        pageSessionId: incomingPageSessionId,
+        revision: state.revision,
+        runtimeRevision: incomingRuntimeRevision,
+      }
+      const activeMode = state.mode !== 'off'
+      annotationModeRef.current = activeMode
+      setAnnotationMode(activeMode)
+      setAnnotations(state.comments)
+      setAnnotationRevision(state.revision)
+      setAnnotationRuntimeRevision(incomingRuntimeRevision)
+      setAnnotationOriginalView(state.originalView)
+      if (!state.scope) return true
+      const scope = { ...state.scope, browserTabId }
+      const normalizedState = { ...state, scope }
+      const contexts = browserAnnotationStateToContexts(
+        normalizedState,
+        activePageUrlRef.current ? getFallbackBrowserTitle(activePageUrlRef.current) : null
+      )
+      if (onReplaceBrowserCodeComments) {
+        onReplaceBrowserCodeComments(scope, contexts)
+      } else {
+        contexts.forEach(context => onAddCodeComment?.(context))
+      }
+      return true
+    },
+    [browserTabId, label, onAddCodeComment, onReplaceBrowserCodeComments]
+  )
 
   const enterAnnotationMode = useCallback(
     async (request: AnnotationEntry = {}) => {
@@ -1028,129 +1034,15 @@ export function WorkspaceBrowserTabPanel({
         })
         return
       }
-      annotationFlowRef.current = mode
-      quickAnnotationBaselineRef.current = null
-      const requestGeneration = annotationRequestGenerationRef.current + 1
-      annotationRequestGenerationRef.current = requestGeneration
       try {
-        const pendingCleanup = annotationCleanupPromiseRef.current
-        if (pendingCleanup) {
-          await pendingCleanup
-        }
-        if (
-          !mountedRef.current ||
-          currentLabelRef.current !== label ||
-          annotationRequestGenerationRef.current !== requestGeneration
-        ) {
-          return
-        }
-        annotationInjectionOwnerRef.current = requestGeneration
-        const injectionScript = createBrowserAnnotationInjectionScript({
-          browserTabId,
-          uiFontSize: appearance.uiFontSize,
-          isDark: resolveAppearanceMode(appearance.mode) === 'dark',
-          strings: {
-            placeholder: t('workbench.browser_annotation_placeholder'),
-            publish: t('workbench.browser_annotation_publish'),
-            save: t('workbench.browser_annotation_save'),
-            cancel: t('workbench.cancel'),
-            adjust: t('workbench.browser_annotation_adjust'),
-            add: t('workbench.browser_annotation_add'),
-            send: t('workbench.browser_annotation_send'),
-            delete: t('workbench.browser_annotation_delete'),
-            deleteTitle: t('workbench.browser_annotation_delete_title'),
-            deleteDescription: t('workbench.browser_annotation_delete_description'),
-            targetUnavailable: t('workbench.browser_annotation_target_unavailable'),
-            resetProperty: t('workbench.browser_annotation_reset_property'),
-            tweaksPlaceholder: t('workbench.browser_annotation_tweaks_placeholder'),
-            selectedItems: t('workbench.browser_annotation_selected_items'),
-            removeAnnotationSelection: t('workbench.browser_annotation_remove_selection'),
-            comment: t('workbench.code_comment_preview_comment'),
-            properties: {
-              text: t('workbench.browser_annotation_adjustment_text'),
-              color: t('workbench.browser_annotation_adjustment_color'),
-              'background-color': t('workbench.browser_annotation_adjustment_background-color'),
-              opacity: t('workbench.browser_annotation_adjustment_opacity'),
-              'font-family': t('workbench.browser_annotation_adjustment_font-family'),
-              'font-size': t('workbench.browser_annotation_adjustment_font-size'),
-              'font-weight': t('workbench.browser_annotation_adjustment_font-weight'),
-              width: t('workbench.browser_annotation_adjustment_width'),
-              height: t('workbench.browser_annotation_adjustment_height'),
-              padding: t('workbench.browser_annotation_adjustment_padding'),
-              margin: t('workbench.browser_annotation_adjustment_margin'),
-              'border-radius': t('workbench.browser_annotation_adjustment_border-radius'),
-              'border-color': t('workbench.browser_annotation_adjustment_border-color'),
-              'border-width': t('workbench.browser_annotation_adjustment_border-width'),
-            },
-          },
-        })
-        const quickBaseline =
-          mode === 'quick'
-            ? await evalEmbeddedBrowserJson<BrowserAnnotationSnapshot | null>(
-                `(() => {
-                  ${injectionScript}
-                  return window.__WEWORK_BROWSER_ANNOTATION__?.getSnapshot?.() ?? null
-                })()`,
-                label
-              )
-            : null
-        if (mode !== 'quick') {
-          await evalEmbeddedBrowser(injectionScript, label)
-        }
-        if (
-          !mountedRef.current ||
-          currentLabelRef.current !== label ||
-          annotationRequestGenerationRef.current !== requestGeneration
-        ) {
-          await cleanupInvalidatedAnnotationRequest(requestGeneration, label)
-          return
-        }
-        if (
-          activePageUrlRef.current &&
-          cloudDesktopExtension.isInternalPageUrl(activePageUrlRef.current)
-        ) {
-          exitAnnotationMode()
-          return
-        }
-        if (mode === 'quick') {
-          if (quickBaseline?.scope.browserTabId !== browserTabId) {
-            logBrowserAnnotation('quick annotation baseline unavailable', {
-              label,
-              browserTabId,
-              baselineBrowserTabId: quickBaseline?.scope.browserTabId ?? null,
-            })
-            throw new Error('Quick annotation baseline is unavailable')
-          }
-          quickAnnotationBaselineRef.current = {
-            pageSessionId: quickBaseline.scope.pageSessionId,
-            revision: quickBaseline.revision,
-            annotationCount: quickBaseline.annotations.length,
-          }
-          annotationSnapshotRef.current = {
-            pageSessionId: quickBaseline.scope.pageSessionId,
-            revision: quickBaseline.revision,
-          }
-        }
-        if (request.point && Number.isFinite(request.point.x) && Number.isFinite(request.point.y)) {
-          await evalEmbeddedBrowser(
-            `window.__WEWORK_BROWSER_ANNOTATION__?.openAt?.(${request.point.x}, ${request.point.y}) ?? false`,
-            label
-          )
-        }
-        annotationEmptyPollLogCountRef.current = 0
+        await startEmbeddedBrowserAnnotation(mode, label, request.point)
+        const state = await readEmbeddedBrowserAnnotationState(label)
+        if (!mountedRef.current || currentLabelRef.current !== label) return
+        if (!applyAnnotationState(state)) return
         annotationModeRef.current = true
         setAnnotationMode(true)
         logBrowserAnnotation('enter annotation mode succeeded', { label, currentUrl })
       } catch (error) {
-        if (
-          !mountedRef.current ||
-          currentLabelRef.current !== label ||
-          annotationRequestGenerationRef.current !== requestGeneration
-        ) {
-          await cleanupInvalidatedAnnotationRequest(requestGeneration, label)
-          return
-        }
-        annotationInjectionOwnerRef.current = null
         console.error('Failed to enter embedded browser annotation mode:', error)
         logBrowserAnnotation('enter annotation mode failed', {
           label,
@@ -1163,18 +1055,29 @@ export function WorkspaceBrowserTabPanel({
     },
     [
       active,
-      appearance.mode,
-      appearance.uiFontSize,
+      applyAnnotationState,
       currentUrl,
-      cleanupInvalidatedAnnotationRequest,
       embeddedBrowserAvailable,
-      exitAnnotationMode,
       internalDesktopPage,
       label,
-      browserTabId,
       t,
     ]
   )
+
+  useEffect(() => {
+    const listener = listenEmbeddedBrowserAnnotationState(applyAnnotationState)
+    if (!listener) return undefined
+    let disposed = false
+    let unlisten: (() => void) | null = null
+    void listener.then(nextUnlisten => {
+      if (disposed) nextUnlisten()
+      else unlisten = nextUnlisten
+    })
+    return () => {
+      disposed = true
+      unlisten?.()
+    }
+  }, [applyAnnotationState])
 
   useEffect(() => {
     const listener = listenEmbeddedBrowserAnnotationRequests(request => {
@@ -1218,20 +1121,26 @@ export function WorkspaceBrowserTabPanel({
       return
     }
     lastAnnotationCommandSequenceRef.current = browserAnnotationCommand.sequence
-    void evalEmbeddedBrowserJson<BrowserAnnotationSnapshot | null>(
-      'window.__WEWORK_BROWSER_ANNOTATION__?.clear?.() ?? null',
-      label
-    )
-      .then(snapshot => {
-        if (!snapshot || snapshot.scope.browserTabId !== browserTabId) return
-        setAnnotations(snapshot.annotations)
-        setAnnotationScope(snapshot.scope)
+    void clearEmbeddedBrowserAnnotations(label)
+      .then(() => readEmbeddedBrowserAnnotationState(label))
+      .then(state => {
+        if (!applyAnnotationState(state)) return
+        if (state.scope) {
+          onRemoveBrowserCodeComments?.({ ...state.scope, browserTabId })
+        }
       })
       .catch(error => {
         console.error('Failed to execute browser annotation cleanup command:', error)
       })
       .finally(exitAnnotationMode)
-  }, [browserAnnotationCommand, browserTabId, exitAnnotationMode, label])
+  }, [
+    applyAnnotationState,
+    browserAnnotationCommand,
+    browserTabId,
+    exitAnnotationMode,
+    label,
+    onRemoveBrowserCodeComments,
+  ])
 
   const clearScheduledBoundsSync = useCallback(() => {
     if (syncBoundsAnimationFrameRef.current !== null) {
@@ -1544,9 +1453,6 @@ export function WorkspaceBrowserTabPanel({
         }
         applyNativePageStatus(pageState)
         schedulePostOpenBoundsSync(active)
-        if (!annotationModeRef.current) {
-          void suspendAnnotationLayer(label)
-        }
       } catch {
         // No existing native browser for this label.
       }
@@ -1566,7 +1472,6 @@ export function WorkspaceBrowserTabPanel({
     label,
     onTitleChange,
     schedulePostOpenBoundsSync,
-    suspendAnnotationLayer,
     updatePageUrl,
   ])
 
@@ -1664,126 +1569,6 @@ export function WorkspaceBrowserTabPanel({
     return () => window.clearInterval(intervalId)
   }, [active, embeddedBrowserAvailable, refreshPageState, status])
 
-  useEffect(() => {
-    if (
-      !active ||
-      !annotationMode ||
-      internalDesktopPage ||
-      !embeddedBrowserAvailable ||
-      !nativeBrowserOpenRef.current
-    ) {
-      if (annotationMode) {
-        logBrowserAnnotation('consume effect inactive', {
-          label,
-          active,
-          annotationMode,
-          embeddedBrowserAvailable,
-          nativeBrowserOpen: nativeBrowserOpenRef.current,
-        })
-      }
-      return
-    }
-
-    logBrowserAnnotation('consume effect active', {
-      label,
-      activePageUrl,
-      hasAddCodeComment: Boolean(onAddCodeComment),
-    })
-    let cancelled = false
-
-    const consumeAnnotations = async () => {
-      try {
-        const snapshot = await evalEmbeddedBrowserJson<BrowserAnnotationSnapshot | null>(
-          'window.__WEWORK_BROWSER_ANNOTATION__?.getSnapshot?.() ?? null',
-          label
-        )
-        if (cancelled) return
-        if (!snapshot || !snapshot.scope || snapshot.scope.browserTabId !== browserTabId) {
-          logBrowserAnnotation('snapshot returned invalid payload', {
-            label,
-            hasSnapshot: Boolean(snapshot),
-          })
-          return
-        }
-        const previousSnapshot = annotationSnapshotRef.current
-        if (
-          previousSnapshot?.pageSessionId === snapshot.scope.pageSessionId &&
-          previousSnapshot.revision === snapshot.revision
-        ) {
-          if (annotationEmptyPollLogCountRef.current < 5) {
-            annotationEmptyPollLogCountRef.current += 1
-            logBrowserAnnotation('snapshot unchanged', {
-              label,
-              emptyPollCount: annotationEmptyPollLogCountRef.current,
-            })
-          }
-          return
-        }
-        annotationSnapshotRef.current = {
-          pageSessionId: snapshot.scope.pageSessionId,
-          revision: snapshot.revision,
-        }
-        annotationEmptyPollLogCountRef.current = 0
-        logBrowserAnnotation('snapshot returned annotations', {
-          label,
-          count: snapshot.annotations.length,
-          revision: snapshot.revision,
-          hasAddCodeComment: Boolean(onAddCodeComment),
-        })
-        setAnnotations(snapshot.annotations)
-        setAnnotationScope(snapshot.scope)
-        const contexts = browserSnapshotToContexts(
-          snapshot,
-          activePageUrl ? getFallbackBrowserTitle(activePageUrl) : null
-        )
-        if (onReplaceBrowserCodeComments) {
-          onReplaceBrowserCodeComments(snapshot.scope, contexts)
-        } else {
-          contexts.forEach(context => onAddCodeComment?.(context))
-        }
-        const quickBaseline = quickAnnotationBaselineRef.current
-        if (
-          annotationFlowRef.current === 'quick' &&
-          quickBaseline &&
-          snapshot.scope.pageSessionId === quickBaseline.pageSessionId &&
-          snapshot.revision > quickBaseline.revision &&
-          snapshot.annotations.length > quickBaseline.annotationCount
-        ) {
-          exitAnnotationMode()
-        }
-      } catch (error) {
-        if (cancelled) return
-        console.error('Failed to consume embedded browser annotations:', error)
-        logBrowserAnnotation('consume annotations failed', {
-          label,
-          error: error instanceof Error ? error.message : String(error),
-        })
-      }
-    }
-
-    const intervalId = window.setInterval(() => {
-      void consumeAnnotations()
-    }, BROWSER_ANNOTATION_STATE_INTERVAL_MS)
-    void consumeAnnotations()
-
-    return () => {
-      cancelled = true
-      logBrowserAnnotation('consume effect cleanup', { label })
-      window.clearInterval(intervalId)
-    }
-  }, [
-    active,
-    activePageUrl,
-    annotationMode,
-    browserTabId,
-    embeddedBrowserAvailable,
-    exitAnnotationMode,
-    internalDesktopPage,
-    label,
-    onAddCodeComment,
-    onReplaceBrowserCodeComments,
-  ])
-
   const holdOriginalView = useCallback((event: PointerEvent<HTMLButtonElement>) => {
     if (event.nativeEvent.isTrusted) {
       try {
@@ -1829,13 +1614,8 @@ export function WorkspaceBrowserTabPanel({
   }, [])
 
   useEffect(() => {
-    if (!annotationMode) {
-      return
-    }
-    void evalEmbeddedBrowser(
-      `window.__WEWORK_BROWSER_ANNOTATION__?.setOriginalViewEnabled?.(${originalViewEnabled}) ?? true`,
-      label
-    ).catch(error => {
+    if (!annotationMode) return
+    void setEmbeddedBrowserAnnotationOriginalView(originalViewEnabled, label).catch(error => {
       console.error('Failed to update embedded browser original view state:', error)
     })
   }, [annotationMode, label, originalViewEnabled])
@@ -2125,10 +1905,6 @@ export function WorkspaceBrowserTabPanel({
       pageStateRequestGenerationRef.current += 1
       pendingNavigationUrlRef.current = nextUrl
 
-      if (annotationMode && nextUrl !== activePageUrl) {
-        exitAnnotationMode()
-      }
-
       if (nextUrl === activePageUrl) {
         updatePageUrl(nextUrl)
         pendingNavigationUrlRef.current = null
@@ -2156,9 +1932,7 @@ export function WorkspaceBrowserTabPanel({
     },
     [
       activePageUrl,
-      annotationMode,
       embeddedBrowserAvailable,
-      exitAnnotationMode,
       label,
       refreshPageState,
       reloadCurrentUrl,
@@ -2555,11 +2329,15 @@ export function WorkspaceBrowserTabPanel({
 
   return (
     <div
+      ref={browserPanelRef}
       data-testid="workspace-browser-panel"
       data-embedded-browser-label={label}
+      data-browser-annotation-original-view={annotationOriginalView}
+      data-browser-annotation-revision={annotationRevision}
+      data-browser-annotation-runtime-revision={annotationRuntimeRevision}
       onKeyDown={handleBrowserKeyDown}
       className={cn(
-        'flex h-full min-h-0 w-full flex-col bg-background text-text-primary',
+        'relative flex h-full min-h-0 w-full flex-col bg-background text-text-primary',
         !active && 'hidden'
       )}
     >
@@ -2816,16 +2594,14 @@ export function WorkspaceBrowserTabPanel({
         onClose={() => setDiscardDialogOpen(false)}
         onConfirm={() => {
           setDiscardingAnnotations(true)
-          void evalEmbeddedBrowserJson<BrowserAnnotationSnapshot>(
-            'window.__WEWORK_BROWSER_ANNOTATION__?.clear?.() ?? null',
-            label
-          )
-            .then(snapshot => {
-              if (!snapshot) throw new Error('Annotation runtime is unavailable')
-              setAnnotations(snapshot.annotations)
-              setAnnotationScope(snapshot.scope)
+          void clearEmbeddedBrowserAnnotations(label)
+            .then(() => readEmbeddedBrowserAnnotationState(label))
+            .then(state => {
+              if (!applyAnnotationState(state)) return
               setOriginalViewHeld(false)
-              onRemoveBrowserCodeComments?.(snapshot.scope)
+              if (state.scope) {
+                onRemoveBrowserCodeComments?.({ ...state.scope, browserTabId })
+              }
               setDiscardDialogOpen(false)
             })
             .catch(error => {
@@ -2840,9 +2616,7 @@ export function WorkspaceBrowserTabPanel({
           data-testid="workspace-browser-agent-status"
           className="flex h-9 shrink-0 items-center gap-2 border-b border-border bg-surface px-3 text-xs text-text-secondary"
         >
-          {agentState?.status === 'running' ? (
-            <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin text-primary" />
-          ) : agentState?.status === 'paused' ? (
+          {agentState?.status === 'paused' ? (
             <Pause className="h-3.5 w-3.5 shrink-0 text-text-muted" />
           ) : (
             <CircleAlert className="h-3.5 w-3.5 shrink-0 text-amber-600" />
@@ -2884,17 +2658,7 @@ export function WorkspaceBrowserTabPanel({
               <Play className="h-3.5 w-3.5" />
               {t('workbench.browser_agent_resume')}
             </button>
-          ) : (
-            <button
-              type="button"
-              data-testid="workspace-browser-agent-pause-button"
-              className="inline-flex h-7 shrink-0 items-center gap-1 rounded-md border border-border bg-background px-2 font-medium text-text-primary hover:bg-muted"
-              onClick={() => setAgentControlPaused(true)}
-            >
-              <Pause className="h-3.5 w-3.5" />
-              {t('workbench.browser_agent_take_control')}
-            </button>
-          )}
+          ) : null}
         </div>
       ) : null}
       {(!annotationMode || internalDesktopPage) && downloadsOpen ? (
@@ -2902,6 +2666,20 @@ export function WorkspaceBrowserTabPanel({
           data-testid="workspace-browser-downloads-panel"
           className="flex max-h-40 shrink-0 flex-col overflow-y-auto border-b border-border bg-surface px-3 py-2"
         >
+          <div className="flex items-center justify-between pb-1">
+            <span className="text-xs font-medium text-text-secondary">
+              {t('workbench.browser_downloads')}
+            </span>
+            <button
+              type="button"
+              data-testid="workspace-browser-downloads-close"
+              aria-label={t('workbench.browser_downloads_close')}
+              className="rounded-md p-1 text-text-secondary hover:bg-muted hover:text-text-primary"
+              onClick={() => setDownloadsOpen(false)}
+            >
+              <X className="h-3.5 w-3.5" />
+            </button>
+          </div>
           {downloads.length === 0 ? (
             <span className="text-xs text-text-muted">
               {t('workbench.browser_downloads_empty')}
@@ -3009,12 +2787,91 @@ export function WorkspaceBrowserTabPanel({
         message={localFilePreviewToast?.message ?? null}
         tone="error"
         onClear={clearLocalFilePreviewToast}
+        horizontalAnchorRef={browserPanelRef}
+        visible={active}
       />
+      {downloadPeek ? (
+        <div
+          key={downloadPeek.id}
+          data-testid="workspace-browser-download-peek"
+          role="status"
+          className="absolute bottom-4 right-4 z-20 flex w-72 flex-col gap-2 rounded-lg border border-border bg-surface p-3 shadow-[0_8px_28px_rgba(0,0,0,0.12)]"
+        >
+          <div className="flex items-center gap-2">
+            {downloadPeek.status === 'finished' ? (
+              <CheckCircle2 className="h-4 w-4 shrink-0 text-green-600" />
+            ) : (
+              <CircleAlert className="h-4 w-4 shrink-0 text-red-500" />
+            )}
+            <div className="min-w-0 flex-1">
+              <p className="text-xs font-medium text-text-primary">
+                {t(`workbench.browser_download_${downloadPeek.status}`)}
+              </p>
+              <p
+                className="truncate text-xs text-text-muted"
+                title={downloadPeek.path ?? downloadPeek.fileName}
+              >
+                {downloadPeek.fileName}
+              </p>
+            </div>
+            <button
+              type="button"
+              data-testid="workspace-browser-download-peek-dismiss"
+              aria-label={t('workbench.browser_download_peek_dismiss')}
+              className="shrink-0 rounded-md p-1 text-text-secondary hover:bg-muted hover:text-text-primary"
+              onClick={() => setDownloadPeek(null)}
+            >
+              <X className="h-3.5 w-3.5" />
+            </button>
+          </div>
+          <div className="flex items-center gap-1.5">
+            {downloadPeek.status === 'finished' && downloadPeek.path ? (
+              <>
+                <button
+                  type="button"
+                  data-testid="workspace-browser-download-peek-open"
+                  className="rounded-md px-2 py-1 text-xs font-medium text-text-secondary hover:bg-muted hover:text-text-primary"
+                  onClick={() => {
+                    void openLocalFile(downloadPeek.path ?? undefined)
+                    setDownloadPeek(null)
+                  }}
+                >
+                  {t('workbench.browser_download_peek_open')}
+                </button>
+                <button
+                  type="button"
+                  data-testid="workspace-browser-download-peek-show-in-folder"
+                  className="rounded-md px-2 py-1 text-xs font-medium text-text-secondary hover:bg-muted hover:text-text-primary"
+                  onClick={() => {
+                    void revealLocalFile(downloadPeek.path ?? undefined)
+                    setDownloadPeek(null)
+                  }}
+                >
+                  {fileManagerRevealLabel(t)}
+                </button>
+              </>
+            ) : null}
+            <button
+              type="button"
+              data-testid="workspace-browser-download-peek-view-downloads"
+              className="rounded-md px-2 py-1 text-xs font-medium text-text-secondary hover:bg-muted hover:text-text-primary"
+              onClick={() => {
+                setDownloadPeek(null)
+                setDownloadsOpen(true)
+              }}
+            >
+              {t('workbench.browser_download_peek_view_downloads')}
+            </button>
+          </div>
+        </div>
+      ) : null}
       <TransientNotice
         key={clearDataNotice?.id ?? 'workspace-browser-clear-data-toast'}
         message={clearDataNotice?.message ?? null}
         tone={clearDataNotice?.tone}
         onClear={clearClearDataNotice}
+        horizontalAnchorRef={browserPanelRef}
+        visible={active}
       />
       {invalidTlsCertificate ? (
         <div
@@ -3067,6 +2924,13 @@ export function WorkspaceBrowserTabPanel({
             {electronRuntime ? (
               <ElectronEmbeddedBrowserView
                 active={active}
+                cursor={agentCursor}
+                cursorScale={
+                  deviceToolbar.isEnabled
+                    ? (deviceVisualRect ? deviceVisualRect.width / deviceToolbar.width : 1) *
+                      zoomPercentToScaleFactor(zoomPercent)
+                    : zoomPercentToScaleFactor(zoomPercent)
+                }
                 interactionBlocked={embeddedBrowserOccluded || Boolean(navigationError)}
                 label={label}
                 visualRect={deviceVisualRect}

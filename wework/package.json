@@ -1,7 +1,7 @@
 {
   "name": "wework",
   "private": true,
-  "version": "0.3.4-beta.1",
+  "version": "0.3.6-beta.1",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -95,6 +95,7 @@
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
     "dequal": "2.0.3",
+    "highlight.js": "11.11.1",
     "html2canvas": "1.4.1",
     "i18next": "^26.2.0",
     "i18next-browser-languagedetector": "^8.2.1",
@@ -115,7 +116,6 @@
     "react-i18next": "^17.0.8",
     "react-markdown": "^10.1.0",
     "react-resizable-panels": "^4.12.2",
-    "react-syntax-highlighter": "^15.6.6",
     "remark-gfm": "^4.0.1",
     "streamdown": "2.5.0",
     "tailwind-merge": "^3.6.0"
@@ -131,7 +131,6 @@
     "@types/node": "^24.12.4",
     "@types/react": "^19.2.14",
     "@types/react-dom": "^19.2.3",
-    "@types/react-syntax-highlighter": "^15.5.13",
     "@vitejs/plugin-react": "^6.0.1",
     "@vitest/coverage-istanbul": "^4.1.8",
     "autoprefixer": "^10.5.0",

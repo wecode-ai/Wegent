@@ -186,7 +186,11 @@ export function installXtermTextDrag({
     terminal.onResize(syncDragRegions),
   ]
   const automationContainer = container as XtermAutomationContainer
-  const selectTextForE2E = (value: string) => selectXtermBufferText(terminal, value)
+  const selectTextForE2E = (value: string) => {
+    const selectedText = selectXtermBufferText(terminal, value)
+    syncDragRegions()
+    return selectedText
+  }
   automationContainer.__weworkInputForE2E = value => terminal.input(value)
   automationContainer.__weworkSelectTextForE2E = selectTextForE2E
   container.addEventListener('mousedown', handleMouseDown, true)

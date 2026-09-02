@@ -136,6 +136,12 @@ Electron，并设置 `ELECTRON_RUN_AS_NODE=1`。因此 Core DSH 以及 Codex ski
 显式执行的 `node script.ts` 或 `#!/usr/bin/env node` 都使用与当前 Electron
 版本绑定的 Node。
 
+该入口还会预加载标准流保护脚本。stdio MCP 或其他 Node 子进程的消费端关闭后，
+向已断开的 `stderr` 写诊断信息不得触发 Electron 的主进程异常弹窗；协议
+`stdout` 断开则表示调用方已经离开，子进程应正常退出。保护只处理 `EPIPE`，
+其他标准流错误仍保持失败并暴露根因。自定义 Node 可执行文件使用原生 Node
+错误处理，不加载这段 Electron 专用逻辑。
+
 ## Bundled sidecars 与资源
 
 构建前必须准备 Codex 和 DWS：
@@ -162,6 +168,23 @@ Codex 下载包按 `wework/codex-binaries.lock.json` 固定并校验 SHA-512。�
 `prepare-package-assets.mjs` 必须将其与目标架构二进制一起复制到桌面资源。修改
 打包链路时，应解包或检查真实应用产物，确认这些文件存在且与仓库中的源文件一致；
 仅检查中间资源目录不能证明最终发行物合规。
+
+## 开发模式热更新
+
+`pnpm --dir wework run dev:mac` 会通过
+`wework/scripts/dev-wework-app-watch.mjs` 持续构建原始 Wework 应用。监听器启动时
+清理一次 `dsh/app-wework/web`，后续增量构建不得再次清空该目录；正在运行的
+renderer 可能仍在请求上一代哈希资源，提前删除会在新产物写入期间造成白屏。
+
+每次构建只有在 Vite 完成 bundle、关闭构建结果并规范化文件查看器元数据后，才能
+写入 `.wework-build-id`。Core DSH 使用这个标记作为已发布构建 ID，页面只在标记
+变化后刷新，不能把 `index.html` 的中间写入状态当成可加载版本。
+
+开发热更新模式下，`/wework/app/` 下的静态资源必须返回
+`Cache-Control: no-store`。除哈希资源外，该目录还包含固定文件名的
+`plugins/*.js`；如果这些文件使用生产环境的长期 immutable 缓存，刷新后会把旧插件
+bundle 与新主 bundle 混合，导致 React Context 等模块出现两份实例。正式构建仍
+使用 `public, max-age=31536000, immutable`。
 
 ## 本地验证
 

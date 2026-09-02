@@ -98,6 +98,53 @@ describe('HostPipeServer', () => {
     server.stop()
   })
 
+  test('accepts requests larger than the previous one MiB limit', async () => {
+    const router = new HostCapabilityRouter()
+    router.grant('@wegent/dsh-app-wework', ['preferences.update'])
+    const updatePreferences = vi.fn(async () => ({ updated: true }))
+    router.register('preferences.update', updatePreferences)
+    const server = new HostPipeServer(router)
+    const childToHost = new PassThrough()
+    const hostToChild = new PassThrough()
+    const replies = createInterface({ input: hostToChild })
+    const nextReply = () =>
+      new Promise<Record<string, unknown>>(resolve =>
+        replies.once('line', line => resolve(JSON.parse(line) as Record<string, unknown>))
+      )
+    server.attachStreams(childToHost, hostToChild)
+
+    let response = nextReply()
+    childToHost.write(
+      `${JSON.stringify({
+        type: 'hello',
+        protocolVersion: 1,
+        token: server.environment().WEWORK_ELECTRON_HOST_TOKEN,
+        principal: '@wegent/dsh-app-wework',
+      })}\n`
+    )
+    await response
+
+    const largeValue = 'x'.repeat(2 * 1024 * 1024)
+    response = nextReply()
+    childToHost.write(
+      `${JSON.stringify({
+        type: 'request',
+        id: 'large-request',
+        capability: 'preferences.update',
+        params: { patch: { largeValue } },
+      })}\n`
+    )
+
+    await expect(response).resolves.toEqual({
+      type: 'response',
+      id: 'large-request',
+      ok: true,
+      result: { updated: true },
+    })
+    expect(updatePreferences).toHaveBeenCalledWith({ patch: { largeValue } }, expect.any(Object))
+    server.stop()
+  })
+
   test('writes the install response before running application shutdown', async () => {
     const router = new HostCapabilityRouter()
     router.grant('@wegent/dsh-app-wework', ['appUpdate.install'])
@@ -170,6 +217,19 @@ describe('HostPipeServer', () => {
       })}\n`
     )
     await vi.waitFor(() => expect(protocolError).toHaveBeenCalledOnce())
+  })
+
+  test('converts a broken response pipe into a protocol error', async () => {
+    const server = new HostPipeServer(new HostCapabilityRouter())
+    const childToHost = new PassThrough()
+    const hostToChild = new PassThrough()
+    const protocolError = vi.fn()
+    server.on('protocolError', protocolError)
+    server.attachStreams(childToHost, hostToChild)
+
+    const error = Object.assign(new Error('write EPIPE'), { code: 'EPIPE' })
+    expect(() => hostToChild.emit('error', error)).not.toThrow()
+    expect(protocolError).toHaveBeenCalledWith(error)
   })
 
   test('uses inherited file descriptors with a real child process', async () => {

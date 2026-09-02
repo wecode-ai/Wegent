@@ -606,6 +606,68 @@ export async function verifyRemoteDockerCommandFlow(control, cloudEnvironment) {
   await control.command('navigate', 'body', { value: '/' })
 }
 
+export async function verifyLocalRemoteControlFlow(control, cloudEnvironment) {
+  await control.command('setAppPreferences', 'body', {
+    value: JSON.stringify({ remoteControlEnabled: false }),
+  })
+  await control.command('navigate', 'body', { value: '/settings/connections' })
+  await control.command('waitFor', '[data-testid="remote-control-toggle"]', {
+    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+  })
+  assert.equal(
+    await control.command('getAttribute', '[data-testid="remote-control-toggle"]', {
+      value: 'aria-checked',
+    }),
+    'false',
+    'Remote control should default to disabled'
+  )
+
+  const initialDevice = await cloudEnvironment.waitForConnectedAppDevice()
+  assert.ok(initialDevice.runtime_instance_id, 'The app device did not expose a Runtime identity')
+  assert.ok(initialDevice.app_device_id, 'The app device did not expose its physical app identity')
+
+  await control.command('click', '[data-testid="remote-control-toggle"]')
+  const remoteDevice = await cloudEnvironment.waitForDeviceType(initialDevice.device_id, 'remote')
+  assert.equal(remoteDevice.device_id, initialDevice.device_id)
+  assert.equal(remoteDevice.runtime_instance_id, initialDevice.runtime_instance_id)
+  assert.equal(remoteDevice.app_device_id, initialDevice.app_device_id)
+  assert.equal(
+    await control.command('getAttribute', '[data-testid="remote-control-toggle"]', {
+      value: 'aria-checked',
+    }),
+    'true',
+    'Remote control switch did not stay enabled'
+  )
+  const runtimeSettings = await cloudEnvironment.runtimeSettings(initialDevice.device_id)
+  assert.equal(runtimeSettings.device_id, initialDevice.device_id)
+  await captureVerificationScreenshot(control, 'cloud-00-local-remote-control-enabled.png')
+
+  await control.command('click', '[data-testid="remote-control-toggle"]')
+  const appDevice = await cloudEnvironment.waitForDeviceType(initialDevice.device_id, 'app')
+  assert.equal(appDevice.device_id, initialDevice.device_id)
+  assert.equal(appDevice.runtime_instance_id, initialDevice.runtime_instance_id)
+  assert.equal(appDevice.app_device_id, initialDevice.app_device_id)
+  assert.equal(
+    (await cloudEnvironment.devices()).filter(
+      device => device.device_id === initialDevice.device_id
+    ).length,
+    1,
+    'Toggling remote control created a duplicate device registration'
+  )
+  assert.equal(
+    await control.command('getAttribute', '[data-testid="remote-control-toggle"]', {
+      value: 'aria-checked',
+    }),
+    'false',
+    'Remote control switch did not stay disabled'
+  )
+  await assert.rejects(
+    () => cloudEnvironment.runtimeSettings(initialDevice.device_id),
+    /Remote control is disabled for this app device/
+  )
+  await control.command('navigate', 'body', { value: '/' })
+}
+
 async function verifyFailedCloudConnectionCanDisconnect(control) {
   await control.command('waitFor', '[data-testid="sidebar-cloud-connection-button"]', {
     text: '云端工作',
@@ -655,6 +717,7 @@ async function verifyCloudProjectFlow(
   await control.command('waitFor', '[data-testid="projects-create-button"]', {
     timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
   })
+  await verifyLocalRemoteControlFlow(control, cloudEnvironment)
   await verifyRemoteDockerCommandFlow(control, cloudEnvironment)
   await control.command('waitFor', '[data-testid="projects-create-button"]', {
     timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
@@ -911,12 +974,15 @@ async function verifyCloudProjectFlow(
     value =>
       value.testIds.includes(runningTaskTestId) &&
       value.testIds.includes('pause-response-button') &&
-      value.testIds.includes('thinking-indicator') &&
       !value.testIds.includes('send-message-button') &&
       !value.testIds.includes(unreadTaskTestId),
-    'The cloud follow-up task did not render a consistent sidebar, composer, and message state',
+    'The cloud follow-up task did not remain active while streaming text',
     DEFAULT_STEP_TIMEOUT_MS
   )
+  await control.command('waitFor', '[data-testid="message-assistant"]', {
+    text: CLOUD_FOLLOW_UP_COMPLETION_TEXT,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
   control.releaseCloudFollowUpResponse()
   await control.command('click', `[data-testid="${taskRowTestId}"]`)
   await control.command('waitFor', '[data-testid="message-assistant"]', {
