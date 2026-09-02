@@ -1,7 +1,7 @@
 """Add enterprise plugin publication workflow.
 
 Revision ID: c2f8d4a6b901
-Revises: d6e7f8a9b0c1
+Revises: 8d3d51c83c99
 Create Date: 2026-08-29
 """
 
@@ -15,7 +15,7 @@ from sqlalchemy.dialects import mysql
 from alembic import op
 
 revision: str = "c2f8d4a6b901"
-down_revision: Union[str, Sequence[str], None] = "d6e7f8a9b0c1"
+down_revision: Union[str, Sequence[str], None] = "8d3d51c83c99"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 

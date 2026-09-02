@@ -48,7 +48,7 @@ def test_plugin_marketplace_v2_is_single_revision_on_main_head() -> None:
 def test_plugin_publication_migration_extends_current_head_and_is_reversible() -> None:
     migration = _load_migration("20260829_c2f8d4a6b901_plugin_publication_workflow.py")
     assert migration.revision == "c2f8d4a6b901"
-    assert migration.down_revision == "d6e7f8a9b0c1"
+    assert migration.down_revision == "8d3d51c83c99"
     source = Path(migration.__file__).read_text(encoding="utf-8")
     for table in (
         "plugin_publication_requests",

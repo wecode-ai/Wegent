@@ -87,6 +87,7 @@ describe('createHttpClient', () => {
         'Content-Type': 'application/json',
         Authorization: 'Bearer cloud-token',
         'Idempotency-Key': 'publication-create-82',
+        'X-Request-ID': expect.stringMatching(/^wework-http-/),
       },
       body: JSON.stringify({ requestedVersion: '1.2.0' }),
     })

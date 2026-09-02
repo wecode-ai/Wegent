@@ -1,0 +1,132 @@
+-- Enterprise plugin publication workflow tables for DBA-managed MySQL deployments.
+
+CREATE TABLE plugin_publication_requests (
+    id BIGINT NOT NULL COMMENT 'Publication request primary key' AUTO_INCREMENT,
+    source_plugin_id BIGINT NOT NULL COMMENT 'Source personal plugin ID' DEFAULT '0',
+    target_plugin_id BIGINT NOT NULL COMMENT 'Published enterprise plugin ID; 0 until released' DEFAULT '0',
+    submitter_user_id BIGINT NOT NULL COMMENT 'Request owner user ID' DEFAULT '0',
+    current_revision_id BIGINT NOT NULL COMMENT 'Current publication revision ID' DEFAULT '0',
+    current_revision INTEGER NOT NULL COMMENT 'Current one-based revision number' DEFAULT '1',
+    aggregate_status VARCHAR(40) NOT NULL COMMENT 'Current publication workflow status' DEFAULT 'uploading',
+    risk_level VARCHAR(20) NOT NULL COMMENT 'Current summarized risk level' DEFAULT 'none',
+    submitted_at DATETIME(6) NOT NULL COMMENT 'First immutable submission time; epoch means not completed' DEFAULT '1970-01-01 00:00:00.000000',
+    created_at DATETIME(6) NOT NULL COMMENT 'Creation time' DEFAULT CURRENT_TIMESTAMP(6),
+    updated_at DATETIME(6) NOT NULL COMMENT 'Last workflow update time' DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6),
+    PRIMARY KEY (id),
+    INDEX idx_plugin_publication_request_owner (submitter_user_id, aggregate_status, updated_at),
+    INDEX idx_plugin_publication_request_source (source_plugin_id, aggregate_status)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='Enterprise plugin publication request aggregates';
+
+CREATE TABLE plugin_publication_revisions (
+    id BIGINT NOT NULL COMMENT 'Revision primary key' AUTO_INCREMENT,
+    request_id BIGINT NOT NULL COMMENT 'Owning request ID' DEFAULT '0',
+    revision INTEGER NOT NULL COMMENT 'One-based immutable revision number' DEFAULT '1',
+    source_release_id BIGINT NOT NULL COMMENT 'Optional source personal release ID' DEFAULT '0',
+    requested_version VARCHAR(50) NOT NULL COMMENT 'Requested enterprise version' DEFAULT '',
+    snapshot_sha256 VARCHAR(64) NOT NULL COMMENT 'Immutable submitted artifact SHA-256' DEFAULT '',
+    source_tree_sha256 VARCHAR(64) NOT NULL COMMENT 'Canonical immutable source-tree SHA-256' DEFAULT '',
+    storage_key VARCHAR(500) NOT NULL COMMENT 'Immutable snapshot object key' DEFAULT '',
+    staging_storage_key VARCHAR(500) NOT NULL COMMENT 'Temporary signed-upload object key' DEFAULT '',
+    filename VARCHAR(255) NOT NULL COMMENT 'Original artifact filename' DEFAULT 'plugin.zip',
+    size_bytes BIGINT NOT NULL COMMENT 'Artifact size in bytes' DEFAULT '0',
+    manifest_snapshot JSON NOT NULL COMMENT 'Parsed immutable manifest snapshot',
+    package_entries_json JSON NOT NULL COMMENT 'Safely bounded immutable package path inventory',
+    package_entry_count INTEGER NOT NULL COMMENT 'Full immutable package regular-file count' DEFAULT '0',
+    capabilities_json JSON NOT NULL COMMENT 'Safely bounded immutable capability inventory',
+    risk_declaration JSON NOT NULL COMMENT 'User-submitted permission and risk declaration',
+    release_notes VARCHAR(4096) NOT NULL COMMENT 'Requested release notes' DEFAULT '',
+    test_notes VARCHAR(4096) NOT NULL COMMENT 'Submitter test notes' DEFAULT '',
+    source_updated_at DATETIME(6) NOT NULL COMMENT 'Source content timestamp at packaging' DEFAULT '1970-01-01 00:00:00.000000',
+    status VARCHAR(40) NOT NULL COMMENT 'Revision workflow status' DEFAULT 'uploading',
+    gitlab_project_id VARCHAR(100) NOT NULL COMMENT 'Controlled GitLab project ID' DEFAULT '',
+    gitlab_project_url VARCHAR(500) NOT NULL COMMENT 'Controlled GitLab project URL' DEFAULT '',
+    source_branch VARCHAR(255) NOT NULL COMMENT 'Controlled source branch' DEFAULT '',
+    merge_request_iid INTEGER NOT NULL COMMENT 'GitLab merge request IID' DEFAULT '0',
+    merge_request_url VARCHAR(500) NOT NULL COMMENT 'GitLab merge request URL' DEFAULT '',
+    merge_request_status VARCHAR(40) NOT NULL COMMENT 'Last observed merge request status' DEFAULT '',
+    pipeline_id BIGINT NOT NULL COMMENT 'Last observed pipeline ID' DEFAULT '0',
+    pipeline_url VARCHAR(500) NOT NULL COMMENT 'Last observed pipeline URL' DEFAULT '',
+    pipeline_status VARCHAR(40) NOT NULL COMMENT 'Last observed pipeline status' DEFAULT '',
+    commit_sha VARCHAR(64) NOT NULL COMMENT 'Materialized source commit SHA' DEFAULT '',
+    created_by_user_id BIGINT NOT NULL COMMENT 'Revision creator user ID' DEFAULT '0',
+    completed_at DATETIME(6) NOT NULL COMMENT 'Snapshot completion time; epoch means incomplete' DEFAULT '1970-01-01 00:00:00.000000',
+    created_at DATETIME(6) NOT NULL COMMENT 'Creation time' DEFAULT CURRENT_TIMESTAMP(6),
+    updated_at DATETIME(6) NOT NULL COMMENT 'Last workflow update time' DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6),
+    PRIMARY KEY (id),
+    CONSTRAINT uniq_plugin_publication_revision UNIQUE (request_id, revision),
+    INDEX idx_plugin_publication_revision_status (status, updated_at),
+    INDEX idx_plugin_publication_revision_gitlab (gitlab_project_id, merge_request_iid)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='Immutable enterprise publication snapshots';
+
+CREATE TABLE plugin_publication_checks (
+    id BIGINT NOT NULL COMMENT 'Check primary key' AUTO_INCREMENT,
+    revision_id BIGINT NOT NULL COMMENT 'Checked revision ID' DEFAULT '0',
+    stage VARCHAR(40) NOT NULL COMMENT 'Check stage' DEFAULT 'automatic',
+    check_code VARCHAR(100) NOT NULL COMMENT 'Stable check code' DEFAULT '',
+    title VARCHAR(200) NOT NULL COMMENT 'Human-readable check title' DEFAULT '',
+    severity VARCHAR(20) NOT NULL COMMENT 'info, warning, or blocker' DEFAULT 'info',
+    status VARCHAR(20) NOT NULL COMMENT 'Check execution status' DEFAULT 'pending',
+    summary VARCHAR(1000) NOT NULL COMMENT 'Short check result summary' DEFAULT '',
+    evidence_json JSON NOT NULL COMMENT 'Structured evidence list',
+    execution_environment VARCHAR(100) NOT NULL COMMENT 'Execution environment label' DEFAULT 'backend',
+    job_url VARCHAR(500) NOT NULL COMMENT 'External job URL; empty means local check' DEFAULT '',
+    acknowledgement_required BOOL NOT NULL COMMENT 'Whether an admin must acknowledge this warning' DEFAULT 0,
+    acknowledged BOOL NOT NULL COMMENT 'Whether the warning was acknowledged' DEFAULT 0,
+    acknowledged_by_user_id BIGINT NOT NULL COMMENT 'Acknowledging admin user ID; 0 means none' DEFAULT '0',
+    created_at DATETIME(6) NOT NULL COMMENT 'Creation time' DEFAULT CURRENT_TIMESTAMP(6),
+    updated_at DATETIME(6) NOT NULL COMMENT 'Last check update time' DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6),
+    PRIMARY KEY (id),
+    CONSTRAINT uniq_plugin_publication_check UNIQUE (revision_id, check_code),
+    INDEX idx_plugin_publication_check_status (revision_id, status)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='Publication check evidence by stable code';
+
+CREATE TABLE plugin_publication_events (
+    id BIGINT NOT NULL COMMENT 'Event primary key' AUTO_INCREMENT,
+    revision_id BIGINT NOT NULL COMMENT 'Related revision ID' DEFAULT '0',
+    event_type VARCHAR(100) NOT NULL COMMENT 'Stable event type' DEFAULT '',
+    actor_type VARCHAR(30) NOT NULL COMMENT 'user, admin, gitlab, pipeline, release_service, or system' DEFAULT 'system',
+    actor_id BIGINT NOT NULL COMMENT 'Actor user or service ID; 0 means external/system' DEFAULT '0',
+    actor_name VARCHAR(200) NOT NULL COMMENT 'Human-readable actor name' DEFAULT '',
+    message VARCHAR(1000) NOT NULL COMMENT 'Human-readable audit message' DEFAULT '',
+    payload_json JSON NOT NULL COMMENT 'Structured event payload',
+    external_event_id VARCHAR(200) NOT NULL COMMENT 'Unique idempotency key for internal or external events' DEFAULT '',
+    created_at DATETIME(6) NOT NULL COMMENT 'Creation time' DEFAULT CURRENT_TIMESTAMP(6),
+    PRIMARY KEY (id),
+    CONSTRAINT uniq_plugin_publication_external_event UNIQUE (external_event_id),
+    INDEX idx_plugin_publication_event_timeline (revision_id, created_at)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='Append-only publication workflow audit events';
+
+CREATE TABLE plugin_release_idempotency (
+    id BIGINT NOT NULL COMMENT 'Idempotency binding primary key' AUTO_INCREMENT,
+    idempotency_key VARCHAR(81) NOT NULL COMMENT 'Derived protected-pipeline release key' DEFAULT '',
+    request_sha256 VARCHAR(64) NOT NULL COMMENT 'Canonical complete release envelope SHA256' DEFAULT '',
+    artifact_sha256 VARCHAR(64) NOT NULL COMMENT 'Exact uploaded artifact SHA256' DEFAULT '',
+    envelope_json JSON NOT NULL COMMENT 'Complete validated release envelope',
+    status VARCHAR(20) NOT NULL COMMENT 'processing, completed, or failed' DEFAULT 'processing',
+    response_json JSON NOT NULL COMMENT 'Stable successful release response',
+    plugin_id BIGINT NOT NULL COMMENT 'Published enterprise plugin ID; 0 until completed' DEFAULT '0',
+    release_id BIGINT NOT NULL COMMENT 'Published release ID; 0 until completed' DEFAULT '0',
+    last_error VARCHAR(1000) NOT NULL COMMENT 'Last retriable release error' DEFAULT '',
+    created_at DATETIME(6) NOT NULL COMMENT 'Creation time' DEFAULT CURRENT_TIMESTAMP(6),
+    updated_at DATETIME(6) NOT NULL COMMENT 'Last idempotency state update time' DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6),
+    PRIMARY KEY (id),
+    CONSTRAINT uniq_plugin_release_idempotency_key UNIQUE (idempotency_key),
+    INDEX idx_plugin_release_idempotency_status (status, updated_at)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='Durable protected-pipeline release idempotency bindings';
+
+CREATE TABLE plugin_publication_idempotency (
+    id BIGINT NOT NULL COMMENT 'Idempotency binding primary key' AUTO_INCREMENT,
+    principal_type VARCHAR(20) NOT NULL COMMENT 'Authenticated principal kind' DEFAULT 'user',
+    principal_id BIGINT NOT NULL COMMENT 'Authenticated principal ID' DEFAULT '0',
+    operation VARCHAR(80) NOT NULL COMMENT 'Stable mutation operation name' DEFAULT '',
+    idempotency_key VARCHAR(200) NOT NULL COMMENT 'Caller-provided Idempotency-Key' DEFAULT '',
+    resource_key VARCHAR(255) NOT NULL COMMENT 'Operation-specific resource binding' DEFAULT '',
+    request_sha256 VARCHAR(64) NOT NULL COMMENT 'Canonical resource and payload SHA256' DEFAULT '',
+    status VARCHAR(20) NOT NULL COMMENT 'processing, completed, or failed' DEFAULT 'processing',
+    response_json JSON NOT NULL COMMENT 'Completed response used for exact replay',
+    created_at DATETIME(6) NOT NULL COMMENT 'Creation time' DEFAULT CURRENT_TIMESTAMP(6),
+    updated_at DATETIME(6) NOT NULL COMMENT 'Last idempotency state update time' DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6),
+    PRIMARY KEY (id),
+    CONSTRAINT uniq_plugin_publication_idempotency UNIQUE (principal_type, principal_id, operation, idempotency_key),
+    INDEX idx_plugin_publication_idempotency_status (status, updated_at)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='Durable publication workflow idempotency bindings';

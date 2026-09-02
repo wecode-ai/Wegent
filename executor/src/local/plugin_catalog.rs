@@ -304,21 +304,21 @@ fn plugin_sources_from_marketplace_manifest(
 fn marketplace_root_from_path(path: &Path) -> PathBuf {
     if path
         .file_name()
-        .map_or(false, |name| name == "marketplace.json")
+        .is_some_and(|name| name == "marketplace.json")
     {
         let Some(parent) = path.parent() else {
             return path.to_path_buf();
         };
-        if parent.file_name().map_or(false, |name| name == "plugins") {
+        if parent.file_name().is_some_and(|name| name == "plugins") {
             if let Some(scope) = parent.parent() {
-                if scope.file_name().map_or(false, |name| name == ".agents") {
+                if scope.file_name().is_some_and(|name| name == ".agents") {
                     return scope.parent().unwrap_or(scope).to_path_buf();
                 }
             }
         }
         if parent
             .file_name()
-            .map_or(false, |name| name == ".claude-plugin")
+            .is_some_and(|name| name == ".claude-plugin")
         {
             return parent.parent().unwrap_or(parent).to_path_buf();
         }
@@ -326,11 +326,11 @@ fn marketplace_root_from_path(path: &Path) -> PathBuf {
     }
     if path
         .file_name()
-        .map_or(false, |name| name == ".agents" || name == ".claude-plugin")
+        .is_some_and(|name| name == ".agents" || name == ".claude-plugin")
     {
         return path.parent().unwrap_or(path).to_path_buf();
     }
-    if path.file_name().map_or(false, |name| name == "plugins")
+    if path.file_name().is_some_and(|name| name == "plugins")
         && path.parent().and_then(Path::file_name) == Some(".agents".as_ref())
     {
         return path
@@ -369,12 +369,12 @@ fn resolve_plugin_example_source() -> Result<PathBuf, String> {
     if let Some(bundled_marketplace) = non_empty_env_path(BUNDLED_PLUGIN_MARKETPLACE_SOURCE_ENV) {
         if bundled_marketplace
             .file_name()
-            .map_or(false, |name| name == PLUGIN_EXAMPLE_DIRECTORY)
+            .is_some_and(|name| name == PLUGIN_EXAMPLE_DIRECTORY)
         {
             candidates.push(bundled_marketplace);
         } else if bundled_marketplace
             .file_name()
-            .map_or(false, |name| name == BUNDLED_PLUGINS_DIRECTORY)
+            .is_some_and(|name| name == BUNDLED_PLUGINS_DIRECTORY)
         {
             candidates.push(bundled_marketplace.join(PLUGIN_EXAMPLE_DIRECTORY));
         } else if let Some(parent) = bundled_marketplace.parent() {

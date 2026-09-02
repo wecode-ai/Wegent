@@ -430,8 +430,8 @@ describe('CloudConnectionProvider', () => {
         backendUrl: 'http://127.0.0.1:8000',
         user: { id: 2, user_name: 'local' },
       })
+      expect(screen.getByTestId('cloud-connection-status')).toHaveTextContent('connected')
     })
-    expect(screen.getByTestId('cloud-connection-status')).toHaveTextContent('connected')
     expect(createHttpClient).toHaveBeenCalledWith(
       expect.objectContaining({ baseUrl: 'http://127.0.0.1:8000/api' })
     )
