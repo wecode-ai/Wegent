@@ -14,8 +14,11 @@ from typing import Any, Dict, List, Optional
 import requests
 from fastapi import HTTPException
 
+from app.core.blocking_work import run_repository_io
 from app.core.cache import cache_manager
 from app.core.config import settings
+from app.core.payload_codec import decode_sync_response_json
+from app.core.web_background_tasks import web_background_task_manager
 from app.models.user import User
 from app.repository.file_status import file_status_letter
 from app.repository.interfaces.repository_provider import RepositoryProvider
@@ -164,7 +167,8 @@ class GitHubProvider(RepositoryProvider):
                     "Accept": "application/vnd.github.v3+json",
                 }
 
-                response = requests.get(
+                response = await run_repository_io(
+                    requests.get,
                     f"{api_base_url}/user/repos",
                     headers=headers,
                     params={"per_page": limit, "page": page, "sort": "updated"},
@@ -172,7 +176,7 @@ class GitHubProvider(RepositoryProvider):
                 )
                 response.raise_for_status()
 
-                repos = response.json()
+                repos = await decode_sync_response_json(response)
 
                 if len(repos) < limit:
                     cache_key = cache_manager.generate_full_cache_key(
@@ -182,8 +186,11 @@ class GitHubProvider(RepositoryProvider):
                         cache_key, repos, expire=settings.REPO_CACHE_EXPIRED_TIME
                     )
                 else:
-                    asyncio.create_task(
-                        self._fetch_all_repositories_async(user, git_token, git_domain)
+                    await web_background_task_manager.submit(
+                        lambda: self._fetch_all_repositories_async(
+                            user, git_token, git_domain
+                        ),
+                        name=f"github-repository-refresh-{user.id}-{git_domain}",
                     )
 
                 all_repos.extend(
@@ -239,8 +246,8 @@ class GitHubProvider(RepositoryProvider):
             }
 
             # Get the actual default branch name
-            default_branch_name = self._get_default_branch(
-                repo_name, git_domain, git_token
+            default_branch_name = await run_repository_io(
+                self._get_default_branch, repo_name, git_domain, git_token
             )
 
             all_branches = []
@@ -248,7 +255,8 @@ class GitHubProvider(RepositoryProvider):
             per_page = 100
 
             while True:
-                response = requests.get(
+                response = await run_repository_io(
+                    requests.get,
                     f"{api_base_url}/repos/{repo_name}/branches",
                     headers=headers,
                     params={"per_page": per_page, "page": page},
@@ -256,7 +264,7 @@ class GitHubProvider(RepositoryProvider):
                 )
                 response.raise_for_status()
 
-                branches = response.json()
+                branches = await decode_sync_response_json(response)
                 if not branches:
                     break
 
@@ -536,14 +544,15 @@ class GitHubProvider(RepositoryProvider):
                     "Authorization": f"token {git_token}",
                     "Accept": "application/vnd.github.v3+json",
                 }
-                response = requests.get(
+                response = await run_repository_io(
+                    requests.get,
                     f"{api_base_url}/user/repos",
                     headers=headers,
                     params={"per_page": 100, "page": 1, "sort": "updated"},
                     timeout=settings.REPOSITORY_READ_TIMEOUT_SECONDS,
                 )
                 response.raise_for_status()
-                repos = response.json()
+                repos = await decode_sync_response_json(response)
                 mapped = [
                     {
                         "id": repo["id"],
@@ -626,7 +635,7 @@ class GitHubProvider(RepositoryProvider):
             )
 
             while True:
-                response = await asyncio.to_thread(
+                response = await run_repository_io(
                     requests.get,
                     f"{api_base_url}/user/repos",
                     headers=headers,
@@ -635,7 +644,7 @@ class GitHubProvider(RepositoryProvider):
                 )
                 response.raise_for_status()
 
-                repos = response.json()
+                repos = await decode_sync_response_json(response)
                 if not repos:
                     break
 
@@ -751,14 +760,15 @@ class GitHubProvider(RepositoryProvider):
             self.logger.info(
                 f"Comparing {repo_name}: {target_branch}...{source_branch}"
             )
-            response = requests.get(
+            response = await run_repository_io(
+                requests.get,
                 f"{api_base_url}/repos/{repo_name}/compare/{target_branch}...{source_branch}",
                 headers=headers,
                 timeout=settings.REPOSITORY_READ_TIMEOUT_SECONDS,
             )
             response.raise_for_status()
 
-            compare_data = response.json()
+            compare_data = await decode_sync_response_json(response)
 
             # Log for debugging
             self.logger.info(
@@ -789,13 +799,14 @@ class GitHubProvider(RepositoryProvider):
                 self.logger.info(
                     f"No files found in {target_branch}...{source_branch}, trying reverse direction"
                 )
-                reverse_response = requests.get(
+                reverse_response = await run_repository_io(
+                    requests.get,
                     f"{api_base_url}/repos/{repo_name}/compare/{source_branch}...{target_branch}",
                     headers=headers,
                     timeout=settings.REPOSITORY_READ_TIMEOUT_SECONDS,
                 )
                 reverse_response.raise_for_status()
-                reverse_data = reverse_response.json()
+                reverse_data = await decode_sync_response_json(reverse_response)
 
                 self.logger.info(
                     f"Reverse compare API response status: {reverse_data.get('status', 'unknown')}"

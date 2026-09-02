@@ -30,10 +30,12 @@ Usage:
 """
 
 import asyncio
-import concurrent.futures
+import inspect
 import logging
 from dataclasses import dataclass
 from typing import Any, Callable, Dict, List, Optional, Type, TypeVar
+
+from app.core.web_background_tasks import web_background_task_manager
 
 logger = logging.getLogger(__name__)
 
@@ -107,8 +109,8 @@ class EventBus:
     This event bus supports:
     - Type-safe event publishing and subscribing
     - Multiple handlers per event type
-    - Async handlers with fire-and-forget execution
-    - Error isolation (one handler failure doesn't affect others)
+    - Explicitly joined concurrent handlers
+    - Handler error propagation to the owning publisher
     - Cross-loop execution (handlers run in main loop)
 
     Note: This is an in-process event bus. For cross-process events,
@@ -163,8 +165,8 @@ class EventBus:
     async def publish(self, event: T) -> None:
         """Publish an event to all subscribed handlers.
 
-        Handlers are executed concurrently in fire-and-forget mode.
-        Errors in handlers are logged but don't propagate to the publisher.
+        Handlers are executed concurrently and joined before returning.
+        Handler failures propagate to the publisher after being logged.
 
         IMPORTANT: This method must be called from an active event loop context.
         It is an async method and requires `await`. If called without a running
@@ -220,33 +222,11 @@ class EventBus:
         )
 
         if is_different_loop:
-            # For TaskCompletedEvent, execute handlers directly in current loop.
-            # This is critical because:
-            # 1. SubscriptionTaskCompletionHandler only updates database, doesn't need WebSocket
-            # 2. asyncio.run_coroutine_threadsafe schedules tasks but main loop may not process them
-            #    (observed issue: tasks only execute when server shuts down)
-            # 3. Executing directly in current loop ensures immediate execution
-            if type(event).__name__ == "TaskCompletedEvent":
-                logger.info(
-                    "[EVENT_BUS] TaskCompletedEvent from different loop, "
-                    "executing handlers directly in current loop "
-                    "(handler doesn't need main loop context, avoids scheduling issues)"
-                )
-                await self._execute_handlers(handlers, event)
-                return
-
-            # For other events that may need WebSocket/main loop context,
-            # schedule in main loop if it's running
-            if self._main_loop.is_running():
-                logger.info(
-                    "[EVENT_BUS] Publishing from different loop, scheduling in main loop"
-                )
-                await self._schedule_in_main_loop(handlers, event)
-                return
-            else:
-                logger.warning(
-                    "[EVENT_BUS] Main loop not running, executing handlers in current loop"
-                )
+            logger.info(
+                "[EVENT_BUS] Publishing from different loop, joining main-loop handlers"
+            )
+            await self._schedule_in_main_loop(handlers, event)
+            return
 
         # Execute handlers in current loop
         await self._execute_handlers(handlers, event)
@@ -260,63 +240,33 @@ class EventBus:
         Args:
             event: The event instance to publish
         """
-        if self._main_loop and self._main_loop.is_running():
-            asyncio.run_coroutine_threadsafe(self.publish(event), self._main_loop)
-        else:
-            logger.warning(
-                "[EVENT_BUS] Cannot publish event %s from sync context: "
-                "no running main loop",
-                type(event).__name__,
-            )
+        if self._main_loop is None or not self._main_loop.is_running():
+            raise RuntimeError("Event bus main loop is not running")
+        web_background_task_manager.submit_from_sync(
+            lambda: self.publish(event),
+            name=f"event-bus-{type(event).__name__}",
+        )
 
     async def _schedule_in_main_loop(self, handlers: List[Callable], event: T) -> None:
         """Schedule handler execution in the main event loop and wait for completion.
 
-        This method schedules handlers in the main loop and attaches a callback
-        to log any exceptions from the Future. Since we're in a different loop,
-        we cannot directly await the result, but we ensure exceptions are logged.
+        The concurrent future is wrapped in the caller's loop, so cross-loop
+        publication preserves backpressure instead of becoming fire-and-forget.
 
         Args:
             handlers: List of handlers to execute
             event: Event to pass to handlers
         """
-        if self._main_loop is None or not self._main_loop.is_running():
-            logger.warning(
-                "[EVENT_BUS] Main loop not available, skipping handlers for event %s "
-                "(executing in wrong loop would cause errors)",
-                type(event).__name__,
-            )
-            return
 
         async def run_handlers() -> None:
             await self._execute_handlers(handlers, event)
 
-        def done_callback(future: "concurrent.futures.Future[None]") -> None:
-            """Log any exceptions from the scheduled handlers."""
-            try:
-                future.result()
-            except Exception:
-                logger.exception(
-                    "[EVENT_BUS] Exception in cross-loop handlers for event %s",
-                    type(event).__name__,
-                )
+        from app.core.async_utils import run_in_event_loop
 
-        try:
-            future = asyncio.run_coroutine_threadsafe(run_handlers(), self._main_loop)
-            # Attach callback to log exceptions - we can't await across loops
-            future.add_done_callback(done_callback)
-            logger.info(
-                "[EVENT_BUS] Scheduled %d handlers in main loop for event %s",
-                len(handlers),
-                type(event).__name__,
-            )
-        except Exception:
-            # Failed to schedule - log and skip (don't execute in wrong loop)
-            logger.exception(
-                "[EVENT_BUS] Failed to schedule handlers in main loop for event %s, "
-                "handlers will not be executed",
-                type(event).__name__,
-            )
+        main_loop = self._main_loop
+        if main_loop is None:
+            raise RuntimeError("Event bus main loop is not configured")
+        await run_in_event_loop(main_loop, run_handlers)
 
     async def _execute_handlers(self, handlers: List[Callable], event: T) -> None:
         """Execute all handlers concurrently.
@@ -325,19 +275,14 @@ class EventBus:
             handlers: List of handlers to execute
             event: Event to pass to handlers
         """
-        # Execute all handlers concurrently
-        tasks = []
-        for handler in handlers:
-            task = asyncio.create_task(self._execute_handler(handler, event))
-            tasks.append(task)
-
-        # Wait for all handlers to complete
-        # Errors are handled in _execute_handler
-        if tasks:
-            await asyncio.gather(*tasks, return_exceptions=True)
-            logger.info(
-                "[EVENT_BUS] All handlers completed for event %s", type(event).__name__
-            )
+        if not handlers:
+            return
+        await asyncio.gather(
+            *(self._execute_handler(handler, event) for handler in handlers)
+        )
+        logger.info(
+            "[EVENT_BUS] All handlers completed for event %s", type(event).__name__
+        )
 
     async def _execute_handler(self, handler: Callable, event: Any) -> None:
         """Execute a single handler with error isolation.
@@ -347,18 +292,26 @@ class EventBus:
             event: The event to pass to the handler
         """
         try:
-            result = handler(event)
-            # If handler is async, await it
-            if asyncio.iscoroutine(result):
+            if inspect.iscoroutinefunction(handler):
+                result = handler(event)
+            else:
+                # EventBus supports synchronous subscribers, but they must never
+                # execute on the sole Uvicorn event loop or enter an unbounded
+                # executor queue. A sync handler may do database or
+                # cross-process notification work.
+                from app.services.chat.storage.db import run_sync_in_executor
+
+                result = await run_sync_in_executor(handler, event)
+            if inspect.isawaitable(result):
                 await result
-        except Exception as e:
+        except Exception:
             logger.error(
-                "[EVENT_BUS] Error in event handler %s for event %s: %s",
+                "[EVENT_BUS] Error in event handler %s for event %s",
                 handler.__name__,
                 type(event).__name__,
-                e,
                 exc_info=True,
             )
+            raise
 
     def clear(self) -> None:
         """Clear all subscriptions. Useful for testing."""

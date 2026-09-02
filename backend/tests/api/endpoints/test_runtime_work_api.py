@@ -2,6 +2,8 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
+import ast
+from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -10,6 +12,30 @@ from fastapi.responses import StreamingResponse
 
 def _auth_headers(token: str) -> dict[str, str]:
     return {"Authorization": f"Bearer {token}"}
+
+
+def test_runtime_work_async_routes_never_inject_sync_sessions() -> None:
+    endpoint_path = Path(__file__).parents[3] / "app/api/endpoints/runtime_work.py"
+    service_path = Path(__file__).parents[3] / "app/services/runtime_work_service.py"
+
+    for path in (endpoint_path, service_path):
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.AsyncFunctionDef):
+                continue
+            arguments = [*node.args.args, *node.args.kwonlyargs]
+            assert all(argument.arg != "db" for argument in arguments), (
+                f"{path.name}:{node.lineno} async function {node.name} accepts a "
+                "synchronous Session"
+            )
+
+    endpoint_tree = ast.parse(endpoint_path.read_text(encoding="utf-8"))
+    for node in ast.walk(endpoint_tree):
+        if not isinstance(node, ast.AsyncFunctionDef):
+            continue
+        source = ast.unparse(node)
+        assert "Depends(get_db)" not in source
+        assert "Depends(get_current_user)" not in source
 
 
 def test_list_runtime_work_endpoint_uses_current_user(
@@ -622,6 +648,43 @@ def test_runtime_guidance_endpoint_dispatches_request(
     assert request.client_guidance_id == "guide-1"
 
 
+def test_runtime_send_endpoint_dispatches_without_request_session(
+    test_client,
+    test_token,
+    monkeypatch,
+):
+    from app.api.endpoints import runtime_work
+
+    service_mock = AsyncMock(
+        return_value={"accepted": True, "taskId": "codex-1", "error": None}
+    )
+    monkeypatch.setattr(
+        runtime_work.runtime_work_service,
+        "send_runtime_message_nonblocking",
+        service_mock,
+    )
+
+    response = test_client.post(
+        "/api/runtime-work/send",
+        headers=_auth_headers(test_token),
+        json={
+            "address": {
+                "deviceId": "device-1",
+                "workspacePath": "/repo/Wegent",
+                "taskId": "codex-1",
+            },
+            "message": "continue",
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json()["accepted"] is True
+    assert set(service_mock.await_args.kwargs) == {"user_id", "request"}
+    request = service_mock.await_args.kwargs["request"]
+    assert request.address.local_task_id == "codex-1"
+    assert request.message == "continue"
+
+
 def test_runtime_interrupt_and_send_endpoint_dispatches_request(
     test_client,
     test_token,
@@ -634,7 +697,7 @@ def test_runtime_interrupt_and_send_endpoint_dispatches_request(
     )
     monkeypatch.setattr(
         runtime_work.runtime_work_service,
-        "interrupt_and_send_runtime_message",
+        "interrupt_and_send_runtime_message_nonblocking",
         service_mock,
     )
 
@@ -653,6 +716,7 @@ def test_runtime_interrupt_and_send_endpoint_dispatches_request(
 
     assert response.status_code == 200
     assert response.json()["accepted"] is True
+    assert set(service_mock.await_args.kwargs) == {"user_id", "request"}
     request = service_mock.await_args.kwargs["request"]
     assert request.address.local_task_id == "codex-1"
     assert request.message == "change direction now"
@@ -1109,7 +1173,8 @@ def test_llm_responses_proxy_endpoint_streams_from_provider(
     proxy_mock.assert_awaited_once()
     call_args = proxy_mock.await_args
     assert call_args.args[0].headers["authorization"] == f"Bearer {test_token}"
-    assert call_args.args[2].id > 0
+    assert call_args.args[1] > 0
+    assert isinstance(call_args.args[2], str)
 
 
 def test_llm_responses_proxy_endpoint_rejects_missing_authorization(test_client):

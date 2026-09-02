@@ -2,6 +2,7 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
+import threading
 from unittest.mock import AsyncMock
 
 import pytest
@@ -76,6 +77,60 @@ def test_encode_runtime_rpc_response_compresses_large_browser_result() -> None:
         )
         == expected
     )
+
+
+@pytest.mark.asyncio
+async def test_runtime_rpc_large_encode_runs_outside_event_loop(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from app.services.device import runtime_rpc_service as module
+
+    event_loop_thread = threading.get_ident()
+    worker_threads: list[int] = []
+    original_compress = module.gzip.compress
+
+    def recording_compress(payload: bytes) -> bytes:
+        worker_threads.append(threading.get_ident())
+        return original_compress(payload)
+
+    monkeypatch.setattr(module.gzip, "compress", recording_compress)
+
+    await module.encode_runtime_rpc_response_nonblocking(
+        {"content": "large-response" * 100_000},
+        method="runtime.tasks.transcript",
+    )
+
+    assert worker_threads
+    assert all(thread_id != event_loop_thread for thread_id in worker_threads)
+
+
+@pytest.mark.asyncio
+async def test_runtime_rpc_compressed_decode_runs_outside_event_loop(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from app.services.device import runtime_rpc_service as module
+
+    event_loop_thread = threading.get_ident()
+    worker_threads: list[int] = []
+    original_decompress = module.gzip.decompress
+    encoded = _compressed_runtime_rpc_response(
+        {"success": True, "content": "large-response" * 100_000}
+    )
+
+    def recording_decompress(payload: bytes) -> bytes:
+        worker_threads.append(threading.get_ident())
+        return original_decompress(payload)
+
+    monkeypatch.setattr(module.gzip, "decompress", recording_decompress)
+
+    result = await module.decode_runtime_rpc_response(
+        encoded,
+        method="runtime.tasks.transcript",
+    )
+
+    assert result["success"] is True
+    assert worker_threads
+    assert all(thread_id != event_loop_thread for thread_id in worker_threads)
 
 
 class _SocketManager:

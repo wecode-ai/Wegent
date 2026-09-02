@@ -14,14 +14,70 @@ Event handlers:
 """
 
 import logging
-from typing import List
+from dataclasses import dataclass
+from typing import Any, List
 
-from app.core.events import MemoryCreatedEvent, TaskCompletedEvent, get_event_bus
+from app.core.events import MemoryCreatedEvent, TaskCompletedEvent
 from app.db.session import SessionLocal
 from app.schemas.pet import STAGE_NAMES
+from app.services.chat.storage.db import run_sync_in_executor
 from app.services.pet.manager import pet_service
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True)
+class _PetExperienceUpdate:
+    amount: int
+    total: int
+    multiplier: float
+    evolved: bool
+    new_stage: int
+
+
+@dataclass(frozen=True)
+class _PetTraitsUpdate:
+    traits: dict[str, Any]
+
+
+def _add_task_completion_experience_sync(user_id: int) -> _PetExperienceUpdate:
+    """Persist pet experience inside a database worker thread."""
+    db = SessionLocal()
+    try:
+        pet, exp_gained, evolved = pet_service.add_chat_experience(db, user_id)
+        spec = pet.json.get("spec", {})
+        current_streak = spec.get("currentStreak", 0)
+        return _PetExperienceUpdate(
+            amount=exp_gained,
+            total=spec.get("experience", 0),
+            multiplier=pet_service._get_streak_multiplier(current_streak),
+            evolved=evolved,
+            new_stage=spec.get("stage", 1),
+        )
+    finally:
+        db.close()
+
+
+def _update_domain_from_memories_sync(
+    user_id: int,
+    memory_texts: List[str],
+) -> _PetTraitsUpdate | None:
+    """Persist and detach a pet domain update in the database worker."""
+    db = SessionLocal()
+    try:
+        updated_pet, domain_changed = pet_service.update_domain_from_memories(
+            db,
+            user_id,
+            memory_texts,
+        )
+        if not domain_changed or not updated_pet:
+            return None
+        updated_spec = updated_pet.json.get("spec", {})
+        return _PetTraitsUpdate(
+            traits=dict(updated_spec.get("appearanceTraits", {})),
+        )
+    finally:
+        db.close()
 
 
 async def handle_task_completed_for_pet(event: TaskCompletedEvent) -> None:
@@ -53,49 +109,35 @@ async def handle_task_completed_for_pet(event: TaskCompletedEvent) -> None:
 
         extended_emitter = get_extended_emitter()
 
-        db = SessionLocal()
-        try:
-            # Add chat experience
-            pet, exp_gained, evolved = pet_service.add_chat_experience(
-                db, event.user_id
-            )
+        update = await run_sync_in_executor(
+            _add_task_completion_experience_sync,
+            event.user_id,
+        )
+        logger.info(
+            "[PET] Experience gained from chat: user_id=%d, exp_gained=%d, total=%d, evolved=%s",
+            event.user_id,
+            update.amount,
+            update.total,
+            update.evolved,
+        )
 
-            # Get pet spec for current values
-            spec = pet.json.get("spec", {})
-            total_exp = spec.get("experience", 0)
-            current_streak = spec.get("currentStreak", 0)
-            multiplier = pet_service._get_streak_multiplier(current_streak)
+        await extended_emitter.emit_pet_experience_gained(
+            user_id=event.user_id,
+            amount=update.amount,
+            total=update.total,
+            source="chat",
+            multiplier=update.multiplier,
+        )
 
-            logger.info(
-                "[PET] Experience gained from chat: user_id=%d, exp_gained=%d, total=%d, evolved=%s",
-                event.user_id,
-                exp_gained,
-                total_exp,
-                evolved,
-            )
-
-            # Emit experience gained event
-            await extended_emitter.emit_pet_experience_gained(
+        if update.evolved:
+            old_stage = update.new_stage - 1
+            await extended_emitter.emit_pet_stage_evolved(
                 user_id=event.user_id,
-                amount=exp_gained,
-                total=total_exp,
-                source="chat",
-                multiplier=multiplier,
+                old_stage=old_stage,
+                new_stage=update.new_stage,
+                old_stage_name=STAGE_NAMES.get(old_stage, "unknown"),
+                new_stage_name=STAGE_NAMES.get(update.new_stage, "unknown"),
             )
-
-            # If evolved, emit stage evolution event
-            if evolved:
-                new_stage = spec.get("stage", 1)
-                old_stage = new_stage - 1
-                await extended_emitter.emit_pet_stage_evolved(
-                    user_id=event.user_id,
-                    old_stage=old_stage,
-                    new_stage=new_stage,
-                    old_stage_name=STAGE_NAMES.get(old_stage, "unknown"),
-                    new_stage_name=STAGE_NAMES.get(new_stage, "unknown"),
-                )
-        finally:
-            db.close()
 
     except Exception as e:
         # Log error but don't fail - pet experience is non-critical
@@ -122,31 +164,24 @@ async def handle_memory_created(event: MemoryCreatedEvent) -> None:
             get_extended_emitter,
         )
 
-        extended_emitter = get_extended_emitter()
-
-        db = SessionLocal()
-        try:
-            # Detect domain from memory texts and update appearance traits
-            if event.memory_texts:
-                updated_pet, domain_changed = pet_service.update_domain_from_memories(
-                    db, event.user_id, event.memory_texts
-                )
-                if domain_changed and updated_pet:
-                    updated_spec = updated_pet.json.get("spec", {})
-                    updated_traits = updated_spec.get("appearanceTraits", {})
-                    logger.info(
-                        "[PET] Domain updated from memories: user_id=%d, new_traits=%s",
-                        event.user_id,
-                        updated_traits,
-                    )
-
-                    # Emit traits updated event
-                    await extended_emitter.emit_pet_traits_updated(
-                        user_id=event.user_id,
-                        traits=updated_traits,
-                    )
-        finally:
-            db.close()
+        if not event.memory_texts:
+            return
+        update = await run_sync_in_executor(
+            _update_domain_from_memories_sync,
+            event.user_id,
+            event.memory_texts,
+        )
+        if update is None:
+            return
+        logger.info(
+            "[PET] Domain updated from memories: user_id=%d, new_traits=%s",
+            event.user_id,
+            update.traits,
+        )
+        await get_extended_emitter().emit_pet_traits_updated(
+            user_id=event.user_id,
+            traits=update.traits,
+        )
 
     except Exception as e:
         # Log error but don't fail - pet traits update is non-critical
@@ -156,22 +191,3 @@ async def handle_memory_created(event: MemoryCreatedEvent) -> None:
             e,
             exc_info=True,
         )
-
-
-def register_pet_event_handlers() -> None:
-    """Register all pet event handlers with the event bus.
-
-    This function should be called during application startup to ensure
-    pet event handlers are subscribed to the relevant events.
-    """
-    event_bus = get_event_bus()
-
-    # Subscribe to task completed events for pet experience updates
-    event_bus.subscribe(TaskCompletedEvent, handle_task_completed_for_pet)
-    logger.info("[PET] Subscribed to TaskCompletedEvent for pet experience")
-
-    # Subscribe to memory created events
-    event_bus.subscribe(MemoryCreatedEvent, handle_memory_created)
-    logger.info("[PET] Subscribed to MemoryCreatedEvent")
-
-    logger.info("[PET] Pet event handlers registered")

@@ -6,17 +6,18 @@
 
 from __future__ import annotations
 
-import asyncio
 import logging
+from dataclasses import dataclass
 from typing import Any, AsyncIterator
 
 from sqlalchemy.orm import Session
 
+from app.db.session import SessionLocal
 from app.models.task import TaskResource
 from app.models.user import User
 from app.services import chat_shell_model_service
 from app.services.prompt_draft.modeling import (
-    resolve_prompt_draft_model_config as _resolve_prompt_draft_model_config,
+    resolve_prompt_draft_model_config_for_user as _resolve_prompt_draft_model_config,
 )
 from app.services.prompt_draft.pipeline import (
     generate_prompt_draft_stream_result as _generate_prompt_draft_stream_result,
@@ -26,6 +27,9 @@ from app.services.prompt_draft.pipeline import (
 )
 from app.services.prompt_draft.pipeline import (
     stream_prompt_text_generation as _stream_prompt_draft_text_generation,
+)
+from app.services.prompt_draft.transcript import (
+    PromptDraftTranscriptTooLargeError,
 )
 from app.services.prompt_draft.transcript import (
     collect_conversation_blocks as _collect_prompt_draft_conversation_blocks,
@@ -44,6 +48,9 @@ class PromptDraftConversationTooShortError(Exception):
     """Raised when conversation content is insufficient for prompt extraction."""
 
 
+PromptDraftConversationTooLargeError = PromptDraftTranscriptTooLargeError
+
+
 class PromptDraftModelUnavailableError(Exception):
     """Raised when prompt draft generation has no usable model."""
 
@@ -52,16 +59,33 @@ class PromptDraftGenerationFailedError(Exception):
     """Raised when prompt draft generation fails."""
 
 
+@dataclass(frozen=True)
+class PromptDraftContext:
+    """Detached inputs prepared before entering the streaming phase."""
+
+    task_id: int
+    user_id: int
+    selected_model: str
+    model_config: dict[str, Any]
+    conversation_blocks: tuple[tuple[str, str], ...]
+
+
 def _collect_conversation_blocks(db: Session, task_id: int) -> list[tuple[str, str]]:
     return _collect_prompt_draft_conversation_blocks(db, task_id)
 
 
 def _resolve_model_config(
     db: Session,
-    current_user: User,
+    user_id: int,
+    user_name: str,
     requested_model_name: str | None,
 ) -> tuple[dict[str, Any] | None, str]:
-    return _resolve_prompt_draft_model_config(db, current_user, requested_model_name)
+    return _resolve_prompt_draft_model_config(
+        db,
+        user_id=user_id,
+        user_name=user_name,
+        requested_model_name=requested_model_name,
+    )
 
 
 async def _run_skill_generation(
@@ -105,31 +129,38 @@ async def _stream_prompt_text_generation(
 def _prepare_prompt_draft_context(
     db: Session,
     task_id: int,
-    current_user: User,
+    user_id: int,
+    user_name: str,
     model: str | None,
-) -> dict[str, Any]:
+) -> PromptDraftContext:
     task = task_store.get_task_by_states(
         db,
         task_id=task_id,
         states=[TaskResource.STATE_ACTIVE, TaskResource.STATE_SUBSCRIPTION],
     )
-    if not task or not task_member_service.is_member(db, task_id, current_user.id):
+    if not task or not task_member_service.is_member(db, task_id, user_id):
         raise PromptDraftTaskNotFoundError("task_not_found")
 
     blocks = _collect_conversation_blocks(db, task_id)
     if len(blocks) < 2:
         raise PromptDraftConversationTooShortError("conversation_too_short")
 
-    model_config, selected_model = _resolve_model_config(db, current_user, model)
+    model_config, selected_model = _resolve_model_config(
+        db,
+        user_id,
+        user_name,
+        model,
+    )
     if not model_config:
         raise PromptDraftModelUnavailableError("prompt_draft_model_unavailable")
 
-    return {
-        "task": task,
-        "blocks": blocks,
-        "model_config": model_config,
-        "selected_model": selected_model,
-    }
+    return PromptDraftContext(
+        task_id=task.id,
+        user_id=user_id,
+        selected_model=selected_model,
+        model_config=model_config,
+        conversation_blocks=tuple(blocks),
+    )
 
 
 def validate_prompt_draft_context(
@@ -143,16 +174,31 @@ def validate_prompt_draft_context(
     _prepare_prompt_draft_context(
         db=db,
         task_id=task_id,
-        current_user=current_user,
+        user_id=current_user.id,
+        user_name=current_user.user_name or "",
         model=model,
     )
 
 
-async def generate_prompt_draft_stream(
-    db: Session,
+def prepare_prompt_draft_stream_context(
     task_id: int,
-    current_user: User,
+    user_id: int,
+    user_name: str,
     model: str | None = None,
+) -> PromptDraftContext:
+    """Prepare detached stream inputs in a fresh worker-owned DB session."""
+    with SessionLocal() as db:
+        return _prepare_prompt_draft_context(
+            db=db,
+            task_id=task_id,
+            user_id=user_id,
+            user_name=user_name,
+            model=model,
+        )
+
+
+async def generate_prompt_draft_stream(
+    context: PromptDraftContext,
     source: str | None = None,
     current_prompt: str | None = None,
     regenerate: bool = False,
@@ -161,17 +207,11 @@ async def generate_prompt_draft_stream(
 
     del source
 
-    context = _prepare_prompt_draft_context(
-        db=db,
-        task_id=task_id,
-        current_user=current_user,
-        model=model,
-    )
     try:
         async for event in _generate_prompt_draft_stream_result(
-            selected_model=context["selected_model"],
-            model_config=context["model_config"],
-            conversation_blocks=context["blocks"],
+            selected_model=context.selected_model,
+            model_config=context.model_config,
+            conversation_blocks=list(context.conversation_blocks),
             current_prompt=current_prompt,
             regenerate=regenerate,
         ):
@@ -179,53 +219,41 @@ async def generate_prompt_draft_stream(
     except Exception as exc:
         logger.exception(
             "Prompt draft streaming generation failed: task_id=%s user_id=%s model=%s",
-            task_id,
-            current_user.id,
-            context["selected_model"],
+            context.task_id,
+            context.user_id,
+            context.selected_model,
         )
         raise PromptDraftGenerationFailedError(
             "prompt_draft_generation_failed"
         ) from exc
 
 
-def generate_prompt_draft(
-    db: Session,
-    task_id: int,
-    current_user: User,
-    model: str | None = None,
+async def generate_prompt_draft_result(
+    context: PromptDraftContext,
+    *,
     source: str | None = None,
     current_prompt: str | None = None,
     regenerate: bool = False,
 ) -> dict[str, Any]:
-    """Generate a prompt draft from task conversation."""
+    """Generate one prompt draft from detached worker-owned context."""
 
     del source
-
-    context = _prepare_prompt_draft_context(
-        db=db,
-        task_id=task_id,
-        current_user=current_user,
-        model=model,
-    )
-    task = context["task"]
     try:
-        return asyncio.run(
-            _run_skill_generation(
-                model_config=context["model_config"],
-                conversation_blocks=context["blocks"],
-                selected_model_name=context["selected_model"],
-                task_id=task.id,
-                user_id=current_user.id,
-                current_prompt=current_prompt,
-                regenerate=regenerate,
-            )
+        return await _run_skill_generation(
+            model_config=context.model_config,
+            conversation_blocks=list(context.conversation_blocks),
+            selected_model_name=context.selected_model,
+            task_id=context.task_id,
+            user_id=context.user_id,
+            current_prompt=current_prompt,
+            regenerate=regenerate,
         )
     except Exception as exc:
         logger.exception(
             "Prompt draft generation failed: task_id=%s user_id=%s model=%s",
-            task.id,
-            current_user.id,
-            context["selected_model"],
+            context.task_id,
+            context.user_id,
+            context.selected_model,
         )
         raise PromptDraftGenerationFailedError(
             "prompt_draft_generation_failed"

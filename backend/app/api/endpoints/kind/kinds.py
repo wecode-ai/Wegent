@@ -27,7 +27,7 @@ router = APIRouter()
 # IMPORTANT: More specific routes (with {name}) must be registered BEFORE generic routes
 # to avoid path parameter conflicts when using {namespace:path}
 @router.get("/namespaces/{namespace:path}/{kinds}/{name}")
-async def get_resource(
+def get_resource(
     namespace: str = Path(
         ...,
         description="Resource namespace (supports nested groups like 'parent/child')",
@@ -61,7 +61,7 @@ async def get_resource(
 
 
 @router.get("/namespaces/{namespace:path}/{kinds}")
-async def list_resources(
+def list_resources(
     namespace: str = Path(
         ...,
         description="Resource namespace (supports nested groups like 'parent/child')",
@@ -89,7 +89,7 @@ async def list_resources(
 
 
 @router.put("/namespaces/{namespace:path}/{kinds}/{name}")
-async def update_resource(
+def update_resource(
     namespace: str = Path(
         ...,
         description="Resource namespace (supports nested groups like 'parent/child')",
@@ -127,7 +127,7 @@ async def update_resource(
 
 
 @router.delete("/namespaces/{namespace:path}/{kinds}/{name}")
-async def delete_resource(
+def delete_resource(
     namespace: str = Path(
         ...,
         description="Resource namespace (supports nested groups like 'parent/child')",
@@ -157,7 +157,7 @@ async def delete_resource(
 @router.post(
     "/namespaces/{namespace:path}/{kinds}", status_code=status.HTTP_201_CREATED
 )
-async def create_resource(
+def create_resource(
     namespace: str = Path(
         ...,
         description="Resource namespace (supports nested groups like 'parent/child')",

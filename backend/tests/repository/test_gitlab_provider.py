@@ -102,7 +102,9 @@ class TestTokenResolution:
                 provider, "_get_all_repositories_from_cache", return_value=None
             ),
             patch.object(
-                provider, "_make_request_with_auth_retry", return_value=response
+                provider,
+                "_make_request_with_auth_retry_async",
+                new=AsyncMock(return_value=response),
             ) as request,
         ):
             await provider.get_repositories(user, page=1, limit=10)
@@ -127,7 +129,9 @@ class TestFailedDomainsAreReported:
                 provider, "_get_all_repositories_from_cache", return_value=None
             ),
             patch.object(
-                provider, "_make_request_with_auth_retry", side_effect=refused
+                provider,
+                "_make_request_with_auth_retry_async",
+                new=AsyncMock(side_effect=refused),
             ),
             caplog.at_level("WARNING"),
         ):
@@ -166,7 +170,9 @@ class TestFailedDomainsAreReported:
                 provider, "_get_all_repositories_from_cache", return_value=None
             ),
             patch.object(
-                provider, "_make_request_with_auth_retry", side_effect=[refused, good]
+                provider,
+                "_make_request_with_auth_retry_async",
+                new=AsyncMock(side_effect=[refused, good]),
             ),
         ):
             result = await provider.get_repositories(user, page=1, limit=10)

@@ -17,12 +17,13 @@ import logging
 from datetime import datetime
 from typing import Any, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from app.api.dependencies import get_db
 from app.core.config import settings
+from app.core.payload_codec import dump_model, run_payload_codec
 from app.models.knowledge import KnowledgeDocument
 from app.models.subtask import Subtask, SubtaskRole, SubtaskStatus
 from app.models.subtask_context import (
@@ -194,6 +195,11 @@ class GuidanceExpireResponse(BaseModel):
     """Response for guidance expire endpoint."""
 
     expired_ids: list[str] = Field(default_factory=list)
+
+
+def _encode_guidance_consume_response(item: dict | None) -> bytes:
+    """Validate and encode guidance response outside the Uvicorn loop."""
+    return GuidanceConsumeResponse(item=item).model_dump_json().encode("utf-8")
 
 
 # ==================== Helper Functions ====================
@@ -788,7 +794,7 @@ def _fetch_kb_head_documents_content(
 
 
 @router.get("/health", response_model=HealthResponse)
-async def health_check():
+def health_check():
     """Health check endpoint for internal chat storage API."""
     return HealthResponse(status="ok")
 
@@ -828,7 +834,13 @@ async def consume_guidance(task_id: int, subtask_id: int):
             guidance_id=item.guidance_id,
             applied_at=applied_at,
         )
-    return GuidanceConsumeResponse(item=item_data)
+    response_body = await run_payload_codec(
+        _encode_guidance_consume_response,
+        item_data,
+        payload_hint=item_data,
+        force_offload=True,
+    )
+    return Response(content=response_body, media_type="application/json")
 
 
 @router.post(
@@ -839,10 +851,10 @@ async def expire_guidance(task_id: int, subtask_id: int):
     """Expire all queued Chat Shell guidance items."""
     expired_ids = await guidance_queue.expire(task_id=task_id, subtask_id=subtask_id)
     logger.info(
-        "[guidance] expire: task_id=%s subtask_id=%s expired_ids=%s",
+        "[guidance] expire: task_id=%s subtask_id=%s expired_count=%s",
         task_id,
         subtask_id,
-        expired_ids,
+        len(expired_ids),
     )
     if expired_ids:
         ws_emitter = get_webpage_ws_emitter()
@@ -856,7 +868,7 @@ async def expire_guidance(task_id: int, subtask_id: int):
 
 
 @router.get("/history/{session_id}", response_model=HistoryResponse)
-@trace_async(
+@trace_sync(
     "internal.chat_storage.get_history",
     "internal.chat_storage",
     extract_attributes=lambda *args, **kwargs: {
@@ -866,7 +878,7 @@ async def expire_guidance(task_id: int, subtask_id: int):
         "chat.is_group_chat": kwargs.get("is_group_chat", False),
     },
 )
-async def get_chat_history(
+def get_chat_history(
     session_id: str,
     limit: Optional[int] = Query(
         None, description="Max number of messages to return (most recent N messages)"
@@ -954,7 +966,7 @@ async def get_chat_history(
 
 
 @router.get("/history/{session_id}/subtasks", response_model=SubtaskListResponse)
-@trace_async(
+@trace_sync(
     "internal.chat_storage.list_subtasks",
     "internal.chat_storage",
     extract_attributes=lambda *args, **kwargs: {
@@ -962,7 +974,7 @@ async def get_chat_history(
         "chat.offset": kwargs.get("offset", 0),
     },
 )
-async def list_history_subtasks(
+def list_history_subtasks(
     session_id: str,
     limit: Optional[int] = Query(None, description="Max summaries to return"),
     offset: int = Query(0, description="Number of summaries to skip"),
@@ -997,7 +1009,7 @@ async def list_history_subtasks(
     "/history/{session_id}/subtasks/{subtask_id}",
     response_model=SubtaskRecordResponse,
 )
-@trace_async(
+@trace_sync(
     "internal.chat_storage.read_subtask",
     "internal.chat_storage",
     extract_attributes=lambda *args, **kwargs: {
@@ -1005,7 +1017,7 @@ async def list_history_subtasks(
         "chat.subtask_id": kwargs.get("subtask_id", 0),
     },
 )
-async def read_history_subtask(
+def read_history_subtask(
     session_id: str,
     subtask_id: int,
     cursor: str = Query("0:0", description="Compound cursor '<unit>:<char_off>'"),
@@ -1051,7 +1063,7 @@ class AttachmentTextResponse(BaseModel):
 
 
 @router.get("/attachments/{attachment_id}/text", response_model=AttachmentTextResponse)
-async def get_attachment_text(
+def get_attachment_text(
     attachment_id: int,
     session_id: str = Query(..., description="Conversation session, e.g. task-123"),
     offset: int = Query(0, ge=0, description="Start character offset (codepoint)"),
@@ -1149,7 +1161,7 @@ def _build_subtask_content_fields(
 
 
 @router.post("/history/{session_id}/messages", response_model=MessageIdResponse)
-async def append_message(
+def append_message(
     session_id: str,
     message: MessageCreate,
     db: Session = Depends(get_db),
@@ -1220,7 +1232,7 @@ async def append_message(
 @router.post(
     "/history/{session_id}/messages/batch", response_model=BatchMessageIdsResponse
 )
-async def append_messages_batch(
+def append_messages_batch(
     session_id: str,
     batch: BatchMessagesCreate,
     db: Session = Depends(get_db),
@@ -1288,7 +1300,7 @@ async def append_messages_batch(
 @router.patch(
     "/history/{session_id}/messages/{message_id}", response_model=SuccessResponse
 )
-async def update_message(
+def update_message(
     session_id: str,
     message_id: str,
     update: MessageUpdate,
@@ -1326,7 +1338,7 @@ async def update_message(
 @router.delete(
     "/history/{session_id}/messages/{message_id}", response_model=SuccessResponse
 )
-async def delete_message(
+def delete_message(
     session_id: str,
     message_id: str,
     db: Session = Depends(get_db),
@@ -1356,7 +1368,7 @@ async def delete_message(
 
 
 @router.delete("/history/{session_id}", response_model=SuccessResponse)
-async def clear_history(
+def clear_history(
     session_id: str,
     db: Session = Depends(get_db),
 ):
@@ -1385,7 +1397,7 @@ async def clear_history(
 
 
 @router.get("/sessions", response_model=SessionListResponse)
-async def list_sessions(
+def list_sessions(
     limit: int = Query(
         100, ge=1, le=1000, description="Max number of sessions to return"
     ),
@@ -1411,7 +1423,6 @@ async def list_sessions(
 async def save_tool_result(
     session_id: str,
     data: ToolResultCreate,
-    db: Session = Depends(get_db),
 ):
     """
     Save tool execution result.
@@ -1439,7 +1450,6 @@ async def save_tool_result(
 async def get_tool_result(
     session_id: str,
     tool_call_id: str,
-    db: Session = Depends(get_db),
 ):
     """Get tool execution result."""
     from app.services.chat.storage import session_manager
@@ -1457,7 +1467,6 @@ async def get_tool_result(
 @router.get("/pending-tool-calls/{session_id}")
 async def get_pending_tool_calls(
     session_id: str,
-    db: Session = Depends(get_db),
 ):
     """Get pending tool calls for a session."""
     from app.services.chat.storage import session_manager
@@ -1474,7 +1483,6 @@ async def get_pending_tool_calls(
 async def save_pending_tool_call(
     session_id: str,
     tool_call: ToolCallCreate,
-    db: Session = Depends(get_db),
 ):
     """Save a pending tool call."""
     from app.services.chat.storage import session_manager
@@ -1484,7 +1492,7 @@ async def save_pending_tool_call(
 
     # Get existing pending calls
     existing = await session_manager._cache.get(cache_key) or []
-    existing.append(tool_call.model_dump())
+    existing.append(await dump_model(tool_call))
 
     await session_manager._cache.set(cache_key, existing, expire=3600)
 
@@ -1494,7 +1502,6 @@ async def save_pending_tool_call(
 @router.delete("/pending-tool-calls/{session_id}", response_model=SuccessResponse)
 async def clear_pending_tool_calls(
     session_id: str,
-    db: Session = Depends(get_db),
 ):
     """Clear pending tool calls for a session."""
     from app.services.chat.storage import session_manager

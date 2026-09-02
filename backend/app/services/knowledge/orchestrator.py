@@ -21,13 +21,17 @@ Architecture:
 
 import base64
 import logging
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Literal, Optional
 
 from sqlalchemy.orm import Session
 from sqlalchemy.orm.exc import ObjectDeletedError
 
+from app.core.blocking_work import run_knowledge_io
 from app.core.config import settings
+from app.core.payload_codec import run_payload_codec
+from app.db.session import SessionLocal
 from app.models.kind import Kind
 from app.models.knowledge import DocumentIndexStatus, KnowledgeDocument
 from app.models.task import TaskResource
@@ -61,6 +65,7 @@ from app.services.knowledge.retrieval_profile import (
     get_profile,
     merge_profile_defaults,
 )
+from app.services.knowledge.web_db import run_knowledge_db_phase
 from app.stores.tasks import task_store
 from shared.models import SearchHints
 
@@ -80,6 +85,148 @@ REQUIRED_DOCUMENT_READ_KEYS = (
     "has_more",
     "kb_id",
 )
+
+
+@dataclass(frozen=True)
+class _KnowledgeRetrievalRequest:
+    """Detached input for preparing one knowledge query in a DB worker."""
+
+    user_id: int
+    user_name: str | None
+    knowledge_base_id: int
+    query: str
+    max_results: int
+    document_ids: tuple[int, ...] | None
+    route_mode: Literal["auto", "direct_injection", "rag_retrieval"]
+    context_window: int
+    used_context_tokens: int
+    reserved_output_tokens: int
+    context_buffer_ratio: float
+    max_direct_chunks: int
+    search_hints: SearchHints | None
+
+
+@dataclass(frozen=True)
+class _PreparedWebDocument:
+    name: str
+    content: bytes
+    source_url: str
+    scraped_at: str
+    source_title: str | None
+    description: str | None
+
+
+@dataclass(frozen=True)
+class _WebRefreshTarget:
+    document_id: int
+    url: str
+    name: str
+
+
+def _prepare_scraped_web_document(
+    title: str | None,
+    content: str,
+    url: str,
+    scraped_at: str,
+    description: str | None,
+    requested_name: str | None,
+) -> _PreparedWebDocument:
+    """Project scraped content into immutable persistence input off the loop."""
+
+    from urllib.parse import urlparse
+
+    name = requested_name or title or urlparse(url).netloc
+    if not name.endswith(".md"):
+        name = f"{name}.md"
+    return _PreparedWebDocument(
+        name=name,
+        content=content.encode("utf-8"),
+        source_url=url,
+        scraped_at=scraped_at,
+        source_title=title,
+        description=description,
+    )
+
+
+def _prepare_knowledge_retrieval_runtime(
+    db: Session,
+    request: _KnowledgeRetrievalRequest,
+):
+    """Build a detached runtime spec using a worker-owned DB session."""
+    from app.services.rag.retrieval_service import RetrievalService
+    from app.services.rag.runtime_resolver import RagRuntimeResolver
+    from shared.models import RetrievalScope
+
+    knowledge_base, has_access = KnowledgeService.get_knowledge_base(
+        db=db,
+        knowledge_base_id=request.knowledge_base_id,
+        user_id=request.user_id,
+    )
+    if knowledge_base is None:
+        raise ValueError(f"Knowledge base {request.knowledge_base_id} not found")
+    if not has_access:
+        raise ValueError(f"Access denied to knowledge base {request.knowledge_base_id}")
+
+    spec = (knowledge_base.json or {}).get("spec", {})
+    retrieval_config = spec.get("retrievalConfig")
+    if not retrieval_config:
+        raise ValueError(
+            f"Knowledge base {request.knowledge_base_id} has no RAG configuration"
+        )
+    if not retrieval_config.get("retriever_name") or not retrieval_config.get(
+        "embedding_config"
+    ):
+        raise ValueError(
+            f"Knowledge base {request.knowledge_base_id} has incomplete RAG configuration"
+        )
+
+    scope = (
+        RetrievalScope(document_ids=list(request.document_ids))
+        if request.document_ids
+        else None
+    )
+    runtime_resolver = RagRuntimeResolver()
+    retrieval_service = RetrievalService()
+    runtime_spec = runtime_resolver.build_query_runtime_spec(
+        knowledge_base_ids=[request.knowledge_base_id],
+        query=request.query,
+        max_results=request.max_results,
+        scope=scope,
+        route_mode=request.route_mode,
+        user_id=request.user_id,
+        user_name=request.user_name,
+        context_window=request.context_window,
+        used_context_tokens=request.used_context_tokens,
+        reserved_output_tokens=request.reserved_output_tokens,
+        context_buffer_ratio=request.context_buffer_ratio,
+        max_direct_chunks=request.max_direct_chunks,
+        search_hints=request.search_hints,
+        restricted_mode=False,
+    )
+    resolved_route_mode = retrieval_service.decide_route_mode_for_chat_shell(
+        query=request.query,
+        knowledge_base_ids=[request.knowledge_base_id],
+        db=db,
+        route_mode=request.route_mode,
+        scope=scope,
+        metadata_condition=None,
+        context_window=request.context_window,
+        used_context_tokens=request.used_context_tokens,
+        reserved_output_tokens=request.reserved_output_tokens,
+        context_buffer_ratio=request.context_buffer_ratio,
+        max_direct_chunks=request.max_direct_chunks,
+    )
+    runtime_spec = runtime_spec.model_copy(update={"route_mode": resolved_route_mode})
+    if resolved_route_mode == "rag_retrieval":
+        kb_configs = runtime_resolver.build_query_knowledge_base_configs(
+            db=db,
+            knowledge_base_ids=[request.knowledge_base_id],
+            user_name=request.user_name,
+        )
+        runtime_spec = runtime_spec.model_copy(
+            update={"knowledge_base_configs": kb_configs}
+        )
+    return runtime_spec
 
 
 def _normalize_file_extension(file_extension: Optional[str]) -> str:
@@ -964,6 +1111,27 @@ class KnowledgeOrchestrator:
         limit: int = MAX_DOCUMENT_READ_LIMIT,
     ) -> DocumentDetailResponse:
         """Aggregate optional document content and summary into a detail response."""
+        return self.get_document_detail_sync(
+            db=db,
+            user=user,
+            document_id=document_id,
+            include_content=include_content,
+            include_summary=include_summary,
+            offset=offset,
+            limit=limit,
+        )
+
+    def get_document_detail_sync(
+        self,
+        db: Session,
+        user: User,
+        document_id: int,
+        include_content: bool = True,
+        include_summary: bool = True,
+        offset: int = 0,
+        limit: int = MAX_DOCUMENT_READ_LIMIT,
+    ) -> DocumentDetailResponse:
+        """Build document detail entirely inside one synchronous DB phase."""
         self._get_document_with_access_or_raise(
             db=db,
             user=user,
@@ -991,7 +1159,7 @@ class KnowledgeOrchestrator:
             from app.services.knowledge.summary_service import get_summary_service
 
             summary_service = get_summary_service(db)
-            summary_result = await summary_service.get_document_summary(document_id)
+            summary_result = summary_service.get_document_summary_sync(document_id)
             summary = (
                 summary_result.model_dump()
                 if hasattr(summary_result, "model_dump")
@@ -2600,137 +2768,87 @@ class KnowledgeOrchestrator:
             "index_generation": schedule_result["index_generation"],
         }
 
-    async def create_web_document(
+    @staticmethod
+    def _load_web_document_user(db: Session, user_id: int) -> User:
+        user = db.get(User, user_id)
+        if user is None or not user.is_active:
+            raise ValueError("User not found or inactive")
+        return user
+
+    def _validate_web_document_create(
         self,
         db: Session,
-        user: User,
-        url: str,
+        user_id: int,
         knowledge_base_id: int,
-        name: Optional[str] = None,
-        folder_id: int = 0,
-        trigger_indexing: bool = True,
-        trigger_summary: bool = True,
-    ) -> Dict[str, Any]:
-        """
-        Create a document from a web page by scraping the URL.
-
-        Flow:
-        1. Scrape the web page and convert to Markdown
-        2. Save the content as an attachment using context_service
-        3. Create a document record in the knowledge base
-        4. Trigger RAG indexing via Celery
-
-        Args:
-            db: Database session
-            user: Current user
-            url: URL to scrape
-            knowledge_base_id: Knowledge base ID to add document to
-            name: Optional document name (uses page title if not provided)
-            trigger_indexing: Whether to trigger RAG indexing
-            trigger_summary: Whether to trigger summary generation
-
-        Returns:
-            Dict with success status and document info
-
-        Raises:
-            ValueError: If scraping fails, access denied, or creation fails
-        """
-        from urllib.parse import urlparse
-
-        from app.schemas.knowledge import DocumentSourceType, KnowledgeDocumentCreate
-        from app.services.context import context_service
-        from app.services.web_scraper import get_web_scraper_service
-
-        logger.info(
-            f"[Orchestrator] Creating web document from URL: {url} "
-            f"in knowledge base {knowledge_base_id}"
-        )
-
-        # Verify knowledge base access
+    ) -> None:
+        self._load_web_document_user(db, user_id)
         knowledge_base, has_access = KnowledgeService.get_knowledge_base(
             db=db,
             knowledge_base_id=knowledge_base_id,
-            user_id=user.id,
+            user_id=user_id,
         )
-        if not knowledge_base:
+        if knowledge_base is None:
             raise ValueError("Knowledge base not found")
         if not has_access:
             raise ValueError("Access denied to knowledge base")
         if not KnowledgeService.can_manage_knowledge_base_documents(
-            db, knowledge_base_id, user.id
+            db,
+            knowledge_base_id,
+            user_id,
         ):
             raise ValueError(
                 "You do not have permission to add documents to this knowledge base"
             )
 
-        # Scrape the web page (async)
-        service = get_web_scraper_service()
-        result = await service.scrape_url(url)
+    def _persist_scraped_web_document(
+        self,
+        db: Session,
+        user_id: int,
+        knowledge_base_id: int,
+        folder_id: int,
+        prepared: _PreparedWebDocument,
+        trigger_indexing: bool,
+        trigger_summary: bool,
+    ) -> Dict[str, Any]:
+        from app.schemas.knowledge import DocumentSourceType, KnowledgeDocumentCreate
+        from app.services.context import context_service
 
-        if not result.success:
-            logger.warning(
-                f"[Orchestrator] Scrape failed for {url}: {result.error_code} - {result.error_message}"
-            )
-            return {
-                "success": False,
-                "document": None,
-                "error_code": result.error_code,
-                "error_message": result.error_message,
-            }
-
-        # Determine document name
-        doc_name = name
-        if not doc_name:
-            doc_name = result.title or urlparse(url).netloc
-        # Ensure name has .md extension for proper handling
-        if not doc_name.endswith(".md"):
-            doc_name = f"{doc_name}.md"
-
-        # Create attachment using context_service (handles storage_key and binary storage)
-        content_bytes = result.content.encode("utf-8")
-        content_size = len(content_bytes)
+        user = self._load_web_document_user(db, user_id)
+        self._validate_web_document_create(db, user_id, knowledge_base_id)
+        knowledge_base, _ = KnowledgeService.get_knowledge_base(
+            db=db,
+            knowledge_base_id=knowledge_base_id,
+            user_id=user_id,
+        )
+        assert knowledge_base is not None
 
         attachment, _ = context_service.upload_attachment(
             db=db,
-            user_id=user.id,
-            filename=doc_name,
-            binary_data=content_bytes,
-            subtask_id=0,  # Unlinked attachment for knowledge base
+            user_id=user_id,
+            filename=prepared.name,
+            binary_data=prepared.content,
+            subtask_id=0,
         )
-
-        logger.info(
-            f"[Orchestrator] Created attachment {attachment.id} for web document"
-        )
-
-        # Create document record
         try:
-            doc_data = KnowledgeDocumentCreate(
-                attachment_id=attachment.id,
-                name=doc_name,
-                file_extension="md",
-                file_size=content_size,
-                folder_id=folder_id,
-                source_type=DocumentSourceType.WEB,
-                source_config={
-                    "url": result.url,
-                    "scraped_at": result.scraped_at.isoformat(),
-                    "title": result.title,
-                    "description": result.description,
-                },
-            )
-
             document = KnowledgeService.create_document(
                 db=db,
                 knowledge_base_id=knowledge_base_id,
-                user_id=user.id,
-                data=doc_data,
+                user_id=user_id,
+                data=KnowledgeDocumentCreate(
+                    attachment_id=attachment.id,
+                    name=prepared.name,
+                    file_extension="md",
+                    file_size=len(prepared.content),
+                    folder_id=folder_id,
+                    source_type=DocumentSourceType.WEB,
+                    source_config={
+                        "url": prepared.source_url,
+                        "scraped_at": prepared.scraped_at,
+                        "title": prepared.source_title,
+                        "description": prepared.description,
+                    },
+                ),
             )
-
-            logger.info(
-                f"[Orchestrator] Created web document {document.id} in knowledge base {knowledge_base_id}"
-            )
-
-            # Trigger RAG indexing via Celery if enabled
             if trigger_indexing:
                 self._schedule_indexing_celery(
                     db=db,
@@ -2741,100 +2859,114 @@ class KnowledgeOrchestrator:
                     allow_if_success=True,
                     replace_active=True,
                 )
-
             return {
                 "success": True,
                 "document": KnowledgeDocumentResponse.model_validate(document),
                 "error_code": None,
                 "error_message": None,
             }
-
-        except ValueError as e:
-            # Rollback attachment creation on error
+        except ValueError as exc:
             db.rollback()
-            logger.error(f"[Orchestrator] Failed to create web document: {e}")
             return {
                 "success": False,
                 "document": None,
                 "error_code": "CREATE_FAILED",
-                "error_message": str(e),
+                "error_message": str(exc),
             }
 
-    async def refresh_web_document(
+    async def create_web_document_for_user(
         self,
-        db: Session,
-        user: User,
-        document_id: int,
+        *,
+        user_id: int,
+        url: str,
+        knowledge_base_id: int,
+        name: Optional[str] = None,
+        folder_id: int = 0,
         trigger_indexing: bool = True,
-        trigger_summary: bool = False,
+        trigger_summary: bool = True,
     ) -> Dict[str, Any]:
-        """
-        Refresh a web document by re-scraping its URL.
+        """Create a web document without retaining a Session across scraping."""
 
-        Flow:
-        1. Get the document and its source URL
-        2. Re-scrape the web page
-        3. Update the attachment content using context_service
-        4. Update the document metadata
-        5. Re-trigger RAG indexing via Celery
-
-        Args:
-            db: Database session
-            user: Current user
-            document_id: Document ID to refresh
-            trigger_indexing: Whether to trigger RAG re-indexing
-            trigger_summary: Whether to trigger summary generation
-
-        Returns:
-            Dict with success status and document info
-
-        Raises:
-            ValueError: If document not found, not a web document, or refresh fails
-        """
-        from app.models.knowledge import DocumentIndexStatus, KnowledgeDocument
-        from app.models.subtask_context import SubtaskContext
-        from app.schemas.knowledge import DocumentSourceType
-        from app.services.context import context_service
         from app.services.web_scraper import get_web_scraper_service
 
-        logger.info(f"[Orchestrator] Refreshing web document {document_id}")
+        await run_knowledge_db_phase(
+            self._validate_web_document_create,
+            user_id,
+            knowledge_base_id,
+        )
+        result = await get_web_scraper_service().scrape_url(url)
+        if not result.success:
+            return {
+                "success": False,
+                "document": None,
+                "error_code": result.error_code,
+                "error_message": result.error_message,
+            }
+        prepared = await run_payload_codec(
+            _prepare_scraped_web_document,
+            result.title,
+            result.content,
+            result.url,
+            result.scraped_at.isoformat(),
+            result.description,
+            name,
+            payload_hint=result.content,
+            force_offload=True,
+        )
+        return await run_knowledge_db_phase(
+            self._persist_scraped_web_document,
+            user_id,
+            knowledge_base_id,
+            folder_id,
+            prepared,
+            trigger_indexing,
+            trigger_summary,
+        )
 
-        # Get the document and verify it's a web document
+    def _prepare_web_document_refresh(
+        self,
+        db: Session,
+        user_id: int,
+        document_id: int,
+    ) -> _WebRefreshTarget | Dict[str, Any]:
+        from app.schemas.knowledge import DocumentSourceType
+        from app.services.knowledge.content_scope import assert_user_content_is_mutable
+
+        self._load_web_document_user(db, user_id)
         document = KnowledgeService.get_document(
             db=db,
             document_id=document_id,
-            user_id=user.id,
+            user_id=user_id,
         )
-
-        if not document:
+        if document is None:
             return {
                 "success": False,
                 "document": None,
                 "error_code": "NOT_FOUND",
                 "error_message": "Document not found or access denied",
             }
-
-        from app.services.knowledge.content_scope import assert_user_content_is_mutable
-
         assert_user_content_is_mutable(getattr(document, "origin", "user"))
-
-        # Verify manage permission before mutating content
-        from app.models.kind import Kind
-
-        kb = (
+        knowledge_base = (
             db.query(Kind)
-            .filter(Kind.id == document.kind_id, Kind.kind == "KnowledgeBase")
+            .filter(
+                Kind.id == document.kind_id,
+                Kind.kind == "KnowledgeBase",
+            )
             .first()
         )
-        if not kb:
+        if knowledge_base is None:
             return {
                 "success": False,
                 "document": None,
                 "error_code": "KB_NOT_FOUND",
                 "error_message": "Knowledge base not found for document",
             }
-        KnowledgeService._assert_can_manage_document(db, kb, document, user.id)
-
+        KnowledgeService._assert_can_manage_document(
+            db,
+            knowledge_base,
+            document,
+            user_id,
+        )
         if document.source_type != DocumentSourceType.WEB.value:
             return {
                 "success": False,
@@ -2842,11 +2974,7 @@ class KnowledgeOrchestrator:
                 "error_code": "INVALID_TYPE",
                 "error_message": "Only web documents can be refreshed",
             }
-
-        # Get the source URL from source_config
-        source_config = document.source_config or {}
-        url = source_config.get("url")
-
+        url = (document.source_config or {}).get("url")
         if not url:
             return {
                 "success": False,
@@ -2854,99 +2982,87 @@ class KnowledgeOrchestrator:
                 "error_code": "NO_URL",
                 "error_message": "Document has no source URL",
             }
+        return _WebRefreshTarget(
+            document_id=document.id,
+            url=str(url),
+            name=document.name,
+        )
 
-        # Re-scrape the web page (async)
-        service = get_web_scraper_service()
-        result = await service.scrape_url(url)
+    def _persist_refreshed_web_document(
+        self,
+        db: Session,
+        user_id: int,
+        target: _WebRefreshTarget,
+        prepared: _PreparedWebDocument,
+        trigger_indexing: bool,
+        trigger_summary: bool,
+    ) -> Dict[str, Any]:
+        from app.models.knowledge import KnowledgeDocument
+        from app.services.context import context_service
 
-        if not result.success:
-            logger.warning(
-                f"[Orchestrator] Scrape failed for {url}: {result.error_code} - {result.error_message}"
-            )
-            return {
-                "success": False,
-                "document": None,
-                "error_code": result.error_code,
-                "error_message": result.error_message,
-            }
-
-        # Update or create attachment using context_service
-        content_bytes = result.content.encode("utf-8")
-        content_size = len(content_bytes)
+        user = self._load_web_document_user(db, user_id)
+        current = self._prepare_web_document_refresh(db, user_id, target.document_id)
+        if isinstance(current, dict):
+            return current
+        document = db.get(KnowledgeDocument, target.document_id)
+        assert document is not None
 
         if document.attachment_id:
-            # Try to overwrite existing attachment
             try:
                 attachment, _ = context_service.overwrite_attachment_internal(
                     db=db,
                     context_id=document.attachment_id,
                     filename=document.name,
                     reason="web_refresh",
-                    binary_data=content_bytes,
+                    binary_data=prepared.content,
                 )
-                logger.info(
-                    f"[Orchestrator] Updated attachment {attachment.id} for web document"
-                )
-            except Exception as e:
+            except Exception:
                 logger.warning(
-                    f"[Orchestrator] Failed to overwrite attachment {document.attachment_id}: {e}, "
-                    f"creating new one"
+                    "Failed to overwrite web attachment %s; creating a replacement",
+                    document.attachment_id,
+                    exc_info=True,
                 )
-                # Create new attachment if overwrite fails
                 attachment, _ = context_service.upload_attachment(
                     db=db,
-                    user_id=user.id,
+                    user_id=user_id,
                     filename=document.name,
-                    binary_data=content_bytes,
+                    binary_data=prepared.content,
                     subtask_id=0,
                 )
                 document.attachment_id = attachment.id
-                logger.info(
-                    f"[Orchestrator] Created new attachment {attachment.id} for web document"
-                )
         else:
-            # Create new attachment if no attachment_id exists
             attachment, _ = context_service.upload_attachment(
                 db=db,
-                user_id=user.id,
+                user_id=user_id,
                 filename=document.name,
-                binary_data=content_bytes,
+                binary_data=prepared.content,
                 subtask_id=0,
             )
             document.attachment_id = attachment.id
-            logger.info(
-                f"[Orchestrator] Created new attachment {attachment.id} for web document"
-            )
 
-        # Update document metadata
-        document.file_size = content_size
+        document.file_size = len(prepared.content)
         source_config = dict(document.source_config or {})
         source_config.update(
             {
-                "url": result.url,
-                "scraped_at": result.scraped_at.isoformat(),
-                "title": result.title,
-                "description": result.description,
+                "url": prepared.source_url,
+                "scraped_at": prepared.scraped_at,
+                "title": prepared.source_title,
+                "description": prepared.description,
             }
         )
         document.source_config = source_config
         document.clear_processing_error_payload()
-        # Reset is_active to False, will be set to True after re-indexing
         document.is_active = False
-
         try:
             db.commit()
             db.refresh(document)
-            logger.info(f"[Orchestrator] Updated web document {document.id} metadata")
-
-            # Trigger RAG re-indexing via Celery if enabled
             if trigger_indexing:
                 knowledge_base, has_access = KnowledgeService.get_knowledge_base(
                     db=db,
                     knowledge_base_id=document.kind_id,
-                    user_id=user.id,
+                    user_id=user_id,
                 )
-                if knowledge_base and has_access:
+                if knowledge_base is not None and has_access:
                     self._schedule_indexing_celery(
                         db=db,
                         knowledge_base=knowledge_base,
@@ -2956,29 +3072,73 @@ class KnowledgeOrchestrator:
                         allow_if_success=True,
                         replace_active=True,
                     )
-
             return {
                 "success": True,
                 "document": KnowledgeDocumentResponse.model_validate(document),
                 "error_code": None,
                 "error_message": None,
             }
-
-        except Exception as e:
+        except Exception as exc:
             db.rollback()
-            logger.error(f"[Orchestrator] Failed to refresh web document: {e}")
             return {
                 "success": False,
                 "document": None,
                 "error_code": "REFRESH_FAILED",
-                "error_message": str(e),
+                "error_message": str(exc),
             }
+
+    async def refresh_web_document_for_user(
+        self,
+        *,
+        user_id: int,
+        document_id: int,
+        trigger_indexing: bool = True,
+        trigger_summary: bool = False,
+    ) -> Dict[str, Any]:
+        """Refresh a web document without retaining a Session across scraping."""
+
+        from app.services.web_scraper import get_web_scraper_service
+
+        target = await run_knowledge_db_phase(
+            self._prepare_web_document_refresh,
+            user_id,
+            document_id,
+        )
+        if isinstance(target, dict):
+            return target
+        result = await get_web_scraper_service().scrape_url(target.url)
+        if not result.success:
+            return {
+                "success": False,
+                "document": None,
+                "error_code": result.error_code,
+                "error_message": result.error_message,
+            }
+        prepared = await run_payload_codec(
+            _prepare_scraped_web_document,
+            result.title,
+            result.content,
+            result.url,
+            result.scraped_at.isoformat(),
+            result.description,
+            target.name,
+            payload_hint=result.content,
+            force_offload=True,
+        )
+        return await run_knowledge_db_phase(
+            self._persist_refreshed_web_document,
+            user_id,
+            target,
+            prepared,
+            trigger_indexing,
+            trigger_summary,
+        )
 
     async def retrieve_knowledge(
         self,
         *,
-        db: Session,
-        user: User,
+        user_id: int,
+        user_name: str | None,
         knowledge_base_id: int,
         query: str,
         max_results: int = 10,
@@ -2991,150 +3151,81 @@ class KnowledgeOrchestrator:
         max_direct_chunks: int = 500,
         search_hints: SearchHints | None = None,
     ) -> Dict[str, Any]:
-        """Retrieve knowledge with automatic routing and gateway support.
-
-        Unified entry point for MCP tools and Open API. Supports both local and
-        remote RAG gateways with automatic fallback.
-
-        Args:
-            db: Database session.
-            user: Current user (for access control).
-            knowledge_base_id: Target knowledge base ID.
-            query: Search query text.
-            max_results: Maximum number of results to return (default: 10, max: 50).
-            document_ids: Optional list of document IDs to restrict search scope.
-            route_mode: Routing strategy:
-                - "auto": Let Backend decide based on token budget (default).
-                - "direct_injection": Fetch all chunks for direct context injection.
-                - "rag_retrieval": Standard RAG search.
-            context_window: Model context window size in tokens (default: 100000).
-            used_context_tokens: Tokens already consumed in conversation.
-            reserved_output_tokens: Tokens reserved for model output.
-            context_buffer_ratio: Safety buffer ratio for context window.
-            max_direct_chunks: Maximum chunks allowed for direct injection.
-            search_hints: Optional dense and sparse query-planning hints.
-
-        Returns:
-            Dict with keys:
-                - mode: "rag_retrieval" | "direct_injection"
-                - records: List of matching chunks with content, score, title, metadata
-                - total: Total number of records returned
-                - total_estimated_tokens: Estimated token count
-
-        Raises:
-            ValueError: If knowledge base not found, access denied, or config invalid.
-        """
-        # Validate and normalize parameters
-        if max_results < 1:
-            max_results = 10
-        if max_results > 50:
-            max_results = 50
-
-        # Verify knowledge base access (single point of permission check)
-        knowledge_base, has_access = KnowledgeService.get_knowledge_base(
-            db=db,
+        """Retrieve knowledge using detached caller identity."""
+        return await self.retrieve_knowledge_for_user(
+            user_id=user_id,
+            user_name=user_name,
             knowledge_base_id=knowledge_base_id,
-            user_id=user.id,
-        )
-        if knowledge_base is None:
-            raise ValueError(f"Knowledge base {knowledge_base_id} not found")
-        if not has_access:
-            raise ValueError(f"Access denied to knowledge base {knowledge_base_id}")
-
-        # Check RAG configuration
-        spec = (
-            (knowledge_base.json or {}).get("spec", {}) if knowledge_base.json else {}
-        )
-        retrieval_config = spec.get("retrievalConfig")
-        if not retrieval_config:
-            raise ValueError(
-                f"Knowledge base {knowledge_base_id} has no RAG configuration"
-            )
-        retriever_name = retrieval_config.get("retriever_name")
-        embedding_config = retrieval_config.get("embedding_config")
-        if not retriever_name or not embedding_config:
-            raise ValueError(
-                f"Knowledge base {knowledge_base_id} has incomplete RAG configuration"
-            )
-
-        # Use runtime resolver and gateway for retrieval (supports remote fallback)
-        from app.services.rag.gateway_factory import get_query_gateway
-        from app.services.rag.local_gateway import LocalRagGateway
-        from app.services.rag.remote_gateway import (
-            RemoteRagGatewayError,
-            should_fallback_to_local,
-        )
-        from app.services.rag.retrieval_service import RetrievalService
-        from app.services.rag.runtime_resolver import RagRuntimeResolver
-        from shared.models import RetrievalScope
-
-        runtime_resolver = RagRuntimeResolver()
-        retrieval_service = RetrievalService()
-        scope = RetrievalScope(document_ids=document_ids) if document_ids else None
-
-        # Build runtime spec for gateway routing
-        runtime_spec = runtime_resolver.build_query_runtime_spec(
-            db=db,
-            knowledge_base_ids=[knowledge_base_id],
             query=query,
             max_results=max_results,
-            scope=scope,
+            document_ids=document_ids,
             route_mode=route_mode,
-            user_id=user.id,
-            user_name=user.user_name,
             context_window=context_window,
             used_context_tokens=used_context_tokens,
             reserved_output_tokens=reserved_output_tokens,
             context_buffer_ratio=context_buffer_ratio,
             max_direct_chunks=max_direct_chunks,
             search_hints=search_hints,
-            restricted_mode=False,
         )
 
-        # Finalize route mode based on context budget
-        resolved_route_mode = retrieval_service.decide_route_mode_for_chat_shell(
+    async def retrieve_knowledge_for_user(
+        self,
+        *,
+        user_id: int,
+        user_name: str | None,
+        knowledge_base_id: int,
+        query: str,
+        max_results: int = 10,
+        document_ids: Optional[List[int]] = None,
+        route_mode: Literal["auto", "direct_injection", "rag_retrieval"] = "auto",
+        context_window: int = 128000,
+        used_context_tokens: int = 0,
+        reserved_output_tokens: int = 4096,
+        context_buffer_ratio: float = 0.1,
+        max_direct_chunks: int = 500,
+        search_hints: SearchHints | None = None,
+    ) -> Dict[str, Any]:
+        """Prepare with an owned session, then perform only async gateway I/O."""
+        from app.services.rag.gateway_factory import get_query_gateway
+        from app.services.rag.local_gateway import LocalRagGateway
+        from app.services.rag.remote_gateway import (
+            RemoteRagGatewayError,
+            should_fallback_to_local,
+        )
+
+        normalized_max_results = 10 if max_results < 1 else min(max_results, 50)
+        request = _KnowledgeRetrievalRequest(
+            user_id=user_id,
+            user_name=user_name,
+            knowledge_base_id=knowledge_base_id,
             query=query,
-            knowledge_base_ids=[knowledge_base_id],
-            db=db,
+            max_results=normalized_max_results,
+            document_ids=tuple(document_ids) if document_ids else None,
             route_mode=route_mode,
-            scope=scope,
-            metadata_condition=None,
             context_window=context_window,
             used_context_tokens=used_context_tokens,
             reserved_output_tokens=reserved_output_tokens,
             context_buffer_ratio=context_buffer_ratio,
             max_direct_chunks=max_direct_chunks,
+            search_hints=search_hints,
         )
-        runtime_spec = runtime_spec.model_copy(
-            update={"route_mode": resolved_route_mode}
+        runtime_spec = await run_knowledge_db_phase(
+            _prepare_knowledge_retrieval_runtime,
+            request,
         )
-
-        # Build KB configs for remote gateway if needed
-        if resolved_route_mode == "rag_retrieval":
-            kb_configs = runtime_resolver.build_query_knowledge_base_configs(
-                db=db,
-                knowledge_base_ids=[knowledge_base_id],
-                user_name=user.user_name,
-            )
-            runtime_spec = runtime_spec.model_copy(
-                update={"knowledge_base_configs": kb_configs}
-            )
-
-        # Execute query with remote fallback support
         rag_gateway = get_query_gateway()
         try:
-            result = await rag_gateway.query(runtime_spec, db=db)
+            result = await rag_gateway.query(runtime_spec)
         except RemoteRagGatewayError as exc:
             if should_fallback_to_local(exc):
                 logger.warning(
                     f"[Orchestrator] Remote query failed for KB {knowledge_base_id}, "
                     f"falling back to local gateway: {exc}"
                 )
-                result = await LocalRagGateway().query(runtime_spec, db=db)
+                result = await LocalRagGateway().query(runtime_spec)
             else:
                 raise
 
-        # Normalize result format for API consumers
         return {
             "query": query,
             "knowledge_base_id": knowledge_base_id,

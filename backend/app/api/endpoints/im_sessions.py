@@ -5,9 +5,7 @@
 """Private IM session task-continuation endpoints."""
 
 from fastapi import APIRouter, Depends
-from sqlalchemy.orm import Session
 
-from app.api.dependencies import get_db
 from app.core.security import get_current_user
 from app.models.im_session import IMPrivateSession
 from app.models.user import User
@@ -21,9 +19,6 @@ from app.services.im.notification_dispatcher import im_notification_dispatcher
 from app.services.im.session_service import im_session_service
 from app.services.im.task_continuation_service import (
     bind_task_to_sessions,
-    get_task_title,
-    load_user_private_sessions_by_keys,
-    validate_personal_wework_task,
 )
 from shared.telemetry.decorators import trace_async
 
@@ -37,12 +32,13 @@ tasks_router = APIRouter()
 )
 @trace_async("list_private_im_sessions", "im.api")
 async def list_private_sessions(
-    db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> IMPrivateSessionListResponse:
     """List the current user's private IM sessions."""
 
-    sessions = await im_session_service.list_user_sessions(db, user_id=current_user.id)
+    sessions = await im_session_service.list_user_sessions(
+        user_id=current_user.id,
+    )
     return IMPrivateSessionListResponse(
         total=len(sessions),
         items=[_private_session_out(session) for session in sessions],
@@ -57,31 +53,22 @@ async def list_private_sessions(
 async def bind_task_private_sessions(
     task_id: int,
     payload: BindTaskIMSessionsRequest,
-    db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> BindTaskIMSessionsResponse:
     """Bind private IM sessions to a personal WeWork task."""
 
-    task = validate_personal_wework_task(db, current_user.id, task_id)
-    bound_session_keys = await bind_task_to_sessions(
-        db,
+    binding = await bind_task_to_sessions(
         current_user.id,
-        task.id,
+        task_id,
         payload.session_keys,
     )
-    sessions = await load_user_private_sessions_by_keys(
-        db,
-        user_id=current_user.id,
-        session_keys=bound_session_keys,
-    )
-    notification = await im_notification_dispatcher.send_task_switched(
-        db,
-        sessions,
-        get_task_title(task),
+    notification = await im_notification_dispatcher.send_task_switched_nonblocking(
+        binding.sessions,
+        binding.task_title,
     )
     return BindTaskIMSessionsResponse(
-        task_id=task.id,
-        bound_session_keys=bound_session_keys,
+        task_id=binding.task_id,
+        bound_session_keys=list(binding.session_keys),
         notified_count=int(notification.get("sent") or 0),
     )
 

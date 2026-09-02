@@ -7,9 +7,7 @@
 import logging
 from typing import TYPE_CHECKING, Any, Callable, Dict, Optional
 
-from sqlalchemy.orm import Session
-
-from app.models.user import User
+from app.db.session import SessionLocal
 from app.services.channels.callback import (
     BaseCallbackInfo,
     BaseChannelCallbackService,
@@ -17,6 +15,7 @@ from app.services.channels.callback import (
 )
 from app.services.channels.discord.user_resolver import DiscordUserResolver
 from app.services.channels.handler import BaseChannelHandler, MessageContext
+from app.services.chat.storage.db import run_sync_in_executor
 
 if TYPE_CHECKING:
     import discord
@@ -24,6 +23,29 @@ if TYPE_CHECKING:
     from app.services.execution.emitters import ResultEmitter
 
 logger = logging.getLogger(__name__)
+
+
+def _resolve_discord_user_id_sync(
+    mapping_mode: str,
+    mapping_config: Optional[dict[str, Any]],
+    discord_user_id: int,
+    discord_username: Optional[str],
+    discord_global_name: Optional[str],
+) -> Optional[int]:
+    db = SessionLocal()
+    try:
+        user = DiscordUserResolver(
+            db,
+            user_mapping_mode=mapping_mode,
+            user_mapping_config=mapping_config,
+        ).resolve_user_sync(
+            discord_user_id=discord_user_id,
+            discord_username=discord_username,
+            discord_global_name=discord_global_name,
+        )
+        return int(user.id) if user else None
+    finally:
+        db.close()
 
 
 class DiscordChannelHandler(BaseChannelHandler[Any, BaseCallbackInfo]):
@@ -83,20 +105,15 @@ class DiscordChannelHandler(BaseChannelHandler[Any, BaseCallbackInfo]):
         except (TypeError, ValueError):
             return 0
 
-    async def resolve_user(
-        self, db: Session, message_context: MessageContext
-    ) -> Optional[User]:
-        """Resolve Discord user to Wegent user."""
-        mapping_config = self.user_mapping_config
-        resolver = DiscordUserResolver(
-            db,
-            user_mapping_mode=mapping_config.mode,
-            user_mapping_config=mapping_config.config,
-        )
-        return await resolver.resolve_user(
-            discord_user_id=message_context.extra_data.get("discord_user_id", 0),
-            discord_username=message_context.extra_data.get("discord_username"),
-            discord_global_name=message_context.extra_data.get("discord_global_name"),
+    async def resolve_user_id(self, message_context: MessageContext) -> Optional[int]:
+        mapping_config = await self.get_user_mapping_config_nonblocking()
+        return await run_sync_in_executor(
+            _resolve_discord_user_id_sync,
+            mapping_config.mode,
+            mapping_config.config,
+            message_context.extra_data.get("discord_user_id", 0),
+            message_context.extra_data.get("discord_username"),
+            message_context.extra_data.get("discord_global_name"),
         )
 
     async def send_text_reply(self, message_context: MessageContext, text: str) -> bool:

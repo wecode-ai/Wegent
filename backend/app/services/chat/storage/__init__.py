@@ -16,6 +16,7 @@ from .task_manager import (
     check_task_status,
     create_assistant_subtask,
     create_chat_task,
+    create_chat_task_nonblocking,
     create_new_task,
     create_task_and_subtasks,
     create_user_subtask,
@@ -50,4 +51,5 @@ __all__ = [
     "initialize_redis_chat_history",
     "create_task_and_subtasks",
     "create_chat_task",
+    "create_chat_task_nonblocking",
 ]

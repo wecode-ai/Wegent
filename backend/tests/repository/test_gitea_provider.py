@@ -85,7 +85,7 @@ class TestGiteaProviderPagination:
             return response
 
         mocker.patch(
-            "asyncio.to_thread",
+            "app.repository.gitea_provider.run_repository_io",
             side_effect=lambda func, *args, **kwargs: mock_request(),
         )
 
@@ -133,7 +133,7 @@ class TestGiteaProviderPagination:
             return response
 
         mocker.patch(
-            "asyncio.to_thread",
+            "app.repository.gitea_provider.run_repository_io",
             side_effect=lambda func, *args, **kwargs: mock_request(),
         )
 
@@ -186,7 +186,7 @@ class TestGiteaProviderPagination:
             return response
 
         mocker.patch(
-            "asyncio.to_thread",
+            "app.repository.gitea_provider.run_repository_io",
             side_effect=lambda func, *args, **kwargs: mock_request(),
         )
 
@@ -245,7 +245,7 @@ class TestGiteaProviderPagination:
             return response
 
         mocker.patch(
-            "asyncio.to_thread",
+            "app.repository.gitea_provider.run_repository_io",
             side_effect=lambda func, *args, **kwargs: mock_request(),
         )
 
@@ -293,13 +293,15 @@ class TestGiteaProviderPagination:
 
         mocker.patch("requests.get", return_value=response)
 
-        # Mock asyncio.create_task to capture the call
-        mock_create_task = mocker.patch("asyncio.create_task")
+        background_owner = mocker.patch(
+            "app.repository.gitea_provider.web_background_task_manager"
+        )
+        background_owner.submit = AsyncMock()
 
         repos = await gitea_provider.get_repositories(mock_user, page=1, limit=100)
 
         # Should have triggered async fetch since has_more = True
-        mock_create_task.assert_called_once()
+        background_owner.submit.assert_awaited_once()
 
         # Should return the 50 repos from the response
         assert len(repos) == 50
@@ -340,13 +342,15 @@ class TestGiteaProviderPagination:
 
         mocker.patch("requests.get", return_value=response)
 
-        # Mock asyncio.create_task
-        mock_create_task = mocker.patch("asyncio.create_task")
+        background_owner = mocker.patch(
+            "app.repository.gitea_provider.web_background_task_manager"
+        )
+        background_owner.submit = AsyncMock()
 
         repos = await gitea_provider.get_repositories(mock_user, page=1, limit=100)
 
         # Should NOT trigger async fetch since all repos are already fetched
-        mock_create_task.assert_not_called()
+        background_owner.submit.assert_not_awaited()
 
         # Should cache directly
         mock_cache.set.assert_called_once()

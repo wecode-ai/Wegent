@@ -10,13 +10,10 @@ import uuid
 from typing import Any, Callable, Optional
 
 from app.api.ws.events import ServerEvents
+from app.core.bounded_executor import BoundedExecutor
 from app.core.constants import get_wework_user_room
 from app.core.socketio import get_sio
-from app.services.channels.callback import (
-    forward_event_to_channel_callbacks,
-    get_callback_registry,
-    runtime_local_task_callback_key,
-)
+from app.services.channels.worker_client import channel_worker_client
 from app.services.execution.dispatcher import ResponsesAPIEventParser
 from shared.models import EventType, ExecutionEvent
 from shared.models.blocks import BlockStatus, create_tool_block
@@ -25,6 +22,14 @@ from shared.models.responses_api import ResponsesAPIStreamEvents
 logger = logging.getLogger(__name__)
 
 MAX_RUNTIME_SUBTASK_ID = 2_147_483_647
+_WEBSOCKET_PARSER_MAX_IN_FLIGHT = 32
+
+_websocket_parser_executor = BoundedExecutor(
+    max_workers=1,
+    max_in_flight=_WEBSOCKET_PARSER_MAX_IN_FLIGHT,
+    max_waiters=0,
+    thread_name_prefix="wegent-websocket-parser",
+)
 
 RUNTIME_TERMINAL_EVENT_TYPES = {
     ResponsesAPIStreamEvents.RESPONSE_COMPLETED.value: EventType.DONE,
@@ -38,6 +43,30 @@ def is_runtime_terminal_event_type(event_type: str) -> bool:
     """Return whether a native Runtime event can settle a task turn."""
 
     return event_type in RUNTIME_TERMINAL_EVENT_TYPES
+
+
+def _parse_response_api_event_sync(
+    event_parser: ResponsesAPIEventParser,
+    task_id: int,
+    subtask_id: int,
+    message_id: Optional[int],
+    event_type: str,
+    event_data: dict,
+) -> Optional[ExecutionEvent]:
+    """Fully parse one event inside the parser's dedicated worker thread."""
+    event = event_parser.parse(
+        task_id=task_id,
+        subtask_id=subtask_id,
+        message_id=message_id,
+        event_type=event_type,
+        data=event_data,
+    )
+    if event is not None and not isinstance(event, ExecutionEvent):
+        raise TypeError(
+            "ResponsesAPIEventParser.parse() must return a materialized "
+            "ExecutionEvent or None"
+        )
+    return event
 
 
 class LocalTaskResponsesHandler:
@@ -79,7 +108,7 @@ class LocalTaskResponsesHandler:
                     ),
                     room=get_wework_user_room(user_id),
                 )
-                event = self.execution_event(
+                event = await self.execution_event(
                     event_type=event_type,
                     event_data=event_data,
                     subtask_id=subtask_id,
@@ -118,7 +147,27 @@ class LocalTaskResponsesHandler:
             cleanup_lock(subtask_id)
             return {"error": str(exc)}
 
-    def execution_event(
+    async def parse_event(
+        self,
+        *,
+        task_id: int,
+        event_type: str,
+        event_data: dict,
+        subtask_id: int,
+        message_id: Optional[int],
+    ) -> Optional[ExecutionEvent]:
+        """Parse one complete event outside the Uvicorn event-loop thread."""
+        return await _websocket_parser_executor.run(
+            _parse_response_api_event_sync,
+            self._event_parser,
+            task_id,
+            subtask_id,
+            message_id,
+            event_type,
+            event_data,
+        )
+
+    async def execution_event(
         self,
         *,
         event_type: str,
@@ -134,12 +183,12 @@ class LocalTaskResponsesHandler:
                 data={"shell_type": event_data.get("shell_type") or "Codex"},
                 message_id=message_id,
             )
-        return self._event_parser.parse(
+        return await self.parse_event(
             task_id=0,
             subtask_id=subtask_id,
             message_id=message_id,
             event_type=event_type,
-            data=event_data,
+            event_data=event_data,
         )
 
     async def emit_execution_event(
@@ -309,12 +358,14 @@ class LocalTaskResponsesHandler:
             event_type=event_type,
             event_data=event_data,
             subtask_id=subtask_id,
-        ) or self.execution_event(
-            event_type=event_type,
-            event_data=event_data,
-            subtask_id=subtask_id,
-            message_id=None,
         )
+        if event is None:
+            event = await self.execution_event(
+                event_type=event_type,
+                event_data=event_data,
+                subtask_id=subtask_id,
+                message_id=None,
+            )
         if event is None:
             return
 
@@ -336,22 +387,11 @@ class LocalTaskResponsesHandler:
         if not source or source.get("source") != "im":
             return
 
-        callback_key = runtime_local_task_callback_key(device_id, local_task_id)
-        if is_terminal_event(event):
-            await get_callback_registry().handle_task_completed(
-                task_id=callback_key,
-                subtask_id=event.subtask_id,
-                status=local_task_terminal_status(event),
-                result=event.result,
-                error=event.error,
-            )
-            return
-
-        await forward_event_to_channel_callbacks(
-            task_id=callback_key,
-            subtask_id=event.subtask_id,
+        await channel_worker_client.runtime_local_event(
+            device_id=device_id,
+            local_task_id=local_task_id,
+            source=source,
             event=event,
-            source="Device WS local task",
         )
 
 

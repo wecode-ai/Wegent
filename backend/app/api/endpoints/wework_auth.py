@@ -18,6 +18,7 @@ from app.api.dependencies import get_db
 from app.core import security
 from app.core.cache import cache_manager
 from app.core.config import settings
+from app.core.payload_codec import run_payload_codec
 from app.core.security import create_access_token
 from app.core.session_token import WEWORK_ACCESS_TOKEN_USE, WEWORK_REFRESH_TOKEN_USE
 from app.models.user import User
@@ -182,6 +183,27 @@ def _device_key_thumbprint(public_key: dict[str, str]) -> str:
     )
 
 
+def _validated_device_identity(
+    value: dict[str, str],
+) -> tuple[dict[str, str], str]:
+    """Validate and hash one device key in the bounded codec worker."""
+    public_key = _validated_device_public_key(value)
+    return public_key, _device_key_thumbprint(public_key)
+
+
+def _issue_wework_session_tokens(
+    user: User,
+    device_thumbprint: str | None,
+) -> tuple[str, str | None]:
+    """Sign desktop session tokens outside the serving event loop."""
+    if device_thumbprint is None:
+        return _create_legacy_wework_access_token(user), None
+    return (
+        _create_wework_access_token(user),
+        _create_wework_refresh_token(user, device_thumbprint),
+    )
+
+
 def _token_hash(token: str) -> str:
     return (
         base64.urlsafe_b64encode(hashlib.sha256(token.encode()).digest())
@@ -290,7 +312,7 @@ def _verify_device_proof(
 
 
 @router.get("/config", response_model=WeworkWebConfigResponse)
-async def get_wework_web_config() -> WeworkWebConfigResponse:
+def get_wework_web_config() -> WeworkWebConfigResponse:
     """Return public Web and Socket.IO URLs associated with this Backend."""
     socket_url = settings.WEGENT_SOCKET_URL.strip().rstrip("/")
     return WeworkWebConfigResponse(
@@ -315,12 +337,17 @@ async def create_wework_auth_session(
         "expires_at": expires_at,
     }
     if request is not None and request.device_public_key is not None:
-        device_public_key = _validated_device_public_key(request.device_public_key)
+        device_public_key, device_thumbprint = await run_payload_codec(
+            _validated_device_identity,
+            request.device_public_key,
+            payload_hint=request.device_public_key,
+            force_offload=True,
+        )
         session_data.update(
             {
                 "auth_mode": DEVICE_BOUND_REFRESH_AUTH_MODE,
                 "device_public_key": device_public_key,
-                "device_thumbprint": _device_key_thumbprint(device_public_key),
+                "device_thumbprint": device_thumbprint,
             }
         )
 
@@ -418,10 +445,12 @@ async def approve_wework_auth_session(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Authorization session is missing its device binding",
         )
-    access_token = (
-        _create_wework_access_token(current_user)
-        if uses_device_bound_refresh
-        else _create_legacy_wework_access_token(current_user)
+    access_token, refresh_token = await run_payload_codec(
+        _issue_wework_session_tokens,
+        current_user,
+        device_thumbprint if uses_device_bound_refresh else None,
+        payload_hint=device_thumbprint or current_user.user_name,
+        force_offload=True,
     )
     session_data.update(
         {
@@ -433,16 +462,13 @@ async def approve_wework_auth_session(
         }
     )
     if uses_device_bound_refresh:
-        session_data["refresh_token"] = _create_wework_refresh_token(
-            current_user,
-            device_thumbprint,
-        )
+        session_data["refresh_token"] = refresh_token
     await _write_session(session_id, session_data)
     return WeworkAuthSessionActionResponse(status="approved")
 
 
 @router.post("/refresh", response_model=WeworkTokenRefreshResponse)
-async def refresh_wework_access_token(
+def refresh_wework_access_token(
     body: WeworkTokenRefreshRequest,
     request: Request,
     db: Session = Depends(get_db),

@@ -4,6 +4,7 @@
 """Start the configured Issue orchestration when work enters processing."""
 
 import logging
+from dataclasses import dataclass
 
 from sqlalchemy.orm import Session
 
@@ -14,6 +15,7 @@ from app.models.delivery import (
     loop_datetime_is_unset,
 )
 from app.schemas.issue_workflow import IssueWorkflowInstance
+from app.services.chat.storage.db import get_db_session, run_sync_in_executor
 from app.services.issue_workflow_planning import issue_workflow_planning_service
 from app.services.loop_item_status_history import is_processing_status
 from app.services.project_automations import (
@@ -21,6 +23,39 @@ from app.services.project_automations import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True)
+class _WorkflowStageDispatch:
+    """Scalar identity for one ready workflow stage."""
+
+    project_id: str
+    item_id: str
+    node_id: str
+    user_id: int
+    automation_rule_id: str | None
+
+
+@dataclass(frozen=True)
+class _AIWorkflowDispatch:
+    """Detached inputs needed to create one AI workflow manager run."""
+
+    project_id: str
+    automation_id: str
+    item_id: str
+    workflow_run_id: str
+    workflow_plan_version: int | None
+    user_id: int
+    coordinator_prompt: str
+    execution_config: dict | None
+
+
+@dataclass(frozen=True)
+class _WorkflowStartPlan:
+    """Database-free work returned from a worker-owned transaction."""
+
+    stages: tuple[_WorkflowStageDispatch, ...] = ()
+    ai: _AIWorkflowDispatch | None = None
 
 
 class IssueWorkflowStartService:
@@ -73,6 +108,29 @@ class IssueWorkflowStartService:
             return await self._start_ai(db, item, project, workflow, user_id)
         return await self._start_ready_stages(db, item, workflow, user_id)
 
+    async def start_nonblocking(self, *, item_id: str, user_id: int) -> int:
+        """Start a persisted workflow without using SQLAlchemy on the caller loop."""
+
+        plan = await run_sync_in_executor(
+            self._prepare_start_nonblocking_sync,
+            item_id,
+            user_id,
+        )
+        if plan.ai is not None:
+            intent = plan.ai
+            await project_automation_service.run_ai_workflow_manager_nonblocking(
+                project_id=intent.project_id,
+                automation_id=intent.automation_id,
+                item_id=intent.item_id,
+                workflow_run_id=intent.workflow_run_id,
+                workflow_plan_version=intent.workflow_plan_version,
+                user_id=intent.user_id,
+                coordinator_prompt=intent.coordinator_prompt,
+                execution_config=intent.execution_config,
+            )
+            return 1
+        return await self._dispatch_stages_nonblocking(plan.stages)
+
     async def continue_ready_stages(
         self,
         db: Session,
@@ -93,6 +151,179 @@ class IssueWorkflowStartService:
             user_id,
             stage_ids=stage_ids,
         )
+
+    async def continue_ready_stages_nonblocking(
+        self,
+        *,
+        item_id: str,
+        user_id: int,
+        stage_ids: set[str],
+    ) -> int:
+        """Continue preset stages using worker-owned database transactions."""
+
+        stages = await run_sync_in_executor(
+            self._prepare_continuation_nonblocking_sync,
+            item_id,
+            user_id,
+            frozenset(stage_ids),
+        )
+        return await self._dispatch_stages_nonblocking(stages)
+
+    def _prepare_start_nonblocking_sync(
+        self,
+        item_id: str,
+        user_id: int,
+    ) -> _WorkflowStartPlan:
+        with get_db_session() as db:
+            item = db.get(LoopItem, item_id)
+            if item is None:
+                logger.warning(
+                    "[issue-workflow-start] skipped item=%s reason=item_missing",
+                    item_id,
+                )
+                return _WorkflowStartPlan()
+            project = db.get(CloudProject, item.cloud_project_id)
+            if project is None:
+                logger.warning(
+                    "[issue-workflow-start] skipped item=%s reason=project_missing",
+                    item_id,
+                )
+                return _WorkflowStartPlan()
+            workflow = self._workflow(item)
+            if workflow is None:
+                return _WorkflowStartPlan()
+            if workflow.advancement_policy != "ai":
+                return _WorkflowStartPlan(
+                    stages=self._stage_dispatches(
+                        item,
+                        workflow,
+                        user_id,
+                        stage_ids=None,
+                    )
+                )
+            return _WorkflowStartPlan(
+                ai=self._prepare_ai_dispatch(db, item, workflow, user_id)
+            )
+
+    def _prepare_continuation_nonblocking_sync(
+        self,
+        item_id: str,
+        user_id: int,
+        stage_ids: frozenset[str],
+    ) -> tuple[_WorkflowStageDispatch, ...]:
+        with get_db_session() as db:
+            item = db.get(LoopItem, item_id)
+            if item is None:
+                logger.warning(
+                    "[IssueWorkflowContinuation] skipped item=%s "
+                    "reason=item_missing stages=%s",
+                    item_id,
+                    sorted(stage_ids),
+                )
+                return ()
+            workflow = self._workflow(item)
+            if workflow is None or workflow.advancement_policy == "ai":
+                return ()
+            return self._stage_dispatches(
+                item,
+                workflow,
+                user_id,
+                stage_ids=set(stage_ids),
+            )
+
+    def _prepare_ai_dispatch(
+        self,
+        db: Session,
+        item: LoopItem,
+        workflow: IssueWorkflowInstance,
+        user_id: int,
+    ) -> _AIWorkflowDispatch | None:
+        rule_id = workflow.ai_automation_rule_id
+        if not rule_id:
+            return None
+        if (
+            workflow.execution_config is not None
+            and not workflow.execution_config.is_complete()
+        ):
+            return None
+        planning_run = issue_workflow_planning_service.ensure_run(
+            db,
+            issue=item,
+            user_id=user_id,
+        )
+        if self._has_run(db, item, rule_id, planning_run.id):
+            return None
+        return _AIWorkflowDispatch(
+            project_id=str(item.cloud_project_id),
+            automation_id=rule_id,
+            item_id=str(item.id),
+            workflow_run_id=str(planning_run.id),
+            workflow_plan_version=(planning_run.metadata_json or {}).get(
+                "plan_version"
+            ),
+            user_id=user_id,
+            coordinator_prompt=workflow.coordinator_prompt,
+            execution_config=(
+                workflow.execution_config.model_dump(mode="json", by_alias=True)
+                if workflow.execution_config
+                else None
+            ),
+        )
+
+    @staticmethod
+    def _stage_dispatches(
+        item: LoopItem,
+        workflow: IssueWorkflowInstance,
+        user_id: int,
+        *,
+        stage_ids: set[str] | None,
+    ) -> tuple[_WorkflowStageDispatch, ...]:
+        stages: list[_WorkflowStageDispatch] = []
+        for node in workflow.nodes:
+            if stage_ids is not None and node.id not in stage_ids:
+                continue
+            execution_config = workflow.execution_config_for(node)
+            if (
+                node.status != "ready"
+                or node.execution_mode != "robot"
+                or execution_config is None
+                or not execution_config.is_complete()
+            ):
+                continue
+            stages.append(
+                _WorkflowStageDispatch(
+                    project_id=str(item.cloud_project_id),
+                    item_id=str(item.id),
+                    node_id=node.id,
+                    user_id=user_id,
+                    automation_rule_id=node.automation_rule_id,
+                )
+            )
+        return tuple(stages)
+
+    @staticmethod
+    async def _dispatch_stages_nonblocking(
+        stages: tuple[_WorkflowStageDispatch, ...],
+    ) -> int:
+        started = 0
+        for stage in stages:
+            if stage.automation_rule_id:
+                await project_automation_service.run_for_workflow_node_nonblocking(
+                    project_id=stage.project_id,
+                    automation_id=stage.automation_rule_id,
+                    item_id=stage.item_id,
+                    workflow_node_id=stage.node_id,
+                    user_id=stage.user_id,
+                )
+            else:
+                await project_automation_service.run_direct_workflow_node_nonblocking(
+                    project_id=stage.project_id,
+                    item_id=stage.item_id,
+                    workflow_node_id=stage.node_id,
+                    user_id=stage.user_id,
+                )
+            started += 1
+        return started
 
     def ready_robot_stage_ids(self, item: LoopItem) -> set[str]:
         workflow = self._workflow(item)

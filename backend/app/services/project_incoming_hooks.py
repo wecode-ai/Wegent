@@ -16,6 +16,7 @@ from sqlalchemy.orm import Session
 
 from app.models.delivery import (
     CloudProject,
+    LoopItem,
     ProjectIncomingEvent,
     ProjectIncomingHook,
     loop_datetime_is_unset,
@@ -27,9 +28,11 @@ from app.schemas.project_incoming_hook import (
     ProjectIncomingHookCreate,
     ProjectIncomingHookUpdate,
 )
+from app.services.chat.storage.db import get_db_session, run_sync_in_executor
 from app.services.cloud_projects.access import require_cloud_project_role
 from app.services.loop_items.provider_router import loop_item_provider_router
 from app.services.loop_items.service import loop_item_service
+from app.services.project_automation_domain import ProjectAutomationEvent
 
 MAX_BODY_BYTES = 1_048_576
 MAX_STORED_PAYLOAD_BYTES = 65_536
@@ -50,6 +53,15 @@ class IncomingDecision:
     candidate: IncomingCandidate | None
     provider: str
     reason: str | None = None
+
+
+@dataclass(frozen=True)
+class _IncomingReceivePlan:
+    result: dict[str, str | None]
+    automation_event: ProjectAutomationEvent | None = None
+    item_id: str | None = None
+    user_id: int | None = None
+    hook_id: str | None = None
 
 
 def _mapping(value: object) -> Mapping[str, Any]:
@@ -391,14 +403,72 @@ class ProjectIncomingHookService:
             raise HTTPException(status.HTTP_404_NOT_FOUND, "Incoming hook not found")
         return hook
 
-    async def receive(
+    async def receive_nonblocking(
+        self,
+        token: str,
+        raw_body: bytes,
+        content_type: str,
+        headers: Mapping[str, str],
+    ) -> dict[str, str | None]:
+        """Receive one public hook without blocking the serving event loop."""
+
+        plan = await run_sync_in_executor(
+            self._prepare_receive_from_store,
+            token,
+            raw_body,
+            content_type,
+            dict(headers),
+        )
+        if plan.automation_event is None:
+            return plan.result
+
+        from app.services.project_automations import project_automation_processor
+
+        try:
+            await project_automation_processor.process_nonblocking(
+                plan.automation_event
+            )
+        except Exception:
+            logger.exception(
+                "Project automation processing failed after incoming hook "
+                "project=%s task=%s hook=%s",
+                plan.automation_event.project_id,
+                plan.automation_event.subject_id,
+                plan.hook_id,
+            )
+
+        if plan.item_id is not None and plan.user_id is not None:
+            await run_sync_in_executor(
+                self._refresh_created_item_from_store,
+                plan.item_id,
+                plan.user_id,
+            )
+        return plan.result
+
+    def _prepare_receive_from_store(
+        self,
+        token: str,
+        raw_body: bytes,
+        content_type: str,
+        headers: Mapping[str, str],
+    ) -> _IncomingReceivePlan:
+        with get_db_session() as db:
+            return self._prepare_receive(
+                db,
+                token,
+                raw_body,
+                content_type,
+                headers,
+            )
+
+    def _prepare_receive(
         self,
         db: Session,
         token: str,
         raw_body: bytes,
         content_type: str,
         headers: Mapping[str, str],
-    ) -> dict[str, str | None]:
+    ) -> _IncomingReceivePlan:
         hook = (
             db.query(ProjectIncomingHook)
             .filter(
@@ -420,14 +490,16 @@ class ProjectIncomingHookService:
             payload = parse_incoming_body(raw_body, content_type)
             decision = normalize_incoming_payload(payload, headers)
         except (UnicodeDecodeError, json.JSONDecodeError, ValueError) as exc:
-            return self._record_outcome(
-                db,
-                hook,
-                raw_body,
-                headers,
-                provider="unknown",
-                outcome="failed",
-                reason=str(exc),
+            return _IncomingReceivePlan(
+                result=self._record_outcome(
+                    db,
+                    hook,
+                    raw_body,
+                    headers,
+                    provider="unknown",
+                    outcome="failed",
+                    reason=str(exc),
+                )
             )
 
         event_public_id = self._event_public_id(hook, raw_body, headers, decision)
@@ -437,35 +509,41 @@ class ProjectIncomingHookService:
             .first()
         )
         if existing is not None:
-            return {
-                "status": "duplicate",
-                "provider": existing.source or decision.provider,
-                "event_id": str(existing.id),
-                "loop_item_id": existing.loop_item_id or None,
-                "reason": None,
-            }
+            return _IncomingReceivePlan(
+                result={
+                    "status": "duplicate",
+                    "provider": existing.source or decision.provider,
+                    "event_id": str(existing.id),
+                    "loop_item_id": existing.loop_item_id or None,
+                    "reason": None,
+                }
+            )
         if decision.candidate is None:
-            return self._record_outcome(
-                db,
-                hook,
-                raw_body,
-                headers,
-                provider=decision.provider,
-                outcome="ignored",
-                reason=decision.reason,
-                public_id=event_public_id,
+            return _IncomingReceivePlan(
+                result=self._record_outcome(
+                    db,
+                    hook,
+                    raw_body,
+                    headers,
+                    provider=decision.provider,
+                    outcome="ignored",
+                    reason=decision.reason,
+                    public_id=event_public_id,
+                )
             )
         candidate = decision.candidate
         if not candidate.title:
-            return self._record_outcome(
-                db,
-                hook,
-                raw_body,
-                headers,
-                provider=candidate.provider,
-                outcome="failed",
-                reason="title is empty",
-                public_id=event_public_id,
+            return _IncomingReceivePlan(
+                result=self._record_outcome(
+                    db,
+                    hook,
+                    raw_body,
+                    headers,
+                    provider=candidate.provider,
+                    outcome="failed",
+                    reason="title is empty",
+                    public_id=event_public_id,
+                )
             )
 
         project_metadata = (
@@ -522,43 +600,34 @@ class ProjectIncomingHookService:
         db.commit()
         db.refresh(event)
 
-        from app.services.project_automations import (
-            ProjectAutomationEvent,
-            project_automation_processor,
+        item_id = str(created.values["id"])
+        return _IncomingReceivePlan(
+            result={
+                "status": "created",
+                "provider": candidate.provider,
+                "event_id": str(event.id),
+                "loop_item_id": item_id,
+                "reason": None,
+            },
+            automation_event=ProjectAutomationEvent(
+                event_type="task.created",
+                project_id=str(project.id),
+                subject_id=item_id,
+                source="incoming_hook",
+                actor_user_id=creator.id,
+                payload=response.model_dump(mode="json"),
+            ),
+            item_id=item_id if created.internal_item is not None else None,
+            user_id=creator.id,
+            hook_id=str(hook.id),
         )
 
-        try:
-            await project_automation_processor.process(
-                db,
-                ProjectAutomationEvent(
-                    event_type="task.created",
-                    project_id=str(project.id),
-                    subject_id=str(created.values["id"]),
-                    source="incoming_hook",
-                    actor_user_id=creator.id,
-                    payload=response.model_dump(mode="json"),
-                ),
-            )
-        except Exception:
-            db.rollback()
-            logger.exception(
-                "Project automation processing failed after incoming hook "
-                "project=%s task=%s hook=%s",
-                project.id,
-                created.values.get("id"),
-                hook.id,
-            )
-
-        if created.internal_item is not None:
-            db.refresh(created.internal_item)
-            loop_item_service.response_values(db, created.internal_item, creator.id)
-        return {
-            "status": "created",
-            "provider": candidate.provider,
-            "event_id": str(event.id),
-            "loop_item_id": str(created.values["id"]),
-            "reason": None,
-        }
+    @staticmethod
+    def _refresh_created_item_from_store(item_id: str, user_id: int) -> None:
+        with get_db_session() as db:
+            item = db.get(LoopItem, item_id, populate_existing=True)
+            if item is not None:
+                loop_item_service.response_values(db, item, user_id)
 
     def _record_outcome(
         self,

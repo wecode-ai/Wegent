@@ -22,6 +22,7 @@ from PIL import Image, ImageOps, UnidentifiedImageError
 from sqlalchemy.orm import Session
 
 from app.api.dependencies import get_db
+from app.core.request_body_limit import TEAM_ICON_FILE_MAX_BYTES
 from app.core.security import get_admin_user
 from app.models.kind import Kind
 from app.models.subtask_context import SubtaskContext
@@ -33,12 +34,12 @@ from app.schemas.admin import (
     PublicTeamResponse,
     PublicTeamUpdate,
 )
+from app.services.chat.storage.db import get_db_session, run_sync_in_executor
 from app.services.context import context_service
-from shared.telemetry.decorators import trace_async
+from shared.telemetry.decorators import trace_sync
 
 router = APIRouter()
 
-MAX_TEAM_ICON_BYTES = 2 * 1024 * 1024
 MAX_TEAM_ICON_PIXELS = 16_777_216
 TEAM_ICON_SIZE = 512
 TEAM_ICON_ASSET_TYPE = "public_team_icon"
@@ -74,6 +75,32 @@ def _normalize_team_icon(content: bytes) -> bytes:
         ) from exc
 
 
+def _store_public_team_icon(
+    user_id: int,
+    content: bytes,
+) -> PublicTeamIconUploadResponse:
+    """Normalize and persist an icon using one worker-owned Session."""
+    normalized = _normalize_team_icon(content)
+    with get_db_session() as db:
+        asset, _ = context_service.upload_attachment(
+            db=db,
+            user_id=user_id,
+            filename=f"{uuid.uuid4().hex}.webp",
+            binary_data=normalized,
+        )
+        asset.type_data = {
+            **(asset.type_data or {}),
+            "public_asset_type": TEAM_ICON_ASSET_TYPE,
+        }
+        db.commit()
+        db.refresh(asset)
+        asset_id = asset.id
+    return PublicTeamIconUploadResponse(
+        asset_id=asset_id,
+        url=f"/api/resource-library/assets/team-icons/{asset_id}",
+    )
+
+
 def _get_public_team_icon_asset(
     db: Session,
     *,
@@ -99,7 +126,6 @@ def _get_public_team_icon_asset(
 )
 async def upload_public_team_icon(
     file: UploadFile = File(...),
-    db: Session = Depends(get_db),
     current_user: User = Depends(get_admin_user),
 ) -> PublicTeamIconUploadResponse:
     """Upload an image used as a public team's canonical icon."""
@@ -108,29 +134,17 @@ async def upload_public_team_icon(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Filename is required",
         )
-    content = await file.read(MAX_TEAM_ICON_BYTES + 1)
-    if len(content) > MAX_TEAM_ICON_BYTES:
+    content = await file.read(TEAM_ICON_FILE_MAX_BYTES + 1)
+    if len(content) > TEAM_ICON_FILE_MAX_BYTES:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Team icon must not exceed 2 MB",
         )
 
-    normalized = _normalize_team_icon(content)
-    asset, _ = context_service.upload_attachment(
-        db=db,
-        user_id=current_user.id,
-        filename=f"{uuid.uuid4().hex}.webp",
-        binary_data=normalized,
-    )
-    asset.type_data = {
-        **(asset.type_data or {}),
-        "public_asset_type": TEAM_ICON_ASSET_TYPE,
-    }
-    db.commit()
-    db.refresh(asset)
-    return PublicTeamIconUploadResponse(
-        asset_id=asset.id,
-        url=f"/api/resource-library/assets/team-icons/{asset.id}",
+    return await run_sync_in_executor(
+        _store_public_team_icon,
+        current_user.id,
+        content,
     )
 
 
@@ -251,8 +265,8 @@ def _team_to_response(team: Kind) -> PublicTeamResponse:
 
 
 @router.get("/public-teams", response_model=PublicTeamListResponse)
-@trace_async()
-async def list_public_teams(
+@trace_sync()
+def list_public_teams(
     page: int = Query(1, ge=1),
     limit: int = Query(20, ge=1, le=1000),
     db: Session = Depends(get_db),
@@ -288,8 +302,8 @@ async def list_public_teams(
     response_model=PublicTeamResponse,
     status_code=status.HTTP_201_CREATED,
 )
-@trace_async()
-async def create_public_team(
+@trace_sync()
+def create_public_team(
     team_data: PublicTeamCreate,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_admin_user),
@@ -339,8 +353,8 @@ async def create_public_team(
 
 
 @router.put("/public-teams/{team_id}", response_model=PublicTeamResponse)
-@trace_async()
-async def update_public_team(
+@trace_sync()
+def update_public_team(
     team_data: PublicTeamUpdate,
     team_id: int = Path(..., description="Team ID"),
     db: Session = Depends(get_db),
@@ -406,8 +420,8 @@ async def update_public_team(
 
 
 @router.delete("/public-teams/{team_id}", status_code=status.HTTP_204_NO_CONTENT)
-@trace_async()
-async def delete_public_team(
+@trace_sync()
+def delete_public_team(
     team_id: int = Path(..., description="Team ID"),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_admin_user),

@@ -19,13 +19,12 @@ import logging
 from dataclasses import dataclass, field
 from typing import Any, List, Optional
 
-from sqlalchemy.orm import make_transient
-
 from app.db.session import get_db_session
 from app.models.kind import Kind
 from app.models.subtask import Subtask
 from app.models.task import TaskResource
 from app.models.user import User
+from app.services.chat.storage.db import run_sync_in_executor
 from app.stores.tasks import subtask_store, task_store
 
 logger = logging.getLogger(__name__)
@@ -149,14 +148,12 @@ async def _build_subscription_execution_request(
     """Build the dispatch request using a short-lived ORM session."""
     from app.services.chat.trigger.unified import build_execution_request
 
-    with get_db_session() as db:
-        try:
-            objects = _load_subscription_execution_objects(db, execution_data)
-            if not objects:
-                return None
-            _detach_subscription_execution_objects(db, objects)
-        finally:
-            db.rollback()
+    objects = await run_sync_in_executor(
+        _load_detached_subscription_execution_objects,
+        execution_data,
+    )
+    if objects is None:
+        return None
 
     return await build_execution_request(
         task=objects.task,
@@ -181,6 +178,21 @@ async def _build_subscription_execution_request(
     )
 
 
+def _load_detached_subscription_execution_objects(
+    execution_data: SubscriptionExecutionData,
+) -> Optional[_SubscriptionExecutionObjects]:
+    """Load and detach ORM state entirely inside the database worker."""
+    with get_db_session() as db:
+        try:
+            objects = _load_subscription_execution_objects(db, execution_data)
+            if not objects:
+                return None
+            _detach_subscription_execution_objects(db, objects)
+            return objects
+        finally:
+            db.rollback()
+
+
 def _detach_subscription_execution_objects(
     db: Any,
     objects: _SubscriptionExecutionObjects,
@@ -189,7 +201,7 @@ def _detach_subscription_execution_objects(
     for obj in (objects.task, objects.assistant_subtask, objects.team, objects.user):
         if hasattr(obj, "_sa_instance_state"):
             db.refresh(obj)
-            make_transient(obj)
+            db.expunge(obj)
 
 
 def _load_subscription_execution_objects(

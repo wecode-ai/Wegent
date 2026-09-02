@@ -5,6 +5,7 @@
 import io
 import logging
 import zipfile
+from collections.abc import Callable
 from typing import Any, Dict, List, Optional, Tuple
 
 import httpx
@@ -29,6 +30,7 @@ from app.schemas.system_skills import (
     SystemSkillUpdateInstalledRequest,
 )
 from app.services.adapters.skill_kinds import skill_kinds_service
+from app.services.chat.storage.db import run_sync_in_executor
 from app.services.system_skill_providers.core.registry import (
     SystemSkillProviderRegistry,
     system_skill_provider_registry,
@@ -46,8 +48,17 @@ class SystemSkillProviderService:
     def __init__(
         self,
         registry: SystemSkillProviderRegistry = system_skill_provider_registry,
+        session_factory: Callable[[], Session] | None = None,
     ) -> None:
         self._registry = registry
+        self._configured_session_factory = session_factory
+
+    def _session_factory(self) -> Session:
+        if self._configured_session_factory is not None:
+            return self._configured_session_factory()
+        from app.db.session import SessionLocal
+
+        return SessionLocal()
 
     def list_providers(self) -> SystemSkillProviderListResponse:
         providers = [
@@ -66,7 +77,6 @@ class SystemSkillProviderService:
     async def list_system_skills(
         self,
         *,
-        db: Session,
         user_id: int,
         user_name: Optional[str],
         provider_key: Optional[str],
@@ -76,7 +86,10 @@ class SystemSkillProviderService:
         page_size: int,
     ) -> SystemSkillListResponse:
         providers = self._select_providers(provider_key)
-        installed_state = self._load_installed_state(db, user_id)
+        installed_state = await run_sync_in_executor(
+            self._load_installed_state_with_session,
+            user_id,
+        )
         items: List[SystemSkillCatalogItem] = []
         provider_errors: List[SystemSkillProviderError] = []
         total = 0
@@ -138,7 +151,6 @@ class SystemSkillProviderService:
     async def install_system_skill(
         self,
         *,
-        db: Session,
         user_id: int,
         request: SystemSkillInstallRequest,
     ) -> InstalledSkill:
@@ -148,53 +160,131 @@ class SystemSkillProviderService:
                 status_code=404, detail="System skill provider not found"
             )
 
-        existing_installed = self._find_installed_skill(
-            db,
-            user_id=user_id,
-            source_type="system",
-            provider_key=request.providerKey,
-            skill_key=request.skillKey,
+        installed = await run_sync_in_executor(
+            self._install_existing_system_skill_with_session,
+            user_id,
+            request,
         )
-        if existing_installed:
-            logger.info(
-                "Reactivating existing InstalledSkill: user_id=%s installed_id=%s name=%s old_enabled=%s old_state=%s",
-                user_id,
-                existing_installed.id,
-                existing_installed.name,
-                self._get_spec(existing_installed).get("enabled"),
-                self._get_spec(existing_installed).get("installState"),
-            )
-            return self._reactivate_installed_skill(db, existing_installed)
+        if installed is not None:
+            return installed
 
-        skill = self._find_skill(db, user_id=user_id, skill_key=request.skillKey)
-        if not skill:
-            source_skill_key = self._source_skill_key(request)
-            archive = await provider.download_skill(
-                source_skill_key=source_skill_key,
-                version=request.version,
-            )
-            archive = self._normalize_skill_zip_root(
-                file_content=archive,
-                target_name=request.skillKey,
-            )
-            created = skill_kinds_service.create_skill(
-                db=db,
-                name=request.skillKey,
-                namespace="default",
-                file_content=archive,
-                file_name=f"{request.skillKey}.zip",
+        archive = await provider.download_skill(
+            source_skill_key=self._source_skill_key(request),
+            version=request.version,
+        )
+        return await run_sync_in_executor(
+            self._install_downloaded_system_skill_with_session,
+            user_id,
+            request,
+            archive,
+        )
+
+    def _load_installed_state_with_session(
+        self,
+        user_id: int,
+    ) -> InstalledSkillStateMap:
+        with self._session_factory() as db:
+            return self._load_installed_state(db, user_id)
+
+    def _install_existing_system_skill_with_session(
+        self,
+        user_id: int,
+        request: SystemSkillInstallRequest,
+    ) -> InstalledSkill | None:
+        with self._session_factory() as db:
+            existing_installed = self._find_installed_skill(
+                db,
                 user_id=user_id,
-                source={
-                    "type": "system",
-                    "providerKey": request.providerKey,
-                    "skillKey": request.skillKey,
-                    "catalogItemId": request.catalogItemId,
-                },
+                source_type="system",
+                provider_key=request.providerKey,
+                skill_key=request.skillKey,
             )
+            if existing_installed:
+                logger.info(
+                    "Reactivating existing InstalledSkill: user_id=%s installed_id=%s name=%s old_enabled=%s old_state=%s",
+                    user_id,
+                    existing_installed.id,
+                    existing_installed.name,
+                    self._get_spec(existing_installed).get("enabled"),
+                    self._get_spec(existing_installed).get("installState"),
+                )
+                return self._reactivate_installed_skill(db, existing_installed)
+
             skill = self._find_skill(
-                db, user_id=user_id, skill_key=created.metadata.name
+                db,
+                user_id=user_id,
+                skill_key=request.skillKey,
+            )
+            if skill is None:
+                return None
+            return self._persist_installed_system_skill(
+                db,
+                user_id=user_id,
+                request=request,
+                skill=skill,
             )
 
+    def _install_downloaded_system_skill_with_session(
+        self,
+        user_id: int,
+        request: SystemSkillInstallRequest,
+        archive: bytes,
+    ) -> InstalledSkill:
+        with self._session_factory() as db:
+            existing_installed = self._find_installed_skill(
+                db,
+                user_id=user_id,
+                source_type="system",
+                provider_key=request.providerKey,
+                skill_key=request.skillKey,
+            )
+            if existing_installed:
+                return self._reactivate_installed_skill(db, existing_installed)
+
+            skill = self._find_skill(
+                db,
+                user_id=user_id,
+                skill_key=request.skillKey,
+            )
+            if skill is None:
+                normalized_archive = self._normalize_skill_zip_root(
+                    file_content=archive,
+                    target_name=request.skillKey,
+                )
+                created = skill_kinds_service.create_skill(
+                    db=db,
+                    name=request.skillKey,
+                    namespace="default",
+                    file_content=normalized_archive,
+                    file_name=f"{request.skillKey}.zip",
+                    user_id=user_id,
+                    source={
+                        "type": "system",
+                        "providerKey": request.providerKey,
+                        "skillKey": request.skillKey,
+                        "catalogItemId": request.catalogItemId,
+                    },
+                )
+                skill = self._find_skill(
+                    db,
+                    user_id=user_id,
+                    skill_key=created.metadata.name,
+                )
+            return self._persist_installed_system_skill(
+                db,
+                user_id=user_id,
+                request=request,
+                skill=skill,
+            )
+
+    def _persist_installed_system_skill(
+        self,
+        db: Session,
+        *,
+        user_id: int,
+        request: SystemSkillInstallRequest,
+        skill: Kind | None,
+    ) -> InstalledSkill:
         installed = self._create_installed_skill(
             db,
             user_id=user_id,
@@ -248,6 +338,18 @@ class SystemSkillProviderService:
         db.refresh(installed)
         return self._kind_to_installed_skill(installed)
 
+    def install_personal_skill_for_user(
+        self,
+        user_id: int,
+        request: PersonalSkillInstallRequest,
+    ) -> InstalledSkill:
+        with self._session_factory() as db:
+            return self.install_personal_skill(
+                db=db,
+                user_id=user_id,
+                request=request,
+            )
+
     def list_installed_system_skills(
         self, *, db: Session, user_id: int
     ) -> InstalledSkillListResponse:
@@ -263,6 +365,13 @@ class SystemSkillProviderService:
         )
         items = [self._kind_to_installed_skill(row) for row in rows]
         return InstalledSkillListResponse(items=items)
+
+    def list_installed_system_skills_for_user(
+        self,
+        user_id: int,
+    ) -> InstalledSkillListResponse:
+        with self._session_factory() as db:
+            return self.list_installed_system_skills(db=db, user_id=user_id)
 
     def update_installed_system_skill(
         self,
@@ -301,6 +410,20 @@ class SystemSkillProviderService:
         db.commit()
         db.refresh(installed)
         return self._kind_to_installed_skill(installed)
+
+    def update_installed_system_skill_for_user(
+        self,
+        user_id: int,
+        installed_id: int,
+        request: SystemSkillUpdateInstalledRequest,
+    ) -> InstalledSkill:
+        with self._session_factory() as db:
+            return self.update_installed_system_skill(
+                db=db,
+                user_id=user_id,
+                installed_id=installed_id,
+                request=request,
+            )
 
     def uninstall_installed_system_skill(
         self,
@@ -355,6 +478,18 @@ class SystemSkillProviderService:
             installed.id,
             [row.name for row in matching_rows],
         )
+
+    def uninstall_installed_system_skill_for_user(
+        self,
+        user_id: int,
+        installed_id: int,
+    ) -> None:
+        with self._session_factory() as db:
+            self.uninstall_installed_system_skill(
+                db=db,
+                user_id=user_id,
+                installed_id=installed_id,
+            )
 
     async def _fetch_provider_items(
         self,

@@ -60,7 +60,7 @@ def _model_to_response(model: Kind) -> PublicModelResponse:
 
 
 @router.get("/public-models", response_model=PublicModelListResponse)
-async def list_public_models(
+def list_public_models(
     page: int = Query(1, ge=1),
     limit: int = Query(20, ge=1, le=1000),
     db: Session = Depends(get_db),
@@ -94,7 +94,7 @@ async def list_public_models(
     response_model=PublicModelResponse,
     status_code=status.HTTP_201_CREATED,
 )
-async def create_public_model(
+def create_public_model(
     model_data: PublicModelCreate,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_admin_user),
@@ -135,7 +135,7 @@ async def create_public_model(
 
 
 @router.put("/public-models/{model_id}", response_model=PublicModelResponse)
-async def update_public_model(
+def update_public_model(
     model_data: PublicModelUpdate,
     model_id: int = Path(..., description="Model ID"),
     db: Session = Depends(get_db),
@@ -199,7 +199,7 @@ async def update_public_model(
 
 
 @router.delete("/public-models/{model_id}", status_code=status.HTTP_204_NO_CONTENT)
-async def delete_public_model(
+def delete_public_model(
     model_id: int = Path(..., description="Model ID"),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_admin_user),

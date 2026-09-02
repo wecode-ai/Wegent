@@ -4,9 +4,9 @@
 
 """Best-effort Wework notification for human project task assignments."""
 
-import asyncio
 import logging
 
+from app.core.web_background_tasks import web_background_task_manager
 from app.services.loop_item_executions.wake import get_socketio_loop
 
 logger = logging.getLogger(__name__)
@@ -61,10 +61,7 @@ def notify_project_task_assignee(
                 exc_info=True,
             )
 
-    try:
-        asyncio.run_coroutine_threadsafe(_emit(), loop)
-    except Exception:
-        logger.debug(
-            "[ProjectTaskAssignment] Notification scheduling failed",
-            exc_info=True,
-        )
+    web_background_task_manager.submit_from_sync(
+        _emit,
+        name=f"project-task-assignment-{user_id}-{item_id}",
+    )

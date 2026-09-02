@@ -15,7 +15,7 @@ CONNECTOR_CONNECTION_KIND = "ConnectorConnection"
 CONNECTOR_CONNECTION_NAMESPACE = "system"
 
 
-@dataclass
+@dataclass(frozen=True)
 class ConnectorConnection:
     """Runtime view of one user's connector authorization."""
 
@@ -23,12 +23,11 @@ class ConnectorConnection:
     user_id: int
     status: str
     external_account_name: str | None
-    granted_scopes: list[str]
+    granted_scopes: tuple[str, ...]
     expires_at: datetime | None
     access_token_encrypted: str
     refresh_token_encrypted: str | None
     token_type: str
-    row: Kind
 
     def access_token(self) -> str:
         return decrypt_sensitive_data(self.access_token_encrypted) or ""
@@ -128,22 +127,36 @@ class ConnectorConnectionService:
         connection: ConnectorConnection,
         status: str,
     ) -> ConnectorConnection:
-        payload = dict(connection.row.json or {})
+        row = ConnectorConnectionService._find_row(
+            db,
+            slug=connection.slug,
+            user_id=connection.user_id,
+        )
+        if row is None:
+            return connection
+        payload = dict(row.json or {})
         spec = dict(payload.get("spec") or {})
         spec["status"] = status
         payload["spec"] = spec
-        connection.row.json = payload
+        row.json = payload
         db.commit()
-        db.refresh(connection.row)
-        return ConnectorConnectionService._row_to_connection(connection.row)
+        db.refresh(row)
+        return ConnectorConnectionService._row_to_connection(row)
 
     @staticmethod
     def disconnect(db: Session, *, slug: str, user_id: int) -> bool:
         connection = ConnectorConnectionService.get(db, slug=slug, user_id=user_id)
         if not connection:
             return False
-        connection.row.is_active = False
-        payload = dict(connection.row.json or {})
+        row = ConnectorConnectionService._find_row(
+            db,
+            slug=slug,
+            user_id=user_id,
+        )
+        if row is None:
+            return False
+        row.is_active = False
+        payload = dict(row.json or {})
         spec = dict(payload.get("spec") or {})
         spec.update(
             {
@@ -153,7 +166,7 @@ class ConnectorConnectionService:
             }
         )
         payload["spec"] = spec
-        connection.row.json = payload
+        row.json = payload
         db.commit()
         return True
 
@@ -173,7 +186,7 @@ class ConnectorConnectionService:
         return ConnectorConnectionResponse(
             status=status,
             external_account_name=connection.external_account_name,
-            granted_scopes=connection.granted_scopes,
+            granted_scopes=list(connection.granted_scopes),
             expires_at=connection.expires_at,
         )
 
@@ -191,12 +204,25 @@ class ConnectorConnectionService:
             user_id=row.user_id,
             status=str(spec.get("status") or "disconnected"),
             external_account_name=spec.get("externalAccountName"),
-            granted_scopes=list(spec.get("grantedScopes") or []),
+            granted_scopes=tuple(spec.get("grantedScopes") or []),
             expires_at=expires_at,
             access_token_encrypted=str(spec.get("accessTokenEncrypted") or ""),
             refresh_token_encrypted=spec.get("refreshTokenEncrypted"),
             token_type=str(spec.get("tokenType") or "bearer"),
-            row=row,
+        )
+
+    @staticmethod
+    def _find_row(db: Session, *, slug: str, user_id: int) -> Kind | None:
+        return (
+            db.query(Kind)
+            .filter(
+                Kind.kind == CONNECTOR_CONNECTION_KIND,
+                Kind.namespace == CONNECTOR_CONNECTION_NAMESPACE,
+                Kind.name == slug,
+                Kind.user_id == user_id,
+                Kind.is_active,
+            )
+            .first()
         )
 
 

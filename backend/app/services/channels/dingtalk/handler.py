@@ -19,7 +19,11 @@ Architecture:
 """
 
 import asyncio
+import base64
+import json
 import logging
+import threading
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Callable, Dict, Optional
 
 import dingtalk_stream
@@ -27,6 +31,7 @@ from dingtalk_stream import AckMessage, CallbackMessage, ChatbotMessage
 from sqlalchemy.orm import Session
 
 from app.core.cache import cache_manager
+from app.core.payload_codec import run_payload_codec
 from app.db.session import SessionLocal
 from app.models.user import User
 from app.services.channels.callback import BaseChannelCallbackService, ChannelType
@@ -35,8 +40,14 @@ from app.services.channels.dingtalk.callback import (
     dingtalk_callback_service,
 )
 from app.services.channels.dingtalk.emitter import StreamingResponseEmitter
+from app.services.channels.dingtalk.sdk_executor import (
+    DingTalkSDKTimeoutError,
+    run_dingtalk_sdk_operation,
+)
+from app.services.channels.dingtalk.user_mapping import MappedUserInfo
 from app.services.channels.dingtalk.user_resolver import DingTalkUserResolver
 from app.services.channels.handler import BaseChannelHandler, MessageContext
+from app.services.chat.storage.db import run_sync_in_executor
 from app.services.execution.emitters import ResultEmitter
 from app.services.subscription.notification_service import (
     subscription_notification_service,
@@ -51,6 +62,158 @@ logger = logging.getLogger(__name__)
 # DingTalk may retry sending messages if ACK is not received in time
 DINGTALK_MSG_DEDUP_PREFIX = "dingtalk:msg_dedup:"
 DINGTALK_MSG_DEDUP_TTL = 300  # 5 minutes - enough to cover retry window
+DINGTALK_REPLY_TIMEOUT_SECONDS = 15.0
+
+
+@dataclass(frozen=True)
+class _DingTalkBindingInput:
+    user_mapping_mode: str
+    user_mapping_config: Optional[dict[str, Any]]
+    channel_id: int
+    sender_id: str
+    sender_staff_id: Optional[str]
+    sender_nick: Optional[str]
+    conversation_type: str
+    conversation_id: str
+    group_name: Optional[str]
+
+
+@dataclass(frozen=True)
+class _DingTalkBindingResult:
+    user_id: Optional[int]
+    binding_result: Optional[dict[str, Any]]
+
+
+def _update_dingtalk_binding_sync(
+    db: Session,
+    user_id: int,
+    binding_input: _DingTalkBindingInput,
+) -> dict[str, Any]:
+    subscription_notification_service.update_user_im_binding(
+        db=db,
+        user_id=user_id,
+        channel_id=binding_input.channel_id,
+        channel_type="dingtalk",
+        sender_id=binding_input.sender_id,
+        sender_staff_id=binding_input.sender_staff_id,
+        conversation_id=binding_input.conversation_id,
+    )
+    return subscription_notification_service.handle_dingtalk_binding_from_message(
+        db=db,
+        user_id=user_id,
+        channel_id=binding_input.channel_id,
+        conversation_type=binding_input.conversation_type,
+        conversation_id=binding_input.conversation_id,
+        sender_id=binding_input.sender_id,
+        sender_staff_id=binding_input.sender_staff_id,
+        group_name=binding_input.group_name,
+    )
+
+
+def _encode_base64(data: bytes) -> str:
+    return base64.b64encode(data).decode("utf-8")
+
+
+def _parse_json_object(value: str) -> dict[str, Any]:
+    parsed = json.loads(value)
+    return parsed if isinstance(parsed, dict) else {}
+
+
+def _resolve_selected_user_and_bind_sync(
+    binding_input: _DingTalkBindingInput,
+) -> _DingTalkBindingResult:
+    target_user_id = (binding_input.user_mapping_config or {}).get("target_user_id")
+    if not target_user_id:
+        return _DingTalkBindingResult(user_id=None, binding_result=None)
+
+    db = SessionLocal()
+    try:
+        user = (
+            db.query(User)
+            .filter(User.id == target_user_id, User.is_active == True)
+            .first()
+        )
+        if not user:
+            return _DingTalkBindingResult(user_id=None, binding_result=None)
+        user_id = int(user.id)
+        binding_result = _update_dingtalk_binding_sync(db, user_id, binding_input)
+        return _DingTalkBindingResult(
+            user_id=user_id,
+            binding_result=binding_result,
+        )
+    finally:
+        db.close()
+
+
+def _resolve_mapped_user_and_bind_sync(
+    binding_input: _DingTalkBindingInput,
+    mapped_info: Optional[MappedUserInfo],
+) -> _DingTalkBindingResult:
+    db = SessionLocal()
+    try:
+        resolver = DingTalkUserResolver(
+            db,
+            user_mapping_mode=binding_input.user_mapping_mode,
+            user_mapping_config=binding_input.user_mapping_config,
+        )
+        user = resolver.resolve_user_from_mapping(
+            sender_id=binding_input.sender_id,
+            sender_staff_id=binding_input.sender_staff_id,
+            mapped_info=mapped_info,
+            check_selected_user=False,
+        )
+        if not user:
+            return _DingTalkBindingResult(user_id=None, binding_result=None)
+        user_id = int(user.id)
+        binding_result = _update_dingtalk_binding_sync(db, user_id, binding_input)
+        return _DingTalkBindingResult(
+            user_id=user_id,
+            binding_result=binding_result,
+        )
+    finally:
+        db.close()
+
+
+def _resolve_selected_dingtalk_user_id_sync(
+    target_user_id: Optional[int],
+) -> Optional[int]:
+    if not target_user_id:
+        return None
+    db = SessionLocal()
+    try:
+        user = (
+            db.query(User)
+            .filter(User.id == target_user_id, User.is_active == True)
+            .first()
+        )
+        return int(user.id) if user else None
+    finally:
+        db.close()
+
+
+def _resolve_mapped_dingtalk_user_id_sync(
+    mapping_mode: str,
+    mapping_config: Optional[dict[str, Any]],
+    sender_id: str,
+    sender_staff_id: Optional[str],
+    mapped_info: Optional[MappedUserInfo],
+) -> Optional[int]:
+    db = SessionLocal()
+    try:
+        resolver = DingTalkUserResolver(
+            db,
+            user_mapping_mode=mapping_mode,
+            user_mapping_config=mapping_config,
+        )
+        user = resolver.resolve_user_from_mapping(
+            sender_id=sender_id,
+            sender_staff_id=sender_staff_id,
+            mapped_info=mapped_info,
+            check_selected_user=False,
+        )
+        return int(user.id) if user else None
+    finally:
+        db.close()
 
 
 class DingTalkChannelHandler(BaseChannelHandler[ChatbotMessage, DingTalkCallbackInfo]):
@@ -89,6 +252,7 @@ class DingTalkChannelHandler(BaseChannelHandler[ChatbotMessage, DingTalkCallback
         )
         self._dingtalk_client = dingtalk_client
         self._use_ai_card = use_ai_card
+        self._reply_operation_lock = threading.Lock()
         # Store incoming_message for reply operations
         self._current_incoming_message: Optional[ChatbotMessage] = None
 
@@ -179,28 +343,32 @@ class DingTalkChannelHandler(BaseChannelHandler[ChatbotMessage, DingTalkCallback
             files=files,
         )
 
-    async def resolve_user(
-        self, db: Session, message_context: MessageContext
-    ) -> Optional[User]:
-        """Resolve DingTalk user to Wegent user.
+    async def resolve_user_id(self, message_context: MessageContext) -> Optional[int]:
+        """Resolve external identity first, then use a fresh worker session."""
 
-        Args:
-            db: Database session
-            message_context: Parsed message context
+        mapping_config = await self.get_user_mapping_config_nonblocking()
+        if mapping_config.mode == "select_user":
+            target_user_id = (mapping_config.config or {}).get("target_user_id")
+            selected_user_id = await run_sync_in_executor(
+                _resolve_selected_dingtalk_user_id_sync,
+                target_user_id,
+            )
+            if selected_user_id is not None:
+                return selected_user_id
 
-        Returns:
-            Wegent User or None if not found
-        """
-        mapping_config = self.user_mapping_config
-        resolver = DingTalkUserResolver(
-            db,
-            user_mapping_mode=mapping_config.mode,
-            user_mapping_config=mapping_config.config,
-        )
-        return await resolver.resolve_user(
+        sender_staff_id = message_context.extra_data.get("sender_staff_id")
+        mapped_info = await DingTalkUserResolver.map_external_user(
             sender_id=message_context.sender_id,
             sender_nick=message_context.sender_name,
-            sender_staff_id=message_context.extra_data.get("sender_staff_id"),
+            sender_staff_id=sender_staff_id,
+        )
+        return await run_sync_in_executor(
+            _resolve_mapped_dingtalk_user_id_sync,
+            mapping_config.mode,
+            mapping_config.config,
+            message_context.sender_id,
+            sender_staff_id,
+            mapped_info,
         )
 
     async def send_text_reply(self, message_context: MessageContext, text: str) -> bool:
@@ -222,13 +390,26 @@ class DingTalkChannelHandler(BaseChannelHandler[ChatbotMessage, DingTalkCallback
             # Use the SDK's reply_text method via the parent handler
             # This requires access to the ChatbotHandler's reply mechanism
             if hasattr(self, "_chatbot_handler") and self._chatbot_handler:
-                self._chatbot_handler.reply_text(text, incoming_message)
+                await run_dingtalk_sdk_operation(
+                    self._reply_operation_lock,
+                    self._chatbot_handler.reply_text,
+                    text,
+                    incoming_message,
+                    timeout_seconds=DINGTALK_REPLY_TIMEOUT_SECONDS,
+                )
                 return True
             else:
                 self.logger.warning(
                     "[DingTalkHandler] No chatbot_handler set for reply"
                 )
                 return False
+        except DingTalkSDKTimeoutError:
+            self.logger.error(
+                "[DingTalkHandler] reply_text timed out after %.1fs; "
+                "the synchronous SDK call continues under the reply lock",
+                DINGTALK_REPLY_TIMEOUT_SECONDS,
+            )
+            return False
         except Exception as e:
             self.logger.exception(f"[DingTalkHandler] Failed to send reply: {e}")
             return False
@@ -329,6 +510,7 @@ class WegentChatbotHandler(dingtalk_stream.ChatbotHandler):
         self._use_ai_card = use_ai_card
         self._on_message = on_message
         self._channel_id = channel_id or 0
+        self._attachment_operation_lock = threading.Lock()
 
         # Handle deprecated default_team_id parameter
         if get_default_team_id is None and default_team_id is not None:
@@ -480,44 +662,60 @@ class WegentChatbotHandler(dingtalk_stream.ChatbotHandler):
         Returns:
             List of image dicts with mime_type and base64_data
         """
-        import base64
-
-        import requests
-
         images: list[dict[str, str]] = []
         for download_code in download_codes:
             try:
-                # Use DingTalk SDK to get temporary download URL
-                download_url = self.get_image_download_url(download_code)
-                if not download_url:
-                    self.logger.warning(
-                        "[DingTalkHandler] Failed to get download URL for code: %s",
-                        download_code[:20],
-                    )
-                    continue
-
-                # Download the image
-                response = requests.get(download_url, timeout=30)
-                response.raise_for_status()
-
-                # Determine MIME type from response headers or default to image/png
-                content_type = response.headers.get("Content-Type", "image/png")
+                content, content_type = await run_dingtalk_sdk_operation(
+                    self._attachment_operation_lock,
+                    self._download_dingtalk_resource,
+                    download_code,
+                    30,
+                    timeout_seconds=35,
+                )
                 # Strip parameters like charset
                 mime_type = content_type.split(";")[0].strip()
                 if not mime_type.startswith("image/"):
                     mime_type = "image/png"
 
-                base64_data = base64.b64encode(response.content).decode("utf-8")
+                base64_data = await run_payload_codec(
+                    _encode_base64,
+                    content,
+                    payload_hint=content,
+                )
                 images.append({"mime_type": mime_type, "base64_data": base64_data})
                 self.logger.info(
                     "[DingTalkHandler] Downloaded image: mime=%s, size=%d bytes",
                     mime_type,
-                    len(response.content),
+                    len(content),
+                )
+            except DingTalkSDKTimeoutError:
+                self.logger.error(
+                    "[DingTalkHandler] Image download timed out for code: %s",
+                    download_code[:20],
                 )
             except Exception as e:
                 self.logger.error("[DingTalkHandler] Failed to download image: %s", e)
                 continue
         return images
+
+    def _download_dingtalk_resource(
+        self,
+        download_code: str,
+        request_timeout: int,
+    ) -> tuple[bytes, str]:
+        """Fetch one DingTalk attachment inside the dedicated SDK worker."""
+
+        import requests
+
+        download_url = self.get_image_download_url(download_code)
+        if not download_url:
+            raise ValueError("DingTalk did not return an attachment download URL")
+        response = requests.get(download_url, timeout=request_timeout)
+        response.raise_for_status()
+        return (
+            response.content,
+            response.headers.get("Content-Type", "application/octet-stream"),
+        )
 
     async def _download_dingtalk_file(
         self, message: ChatbotMessage
@@ -533,15 +731,15 @@ class WegentChatbotHandler(dingtalk_stream.ChatbotHandler):
         Returns:
             List of file dicts with filename and binary_data
         """
-        import json
-
-        import requests
-
         # File metadata is in extensions["content"], may be dict or JSON string
         file_content = message.extensions.get("content", {})
         if isinstance(file_content, str):
             try:
-                file_content = json.loads(file_content)
+                file_content = await run_payload_codec(
+                    _parse_json_object,
+                    file_content,
+                    payload_hint=file_content,
+                )
             except (json.JSONDecodeError, TypeError):
                 self.logger.error(
                     "[DingTalkHandler] Failed to parse file content: %s",
@@ -557,30 +755,32 @@ class WegentChatbotHandler(dingtalk_stream.ChatbotHandler):
             return []
 
         try:
-            # Reuse the same DingTalk API for file download
-            download_url = self.get_image_download_url(download_code)
-            if not download_url:
-                self.logger.warning(
-                    "[DingTalkHandler] Failed to get download URL for file: %s",
-                    file_name,
-                )
-                return []
-
-            response = requests.get(download_url, timeout=60)
-            response.raise_for_status()
+            content, _ = await run_dingtalk_sdk_operation(
+                self._attachment_operation_lock,
+                self._download_dingtalk_resource,
+                download_code,
+                60,
+                timeout_seconds=65,
+            )
 
             self.logger.info(
                 "[DingTalkHandler] Downloaded file: name=%s, size=%d bytes",
                 file_name,
-                len(response.content),
+                len(content),
             )
             return [
                 {
                     "filename": file_name,
-                    "binary_data": response.content,
-                    "file_size": len(response.content),
+                    "binary_data": content,
+                    "file_size": len(content),
                 }
             ]
+        except DingTalkSDKTimeoutError:
+            self.logger.error(
+                "[DingTalkHandler] File download timed out: %s",
+                file_name,
+            )
+            return []
         except Exception as e:
             self.logger.error(
                 "[DingTalkHandler] Failed to download file %s: %s",
@@ -588,6 +788,60 @@ class WegentChatbotHandler(dingtalk_stream.ChatbotHandler):
                 e,
             )
             return []
+
+    async def _update_subscription_binding_nonblocking(
+        self,
+        message_context: MessageContext,
+        incoming_message: ChatbotMessage,
+    ) -> None:
+        """Resolve a scalar user ID and run binding I/O in fresh worker sessions."""
+
+        if not self._channel_id:
+            return
+
+        mapping_config = (
+            await self._channel_handler.get_user_mapping_config_nonblocking()
+        )
+        binding_input = _DingTalkBindingInput(
+            user_mapping_mode=mapping_config.mode,
+            user_mapping_config=mapping_config.config,
+            channel_id=self._channel_id,
+            sender_id=message_context.sender_id,
+            sender_staff_id=message_context.extra_data.get("sender_staff_id"),
+            sender_nick=message_context.sender_name,
+            conversation_type=message_context.conversation_type,
+            conversation_id=message_context.conversation_id,
+            group_name=getattr(incoming_message, "conversation_title", None),
+        )
+
+        result: Optional[_DingTalkBindingResult] = None
+        if mapping_config.mode == "select_user":
+            result = await run_sync_in_executor(
+                _resolve_selected_user_and_bind_sync,
+                binding_input,
+            )
+
+        if result is None or result.user_id is None:
+            mapped_info = await DingTalkUserResolver.map_external_user(
+                sender_id=binding_input.sender_id,
+                sender_nick=binding_input.sender_nick,
+                sender_staff_id=binding_input.sender_staff_id,
+            )
+            result = await run_sync_in_executor(
+                _resolve_mapped_user_and_bind_sync,
+                binding_input,
+                mapped_info,
+            )
+
+        if result.user_id is None:
+            return
+        self.logger.info(
+            "[DingTalkHandler] Binding check result: user_id=%s, "
+            "channel_id=%s, result=%s",
+            result.user_id,
+            self._channel_id,
+            result.binding_result,
+        )
 
     async def _process_with_channel_handler(
         self, incoming_message: ChatbotMessage, callback_data: Dict[str, Any]
@@ -632,72 +886,14 @@ class WegentChatbotHandler(dingtalk_stream.ChatbotHandler):
         message_context = self._channel_handler.parse_message(incoming_message)
         message_context.extra_data["callback_data"] = callback_data
 
-        # Override send_text_reply to use our reply_text method
-        original_send_reply = self._channel_handler.send_text_reply
-
-        async def patched_send_reply(ctx: MessageContext, text: str) -> bool:
-            self.reply_text(text, ctx.raw_message)
-            return True
-
-        self._channel_handler.send_text_reply = patched_send_reply
-
         try:
-            # Get user and update IM binding for subscription notifications
-            db = SessionLocal()
-            try:
-                user = await self._channel_handler.resolve_user(db, message_context)
-                if user and self._channel_id:
-                    try:
-                        self.logger.info(
-                            "[DingTalkHandler] Updating IM binding from message: user_id=%s, channel_id=%s, conversation_type=%s, conversation_id=%s, sender_id=%s",
-                            user.id,
-                            self._channel_id,
-                            message_context.conversation_type,
-                            message_context.conversation_id,
-                            message_context.sender_id,
-                        )
-                        subscription_notification_service.update_user_im_binding(
-                            db=db,
-                            user_id=user.id,
-                            channel_id=self._channel_id,
-                            channel_type="dingtalk",
-                            sender_id=message_context.sender_id,
-                            sender_staff_id=message_context.extra_data.get(
-                                "sender_staff_id"
-                            ),
-                            conversation_id=message_context.conversation_id,
-                        )
-                        # Extract group name from incoming message for group binding
-                        group_name = getattr(
-                            incoming_message, "conversation_title", None
-                        )
+            await self._update_subscription_binding_nonblocking(
+                message_context,
+                incoming_message,
+            )
+        except Exception:
+            self.logger.exception(
+                "[DingTalkHandler] Failed during IM binding update/check"
+            )
 
-                        binding_result = subscription_notification_service.handle_dingtalk_binding_from_message(
-                            db=db,
-                            user_id=user.id,
-                            channel_id=self._channel_id,
-                            conversation_type=message_context.conversation_type,
-                            conversation_id=message_context.conversation_id,
-                            sender_id=message_context.sender_id,
-                            sender_staff_id=message_context.extra_data.get(
-                                "sender_staff_id"
-                            ),
-                            group_name=group_name,
-                        )
-                        self.logger.info(
-                            "[DingTalkHandler] Binding check result: user_id=%s, channel_id=%s, result=%s",
-                            user.id,
-                            self._channel_id,
-                            binding_result,
-                        )
-                    except Exception as e:
-                        self.logger.exception(
-                            "[DingTalkHandler] Failed during IM binding update/check"
-                        )
-            finally:
-                db.close()
-
-            return await self._channel_handler.handle_message(incoming_message)
-        finally:
-            # Restore original method
-            self._channel_handler.send_text_reply = original_send_reply
+        return await self._channel_handler.handle_message(incoming_message)

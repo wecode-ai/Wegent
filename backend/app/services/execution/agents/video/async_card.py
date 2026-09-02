@@ -4,7 +4,6 @@
 
 """Durable asynchronous CardBlock polling for external video workflows."""
 
-import asyncio
 import logging
 import time
 import uuid
@@ -16,6 +15,8 @@ from urllib.parse import urlparse
 
 import httpx
 
+from app.core.blocking_work import run_execution_io
+from app.core.payload_codec import run_payload_codec
 from app.mcp_server.auth import TaskTokenInfo
 from app.services.url_metadata import _validate_url_for_ssrf
 
@@ -199,7 +200,7 @@ def normalize_async_card_payload(raw: dict[str, Any]) -> AsyncCardSnapshot:
 
 async def fetch_async_card_snapshot(query_url: str) -> AsyncCardSnapshot:
     """Fetch and normalize one external card workflow status response."""
-    validated_url = validate_async_card_query_url(query_url)
+    validated_url = await run_execution_io(validate_async_card_query_url, query_url)
     try:
         async with httpx.AsyncClient(
             timeout=CARD_QUERY_TIMEOUT_SECONDS,
@@ -207,12 +208,19 @@ async def fetch_async_card_snapshot(query_url: str) -> AsyncCardSnapshot:
         ) as client:
             response = await client.get(validated_url)
             response.raise_for_status()
-            raw = response.json()
+            raw = await run_payload_codec(
+                response.json,
+                payload_hint=response.content,
+            )
     except (httpx.HTTPError, ValueError) as exc:
         raise AsyncCardError("Card workflow status request failed") from exc
     if not isinstance(raw, dict):
         raise AsyncCardError("Card workflow returned an invalid response")
-    return normalize_async_card_payload(raw)
+    return await run_payload_codec(
+        normalize_async_card_payload,
+        raw,
+        payload_hint=raw,
+    )
 
 
 def build_async_card_block(
@@ -258,6 +266,76 @@ def build_async_card_block(
     }
 
 
+def _persist_and_dispatch_async_card(
+    *,
+    token_info: TaskTokenInfo,
+    video_job: dict[str, Any],
+    block: dict[str, Any],
+    job_id: str,
+    block_id: str,
+    query_url: str,
+    card_type: str,
+    preview_title: str,
+    progress_text: str,
+) -> None:
+    from app.tasks.video_tasks import (
+        dispatch_video_polling_task,
+        update_subtask_video_job,
+    )
+    from app.tasks.video_websocket import emit_card_created
+
+    update_subtask_video_job(token_info.subtask_id, video_job, block)
+    emit_card_created(
+        task_id=token_info.task_id,
+        subtask_id=token_info.subtask_id,
+        block=block,
+    )
+    dispatch_video_polling_task(
+        subtask_id=token_info.subtask_id,
+        task_id=token_info.task_id,
+        user_id=token_info.user_id,
+        job_id=job_id,
+        provider_protocol="",
+        video_block_id=block_id,
+        model_config={},
+        message_id=None,
+        card_context={
+            "query_url": query_url,
+            "card_type": card_type,
+            "preview_title": preview_title,
+            "progress_text": progress_text,
+        },
+    )
+
+
+def _persist_async_card_error(
+    *,
+    token_info: TaskTokenInfo,
+    failed_job: dict[str, Any],
+    failed_block: dict[str, Any],
+) -> None:
+    from app.tasks.video_tasks import update_subtask_video_job
+    from app.tasks.video_websocket import emit_card_error
+
+    update_subtask_video_job(
+        token_info.subtask_id,
+        failed_job,
+        failed_block,
+    )
+    emit_card_error(
+        task_id=token_info.task_id,
+        subtask_id=token_info.subtask_id,
+        message_id=None,
+        block=failed_block,
+    )
+
+
+def _fail_async_card_start(subtask_id: int, error: str) -> None:
+    from app.tasks.video_tasks import fail_video_generation_start
+
+    fail_video_generation_start(subtask_id, error)
+
+
 class AsyncVideoCardService:
     """Create pending CardBlocks and reuse the shared video task lifecycle."""
 
@@ -271,7 +349,7 @@ class AsyncVideoCardService:
         progress_text: str = "",
     ) -> dict[str, Any]:
         try:
-            query_url = validate_async_card_query_url(task_url)
+            query_url = await run_execution_io(validate_async_card_query_url, task_url)
         except AsyncCardError as exc:
             raise ValueError(str(exc)) from exc
         normalized_card_type = card_type.strip()
@@ -307,40 +385,18 @@ class AsyncVideoCardService:
             "poll_count": 0,
         }
 
-        from app.tasks.video_tasks import (
-            dispatch_video_polling_task,
-            fail_video_generation_start,
-            update_subtask_video_job,
-        )
-        from app.tasks.video_websocket import emit_card_created
-
         try:
-            await asyncio.to_thread(
-                update_subtask_video_job,
-                token_info.subtask_id,
-                video_job,
-                block,
-            )
-            emit_card_created(
-                task_id=token_info.task_id,
-                subtask_id=token_info.subtask_id,
+            await run_execution_io(
+                _persist_and_dispatch_async_card,
+                token_info=token_info,
+                video_job=video_job,
                 block=block,
-            )
-            dispatch_video_polling_task(
-                subtask_id=token_info.subtask_id,
-                task_id=token_info.task_id,
-                user_id=token_info.user_id,
                 job_id=job_id,
-                provider_protocol="",
-                video_block_id=block_id,
-                model_config={},
-                message_id=None,
-                card_context={
-                    "query_url": query_url,
-                    "card_type": normalized_card_type,
-                    "preview_title": preview_title,
-                    "progress_text": progress_text,
-                },
+                block_id=block_id,
+                query_url=query_url,
+                card_type=normalized_card_type,
+                preview_title=preview_title,
+                progress_text=progress_text,
             )
         except Exception as exc:
             error = f"Failed to persist or dispatch async card: {exc}"
@@ -360,30 +416,18 @@ class AsyncVideoCardService:
                 "last_poll_at": datetime.now(timezone.utc).isoformat(),
             }
             try:
-                await asyncio.to_thread(
-                    update_subtask_video_job,
-                    token_info.subtask_id,
-                    failed_job,
-                    failed_block,
-                )
-                from app.tasks.video_websocket import emit_card_error
-
-                emit_card_error(
-                    task_id=token_info.task_id,
-                    subtask_id=token_info.subtask_id,
-                    message_id=None,
-                    block=failed_block,
+                await run_execution_io(
+                    _persist_async_card_error,
+                    token_info=token_info,
+                    failed_job=failed_job,
+                    failed_block=failed_block,
                 )
             except Exception:
                 logger.exception(
                     "Failed to persist async card setup error for subtask %s",
                     token_info.subtask_id,
                 )
-            await asyncio.to_thread(
-                fail_video_generation_start,
-                token_info.subtask_id,
-                error,
-            )
+            await run_execution_io(_fail_async_card_start, token_info.subtask_id, error)
             raise RuntimeError(error) from exc
 
         return {

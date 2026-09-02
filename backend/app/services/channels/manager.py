@@ -18,9 +18,8 @@ import asyncio
 import logging
 from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional, Protocol
 
-from sqlalchemy.orm import Session
-
 from app.services.channels.callback import ChannelType
+from app.services.chat.storage.db import run_sync_in_executor
 
 if TYPE_CHECKING:
     from app.services.channels.base import BaseChannelProvider
@@ -46,6 +45,33 @@ class ChannelLike(Protocol):
 
 # Type alias for provider factory function
 ProviderFactory = Callable[[ChannelLike], "BaseChannelProvider"]
+
+
+def _load_enabled_channels_sync() -> tuple[ChannelLike, ...]:
+    """Load detached, decrypted channel configuration in a DB worker."""
+
+    from app.api.endpoints.admin.im_channels import IMChannelAdapter
+    from app.db.session import SessionLocal
+    from app.models.kind import Kind
+
+    db = SessionLocal()
+    try:
+        channels = (
+            db.query(Kind)
+            .filter(
+                Kind.kind == MESSAGER_KIND,
+                Kind.user_id == MESSAGER_USER_ID,
+                Kind.is_active.is_(True),
+            )
+            .all()
+        )
+        return tuple(
+            IMChannelAdapter(channel)
+            for channel in channels
+            if channel.json.get("spec", {}).get("isEnabled", True)
+        )
+    finally:
+        db.close()
 
 
 class ChannelManager:
@@ -191,45 +217,24 @@ class ChannelManager:
 
         return WeiboChannelProvider(channel)
 
-    async def start_all_enabled(self, db: Session) -> int:
+    async def start_all_enabled(self) -> int:
         """
         Start all enabled channels from the database.
 
         This should be called during application startup.
         IM channels are stored as Messager CRD in the kinds table.
 
-        Args:
-            db: Database session
-
         Returns:
             Number of channels started successfully
         """
-        from app.api.endpoints.admin.im_channels import IMChannelAdapter
-        from app.models.kind import Kind
-
-        # Query all active Messager CRDs
-        channels = (
-            db.query(Kind)
-            .filter(
-                Kind.kind == MESSAGER_KIND,
-                Kind.user_id == MESSAGER_USER_ID,
-                Kind.is_active == True,
-            )
-            .all()
-        )
-
-        # Filter enabled channels
-        enabled_channels = [
-            ch for ch in channels if ch.json.get("spec", {}).get("isEnabled", True)
-        ]
+        enabled_channels = await run_sync_in_executor(_load_enabled_channels_sync)
 
         logger.info("[ChannelManager] Found %d enabled channels", len(enabled_channels))
 
         started_count = 0
         for channel in enabled_channels:
             try:
-                adapter = IMChannelAdapter(channel)
-                if await self.start_channel(adapter):
+                if await self.start_channel(channel):
                     started_count += 1
             except Exception as e:
                 logger.exception(

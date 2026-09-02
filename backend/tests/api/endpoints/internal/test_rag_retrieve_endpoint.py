@@ -235,7 +235,7 @@ def test_internal_all_chunks_routes_protocol_request_through_local_gateway(test_
         query="list_index_chunks",
         metadata_condition=payload["metadata_condition"],
     )
-    mock_list_chunks.assert_awaited_once_with(runtime_spec, db=ANY)
+    mock_list_chunks.assert_awaited_once_with(runtime_spec)
 
 
 def test_internal_purge_index_routes_protocol_request_through_local_gateway(
@@ -279,7 +279,7 @@ def test_internal_purge_index_routes_protocol_request_through_local_gateway(
         user_id=9,
         user_name=None,
     )
-    mock_purge.assert_awaited_once_with(runtime_spec, db=ANY)
+    mock_purge.assert_awaited_once_with(runtime_spec)
 
 
 def test_internal_drop_index_routes_protocol_request_through_local_gateway(
@@ -323,7 +323,7 @@ def test_internal_drop_index_routes_protocol_request_through_local_gateway(
         user_id=9,
         user_name=None,
     )
-    mock_drop.assert_awaited_once_with(runtime_spec, db=ANY)
+    mock_drop.assert_awaited_once_with(runtime_spec)
 
 
 def test_internal_retrieve_keeps_user_subtask_id_out_of_gateway(test_client):
@@ -365,7 +365,7 @@ def test_internal_retrieve_keeps_user_subtask_id_out_of_gateway(test_client):
         )
 
     assert response.status_code == 200
-    mock_query.assert_awaited_once_with(ANY, ANY)
+    mock_query.assert_awaited_once_with(ANY)
     mock_persist.assert_called_once()
 
 
@@ -482,7 +482,7 @@ def test_internal_retrieve_keeps_direct_injection_routing_in_backend(
     assert response.status_code == 200
     assert "source_summaries" not in response.json()
     mock_get_query_gateway.assert_not_called()
-    mock_query.assert_awaited_once_with(ANY, db=ANY)
+    mock_query.assert_awaited_once_with(ANY)
     mock_persist.assert_called_once()
 
 
@@ -722,7 +722,7 @@ def test_internal_retrieve_auto_route_uses_remote_gateway_for_rag_retrieval(
 
     assert response.status_code == 200
     mock_get_query_gateway.assert_called_once()
-    remote_gateway.query.assert_awaited_once_with(ANY, db=ANY)
+    remote_gateway.query.assert_awaited_once_with(ANY)
     assert remote_gateway.query.await_args.args[0].route_mode == "rag_retrieval"
     mock_local_query.assert_not_called()
 
@@ -847,7 +847,7 @@ def test_internal_retrieve_auto_route_keeps_local_direct_injection(
 
     assert response.status_code == 200
     mock_get_query_gateway.assert_not_called()
-    mock_local_query.assert_awaited_once_with(ANY, db=ANY)
+    mock_local_query.assert_awaited_once_with(ANY)
     assert mock_local_query.await_args.args[0].route_mode == "direct_injection"
 
 
@@ -943,8 +943,8 @@ def test_internal_retrieve_falls_back_to_local_when_remote_query_fails(
         "message": None,
     }
     mock_get_query_gateway.assert_called_once()
-    remote_gateway.query.assert_awaited_once_with(ANY, db=ANY)
-    mock_local_query.assert_awaited_once_with(ANY, db=ANY)
+    remote_gateway.query.assert_awaited_once_with(ANY)
+    mock_local_query.assert_awaited_once_with(ANY)
     assert mock_local_query.await_args.args[0].route_mode == "rag_retrieval"
     mock_persist.assert_called_once()
 

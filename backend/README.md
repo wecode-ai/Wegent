@@ -120,7 +120,7 @@ export PYTHONPATH=$(pwd):$PYTHONPATH
 # Navigate to backend and start
 cd backend
 source .venv/bin/activate  # Activate uv's virtual environment
-uvicorn app.main:app --reload
+PORT=8000 uv run python -m app.runtime
 ```
 
 ## API Documentation

@@ -26,6 +26,7 @@ import aiohttp
 from sqlalchemy.orm import Session
 
 from app.core.async_utils import AsyncSessionManager
+from app.core.blocking_work import run_knowledge_io
 from app.core.config import settings
 from app.models.user import User
 from app.services.dingtalk_document_types import get_import_extension
@@ -110,7 +111,7 @@ async def download_content(url: Any, headers: Any = None) -> bytes:
         raise ExternalDocumentFetchError("DingTalk returned invalid download headers")
     limit = settings.MAX_UPLOAD_FILE_SIZE_MB * 1024 * 1024
     try:
-        await asyncio.to_thread(validate_upstream_url, url)
+        await run_knowledge_io(validate_upstream_url, url)
         # This client does not log or automatically trace signed request URLs.
         async with AsyncSessionManager(timeout=60) as client:
             async with client.get(

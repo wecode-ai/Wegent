@@ -871,7 +871,6 @@ def _dispatch_due_subscription(
                         "Execution was not dispatched because scheduler failed to "
                         f"advance next_execution_time: {exc}"
                     ),
-                    skip_notifications=True,
                 )
             except Exception as status_exc:
                 logger.error(
@@ -901,7 +900,6 @@ def _dispatch_due_subscription(
                         "Execution was not dispatched because dispatch failed after "
                         f"scheduler advanced next_execution_time: {exc}"
                     ),
-                    skip_notifications=True,
                 )
             except Exception as status_exc:
                 logger.error(

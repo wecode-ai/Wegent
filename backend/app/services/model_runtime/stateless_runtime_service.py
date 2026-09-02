@@ -7,6 +7,7 @@ from __future__ import annotations
 import json
 from typing import Any, AsyncIterator
 
+from app.core.payload_codec import run_payload_codec
 from app.services import chat_shell_model_service
 
 
@@ -49,9 +50,14 @@ async def complete_text(
     metadata: dict[str, Any] | None = None,
     tools: list[dict[str, Any]] | None = None,
 ) -> str:
+    input_messages = await run_payload_codec(
+        normalize_input_messages,
+        input_data,
+        payload_hint=input_data,
+    )
     return await chat_shell_model_service.complete_text(
         model=model,
-        input_messages=normalize_input_messages(input_data),
+        input_messages=input_messages,
         instructions=instructions,
         model_config=model_config,
         metadata=metadata,
@@ -68,13 +74,23 @@ async def stream_response(
     metadata: dict[str, Any] | None = None,
     tools: list[dict[str, Any]] | None = None,
 ) -> AsyncIterator[str]:
+    input_messages = await run_payload_codec(
+        normalize_input_messages,
+        input_data,
+        payload_hint=input_data,
+    )
     async with chat_shell_model_service.create_streaming_response(
         model=model,
-        input_messages=normalize_input_messages(input_data),
+        input_messages=input_messages,
         instructions=instructions,
         model_config=model_config,
         metadata=metadata,
         tools=tools,
     ) as stream:
         async for event in stream:
-            yield serialize_stream_event(event)
+            yield await run_payload_codec(
+                serialize_stream_event,
+                event,
+                payload_hint=event,
+                force_offload=True,
+            )

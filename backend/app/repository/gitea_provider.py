@@ -14,8 +14,11 @@ from typing import Any, Dict, List, Optional
 import requests
 from fastapi import HTTPException
 
+from app.core.blocking_work import run_repository_io
 from app.core.cache import cache_manager
 from app.core.config import settings
+from app.core.payload_codec import decode_sync_response_json
+from app.core.web_background_tasks import web_background_task_manager
 from app.models.user import User
 from app.repository.file_status import file_status_letter
 from app.repository.interfaces.repository_provider import RepositoryProvider
@@ -163,7 +166,8 @@ class GiteaProvider(RepositoryProvider):
 
             try:
                 headers = self._build_headers(git_token)
-                response = requests.get(
+                response = await run_repository_io(
+                    requests.get,
                     f"{api_base_url}/user/repos",
                     headers=headers,
                     params={"limit": limit, "page": page, "sort": "updated"},
@@ -171,7 +175,7 @@ class GiteaProvider(RepositoryProvider):
                 )
                 response.raise_for_status()
 
-                repos = response.json()
+                repos = await decode_sync_response_json(response)
                 mapped_repos = [
                     {
                         "id": repo.get("id"),
@@ -210,8 +214,11 @@ class GiteaProvider(RepositoryProvider):
                         expire=settings.REPO_CACHE_EXPIRED_TIME,
                     )
                 else:
-                    asyncio.create_task(
-                        self._fetch_all_repositories_async(user, git_token, git_domain)
+                    await web_background_task_manager.submit(
+                        lambda: self._fetch_all_repositories_async(
+                            user, git_token, git_domain
+                        ),
+                        name=f"gitea-repository-refresh-{user.id}-{git_domain}",
                     )
 
                 all_repos.extend(
@@ -263,8 +270,8 @@ class GiteaProvider(RepositoryProvider):
         try:
             headers = self._build_headers(git_token)
 
-            default_branch_name = self._get_default_branch(
-                repo_name, git_domain, git_token
+            default_branch_name = await run_repository_io(
+                self._get_default_branch, repo_name, git_domain, git_token
             )
 
             all_branches = []
@@ -272,7 +279,8 @@ class GiteaProvider(RepositoryProvider):
             per_page = 100
 
             while True:
-                response = requests.get(
+                response = await run_repository_io(
+                    requests.get,
                     f"{api_base_url}/repos/{repo_name}/branches",
                     headers=headers,
                     params={"limit": per_page, "page": page},
@@ -280,7 +288,7 @@ class GiteaProvider(RepositoryProvider):
                 )
                 response.raise_for_status()
 
-                branches = response.json()
+                branches = await decode_sync_response_json(response)
                 if not branches:
                     break
 
@@ -535,14 +543,15 @@ class GiteaProvider(RepositoryProvider):
             try:
                 api_base_url = self._get_api_base_url(git_domain)
                 headers = self._build_headers(git_token)
-                response = requests.get(
+                response = await run_repository_io(
+                    requests.get,
                     f"{api_base_url}/user/repos",
                     headers=headers,
                     params={"limit": 100, "page": 1, "sort": "updated"},
                     timeout=settings.REPOSITORY_READ_TIMEOUT_SECONDS,
                 )
                 response.raise_for_status()
-                repos = response.json()
+                repos = await decode_sync_response_json(response)
                 mapped = [
                     {
                         "id": repo["id"],
@@ -621,7 +630,7 @@ class GiteaProvider(RepositoryProvider):
             )
 
             while True:
-                response = await asyncio.to_thread(
+                response = await run_repository_io(
                     requests.get,
                     f"{api_base_url}/user/repos",
                     headers=headers,
@@ -630,7 +639,7 @@ class GiteaProvider(RepositoryProvider):
                 )
                 response.raise_for_status()
 
-                repos = response.json()
+                repos = await decode_sync_response_json(response)
                 if not repos:
                     break
 
@@ -743,14 +752,15 @@ class GiteaProvider(RepositoryProvider):
             self.logger.info(
                 f"Comparing {repo_name}: {target_branch}...{source_branch}"
             )
-            response = requests.get(
+            response = await run_repository_io(
+                requests.get,
                 f"{api_base_url}/repos/{repo_name}/compare/{target_branch}...{source_branch}",
                 headers=headers,
                 timeout=settings.REPOSITORY_READ_TIMEOUT_SECONDS,
             )
             response.raise_for_status()
 
-            compare_data = response.json()
+            compare_data = await decode_sync_response_json(response)
 
             files = []
             for file in compare_data.get("files", []):

@@ -22,6 +22,7 @@ from sqlalchemy.orm import Session
 
 from app.core.cache import cache_manager
 from app.core.config import settings
+from app.core.payload_codec import run_payload_codec
 from app.models.kind import Kind
 from app.models.oauth_refresh_token import (
     OAUTH_REFRESH_TOKEN_UNSET_TIME,
@@ -55,6 +56,7 @@ from app.services.auth.outbound_token_service import (
     OutboundTokenError,
     outbound_token_service,
 )
+from app.services.chat.storage.db import get_db_session, run_sync_in_executor
 
 AUTH_REQUEST_TTL_SECONDS = 10 * 60
 AUTH_CODE_TTL_SECONDS = 5 * 60
@@ -238,7 +240,6 @@ class OAuthProviderService:
 
     async def begin_authorization(
         self,
-        db: Session,
         *,
         response_type: str,
         client_id: str,
@@ -248,20 +249,20 @@ class OAuthProviderService:
         code_challenge: str,
         code_challenge_method: str,
     ) -> str:
-        client_row, _ = self._get_active_client_by_public_id(db, client_id)
-        self._validate_authorization_request(
-            client_row,
-            response_type=response_type,
-            redirect_uri=redirect_uri,
-            scope=scope,
-            code_challenge=code_challenge,
-            code_challenge_method=code_challenge_method,
+        client_kind_id = await run_sync_in_executor(
+            self._prepare_authorization,
+            response_type,
+            client_id,
+            redirect_uri,
+            scope,
+            code_challenge,
+            code_challenge_method,
         )
         request_id = secrets.token_urlsafe(32)
         stored = await cache_manager.set(
             f"{AUTH_REQUEST_PREFIX}{request_id}",
             {
-                "client_kind_id": client_row.id,
+                "client_kind_id": client_kind_id,
                 "client_id": client_id,
                 "redirect_uri": redirect_uri,
                 "scope": scope,
@@ -280,9 +281,29 @@ class OAuthProviderService:
             f"{urlencode({'request_id': request_id})}"
         )
 
-    def authorization_error_redirect(
+    def _prepare_authorization(
         self,
-        db: Session,
+        response_type: str,
+        client_id: str,
+        redirect_uri: str,
+        scope: str,
+        code_challenge: str,
+        code_challenge_method: str,
+    ) -> int:
+        with get_db_session() as db:
+            client_row, _ = self._get_active_client_by_public_id(db, client_id)
+            self._validate_authorization_request(
+                client_row,
+                response_type=response_type,
+                redirect_uri=redirect_uri,
+                scope=scope,
+                code_challenge=code_challenge,
+                code_challenge_method=code_challenge_method,
+            )
+            return client_row.id
+
+    async def authorization_error_redirect(
+        self,
         *,
         client_id: str,
         redirect_uri: str,
@@ -290,55 +311,79 @@ class OAuthProviderService:
         error: str,
         description: str,
     ) -> str | None:
-        rows = (
-            db.query(Kind)
-            .filter(
-                Kind.kind == OAUTH_CLIENT_KIND,
-                Kind.namespace == SYSTEM_NAMESPACE,
-                Kind.is_active == True,  # noqa: E712
-            )
-            .all()
+        return await run_sync_in_executor(
+            self._authorization_error_redirect,
+            client_id,
+            redirect_uri,
+            state,
+            error,
+            description,
         )
-        for row in rows:
-            client = OAuthClientKind.model_validate(row.json)
-            if (
-                client.spec.enabled
-                and client.spec.clientId == client_id
-                and redirect_uri in client.spec.redirectUris
-            ):
-                query = {
-                    "error": error,
-                    "error_description": description,
-                    "iss": oauth_provider_issuer(),
-                }
-                if state:
-                    query["state"] = state
-                return self._append_query(redirect_uri, query)
-        return None
+
+    def _authorization_error_redirect(
+        self,
+        client_id: str,
+        redirect_uri: str,
+        state: str,
+        error: str,
+        description: str,
+    ) -> str | None:
+        with get_db_session() as db:
+            rows = (
+                db.query(Kind)
+                .filter(
+                    Kind.kind == OAUTH_CLIENT_KIND,
+                    Kind.namespace == SYSTEM_NAMESPACE,
+                    Kind.is_active == True,  # noqa: E712
+                )
+                .all()
+            )
+            for row in rows:
+                client = OAuthClientKind.model_validate(row.json)
+                if (
+                    client.spec.enabled
+                    and client.spec.clientId == client_id
+                    and redirect_uri in client.spec.redirectUris
+                ):
+                    query = {
+                        "error": error,
+                        "error_description": description,
+                        "iss": oauth_provider_issuer(),
+                    }
+                    if state:
+                        query["state"] = state
+                    return self._append_query(redirect_uri, query)
+            return None
 
     async def get_authorization_request(
-        self, db: Session, request_id: str
+        self, request_id: str
     ) -> OAuthAuthorizationRequestResponse:
         payload = await cache_manager.get(f"{AUTH_REQUEST_PREFIX}{request_id}")
         if not isinstance(payload, dict):
             raise OAuthProviderError(
                 "invalid_request", "Authorization request expired or not found", 404
             )
-        row = self._get_client_row(db, int(payload["client_kind_id"]), active=True)
+        client_name = await run_sync_in_executor(
+            self._active_client_name,
+            int(payload["client_kind_id"]),
+        )
         return OAuthAuthorizationRequestResponse(
             request_id=request_id,
-            client_name=row.name,
+            client_name=client_name,
             client_id=str(payload["client_id"]),
             scope=str(payload["scope"]),
             redirect_uri=str(payload["redirect_uri"]),
         )
 
+    def _active_client_name(self, client_kind_id: int) -> str:
+        with get_db_session() as db:
+            return self._get_client_row(db, client_kind_id, active=True).name
+
     async def decide_authorization(
         self,
-        db: Session,
         *,
         request_id: str,
-        user: User,
+        user_id: int,
         approved: bool,
     ) -> OAuthAuthorizationDecisionResponse:
         payload = await cache_manager.pop(f"{AUTH_REQUEST_PREFIX}{request_id}")
@@ -346,7 +391,10 @@ class OAuthProviderService:
             raise OAuthProviderError(
                 "invalid_request", "Authorization request expired or already used", 404
             )
-        self._get_client_row(db, int(payload["client_kind_id"]), active=True)
+        await run_sync_in_executor(
+            self._require_active_client,
+            int(payload["client_kind_id"]),
+        )
         redirect_uri = str(payload["redirect_uri"])
         state = str(payload.get("state") or "")
         if not approved:
@@ -357,11 +405,17 @@ class OAuthProviderService:
                 redirect_url=self._append_query(redirect_uri, query)
             )
         code = f"wgoac_{secrets.token_urlsafe(32)}"
+        code_hash = await run_payload_codec(
+            self._hash_secret,
+            code,
+            payload_hint=code,
+            force_offload=True,
+        )
         stored = await cache_manager.set(
-            f"{AUTH_CODE_PREFIX}{self._hash_secret(code)}",
+            f"{AUTH_CODE_PREFIX}{code_hash}",
             {
                 **payload,
-                "user_id": user.id,
+                "user_id": user_id,
                 "issued_at": int(time.time()),
             },
             expire=AUTH_CODE_TTL_SECONDS,
@@ -375,9 +429,12 @@ class OAuthProviderService:
             redirect_url=self._append_query(redirect_uri, query)
         )
 
+    def _require_active_client(self, client_kind_id: int) -> None:
+        with get_db_session() as db:
+            self._get_client_row(db, client_kind_id, active=True)
+
     async def exchange_code(
         self,
-        db: Session,
         *,
         client_id: str,
         client_secret: str | None,
@@ -385,14 +442,69 @@ class OAuthProviderService:
         redirect_uri: str,
         code_verifier: str,
     ) -> OAuthTokenResponse:
-        client_row, client = self.authenticate_client(
-            db, client_id=client_id, client_secret=client_secret
+        client_kind_id = await run_sync_in_executor(
+            self._authenticate_client_id,
+            client_id,
+            client_secret,
         )
-        payload = await cache_manager.pop(
-            f"{AUTH_CODE_PREFIX}{self._hash_secret(code)}"
+        code_hash = await run_payload_codec(
+            self._hash_secret,
+            code,
+            payload_hint=code,
+            force_offload=True,
         )
+        payload = await cache_manager.pop(f"{AUTH_CODE_PREFIX}{code_hash}")
         if not isinstance(payload, dict):
             raise OAuthProviderError("invalid_grant", "Invalid or expired code")
+        return await run_sync_in_executor(
+            self._exchange_code_payload,
+            client_kind_id,
+            payload,
+            redirect_uri,
+            code_verifier,
+        )
+
+    def _authenticate_client_id(
+        self,
+        client_id: str,
+        client_secret: str | None,
+    ) -> int:
+        with get_db_session() as db:
+            row, _ = self.authenticate_client(
+                db,
+                client_id=client_id,
+                client_secret=client_secret,
+            )
+            return row.id
+
+    def _exchange_code_payload(
+        self,
+        client_kind_id: int,
+        payload: dict,
+        redirect_uri: str,
+        code_verifier: str,
+    ) -> OAuthTokenResponse:
+        with get_db_session() as db:
+            client_row = self._get_client_row(db, client_kind_id, active=True)
+            client = OAuthClientKind.model_validate(client_row.json)
+            return self._issue_code_token_pair(
+                db,
+                client_row,
+                client,
+                payload,
+                redirect_uri,
+                code_verifier,
+            )
+
+    def _issue_code_token_pair(
+        self,
+        db: Session,
+        client_row: Kind,
+        client: OAuthClientKind,
+        payload: dict,
+        redirect_uri: str,
+        code_verifier: str,
+    ) -> OAuthTokenResponse:
         if (
             int(payload["client_kind_id"]) != client_row.id
             or payload["redirect_uri"] != redirect_uri
@@ -406,7 +518,35 @@ class OAuthProviderService:
             raise OAuthProviderError("invalid_grant", "User is inactive")
         return self._issue_token_pair(db, client_row, client, user)
 
-    def refresh(
+    async def refresh(
+        self,
+        *,
+        client_id: str,
+        client_secret: str | None,
+        refresh_token: str,
+    ) -> OAuthTokenResponse:
+        return await run_sync_in_executor(
+            self._refresh,
+            client_id,
+            client_secret,
+            refresh_token,
+        )
+
+    def _refresh(
+        self,
+        client_id: str,
+        client_secret: str | None,
+        refresh_token: str,
+    ) -> OAuthTokenResponse:
+        with get_db_session() as db:
+            return self._refresh_with_session(
+                db,
+                client_id=client_id,
+                client_secret=client_secret,
+                refresh_token=refresh_token,
+            )
+
+    def _refresh_with_session(
         self,
         db: Session,
         *,

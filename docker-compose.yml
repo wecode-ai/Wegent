@@ -74,6 +74,7 @@ services:
     pull_policy: ${DOCKER_PULL_POLICY:-always}
     container_name: wegent-backend
     restart: always
+    stop_grace_period: ${BACKEND_STOP_GRACE_PERIOD:-610s}
     ports:
       - "${BACKEND_PORT:-8000}:8000"
     volumes:
@@ -146,6 +147,12 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8000/api/ready"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 60s
     networks:
       - wegent-network
 
@@ -180,7 +187,8 @@ services:
       # - RUNTIME_OTEL_SERVICE_NAME=wegent-frontend
       # - RUNTIME_OTEL_COLLECTOR_ENDPOINT=http://localhost:4318
     depends_on:
-      - backend
+      backend:
+        condition: service_healthy
     networks:
       - wegent-network
 

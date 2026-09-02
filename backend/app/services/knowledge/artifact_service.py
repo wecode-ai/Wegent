@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import re
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from uuid import uuid4
 
@@ -30,7 +31,11 @@ from app.schemas.knowledge_artifact import (
     MindMapNode,
 )
 from app.services.knowledge.artifact_repository import KnowledgeArtifactRepository
-from app.services.knowledge.artifact_task_launcher import ArtifactTaskLauncher
+from app.services.knowledge.artifact_task_launcher import (
+    ArtifactTaskLauncher,
+    ArtifactTaskLaunchResult,
+    PreparedArtifactTaskLaunch,
+)
 from app.services.knowledge.knowledge_service import (
     KnowledgeDocumentScopeValidationError,
     KnowledgeService,
@@ -60,6 +65,14 @@ class ArtifactPermissionError(PermissionError):
 
 class ArtifactValidationError(ValueError):
     """The request or generated output does not meet the Artifact contract."""
+
+
+@dataclass(frozen=True)
+class PreparedArtifactLaunch:
+    """Artifact state and task identifiers detached from the DB Session."""
+
+    artifact: KnowledgeArtifact
+    task: PreparedArtifactTaskLaunch
 
 
 class ArtifactService:
@@ -223,6 +236,219 @@ class ArtifactService:
             raise ArtifactNotFoundError("Artifact not found")
         raise ArtifactValidationError("Artifact execution state has changed")
 
+    def prepare_create(
+        self,
+        knowledge_base_id: int,
+        request: KnowledgeArtifactCreate,
+    ) -> PreparedArtifactLaunch:
+        """Persist Artifact and task records inside one synchronous DB phase."""
+        self._require_manage_access(knowledge_base_id)
+        document_ids = self._resolve_document_ids(
+            knowledge_base_id,
+            request.document_ids,
+        )
+        prepared_team = self.launcher.preflight_sync()
+        now = datetime.now(timezone.utc).replace(tzinfo=None)
+        artifact = self.repository.create(
+            KnowledgeArtifact(
+                artifact_id=str(uuid4()),
+                knowledge_base_id=knowledge_base_id,
+                artifact_type=request.artifact_type,
+                title=self._default_title(request),
+                status=KnowledgeArtifactStatus.QUEUED,
+                source_document_ids=document_ids,
+                generation_config={"instruction": request.instruction},
+                user_id=self.user.id,
+                created_at=now,
+                updated_at=now,
+            )
+        )
+        try:
+            task = self.launcher.prepare_launch(
+                artifact_id=artifact.artifact_id,
+                attempt=artifact.attempt,
+                artifact_type=artifact.artifact_type,
+                title=artifact.title,
+                knowledge_base_id=artifact.knowledge_base_id,
+                document_ids=artifact.source_document_ids,
+                instruction=artifact.generation_config.get("instruction"),
+                prepared_team=prepared_team,
+            )
+        except BaseException as exc:
+            self._mark_launch_failed(artifact, exc)
+            raise
+        return PreparedArtifactLaunch(artifact=artifact, task=task)
+
+    def prepare_retry(
+        self,
+        knowledge_base_id: int,
+        artifact_id: str,
+    ) -> PreparedArtifactLaunch:
+        """Claim a retry and create task records inside one DB phase."""
+        self._require_manage_access(knowledge_base_id)
+        artifact = self._reconcile_sync(
+            self._get_artifact_sync(knowledge_base_id, artifact_id)
+        )
+        if not artifact.can_retry:
+            raise ArtifactValidationError(
+                "Only failed or stalled artifacts can be retried"
+            )
+        prepared_team = self.launcher.preflight_sync()
+        claimed, did_claim = self.repository.claim_retry(
+            knowledge_base_id,
+            artifact_id,
+            expected_attempt=artifact.attempt,
+            allow_active=(
+                artifact.execution_health == KnowledgeArtifactExecutionHealth.STALLED
+            ),
+        )
+        if claimed is None:
+            raise ArtifactNotFoundError("Artifact not found")
+        if not did_claim:
+            raise ArtifactValidationError(
+                "Only failed or stalled artifacts can be retried"
+            )
+        try:
+            task = self.launcher.prepare_launch(
+                artifact_id=claimed.artifact_id,
+                attempt=claimed.attempt,
+                artifact_type=claimed.artifact_type,
+                title=claimed.title,
+                knowledge_base_id=claimed.knowledge_base_id,
+                document_ids=claimed.source_document_ids,
+                instruction=claimed.generation_config.get("instruction"),
+                prepared_team=prepared_team,
+            )
+        except BaseException as exc:
+            self._mark_launch_failed(claimed, exc)
+            raise
+        return PreparedArtifactLaunch(artifact=claimed, task=task)
+
+    def finish_launch(
+        self,
+        prepared: PreparedArtifactLaunch,
+        launch: ArtifactTaskLaunchResult,
+    ) -> KnowledgeArtifact:
+        """Persist launch identifiers after async request construction succeeds."""
+        artifact = self.repository.get(
+            prepared.artifact.knowledge_base_id,
+            prepared.artifact.artifact_id,
+        )
+        if artifact is None or artifact.attempt != prepared.artifact.attempt:
+            raise ArtifactValidationError("Artifact execution state has changed")
+        artifact.task_id = launch.task_id
+        artifact.assistant_subtask_id = launch.assistant_subtask_id
+        artifact.status = KnowledgeArtifactStatus.RUNNING
+        artifact.updated_at = datetime.now(timezone.utc).replace(tzinfo=None)
+        return self.repository.update_execution(artifact) or artifact
+
+    def fail_launch(
+        self,
+        prepared: PreparedArtifactLaunch,
+        error_message: str,
+    ) -> None:
+        """Record an async launch failure for the current Artifact attempt."""
+        artifact = self.repository.get(
+            prepared.artifact.knowledge_base_id,
+            prepared.artifact.artifact_id,
+        )
+        if artifact is None or artifact.attempt != prepared.artifact.attempt:
+            return
+        self._mark_launch_failed(artifact, RuntimeError(error_message))
+
+    def list_sync(
+        self,
+        knowledge_base_id: int,
+        *,
+        limit: int = 50,
+    ) -> KnowledgeArtifactListResponse:
+        """List and reconcile Artifacts in a synchronous DB phase."""
+        self._require_read_access(knowledge_base_id)
+        artifacts = self._reconcile_many_sync(
+            self.repository.list_by_knowledge_base(knowledge_base_id, limit=limit)
+        )
+        can_manage = KnowledgeService.can_manage_knowledge_base_documents(
+            self.db,
+            knowledge_base_id,
+            self.user.id,
+        )
+        for artifact in artifacts:
+            self._set_user_capabilities(artifact, can_manage=can_manage)
+        available_count, processing_count = self._document_source_counts(
+            knowledge_base_id
+        )
+        return KnowledgeArtifactListResponse(
+            items=artifacts,
+            can_manage=can_manage,
+            available_document_count=available_count,
+            processing_document_count=processing_count,
+        )
+
+    def get_sync(
+        self,
+        knowledge_base_id: int,
+        artifact_id: str,
+    ) -> KnowledgeArtifact:
+        """Get and reconcile one Artifact in a synchronous DB phase."""
+        self._require_read_access(knowledge_base_id)
+        artifact = self._reconcile_sync(
+            self._get_artifact_sync(knowledge_base_id, artifact_id)
+        )
+        self._set_user_capabilities(artifact)
+        return artifact
+
+    def rename_sync(
+        self,
+        knowledge_base_id: int,
+        artifact_id: str,
+        title: str,
+    ) -> KnowledgeArtifact:
+        """Rename and reconcile one Artifact in a synchronous DB phase."""
+        self._require_manage_access(knowledge_base_id)
+        artifact = self.repository.rename(
+            knowledge_base_id,
+            artifact_id,
+            title.strip(),
+        )
+        if artifact is None:
+            raise ArtifactNotFoundError("Artifact not found")
+        artifact = self._reconcile_sync(artifact)
+        self._set_user_capabilities(artifact, can_manage=True)
+        return artifact
+
+    def delete_sync(self, knowledge_base_id: int, artifact_id: str) -> None:
+        """Delete one inactive Artifact in a synchronous DB phase."""
+        self._require_manage_access(knowledge_base_id)
+        artifact = self._reconcile_sync(
+            self._get_artifact_sync(knowledge_base_id, artifact_id)
+        )
+        if (
+            artifact.status in _ACTIVE_STATUSES
+            and artifact.execution_health != KnowledgeArtifactExecutionHealth.STALLED
+        ):
+            raise ArtifactValidationError(
+                "Active artifacts cannot be deleted before generation finishes"
+            )
+        if self.repository.delete(
+            knowledge_base_id,
+            artifact_id,
+            expected_attempt=artifact.attempt,
+        ):
+            return
+        if self.repository.get(knowledge_base_id, artifact_id) is None:
+            raise ArtifactNotFoundError("Artifact not found")
+        raise ArtifactValidationError("Artifact execution state has changed")
+
+    def _mark_launch_failed(
+        self,
+        artifact: KnowledgeArtifact,
+        error: BaseException,
+    ) -> None:
+        artifact.status = KnowledgeArtifactStatus.FAILED
+        artifact.error_message = str(error) or "Failed to start artifact generation"
+        artifact.updated_at = datetime.now(timezone.utc).replace(tzinfo=None)
+        self.repository.update_execution(artifact)
+
     def resolve_mind_map_node(
         self,
         knowledge_base_id: int,
@@ -319,6 +545,9 @@ class ArtifactService:
         return self.repository.update_execution(artifact) or artifact
 
     async def _reconcile(self, artifact: KnowledgeArtifact) -> KnowledgeArtifact:
+        return self._reconcile_sync(artifact)
+
+    def _reconcile_sync(self, artifact: KnowledgeArtifact) -> KnowledgeArtifact:
         if artifact.status not in _ACTIVE_STATUSES:
             return self._apply_execution_health(artifact)
         execution_ids_changed = False
@@ -338,7 +567,7 @@ class ArtifactService:
                 artifact.updated_at = datetime.now(timezone.utc).replace(tzinfo=None)
                 artifact = self.repository.update_execution(artifact) or artifact
             return self._apply_execution_health(artifact)
-        reconciled = await self._apply_subtask_status(
+        reconciled = self._apply_subtask_status_sync(
             artifact,
             subtask,
             changed=execution_ids_changed,
@@ -346,6 +575,12 @@ class ArtifactService:
         return self._apply_execution_health(reconciled)
 
     async def _reconcile_many(
+        self,
+        artifacts: list[KnowledgeArtifact],
+    ) -> list[KnowledgeArtifact]:
+        return self._reconcile_many_sync(artifacts)
+
+    def _reconcile_many_sync(
         self,
         artifacts: list[KnowledgeArtifact],
     ) -> list[KnowledgeArtifact]:
@@ -385,7 +620,7 @@ class ArtifactService:
                     artifact = self.repository.update_execution(artifact) or artifact
                 reconciled.append(self._apply_execution_health(artifact))
                 continue
-            current = await self._apply_subtask_status(
+            current = self._apply_subtask_status_sync(
                 artifact,
                 subtask,
                 changed=artifact.artifact_id in repaired_ids,
@@ -394,6 +629,19 @@ class ArtifactService:
         return reconciled
 
     async def _apply_subtask_status(
+        self,
+        artifact: KnowledgeArtifact,
+        subtask: Subtask,
+        *,
+        changed: bool,
+    ) -> KnowledgeArtifact:
+        return self._apply_subtask_status_sync(
+            artifact,
+            subtask,
+            changed=changed,
+        )
+
+    def _apply_subtask_status_sync(
         self,
         artifact: KnowledgeArtifact,
         subtask: Subtask,
@@ -604,6 +852,13 @@ class ArtifactService:
         return int(available_count or 0), int(processing_count or 0)
 
     async def _get_artifact(
+        self,
+        knowledge_base_id: int,
+        artifact_id: str,
+    ) -> KnowledgeArtifact:
+        return self._get_artifact_sync(knowledge_base_id, artifact_id)
+
+    def _get_artifact_sync(
         self,
         knowledge_base_id: int,
         artifact_id: str,

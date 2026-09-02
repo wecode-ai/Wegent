@@ -58,17 +58,22 @@ async def test_cancel_run_delegates_to_the_single_cancellation_service(
 
     cancel = AsyncMock(return_value=_run_view(run))
     monkeypatch.setattr(
-        project_automations.project_automation_service, "cancel_run", cancel
+        project_automations.project_automation_service,
+        "cancel_run_nonblocking",
+        cancel,
     )
     result = await project_automations.cancel_run(
         project_id="project-1",
         run_id=run.id,
-        db=test_db,
         current_user=test_user,
     )
 
     assert result.status == "cancelled"
-    cancel.assert_awaited_once_with(test_db, "project-1", run.id, test_user.id)
+    cancel.assert_awaited_once_with(
+        project_id="project-1",
+        run_id=run.id,
+        user_id=test_user.id,
+    )
 
 
 @pytest.mark.asyncio
@@ -100,17 +105,22 @@ async def test_cancel_managed_wegent_run_never_emits_wework_runtime_cancel(
 
     cancel = AsyncMock(return_value=_run_view(run))
     monkeypatch.setattr(
-        project_automations.project_automation_service, "cancel_run", cancel
+        project_automations.project_automation_service,
+        "cancel_run_nonblocking",
+        cancel,
     )
     result = await project_automations.cancel_run(
         project_id="project-1",
         run_id=run.id,
-        db=test_db,
         current_user=test_user,
     )
 
     assert result.backend_task_id == 12345
-    cancel.assert_awaited_once_with(test_db, "project-1", run.id, test_user.id)
+    cancel.assert_awaited_once_with(
+        project_id="project-1",
+        run_id=run.id,
+        user_id=test_user.id,
+    )
 
 
 @pytest.mark.asyncio
@@ -133,15 +143,20 @@ async def test_retry_run_delegates_to_the_automation_service(
 
     retry = AsyncMock(return_value=_run_view(run))
     monkeypatch.setattr(
-        project_automations.project_automation_service, "retry_run", retry
+        project_automations.project_automation_service,
+        "retry_run_nonblocking",
+        retry,
     )
 
     result = await project_automations.retry_run(
         project_id="project-1",
         run_id=run.id,
-        db=test_db,
         current_user=test_user,
     )
 
     assert result.id == run.id
-    retry.assert_awaited_once_with(test_db, "project-1", run.id, test_user.id)
+    retry.assert_awaited_once_with(
+        project_id="project-1",
+        run_id=run.id,
+        user_id=test_user.id,
+    )

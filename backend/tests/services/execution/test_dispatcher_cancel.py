@@ -3,6 +3,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 import asyncio
+import json
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -64,9 +65,25 @@ class _BlockingStream:
             raise
 
 
+class _FailingReasoningStream(_BlockingStream):
+    def __init__(self) -> None:
+        super().__init__()
+        self._event_sent = False
+
+    async def __anext__(self):
+        if not self._event_sent:
+            self._event_sent = True
+            return SimpleNamespace(
+                type="response.reasoning_summary_text.delta",
+                delta="thinking",
+            )
+        raise RuntimeError("upstream iteration failed")
+
+
 def _build_fake_openai_module(
     stream: _BlockingStream,
     create_blocker: _BlockingCreate | None = None,
+    client_closed: asyncio.Event | None = None,
 ):
     class _FakeResponses:
         async def create(self, **kwargs):
@@ -77,6 +94,10 @@ def _build_fake_openai_module(
     class _FakeAsyncOpenAI:
         def __init__(self, **kwargs):
             self.responses = _FakeResponses()
+
+        async def close(self) -> None:
+            if client_closed is not None:
+                client_closed.set()
 
     return SimpleNamespace(AsyncOpenAI=_FakeAsyncOpenAI)
 
@@ -126,14 +147,15 @@ async def test_cancel_http_targets_known_executor() -> None:
     result = await dispatcher._cancel_http(request, target)
 
     assert result is True
-    http_client.post.assert_awaited_once_with(
-        "http://executor-manager/executor-manager/v1/cancel",
-        json={
-            "task_id": 101,
-            "subtask_id": 55,
-            "executor_name": "wegent-task-test",
-        },
-    )
+    http_client.post.assert_awaited_once()
+    call = http_client.post.await_args
+    assert call.args == ("http://executor-manager/executor-manager/v1/cancel",)
+    assert json.loads(call.kwargs["content"]) == {
+        "task_id": 101,
+        "subtask_id": 55,
+        "executor_name": "wegent-task-test",
+    }
+    assert call.kwargs["headers"] == {"Content-Type": "application/json"}
 
 
 @pytest.mark.asyncio
@@ -156,10 +178,14 @@ async def test_cancel_http_omits_empty_executor_name_for_discovery() -> None:
     result = await dispatcher._cancel_http(request, target)
 
     assert result is True
-    http_client.post.assert_awaited_once_with(
-        "http://executor-manager/executor-manager/v1/cancel",
-        json={"task_id": 101, "subtask_id": 55},
-    )
+    http_client.post.assert_awaited_once()
+    call = http_client.post.await_args
+    assert call.args == ("http://executor-manager/executor-manager/v1/cancel",)
+    assert json.loads(call.kwargs["content"]) == {
+        "task_id": 101,
+        "subtask_id": 55,
+    }
+    assert call.kwargs["headers"] == {"Content-Type": "application/json"}
 
 
 @pytest.mark.asyncio
@@ -171,7 +197,7 @@ async def test_dispatch_sse_cancels_while_opening_stream() -> None:
     create_blocker = _BlockingCreate()
     cancel_event = asyncio.Event()
     session_manager = AsyncMock()
-    session_manager.register_stream.return_value = cancel_event
+    session_manager.attach_stream.return_value = cancel_event
     session_manager.is_cancelled.return_value = False
 
     with (
@@ -196,7 +222,7 @@ async def test_dispatch_sse_cancels_while_opening_stream() -> None:
         patch("app.services.chat.storage.session.session_manager", session_manager),
     ):
         dispatch_task = asyncio.create_task(
-            dispatcher._dispatch_sse(request, _sse_target(), emitter)
+            dispatcher._dispatch_sse_upstream(request, _sse_target(), emitter)
         )
         await asyncio.wait_for(create_blocker.started.wait(), timeout=1)
         cancel_event.set()
@@ -217,7 +243,7 @@ async def test_dispatch_sse_closes_stream_opened_during_cancellation() -> None:
     create_blocker = _CancellationResistantCreate()
     cancel_event = asyncio.Event()
     session_manager = AsyncMock()
-    session_manager.register_stream.return_value = cancel_event
+    session_manager.attach_stream.return_value = cancel_event
     session_manager.is_cancelled.return_value = False
 
     with (
@@ -242,7 +268,7 @@ async def test_dispatch_sse_closes_stream_opened_during_cancellation() -> None:
         patch("app.services.chat.storage.session.session_manager", session_manager),
     ):
         dispatch_task = asyncio.create_task(
-            dispatcher._dispatch_sse(request, _sse_target(), emitter)
+            dispatcher._dispatch_sse_upstream(request, _sse_target(), emitter)
         )
         await asyncio.wait_for(create_blocker.started.wait(), timeout=1)
         cancel_event.set()
@@ -263,7 +289,7 @@ async def test_dispatch_sse_cancels_while_waiting_for_event() -> None:
     stream = _BlockingStream()
     redis_cancelled = asyncio.Event()
     session_manager = AsyncMock()
-    session_manager.register_stream.return_value = asyncio.Event()
+    session_manager.attach_stream.return_value = asyncio.Event()
     session_manager.is_cancelled.side_effect = (
         lambda subtask_id: redis_cancelled.is_set()
     )
@@ -286,7 +312,7 @@ async def test_dispatch_sse_cancels_while_waiting_for_event() -> None:
         patch("app.services.chat.storage.session.session_manager", session_manager),
     ):
         dispatch_task = asyncio.create_task(
-            dispatcher._dispatch_sse(request, _sse_target(), emitter)
+            dispatcher._dispatch_sse_upstream(request, _sse_target(), emitter)
         )
         await asyncio.wait_for(stream.iteration_started.wait(), timeout=1)
         redis_cancelled.set()
@@ -295,4 +321,45 @@ async def test_dispatch_sse_cancels_while_waiting_for_event() -> None:
     assert stream.iteration_cancelled.is_set()
     emitted_events = [call.args[0] for call in emitter.emit.call_args_list]
     assert [event.type for event in emitted_events] == [EventType.CANCELLED.value]
+    session_manager.unregister_stream.assert_awaited_once_with(request.subtask_id)
+
+
+@pytest.mark.asyncio
+async def test_dispatch_sse_cleans_client_and_parser_after_upstream_failure() -> None:
+    dispatcher = ExecutionDispatcher()
+    request = _make_sse_request(subtask_id=60)
+    emitter = AsyncMock()
+    stream = _FailingReasoningStream()
+    client_closed = asyncio.Event()
+    session_manager = AsyncMock()
+    session_manager.attach_stream.return_value = asyncio.Event()
+    session_manager.is_cancelled.return_value = False
+
+    with (
+        patch.dict(
+            "sys.modules",
+            {
+                "openai": _build_fake_openai_module(
+                    stream,
+                    client_closed=client_closed,
+                )
+            },
+        ),
+        patch(
+            "app.services.execution.dispatcher.OpenAIRequestConverter.from_execution_request",
+            return_value={
+                "model": "test-model",
+                "input": "hello",
+                "metadata": {},
+                "model_config": {},
+            },
+        ),
+        patch("app.services.chat.storage.session.session_manager", session_manager),
+        pytest.raises(RuntimeError, match="upstream iteration failed"),
+    ):
+        await dispatcher._dispatch_sse_upstream(request, _sse_target(), emitter)
+
+    assert client_closed.is_set()
+    assert dispatcher.event_parser._reasoning_buffers == {}
+    assert dispatcher.event_parser._tool_contexts == {}
     session_manager.unregister_stream.assert_awaited_once_with(request.subtask_id)

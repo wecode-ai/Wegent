@@ -15,7 +15,7 @@ Refactored version:
 
 import logging
 from datetime import datetime
-from typing import List, Optional, Union
+from typing import Any, List, Optional, Union
 
 from sqlalchemy.orm import Session
 
@@ -28,6 +28,148 @@ from app.stores.tasks import subtask_store, task_store
 from app.utils.prompt_utils import extract_display_prompt
 
 logger = logging.getLogger(__name__)
+
+
+def _prepare_device_route_sync(
+    user_id: int,
+    device_id: str,
+    task_id: int,
+    subtask_id: int,
+    team_id: int,
+    user_subtask_id: Optional[int],
+    message: Optional[Union[str, list]],
+    attachments: Optional[List[dict]],
+) -> Any:
+    """Build a device request inside one worker-owned database session."""
+
+    from app.services.chat.storage.db import get_db_session
+    from app.services.execution import TaskRequestBuilder
+
+    with get_db_session() as db:
+        user = db.get(User, user_id)
+        task = task_store.get_by_id(db, task_id=task_id)
+        subtask = subtask_store.get_by_id(db, subtask_id=subtask_id)
+        team = db.get(Kind, team_id)
+        user_subtask = (
+            subtask_store.get_by_id(db, subtask_id=user_subtask_id)
+            if user_subtask_id is not None
+            else None
+        )
+        if not user or not task or not subtask or not team:
+            raise ValueError("Device route entities no longer exist")
+
+        task_json = task.json if isinstance(task.json, dict) else {}
+        task_labels = task_json.get("metadata", {}).get("labels", {})
+        override_model_name = (
+            task_labels.get("modelId")
+            if task_labels.get("forceOverrideBotModel") == "true"
+            else None
+        )
+        force_override = override_model_name is not None
+
+        from app.schemas.kind import Task as TaskCRD
+
+        task_crd = TaskCRD.model_validate(task.json)
+        if task_crd.spec.device_id != device_id:
+            task_crd.spec.device_id = device_id
+            task_store.update_json(
+                db,
+                task=task,
+                payload=task_crd.model_dump(mode="json"),
+            )
+        subtask_store.update_fields(
+            db,
+            subtask=subtask,
+            executor_name=f"device-{device_id}",
+            executor_namespace=f"user-{user_id}",
+            status=SubtaskStatus.RUNNING,
+            started_at=datetime.now(),
+        )
+        fallback_prompt = user_subtask.prompt if user_subtask else subtask.prompt
+        return TaskRequestBuilder(db).build(
+            subtask=subtask,
+            task=task,
+            user=user,
+            team=team,
+            message=(
+                message
+                if message is not None
+                else extract_display_prompt(fallback_prompt) or ""
+            ),
+            override_model_name=override_model_name,
+            force_override=force_override,
+            attachments=attachments,
+        )
+
+
+def _build_device_slot_event_sync(user_id: int, device_id: str) -> dict[str, Any]:
+    from app.schemas.device import DeviceRunningTask, DeviceSlotUpdateEvent
+    from app.services.chat.storage.db import get_db_session
+
+    with get_db_session() as db:
+        slot_info = device_service.get_device_slot_usage(db, user_id, device_id)
+    return DeviceSlotUpdateEvent(
+        device_id=device_id,
+        slot_used=slot_info["used"],
+        slot_max=slot_info["max"],
+        running_tasks=[
+            DeviceRunningTask(**task) for task in slot_info["running_tasks"]
+        ],
+    ).model_dump()
+
+
+async def route_task_to_device_nonblocking(
+    *,
+    user_id: int,
+    device_id: str,
+    task_id: int,
+    subtask_id: int,
+    team_id: int,
+    user_subtask_id: Optional[int],
+    message: Optional[Union[str, list]] = None,
+    attachments: Optional[List[dict]] = None,
+) -> bool:
+    """Route scalar task identities without retaining a Session across await."""
+
+    from fastapi import HTTPException
+
+    from app.core.socketio import get_sio
+    from app.services.chat.storage.db import run_sync_in_executor
+    from app.services.execution import execution_dispatcher
+
+    if not await device_service.get_device_online_info(user_id, device_id):
+        raise HTTPException(status_code=400, detail="Selected device is offline")
+    request = await run_sync_in_executor(
+        _prepare_device_route_sync,
+        user_id,
+        device_id,
+        task_id,
+        subtask_id,
+        team_id,
+        user_subtask_id,
+        message,
+        attachments,
+    )
+    await execution_dispatcher.dispatch(request, device_id=device_id)
+    try:
+        event_data = await run_sync_in_executor(
+            _build_device_slot_event_sync,
+            user_id,
+            device_id,
+        )
+        await get_sio().emit(
+            "device:slot_update",
+            event_data,
+            room=f"user:{user_id}",
+            namespace="/chat",
+        )
+    except Exception:
+        logger.exception(
+            "[DeviceRouter] Failed to broadcast slot update: user_id=%s device_id=%s",
+            user_id,
+            device_id,
+        )
+    return True
 
 
 async def route_task_to_device(

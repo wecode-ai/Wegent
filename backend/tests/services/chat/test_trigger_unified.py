@@ -2,8 +2,10 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
+import asyncio
+import threading
 from types import SimpleNamespace
-from unittest.mock import ANY, AsyncMock, MagicMock, patch
+from unittest.mock import ANY, MagicMock, patch
 
 import pytest
 
@@ -18,6 +20,58 @@ from shared.models.knowledge import (
     SelectedKnowledgeContext,
     SelectedKnowledgeRef,
 )
+
+
+@pytest.mark.asyncio
+async def test_build_execution_request_keeps_event_loop_responsive() -> None:
+    """Synchronous SQL/CPU request preparation must run outside Uvicorn."""
+    from app.services.chat.trigger import unified as trigger_unified
+
+    started = threading.Event()
+    release = threading.Event()
+    worker_thread_id = None
+    expected = object()
+
+    def blocking_build(**_kwargs):
+        nonlocal worker_thread_id
+        worker_thread_id = threading.get_ident()
+        started.set()
+        release.wait(timeout=2)
+        return expected
+
+    event_loop_thread_id = threading.get_ident()
+    loop = asyncio.get_running_loop()
+    started_at = loop.time()
+    safety_release = threading.Timer(1, release.set)
+    safety_release.start()
+    with patch.object(
+        trigger_unified,
+        "_build_execution_request_sync",
+        side_effect=blocking_build,
+    ):
+        task = asyncio.create_task(
+            trigger_unified.build_execution_request(
+                task=1,
+                assistant_subtask=2,
+                team=3,
+                user=4,
+                message="hello",
+            )
+        )
+        try:
+            assert await asyncio.to_thread(started.wait, 1)
+            assert loop.time() - started_at < 0.5
+            loop_tick = asyncio.Event()
+            loop.call_soon(loop_tick.set)
+            await asyncio.wait_for(loop_tick.wait(), timeout=0.1)
+        finally:
+            release.set()
+            safety_release.cancel()
+
+        result = await asyncio.wait_for(task, timeout=1)
+
+    assert result is expected
+    assert worker_thread_id != event_loop_thread_id
 
 
 def test_apply_image_generation_params_overrides_request_size() -> None:
@@ -215,7 +269,7 @@ class TestBuildExecutionRequestUserSubtaskId:
         mock_builder = MagicMock()
         mock_builder.build.return_value = request_from_builder
 
-        async def _process_contexts_passthrough(
+        def _process_contexts_passthrough(
             db,
             request,
             user_subtask_id,
@@ -233,7 +287,7 @@ class TestBuildExecutionRequestUserSubtaskId:
                 with patch.object(
                     trigger_unified,
                     "_process_contexts",
-                    new=AsyncMock(side_effect=_process_contexts_passthrough),
+                    new=MagicMock(side_effect=_process_contexts_passthrough),
                 ) as mock_process_contexts:
                     task = MagicMock()
                     task.id = 1
@@ -258,7 +312,7 @@ class TestBuildExecutionRequestUserSubtaskId:
 
                     assert result.user_subtask_id == 123
                     mock_builder.build.assert_called_once()
-                    mock_process_contexts.assert_awaited_once()
+                    mock_process_contexts.assert_called_once()
 
     async def test_propagates_interactive_form_answer_to_execution_request(self):
         """Deferred form answers must reach executors as structured data."""
@@ -476,7 +530,7 @@ class TestBuildExecutionRequestUserSubtaskId:
                 with patch.object(
                     trigger_unified,
                     "_process_contexts",
-                    new=AsyncMock(return_value=request_from_builder),
+                    new=MagicMock(return_value=request_from_builder),
                 ) as mock_process_contexts:
                     task = MagicMock()
                     task.id = 1
@@ -500,7 +554,7 @@ class TestBuildExecutionRequestUserSubtaskId:
                         device_id="device-1",
                     )
 
-                    mock_process_contexts.assert_awaited_once_with(
+                    mock_process_contexts.assert_called_once_with(
                         mock_db,
                         request_from_builder,
                         123,
@@ -527,7 +581,7 @@ class TestBuildExecutionRequestUserSubtaskId:
             patch.object(
                 trigger_unified,
                 "_process_contexts",
-                new=AsyncMock(return_value=request_from_builder),
+                new=MagicMock(return_value=request_from_builder),
             ) as mock_process_contexts,
         ):
             task = MagicMock()
@@ -555,7 +609,7 @@ class TestBuildExecutionRequestUserSubtaskId:
                 user_subtask_id=123,
             )
 
-        mock_process_contexts.assert_awaited_once_with(
+        mock_process_contexts.assert_called_once_with(
             mock_db,
             request_from_builder,
             123,
@@ -579,7 +633,7 @@ class TestBuildExecutionRequestUserSubtaskId:
                 "app.services.execution.TaskRequestBuilder", return_value=mock_builder
             ):
                 with patch.object(
-                    trigger_unified, "_process_contexts", new=AsyncMock()
+                    trigger_unified, "_process_contexts", new=MagicMock()
                 ) as mock_process_contexts:
                     task = MagicMock()
                     task.id = 1
@@ -604,7 +658,7 @@ class TestBuildExecutionRequestUserSubtaskId:
 
                     assert result.user_subtask_id is None
                     mock_builder.build.assert_called_once()
-                    mock_process_contexts.assert_not_awaited()
+                    mock_process_contexts.assert_not_called()
 
     async def test_merges_payload_additional_skills_with_existing_preload_skills(self):
         """Payload additional skills should extend caller preload skills, not replace them."""
@@ -634,7 +688,7 @@ class TestBuildExecutionRequestUserSubtaskId:
                 with patch.object(
                     trigger_unified,
                     "_process_contexts",
-                    new=AsyncMock(return_value=request_from_builder),
+                    new=MagicMock(return_value=request_from_builder),
                 ):
                     task = MagicMock()
                     task.id = 1
@@ -747,7 +801,7 @@ class TestBuildExecutionRequestUserSubtaskId:
         mock_builder.resolve_request_preload_skills.return_value = resolved_request
         mock_builder._get_bot_for_subtask.return_value = MagicMock()
 
-        async def _process_contexts_with_selected_kb(
+        def _process_contexts_with_selected_kb(
             db,
             request,
             user_subtask_id,
@@ -776,7 +830,7 @@ class TestBuildExecutionRequestUserSubtaskId:
                 with patch.object(
                     trigger_unified,
                     "_process_contexts",
-                    new=AsyncMock(side_effect=_process_contexts_with_selected_kb),
+                    new=MagicMock(side_effect=_process_contexts_with_selected_kb),
                 ):
                     task = MagicMock()
                     task.id = 1273
@@ -865,7 +919,7 @@ class TestBuildExecutionRequestUserSubtaskId:
             )
         )
 
-        async def _process_contexts_with_selected_kb(
+        def _process_contexts_with_selected_kb(
             db,
             request,
             user_subtask_id,
@@ -895,7 +949,7 @@ class TestBuildExecutionRequestUserSubtaskId:
                     patch.object(
                         trigger_unified,
                         "_process_contexts",
-                        new=AsyncMock(side_effect=_process_contexts_with_selected_kb),
+                        new=MagicMock(side_effect=_process_contexts_with_selected_kb),
                     ),
                     patch(
                         "app.services.chat.selected_knowledge."
@@ -968,7 +1022,7 @@ class TestBuildExecutionRequestUserSubtaskId:
         mock_builder = MagicMock()
         mock_builder.build.return_value = request_from_builder
 
-        async def _process_restricted_contexts(
+        def _process_restricted_contexts(
             db,
             request,
             user_subtask_id,
@@ -990,7 +1044,7 @@ class TestBuildExecutionRequestUserSubtaskId:
                 with patch.object(
                     trigger_unified,
                     "_process_contexts",
-                    new=AsyncMock(side_effect=_process_restricted_contexts),
+                    new=MagicMock(side_effect=_process_restricted_contexts),
                 ):
                     with patch.object(
                         selected_knowledge,
@@ -1028,8 +1082,7 @@ class TestProcessContextsAttachments:
             ),
         ],
     )
-    @pytest.mark.asyncio
-    async def test_non_native_kb_keeps_legacy_prompt_and_metadata(
+    def test_non_native_kb_keeps_legacy_prompt_and_metadata(
         self,
         access_mode,
         scopes,
@@ -1060,13 +1113,13 @@ class TestProcessContextsAttachments:
 
         with patch(
             "app.services.chat.preprocessing.prepare_contexts_for_chat",
-            new=AsyncMock(return_value=ctx),
+            new=MagicMock(return_value=ctx),
         ):
             with patch(
                 "app.services.chat.trigger.unified.context_service.get_attachments_by_subtask",
                 return_value=[],
             ):
-                result = await trigger_unified._process_contexts(
+                result = trigger_unified._process_contexts(
                     db=MagicMock(),
                     request=request,
                     user_subtask_id=1,
@@ -1078,8 +1131,7 @@ class TestProcessContextsAttachments:
         assert result.kb_tool_access_mode == access_mode
         assert result.preload_skills == []
 
-    @pytest.mark.asyncio
-    async def test_external_provider_keeps_native_path_with_empty_wegent_scope(self):
+    def test_external_provider_keeps_native_path_with_empty_wegent_scope(self):
         from app.services.chat.trigger import unified as trigger_unified
 
         request = ExecutionRequest(
@@ -1122,13 +1174,13 @@ class TestProcessContextsAttachments:
 
         with patch(
             "app.services.chat.preprocessing.prepare_contexts_for_chat",
-            new=AsyncMock(return_value=ctx),
+            new=MagicMock(return_value=ctx),
         ):
             with patch(
                 "app.services.chat.trigger.unified.context_service.get_attachments_by_subtask",
                 return_value=[],
             ):
-                result = await trigger_unified._process_contexts(
+                result = trigger_unified._process_contexts(
                     db=MagicMock(),
                     request=request,
                     user_subtask_id=1,
@@ -1141,8 +1193,7 @@ class TestProcessContextsAttachments:
         assert result.kb_meta_prompt == ""
         assert result.preload_skills == []
 
-    @pytest.mark.asyncio
-    async def test_populates_request_attachments_from_subtask_contexts(self):
+    def test_populates_request_attachments_from_subtask_contexts(self):
         """Executor request should carry attachment metadata for local downloads."""
         from app.services.chat.trigger import unified as trigger_unified
 
@@ -1174,13 +1225,13 @@ class TestProcessContextsAttachments:
 
         with patch(
             "app.services.chat.preprocessing.prepare_contexts_for_chat",
-            new=AsyncMock(return_value=ctx),
+            new=MagicMock(return_value=ctx),
         ):
             with patch(
                 "app.services.chat.trigger.unified.context_service.get_attachments_by_subtask",
                 return_value=[attachment_context],
             ):
-                result = await trigger_unified._process_contexts(
+                result = trigger_unified._process_contexts(
                     db=MagicMock(),
                     request=request,
                     user_subtask_id=1642,
@@ -1199,8 +1250,7 @@ class TestProcessContextsAttachments:
             }
         ]
 
-    @pytest.mark.asyncio
-    async def test_preserves_requested_attachment_order(self):
+    def test_preserves_requested_attachment_order(self):
         from app.services.chat.trigger import unified as trigger_unified
 
         request = ExecutionRequest(
@@ -1234,7 +1284,7 @@ class TestProcessContextsAttachments:
                 kb_meta_prompt="",
             ),
         )
-        prepare_mock = AsyncMock(return_value=ctx)
+        prepare_mock = MagicMock(return_value=ctx)
 
         with (
             patch(
@@ -1246,7 +1296,7 @@ class TestProcessContextsAttachments:
                 return_value=[second, first],
             ),
         ):
-            result = await trigger_unified._process_contexts(
+            result = trigger_unified._process_contexts(
                 db=MagicMock(),
                 request=request,
                 user_subtask_id=1642,
@@ -1257,11 +1307,10 @@ class TestProcessContextsAttachments:
 
         assert [item["id"] for item in result.attachments] == [11, 22]
         assert [
-            context.id for context in prepare_mock.await_args.kwargs["contexts"]
+            context.id for context in prepare_mock.call_args.kwargs["contexts"]
         ] == [11, 22]
 
-    @pytest.mark.asyncio
-    async def test_executor_context_processing_uses_attachment_metadata_only(self):
+    def test_executor_context_processing_uses_attachment_metadata_only(self):
         """Executor runtimes should not inline backend-parsed attachment content."""
         from app.services.chat.trigger import unified as trigger_unified
 
@@ -1284,7 +1333,7 @@ class TestProcessContextsAttachments:
                 kb_meta_prompt="",
             ),
         )
-        prepare_mock = AsyncMock(return_value=ctx)
+        prepare_mock = MagicMock(return_value=ctx)
 
         with patch(
             "app.services.chat.preprocessing.prepare_contexts_for_chat",
@@ -1294,17 +1343,16 @@ class TestProcessContextsAttachments:
                 "app.services.chat.trigger.unified.context_service.get_attachments_by_subtask",
                 return_value=[],
             ):
-                await trigger_unified._process_contexts(
+                trigger_unified._process_contexts(
                     db=MagicMock(),
                     request=request,
                     user_subtask_id=1642,
                     user_id=2,
                 )
 
-        assert prepare_mock.await_args.kwargs["inline_attachment_content"] is False
+        assert prepare_mock.call_args.kwargs["inline_attachment_content"] is False
 
-    @pytest.mark.asyncio
-    async def test_video_generation_uses_attachment_metadata_only(self):
+    def test_video_generation_uses_attachment_metadata_only(self):
         """VideoAgent resolves uploaded media itself and must not receive duplicates."""
         from app.services.chat.trigger import unified as trigger_unified
 
@@ -1326,7 +1374,7 @@ class TestProcessContextsAttachments:
                 kb_meta_prompt="",
             ),
         )
-        prepare_mock = AsyncMock(return_value=ctx)
+        prepare_mock = MagicMock(return_value=ctx)
 
         with patch(
             "app.services.chat.preprocessing.prepare_contexts_for_chat",
@@ -1336,17 +1384,16 @@ class TestProcessContextsAttachments:
                 "app.services.chat.trigger.unified.context_service.get_attachments_by_subtask",
                 return_value=[],
             ):
-                await trigger_unified._process_contexts(
+                trigger_unified._process_contexts(
                     db=MagicMock(),
                     request=request,
                     user_subtask_id=1642,
                     user_id=2,
                 )
 
-        assert prepare_mock.await_args.kwargs["inline_attachment_content"] is False
+        assert prepare_mock.call_args.kwargs["inline_attachment_content"] is False
 
-    @pytest.mark.asyncio
-    async def test_defers_selected_knowledge_skill_until_final_scope_resolution(self):
+    def test_defers_selected_knowledge_skill_until_final_scope_resolution(self):
         """Context preprocessing must not mount a Provider before final resolution."""
         from app.services.chat.trigger import unified as trigger_unified
 
@@ -1374,13 +1421,13 @@ class TestProcessContextsAttachments:
 
         with patch(
             "app.services.chat.preprocessing.prepare_contexts_for_chat",
-            new=AsyncMock(return_value=ctx),
+            new=MagicMock(return_value=ctx),
         ):
             with patch(
                 "app.services.chat.trigger.unified.context_service.get_attachments_by_subtask",
                 return_value=[],
             ):
-                result = await trigger_unified._process_contexts(
+                result = trigger_unified._process_contexts(
                     db=MagicMock(),
                     request=request,
                     user_subtask_id=1696,
@@ -1395,8 +1442,7 @@ class TestProcessContextsAttachments:
         assert result.kb_meta_prompt == ""
         assert result.provider_native_knowledge is False
 
-    @pytest.mark.asyncio
-    async def test_artifact_context_does_not_preload_knowledge_management_skill(self):
+    def test_artifact_context_does_not_preload_knowledge_management_skill(self):
         """Artifact generation must use scoped built-in knowledge tools only."""
         from app.services.chat.trigger import unified as trigger_unified
 
@@ -1429,13 +1475,13 @@ class TestProcessContextsAttachments:
 
         with patch(
             "app.services.chat.preprocessing.prepare_contexts_for_chat",
-            new=AsyncMock(return_value=ctx),
+            new=MagicMock(return_value=ctx),
         ):
             with patch(
                 "app.services.chat.trigger.unified.context_service.get_attachments_by_subtask",
                 return_value=[],
             ):
-                result = await trigger_unified._process_contexts(
+                result = trigger_unified._process_contexts(
                     db=MagicMock(),
                     request=request,
                     user_subtask_id=1696,
@@ -1450,8 +1496,7 @@ class TestProcessContextsAttachments:
         assert result.kb_meta_prompt == "meta"
         assert result.provider_native_knowledge is False
 
-    @pytest.mark.asyncio
-    async def test_unsupported_shell_uses_unified_knowledge_context(
+    def test_unsupported_shell_uses_unified_knowledge_context(
         self,
     ):
         """Unsupported shells must not switch context processing to A2."""
@@ -1487,13 +1532,13 @@ class TestProcessContextsAttachments:
 
         with patch(
             "app.services.chat.preprocessing.prepare_contexts_for_chat",
-            new=AsyncMock(return_value=ctx),
+            new=MagicMock(return_value=ctx),
         ):
             with patch(
                 "app.services.chat.trigger.unified.context_service.get_attachments_by_subtask",
                 return_value=[],
             ):
-                result = await trigger_unified._process_contexts(
+                result = trigger_unified._process_contexts(
                     db=MagicMock(),
                     request=request,
                     user_subtask_id=1696,
@@ -1509,8 +1554,7 @@ class TestProcessContextsAttachments:
         assert result.selected_knowledge_prompt == ""
         assert result.provider_native_knowledge is False
 
-    @pytest.mark.asyncio
-    async def test_explicit_subtask_kb_overrides_inherited_task_level_ids(self):
+    def test_explicit_subtask_kb_overrides_inherited_task_level_ids(self):
         """Explicit subtask KB selection should override inherited task-level KB IDs."""
         from app.services.chat.trigger import unified as trigger_unified
 
@@ -1539,13 +1583,13 @@ class TestProcessContextsAttachments:
 
         with patch(
             "app.services.chat.preprocessing.prepare_contexts_for_chat",
-            new=AsyncMock(return_value=ctx),
+            new=MagicMock(return_value=ctx),
         ):
             with patch(
                 "app.services.chat.trigger.unified.context_service.get_attachments_by_subtask",
                 return_value=[],
             ):
-                result = await trigger_unified._process_contexts(
+                result = trigger_unified._process_contexts(
                     db=MagicMock(),
                     request=request,
                     user_subtask_id=1696,

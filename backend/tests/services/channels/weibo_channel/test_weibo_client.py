@@ -3,6 +3,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 import asyncio
+import json
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
@@ -50,6 +51,12 @@ class FakeResponse:
     async def json(self):
         return self.payload
 
+    async def read(self):
+        return json.dumps(self.payload).encode()
+
+    def get_encoding(self):
+        return "utf-8"
+
 
 class FakeSession:
     def __init__(self, responses):
@@ -58,8 +65,9 @@ class FakeSession:
         self.ws_urls = []
         self.ws = None
 
-    def post(self, url, json):
-        self.posts.append((url, json))
+    def post(self, url, data, headers):
+        assert headers == {"Content-Type": "application/json"}
+        self.posts.append((url, json.loads(data)))
         return self.responses.pop(0)
 
     async def ws_connect(self, url):

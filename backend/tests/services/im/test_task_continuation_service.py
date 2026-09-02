@@ -2,36 +2,51 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-import json
+import threading
 from datetime import datetime, timedelta
-from types import SimpleNamespace
 
 import pytest
 from fastapi import HTTPException
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, sessionmaker
 
 from app.core.constants import CLIENT_ORIGIN_FRONTEND, CLIENT_ORIGIN_WEWORK
 from app.models.im_session import IMPrivateSession, IMSessionMode
-from app.models.kind import Kind
 from app.models.project import Project
 from app.models.resource_member import MemberStatus, ResourceMember
 from app.models.share_link import ResourceType
 from app.models.task import TaskResource
 from app.models.user import User
-from app.services.channels.device_selection import DeviceSelection, DeviceType
 from app.services.im.session_service import im_session_service
 from app.services.im.task_continuation_service import (
-    append_message_to_task,
     bind_task_to_sessions,
     build_existing_task_params,
     build_im_message_source,
-    build_new_task_params,
     list_recent_wework_tasks,
     list_wework_projects,
     validate_personal_wework_task,
 )
 
 pytestmark = pytest.mark.asyncio
+
+
+@pytest.fixture(autouse=True)
+def _configure_im_worker_session(
+    monkeypatch: pytest.MonkeyPatch,
+    test_db: Session,
+) -> None:
+    from app.db import session as db_session
+
+    monkeypatch.setattr(
+        db_session,
+        "SessionLocal",
+        sessionmaker(
+            autocommit=False,
+            autoflush=False,
+            bind=test_db.get_bind(),
+            expire_on_commit=False,
+            join_transaction_mode="create_savepoint",
+        ),
+    )
 
 
 def _task_json(
@@ -113,7 +128,6 @@ async def _create_session(
     conversation_id: str,
 ) -> IMPrivateSession:
     return await im_session_service.get_or_create_private_session(
-        db=db,
         user_id=user_id,
         channel_type="dingtalk",
         channel_id=12,
@@ -192,7 +206,10 @@ async def test_validate_rejects_shared_member_task_if_approved_member_exists(
 async def test_bind_task_to_sessions_sets_task_mode_and_returns_keys_in_request_order(
     test_db: Session,
     test_user: User,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    from app.services.im import task_continuation_service
+
     task = _create_task(
         test_db,
         task_id=9131,
@@ -202,15 +219,35 @@ async def test_bind_task_to_sessions_sets_task_mode_and_returns_keys_in_request_
     first = await _create_session(test_db, test_user.id, conversation_id="conv-a")
     second = await _create_session(test_db, test_user.id, conversation_id="conv-b")
     test_db.commit()
+    loop_thread_id = threading.get_ident()
+    worker_thread_ids: list[int] = []
+    load_target = task_continuation_service._load_task_binding_target
+
+    def tracked_load_target(user_id: int, task_id: int) -> tuple[int, str]:
+        worker_thread_ids.append(threading.get_ident())
+        return load_target(user_id, task_id)
+
+    monkeypatch.setattr(
+        task_continuation_service,
+        "_load_task_binding_target",
+        tracked_load_target,
+    )
 
     result = await bind_task_to_sessions(
-        test_db,
         test_user.id,
         task.id,
         [second.session_key, first.session_key],
     )
 
-    assert result == [second.session_key, first.session_key]
+    assert result.task_id == task.id
+    assert result.task_title == "绑定会话任务"
+    assert result.session_keys == (second.session_key, first.session_key)
+    assert [session.session_key for session in result.sessions] == [
+        second.session_key,
+        first.session_key,
+    ]
+    assert worker_thread_ids
+    assert all(thread_id != loop_thread_id for thread_id in worker_thread_ids)
     bound_first = await im_session_service.get_session(first.session_key)
     bound_second = await im_session_service.get_session(second.session_key)
     assert bound_first is not None
@@ -382,90 +419,6 @@ async def test_build_existing_task_params_uses_task_labels_and_im_source_metadat
     assert params.message_source == message_source
 
 
-@pytest.mark.asyncio
-async def test_build_new_task_params_uses_wework_im_defaults_and_source_metadata(
-    test_db: Session,
-    test_user: User,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    message_source = {"source": "im", "session_key": "session-1"}
-    test_user.preferences = json.dumps(
-        {
-            "wework_new_chat_model_selection": {
-                "modelName": "kimi",
-                "modelType": "user",
-                "options": {"reasoning": "medium"},
-            }
-        }
-    )
-
-    async def fake_get_selection(user_id: int) -> DeviceSelection:
-        return DeviceSelection(
-            device_type=DeviceType.LOCAL,
-            device_id="device-default",
-            device_name="MacBook",
-        )
-
-    monkeypatch.setattr(
-        "app.services.channels.device_selection.device_selection_manager.get_selection",
-        fake_get_selection,
-    )
-
-    params = await build_new_task_params(
-        test_db,
-        user=test_user,
-        message="创建一个新任务",
-        title="新 IM 任务",
-        project_id=456,
-        message_source=message_source,
-    )
-
-    assert params.message == "创建一个新任务"
-    assert params.title == "新 IM 任务"
-    assert params.task_type == "chat"
-    assert params.is_group_chat is False
-    assert params.model_id == "kimi"
-    assert params.force_override_bot_model is True
-    assert params.force_override_bot_model_type == "user"
-    assert params.model_options == {"reasoning": "medium"}
-    assert params.device_id == "device-default"
-    assert params.project_id == 456
-    assert params.client_origin == CLIENT_ORIGIN_WEWORK
-    assert params.source == "im"
-    assert params.message_source == message_source
-    assert params.message_source is not message_source
-
-
-@pytest.mark.asyncio
-async def test_build_new_task_params_uses_default_execution_target_when_im_device_is_chat(
-    test_db: Session,
-    test_user: User,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    test_user.preferences = json.dumps(
-        {
-            "default_execution_target": "device-from-preferences",
-            "wework_new_chat_model_selection": {"modelName": "kimi"},
-        }
-    )
-
-    async def fake_get_selection(user_id: int) -> DeviceSelection:
-        return DeviceSelection(device_type=DeviceType.CHAT)
-
-    monkeypatch.setattr(
-        "app.services.channels.device_selection.device_selection_manager.get_selection",
-        fake_get_selection,
-    )
-
-    params = await build_new_task_params(
-        test_db,
-        user=test_user,
-        message="创建一个新任务",
-    )
-
-    assert params.device_id == "device-from-preferences"
-
-
 async def test_build_im_message_source_includes_session_identity_and_extra_metadata(
     test_db: Session,
     test_user: User,
@@ -493,56 +446,3 @@ async def test_build_im_message_source_includes_session_identity_and_extra_metad
         "message_id": "msg-123",
         "platform": "mobile",
     }
-
-
-@pytest.mark.asyncio
-async def test_append_message_to_task_preserves_task_id_and_triggers_ai(
-    test_db: Session,
-    test_user: User,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    team = Kind(
-        user_id=test_user.id,
-        kind="Team",
-        name="assistant",
-        namespace="default",
-        json={
-            "apiVersion": "agent.wecode.io/v1",
-            "kind": "Team",
-            "metadata": {"name": "assistant", "namespace": "default"},
-            "spec": {"collaborationModel": "sequential", "members": []},
-        },
-        is_active=True,
-    )
-    task = _create_task(
-        test_db,
-        task_id=9161,
-        user_id=test_user.id,
-        title="继续任务",
-    )
-    test_db.add(team)
-    test_db.commit()
-    calls: list[dict[str, object]] = []
-
-    async def fake_create_chat_task(**kwargs):
-        calls.append(kwargs)
-        return SimpleNamespace(task=task, ai_triggered=True)
-
-    monkeypatch.setattr(
-        "app.services.im.task_continuation_service.create_chat_task",
-        fake_create_chat_task,
-    )
-
-    result = await append_message_to_task(
-        test_db,
-        user=test_user,
-        task_id=task.id,
-        message="继续",
-        message_source={"source": "im", "session_key": "session-1"},
-    )
-
-    assert result.task.id == task.id
-    assert calls[0]["task_id"] == task.id
-    assert calls[0]["should_trigger_ai"] is True
-    assert calls[0]["team"].id == team.id
-    assert calls[0]["source"] == "im"

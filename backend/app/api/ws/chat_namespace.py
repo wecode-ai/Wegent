@@ -17,6 +17,7 @@ Business logic has been extracted to services/chat/ modules:
 import asyncio
 import logging
 import uuid
+from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, Dict, Optional
 
@@ -52,6 +53,8 @@ from app.core.constants import (
     get_wework_task_room,
     get_wework_user_room,
 )
+from app.core.payload_codec import project_model
+from app.core.web_background_tasks import web_background_task_manager
 from app.db.session import SessionLocal
 from app.models.kind import Kind
 from app.models.subtask import Subtask, SubtaskRole, SubtaskStatus
@@ -67,7 +70,7 @@ from app.services.chat.access import (
     verify_jwt_token,
 )
 from app.services.chat.config import get_team_first_bot_shell_type
-from app.services.chat.guidance_queue import guidance_queue
+from app.services.chat.guidance_queue import GuidanceQueueFullError, guidance_queue
 from app.services.chat.operations import (
     call_executor_cancel,
     extract_model_override_info,
@@ -85,7 +88,9 @@ from app.services.chat.trigger import (
     persist_completed_result,
     trigger_ai_response_unified,
 )
-from app.services.chat.wework_task_defaults import apply_wework_task_defaults
+from app.services.execution.stream_client import StreamWorkerExecutionError
+from app.services.execution.web_stream_client import web_stream_worker_client
+from app.services.execution.web_stream_protocol import SUBTASK_RECOVERY_EXECUTE
 from app.services.task_fork_history import task_fork_history_resolver
 from app.utils.client_payload_sanitizer import sanitize_client_payload
 from app.utils.prompt_utils import extract_display_prompt
@@ -95,6 +100,66 @@ from shared.telemetry.context import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+async def _load_subtask_recovery(
+    subtask_id: int,
+    *,
+    offset: int,
+    include_blocks: bool,
+    include_context_metrics: bool,
+) -> dict[str, Any]:
+    result = await web_stream_worker_client.execute(
+        SUBTASK_RECOVERY_EXECUTE,
+        {
+            "subtask_id": subtask_id,
+            "offset": offset,
+            "include_blocks": include_blocks,
+            "include_context_metrics": include_context_metrics,
+        },
+    )
+    content = result.get("content")
+    cursor = result.get("cursor")
+    blocks = result.get("blocks", [])
+    context_metrics = result.get("context_metrics")
+    if (
+        not isinstance(content, str)
+        or not isinstance(cursor, int)
+        or cursor < 0
+        or not isinstance(blocks, list)
+        or (context_metrics is not None and not isinstance(context_metrics, dict))
+    ):
+        raise StreamWorkerExecutionError(
+            "Stream worker returned an invalid recovery snapshot"
+        )
+    return {
+        "content": content,
+        "cursor": cursor,
+        "blocks": blocks,
+        "context_metrics": context_metrics,
+    }
+
+
+@dataclass(frozen=True)
+class _AuthenticatedSocketUser:
+    """Authentication data safe to use after the worker session is closed."""
+
+    user_id: int
+    user_name: str
+    token_exp: Optional[int]
+
+
+@dataclass
+class _ChatSendPreparation:
+    """Detached database phase for one chat send request."""
+
+    payload: ChatSendPayload
+    response: Optional[Dict[str, Any]] = None
+    user: Optional[User] = None
+    team: Optional[Kind] = None
+    pipeline_info: Optional[Dict[str, Any]] = None
+    should_trigger_ai: bool = True
+    pipeline_confirm: bool = False
 
 
 def _get_retry_generate_params(user_subtask: Subtask) -> Optional[GenerateParams]:
@@ -281,43 +346,31 @@ class ChatNamespace(socketio.AsyncNamespace):
         session = await self.get_session(sid)
         user_id = session.get("user_id")
         if not user_id:
-            return ChatGuideAck(error="Not authenticated").model_dump()
+            return await project_model(
+                ChatGuideAck,
+                {"error": "Not authenticated"},
+            )
 
         payload = data
         if not await can_access_task(user_id, payload.task_id):
-            return ChatGuideAck(error="Task not found or access denied").model_dump()
+            return await project_model(
+                ChatGuideAck,
+                {"error": "Task not found or access denied"},
+            )
 
-        db = SessionLocal()
+        validation_error = await run_sync_in_executor(
+            _validate_chat_guidance,
+            payload.task_id,
+            payload.subtask_id,
+            payload.team_id,
+        )
+        if validation_error:
+            return await project_model(
+                ChatGuideAck,
+                {"error": validation_error},
+            )
+
         try:
-            team = (
-                db.query(Kind)
-                .filter(
-                    Kind.id == payload.team_id,
-                    Kind.kind == "Team",
-                    Kind.is_active == True,
-                )
-                .first()
-            )
-            if not team:
-                return ChatGuideAck(error="Team not found").model_dump()
-
-            shell_type = get_team_first_bot_shell_type(db, team)
-            logger.info("[guidance] team=%s shell_type=%s", payload.team_id, shell_type)
-            if shell_type != "Chat":
-                return ChatGuideAck(
-                    error="Guidance is only supported for Chat Shell tasks"
-                ).model_dump()
-
-            subtask = task_stores.subtask_store.get_by_id(
-                db, subtask_id=payload.subtask_id
-            )
-            if subtask and (
-                subtask.task_id != payload.task_id or subtask.team_id != payload.team_id
-            ):
-                subtask = None
-            if not subtask:
-                return ChatGuideAck(error="Subtask not found").model_dump()
-
             item = await guidance_queue.enqueue(
                 task_id=payload.task_id,
                 subtask_id=payload.subtask_id,
@@ -326,21 +379,27 @@ class ChatNamespace(socketio.AsyncNamespace):
                 message=payload.message,
                 guidance_id=payload.client_guidance_id,
             )
-            logger.info(
-                "[guidance] enqueued: task_id=%s subtask_id=%s guidance_id=%s",
-                payload.task_id,
-                payload.subtask_id,
-                item.guidance_id,
+        except GuidanceQueueFullError as error:
+            return await project_model(
+                ChatGuideAck,
+                {"error": str(error)},
             )
-            item_data = item.to_dict()
-            await self.emit(
-                ServerEvents.CHAT_GUIDANCE_QUEUED,
-                item_data,
-                room=f"task:{payload.task_id}",
-            )
-            return ChatGuideAck(guidance_id=item.guidance_id).model_dump()
-        finally:
-            db.close()
+        logger.info(
+            "[guidance] enqueued: task_id=%s subtask_id=%s guidance_id=%s",
+            payload.task_id,
+            payload.subtask_id,
+            item.guidance_id,
+        )
+        item_data = item.to_dict()
+        await self.emit(
+            ServerEvents.CHAT_GUIDANCE_QUEUED,
+            item_data,
+            room=f"task:{payload.task_id}",
+        )
+        return await project_model(
+            ChatGuideAck,
+            {"guidance_id": item.guidance_id},
+        )
 
     @trace_websocket_event(
         exclude_events={"connect"},  # connect is handled separately in on_connect
@@ -423,13 +482,12 @@ class ChatNamespace(socketio.AsyncNamespace):
             raise ConnectionRefusedError("Missing authentication token")
 
         # Verify token
-        user = verify_jwt_token(token)
-        if not user:
+        authenticated_user = await run_sync_in_executor(
+            _authenticate_websocket_token, token
+        )
+        if not authenticated_user:
             logger.warning(f"[WS] Invalid token sid={sid}")
             raise ConnectionRefusedError("Invalid or expired token")
-
-        # Extract token expiry for later validation
-        token_exp = get_token_expiry(token)
         client_origin = (
             CLIENT_ORIGIN_WEWORK
             if auth.get("client_origin") == CLIENT_ORIGIN_WEWORK
@@ -440,10 +498,10 @@ class ChatNamespace(socketio.AsyncNamespace):
             self,
             sid,
             session_data={
-                "user_id": user.id,
-                "user_name": user.user_name,
+                "user_id": authenticated_user.user_id,
+                "user_name": authenticated_user.user_name,
                 "request_id": request_id,
-                "token_exp": token_exp,
+                "token_exp": authenticated_user.token_exp,
                 "auth_token": token,
                 "client_origin": client_origin,
             },
@@ -452,15 +510,18 @@ class ChatNamespace(socketio.AsyncNamespace):
         )
 
         # Set user context for trace logging
-        set_user_context(user_id=str(user.id), user_name=user.user_name)
+        set_user_context(
+            user_id=str(authenticated_user.user_id),
+            user_name=authenticated_user.user_name,
+        )
 
         # Join only the stream room for this client origin. Wework gets raw
         # Responses API events in a dedicated room and should not receive the
         # legacy chat:* compatibility stream.
         user_room = (
-            get_wework_user_room(user.id)
+            get_wework_user_room(authenticated_user.user_id)
             if client_origin == CLIENT_ORIGIN_WEWORK
-            else f"user:{user.id}"
+            else f"user:{authenticated_user.user_id}"
         )
         await enter_connect_room(
             self,
@@ -470,7 +531,12 @@ class ChatNamespace(socketio.AsyncNamespace):
             log_prefix="[WS]",
         )
 
-        logger.info(f"[WS] Connected user={user.id} ({user.user_name}) sid={sid}")
+        logger.info(
+            "[WS] Connected user=%s (%s) sid=%s",
+            authenticated_user.user_id,
+            authenticated_user.user_name,
+            sid,
+        )
 
     async def on_disconnect(self, sid: str):
         """
@@ -584,18 +650,35 @@ class ChatNamespace(socketio.AsyncNamespace):
             f"[WS] task:join checking for active streaming, task_id={payload.task_id}"
         )
         streaming_info = await get_active_streaming(payload.task_id)
-        logger.info(f"[WS] task:join get_active_streaming returned: {streaming_info}")
+        logger.info(
+            "[WS] task:join active streaming lookup: task_id=%s active=%s",
+            payload.task_id,
+            bool(streaming_info),
+        )
 
         if streaming_info:
             subtask_id = streaming_info["subtask_id"]
 
-            # Get cached content and blocks from Redis
-            cached_content = await session_manager.get_streaming_content(subtask_id)
-            blocks = await session_manager.get_blocks(subtask_id)
-            cached_context_metrics = await session_manager.get_context_metrics(
-                subtask_id
-            )
-            offset = len(cached_content) if cached_content else 0
+            try:
+                recovery = await _load_subtask_recovery(
+                    subtask_id,
+                    offset=0,
+                    include_blocks=True,
+                    include_context_metrics=True,
+                )
+            except RuntimeError as error:
+                logger.error(
+                    "[WS] task:join stream recovery failed: task_id=%s "
+                    "subtask_id=%s error=%s",
+                    payload.task_id,
+                    subtask_id,
+                    error,
+                )
+                return {"error": "Streaming recovery is unavailable"}
+            cached_content = recovery["content"]
+            blocks = recovery["blocks"]
+            cached_context_metrics = recovery["context_metrics"]
+            offset = recovery["cursor"]
 
             logger.info(
                 f"[WS] task:join found active streaming: subtask_id={subtask_id}, "
@@ -671,7 +754,7 @@ class ChatNamespace(socketio.AsyncNamespace):
             {"task_id": int, "subtask_id": int} or {"error": "..."}
             For pipeline:confirm action: {"task_id": int, "current_stage": int, ...}
         """
-        logger.info(f"[WS] chat:send received sid={sid} data={data}")
+        logger.info("[WS] chat:send received sid=%s", sid)
 
         # Check token expiry before processing
         if await self._check_token_expiry(sid):
@@ -694,410 +777,108 @@ class ChatNamespace(socketio.AsyncNamespace):
             logger.error("[WS] chat:send error: Not authenticated")
             return {"error": "Not authenticated"}
 
-        db = SessionLocal()
-        pipeline_info = None
-        pipeline_context_passing = None
         try:
-            # Get user
-            user = db.query(User).filter(User.id == user_id).first()
-            if not user:
-                logger.error(f"[WS] chat:send error: User not found for id={user_id}")
-                return {"error": "User not found"}
-            logger.info(f"[WS] chat:send user found: {user.user_name}")
-
-            # Get team
-            team = (
-                db.query(Kind)
-                .filter(
-                    Kind.id == payload.team_id,
-                    Kind.kind == "Team",
-                    Kind.is_active == True,
-                )
-                .first()
+            preparation = await run_sync_in_executor(
+                _prepare_chat_send,
+                user_id,
+                payload,
             )
+            if preparation.response is not None:
+                return preparation.response
+            payload = preparation.payload
+            user = preparation.user
+            team = preparation.team
+            if user is None or team is None:
+                return {"error": "Chat send preparation failed"}
 
-            if not team:
-                logger.error(
-                    f"[WS] chat:send error: Team not found for id={payload.team_id}"
+            if preparation.pipeline_confirm:
+                from app.services.chat.pipeline_advance import (
+                    advance_pipeline_stage_and_send,
                 )
-                return {"error": "Team not found"}
-            logger.info(f"[WS] chat:send team found: {team.name} (id={team.id})")
 
-            # Handle pipeline mode
-            team_crd = Team.model_validate(team.json)
-            if team_crd.spec.collaborationModel == "pipeline":
-                from app.services.adapters.pipeline_stage import pipeline_stage_service
-
-                # pipeline:confirm uses the same stage-advance and send path as auto advance.
-                if payload.action == "pipeline:confirm":
-                    from app.services.chat.pipeline_advance import (
-                        advance_pipeline_stage_and_send,
-                    )
-
-                    return await advance_pipeline_stage_and_send(
-                        db=db,
-                        user=user,
-                        team=team,
-                        task_id=payload.task_id,
-                        message=effective_message,
-                        payload=payload,
-                        skip_sid=sid,
-                        auth_token=auth_token,
-                    )
-
-                # Get pipeline info (unified logic for all pipeline operations)
-                pipeline_info = pipeline_stage_service.get_pipeline_info(
-                    db=db,
-                    team=team,
+                return await advance_pipeline_stage_and_send(
+                    user_id=user_id,
+                    team_id=team.id,
                     task_id=payload.task_id,
-                )
-                if pipeline_info:
-                    # Check if pipeline is complete
-                    if pipeline_info.get("is_pipeline_complete"):
-                        logger.info(
-                            f"[WS] chat:send: Pipeline completed for task {payload.task_id}"
-                        )
-                        return {
-                            "task_id": payload.task_id,
-                            "current_stage": pipeline_info.get("current_stage"),
-                            "total_stages": pipeline_info.get("total_stages"),
-                            "pipeline_completed": True,
-                        }
-                    logger.info(
-                        f"[WS] chat:send pipeline info: bot_ids={pipeline_info.get('bot_ids')}, "
-                        f"current_stage={pipeline_info.get('current_stage')}"
-                    )
-
-            # Import existing helpers from service layer
-            from app.api.endpoints.adapter.chat import StreamChatRequest
-            from app.services.chat.config import is_deep_research_protocol
-            from app.services.chat.storage import (
-                TaskCreationParams,
-                create_chat_task,
-            )
-            from app.services.chat.trigger import should_trigger_ai_response
-
-            # Check if this is a follow-up to a deep research task
-            # Deep research (gemini-deep-research protocol) does not support follow-up questions
-            if payload.task_id and is_deep_research_protocol(db, team):
-                logger.warning(
-                    f"[WS] chat:send error: Deep research does not support follow-up questions, "
-                    f"task_id={payload.task_id}, team_id={payload.team_id}"
-                )
-                return {
-                    "error": "Deep Research does not support follow-up questions. Please start a new conversation."
-                }
-
-            if payload.task_id:
-                from app.services.chat.interactive_forms import (
-                    validate_interactive_form_answer,
+                    message=effective_message,
+                    payload=payload,
+                    skip_sid=sid,
+                    auth_token=auth_token,
                 )
 
-                form_validation = validate_interactive_form_answer(
-                    db,
-                    task_id=payload.task_id,
-                    answer=payload.interactive_form_answer,
-                )
-                if not form_validation.ok:
-                    logger.warning(
-                        "[WS] chat:send blocked by interactive form state: "
-                        "task_id=%s, error=%s, message=%s",
-                        payload.task_id,
-                        form_validation.error,
-                        form_validation.message,
-                    )
-                    return {
-                        "error": form_validation.error,
-                        "message": form_validation.message,
-                    }
-
-            _apply_artifact_node_scope(
-                db=db,
-                user=user,
-                payload=payload,
-            )
-
-            # Get task JSON for group chat check
-            task_json = {}
-            existing_task = None
-            if payload.task_id:
-                existing_task = task_stores.task_store.get_regular_active_task(
-                    db,
-                    task_id=payload.task_id,
-                )
-                if existing_task:
-                    task_json = existing_task.json or {}
-
-            # Check if AI should be triggered (for group chat with @mention)
-            # For existing tasks: use task_json.spec.is_group_chat
-            # For new tasks: use payload.is_group_chat from frontend
-            team_name = team.name
-            should_trigger_ai = should_trigger_ai_response(
-                task_json,
-                effective_message,
-                team_name,
-                request_is_group_chat=payload.is_group_chat,
-            )
-            logger.info(
-                f"[WS] chat:send group chat check: task_id={payload.task_id}, "
-                f"is_group_chat={task_json.get('spec', {}).get('is_group_chat', False)}, "
-                f"team_name={team_name}, "
-                f"should_trigger_ai={should_trigger_ai}"
-            )
-
-            # Process context metadata and RAG based on chat version
-            # Uses service module for RAG processing
+            pipeline_info = preparation.pipeline_info
+            should_trigger_ai = preparation.should_trigger_ai
             _, rag_prompt = await process_context_and_rag(
                 message=effective_message,
                 contexts=payload.contexts,
                 should_trigger_ai=should_trigger_ai,
                 user_id=user_id,
-                db=db,
+                db=None,
             )
-
-            # Create task and subtasks using unified function
-            # Automatically handles Chat Shell vs Executor path based on team configuration
-            logger.info(f"[WS] chat:send calling create_chat_task...")
-
-            # Build TaskCreationParams from request
-            # Convert additional_skills to list of dicts if present
-            additional_skills_dicts = None
-            if payload.additional_skills:
-                additional_skills_dicts = [
-                    {"name": s.name, "namespace": s.namespace, "is_public": s.is_public}
-                    for s in payload.additional_skills
-                ]
-
-            # For pipeline mode, use the bot_ids from pipeline_info
-            pipeline_bot_ids = None
-            if pipeline_info and pipeline_info.get("bot_ids"):
-                pipeline_bot_ids = pipeline_info["bot_ids"]
-                logger.info(
-                    f"[WS] chat:send pipeline mode using pipeline_bot_ids={pipeline_bot_ids}"
-                )
-
-            # Convert generate_params to dict if present
-            generate_params_dict = None
-            if payload.generate_params:
-                generate_params_dict = {
-                    "resolution": payload.generate_params.resolution,
-                    "ratio": payload.generate_params.ratio,
-                    "duration": payload.generate_params.duration,
-                    "model": payload.generate_params.model,
-                    "model_display_name": payload.generate_params.model_display_name,
-                    "generation_mode_id": payload.generate_params.generation_mode_id,
-                    "size": payload.generate_params.size,
-                    "model": payload.generate_params.model,
-                }
-
-            execution_workspace = None
-            if (
-                not payload.task_id
-                and payload.execution
-                and payload.execution.workspace
-                and payload.execution.workspace.source == "git_worktree"
-            ):
-                if not payload.project_id:
-                    raise ValueError("Git worktree execution requires a project")
-
-                execution_workspace = {"source": "git_worktree"}
-                branch = (payload.execution.workspace.branch or "").strip()
-                if branch:
-                    execution_workspace["branch"] = branch
-
-            # For pipeline confirm, get the previous stage's bot_id for session management
-            previous_bot_id = None
-            if pipeline_info:
-                previous_bot_id = pipeline_info.get("current_stage_bot_id")
-
-            params = TaskCreationParams(
-                message=effective_message,
-                title=payload.title,
-                model_id=payload.force_override_bot_model,
-                force_override_bot_model=payload.force_override_bot_model is not None,
-                force_override_bot_model_type=payload.force_override_bot_model_type,
-                model_options=payload.model_options,
-                is_group_chat=payload.is_group_chat,
-                git_url=payload.git_url,
-                git_repo=payload.git_repo,
-                git_repo_id=payload.git_repo_id,
-                git_domain=payload.git_domain,
-                branch_name=payload.branch_name,
-                task_type=payload.task_type,
-                knowledge_base_id=payload.knowledge_base_id,
-                additional_skills=additional_skills_dicts,
-                pipeline_bot_ids=pipeline_bot_ids,
-                # Pipeline mode: pass previous stage's bot_id for session management
-                # TaskRequestBuilder will compare this with current bot_id to determine
-                # if a new session is needed (different bot = new session)
-                previous_bot_id=previous_bot_id,
-                pipeline_context_passing=pipeline_context_passing,
-                skip_status_check=payload.action == "pipeline:confirm",
-                device_id=payload.device_id,
-                project_id=payload.project_id,
-                execution_workspace=execution_workspace,
-                client_origin=payload.client_origin,
-                generate_params=generate_params_dict,
+            params = _build_chat_task_creation_params(
+                payload,
+                effective_message,
+                pipeline_info,
             )
             if payload.client_origin == CLIENT_ORIGIN_WEWORK and not payload.task_id:
-                params = await apply_wework_task_defaults(
-                    db,
+                from app.services.chat.wework_task_defaults import (
+                    apply_wework_task_defaults_nonblocking,
+                )
+
+                params = await apply_wework_task_defaults_nonblocking(
                     user=user,
                     params=params,
                 )
-            resolved_device_id = resolve_chat_task_device_id(
-                db,
-                user_id=user_id,
-                params=params,
-                task=existing_task,
+            params.device_id = await run_sync_in_executor(
+                _resolve_chat_send_device_id,
+                user_id,
+                params,
+                payload.task_id,
             )
-            params.device_id = resolved_device_id
 
-            result = await create_chat_task(
-                db=db,
-                user=user,
-                team=team,
+            from app.services.chat.storage import create_chat_task_nonblocking
+
+            result = await create_chat_task_nonblocking(
+                user_id=user_id,
+                team_id=team.id,
                 message=effective_message,
                 params=params,
                 task_id=payload.task_id,
                 should_trigger_ai=should_trigger_ai,
                 rag_prompt=rag_prompt,
-                source="web",
+                detach_memory_save=True,
             )
-            logger.info(
-                f"[WS] chat:send create_chat_task returned: ai_triggered={result.ai_triggered}, "
-                f"task_id={result.task.id if result.task else None}"
-            )
-
-            # Extract task and subtasks from result
             task = result.task
             user_subtask = result.user_subtask
             assistant_subtask = result.assistant_subtask
-            user_subtask_for_context = user_subtask
+            await run_sync_in_executor(
+                _finalize_chat_send_storage,
+                task.id,
+                user_subtask.id,
+                user_id,
+                user_name,
+                payload,
+            )
 
-            # Update userInteracted label for Subscription tasks
-            # When user sends a message to a Subscription-triggered task, mark it as interacted
-            # so it appears in the history conversation list
-            task_crd = Task.model_validate(task.json)
-            if (
-                task_crd.metadata.labels
-                and task_crd.metadata.labels.get("type") == "subscription"
-            ):
-                if task_crd.metadata.labels.get("userInteracted") != "true":
-                    task_crd.metadata.labels["userInteracted"] = "true"
-                    task_stores.task_store.update_json(
-                        db, task=task, payload=task_crd.model_dump(mode="json")
-                    )
-                    db.commit()
-                    db.refresh(task)
-                    logger.info(
-                        f"[WS] chat:send updated userInteracted=true for Subscription task {task.id}"
-                    )
-
-            # Link attachments and create knowledge base contexts for the user subtask
-            # This handles both pre-uploaded attachments and knowledge bases selected at send time
-            # Note: RAG retrieval for knowledge bases is done later via tools/Service
-            linked_context_ids = []
-            if user_subtask_for_context:
-                from app.services.chat.preprocessing import link_contexts_to_subtask
-
-                # Build attachment_ids list (support both legacy and new format)
-                attachment_ids_to_link = []
-                if payload.attachment_ids:
-                    attachment_ids_to_link = payload.attachment_ids
-                elif payload.attachment_id:
-                    # Backward compatibility: convert single attachment_id to list
-                    attachment_ids_to_link = [payload.attachment_id]
-
-                linked_context_ids = link_contexts_to_subtask(
-                    db=db,
-                    subtask_id=user_subtask_for_context.id,
-                    user_id=user_id,
-                    attachment_ids=(
-                        attachment_ids_to_link if attachment_ids_to_link else None
-                    ),
-                    contexts=payload.contexts,
-                    task=task,
-                    user_name=user_name,
-                )
-                if linked_context_ids:
-                    logger.info(
-                        f"[WS] chat:send linked/created {len(linked_context_ids)} contexts "
-                        f"for subtask {user_subtask_for_context.id}"
-                    )
-
-            # Join task room
             task_room = f"task:{task.id}"
             await self.enter_room(sid, task_room)
-            logger.info(f"[WS] chat:send joined task room: {task_room}")
-
-            # Note: task:created event is now emitted by WebSocketResultEmitter
-            # when the START event is processed. This ensures consistent event
-            # emission through the ExecutionDispatcher chain.
-
-            # Broadcast user message to room (exclude sender)
             if user_subtask:
                 await self._broadcast_user_message(
-                    db=db,
-                    user_subtask=user_subtask,
+                    user_subtask_id=user_subtask.id,
                     task_id=task.id,
                     message=effective_message,
                     user_id=user_id,
                     user_name=user_name,
-                    attachment_id=(
-                        payload.attachment_ids[0]
-                        if payload.attachment_ids
-                        else payload.attachment_id
-                    ),
                     task_room=task_room,
                     skip_sid=sid,
                 )
-                logger.info(f"[WS] chat:send broadcasted user message to room")
-
-            # Note: Model override metadata is already set during task creation
-            # by _create_task_and_subtasks() or task_kinds_service.create_task_or_append()
-            # No need to update it again here
-
-            # Trigger AI response if needed
-            # Uses unified trigger from chat.trigger module
-            # enable_deep_thinking controls whether tools are enabled in chat_shell
-            # IMPORTANT: Use asyncio.create_task to trigger AI response asynchronously
-            # This allows the ACK response to be returned immediately, so the frontend
-            # can update the user message with subtaskId and messageId before chat:start arrives
             if should_trigger_ai and assistant_subtask:
-                from sqlalchemy.orm import make_transient
-
-                logger.info(
-                    f"[WS] chat:send triggering AI response with enable_deep_thinking={payload.enable_deep_thinking} (controls tool usage)"
-                )
-                # Note: knowledge_base_ids is no longer passed separately.
-                # The unified context processing in trigger_ai_response_unified will
-                # retrieve both attachments and knowledge bases from the
-                # user_subtask's associated contexts.
-
-                # Refresh objects to load all attributes before making them transient
-                # This ensures all lazy-loaded attributes are loaded from the database
-                db.refresh(task)
-                db.refresh(team)
-                db.refresh(assistant_subtask)
-                db.refresh(user)
-
-                # Make objects transient so they can be used after session is closed
-                make_transient(task)
-                make_transient(team)
-                make_transient(assistant_subtask)
-                make_transient(user)
-
-                # Extract user_subtask_id and device_id before closing session
-                user_subtask_id_for_context = (
-                    user_subtask_for_context.id if user_subtask_for_context else None
-                )
                 device_id = params.device_id
+                previous_bot_id = (
+                    pipeline_info.get("current_stage_bot_id") if pipeline_info else None
+                )
 
-                # Create async task for AI response - don't await it
-                # This ensures the ACK is returned before chat:start is sent
                 async def _trigger_ai():
-                    """Trigger AI response after message persistence."""
                     try:
                         await trigger_ai_response_unified(
                             task=task,
@@ -1109,9 +890,9 @@ class ChatNamespace(socketio.AsyncNamespace):
                             task_room=task_room,
                             device_id=device_id,
                             namespace=self,
-                            user_subtask_id=user_subtask_id_for_context,  # Pass user subtask ID for unified context processing
-                            auth_token=auth_token,  # Pass original JWT token from WebSocket session
-                            previous_bot_id=previous_bot_id,  # Pipeline mode: previous stage's bot_id for session management
+                            user_subtask_id=user_subtask.id,
+                            auth_token=auth_token,
+                            previous_bot_id=previous_bot_id,
                         )
                     except Exception as e:
                         logger.exception(
@@ -1152,23 +933,27 @@ class ChatNamespace(socketio.AsyncNamespace):
                             )
 
                         # Emit error to frontend so user sees the failure
+                        error_payload = await project_model(
+                            ChatErrorPayload,
+                            {
+                                "subtask_id": assistant_subtask.id,
+                                "error": error_message,
+                                "type": error_code,
+                                "message_id": assistant_subtask.message_id,
+                                "task_id": task.id,
+                            },
+                        )
                         await self.emit(
                             ServerEvents.CHAT_ERROR,
-                            ChatErrorPayload(
-                                subtask_id=assistant_subtask.id,
-                                error=error_message,
-                                type=error_code,
-                                message_id=assistant_subtask.message_id,
-                                task_id=task.id,
-                            ).model_dump(),
+                            error_payload,
                             room=task_room,
                         )
 
-                asyncio.create_task(_trigger_ai())
+                await web_background_task_manager.submit(
+                    _trigger_ai,
+                    name=f"chat-ai-trigger-{assistant_subtask.id}",
+                )
 
-            # Return unified response - same structure for all modes
-            # IMPORTANT: Return immediately so frontend can update user message
-            # with subtaskId and messageId before chat:start arrives
             return {
                 "task_id": task.id,
                 "subtask_id": user_subtask.id if user_subtask else None,
@@ -1180,19 +965,14 @@ class ChatNamespace(socketio.AsyncNamespace):
             error_response = {"error": str(e)}
             logger.info(f"[WS] chat:send returning error response: {error_response}")
             return error_response
-        finally:
-            logger.info(f"[WS] chat:send finally block, closing db")
-            db.close()
 
     async def _broadcast_user_message(
         self,
-        db,
-        user_subtask: Subtask,
+        user_subtask_id: int,
         task_id: int,
         message: str,
         user_id: int,
         user_name: str,
-        attachment_id: Optional[int],
         task_room: str,
         skip_sid: str,
     ):
@@ -1203,23 +983,23 @@ class ChatNamespace(socketio.AsyncNamespace):
         to notify other group members about the new message.
 
         Args:
-            db: Database session
-            user_subtask: User's subtask object
+            user_subtask_id: User subtask ID
             task_id: Task ID
             message: Message content
             user_id: Sender's user ID
             user_name: Sender's user name
-            attachment_id: Optional attachment/context ID
             task_room: Task room name
             skip_sid: Socket ID to skip (sender)
         """
-        from app.api.ws.events import ServerEvents
-        from app.services.context import context_service
-
-        # Build contexts list for the subtask
-        contexts_briefs = context_service.get_briefs_by_subtask(db, user_subtask.id)
-        # Use Pydantic's model_dump to ensure all fields are serialized correctly
-        contexts_list = [ctx.model_dump(mode="json") for ctx in contexts_briefs]
+        message_payload = await run_sync_in_executor(
+            _build_user_message_payload,
+            user_subtask_id,
+            task_id,
+            message,
+            user_id,
+            user_name,
+        )
+        contexts_list = message_payload["contexts"]
 
         # DEBUG: Log contexts being sent via WebSocket
         for ctx_dict in contexts_list:
@@ -1229,48 +1009,23 @@ class ChatNamespace(socketio.AsyncNamespace):
                     f"name={ctx_dict.get('name')}, source_config={ctx_dict.get('source_config')}"
                 )
 
-        # Build legacy attachment info for backward compatibility
-        # Note: attachments field is kept for backward compatibility but set to empty
-        # All context data should be read from the 'contexts' field
-        attachment_info = None
-        source = None
-        if isinstance(user_subtask.result, dict):
-            result_source = user_subtask.result.get("source")
-            if isinstance(result_source, dict):
-                source = result_source
-
         logger.info(
             f"[WS] Broadcasting user message to room: room={task_room}, "
-            f"skip_sid={skip_sid}, message_id={user_subtask.message_id}, "
+            f"skip_sid={skip_sid}, message_id={message_payload['message_id']}, "
             f"sender_user_id={user_id}, sender_user_name={user_name}, "
             f"contexts_count={len(contexts_list)}"
         )
 
         await self.emit(
             ServerEvents.CHAT_MESSAGE,
-            {
-                "subtask_id": user_subtask.id,
-                "task_id": task_id,
-                "message_id": user_subtask.message_id,
-                "role": "user",
-                "content": message,
-                "sender": {
-                    "user_id": user_id,
-                    "user_name": user_name,
-                },
-                "created_at": user_subtask.created_at.isoformat(),
-                "attachment": attachment_info,  # Keep for backward compatibility
-                "attachments": [],  # Legacy array format - empty, use contexts instead
-                "contexts": contexts_list,  # New contexts format
-                "source": source,
-            },
+            message_payload,
             room=task_room,
             skip_sid=skip_sid,
         )
 
         logger.info(
             f"[WS] User message broadcasted successfully: "
-            f"room={task_room}, message_id={user_subtask.message_id}, "
+            f"room={task_room}, message_id={message_payload['message_id']}, "
             f"content_length={len(message)}"
         )
 
@@ -1510,9 +1265,12 @@ class ChatNamespace(socketio.AsyncNamespace):
             )
             return {"error": "Access denied"}
 
-        db = SessionLocal()
         try:
-            dispatch_args_or_error = _prepare_chat_retry_dispatch(db, payload, user_id)
+            dispatch_args_or_error = await run_sync_in_executor(
+                _prepare_chat_retry_dispatch_for_user,
+                payload,
+                user_id,
+            )
         except ValueError as e:
             # Validation errors, data parsing errors
             logger.error(f"[WS] chat:retry validation error: {e}", exc_info=True)
@@ -1541,49 +1299,75 @@ class ChatNamespace(socketio.AsyncNamespace):
                 else f"Internal server error: {str(e)}"
             )
             return {"error": error_msg}
-        finally:
-            db.rollback()
-            db.close()
-
         if "error" in dispatch_args_or_error:
             return dispatch_args_or_error
 
-        try:
-            await trigger_ai_response_unified(
-                namespace=self,
-                **dispatch_args_or_error,
-            )
-        except Exception as e:
-            from sqlalchemy.exc import SQLAlchemyError
+        assistant_subtask = dispatch_args_or_error["assistant_subtask"]
+        task_room = dispatch_args_or_error["task_room"]
 
-            from shared.utils.error_classifier import (
-                classify_error,
-                format_error_message,
-            )
-
-            logger.error(f"[WS] chat:retry exception: {e}", exc_info=True)
+        async def _trigger_retry_ai() -> None:
             try:
-                await _finalize_failed_ai_trigger(
-                    task_id=payload.task_id,
-                    assistant_subtask_id=dispatch_args_or_error["assistant_subtask"].id,
-                    error_message=format_error_message(e),
-                    error_code=classify_error(e),
+                await trigger_ai_response_unified(
+                    namespace=self,
+                    **dispatch_args_or_error,
                 )
-            except Exception as finalize_error:
+            except Exception as error:
+                from shared.utils.error_classifier import (
+                    classify_error,
+                    format_error_message,
+                )
+
+                error_message = format_error_message(error)
+                error_code = classify_error(error)
                 logger.error(
-                    "[WS] chat:retry failed to persist trigger error: "
-                    "task_id=%s, subtask_id=%s, error=%s",
+                    "[WS] chat:retry async trigger failed: task_id=%s, "
+                    "subtask_id=%s, error=%s",
                     payload.task_id,
-                    dispatch_args_or_error["assistant_subtask"].id,
-                    finalize_error,
+                    assistant_subtask.id,
+                    error,
                     exc_info=True,
                 )
-            if isinstance(e, SQLAlchemyError):
-                return {"error": "Database error occurred"}
-            return {"error": f"Internal server error: {str(e)}"}
+                try:
+                    await _finalize_failed_ai_trigger(
+                        task_id=payload.task_id,
+                        assistant_subtask_id=assistant_subtask.id,
+                        error_message=error_message,
+                        error_code=error_code,
+                    )
+                except Exception as finalize_error:
+                    logger.error(
+                        "[WS] chat:retry failed to persist trigger error: "
+                        "task_id=%s, subtask_id=%s, error=%s",
+                        payload.task_id,
+                        assistant_subtask.id,
+                        finalize_error,
+                        exc_info=True,
+                    )
+
+                error_payload = await project_model(
+                    ChatErrorPayload,
+                    {
+                        "subtask_id": assistant_subtask.id,
+                        "error": error_message,
+                        "type": error_code,
+                        "message_id": assistant_subtask.message_id,
+                        "task_id": payload.task_id,
+                    },
+                )
+                await self.emit(
+                    ServerEvents.CHAT_ERROR,
+                    error_payload,
+                    room=task_room,
+                )
+
+        await web_background_task_manager.submit(
+            _trigger_retry_ai,
+            name=f"chat-retry-ai-trigger-{assistant_subtask.id}",
+        )
 
         logger.info(
-            f"[WS] chat:retry AI response triggered for subtask_id={dispatch_args_or_error['assistant_subtask'].id}"
+            "[WS] chat:retry AI response admitted for subtask_id=%s",
+            assistant_subtask.id,
         )
         return {"success": True}
 
@@ -1625,12 +1409,23 @@ class ChatNamespace(socketio.AsyncNamespace):
         task_room = f"task:{payload.task_id}"
         await self.enter_room(sid, task_room)
 
-        # Get cached content
-        cached_content = await session_manager.get_streaming_content(payload.subtask_id)
+        try:
+            recovery = await _load_subtask_recovery(
+                payload.subtask_id,
+                offset=payload.offset,
+                include_blocks=False,
+                include_context_metrics=True,
+            )
+        except RuntimeError as error:
+            logger.error(
+                "[WS] chat:resume recovery failed: subtask_id=%s error=%s",
+                payload.subtask_id,
+                error,
+            )
+            return {"error": "Streaming recovery is unavailable"}
 
-        if cached_content and payload.offset < len(cached_content):
-            # Send remaining content
-            remaining = cached_content[payload.offset :]
+        remaining = recovery["content"]
+        if remaining:
             from app.api.ws.events import ServerEvents
 
             await self.emit(
@@ -1643,9 +1438,7 @@ class ChatNamespace(socketio.AsyncNamespace):
                 to=sid,
             )
 
-        cached_context_metrics = await session_manager.get_context_metrics(
-            payload.subtask_id
-        )
+        cached_context_metrics = recovery["context_metrics"]
         if cached_context_metrics:
             from app.api.ws.events import ServerEvents
 
@@ -1780,6 +1573,252 @@ def _is_code_wiki_task(task: TaskResource) -> bool:
     return isinstance(labels, dict) and labels.get("source") == "code_wiki"
 
 
+def _prepare_chat_send(
+    user_id: int,
+    request_payload: ChatSendPayload,
+) -> _ChatSendPreparation:
+    """Load and validate a chat send request inside one worker-owned session."""
+    from app.services.chat.config import is_deep_research_protocol
+    from app.services.chat.trigger import should_trigger_ai_response
+
+    payload = request_payload.model_copy(deep=True)
+    with get_db_session() as db:
+        user = db.query(User).filter(User.id == user_id).first()
+        if not user:
+            return _ChatSendPreparation(
+                payload=payload, response={"error": "User not found"}
+            )
+
+        team = (
+            db.query(Kind)
+            .filter(
+                Kind.id == payload.team_id,
+                Kind.kind == "Team",
+                Kind.is_active == True,
+            )
+            .first()
+        )
+        if not team:
+            return _ChatSendPreparation(
+                payload=payload, response={"error": "Team not found"}
+            )
+
+        team_crd = Team.model_validate(team.json)
+        pipeline_info = None
+        if team_crd.spec.collaborationModel == "pipeline":
+            if payload.action == "pipeline:confirm":
+                db.refresh(user)
+                db.refresh(team)
+                db.expunge(user)
+                db.expunge(team)
+                return _ChatSendPreparation(
+                    payload=payload,
+                    user=user,
+                    team=team,
+                    pipeline_confirm=True,
+                )
+
+            from app.services.adapters.pipeline_stage import pipeline_stage_service
+
+            pipeline_info = pipeline_stage_service.get_pipeline_info(
+                db=db,
+                team=team,
+                task_id=payload.task_id,
+            )
+            if pipeline_info and pipeline_info.get("is_pipeline_complete"):
+                return _ChatSendPreparation(
+                    payload=payload,
+                    response={
+                        "task_id": payload.task_id,
+                        "current_stage": pipeline_info.get("current_stage"),
+                        "total_stages": pipeline_info.get("total_stages"),
+                        "pipeline_completed": True,
+                    },
+                )
+
+        if payload.task_id and is_deep_research_protocol(db, team):
+            return _ChatSendPreparation(
+                payload=payload,
+                response={
+                    "error": "Deep Research does not support follow-up questions. Please start a new conversation."
+                },
+            )
+
+        if payload.task_id:
+            from app.services.chat.interactive_forms import (
+                validate_interactive_form_answer,
+            )
+
+            form_validation = validate_interactive_form_answer(
+                db,
+                task_id=payload.task_id,
+                answer=payload.interactive_form_answer,
+            )
+            if not form_validation.ok:
+                return _ChatSendPreparation(
+                    payload=payload,
+                    response={
+                        "error": form_validation.error,
+                        "message": form_validation.message,
+                    },
+                )
+
+        _apply_artifact_node_scope(db=db, user=user, payload=payload)
+        existing_task = None
+        task_json: Dict[str, Any] = {}
+        if payload.task_id:
+            existing_task = task_stores.task_store.get_regular_active_task(
+                db, task_id=payload.task_id
+            )
+            if existing_task:
+                task_json = existing_task.json or {}
+
+        should_trigger_ai = should_trigger_ai_response(
+            task_json,
+            payload.message,
+            team.name,
+            request_is_group_chat=payload.is_group_chat,
+        )
+        db.refresh(user)
+        db.refresh(team)
+        db.expunge(user)
+        db.expunge(team)
+        return _ChatSendPreparation(
+            payload=payload,
+            user=user,
+            team=team,
+            pipeline_info=pipeline_info,
+            should_trigger_ai=should_trigger_ai,
+        )
+
+
+def _build_chat_task_creation_params(
+    payload: ChatSendPayload,
+    message: str,
+    pipeline_info: Optional[Dict[str, Any]],
+):
+    """Build persistence parameters from an already validated payload."""
+    from app.services.chat.storage import TaskCreationParams
+
+    additional_skills = None
+    if payload.additional_skills:
+        additional_skills = [
+            {
+                "name": skill.name,
+                "namespace": skill.namespace,
+                "is_public": skill.is_public,
+            }
+            for skill in payload.additional_skills
+        ]
+    generation = None
+    if payload.generate_params:
+        generation = payload.generate_params.model_dump(mode="json")
+
+    execution_workspace = None
+    if (
+        not payload.task_id
+        and payload.execution
+        and payload.execution.workspace
+        and payload.execution.workspace.source == "git_worktree"
+    ):
+        if not payload.project_id:
+            raise ValueError("Git worktree execution requires a project")
+        execution_workspace = {"source": "git_worktree"}
+        branch = (payload.execution.workspace.branch or "").strip()
+        if branch:
+            execution_workspace["branch"] = branch
+
+    return TaskCreationParams(
+        message=message,
+        title=payload.title,
+        model_id=payload.force_override_bot_model,
+        force_override_bot_model=payload.force_override_bot_model is not None,
+        force_override_bot_model_type=payload.force_override_bot_model_type,
+        model_options=payload.model_options,
+        is_group_chat=payload.is_group_chat,
+        git_url=payload.git_url,
+        git_repo=payload.git_repo,
+        git_repo_id=payload.git_repo_id,
+        git_domain=payload.git_domain,
+        branch_name=payload.branch_name,
+        task_type=payload.task_type,
+        knowledge_base_id=payload.knowledge_base_id,
+        additional_skills=additional_skills,
+        pipeline_bot_ids=pipeline_info.get("bot_ids") if pipeline_info else None,
+        previous_bot_id=(
+            pipeline_info.get("current_stage_bot_id") if pipeline_info else None
+        ),
+        skip_status_check=payload.action == "pipeline:confirm",
+        device_id=payload.device_id,
+        project_id=payload.project_id,
+        execution_workspace=execution_workspace,
+        client_origin=payload.client_origin,
+        generate_params=generation,
+    )
+
+
+def _resolve_chat_send_device_id(
+    user_id: int,
+    params,
+    task_id: Optional[int],
+) -> Optional[str]:
+    """Resolve a device using a session local to the database worker."""
+    with get_db_session() as db:
+        task = (
+            task_stores.task_store.get_regular_active_task(db, task_id=task_id)
+            if task_id
+            else None
+        )
+        return resolve_chat_task_device_id(
+            db,
+            user_id=user_id,
+            params=params,
+            task=task,
+        )
+
+
+def _finalize_chat_send_storage(
+    task_id: int,
+    user_subtask_id: int,
+    user_id: int,
+    user_name: str,
+    payload: ChatSendPayload,
+) -> None:
+    """Persist labels and contexts after task creation in a fresh session."""
+    from app.services.chat.preprocessing import link_contexts_to_subtask
+
+    with get_db_session() as db:
+        task = task_stores.task_store.get_regular_active_task(db, task_id=task_id)
+        if not task:
+            raise ValueError("Task not found after creation")
+
+        task_crd = Task.model_validate(task.json)
+        labels = task_crd.metadata.labels or {}
+        if (
+            labels.get("type") == "subscription"
+            and labels.get("userInteracted") != "true"
+        ):
+            labels["userInteracted"] = "true"
+            task_crd.metadata.labels = labels
+            task_stores.task_store.update_json(
+                db, task=task, payload=task_crd.model_dump(mode="json")
+            )
+
+        attachment_ids = list(payload.attachment_ids or [])
+        if not attachment_ids and payload.attachment_id:
+            attachment_ids = [payload.attachment_id]
+        if attachment_ids or payload.contexts:
+            link_contexts_to_subtask(
+                db=db,
+                subtask_id=user_subtask_id,
+                user_id=user_id,
+                attachment_ids=attachment_ids or None,
+                contexts=payload.contexts,
+                task=task,
+                user_name=user_name,
+            )
+
+
 def _prepare_chat_retry_dispatch(
     db: Session,
     payload: ChatRetryPayload,
@@ -1885,8 +1924,8 @@ def _prepare_chat_retry_dispatch(
             )
         else:
             logger.info(
-                f"[WS] chat:retry use_model_override=False, no task metadata model, "
-                f"will use bot's default model"
+                "[WS] chat:retry use_model_override=False, no task metadata model, "
+                "will use bot's default model"
             )
 
     if model_id:
@@ -1971,6 +2010,19 @@ def _prepare_chat_retry_dispatch(
     return dispatch_args
 
 
+def _prepare_chat_retry_dispatch_for_user(
+    payload: ChatRetryPayload,
+    user_id: int,
+) -> Dict[str, Any]:
+    """Prepare a retry using a session owned by the database worker thread."""
+    db = SessionLocal()
+    try:
+        return _prepare_chat_retry_dispatch(db, payload, user_id)
+    finally:
+        db.rollback()
+        db.close()
+
+
 def _detach_retry_dispatch_objects(
     db: Session,
     task,
@@ -1979,12 +2031,10 @@ def _detach_retry_dispatch_objects(
     user,
 ) -> None:
     """Load ORM attributes and detach objects before the DB session is closed."""
-    from sqlalchemy.orm import make_transient
-
     for obj in (task, team, assistant_subtask, user):
         if hasattr(obj, "_sa_instance_state"):
             db.refresh(obj)
-            make_transient(obj)
+            db.expunge(obj)
 
 
 # ============================================================
@@ -1992,6 +2042,90 @@ def _detach_retry_dispatch_objects(
 # These functions run synchronous database operations in a thread pool
 # to avoid blocking the event loop
 # ============================================================
+
+
+def _authenticate_websocket_token(token: str) -> Optional[_AuthenticatedSocketUser]:
+    """Verify a socket token and copy all ORM-backed data before returning."""
+    user = verify_jwt_token(token)
+    if not user:
+        return None
+    return _AuthenticatedSocketUser(
+        user_id=user.id,
+        user_name=user.user_name,
+        token_exp=get_token_expiry(token),
+    )
+
+
+def _validate_chat_guidance(
+    task_id: int,
+    subtask_id: int,
+    team_id: int,
+) -> Optional[str]:
+    """Validate guidance targets entirely inside a database worker."""
+    with get_db_session() as db:
+        team = (
+            db.query(Kind)
+            .filter(
+                Kind.id == team_id,
+                Kind.kind == "Team",
+                Kind.is_active == True,
+            )
+            .first()
+        )
+        if not team:
+            return "Team not found"
+
+        shell_type = get_team_first_bot_shell_type(db, team)
+        logger.info("[guidance] team=%s shell_type=%s", team_id, shell_type)
+        if shell_type != "Chat":
+            return "Guidance is only supported for Chat Shell tasks"
+
+        subtask = task_stores.subtask_store.get_by_id(db, subtask_id=subtask_id)
+        if not subtask or subtask.task_id != task_id or subtask.team_id != team_id:
+            return "Subtask not found"
+    return None
+
+
+def _build_user_message_payload(
+    user_subtask_id: int,
+    task_id: int,
+    message: str,
+    user_id: int,
+    user_name: str,
+) -> Dict[str, Any]:
+    """Serialize a user message without leaking ORM objects to the event loop."""
+    from app.services.context import context_service
+
+    with get_db_session() as db:
+        user_subtask = task_stores.subtask_store.get_by_id(
+            db, subtask_id=user_subtask_id
+        )
+        if not user_subtask or user_subtask.task_id != task_id:
+            raise ValueError("User subtask not found")
+
+        contexts = [
+            context.model_dump(mode="json")
+            for context in context_service.get_briefs_by_subtask(db, user_subtask.id)
+        ]
+        source = None
+        if isinstance(user_subtask.result, dict):
+            result_source = user_subtask.result.get("source")
+            if isinstance(result_source, dict):
+                source = result_source
+
+        return {
+            "subtask_id": user_subtask.id,
+            "task_id": task_id,
+            "message_id": user_subtask.message_id,
+            "role": "user",
+            "content": message,
+            "sender": {"user_id": user_id, "user_name": user_name},
+            "created_at": user_subtask.created_at.isoformat(),
+            "attachment": None,
+            "attachments": [],
+            "contexts": contexts,
+            "source": source,
+        }
 
 
 def _fetch_subtasks_for_task_join(

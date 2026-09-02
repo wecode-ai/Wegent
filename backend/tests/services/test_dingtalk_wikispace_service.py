@@ -894,10 +894,12 @@ class TestSyncWikispaceNodes:
         """Raises ValueError when wikispace MCP URL is not configured."""
         mock_mcp_svc.get_provider_service_config.return_value = {"enabled": False}
         mock_user = MagicMock()
-        mock_db = MagicMock()
 
         with pytest.raises(ValueError, match="not configured"):
-            await DingTalkWikiSpaceService.sync_wikispace_nodes(mock_user, mock_db)
+            await DingTalkWikiSpaceService.sync_wikispace_nodes(
+                mock_user.id,
+                mock_user.preferences,
+            )
 
     @pytest.mark.asyncio
     @patch("app.services.dingtalk_wikispace_service.UserMCPService")
@@ -910,8 +912,6 @@ class TestSyncWikispaceNodes:
             "url": "https://ws.mcp.example.com",
         }
         mock_user = MagicMock()
-        mock_db = MagicMock()
-
         captured: dict = {}
 
         async def fake_fetch(
@@ -930,12 +930,12 @@ class TestSyncWikispaceNodes:
             ),
             patch(
                 "app.services.dingtalk_wikispace_service.DingTalkDocService"
-                ".get_user_dingtalk_mcp_url",
+                ".get_dingtalk_mcp_url_from_preferences",
                 return_value="https://docs.mcp.example.com",
             ),
             patch(
                 "app.services.dingtalk_wikispace_service.DingTalkDocService"
-                "._sync_nodes_to_db",
+                "._sync_nodes_with_owned_session",
                 return_value={
                     "added": 0,
                     "updated": 0,
@@ -945,7 +945,10 @@ class TestSyncWikispaceNodes:
                 },
             ),
         ):
-            await DingTalkWikiSpaceService.sync_wikispace_nodes(mock_user, mock_db)
+            await DingTalkWikiSpaceService.sync_wikispace_nodes(
+                mock_user.id,
+                mock_user.preferences,
+            )
 
         assert captured["wikispace_url"] == "https://ws.mcp.example.com"
         assert captured["docs_url"] == "https://docs.mcp.example.com"
@@ -975,14 +978,18 @@ class TestSyncWikispaceNodes:
             ),
             patch(
                 "app.services.dingtalk_wikispace_service.DingTalkDocService"
-                ".get_user_dingtalk_mcp_url",
+                ".get_dingtalk_mcp_url_from_preferences",
                 return_value="https://docs.mcp.example.com",
             ),
-            patch.object(DingTalkDocService, "_sync_nodes_to_db") as mock_sync,
+            patch.object(
+                DingTalkDocService,
+                "_sync_nodes_with_owned_session",
+            ) as mock_sync,
         ):
             with pytest.raises(DingTalkMCPToolError):
                 await DingTalkWikiSpaceService.sync_wikispace_nodes(
-                    MagicMock(), MagicMock()
+                    7,
+                    {},
                 )
 
         mock_sync.assert_not_called()

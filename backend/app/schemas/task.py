@@ -383,9 +383,9 @@ class TaskSkillsResponse(BaseModel):
 class PromptDraftGenerateRequest(BaseModel):
     """Request body for generating a prompt draft from a task conversation."""
 
-    model: Optional[str] = None
-    source: Optional[str] = None
-    current_prompt: Optional[str] = None
+    model: Optional[str] = Field(default=None, max_length=256)
+    source: Optional[str] = Field(default=None, max_length=128)
+    current_prompt: Optional[str] = Field(default=None, max_length=256 * 1024)
     regenerate: bool = False
 
 

@@ -6,6 +6,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from app.core.shutdown import StreamAdmissionClosedError
 from shared.models import EventType, ExecutionRequest
 
 
@@ -95,3 +96,46 @@ async def test_creation_failure_releases_shutdown_wait_and_closes_placeholder() 
     final_block = chunk_events[-1].result["blocks"][0]
     assert final_block["status"] == "error"
     assert final_block["is_placeholder"] is False
+
+
+@pytest.mark.asyncio
+async def test_shutdown_rejection_does_not_allocate_video_session_stream() -> None:
+    from app.services.execution.agents.video.video_agent import VideoAgent
+
+    request = ExecutionRequest(
+        task_id=1,
+        subtask_id=2,
+        message_id=3,
+        prompt="Generate a video",
+        model_config={"protocol": "seedance", "videoConfig": {}},
+        user={"id": 4, "name": "test-user"},
+        attachments=[],
+    )
+    emitter = AsyncMock()
+    session_manager = MagicMock()
+    session_manager.register_stream = AsyncMock()
+    session_manager.unregister_stream = AsyncMock()
+    shutdown_manager = MagicMock()
+    shutdown_manager.register_stream = AsyncMock(
+        side_effect=StreamAdmissionClosedError(request.subtask_id)
+    )
+    shutdown_manager.unregister_stream = AsyncMock()
+
+    with (
+        patch(
+            "app.services.chat.storage.session.session_manager",
+            session_manager,
+        ),
+        patch(
+            "app.services.execution.agents.video.video_agent.shutdown_manager",
+            shutdown_manager,
+        ),
+        pytest.raises(StreamAdmissionClosedError) as raised,
+    ):
+        await VideoAgent().execute(request, emitter)
+
+    assert raised.value.error_code == "server_shutting_down"
+    session_manager.register_stream.assert_not_awaited()
+    session_manager.unregister_stream.assert_not_awaited()
+    shutdown_manager.unregister_stream.assert_not_awaited()
+    emitter.emit.assert_not_awaited()

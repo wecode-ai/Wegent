@@ -6,6 +6,7 @@
 
 import logging
 from copy import deepcopy
+from dataclasses import dataclass
 from typing import Any, Sequence
 
 from fastapi import HTTPException, status
@@ -18,16 +19,12 @@ from app.models.project import Project
 from app.models.resource_member import MemberStatus, ResourceMember
 from app.models.share_link import ResourceType
 from app.models.task import TaskResource
-from app.models.user import User
 from app.schemas.kind import Task
 from app.services.chat.storage.task_manager import (
     TaskCreationParams,
-    TaskCreationResult,
-    create_chat_task,
 )
 from app.services.chat.wework_task_defaults import (
     apply_existing_wework_task_defaults,
-    apply_wework_task_defaults,
 )
 from app.services.im.session_service import im_session_service
 from app.stores.tasks import task_store
@@ -36,6 +33,16 @@ logger = logging.getLogger(__name__)
 
 IM_SOURCE = "im"
 DEFAULT_TASK_TYPE = "chat"
+
+
+@dataclass(frozen=True)
+class TaskSessionBinding:
+    """Detached result of binding Redis IM sessions to a validated task."""
+
+    task_id: int
+    task_title: str
+    session_keys: tuple[str, ...]
+    sessions: tuple[IMPrivateSession, ...]
 
 
 def validate_personal_wework_task(
@@ -75,26 +82,45 @@ def validate_personal_wework_task(
 
 
 async def bind_task_to_sessions(
-    db: Session,
     user_id: int,
     task_id: int,
     session_keys: Sequence[str],
-) -> list[str]:
+) -> TaskSessionBinding:
     """Bind current user's private IM sessions to a validated WeWork task."""
 
-    task = validate_personal_wework_task(db, user_id, task_id)
+    from app.services.chat.storage.db import run_sync_in_executor
+
+    validated_task_id, task_title = await run_sync_in_executor(
+        _load_task_binding_target,
+        user_id,
+        task_id,
+    )
     sessions = await load_user_private_sessions_by_keys(
-        db,
         user_id=user_id,
         session_keys=session_keys,
     )
     for session in sessions:
-        await im_session_service.bind_active_task(db, session=session, task_id=task.id)
-    return [str(session_key) for session_key in session_keys]
+        await im_session_service.bind_active_task(
+            session=session,
+            task_id=validated_task_id,
+        )
+    return TaskSessionBinding(
+        task_id=validated_task_id,
+        task_title=task_title,
+        session_keys=tuple(str(session_key) for session_key in session_keys),
+        sessions=tuple(sessions),
+    )
+
+
+def _load_task_binding_target(user_id: int, task_id: int) -> tuple[int, str]:
+    from app.services.chat.storage.db import get_db_session
+
+    with get_db_session() as db:
+        task = validate_personal_wework_task(db, user_id, task_id)
+        return task.id, get_task_title(task)
 
 
 async def load_user_private_sessions_by_keys(
-    db: Session,
     *,
     user_id: int,
     session_keys: Sequence[str],
@@ -102,7 +128,6 @@ async def load_user_private_sessions_by_keys(
     """Load current user's private sessions and preserve caller order."""
 
     return await im_session_service.load_user_sessions_by_keys(
-        db,
         user_id=user_id,
         session_keys=session_keys,
     )
@@ -230,82 +255,6 @@ def build_existing_task_params(
         message_source=deepcopy(message_source) if message_source is not None else None,
     )
     return apply_existing_wework_task_defaults(params=params, task=task)
-
-
-async def resolve_existing_task_params(
-    db: Session,
-    *,
-    user: User,
-    task: TaskResource,
-    message: str,
-    message_source: dict[str, Any] | None,
-) -> TaskCreationParams:
-    """Build and enrich TaskCreationParams for an existing Wework IM task."""
-
-    params = build_existing_task_params(
-        task,
-        message=message,
-        message_source=message_source,
-    )
-    return params
-
-
-async def build_new_task_params(
-    db: Session,
-    *,
-    user: User,
-    message: str,
-    title: str | None = None,
-    project_id: int | None = None,
-    task_type: str | None = None,
-    message_source: dict[str, Any] | None = None,
-) -> TaskCreationParams:
-    """Build TaskCreationParams for creating a personal WeWork task from IM."""
-
-    params = TaskCreationParams(
-        message=message,
-        title=title,
-        task_type=task_type or DEFAULT_TASK_TYPE,
-        is_group_chat=False,
-        project_id=project_id,
-        client_origin=CLIENT_ORIGIN_WEWORK,
-        source=IM_SOURCE,
-        message_source=deepcopy(message_source) if message_source is not None else None,
-    )
-    return await apply_wework_task_defaults(db, user=user, params=params)
-
-
-async def append_message_to_task(
-    db: Session,
-    *,
-    user: User,
-    task_id: int,
-    message: str,
-    message_source: dict[str, Any] | None,
-) -> TaskCreationResult:
-    """Append a private IM message to an existing WeWork task and trigger AI."""
-
-    task = validate_personal_wework_task(db, user.id, task_id)
-    team = get_task_team(db, task)
-    task_params = await resolve_existing_task_params(
-        db,
-        user=user,
-        task=task,
-        message=message,
-        message_source=message_source,
-    )
-    result = await create_chat_task(
-        db=db,
-        user=user,
-        team=team,
-        message=message,
-        params=task_params,
-        task_id=task.id,
-        should_trigger_ai=True,
-        source=IM_SOURCE,
-    )
-    setattr(result, "task_params", task_params)
-    return result
 
 
 def _has_approved_task_members(db: Session, task_id: int) -> bool:

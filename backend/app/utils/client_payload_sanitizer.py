@@ -8,6 +8,8 @@ from __future__ import annotations
 
 from typing import Any
 
+from app.core.payload_codec import run_payload_codec
+
 _PRIVATE_WORKFLOW_URL_KEYS = {
     "polling_url",
     "query_url",
@@ -26,3 +28,12 @@ def sanitize_client_payload(payload: Any) -> Any:
     if isinstance(payload, list):
         return [sanitize_client_payload(item) for item in payload]
     return payload
+
+
+async def sanitize_client_payload_nonblocking(payload: Any) -> Any:
+    """Sanitize potentially large results without blocking an async loop."""
+    return await run_payload_codec(
+        sanitize_client_payload,
+        payload,
+        payload_hint=payload,
+    )

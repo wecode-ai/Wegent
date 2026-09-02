@@ -115,6 +115,10 @@ def test_manual_archive_endpoint_updates_task_archive(
             }
         ),
     )
+    persist_mock = mocker.patch.object(
+        archive_service,
+        "_persist_task_archive_info_sync",
+    )
 
     response = test_client.post(f"/api/internal/workspace-archives/{task.id}/archive")
 
@@ -128,22 +132,11 @@ def test_manual_archive_endpoint_updates_task_archive(
     assert archived_at.utcoffset() == timedelta(hours=8)
     assert payload_expires_at.utcoffset() == timedelta(hours=8)
     archive_mock.assert_awaited_once()
-
-    test_db.expire_all()
-    persisted_task = (
-        test_db.query(TaskResource)
-        .filter(TaskResource.id == task.id, TaskResource.kind == "Task")
-        .first()
+    persist_mock.assert_called_once()
+    assert persist_mock.call_args.args[0] == task.id
+    assert persist_mock.call_args.args[1].storageKey == (
+        "workspace-archives/1385/archive.tar.gz"
     )
-    persisted_archive = persisted_task.json["status"]["archive"]
-    persisted_archived_at = datetime.fromisoformat(persisted_archive["archivedAt"])
-
-    assert persisted_archive["storageKey"] == "workspace-archives/1385/archive.tar.gz"
-    assert persisted_archive["sizeBytes"] == 1024
-    assert persisted_archived_at.utcoffset() == timedelta(hours=8)
-    persisted_expires_at = datetime.fromisoformat(persisted_archive["expiresAt"])
-    assert persisted_expires_at.utcoffset() == timedelta(hours=8)
-    assert persisted_expires_at.astimezone(expires_at.tzinfo) == expires_at
 
 
 def test_manual_archive_endpoint_returns_404_without_executor(
@@ -202,7 +195,7 @@ def test_restore_sandbox_endpoint_uses_sandbox_runtime(
     task = _create_task(test_db, task_id=1502, user_id=test_user.id)
     restore_mock = mocker.patch.object(
         archive_service,
-        "restore_workspace",
+        "restore_workspace_snapshot",
         new=AsyncMock(
             return_value={
                 "success": True,

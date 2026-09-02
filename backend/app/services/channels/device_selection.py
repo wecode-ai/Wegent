@@ -33,6 +33,25 @@ CHANNEL_USER_DEVICE_PREFIX = "channel:user_device:"
 CHANNEL_USER_DEVICE_TTL = 30 * 24 * 60 * 60
 
 
+def _load_default_execution_target_sync(user_id: int) -> Optional[str]:
+    """Load the persisted default target in a worker-owned session."""
+
+    from app.db.session import SessionLocal
+    from app.models.user import User
+    from app.services.user_mcp_service import UserMCPService
+
+    db = SessionLocal()
+    try:
+        user = db.query(User).filter(User.id == user_id).first()
+        if not user or not user.preferences:
+            return None
+        preferences = UserMCPService.load_preferences(user.preferences)
+        target = preferences.get("default_execution_target")
+        return str(target).strip() if target else None
+    finally:
+        db.close()
+
+
 class DeviceType(str, Enum):
     """Device execution type."""
 
@@ -96,19 +115,13 @@ class DeviceSelectionManager:
         Returns:
             DeviceSelection based on user preference, or None if not set
         """
-        from app.db.session import SessionLocal
-        from app.models.user import User
-
-        db = SessionLocal()
         try:
-            user = db.query(User).filter(User.id == user_id).first()
-            if not user or not user.preferences:
-                return None
+            from app.services.chat.storage.db import run_sync_in_executor
 
-            from app.services.user_mcp_service import UserMCPService
-
-            preferences = UserMCPService.load_preferences(user.preferences)
-            default_target = preferences.get("default_execution_target")
+            default_target = await run_sync_in_executor(
+                _load_default_execution_target_sync,
+                user_id,
+            )
             if not default_target:
                 return None
 
@@ -158,8 +171,6 @@ class DeviceSelectionManager:
                 e,
             )
             return None
-        finally:
-            db.close()
 
     @staticmethod
     async def get_selection(user_id: int) -> DeviceSelection:

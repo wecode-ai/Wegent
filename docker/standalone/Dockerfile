@@ -236,12 +236,15 @@ ENV WEGENT_WORKSPACE_ROOT=/workspace
 # Expose the single browser-facing standalone port
 EXPOSE 3000
 
+# /app/start.sh forwards SIGTERM to every service it owns.
+STOPSIGNAL SIGTERM
+
 # Data volume for service state and workspace artifacts
 VOLUME ["/app/data", "/workspace"]
 
 # Health check - verify main services are running
 HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
-    CMD curl -f http://localhost:8000/health \
+    CMD curl -fsS http://localhost:8000/api/ready \
       && curl -f http://localhost:3000 \
       && curl -f http://localhost:3000/wework/ \
       || exit 1

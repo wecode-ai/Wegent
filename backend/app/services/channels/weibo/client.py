@@ -17,6 +17,11 @@ from urllib.parse import urlencode
 import aiohttp
 
 from app.core.cache import cache_manager
+from app.core.payload_codec import (
+    decode_async_response_json,
+    encode_http_json,
+    run_payload_codec,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -145,16 +150,20 @@ class WeiboWebSocketClient:
 
     async def _fetch_token(self) -> WeiboToken:
         session = self._get_session()
+        request_body = await encode_http_json(
+            {"app_id": self.config.app_id, "app_secret": self.config.app_secret}
+        )
         async with session.post(
             self.config.token_endpoint,
-            json={"app_id": self.config.app_id, "app_secret": self.config.app_secret},
+            data=request_body,
+            headers={"Content-Type": "application/json"},
         ) as response:
             if response.status not in range(200, 300):
                 raise WeiboTokenFetchError(
                     f"Failed to fetch token: {response.status}",
                     retryable=response.status in RETRYABLE_TOKEN_STATUS_CODES,
                 )
-            payload = await response.json()
+            payload = await decode_async_response_json(response)
 
         data = payload.get("data") if isinstance(payload, dict) else None
         token = data.get("token") if isinstance(data, dict) else None
@@ -207,7 +216,12 @@ class WeiboWebSocketClient:
     async def send_json(self, data: dict[str, Any]) -> bool:
         if not self.is_connected:
             return False
-        await self._ws.send_str(json.dumps(data, ensure_ascii=False))
+        encoded = await run_payload_codec(
+            _encode_json,
+            data,
+            payload_hint=data,
+        )
+        await self._ws.send_str(encoded)
         return True
 
     async def start(self) -> None:
@@ -241,7 +255,11 @@ class WeiboWebSocketClient:
             data = getattr(message, "data", None)
             if not isinstance(data, str):
                 continue
-            parsed = self.handle_ws_text(data)
+            parsed = await run_payload_codec(
+                self.handle_ws_text,
+                data,
+                payload_hint=data,
+            )
             if parsed is None:
                 continue
             if self._on_message:
@@ -276,3 +294,7 @@ class WeiboWebSocketClient:
         self._session = None
         self._task = None
         self._heartbeat_task = None
+
+
+def _encode_json(data: dict[str, Any]) -> str:
+    return json.dumps(data, ensure_ascii=False)

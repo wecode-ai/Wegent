@@ -6,6 +6,8 @@
 Tests for WebSocket event tracing decorators.
 """
 
+import asyncio
+import threading
 from unittest.mock import AsyncMock, Mock, call, patch
 
 import pytest
@@ -384,7 +386,8 @@ class TestSafeSetAttribute:
 class TestSetEventDataAttributes:
     """Test suite for _set_event_data_attributes helper."""
 
-    def test_extracts_all_fields(self):
+    @pytest.mark.asyncio
+    async def test_extracts_all_fields(self):
         """Test that all event data fields are extracted."""
         mock_span = Mock()
         event_data = {
@@ -399,7 +402,7 @@ class TestSetEventDataAttributes:
             with patch(
                 "shared.telemetry.context.span.get_current_span", return_value=mock_span
             ):
-                _set_event_data_attributes(mock_span, event_data)
+                await _set_event_data_attributes(mock_span, event_data)
 
         # Verify all fields were set (including request body length/preview and server IP)
         calls = mock_span.set_attribute.call_args_list
@@ -409,7 +412,8 @@ class TestSetEventDataAttributes:
         # Verify the event was added for the full request body
         assert mock_span.add_event.called
 
-    def test_handles_missing_fields(self):
+    @pytest.mark.asyncio
+    async def test_handles_missing_fields(self):
         """Test that missing fields are handled gracefully."""
         mock_span = Mock()
         event_data = {
@@ -424,7 +428,7 @@ class TestSetEventDataAttributes:
                 "shared.telemetry.context.span.get_current_span", return_value=mock_span
             ):
                 # Should not raise exception
-                _set_event_data_attributes(mock_span, event_data)
+                await _set_event_data_attributes(mock_span, event_data)
 
         # task_id, server.ip, websocket.request_body.length, websocket.request_body.preview should be set
         calls = mock_span.set_attribute.call_args_list
@@ -432,7 +436,8 @@ class TestSetEventDataAttributes:
             len(calls) == 4
         )  # task_id, server.ip, websocket.request_body.length, websocket.request_body.preview
 
-    def test_handles_none_values(self):
+    @pytest.mark.asyncio
+    async def test_handles_none_values(self):
         """Test that None values are not set."""
         mock_span = Mock()
         event_data = {
@@ -447,7 +452,7 @@ class TestSetEventDataAttributes:
             with patch(
                 "shared.telemetry.context.span.get_current_span", return_value=mock_span
             ):
-                _set_event_data_attributes(mock_span, event_data)
+                await _set_event_data_attributes(mock_span, event_data)
 
         # team_id, server.ip, websocket.request_body.length, websocket.request_body.preview should be set
         calls = mock_span.set_attribute.call_args_list
@@ -456,3 +461,41 @@ class TestSetEventDataAttributes:
         )  # team_id, server.ip, websocket.request_body.length, websocket.request_body.preview
         assert calls[0][0][0] == "team_id"
         assert calls[0][0][1] == 456
+
+    @pytest.mark.asyncio
+    async def test_large_event_trace_projection_does_not_block_loop(self, monkeypatch):
+        entered = threading.Event()
+        release = threading.Event()
+
+        def blocking_projection(event_data):
+            assert len(event_data["content"]) > 64 * 1024
+            entered.set()
+            assert release.wait(timeout=1)
+            return "127.0.0.1", "{}"
+
+        monkeypatch.setattr(
+            "app.api.ws.decorators._project_event_data",
+            blocking_projection,
+        )
+        task = asyncio.create_task(
+            _set_event_data_attributes(
+                Mock(),
+                {"content": "x" * (64 * 1024 + 1)},
+            )
+        )
+
+        try:
+            for _ in range(100):
+                if entered.is_set():
+                    break
+                await asyncio.sleep(0.001)
+            assert entered.is_set()
+
+            loop_tick = asyncio.Event()
+            asyncio.get_running_loop().call_soon(loop_tick.set)
+            await asyncio.wait_for(loop_tick.wait(), timeout=0.1)
+            assert not task.done()
+        finally:
+            release.set()
+
+        await task

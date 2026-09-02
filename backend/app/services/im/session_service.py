@@ -11,8 +11,6 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Any, Sequence
 
-from sqlalchemy.orm import Session
-
 from app.core.cache import cache_manager
 from app.models.im_session import IMPrivateSession, IMSessionMode, IMSessionState
 
@@ -57,7 +55,6 @@ class IMSessionService:
 
     async def get_or_create_private_session(
         self,
-        db: Session | None,
         *,
         user_id: int,
         channel_type: str,
@@ -123,9 +120,7 @@ class IMSessionService:
         )
         await self._add_user_session(session)
 
-    async def list_user_sessions(
-        self, db: Session | None, *, user_id: int
-    ) -> list[IMPrivateSession]:
+    async def list_user_sessions(self, *, user_id: int) -> list[IMPrivateSession]:
         session_keys = await self._list_user_session_keys(user_id)
         sessions: list[IMPrivateSession] = []
         missing_keys: list[str] = []
@@ -153,7 +148,6 @@ class IMSessionService:
 
     async def enable_global_notification(
         self,
-        db: Session | None,
         *,
         session: IMPrivateSession,
     ) -> "IMGlobalNotificationSettings":
@@ -179,7 +173,6 @@ class IMSessionService:
 
     async def update_global_notification(
         self,
-        db: Session | None,
         *,
         user_id: int,
         enabled: bool,
@@ -267,7 +260,6 @@ class IMSessionService:
 
     async def subscribe_runtime_task_notification(
         self,
-        db: Session | None,
         *,
         session: IMPrivateSession,
         runtime_task: dict[str, Any],
@@ -282,7 +274,6 @@ class IMSessionService:
 
     async def list_runtime_task_notification_sessions(
         self,
-        db: Session | None,
         *,
         user_id: int,
         runtime_task: dict[str, Any],
@@ -365,13 +356,12 @@ class IMSessionService:
 
     async def list_active_runtime_task_sessions(
         self,
-        db: Session | None,
         *,
         user_id: int,
         runtime_task: dict[str, Any],
     ) -> list[IMPrivateSession]:
         task_key = self.runtime_task_notification_key(runtime_task)
-        sessions = await self.list_user_sessions(db, user_id=user_id)
+        sessions = await self.list_user_sessions(user_id=user_id)
         matched_sessions: list[IMPrivateSession] = []
         for session in sessions:
             if not isinstance(session.active_runtime_task, dict):
@@ -404,7 +394,6 @@ class IMSessionService:
 
     async def load_user_sessions_by_keys(
         self,
-        db: Session | None,
         *,
         user_id: int,
         session_keys: Sequence[str],
@@ -431,9 +420,7 @@ class IMSessionService:
             )
         return [sessions_by_key[session_key] for session_key in ordered_keys]
 
-    async def set_mode(
-        self, db: Session | None, *, session: IMPrivateSession, mode: str
-    ) -> None:
+    async def set_mode(self, *, session: IMPrivateSession, mode: str) -> None:
         session.mode = mode
         session.state = IMSessionState.IDLE
         session.pending_payload = {}
@@ -445,7 +432,6 @@ class IMSessionService:
 
     async def bind_active_task(
         self,
-        db: Session | None,
         *,
         session: IMPrivateSession,
         task_id: int,
@@ -460,7 +446,6 @@ class IMSessionService:
 
     async def bind_active_runtime_task(
         self,
-        db: Session | None,
         *,
         session: IMPrivateSession,
         runtime_task: dict[str, Any],
@@ -473,9 +458,7 @@ class IMSessionService:
         session.state_expires_at = None
         await self.save_session(session)
 
-    async def clear_active_task(
-        self, db: Session | None, *, session: IMPrivateSession
-    ) -> None:
+    async def clear_active_task(self, *, session: IMPrivateSession) -> None:
         session.active_task_id = None
         session.active_runtime_task = None
         session.state = IMSessionState.IDLE
@@ -485,7 +468,6 @@ class IMSessionService:
 
     async def set_pending_state(
         self,
-        db: Session | None,
         *,
         session: IMPrivateSession,
         state: str,
@@ -502,9 +484,7 @@ class IMSessionService:
         )
         await self.save_session(session)
 
-    async def cancel_pending(
-        self, db: Session | None, *, session: IMPrivateSession
-    ) -> None:
+    async def cancel_pending(self, *, session: IMPrivateSession) -> None:
         session.state = IMSessionState.IDLE
         session.pending_payload = {}
         session.state_expires_at = None
@@ -512,13 +492,12 @@ class IMSessionService:
 
     async def get_active_pending_payload(
         self,
-        db: Session | None,
         session: IMPrivateSession,
     ) -> dict[str, Any] | None:
         if session.state == IMSessionState.IDLE:
             return None
         if session.state_expires_at and session.state_expires_at < datetime.now():
-            await self.cancel_pending(db, session=session)
+            await self.cancel_pending(session=session)
             return None
         payload = session.pending_payload
         return payload if isinstance(payload, dict) else {}

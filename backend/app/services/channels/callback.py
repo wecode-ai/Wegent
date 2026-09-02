@@ -16,13 +16,17 @@ its own callback logic while sharing common infrastructure.
 import asyncio
 import json
 import logging
+import threading
 import time
+import weakref
 from abc import ABC, abstractmethod
+from collections import OrderedDict
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import TYPE_CHECKING, Any, Dict, Generic, Iterator, Optional, Tuple, TypeVar
 
 from app.core.cache import cache_manager
+from app.core.payload_codec import run_payload_codec
 
 if TYPE_CHECKING:
     from app.services.execution.emitters import ResultEmitter
@@ -34,6 +38,13 @@ logger = logging.getLogger(__name__)
 CHANNEL_TASK_CALLBACK_PREFIX = "channel:task_callback:"
 # TTL for task callback info (1 hour - should be enough for most tasks)
 CHANNEL_TASK_CALLBACK_TTL = 60 * 60
+CALLBACK_INFO_CACHE_MAX_ITEMS = 4096
+CALLBACK_INFO_NEGATIVE_TTL_SECONDS = 30
+CALLBACK_INFO_MAX_BYTES = 256 * 1024
+ACTIVE_EMITTER_MAX_ITEMS = 4096
+EMITTER_LOCK_STRIPES = 64
+EMITTER_CLEANUP_INTERVAL_SECONDS = 30
+EMITTER_CLEANUP_BATCH_SIZE = 32
 RUNTIME_LOCAL_TASK_CALLBACK_PREFIX = "runtime"
 
 
@@ -91,6 +102,57 @@ class BaseCallbackInfo:
 T = TypeVar("T", bound=BaseCallbackInfo)
 
 
+def _serialize_callback_info(callback_info: BaseCallbackInfo) -> tuple[str, int]:
+    """Serialize one callback descriptor and return its UTF-8 storage size."""
+    data = json.dumps(callback_info.to_dict())
+    return data, len(data.encode("utf-8"))
+
+
+def _parse_callback_info_payload(
+    parser: Any,
+    data: Any,
+) -> BaseCallbackInfo:
+    """Validate one bounded Redis payload and parse it in a codec worker."""
+    if isinstance(data, bytes):
+        if len(data) > CALLBACK_INFO_MAX_BYTES:
+            raise ValueError("Channel callback info exceeds its size limit")
+        decoded: Any = json.loads(data)
+    elif isinstance(data, str):
+        if len(data.encode("utf-8")) > CALLBACK_INFO_MAX_BYTES:
+            raise ValueError("Channel callback info exceeds its size limit")
+        decoded = json.loads(data)
+    elif isinstance(data, dict):
+        encoded = json.dumps(data).encode("utf-8")
+        if len(encoded) > CALLBACK_INFO_MAX_BYTES:
+            raise ValueError("Channel callback info exceeds its size limit")
+        decoded = data
+    else:
+        raise TypeError("Channel callback info must be a JSON object")
+    if not isinstance(decoded, dict):
+        raise TypeError("Channel callback info must decode to an object")
+    return parser(decoded)
+
+
+class _LoopTaskLocks:
+    """Provide a fixed number of task locks for each owning event loop."""
+
+    def __init__(self, stripe_count: int) -> None:
+        self._stripe_count = stripe_count
+        self._guard = threading.Lock()
+        self._by_loop: weakref.WeakKeyDictionary[
+            asyncio.AbstractEventLoop, tuple[asyncio.Lock, ...]
+        ] = weakref.WeakKeyDictionary()
+
+    def for_task(self, task_id: int | str) -> asyncio.Lock:
+        loop = asyncio.get_running_loop()
+        with self._guard:
+            locks = self._by_loop.get(loop)
+            if locks is None:
+                locks = tuple(asyncio.Lock() for _ in range(self._stripe_count))
+                self._by_loop[loop] = locks
+        return locks[hash(task_id) % self._stripe_count]
+
+
 class BaseChannelCallbackService(ABC, Generic[T]):
     """Abstract base class for channel callback services.
 
@@ -112,16 +174,26 @@ class BaseChannelCallbackService(ABC, Generic[T]):
         self._channel_type = channel_type
         # Cache of active streaming emitters: task_id -> ResultEmitter
         self._active_emitters: Dict[int, "ResultEmitter"] = {}
-        # Locks for each task to prevent concurrent emitter creation
-        self._emitter_locks: Dict[int, asyncio.Lock] = {}
-        # Global lock for accessing _emitter_locks dict
-        self._locks_lock = asyncio.Lock()
-        # Track last emitted content offset for each task to calculate delta
-        self._last_emitted_offsets: Dict[int, int] = {}
+        # A fixed number of event-loop-local stripes prevents duplicate emitter
+        # creation without retaining one asyncio.Lock for every historical task.
+        self._emitter_locks = _LoopTaskLocks(EMITTER_LOCK_STRIPES)
+        self._emitter_reservations: set[int | str] = set()
+        self._active_emitter_max_items = ACTIVE_EMITTER_MAX_ITEMS
         # Track emitter creation time for TTL cleanup
         self._emitter_created_at: Dict[int, float] = {}
         # Emitter TTL in seconds (30 minutes)
         self._emitter_ttl = 30 * 60
+        self._emitter_cleanup_interval = EMITTER_CLEANUP_INTERVAL_SECONDS
+        self._emitter_cleanup_batch_size = EMITTER_CLEANUP_BATCH_SIZE
+        self._last_emitter_cleanup_at = 0.0
+        # Executor callbacks can arrive many times per second. Redis remains the
+        # source of truth for the first lookup in this process, while this
+        # bounded cache prevents multiplying every event by every registered
+        # channel type. Channel handlers persist callback info before dispatch.
+        self._callback_info_cache: OrderedDict[int | str, tuple[float, Optional[T]]] = (
+            OrderedDict()
+        )
+        self._callback_info_cache_max_items = CALLBACK_INFO_CACHE_MAX_ITEMS
 
     @property
     def channel_type(self) -> ChannelType:
@@ -132,17 +204,6 @@ class BaseChannelCallbackService(ABC, Generic[T]):
     def redis_key_prefix(self) -> str:
         """Get the Redis key prefix for this channel type."""
         return f"{CHANNEL_TASK_CALLBACK_PREFIX}{self._channel_type.value}:"
-
-    async def _get_lock_for_task(self, task_id: int) -> asyncio.Lock:
-        """Get or create a lock for a specific task."""
-        async with self._locks_lock:
-            if task_id not in self._emitter_locks:
-                self._emitter_locks[task_id] = asyncio.Lock()
-            return self._emitter_locks[task_id]
-
-    def _remove_lock_for_task(self, task_id: int) -> None:
-        """Remove lock for a task (called during cleanup)."""
-        self._emitter_locks.pop(task_id, None)
 
     @abstractmethod
     async def _create_emitter(
@@ -178,21 +239,6 @@ class BaseChannelCallbackService(ABC, Generic[T]):
         """
         pass
 
-    @abstractmethod
-    def _extract_thinking_display(self, thinking: Any) -> str:
-        """Extract thinking content for display.
-
-        This method should be implemented by each channel to format
-        thinking content appropriately for the channel's UI.
-
-        Args:
-            thinking: Thinking content from AI response
-
-        Returns:
-            Formatted thinking text for display
-        """
-        pass
-
     async def _get_or_create_emitter(
         self, task_id: int, subtask_id: int
     ) -> Optional["ResultEmitter"]:
@@ -221,7 +267,7 @@ class BaseChannelCallbackService(ABC, Generic[T]):
             return emitter
 
         # Get lock for this task to prevent concurrent creation
-        task_lock = await self._get_lock_for_task(task_id)
+        task_lock = self._emitter_locks.for_task(task_id)
 
         async with task_lock:
             # Double-check after acquiring lock
@@ -242,6 +288,18 @@ class BaseChannelCallbackService(ABC, Generic[T]):
             callback_info = await self.get_callback_info(task_id)
             if not callback_info:
                 return None
+
+            if not self._reserve_emitter_capacity(task_id):
+                await self._cleanup_expired_emitters(force=True)
+                if not self._reserve_emitter_capacity(task_id):
+                    logger.error(
+                        "[%sCallback] Active emitter capacity exhausted: "
+                        "task=%s, capacity=%s",
+                        self._channel_type.value,
+                        task_id,
+                        self._active_emitter_max_items,
+                    )
+                    return None
 
             try:
                 # Create channel-specific emitter
@@ -271,6 +329,8 @@ class BaseChannelCallbackService(ABC, Generic[T]):
                     f"[{self._channel_type.value}Callback] Failed to create emitter for task {task_id}: {e}"
                 )
                 return None
+            finally:
+                self._emitter_reservations.discard(task_id)
 
     async def _remove_emitter(self, task_id: int) -> None:
         """Remove emitter, lock, and offset tracking from cache.
@@ -292,19 +352,37 @@ class BaseChannelCallbackService(ABC, Generic[T]):
             await cache_manager.delete(streaming_content_key)
         except Exception:
             pass
-        self._remove_lock_for_task(task_id)
-        # Clean up offset tracking
-        self._last_emitted_offsets.pop(task_id, None)
         self._emitter_created_at.pop(task_id, None)
 
-    async def _cleanup_expired_emitters(self) -> None:
-        """Remove emitters that have exceeded the TTL to prevent memory leaks."""
+    def _reserve_emitter_capacity(self, task_id: int | str) -> bool:
+        """Reserve one bounded active-emitter slot without awaiting."""
+        if task_id in self._active_emitters or task_id in self._emitter_reservations:
+            return True
+        used = len(self._active_emitters) + len(self._emitter_reservations)
+        if used >= self._active_emitter_max_items:
+            return False
+        self._emitter_reservations.add(task_id)
+        return True
+
+    async def _cleanup_expired_emitters(self, *, force: bool = False) -> None:
+        """Remove one bounded batch of expired emitters at a fixed cadence."""
+        monotonic_now = time.monotonic()
+        if (
+            not force
+            and monotonic_now - self._last_emitter_cleanup_at
+            < self._emitter_cleanup_interval
+        ):
+            return
+        self._last_emitter_cleanup_at = monotonic_now
+
         now = time.time()
-        expired = [
-            task_id
-            for task_id, created_at in self._emitter_created_at.items()
-            if now - created_at > self._emitter_ttl
-        ]
+        expired: list[int] = []
+        for task_id, created_at in self._emitter_created_at.items():
+            if now - created_at <= self._emitter_ttl:
+                continue
+            expired.append(task_id)
+            if len(expired) >= self._emitter_cleanup_batch_size:
+                break
         for task_id in expired:
             logger.warning(
                 f"[{self._channel_type.value}Callback] Emitter for task {task_id} "
@@ -325,22 +403,41 @@ class BaseChannelCallbackService(ABC, Generic[T]):
             task_id: Task ID
             emitter: ResultEmitter instance to register
         """
-        if task_id in self._active_emitters:
-            old_emitter = self._active_emitters[task_id]
-            if old_emitter is not emitter and hasattr(old_emitter, "close"):
-                try:
-                    await old_emitter.close()
-                except Exception:
-                    logger.exception(
-                        f"[{self._channel_type.value}Callback] Failed to close old emitter "
-                        f"for task {task_id}"
-                    )
-        self._active_emitters[task_id] = emitter
-        self._emitter_created_at[task_id] = time.time()
-        logger.info(
-            f"[{self._channel_type.value}Callback] Registered external emitter "
-            f"for task {task_id}: emitter={emitter.__class__.__name__}"
-        )
+        await self._cleanup_expired_emitters()
+        task_lock = self._emitter_locks.for_task(task_id)
+        async with task_lock:
+            if task_id not in self._active_emitters:
+                if not self._reserve_emitter_capacity(task_id):
+                    await self._cleanup_expired_emitters(force=True)
+                    if not self._reserve_emitter_capacity(task_id):
+                        logger.error(
+                            "[%sCallback] Refusing external emitter at capacity: "
+                            "task=%s, capacity=%s",
+                            self._channel_type.value,
+                            task_id,
+                            self._active_emitter_max_items,
+                        )
+                        return
+
+            try:
+                if task_id in self._active_emitters:
+                    old_emitter = self._active_emitters[task_id]
+                    if old_emitter is not emitter and hasattr(old_emitter, "close"):
+                        try:
+                            await old_emitter.close()
+                        except Exception:
+                            logger.exception(
+                                f"[{self._channel_type.value}Callback] Failed to close old emitter "
+                                f"for task {task_id}"
+                            )
+                self._active_emitters[task_id] = emitter
+                self._emitter_created_at[task_id] = time.time()
+                logger.info(
+                    f"[{self._channel_type.value}Callback] Registered external emitter "
+                    f"for task {task_id}: emitter={emitter.__class__.__name__}"
+                )
+            finally:
+                self._emitter_reservations.discard(task_id)
 
     async def emit_event(
         self, task_id: int, subtask_id: int, event: "ExecutionEvent"
@@ -371,8 +468,11 @@ class BaseChannelCallbackService(ABC, Generic[T]):
         ):
             return False
 
-        # Fast path: skip if no callback info exists for this task
-        if not await self.has_callback_info(task_id):
+        # An active emitter proves this task belongs to the channel. Avoid a
+        # Redis lookup on every stream frame after the first one.
+        if task_id not in self._active_emitters and not await self.has_callback_info(
+            task_id
+        ):
             return False
 
         try:
@@ -396,98 +496,6 @@ class BaseChannelCallbackService(ABC, Generic[T]):
             )
             return False
 
-    async def send_progress(
-        self,
-        task_id: int,
-        subtask_id: int,
-        content: str,
-        offset: int,
-        thinking: Optional[Any] = None,
-    ) -> bool:
-        """Send streaming progress update to the channel.
-
-        This method receives FULL content but calculates and sends only the DELTA
-        (incremental content) to the emitter. It tracks the last emitted offset
-        for each task to avoid sending duplicate content.
-
-        Args:
-            task_id: Task ID
-            subtask_id: Subtask ID
-            content: Full content (result.value) - NOT delta
-            offset: Current offset in full content (used for tracking)
-            thinking: Thinking content (optional)
-
-        Returns:
-            True if sent successfully, False otherwise
-        """
-        try:
-            emitter = await self._get_or_create_emitter(task_id, subtask_id)
-            if not emitter:
-                return False
-
-            # Get last emitted offset for this task
-            last_offset = self._last_emitted_offsets.get(task_id, 0)
-
-            # Build display content - include thinking if available
-            # For thinking, we always show the latest status (not accumulated)
-            thinking_text = ""
-            if thinking:
-                thinking_text = self._extract_thinking_display(thinking)
-
-            # Calculate delta content (only new content since last emit)
-            delta_content = ""
-            if content and len(content) > last_offset:
-                delta_content = content[last_offset:]
-
-            # If no new content and no thinking update, skip
-            if not delta_content and not thinking_text:
-                return False
-
-            # Build the chunk to send
-            # For the first chunk, include thinking prefix if present
-            chunk_to_send = ""
-            if last_offset == 0 and thinking_text:
-                # First chunk: include thinking status
-                chunk_to_send = f"{thinking_text}\n\n"
-                if delta_content:
-                    chunk_to_send += "**回复:**\n"
-                    chunk_to_send += delta_content
-            elif delta_content:
-                # Subsequent chunks: only send delta content
-                chunk_to_send = delta_content
-            elif thinking_text:
-                # Only thinking update (tool use), send thinking status
-                chunk_to_send = f"{thinking_text}\n\n"
-
-            if not chunk_to_send:
-                return False
-
-            # Update last emitted offset
-            if content:
-                self._last_emitted_offsets[task_id] = len(content)
-
-            # Send chunk update with delta content
-            await emitter.emit_chunk(
-                task_id=task_id,
-                subtask_id=subtask_id,
-                content=chunk_to_send,
-                offset=offset,
-            )
-
-            logger.debug(
-                f"[{self._channel_type.value}Callback] Sent progress delta: "
-                f"task={task_id}, last_offset={last_offset}, new_offset={len(content) if content else 0}, "
-                f"delta_len={len(delta_content)}, has_thinking={bool(thinking_text)}"
-            )
-
-            return True
-
-        except Exception as e:
-            logger.warning(
-                f"[{self._channel_type.value}Callback] Failed to send progress for task {task_id}: {e}"
-            )
-            return False
-
     async def save_callback_info(
         self,
         task_id: int,
@@ -500,8 +508,18 @@ class BaseChannelCallbackService(ABC, Generic[T]):
             callback_info: Channel-specific callback information
         """
         key = f"{self.redis_key_prefix}{task_id}"
-        data = json.dumps(callback_info.to_dict())
+        data, encoded_size = await run_payload_codec(
+            _serialize_callback_info,
+            callback_info,
+            payload_hint=callback_info,
+            force_offload=True,
+        )
+        if encoded_size > CALLBACK_INFO_MAX_BYTES:
+            raise ValueError(
+                f"Channel callback info exceeds {CALLBACK_INFO_MAX_BYTES} bytes"
+            )
         await cache_manager.set(key, data, expire=CHANNEL_TASK_CALLBACK_TTL)
+        self._cache_callback_info(task_id, callback_info, CHANNEL_TASK_CALLBACK_TTL)
         logger.info(
             f"[{self._channel_type.value}Callback] Saved callback info for task {task_id}"
         )
@@ -515,19 +533,40 @@ class BaseChannelCallbackService(ABC, Generic[T]):
         Returns:
             CallbackInfo or None if not found
         """
+        cached, found = self._get_cached_callback_info(task_id)
+        if found:
+            return cached
+
         key = f"{self.redis_key_prefix}{task_id}"
         data = await cache_manager.get(key)
         if data:
             try:
-                return self._parse_callback_info(json.loads(data))
-            except (json.JSONDecodeError, TypeError) as e:
+                callback_info = await run_payload_codec(
+                    _parse_callback_info_payload,
+                    self._parse_callback_info,
+                    data,
+                    payload_hint=data,
+                    force_offload=True,
+                )
+                self._cache_callback_info(
+                    task_id,
+                    callback_info,
+                    CHANNEL_TASK_CALLBACK_TTL,
+                )
+                return callback_info
+            except (json.JSONDecodeError, TypeError, ValueError) as e:
                 logger.error(
                     f"[{self._channel_type.value}Callback] Failed to parse callback info for task {task_id}: {e}"
                 )
+        self._cache_callback_info(
+            task_id,
+            None,
+            CALLBACK_INFO_NEGATIVE_TTL_SECONDS,
+        )
         return None
 
     async def has_callback_info(self, task_id: int) -> bool:
-        """Check if callback info exists for a task without full deserialization.
+        """Check the bounded callback-info cache, loading Redis on first use.
 
         Args:
             task_id: Task ID
@@ -535,9 +574,7 @@ class BaseChannelCallbackService(ABC, Generic[T]):
         Returns:
             True if callback info exists, False otherwise
         """
-        key = f"{self.redis_key_prefix}{task_id}"
-        data = await cache_manager.get(key)
-        return data is not None
+        return await self.get_callback_info(task_id) is not None
 
     async def delete_callback_info(self, task_id: int) -> None:
         """Delete callback info for a task.
@@ -547,9 +584,40 @@ class BaseChannelCallbackService(ABC, Generic[T]):
         """
         key = f"{self.redis_key_prefix}{task_id}"
         await cache_manager.delete(key)
+        self._callback_info_cache.pop(task_id, None)
         logger.debug(
             f"[{self._channel_type.value}Callback] Deleted callback info for task {task_id}"
         )
+
+    def _get_cached_callback_info(
+        self,
+        task_id: int | str,
+    ) -> tuple[Optional[T], bool]:
+        """Return one unexpired callback cache entry and refresh its LRU age."""
+        entry = self._callback_info_cache.get(task_id)
+        if entry is None:
+            return None, False
+        expires_at, callback_info = entry
+        if expires_at <= time.monotonic():
+            self._callback_info_cache.pop(task_id, None)
+            return None, False
+        self._callback_info_cache.move_to_end(task_id)
+        return callback_info, True
+
+    def _cache_callback_info(
+        self,
+        task_id: int | str,
+        callback_info: Optional[T],
+        ttl_seconds: float,
+    ) -> None:
+        """Store one callback lookup without allowing unbounded process memory."""
+        self._callback_info_cache[task_id] = (
+            time.monotonic() + ttl_seconds,
+            callback_info,
+        )
+        self._callback_info_cache.move_to_end(task_id)
+        while len(self._callback_info_cache) > self._callback_info_cache_max_items:
+            self._callback_info_cache.popitem(last=False)
 
     async def send_task_result(
         self,

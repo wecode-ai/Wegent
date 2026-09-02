@@ -12,6 +12,8 @@ so a missing Socket.IO loop (tests, early startup) never blocks assignment.
 import asyncio
 import logging
 
+from app.core.web_background_tasks import web_background_task_manager
+
 logger = logging.getLogger(__name__)
 
 _socketio_loop: asyncio.AbstractEventLoop | None = None
@@ -60,7 +62,7 @@ def wake_robot_creator(*, user_id: int, project_id: str, agent_id: str) -> None:
                 exc_info=True,
             )
 
-    try:
-        asyncio.run_coroutine_threadsafe(_emit(), loop)
-    except Exception:
-        logger.debug("[RobotQueue] Wake push scheduling failed", exc_info=True)
+    web_background_task_manager.submit_from_sync(
+        _emit,
+        name=f"robot-queue-wake-{user_id}-{project_id}-{agent_id}",
+    )

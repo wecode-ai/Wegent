@@ -4,7 +4,6 @@
 
 """Message Forwarding Service for forwarding messages to work queues."""
 
-import asyncio
 import logging
 from datetime import datetime
 from typing import Any, Dict, List, Optional
@@ -12,6 +11,7 @@ from typing import Any, Dict, List, Optional
 from sqlalchemy.orm import Session
 
 from app.core.exceptions import ForbiddenException, NotFoundException
+from app.core.web_background_tasks import web_background_task_manager
 from app.db.session import SessionLocal
 from app.models.subtask import Subtask
 from app.models.user import User
@@ -342,62 +342,34 @@ class MessageForwardingService:
             priority: Message priority
             created_at: Message creation time
         """
-        try:
-            from app.services.chat.webpage_ws_chat_emitter import (
-                get_main_event_loop,
-                get_webpage_ws_emitter,
-            )
+        from app.services.chat.webpage_ws_chat_emitter import get_webpage_ws_emitter
 
-            ws_emitter = get_webpage_ws_emitter()
-            if not ws_emitter:
-                logger.warning(
-                    "[MessageForwarding] WebSocket emitter not initialized, skipping notification"
-                )
-                return
+        ws_emitter = get_webpage_ws_emitter()
+        if ws_emitter is None:
+            raise RuntimeError("WebSocket emitter is not initialized")
 
-            # Generate preview from content snapshots
-            preview = ""
-            if content_snapshots:
-                # Get the last user message for preview
-                for snapshot in reversed(content_snapshots):
-                    if snapshot.role == "USER" and snapshot.content:
-                        preview = snapshot.content[:200]
-                        break
-                # Fallback to first message if no user message found
-                if not preview and content_snapshots[0].content:
-                    preview = content_snapshots[0].content[:200]
+        preview = ""
+        for snapshot in reversed(content_snapshots):
+            if snapshot.role == "USER" and snapshot.content:
+                preview = snapshot.content[:200]
+                break
+        if not preview and content_snapshots and content_snapshots[0].content:
+            preview = content_snapshots[0].content[:200]
 
-            # Get the main event loop for async emit
-            main_loop = get_main_event_loop()
-            if main_loop and main_loop.is_running():
-                # Schedule the emit in the main event loop
-                asyncio.run_coroutine_threadsafe(
-                    ws_emitter.emit_queue_message_received(
-                        user_id=recipient_user_id,
-                        message_id=message_id,
-                        queue_id=queue_id,
-                        queue_name=queue_name,
-                        sender_id=sender_id,
-                        sender_name=sender_name,
-                        preview=preview,
-                        priority=priority.value,
-                        created_at=created_at.isoformat(),
-                    ),
-                    main_loop,
-                )
-                logger.debug(
-                    f"[MessageForwarding] Scheduled WebSocket notification for user {recipient_user_id}"
-                )
-            else:
-                logger.warning(
-                    "[MessageForwarding] Main event loop not available, skipping WebSocket notification"
-                )
-
-        except Exception as e:
-            # Don't fail the message forwarding if notification fails
-            logger.error(
-                f"[MessageForwarding] Failed to send WebSocket notification: {e}"
-            )
+        web_background_task_manager.submit_from_sync(
+            lambda: ws_emitter.emit_queue_message_received(
+                user_id=recipient_user_id,
+                message_id=message_id,
+                queue_id=queue_id,
+                queue_name=queue_name,
+                sender_id=sender_id,
+                sender_name=sender_name,
+                preview=preview,
+                priority=priority.value,
+                created_at=created_at.isoformat(),
+            ),
+            name=f"forwarded-message-notification-{message_id}",
+        )
 
 
 # Global service instance

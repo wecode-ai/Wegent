@@ -4,6 +4,7 @@
 
 """Tests for optional Seedance asset-library staging."""
 
+import json
 from typing import Any
 
 import pytest
@@ -18,7 +19,8 @@ class _Response:
     def __init__(self, payload: dict[str, Any]):
         self.payload = payload
         self.status_code = 200
-        self.text = ""
+        self.content = json.dumps(payload).encode()
+        self.text = self.content.decode()
 
     def json(self) -> dict[str, Any]:
         return self.payload
@@ -70,5 +72,5 @@ async def test_asset_staging_passes_asset_url_to_seedance(monkeypatch) -> None:
 
     assert prepared == [{"url": "asset://asset-1"}]
     assert client.calls[0]["url"].endswith("/CreateAsset")
-    assert client.calls[0]["json"]["GroupId"] == "group-1"
+    assert json.loads(client.calls[0]["content"])["GroupId"] == "group-1"
     assert client.calls[0]["headers"]["wecode-user"] == "yansheng3"

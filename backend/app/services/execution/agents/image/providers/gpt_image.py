@@ -11,6 +11,12 @@ from urllib.parse import unquote_to_bytes, urljoin
 
 import httpx
 
+from app.core.payload_codec import (
+    decode_sync_response_json,
+    decode_sync_response_text,
+    encode_http_json,
+    run_payload_codec,
+)
 from app.services.web_scraper.security import WebScraperUrlGuard
 
 from .base import ImageGenerationResult, ImageProvider, ImageResult
@@ -82,19 +88,18 @@ class GptImageProvider(ImageProvider):
             else:
                 response = await client.post(
                     url=url,
-                    json=payload,
+                    content=await encode_http_json(payload),
                     headers=self._request_headers(),
                 )
 
         if response.status_code >= 400:
-            raise RuntimeError(
-                f"GPT image API error ({response.status_code}): "
-                f"{self._extract_error(response)}"
-            )
+            error = await self._extract_error(response)
+            raise RuntimeError(f"GPT image API error ({response.status_code}): {error}")
 
-        data = response.json()
+        data = await decode_sync_response_json(response)
         if data.get("error"):
-            raise RuntimeError(f"GPT image API error: {self._extract_error(response)}")
+            error = await self._extract_error(response)
+            raise RuntimeError(f"GPT image API error: {error}")
 
         size = payload.get("size") or data.get("size")
         images = [
@@ -219,10 +224,19 @@ class GptImageProvider(ImageProvider):
             return await cls._load_remote_reference_image(client, reference)
 
         if reference.startswith("data:"):
-            return cls._decode_data_url(reference)
+            return await run_payload_codec(
+                cls._decode_data_url,
+                reference,
+                payload_hint=reference,
+            )
 
         try:
-            return base64.b64decode(reference, validate=True), "image/png"
+            decoded = await run_payload_codec(
+                cls._decode_base64_reference,
+                reference,
+                payload_hint=reference,
+            )
+            return decoded, "image/png"
         except ValueError as exc:
             raise ValueError(
                 "Reference image must be a URL or base64 data URL"
@@ -289,6 +303,10 @@ class GptImageProvider(ImageProvider):
         return unquote_to_bytes(encoded), mime_type
 
     @staticmethod
+    def _decode_base64_reference(reference: str) -> bytes:
+        return base64.b64decode(reference, validate=True)
+
+    @staticmethod
     def _extension_for_mime_type(mime_type: str) -> str:
         return {
             "image/jpeg": "jpg",
@@ -297,15 +315,16 @@ class GptImageProvider(ImageProvider):
         }.get(mime_type.lower(), "png")
 
     @staticmethod
-    def _extract_error(response: httpx.Response | Any) -> str:
+    async def _extract_error(response: httpx.Response | Any) -> str:
         try:
-            data = response.json()
+            data = await decode_sync_response_json(response)
         except Exception:
-            return getattr(response, "text", "unknown error")
+            text = await decode_sync_response_text(response)
+            return text or "unknown error"
 
         error = data.get("error")
         if isinstance(error, dict):
             return str(error.get("message") or error)
         if error:
             return str(error)
-        return getattr(response, "text", "unknown error")
+        return await decode_sync_response_text(response) or "unknown error"

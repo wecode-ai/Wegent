@@ -17,7 +17,7 @@ router = APIRouter()
 
 
 @router.api_route("/{path:path}", methods=["GET"])
-async def get_quota(
+def get_quota(
     path: str, request: Request, current_user: User = Depends(security.get_current_user)
 ):
     """

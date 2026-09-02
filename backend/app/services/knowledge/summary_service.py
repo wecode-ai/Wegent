@@ -514,6 +514,13 @@ class SummaryService:
 
     async def get_document_summary(self, document_id: int) -> Optional[DocumentSummary]:
         """Get document summary."""
+        return self.get_document_summary_sync(document_id)
+
+    def get_document_summary_sync(
+        self,
+        document_id: int,
+    ) -> Optional[DocumentSummary]:
+        """Read a document summary in a synchronous DB phase."""
         document = (
             self.db.query(KnowledgeDocument)
             .filter(KnowledgeDocument.id == document_id)
@@ -790,6 +797,10 @@ class SummaryService:
 
     async def get_kb_summary(self, kb_id: int) -> Optional[KnowledgeBaseSummary]:
         """Get knowledge base summary."""
+        return self.get_kb_summary_sync(kb_id)
+
+    def get_kb_summary_sync(self, kb_id: int) -> Optional[KnowledgeBaseSummary]:
+        """Read a knowledge base summary in a synchronous DB phase."""
         kb = (
             self.db.query(Kind)
             .filter(
@@ -819,6 +830,21 @@ class SummaryService:
         content: str,
     ) -> Optional[KnowledgeBaseSummary]:
         """Persist manual KB summary override."""
+        return self.update_kb_manual_summary_sync(
+            kb_id=kb_id,
+            user_id=user_id,
+            user_name=user_name,
+            content=content,
+        )
+
+    def update_kb_manual_summary_sync(
+        self,
+        kb_id: int,
+        user_id: int,
+        user_name: str,
+        content: str,
+    ) -> Optional[KnowledgeBaseSummary]:
+        """Persist a manual KB summary in a synchronous DB phase."""
         kb = (
             self.db.query(Kind)
             .filter(
@@ -843,12 +869,19 @@ class SummaryService:
 
         self._persist_kb_summary(kb, summary_data)
 
-        return await self.get_kb_summary(kb_id)
+        return self.get_kb_summary_sync(kb_id)
 
     async def reset_kb_manual_summary(
         self, kb_id: int
     ) -> Optional[KnowledgeBaseSummary]:
         """Clear manual KB summary override while preserving AI summary."""
+        return self.reset_kb_manual_summary_sync(kb_id)
+
+    def reset_kb_manual_summary_sync(
+        self,
+        kb_id: int,
+    ) -> Optional[KnowledgeBaseSummary]:
+        """Clear a manual KB summary in a synchronous DB phase."""
         kb = (
             self.db.query(Kind)
             .filter(
@@ -872,7 +905,7 @@ class SummaryService:
 
         self._persist_kb_summary(kb, summary_data)
 
-        return await self.get_kb_summary(kb_id)
+        return self.get_kb_summary_sync(kb_id)
 
     async def refresh_kb_summary(
         self, kb_id: int, user_id: int, user_name: str

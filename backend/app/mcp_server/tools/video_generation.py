@@ -7,7 +7,6 @@
 import logging
 from typing import Any, Optional
 
-from app.db.session import SessionLocal
 from app.mcp_server.auth import TaskTokenInfo
 from app.mcp_server.tools.decorator import mcp_tool
 from app.services.execution.agents.video.generation_service import (
@@ -44,10 +43,8 @@ async def generate_video(
     reference_audios: Optional[list[str | int]] = None,
 ) -> dict[str, Any]:
     """Start a durable video generation job."""
-    db = SessionLocal()
     try:
         return await video_generation_service.create_job(
-            db=db,
             token_info=token_info,
             prompt=prompt,
             ratio=ratio,
@@ -62,5 +59,3 @@ async def generate_video(
     except Exception as exc:
         logger.exception("[MCP:Video] generate_video failed")
         return {"error": str(exc)}
-    finally:
-        db.close()

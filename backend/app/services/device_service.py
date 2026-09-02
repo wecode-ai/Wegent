@@ -28,12 +28,43 @@ from sqlalchemy.orm.attributes import flag_modified
 
 from app.models.kind import Kind
 from app.schemas.device import DeviceType
+from app.services.device.base_provider import DeviceRecord
 from app.services.device.display_name import (
     resolve_device_display_name,
     set_device_display_name,
 )
 
 logger = logging.getLogger(__name__)
+
+
+def _load_owned_device_records(user_id: int) -> tuple[DeviceRecord, ...]:
+    """Load detached Device CRDs in a worker-owned database transaction."""
+
+    from app.services.chat.storage.db import get_db_session
+
+    with get_db_session() as db:
+        devices = (
+            db.query(Kind)
+            .filter(
+                and_(
+                    Kind.user_id == user_id,
+                    Kind.kind == "Device",
+                    Kind.namespace == "default",
+                    Kind.is_active == True,
+                )
+            )
+            .all()
+        )
+        return tuple(
+            DeviceRecord(
+                id=int(device.id),
+                name=str(device.name),
+                json=(
+                    copy.deepcopy(device.json) if isinstance(device.json, dict) else {}
+                ),
+            )
+            for device in devices
+        )
 
 
 class RuntimeInstanceMismatchError(ValueError):
@@ -327,6 +358,25 @@ class DeviceService:
         return devices
 
     @staticmethod
+    async def get_all_devices_nonblocking(user_id: int) -> List[Dict[str, Any]]:
+        """List all devices without carrying a request Session across awaits."""
+
+        from app.services.chat.storage.db import run_sync_in_executor
+        from app.services.device.provider_factory import DeviceProviderFactory
+
+        records = await run_sync_in_executor(_load_owned_device_records, user_id)
+        devices: List[Dict[str, Any]] = []
+        for provider in DeviceProviderFactory.get_all_providers().values():
+            devices.extend(
+                await provider.list_device_records(
+                    records,
+                    user_id,
+                    include_offline=True,
+                )
+            )
+        return devices
+
+    @staticmethod
     async def get_online_devices(db: Session, user_id: int) -> List[Dict[str, Any]]:
         """Get only online devices for a user.
 
@@ -343,6 +393,25 @@ class DeviceService:
         for provider in DeviceProviderFactory.get_all_providers().values():
             devices.extend(
                 await provider.list_devices(db, user_id, include_offline=False)
+            )
+        return devices
+
+    @staticmethod
+    async def get_online_devices_nonblocking(user_id: int) -> List[Dict[str, Any]]:
+        """List online devices using detached CRDs and batched Redis lookups."""
+
+        from app.services.chat.storage.db import run_sync_in_executor
+        from app.services.device.provider_factory import DeviceProviderFactory
+
+        records = await run_sync_in_executor(_load_owned_device_records, user_id)
+        devices: List[Dict[str, Any]] = []
+        for provider in DeviceProviderFactory.get_all_providers().values():
+            devices.extend(
+                await provider.list_device_records(
+                    records,
+                    user_id,
+                    include_offline=False,
+                )
             )
         return devices
 

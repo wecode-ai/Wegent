@@ -648,7 +648,7 @@ def _create_httpx_async_request_hook(capture_settings: dict, logger: logging.Log
                         # For ByteStream, try to get the underlying bytes
                         if hasattr(stream, "__iter__"):
                             # Don't consume the iterator, just log that it exists
-                            logger.info(
+                            logger.debug(
                                 "[OTEL DEBUG] Stream is iterable, cannot capture without consuming"
                             )
 
@@ -658,7 +658,7 @@ def _create_httpx_async_request_hook(capture_settings: dict, logger: logging.Log
                             f"[OTEL DEBUG] Captured request body: {len(body) if isinstance(body, (bytes, str)) else 'unknown'} bytes/chars"
                         )
                     else:
-                        logger.info("[OTEL DEBUG] No request body found to capture")
+                        logger.debug("[OTEL DEBUG] No request body found to capture")
                 except Exception as e:
                     logger.warning(
                         f"[OTEL DEBUG] Failed to capture HTTPX async request body: {e}"

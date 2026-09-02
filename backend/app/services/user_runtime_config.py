@@ -4,8 +4,10 @@
 
 """User-scoped runtime configuration storage and device sync."""
 
+import copy
 import hashlib
 import json
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any, Iterable, Optional
 from urllib.parse import urlsplit
@@ -38,6 +40,15 @@ class UserRuntimeConfigError(ValueError):
 
 class UserRuntimeConfigSyncError(RuntimeError):
     """Raised when a runtime config cannot be synced."""
+
+
+@dataclass(frozen=True)
+class RuntimeAuthSyncPayload:
+    """Detached runtime auth data safe to carry across an executor boundary."""
+
+    runtime: str
+    target_path: str
+    auth_json: str
 
 
 RUNTIME_AUTH_FILES: dict[str, dict[str, str]] = {
@@ -348,7 +359,6 @@ class UserRuntimeConfigService:
 
     async def import_auth_json_from_device(
         self,
-        db: Session,
         *,
         user_id: int,
         runtime: str,
@@ -360,7 +370,7 @@ class UserRuntimeConfigService:
         target_path = RUNTIME_AUTH_FILES[normalized_runtime]["target_path"]
         try:
             result = await execute_configured_device_command(
-                db=db,
+                db=None,
                 user_id=user_id,
                 device_id=device_id,
                 command_key="read_runtime_auth_file",
@@ -382,13 +392,34 @@ class UserRuntimeConfigService:
         if not isinstance(stdout, dict) or not isinstance(stdout.get("content"), str):
             raise UserRuntimeConfigSyncError("device returned an invalid auth file")
 
-        return self.save_auth_json(
-            db,
-            user_id=user_id,
-            runtime=normalized_runtime,
-            auth_json=stdout["content"],
-            preferences=preferences,
+        from app.services.chat.storage.db import run_sync_in_executor
+
+        return await run_sync_in_executor(
+            self._save_imported_auth_json_sync,
+            user_id,
+            normalized_runtime,
+            stdout["content"],
+            preferences,
         )
+
+    def _save_imported_auth_json_sync(
+        self,
+        user_id: int,
+        runtime: str,
+        auth_json: str,
+        preferences: Any,
+    ) -> dict[str, Any]:
+        """Persist imported auth data in a worker-owned database session."""
+        from app.services.chat.storage.db import get_db_session
+
+        with get_db_session() as db:
+            return self.save_auth_json(
+                db,
+                user_id=user_id,
+                runtime=runtime,
+                auth_json=auth_json,
+                preferences=copy.deepcopy(preferences),
+            )
 
     async def sync_auth_to_devices(
         self,
@@ -400,24 +431,11 @@ class UserRuntimeConfigService:
         device_ids: Optional[Iterable[str]] = None,
     ) -> dict[str, Any]:
         """Sync a saved auth file to online devices without overwriting files."""
-        normalized_runtime = _normalize_runtime(runtime)
-        kind = self._get_kind(db, user_id=user_id, runtime=normalized_runtime)
-        spec = self._get_spec(kind)
-        if not is_runtime_user_config_enabled(preferences, normalized_runtime):
-            raise UserRuntimeConfigSyncError("user runtime config is disabled")
-
-        auth = dict(spec.get("auth") or {})
-        encrypted_value = auth.get("encryptedValue")
-        if not encrypted_value:
-            raise UserRuntimeConfigSyncError("auth_json is not configured")
-
-        auth_json = decrypt_sensitive_data(encrypted_value)
-        if not auth_json or auth_json == encrypted_value:
-            raise UserRuntimeConfigSyncError("auth_json could not be decrypted")
-
-        target_path = (
-            auth.get("targetPath")
-            or RUNTIME_AUTH_FILES[normalized_runtime]["target_path"]
+        payload = self.build_auth_sync_payload(
+            db,
+            user_id=user_id,
+            runtime=runtime,
+            preferences=preferences,
         )
         selected_device_ids = {device_id for device_id in device_ids or [] if device_id}
         online_devices = await device_service.get_online_devices(db, user_id)
@@ -437,23 +455,73 @@ class UserRuntimeConfigService:
                 db=db,
                 user_id=user_id,
                 device_id=device_id,
-                runtime=normalized_runtime,
-                target_path=target_path,
-                auth_json=auth_json,
+                runtime=payload.runtime,
+                target_path=payload.target_path,
+                auth_json=payload.auth_json,
             )
             results.append(result)
 
         return {
-            "runtime": normalized_runtime,
-            "target_path": target_path,
+            "runtime": payload.runtime,
+            "target_path": payload.target_path,
             "total": len(results),
             "items": results,
         }
 
+    def build_auth_sync_payload(
+        self,
+        db: Session,
+        *,
+        user_id: int,
+        runtime: str,
+        preferences: Any = None,
+    ) -> RuntimeAuthSyncPayload:
+        """Read and decrypt auth state without retaining ORM objects."""
+        normalized_runtime = _normalize_runtime(runtime)
+        kind = self._get_kind(db, user_id=user_id, runtime=normalized_runtime)
+        spec = self._get_spec(kind)
+        if not is_runtime_user_config_enabled(preferences, normalized_runtime):
+            raise UserRuntimeConfigSyncError("user runtime config is disabled")
+
+        auth = dict(spec.get("auth") or {})
+        encrypted_value = auth.get("encryptedValue")
+        if not encrypted_value:
+            raise UserRuntimeConfigSyncError("auth_json is not configured")
+
+        auth_json = decrypt_sensitive_data(encrypted_value)
+        if not auth_json or auth_json == encrypted_value:
+            raise UserRuntimeConfigSyncError("auth_json could not be decrypted")
+
+        return RuntimeAuthSyncPayload(
+            runtime=normalized_runtime,
+            target_path=(
+                auth.get("targetPath")
+                or RUNTIME_AUTH_FILES[normalized_runtime]["target_path"]
+            ),
+            auth_json=auth_json,
+        )
+
+    async def sync_auth_payload_to_device(
+        self,
+        *,
+        user_id: int,
+        device_id: str,
+        payload: RuntimeAuthSyncPayload,
+    ) -> dict[str, Any]:
+        """Send prepared auth data without a request-owned database session."""
+        return await self._sync_auth_to_device(
+            db=None,
+            user_id=user_id,
+            device_id=device_id,
+            runtime=payload.runtime,
+            target_path=payload.target_path,
+            auth_json=payload.auth_json,
+        )
+
     async def _sync_auth_to_device(
         self,
         *,
-        db: Session,
+        db: Session | None,
         user_id: int,
         device_id: str,
         runtime: str,

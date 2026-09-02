@@ -6,12 +6,17 @@
 Seedance video generation provider.
 """
 
-import json
 import logging
 from typing import Any, Dict, Literal, Optional
 from urllib.parse import parse_qsl, urlsplit
 
 import httpx
+
+from app.core.payload_codec import (
+    decode_sync_response_json,
+    decode_sync_response_text,
+    encode_http_json,
+)
 
 from ..extensions import (
     VideoResultOverride,
@@ -79,14 +84,9 @@ def _seedance_25_task_type(generation_mode_id: Any) -> Optional[str]:
     return None
 
 
-def _extract_api_error(response: httpx.Response) -> str:
+async def _extract_api_error(response: httpx.Response) -> str:
     """Return the Seedance response body without friendly-message rewriting."""
-    if response.text:
-        return response.text
-    try:
-        return json.dumps(response.json(), ensure_ascii=False)
-    except Exception:
-        return "Unknown error"
+    return await decode_sync_response_text(response) or "Unknown error"
 
 
 def _media_url_for_log(item: dict[str, Any]) -> Optional[str]:
@@ -376,19 +376,19 @@ class SeedanceProvider(VideoProvider):
         async with httpx.AsyncClient(timeout=30.0) as client:
             response = await client.post(
                 f"{self.base_url}/contents/generations/tasks",
-                json=payload,
+                content=await encode_http_json(payload),
                 headers=self._request_headers(),
             )
             if response.status_code >= 400:
-                error_detail = _extract_api_error(response)
+                error_detail = await _extract_api_error(response)
                 raise Exception(
                     f"Seedance API error ({response.status_code}): {error_detail}"
                 )
-            data = response.json()
+            data = await decode_sync_response_json(response)
             job_id = data.get("id") if isinstance(data, dict) else None
             if not job_id:
                 error_detail = (
-                    _extract_api_error(response)
+                    await _extract_api_error(response)
                     if isinstance(data, dict)
                     else "Invalid response"
                 )
@@ -414,11 +414,11 @@ class SeedanceProvider(VideoProvider):
                 headers=self._request_headers(),
             )
             if response.status_code >= 400:
-                error_detail = _extract_api_error(response)
+                error_detail = await _extract_api_error(response)
                 raise Exception(
                     f"Seedance API error ({response.status_code}): {error_detail}"
                 )
-            data = response.json()
+            data = await decode_sync_response_json(response)
 
             logger.info(
                 f"[Seedance] Task response: job_id={job_id}, "

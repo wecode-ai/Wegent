@@ -12,6 +12,7 @@ Example:
 """
 
 from dataclasses import dataclass
+from functools import partial
 from typing import Literal, Optional
 
 from jose import jwt
@@ -74,6 +75,23 @@ def authenticate_mcp_token(
     )
 
 
+async def authenticate_mcp_token_async(
+    token: str,
+    *,
+    allow_user_token: bool = False,
+) -> Optional[MCPAuthInfo]:
+    """Authenticate without executing JWT crypto or sync DB work on the loop."""
+    from app.services.chat.storage.db import run_sync_in_executor
+
+    return await run_sync_in_executor(
+        partial(
+            authenticate_mcp_token,
+            token,
+            allow_user_token=allow_user_token,
+        )
+    )
+
+
 __all__ = [
     "TaskTokenData",
     "TaskTokenInfo",
@@ -83,4 +101,5 @@ __all__ = [
     "extract_token_from_header",
     "MCPAuthInfo",
     "authenticate_mcp_token",
+    "authenticate_mcp_token_async",
 ]

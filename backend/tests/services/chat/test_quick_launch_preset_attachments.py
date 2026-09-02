@@ -2,7 +2,6 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-import pytest
 from sqlalchemy.orm import Session
 
 from app.models.subtask_context import ContextStatus, ContextType, SubtaskContext
@@ -132,8 +131,7 @@ def test_link_contexts_to_subtask_keeps_user_and_preset_attachments(
     assert preset_attachment.subtask_id == 42
 
 
-@pytest.mark.asyncio
-async def test_user_and_preset_attachments_reach_model_context(
+def test_user_and_preset_attachments_reach_model_context(
     test_db: Session,
 ) -> None:
     user_attachment = _create_ready_attachment(
@@ -155,7 +153,7 @@ async def test_user_and_preset_attachments_reach_model_context(
         contexts=None,
     )
 
-    result = await prepare_contexts_for_chat(
+    result = prepare_contexts_for_chat(
         db=test_db,
         user_subtask_id=42,
         user_id=7,
@@ -174,8 +172,7 @@ async def test_user_and_preset_attachments_reach_model_context(
     assert "Preset attachment content" in model_text
 
 
-@pytest.mark.asyncio
-async def test_preset_image_reaches_image_generation_context(
+def test_preset_image_reaches_image_generation_context(
     test_db: Session,
 ) -> None:
     preset_attachment = _create_ready_image_attachment(
@@ -191,7 +188,7 @@ async def test_preset_image_reaches_image_generation_context(
         contexts=None,
     )
 
-    result = await prepare_contexts_for_chat(
+    result = prepare_contexts_for_chat(
         db=test_db,
         user_subtask_id=42,
         user_id=7,

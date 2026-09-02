@@ -5,7 +5,6 @@
 """Tests for async utilities module."""
 
 import asyncio
-import threading
 import time
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -17,7 +16,6 @@ from app.core.async_utils import (
     get_main_event_loop,
     is_main_loop_running,
     run_in_main_loop,
-    schedule_async_task,
     set_main_event_loop,
 )
 
@@ -100,8 +98,8 @@ class TestRunInMainLoop:
         assert result == 10
 
     @pytest.mark.asyncio
-    async def test_executes_when_no_main_loop_set(self) -> None:
-        """Test that function executes directly when no main loop is set."""
+    async def test_fails_when_no_main_loop_is_configured(self) -> None:
+        """A missing owner must never fall back to the caller's loop."""
         import app.core.async_utils as async_utils
 
         async_utils._main_loop = None
@@ -109,8 +107,8 @@ class TestRunInMainLoop:
         async def async_func(x: int) -> int:
             return x * 2
 
-        result = await run_in_main_loop(async_func, 5)
-        assert result == 10
+        with pytest.raises(RuntimeError, match="not configured"):
+            await run_in_main_loop(async_func, 5)
 
     @pytest.mark.asyncio
     async def test_handles_kwargs(self) -> None:
@@ -125,6 +123,32 @@ class TestRunInMainLoop:
 
         result = await run_in_main_loop(async_func, 5, multiplier=3)
         assert result == 15
+
+    @pytest.mark.asyncio
+    async def test_cross_loop_execution_is_joined(self) -> None:
+        """The caller observes both completion and the main-loop result."""
+        import app.core.async_utils as async_utils
+
+        original = async_utils._main_loop
+        main_loop = asyncio.get_running_loop()
+        async_utils._main_loop = main_loop
+        executed = asyncio.Event()
+
+        async def async_func(value: int) -> int:
+            assert asyncio.get_running_loop() is main_loop
+            executed.set()
+            return value * 2
+
+        def run_from_worker_thread() -> int | None:
+            return asyncio.run(run_in_main_loop(async_func, 5))
+
+        try:
+            result = await asyncio.to_thread(run_from_worker_thread)
+        finally:
+            async_utils._main_loop = original
+
+        assert result == 10
+        assert executed.is_set()
 
 
 class TestExecuteAsyncSafely:
@@ -157,46 +181,6 @@ class TestExecuteAsyncSafely:
 
         result = execute_async_safely(failing_func, timeout=5.0)
         assert result is None
-
-
-class TestScheduleAsyncTask:
-    """Tests for schedule_async_task function."""
-
-    def test_schedules_task_successfully(self) -> None:
-        """Test that task is scheduled and executes."""
-        result_holder = {"result": None}
-        event = threading.Event()
-
-        async def async_func() -> str:
-            return "done"
-
-        def callback(result: str, error: Exception | None) -> None:
-            result_holder["result"] = result
-            event.set()
-
-        schedule_async_task(async_func, callback=callback)
-
-        # Wait for task to complete
-        event.wait(timeout=5.0)
-        assert result_holder["result"] == "done"
-
-    def test_callback_receives_error(self) -> None:
-        """Test that callback receives error on failure."""
-        error_holder = {"error": None}
-        event = threading.Event()
-
-        async def failing_func() -> str:
-            raise ValueError("test error")
-
-        def callback(result: str | None, error: Exception | None) -> None:
-            error_holder["error"] = error
-            event.set()
-
-        schedule_async_task(failing_func, callback=callback)
-
-        # Wait for task to complete
-        event.wait(timeout=5.0)
-        assert error_holder["error"] is not None
 
 
 class TestAsyncSessionManager:

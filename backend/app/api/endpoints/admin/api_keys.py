@@ -31,7 +31,7 @@ router = APIRouter()
 
 
 @router.get("/service-keys", response_model=ServiceKeyListResponse)
-async def list_service_keys(
+def list_service_keys(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_admin_user),
 ):
@@ -75,7 +75,7 @@ async def list_service_keys(
     response_model=ServiceKeyCreatedResponse,
     status_code=status.HTTP_201_CREATED,
 )
-async def create_service_key(
+def create_service_key(
     service_key_create: ServiceKeyCreate,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_admin_user),
@@ -129,7 +129,7 @@ async def create_service_key(
 
 
 @router.post("/service-keys/{key_id}/toggle-status", response_model=ServiceKeyResponse)
-async def toggle_service_key_status(
+def toggle_service_key_status(
     key_id: int,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_admin_user),
@@ -176,7 +176,7 @@ async def toggle_service_key_status(
 
 
 @router.delete("/service-keys/{key_id}", status_code=status.HTTP_204_NO_CONTENT)
-async def delete_service_key(
+def delete_service_key(
     key_id: int,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_admin_user),
@@ -212,7 +212,7 @@ async def delete_service_key(
 
 
 @router.get("/personal-keys", response_model=AdminPersonalKeyListResponse)
-async def list_all_personal_keys(
+def list_all_personal_keys(
     page: int = Query(1, ge=1),
     limit: int = Query(50, ge=1, le=100),
     search: Optional[str] = Query(None, description="Search by username or key name"),
@@ -268,7 +268,7 @@ async def list_all_personal_keys(
 @router.post(
     "/personal-keys/{key_id}/toggle-status", response_model=AdminPersonalKeyResponse
 )
-async def toggle_personal_key_status(
+def toggle_personal_key_status(
     key_id: int,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_admin_user),
@@ -316,7 +316,7 @@ async def toggle_personal_key_status(
 
 
 @router.delete("/personal-keys/{key_id}", status_code=status.HTTP_204_NO_CONTENT)
-async def delete_personal_key(
+def delete_personal_key(
     key_id: int,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_admin_user),

@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any
 
@@ -30,6 +31,12 @@ from app.stores.tasks import subtask_store, task_store
 MAX_DIFF_OUTPUT_BYTES = 5 * 1024 * 1024
 
 
+@dataclass(frozen=True)
+class _TurnFileChangesPlan:
+    subtask_id: int
+    summary: TurnFileChangesSummary
+
+
 def _error(status_code: int, code: str, message: str, **extra: Any) -> HTTPException:
     return HTTPException(
         status_code=status_code,
@@ -43,21 +50,19 @@ class TurnFileChangesService:
     async def get_diff(
         self,
         *,
-        db: Session,
         user_id: int,
         subtask_id: int,
     ) -> TurnFileChangesDiffResponse:
-        subtask, summary = self._load_summary(db, user_id, subtask_id)
-        if summary.status == "artifact_missing":
+        plan = await self._load_plan(user_id, subtask_id)
+        if plan.summary.status == "artifact_missing":
             raise self._artifact_missing_error()
 
         payload = await self._execute(
-            db=db,
             user_id=user_id,
-            summary=summary,
+            summary=plan.summary,
             command_key="turn_file_changes_review",
         )
-        self._raise_for_artifact_status(db, subtask, payload)
+        await self._raise_for_artifact_status(user_id, plan.subtask_id, payload)
         diff = payload.get("diff")
         if payload.get("success") is not True or not isinstance(diff, str):
             raise _error(
@@ -65,44 +70,46 @@ class TurnFileChangesService:
                 "TURN_FILE_CHANGES_ARTIFACT_INVALID",
                 str(payload.get("error") or "Device returned an invalid diff artifact"),
             )
-        return TurnFileChangesDiffResponse(subtask_id=subtask.id, diff=diff)
+        return TurnFileChangesDiffResponse(subtask_id=plan.subtask_id, diff=diff)
 
     async def revert(
         self,
         *,
-        db: Session,
         user_id: int,
         subtask_id: int,
     ) -> TurnFileChangesRevertResponse:
-        subtask, summary = self._load_summary(db, user_id, subtask_id)
-        if summary.status == "reverted":
+        plan = await self._load_plan(user_id, subtask_id)
+        if plan.summary.status == "reverted":
             return TurnFileChangesRevertResponse(
-                subtask_id=subtask.id,
-                file_changes=summary,
+                subtask_id=plan.subtask_id,
+                file_changes=plan.summary,
             )
-        if summary.status == "artifact_missing":
+        if plan.summary.status == "artifact_missing":
             raise self._artifact_missing_error()
 
         payload = await self._execute(
-            db=db,
             user_id=user_id,
-            summary=summary,
+            summary=plan.summary,
             command_key="turn_file_changes_revert",
         )
-        self._raise_for_artifact_status(db, subtask, payload)
+        await self._raise_for_artifact_status(user_id, plan.subtask_id, payload)
         if payload.get("success") is True and payload.get("status") == "reverted":
-            updated = self._update_status(
-                db,
-                subtask,
+            updated = await self._update_status_nonblocking(
+                user_id,
+                plan.subtask_id,
                 status="reverted",
                 reverted_at=datetime.now(timezone.utc).isoformat(),
             )
             return TurnFileChangesRevertResponse(
-                subtask_id=subtask.id,
+                subtask_id=plan.subtask_id,
                 file_changes=updated,
             )
         if payload.get("status") == "conflicted":
-            updated = self._update_status(db, subtask, status="conflicted")
+            updated = await self._update_status_nonblocking(
+                user_id,
+                plan.subtask_id,
+                status="conflicted",
+            )
             raise _error(
                 409,
                 "TURN_FILE_CHANGES_CONFLICT",
@@ -114,6 +121,33 @@ class TurnFileChangesService:
             "TURN_FILE_CHANGES_ARTIFACT_INVALID",
             str(payload.get("error") or "Device returned an invalid revert result"),
         )
+
+    async def _load_plan(
+        self,
+        user_id: int,
+        subtask_id: int,
+    ) -> _TurnFileChangesPlan:
+        from app.services.chat.storage.db import run_sync_in_executor
+
+        return await run_sync_in_executor(
+            self._load_plan_with_session,
+            user_id,
+            subtask_id,
+        )
+
+    def _load_plan_with_session(
+        self,
+        user_id: int,
+        subtask_id: int,
+    ) -> _TurnFileChangesPlan:
+        from app.services.chat.storage.db import get_db_session
+
+        with get_db_session() as db:
+            subtask, summary = self._load_summary(db, user_id, subtask_id)
+            return _TurnFileChangesPlan(
+                subtask_id=subtask.id,
+                summary=summary.model_copy(deep=True),
+            )
 
     def _load_summary(
         self,
@@ -170,14 +204,13 @@ class TurnFileChangesService:
     async def _execute(
         self,
         *,
-        db: Session,
         user_id: int,
         summary: TurnFileChangesSummary,
         command_key: str,
     ) -> dict[str, Any]:
         try:
             result = await execute_configured_device_command(
-                db=db,
+                db=None,
                 user_id=user_id,
                 device_id=summary.device_id,
                 command_key=command_key,
@@ -225,21 +258,61 @@ class TurnFileChangesService:
             )
         return payload
 
-    def _raise_for_artifact_status(
+    async def _raise_for_artifact_status(
         self,
-        db: Session,
-        subtask: Subtask,
+        user_id: int,
+        subtask_id: int,
         payload: dict[str, Any],
     ) -> None:
         if payload.get("status") != "artifact_missing":
             return
-        updated = self._update_status(db, subtask, status="artifact_missing")
+        updated = await self._update_status_nonblocking(
+            user_id,
+            subtask_id,
+            status="artifact_missing",
+        )
         raise _error(
             410,
             "TURN_FILE_CHANGES_ARTIFACT_MISSING",
             str(payload.get("error") or "Turn file changes artifact is missing"),
             file_changes=updated.model_dump(mode="json"),
         )
+
+    async def _update_status_nonblocking(
+        self,
+        user_id: int,
+        subtask_id: int,
+        *,
+        status: str,
+        reverted_at: str | None = None,
+    ) -> TurnFileChangesSummary:
+        from app.services.chat.storage.db import run_sync_in_executor
+
+        return await run_sync_in_executor(
+            self._update_status_with_session,
+            user_id,
+            subtask_id,
+            status,
+            reverted_at,
+        )
+
+    def _update_status_with_session(
+        self,
+        user_id: int,
+        subtask_id: int,
+        status: str,
+        reverted_at: str | None,
+    ) -> TurnFileChangesSummary:
+        from app.services.chat.storage.db import get_db_session
+
+        with get_db_session() as db:
+            subtask, _ = self._load_summary(db, user_id, subtask_id)
+            return self._update_status(
+                db,
+                subtask,
+                status=status,
+                reverted_at=reverted_at,
+            )
 
     def _update_status(
         self,

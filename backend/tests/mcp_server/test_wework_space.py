@@ -553,7 +553,7 @@ async def test_board_robot_task_can_assign_item_to_another_project_robot(
         },
     )
     dispatch = mocker.patch(
-        "app.services.board_team_execution.dispatch_board_team_assignment",
+        "app.services.board_team_execution.dispatch_board_team_assignment_nonblocking",
         return_value=None,
     )
 
@@ -562,4 +562,4 @@ async def test_board_robot_task_can_assign_item_to_another_project_robot(
     )
 
     assert assigned["assignee_agent_id"] == robot.id
-    dispatch.assert_awaited_once()
+    dispatch.assert_awaited_once_with(item_id=item.id)

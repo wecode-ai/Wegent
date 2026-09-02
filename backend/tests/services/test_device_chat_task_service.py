@@ -7,11 +7,29 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from fastapi import HTTPException
+from sqlalchemy.orm import sessionmaker
 
 from app.core.constants import CLIENT_ORIGIN_FRONTEND, CLIENT_ORIGIN_WEWORK
 from app.models.kind import Kind
 from app.models.task import TaskResource
 from app.schemas.device_chat_task import DeviceChatTaskRequest
+
+
+@pytest.fixture(autouse=True)
+def _worker_sessions_use_test_database(test_db, monkeypatch):
+    from app.db import session as db_session
+
+    monkeypatch.setattr(
+        db_session,
+        "SessionLocal",
+        sessionmaker(
+            autocommit=False,
+            autoflush=False,
+            bind=test_db.get_bind(),
+            expire_on_commit=False,
+            join_transaction_mode="create_savepoint",
+        ),
+    )
 
 
 def _team(test_db, *, team_id: int = 1289) -> Kind:
@@ -74,11 +92,32 @@ def _task(
 
 def _creation_result(*, task_id: int, message_id: int = 1):
     return SimpleNamespace(
-        task=SimpleNamespace(id=task_id),
-        user_subtask=SimpleNamespace(id=3332, message_id=message_id),
-        assistant_subtask=SimpleNamespace(id=3333),
+        task_id=task_id,
+        user_subtask_id=3332,
+        assistant_subtask_id=3333,
         ai_triggered=True,
         rag_prompt=None,
+    )
+
+
+def _patch_after_creation(monkeypatch, *, message_id: int = 1):
+    from app.services import device_chat_task_service
+
+    trigger = device_chat_task_service._DeviceChatTrigger(
+        task=SimpleNamespace(id=2268),
+        assistant_subtask=SimpleNamespace(id=3333),
+        team=SimpleNamespace(id=1289),
+        user=SimpleNamespace(id=7),
+    )
+    monkeypatch.setattr(
+        device_chat_task_service,
+        "_prepare_device_chat_after_creation",
+        MagicMock(
+            return_value=device_chat_task_service._DeviceChatAfterCreation(
+                message_id=message_id,
+                trigger=trigger,
+            )
+        ),
     )
 
 
@@ -96,7 +135,7 @@ async def test_create_device_chat_task_creates_new_task_and_schedules_ai(
 
     team = _team(test_db)
     create_chat_task = AsyncMock(return_value=_creation_result(task_id=2268))
-    schedule_ai = MagicMock()
+    schedule_ai = AsyncMock()
     monkeypatch.setattr(
         device_chat_task_service,
         "process_context_and_rag",
@@ -109,14 +148,14 @@ async def test_create_device_chat_task_creates_new_task_and_schedules_ai(
     )
     monkeypatch.setattr(
         device_chat_task_service,
-        "create_chat_task",
+        "create_chat_task_ids_nonblocking",
         create_chat_task,
     )
     monkeypatch.setattr(device_chat_task_service, "_schedule_ai_response", schedule_ai)
+    _patch_after_creation(monkeypatch)
 
     response = await device_chat_task_service.create_device_chat_task(
-        db=test_db,
-        user=test_user,
+        user_id=test_user.id,
         request=DeviceChatTaskRequest(
             teamId=team.id,
             deviceId="device-1",
@@ -139,7 +178,6 @@ async def test_create_device_chat_task_creates_new_task_and_schedules_ai(
     assert call_kwargs["task_id"] is None
     assert call_kwargs["message"] == "Run pwd"
     assert call_kwargs["should_trigger_ai"] is True
-    assert call_kwargs["source"] == "web"
     params = call_kwargs["params"]
     assert params.task_type == "task"
     assert params.client_origin == CLIENT_ORIGIN_FRONTEND
@@ -147,8 +185,9 @@ async def test_create_device_chat_task_creates_new_task_and_schedules_ai(
     assert params.model_id == "kimi-k2.5"
     assert params.force_override_bot_model_type == "public"
     assert params.model_options == {"reasoning": {"effort": "medium"}}
-    schedule_ai.assert_called_once()
-    assert schedule_ai.call_args.kwargs["auth_token"] == "jwt-token"
+    assert params.source == "web"
+    schedule_ai.assert_awaited_once()
+    assert schedule_ai.await_args.kwargs["auth_token"] == "jwt-token"
 
 
 @pytest.mark.asyncio
@@ -174,12 +213,16 @@ async def test_create_device_chat_task_continues_existing_task(
         "resolve_chat_task_device_id",
         MagicMock(return_value="device-old"),
     )
-    monkeypatch.setattr(device_chat_task_service, "create_chat_task", create_chat_task)
-    monkeypatch.setattr(device_chat_task_service, "_schedule_ai_response", MagicMock())
+    monkeypatch.setattr(
+        device_chat_task_service,
+        "create_chat_task_ids_nonblocking",
+        create_chat_task,
+    )
+    monkeypatch.setattr(device_chat_task_service, "_schedule_ai_response", AsyncMock())
+    _patch_after_creation(monkeypatch, message_id=5)
 
     response = await device_chat_task_service.create_device_chat_task(
-        db=test_db,
-        user=test_user,
+        user_id=test_user.id,
         request=DeviceChatTaskRequest(
             teamId=team.id,
             taskId=existing_task.id,
@@ -224,12 +267,16 @@ async def test_create_device_chat_task_continuation_uses_existing_client_origin(
         "resolve_chat_task_device_id",
         MagicMock(return_value="device-old"),
     )
-    monkeypatch.setattr(device_chat_task_service, "create_chat_task", create_chat_task)
-    monkeypatch.setattr(device_chat_task_service, "_schedule_ai_response", MagicMock())
+    monkeypatch.setattr(
+        device_chat_task_service,
+        "create_chat_task_ids_nonblocking",
+        create_chat_task,
+    )
+    monkeypatch.setattr(device_chat_task_service, "_schedule_ai_response", AsyncMock())
+    _patch_after_creation(monkeypatch, message_id=5)
 
     await device_chat_task_service.create_device_chat_task(
-        db=test_db,
-        user=test_user,
+        user_id=test_user.id,
         request=DeviceChatTaskRequest(
             teamId=team.id,
             taskId=existing_task.id,
@@ -253,12 +300,15 @@ async def test_create_device_chat_task_rejects_inaccessible_existing_task(
     team = _team(test_db)
     existing_task = _task(test_db, task_id=2267, user_id=test_user.id + 1000)
     create_chat_task = AsyncMock()
-    monkeypatch.setattr(device_chat_task_service, "create_chat_task", create_chat_task)
+    monkeypatch.setattr(
+        device_chat_task_service,
+        "create_chat_task_ids_nonblocking",
+        create_chat_task,
+    )
 
     with pytest.raises(HTTPException) as exc_info:
         await device_chat_task_service.create_device_chat_task(
-            db=test_db,
-            user=test_user,
+            user_id=test_user.id,
             request=DeviceChatTaskRequest(
                 teamId=team.id,
                 taskId=existing_task.id,
@@ -301,12 +351,16 @@ async def test_create_device_chat_task_uses_default_local_device_when_not_specif
         "resolve_local_executor_device_id",
         MagicMock(return_value="device-default"),
     )
-    monkeypatch.setattr(device_chat_task_service, "create_chat_task", create_chat_task)
-    monkeypatch.setattr(device_chat_task_service, "_schedule_ai_response", MagicMock())
+    monkeypatch.setattr(
+        device_chat_task_service,
+        "create_chat_task_ids_nonblocking",
+        create_chat_task,
+    )
+    monkeypatch.setattr(device_chat_task_service, "_schedule_ai_response", AsyncMock())
+    _patch_after_creation(monkeypatch)
 
     response = await device_chat_task_service.create_device_chat_task(
-        db=test_db,
-        user=test_user,
+        user_id=test_user.id,
         request=DeviceChatTaskRequest(
             teamId=team.id,
             message="Use default device",
@@ -327,7 +381,7 @@ async def test_create_device_chat_task_applies_wework_defaults_for_new_task(
 
     team = _team(test_db)
     create_chat_task = AsyncMock(return_value=_creation_result(task_id=2270))
-    apply_defaults = AsyncMock(side_effect=lambda db, user, params: params)
+    apply_defaults = AsyncMock(side_effect=lambda user, params: params)
     monkeypatch.setattr(
         device_chat_task_service,
         "process_context_and_rag",
@@ -340,15 +394,19 @@ async def test_create_device_chat_task_applies_wework_defaults_for_new_task(
     )
     monkeypatch.setattr(
         device_chat_task_service,
-        "apply_wework_task_defaults",
+        "apply_wework_task_defaults_nonblocking",
         apply_defaults,
     )
-    monkeypatch.setattr(device_chat_task_service, "create_chat_task", create_chat_task)
-    monkeypatch.setattr(device_chat_task_service, "_schedule_ai_response", MagicMock())
+    monkeypatch.setattr(
+        device_chat_task_service,
+        "create_chat_task_ids_nonblocking",
+        create_chat_task,
+    )
+    monkeypatch.setattr(device_chat_task_service, "_schedule_ai_response", AsyncMock())
+    _patch_after_creation(monkeypatch)
 
     response = await device_chat_task_service.create_device_chat_task(
-        db=test_db,
-        user=test_user,
+        user_id=test_user.id,
         request=DeviceChatTaskRequest(
             teamId=team.id,
             clientOrigin=CLIENT_ORIGIN_WEWORK,

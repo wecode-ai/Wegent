@@ -22,7 +22,7 @@ router = APIRouter(prefix="/token-issuers", tags=["token-issuers"])
 
 
 @router.post("/{issuer_id}/issue", response_model=TokenIssueResponse)
-async def issue_outbound_token(
+def issue_outbound_token(
     issuer_id: int,
     request: TokenIssueRequest,
     db: Session = Depends(get_db),

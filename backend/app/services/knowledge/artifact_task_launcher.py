@@ -11,6 +11,7 @@ from dataclasses import dataclass
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
+from app.core.web_background_tasks import web_background_task_manager
 from app.models.task import TaskResource
 from app.models.user import User
 from app.schemas.kind import Task, Team
@@ -29,8 +30,6 @@ from shared.models.execution import ExecutionRequest
 
 logger = logging.getLogger(__name__)
 
-_running_artifact_tasks: set[asyncio.Task] = set()
-
 
 class ArtifactTaskConfigurationError(RuntimeError):
     """Raised when the configured Artifact agent cannot be used."""
@@ -42,6 +41,18 @@ class ArtifactTaskLaunchResult:
 
     task_id: int
     assistant_subtask_id: int
+
+
+@dataclass(frozen=True)
+class PreparedArtifactTaskLaunch:
+    """Detached identifiers needed to build and dispatch one execution."""
+
+    task_id: int
+    assistant_subtask_id: int
+    user_subtask_id: int
+    team_id: int
+    user_id: int
+    message: str
 
 
 class ArtifactTaskLauncher:
@@ -68,7 +79,37 @@ class ArtifactTaskLauncher:
         prepared_team: Kind | None = None,
     ) -> ArtifactTaskLaunchResult:
         """Create the agent session, bind sources, and schedule execution."""
-        team = prepared_team or await self.preflight()
+        prepared = self.prepare_launch(
+            artifact_id=artifact_id,
+            attempt=attempt,
+            artifact_type=artifact_type,
+            title=title,
+            knowledge_base_id=knowledge_base_id,
+            document_ids=document_ids,
+            instruction=instruction,
+            prepared_team=prepared_team,
+        )
+        request = await self._build_prepared_execution_request(prepared)
+        await self._schedule_execution(request)
+        return ArtifactTaskLaunchResult(
+            task_id=prepared.task_id,
+            assistant_subtask_id=prepared.assistant_subtask_id,
+        )
+
+    def prepare_launch(
+        self,
+        *,
+        artifact_id: str,
+        attempt: int,
+        artifact_type: KnowledgeArtifactType,
+        title: str,
+        knowledge_base_id: int,
+        document_ids: list[int],
+        instruction: str | None,
+        prepared_team: Kind | None = None,
+    ) -> PreparedArtifactTaskLaunch:
+        """Create durable task records inside the caller's DB phase."""
+        team = prepared_team or self.preflight_sync()
         message = self._build_prompt(artifact_type, instruction)
         params = TaskCreationParams(
             message=message,
@@ -106,24 +147,51 @@ class ArtifactTaskLauncher:
             task=session.task,
         )
 
-        request = await build_execution_request(
-            task=session.task,
-            assistant_subtask=session.assistant_subtask,
-            team=team,
-            user=self.user,
-            message=message,
+        return PreparedArtifactTaskLaunch(
+            task_id=session.task_id,
+            assistant_subtask_id=session.assistant_subtask.id,
             user_subtask_id=session.user_subtask.id,
+            team_id=team.id,
+            user_id=self.user.id,
+            message=message,
+        )
+
+    @classmethod
+    async def launch_prepared(
+        cls,
+        prepared: PreparedArtifactTaskLaunch,
+    ) -> ArtifactTaskLaunchResult:
+        """Build and schedule execution after the preparation Session is closed."""
+        request = await cls._build_prepared_execution_request(prepared)
+        await cls._schedule_execution(request)
+        return ArtifactTaskLaunchResult(
+            task_id=prepared.task_id,
+            assistant_subtask_id=prepared.assistant_subtask_id,
+        )
+
+    @staticmethod
+    async def _build_prepared_execution_request(
+        prepared: PreparedArtifactTaskLaunch,
+    ) -> ExecutionRequest:
+        """Build an execution request from detached database identifiers."""
+        request = await build_execution_request(
+            task=prepared.task_id,
+            assistant_subtask=prepared.assistant_subtask_id,
+            team=prepared.team_id,
+            user=prepared.user_id,
+            message=prepared.message,
+            user_subtask_id=prepared.user_subtask_id,
             enable_tools=True,
             enable_deep_thinking=True,
         )
-        self._schedule_execution(request)
-        return ArtifactTaskLaunchResult(
-            task_id=session.task_id,
-            assistant_subtask_id=session.assistant_subtask.id,
-        )
+        return request
 
     async def preflight(self) -> Kind:
         """Validate the execution configuration without creating records."""
+        return self.preflight_sync()
+
+    def preflight_sync(self) -> Kind:
+        """Validate execution configuration inside a synchronous DB phase."""
         team = self._resolve_team()
         try:
             team_crd = Team.model_validate(team.json)
@@ -232,13 +300,12 @@ class ArtifactTaskLauncher:
             f"补充要求：{extra}"
         )
 
-    def _schedule_execution(self, request: ExecutionRequest) -> None:
-        task = asyncio.create_task(
-            self._dispatch_and_drain(request),
+    @staticmethod
+    async def _schedule_execution(request: ExecutionRequest) -> None:
+        await web_background_task_manager.submit(
+            lambda: ArtifactTaskLauncher._dispatch_and_drain(request),
             name=f"knowledge-artifact-{request.task_id}",
         )
-        _running_artifact_tasks.add(task)
-        task.add_done_callback(_running_artifact_tasks.discard)
 
     @staticmethod
     async def _dispatch_and_drain(request: ExecutionRequest) -> None:
@@ -246,13 +313,9 @@ class ArtifactTaskLauncher:
             task_id=request.task_id,
             subtask_id=request.subtask_id,
         )
-        dispatch_task = asyncio.create_task(
-            execution_dispatcher.dispatch(request, emitter=emitter)
-        )
-        collect_task = asyncio.create_task(emitter.collect())
         dispatch_result, collect_result = await asyncio.gather(
-            dispatch_task,
-            collect_task,
+            execution_dispatcher.dispatch(request, emitter=emitter),
+            emitter.collect(),
             return_exceptions=True,
         )
         if isinstance(dispatch_result, BaseException):

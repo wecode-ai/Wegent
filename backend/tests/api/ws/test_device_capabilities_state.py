@@ -4,14 +4,15 @@
 
 import asyncio
 import json
-from contextlib import contextmanager
+import threading
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock
 
 import pytest
 
 from app.api.ws import device_namespace, local_task_responses
 from app.services.device.terminal_session_service import TerminalSessionRecord
+from shared.models import ExecutionEvent
 
 
 def find_emit_call(sio, event_name: str):
@@ -153,47 +154,35 @@ async def test_device_status_broadcast_reaches_frontend_and_wework_rooms(monkeyp
 @pytest.mark.asyncio
 async def test_heartbeat_runtime_auth_sync_uses_user_preferences(monkeypatch):
     namespace = device_namespace.DeviceNamespace()
-    user = SimpleNamespace(
-        id=7,
-        preferences=json.dumps(
-            {"runtime_configs": {"codex": {"use_user_config": True}}}
-        ),
+    event_loop_thread = threading.get_ident()
+    payload = device_namespace.RuntimeAuthSyncPayload(
+        runtime="codex",
+        target_path="~/.codex/auth.json",
+        auth_json=json.dumps({"token": "secret"}),
     )
-    db = MagicMock()
-    db.query.return_value.filter.return_value.first.return_value = user
 
-    @contextmanager
-    def fake_db_session():
-        yield db
-
-    def fake_get_config(db_arg, *, user_id, runtime, preferences):
-        assert db_arg is db
+    def fake_load_payload(user_id, runtime):
+        assert threading.get_ident() != event_loop_thread
         assert user_id == 7
         assert runtime == "codex"
-        assert preferences == user.preferences
-        return {"use_user_config": True, "configured": True}
+        return payload
 
-    sync_auth_to_devices = AsyncMock(
+    sync_auth_payload_to_device = AsyncMock(
         return_value={
-            "items": [
-                {
-                    "device_id": "device-1",
-                    "success": True,
-                    "status": "written",
-                }
-            ]
+            "device_id": "device-1",
+            "success": True,
+            "status": "written",
         }
     )
-    monkeypatch.setattr(device_namespace, "_db_session", fake_db_session)
     monkeypatch.setattr(
         device_namespace.user_runtime_config_service,
-        "get_config",
-        fake_get_config,
+        "sync_auth_payload_to_device",
+        sync_auth_payload_to_device,
     )
     monkeypatch.setattr(
-        device_namespace.user_runtime_config_service,
-        "sync_auth_to_devices",
-        sync_auth_to_devices,
+        device_namespace,
+        "_load_heartbeat_runtime_auth_payload",
+        fake_load_payload,
     )
 
     key = (7, "device-1", "codex")
@@ -206,720 +195,152 @@ async def test_heartbeat_runtime_auth_sync_uses_user_preferences(monkeypatch):
         key=key,
     )
 
-    sync_auth_to_devices.assert_awaited_once_with(
-        db,
+    sync_auth_payload_to_device.assert_awaited_once_with(
         user_id=7,
-        runtime="codex",
-        preferences=user.preferences,
-        device_ids=["device-1"],
+        device_id="device-1",
+        payload=payload,
     )
     assert key not in namespace._runtime_auth_sync_inflight
 
 
 @pytest.mark.asyncio
-async def test_responses_api_terminal_event_logs_callback_summary(monkeypatch):
+async def test_registered_capability_sync_offloads_database_phases(monkeypatch):
     namespace = device_namespace.DeviceNamespace()
-    event = SimpleNamespace(
-        type=device_namespace.EventType.DONE.value,
-        result={"content": "done"},
+    event_loop_thread = threading.get_ident()
+    payload = {"revision": 3}
+    result = SimpleNamespace(success=True, error=None)
+    phases = []
+
+    def fake_prepare(user_id, device_id):
+        assert threading.get_ident() != event_loop_thread
+        phases.append("prepare")
+        assert (user_id, device_id) == (7, "device-1")
+        return payload
+
+    async def fake_sync(**kwargs):
+        assert threading.get_ident() == event_loop_thread
+        phases.append("sync")
+        assert kwargs["payload"] is payload
+        return result
+
+    def fake_record(user_id, recorded_result):
+        assert threading.get_ident() != event_loop_thread
+        phases.append("record")
+        assert user_id == 7
+        assert recorded_result is result
+
+    monkeypatch.setattr(
+        device_namespace,
+        "_prepare_registered_device_capability_sync",
+        fake_prepare,
+    )
+    monkeypatch.setattr(
+        device_namespace.device_capability_sync_service,
+        "sync_device_payload",
+        fake_sync,
+    )
+    monkeypatch.setattr(
+        device_namespace,
+        "_record_registered_device_capability_sync",
+        fake_record,
+    )
+
+    await namespace._sync_global_capabilities_to_registered_device(
+        user_id=7,
+        device_id="device-1",
+    )
+
+    assert phases == ["prepare", "sync", "record"]
+
+
+@pytest.mark.asyncio
+async def test_upgrade_status_admin_query_runs_off_event_loop(monkeypatch):
+    namespace = device_namespace.DeviceNamespace()
+    event_loop_thread = threading.get_ident()
+    emit = AsyncMock()
+
+    def fake_admin_ids():
+        assert threading.get_ident() != event_loop_thread
+        return [2, 3]
+
+    monkeypatch.setattr(device_namespace, "_active_admin_user_ids", fake_admin_ids)
+    monkeypatch.setattr(device_namespace, "emit_chat_user_event", emit)
+
+    await namespace._broadcast_device_upgrade_status(
+        7,
+        SimpleNamespace(
+            device_id="device-1",
+            model_dump=lambda **_: {"device_id": "device-1", "status": "done"},
+        ),
+    )
+
+    assert {call.kwargs["user_id"] for call in emit.await_args_list} == {2, 3, 7}
+
+
+@pytest.mark.asyncio
+async def test_responses_api_event_only_forwards_authenticated_envelope(monkeypatch):
+    namespace = device_namespace.DeviceNamespace()
+    dispatch = AsyncMock(return_value={"success": True})
+    monkeypatch.setattr(
+        namespace,
+        "get_session",
+        AsyncMock(return_value={"user_id": 7, "device_id": "device-1"}),
+    )
+    monkeypatch.setattr(
+        device_namespace.stream_execution_client,
+        "dispatch_device_event",
+        dispatch,
     )
     payload = {
         "task_id": 101,
         "subtask_id": 202,
         "message_id": 303,
-        "data": {"output": [{"type": "text", "text": "done"}]},
+        "data": {"delta": "hello"},
     }
-    messages = []
-    completed_event_args = []
-
-    async def fake_get_session(sid):
-        return {"user_id": 7, "device_id": "device-1"}
-
-    def fake_parse(**kwargs):
-        return event
-
-    class FakeWebSocketResultEmitter:
-        def __init__(self, **kwargs):
-            assert kwargs["user_id"] == 7
-            pass
-
-    class FakeStatusUpdatingEmitter:
-        def __init__(self, **kwargs):
-            assert "owner_user_id" not in kwargs
-            pass
-
-        async def emit(self, emitted_event):
-            assert emitted_event is event
-
-        async def close(self):
-            pass
-
-    async def fake_publish_task_completed_event(*args):
-        completed_event_args.append(args)
-
-    async def fake_broadcast_slot_update(*args):
-        pass
-
-    monkeypatch.setattr(namespace, "get_session", fake_get_session)
-    monkeypatch.setattr(namespace._event_parser, "parse", fake_parse)
-    monkeypatch.setattr(
-        device_namespace,
-        "WebSocketResultEmitter",
-        FakeWebSocketResultEmitter,
-    )
-    monkeypatch.setattr(
-        device_namespace,
-        "StatusUpdatingEmitter",
-        FakeStatusUpdatingEmitter,
-    )
-    monkeypatch.setattr(
-        namespace,
-        "_publish_task_completed_event",
-        fake_publish_task_completed_event,
-    )
-    monkeypatch.setattr(
-        namespace,
-        "_broadcast_device_slot_update",
-        fake_broadcast_slot_update,
-    )
-    monkeypatch.setattr(
-        device_namespace.logger,
-        "info",
-        lambda message: messages.append(message),
-    )
-
-    result = await namespace._handle_responses_api_event(
-        "sid-1", "response.completed", payload
-    )
-
-    assert result == {"success": True}
-    assert completed_event_args[0][2] == 7
-    assert any(
-        "[Device WS] Terminal callback received:" in message
-        and "task_id=101" in message
-        and "subtask_id=202" in message
-        for message in messages
-    )
-    assert all("done" not in message for message in messages)
-
-
-@pytest.mark.asyncio
-async def test_responses_api_event_passes_raw_response_event_to_task_room(monkeypatch):
-    namespace = device_namespace.DeviceNamespace()
-    sio = SimpleNamespace(emit=AsyncMock())
-    event = SimpleNamespace(
-        type=device_namespace.EventType.CHUNK.value, content="hi", offset=2
-    )
-
-    async def fake_get_session(sid):
-        return {"user_id": 7, "device_id": "device-1"}
-
-    def fake_parse(**kwargs):
-        return event
-
-    class FakeWebSocketResultEmitter:
-        def __init__(self, **kwargs):
-            assert kwargs["user_id"] == 7
-
-    class FakeStatusUpdatingEmitter:
-        def __init__(self, **kwargs):
-            pass
-
-        async def emit(self, emitted_event):
-            assert emitted_event is event
-
-        async def close(self):
-            pass
-
-    monkeypatch.setattr(namespace, "get_session", fake_get_session)
-    monkeypatch.setattr(namespace._event_parser, "parse", fake_parse)
-    monkeypatch.setattr(
-        device_namespace,
-        "WebSocketResultEmitter",
-        FakeWebSocketResultEmitter,
-    )
-    monkeypatch.setattr(
-        device_namespace,
-        "StatusUpdatingEmitter",
-        FakeStatusUpdatingEmitter,
-    )
-    monkeypatch.setattr(local_task_responses, "get_sio", lambda: sio, raising=False)
 
     result = await namespace._handle_responses_api_event(
         "sid-1",
         "response.output_text.delta",
-        {
-            "task_id": 101,
-            "subtask_id": 202,
-            "message_id": 303,
-            "data": {"delta": "hello"},
-        },
+        payload,
     )
 
     assert result == {"success": True}
-    raw_emit = find_emit_call(sio, "response.output_text.delta")
-    assert raw_emit.args[1] == {
-        "task_id": 101,
-        "subtask_id": 202,
-        "message_id": 303,
-        "device_id": "device-1",
-        "data": {"delta": "hello"},
-    }
-    assert raw_emit.kwargs == {"room": "wework:task:101", "namespace": "/chat"}
+    dispatch.assert_awaited_once_with(
+        user_id=7,
+        device_id="device-1",
+        event_type="response.output_text.delta",
+        data=payload,
+    )
 
 
 @pytest.mark.asyncio
-async def test_device_response_created_emits_chat_start_to_frontend_task_room(
-    monkeypatch,
-):
-    from app.services.chat import webpage_ws_chat_emitter
-
+async def test_runtime_task_update_only_forwards_authenticated_envelope(monkeypatch):
     namespace = device_namespace.DeviceNamespace()
-    sio = SimpleNamespace(emit=AsyncMock())
-    frontend_emitter = webpage_ws_chat_emitter.WebPageSocketEmitter(sio)
-
-    async def fake_get_session(sid):
-        return {"user_id": 7, "device_id": "device-1"}
-
-    class PassthroughStatusUpdatingEmitter:
-        def __init__(self, **kwargs):
-            self.wrapped = kwargs["wrapped"]
-
-        async def emit(self, event):
-            await self.wrapped.emit(event)
-
-        async def close(self):
-            pass
-
-    monkeypatch.setattr(namespace, "get_session", fake_get_session)
+    dispatch = AsyncMock(return_value={"success": True, "notified": 1})
     monkeypatch.setattr(
-        webpage_ws_chat_emitter,
-        "_ws_emitter",
-        frontend_emitter,
+        namespace,
+        "get_session",
+        AsyncMock(return_value={"user_id": 7, "device_id": "device-1"}),
     )
     monkeypatch.setattr(
-        device_namespace,
-        "StatusUpdatingEmitter",
-        PassthroughStatusUpdatingEmitter,
-    )
-    monkeypatch.setattr(local_task_responses, "get_sio", lambda: sio, raising=False)
-
-    result = await namespace._handle_responses_api_event(
-        "sid-1",
-        "response.created",
-        {
-            "task_id": 101,
-            "subtask_id": 202,
-            "message_id": 303,
-            "data": {"shell_type": "ClaudeCode"},
-        },
-    )
-
-    assert result == {"success": True}
-    chat_start = find_emit_call(sio, device_namespace.ServerEvents.CHAT_START)
-    assert chat_start.args[1] == {
-        "task_id": 101,
-        "subtask_id": 202,
-        "bot_name": None,
-        "shell_type": "ClaudeCode",
-        "message_id": 303,
-    }
-    assert chat_start.kwargs == {"room": "task:101", "namespace": "/chat"}
-
-
-@pytest.mark.asyncio
-async def test_responses_api_delta_event_forwards_to_channel_callbacks(monkeypatch):
-    namespace = device_namespace.DeviceNamespace()
-    sio = SimpleNamespace(emit=AsyncMock())
-    event = SimpleNamespace(
-        type=device_namespace.EventType.CHUNK.value,
-        content="hi",
-        offset=2,
+        device_namespace.stream_execution_client,
+        "dispatch_runtime_task_updated",
+        dispatch,
     )
     payload = {
-        "task_id": 101,
-        "subtask_id": 202,
-        "message_id": 303,
-        "data": {"delta": "hi"},
+        "localTaskId": "codex-thread-1",
+        "status": "done",
+        "content": "Implemented",
     }
-    forwarded_events = []
 
-    async def fake_get_session(sid):
-        return {"user_id": 7, "device_id": "device-1"}
-
-    def fake_parse(**kwargs):
-        return event
-
-    class FakeWebSocketResultEmitter:
-        def __init__(self, **kwargs):
-            assert kwargs["user_id"] == 7
-
-    class FakeStatusUpdatingEmitter:
-        def __init__(self, **kwargs):
-            pass
-
-        async def emit(self, emitted_event):
-            assert emitted_event is event
-
-        async def close(self):
-            pass
-
-    async def fake_forward_event_to_channel_callbacks(
-        *, task_id, subtask_id, event, source
-    ):
-        assert source == "Device WS"
-        forwarded_events.append((task_id, subtask_id, event))
-
-    monkeypatch.setattr(namespace, "get_session", fake_get_session)
-    monkeypatch.setattr(namespace._event_parser, "parse", fake_parse)
-    monkeypatch.setattr(
-        device_namespace,
-        "WebSocketResultEmitter",
-        FakeWebSocketResultEmitter,
-    )
-    monkeypatch.setattr(
-        device_namespace,
-        "StatusUpdatingEmitter",
-        FakeStatusUpdatingEmitter,
-    )
-    monkeypatch.setattr(
-        device_namespace,
-        "forward_event_to_channel_callbacks",
-        fake_forward_event_to_channel_callbacks,
-        raising=False,
-    )
-    monkeypatch.setattr(local_task_responses, "get_sio", lambda: sio, raising=False)
-
-    result = await namespace._handle_responses_api_event(
-        "sid-1", "response.output_text.delta", payload
-    )
-
-    assert result == {"success": True}
-    assert forwarded_events == [(101, 202, event)]
-
-
-@pytest.mark.asyncio
-async def test_local_task_response_event_passes_raw_response_event_to_wework_clients(
-    monkeypatch,
-):
-    namespace = device_namespace.DeviceNamespace()
-    sio = SimpleNamespace(emit=AsyncMock())
-
-    async def fake_get_session(sid):
-        return {"user_id": 7, "device_id": "device-1"}
-
-    monkeypatch.setattr(namespace, "get_session", fake_get_session)
-    monkeypatch.setattr(local_task_responses, "get_sio", lambda: sio, raising=False)
-
-    result = await namespace._handle_responses_api_event(
-        "sid-1",
-        "response.output_text.delta",
-        {
-            "subtask_id": 202,
-            "local_task_id": "codex-1",
-            "runtime": "codex",
-            "message_id": 303,
-            "data": {"delta": "hello"},
-        },
-    )
-
-    assert result == {"success": True}
-    raw_emit = find_emit_call(sio, "response.output_text.delta")
-    assert raw_emit.args[1] == {
-        "task_id": 0,
-        "subtask_id": 202,
-        "device_id": "device-1",
-        "local_task_id": "codex-1",
-        "runtime": "codex",
-        "message_id": 303,
-        "data": {"delta": "hello"},
-    }
-    assert raw_emit.kwargs == {"room": "wework:user:7", "namespace": "/chat"}
-
-
-@pytest.mark.asyncio
-async def test_local_task_reasoning_event_emits_chat_chunk(monkeypatch):
-    namespace = device_namespace.DeviceNamespace()
-    sio = SimpleNamespace(emit=AsyncMock())
-
-    async def fake_get_session(sid):
-        return {"user_id": 7, "device_id": "device-1"}
-
-    monkeypatch.setattr(namespace, "get_session", fake_get_session)
-    monkeypatch.setattr(local_task_responses, "get_sio", lambda: sio, raising=False)
-
-    result = await namespace._handle_responses_api_event(
-        "sid-1",
-        "response.reasoning_summary_text.delta",
-        {
-            "subtask_id": 202,
-            "local_task_id": "codex-1",
-            "runtime": "codex",
-            "data": {"delta": "Reading files"},
-        },
-    )
-
-    assert result == {"success": True}
-    call = find_emit_call(sio, device_namespace.ServerEvents.CHAT_CHUNK)
-    event_name, payload = call.args[:2]
-    assert event_name == device_namespace.ServerEvents.CHAT_CHUNK
-    assert payload["device_id"] == "device-1"
-    assert payload["local_task_id"] == "codex-1"
-    assert payload["content"] == ""
-    assert payload["result"] == {"reasoning_chunk": "Reading files"}
-
-
-@pytest.mark.asyncio
-async def test_local_task_tool_event_emits_block_created(monkeypatch):
-    namespace = device_namespace.DeviceNamespace()
-    sio = SimpleNamespace(emit=AsyncMock())
-
-    async def fake_get_session(sid):
-        return {"user_id": 7, "device_id": "device-1"}
-
-    monkeypatch.setattr(namespace, "get_session", fake_get_session)
-    monkeypatch.setattr(local_task_responses, "get_sio", lambda: sio, raising=False)
-
-    result = await namespace._handle_responses_api_event(
-        "sid-1",
-        "response.output_item.added",
-        {
-            "subtask_id": 202,
-            "local_task_id": "codex-1",
-            "runtime": "codex",
-            "data": {
-                "item": {
-                    "type": "function_call",
-                    "call_id": "call-1",
-                    "name": "shell",
-                    "arguments": "{}",
-                }
-            },
-        },
-    )
-
-    assert result == {"success": True}
-    call = find_emit_call(sio, device_namespace.ServerEvents.CHAT_BLOCK_CREATED)
-    event_name, payload = call.args[:2]
-    assert event_name == device_namespace.ServerEvents.CHAT_BLOCK_CREATED
-    assert payload["device_id"] == "device-1"
-    assert payload["local_task_id"] == "codex-1"
-    assert payload["block"]["type"] == "tool"
-    assert payload["block"]["tool_name"] == "shell"
-
-
-@pytest.mark.asyncio
-async def test_local_task_streaming_tool_arguments_emit_generating_block(monkeypatch):
-    namespace = device_namespace.DeviceNamespace()
-    sio = SimpleNamespace(emit=AsyncMock())
-
-    async def fake_get_session(sid):
-        return {"user_id": 7, "device_id": "device-1"}
-
-    monkeypatch.setattr(namespace, "get_session", fake_get_session)
-    monkeypatch.setattr(local_task_responses, "get_sio", lambda: sio, raising=False)
-
-    result = await namespace._handle_responses_api_event(
-        "sid-1",
-        "response.output_item.added",
-        {
-            "subtask_id": 202,
-            "local_task_id": "claude-1",
-            "runtime": "claude_code",
-            "data": {
-                "item": {
-                    "type": "function_call",
-                    "call_id": "call-1",
-                    "name": "Bash",
-                    "arguments": "{}",
-                },
-                "argument_status": "streaming",
-            },
-        },
-    )
-
-    assert result == {"success": True}
-    call = find_emit_call(sio, device_namespace.ServerEvents.CHAT_BLOCK_CREATED)
-    event_name, payload = call.args[:2]
-    assert event_name == device_namespace.ServerEvents.CHAT_BLOCK_CREATED
-    assert payload["device_id"] == "device-1"
-    assert payload["local_task_id"] == "claude-1"
-    assert payload["block"]["type"] == "tool"
-    assert payload["block"]["tool_name"] == "Bash"
-    assert payload["block"]["status"] == "generating_arguments"
-
-
-@pytest.mark.asyncio
-async def test_local_task_im_source_forwards_stream_event_to_channel_callbacks(
-    monkeypatch,
-):
-    namespace = device_namespace.DeviceNamespace()
-    sio = SimpleNamespace(emit=AsyncMock())
-    forwarded_events = []
-
-    async def fake_get_session(sid):
-        return {"user_id": 7, "device_id": "device-1"}
-
-    async def fake_forward_event_to_channel_callbacks(
-        *, task_id, subtask_id, event, source
-    ):
-        forwarded_events.append((task_id, subtask_id, event, source))
-
-    monkeypatch.setattr(namespace, "get_session", fake_get_session)
-    monkeypatch.setattr(local_task_responses, "get_sio", lambda: sio, raising=False)
-    monkeypatch.setattr(
-        local_task_responses,
-        "forward_event_to_channel_callbacks",
-        fake_forward_event_to_channel_callbacks,
-        raising=False,
-    )
-
-    result = await namespace._handle_responses_api_event(
-        "sid-1",
-        "response.output_text.delta",
-        {
-            "subtask_id": 202,
-            "local_task_id": "codex-1",
-            "runtime": "codex",
-            "source": {
-                "source": "im",
-                "external_id": "session-1",
-                "channel_type": "telegram",
-                "channel_id": 10,
-                "conversation_id": "12345",
-                "sender_id": "sender-1",
-            },
-            "data": {"delta": "hello"},
-        },
-    )
-
-    assert result == {"success": True}
-    assert len(forwarded_events) == 1
-    task_id, subtask_id, event, source = forwarded_events[0]
-    assert task_id == "runtime:device-1:codex-1"
-    assert subtask_id == 202
-    assert event.type == device_namespace.EventType.CHUNK.value
-    assert event.content == "hello"
-    assert source == "Device WS local task"
-
-
-@pytest.mark.asyncio
-async def test_runtime_task_updated_event_notifies_im_dispatcher(monkeypatch):
-    namespace = device_namespace.DeviceNamespace()
-    notifications = []
-    runtime_syncs = []
-
-    async def fake_get_session(sid):
-        return {"user_id": 7, "device_id": "device-1"}
-
-    async def fake_send_runtime_task_update(**kwargs):
-        notifications.append(kwargs)
-        return {"sent": 1}
-
-    monkeypatch.setattr(namespace, "get_session", fake_get_session)
-    monkeypatch.setattr(
-        device_namespace.im_notification_dispatcher,
-        "send_runtime_task_update_for_user",
-        fake_send_runtime_task_update,
-    )
-    monkeypatch.setattr(
-        device_namespace,
-        "_project_chat_runtime_event_sync",
-        lambda *args, **kwargs: runtime_syncs.append((args, kwargs)),
-    )
-
-    result = await namespace.on_runtime_task_updated(
-        "sid-1",
-        {
-            "localTaskId": "codex-thread-1",
-            "runtime": "codex",
-            "title": "Native Codex task",
-            "updatedAt": "2026-06-21T01:06:00Z",
-            "status": "done",
-            "content": "Implemented from native Codex",
-        },
-    )
+    result = await namespace.on_runtime_task_updated("sid-1", payload)
 
     assert result == {"success": True, "notified": 1}
-    assert notifications[0]["user_id"] == 7
-    assert notifications[0]["address"] == {
-        "deviceId": "device-1",
-        "localTaskId": "codex-thread-1",
-    }
-    assert notifications[0]["source"] == "codex_watcher"
-    assert notifications[0]["title"] == "Native Codex task"
-    assert notifications[0]["status"] == "done"
-    assert notifications[0]["content"] == "Implemented from native Codex"
-    assert runtime_syncs == [
-        (
-            (
-                "device-1",
-                {
-                    "event": "runtime.task.completed",
-                    "payload": {
-                        "taskId": "codex-thread-1",
-                        "localTaskId": "codex-thread-1",
-                        "deviceId": "device-1",
-                        "device_id": "device-1",
-                        "status": "done",
-                        "data": {
-                            "status": "done",
-                            "value": "Implemented from native Codex",
-                        },
-                    },
-                },
-                7,
-                True,
-            ),
-            {},
-        )
-    ]
-
-
-@pytest.mark.asyncio
-async def test_runtime_task_updated_event_skips_im_notification_until_terminal(
-    monkeypatch,
-):
-    namespace = device_namespace.DeviceNamespace()
-    notifications = []
-
-    async def fake_get_session(sid):
-        return {"user_id": 7, "device_id": "device-1"}
-
-    async def fake_send_runtime_task_update(**kwargs):
-        notifications.append(kwargs)
-        return {"sent": 1}
-
-    monkeypatch.setattr(namespace, "get_session", fake_get_session)
-    monkeypatch.setattr(
-        device_namespace.im_notification_dispatcher,
-        "send_runtime_task_update_for_user",
-        fake_send_runtime_task_update,
+    dispatch.assert_awaited_once_with(
+        user_id=7,
+        device_id="device-1",
+        data=payload,
     )
-    monkeypatch.setattr(
-        device_namespace,
-        "_project_chat_runtime_event_sync",
-        lambda *args, **kwargs: None,
-    )
-
-    result = await namespace.on_runtime_task_updated(
-        "sid-1",
-        {
-            "localTaskId": "codex-thread-1",
-            "runtime": "codex",
-            "title": "Native Codex task",
-            "updatedAt": "2026-06-21T01:06:00Z",
-            "status": "streaming",
-            "content": "Partial response",
-        },
-    )
-
-    assert result == {"success": True, "notified": 0, "skipped": "non_terminal"}
-    assert notifications == []
-
-
-@pytest.mark.asyncio
-async def test_runtime_task_updated_event_skips_success_notification_without_content(
-    monkeypatch,
-):
-    namespace = device_namespace.DeviceNamespace()
-    notifications = []
-
-    async def fake_get_session(sid):
-        return {"user_id": 7, "device_id": "device-1"}
-
-    async def fake_send_runtime_task_update(**kwargs):
-        notifications.append(kwargs)
-        return {"sent": 1}
-
-    monkeypatch.setattr(namespace, "get_session", fake_get_session)
-    monkeypatch.setattr(
-        device_namespace.im_notification_dispatcher,
-        "send_runtime_task_update_for_user",
-        fake_send_runtime_task_update,
-    )
-    monkeypatch.setattr(
-        device_namespace,
-        "_project_chat_runtime_event_sync",
-        lambda *args, **kwargs: None,
-    )
-
-    result = await namespace.on_runtime_task_updated(
-        "sid-1",
-        {
-            "localTaskId": "codex-thread-1",
-            "runtime": "codex",
-            "title": "Native Codex task",
-            "updatedAt": "2026-06-21T01:06:00Z",
-            "status": "done",
-        },
-    )
-
-    assert result == {"success": True, "notified": 0, "skipped": "empty_content"}
-    assert notifications == []
-
-
-@pytest.mark.asyncio
-async def test_local_task_responses_api_events_are_serialized(monkeypatch):
-    namespace = device_namespace.DeviceNamespace()
-    first_event_started = asyncio.Event()
-    emitted_chunks = []
-    sio = SimpleNamespace(emit=AsyncMock())
-
-    async def fake_get_session(sid):
-        return {"user_id": 7, "device_id": "device-1"}
-
-    async def fake_emit_local_task_execution_event(**kwargs):
-        event = kwargs["event"]
-        if event.content == "first":
-            first_event_started.set()
-            await asyncio.sleep(0.05)
-        emitted_chunks.append(event.content)
-
-    async def fake_forward_local_task_event_to_channel_callbacks(**kwargs):
-        return None
-
-    monkeypatch.setattr(namespace, "get_session", fake_get_session)
-    monkeypatch.setattr(
-        namespace._local_task_responses,
-        "emit_execution_event",
-        fake_emit_local_task_execution_event,
-    )
-    monkeypatch.setattr(
-        namespace._local_task_responses,
-        "forward_channel_callbacks",
-        fake_forward_local_task_event_to_channel_callbacks,
-    )
-    monkeypatch.setattr(local_task_responses, "get_sio", lambda: sio, raising=False)
-
-    first = asyncio.create_task(
-        namespace._handle_responses_api_event(
-            "sid-1",
-            "response.output_text.delta",
-            {
-                "subtask_id": 202,
-                "local_task_id": "codex-1",
-                "runtime": "codex",
-                "data": {"delta": "first"},
-            },
-        )
-    )
-    await asyncio.wait_for(first_event_started.wait(), timeout=1)
-    second = await namespace._handle_responses_api_event(
-        "sid-1",
-        "response.output_text.delta",
-        {
-            "subtask_id": 202,
-            "local_task_id": "codex-1",
-            "runtime": "codex",
-            "data": {"delta": "second"},
-        },
-    )
-    first_result = await first
-
-    assert first_result == {"success": True}
-    assert second == {"success": True}
-    assert emitted_chunks == ["first", "second"]
 
 
 @pytest.mark.asyncio

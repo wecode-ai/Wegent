@@ -116,16 +116,12 @@ class MySQLStorageBackend(StorageBackend):
         """
         try:
             context_id = self._extract_attachment_id(key)
-            context = (
-                self._db.query(SubtaskContext)
+            binary_data = (
+                self._db.query(SubtaskContext.binary_data)
                 .filter(SubtaskContext.id == context_id)
-                .first()
+                .scalar()
             )
-
-            if context is None:
-                return None
-
-            return context.binary_data
+            return binary_data
 
         except Exception as e:
             logger.error(f"Failed to get from MySQL storage: {e}")

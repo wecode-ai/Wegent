@@ -2,17 +2,16 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-import asyncio
 import logging
 from dataclasses import dataclass
 from typing import Any
 
 from sqlalchemy.orm import Session
 
+from app.core.blocking_work import run_knowledge_io
 from app.db.session import SessionLocal
 from app.models.subtask_context import ContextStatus, ContextType, SubtaskContext
 from app.services.adapters.retriever_kinds import retriever_kinds_service
-from app.services.attachment.storage_factory import get_storage_backend
 from app.services.context import context_service
 from app.services.rag.embedding.factory import (
     create_embedding_model_from_crd,
@@ -28,7 +27,6 @@ from knowledge_engine.services import DocumentService as EngineDocumentService
 from knowledge_engine.storage.factory import create_storage_backend_from_runtime_config
 from shared.models import RuntimeRetrieverConfig, serialize_splitter_config
 from shared.telemetry.decorators import trace_async
-from shared.utils.crypto import decrypt_attachment
 
 logger = logging.getLogger(__name__)
 
@@ -41,17 +39,6 @@ class _LocalIndexPreparation:
     source_file: str | None
     file_extension: str | None
     skip_result: dict | None = None
-    deferred_binary_source: "_DeferredAttachmentBinarySource | None" = None
-
-
-@dataclass
-class _DeferredAttachmentBinarySource:
-    storage_backend: Any
-    storage_key: str
-    source_file: str
-    file_extension: str
-    is_encrypted: bool
-    context_id: int
 
 
 def _extract_index_document_attributes(
@@ -132,28 +119,13 @@ async def index_document_local(
     *,
     db: Session | None = None,
 ) -> dict:
-    own_session = db is None
-    if own_session:
-        db = SessionLocal()
-
-    try:
-        preparation = _prepare_index_document_local(
-            spec, db=db, defer_external_attachment_load=own_session
-        )
-    finally:
-        if own_session:
-            db.rollback()
-            db.close()
+    del db
+    preparation = await run_knowledge_io(
+        _prepare_index_document_with_owned_session, spec
+    )
 
     if preparation.skip_result is not None:
         return preparation.skip_result
-
-    if preparation.deferred_binary_source is not None:
-        (
-            preparation.binary_data,
-            preparation.source_file,
-            preparation.file_extension,
-        ) = _load_deferred_attachment_binary_source(preparation.deferred_binary_source)
 
     service = EngineDocumentService(storage_backend=preparation.storage_backend)
     return await service.index_document_from_binary(
@@ -168,11 +140,26 @@ async def index_document_local(
     )
 
 
+def _prepare_index_document_with_owned_session(
+    spec: IndexRuntimeSpec,
+) -> _LocalIndexPreparation:
+    db = SessionLocal()
+    try:
+        preparation = _prepare_index_document_local(
+            spec,
+            db=db,
+        )
+    finally:
+        db.rollback()
+        db.close()
+
+    return preparation
+
+
 def _prepare_index_document_local(
     spec: IndexRuntimeSpec,
     *,
     db: Session,
-    defer_external_attachment_load: bool = False,
 ) -> _LocalIndexPreparation:
     try:
         storage_backend = _build_index_storage_backend(spec, db=db)
@@ -200,89 +187,21 @@ def _prepare_index_document_local(
 
     embed_model = _build_index_embed_model(spec, db=db)
     if spec.source.source_type == "attachment":
-        if defer_external_attachment_load:
-            binary_data, source_file, file_extension, deferred_source = (
-                _prepare_attachment_binary_source_for_owned_session(
-                    db, spec.source.attachment_id
-                )
-            )
-        else:
-            binary_data, source_file, file_extension = _get_attachment_binary_source(
-                db,
-                spec.source.attachment_id,
-            )
-            deferred_source = None
+        binary_data, source_file, file_extension = _get_attachment_binary_source(
+            db,
+            spec.source.attachment_id,
+        )
         return _LocalIndexPreparation(
             storage_backend=storage_backend,
             embed_model=embed_model,
             binary_data=binary_data,
             source_file=source_file,
             file_extension=file_extension,
-            deferred_binary_source=deferred_source,
         )
 
     raise ValueError(
         f"Unsupported index source type for local execution: {spec.source.source_type}"
     )
-
-
-def _prepare_attachment_binary_source_for_owned_session(
-    db: Session,
-    attachment_id: int,
-) -> tuple[bytes | None, str, str, _DeferredAttachmentBinarySource | None]:
-    context = (
-        db.query(SubtaskContext)
-        .filter(
-            SubtaskContext.id == attachment_id,
-            SubtaskContext.context_type == ContextType.ATTACHMENT.value,
-        )
-        .first()
-    )
-    if not context:
-        raise ValueError(f"Attachment context {attachment_id} not found")
-    if context.status != ContextStatus.READY.value:
-        raise ValueError(
-            f"Attachment context {attachment_id} is not ready (status: {context.status})"
-        )
-
-    if context.storage_backend == "mysql":
-        binary_data = context_service.get_attachment_binary_data(db=db, context=context)
-        if binary_data is None:
-            raise ValueError(
-                f"Attachment context {attachment_id} has no binary data available"
-            )
-        return binary_data, context.original_filename, context.file_extension, None
-
-    storage_key = context.storage_key
-    if not storage_key:
-        raise ValueError(f"Attachment context {attachment_id} has no storage key")
-
-    return (
-        None,
-        context.original_filename,
-        context.file_extension,
-        _DeferredAttachmentBinarySource(
-            storage_backend=get_storage_backend(db),
-            storage_key=storage_key,
-            source_file=context.original_filename,
-            file_extension=context.file_extension,
-            is_encrypted=context.is_encrypted,
-            context_id=context.id,
-        ),
-    )
-
-
-def _load_deferred_attachment_binary_source(
-    source: _DeferredAttachmentBinarySource,
-) -> tuple[bytes, str, str]:
-    binary_data = source.storage_backend.get(source.storage_key)
-    if binary_data is None:
-        raise ValueError(
-            f"Attachment context {source.context_id} has no binary data available"
-        )
-    if source.is_encrypted:
-        binary_data = decrypt_attachment(binary_data)
-    return binary_data, source.source_file, source.file_extension
 
 
 @trace_async(
@@ -323,12 +242,17 @@ async def delete_document_index_local(
 async def purge_knowledge_index_local(
     spec: PurgeKnowledgeRuntimeSpec,
     *,
-    db: Session,
+    db: Session | None = None,
 ) -> dict:
     del db
+    return await run_knowledge_io(_purge_knowledge_index_sync, spec)
+
+
+def _purge_knowledge_index_sync(spec: PurgeKnowledgeRuntimeSpec) -> dict:
+    """Build the storage client and purge it in one bounded worker."""
+
     storage_backend = create_storage_backend_from_runtime_config(spec.retriever_config)
-    return await asyncio.to_thread(
-        storage_backend.delete_knowledge,
+    return storage_backend.delete_knowledge(
         knowledge_id=str(spec.knowledge_base_id),
         user_id=spec.index_owner_user_id,
     )
@@ -342,12 +266,17 @@ async def purge_knowledge_index_local(
 async def drop_knowledge_index_local(
     spec: DropKnowledgeIndexRuntimeSpec,
     *,
-    db: Session,
+    db: Session | None = None,
 ) -> dict:
     del db
+    return await run_knowledge_io(_drop_knowledge_index_sync, spec)
+
+
+def _drop_knowledge_index_sync(spec: DropKnowledgeIndexRuntimeSpec) -> dict:
+    """Build the storage client and drop it in one bounded worker."""
+
     storage_backend = create_storage_backend_from_runtime_config(spec.retriever_config)
-    return await asyncio.to_thread(
-        storage_backend.drop_knowledge_index,
+    return storage_backend.drop_knowledge_index(
         knowledge_id=str(spec.knowledge_base_id),
         user_id=spec.index_owner_user_id,
     )

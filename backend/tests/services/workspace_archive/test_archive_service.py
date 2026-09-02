@@ -6,7 +6,7 @@
 
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock
 
 import pytest
 
@@ -64,9 +64,9 @@ async def test_restore_workspace_rejects_expired_archive():
     expires_at = (datetime.utcnow() - timedelta(days=1)).isoformat()
     task = _build_task(expires_at)
 
-    result = await archive_service.restore_workspace(
-        db=MagicMock(),
-        task=task,
+    result = await archive_service.restore_workspace_snapshot(
+        task_id=task.id,
+        task_json=task.json,
         executor_name="executor-22",
         executor_namespace="default",
     )
@@ -107,9 +107,9 @@ async def test_restore_workspace_returns_executor_restore_details(mocker):
         new=AsyncMock(return_value=restore_details),
     )
 
-    result = await archive_service.restore_workspace(
-        db=MagicMock(),
-        task=task,
+    result = await archive_service.restore_workspace_snapshot(
+        task_id=task.id,
+        task_json=task.json,
         executor_name="executor-22",
         executor_namespace="default",
     )

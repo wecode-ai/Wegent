@@ -17,6 +17,7 @@ from app.core.celery_app import celery_app
 from app.core.config import settings
 from app.core.distributed_lock import distributed_lock
 from app.models.loop_item_execution import LoopItemExecution
+from app.services.chat.storage import db as chat_storage_db
 from app.services.device_service import device_service
 from app.services.loop_item_executions.service import loop_item_execution_service
 
@@ -107,15 +108,20 @@ def _queued_devices(db) -> list[tuple[int, str]]:
     return [(int(row[0]), str(row[1])) for row in rows if row[0] and row[1]]
 
 
+def _queued_devices_from_store() -> list[tuple[int, str]]:
+    from app.db.session import get_db_session
+
+    with get_db_session() as db:
+        return _queued_devices(db)
+
+
 async def consume_queues_background() -> None:
     """Notify connected Executors; the notification never carries work."""
 
     from app.core.socketio import get_sio
-    from app.db.session import get_db_session
 
     try:
-        with get_db_session() as db:
-            devices = _queued_devices(db)
+        devices = await chat_storage_db.run_sync_in_executor(_queued_devices_from_store)
         for owner_user_id, device_id in devices:
             await get_sio().emit(
                 "runtime.tasks.available",
@@ -189,15 +195,12 @@ def emit_runtime_cancels(executions: list[LoopItemExecution]) -> set[int]:
     return confirmed_execution_ids
 
 
-async def reconcile_device_executions(
-    *,
+def _load_device_reconciliation_refs(
     user_id: int,
     device_id: str,
-    needs_confirmation_only: bool = False,
-) -> int:
-    """Reconcile active runs through the Executor's current local socket."""
-
-    from app.core.socketio import get_sio
+    needs_confirmation_only: bool,
+) -> list[tuple[int, str]]:
+    """Load detached execution identifiers in a fresh worker-thread session."""
     from app.db.session import get_db_session
 
     with get_db_session() as db:
@@ -207,9 +210,51 @@ async def reconcile_device_executions(
             runtime_device_id=device_id,
             needs_confirmation_only=needs_confirmation_only,
         )
-        execution_refs = [
-            (execution.id, execution.runtime_task_id) for execution in executions
-        ]
+        return [(execution.id, execution.runtime_task_id) for execution in executions]
+
+
+def _apply_device_reconciliation_snapshots(
+    execution_refs: list[tuple[int, str]],
+    snapshots: dict[str, dict],
+) -> int:
+    """Persist detached Runtime snapshots in a fresh worker-thread session."""
+    from app.db.session import get_db_session
+
+    with get_db_session() as db:
+        for execution_id, runtime_task_id in execution_refs:
+            snapshot = snapshots.get(runtime_task_id)
+            loop_item_execution_service.reconcile_runtime_snapshot(
+                db,
+                execution_id=execution_id,
+                runtime_status=(
+                    str(snapshot.get("status") or "") if snapshot else "missing"
+                ),
+                running=bool(snapshot.get("running")) if snapshot else False,
+                turn_status=(
+                    str(snapshot.get("turnStatus") or snapshot.get("turn_status") or "")
+                    if snapshot
+                    else None
+                ),
+            )
+    return len(execution_refs)
+
+
+async def reconcile_device_executions(
+    *,
+    user_id: int,
+    device_id: str,
+    needs_confirmation_only: bool = False,
+) -> int:
+    """Reconcile active runs through the Executor's current local socket."""
+
+    from app.core.socketio import get_sio
+
+    execution_refs = await chat_storage_db.run_sync_in_executor(
+        _load_device_reconciliation_refs,
+        user_id,
+        device_id,
+        needs_confirmation_only,
+    )
     if not execution_refs:
         return 0
 
@@ -246,22 +291,8 @@ async def reconcile_device_executions(
             if task_id:
                 snapshots[task_id] = task
 
-    reconciled = 0
-    with get_db_session() as db:
-        for execution_id, runtime_task_id in execution_refs:
-            snapshot = snapshots.get(runtime_task_id)
-            loop_item_execution_service.reconcile_runtime_snapshot(
-                db,
-                execution_id=execution_id,
-                runtime_status=(
-                    str(snapshot.get("status") or "") if snapshot else "missing"
-                ),
-                running=bool(snapshot.get("running")) if snapshot else False,
-                turn_status=(
-                    str(snapshot.get("turnStatus") or snapshot.get("turn_status") or "")
-                    if snapshot
-                    else None
-                ),
-            )
-            reconciled += 1
-    return reconciled
+    return await chat_storage_db.run_sync_in_executor(
+        _apply_device_reconciliation_snapshots,
+        execution_refs,
+        snapshots,
+    )

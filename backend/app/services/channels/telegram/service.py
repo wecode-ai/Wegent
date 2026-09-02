@@ -35,9 +35,9 @@ from telegram.ext import (
 )
 
 from app.core.cache import cache_manager
-from app.db.session import SessionLocal
 from app.services.channels.base import BaseChannelProvider
-from app.services.channels.commands import CommandType, parse_command
+from app.services.channels.commands import CommandType, ParsedCommand, parse_command
+from app.services.channels.handler import ChannelUserRef, MessageContext
 from app.services.channels.messager_config import (
     get_channel_default_model_name,
     get_channel_default_team_id,
@@ -77,6 +77,15 @@ class TelegramChannelProvider(BaseChannelProvider):
         self._bot: Optional[Any] = None  # telegram.Bot instance
         self._handler: Optional[TelegramChannelHandler] = None
         self._task: Optional[asyncio.Task] = None
+
+    async def _resolve_user_ref(
+        self,
+        message_context: MessageContext,
+    ) -> Optional[ChannelUserRef]:
+        if self._handler is None:
+            return None
+        user_id = await self._handler.resolve_user_id(message_context)
+        return ChannelUserRef(user_id) if user_id is not None else None
 
     @property
     def bot_token(self) -> Optional[str]:
@@ -370,19 +379,14 @@ class TelegramChannelProvider(BaseChannelProvider):
 
         message_context = self._handler.parse_message(update)
 
-        db = SessionLocal()
-        try:
-            user = await self._handler.resolve_user(db, message_context)
-            if not user:
-                await update.message.reply_text("用户未注册，请先登录 Wegent 系统")
-                return
-
-            await self._handler._delete_conversation_task_id(
-                message_context.conversation_id, user.id
-            )
-            await update.message.reply_text("✅ 已开始新对话，请发送您的消息")
-        finally:
-            db.close()
+        user = await self._resolve_user_ref(message_context)
+        if not user:
+            await update.message.reply_text("用户未注册，请先登录 Wegent 系统")
+            return
+        await self._handler._delete_conversation_task_id(
+            message_context.conversation_id, user.id
+        )
+        await update.message.reply_text("✅ 已开始新对话，请发送您的消息")
 
     async def _handle_status_command(
         self, update: Update, context: ContextTypes.DEFAULT_TYPE
@@ -393,16 +397,11 @@ class TelegramChannelProvider(BaseChannelProvider):
 
         message_context = self._handler.parse_message(update)
 
-        db = SessionLocal()
-        try:
-            user = await self._handler.resolve_user(db, message_context)
-            if not user:
-                await update.message.reply_text("用户未注册，请先登录 Wegent 系统")
-                return
-
-            await self._handler._handle_status_command(db, user, message_context)
-        finally:
-            db.close()
+        user = await self._resolve_user_ref(message_context)
+        if not user:
+            await update.message.reply_text("用户未注册，请先登录 Wegent 系统")
+            return
+        await self._handler._handle_status_command(None, user, message_context)
 
     async def _handle_models_command(
         self, update: Update, context: ContextTypes.DEFAULT_TYPE
@@ -413,34 +412,19 @@ class TelegramChannelProvider(BaseChannelProvider):
 
         message_context = self._handler.parse_message(update)
 
-        db = SessionLocal()
-        try:
-            user = await self._handler.resolve_user(db, message_context)
-            if not user:
-                await update.message.reply_text("用户未注册，请先登录 Wegent 系统")
-                return
-
-            # Check if there's an argument
-            args = context.args
-            if args:
-                # Use the base handler's model command logic
-                from app.services.channels.commands import ParsedCommand
-
-                command = ParsedCommand(
-                    command=CommandType.MODELS, argument=" ".join(args)
-                )
-                await self._handler._handle_command(db, user, command, message_context)
-            else:
-                # Show keyboard if enabled, otherwise use text list
-                if self._handler._use_inline_keyboard:
-                    await self._handler.send_models_keyboard(message_context, user)
-                else:
-                    command = ParsedCommand(command=CommandType.MODELS, argument=None)
-                    await self._handler._handle_command(
-                        db, user, command, message_context
-                    )
-        finally:
-            db.close()
+        user = await self._resolve_user_ref(message_context)
+        if not user:
+            await update.message.reply_text("用户未注册，请先登录 Wegent 系统")
+            return
+        args = context.args
+        if args:
+            command = ParsedCommand(command=CommandType.MODELS, argument=" ".join(args))
+            await self._handler._handle_command(None, user, command, message_context)
+        elif self._handler._use_inline_keyboard:
+            await self._handler.send_models_keyboard(message_context, user)
+        else:
+            command = ParsedCommand(command=CommandType.MODELS, argument=None)
+            await self._handler._handle_command(None, user, command, message_context)
 
     async def _handle_devices_command(
         self, update: Update, context: ContextTypes.DEFAULT_TYPE
@@ -451,34 +435,21 @@ class TelegramChannelProvider(BaseChannelProvider):
 
         message_context = self._handler.parse_message(update)
 
-        db = SessionLocal()
-        try:
-            user = await self._handler.resolve_user(db, message_context)
-            if not user:
-                await update.message.reply_text("用户未注册，请先登录 Wegent 系统")
-                return
-
-            # Check if there's an argument
-            args = context.args
-            if args:
-                # Use the base handler's devices command logic
-                from app.services.channels.commands import ParsedCommand
-
-                command = ParsedCommand(
-                    command=CommandType.DEVICES, argument=" ".join(args)
-                )
-                await self._handler._handle_command(db, user, command, message_context)
-            else:
-                # Show keyboard if enabled, otherwise use text list
-                if self._handler._use_inline_keyboard:
-                    await self._handler.send_devices_keyboard(message_context, user)
-                else:
-                    command = ParsedCommand(command=CommandType.DEVICES, argument=None)
-                    await self._handler._handle_command(
-                        db, user, command, message_context
-                    )
-        finally:
-            db.close()
+        user = await self._resolve_user_ref(message_context)
+        if not user:
+            await update.message.reply_text("用户未注册，请先登录 Wegent 系统")
+            return
+        args = context.args
+        if args:
+            command = ParsedCommand(
+                command=CommandType.DEVICES, argument=" ".join(args)
+            )
+            await self._handler._handle_command(None, user, command, message_context)
+        elif self._handler._use_inline_keyboard:
+            await self._handler.send_devices_keyboard(message_context, user)
+        else:
+            command = ParsedCommand(command=CommandType.DEVICES, argument=None)
+            await self._handler._handle_command(None, user, command, message_context)
 
     async def _handle_use_command(
         self, update: Update, context: ContextTypes.DEFAULT_TYPE
@@ -489,33 +460,18 @@ class TelegramChannelProvider(BaseChannelProvider):
 
         message_context = self._handler.parse_message(update)
 
-        db = SessionLocal()
-        try:
-            user = await self._handler.resolve_user(db, message_context)
-            if not user:
-                await update.message.reply_text("用户未注册，请先登录 Wegent 系统")
-                return
-
-            # Check if there's an argument
-            args = context.args
-            if args:
-                # Use the base handler's use command logic
-                from app.services.channels.commands import ParsedCommand
-
-                command = ParsedCommand(
-                    command=CommandType.USE, argument=" ".join(args)
-                )
-                await self._handler._handle_command(db, user, command, message_context)
-            else:
-                # Show keyboard if enabled, otherwise show status
-                if self._handler._use_inline_keyboard:
-                    await self._handler.send_mode_keyboard(message_context, user)
-                else:
-                    await self._handler._handle_status_command(
-                        db, user, message_context
-                    )
-        finally:
-            db.close()
+        user = await self._resolve_user_ref(message_context)
+        if not user:
+            await update.message.reply_text("用户未注册，请先登录 Wegent 系统")
+            return
+        args = context.args
+        if args:
+            command = ParsedCommand(command=CommandType.USE, argument=" ".join(args))
+            await self._handler._handle_command(None, user, command, message_context)
+        elif self._handler._use_inline_keyboard:
+            await self._handler.send_mode_keyboard(message_context, user)
+        else:
+            await self._handler._handle_status_command(None, user, message_context)
 
     async def _handle_callback_query(
         self, update: Update, context: ContextTypes.DEFAULT_TYPE
@@ -526,26 +482,17 @@ class TelegramChannelProvider(BaseChannelProvider):
 
         message_context = self._handler.parse_message(update)
 
-        db = SessionLocal()
-        try:
-            user = await self._handler.resolve_user(db, message_context)
-            if not user:
-                await update.callback_query.answer("用户未注册")
-                return
-
-            # Answer callback query to dismiss loading indicator
-            await update.callback_query.answer()
-
-            response = await self._handler.handle_callback_query(update, user)
-            if response:
-                # Edit the original message with the response
-                try:
-                    await update.callback_query.message.edit_text(response)
-                except Exception:
-                    # If edit fails, send new message
-                    await update.callback_query.message.reply_text(response)
-        finally:
-            db.close()
+        user = await self._resolve_user_ref(message_context)
+        if not user:
+            await update.callback_query.answer("用户未注册")
+            return
+        await update.callback_query.answer()
+        response = await self._handler.handle_callback_query(update, user)
+        if response:
+            try:
+                await update.callback_query.message.edit_text(response)
+            except Exception:
+                await update.callback_query.message.reply_text(response)
 
     async def _handle_message(
         self, update: Update, context: ContextTypes.DEFAULT_TYPE

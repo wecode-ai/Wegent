@@ -26,7 +26,7 @@ router = APIRouter()
 
 
 @router.get("/subscription-monitor/stats", response_model=SubscriptionMonitorStats)
-async def get_subscription_monitor_stats(
+def get_subscription_monitor_stats(
     hours: int = Query(default=24, ge=1, le=168, description="Time window in hours"),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_admin_user),
@@ -122,7 +122,7 @@ async def get_subscription_monitor_stats(
 @router.get(
     "/subscription-monitor/errors", response_model=SubscriptionMonitorErrorListResponse
 )
-async def get_subscription_monitor_errors(
+def get_subscription_monitor_errors(
     page: int = Query(default=1, ge=1, description="Page number"),
     limit: int = Query(default=20, ge=1, le=100, description="Items per page"),
     hours: int = Query(default=24, ge=1, le=168, description="Time window in hours"),

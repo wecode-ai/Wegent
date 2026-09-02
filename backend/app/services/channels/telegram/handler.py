@@ -21,12 +21,13 @@ Architecture:
 import logging
 from typing import TYPE_CHECKING, Any, Callable, Dict, Optional
 
-from sqlalchemy.orm import Session
-
 from app.db.session import SessionLocal
-from app.models.user import User
 from app.services.channels.callback import BaseChannelCallbackService, ChannelType
-from app.services.channels.handler import BaseChannelHandler, MessageContext
+from app.services.channels.handler import (
+    BaseChannelHandler,
+    ChannelUserRef,
+    MessageContext,
+)
 from app.services.channels.telegram.callback import (
     TelegramCallbackInfo,
     telegram_callback_service,
@@ -37,12 +38,38 @@ from app.services.channels.telegram.keyboard import (
     TelegramKeyboardBuilder,
 )
 from app.services.channels.telegram.user_resolver import TelegramUserResolver
+from app.services.chat.storage.db import run_sync_in_executor
 from app.services.execution.emitters import ResultEmitter
 
 if TYPE_CHECKING:
     from telegram import Bot, Message, Update
 
 logger = logging.getLogger(__name__)
+
+
+def _resolve_telegram_user_id_sync(
+    mapping_mode: str,
+    mapping_config: Optional[dict[str, Any]],
+    telegram_user_id: int,
+    telegram_username: Optional[str],
+    telegram_first_name: Optional[str],
+    telegram_last_name: Optional[str],
+) -> Optional[int]:
+    db = SessionLocal()
+    try:
+        user = TelegramUserResolver(
+            db,
+            user_mapping_mode=mapping_mode,
+            user_mapping_config=mapping_config,
+        ).resolve_user_sync(
+            telegram_user_id=telegram_user_id,
+            telegram_username=telegram_username,
+            telegram_first_name=telegram_first_name,
+            telegram_last_name=telegram_last_name,
+        )
+        return int(user.id) if user else None
+    finally:
+        db.close()
 
 
 class TelegramChannelHandler(BaseChannelHandler["Update", TelegramCallbackInfo]):
@@ -182,29 +209,18 @@ class TelegramChannelHandler(BaseChannelHandler["Update", TelegramCallbackInfo])
             },
         )
 
-    async def resolve_user(
-        self, db: Session, message_context: MessageContext
-    ) -> Optional[User]:
-        """Resolve Telegram user to Wegent user.
+    async def resolve_user_id(self, message_context: MessageContext) -> Optional[int]:
+        """Resolve one user ID in a worker-owned database session."""
 
-        Args:
-            db: Database session
-            message_context: Parsed message context
-
-        Returns:
-            Wegent User or None if not found
-        """
-        mapping_config = self.user_mapping_config
-        resolver = TelegramUserResolver(
-            db,
-            user_mapping_mode=mapping_config.mode,
-            user_mapping_config=mapping_config.config,
-        )
-        return await resolver.resolve_user(
-            telegram_user_id=message_context.extra_data.get("telegram_user_id", 0),
-            telegram_username=message_context.extra_data.get("telegram_username"),
-            telegram_first_name=message_context.extra_data.get("telegram_first_name"),
-            telegram_last_name=message_context.extra_data.get("telegram_last_name"),
+        mapping_config = await self.get_user_mapping_config_nonblocking()
+        return await run_sync_in_executor(
+            _resolve_telegram_user_id_sync,
+            mapping_config.mode,
+            mapping_config.config,
+            message_context.extra_data.get("telegram_user_id", 0),
+            message_context.extra_data.get("telegram_username"),
+            message_context.extra_data.get("telegram_first_name"),
+            message_context.extra_data.get("telegram_last_name"),
         )
 
     async def send_text_reply(self, message_context: MessageContext, text: str) -> bool:
@@ -298,7 +314,7 @@ class TelegramChannelHandler(BaseChannelHandler["Update", TelegramCallbackInfo])
         )
 
     async def handle_callback_query(
-        self, update: "Update", user: User
+        self, update: "Update", user: ChannelUserRef
     ) -> Optional[str]:
         """Handle inline keyboard callback query.
 
@@ -346,89 +362,74 @@ class TelegramChannelHandler(BaseChannelHandler["Update", TelegramCallbackInfo])
 
         return None
 
-    async def _handle_model_callback(self, user: User, value: str) -> Optional[str]:
+    async def _handle_model_callback(
+        self, user: ChannelUserRef, value: str
+    ) -> Optional[str]:
         """Handle model selection callback."""
         from app.services.channels.model_selection import (
             ModelSelection,
             model_selection_manager,
         )
-        from app.services.model_aggregation_service import model_aggregation_service
 
-        db = SessionLocal()
+        all_models = await self._get_im_models(user.id)
+
+        if not all_models:
+            return "❌ 暂无可用模型"
+
         try:
-            # Get available models
-            all_models = model_aggregation_service.list_available_models(
-                db=db,
-                current_user=user,
-                shell_type=None,
-                include_config=False,
-                scope="personal",
-                model_category_type="llm",
-            )
-
-            if not all_models:
-                return "❌ 暂无可用模型"
-
-            # Parse model index
-            try:
-                model_index = int(value)
-                if model_index < 1 or model_index > len(all_models):
-                    return f"❌ 无效的模型序号: {value}"
-            except ValueError:
+            model_index = int(value)
+            if model_index < 1 or model_index > len(all_models):
                 return f"❌ 无效的模型序号: {value}"
+        except ValueError:
+            return f"❌ 无效的模型序号: {value}"
 
-            selected = all_models[model_index - 1]
+        selected = all_models[model_index - 1]
 
-            # Save selection
-            new_selection = ModelSelection(
-                model_name=selected.get("name", ""),
-                model_type=selected.get("type", "public"),
-                display_name=selected.get("displayName"),
-                provider=selected.get("provider"),
-            )
-            await model_selection_manager.set_selection(user.id, new_selection)
+        # Save selection
+        new_selection = ModelSelection(
+            model_name=selected.get("name", ""),
+            model_type=selected.get("type", "public"),
+            display_name=selected.get("displayName"),
+            provider=selected.get("provider"),
+        )
+        await model_selection_manager.set_selection(user.id, new_selection)
 
-            display_name = new_selection.display_name or new_selection.model_name
-            return f"✅ 已切换到模型 **{display_name}**"
+        display_name = new_selection.display_name or new_selection.model_name
+        return f"✅ 已切换到模型 **{display_name}**"
 
-        finally:
-            db.close()
-
-    async def _handle_device_callback(self, user: User, value: str) -> Optional[str]:
+    async def _handle_device_callback(
+        self, user: ChannelUserRef, value: str
+    ) -> Optional[str]:
         """Handle device selection callback."""
         from app.services.channels.device_selection import device_selection_manager
-        from app.services.device_service import device_service
 
-        db = SessionLocal()
-        try:
-            devices = await device_service.get_all_devices(db, user.id)
-            online_devices = [d for d in devices if d.get("status") != "offline"]
+        devices = await self._get_im_local_devices(user.id)
+        online_devices = [d for d in devices if d.get("status") != "offline"]
 
-            if not online_devices:
-                return "❌ 暂无在线设备"
+        if not online_devices:
+            return "❌ 暂无在线设备"
 
             # Parse device index
-            try:
-                device_index = int(value)
-                if device_index < 1 or device_index > len(online_devices):
-                    return f"❌ 无效的设备序号: {value}"
-            except ValueError:
+        try:
+            device_index = int(value)
+            if device_index < 1 or device_index > len(online_devices):
                 return f"❌ 无效的设备序号: {value}"
+        except ValueError:
+            return f"❌ 无效的设备序号: {value}"
 
-            selected = online_devices[device_index - 1]
+        selected = online_devices[device_index - 1]
 
-            await device_selection_manager.set_local_device(
-                user.id,
-                selected["device_id"],
-                selected["name"],
-            )
+        await device_selection_manager.set_local_device(
+            user.id,
+            selected["device_id"],
+            selected["name"],
+        )
 
-            return f"✅ 已切换到设备 **{selected['name']}**"
+        return f"✅ 已切换到设备 **{selected['name']}**"
 
-        finally:
-            db.close()
-
-    async def _handle_mode_callback(self, user: User, value: str) -> Optional[str]:
+    async def _handle_mode_callback(
+        self, user: ChannelUserRef, value: str
+    ) -> Optional[str]:
         """Handle execution mode selection callback."""
         from app.services.channels.device_selection import device_selection_manager
 
@@ -455,7 +456,7 @@ class TelegramChannelHandler(BaseChannelHandler["Update", TelegramCallbackInfo])
         return f"❌ 未知的执行模式: {value}"
 
     async def send_models_keyboard(
-        self, message_context: MessageContext, user: User
+        self, message_context: MessageContext, user: ChannelUserRef
     ) -> bool:
         """Send models list with inline keyboard.
 
@@ -470,19 +471,9 @@ class TelegramChannelHandler(BaseChannelHandler["Update", TelegramCallbackInfo])
             return False
 
         from app.services.channels.model_selection import model_selection_manager
-        from app.services.model_aggregation_service import model_aggregation_service
 
-        db = SessionLocal()
         try:
-            # Get available models
-            all_models = model_aggregation_service.list_available_models(
-                db=db,
-                current_user=user,
-                shell_type=None,
-                include_config=False,
-                scope="personal",
-                model_category_type="llm",
-            )
+            all_models = await self._get_im_models(user.id)
 
             if not all_models:
                 await self.send_text_reply(message_context, "暂无可用模型")
@@ -521,11 +512,9 @@ class TelegramChannelHandler(BaseChannelHandler["Update", TelegramCallbackInfo])
                 f"[TelegramHandler] Failed to send models keyboard: {e}"
             )
             return False
-        finally:
-            db.close()
 
     async def send_devices_keyboard(
-        self, message_context: MessageContext, user: User
+        self, message_context: MessageContext, user: ChannelUserRef
     ) -> bool:
         """Send devices list with inline keyboard.
 
@@ -543,11 +532,9 @@ class TelegramChannelHandler(BaseChannelHandler["Update", TelegramCallbackInfo])
             DeviceType,
             device_selection_manager,
         )
-        from app.services.device_service import device_service
 
-        db = SessionLocal()
         try:
-            devices = await device_service.get_all_devices(db, user.id)
+            devices = await self._get_im_local_devices(user.id)
 
             if not devices:
                 await self.send_text_reply(
@@ -591,11 +578,9 @@ class TelegramChannelHandler(BaseChannelHandler["Update", TelegramCallbackInfo])
                 f"[TelegramHandler] Failed to send devices keyboard: {e}"
             )
             return False
-        finally:
-            db.close()
 
     async def send_mode_keyboard(
-        self, message_context: MessageContext, user: User
+        self, message_context: MessageContext, user: ChannelUserRef
     ) -> bool:
         """Send execution mode selection with inline keyboard.
 

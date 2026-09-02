@@ -43,7 +43,7 @@ def _user_to_response(user: User) -> AdminUserResponse:
 
 
 @router.get("/users", response_model=AdminUserListResponse)
-async def list_all_users(
+def list_all_users(
     page: int = Query(1, ge=1),
     limit: int = Query(20, ge=1, le=100),
     include_inactive: bool = Query(False),
@@ -75,7 +75,7 @@ async def list_all_users(
 
 
 @router.get("/users/{user_id}", response_model=AdminUserResponse)
-async def get_user_by_id_endpoint(
+def get_user_by_id_endpoint(
     user_id: int = Path(..., description="User ID"),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_admin_user),
@@ -90,7 +90,7 @@ async def get_user_by_id_endpoint(
 @router.post(
     "/users", response_model=AdminUserResponse, status_code=status.HTTP_201_CREATED
 )
-async def create_user(
+def create_user(
     user_data: AdminUserCreate,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_admin_user),
@@ -144,7 +144,7 @@ async def create_user(
 
 
 @router.put("/users/{user_id}", response_model=AdminUserResponse)
-async def update_user(
+def update_user(
     user_data: AdminUserUpdate,
     user_id: int = Path(..., description="User ID"),
     db: Session = Depends(get_db),
@@ -209,7 +209,7 @@ async def update_user(
 
 
 @router.delete("/users/{user_id}", status_code=status.HTTP_204_NO_CONTENT)
-async def delete_user(
+def delete_user(
     user_id: int = Path(..., description="User ID"),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_admin_user),
@@ -240,7 +240,7 @@ async def delete_user(
 
 
 @router.post("/users/{user_id}/reset-password", response_model=AdminUserResponse)
-async def reset_user_password(
+def reset_user_password(
     password_data: PasswordReset,
     user_id: int = Path(..., description="User ID"),
     db: Session = Depends(get_db),
@@ -281,7 +281,7 @@ async def reset_user_password(
 
 
 @router.post("/users/{user_id}/toggle-status", response_model=AdminUserResponse)
-async def toggle_user_status(
+def toggle_user_status(
     user_id: int = Path(..., description="User ID"),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_admin_user),
@@ -312,7 +312,7 @@ async def toggle_user_status(
 
 
 @router.put("/users/{user_id}/role", response_model=AdminUserResponse)
-async def update_user_role(
+def update_user_role(
     role_data: RoleUpdate,
     user_id: int = Path(..., description="User ID"),
     db: Session = Depends(get_db),

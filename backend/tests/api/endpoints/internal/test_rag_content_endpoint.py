@@ -81,7 +81,7 @@ async def test_internal_rag_content_returns_streaming_response(test_db) -> None:
             return_value=b"release plan",
         ),
     ):
-        response = await stream_rag_attachment_content(
+        response = stream_rag_attachment_content(
             attachment_id=context.id,
             _=None,
             db=test_db,

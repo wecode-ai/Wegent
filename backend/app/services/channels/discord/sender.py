@@ -9,6 +9,8 @@ from typing import Any, Dict
 
 import httpx
 
+from app.core.payload_codec import decode_sync_response_json, encode_http_json
+
 logger = logging.getLogger(__name__)
 
 DISCORD_MESSAGE_CONTENT_LIMIT = 2000
@@ -35,26 +37,30 @@ class DiscordBotSender:
         }
         try:
             async with httpx.AsyncClient(timeout=30.0) as client:
+                dm_request = {"recipient_id": str(user_id)}
                 dm_response = await client.post(
                     f"{self.BASE_URL}/users/@me/channels",
-                    json={"recipient_id": str(user_id)},
+                    content=await encode_http_json(dm_request),
                     headers=headers,
                 )
                 dm_response.raise_for_status()
-                dm_channel_id = dm_response.json().get("id")
+                dm_payload = await decode_sync_response_json(dm_response)
+                dm_channel_id = dm_payload.get("id")
                 if not dm_channel_id:
                     return {
                         "success": False,
                         "error": "Discord DM channel not returned",
                     }
 
+                message_request = {"content": _normalize_message_content(text)}
                 message_response = await client.post(
                     f"{self.BASE_URL}/channels/{dm_channel_id}/messages",
-                    json={"content": _normalize_message_content(text)},
+                    content=await encode_http_json(message_request),
                     headers=headers,
                 )
                 message_response.raise_for_status()
-                return {"success": True, "result": message_response.json()}
+                message_payload = await decode_sync_response_json(message_response)
+                return {"success": True, "result": message_payload}
         except Exception as exc:
             logger.error("[DiscordSender] Error sending message: %s", exc)
             return {"success": False, "error": str(exc)}

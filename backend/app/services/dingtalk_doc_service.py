@@ -18,8 +18,10 @@ from typing import Any
 from sqlalchemy.orm import Session
 from sqlalchemy.orm.attributes import flag_modified
 
+from app.core.payload_codec import run_payload_codec
 from app.models.dingtalk_doc import DingTalkNodeSource, DingtalkSyncedNode
 from app.models.user import User
+from app.services.chat.storage.db import run_sync_in_executor
 from app.services.user_mcp_service import UserMCPService
 
 logger = logging.getLogger(__name__)
@@ -50,8 +52,19 @@ class DingTalkDocService:
 
         Returns the decrypted URL if configured and enabled, None otherwise.
         """
-        config = UserMCPService.get_provider_service_config(
+        return DingTalkDocService.get_dingtalk_mcp_url_from_preferences(
             user.preferences,
+            service_id,
+        )
+
+    @staticmethod
+    def get_dingtalk_mcp_url_from_preferences(
+        preferences: str | dict[str, Any] | None,
+        service_id: str = "docs",
+    ) -> str | None:
+        """Resolve one DingTalk MCP URL from a detached preference snapshot."""
+        config = UserMCPService.get_provider_service_config(
+            preferences,
             provider_id="dingtalk",
             service_id=service_id,
         )
@@ -79,7 +92,10 @@ class DingTalkDocService:
         )
 
     @staticmethod
-    async def sync_dingtalk_docs(user: User, db: Session) -> dict[str, Any]:
+    async def sync_dingtalk_docs(
+        user_id: int,
+        preferences: str | dict[str, Any] | None,
+    ) -> dict[str, Any]:
         """Sync DingTalk document nodes from the user's MCP server.
 
         Connects to the user's DingTalk Docs MCP server, recursively lists all
@@ -87,7 +103,12 @@ class DingTalkDocService:
 
         Returns a dict with sync statistics: added, updated, deleted, total.
         """
-        mcp_url = DingTalkDocService.get_user_dingtalk_mcp_url(user)
+        mcp_url = await run_payload_codec(
+            DingTalkDocService.get_dingtalk_mcp_url_from_preferences,
+            preferences,
+            payload_hint=preferences,
+            force_offload=True,
+        )
         if not mcp_url:
             raise ValueError("DingTalk Docs MCP URL is not configured or not enabled")
 
@@ -97,7 +118,7 @@ class DingTalkDocService:
         if len(all_nodes) > MAX_NODES_PER_SYNC:
             logger.warning(
                 "User %s has %d DingTalk nodes, truncating to %d",
-                user.id,
+                user_id,
                 len(all_nodes),
                 MAX_NODES_PER_SYNC,
             )
@@ -105,8 +126,12 @@ class DingTalkDocService:
 
         # Sync to database - use local time (no timezone) consistent with created_at
         now = datetime.now()
-        stats = DingTalkDocService._sync_nodes_to_db(
-            user.id, all_nodes, now, db, source=DOCS_SOURCE
+        stats = await run_sync_in_executor(
+            DingTalkDocService._sync_nodes_with_owned_session,
+            user_id,
+            all_nodes,
+            now,
+            DOCS_SOURCE,
         )
         stats["mcp_nodes_fetched"] = len(all_nodes)
 
@@ -186,8 +211,11 @@ class DingTalkDocService:
             result = await session.call_tool(MCP_TOOL_LIST_NODES, args)
 
             # Parse the result - MCP returns content items
-            nodes_data, parsed_page_token = DingTalkDocService._parse_list_nodes_result(
-                result
+            nodes_data, parsed_page_token = await run_payload_codec(
+                DingTalkDocService._parse_list_nodes_result,
+                result,
+                payload_hint=result,
+                force_offload=True,
             )
 
             # Inject parentId into each node: the MCP API does not return parent
@@ -539,6 +567,25 @@ class DingTalkDocService:
             "total": total,
             "sync_time": sync_time,
         }
+
+    @staticmethod
+    def _sync_nodes_with_owned_session(
+        user_id: int,
+        nodes: list[dict[str, Any]],
+        sync_time: datetime,
+        source: DingTalkNodeSource,
+    ) -> dict[str, Any]:
+        """Persist one fetched snapshot in a worker-owned short DB session."""
+        from app.db.session import SessionLocal
+
+        with SessionLocal() as db:
+            return DingTalkDocService._sync_nodes_to_db(
+                user_id,
+                nodes,
+                sync_time,
+                db,
+                source=source,
+            )
 
     @staticmethod
     def _parse_update_time(update_time: Any, fallback: datetime) -> datetime:

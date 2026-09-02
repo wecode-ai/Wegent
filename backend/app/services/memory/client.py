@@ -28,6 +28,11 @@ import aiohttp
 
 from app.core.async_utils import AsyncSessionManager
 from app.core.config import settings
+from app.core.payload_codec import (
+    decode_async_response_json,
+    decode_async_response_text,
+    encode_http_json,
+)
 from app.services.memory.schemas import (
     MemoryCreateRequest,
     MemorySearchRequest,
@@ -143,14 +148,18 @@ class LongTermMemoryClient:
                 http_method = getattr(session, method)
                 kwargs: Dict[str, Any] = {"headers": self._get_headers()}
                 if json_data is not None:
-                    kwargs["json"] = json_data
+                    kwargs["data"] = await encode_http_json(json_data)
 
                 async with http_method(url, **kwargs) as resp:
                     if resp.status == 200:
-                        data = await resp.json() if parse_response else None
+                        data = (
+                            await decode_async_response_json(resp)
+                            if parse_response
+                            else None
+                        )
                         return HttpResponse(success=True, data=data)
                     else:
-                        error_text = await resp.text()
+                        error_text = await decode_async_response_text(resp)
                         logger.error(
                             "Failed to %s (HTTP %d): %s%s",
                             operation,

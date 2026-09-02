@@ -23,7 +23,13 @@ from app.schemas.project_chat import (
     ProjectChatMessageView,
     ProjectChatWegentContinuation,
 )
-from app.services.chat.storage.task_manager import TaskCreationParams, create_chat_task
+from app.services.chat.storage.db import get_db_session, run_sync_in_executor
+from app.services.chat.storage.task_manager import (
+    TaskCreationParams,
+    _create_task_and_subtasks_storage,
+    build_nonblocking_task_creation_output,
+    run_task_creation_side_effects,
+)
 from app.services.project_chat.push import push_project_chat_message
 from app.services.project_chat.service import bot_config, project_chat_service
 from app.stores.tasks import task_store
@@ -41,168 +47,217 @@ class BoardTeamContinuationResult:
     created: bool
 
 
+@dataclass(frozen=True)
+class _BoardTeamContinuationDispatch:
+    task_id: int
+    assistant_subtask_id: int
+    user_subtask_id: int
+    team_id: int
+    user_id: int
+    prompt: str
+
+
+@dataclass(frozen=True)
+class _BoardTeamContinuationStartOutput:
+    result: BoardTeamContinuationResult
+    task_creation_output: Any = None
+    dispatch: _BoardTeamContinuationDispatch | None = None
+
+
 class BoardTeamContinuationService:
     """Resolve, persist, and dispatch native Wegent board continuations."""
 
-    async def start(
+    async def start_nonblocking(
         self,
-        db: Session,
         *,
         user_id: int,
         request: ProjectChatWegentContinuation,
     ) -> BoardTeamContinuationResult:
-        project_chat_service._require_scope(
-            db,
-            user_id=user_id,
-            project_id=request.project_id,
-            task_id=request.task_id,
-            required_role=BaseRole.Developer,
+        """Persist a continuation in a DB worker, then run async side effects."""
+        output = await run_sync_in_executor(
+            self._start_nonblocking_sync,
+            user_id,
+            request,
         )
-        trigger = self._trigger_message(db, request)
-        reply_target = self._reply_target(db, request, trigger)
-        execution = self._execution(db, request, reply_target)
-        agent, team, owner = self._runtime_objects(db, request, execution)
+        if output.dispatch is not None:
+            try:
+                await run_sync_in_executor(
+                    _dispatch_board_team_continuation,
+                    output.dispatch,
+                )
+            except Exception as exc:
+                await run_sync_in_executor(
+                    _fail_board_team_continuation_dispatch,
+                    output.dispatch,
+                    str(exc) or "Wegent continuation could not be queued",
+                )
+                raise HTTPException(
+                    status.HTTP_503_SERVICE_UNAVAILABLE,
+                    "Wegent continuation could not be queued",
+                ) from exc
+        if output.task_creation_output is not None:
+            await run_task_creation_side_effects(output.task_creation_output)
+        return output.result
 
-        # Serialize duplicate Socket ACK retries and concurrent replies on the
-        # durable user comment. The same trigger can own exactly one Wegent turn.
-        trigger = (
-            db.query(ProjectChatMessage)
-            .filter(ProjectChatMessage.id == trigger.id)
-            .with_for_update()
-            .one()
-        )
-        existing = self._existing_response(db, request, trigger)
-        if existing is not None:
-            return BoardTeamContinuationResult(
-                project_chat_service.to_view(existing), created=False
-            )
-
-        native_task = task_store.get_by_id_for_update(
-            db,
-            task_id=execution.backend_task_id,
-            owner_user_id=owner.id,
-        )
-        if native_task is None:
-            raise HTTPException(status.HTTP_409_CONFLICT, "Wegent task is unavailable")
-        active_turn = (
-            db.query(ProjectChatMessage)
-            .filter(
-                ProjectChatMessage.runtime_task_id.startswith(
-                    f"wegent:{native_task.id}:"
-                ),
-                ProjectChatMessage.sender_type == "agent",
-                ProjectChatMessage.status.in_(["pending", "streaming"]),
-            )
-            .first()
-        )
-        if active_turn is not None:
-            raise HTTPException(
-                status.HTTP_409_CONFLICT,
-                "The previous Wegent continuation is still running",
-            )
-
-        params = TaskCreationParams(
-            message=trigger.content,
-            title=self._task_title(native_task),
-            task_type="chat",
-            source=CONTINUATION_SOURCE,
-            auto_delete_executor="true",
-        )
-        created = await create_chat_task(
-            db=db,
-            user=owner,
-            team=team,
-            message=trigger.content,
-            params=params,
-            task_id=native_task.id,
-            should_trigger_ai=True,
-            source=CONTINUATION_SOURCE,
-            commit=False,
-        )
-        if created.assistant_subtask is None:
-            raise HTTPException(
-                status.HTTP_409_CONFLICT,
-                "Wegent continuation did not create an assistant turn",
-            )
-        if request.attachment_ids:
-            from app.services.chat.preprocessing import link_contexts_to_subtask
-
-            link_contexts_to_subtask(
-                db=db,
-                subtask_id=created.user_subtask.id,
+    def _start_nonblocking_sync(
+        self,
+        user_id: int,
+        request: ProjectChatWegentContinuation,
+    ) -> _BoardTeamContinuationStartOutput:
+        """Run the locked continuation transaction in a worker-owned session."""
+        with get_db_session() as db:
+            project_chat_service._require_scope(
+                db,
                 user_id=user_id,
-                attachment_ids=request.attachment_ids,
+                project_id=request.project_id,
+                task_id=request.task_id,
+                required_role=BaseRole.Developer,
+            )
+            trigger = self._trigger_message(db, request)
+            reply_target = self._reply_target(db, request, trigger)
+            execution = self._execution(db, request, reply_target)
+            agent, team, owner = self._runtime_objects(db, request, execution)
+
+            trigger = (
+                db.query(ProjectChatMessage)
+                .filter(ProjectChatMessage.id == trigger.id)
+                .with_for_update()
+                .one()
+            )
+            existing = self._existing_response(db, request, trigger)
+            if existing is not None:
+                return _BoardTeamContinuationStartOutput(
+                    result=BoardTeamContinuationResult(
+                        project_chat_service.to_view(existing),
+                        created=False,
+                    )
+                )
+
+            native_task = task_store.get_by_id_for_update(
+                db,
+                task_id=execution.backend_task_id,
+                owner_user_id=owner.id,
+            )
+            if native_task is None:
+                raise HTTPException(
+                    status.HTTP_409_CONFLICT,
+                    "Wegent task is unavailable",
+                )
+            active_turn = (
+                db.query(ProjectChatMessage)
+                .filter(
+                    ProjectChatMessage.runtime_task_id.startswith(
+                        f"wegent:{native_task.id}:"
+                    ),
+                    ProjectChatMessage.sender_type == "agent",
+                    ProjectChatMessage.status.in_(["pending", "streaming"]),
+                )
+                .first()
+            )
+            if active_turn is not None:
+                raise HTTPException(
+                    status.HTTP_409_CONFLICT,
+                    "The previous Wegent continuation is still running",
+                )
+
+            params = TaskCreationParams(
+                message=trigger.content,
+                title=self._task_title(native_task),
+                task_type="chat",
+                source=CONTINUATION_SOURCE,
+                auto_delete_executor="true",
+            )
+            storage_result = _create_task_and_subtasks_storage(
+                db=db,
+                user=owner,
+                team=team,
+                message=trigger.content,
+                params=params,
+                task_id=native_task.id,
+                should_trigger_ai=True,
+                rag_prompt=None,
+                commit=False,
+            )
+            created = storage_result.creation
+            if created.assistant_subtask is None:
+                raise HTTPException(
+                    status.HTTP_409_CONFLICT,
+                    "Wegent continuation did not create an assistant turn",
+                )
+            if request.attachment_ids:
+                from app.services.chat.preprocessing import link_contexts_to_subtask
+
+                link_contexts_to_subtask(
+                    db=db,
+                    subtask_id=created.user_subtask.id,
+                    user_id=user_id,
+                    attachment_ids=request.attachment_ids,
+                    task=created.task,
+                    user_name=trigger.sender_name,
+                )
+
+            message_id = (
+                str(uuid.uuid7()) if hasattr(uuid, "uuid7") else str(uuid.uuid4())
+            )
+            response = ProjectChatMessage(
+                message_id=message_id,
+                client_message_id=message_id,
+                project_id=request.project_id,
+                task_id=request.task_id,
+                sender_type="agent",
+                sender_id=agent.id,
+                sender_name=agent.title or agent.name or team.name or "Wegent Team",
+                message_type="agent_chunk",
+                content="",
+                metadata_json={
+                    "execution_id": execution.id,
+                    "executor_type": "wegent_team",
+                    "executor_ref": str(team.id),
+                    "backend_task_id": native_task.id,
+                    "backend_subtask_id": created.assistant_subtask.id,
+                    "run_status": "queued",
+                },
+                trigger_message_id=trigger.message_id,
+                reply_to_message_id=trigger.message_id,
+                thread_root_message_id=(
+                    trigger.thread_root_message_id or trigger.message_id
+                ),
+                agent_id=agent.id,
+                runtime_device_id="",
+                runtime_task_id=(
+                    f"wegent:{native_task.id}:{created.assistant_subtask.id}"
+                ),
+                status="pending",
+            )
+            db.add(response)
+            self._bind_active_turn(
+                db,
                 task=created.task,
-                user_name=trigger.sender_name,
-            )
-
-        message_id = str(uuid.uuid7()) if hasattr(uuid, "uuid7") else str(uuid.uuid4())
-        response = ProjectChatMessage(
-            message_id=message_id,
-            client_message_id=message_id,
-            project_id=request.project_id,
-            task_id=request.task_id,
-            sender_type="agent",
-            sender_id=agent.id,
-            sender_name=agent.title or agent.name or team.name or "Wegent Team",
-            message_type="agent_chunk",
-            content="",
-            metadata_json={
-                "execution_id": execution.id,
-                "executor_type": "wegent_team",
-                "executor_ref": str(team.id),
-                "backend_task_id": native_task.id,
-                "backend_subtask_id": created.assistant_subtask.id,
-                "run_status": "queued",
-            },
-            trigger_message_id=trigger.message_id,
-            reply_to_message_id=trigger.message_id,
-            thread_root_message_id=(
-                trigger.thread_root_message_id or trigger.message_id
-            ),
-            agent_id=agent.id,
-            runtime_device_id="",
-            runtime_task_id=(f"wegent:{native_task.id}:{created.assistant_subtask.id}"),
-            status="pending",
-        )
-        db.add(response)
-        self._bind_active_turn(
-            db,
-            task=created.task,
-            subtask_id=created.assistant_subtask.id,
-            message_id=message_id,
-        )
-        db.commit()
-        db.refresh(response)
-
-        try:
-            from app.tasks.project_automation_tasks import (
-                execute_board_team_continuation,
-            )
-
-            execute_board_team_continuation.delay(
-                task_id=native_task.id,
-                assistant_subtask_id=created.assistant_subtask.id,
-                user_subtask_id=created.user_subtask.id,
-                team_id=team.id,
-                user_id=owner.id,
-                prompt=trigger.content,
-            )
-        except Exception as exc:
-            fail_board_team_continuation(
-                task_id=native_task.id,
                 subtask_id=created.assistant_subtask.id,
-                user_id=owner.id,
-                error=str(exc) or "Wegent continuation could not be queued",
+                message_id=message_id,
             )
-            raise HTTPException(
-                status.HTTP_503_SERVICE_UNAVAILABLE,
-                "Wegent continuation could not be queued",
-            ) from exc
-        db.refresh(response)
-        return BoardTeamContinuationResult(
-            project_chat_service.to_view(response), created=True
-        )
+            db.commit()
+            db.refresh(response)
+
+            message_view = project_chat_service.to_view(response)
+            task_creation_output = build_nonblocking_task_creation_output(
+                db,
+                user=owner,
+                team=team,
+                storage_result=storage_result,
+            )
+            return _BoardTeamContinuationStartOutput(
+                result=BoardTeamContinuationResult(message_view, created=True),
+                task_creation_output=task_creation_output,
+                dispatch=_BoardTeamContinuationDispatch(
+                    task_id=native_task.id,
+                    assistant_subtask_id=created.assistant_subtask.id,
+                    user_subtask_id=created.user_subtask.id,
+                    team_id=team.id,
+                    user_id=owner.id,
+                    prompt=trigger.content,
+                ),
+            )
 
     @staticmethod
     def _trigger_message(
@@ -519,6 +574,35 @@ def fail_board_team_continuation(
             content=None,
             error=error,
         )
+
+
+def _dispatch_board_team_continuation(
+    dispatch: _BoardTeamContinuationDispatch,
+) -> None:
+    """Publish a continuation after its database transaction has closed."""
+    from app.tasks.project_automation_tasks import execute_board_team_continuation
+
+    execute_board_team_continuation.delay(
+        task_id=dispatch.task_id,
+        assistant_subtask_id=dispatch.assistant_subtask_id,
+        user_subtask_id=dispatch.user_subtask_id,
+        team_id=dispatch.team_id,
+        user_id=dispatch.user_id,
+        prompt=dispatch.prompt,
+    )
+
+
+def _fail_board_team_continuation_dispatch(
+    dispatch: _BoardTeamContinuationDispatch,
+    error: str,
+) -> None:
+    """Persist a failed task publication outside the event loop."""
+    fail_board_team_continuation(
+        task_id=dispatch.task_id,
+        subtask_id=dispatch.assistant_subtask_id,
+        user_id=dispatch.user_id,
+        error=error,
+    )
 
 
 board_team_continuation_service = BoardTeamContinuationService()

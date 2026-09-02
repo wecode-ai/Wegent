@@ -4,6 +4,7 @@
 
 """Project-scoped helpers for starting local device sessions."""
 
+from dataclasses import dataclass
 from typing import Literal, Optional
 
 from fastapi import HTTPException, status
@@ -30,9 +31,69 @@ from app.stores.tasks import task_store
 ProjectSessionType = Literal["terminal", "code_server"]
 
 
+@dataclass(frozen=True)
+class _ProjectDeviceSessionPlan:
+    device_id: str
+    path: str
+    create_if_missing: bool
+
+
+def _load_project_device_session_plan(
+    user_id: int,
+    project_id: int,
+    session_type: ProjectSessionType,
+    client_origin: Optional[str],
+    task_id: Optional[int],
+) -> _ProjectDeviceSessionPlan:
+    from app.services.chat.storage.db import get_db_session
+
+    with get_db_session() as db:
+        query = db.query(Project).filter(
+            Project.id == project_id,
+            Project.user_id == user_id,
+            Project.is_active == True,
+        )
+        if client_origin:
+            query = query.filter(Project.client_origin == client_origin)
+        project = query.first()
+        if not project:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Project not found",
+            )
+
+        project_config = _parse_project_config(project.config)
+        device_id = _get_bound_device_id(project_config)
+        _ensure_device_supports_project_session_type(
+            db,
+            user_id,
+            device_id,
+            session_type,
+        )
+        if task_id is not None:
+            path = _get_task_session_path(
+                db=db,
+                user_id=user_id,
+                project_id=project_id,
+                task_id=task_id,
+                client_origin=client_origin,
+            )
+            create_if_missing = False
+        else:
+            path, create_if_missing = _get_project_path(
+                project_config,
+                project.config,
+                project_id,
+            )
+        return _ProjectDeviceSessionPlan(
+            device_id=device_id,
+            path=path,
+            create_if_missing=create_if_missing,
+        )
+
+
 async def start_project_device_session(
     *,
-    db: Session,
     user_id: int,
     project_id: int,
     session_type: ProjectSessionType,
@@ -41,46 +102,25 @@ async def start_project_device_session(
     allow_app_device: bool = True,
 ) -> ProjectDeviceSessionResponse:
     """Start an interactive local device session for a workspace project."""
-    query = db.query(Project).filter(
-        Project.id == project_id,
-        Project.user_id == user_id,
-        Project.is_active == True,
-    )
-    if client_origin:
-        query = query.filter(Project.client_origin == client_origin)
-    project = query.first()
-    if not project:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Project not found",
-        )
+    from app.services.chat.storage.db import run_sync_in_executor
 
-    project_config = _parse_project_config(project.config)
-    device_id = _get_bound_device_id(project_config)
-    _ensure_device_supports_project_session_type(db, user_id, device_id, session_type)
-    if task_id is not None:
-        path = _get_task_session_path(
-            db=db,
-            user_id=user_id,
-            project_id=project_id,
-            task_id=task_id,
-            client_origin=client_origin,
-        )
-        create_if_missing = False
-    else:
-        path, create_if_missing = _get_project_path(
-            project_config, project.config, project_id
-        )
+    plan = await run_sync_in_executor(
+        _load_project_device_session_plan,
+        user_id,
+        project_id,
+        session_type,
+        client_origin,
+        task_id,
+    )
 
     try:
         result = await local_device_session_service.start_session(
-            db=db,
             user_id=user_id,
-            device_id=device_id,
+            device_id=plan.device_id,
             project_id=project_id,
             session_type=session_type,
-            path=path,
-            create_if_missing=create_if_missing,
+            path=plan.path,
+            create_if_missing=plan.create_if_missing,
             allow_app_device=allow_app_device,
         )
     except DeviceSessionNotFoundError as exc:
@@ -95,9 +135,9 @@ async def start_project_device_session(
         ) from exc
 
     result.setdefault("project_id", project_id)
-    result.setdefault("device_id", device_id)
+    result.setdefault("device_id", plan.device_id)
     result.setdefault("type", session_type)
-    result.setdefault("path", path)
+    result.setdefault("path", plan.path)
     return ProjectDeviceSessionResponse.model_validate(result)
 
 

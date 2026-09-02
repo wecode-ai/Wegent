@@ -44,19 +44,12 @@ def test_generation_tools_are_registered_with_typed_reference_arrays() -> None:
 
 
 @pytest.mark.asyncio
-async def test_generate_image_delegates_and_closes_session() -> None:
-    db = MagicMock()
+async def test_generate_image_delegates() -> None:
     expected = {"status": "completed"}
-    with (
-        patch(
-            "app.mcp_server.tools.image_generation.SessionLocal",
-            return_value=db,
-        ),
-        patch(
-            "app.mcp_server.tools.image_generation.image_generation_service.generate",
-            new=AsyncMock(return_value=expected),
-        ) as generate,
-    ):
+    with patch(
+        "app.mcp_server.tools.image_generation.image_generation_service.generate",
+        new=AsyncMock(return_value=expected),
+    ) as generate:
         result = await generate_image(
             token_info=TOKEN_INFO,
             prompt="draw a cat",
@@ -65,21 +58,13 @@ async def test_generate_image_delegates_and_closes_session() -> None:
 
     assert result == expected
     generate.assert_awaited_once()
-    db.close.assert_called_once_with()
 
 
 @pytest.mark.asyncio
-async def test_generate_video_returns_validation_error_and_closes_session() -> None:
-    db = MagicMock()
-    with (
-        patch(
-            "app.mcp_server.tools.video_generation.SessionLocal",
-            return_value=db,
-        ),
-        patch(
-            "app.mcp_server.tools.video_generation.video_generation_service.create_job",
-            new=AsyncMock(side_effect=ValueError("invalid material")),
-        ),
+async def test_generate_video_returns_validation_error() -> None:
+    with patch(
+        "app.mcp_server.tools.video_generation.video_generation_service.create_job",
+        new=AsyncMock(side_effect=ValueError("invalid material")),
     ):
         result = await generate_video(
             token_info=TOKEN_INFO,
@@ -87,7 +72,6 @@ async def test_generate_video_returns_validation_error_and_closes_session() -> N
         )
 
     assert result == {"error": "invalid material"}
-    db.close.assert_called_once_with()
 
 
 @pytest.mark.asyncio

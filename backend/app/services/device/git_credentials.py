@@ -6,6 +6,7 @@
 
 import json
 import logging
+from dataclasses import dataclass
 from typing import Any
 from urllib.parse import urlsplit
 
@@ -33,6 +34,14 @@ DEFAULT_GIT_USERNAMES = {
     "gitee": "oauth2",
     "gitea": "oauth2",
 }
+
+
+@dataclass(frozen=True)
+class _GitCredentialSyncPlan:
+    payload: str
+    duplicate_domains: tuple[str, ...]
+    device_type: DeviceType
+    online_device_id: str
 
 
 def _single_line_value(value: object, *, field: str, domain: str) -> str:
@@ -216,12 +225,45 @@ def _effective_accounts(user: User) -> tuple[list[dict[str, Any]], list[str]]:
     return effective, list(dict.fromkeys(duplicates))
 
 
-async def _require_eligible_device(
+def _prepare_git_credential_sync_plan(
+    user_id: int,
+    device_id: str,
+    allow_empty: bool,
+) -> _GitCredentialSyncPlan:
+    from app.services.chat.storage.db import get_db_session
+
+    with get_db_session() as db:
+        user = db.query(User).filter(User.id == user_id).first()
+        if user is None:
+            raise DeviceGitCredentialResolutionError("User not found")
+        device_type, online_device_id = _require_eligible_device(
+            db,
+            user_id=user_id,
+            device_id=device_id,
+        )
+        accounts, duplicate_domains = _effective_accounts(user)
+        if not accounts and not allow_empty:
+            raise DeviceGitCredentialResolutionError(
+                "No Git accounts are configured; confirm before clearing managed credentials"
+            )
+        return _GitCredentialSyncPlan(
+            payload=json.dumps(
+                {"version": 1, "accounts": accounts},
+                ensure_ascii=False,
+                separators=(",", ":"),
+            ),
+            duplicate_domains=tuple(duplicate_domains),
+            device_type=device_type,
+            online_device_id=online_device_id,
+        )
+
+
+def _require_eligible_device(
     db: Session,
     *,
     user_id: int,
     device_id: str,
-) -> None:
+) -> tuple[DeviceType, str]:
     device = device_service.get_device_by_device_id(db, user_id, device_id)
     if device is None:
         raise DeviceGitCredentialNotFoundError("Device not found or access denied")
@@ -246,10 +288,18 @@ async def _require_eligible_device(
         cloud_config = spec.get("cloudConfig") or {}
         if isinstance(cloud_config, dict):
             dispatch_device_id = str(cloud_config.get("deviceId") or device_id)
+    return device_type, dispatch_device_id
+
+
+async def _require_online_device(
+    *,
+    user_id: int,
+    plan: _GitCredentialSyncPlan,
+) -> None:
     online_info = await device_service.get_device_online_info_by_type(
         user_id,
-        dispatch_device_id,
-        device_type,
+        plan.online_device_id,
+        plan.device_type,
     )
     if not online_info or online_info.get("status") != "online":
         raise DeviceGitCredentialTargetError(
@@ -301,27 +351,23 @@ def _safe_device_result(
 
 @trace_async("sync_git_accounts_to_device", "backend.device.git_credentials")
 async def sync_git_accounts_to_device(
-    db: Session,
     *,
-    user: User,
+    user_id: int,
     device_id: str,
     allow_empty: bool,
 ) -> dict[str, Any]:
     """Reconcile all effective Git accounts to one online managed device."""
 
-    await _require_eligible_device(db, user_id=user.id, device_id=device_id)
-    accounts, duplicate_domains = _effective_accounts(user)
-    if not accounts and not allow_empty:
-        raise DeviceGitCredentialResolutionError(
-            "No Git accounts are configured; confirm before clearing managed credentials"
-        )
+    from app.services.chat.storage.db import run_sync_in_executor
 
-    payload = json.dumps(
-        {"version": 1, "accounts": accounts},
-        ensure_ascii=False,
-        separators=(",", ":"),
+    plan = await run_sync_in_executor(
+        _prepare_git_credential_sync_plan,
+        user_id,
+        device_id,
+        allow_empty,
     )
-    lock_name = f"device-git-credentials:{user.id}:{device_id}"
+    await _require_online_device(user_id=user_id, plan=plan)
+    lock_name = f"device-git-credentials:{user_id}:{device_id}"
     async with distributed_lock.acquire_watchdog_context_async(
         lock_name,
         expire_seconds=120,
@@ -333,11 +379,11 @@ async def sync_git_accounts_to_device(
             )
         try:
             result = await execute_configured_device_command(
-                db=db,
-                user_id=user.id,
+                db=None,
+                user_id=user_id,
                 device_id=device_id,
                 command_key="sync_git_credentials",
-                env={GIT_CREDENTIALS_SECRET_ENV: payload},
+                env={GIT_CREDENTIALS_SECRET_ENV: plan.payload},
                 timeout_seconds=90,
                 max_output_bytes=64 * 1024,
                 allow_internal=True,
@@ -349,7 +395,7 @@ async def sync_git_accounts_to_device(
         except DeviceCommandError as exc:
             logger.warning(
                 "Git credential device RPC failed: user_id=%s device_id=%s error_type=%s",
-                user.id,
+                user_id,
                 device_id,
                 type(exc).__name__,
             )
@@ -361,4 +407,4 @@ async def sync_git_accounts_to_device(
             raise DeviceGitCredentialSyncError(
                 "The selected device could not receive Git credentials"
             ) from exc
-    return _safe_device_result(device_id, result, duplicate_domains)
+    return _safe_device_result(device_id, result, list(plan.duplicate_domains))

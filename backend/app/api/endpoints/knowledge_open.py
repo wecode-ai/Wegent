@@ -18,7 +18,14 @@ from app.api.dependencies import get_db
 from app.api.knowledge_document_side_effects import (
     schedule_kb_summary_updates_after_deletion,
 )
-from app.core.security import AuthContext, get_auth_context
+from app.core.payload_codec import dump_model
+from app.core.security import (
+    AuthContext,
+    DetachedAuthContext,
+    get_auth_context,
+    get_detached_auth_context,
+)
+from app.models.user import User
 from app.schemas.knowledge import (
     BatchDocumentIds,
     BatchDocumentMoveRequest,
@@ -49,6 +56,7 @@ from app.services.knowledge.orchestrator import (
     MAX_KNOWLEDGE_LIST_LIMIT,
     knowledge_orchestrator,
 )
+from app.services.knowledge.web_db import run_knowledge_db_phase
 from shared.telemetry.decorators import add_span_event, trace_async, trace_sync
 
 router = APIRouter()
@@ -71,6 +79,63 @@ def _raise_open_knowledge_http_error(exc: ValueError) -> None:
     raise HTTPException(
         status_code=status.HTTP_400_BAD_REQUEST,
         detail=error_msg,
+    )
+
+
+def _load_open_user(db: Session, user_id: int) -> User:
+    user = db.get(User, user_id)
+    if user is None or not user.is_active:
+        raise ValueError("User not found or inactive")
+    return user
+
+
+def _create_document_open_db(
+    db: Session,
+    user_id: int,
+    data: KnowledgeDocumentCreateV1,
+    source_type: str,
+    splitter_config: dict | None,
+) -> KnowledgeDocumentResponse:
+    user = _load_open_user(db, user_id)
+    params = {
+        "db": db,
+        "user": user,
+        "knowledge_base_id": data.knowledge_base_id,
+        "name": data.name,
+        "source_type": source_type,
+        "folder_id": data.folder_id,
+        "trigger_indexing": True,
+        "trigger_summary": True,
+        "splitter_config": splitter_config,
+    }
+    if source_type == "attachment":
+        params["attachment_id"] = data.attachment_id
+    else:
+        params.update(
+            {
+                "content": data.content,
+                "file_base64": data.file_base64,
+                "file_extension": data.file_extension,
+            }
+        )
+    return knowledge_orchestrator.create_document_with_content(**params)
+
+
+def _resolve_open_search_document_ids(
+    db: Session,
+    knowledge_base_id: int,
+    user_id: int,
+    folder_ids: list[int] | None,
+    document_ids: list[int] | None,
+    include_subfolders: bool,
+) -> list[int]:
+    return KnowledgeFolderService.resolve_document_ids_for_scope(
+        db=db,
+        knowledge_base_id=knowledge_base_id,
+        user_id=user_id,
+        folder_ids=folder_ids,
+        document_ids=document_ids,
+        include_subfolders=include_subfolders,
     )
 
 
@@ -382,8 +447,7 @@ def get_document_content_open(
 @trace_async("create_document_open", "knowledge.api")
 async def create_document_open(
     data: KnowledgeDocumentCreateV1,
-    auth_context: AuthContext = Depends(get_auth_context),
-    db: Session = Depends(get_db),
+    auth_context: DetachedAuthContext = Depends(get_detached_auth_context),
 ) -> KnowledgeDocumentResponse:
     """
     Create a document in a knowledge base.
@@ -428,9 +492,8 @@ async def create_document_open(
                 detail="url is required when source_type is 'web'",
             )
         try:
-            result = await knowledge_orchestrator.create_web_document(
-                db=db,
-                user=current_user,
+            result = await knowledge_orchestrator.create_web_document_for_user(
+                user_id=current_user.id,
                 url=data.url,
                 knowledge_base_id=data.knowledge_base_id,
                 name=data.name,
@@ -469,7 +532,7 @@ async def create_document_open(
 
     # Prepare splitter config for text/file/attachment types
     splitter_config_dict = (
-        data.splitter_config.model_dump(exclude_none=True)
+        await dump_model(data.splitter_config, exclude_none=True)
         if data.splitter_config
         else None
     )
@@ -482,36 +545,14 @@ async def create_document_open(
                 detail="attachment_id is required when source_type is 'attachment'",
             )
 
-    # Build common parameters for create_document_with_content
-    create_doc_params = {
-        "db": db,
-        "user": current_user,
-        "knowledge_base_id": data.knowledge_base_id,
-        "name": data.name,
-        "source_type": source_type,
-        "folder_id": data.folder_id,
-        "trigger_indexing": True,
-        "trigger_summary": True,
-        "splitter_config": splitter_config_dict,
-    }
-
-    # Add source-specific parameters
-    if source_type == "attachment":
-        create_doc_params["attachment_id"] = data.attachment_id
-    else:
-        # text / file
-        create_doc_params.update(
-            {
-                "content": data.content,
-                "file_base64": data.file_base64,
-                "file_extension": data.file_extension,
-            }
-        )
-
     # Unified document creation with shared error handling
     try:
-        document = knowledge_orchestrator.create_document_with_content(
-            **create_doc_params
+        document = await run_knowledge_db_phase(
+            _create_document_open_db,
+            current_user.id,
+            data,
+            source_type,
+            splitter_config_dict,
         )
     except ValueError as exc:
         _raise_open_knowledge_http_error(exc)
@@ -536,8 +577,7 @@ async def create_document_open(
 @trace_async("search_documents_open", "knowledge.api")
 async def search_documents_open(
     data: KnowledgeSearchRequest,
-    auth_context: AuthContext = Depends(get_auth_context),
-    db: Session = Depends(get_db),
+    auth_context: DetachedAuthContext = Depends(get_detached_auth_context),
 ) -> RetrieveResponse:
     """Search document chunks in a knowledge base via RAG retrieval.
 
@@ -567,22 +607,20 @@ async def search_documents_open(
         scope_specified = data.folder_ids is not None or data.document_ids is not None
         resolved_document_ids = None
         if scope_specified:
-            resolved_document_ids = (
-                KnowledgeFolderService.resolve_document_ids_for_scope(
-                    db=db,
-                    knowledge_base_id=data.knowledge_base_id,
-                    user_id=current_user.id,
-                    folder_ids=data.folder_ids,
-                    document_ids=data.document_ids,
-                    include_subfolders=data.include_subfolders,
-                )
+            resolved_document_ids = await run_knowledge_db_phase(
+                _resolve_open_search_document_ids,
+                data.knowledge_base_id,
+                current_user.id,
+                data.folder_ids,
+                data.document_ids,
+                data.include_subfolders,
             )
             if not resolved_document_ids:
                 return {"records": []}
 
         result = await knowledge_orchestrator.retrieve_knowledge(
-            db=db,
-            user=current_user,
+            user_id=current_user.id,
+            user_name=current_user.user_name,
             knowledge_base_id=data.knowledge_base_id,
             query=data.query,
             max_results=data.top_k,
@@ -814,8 +852,8 @@ def delete_document_open(
 
 
 @router.post("/documents/{document_id}/reindex")
-@trace_async("reindex_document_open", "knowledge.api")
-async def reindex_document_open(
+@trace_sync("reindex_document_open", "knowledge.api")
+def reindex_document_open(
     document_id: int,
     auth_context: AuthContext = Depends(get_auth_context),
     db: Session = Depends(get_db),

@@ -72,6 +72,9 @@ def _build_fake_openai_module(calls: dict, events=None):
             calls["client_kwargs"] = kwargs
             self.responses = _FakeResponses()
 
+        async def close(self) -> None:
+            calls["client_closed"] = True
+
     return SimpleNamespace(AsyncOpenAI=_FakeAsyncOpenAI)
 
 
@@ -100,7 +103,7 @@ async def test_dispatch_sse_keeps_existing_metadata_request_id():
     emitter = AsyncMock()
     calls = {}
     session_manager = AsyncMock()
-    session_manager.register_stream.return_value = asyncio.Event()
+    session_manager.attach_stream.return_value = asyncio.Event()
     session_manager.is_cancelled.return_value = False
 
     with (
@@ -116,7 +119,7 @@ async def test_dispatch_sse_keeps_existing_metadata_request_id():
         ),
         patch("app.services.chat.storage.session.session_manager", session_manager),
     ):
-        await dispatcher._dispatch_sse(request, target, emitter)
+        await dispatcher._dispatch_sse_upstream(request, target, emitter)
 
     assert calls["extra_body"]["metadata"]["request_id"] == "metadata-request-id"
 
@@ -135,7 +138,7 @@ async def test_dispatch_sse_uses_request_request_id_when_metadata_missing():
     emitter = AsyncMock()
     calls = {}
     session_manager = AsyncMock()
-    session_manager.register_stream.return_value = asyncio.Event()
+    session_manager.attach_stream.return_value = asyncio.Event()
     session_manager.is_cancelled.return_value = False
 
     with (
@@ -151,7 +154,7 @@ async def test_dispatch_sse_uses_request_request_id_when_metadata_missing():
         ),
         patch("app.services.chat.storage.session.session_manager", session_manager),
     ):
-        await dispatcher._dispatch_sse(request, target, emitter)
+        await dispatcher._dispatch_sse_upstream(request, target, emitter)
 
     assert calls["extra_body"]["metadata"]["request_id"] == "backend-request-id"
 
@@ -170,7 +173,7 @@ async def test_dispatch_sse_generates_request_id_when_missing():
     emitter = AsyncMock()
     calls = {}
     session_manager = AsyncMock()
-    session_manager.register_stream.return_value = asyncio.Event()
+    session_manager.attach_stream.return_value = asyncio.Event()
     session_manager.is_cancelled.return_value = False
 
     with (
@@ -186,7 +189,7 @@ async def test_dispatch_sse_generates_request_id_when_missing():
         ),
         patch("app.services.chat.storage.session.session_manager", session_manager),
     ):
-        await dispatcher._dispatch_sse(request, target, emitter)
+        await dispatcher._dispatch_sse_upstream(request, target, emitter)
 
     assert calls["extra_body"]["metadata"]["request_id"] == "req_77"
 
@@ -205,7 +208,7 @@ async def test_dispatch_sse_emits_error_when_stream_ends_without_terminal_event(
     emitter = AsyncMock()
     calls = {}
     session_manager = AsyncMock()
-    session_manager.register_stream.return_value = asyncio.Event()
+    session_manager.attach_stream.return_value = asyncio.Event()
     session_manager.is_cancelled.return_value = False
 
     with (
@@ -221,7 +224,7 @@ async def test_dispatch_sse_emits_error_when_stream_ends_without_terminal_event(
         ),
         patch("app.services.chat.storage.session.session_manager", session_manager),
     ):
-        await dispatcher._dispatch_sse(request, target, emitter)
+        await dispatcher._dispatch_sse_upstream(request, target, emitter)
 
     emitted_events = [call.args[0] for call in emitter.emit.call_args_list]
     assert len(emitted_events) == 1

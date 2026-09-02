@@ -2,7 +2,7 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-from unittest.mock import AsyncMock, patch
+from unittest.mock import patch
 
 from fastapi.testclient import TestClient
 
@@ -26,8 +26,7 @@ def test_standalone_detail_uses_orchestrator(
     }
 
     with patch(
-        "app.api.endpoints.knowledge.knowledge_orchestrator.get_document_detail",
-        new_callable=AsyncMock,
+        "app.api.endpoints.knowledge.knowledge_orchestrator.get_document_detail_sync",
         return_value=payload,
     ) as mock_detail:
         response = test_client.get(
@@ -46,12 +45,12 @@ def test_standalone_detail_uses_orchestrator(
         "content_length": 10,
         "truncated": True,
     }
-    mock_detail.assert_awaited_once()
-    assert mock_detail.await_args.kwargs["document_id"] == 9
-    assert mock_detail.await_args.kwargs["include_content"] is True
-    assert mock_detail.await_args.kwargs["include_summary"] is False
-    assert mock_detail.await_args.kwargs["offset"] == 0
-    assert mock_detail.await_args.kwargs["limit"] == 100000
+    mock_detail.assert_called_once()
+    assert mock_detail.call_args.kwargs["document_id"] == 9
+    assert mock_detail.call_args.kwargs["include_content"] is True
+    assert mock_detail.call_args.kwargs["include_summary"] is False
+    assert mock_detail.call_args.kwargs["offset"] == 0
+    assert mock_detail.call_args.kwargs["limit"] == 100000
 
 
 def test_kb_scoped_detail_uses_orchestrator(
@@ -85,8 +84,7 @@ def test_kb_scoped_detail_uses_orchestrator(
             return_value=(object(), True),
         ),
         patch(
-            "app.api.endpoints.knowledge.knowledge_orchestrator.get_document_detail",
-            new_callable=AsyncMock,
+            "app.api.endpoints.knowledge.knowledge_orchestrator.get_document_detail_sync",
             return_value=payload,
         ) as mock_detail,
     ):
@@ -97,12 +95,12 @@ def test_kb_scoped_detail_uses_orchestrator(
 
     assert response.status_code == 200
     assert response.json() == payload
-    mock_detail.assert_awaited_once()
-    assert mock_detail.await_args.kwargs["document_id"] == 9
-    assert mock_detail.await_args.kwargs["include_content"] is True
-    assert mock_detail.await_args.kwargs["include_summary"] is True
-    assert mock_detail.await_args.kwargs["offset"] == 0
-    assert mock_detail.await_args.kwargs["limit"] == 100000
+    mock_detail.assert_called_once()
+    assert mock_detail.call_args.kwargs["document_id"] == 9
+    assert mock_detail.call_args.kwargs["include_content"] is True
+    assert mock_detail.call_args.kwargs["include_summary"] is True
+    assert mock_detail.call_args.kwargs["offset"] == 0
+    assert mock_detail.call_args.kwargs["limit"] == 100000
 
 
 def test_standalone_detail_maps_not_found_error_to_404(
@@ -110,8 +108,7 @@ def test_standalone_detail_maps_not_found_error_to_404(
     test_token: str,
 ):
     with patch(
-        "app.api.endpoints.knowledge.knowledge_orchestrator.get_document_detail",
-        new_callable=AsyncMock,
+        "app.api.endpoints.knowledge.knowledge_orchestrator.get_document_detail_sync",
         side_effect=ValueError("Document not found"),
     ):
         response = test_client.get(
@@ -136,8 +133,7 @@ def test_standalone_detail_omits_unrequested_fields(
     }
 
     with patch(
-        "app.api.endpoints.knowledge.knowledge_orchestrator.get_document_detail",
-        new_callable=AsyncMock,
+        "app.api.endpoints.knowledge.knowledge_orchestrator.get_document_detail_sync",
         return_value=payload,
     ) as mock_detail:
         response = test_client.get(
@@ -151,12 +147,12 @@ def test_standalone_detail_omits_unrequested_fields(
         "document_id": 9,
         "summary": {"summary": "hello"},
     }
-    mock_detail.assert_awaited_once()
-    assert mock_detail.await_args.kwargs["document_id"] == 9
-    assert mock_detail.await_args.kwargs["include_content"] is False
-    assert mock_detail.await_args.kwargs["include_summary"] is True
-    assert mock_detail.await_args.kwargs["offset"] == 0
-    assert mock_detail.await_args.kwargs["limit"] == 100000
+    mock_detail.assert_called_once()
+    assert mock_detail.call_args.kwargs["document_id"] == 9
+    assert mock_detail.call_args.kwargs["include_content"] is False
+    assert mock_detail.call_args.kwargs["include_summary"] is True
+    assert mock_detail.call_args.kwargs["offset"] == 0
+    assert mock_detail.call_args.kwargs["limit"] == 100000
 
 
 def test_kb_scoped_detail_rejects_document_outside_requested_kb(
@@ -183,8 +179,7 @@ def test_kb_scoped_detail_rejects_document_outside_requested_kb(
             return_value=(object(), True),
         ),
         patch(
-            "app.api.endpoints.knowledge.knowledge_orchestrator.get_document_detail",
-            new_callable=AsyncMock,
+            "app.api.endpoints.knowledge.knowledge_orchestrator.get_document_detail_sync",
         ) as mock_detail,
     ):
         response = test_client.get(
@@ -197,7 +192,7 @@ def test_kb_scoped_detail_rejects_document_outside_requested_kb(
         response.json()["detail"]
         == "Document not found in the specified knowledge base"
     )
-    mock_detail.assert_not_awaited()
+    mock_detail.assert_not_called()
 
 
 def test_kb_scoped_detail_maps_missing_kb_before_document_lookup(
@@ -210,8 +205,7 @@ def test_kb_scoped_detail_maps_missing_kb_before_document_lookup(
             return_value=(None, False),
         ),
         patch(
-            "app.api.endpoints.knowledge.knowledge_orchestrator.get_document_detail",
-            new_callable=AsyncMock,
+            "app.api.endpoints.knowledge.knowledge_orchestrator.get_document_detail_sync",
         ) as mock_detail,
     ):
         response = test_client.get(
@@ -221,7 +215,7 @@ def test_kb_scoped_detail_maps_missing_kb_before_document_lookup(
 
     assert response.status_code == 404
     assert response.json()["detail"] == "Knowledge base not found"
-    mock_detail.assert_not_awaited()
+    mock_detail.assert_not_called()
 
 
 def test_kb_scoped_detail_maps_kb_access_denied_before_document_lookup(
@@ -234,8 +228,7 @@ def test_kb_scoped_detail_maps_kb_access_denied_before_document_lookup(
             return_value=(object(), False),
         ),
         patch(
-            "app.api.endpoints.knowledge.knowledge_orchestrator.get_document_detail",
-            new_callable=AsyncMock,
+            "app.api.endpoints.knowledge.knowledge_orchestrator.get_document_detail_sync",
         ) as mock_detail,
     ):
         response = test_client.get(
@@ -245,4 +238,4 @@ def test_kb_scoped_detail_maps_kb_access_denied_before_document_lookup(
 
     assert response.status_code == 403
     assert response.json()["detail"] == "Access denied to this knowledge base"
-    mock_detail.assert_not_awaited()
+    mock_detail.assert_not_called()

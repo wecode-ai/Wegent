@@ -2,29 +2,38 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-"""Runtime bridge from Wegent connector apps to upstream MCP servers."""
+"""Runtime bridge from Wegent connector apps to upstream tool servers."""
 
 from __future__ import annotations
 
 import json
 import logging
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Callable, Mapping
 from contextlib import asynccontextmanager
+from dataclasses import dataclass
 from datetime import timedelta
+from types import MappingProxyType
 from typing import Any
 from urllib.parse import quote
 
 import httpx
+import mcp
 from fastapi import HTTPException, status
 from jsonschema import SchemaError, ValidationError, validate
+from mcp.client import sse, streamable_http
 from sqlalchemy.orm import Session
 
-from app.models.user import User
-from app.schemas.connector import ConnectorHttpToolDefinition, ConnectorTool
+from app.core.payload_codec import run_payload_codec
+from app.schemas.connector import (
+    ConnectorHttpToolDefinition,
+    ConnectorTool,
+    ConnectorToolCallRequest,
+)
+from app.services.chat.storage.db import run_sync_in_executor
 from app.services.connector_apps import (
     ConnectorApp,
-    ConnectorAppService,
     _decrypt_json,
+    connector_app_service,
 )
 from app.services.connector_connections import connector_connection_service
 from app.services.connector_oauth import connector_oauth_service
@@ -34,137 +43,368 @@ logger = logging.getLogger(__name__)
 MAX_HTTP_RESPONSE_BYTES = 1_000_000
 
 
-class ConnectorRuntimeService:
-    """List and invoke tools for the current user's connected apps."""
+@dataclass(frozen=True)
+class ConnectorServerConfig:
+    """Immutable provider configuration detached from SQLAlchemy state."""
 
-    @staticmethod
+    transport: str
+    url: str
+    headers: Mapping[str, str]
+
+
+@dataclass(frozen=True)
+class ConnectorRuntimePlan:
+    """One detached app invocation/discovery plan."""
+
+    app: ConnectorApp
+    config: ConnectorServerConfig | None
+    refresh_required: bool = False
+
+
+class ConnectorRuntimeService:
+    """List and invoke tools without holding DB state during network waits."""
+
+    def __init__(self, session_factory: Callable[[], Session] | None = None) -> None:
+        self._configured_session_factory = session_factory
+
+    def _session_factory(self) -> Session:
+        if self._configured_session_factory is not None:
+            return self._configured_session_factory()
+        from app.db.session import SessionLocal
+
+        return SessionLocal()
+
     @trace_async(
         "connector.runtime.list_tools",
         "backend.connector",
-        extract_attributes=lambda db, user: {"user.id": str(user.id)},
+        extract_attributes=lambda self, user_id, user_name, user_role: {
+            "user.id": str(user_id)
+        },
     )
-    async def list_tools(db: Session, user: User) -> list[ConnectorTool]:
-        tools: list[ConnectorTool] = []
-        for app in ConnectorRuntimeService._connected_apps(db, user):
-            if app.transport == "http":
-                tools.extend(ConnectorRuntimeService._http_tools(app))
+    async def list_tools(
+        self,
+        user_id: int,
+        user_name: str,
+        user_role: str,
+    ) -> list[ConnectorTool]:
+        plans = await run_sync_in_executor(
+            self._prepare_list_sync, user_id, user_name, user_role
+        )
+        tools: tuple[ConnectorTool, ...] = ()
+        for plan in plans:
+            if plan.app.transport == "http":
+                projected = await run_payload_codec(
+                    self._http_tools,
+                    plan.app,
+                    payload_hint=plan.app.http_tools,
+                    force_offload=True,
+                )
+                tools = await run_payload_codec(
+                    self._merge_tools,
+                    tools,
+                    projected,
+                    payload_hint=(tools, projected),
+                    force_offload=True,
+                )
                 continue
             try:
-                upstream_tools = await ConnectorRuntimeService._upstream_tools(
-                    db, app, user
+                upstream_tools = await self._upstream_tools(plan)
+                projected = await run_payload_codec(
+                    self._tools_from_upstream,
+                    plan.app,
+                    upstream_tools,
+                    True,
+                    payload_hint=upstream_tools,
+                    force_offload=True,
+                )
+                tools = await run_payload_codec(
+                    self._merge_tools,
+                    tools,
+                    projected,
+                    payload_hint=(tools, projected),
+                    force_offload=True,
                 )
             except HTTPException as exc:
                 logger.warning(
                     "Skipping unavailable connector '%s' during tool discovery: %s",
-                    app.slug,
+                    plan.app.slug,
                     exc.detail,
                 )
-                continue
-            allowlist = set(app.tool_allowlist or [])
-            for tool in upstream_tools:
-                upstream_name = tool.name
-                if allowlist and upstream_name not in allowlist:
-                    continue
-                tools.append(ConnectorRuntimeService._tool_from_upstream(app, tool))
-        return tools
+        return await run_payload_codec(
+            list,
+            tools,
+            payload_hint=tools,
+            force_offload=True,
+        )
 
-    @staticmethod
+    async def discover_tools(
+        self,
+        app_id: int,
+        user_id: int,
+        user_name: str,
+    ) -> list[ConnectorTool]:
+        plan = await run_sync_in_executor(
+            self._prepare_admin_discovery_sync, app_id, user_id, user_name
+        )
+        if plan.refresh_required:
+            await connector_oauth_service.refresh_connection(
+                slug=plan.app.slug, user_id=user_id
+            )
+            plan = await run_sync_in_executor(
+                self._prepare_admin_discovery_sync, app_id, user_id, user_name
+            )
+        if plan.app.transport == "http":
+            return await run_payload_codec(
+                self._http_tools,
+                plan.app,
+                payload_hint=plan.app.http_tools,
+                force_offload=True,
+            )
+        upstream_tools = await self._upstream_tools(plan)
+        return await run_payload_codec(
+            self._tools_from_upstream,
+            plan.app,
+            upstream_tools,
+            False,
+            payload_hint=upstream_tools,
+            force_offload=True,
+        )
+
     @trace_async(
         "connector.runtime.call_tool",
         "backend.connector",
-        extract_attributes=lambda db, user, name, arguments: {
-            "user.id": str(user.id),
-            "connector.tool": name,
+        extract_attributes=lambda self, user_id, user_name, user_role, request: {
+            "user.id": str(user_id),
+            "connector.tool": request.name,
         },
     )
     async def call_tool(
-        db: Session, user: User, name: str, arguments: dict[str, Any]
+        self,
+        user_id: int,
+        user_name: str,
+        user_role: str,
+        request: ConnectorToolCallRequest,
     ) -> tuple[Any, dict[str, Any] | None, bool]:
-        app_slug, separator, upstream_name = name.partition("__")
+        plan = await run_sync_in_executor(
+            self._prepare_call_sync,
+            user_id,
+            user_name,
+            user_role,
+            request.name,
+        )
+        if plan.refresh_required:
+            await connector_oauth_service.refresh_connection(
+                slug=plan.app.slug, user_id=user_id
+            )
+            plan = await run_sync_in_executor(
+                self._prepare_call_sync,
+                user_id,
+                user_name,
+                user_role,
+                request.name,
+            )
+        upstream_name = request.name.partition("__")[2]
+        if plan.app.transport == "http":
+            definition = await run_payload_codec(
+                self._http_tool_definition,
+                plan.app,
+                upstream_name,
+                payload_hint=plan.app.http_tools,
+                force_offload=True,
+            )
+            return await self._call_http_tool(
+                self._require_config(plan), definition, request.arguments
+            )
+        try:
+            async with self._mcp_session(self._require_config(plan)) as session:
+                tool_name = await self._find_tool_name(session, upstream_name)
+                if tool_name is None:
+                    raise HTTPException(
+                        status.HTTP_404_NOT_FOUND, "Connector tool not found"
+                    )
+                result = await session.call_tool(tool_name, request.arguments)
+            return await run_payload_codec(
+                self._project_tool_result,
+                result,
+                payload_hint=result,
+                force_offload=True,
+            )
+        except HTTPException:
+            raise
+        except Exception as exc:
+            await self._mark_expired_on_auth_error(plan.app, user_id, exc)
+            raise HTTPException(
+                status.HTTP_502_BAD_GATEWAY, "Connector tool execution failed"
+            ) from exc
+
+    async def call_admin_tool(
+        self,
+        app_id: int,
+        user_id: int,
+        user_name: str,
+        user_role: str,
+        request: ConnectorToolCallRequest,
+    ) -> tuple[Any, dict[str, Any] | None, bool]:
+        normalized = await run_sync_in_executor(
+            self._normalize_admin_request_sync, app_id, request
+        )
+        return await self.call_tool(user_id, user_name, user_role, normalized)
+
+    def _prepare_list_sync(
+        self,
+        user_id: int,
+        user_name: str,
+        user_role: str,
+    ) -> tuple[ConnectorRuntimePlan, ...]:
+        with self._session_factory() as db:
+            plans: list[ConnectorRuntimePlan] = []
+            for app in connector_app_service.list_visible_apps(db, user_role):
+                try:
+                    plan = self._plan_for_app_sync(
+                        db, app, user_id, user_name, allow_expired=False
+                    )
+                except HTTPException:
+                    continue
+                plans.append(plan)
+            return tuple(plans)
+
+    def _prepare_call_sync(
+        self,
+        user_id: int,
+        user_name: str,
+        user_role: str,
+        tool_name: str,
+    ) -> ConnectorRuntimePlan:
+        app_slug, separator, upstream_name = tool_name.partition("__")
         if not separator or not app_slug or not upstream_name:
             raise HTTPException(
                 status.HTTP_400_BAD_REQUEST, "Invalid connector tool name"
             )
-        app = ConnectorAppService.get_app_by_slug(db, app_slug)
-        visible_ids = {
-            item.id for item in ConnectorAppService.list_visible_apps(db, user)
-        }
-        if not app or app.id not in visible_ids:
-            raise HTTPException(status.HTTP_404_NOT_FOUND, "Connector app not found")
-        allowlist = set(app.tool_allowlist or [])
-        if allowlist and upstream_name not in allowlist:
-            raise HTTPException(status.HTTP_403_FORBIDDEN, "Connector tool is disabled")
-        config = await ConnectorRuntimeService._server_config(db, app, user)
-        if app.transport == "http":
-            definition = ConnectorRuntimeService._http_tool_definition(
-                app, upstream_name
-            )
-            return await ConnectorRuntimeService._call_http_tool(
-                config, definition, arguments
-            )
-        try:
-            async with ConnectorRuntimeService._mcp_session(config) as session:
-                tool = await ConnectorRuntimeService._find_tool(session, upstream_name)
-                if not tool:
-                    raise HTTPException(
-                        status.HTTP_404_NOT_FOUND, "Connector tool not found"
-                    )
-                result = await session.call_tool(tool.name, arguments)
-                return (
-                    ConnectorRuntimeService._json_safe(result.content),
-                    ConnectorRuntimeService._json_safe(result.structuredContent),
-                    bool(result.isError),
+        with self._session_factory() as db:
+            app = connector_app_service.get_app_by_slug(db, app_slug)
+            visible_ids = {
+                item.id
+                for item in connector_app_service.list_visible_apps(db, user_role)
+            }
+            if app is None or app.id not in visible_ids:
+                raise HTTPException(
+                    status.HTTP_404_NOT_FOUND, "Connector app not found"
                 )
-        except HTTPException:
-            raise
-        except Exception as exc:
-            ConnectorRuntimeService._mark_expired_on_auth_error(db, app, user, exc)
-            raise HTTPException(
-                status.HTTP_502_BAD_GATEWAY,
-                "Connector tool execution failed",
-            ) from exc
+            if app.tool_allowlist and upstream_name not in app.tool_allowlist:
+                raise HTTPException(
+                    status.HTTP_403_FORBIDDEN, "Connector tool is disabled"
+                )
+            return self._plan_for_app_sync(
+                db, app, user_id, user_name, allow_expired=True
+            )
+
+    def _prepare_admin_discovery_sync(
+        self,
+        app_id: int,
+        user_id: int,
+        user_name: str,
+    ) -> ConnectorRuntimePlan:
+        with self._session_factory() as db:
+            app = connector_app_service.get_app(db, app_id)
+            return self._plan_for_app_sync(
+                db, app, user_id, user_name, allow_expired=True
+            )
+
+    def _normalize_admin_request_sync(
+        self,
+        app_id: int,
+        request: ConnectorToolCallRequest,
+    ) -> ConnectorToolCallRequest:
+        with self._session_factory() as db:
+            app = connector_app_service.get_app(db, app_id)
+            name = (
+                request.name
+                if request.name.startswith(f"{app.slug}__")
+                else f"{app.slug}__{request.name}"
+            )
+            return request.model_copy(update={"name": name})
 
     @staticmethod
-    def _mark_expired_on_auth_error(
+    def _plan_for_app_sync(
         db: Session,
         app: ConnectorApp,
-        user: User,
-        error: Exception,
+        user_id: int,
+        user_name: str,
+        *,
+        allow_expired: bool,
+    ) -> ConnectorRuntimePlan:
+        headers = _decrypt_json(app.provider_headers_encrypted)
+        if app.auth_type != "none":
+            connection = connector_connection_service.get(
+                db, slug=app.slug, user_id=user_id
+            )
+            response = connector_connection_service.response(connection)
+            if response.status == "expired" and allow_expired:
+                return ConnectorRuntimePlan(app=app, config=None, refresh_required=True)
+            if response.status != "connected" or connection is None:
+                raise HTTPException(
+                    status.HTTP_401_UNAUTHORIZED,
+                    f"Connector '{app.slug}' requires authorization",
+                )
+            access_token = connection.access_token()
+            if not access_token:
+                raise HTTPException(
+                    status.HTTP_401_UNAUTHORIZED,
+                    f"Connector '{app.slug}' authorization is unavailable",
+                )
+            headers["Authorization"] = f"Bearer {access_token}"
+        headers["X-Wegent-Username"] = user_name
+        headers["X-Wegent-User-Id"] = str(user_id)
+        return ConnectorRuntimePlan(
+            app=app,
+            config=ConnectorServerConfig(
+                transport=app.transport,
+                url=app.mcp_url,
+                headers=MappingProxyType(headers),
+            ),
+        )
+
+    async def _mark_expired_on_auth_error(
+        self, app: ConnectorApp, user_id: int, error: Exception
     ) -> None:
         if app.auth_type == "none":
             return
-        message = str(error).lower()
-        if not any(
-            marker in message for marker in ("401", "403", "unauthorized", "forbidden")
-        ):
-            return
-        connection = connector_connection_service.get(
-            db,
-            slug=app.slug,
-            user_id=user.id,
+        is_auth_error = await run_payload_codec(
+            self._is_auth_error,
+            error,
+            payload_hint=error,
+            force_offload=True,
         )
-        if connection:
-            connector_connection_service.set_status(db, connection, "expired")
+        if not is_auth_error:
+            return
+        await run_sync_in_executor(self._mark_expired_sync, app.slug, user_id)
 
     @staticmethod
-    def _connected_apps(db: Session, user: User) -> list[ConnectorApp]:
-        connected: list[ConnectorApp] = []
-        for app in ConnectorAppService.list_visible_apps(db, user):
-            if app.auth_type == "none":
-                connected.append(app)
-                continue
+    def _is_auth_error(error: Exception) -> bool:
+        message = str(error).lower()
+        return any(
+            marker in message for marker in ("401", "403", "unauthorized", "forbidden")
+        )
+
+    def _mark_expired_sync(self, slug: str, user_id: int) -> None:
+        with self._session_factory() as db:
             connection = connector_connection_service.get(
-                db,
-                slug=app.slug,
-                user_id=user.id,
+                db, slug=slug, user_id=user_id
             )
-            if connector_connection_service.response(connection).status == "connected":
-                connected.append(app)
-        return connected
+            if connection is not None:
+                connector_connection_service.set_status(db, connection, "expired")
+
+    @staticmethod
+    def _require_config(plan: ConnectorRuntimePlan) -> ConnectorServerConfig:
+        if plan.config is None:
+            raise HTTPException(
+                status.HTTP_401_UNAUTHORIZED,
+                f"Connector '{plan.app.slug}' requires authorization",
+            )
+        return plan.config
 
     @staticmethod
     def _http_tools(app: ConnectorApp) -> list[ConnectorTool]:
-        allowlist = set(app.tool_allowlist or [])
         return [
             ConnectorTool(
                 name=f"{app.slug}__{definition.name}",
@@ -179,14 +419,35 @@ class ConnectorRuntimeService:
                     "destructive": definition.method in {"DELETE", "PUT", "PATCH"},
                     "open_world": True,
                 },
-                source_transport=app.transport or "http",
+                source_transport=app.transport,
                 app_id=app.id,
                 app_slug=app.slug,
                 app_name=app.name,
             )
-            for definition in ConnectorRuntimeService._http_tool_definitions(app)
-            if not allowlist or definition.name in allowlist
+            for definition in app.http_tools
+            if not app.tool_allowlist or definition.name in app.tool_allowlist
         ]
+
+    @staticmethod
+    def _tools_from_upstream(
+        app: ConnectorApp,
+        upstream_tools: list[Any],
+        enforce_allowlist: bool,
+    ) -> list[ConnectorTool]:
+        return [
+            ConnectorRuntimeService._tool_from_upstream(app, tool)
+            for tool in upstream_tools
+            if not enforce_allowlist
+            or not app.tool_allowlist
+            or tool.name in app.tool_allowlist
+        ]
+
+    @staticmethod
+    def _merge_tools(
+        current: tuple[ConnectorTool, ...],
+        additions: list[ConnectorTool],
+    ) -> tuple[ConnectorTool, ...]:
+        return current + tuple(additions)
 
     @staticmethod
     def _tool_from_upstream(app: ConnectorApp, tool: Any) -> ConnectorTool:
@@ -206,98 +467,88 @@ class ConnectorRuntimeService:
             raw_tool_name=upstream_name,
             model_visible=True,
             risk_hints=ConnectorRuntimeService._risk_hints(tool),
-            source_transport=app.transport or "streamable-http",
+            source_transport=app.transport,
             app_id=app.id,
             app_slug=app.slug,
             app_name=app.name,
         )
 
     @staticmethod
-    def _http_tool_definitions(
-        app: ConnectorApp,
-    ) -> list[ConnectorHttpToolDefinition]:
-        try:
-            return [
-                ConnectorHttpToolDefinition.model_validate(item)
-                for item in (app.http_tools or [])
-            ]
-        except ValueError as exc:
-            raise HTTPException(
-                status.HTTP_500_INTERNAL_SERVER_ERROR,
-                "Connector HTTP tool configuration is invalid",
-            ) from exc
-
-    @staticmethod
     def _http_tool_definition(
         app: ConnectorApp, name: str
     ) -> ConnectorHttpToolDefinition:
-        definition = next(
-            (
-                item
-                for item in ConnectorRuntimeService._http_tool_definitions(app)
-                if item.name == name
-            ),
-            None,
-        )
-        if not definition:
+        definition = next((item for item in app.http_tools if item.name == name), None)
+        if definition is None:
             raise HTTPException(status.HTTP_404_NOT_FOUND, "Connector tool not found")
         return definition
 
-    @staticmethod
-    async def _upstream_tools(
-        db: Session,
-        app: ConnectorApp,
-        user: User,
-    ) -> list[Any]:
+    async def _upstream_tools(self, plan: ConnectorRuntimePlan) -> list[Any]:
         try:
-            config = await ConnectorRuntimeService._server_config(db, app, user)
-            async with ConnectorRuntimeService._mcp_session(config) as session:
-                return await ConnectorRuntimeService._list_all_tools(session)
+            async with self._mcp_session(self._require_config(plan)) as session:
+                return await self._list_all_tools(session)
         except Exception as exc:
             raise HTTPException(
                 status.HTTP_502_BAD_GATEWAY,
-                f"Failed to list tools for connector '{app.slug}'",
+                f"Failed to list tools for connector '{plan.app.slug}'",
             ) from exc
 
     @staticmethod
     @trace_async("connector.runtime.call_http", "backend.connector")
     async def _call_http_tool(
-        config: dict[str, Any],
+        config: ConnectorServerConfig,
         definition: ConnectorHttpToolDefinition,
         arguments: dict[str, Any],
     ) -> tuple[Any, dict[str, Any] | None, bool]:
-        ConnectorRuntimeService._validate_http_arguments(definition, arguments)
-        url, query, body = ConnectorRuntimeService._http_request_parts(
-            config["url"], definition, arguments
+        request = await run_payload_codec(
+            ConnectorRuntimeService._build_http_request,
+            config,
+            definition,
+            arguments,
+            payload_hint=arguments,
+            force_offload=True,
         )
         try:
             async with httpx.AsyncClient(
-                timeout=definition.timeout_seconds,
-                follow_redirects=False,
+                timeout=definition.timeout_seconds, follow_redirects=False
             ) as client:
-                request = client.build_request(
-                    definition.method,
-                    url,
-                    headers=config.get("headers") or None,
-                    params=query or None,
-                    json=body or None,
-                )
                 response = await client.send(request, stream=True)
                 try:
                     content = await ConnectorRuntimeService._bounded_response_body(
                         response
                     )
+                    response_encoding = response.encoding
+                    response_status = response.status_code
                 finally:
                     await response.aclose()
         except httpx.HTTPError as exc:
             raise HTTPException(
-                status.HTTP_502_BAD_GATEWAY,
-                "Connector HTTP request failed",
+                status.HTTP_502_BAD_GATEWAY, "Connector HTTP request failed"
             ) from exc
-        return ConnectorRuntimeService._http_response(
-            response.status_code,
+        return await run_payload_codec(
+            ConnectorRuntimeService._http_response,
+            response_status,
             content,
-            response.encoding,
+            response_encoding,
+            payload_hint=content,
+            force_offload=True,
+        )
+
+    @staticmethod
+    def _build_http_request(
+        config: ConnectorServerConfig,
+        definition: ConnectorHttpToolDefinition,
+        arguments: dict[str, Any],
+    ) -> httpx.Request:
+        ConnectorRuntimeService._validate_http_arguments(definition, arguments)
+        url, query, body = ConnectorRuntimeService._http_request_parts(
+            config.url, definition, arguments
+        )
+        return httpx.Request(
+            definition.method,
+            url,
+            headers=config.headers,
+            params=query or None,
+            json=body or None,
         )
 
     @staticmethod
@@ -372,9 +623,7 @@ class ConnectorRuntimeService:
 
     @staticmethod
     def _http_response(
-        status_code: int,
-        content: bytes,
-        encoding: str | None,
+        status_code: int, content: bytes, encoding: str | None
     ) -> tuple[Any, dict[str, Any] | None, bool]:
         try:
             payload: Any = json.loads(content)
@@ -398,21 +647,20 @@ class ConnectorRuntimeService:
 
     @staticmethod
     @asynccontextmanager
-    async def _mcp_session(config: dict[str, Any]) -> AsyncIterator[Any]:
-        from mcp import ClientSession
-        from mcp.client.sse import sse_client
-        from mcp.client.streamable_http import streamablehttp_client
-
-        transport = config["type"]
-        client = sse_client if transport == "sse" else streamablehttp_client
+    async def _mcp_session(config: ConnectorServerConfig) -> AsyncIterator[Any]:
+        client = (
+            sse.sse_client
+            if config.transport == "sse"
+            else streamable_http.streamablehttp_client
+        )
         async with client(
-            url=config["url"],
-            headers=config.get("headers") or None,
+            url=config.url,
+            headers=config.headers or None,
             timeout=30,
             sse_read_timeout=180,
         ) as streams:
             read_stream, write_stream = streams[:2]
-            async with ClientSession(
+            async with mcp.ClientSession(
                 read_stream,
                 write_stream,
                 read_timeout_seconds=timedelta(seconds=180),
@@ -422,71 +670,63 @@ class ConnectorRuntimeService:
 
     @staticmethod
     async def _list_all_tools(session: Any) -> list[Any]:
-        tools: list[Any] = []
+        tools: tuple[Any, ...] = ()
         cursor: str | None = None
         seen_cursors: set[str] = set()
         while True:
             result = await session.list_tools(cursor=cursor)
-            tools.extend(result.tools)
-            cursor = result.nextCursor
+            tools, cursor = await run_payload_codec(
+                ConnectorRuntimeService._merge_upstream_page,
+                tools,
+                result,
+                payload_hint=result,
+                force_offload=True,
+            )
             if not cursor:
-                return tools
+                return await run_payload_codec(
+                    list,
+                    tools,
+                    payload_hint=tools,
+                    force_offload=True,
+                )
             if cursor in seen_cursors:
                 raise RuntimeError("MCP tools/list returned a repeated cursor")
             seen_cursors.add(cursor)
 
     @staticmethod
-    async def _find_tool(session: Any, name: str) -> Any | None:
-        for tool in await ConnectorRuntimeService._list_all_tools(session):
+    def _merge_upstream_page(
+        current: tuple[Any, ...],
+        result: Any,
+    ) -> tuple[tuple[Any, ...], str | None]:
+        return current + tuple(result.tools), result.nextCursor
+
+    @staticmethod
+    async def _find_tool_name(session: Any, name: str) -> str | None:
+        tools = await ConnectorRuntimeService._list_all_tools(session)
+        return await run_payload_codec(
+            ConnectorRuntimeService._find_tool_name_sync,
+            tools,
+            name,
+            payload_hint=tools,
+            force_offload=True,
+        )
+
+    @staticmethod
+    def _find_tool_name_sync(tools: list[Any], name: str) -> str | None:
+        for tool in tools:
             if tool.name == name:
-                return tool
+                return str(tool.name)
         return None
 
     @staticmethod
-    async def _server_config(
-        db: Session,
-        app: ConnectorApp,
-        user: User | None = None,
-    ) -> dict[str, Any]:
-        headers = _decrypt_json(app.provider_headers_encrypted)
-        if user and app.auth_type != "none":
-            connection = connector_connection_service.get(
-                db,
-                slug=app.slug,
-                user_id=user.id,
-            )
-            if (
-                connection
-                and connector_connection_service.response(connection).status
-                == "expired"
-            ):
-                connection = await connector_oauth_service.refresh_connection(
-                    db, connection
-                )
-            if (
-                not connection
-                or connector_connection_service.response(connection).status
-                != "connected"
-            ):
-                raise HTTPException(
-                    status.HTTP_401_UNAUTHORIZED,
-                    f"Connector '{app.slug}' requires authorization",
-                )
-            access_token = connection.access_token()
-            if not access_token:
-                raise HTTPException(
-                    status.HTTP_401_UNAUTHORIZED,
-                    f"Connector '{app.slug}' authorization is unavailable",
-                )
-            headers["Authorization"] = f"Bearer {access_token}"
-        if user:
-            headers["X-Wegent-Username"] = user.user_name
-            headers["X-Wegent-User-Id"] = str(user.id)
-        return {
-            "type": app.transport,
-            "url": app.mcp_url,
-            "headers": headers,
-        }
+    def _project_tool_result(
+        result: Any,
+    ) -> tuple[Any, dict[str, Any] | None, bool]:
+        return (
+            ConnectorRuntimeService._json_safe(result.content),
+            ConnectorRuntimeService._json_safe(result.structuredContent),
+            bool(result.isError),
+        )
 
     @staticmethod
     def _model_dump(value: Any) -> dict[str, Any] | None:

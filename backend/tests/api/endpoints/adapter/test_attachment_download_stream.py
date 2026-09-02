@@ -2,9 +2,11 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
+import json
 import threading
+from contextlib import contextmanager
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, Mock
+from unittest.mock import Mock
 
 import httpx
 import pytest
@@ -16,10 +18,17 @@ from app.models.subtask_context import ContextType
 def _local_video() -> SimpleNamespace:
     return SimpleNamespace(
         id=43,
+        subtask_id=0,
         user_id=7,
         context_type=ContextType.ATTACHMENT.value,
+        name="local.mp4",
+        status="ready",
+        error_message="",
+        text_length=0,
+        created_at=None,
         original_filename="local.mp4",
         file_extension=".mp4",
+        file_size=12,
         mime_type="video/mp4",
         storage_backend="mysql",
         storage_key="attachments/43",
@@ -27,13 +36,31 @@ def _local_video() -> SimpleNamespace:
     )
 
 
+def _response_json(response) -> dict:
+    return json.loads(response.body)
+
+
+def _use_mock_session(monkeypatch) -> None:
+    @contextmanager
+    def session_local():
+        yield Mock()
+
+    monkeypatch.setattr(attachments.db_session, "SessionLocal", session_local)
+
+
 @pytest.mark.asyncio
 async def test_stream_remote_media_forwards_range_and_streams_chunks(monkeypatch):
     requested_headers = []
+    main_thread_id = threading.get_ident()
+    validation_thread_ids = []
+
+    def validate_url(self, url):
+        validation_thread_ids.append(threading.get_ident())
+
     monkeypatch.setattr(
         attachments.WebScraperUrlGuard,
         "validate_initial_url",
-        lambda self, url: None,
+        validate_url,
     )
 
     class MockResponse:
@@ -81,9 +108,11 @@ async def test_stream_remote_media_forwards_range_and_streams_chunks(monkeypatch
         "video/mp4",
         range_header="bytes=10-21",
     )
-    chunks = [chunk async for chunk in response.body_iterator]
+    chunks = [bytes(chunk) async for chunk in response.body_iterator]
 
     assert chunks == [b"video-", b"stream"]
+    assert validation_thread_ids
+    assert validation_thread_ids[0] != main_thread_id
     assert requested_headers == [{"Range": "bytes=10-21"}]
     assert response.status_code == 206
     assert response.headers["content-range"] == "bytes 10-21/100"
@@ -113,7 +142,7 @@ async def test_stream_stored_attachment_reads_in_worker_and_streams_chunks(
     )
 
     response = await attachments._stream_stored_attachment(_local_video())
-    chunks = [chunk async for chunk in response.body_iterator]
+    chunks = [bytes(chunk) async for chunk in response.body_iterator]
 
     assert worker_thread_ids
     assert worker_thread_ids[0] != main_thread_id
@@ -132,11 +161,10 @@ async def test_stream_stored_attachment_reads_in_worker_and_streams_chunks(
 async def test_get_attachment_playback_returns_direct_adapter_url_and_cover(
     monkeypatch,
 ):
-    context = SimpleNamespace(
-        id=42,
-        user_id=7,
-        type_data={"storage_backend": "external_video"},
-    )
+    context = _local_video()
+    context.id = 42
+    context.type_data = {"storage_backend": "external_video"}
+    _use_mock_session(monkeypatch)
     monkeypatch.setattr(
         attachments,
         "_get_attachment_context",
@@ -144,8 +172,8 @@ async def test_get_attachment_playback_returns_direct_adapter_url_and_cover(
     )
     monkeypatch.setattr(
         attachments,
-        "_resolve_attachment_playback",
-        AsyncMock(
+        "resolve_external_attachment_playback",
+        Mock(
             return_value=attachments.ExternalAttachmentPlayback(
                 url="https://cdn.example.com/reference.mp4",
                 media_type="video/mp4",
@@ -158,21 +186,20 @@ async def test_get_attachment_playback_returns_direct_adapter_url_and_cover(
     response = await attachments.get_attachment_playback(
         attachment_id=42,
         share_token=None,
-        db=Mock(),
-        current_user=SimpleNamespace(id=7),
+        current_user=SimpleNamespace(id=7, user_name="user-7"),
     )
 
-    assert response.playback_url == "https://cdn.example.com/reference.mp4"
-    assert response.cover_url == "https://cdn.example.com/reference-cover.jpg"
+    payload = _response_json(response)
+    assert payload["playback_url"] == "https://cdn.example.com/reference.mp4"
+    assert payload["cover_url"] == "https://cdn.example.com/reference-cover.jpg"
 
 
 @pytest.mark.asyncio
 async def test_get_attachment_playback_uses_proxy_for_adapter_proxy_mode(monkeypatch):
-    context = SimpleNamespace(
-        id=42,
-        user_id=7,
-        type_data={"storage_backend": "test_video_hosting"},
-    )
+    context = _local_video()
+    context.id = 42
+    context.type_data = {"storage_backend": "test_video_hosting"}
+    _use_mock_session(monkeypatch)
     monkeypatch.setattr(
         attachments,
         "_get_attachment_context",
@@ -180,8 +207,8 @@ async def test_get_attachment_playback_uses_proxy_for_adapter_proxy_mode(monkeyp
     )
     monkeypatch.setattr(
         attachments,
-        "_resolve_attachment_playback",
-        AsyncMock(
+        "resolve_external_attachment_playback",
+        Mock(
             return_value=attachments.ExternalAttachmentPlayback(
                 url="https://private-media.example/reference.mp4",
                 media_type="video/mp4",
@@ -203,14 +230,14 @@ async def test_get_attachment_playback_uses_proxy_for_adapter_proxy_mode(monkeyp
     response = await attachments.get_attachment_playback(
         attachment_id=42,
         share_token=None,
-        db=Mock(),
-        current_user=SimpleNamespace(id=7),
+        current_user=SimpleNamespace(id=7, user_name="user-7"),
     )
 
-    assert response.playback_url == (
+    payload = _response_json(response)
+    assert payload["playback_url"] == (
         "/api/attachments/42/download?download_token=playback-token"
     )
-    assert "private-media.example" not in response.playback_url
+    assert "private-media.example" not in payload["playback_url"]
 
 
 @pytest.mark.asyncio
@@ -218,6 +245,7 @@ async def test_get_attachment_playback_returns_wegent_proxy_for_other_storage(
     monkeypatch,
 ):
     context = _local_video()
+    _use_mock_session(monkeypatch)
     monkeypatch.setattr(
         attachments,
         "_get_attachment_context",
@@ -225,8 +253,8 @@ async def test_get_attachment_playback_returns_wegent_proxy_for_other_storage(
     )
     monkeypatch.setattr(
         attachments,
-        "_resolve_attachment_playback",
-        AsyncMock(return_value=None),
+        "resolve_external_attachment_playback",
+        Mock(return_value=None),
     )
     monkeypatch.setattr(
         attachments,
@@ -242,14 +270,14 @@ async def test_get_attachment_playback_returns_wegent_proxy_for_other_storage(
     response = await attachments.get_attachment_playback(
         attachment_id=43,
         share_token=None,
-        db=Mock(),
-        current_user=SimpleNamespace(id=7),
+        current_user=SimpleNamespace(id=7, user_name="user-7"),
     )
 
-    assert response.playback_url == (
+    payload = _response_json(response)
+    assert payload["playback_url"] == (
         "/api/attachments/43/download?download_token=playback-token"
     )
-    assert response.cover_url is None
+    assert payload["cover_url"] is None
 
 
 @pytest.mark.asyncio
@@ -257,6 +285,7 @@ async def test_get_attachment_playback_preserves_share_access_on_wegent_proxy(
     monkeypatch,
 ):
     context = _local_video()
+    _use_mock_session(monkeypatch)
     monkeypatch.setattr(
         attachments,
         "_validate_share_token_access",
@@ -269,8 +298,8 @@ async def test_get_attachment_playback_preserves_share_access_on_wegent_proxy(
     )
     monkeypatch.setattr(
         attachments,
-        "_resolve_attachment_playback",
-        AsyncMock(return_value=None),
+        "resolve_external_attachment_playback",
+        Mock(return_value=None),
     )
     monkeypatch.setattr(
         attachments.context_service,
@@ -281,10 +310,10 @@ async def test_get_attachment_playback_preserves_share_access_on_wegent_proxy(
     response = await attachments.get_attachment_playback(
         attachment_id=43,
         share_token="share/token",
-        db=Mock(),
         current_user=None,
     )
 
-    assert response.playback_url == (
+    payload = _response_json(response)
+    assert payload["playback_url"] == (
         "/api/attachments/43/download?share_token=share%2Ftoken"
     )

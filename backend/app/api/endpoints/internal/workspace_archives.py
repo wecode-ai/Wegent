@@ -5,6 +5,8 @@
 """Internal workspace archive endpoints."""
 
 import logging
+from copy import deepcopy
+from dataclasses import dataclass
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
@@ -52,6 +54,14 @@ class ArchiveDownloadUrlResponse(BaseModel):
     download_url: str
 
 
+@dataclass(frozen=True)
+class _ArchiveTaskSnapshot:
+    task_id: int
+    task_json: dict
+    executor_name: str = ""
+    executor_namespace: str = ""
+
+
 def _get_active_task(db: Session, task_id: int) -> TaskResource:
     """Load an active task resource for internal archive operations."""
     task = task_store.get_task_by_states(
@@ -64,41 +74,74 @@ def _get_active_task(db: Session, task_id: int) -> TaskResource:
     return task
 
 
+def _load_archive_task_snapshot(
+    task_id: int,
+    require_executor: bool,
+) -> _ArchiveTaskSnapshot:
+    """Load all archive metadata in a worker-owned transaction."""
+
+    from app.services.chat.storage.db import get_db_session
+
+    with get_db_session() as db:
+        task = _get_active_task(db, task_id)
+        executor_name = ""
+        executor_namespace = ""
+        if require_executor:
+            subtask = subtask_store.get_latest_active_executor_for_task(
+                db,
+                task_id=task_id,
+                owner_user_id=task.user_id,
+            )
+            if not subtask:
+                raise HTTPException(
+                    status_code=404,
+                    detail="No active executor found for task",
+                )
+            executor_name = str(subtask.executor_name or "")
+            executor_namespace = str(subtask.executor_namespace or "")
+        return _ArchiveTaskSnapshot(
+            task_id=task.id,
+            task_json=deepcopy(task.json) if isinstance(task.json, dict) else {},
+            executor_name=executor_name,
+            executor_namespace=executor_namespace,
+        )
+
+
+async def _archive_task_snapshot(
+    task_id: int,
+    *,
+    require_executor: bool,
+) -> _ArchiveTaskSnapshot:
+    from app.services.chat.storage.db import run_sync_in_executor
+
+    return await run_sync_in_executor(
+        _load_archive_task_snapshot,
+        task_id,
+        require_executor,
+    )
+
+
 @router.post("/{task_id}/archive", response_model=ManualArchiveResponse)
 async def archive_task_workspace(
     task_id: int,
-    db: Session = Depends(get_db),
 ):
     """Archive the current task workspace and persist archive metadata."""
-    task = _get_active_task(db, task_id)
-
-    subtask = subtask_store.get_latest_active_executor_for_task(
-        db,
-        task_id=task_id,
-        owner_user_id=task.user_id,
-    )
-
-    if not subtask:
-        raise HTTPException(status_code=404, detail="No active executor found for task")
+    snapshot = await _archive_task_snapshot(task_id, require_executor=True)
 
     archive_info = await archive_service.archive_workspace(
-        db=db,
-        task=task,
-        executor_name=subtask.executor_name,
-        executor_namespace=subtask.executor_namespace or "",
+        task_id=snapshot.task_id,
+        executor_name=snapshot.executor_name,
+        executor_namespace=snapshot.executor_namespace,
     )
 
     if not archive_info:
         raise HTTPException(status_code=500, detail="Failed to archive workspace")
 
-    db.commit()
-    db.refresh(task)
-
     logger.info(
         "Manually archived workspace for task %s via executor %s/%s",
         task_id,
-        subtask.executor_namespace or "",
-        subtask.executor_name,
+        snapshot.executor_namespace,
+        snapshot.executor_name,
     )
 
     return ManualArchiveResponse(task_id=task_id, archive=archive_info)
@@ -108,14 +151,12 @@ async def archive_task_workspace(
 async def archive_sandbox_workspace(
     task_id: int,
     request: SandboxArchiveRequest,
-    db: Session = Depends(get_db),
 ):
     """Archive sandbox runtime files and persist archive metadata."""
-    task = _get_active_task(db, task_id)
+    snapshot = await _archive_task_snapshot(task_id, require_executor=False)
 
     archive_info = await archive_service.archive_workspace(
-        db=db,
-        task=task,
+        task_id=snapshot.task_id,
         executor_name=request.executor_name,
         executor_namespace=request.executor_namespace,
         runtime_type="sandbox",
@@ -123,9 +164,6 @@ async def archive_sandbox_workspace(
 
     if not archive_info:
         raise HTTPException(status_code=500, detail="Failed to archive sandbox")
-
-    db.commit()
-    db.refresh(task)
 
     logger.info(
         "Archived sandbox workspace for task %s via executor %s/%s",
@@ -141,14 +179,13 @@ async def archive_sandbox_workspace(
 async def restore_sandbox_workspace(
     task_id: int,
     request: SandboxArchiveRequest,
-    db: Session = Depends(get_db),
 ):
     """Restore sandbox runtime files from the latest task archive."""
-    task = _get_active_task(db, task_id)
+    snapshot = await _archive_task_snapshot(task_id, require_executor=False)
 
-    restored = await archive_service.restore_workspace(
-        db=db,
-        task=task,
+    restored = await archive_service.restore_workspace_snapshot(
+        task_id=snapshot.task_id,
+        task_json=snapshot.task_json,
         executor_name=request.executor_name,
         executor_namespace=request.executor_namespace,
         runtime_type="sandbox",
@@ -158,7 +195,7 @@ async def restore_sandbox_workspace(
 
 
 @router.get("/{task_id}/download-url", response_model=ArchiveDownloadUrlResponse)
-async def get_workspace_archive_download_url(
+def get_workspace_archive_download_url(
     task_id: int,
     storage_key: str | None = None,
     db: Session = Depends(get_db),

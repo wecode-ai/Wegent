@@ -338,7 +338,7 @@ class TestGerritProviderAsyncMethods:
             return mock_response
 
         mocker.patch(
-            "asyncio.to_thread",
+            "app.repository.gerrit_provider.run_repository_io",
             side_effect=lambda func, *args, **kwargs: capture_request(**kwargs),
         )
 
@@ -369,7 +369,7 @@ class TestGerritProviderAsyncMethods:
             return mock_response
 
         mocker.patch(
-            "asyncio.to_thread",
+            "app.repository.gerrit_provider.run_repository_io",
             side_effect=lambda func, *args, **kwargs: capture_request(**kwargs),
         )
 
@@ -396,7 +396,7 @@ class TestGerritProviderGetBranches:
         # Mock the _make_request method to capture auth_type
         captured_auth_type = [None]
 
-        def mock_make_request(*args, **kwargs):
+        async def mock_make_request(*args, **kwargs):
             captured_auth_type[0] = kwargs.get("auth_type")
             mock_response = Mock()
             mock_response.status_code = 200
@@ -407,7 +407,7 @@ class TestGerritProviderGetBranches:
             return mock_response
 
         mocker.patch.object(
-            gerrit_provider, "_make_request", side_effect=mock_make_request
+            gerrit_provider, "_make_request_async", side_effect=mock_make_request
         )
         mocker.patch.object(gerrit_provider, "_get_default_branch", return_value="main")
 
@@ -430,7 +430,7 @@ class TestGerritProviderCreateChange:
         """Test that create_change uses auth_type from git_info"""
         captured_auth_type = [None]
 
-        def mock_make_request(*args, **kwargs):
+        async def mock_make_request(*args, **kwargs):
             captured_auth_type[0] = kwargs.get("auth_type")
             mock_response = Mock()
             mock_response.status_code = 200
@@ -439,7 +439,7 @@ class TestGerritProviderCreateChange:
             return mock_response
 
         mocker.patch.object(
-            gerrit_provider, "_make_request", side_effect=mock_make_request
+            gerrit_provider, "_make_request_async", side_effect=mock_make_request
         )
 
         await gerrit_provider.create_change(

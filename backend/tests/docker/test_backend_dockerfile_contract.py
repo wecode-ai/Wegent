@@ -16,3 +16,12 @@ def test_backend_image_does_not_require_optional_sites_plugin() -> None:
 
     assert "COPY backend/init_data /app/init_data" in dockerfile
     assert "wegent-sites" not in dockerfile
+
+
+def test_backend_image_uses_supervisor_and_real_readiness_probe() -> None:
+    dockerfile = BACKEND_DOCKERFILE.read_text(encoding="utf-8")
+
+    assert 'CMD ["python", "-m", "app.runtime"]' in dockerfile
+    assert "STOPSIGNAL SIGTERM" in dockerfile
+    assert "HEALTHCHECK" in dockerfile
+    assert "curl -fsS http://localhost:${PORT}/api/ready" in dockerfile

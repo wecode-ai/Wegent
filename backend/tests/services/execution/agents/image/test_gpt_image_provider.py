@@ -3,6 +3,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 import base64
+import json
 
 import pytest
 
@@ -16,7 +17,8 @@ class _Response:
     def __init__(self, data: dict, status_code: int = 200):
         self._data = data
         self.status_code = status_code
-        self.text = str(data)
+        self.content = json.dumps(data).encode()
+        self.text = self.content.decode()
 
     def json(self) -> dict:
         return self._data
@@ -120,7 +122,7 @@ async def test_generate_uses_openai_images_api(
         "Content-Type": "application/json",
         "Authorization": "Bearer test-key",
     }
-    assert client.post_kwargs["json"] == {
+    assert json.loads(client.post_kwargs["content"]) == {
         "model": TEST_MODEL,
         "prompt": "A cat",
         "n": 2,

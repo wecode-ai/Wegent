@@ -2,15 +2,33 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-from unittest.mock import AsyncMock, Mock, patch
+from unittest.mock import ANY, AsyncMock, Mock, patch
 
 import pytest
 from fastapi import HTTPException
+from sqlalchemy.orm import sessionmaker
 
 from app.models.project import Project
 from app.models.task import TaskResource
 from app.schemas.project import ProjectCreate
 from app.services import project_service
+
+
+@pytest.fixture(autouse=True)
+def _worker_sessions_use_test_database(test_db, monkeypatch):
+    from app.db import session as db_session
+
+    monkeypatch.setattr(
+        db_session,
+        "SessionLocal",
+        sessionmaker(
+            autocommit=False,
+            autoflush=False,
+            bind=test_db.get_bind(),
+            expire_on_commit=False,
+            join_transaction_mode="create_savepoint",
+        ),
+    )
 
 
 def _local_path_project_config(device_id: str, local_path: str) -> dict:
@@ -71,7 +89,6 @@ async def test_prepare_git_checkout_sets_repo_git_identity_after_clone():
         command_mock,
     ):
         await project_service._prepare_git_checkout(
-            db=object(),
             user_id=7,
             device_id="device-1",
             git_url="https://github.com/wecode-ai/Wegent.git",
@@ -397,7 +414,6 @@ async def test_prepare_git_checkout_stops_when_target_path_exists():
     ):
         with pytest.raises(HTTPException) as exc_info:
             await project_service._prepare_git_checkout(
-                db=object(),
                 user_id=7,
                 device_id="device-1",
                 git_url="https://github.com/wecode-ai/Wegent.git",
@@ -697,7 +713,7 @@ async def test_list_project_worktrees_scans_each_online_project_device_once(
 
     with (
         patch(
-            "app.services.project_service.device_service.get_all_devices",
+            "app.services.project_service.device_service.get_all_devices_nonblocking",
             AsyncMock(
                 return_value=[
                     {
@@ -714,7 +730,6 @@ async def test_list_project_worktrees_scans_each_online_project_device_once(
         ),
     ):
         result = await project_service.list_project_worktrees(
-            db=test_db,
             user_id=test_user.id,
             client_origin="wework",
         )
@@ -804,7 +819,6 @@ async def test_delete_project_worktree_removes_directory_and_matching_task(
         ),
     ):
         result = await project_service.delete_project_worktree(
-            db=test_db,
             user_id=test_user.id,
             client_origin="wework",
             device_id="device-1",
@@ -829,7 +843,7 @@ async def test_delete_project_worktree_removes_directory_and_matching_task(
         "/workspace/worktrees/1386/Wegent"
     ]
     delete_task_mock.assert_called_once_with(
-        db=test_db,
+        db=ANY,
         task_id=task.id,
         user_id=test_user.id,
         client_origin="wework",
@@ -861,7 +875,6 @@ async def test_delete_project_worktree_rejects_legacy_worktree_id(test_db, test_
     ):
         with pytest.raises(HTTPException) as exc_info:
             await project_service.delete_project_worktree(
-                db=test_db,
                 user_id=test_user.id,
                 client_origin="wework",
                 device_id="device-1",

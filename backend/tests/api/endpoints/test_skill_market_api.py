@@ -85,7 +85,7 @@ async def test_lists_all_registered_providers() -> None:
     skill_market_registry.register(StubSkillMarketProvider("first", "First"))
     skill_market_registry.register(StubSkillMarketProvider("second", "Second"))
 
-    response = await list_providers(current_user=current_user())
+    response = list_providers(current_user=current_user())
 
     assert [provider.key for provider in response.providers] == ["first", "second"]
     assert [provider.name for provider in response.providers] == ["First", "Second"]

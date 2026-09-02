@@ -14,10 +14,6 @@ from fastapi import HTTPException
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from app.api.ws.device_namespace import (
-    _execution_runtime_event_sync,
-    _project_chat_runtime_event_sync,
-)
 from app.core.constants import CLIENT_ORIGIN_WEWORK
 from app.models.delivery import (
     CloudProject,
@@ -43,6 +39,12 @@ from app.schemas.project_chat import (
     ProjectChatWorkspaceBinding,
 )
 from app.schemas.runtime_work import DeviceWorkspaceUpsert
+from app.services.execution.runtime_projection import (
+    execution_runtime_event_sync as _execution_runtime_event_sync,
+)
+from app.services.execution.runtime_projection import (
+    project_chat_runtime_event_sync as _project_chat_runtime_event_sync,
+)
 from app.services.loop_items.service import loop_item_service
 from app.services.project_chat.service import project_chat_service
 from app.services.runtime_work_service import upsert_device_workspace
@@ -2037,7 +2039,7 @@ def test_device_runtime_projection_accepts_local_task_id(
         yield test_db
 
     monkeypatch.setattr(
-        "app.api.ws.device_namespace.get_db_session",
+        "app.services.execution.runtime_projection.get_db_session",
         same_session,
     )
 
@@ -2107,15 +2109,15 @@ def test_device_runtime_projection_invalidates_only_material_issue_changes(
         return execution
 
     monkeypatch.setattr(
-        "app.api.ws.device_namespace.get_db_session",
+        "app.services.execution.runtime_projection.get_db_session",
         same_session,
     )
     monkeypatch.setattr(
-        "app.api.ws.device_namespace.loop_item_execution_service.handle_runtime_event",
+        "app.services.execution.runtime_projection.loop_item_execution_service.handle_runtime_event",
         handle_runtime_event,
     )
     monkeypatch.setattr(
-        "app.api.ws.device_namespace.publish_loop_item_changed",
+        "app.services.execution.runtime_projection.publish_loop_item_changed",
         lambda db, *, item, reason, actor_user_id: published_events.append(
             (item.id, reason)
         ),
@@ -2178,11 +2180,11 @@ def test_device_runtime_event_projects_directly_bound_issue_status(
 
     published: list[tuple[str, str]] = []
     monkeypatch.setattr(
-        "app.api.ws.device_namespace.get_db_session",
+        "app.services.execution.runtime_projection.get_db_session",
         same_session,
     )
     monkeypatch.setattr(
-        "app.api.ws.device_namespace.publish_loop_item_changed",
+        "app.services.execution.runtime_projection.publish_loop_item_changed",
         lambda db, *, item, reason, actor_user_id: published.append((item.id, reason)),
     )
 
@@ -2330,7 +2332,7 @@ def test_device_runtime_event_projects_bound_workflow_task_status(
             raise
 
     monkeypatch.setattr(
-        "app.api.ws.device_namespace.get_db_session",
+        "app.services.execution.runtime_projection.get_db_session",
         same_session,
     )
 
@@ -2426,7 +2428,7 @@ def test_streaming_runtime_event_does_not_project_workflow_status(
             raise
 
     monkeypatch.setattr(
-        "app.api.ws.device_namespace.get_db_session",
+        "app.services.execution.runtime_projection.get_db_session",
         same_session,
     )
 
@@ -2504,7 +2506,7 @@ def test_manual_runtime_event_projects_workflow_without_execution_row(
             raise
 
     monkeypatch.setattr(
-        "app.api.ws.device_namespace.get_db_session",
+        "app.services.execution.runtime_projection.get_db_session",
         same_session,
     )
 
@@ -2579,7 +2581,7 @@ def test_execution_truth_rejection_blocks_project_chat_projection(
         yield test_db
 
     monkeypatch.setattr(
-        "app.api.ws.device_namespace.get_db_session",
+        "app.services.execution.runtime_projection.get_db_session",
         same_session,
     )
 

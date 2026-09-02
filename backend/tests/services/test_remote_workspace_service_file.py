@@ -4,165 +4,30 @@
 
 from unittest.mock import Mock, patch
 
+import httpx
+import pytest
+from fastapi import HTTPException
+
 from app.services.remote_workspace_service import (
-    REMOTE_WORKSPACE_FILE_TIMEOUT_SECONDS,
+    REMOTE_WORKSPACE_FILE_MAX_BYTES,
+    RemoteWorkspaceFileRequest,
     RemoteWorkspaceService,
 )
 
 
-def test_stream_file_download_sets_attachment_disposition():
+def test_prepare_file_stream_uses_running_sandbox_endpoint() -> None:
     service = RemoteWorkspaceService(executor_manager_url="http://executor-manager")
-
-    with (
-        patch.object(service, "_get_task_detail", return_value={"subtasks": []}),
-        patch.object(
-            service,
-            "normalize_and_validate_workspace_path",
-            return_value="/workspace/a.txt",
-        ),
-        patch.object(
-            service, "_ensure_sandbox_available", return_value="http://sandbox"
-        ),
-        patch.object(
-            service,
-            "_download_file",
-            return_value=(b"hello", "text/plain"),
-        ),
-    ):
-        response = service.stream_file(
-            db=Mock(),
-            task_id=1,
-            user_id=100,
-            path="/workspace/a.txt",
-            disposition="attachment",
-        )
-
-    assert "attachment" in response.headers["Content-Disposition"]
-
-
-def test_stream_file_zip_download_appends_zip_extension():
-    service = RemoteWorkspaceService(executor_manager_url="http://executor-manager")
-
-    with (
-        patch.object(service, "_get_task_detail", return_value={"subtasks": []}),
-        patch.object(
-            service,
-            "normalize_and_validate_workspace_path",
-            return_value="/workspace/demo",
-        ),
-        patch.object(
-            service, "_ensure_sandbox_available", return_value="http://sandbox"
-        ),
-        patch.object(
-            service,
-            "_download_file",
-            return_value=(b"zip", "application/zip"),
-        ),
-    ):
-        response = service.stream_file(
-            db=Mock(),
-            task_id=1,
-            user_id=100,
-            path="/workspace/demo",
-            disposition="attachment",
-        )
-
-    assert response.media_type == "application/zip"
-    assert "demo.zip" in response.headers["Content-Disposition"]
-
-
-def test_stream_file_inline_sets_inline_disposition():
-    service = RemoteWorkspaceService(executor_manager_url="http://executor-manager")
-
-    with (
-        patch.object(service, "_get_task_detail", return_value={"subtasks": []}),
-        patch.object(
-            service,
-            "normalize_and_validate_workspace_path",
-            return_value="/workspace/a.txt",
-        ),
-        patch.object(
-            service, "_ensure_sandbox_available", return_value="http://sandbox"
-        ),
-        patch.object(
-            service,
-            "_download_file",
-            return_value=(b"hello", "text/plain"),
-        ),
-    ):
-        response = service.stream_file(
-            db=Mock(),
-            task_id=1,
-            user_id=100,
-            path="/workspace/a.txt",
-            disposition="inline",
-        )
-
-    assert "inline" in response.headers["Content-Disposition"]
-
-
-def test_stream_file_non_ascii_filename_uses_rfc5987_disposition():
-    service = RemoteWorkspaceService(executor_manager_url="http://executor-manager")
-
-    with (
-        patch.object(service, "_get_task_detail", return_value={"subtasks": []}),
-        patch.object(
-            service,
-            "normalize_and_validate_workspace_path",
-            return_value="/home/user/出师表.txt",
-        ),
-        patch.object(
-            service, "_ensure_sandbox_available", return_value="http://sandbox"
-        ),
-        patch.object(
-            service,
-            "_download_file",
-            return_value=(b"hello", "text/plain"),
-        ),
-    ):
-        response = service.stream_file(
-            db=Mock(),
-            task_id=1,
-            user_id=100,
-            path="/home/user/出师表.txt",
-            disposition="attachment",
-        )
-
-    content_disposition = response.headers["Content-Disposition"]
-    assert content_disposition.startswith("attachment;")
-    assert "filename*=UTF-8''" in content_disposition
-    assert "%E5%87%BA%E5%B8%88%E8%A1%A8.txt" in content_disposition
-
-
-def test_stream_file_reads_running_sandbox_via_envd_files_endpoint():
-    service = RemoteWorkspaceService(executor_manager_url="http://executor-manager")
-    task_detail = {
-        "subtasks": [
-            {"executor_name": "", "executor_namespace": ""},
-        ]
-    }
-    client = Mock()
-    response = Mock()
-    response.status_code = 200
-    response.content = b"hello from sandbox"
-    response.headers = {"content-type": "text/plain"}
-    response.text = "hello from sandbox"
-    client.get.return_value = response
-    client.__enter__ = Mock(return_value=client)
-    client.__exit__ = Mock(return_value=False)
+    task_detail = {"subtasks": [{"executor_name": "", "executor_namespace": ""}]}
 
     with (
         patch.object(service, "_get_task_detail", return_value=task_detail),
         patch.object(
             service,
             "_get_sandbox_payload",
-            return_value={"status": "running", "base_url": "http://sandbox-runtime"},
-        ),
-        patch(
-            "app.services.remote_workspace_service.httpx.Client", return_value=client
+            return_value={"status": "running", "base_url": "http://sandbox"},
         ),
     ):
-        response = service.stream_file(
+        request = service.prepare_file_stream(
             db=Mock(),
             task_id=1,
             user_id=100,
@@ -170,39 +35,147 @@ def test_stream_file_reads_running_sandbox_via_envd_files_endpoint():
             disposition="inline",
         )
 
-    assert response.media_type == "text/plain"
-    client.get.assert_called_once_with(
-        "http://sandbox-runtime/files",
+    assert request == RemoteWorkspaceFileRequest(
+        url="http://sandbox/files",
         params={"path": "/home/user/README.md"},
+        normalized_path="/home/user/README.md",
+        disposition="inline",
     )
 
 
-def test_download_file_uses_archive_friendly_timeout():
-    service = RemoteWorkspaceService(
-        executor_manager_url="http://executor-manager",
-        request_timeout=5.0,
-    )
-    client = Mock()
-    response = Mock()
-    response.status_code = 200
-    response.content = b"zip"
-    response.headers = {"content-type": "application/zip"}
-    response.text = "zip"
-    client.get.return_value = response
-    client.__enter__ = Mock(return_value=client)
-    client.__exit__ = Mock(return_value=False)
+def test_prepare_file_stream_uses_executor_manager_endpoint() -> None:
+    service = RemoteWorkspaceService(executor_manager_url="http://executor-manager")
+    task_detail = {
+        "subtasks": [{"executor_name": "executor-1", "executor_namespace": "default"}]
+    }
 
-    with patch(
-        "app.services.remote_workspace_service.httpx.Client", return_value=client
-    ) as client_factory:
-        content, content_type = service._download_file(
-            task_id=1,
-            executor_name="executor",
-            path="/workspace/1/demo",
+    with (
+        patch.object(service, "_get_task_detail", return_value=task_detail),
+        patch.object(service, "_get_sandbox_payload", return_value=None),
+        patch.object(
+            service,
+            "_resolve_workspace_base_url",
+            return_value="http://runtime",
+        ),
+    ):
+        request = service.prepare_file_stream(
+            db=Mock(),
+            task_id=7,
+            user_id=100,
+            path="/workspace/demo.zip",
+            disposition="attachment",
         )
 
-    assert content == b"zip"
-    assert content_type == "application/zip"
-    client_factory.assert_called_once_with(
-        timeout=REMOTE_WORKSPACE_FILE_TIMEOUT_SECONDS
+    assert request.url == (
+        "http://executor-manager/executor-manager/executor/workspace/file"
     )
+    assert request.params == {
+        "task_id": 7,
+        "path": "/workspace/7/demo.zip",
+        "executor_name": "executor-1",
+    }
+    assert request.disposition == "attachment"
+
+
+@pytest.mark.asyncio
+async def test_open_file_stream_relays_chunks_and_safe_metadata() -> None:
+    service = RemoteWorkspaceService(executor_manager_url="http://executor-manager")
+    transport = httpx.MockTransport(
+        lambda request: httpx.Response(
+            200,
+            headers={"content-type": "text/plain", "content-length": "5"},
+            content=b"hello",
+            request=request,
+        )
+    )
+    client = httpx.AsyncClient(transport=transport)
+    request = RemoteWorkspaceFileRequest(
+        url="http://sandbox/files",
+        params={"path": "/home/user/hello.txt"},
+        normalized_path="/home/user/hello.txt",
+        disposition="attachment",
+    )
+
+    with patch(
+        "app.services.remote_workspace_service.httpx.AsyncClient",
+        return_value=client,
+    ):
+        stream = await service.open_file_stream(request)
+        content = b"".join([chunk async for chunk in stream.chunks()])
+
+    assert content == b"hello"
+    assert stream.content_type == "text/plain"
+    assert stream.content_disposition.startswith("attachment;")
+    assert "hello.txt" in stream.content_disposition
+    assert stream._closed is True
+
+
+@pytest.mark.asyncio
+async def test_open_file_stream_rejects_declared_oversize_before_body() -> None:
+    service = RemoteWorkspaceService(executor_manager_url="http://executor-manager")
+    transport = httpx.MockTransport(
+        lambda request: httpx.Response(
+            200,
+            headers={"content-length": str(REMOTE_WORKSPACE_FILE_MAX_BYTES + 1)},
+            request=request,
+        )
+    )
+    client = httpx.AsyncClient(transport=transport)
+    request = RemoteWorkspaceFileRequest(
+        url="http://sandbox/files",
+        params={},
+        normalized_path="/home/user/archive.zip",
+        disposition="attachment",
+    )
+
+    with (
+        patch(
+            "app.services.remote_workspace_service.httpx.AsyncClient",
+            return_value=client,
+        ),
+        pytest.raises(HTTPException) as raised,
+    ):
+        await service.open_file_stream(request)
+
+    assert raised.value.status_code == 413
+    assert client.is_closed
+
+
+@pytest.mark.asyncio
+async def test_open_file_stream_maps_not_found_without_buffering_body() -> None:
+    service = RemoteWorkspaceService(executor_manager_url="http://executor-manager")
+    transport = httpx.MockTransport(
+        lambda request: httpx.Response(404, content=b"missing", request=request)
+    )
+    client = httpx.AsyncClient(transport=transport)
+    request = RemoteWorkspaceFileRequest(
+        url="http://sandbox/files",
+        params={},
+        normalized_path="/home/user/missing.txt",
+        disposition="inline",
+    )
+
+    with (
+        patch(
+            "app.services.remote_workspace_service.httpx.AsyncClient",
+            return_value=client,
+        ),
+        pytest.raises(HTTPException) as raised,
+    ):
+        await service.open_file_stream(request)
+
+    assert raised.value.status_code == 404
+    assert client.is_closed
+
+
+def test_non_ascii_filename_uses_rfc5987_disposition() -> None:
+    service = RemoteWorkspaceService(executor_manager_url="http://executor-manager")
+
+    disposition = service._build_content_disposition(
+        disposition="attachment",
+        filename="出师表.txt",
+    )
+
+    assert disposition.startswith("attachment;")
+    assert "filename*=UTF-8''" in disposition
+    assert "%E5%87%BA%E5%B8%88%E8%A1%A8.txt" in disposition

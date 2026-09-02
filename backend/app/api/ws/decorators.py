@@ -8,13 +8,14 @@ WebSocket event decorators for tracing and context management.
 
 import logging
 import uuid
-from functools import wraps
+from functools import lru_cache, wraps
 from typing import Any, Callable, Optional
 
 from opentelemetry import trace
 from opentelemetry.trace import Status, StatusCode
 
 from app.core.config import settings
+from app.core.payload_codec import run_payload_codec
 from shared.telemetry.context import (
     SpanNames,
     set_request_context,
@@ -114,7 +115,7 @@ def trace_websocket_event(
                         and isinstance(args[0], dict)
                     ):
                         event_data = args[0]
-                        _set_event_data_attributes(span, event_data)
+                        await _set_event_data_attributes(span, event_data)
 
                     try:
                         result = await func(self, event, sid, *args)
@@ -141,7 +142,20 @@ def trace_websocket_event(
     return decorator
 
 
-def _set_event_data_attributes(span, event_data: dict) -> None:
+@lru_cache(maxsize=1)
+def _server_ip() -> str:
+    """Resolve the server address once outside the Uvicorn event loop."""
+    return get_host_ip()
+
+
+def _project_event_data(event_data: dict) -> tuple[str, str]:
+    """Build potentially expensive trace fields in a codec worker."""
+    import json
+
+    return _server_ip(), json.dumps(event_data, ensure_ascii=False)
+
+
+async def _set_event_data_attributes(span, event_data: dict) -> None:
     """
     Helper function to safely set event data attributes on span.
 
@@ -156,19 +170,17 @@ def _set_event_data_attributes(span, event_data: dict) -> None:
     _safe_set_attribute(span, "team_id", event_data.get("team_id"))
     _safe_set_attribute(span, "subtask.id", event_data.get("subtask_id"))
 
-    # Add server IP address
     try:
-        server_ip = get_host_ip()
+        server_ip, request_body_json = await run_payload_codec(
+            _project_event_data,
+            event_data,
+            payload_hint=event_data,
+            force_offload=True,
+        )
         _safe_set_attribute(span, "server.ip", server_ip)
     except Exception as e:
-        logger.debug(f"Failed to get server IP: {e}")
-
-    # For chat:send event, add the complete request body as JSON
-    # This helps with debugging and understanding client requests
-    import json
-
-    try:
-        request_body_json = json.dumps(event_data, ensure_ascii=False)
+        logger.debug(f"Failed to project WebSocket trace data: {e}")
+    else:
         log_large_attribute(
             "websocket.request_body",
             request_body_json,
@@ -176,8 +188,6 @@ def _set_event_data_attributes(span, event_data: dict) -> None:
             max_event_length=10000,
             event_name="websocket.request_received",
         )
-    except Exception as e:
-        logger.debug(f"Failed to serialize request body to JSON: {e}")
 
 
 def _safe_set_attribute(span, key: str, value: Any) -> None:

@@ -1,4 +1,11 @@
 from app.core.celery_app import celery_app
+
+
+def test_celery_does_not_hijack_backend_logging() -> None:
+    assert celery_app.conf.worker_hijack_root_logger is False
+    assert celery_app.conf.worker_redirect_stdouts is False
+
+
 from app.core.config import settings
 
 

@@ -8,6 +8,7 @@ import asyncio
 import logging
 from typing import Any, AsyncGenerator
 
+from app.core.payload_codec import run_payload_codec
 from app.services.simple_chat.providers.base import (
     ChunkType,
     LLMProvider,
@@ -114,8 +115,18 @@ class GeminiProvider(LLMProvider):
         base_url = self.config.base_url.rstrip("/")
         url = f"{base_url}/v1beta/models/{self.config.model_id}-preview:streamGenerateContent?alt=sse"
 
-        formatted_messages = self.format_messages(messages)
-        system_prompt = self._extract_system_prompt(messages)
+        formatted_messages = await run_payload_codec(
+            self.format_messages,
+            messages,
+            payload_hint=messages,
+            force_offload=True,
+        )
+        system_prompt = await run_payload_codec(
+            self._extract_system_prompt,
+            messages,
+            payload_hint=messages,
+            force_offload=True,
+        )
 
         payload = {"contents": formatted_messages}
         if system_prompt:
@@ -128,7 +139,13 @@ class GeminiProvider(LLMProvider):
                 yield StreamChunk(type=ChunkType.ERROR, error=chunk_data["_error"])
                 return
 
-            for chunk in self._parse_chunk(chunk_data):
+            chunks = await run_payload_codec(
+                self._parse_chunk,
+                chunk_data,
+                payload_hint=chunk_data,
+                force_offload=True,
+            )
+            for chunk in chunks:
                 yield chunk
 
     def _parse_chunk(self, chunk_data: dict[str, Any]) -> list[StreamChunk]:

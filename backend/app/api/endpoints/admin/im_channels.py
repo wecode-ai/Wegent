@@ -8,8 +8,10 @@ IM channels are stored as Messager CRD in the kinds table with user_id=0.
 """
 
 import logging
+from copy import deepcopy
+from dataclasses import dataclass
 from datetime import datetime
-from typing import Any, Dict, Optional, Set
+from typing import Any, Dict, Literal, Optional, Set
 
 from fastapi import APIRouter, Depends, HTTPException, Path, Query, status
 from sqlalchemy.orm import Session
@@ -26,7 +28,8 @@ from app.schemas.im_channel import (
     IMChannelStatus,
     IMChannelUpdate,
 )
-from app.services.channels import get_channel_manager
+from app.services.channels.worker_client import channel_worker_client
+from app.services.chat.storage.db import get_db_session, run_sync_in_executor
 from shared.utils.crypto import decrypt_sensitive_data, encrypt_sensitive_data
 
 router = APIRouter()
@@ -47,6 +50,26 @@ SENSITIVE_CONFIG_KEYS: Set[str] = {
     "encoding_aes_key",
     "bot_token",
 }
+
+
+@dataclass(frozen=True)
+class _IMChannelSnapshot:
+    """Detached channel configuration safe to carry across an await."""
+
+    id: int
+    name: str
+    namespace: str
+    json: Dict[str, Any]
+    created_at: datetime
+    updated_at: datetime
+
+
+@dataclass(frozen=True)
+class _IMChannelMutation:
+    """Persisted channel plus the lifecycle action its update requires."""
+
+    channel: _IMChannelSnapshot
+    action: Literal["start", "stop", "restart"] | None = None
 
 
 def _is_sensitive_key(key: str) -> bool:
@@ -87,8 +110,8 @@ def _mask_config(config: Dict[str, Any]) -> Dict[str, Any]:
     return masked
 
 
-def _kind_to_response(kind: Kind) -> IMChannelResponse:
-    """Convert Kind model to IMChannelResponse."""
+def _kind_to_response(kind: Kind | _IMChannelSnapshot) -> IMChannelResponse:
+    """Convert stored or detached channel fields to an API response."""
     spec = kind.json.get("spec", {})
     config = spec.get("config", {})
 
@@ -133,11 +156,220 @@ def _create_messager_json(
     }
 
 
-class IMChannelAdapter:
-    """Adapter to make Kind behave like IMChannel for ChannelManager."""
+def _active_channel_query(db: Session, channel_id: int):
+    return db.query(Kind).filter(
+        Kind.id == channel_id,
+        Kind.kind == MESSAGER_KIND,
+        Kind.user_id == MESSAGER_USER_ID,
+        Kind.is_active == True,
+    )
 
-    def __init__(self, kind: Kind):
-        self._kind = kind
+
+def _channel_snapshot(kind: Kind) -> _IMChannelSnapshot:
+    """Detach all fields used after the worker Session closes."""
+    return _IMChannelSnapshot(
+        id=kind.id,
+        name=kind.name,
+        namespace=kind.namespace,
+        json=deepcopy(kind.json or {}),
+        created_at=kind.created_at,
+        updated_at=kind.updated_at,
+    )
+
+
+def _load_channel_snapshot_from_store(channel_id: int) -> _IMChannelSnapshot | None:
+    """Load one active channel using a worker-owned database Session."""
+    with get_db_session() as db:
+        channel = _active_channel_query(db, channel_id).first()
+        return _channel_snapshot(channel) if channel is not None else None
+
+
+def _create_channel_in_store(channel_data: IMChannelCreate) -> _IMChannelSnapshot:
+    """Validate and persist a channel entirely inside one DB worker."""
+    with get_db_session() as db:
+        existing = (
+            db.query(Kind)
+            .filter(
+                Kind.kind == MESSAGER_KIND,
+                Kind.user_id == MESSAGER_USER_ID,
+                Kind.name == channel_data.name,
+                Kind.namespace == channel_data.namespace,
+                Kind.is_active == True,
+            )
+            .first()
+        )
+        if existing:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=(
+                    f"IM channel '{channel_data.name}' already exists in "
+                    f"namespace '{channel_data.namespace}'"
+                ),
+            )
+
+        now = datetime.now()
+        channel = Kind(
+            user_id=MESSAGER_USER_ID,
+            kind=MESSAGER_KIND,
+            name=channel_data.name,
+            namespace=channel_data.namespace,
+            json=_create_messager_json(
+                name=channel_data.name,
+                namespace=channel_data.namespace,
+                channel_type=channel_data.channel_type,
+                is_enabled=channel_data.is_enabled,
+                config=channel_data.config,
+                default_team_id=channel_data.default_team_id or 0,
+                default_model_name=channel_data.default_model_name or "",
+            ),
+            is_active=True,
+            created_at=now,
+            updated_at=now,
+        )
+        db.add(channel)
+        db.commit()
+        db.refresh(channel)
+        return _channel_snapshot(channel)
+
+
+def _apply_channel_update(
+    channel: Kind,
+    channel_data: IMChannelUpdate,
+) -> tuple[bool, bool]:
+    """Apply mutable fields and return prior enablement and restart intent."""
+    current_json = deepcopy(channel.json or {})
+    spec = current_json.get("spec", {})
+    was_enabled = spec.get("isEnabled", True)
+    needs_restart = False
+    if channel_data.name is not None:
+        channel.name = channel_data.name
+        current_json.setdefault("metadata", {})["name"] = channel_data.name
+    if channel_data.is_enabled is not None:
+        spec["isEnabled"] = channel_data.is_enabled
+    for field, key in (
+        (channel_data.default_team_id, "defaultTeamId"),
+        (channel_data.default_model_name, "defaultModelName"),
+    ):
+        if field is not None:
+            spec[key] = field
+            needs_restart = True
+    if channel_data.config is not None:
+        existing_config = spec.get("config", {})
+        for key, value in channel_data.config.items():
+            if value == "***":
+                continue
+            existing_config[key] = (
+                encrypt_sensitive_data(value)
+                if _is_sensitive_key(key) and isinstance(value, str) and value
+                else value
+            )
+        spec["config"] = existing_config
+        needs_restart = True
+    current_json["spec"] = spec
+    channel.json = current_json
+    channel.updated_at = datetime.now()
+    flag_modified(channel, "json")
+    return was_enabled, needs_restart
+
+
+def _update_channel_in_store(
+    channel_id: int,
+    channel_data: IMChannelUpdate,
+) -> _IMChannelMutation:
+    """Persist an update and return detached lifecycle intent."""
+    with get_db_session() as db:
+        channel = _active_channel_query(db, channel_id).first()
+        if channel is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"IM channel with id {channel_id} not found",
+            )
+        was_enabled, needs_restart = _apply_channel_update(channel, channel_data)
+        db.commit()
+        db.refresh(channel)
+        is_enabled = channel.json.get("spec", {}).get("isEnabled", True)
+        action: Literal["start", "stop", "restart"] | None = None
+        if was_enabled and not is_enabled:
+            action = "stop"
+        elif not was_enabled and is_enabled:
+            action = "start"
+        elif is_enabled and needs_restart:
+            action = "restart"
+        return _IMChannelMutation(_channel_snapshot(channel), action)
+
+
+def _toggle_channel_in_store(channel_id: int) -> _IMChannelMutation:
+    """Toggle one channel and return a detached lifecycle action."""
+    with get_db_session() as db:
+        channel = _active_channel_query(db, channel_id).first()
+        if channel is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"IM channel with id {channel_id} not found",
+            )
+        current_json = deepcopy(channel.json or {})
+        spec = current_json.get("spec", {})
+        was_enabled = spec.get("isEnabled", True)
+        spec["isEnabled"] = not was_enabled
+        current_json["spec"] = spec
+        channel.json = current_json
+        channel.updated_at = datetime.now()
+        flag_modified(channel, "json")
+        db.commit()
+        db.refresh(channel)
+        return _IMChannelMutation(
+            channel=_channel_snapshot(channel),
+            action="stop" if was_enabled else "start",
+        )
+
+
+def _delete_channel_in_store(channel_id: int) -> None:
+    """Soft-delete one channel after its provider has stopped."""
+    with get_db_session() as db:
+        channel = _active_channel_query(db, channel_id).first()
+        if channel is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"IM channel with id {channel_id} not found",
+            )
+        channel.is_active = False
+        channel.updated_at = datetime.now()
+        db.commit()
+
+
+def _channel_status_response(
+    channel: _IMChannelSnapshot,
+    status_info: Dict[str, Any] | None,
+    *,
+    missing_error: str | None,
+) -> IMChannelStatus:
+    """Combine detached configuration with worker-owned provider state."""
+    spec = channel.json.get("spec", {})
+    if status_info is None:
+        return IMChannelStatus(
+            id=channel.id,
+            name=channel.name,
+            channel_type=spec.get("channelType", "dingtalk"),
+            is_enabled=spec.get("isEnabled", True),
+            is_connected=False,
+            last_error=missing_error,
+        )
+    return IMChannelStatus(
+        id=channel.id,
+        name=channel.name,
+        channel_type=spec.get("channelType", "dingtalk"),
+        is_enabled=spec.get("isEnabled", True),
+        is_connected=status_info.get("is_connected", False),
+        last_error=status_info.get("last_error"),
+        uptime_seconds=status_info.get("uptime_seconds"),
+        extra_info=status_info.get("extra_info"),
+    )
+
+
+class IMChannelAdapter:
+    """Expose detached channel configuration to the provider owner."""
+
+    def __init__(self, kind: Kind | _IMChannelSnapshot):
         spec = kind.json.get("spec", {})
         self.id = kind.id
         self.name = kind.name
@@ -153,7 +385,7 @@ class IMChannelAdapter:
 
 
 @router.get("/im-channels", response_model=IMChannelListResponse)
-async def list_im_channels(
+def list_im_channels(
     page: int = Query(1, ge=1),
     limit: int = Query(20, ge=1, le=100),
     channel_type: Optional[str] = Query(None, description="Filter by channel type"),
@@ -191,7 +423,7 @@ async def list_im_channels(
 
 
 @router.get("/im-channels/{channel_id}", response_model=IMChannelResponse)
-async def get_im_channel(
+def get_im_channel(
     channel_id: int = Path(..., description="Channel ID"),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_admin_user),
@@ -224,7 +456,6 @@ async def get_im_channel(
 )
 async def create_im_channel(
     channel_data: IMChannelCreate,
-    db: Session = Depends(get_db),
     current_user: User = Depends(get_admin_user),
 ):
     """
@@ -238,71 +469,20 @@ async def create_im_channel(
             detail=f"Invalid channel type. Must be one of: {', '.join(valid_types)}",
         )
 
-    # Check for duplicate name in same namespace
-    existing = (
-        db.query(Kind)
-        .filter(
-            Kind.kind == MESSAGER_KIND,
-            Kind.user_id == MESSAGER_USER_ID,
-            Kind.name == channel_data.name,
-            Kind.namespace == channel_data.namespace,
-            Kind.is_active == True,
-        )
-        .first()
-    )
-    if existing:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"IM channel '{channel_data.name}' already exists in namespace '{channel_data.namespace}'",
-        )
-
-    # Create Messager CRD
-    messager_json = _create_messager_json(
-        name=channel_data.name,
-        namespace=channel_data.namespace,
-        channel_type=channel_data.channel_type,
-        is_enabled=channel_data.is_enabled,
-        config=channel_data.config,
-        default_team_id=channel_data.default_team_id or 0,
-        default_model_name=channel_data.default_model_name or "",
-    )
-
-    new_channel = Kind(
-        user_id=MESSAGER_USER_ID,
-        kind=MESSAGER_KIND,
-        name=channel_data.name,
-        namespace=channel_data.namespace,
-        json=messager_json,
-        is_active=True,
-        created_at=datetime.now(),
-        updated_at=datetime.now(),
-    )
-
-    db.add(new_channel)
-    db.commit()
-    db.refresh(new_channel)
+    admin_name = current_user.user_name
+    new_channel = await run_sync_in_executor(_create_channel_in_store, channel_data)
 
     logger.info(
         "[IMChannels] Created channel %s (id=%d, type=%s) by user %s",
         new_channel.name,
         new_channel.id,
         channel_data.channel_type,
-        current_user.user_name,
+        admin_name,
     )
 
     # Auto-start if enabled
     if channel_data.is_enabled:
-        manager = get_channel_manager()
-        try:
-            adapter = IMChannelAdapter(new_channel)
-            await manager.start_channel(adapter)
-        except Exception as e:
-            logger.warning(
-                "[IMChannels] Failed to auto-start channel %s (id=%d): %s",
-                new_channel.name,
-                new_channel.id,
-                e,
-            )
+        await channel_worker_client.reconcile(new_channel.id)
 
     return _kind_to_response(new_channel)
 
@@ -311,101 +491,32 @@ async def create_im_channel(
 async def update_im_channel(
     channel_data: IMChannelUpdate,
     channel_id: int = Path(..., description="Channel ID"),
-    db: Session = Depends(get_db),
     current_user: User = Depends(get_admin_user),
 ):
     """
     Update an existing IM channel.
     """
-    channel = (
-        db.query(Kind)
-        .filter(
-            Kind.id == channel_id,
-            Kind.kind == MESSAGER_KIND,
-            Kind.user_id == MESSAGER_USER_ID,
-            Kind.is_active == True,
-        )
-        .first()
+    admin_name = current_user.user_name
+    mutation = await run_sync_in_executor(
+        _update_channel_in_store,
+        channel_id,
+        channel_data,
     )
-    if not channel:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"IM channel with id {channel_id} not found",
-        )
-
-    # Get current spec
-    current_json = channel.json.copy()
-    spec = current_json.get("spec", {})
-    was_enabled = spec.get("isEnabled", True)
-    needs_restart = False
-
-    # Update fields
-    if channel_data.name is not None:
-        channel.name = channel_data.name
-        current_json["metadata"]["name"] = channel_data.name
-    if channel_data.is_enabled is not None:
-        spec["isEnabled"] = channel_data.is_enabled
-    if channel_data.default_team_id is not None:
-        spec["defaultTeamId"] = channel_data.default_team_id
-        needs_restart = True
-    if channel_data.default_model_name is not None:
-        spec["defaultModelName"] = channel_data.default_model_name
-        needs_restart = True
-    if channel_data.config is not None:
-        # Merge config - encrypt new sensitive values
-        existing_config = spec.get("config", {})
-        for key, value in channel_data.config.items():
-            # Skip masked values (*** means "don't update this field")
-            if value == "***":
-                continue
-            # Encrypt sensitive fields
-            if _is_sensitive_key(key) and isinstance(value, str) and value:
-                existing_config[key] = encrypt_sensitive_data(value)
-            else:
-                existing_config[key] = value
-        spec["config"] = existing_config
-        needs_restart = True
-
-    current_json["spec"] = spec
-    channel.json = current_json
-    channel.updated_at = datetime.now()
-    # Mark JSON field as modified for SQLAlchemy to detect the change
-    from sqlalchemy.orm.attributes import flag_modified
-
-    flag_modified(channel, "json")
-
-    db.commit()
-    db.refresh(channel)
+    channel = mutation.channel
 
     logger.info(
         "[IMChannels] Updated channel %s (id=%d) by user %s",
         channel.name,
         channel.id,
-        current_user.user_name,
+        admin_name,
     )
 
-    # Handle channel state changes
-    manager = get_channel_manager()
-    is_enabled = spec.get("isEnabled", True)
-    adapter = IMChannelAdapter(channel)
-
-    try:
-        if was_enabled and not is_enabled:
-            # Channel was disabled
-            await manager.stop_channel(channel.id)
-        elif not was_enabled and is_enabled:
-            # Channel was enabled
-            await manager.start_channel(adapter)
-        elif is_enabled and needs_restart:
-            # Channel config changed, restart
-            await manager.restart_channel(adapter)
-    except Exception as e:
-        logger.warning(
-            "[IMChannels] Failed to update channel state for %s (id=%d): %s",
-            channel.name,
-            channel.id,
-            e,
-        )
+    if mutation.action == "stop":
+        await channel_worker_client.stop(channel.id)
+    elif mutation.action == "start":
+        await channel_worker_client.reconcile(channel.id)
+    elif mutation.action == "restart":
+        await channel_worker_client.reconcile(channel.id, force_restart=True)
 
     return _kind_to_response(channel)
 
@@ -413,50 +524,32 @@ async def update_im_channel(
 @router.delete("/im-channels/{channel_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_im_channel(
     channel_id: int = Path(..., description="Channel ID"),
-    db: Session = Depends(get_db),
     current_user: User = Depends(get_admin_user),
 ):
     """
     Delete an IM channel (soft delete).
     """
-    channel = (
-        db.query(Kind)
-        .filter(
-            Kind.id == channel_id,
-            Kind.kind == MESSAGER_KIND,
-            Kind.user_id == MESSAGER_USER_ID,
-            Kind.is_active == True,
-        )
-        .first()
+    admin_name = current_user.user_name
+    channel = await run_sync_in_executor(
+        _load_channel_snapshot_from_store,
+        channel_id,
     )
-    if not channel:
+    if channel is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"IM channel with id {channel_id} not found",
         )
 
     # Stop the channel if running
-    manager = get_channel_manager()
-    try:
-        await manager.stop_channel(channel_id)
-    except Exception as e:
-        logger.warning(
-            "[IMChannels] Failed to stop channel before deletion (id=%d): %s",
-            channel_id,
-            e,
-        )
+    await channel_worker_client.stop(channel_id)
 
-    channel_name = channel.name
-    # Soft delete
-    channel.is_active = False
-    channel.updated_at = datetime.now()
-    db.commit()
+    await run_sync_in_executor(_delete_channel_in_store, channel_id)
 
     logger.info(
         "[IMChannels] Deleted channel %s (id=%d) by user %s",
-        channel_name,
+        channel.name,
         channel_id,
-        current_user.user_name,
+        admin_name,
     )
 
     return None
@@ -465,65 +558,30 @@ async def delete_im_channel(
 @router.post("/im-channels/{channel_id}/toggle", response_model=IMChannelResponse)
 async def toggle_im_channel(
     channel_id: int = Path(..., description="Channel ID"),
-    db: Session = Depends(get_db),
     current_user: User = Depends(get_admin_user),
 ):
     """
     Toggle the enabled status of an IM channel.
     """
-    channel = (
-        db.query(Kind)
-        .filter(
-            Kind.id == channel_id,
-            Kind.kind == MESSAGER_KIND,
-            Kind.user_id == MESSAGER_USER_ID,
-            Kind.is_active == True,
-        )
-        .first()
-    )
-    if not channel:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"IM channel with id {channel_id} not found",
-        )
-
-    current_json = channel.json.copy()
-    spec = current_json.get("spec", {})
-    was_enabled = spec.get("isEnabled", True)
-    spec["isEnabled"] = not was_enabled
-    current_json["spec"] = spec
-    channel.json = current_json
-    channel.updated_at = datetime.now()
-    # Mark JSON field as modified for SQLAlchemy to detect the change
-    flag_modified(channel, "json")
-
-    db.commit()
-    db.refresh(channel)
+    admin_name = current_user.user_name
+    mutation = await run_sync_in_executor(_toggle_channel_in_store, channel_id)
+    channel = mutation.channel
+    is_enabled = channel.json.get("spec", {}).get("isEnabled", True)
 
     logger.info(
         "[IMChannels] Toggled channel %s (id=%d) from %s to %s by user %s",
         channel.name,
         channel.id,
-        was_enabled,
-        not was_enabled,
-        current_user.user_name,
+        not is_enabled,
+        is_enabled,
+        admin_name,
     )
 
     # Start or stop based on new state
-    manager = get_channel_manager()
-    adapter = IMChannelAdapter(channel)
-    try:
-        if not was_enabled:
-            await manager.start_channel(adapter)
-        else:
-            await manager.stop_channel(channel.id)
-    except Exception as e:
-        logger.warning(
-            "[IMChannels] Failed to toggle channel state for %s (id=%d): %s",
-            channel.name,
-            channel.id,
-            e,
-        )
+    if mutation.action == "start":
+        await channel_worker_client.reconcile(channel.id)
+    else:
+        await channel_worker_client.stop(channel.id)
 
     return _kind_to_response(channel)
 
@@ -531,23 +589,17 @@ async def toggle_im_channel(
 @router.post("/im-channels/{channel_id}/restart", response_model=IMChannelStatus)
 async def restart_im_channel(
     channel_id: int = Path(..., description="Channel ID"),
-    db: Session = Depends(get_db),
     current_user: User = Depends(get_admin_user),
 ):
     """
     Restart an IM channel connection.
     """
-    channel = (
-        db.query(Kind)
-        .filter(
-            Kind.id == channel_id,
-            Kind.kind == MESSAGER_KIND,
-            Kind.user_id == MESSAGER_USER_ID,
-            Kind.is_active == True,
-        )
-        .first()
+    admin_name = current_user.user_name
+    channel = await run_sync_in_executor(
+        _load_channel_snapshot_from_store,
+        channel_id,
     )
-    if not channel:
+    if channel is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"IM channel with id {channel_id} not found",
@@ -555,7 +607,6 @@ async def restart_im_channel(
 
     spec = channel.json.get("spec", {})
     is_enabled = spec.get("isEnabled", True)
-    channel_type = spec.get("channelType", "dingtalk")
 
     if not is_enabled:
         raise HTTPException(
@@ -567,85 +618,43 @@ async def restart_im_channel(
         "[IMChannels] Restarting channel %s (id=%d) by user %s",
         channel.name,
         channel.id,
-        current_user.user_name,
+        admin_name,
     )
 
-    manager = get_channel_manager()
-    adapter = IMChannelAdapter(channel)
-    success = await manager.restart_channel(adapter)
+    success = await channel_worker_client.reconcile(
+        channel.id,
+        force_restart=True,
+    )
 
-    status_info = manager.get_status(channel_id)
-    if status_info:
-        return IMChannelStatus(
-            id=channel.id,
-            name=channel.name,
-            channel_type=channel_type,
-            is_enabled=is_enabled,
-            is_connected=status_info.get("is_connected", False),
-            last_error=status_info.get("last_error"),
-            uptime_seconds=status_info.get("uptime_seconds"),
-            extra_info=status_info.get("extra_info"),
-        )
-    else:
-        return IMChannelStatus(
-            id=channel.id,
-            name=channel.name,
-            channel_type=channel_type,
-            is_enabled=is_enabled,
-            is_connected=False,
-            last_error="Channel not running" if not success else None,
-        )
+    status_info = await channel_worker_client.status(channel_id)
+    return _channel_status_response(
+        channel,
+        status_info,
+        missing_error="Channel not running" if not success else None,
+    )
 
 
 @router.get("/im-channels/{channel_id}/status", response_model=IMChannelStatus)
 async def get_im_channel_status(
     channel_id: int = Path(..., description="Channel ID"),
-    db: Session = Depends(get_db),
     current_user: User = Depends(get_admin_user),
 ):
     """
     Get the connection status of an IM channel.
     """
-    channel = (
-        db.query(Kind)
-        .filter(
-            Kind.id == channel_id,
-            Kind.kind == MESSAGER_KIND,
-            Kind.user_id == MESSAGER_USER_ID,
-            Kind.is_active == True,
-        )
-        .first()
+    channel = await run_sync_in_executor(
+        _load_channel_snapshot_from_store,
+        channel_id,
     )
-    if not channel:
+    if channel is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"IM channel with id {channel_id} not found",
         )
 
-    spec = channel.json.get("spec", {})
-    is_enabled = spec.get("isEnabled", True)
-    channel_type = spec.get("channelType", "dingtalk")
-
-    manager = get_channel_manager()
-    status_info = manager.get_status(channel_id)
-
-    if status_info:
-        return IMChannelStatus(
-            id=channel.id,
-            name=channel.name,
-            channel_type=channel_type,
-            is_enabled=is_enabled,
-            is_connected=status_info.get("is_connected", False),
-            last_error=status_info.get("last_error"),
-            uptime_seconds=status_info.get("uptime_seconds"),
-            extra_info=status_info.get("extra_info"),
-        )
-    else:
-        return IMChannelStatus(
-            id=channel.id,
-            name=channel.name,
-            channel_type=channel_type,
-            is_enabled=is_enabled,
-            is_connected=False,
-            last_error="Channel not running",
-        )
+    status_info = await channel_worker_client.status(channel_id)
+    return _channel_status_response(
+        channel,
+        status_info,
+        missing_error="Channel not running",
+    )

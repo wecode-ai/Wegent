@@ -18,9 +18,13 @@ Key changes from the original trigger_ai_response:
 
 import json
 import logging
+from dataclasses import dataclass
+from functools import partial
 from typing import TYPE_CHECKING, Any, Dict, List, Optional, Union
 
 from fastapi import HTTPException, status
+from sqlalchemy import inspect as sqlalchemy_inspect
+from sqlalchemy.exc import NoInspectionAvailable
 
 from app.core.constants import CLIENT_ORIGIN_FRONTEND
 from app.db.session import SessionLocal
@@ -340,7 +344,6 @@ def _build_codex_runtime_model_config(
     for runtime-only or official Codex models.
 
     """
-    requested_name = model_name
     options = model_options or {}
     provider_id = options.get("codexProviderId") or options.get("codex_model_provider")
     provider_name = options.get("codexProviderName") or options.get(
@@ -774,7 +777,7 @@ async def trigger_ai_response_unified(
         result_emitter is not None,
     )
 
-    from app.services.execution import execution_dispatcher
+    from app.services.execution.dispatcher import execution_dispatcher
 
     # 1. Build unified execution request using shared function
     request = await build_execution_request(
@@ -810,11 +813,100 @@ async def trigger_ai_response_unified(
     )
 
 
+@dataclass(frozen=True)
+class _ExecutionEntityReference:
+    """Database identity safe to transfer from an event loop to a worker thread."""
+
+    model: type
+    identity: Any
+
+
+def _worker_entity_reference(entity: Any, model: type) -> Any:
+    """Replace mapped ORM instances with identifiers before crossing threads."""
+    if isinstance(entity, int):
+        return _ExecutionEntityReference(model=model, identity=entity)
+    if not isinstance(entity, model):
+        return entity
+    try:
+        state = sqlalchemy_inspect(entity)
+    except NoInspectionAvailable:
+        return entity
+    if not state.identity:
+        raise ValueError(f"{model.__name__} must be persisted before request building")
+    return _ExecutionEntityReference(model=model, identity=state.identity[0])
+
+
+def _resolve_worker_entity(db: "Session", value: Any) -> Any:
+    if not isinstance(value, _ExecutionEntityReference):
+        return value
+    entity = db.get(value.model, value.identity)
+    if entity is None:
+        raise ValueError(f"{value.model.__name__} {value.identity} no longer exists")
+    return entity
+
+
 async def build_execution_request(
     task: TaskResource,
     assistant_subtask: Subtask,
     team: Kind,
     user: User,
+    message: Union[str, list],
+    device_id: Optional[str] = None,
+    payload: Any = None,
+    user_subtask_id: Optional[int] = None,
+    history_limit: Optional[int] = None,
+    is_subscription: bool = False,
+    enable_tools: bool = True,
+    enable_deep_thinking: bool = True,
+    enable_web_search: bool = False,
+    enable_clarification: bool = False,
+    preload_skills: Optional[list] = None,
+    previous_bot_id: Optional[int] = None,
+    knowledge_base_names: Optional[List[Dict[str, str]]] = None,
+    knowledge_base_refs: Optional[List[Dict[str, Any]]] = None,
+    reasoning_config: Optional[Dict[str, Any]] = None,
+    generation_params: Any = None,
+    attachment_ids: Optional[List[int]] = None,
+    include_wework_space_mcp: bool = False,
+    web_runtime_guidance: Optional[bool] = None,
+):
+    """Build an execution request without blocking the caller's event loop."""
+    from app.services.chat.storage.db import run_sync_in_executor
+
+    build = partial(
+        _build_execution_request_sync,
+        task=_worker_entity_reference(task, TaskResource),
+        assistant_subtask=_worker_entity_reference(assistant_subtask, Subtask),
+        team=_worker_entity_reference(team, Kind),
+        user=_worker_entity_reference(user, User),
+        message=message,
+        device_id=device_id,
+        payload=payload,
+        user_subtask_id=user_subtask_id,
+        history_limit=history_limit,
+        is_subscription=is_subscription,
+        enable_tools=enable_tools,
+        enable_deep_thinking=enable_deep_thinking,
+        enable_web_search=enable_web_search,
+        enable_clarification=enable_clarification,
+        preload_skills=preload_skills,
+        previous_bot_id=previous_bot_id,
+        knowledge_base_names=knowledge_base_names,
+        knowledge_base_refs=knowledge_base_refs,
+        reasoning_config=reasoning_config,
+        generation_params=generation_params,
+        attachment_ids=attachment_ids,
+        include_wework_space_mcp=include_wework_space_mcp,
+        web_runtime_guidance=web_runtime_guidance,
+    )
+    return await run_sync_in_executor(build)
+
+
+def _build_execution_request_sync(
+    task: Any,
+    assistant_subtask: Any,
+    team: Any,
+    user: Any,
     message: Union[str, list],
     device_id: Optional[str] = None,
     payload: Any = None,
@@ -866,18 +958,23 @@ async def build_execution_request(
     Returns:
         ExecutionRequest ready for dispatch
     """
+    # Delayed until the worker-owned synchronous phase so importing this module
+    # cannot create the execution-package cycle on the Uvicorn thread.
     from app.services.execution import TaskRequestBuilder
-    from shared.models import ExecutionRequest
     from shared.telemetry.context import get_request_id
-
-    logger.info(
-        "[build_execution_request] Building request: task_id=%d, subtask_id=%d",
-        task.id,
-        assistant_subtask.id,
-    )
 
     db = SessionLocal()
     try:
+        task = _resolve_worker_entity(db, task)
+        assistant_subtask = _resolve_worker_entity(db, assistant_subtask)
+        team = _resolve_worker_entity(db, team)
+        user = _resolve_worker_entity(db, user)
+        logger.info(
+            "[build_execution_request] Building request: task_id=%d, subtask_id=%d",
+            task.id,
+            assistant_subtask.id,
+        )
+
         # Build unified execution request
         builder = TaskRequestBuilder(db)
 
@@ -1103,7 +1200,7 @@ async def build_execution_request(
                 processed_subtask_id,
                 str(user_subtask_id),
             )
-            await _create_kb_contexts_from_api_request(
+            _create_kb_contexts_from_api_request(
                 db,
                 user.id,
                 processed_subtask_id,
@@ -1172,7 +1269,7 @@ async def build_execution_request(
             }
             if attachment_ids is not None:
                 process_context_kwargs["attachment_ids"] = attachment_ids
-            request = await _process_contexts(
+            request = _process_contexts(
                 db,
                 request,
                 context_subtask_id,
@@ -1213,7 +1310,7 @@ async def build_execution_request(
         db.close()
 
 
-async def _process_contexts(
+def _process_contexts(
     db: "Session",
     request: "ExecutionRequest",
     user_subtask_id: int,
@@ -1223,19 +1320,7 @@ async def _process_contexts(
     current_contexts: Optional[List["SubtaskContext"]] = None,
     attachment_ids: Optional[List[int]] = None,
 ) -> "ExecutionRequest":
-    """Process contexts (attachments, knowledge bases, etc.) for the request.
-
-    Args:
-        db: Database session
-        request: ExecutionRequest to enhance
-        user_subtask_id: User subtask ID for context retrieval
-        user_id: User ID for context retrieval
-        prepare_provider_native_knowledge: Whether the resolved knowledge context
-            should suppress the legacy KB prompt.
-
-    Returns:
-        Enhanced ExecutionRequest with context information
-    """
+    """Prepare contexts inside the worker-thread request builder."""
     from app.services.chat.preprocessing import prepare_contexts_for_chat
 
     if current_contexts is not None:
@@ -1244,13 +1329,9 @@ async def _process_contexts(
             attachment_ids,
         )
 
-    # Get context_window from model_config for selected_documents injection threshold
     model_context_window = request.model_config.get("context_window")
     inline_attachment_content = _should_inline_attachment_content(request)
-
-    # Process contexts (attachments, knowledge bases, etc.)
-    base_system_prompt = request.system_prompt
-    ctx = await prepare_contexts_for_chat(
+    ctx = prepare_contexts_for_chat(
         db=db,
         user_subtask_id=user_subtask_id,
         user_id=user_id,
@@ -1262,6 +1343,31 @@ async def _process_contexts(
         inline_attachment_content=inline_attachment_content,
         contexts=current_contexts,
     )
+
+    return _apply_processed_contexts(
+        db=db,
+        request=request,
+        user_subtask_id=user_subtask_id,
+        attachment_ids=attachment_ids,
+        prepare_provider_native_knowledge=prepare_provider_native_knowledge,
+        context_result=ctx,
+        inline_attachment_content=inline_attachment_content,
+    )
+
+
+def _apply_processed_contexts(
+    *,
+    db: "Session",
+    request: "ExecutionRequest",
+    user_subtask_id: int,
+    attachment_ids: Optional[List[int]],
+    prepare_provider_native_knowledge: bool,
+    context_result: Any,
+    inline_attachment_content: bool,
+) -> "ExecutionRequest":
+    """Apply already prepared, non-ORM context data to an execution request."""
+    ctx = context_result
+    base_system_prompt = request.system_prompt
 
     # Update request with all processed context results.
     # knowledge_base_ids / is_user_selected_kb / document_ids / kb_meta_prompt are
@@ -1317,7 +1423,7 @@ async def _process_contexts(
     return request
 
 
-async def _create_kb_contexts_from_api_request(
+def _create_kb_contexts_from_api_request(
     db: "Session",
     user_id: int,
     user_subtask_id: int,

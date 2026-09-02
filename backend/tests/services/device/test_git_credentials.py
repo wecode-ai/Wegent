@@ -9,10 +9,10 @@ import os
 import shutil
 import stat
 import subprocess
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, contextmanager
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
@@ -25,6 +25,21 @@ from app.services.device.git_credentials_command import (
 
 def _user(*accounts):
     return SimpleNamespace(id=7, user_name="alice", git_info=list(accounts))
+
+
+@contextmanager
+def _worker_user_session(user):
+    query = SimpleNamespace()
+    query.filter = lambda *_args: query
+    query.first = lambda: user
+    yield SimpleNamespace(query=lambda _model: query)
+
+
+def _use_worker_user(monkeypatch, user) -> None:
+    monkeypatch.setattr(
+        "app.services.chat.storage.db.get_db_session",
+        lambda: _worker_user_session(user),
+    )
 
 
 def _account(domain, token, *, account_id, provider="gitea"):
@@ -133,7 +148,9 @@ def test_summary_preserves_order_and_hides_duplicate_tokens():
 
 @pytest.mark.asyncio
 async def test_sync_resolves_all_accounts_before_dispatch(monkeypatch):
-    require_device = AsyncMock()
+    require_device = MagicMock(
+        return_value=(git_credentials.DeviceType.REMOTE, "remote-1")
+    )
     dispatch = AsyncMock(
         return_value={
             "success": True,
@@ -152,6 +169,11 @@ async def test_sync_resolves_all_accounts_before_dispatch(monkeypatch):
         yield True
 
     monkeypatch.setattr(git_credentials, "_require_eligible_device", require_device)
+    monkeypatch.setattr(
+        git_credentials,
+        "_require_online_device",
+        AsyncMock(),
+    )
     monkeypatch.setattr(git_credentials, "execute_configured_device_command", dispatch)
     monkeypatch.setattr(
         git_credentials.distributed_lock,
@@ -162,15 +184,15 @@ async def test_sync_resolves_all_accounts_before_dispatch(monkeypatch):
         _account("git.example.com", "resolved-secret", account_id="first"),
         _account("git.example.com", "ignored-secret", account_id="second"),
     )
+    _use_worker_user(monkeypatch, user)
 
     result = await git_credentials.sync_git_accounts_to_device(
-        SimpleNamespace(),
-        user=user,
+        user_id=user.id,
         device_id="remote-1",
         allow_empty=False,
     )
 
-    require_device.assert_awaited_once()
+    require_device.assert_called_once()
     dispatch.assert_awaited_once()
     payload = json.loads(dispatch.await_args.kwargs["env"][GIT_CREDENTIALS_SECRET_ENV])
     assert len(payload["accounts"]) == 1
@@ -182,19 +204,24 @@ async def test_sync_resolves_all_accounts_before_dispatch(monkeypatch):
 @pytest.mark.asyncio
 async def test_unresolved_effective_token_aborts_before_dispatch(monkeypatch):
     dispatch = AsyncMock()
-    monkeypatch.setattr(git_credentials, "_require_eligible_device", AsyncMock())
+    monkeypatch.setattr(
+        git_credentials,
+        "_require_eligible_device",
+        MagicMock(return_value=(git_credentials.DeviceType.REMOTE, "remote-1")),
+    )
     monkeypatch.setattr(
         git_credentials, "resolve_plaintext_git_token", lambda *_args: ""
     )
     monkeypatch.setattr(git_credentials, "execute_configured_device_command", dispatch)
 
+    user = _user(_account("git.example.com", "***", account_id="first"))
+    _use_worker_user(monkeypatch, user)
     with pytest.raises(
         git_credentials.DeviceGitCredentialResolutionError,
         match="unavailable",
     ):
         await git_credentials.sync_git_accounts_to_device(
-            SimpleNamespace(),
-            user=_user(_account("git.example.com", "***", account_id="first")),
+            user_id=user.id,
             device_id="remote-1",
             allow_empty=False,
         )
@@ -217,18 +244,23 @@ async def test_multiline_account_values_abort_before_dispatch(
     value,
 ):
     dispatch = AsyncMock()
-    monkeypatch.setattr(git_credentials, "_require_eligible_device", AsyncMock())
+    monkeypatch.setattr(
+        git_credentials,
+        "_require_eligible_device",
+        MagicMock(return_value=(git_credentials.DeviceType.REMOTE, "remote-1")),
+    )
     monkeypatch.setattr(git_credentials, "execute_configured_device_command", dispatch)
     account = _account("git.example.com", "safe-secret", account_id="first")
     account[field] = value
+    user = _user(account)
+    _use_worker_user(monkeypatch, user)
 
     with pytest.raises(
         git_credentials.DeviceGitCredentialResolutionError,
         match="invalid",
     ):
         await git_credentials.sync_git_accounts_to_device(
-            SimpleNamespace(),
-            user=_user(account),
+            user_id=user.id,
             device_id="remote-1",
             allow_empty=False,
         )
@@ -277,8 +309,19 @@ async def test_target_must_be_online_idle_claudecode_cloud_or_remote(
     )
 
     with pytest.raises(git_credentials.DeviceGitCredentialTargetError, match=message):
-        await git_credentials._require_eligible_device(
-            SimpleNamespace(), user_id=7, device_id="device-1"
+        device_type, online_device_id = git_credentials._require_eligible_device(
+            SimpleNamespace(),
+            user_id=7,
+            device_id="device-1",
+        )
+        await git_credentials._require_online_device(
+            user_id=7,
+            plan=git_credentials._GitCredentialSyncPlan(
+                payload="{}",
+                duplicate_domains=(),
+                device_type=device_type,
+                online_device_id=online_device_id,
+            ),
         )
 
 
@@ -304,8 +347,19 @@ async def test_cloud_target_uses_runtime_device_id_for_online_check(monkeypatch)
         get_online,
     )
 
-    await git_credentials._require_eligible_device(
-        SimpleNamespace(), user_id=7, device_id="cloud-device-1"
+    device_type, online_device_id = git_credentials._require_eligible_device(
+        SimpleNamespace(),
+        user_id=7,
+        device_id="cloud-device-1",
+    )
+    await git_credentials._require_online_device(
+        user_id=7,
+        plan=git_credentials._GitCredentialSyncPlan(
+            payload="{}",
+            duplicate_domains=(),
+            device_type=device_type,
+            online_device_id=online_device_id,
+        ),
     )
 
     assert get_online.await_args.args[1] == "runtime-device-1"

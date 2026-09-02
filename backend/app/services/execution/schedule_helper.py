@@ -11,16 +11,30 @@ handling the async-to-sync context switching and database queries.
 
 import asyncio
 import logging
-from abc import ABC, abstractmethod
-from concurrent.futures import ThreadPoolExecutor
 from typing import Any
 
 from sqlalchemy.orm import Session
 
+from app.core.bounded_executor import BoundedExecutor
 from app.utils.prompt_utils import extract_display_prompt
 from shared.telemetry.decorators import add_span_event, trace_async
 
 logger = logging.getLogger(__name__)
+
+_RECOVERY_IO_EXECUTOR = BoundedExecutor(
+    max_workers=5,
+    max_in_flight=10,
+    thread_name_prefix="wegent-recovery-io",
+)
+_DISPATCH_EXECUTOR = BoundedExecutor(
+    max_workers=5,
+    max_in_flight=20,
+    thread_name_prefix="wegent-schedule-dispatch",
+)
+
+
+class ScheduleDispatchOverloaded(RuntimeError):
+    """Raised instead of placing task dispatch in an unbounded queue."""
 
 
 def _extract_device_id_from_executor_name(executor_name: str | None) -> str | None:
@@ -32,37 +46,27 @@ def _extract_device_id_from_executor_name(executor_name: str | None) -> str | No
 
 
 def schedule_dispatch(task_id: int) -> None:
-    """Schedule async dispatch of a task from sync context.
+    """Submit dispatch outside the caller loop with finite admission capacity."""
+    future = _DISPATCH_EXECUTOR.submit_nowait(_dispatch_task_in_worker, task_id)
+    if future is None:
+        raise ScheduleDispatchOverloaded(
+            "Task dispatch capacity is exhausted; refusing unbounded queueing"
+        )
 
-    This function is designed to be called from synchronous code (e.g., after
-    creating/updating a task). It handles finding an event loop and scheduling
-    the async dispatch operation.
+    def log_result(completed) -> None:
+        try:
+            completed.result()
+            logger.info(
+                "[schedule_dispatch] Background dispatch completed task_id=%s",
+                task_id,
+            )
+        except Exception:
+            logger.exception(
+                "[schedule_dispatch] Background dispatch failed task_id=%s",
+                task_id,
+            )
 
-    This replaces the former task_dispatcher.schedule_dispatch() method,
-    using execution_dispatcher to select the appropriate dispatch route.
-
-    Args:
-        task_id: Task ID to dispatch
-    """
-    for strategy in _get_dispatch_strategies():
-        if strategy.can_handle():
-            strategy.execute(task_id)
-            return
-
-    logger.error(f"No suitable dispatch strategy found for task {task_id}")
-
-
-def _get_dispatch_strategies() -> list:
-    """Get ordered list of dispatch strategies to try.
-
-    Returns:
-        List of dispatch strategies in priority order
-    """
-    return [
-        _RunningLoopStrategy(),
-        _MainLoopStrategy(),
-        _NewLoopStrategy(),
-    ]
+    future.add_done_callback(log_result)
 
 
 def _run_in_new_loop(coro) -> Any:
@@ -92,10 +96,6 @@ def _run_in_new_loop(coro) -> Any:
         loop.close()
 
 
-# Thread pool for running async dispatch in separate threads
-_thread_pool: ThreadPoolExecutor | None = None
-
-
 def _resolve_dispatch_message(db: Session, subtask: "Subtask") -> str:
     """Resolve the user message that triggered a pending assistant subtask."""
     from app.stores.tasks import subtask_store
@@ -116,14 +116,6 @@ def _resolve_dispatch_message(db: Session, subtask: "Subtask") -> str:
         return ""
 
     return extract_display_prompt(user_subtask.prompt) or ""
-
-
-def _get_thread_pool() -> ThreadPoolExecutor:
-    """Get or create the shared thread pool."""
-    global _thread_pool
-    if _thread_pool is None:
-        _thread_pool = ThreadPoolExecutor(max_workers=5)
-    return _thread_pool
 
 
 async def _dispatch_task_async(task_id: int) -> None:
@@ -241,7 +233,6 @@ async def _dispatch_task_async(task_id: int) -> None:
                         f"attempting recovery"
                     )
                     recovery_success = await _recover_executor(
-                        db=db,
                         subtask=subtask,
                         task=task,
                         request=request,
@@ -286,7 +277,6 @@ async def _dispatch_task_async(task_id: int) -> None:
                     )
                     db.commit()
                     recovery_success = await _recover_executor(
-                        db=db,
                         subtask=subtask,
                         task=task,
                         request=request,
@@ -368,7 +358,7 @@ async def _executor_pod_missing(
     from app.services.remote_workspace_service import remote_workspace_service
 
     try:
-        alive = await asyncio.to_thread(
+        alive = await _RECOVERY_IO_EXECUTOR.run(
             remote_workspace_service.executor_alive,
             executor_name,
             executor_namespace,
@@ -393,7 +383,6 @@ async def _executor_pod_missing(
 
 
 async def _recover_executor(
-    db: Session,
     subtask: "Subtask",
     task: "TaskResource",
     request,
@@ -405,7 +394,6 @@ async def _recover_executor(
     restores the workspace from archive.
 
     Args:
-        db: Database session
         subtask: Subtask with deleted executor
         task: Parent task
         request: ExecutionRequest with the normal executor config
@@ -413,27 +401,18 @@ async def _recover_executor(
     Returns:
         True if recovery successful, False otherwise
     """
-    from app.stores.tasks import subtask_store
-
     from .recovery_service import recovery_service
 
     try:
-        recovered_info = await recovery_service.recover(
-            db=db,
-            subtask=subtask,
-            task=task,
+        outcome = await recovery_service.recover_from_store(
+            task_id=task.id,
+            subtask_id=subtask.id,
             request=request,
         )
-        if recovered_info:
-            # Update subtask with new executor info
-            subtask_store.update_fields(
-                db,
-                subtask=subtask,
-                executor_name=recovered_info["executor_name"],
-                executor_namespace=recovered_info["executor_namespace"],
-                executor_deleted_at=False,
-            )
-            db.commit()
+        if outcome.recovered:
+            subtask.executor_name = outcome.executor_name
+            subtask.executor_namespace = outcome.executor_namespace
+            subtask.executor_deleted_at = False
             return True
         return False
     except RuntimeError:
@@ -446,122 +425,6 @@ async def _recover_executor(
         return False
 
 
-# Dispatch strategy pattern for handling different event loop contexts
-class _DispatchStrategy(ABC):
-    """Abstract base class for task dispatch strategies."""
-
-    @abstractmethod
-    def can_handle(self) -> bool:
-        """Check if this strategy can handle the current context.
-
-        Returns:
-            True if this strategy is applicable, False otherwise
-        """
-        pass
-
-    @abstractmethod
-    def execute(self, task_id: int) -> None:
-        """Execute the dispatch using this strategy.
-
-        Args:
-            task_id: Task ID to dispatch
-        """
-        pass
-
-
-class _RunningLoopStrategy(_DispatchStrategy):
-    """Strategy for when there's already a running event loop.
-
-    This happens in async contexts (e.g., FastAPI endpoints, Celery with async).
-    We need to run in a separate thread to avoid blocking.
-    """
-
-    def can_handle(self) -> bool:
-        try:
-            asyncio.get_running_loop()
-            return True
-        except RuntimeError:
-            return False
-
-    def execute(self, task_id: int) -> None:
-        logger.info(
-            f"[schedule_dispatch] Using running loop strategy for task_id={task_id}"
-        )
-
-        def run_in_thread():
-            return _run_in_new_loop(_dispatch_task_async(task_id))
-
-        # Submit to thread pool without blocking
-        future = _get_thread_pool().submit(run_in_thread)
-
-        # Add callback for logging
-        def log_result(f):
-            try:
-                f.result(timeout=30)
-                logger.info(
-                    f"[schedule_dispatch] Task completed in thread for task_id={task_id}"
-                )
-            except Exception as e:
-                logger.error(
-                    f"[schedule_dispatch] Task failed in thread for task_id={task_id}: {e}",
-                    exc_info=True,
-                )
-
-        future.add_done_callback(log_result)
-
-
-class _MainLoopStrategy(_DispatchStrategy):
-    """Strategy for using the main event loop (FastAPI context).
-
-    This is the preferred approach when no loop is running but the main
-    loop is available and running.
-    """
-
-    def can_handle(self) -> bool:
-        try:
-            from app.services.chat.webpage_ws_chat_emitter import get_main_event_loop
-
-            main_loop = get_main_event_loop()
-            return main_loop is not None and main_loop.is_running()
-        except Exception:
-            return False
-
-    def execute(self, task_id: int) -> None:
-        try:
-            from app.services.chat.webpage_ws_chat_emitter import get_main_event_loop
-
-            main_loop = get_main_event_loop()
-            asyncio.run_coroutine_threadsafe(_dispatch_task_async(task_id), main_loop)
-            logger.debug(
-                f"[schedule_dispatch] Scheduled dispatch on main loop for task {task_id}"
-            )
-        except Exception as e:
-            logger.error(
-                f"[schedule_dispatch] Failed to schedule on main loop for task {task_id}: {e}",
-                exc_info=True,
-            )
-            raise
-
-
-class _NewLoopStrategy(_DispatchStrategy):
-    """Strategy for creating a new event loop (Celery worker context).
-
-    This is the fallback when no event loop is available. It's synchronous
-    but necessary in some contexts like Celery workers.
-    """
-
-    def can_handle(self) -> bool:
-        # This strategy always works as a fallback
-        return True
-
-    def execute(self, task_id: int) -> None:
-        try:
-            _run_in_new_loop(_dispatch_task_async(task_id))
-            logger.info(
-                f"[schedule_dispatch] Dispatched task {task_id} via new event loop"
-            )
-        except Exception as e:
-            logger.error(
-                f"[schedule_dispatch] Failed to dispatch task {task_id}: {e}",
-                exc_info=True,
-            )
+def _dispatch_task_in_worker(task_id: int) -> None:
+    """Own all dispatch SQL and async I/O inside a dedicated worker thread."""
+    _run_in_new_loop(_dispatch_task_async(task_id))

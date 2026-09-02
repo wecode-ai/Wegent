@@ -14,6 +14,12 @@ from typing import Any, Dict, List, Optional
 
 import httpx
 
+from app.core.payload_codec import (
+    decode_sync_response_json,
+    decode_sync_response_text,
+    encode_http_json,
+)
+
 logger = logging.getLogger(__name__)
 
 
@@ -76,10 +82,12 @@ class DingtalkTokenManager:
         async with httpx.AsyncClient(timeout=10.0) as client:
             try:
                 response = await client.post(
-                    url, json=payload, headers={"Content-Type": "application/json"}
+                    url,
+                    content=await encode_http_json(payload),
+                    headers={"Content-Type": "application/json"},
                 )
                 response.raise_for_status()
-                data = response.json()
+                data = await decode_sync_response_json(response)
 
                 logger.debug(
                     f"[DingtalkTokenManager] Response status: {response.status_code}"
@@ -111,9 +119,10 @@ class DingtalkTokenManager:
                 return access_token
 
             except httpx.HTTPStatusError as e:
+                response_text = await decode_sync_response_text(e.response)
                 logger.error(
                     f"[DingtalkTokenManager] HTTP error: {e.response.status_code} - "
-                    f"{e.response.text}"
+                    f"{response_text}"
                 )
                 raise Exception(f"HTTP error fetching token: {e.response.status_code}")
             except httpx.RequestError as e:
@@ -256,7 +265,7 @@ class DingtalkNotableClient:
                 )
 
                 response.raise_for_status()
-                data = response.json()
+                data = await decode_sync_response_json(response)
 
                 logger.info(
                     f"[DingtalkNotableClient] Retrieved {len(data.get('records', []))} records"
@@ -270,7 +279,7 @@ class DingtalkNotableClient:
         except httpx.HTTPStatusError as e:
             error_data = {}
             try:
-                error_data = e.response.json()
+                error_data = await decode_sync_response_json(e.response)
             except Exception:
                 pass
 
@@ -339,7 +348,7 @@ class DingtalkNotableClient:
                 )
 
                 response.raise_for_status()
-                data = response.json()
+                data = await decode_sync_response_json(response)
 
                 logger.info(
                     f"[DingtalkNotableClient] Retrieved {len(data.get('value', []))} sheets"
@@ -353,7 +362,7 @@ class DingtalkNotableClient:
         except httpx.HTTPStatusError as e:
             error_data = {}
             try:
-                error_data = e.response.json()
+                error_data = await decode_sync_response_json(e.response)
             except Exception:
                 pass
 

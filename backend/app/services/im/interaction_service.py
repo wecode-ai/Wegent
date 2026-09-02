@@ -6,15 +6,27 @@
 
 from typing import Protocol
 
-from sqlalchemy.orm import Session
-
+from app.db.session import SessionLocal
 from app.models.im_session import IMPrivateSession, IMSessionMode
-from app.models.user import User
 from app.services.channels.commands import parse_command
-from app.services.channels.handler import MessageContext
+from app.services.channels.handler import ChannelUserRef, MessageContext
+from app.services.chat.storage.db import run_sync_in_executor
 from app.services.im import task_continuation_service as im_task_continuation_service
 from app.services.im.command_router import IMCommandAction, im_command_router
 from app.services.im.session_service import im_session_service
+
+
+def _load_private_route_options_sync(
+    user_id: int,
+) -> tuple[list[dict], list[dict]]:
+    db = SessionLocal()
+    try:
+        return (
+            im_task_continuation_service.list_recent_wework_tasks(db, user_id, limit=5),
+            im_task_continuation_service.list_wework_projects(db, user_id, limit=8),
+        )
+    finally:
+        db.close()
 
 
 class PrivateIMInteractionPort(Protocol):
@@ -34,8 +46,7 @@ class PrivateIMInteractionPort(Protocol):
 
     async def execute_private_im_bind_task(
         self,
-        db: Session,
-        user: User,
+        user: ChannelUserRef,
         im_session: IMPrivateSession,
         task_id: int | None,
         message_context: MessageContext,
@@ -43,8 +54,7 @@ class PrivateIMInteractionPort(Protocol):
 
     async def execute_private_im_continue_task(
         self,
-        db: Session,
-        user: User,
+        user: ChannelUserRef,
         im_session: IMPrivateSession,
         task_id: int | None,
         message: str,
@@ -54,8 +64,7 @@ class PrivateIMInteractionPort(Protocol):
 
     async def execute_private_im_create_task(
         self,
-        db: Session,
-        user: User,
+        user: ChannelUserRef,
         im_session: IMPrivateSession,
         project_id: int | None,
         message: str,
@@ -69,15 +78,13 @@ class IMInteractionService:
     async def route_private_message(
         self,
         *,
-        db: Session,
-        user: User,
+        user: ChannelUserRef,
         im_session: IMPrivateSession,
         message_context: MessageContext,
         port: PrivateIMInteractionPort,
     ) -> bool:
         if self._should_continue_task_media_message(im_session, message_context):
             await port.execute_private_im_continue_task(
-                db=db,
                 user=user,
                 im_session=im_session,
                 task_id=im_session.active_task_id,
@@ -96,7 +103,6 @@ class IMInteractionService:
             and parse_command(message_context.content) is None
         ):
             await port.execute_private_im_continue_task(
-                db=db,
                 user=user,
                 im_session=im_session,
                 task_id=None,
@@ -106,14 +112,11 @@ class IMInteractionService:
             )
             return True
 
-        recent_tasks = im_task_continuation_service.list_recent_wework_tasks(
-            db, user.id, limit=5
-        )
-        projects = im_task_continuation_service.list_wework_projects(
-            db, user.id, limit=8
+        recent_tasks, projects = await run_sync_in_executor(
+            _load_private_route_options_sync,
+            user.id,
         )
         result = await im_command_router.route(
-            db=db,
             session=im_session,
             content=message_context.content,
             recent_tasks=recent_tasks,
@@ -139,7 +142,6 @@ class IMInteractionService:
 
         if result.action == IMCommandAction.BIND_TASK:
             await port.execute_private_im_bind_task(
-                db=db,
                 user=user,
                 im_session=im_session,
                 task_id=result.task_id,
@@ -149,7 +151,6 @@ class IMInteractionService:
 
         if result.action == IMCommandAction.CONTINUE_TASK:
             await port.execute_private_im_continue_task(
-                db=db,
                 user=user,
                 im_session=im_session,
                 task_id=result.task_id,
@@ -161,7 +162,6 @@ class IMInteractionService:
 
         if result.action == IMCommandAction.CREATE_TASK:
             await port.execute_private_im_create_task(
-                db=db,
                 user=user,
                 im_session=im_session,
                 project_id=result.project_id,

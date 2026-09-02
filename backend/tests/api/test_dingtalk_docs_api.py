@@ -11,11 +11,12 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from sqlalchemy.exc import StatementError
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, sessionmaker
 
 from app.api.dependencies import get_db
 from app.api.endpoints.dingtalk_docs import router
 from app.core import security
+from app.db import session as db_session
 from app.models.dingtalk_doc import DingtalkSyncedNode
 from app.models.user import User
 from app.services.dingtalk_doc_service import DingTalkDocService
@@ -190,10 +191,28 @@ class TestSyncDingtalkDocs:
             {"raw_metadata": node},
             ValueError("Database rejected write"),
         )
+        rollback_calls: list[bool] = []
+
+        class FailingCommitSession(Session):
+            def commit(self) -> None:
+                raise error
+
+            def rollback(self) -> None:
+                rollback_calls.append(True)
+                super().rollback()
+
+        failing_session_factory = sessionmaker(
+            class_=FailingCommitSession,
+            autocommit=False,
+            autoflush=False,
+            bind=test_db.get_bind(),
+            expire_on_commit=False,
+            join_transaction_mode="create_savepoint",
+        )
         with (
             patch.object(
                 DingTalkDocService,
-                "get_user_dingtalk_mcp_url",
+                "get_dingtalk_mcp_url_from_preferences",
                 return_value="https://docs.example.test",
             ),
             patch.object(
@@ -201,8 +220,7 @@ class TestSyncDingtalkDocs:
                 "_fetch_all_nodes",
                 new=AsyncMock(return_value=[node]),
             ),
-            patch.object(test_db, "commit", side_effect=error),
-            patch.object(test_db, "rollback", wraps=test_db.rollback) as rollback,
+            patch.object(db_session, "SessionLocal", failing_session_factory),
         ):
             response = dingtalk_client.post("/dingtalk-docs/sync")
 
@@ -210,14 +228,14 @@ class TestSyncDingtalkDocs:
         assert marker not in response.text
         assert marker not in caplog.text
         assert "StatementError" in caplog.text
-        rollback.assert_called_once()
+        assert rollback_calls == [True]
 
     @patch(
-        "app.api.endpoints.dingtalk_docs.DingTalkDocService.is_configured",
-        return_value=False,
+        "app.api.endpoints.dingtalk_docs.DingTalkDocService.sync_dingtalk_docs",
+        side_effect=ValueError("DingTalk Docs MCP URL is not configured"),
     )
     def test_returns_400_when_not_configured(
-        self, mock_is_configured: MagicMock, dingtalk_client: TestClient
+        self, mock_sync: MagicMock, dingtalk_client: TestClient
     ) -> None:
         """Returns 400 when DingTalk MCP is not configured."""
         response = dingtalk_client.post("/dingtalk-docs/sync")
@@ -225,15 +243,10 @@ class TestSyncDingtalkDocs:
         assert response.status_code == 400
         assert "not configured" in response.json()["detail"].lower()
 
-    @patch(
-        "app.api.endpoints.dingtalk_docs.DingTalkDocService.is_configured",
-        return_value=True,
-    )
     @patch("app.api.endpoints.dingtalk_docs.DingTalkDocService.sync_dingtalk_docs")
     def test_returns_sync_result_on_success(
         self,
         mock_sync: MagicMock,
-        mock_is_configured: MagicMock,
         dingtalk_client: TestClient,
         test_user: User,
     ) -> None:
@@ -255,11 +268,8 @@ class TestSyncDingtalkDocs:
         assert data["updated"] == 2
         assert data["deleted"] == 1
         assert data["total"] == 7
+        mock_sync.assert_awaited_once_with(test_user.id, test_user.preferences)
 
-    @patch(
-        "app.api.endpoints.dingtalk_docs.DingTalkDocService.is_configured",
-        return_value=True,
-    )
     @patch(
         "app.api.endpoints.dingtalk_docs.DingTalkDocService.sync_dingtalk_docs",
         side_effect=ValueError("MCP URL is not configured"),
@@ -267,7 +277,6 @@ class TestSyncDingtalkDocs:
     def test_returns_400_on_value_error(
         self,
         mock_sync: MagicMock,
-        mock_is_configured: MagicMock,
         dingtalk_client: TestClient,
     ) -> None:
         """Returns 400 when sync raises ValueError."""
@@ -277,17 +286,12 @@ class TestSyncDingtalkDocs:
         assert "MCP URL is not configured" in response.json()["detail"]
 
     @patch(
-        "app.api.endpoints.dingtalk_docs.DingTalkDocService.is_configured",
-        return_value=True,
-    )
-    @patch(
         "app.api.endpoints.dingtalk_docs.DingTalkDocService.sync_dingtalk_docs",
         side_effect=Exception("Connection failed"),
     )
     def test_returns_500_on_unexpected_error(
         self,
         mock_sync: MagicMock,
-        mock_is_configured: MagicMock,
         dingtalk_client: TestClient,
     ) -> None:
         """Returns 500 when sync raises an unexpected exception."""

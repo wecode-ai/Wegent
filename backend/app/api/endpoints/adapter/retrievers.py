@@ -2,7 +2,6 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-import asyncio
 import logging
 from typing import Optional
 
@@ -11,6 +10,7 @@ from sqlalchemy.orm import Session
 
 from app.api.dependencies import get_db
 from app.core import security
+from app.core.blocking_work import run_knowledge_io
 from app.core.config import settings
 from app.models.user import User
 from app.schemas.kind import Retriever
@@ -264,7 +264,7 @@ async def test_retriever_connection(
             index_strategy={"mode": "per_dataset"},
             ext={},
         )
-        success = await asyncio.to_thread(storage_backend.test_connection)
+        success = await run_knowledge_io(storage_backend.test_connection)
         return {
             "success": success,
             "message": "Connection successful" if success else "Connection failed",

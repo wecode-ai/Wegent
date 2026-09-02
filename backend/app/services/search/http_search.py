@@ -15,6 +15,12 @@ from typing import Any
 
 import httpx
 
+from app.core.payload_codec import (
+    decode_sync_response_json,
+    decode_sync_response_text,
+    run_payload_codec,
+)
+
 from .base import SearchServiceBase
 
 logger = logging.getLogger(__name__)
@@ -96,6 +102,32 @@ class HttpSearchService(SearchServiceBase):
 
         return current if isinstance(current, list) else []
 
+    def _format_results(
+        self,
+        response_data: Any,
+        limit: int,
+    ) -> list[dict[str, Any]]:
+        raw_results = self._extract_results(response_data)
+        effective_limit = min(limit, self.max_results)
+        formatted_results = []
+        for item in raw_results[:effective_limit]:
+            if not isinstance(item, dict):
+                continue
+
+            def get_clean_str(key: str) -> str:
+                value = item.get(key)
+                return str(value).strip() if value is not None else ""
+
+            formatted_results.append(
+                {
+                    "title": get_clean_str(self.title_field),
+                    "url": get_clean_str(self.url_field),
+                    "snippet": get_clean_str(self.snippet_field),
+                    "content": get_clean_str(self.content_field),
+                }
+            )
+        return formatted_results
+
     async def search_raw(self, query: str, limit: int = 5) -> list[dict[str, Any]]:
         """
         Perform a web search and return raw results.
@@ -122,30 +154,14 @@ class HttpSearchService(SearchServiceBase):
                     headers=self.auth_header,
                 )
                 response.raise_for_status()
-                data = response.json()
+                data = await decode_sync_response_json(response)
 
-            # Extract results array
-            raw_results = self._extract_results(data)
-            effective_limit = min(limit, self.max_results)
-
-            # Transform to standard format
-            formatted_results = []
-            for item in raw_results[:effective_limit]:
-                if not isinstance(item, dict):
-                    continue
-
-                def get_clean_str(key: str) -> str:
-                    val = item.get(key)
-                    return str(val).strip() if val is not None else ""
-
-                formatted_results.append(
-                    {
-                        "title": get_clean_str(self.title_field),
-                        "url": get_clean_str(self.url_field),
-                        "snippet": get_clean_str(self.snippet_field),
-                        "content": get_clean_str(self.content_field),
-                    }
-                )
+            formatted_results = await run_payload_codec(
+                self._format_results,
+                data,
+                limit,
+                payload_hint=data,
+            )
 
             logger.info(
                 "HTTP search successful for query '%s': %s results",
@@ -155,10 +171,11 @@ class HttpSearchService(SearchServiceBase):
             return formatted_results
 
         except httpx.HTTPStatusError as e:
+            response_text = await decode_sync_response_text(e.response)
             logger.error(
                 "HTTP search failed with status %s: %s",
                 e.response.status_code,
-                e.response.text,
+                response_text,
             )
             raise Exception(
                 f"Search API returned error: {e.response.status_code}"

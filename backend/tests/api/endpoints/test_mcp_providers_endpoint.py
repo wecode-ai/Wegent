@@ -3,6 +3,8 @@
 # SPDX-License-Identifier: Apache-2.0
 
 import json
+import threading
+from types import SimpleNamespace
 from typing import Any
 from unittest.mock import Mock
 
@@ -11,7 +13,7 @@ from sqlalchemy.orm import Session
 
 import app.api.endpoints.mcp_providers as mcp_providers_endpoint
 from app.models.user import User
-from app.schemas.mcp_providers import MCPProviderKeysRequest
+from app.schemas.mcp_providers import MCPProviderKeysRequest, MCPTestRequest
 from app.schemas.user import UserUpdate
 from shared.utils.crypto import is_data_encrypted
 
@@ -54,7 +56,7 @@ async def test_update_mcp_provider_keys_encrypts_values(
     request = MCPProviderKeysRequest(mcp_router="plain-router-token")
     current_user = DummyUser(preferences=json.dumps({}))
 
-    response = await mcp_providers_endpoint.update_mcp_provider_keys(
+    response = mcp_providers_endpoint.update_mcp_provider_keys(
         keys=request,
         db=Mock(),
         current_user=current_user,
@@ -79,7 +81,7 @@ async def test_update_mcp_provider_keys_preserves_dynamic_fields(
         )
     )
 
-    response = await mcp_providers_endpoint.update_mcp_provider_keys(
+    response = mcp_providers_endpoint.update_mcp_provider_keys(
         keys=request,
         db=Mock(),
         current_user=current_user,
@@ -91,3 +93,39 @@ async def test_update_mcp_provider_keys_preserves_dynamic_fields(
     assert response.success is True
     assert is_data_encrypted(saved_values["custom_provider"])
     assert is_data_encrypted(saved_values["existing_provider"])
+
+
+@pytest.mark.anyio
+async def test_mcp_tool_projection_runs_off_event_loop(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    event_loop_thread = threading.get_ident()
+    projected_on: list[int] = []
+    project = mcp_providers_endpoint._mcp_tool_infos
+
+    async def fake_connect(_config: dict) -> list[SimpleNamespace]:
+        return [SimpleNamespace(name="search", description="Search docs")]
+
+    def tracked_project(raw_tools: list) -> list:
+        projected_on.append(threading.get_ident())
+        return project(raw_tools)
+
+    monkeypatch.setattr(
+        mcp_providers_endpoint,
+        "_connect_and_get_tools",
+        fake_connect,
+    )
+    monkeypatch.setattr(mcp_providers_endpoint, "_mcp_tool_infos", tracked_project)
+
+    response = await mcp_providers_endpoint.test_mcp_connection(
+        request=MCPTestRequest(
+            server_name="docs",
+            server_config={"type": "streamable-http", "url": "https://example.com"},
+        ),
+        current_user=DummyUser(preferences="{}"),
+    )
+
+    assert response.success is True
+    assert [tool.name for tool in response.tools or []] == ["search"]
+    assert projected_on
+    assert all(thread_id != event_loop_thread for thread_id in projected_on)

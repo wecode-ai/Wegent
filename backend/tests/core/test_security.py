@@ -8,7 +8,8 @@ from datetime import datetime, timedelta
 import pytest
 from fastapi import HTTPException
 from jose import jwt
-from sqlalchemy.orm import Session
+from sqlalchemy import event, inspect
+from sqlalchemy.orm import Session, defer, object_session
 
 from app.core.config import settings
 from app.core.security import (
@@ -17,7 +18,9 @@ from app.core.security import (
     get_admin_user,
     get_auth_context,
     get_current_user,
+    get_current_user_flexible_for_executor,
     get_current_user_from_token,
+    get_current_user_jwt_apikey_tasktoken,
     get_current_user_optional,
     get_password_hash,
     verify_password,
@@ -294,6 +297,7 @@ class TestGetCurrentUser:
         assert user is not None
         assert user.user_name == "testuser"
         assert user.is_active is True
+        assert object_session(user) is None
         decrypt_git_info.assert_not_called()
 
     def test_get_current_user_optional_does_not_decrypt_git_credentials(
@@ -310,7 +314,74 @@ class TestGetCurrentUser:
 
         assert user is not None
         assert user.user_name == test_user.user_name
+        assert object_session(user) is None
         decrypt_git_info.assert_not_called()
+
+    def test_auth_boundary_loads_every_column_before_expunge(
+        self,
+        test_db: Session,
+        test_user: User,
+    ) -> None:
+        from app.core.security import _expunge_authenticated_user
+
+        user_id = test_user.id
+        test_db.expunge_all()
+        user = (
+            test_db.query(User)
+            .options(defer(User.email))
+            .filter(User.id == user_id)
+            .one()
+        )
+        assert "email" in inspect(user).unloaded
+
+        statements: list[str] = []
+
+        def record_statement(*_args) -> None:
+            statements.append(str(_args[2]))
+
+        engine = test_db.get_bind()
+        event.listen(engine, "before_cursor_execute", record_statement)
+        try:
+            detached = _expunge_authenticated_user(user)
+            statements_after_expunge = len(statements)
+            values = {
+                attribute.key: getattr(detached, attribute.key)
+                for attribute in inspect(detached).mapper.column_attrs
+            }
+        finally:
+            event.remove(engine, "before_cursor_execute", record_statement)
+
+        assert values["email"] == test_user.email
+        assert object_session(detached) is None
+        assert inspect(detached).unloaded.isdisjoint(values)
+        assert not tuple(inspect(detached).mapper.relationships)
+        assert len(statements) == statements_after_expunge
+
+    def test_flexible_and_task_token_dependencies_return_sessionless_users(
+        self,
+        test_db: Session,
+        test_user: User,
+        test_token: str,
+    ) -> None:
+        flexible = get_current_user_flexible_for_executor(
+            db=test_db,
+            oauth2_token=test_token,
+            x_api_key_security=None,
+            authorization="",
+            x_api_key="",
+        )
+        task_token_capable = get_current_user_jwt_apikey_tasktoken(
+            db=test_db,
+            oauth2_token=test_token,
+            x_api_key_security=None,
+            authorization="",
+            x_api_key="",
+        )
+
+        assert flexible.id == test_user.id
+        assert task_token_capable.id == test_user.id
+        assert object_session(flexible) is None
+        assert object_session(task_token_capable) is None
 
     def test_get_current_user_with_invalid_token(self, test_db: Session, mocker):
         """Test getting current user with invalid token raises HTTPException"""
@@ -353,12 +424,18 @@ class TestGetCurrentUser:
 class TestGetAdminUser:
     """Test get_admin_user function"""
 
-    def test_get_admin_user_with_admin(self, test_admin_user: User):
+    def test_get_admin_user_with_admin(
+        self,
+        test_db: Session,
+        test_admin_user: User,
+    ):
         """Test getting admin user with admin account"""
-        admin = get_admin_user(current_user=test_admin_user)
+        token = create_access_token({"sub": test_admin_user.user_name})
+        admin = get_admin_user(current_user=get_current_user(token=token, db=test_db))
 
         assert admin is not None
         assert admin.user_name == "admin"
+        assert object_session(admin) is None
 
     def test_get_admin_user_with_regular_user(self, test_user: User):
         """Test getting admin user with regular user raises HTTPException"""
@@ -403,6 +480,7 @@ class TestGetAuthContextServiceKey:
         )
 
         assert auth_context.user.id == test_user.id
+        assert object_session(auth_context.user) is None
 
     def test_non_admin_owned_service_key_can_use_wegent_username(
         self, test_db: Session, test_user: User
@@ -417,3 +495,4 @@ class TestGetAuthContextServiceKey:
         )
 
         assert auth_context.user.id == test_user.id
+        assert object_session(auth_context.user) is None

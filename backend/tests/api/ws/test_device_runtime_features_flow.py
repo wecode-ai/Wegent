@@ -4,7 +4,6 @@
 
 """End-to-end unit contracts for Runtime feature online-state projection."""
 
-import asyncio
 import copy
 from unittest.mock import AsyncMock
 
@@ -12,11 +11,27 @@ import pytest
 
 from app.api.ws import device_namespace
 from app.api.ws.device_namespace import DeviceNamespace
+from app.core.web_background_tasks import WebBackgroundTaskManager
 from app.models.kind import Kind
 from app.schemas.device import DeviceType
 from app.services.device import local_provider, remote_provider
+from app.services.device import version_service as device_version_service
 from app.services.device.cloud_provider import CloudDeviceProvider
 from app.services.device.remote_provider import RemoteDeviceProvider
+
+
+@pytest.fixture(autouse=True)
+async def background_manager(monkeypatch):
+    manager = WebBackgroundTaskManager(max_concurrency=4, max_outstanding=16)
+    monkeypatch.setattr(device_namespace, "web_background_task_manager", manager)
+    monkeypatch.setattr(
+        device_version_service,
+        "web_background_task_manager",
+        manager,
+    )
+    manager.start()
+    yield manager
+    await manager.shutdown()
 
 
 class _MemoryDeviceCache:
@@ -126,8 +141,8 @@ def _patch_namespace(
 
 
 async def _wait_for_registration_followups(namespace: DeviceNamespace) -> None:
-    if namespace._background_tasks:
-        await asyncio.gather(*tuple(namespace._background_tasks))
+    del namespace
+    await device_namespace.web_background_task_manager.drain()
 
 
 @pytest.mark.asyncio

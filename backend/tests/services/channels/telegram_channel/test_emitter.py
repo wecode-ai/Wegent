@@ -4,10 +4,13 @@
 
 """Unit tests for Telegram StreamingResponseEmitter."""
 
+import asyncio
+import threading
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from app.services.channels.telegram import emitter as emitter_module
 from app.services.channels.telegram.emitter import StreamingResponseEmitter
 from shared.models import EventType, ExecutionEvent
 
@@ -141,6 +144,40 @@ class TestStreamingResponseEmitter:
 
         # Should not send anything
         mock_bot.edit_message_text.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_large_chunk_codec_keeps_loop_responsive(self, emitter, monkeypatch):
+        entered = threading.Event()
+        release = threading.Event()
+        original_join = emitter_module._join_text
+
+        def blocking_join(left, right):
+            entered.set()
+            assert release.wait(timeout=2)
+            return original_join(left, right)
+
+        monkeypatch.setattr(emitter_module, "_join_text", blocking_join)
+        emitter._message_id = 999
+        emitter._last_update_time = 0
+        emit_task = asyncio.create_task(
+            emitter.emit_chunk(
+                task_id=1,
+                subtask_id=2,
+                content="x" * (32 * 1024**2),
+                offset=0,
+            )
+        )
+        while not entered.is_set():
+            await asyncio.sleep(0)
+
+        ticks = 0
+        for _ in range(10):
+            await asyncio.sleep(0)
+            ticks += 1
+
+        assert ticks == 10
+        release.set()
+        await emit_task
 
     @pytest.mark.asyncio
     async def test_emit_thinking_event_edits_message(self, emitter, mock_bot):

@@ -4,11 +4,11 @@
 
 from __future__ import annotations
 
-import json
 import logging
 from datetime import datetime, timezone
 from typing import Any, AsyncIterator
 
+from app.core.payload_codec import run_payload_codec
 from app.services import chat_shell_model_service
 from app.services.prompt_draft.generation import safe_model_config_for_logging
 from app.services.prompt_draft.prompt_contract import (
@@ -167,6 +167,34 @@ def build_prompt_retry_message(invalid_prompt: str) -> dict[str, str]:
     }
 
 
+def _normalize_and_validate_prompt(prompt: str) -> str:
+    normalized = normalize_prompt_markdown(prompt)
+    validate_prompt_contract(normalized)
+    return normalized
+
+
+def _normalize_streamed_prompt(chunks: list[str]) -> str:
+    return normalize_prompt_markdown("".join(chunks).strip())
+
+
+def _extract_text_delta(event: Any) -> str | None:
+    if hasattr(event, "model_dump"):
+        event_data = event.model_dump()
+    elif isinstance(event, dict):
+        event_data = event
+    else:
+        event_data = None
+    event_type = getattr(event, "type", None)
+    if not event_type and isinstance(event_data, dict):
+        event_type = event_data.get("type")
+    if event_type != "response.output_text.delta":
+        return None
+    delta = getattr(event, "delta", None)
+    if not isinstance(delta, str) and isinstance(event_data, dict):
+        delta = event_data.get("delta")
+    return delta if isinstance(delta, str) and delta else None
+
+
 async def generate_prompt_text(
     *,
     model_id: str,
@@ -184,22 +212,38 @@ async def generate_prompt_text(
     )
     if not prompt:
         raise ValueError("invalid_model_output")
-    prompt = normalize_prompt_markdown(prompt)
 
+    prompt = await run_payload_codec(
+        normalize_prompt_markdown,
+        prompt,
+        payload_hint=prompt,
+        force_offload=True,
+    )
     try:
-        validate_prompt_contract(prompt)
+        await run_payload_codec(
+            validate_prompt_contract,
+            prompt,
+            payload_hint=prompt,
+            force_offload=True,
+        )
         return prompt
     except ValueError as exc:
         if str(exc) != "prompt_echoed_generation_instructions":
             raise
 
-    retry_messages = [*input_messages, build_prompt_retry_message(prompt)]
+    retry_message = await run_payload_codec(
+        build_prompt_retry_message,
+        prompt,
+        payload_hint=prompt,
+        force_offload=True,
+    )
+    retry_messages = [*input_messages, retry_message]
     logger.info(
-        "Prompt draft prompt-generation retry payload: model=%s instructions=%s user_message=%s metadata=%s model_config=%s",
+        "Prompt draft prompt-generation retry: model=%s message_count=%s "
+        "metadata=%s model_config=%s",
         model_id,
-        prompt_instructions,
-        json.dumps(retry_messages, ensure_ascii=False),
-        json.dumps(metadata, ensure_ascii=False),
+        len(retry_messages),
+        metadata,
         safe_model_config_for_logging(model_config),
     )
     retry_prompt = await chat_shell_model_service.complete_text(
@@ -211,9 +255,12 @@ async def generate_prompt_text(
     )
     if not retry_prompt:
         raise ValueError("invalid_model_output")
-    retry_prompt = normalize_prompt_markdown(retry_prompt)
-    validate_prompt_contract(retry_prompt)
-    return retry_prompt
+    return await run_payload_codec(
+        _normalize_and_validate_prompt,
+        retry_prompt,
+        payload_hint=retry_prompt,
+        force_offload=True,
+    )
 
 
 async def run_skill_generation(
@@ -226,22 +273,24 @@ async def run_skill_generation(
     regenerate: bool = False,
 ) -> dict[str, Any]:
     model_id = str(model_config.get("model_id") or "").strip() or selected_model_name
-    input_messages = build_generation_messages(
+    input_messages = await run_payload_codec(
+        build_generation_messages,
         conversation_blocks,
-        current_prompt=current_prompt,
-        regenerate=regenerate,
+        current_prompt,
+        regenerate,
+        payload_hint=(conversation_blocks, current_prompt),
+        force_offload=True,
     )
     prompt_instructions = build_prompt_generation_system_prompt()
 
     logger.info(
-        "Prompt draft prompt-generation request payload: model=%s task_id=%s user_id=%s "
-        "instructions=%s user_message=%s metadata=%s model_config=%s",
+        "Prompt draft prompt-generation request: model=%s task_id=%s user_id=%s "
+        "message_count=%s metadata=%s model_config=%s",
         model_id,
         task_id,
         user_id,
-        prompt_instructions,
-        json.dumps(input_messages, ensure_ascii=False),
-        json.dumps(GENERATION_METADATA, ensure_ascii=False),
+        len(input_messages),
+        GENERATION_METADATA,
         safe_model_config_for_logging(model_config),
     )
     prompt = await generate_prompt_text(
@@ -252,7 +301,12 @@ async def run_skill_generation(
         model_config=model_config,
     )
 
-    title_messages = build_title_generation_messages(prompt)
+    title_messages = await run_payload_codec(
+        build_title_generation_messages,
+        prompt,
+        payload_hint=prompt,
+        force_offload=True,
+    )
     title = await chat_shell_model_service.complete_text(
         model=model_id,
         input_messages=title_messages,
@@ -287,12 +341,11 @@ async def stream_prompt_text_generation(
     model_config: dict[str, Any],
 ) -> AsyncIterator[str]:
     logger.info(
-        "Prompt draft stream prompt-generation request payload: model=%s "
-        "instructions=%s input_messages=%s metadata=%s model_config=%s",
+        "Prompt draft stream prompt-generation request: model=%s "
+        "message_count=%s metadata=%s model_config=%s",
         model_id,
-        prompt_instructions,
-        json.dumps(input_messages, ensure_ascii=False),
-        json.dumps(metadata, ensure_ascii=False),
+        len(input_messages),
+        metadata,
         safe_model_config_for_logging(model_config),
     )
     async with chat_shell_model_service.create_streaming_response(
@@ -303,15 +356,13 @@ async def stream_prompt_text_generation(
         model_config=model_config,
     ) as stream:
         async for event in stream:
-            event_type = getattr(event, "type", None)
-            if not event_type and hasattr(event, "model_dump"):
-                event_type = event.model_dump().get("type")
-            if event_type != "response.output_text.delta":
-                continue
-            delta = getattr(event, "delta", None)
-            if not isinstance(delta, str) and hasattr(event, "model_dump"):
-                delta = event.model_dump().get("delta")
-            if isinstance(delta, str) and delta:
+            delta = await run_payload_codec(
+                _extract_text_delta,
+                event,
+                payload_hint=event,
+                force_offload=True,
+            )
+            if delta:
                 yield delta
 
 
@@ -334,8 +385,12 @@ async def generate_title_text(
             model_config=model_config,
         )
 
-    normalized_title = normalize_title_text(title or "")
-    return normalized_title
+    return await run_payload_codec(
+        normalize_title_text,
+        title or "",
+        payload_hint=title or "",
+        force_offload=True,
+    )
 
 
 async def generate_prompt_draft_stream_result(
@@ -347,10 +402,13 @@ async def generate_prompt_draft_stream_result(
     regenerate: bool = False,
 ) -> AsyncIterator[dict[str, Any]]:
     model_id = str(model_config.get("model_id") or "").strip() or selected_model
-    input_messages = build_generation_messages(
+    input_messages = await run_payload_codec(
+        build_generation_messages,
         conversation_blocks,
-        current_prompt=current_prompt,
-        regenerate=regenerate,
+        current_prompt,
+        regenerate,
+        payload_hint=(conversation_blocks, current_prompt),
+        force_offload=True,
     )
     prompt_instructions = build_prompt_generation_system_prompt()
 
@@ -365,7 +423,12 @@ async def generate_prompt_draft_stream_result(
         chunks.append(delta)
         yield {"type": "prompt_delta", "delta": delta}
 
-    prompt_text = normalize_prompt_markdown("".join(chunks).strip())
+    prompt_text = await run_payload_codec(
+        _normalize_streamed_prompt,
+        chunks,
+        payload_hint=chunks,
+        force_offload=True,
+    )
     if not prompt_text:
         prompt_text = await generate_prompt_text(
             model_id=model_id,
@@ -376,7 +439,12 @@ async def generate_prompt_draft_stream_result(
         )
     else:
         try:
-            validate_prompt_contract(prompt_text)
+            await run_payload_codec(
+                validate_prompt_contract,
+                prompt_text,
+                payload_hint=prompt_text,
+                force_offload=True,
+            )
         except ValueError as exc:
             if str(exc) != "prompt_echoed_generation_instructions":
                 raise
@@ -389,7 +457,12 @@ async def generate_prompt_draft_stream_result(
             )
     yield {"type": "prompt_done", "prompt": prompt_text}
 
-    title_messages = build_title_generation_messages(prompt_text)
+    title_messages = await run_payload_codec(
+        build_title_generation_messages,
+        prompt_text,
+        payload_hint=prompt_text,
+        force_offload=True,
+    )
     title_instructions = build_title_generation_system_prompt()
     title_text = await chat_shell_model_service.complete_text(
         model=model_id,
@@ -399,12 +472,11 @@ async def generate_prompt_draft_stream_result(
         model_config=model_config,
     )
     logger.info(
-        "Prompt draft stream title-generation request payload: model=%s "
-        "instructions=%s input_messages=%s metadata=%s model_config=%s",
+        "Prompt draft stream title-generation request: model=%s "
+        "message_count=%s metadata=%s model_config=%s",
         model_id,
-        title_instructions,
-        json.dumps(title_messages, ensure_ascii=False),
-        json.dumps(TITLE_METADATA, ensure_ascii=False),
+        len(title_messages),
+        TITLE_METADATA,
         safe_model_config_for_logging(model_config),
     )
     title_text = await generate_title_text(

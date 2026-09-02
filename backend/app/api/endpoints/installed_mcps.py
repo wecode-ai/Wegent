@@ -5,9 +5,7 @@
 import logging
 
 from fastapi import APIRouter, Depends, status
-from sqlalchemy.orm import Session
 
-from app.api.dependencies import get_db
 from app.core import security
 from app.models.user import User
 from app.schemas.installed_mcp import (
@@ -17,6 +15,7 @@ from app.schemas.installed_mcp import (
     InstalledMCPListResponse,
     InstalledMCPUpdateRequest,
 )
+from app.services.chat.storage.db import run_sync_in_executor
 from app.services.device.capability_sync_service import device_capability_sync_service
 from app.services.installed_mcp_service import installed_mcp_service
 
@@ -25,14 +24,15 @@ logger = logging.getLogger(__name__)
 
 
 @router.get("/installed", response_model=InstalledMCPListResponse)
-def list_installed_mcps(
-    db: Session = Depends(get_db),
+async def list_installed_mcps(
     current_user: User = Depends(security.get_current_user),
 ) -> InstalledMCPListResponse:
     """List MCP servers installed by the current user."""
-    return installed_mcp_service.list_installed_mcps(
-        db=db,
-        user_id=current_user.id,
+    user_id = current_user.id
+    del current_user
+    return await run_sync_in_executor(
+        installed_mcp_service.list_installed_mcps_for_user,
+        user_id,
     )
 
 
@@ -43,30 +43,31 @@ def list_installed_mcps(
 )
 async def create_custom_mcp(
     request: InstalledMCPCustomCreateRequest,
-    db: Session = Depends(get_db),
     current_user: User = Depends(security.get_current_user),
 ) -> InstalledMCP:
     """Create or reactivate a custom MCP installation."""
+    user_id = current_user.id
+    del current_user
     logger.info(
         "Custom MCP create requested: user_id=%s name=%s enabled=%s",
-        current_user.id,
+        user_id,
         request.name,
         request.enabled,
     )
-    installed = installed_mcp_service.create_custom_mcp(
-        db=db,
-        user_id=current_user.id,
-        request=request,
+    installed = await run_sync_in_executor(
+        installed_mcp_service.create_custom_mcp_for_user,
+        user_id,
+        request,
     )
     logger.info(
         "Custom MCP create completed: user_id=%s installed_id=%s name=%s enabled=%s state=%s",
-        current_user.id,
+        user_id,
         _installed_mcp_id(installed),
         installed.metadata.get("name"),
         installed.spec.enabled,
         installed.spec.installState,
     )
-    await _sync_global_capabilities(db, current_user.id)
+    await _sync_global_capabilities(user_id)
     return installed
 
 
@@ -77,31 +78,32 @@ async def create_custom_mcp(
 )
 async def install_provider_mcp(
     request: InstalledMCPInstallRequest,
-    db: Session = Depends(get_db),
     current_user: User = Depends(security.get_current_user),
 ) -> InstalledMCP:
     """Install or reactivate an MCP server from a provider catalog."""
+    user_id = current_user.id
+    del current_user
     logger.info(
         "Provider MCP install requested: user_id=%s provider=%s server=%s catalog_item=%s",
-        current_user.id,
+        user_id,
         request.providerKey,
         request.serverKey,
         request.catalogItemId,
     )
-    installed = installed_mcp_service.install_provider_mcp(
-        db=db,
-        user_id=current_user.id,
-        request=request,
+    installed = await run_sync_in_executor(
+        installed_mcp_service.install_provider_mcp_for_user,
+        user_id,
+        request,
     )
     logger.info(
         "Provider MCP install completed: user_id=%s installed_id=%s name=%s enabled=%s state=%s",
-        current_user.id,
+        user_id,
         _installed_mcp_id(installed),
         installed.metadata.get("name"),
         installed.spec.enabled,
         installed.spec.installState,
     )
-    await _sync_global_capabilities(db, current_user.id)
+    await _sync_global_capabilities(user_id)
     return installed
 
 
@@ -109,63 +111,64 @@ async def install_provider_mcp(
 async def update_installed_mcp(
     installed_id: int,
     request: InstalledMCPUpdateRequest,
-    db: Session = Depends(get_db),
     current_user: User = Depends(security.get_current_user),
 ) -> InstalledMCP:
     """Update an installed MCP configuration or enabled state."""
+    user_id = current_user.id
+    del current_user
     logger.info(
         "MCP update requested: user_id=%s installed_id=%s enabled=%s",
-        current_user.id,
+        user_id,
         installed_id,
         request.enabled,
     )
-    installed = installed_mcp_service.update_installed_mcp(
-        db=db,
-        user_id=current_user.id,
-        installed_id=installed_id,
-        request=request,
+    installed = await run_sync_in_executor(
+        installed_mcp_service.update_installed_mcp_for_user,
+        user_id,
+        installed_id,
+        request,
     )
     logger.info(
         "MCP update completed: user_id=%s installed_id=%s name=%s enabled=%s state=%s",
-        current_user.id,
+        user_id,
         _installed_mcp_id(installed),
         installed.metadata.get("name"),
         installed.spec.enabled,
         installed.spec.installState,
     )
-    await _sync_global_capabilities(db, current_user.id)
+    await _sync_global_capabilities(user_id)
     return installed
 
 
 @router.delete("/installed/{installed_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def uninstall_installed_mcp(
     installed_id: int,
-    db: Session = Depends(get_db),
     current_user: User = Depends(security.get_current_user),
 ) -> None:
     """Uninstall a user-scoped MCP server."""
+    user_id = current_user.id
+    del current_user
     logger.info(
         "MCP uninstall requested: user_id=%s installed_id=%s",
-        current_user.id,
+        user_id,
         installed_id,
     )
-    installed_mcp_service.uninstall_installed_mcp(
-        db=db,
-        user_id=current_user.id,
-        installed_id=installed_id,
+    await run_sync_in_executor(
+        installed_mcp_service.uninstall_installed_mcp_for_user,
+        user_id,
+        installed_id,
     )
     logger.info(
         "MCP uninstall completed: user_id=%s installed_id=%s",
-        current_user.id,
+        user_id,
         installed_id,
     )
-    await _sync_global_capabilities(db, current_user.id)
+    await _sync_global_capabilities(user_id)
 
 
-async def _sync_global_capabilities(db: Session, user_id: int) -> None:
+async def _sync_global_capabilities(user_id: int) -> None:
     try:
         result = await device_capability_sync_service.sync_user_global_capabilities(
-            db,
             user_id=user_id,
         )
         logger.info(

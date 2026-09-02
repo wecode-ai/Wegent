@@ -10,6 +10,8 @@ from typing import Any
 
 import httpx
 
+from app.core.blocking_work import run_knowledge_io
+from app.core.bounded_executor import BoundedExecutorOverloaded
 from app.services.web_scraper.models import InternalScrapeResult, SourcePart
 from app.services.web_scraper.proxy import ProxyPlan
 from app.services.web_scraper.security import (
@@ -45,10 +47,14 @@ class PdfExtractor:
     ) -> InternalScrapeResult:
         """Extract PDF content as degraded markdown."""
         try:
-            guard.validate_initial_url(pdf_url)
+            await run_knowledge_io(guard.validate_initial_url, pdf_url)
 
             response = await self._download_pdf(pdf_url, proxy_plan, guard)
-            markdown, source_part = self._extract_pdf_text(response)
+            markdown, source_part = await run_knowledge_io(
+                self._extract_pdf_text,
+                response.content,
+                str(response.url),
+            )
             return InternalScrapeResult(
                 url=pdf_url,
                 final_url=str(response.url),
@@ -98,6 +104,8 @@ class PdfExtractor:
                 extraction_method="pdf",
                 quality_level="degraded",
             )
+        except BoundedExecutorOverloaded:
+            raise
         except Exception as exc:
             logger.warning(
                 "Failed to extract PDF content from %s: %s",
@@ -121,6 +129,8 @@ class PdfExtractor:
         if proxy_plan.fallback:
             try:
                 return await self._download_once(pdf_url, proxy_plan, guard, False)
+            except BoundedExecutorOverloaded:
+                raise
             except Exception as exc:
                 if self._should_retry_with_proxy(exc):
                     return await self._download_once(pdf_url, proxy_plan, guard, True)
@@ -149,7 +159,11 @@ class PdfExtractor:
             for _ in range(PDF_MAX_REDIRECTS + 1):
                 response = await client.get(current_url)
                 if response.status_code not in REDIRECT_STATUS_CODES:
-                    guard.validate_final_url(pdf_url, str(response.url))
+                    await run_knowledge_io(
+                        guard.validate_final_url,
+                        pdf_url,
+                        str(response.url),
+                    )
                     response.raise_for_status()
                     return response
 
@@ -158,7 +172,8 @@ class PdfExtractor:
                     response.raise_for_status()
                     return response
 
-                current_url = guard.validate_redirect_target(
+                current_url = await run_knowledge_io(
+                    guard.validate_redirect_target,
                     pdf_url,
                     str(response.url),
                     location,
@@ -177,10 +192,14 @@ class PdfExtractor:
             return status_code in PROXY_RETRY_STATUS_CODES or status_code >= 500
         return False
 
-    def _extract_pdf_text(self, response: httpx.Response) -> tuple[str, SourcePart]:
+    def _extract_pdf_text(
+        self,
+        content: bytes,
+        final_url: str,
+    ) -> tuple[str, SourcePart]:
         from PyPDF2 import PdfReader
 
-        reader = PdfReader(io.BytesIO(response.content))
+        reader = PdfReader(io.BytesIO(content))
         text_parts = []
         for index, page in enumerate(reader.pages):
             page_text = page.extract_text()
@@ -190,7 +209,7 @@ class PdfExtractor:
         markdown = "\n\n".join(text_parts)
         source_part = SourcePart(
             title="PDF",
-            url=str(response.url),
+            url=final_url,
             markdown=markdown,
             text_length=len(markdown),
             method="pdf",

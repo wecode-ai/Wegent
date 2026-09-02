@@ -13,7 +13,12 @@ from typing import Any, Dict, List, Literal, Optional
 
 from pydantic import BaseModel, Field
 
-from app.core.constants import CLIENT_ORIGIN_FRONTEND, SUPPORTED_CLIENT_ORIGINS
+from app.core.constants import (
+    CLIENT_ORIGIN_FRONTEND,
+    MAX_GUIDANCE_ID_LENGTH,
+    MAX_GUIDANCE_MESSAGE_LENGTH,
+    SUPPORTED_CLIENT_ORIGINS,
+)
 
 # ============================================================
 # Event Names
@@ -348,9 +353,16 @@ class ChatGuidePayload(BaseModel):
     task_id: int = Field(..., description="Task ID")
     subtask_id: int = Field(..., description="Active assistant subtask ID")
     team_id: int = Field(..., description="Team ID")
-    message: str = Field(..., min_length=1, description="Guidance message")
+    message: str = Field(
+        ...,
+        min_length=1,
+        max_length=MAX_GUIDANCE_MESSAGE_LENGTH,
+        description="Guidance message",
+    )
     client_guidance_id: Optional[str] = Field(
-        None, description="Client-generated guidance ID for correlation"
+        None,
+        max_length=MAX_GUIDANCE_ID_LENGTH,
+        description="Client-generated guidance ID for correlation",
     )
 
 

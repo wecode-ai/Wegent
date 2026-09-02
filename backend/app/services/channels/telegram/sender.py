@@ -19,6 +19,8 @@ from typing import Any, Dict, Optional
 
 import httpx
 
+from app.core.payload_codec import decode_sync_response_json, encode_http_json
+
 logger = logging.getLogger(__name__)
 
 TELEGRAM_SEND_MAX_ATTEMPTS = 3
@@ -164,11 +166,11 @@ class TelegramBotSender:
             async with httpx.AsyncClient(timeout=30.0) as client:
                 response = await client.post(
                     url,
-                    json=payload,
+                    content=await encode_http_json(payload),
                     headers={"Content-Type": "application/json"},
                 )
                 response.raise_for_status()
-                data = response.json()
+                data = await decode_sync_response_json(response)
 
                 if data.get("ok"):
                     message_id = data.get("result", {}).get("message_id")
@@ -185,7 +187,7 @@ class TelegramBotSender:
         except httpx.HTTPStatusError as e:
             error_data = {}
             try:
-                error_data = e.response.json()
+                error_data = await decode_sync_response_json(e.response)
             except Exception:
                 pass
 

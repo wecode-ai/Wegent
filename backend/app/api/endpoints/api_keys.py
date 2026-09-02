@@ -27,7 +27,7 @@ router = APIRouter()
 
 
 @router.get("", response_model=APIKeyListResponse)
-async def list_api_keys(
+def list_api_keys(
     db: Session = Depends(get_db),
     current_user: User = Depends(security.get_current_user),
 ):
@@ -50,7 +50,7 @@ async def list_api_keys(
 @router.post(
     "", response_model=APIKeyCreatedResponse, status_code=status.HTTP_201_CREATED
 )
-async def create_api_key(
+def create_api_key(
     api_key_create: APIKeyCreate,
     db: Session = Depends(get_db),
     current_user: User = Depends(security.get_current_user),
@@ -99,7 +99,7 @@ async def create_api_key(
 
 
 @router.post("/{key_id}/toggle-status", response_model=APIKeyResponse)
-async def toggle_api_key_status(
+def toggle_api_key_status(
     key_id: int,
     db: Session = Depends(get_db),
     current_user: User = Depends(security.get_current_user),
@@ -130,7 +130,7 @@ async def toggle_api_key_status(
 
 
 @router.delete("/{key_id}", status_code=status.HTTP_204_NO_CONTENT)
-async def delete_api_key(
+def delete_api_key(
     key_id: int,
     db: Session = Depends(get_db),
     current_user: User = Depends(security.get_current_user),

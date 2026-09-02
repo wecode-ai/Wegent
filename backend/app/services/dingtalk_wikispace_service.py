@@ -30,8 +30,10 @@ from urllib.parse import urlparse, urlunparse
 
 from sqlalchemy.orm import Session
 
+from app.core.payload_codec import run_payload_codec
 from app.models.dingtalk_doc import DingTalkNodeSource, DingtalkSyncedNode
 from app.models.user import User
+from app.services.chat.storage.db import run_sync_in_executor
 from app.services.dingtalk_doc_service import (
     MAX_NODES_PER_SYNC,
     MCP_TOOL_LIST_NODES,
@@ -97,8 +99,17 @@ class DingTalkWikiSpaceService:
     @trace_sync()
     def get_user_wikispace_mcp_url(user: User) -> str | None:
         """Read and decrypt the user's DingTalk WikiSpace MCP URL from preferences."""
+        return DingTalkWikiSpaceService.get_wikispace_mcp_url_from_preferences(
+            user.preferences
+        )
+
+    @staticmethod
+    def get_wikispace_mcp_url_from_preferences(
+        preferences: str | dict[str, Any] | None,
+    ) -> str | None:
+        """Resolve the WikiSpace URL from a detached preference snapshot."""
         config = UserMCPService.get_provider_service_config(
-            user.preferences,
+            preferences,
             provider_id="dingtalk",
             service_id="wikispace",
         )
@@ -123,7 +134,10 @@ class DingTalkWikiSpaceService:
 
     @staticmethod
     @trace_async()
-    async def sync_wikispace_nodes(user: User, db: Session) -> dict[str, Any]:
+    async def sync_wikispace_nodes(
+        user_id: int,
+        preferences: str | dict[str, Any] | None,
+    ) -> dict[str, Any]:
         """Sync DingTalk wikispace nodes from the user's wikispace MCP server.
 
         Uses a two-phase approach:
@@ -133,14 +147,18 @@ class DingTalkWikiSpaceService:
         Returns a dict with sync statistics: added, updated, deleted, total,
         mcp_nodes_fetched.
         """
-        wikispace_mcp_url = DingTalkWikiSpaceService.get_user_wikispace_mcp_url(user)
+        wikispace_mcp_url, docs_mcp_url = await run_payload_codec(
+            DingTalkWikiSpaceService._resolve_sync_urls,
+            preferences,
+            payload_hint=preferences,
+            force_offload=True,
+        )
         if not wikispace_mcp_url:
             raise ValueError(
                 "DingTalk WikiSpace MCP URL is not configured or not enabled"
             )
 
         # WikiSpace and Docs are separate MCP services with separate boundaries.
-        docs_mcp_url = DingTalkDocService.get_user_dingtalk_mcp_url(user)
         if not docs_mcp_url:
             raise ValueError("DingTalk Docs MCP URL is not configured or not enabled")
 
@@ -153,19 +171,19 @@ class DingTalkWikiSpaceService:
         if len(all_nodes) > MAX_NODES_PER_SYNC:
             logger.warning(
                 "User %s has %d DingTalk wikispace nodes, truncating to %d",
-                user.id,
+                user_id,
                 len(all_nodes),
                 MAX_NODES_PER_SYNC,
             )
             all_nodes = all_nodes[:MAX_NODES_PER_SYNC]
 
         now = datetime.now()
-        stats = DingTalkDocService._sync_nodes_to_db(
-            user.id,
+        stats = await run_sync_in_executor(
+            DingTalkDocService._sync_nodes_with_owned_session,
+            user_id,
             all_nodes,
             now,
-            db,
-            source=WIKISPACE_SOURCE,
+            WIKISPACE_SOURCE,
         )
         stats["mcp_nodes_fetched"] = original_count
         sanitized_wikispace_mcp_url = _sanitize_url_for_telemetry(wikispace_mcp_url)
@@ -177,6 +195,18 @@ class DingTalkWikiSpaceService:
             },
         )
         return stats
+
+    @staticmethod
+    def _resolve_sync_urls(
+        preferences: str | dict[str, Any] | None,
+    ) -> tuple[str | None, str | None]:
+        """Resolve both required MCP URLs outside the serving event loop."""
+        return (
+            DingTalkWikiSpaceService.get_wikispace_mcp_url_from_preferences(
+                preferences
+            ),
+            DingTalkDocService.get_dingtalk_mcp_url_from_preferences(preferences),
+        )
 
     # ------------------------------------------------------------------
     # Phase 1 helpers: list knowledge bases via wikispace MCP
@@ -244,8 +274,11 @@ class DingTalkWikiSpaceService:
 
                     result = await session.call_tool(MCP_TOOL_LIST_WIKI_SPACES, args)
 
-                    batch, page_token = DingTalkDocService._parse_list_nodes_result(
-                        result, allow_workspace_id=True
+                    batch, page_token = await run_payload_codec(
+                        DingTalkWikiSpaceService._parse_wikispace_result,
+                        result,
+                        payload_hint=result,
+                        force_offload=True,
                     )
                     kb_nodes.extend(batch)
                     if not page_token:
@@ -256,6 +289,16 @@ class DingTalkWikiSpaceService:
             len(kb_nodes),
         )
         return kb_nodes
+
+    @staticmethod
+    def _parse_wikispace_result(
+        result: Any,
+    ) -> tuple[list[dict[str, Any]], str | None]:
+        """Parse one WikiSpace page in the bounded payload executor."""
+        return DingTalkDocService._parse_list_nodes_result(
+            result,
+            allow_workspace_id=True,
+        )
 
     # ------------------------------------------------------------------
     # Phase 2 helpers: list documents inside each KB via docs MCP

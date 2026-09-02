@@ -6,6 +6,7 @@
 
 import logging
 import time
+from dataclasses import dataclass
 from typing import Any, Dict, List, Literal, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Path, Query, status
@@ -20,6 +21,7 @@ from app.core.cache import cache_manager
 from app.models.kind import Kind
 from app.models.user import User
 from app.schemas.device import BindShell, DeviceStatusEnum, DeviceType
+from app.services.chat.storage.db import get_db_session, run_sync_in_executor
 from app.services.device.admin_device_batch import (
     AdminDeviceBatchTarget,
     admin_device_batch_manager,
@@ -160,6 +162,52 @@ class AdminDeviceStats(BaseModel):
     )
 
 
+@dataclass(frozen=True)
+class _AdminDeviceRecord:
+    """Detached device fields safe to carry across the event-loop boundary."""
+
+    id: int
+    device_id: str
+    name: str
+    device_type: str
+    bind_shell: str
+    user_id: int
+    user_name: str
+    client_ip: str | None
+    created_at: str | None
+
+    @property
+    def redis_key(self) -> str:
+        return local_device_provider.generate_online_key(self.user_id, self.device_id)
+
+
+@dataclass(frozen=True)
+class _AdminDeviceQuerySnapshot:
+    """One detached database result for the admin device list."""
+
+    records: tuple[_AdminDeviceRecord, ...]
+    total: int
+
+
+@dataclass(frozen=True)
+class _AdminDeviceStatsSnapshot:
+    """Static device counters and Redis identities loaded in a DB worker."""
+
+    total: int
+    user_count: int
+    by_device_type: Dict[str, int]
+    by_bind_shell: Dict[str, int]
+    redis_keys: tuple[str, ...]
+    device_types: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class _AdminDeviceActionTarget:
+    """Detached device identity used before async action dispatch."""
+
+    device_type: str
+
+
 def _build_device_query(
     db: Session,
     device_type: Optional[str],
@@ -231,51 +279,91 @@ def _build_device_query(
     return query
 
 
-async def _get_devices_redis_status(
+def _detach_device_records(
+    db: Session,
     device_kinds: List[Kind],
-) -> Dict[str, Any]:
-    """Get Redis status for devices in batch.
-
-    Args:
-        device_kinds: List of device Kind objects
-
-    Returns:
-        Dict mapping Redis keys to device status info
-    """
-    if not device_kinds:
-        return {}
-
-    # Build Redis keys for all devices
-    redis_keys = []
+) -> tuple[_AdminDeviceRecord, ...]:
+    """Materialize ORM rows into immutable values before closing the Session."""
+    user_ids = {kind.user_id for kind in device_kinds}
+    users_map = (
+        {
+            user.id: user.user_name
+            for user in db.query(User).filter(User.id.in_(user_ids)).all()
+        }
+        if user_ids
+        else {}
+    )
+    records: list[_AdminDeviceRecord] = []
     for kind in device_kinds:
         spec = kind.json.get("spec", {}) if kind.json else {}
         device_id = spec.get("deviceId", kind.name)
-        redis_key = local_device_provider.generate_online_key(kind.user_id, device_id)
-        redis_keys.append(redis_key)
+        records.append(
+            _AdminDeviceRecord(
+                id=kind.id,
+                device_id=device_id,
+                name=spec.get("displayName", device_id),
+                device_type=spec.get("deviceType", DeviceType.LOCAL.value),
+                bind_shell=spec.get("bindShell", BindShell.CLAUDECODE.value),
+                user_id=kind.user_id,
+                user_name=users_map.get(kind.user_id, "Unknown"),
+                client_ip=spec.get("clientIp"),
+                created_at=(kind.created_at.isoformat() if kind.created_at else None),
+            )
+        )
+    return tuple(records)
 
-    # Batch get all Redis status (single round-trip)
-    return await cache_manager.mget(redis_keys)
+
+def _load_device_query_snapshot_from_store(
+    page: int,
+    limit: int,
+    device_type: str | None,
+    bind_shell: str | None,
+    search: str | None,
+    paginate_in_store: bool,
+) -> _AdminDeviceQuerySnapshot:
+    """Load and detach one list-query phase in a worker-owned Session."""
+    with get_db_session() as db:
+        search_user_ids: list[int] | None = None
+        if search:
+            matching_users = (
+                db.query(User.id).filter(User.user_name.ilike(f"%{search}%")).all()
+            )
+            search_user_ids = [user.id for user in matching_users]
+
+        query = _build_device_query(
+            db,
+            device_type,
+            bind_shell,
+            search,
+            search_user_ids,
+        )
+        if paginate_in_store:
+            total = query.count()
+            offset = (page - 1) * limit
+            device_kinds = query.offset(offset).limit(limit).all()
+        else:
+            device_kinds = query.all()
+            total = len(device_kinds)
+        return _AdminDeviceQuerySnapshot(
+            records=_detach_device_records(db, device_kinds),
+            total=total,
+        )
+
+
+async def _get_devices_redis_status(
+    records: tuple[_AdminDeviceRecord, ...],
+) -> Dict[str, Any]:
+    """Get Redis status for detached devices in one batch."""
+    if not records:
+        return {}
+    return await cache_manager.mget([record.redis_key for record in records])
 
 
 def _build_device_info(
-    kind: Kind,
-    users_map: Dict[int, str],
+    record: _AdminDeviceRecord,
     online_info: Optional[Dict[str, Any]],
 ) -> AdminDeviceInfo:
-    """Build AdminDeviceInfo from Kind and Redis status.
-
-    Args:
-        kind: Device Kind object
-        users_map: Map of user_id to user_name
-        online_info: Redis status info or None
-
-    Returns:
-        AdminDeviceInfo object
-    """
-    spec = kind.json.get("spec", {}) if kind.json else {}
-    device_id = spec.get("deviceId", kind.name)
-
-    # Determine status from Redis
+    """Build an API response from detached DB values and live Redis state."""
     if online_info:
         status_val = online_info.get("status", DeviceStatusEnum.ONLINE.value)
         executor_version = online_info.get("executor_version")
@@ -286,25 +374,20 @@ def _build_device_info(
         slot_used = 0
         slot_max = 0
 
-    # Format created_at as ISO string
-    created_at_str = None
-    if kind.created_at:
-        created_at_str = kind.created_at.isoformat()
-
     return AdminDeviceInfo(
-        id=kind.id,
-        device_id=device_id,
-        name=spec.get("displayName", device_id),
+        id=record.id,
+        device_id=record.device_id,
+        name=record.name,
         status=status_val,
-        device_type=spec.get("deviceType", DeviceType.LOCAL.value),
-        bind_shell=spec.get("bindShell", BindShell.CLAUDECODE.value),
-        user_id=kind.user_id,
-        user_name=users_map.get(kind.user_id, "Unknown"),
-        client_ip=spec.get("clientIp"),
+        device_type=record.device_type,
+        bind_shell=record.bind_shell,
+        user_id=record.user_id,
+        user_name=record.user_name,
+        client_ip=record.client_ip,
         executor_version=executor_version,
         slot_used=slot_used,
         slot_max=slot_max,
-        created_at=created_at_str,
+        created_at=record.created_at,
     )
 
 
@@ -355,6 +438,59 @@ def _matches_version_filter(
     return parsed_executor_version <= target_version
 
 
+def _load_device_stats_snapshot_from_store() -> _AdminDeviceStatsSnapshot:
+    """Load all static statistics in a worker-owned database Session."""
+    with get_db_session() as db:
+        device_kinds = (
+            db.query(Kind)
+            .filter(
+                and_(
+                    Kind.kind == "Device",
+                    Kind.namespace == "default",
+                    Kind.is_active == True,
+                )
+            )
+            .all()
+        )
+
+        by_device_type = {
+            DeviceType.LOCAL.value: 0,
+            DeviceType.APP.value: 0,
+            DeviceType.CLOUD.value: 0,
+            DeviceType.REMOTE.value: 0,
+        }
+        by_bind_shell = {
+            BindShell.CLAUDECODE.value: 0,
+            BindShell.OPENCLAW.value: 0,
+        }
+        redis_keys: list[str] = []
+        device_types: list[str] = []
+        user_ids: set[int] = set()
+        for kind in device_kinds:
+            spec = kind.json.get("spec", {}) if kind.json else {}
+            device_id = spec.get("deviceId", kind.name)
+            device_type = spec.get("deviceType", DeviceType.LOCAL.value)
+            bind_shell = spec.get("bindShell", BindShell.CLAUDECODE.value)
+            if device_type in by_device_type:
+                by_device_type[device_type] += 1
+            if bind_shell in by_bind_shell:
+                by_bind_shell[bind_shell] += 1
+            redis_keys.append(
+                local_device_provider.generate_online_key(kind.user_id, device_id)
+            )
+            device_types.append(device_type)
+            user_ids.add(kind.user_id)
+
+        return _AdminDeviceStatsSnapshot(
+            total=len(device_kinds),
+            user_count=len(user_ids),
+            by_device_type=by_device_type,
+            by_bind_shell=by_bind_shell,
+            redis_keys=tuple(redis_keys),
+            device_types=tuple(device_types),
+        )
+
+
 @router.get("/devices", response_model=AdminDeviceListResponse)
 async def get_all_devices(
     page: int = Query(1, ge=1, description="Page number"),
@@ -371,7 +507,6 @@ async def get_all_devices(
     version: Optional[str] = Query(
         None, description="Filter online devices by executor version"
     ),
-    db: Session = Depends(get_db),
     current_user: User = Depends(security.get_admin_user),
 ):
     """Get all devices across all users for admin monitoring (optimized).
@@ -390,7 +525,6 @@ async def get_all_devices(
         device_type: Filter by device type (local/app/cloud/remote)
         bind_shell: Filter by bind shell (claudecode/openclaw)
         search: Search by device name, device ID or username
-        db: Database session
         current_user: Must be admin
 
     Returns:
@@ -398,59 +532,30 @@ async def get_all_devices(
     """
     effective_version = None if status == DeviceStatusEnum.OFFLINE else version
     normalized_version_filter = _normalize_version_filter(version_op, effective_version)
+    paginate_in_store = normalized_version_filter is None and status is None
+    snapshot = await run_sync_in_executor(
+        _load_device_query_snapshot_from_store,
+        page,
+        limit,
+        device_type,
+        bind_shell,
+        search,
+        paginate_in_store,
+    )
+    online_info_map = await _get_devices_redis_status(snapshot.records)
 
-    # Step 1: If search term provided, find matching user IDs first
-    search_user_ids: Optional[List[int]] = None
-    if search:
-        matching_users = (
-            db.query(User.id).filter(User.user_name.ilike(f"%{search}%")).all()
+    if paginate_in_store:
+        return AdminDeviceListResponse(
+            items=[
+                _build_device_info(record, online_info_map.get(record.redis_key))
+                for record in snapshot.records
+            ],
+            total=snapshot.total,
         )
-        search_user_ids = [u.id for u in matching_users] if matching_users else []
 
-    # Step 2: Build optimized query with SQL-level filtering
-    query = _build_device_query(db, device_type, bind_shell, search, search_user_ids)
-
-    if normalized_version_filter is None and status is None:
-        # Step 3: Get total count and paginated results
-        total = query.count()
-        offset = (page - 1) * limit
-        page_kinds = query.offset(offset).limit(limit).all()
-
-        # Step 4: Build user map only for current page (not all devices)
-        page_user_ids = list({d.user_id for d in page_kinds})
-        users_map: Dict[int, str] = {}
-        if page_user_ids:
-            users = db.query(User).filter(User.id.in_(page_user_ids)).all()
-            users_map = {u.id: u.user_name for u in users}
-
-        # Step 5: Get Redis status for current page only (batch query)
-        online_info_map = await _get_devices_redis_status(page_kinds)
-
-        # Step 6: Build device info list
-        items = []
-        for kind in page_kinds:
-            spec = kind.json.get("spec", {}) if kind.json else {}
-            device_id = spec.get("deviceId", kind.name)
-            redis_key = local_device_provider.generate_online_key(
-                kind.user_id, device_id
-            )
-            online_info = online_info_map.get(redis_key)
-
-            device_info = _build_device_info(kind, users_map, online_info)
-            items.append(device_info)
-
-        return AdminDeviceListResponse(items=items, total=total)
-
-    # Version filtering requires live online info, so filter before pagination.
-    candidate_kinds = query.all()
-    online_info_map = await _get_devices_redis_status(candidate_kinds)
-    filtered_pairs: list[tuple[Kind, Dict[str, Any]]] = []
-
-    for kind in candidate_kinds:
-        spec = kind.json.get("spec", {}) if kind.json else {}
-        device_id = spec.get("deviceId", kind.name)
-        redis_key = local_device_provider.generate_online_key(kind.user_id, device_id)
-        online_info = online_info_map.get(redis_key)
+    filtered_pairs: list[tuple[_AdminDeviceRecord, Dict[str, Any] | None]] = []
+    for record in snapshot.records:
+        online_info = online_info_map.get(record.redis_key)
 
         status_val = (
             online_info.get("status", DeviceStatusEnum.ONLINE.value)
@@ -466,28 +571,22 @@ async def get_all_devices(
         ):
             continue
 
-        filtered_pairs.append((kind, online_info))
+        filtered_pairs.append((record, online_info))
 
     total = len(filtered_pairs)
     offset = (page - 1) * limit
     page_pairs = filtered_pairs[offset : offset + limit]
-    page_user_ids = list({kind.user_id for kind, _ in page_pairs})
-    users_map: Dict[int, str] = {}
-    if page_user_ids:
-        users = db.query(User).filter(User.id.in_(page_user_ids)).all()
-        users_map = {u.id: u.user_name for u in users}
-
-    items = []
-    for kind, online_info in page_pairs:
-        device_info = _build_device_info(kind, users_map, online_info)
-        items.append(device_info)
-
-    return AdminDeviceListResponse(items=items, total=total)
+    return AdminDeviceListResponse(
+        items=[
+            _build_device_info(record, online_info)
+            for record, online_info in page_pairs
+        ],
+        total=total,
+    )
 
 
 @router.get("/stats", response_model=AdminDeviceStats)
 async def get_device_stats(
-    db: Session = Depends(get_db),
     current_user: User = Depends(security.get_admin_user),
 ):
     """Get device statistics for admin monitoring (with caching).
@@ -495,7 +594,6 @@ async def get_device_stats(
     Uses a 30-second in-memory cache to reduce Redis load for frequent requests.
 
     Args:
-        db: Database session
         current_user: Must be admin
 
     Returns:
@@ -509,88 +607,36 @@ async def get_device_stats(
         logger.debug("Returning cached device stats")
         return _STATS_CACHE["data"]
 
-    # Get all Device CRDs
-    device_kinds = (
-        db.query(Kind)
-        .filter(
-            and_(
-                Kind.kind == "Device",
-                Kind.namespace == "default",
-                Kind.is_active == True,
-            )
-        )
-        .all()
-    )
-
-    # Initialize counters
     by_status: Dict[str, int] = {
         DeviceStatusEnum.ONLINE.value: 0,
         DeviceStatusEnum.OFFLINE.value: 0,
         DeviceStatusEnum.BUSY.value: 0,
     }
-    by_device_type: Dict[str, int] = {
-        DeviceType.LOCAL.value: 0,
-        DeviceType.APP.value: 0,
-        DeviceType.CLOUD.value: 0,
-        DeviceType.REMOTE.value: 0,
-    }
-    by_bind_shell: Dict[str, int] = {
-        BindShell.CLAUDECODE.value: 0,
-        BindShell.OPENCLAW.value: 0,
-    }
-
-    # Count unique users with devices
-    user_ids = {d.user_id for d in device_kinds}
-
-    # Build Redis keys for all devices and collect static data
-    redis_keys = []
-    device_metadata = []
-
-    for kind in device_kinds:
-        spec = kind.json.get("spec", {}) if kind.json else {}
-        device_id = spec.get("deviceId", kind.name)
-        device_type_val = spec.get("deviceType", DeviceType.LOCAL.value)
-        bind_shell_val = spec.get("bindShell", BindShell.CLAUDECODE.value)
-
-        # Count by device type (static data)
-        if device_type_val in by_device_type:
-            by_device_type[device_type_val] += 1
-
-        # Count by bind shell (static data)
-        if bind_shell_val in by_bind_shell:
-            by_bind_shell[bind_shell_val] += 1
-
-        # Prepare for Redis batch query
-        redis_key = local_device_provider.generate_online_key(kind.user_id, device_id)
-        redis_keys.append(redis_key)
-        device_metadata.append({"type": device_type_val, "shell": bind_shell_val})
-
-    # Batch get all Redis status (single round-trip for all devices)
-    online_info_map = await cache_manager.mget(redis_keys)
-
-    # Count by status
-    for i, metadata in enumerate(device_metadata):
-        redis_key = redis_keys[i]
+    snapshot = await run_sync_in_executor(_load_device_stats_snapshot_from_store)
+    online_info_map = await cache_manager.mget(list(snapshot.redis_keys))
+    for redis_key, device_type in zip(
+        snapshot.redis_keys,
+        snapshot.device_types,
+        strict=True,
+    ):
         online_info = online_info_map.get(redis_key)
-
-        if online_info:
-            status_val = online_info.get("status", DeviceStatusEnum.ONLINE.value)
-        else:
-            status_val = DeviceStatusEnum.OFFLINE.value
-
-        # Only count offline cloud devices (not all offline devices)
+        status_val = (
+            online_info.get("status", DeviceStatusEnum.ONLINE.value)
+            if online_info
+            else DeviceStatusEnum.OFFLINE.value
+        )
         if status_val == DeviceStatusEnum.OFFLINE.value:
-            if metadata["type"] == DeviceType.CLOUD.value:
+            if device_type == DeviceType.CLOUD.value:
                 by_status[status_val] += 1
         elif status_val in by_status:
             by_status[status_val] += 1
 
     result = AdminDeviceStats(
-        total=len(device_kinds),
-        user_count=len(user_ids),
+        total=snapshot.total,
+        user_count=snapshot.user_count,
         by_status=by_status,
-        by_device_type=by_device_type,
-        by_bind_shell=by_bind_shell,
+        by_device_type=snapshot.by_device_type,
+        by_bind_shell=snapshot.by_bind_shell,
     )
 
     # Update cache
@@ -603,31 +649,34 @@ async def get_device_stats(
 # ==================== Device Action Endpoints ====================
 
 
-async def _get_device_for_action(
-    db: Session, device_id: str, user_id: int
-) -> tuple[Kind, Dict[str, Any]]:
-    """Get device and validate it exists and is online.
+def _load_device_action_target_from_store(
+    user_id: int,
+    device_id: str,
+) -> _AdminDeviceActionTarget | None:
+    """Load one action target using a worker-owned database Session."""
+    with get_db_session() as db:
+        device_kind = device_service.get_device_by_device_id(db, user_id, device_id)
+        if device_kind is None:
+            return None
+        spec = device_kind.json.get("spec", {}) if device_kind.json else {}
+        return _AdminDeviceActionTarget(
+            device_type=spec.get("deviceType", DeviceType.LOCAL.value)
+        )
 
-    Args:
-        db: Database session
-        device_id: Device unique identifier
-        user_id: Device owner user ID
 
-    Returns:
-        Tuple of (device Kind, online_info dict)
-
-    Raises:
-        HTTPException: If device not found, offline, or socket_id missing
-    """
-    # Get device from database
-    device_kind = device_service.get_device_by_device_id(db, user_id, device_id)
-    if not device_kind:
+async def _get_device_for_action(device_id: str, user_id: int) -> Dict[str, Any]:
+    """Validate stored ownership, then load live status without blocking the loop."""
+    target = await run_sync_in_executor(
+        _load_device_action_target_from_store,
+        user_id,
+        device_id,
+    )
+    if target is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Device not found: device_id={device_id}, user_id={user_id}",
         )
 
-    # Get online info from Redis
     online_info = await device_service.get_device_online_info(user_id, device_id)
     if not online_info:
         raise HTTPException(
@@ -641,7 +690,7 @@ async def _get_device_for_action(
             detail="Device socket information not found",
         )
 
-    return device_kind, online_info
+    return online_info
 
 
 def _get_device_id(kind: Kind) -> str:
@@ -673,17 +722,29 @@ def _get_active_devices_by_type(db: Session, device_type: DeviceType) -> List[Ki
     ]
 
 
-def _get_local_claudecode_devices(db: Session) -> List[Kind]:
-    """Return local devices that use the ClaudeCode runtime binding."""
-    local_devices = _get_active_devices_by_type(db, DeviceType.LOCAL)
-    return [
-        kind
-        for kind in local_devices
-        if (kind.json.get("spec", {}) if kind.json else {}).get(
-            "bindShell", BindShell.CLAUDECODE.value
-        )
-        == BindShell.CLAUDECODE.value
-    ]
+def _load_batch_targets_from_store(
+    device_type: DeviceType,
+    bind_shell: BindShell | None = None,
+) -> List[AdminDeviceBatchTarget]:
+    """Load detached batch target identities in a worker-owned Session."""
+    with get_db_session() as db:
+        devices = _get_active_devices_by_type(db, device_type)
+        if bind_shell is not None:
+            devices = [
+                kind
+                for kind in devices
+                if (kind.json.get("spec", {}) if kind.json else {}).get(
+                    "bindShell", BindShell.CLAUDECODE.value
+                )
+                == bind_shell.value
+            ]
+        return [
+            AdminDeviceBatchTarget(
+                user_id=kind.user_id,
+                device_id=_get_device_id(kind),
+            )
+            for kind in devices
+        ]
 
 
 def _get_upgrade_params(force_stop_tasks: bool) -> Dict[str, Any]:
@@ -703,7 +764,6 @@ def _get_upgrade_params(force_stop_tasks: bool) -> Dict[str, Any]:
 async def upgrade_device(
     device_id: str = Path(..., description="Device unique identifier"),
     request: AdminDeviceUpgradeRequest = ...,
-    db: Session = Depends(get_db),
     current_user: User = Depends(security.get_admin_user),
 ):
     """Trigger device upgrade for any user's device (admin only).
@@ -711,7 +771,6 @@ async def upgrade_device(
     Args:
         device_id: Device unique identifier
         request: Upgrade request with user_id and options
-        db: Database session
         current_user: Must be admin
 
     Returns:
@@ -720,7 +779,7 @@ async def upgrade_device(
     user_id = request.user_id
 
     # Validate device exists and is online
-    device_kind, online_info = await _get_device_for_action(db, device_id, user_id)
+    online_info = await _get_device_for_action(device_id, user_id)
 
     # Check for running tasks
     running_task_ids = online_info.get("running_task_ids", [])
@@ -773,15 +832,14 @@ async def upgrade_device(
 )
 async def upgrade_all_local_devices(
     request: AdminDeviceBatchUpgradeRequest = AdminDeviceBatchUpgradeRequest(),
-    db: Session = Depends(get_db),
     current_user: User = Depends(security.get_admin_user),
 ):
     """Start a batch upgrade for all eligible local ClaudeCode devices."""
-    local_devices = _get_local_claudecode_devices(db)
-    targets = [
-        AdminDeviceBatchTarget(user_id=kind.user_id, device_id=_get_device_id(kind))
-        for kind in local_devices
-    ]
+    targets = await run_sync_in_executor(
+        _load_batch_targets_from_store,
+        DeviceType.LOCAL,
+        BindShell.CLAUDECODE,
+    )
     batch = admin_device_batch_manager.start_local_upgrade(
         targets=targets,
         force_stop_tasks=request.force_stop_tasks,
@@ -803,7 +861,6 @@ async def upgrade_all_local_devices(
 async def restart_device(
     device_id: str = Path(..., description="Device unique identifier"),
     request: AdminDeviceRestartRequest = ...,
-    db: Session = Depends(get_db),
     current_user: User = Depends(security.get_admin_user),
 ):
     """Restart a cloud device (admin only). Currently not implemented.
@@ -819,25 +876,26 @@ async def restart_device(
     """
     user_id = request.user_id
 
-    # Validate device exists
-    device_kind = device_service.get_device_by_device_id(db, user_id, device_id)
-    if not device_kind:
+    target = await run_sync_in_executor(
+        _load_device_action_target_from_store,
+        user_id,
+        device_id,
+    )
+    if target is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Device not found: device_id={device_id}, user_id={user_id}",
         )
 
     # Check device type - only cloud devices can be restarted
-    spec = device_kind.json.get("spec", {}) if device_kind.json else {}
-    device_type = spec.get("deviceType", DeviceType.LOCAL.value)
-    if device_type != DeviceType.CLOUD.value:
+    if target.device_type != DeviceType.CLOUD.value:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Only cloud devices can be restarted",
         )
 
     try:
-        result = await restart_admin_device(db, user_id, device_id)
+        result = await restart_admin_device(user_id, device_id)
     except HTTPException:
         raise
     except Exception as e:
@@ -866,15 +924,13 @@ async def restart_device(
     status_code=status.HTTP_202_ACCEPTED,
 )
 async def restart_all_cloud_devices(
-    db: Session = Depends(get_db),
     current_user: User = Depends(security.get_admin_user),
 ):
     """Start a batch restart for all cloud devices."""
-    cloud_devices = _get_active_devices_by_type(db, DeviceType.CLOUD)
-    targets = [
-        AdminDeviceBatchTarget(user_id=kind.user_id, device_id=_get_device_id(kind))
-        for kind in cloud_devices
-    ]
+    targets = await run_sync_in_executor(
+        _load_batch_targets_from_store,
+        DeviceType.CLOUD,
+    )
     batch = admin_device_batch_manager.start_cloud_restart(
         targets=targets,
         admin_name=current_user.user_name,
@@ -892,7 +948,7 @@ async def restart_all_cloud_devices(
     "/batches/{batch_id}",
     response_model=AdminDeviceBatchStatusResponse,
 )
-async def get_device_batch_status(
+def get_device_batch_status(
     batch_id: str = Path(..., description="Admin device batch action ID"),
     current_user: User = Depends(security.get_admin_user),
 ):
@@ -913,7 +969,7 @@ async def get_device_batch_status(
     "/devices/{device_id}/migrate",
     response_model=AdminDeviceActionResponse,
 )
-async def migrate_device(
+def migrate_device(
     device_id: str = Path(..., description="Device unique identifier"),
     request: AdminDeviceMigrateRequest = ...,
     db: Session = Depends(get_db),

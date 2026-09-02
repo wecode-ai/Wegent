@@ -11,11 +11,21 @@ to have their own implementation while sharing a common interface.
 """
 
 from abc import ABC, abstractmethod
+from dataclasses import dataclass
 from typing import Any, Dict, List, Optional
 
 from sqlalchemy.orm import Session
 
 from app.schemas.device import DeviceType
+
+
+@dataclass(frozen=True)
+class DeviceRecord:
+    """Detached Device CRD fields safe to carry to async provider enrichment."""
+
+    id: int
+    name: str
+    json: Dict[str, Any]
 
 
 class BaseDeviceProvider(ABC):
@@ -133,6 +143,17 @@ class BaseDeviceProvider(ABC):
         Returns:
             List of device info dicts
         """
+        pass
+
+    @abstractmethod
+    async def list_device_records(
+        self,
+        records: tuple[DeviceRecord, ...],
+        user_id: int,
+        include_offline: bool = True,
+    ) -> List[Dict[str, Any]]:
+        """Enrich detached Device CRDs using async provider state."""
+
         pass
 
     @abstractmethod

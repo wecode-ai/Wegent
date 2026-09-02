@@ -3,17 +3,311 @@
 # SPDX-License-Identifier: Apache-2.0
 
 import asyncio
+import threading
 import time
+from contextlib import contextmanager
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
 
 import pytest
 from fastapi import HTTPException
+from sqlalchemy.orm import sessionmaker
 
 from app.core.constants import CLIENT_ORIGIN_WEWORK
 from app.models.kind import Kind
 from app.models.project import Project
 from app.models.task import TaskResource
+
+
+def _configure_runtime_worker_session(monkeypatch, test_db) -> None:
+    """Create runtime-work sessions inside the bounded executor thread."""
+
+    from app.db import session as db_session
+
+    monkeypatch.setattr(
+        db_session,
+        "SessionLocal",
+        sessionmaker(
+            autocommit=False,
+            autoflush=False,
+            bind=test_db.get_bind(),
+            expire_on_commit=False,
+            join_transaction_mode="create_savepoint",
+        ),
+    )
+
+
+@pytest.fixture(autouse=True)
+def _configure_runtime_work_db_executor(monkeypatch, test_db) -> None:
+    """Give every runtime-work DB phase an isolated worker-owned test session."""
+
+    _configure_runtime_worker_session(monkeypatch, test_db)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("service_name", "rpc_method"),
+    [
+        ("send_runtime_message_nonblocking", "runtime.tasks.send"),
+        (
+            "interrupt_and_send_runtime_message_nonblocking",
+            "runtime.tasks.interrupt_and_send",
+        ),
+    ],
+)
+async def test_runtime_send_uses_worker_owned_session_then_loop_rpc(
+    monkeypatch,
+    service_name,
+    rpc_method,
+):
+    from app.schemas.runtime_work import RuntimeSendRequest, RuntimeTaskAddress
+    from app.services import runtime_work_service
+    from app.services.chat.storage import db as storage_db
+
+    loop_thread_id = threading.get_ident()
+    worker_thread_ids: set[int] = set()
+    events: list[str] = []
+    worker_db = object()
+
+    @contextmanager
+    def worker_session_scope():
+        worker_thread_ids.add(threading.get_ident())
+        events.append("session-enter")
+        yield worker_db
+        events.append("session-exit")
+
+    def assert_worker_db(db, *args, **kwargs):
+        assert db is worker_db
+        assert threading.get_ident() != loop_thread_id
+        events.append("db-work")
+
+    def complete_payload(*, db, payload, **kwargs):
+        assert_worker_db(db)
+        payload["executionRequest"] = {"prompt": payload["message"]}
+
+    async def call_rpc(**kwargs):
+        assert threading.get_ident() == loop_thread_id
+        assert events[-1] == "session-exit"
+        return {"success": True, "accepted": True, "taskId": "codex-1"}
+
+    monkeypatch.setattr(storage_db, "get_db_session", worker_session_scope)
+    monkeypatch.setattr(
+        runtime_work_service,
+        "_ensure_owned_device",
+        assert_worker_db,
+    )
+    monkeypatch.setattr(
+        runtime_work_service,
+        "_touch_workspace_mapping",
+        assert_worker_db,
+    )
+    monkeypatch.setattr(
+        runtime_work_service,
+        "_runtime_attachment_payloads",
+        lambda db, *args: (assert_worker_db(db), [])[1],
+    )
+    monkeypatch.setattr(
+        runtime_work_service,
+        "_complete_runtime_send_payload",
+        complete_payload,
+    )
+    rpc = AsyncMock(side_effect=call_rpc)
+    monkeypatch.setattr(runtime_work_service.runtime_rpc_service, "call", rpc)
+
+    response = await getattr(runtime_work_service, service_name)(
+        user_id=7,
+        request=RuntimeSendRequest(
+            address=RuntimeTaskAddress(
+                deviceId="device-1",
+                workspacePath="/repo/Wegent",
+                localTaskId="codex-1",
+            ),
+            message="continue",
+        ),
+    )
+
+    assert response.accepted is True
+    assert worker_thread_ids
+    assert loop_thread_id not in worker_thread_ids
+    rpc.assert_awaited_once_with(
+        user_id=7,
+        device_id="device-1",
+        method=rpc_method,
+        payload={
+            "deviceId": "device-1",
+            "workspacePath": "/repo/Wegent",
+            "taskId": "codex-1",
+            "message": "continue",
+            "executionRequest": {"prompt": "continue"},
+        },
+        timeout_seconds=600,
+    )
+
+
+@pytest.mark.asyncio
+async def test_runtime_db_phase_keeps_event_loop_schedulable(monkeypatch) -> None:
+    from app.services import runtime_work_service
+    from app.services.chat.storage import db as storage_db
+
+    loop_thread_id = threading.get_ident()
+    worker_thread_ids: set[int] = set()
+    started = threading.Event()
+    release = threading.Event()
+
+    @contextmanager
+    def worker_session_scope():
+        yield object()
+
+    def slow_db_phase(db):
+        del db
+        worker_thread_ids.add(threading.get_ident())
+        started.set()
+        assert release.wait(timeout=2)
+        return "done"
+
+    monkeypatch.setattr(storage_db, "get_db_session", worker_session_scope)
+    task = asyncio.create_task(runtime_work_service._run_db_phase(slow_db_phase))
+
+    async with asyncio.timeout(2):
+        while not started.is_set():
+            await asyncio.sleep(0)
+        ticks = 0
+        for _ in range(20):
+            await asyncio.sleep(0)
+            ticks += 1
+        assert ticks == 20
+        assert not task.done()
+        release.set()
+        assert await task == "done"
+
+    assert worker_thread_ids
+    assert loop_thread_id not in worker_thread_ids
+
+
+@pytest.mark.asyncio
+async def test_runtime_db_phase_cancellation_closes_worker_session(monkeypatch) -> None:
+    from app.services import runtime_work_service
+    from app.services.chat.storage import db as storage_db
+
+    started = threading.Event()
+    release = threading.Event()
+    closed = threading.Event()
+
+    @contextmanager
+    def worker_session_scope():
+        try:
+            yield object()
+        finally:
+            closed.set()
+
+    def slow_db_phase(db):
+        del db
+        started.set()
+        assert release.wait(timeout=2)
+
+    monkeypatch.setattr(storage_db, "get_db_session", worker_session_scope)
+    task = asyncio.create_task(runtime_work_service._run_db_phase(slow_db_phase))
+
+    async with asyncio.timeout(2):
+        while not started.is_set():
+            await asyncio.sleep(0)
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+        assert not closed.is_set()
+        release.set()
+        while not closed.is_set():
+            await asyncio.sleep(0)
+
+
+@pytest.mark.asyncio
+async def test_runtime_db_phase_overload_propagates_without_rpc(monkeypatch) -> None:
+    from app.core.bounded_executor import BoundedExecutorOverloaded
+    from app.schemas.runtime_work import RuntimeTaskAddress
+    from app.services import runtime_work_service
+    from app.services.chat.storage import db as storage_db
+
+    monkeypatch.setattr(
+        storage_db,
+        "run_sync_in_executor",
+        AsyncMock(side_effect=BoundedExecutorOverloaded("full")),
+    )
+    rpc = AsyncMock()
+    monkeypatch.setattr(runtime_work_service.runtime_rpc_service, "call", rpc)
+
+    with pytest.raises(BoundedExecutorOverloaded):
+        await runtime_work_service.archive_runtime_task(
+            user_id=7,
+            address=RuntimeTaskAddress(
+                deviceId="device-1",
+                workspacePath="/repo/Wegent",
+                localTaskId="task-1",
+            ),
+        )
+
+    rpc.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_runtime_device_loader_batches_redis_after_detached_db_phase(
+    test_db,
+    test_user,
+    monkeypatch,
+) -> None:
+    from app.core.cache import cache_manager
+    from app.services import runtime_work_service
+
+    test_db.add_all(
+        [
+            Kind(
+                user_id=test_user.id,
+                kind="Device",
+                namespace="default",
+                name="local-1",
+                json={"spec": {"deviceType": "local", "displayName": "Mac"}},
+                is_active=True,
+            ),
+            Kind(
+                user_id=test_user.id,
+                kind="Device",
+                namespace="default",
+                name="cloud-1",
+                json={
+                    "spec": {
+                        "deviceType": "cloud",
+                        "displayName": "Cloud",
+                        "deviceId": "cloud-runtime-1",
+                    }
+                },
+                is_active=True,
+            ),
+        ]
+    )
+    test_db.commit()
+    local_key = runtime_work_service.device_service.generate_online_key(
+        test_user.id,
+        "local-1",
+    )
+    cloud_key = runtime_work_service.device_service.generate_online_key(
+        test_user.id,
+        "cloud-runtime-1",
+    )
+    mget = AsyncMock(
+        return_value={
+            local_key: {"status": "online"},
+            cloud_key: {"status": "busy"},
+        }
+    )
+    monkeypatch.setattr(cache_manager, "mget", mget)
+
+    devices = await runtime_work_service._load_runtime_devices(test_user.id)
+
+    mget.assert_awaited_once()
+    assert set(mget.await_args.args[0]) == {local_key, cloud_key}
+    devices_by_id = {device["device_id"]: device for device in devices}
+    assert devices_by_id["local-1"]["status"] == "online"
+    assert devices_by_id["cloud-1"]["status"] == "busy"
+    assert devices_by_id["cloud-1"]["socket_device_id"] == "cloud-runtime-1"
 
 
 def _project(test_db, user_id: int, name: str = "Wegent") -> Project:
@@ -402,7 +696,6 @@ async def test_prepare_plain_device_workspace_creates_directory_and_mapping(
     rpc = _mock_runtime_workspace_open(runtime_work_service, monkeypatch)
 
     response = await runtime_work_service.prepare_device_workspace(
-        db=test_db,
         user_id=test_user.id,
         payload=DeviceWorkspacePrepareRequest(
             projectId=project.id,
@@ -464,7 +757,6 @@ async def test_prepare_plain_device_workspace_accepts_already_created_empty_dire
     rpc = _mock_runtime_workspace_open(runtime_work_service, monkeypatch)
 
     response = await runtime_work_service.prepare_device_workspace(
-        db=test_db,
         user_id=test_user.id,
         payload=DeviceWorkspacePrepareRequest(
             projectId=project.id,
@@ -513,7 +805,6 @@ async def test_prepare_git_device_workspace_clones_into_empty_directory(
     rpc = _mock_runtime_workspace_open(runtime_work_service, monkeypatch)
 
     response = await runtime_work_service.prepare_device_workspace(
-        db=test_db,
         user_id=test_user.id,
         payload=DeviceWorkspacePrepareRequest(
             projectId=project.id,
@@ -569,7 +860,6 @@ async def test_prepare_git_device_workspace_rejects_nonmatching_nonempty_directo
 
     with pytest.raises(HTTPException) as exc:
         await runtime_work_service.prepare_device_workspace(
-            db=test_db,
             user_id=test_user.id,
             payload=DeviceWorkspacePrepareRequest(
                 projectId=project.id,
@@ -607,8 +897,8 @@ async def test_list_runtime_work_groups_executor_workspaces_without_project_mapp
     )
 
     monkeypatch.setattr(
-        runtime_work_service.device_service,
-        "get_all_devices",
+        runtime_work_service,
+        "_load_runtime_devices",
         AsyncMock(
             return_value=[
                 {
@@ -699,7 +989,6 @@ async def test_list_runtime_work_groups_executor_workspaces_without_project_mapp
     monkeypatch.setattr(runtime_work_service.runtime_rpc_service, "call", rpc)
 
     response = await runtime_work_service.list_runtime_work(
-        db=test_db,
         user_id=test_user.id,
     )
 
@@ -762,8 +1051,8 @@ async def test_list_runtime_work_keeps_empty_executor_workspaces(
     from app.services import runtime_work_service
 
     monkeypatch.setattr(
-        runtime_work_service.device_service,
-        "get_all_devices",
+        runtime_work_service,
+        "_load_runtime_devices",
         AsyncMock(
             return_value=[
                 {
@@ -794,7 +1083,6 @@ async def test_list_runtime_work_keeps_empty_executor_workspaces(
     )
 
     response = await runtime_work_service.list_runtime_work(
-        db=test_db,
         user_id=test_user.id,
     )
 
@@ -846,8 +1134,8 @@ async def test_list_runtime_work_prefers_owner_device_over_remote_projection(
         },
     }
     monkeypatch.setattr(
-        runtime_work_service.device_service,
-        "get_all_devices",
+        runtime_work_service,
+        "_load_runtime_devices",
         AsyncMock(return_value=[devices_by_id[device_id] for device_id in device_ids]),
     )
 
@@ -882,7 +1170,6 @@ async def test_list_runtime_work_prefers_owner_device_over_remote_projection(
     )
 
     response = await runtime_work_service.list_runtime_work(
-        db=test_db,
         user_id=test_user.id,
     )
 
@@ -907,8 +1194,8 @@ async def test_list_runtime_work_orders_local_devices_first_and_keeps_executor_o
     from app.services import runtime_work_service
 
     monkeypatch.setattr(
-        runtime_work_service.device_service,
-        "get_all_devices",
+        runtime_work_service,
+        "_load_runtime_devices",
         AsyncMock(
             return_value=[
                 {
@@ -960,7 +1247,6 @@ async def test_list_runtime_work_orders_local_devices_first_and_keeps_executor_o
     )
 
     response = await runtime_work_service.list_runtime_work(
-        db=test_db,
         user_id=test_user.id,
     )
 
@@ -984,8 +1270,8 @@ async def test_list_runtime_work_preserves_executor_workspace_kind(
     from app.services import runtime_work_service
 
     monkeypatch.setattr(
-        runtime_work_service.device_service,
-        "get_all_devices",
+        runtime_work_service,
+        "_load_runtime_devices",
         AsyncMock(
             return_value=[
                 {
@@ -1023,7 +1309,6 @@ async def test_list_runtime_work_preserves_executor_workspace_kind(
     )
 
     response = await runtime_work_service.list_runtime_work(
-        db=test_db,
         user_id=test_user.id,
     )
 
@@ -1047,8 +1332,8 @@ async def test_search_runtime_work_fans_out_to_online_and_busy_devices(
     from app.services import runtime_work_service
 
     monkeypatch.setattr(
-        runtime_work_service.device_service,
-        "get_all_devices",
+        runtime_work_service,
+        "_load_runtime_devices",
         AsyncMock(
             return_value=[
                 {
@@ -1098,7 +1383,6 @@ async def test_search_runtime_work_fans_out_to_online_and_busy_devices(
     monkeypatch.setattr(runtime_work_service.runtime_rpc_service, "call", rpc_mock)
 
     response = await runtime_work_service.search_runtime_work(
-        db=test_db,
         user_id=test_user.id,
         request=RuntimeWorkSearchRequest(query="pwd", limit=20),
     )
@@ -1128,8 +1412,8 @@ async def test_search_runtime_work_queries_online_devices_concurrently(
     from app.services import runtime_work_service
 
     monkeypatch.setattr(
-        runtime_work_service.device_service,
-        "get_all_devices",
+        runtime_work_service,
+        "_load_runtime_devices",
         AsyncMock(
             return_value=[
                 {
@@ -1165,7 +1449,6 @@ async def test_search_runtime_work_queries_online_devices_concurrently(
     )
 
     response = await runtime_work_service.search_runtime_work(
-        db=test_db,
         user_id=test_user.id,
         request=RuntimeWorkSearchRequest(query="pwd", limit=20),
     )
@@ -1183,8 +1466,8 @@ async def test_list_runtime_work_skips_offline_devices(
     from app.services import runtime_work_service
 
     monkeypatch.setattr(
-        runtime_work_service.device_service,
-        "get_all_devices",
+        runtime_work_service,
+        "_load_runtime_devices",
         AsyncMock(
             return_value=[
                 {
@@ -1200,7 +1483,6 @@ async def test_list_runtime_work_skips_offline_devices(
     monkeypatch.setattr(runtime_work_service.runtime_rpc_service, "call", rpc)
 
     response = await runtime_work_service.list_runtime_work(
-        db=test_db,
         user_id=test_user.id,
     )
 
@@ -1219,8 +1501,8 @@ async def test_list_runtime_work_queries_online_devices_concurrently(
     from app.services import runtime_work_service
 
     monkeypatch.setattr(
-        runtime_work_service.device_service,
-        "get_all_devices",
+        runtime_work_service,
+        "_load_runtime_devices",
         AsyncMock(
             return_value=[
                 {
@@ -1248,7 +1530,6 @@ async def test_list_runtime_work_queries_online_devices_concurrently(
 
     started_at = time.perf_counter()
     response = await runtime_work_service.list_runtime_work(
-        db=test_db,
         user_id=test_user.id,
     )
     elapsed = time.perf_counter() - started_at
@@ -1303,7 +1584,6 @@ async def test_open_runtime_transcript_dispatches_to_owned_mapped_device_without
     monkeypatch.setattr(runtime_work_service.runtime_rpc_service, "call", rpc)
 
     response = await runtime_work_service.get_runtime_transcript(
-        db=test_db,
         user_id=test_user.id,
         address=RuntimeTaskAddress(
             deviceId="device-1",
@@ -1391,7 +1671,6 @@ async def test_runtime_transcript_dispatches_pagination_payload(
     monkeypatch.setattr(runtime_work_service.runtime_rpc_service, "call", rpc)
 
     response = await runtime_work_service.get_runtime_transcript(
-        db=test_db,
         user_id=test_user.id,
         address=RuntimeTranscriptRequest(
             deviceId="device-1",
@@ -1485,7 +1764,6 @@ async def test_runtime_file_changes_revert_preserves_device_failure_status(
 
     with pytest.raises(HTTPException) as exc_info:
         await runtime_work_service.revert_runtime_file_changes(
-            db=test_db,
             user_id=test_user.id,
             request=request,
         )
@@ -1493,7 +1771,7 @@ async def test_runtime_file_changes_revert_preserves_device_failure_status(
     assert exc_info.value.status_code == expected_http_status
     assert exc_info.value.detail["file_changes"]["status"] == device_status
     execute.assert_awaited_once_with(
-        db=test_db,
+        db=None,
         user_id=test_user.id,
         device_id="device-1",
         command_key="turn_file_changes_revert",
@@ -1530,7 +1808,6 @@ async def test_runtime_transcript_dispatches_full_content_payload(
     monkeypatch.setattr(runtime_work_service.runtime_rpc_service, "call", rpc)
 
     response = await runtime_work_service.get_runtime_transcript(
-        db=test_db,
         user_id=test_user.id,
         address=RuntimeTranscriptRequest(
             deviceId="device-1",
@@ -1582,7 +1859,6 @@ async def test_archive_runtime_task_dispatches_to_owned_device_without_task_rows
     monkeypatch.setattr(runtime_work_service.runtime_rpc_service, "call", rpc)
 
     response = await runtime_work_service.archive_runtime_task(
-        db=test_db,
         user_id=test_user.id,
         address=RuntimeTaskAddress(
             deviceId="device-1",
@@ -1630,7 +1906,6 @@ async def test_rename_runtime_task_dispatches_to_owned_device(
     monkeypatch.setattr(runtime_work_service.runtime_rpc_service, "call", rpc)
 
     response = await runtime_work_service.rename_runtime_task(
-        db=test_db,
         user_id=test_user.id,
         request=RuntimeTaskRenameRequest(
             address=RuntimeTaskAddress(
@@ -1680,8 +1955,8 @@ async def test_list_archived_conversations_dispatches_to_online_device(
         ),
     )
     monkeypatch.setattr(
-        runtime_work_service.device_service,
-        "get_all_devices",
+        runtime_work_service,
+        "_load_runtime_devices",
         AsyncMock(
             return_value=[
                 {
@@ -1719,7 +1994,6 @@ async def test_list_archived_conversations_dispatches_to_online_device(
     monkeypatch.setattr(runtime_work_service.runtime_rpc_service, "call", rpc)
 
     response = await runtime_work_service.list_archived_conversations(
-        db=test_db,
         user_id=test_user.id,
         request=ArchivedConversationsListRequest(),
     )
@@ -1761,8 +2035,8 @@ async def test_list_archived_conversations_local_filter_skips_non_local_devices(
     from app.services import runtime_work_service
 
     monkeypatch.setattr(
-        runtime_work_service.device_service,
-        "get_all_devices",
+        runtime_work_service,
+        "_load_runtime_devices",
         AsyncMock(
             return_value=[
                 {
@@ -1784,7 +2058,6 @@ async def test_list_archived_conversations_local_filter_skips_non_local_devices(
     monkeypatch.setattr(runtime_work_service.runtime_rpc_service, "call", rpc)
 
     response = await runtime_work_service.list_archived_conversations(
-        db=test_db,
         user_id=test_user.id,
         request=ArchivedConversationsListRequest(source="local"),
     )
@@ -1819,7 +2092,6 @@ async def test_unarchive_conversation_dispatches_to_owned_device(
     monkeypatch.setattr(runtime_work_service.runtime_rpc_service, "call", rpc)
 
     response = await runtime_work_service.unarchive_conversation(
-        db=test_db,
         user_id=test_user.id,
         address=RuntimeTaskAddress(
             deviceId="device-1",
@@ -1867,7 +2139,6 @@ async def test_cancel_runtime_task_dispatches_to_owned_device_without_task_rows(
     monkeypatch.setattr(runtime_work_service.runtime_rpc_service, "call", rpc)
 
     response = await runtime_work_service.cancel_runtime_task(
-        db=test_db,
         user_id=test_user.id,
         address=RuntimeTaskAddress(
             deviceId="device-1",
@@ -1915,7 +2186,6 @@ async def test_reorder_runtime_task_queue_accepts_null_ordered_task_ids(
     monkeypatch.setattr(runtime_work_service.runtime_rpc_service, "call", rpc)
 
     response = await runtime_work_service.reorder_runtime_task_queue(
-        db=test_db,
         user_id=test_user.id,
         request=RuntimeTaskQueueReorderRequest(
             deviceId="device-1",
@@ -1949,7 +2219,6 @@ async def test_delete_archived_conversations_bulk_groups_by_device(
     monkeypatch.setattr(runtime_work_service.runtime_rpc_service, "call", rpc)
 
     response = await runtime_work_service.delete_archived_conversations_bulk(
-        db=test_db,
         user_id=test_user.id,
         request=RuntimeArchivedConversationBulkRequest(
             items=[
@@ -2006,6 +2275,7 @@ async def test_send_runtime_message_normalizes_runtime_rpc_failure_without_task_
     )
     from app.services import runtime_work_service
 
+    _configure_runtime_worker_session(monkeypatch, test_db)
     project = _project(test_db, test_user.id)
     runtime_work_service.upsert_device_workspace(
         db=test_db,
@@ -2034,8 +2304,7 @@ async def test_send_runtime_message_normalizes_runtime_rpc_failure_without_task_
         lambda **kwargs: SimpleNamespace(to_dict=lambda: {"prompt": kwargs["message"]}),
     )
 
-    response = await runtime_work_service.send_runtime_message(
-        db=test_db,
+    response = await runtime_work_service.send_runtime_message_nonblocking(
         user_id=test_user.id,
         request=RuntimeSendRequest(
             address=RuntimeTaskAddress(
@@ -2099,6 +2368,7 @@ async def test_send_runtime_message_forwards_external_user_message_identity(
     )
     from app.services import runtime_work_service
 
+    _configure_runtime_worker_session(monkeypatch, test_db)
     monkeypatch.setattr(
         runtime_work_service.device_service,
         "get_device_by_device_id",
@@ -2113,8 +2383,7 @@ async def test_send_runtime_message_forwards_external_user_message_identity(
     rpc = AsyncMock(return_value={"success": True, "accepted": True})
     monkeypatch.setattr(runtime_work_service.runtime_rpc_service, "call", rpc)
 
-    response = await runtime_work_service.send_runtime_message(
-        db=test_db,
+    response = await runtime_work_service.send_runtime_message_nonblocking(
         user_id=test_user.id,
         request=RuntimeSendRequest.model_validate(
             {
@@ -2182,7 +2451,6 @@ async def test_send_runtime_guidance_dispatches_to_owned_device_without_task_row
     monkeypatch.setattr(runtime_work_service.runtime_rpc_service, "call", rpc)
 
     response = await runtime_work_service.send_runtime_guidance(
-        db=test_db,
         user_id=test_user.id,
         request=RuntimeGuidanceRequest(
             address=RuntimeTaskAddress(
@@ -2254,7 +2522,6 @@ async def test_send_runtime_guidance_normalizes_runtime_rpc_failure_without_task
     monkeypatch.setattr(runtime_work_service.runtime_rpc_service, "call", rpc)
 
     response = await runtime_work_service.send_runtime_guidance(
-        db=test_db,
         user_id=test_user.id,
         request=RuntimeGuidanceRequest(
             address=RuntimeTaskAddress(
@@ -2287,6 +2554,7 @@ async def test_send_runtime_message_forwards_ready_attachments_without_task_rows
     )
     from app.services import runtime_work_service
 
+    _configure_runtime_worker_session(monkeypatch, test_db)
     project = _project(test_db, test_user.id)
     runtime_work_service.upsert_device_workspace(
         db=test_db,
@@ -2325,8 +2593,7 @@ async def test_send_runtime_message_forwards_ready_attachments_without_task_rows
         lambda **kwargs: SimpleNamespace(to_dict=lambda: {"prompt": kwargs["message"]}),
     )
 
-    response = await runtime_work_service.send_runtime_message(
-        db=test_db,
+    response = await runtime_work_service.send_runtime_message_nonblocking(
         user_id=test_user.id,
         request=RuntimeSendRequest(
             address=RuntimeTaskAddress(
@@ -2398,7 +2665,6 @@ async def test_create_runtime_task_dispatches_to_project_device_without_task_row
     monkeypatch.setattr(runtime_work_service.runtime_rpc_service, "call", rpc)
 
     response = await runtime_work_service.create_runtime_task(
-        db=test_db,
         user_id=test_user.id,
         request=RuntimeTaskCreateRequest(
             projectId=project.id,
@@ -2485,7 +2751,6 @@ async def test_create_runtime_task_uses_executor_worktree_workspace_path(
     monkeypatch.setattr(runtime_work_service.runtime_rpc_service, "call", rpc)
 
     response = await runtime_work_service.create_runtime_task(
-        db=test_db,
         user_id=test_user.id,
         request=RuntimeTaskCreateRequest(
             projectId=project.id,
@@ -2533,7 +2798,6 @@ async def test_create_runtime_task_preserves_v2_initial_goal_and_supervisor(
     monkeypatch.setattr(runtime_work_service.runtime_rpc_service, "call", rpc)
 
     response = await runtime_work_service.create_runtime_task(
-        db=test_db,
         user_id=test_user.id,
         request=RuntimeTaskCreateRequest(
             schemaVersion=2,
@@ -2836,7 +3100,6 @@ async def test_create_runtime_task_uses_absolute_git_checkout_path_without_prefi
     monkeypatch.setattr(runtime_work_service.runtime_rpc_service, "call", rpc)
 
     response = await runtime_work_service.create_runtime_task(
-        db=test_db,
         user_id=test_user.id,
         request=RuntimeTaskCreateRequest(
             projectId=project.id,
@@ -2880,7 +3143,6 @@ async def test_open_runtime_workspace_dispatches_to_owned_device_without_task_ro
     monkeypatch.setattr(runtime_work_service.runtime_rpc_service, "call", rpc)
 
     response = await runtime_work_service.open_runtime_workspace(
-        db=test_db,
         user_id=test_user.id,
         request=RuntimeWorkspaceOpenRequest(
             deviceId="device-1",
@@ -2936,7 +3198,6 @@ async def test_search_runtime_workspace_dispatches_to_owned_device(
     monkeypatch.setattr(runtime_work_service.runtime_rpc_service, "call", rpc)
 
     response = await runtime_work_service.search_runtime_workspace(
-        db=test_db,
         user_id=test_user.id,
         request=RuntimeWorkspaceSearchRequest(
             deviceId="device-1",
@@ -2985,7 +3246,6 @@ async def test_rename_runtime_workspace_dispatches_to_owned_device(
     monkeypatch.setattr(runtime_work_service.runtime_rpc_service, "call", rpc)
 
     response = await runtime_work_service.rename_runtime_workspace(
-        db=test_db,
         user_id=test_user.id,
         request=RuntimeWorkspaceRenameRequest(
             deviceId="device-1",
@@ -3035,7 +3295,6 @@ async def test_remove_runtime_workspace_dispatches_to_owned_device(
     monkeypatch.setattr(runtime_work_service.runtime_rpc_service, "call", rpc)
 
     response = await runtime_work_service.remove_runtime_workspace(
-        db=test_db,
         user_id=test_user.id,
         request=RuntimeWorkspaceRemoveRequest(
             deviceId="device-1",
@@ -3108,7 +3367,6 @@ async def test_create_runtime_task_uses_device_workspace_id_as_trusted_target(
     monkeypatch.setattr(runtime_work_service.runtime_rpc_service, "call", rpc)
 
     response = await runtime_work_service.create_runtime_task(
-        db=test_db,
         user_id=test_user.id,
         request=RuntimeTaskCreateRequest(
             projectId=project.id,
@@ -3162,7 +3420,6 @@ async def test_create_runtime_task_rejects_device_workspace_from_another_project
 
     with pytest.raises(HTTPException) as exc_info:
         await runtime_work_service.create_runtime_task(
-            db=test_db,
             user_id=test_user.id,
             request=RuntimeTaskCreateRequest(
                 projectId=target_project.id,
@@ -3294,7 +3551,6 @@ async def test_fork_runtime_task_uses_git_workspace_without_storage(
     )
 
     response = await runtime_work_service.fork_runtime_task(
-        db=test_db,
         user_id=test_user.id,
         request=RuntimeTaskForkRequest(
             source=RuntimeTaskAddress(
@@ -3479,7 +3735,6 @@ async def test_fork_runtime_task_uses_archive_when_git_commit_unreachable(
     )
 
     response = await runtime_work_service.fork_runtime_task(
-        db=test_db,
         user_id=test_user.id,
         request=RuntimeTaskForkRequest(
             source=RuntimeTaskAddress(
@@ -3621,7 +3876,6 @@ async def test_fork_runtime_task_without_source_workspace_path_resolves_git_work
     )
 
     response = await runtime_work_service.fork_runtime_task(
-        db=test_db,
         user_id=test_user.id,
         request=RuntimeTaskForkRequest(
             source=RuntimeTaskAddress(
@@ -3808,7 +4062,6 @@ async def test_fork_runtime_task_uses_target_git_project_for_non_project_worktre
     )
 
     response = await runtime_work_service.fork_runtime_task(
-        db=test_db,
         user_id=test_user.id,
         request=RuntimeTaskForkRequest(
             source=RuntimeTaskAddress(
@@ -3987,7 +4240,6 @@ async def test_fork_runtime_task_uses_git_workspace_for_local_path_git_project(
     )
 
     response = await runtime_work_service.fork_runtime_task(
-        db=test_db,
         user_id=test_user.id,
         request=RuntimeTaskForkRequest(
             source=RuntimeTaskAddress(
@@ -4135,7 +4387,6 @@ async def test_fork_runtime_task_uses_archive_for_non_git_project_workspace(
     monkeypatch.setattr(runtime_work_service.runtime_rpc_service, "call", rpc)
 
     response = await runtime_work_service.fork_runtime_task(
-        db=test_db,
         user_id=test_user.id,
         request=RuntimeTaskForkRequest(
             source=RuntimeTaskAddress(
@@ -4192,7 +4443,7 @@ async def test_fork_runtime_task_uses_bidirectional_direct_transfer(
         ),
     )
 
-    async def direct_hosts(*, db, user_id, device_id, peer_device_id):
+    async def direct_hosts(*, user_id, device_id, peer_device_id):
         return {
             "source-device": ["10.0.0.11"],
             "target-device": ["10.0.0.12"],
@@ -4259,7 +4510,6 @@ async def test_fork_runtime_task_uses_bidirectional_direct_transfer(
     monkeypatch.setattr(runtime_work_service.runtime_rpc_service, "call", rpc)
 
     response = await runtime_work_service.fork_runtime_task(
-        db=test_db,
         user_id=test_user.id,
         request=RuntimeTaskForkRequest(
             source=RuntimeTaskAddress(
@@ -4364,7 +4614,6 @@ async def test_fork_runtime_task_reports_storage_unavailable_without_internal_er
 
     with pytest.raises(HTTPException) as exc_info:
         await runtime_work_service.fork_runtime_task(
-            db=test_db,
             user_id=test_user.id,
             request=RuntimeTaskForkRequest(
                 source=RuntimeTaskAddress(
@@ -4412,7 +4661,6 @@ async def test_runtime_transfer_direct_hosts_uses_reported_host_then_tcp_ip(
     )
 
     assert await runtime_work_service._runtime_transfer_direct_hosts(
-        db=None,
         user_id=7,
         device_id="target-device",
         peer_device_id="source-device",
@@ -4438,7 +4686,6 @@ async def test_runtime_transfer_direct_hosts_filters_loopback_for_cross_device(
 
     assert (
         await runtime_work_service._runtime_transfer_direct_hosts(
-            db=None,
             user_id=7,
             device_id="target-device",
             peer_device_id="source-device",
@@ -4812,12 +5059,11 @@ async def test_bind_runtime_task_to_im_sessions_persists_selected_model(
     send_task_switched = AsyncMock(return_value={"sent": 1})
     monkeypatch.setattr(
         runtime_work_service.im_notification_dispatcher,
-        "send_task_switched",
+        "send_task_switched_nonblocking",
         send_task_switched,
     )
 
     response = await runtime_work_service.bind_runtime_task_to_im_sessions(
-        db=test_db,
         user_id=test_user.id,
         request=BindRuntimeTaskIMSessionsRequest.model_validate(
             {
@@ -4839,7 +5085,6 @@ async def test_bind_runtime_task_to_im_sessions_persists_selected_model(
 
     assert response.bound_session_keys == ["session-a"]
     send_task_switched.assert_awaited_once_with(
-        test_db,
         [session],
         "用户可见任务标题",
     )
@@ -4864,6 +5109,7 @@ async def test_send_runtime_message_does_not_dispatch_when_request_build_fails(
     from app.schemas.runtime_work import RuntimeSendRequest, RuntimeTaskAddress
     from app.services import runtime_work_service
 
+    _configure_runtime_worker_session(monkeypatch, test_db)
     monkeypatch.setattr(
         runtime_work_service.device_service,
         "get_device_by_device_id",
@@ -4882,8 +5128,7 @@ async def test_send_runtime_message_does_not_dispatch_when_request_build_fails(
     monkeypatch.setattr(runtime_work_service.runtime_rpc_service, "call", rpc)
 
     with pytest.raises(HTTPException) as exc_info:
-        await runtime_work_service.send_runtime_message(
-            db=test_db,
+        await runtime_work_service.send_runtime_message_nonblocking(
             user_id=test_user.id,
             request=RuntimeSendRequest(
                 address=RuntimeTaskAddress(
@@ -4908,6 +5153,7 @@ async def test_send_runtime_request_user_input_response_omits_execution_request(
     from app.schemas.runtime_work import RuntimeSendRequest, RuntimeTaskAddress
     from app.services import runtime_work_service
 
+    _configure_runtime_worker_session(monkeypatch, test_db)
     monkeypatch.setattr(
         runtime_work_service.device_service,
         "get_device_by_device_id",
@@ -4925,8 +5171,7 @@ async def test_send_runtime_request_user_input_response_omits_execution_request(
     rpc = AsyncMock(return_value={"success": True, "accepted": True})
     monkeypatch.setattr(runtime_work_service.runtime_rpc_service, "call", rpc)
 
-    response = await runtime_work_service.send_runtime_message(
-        db=test_db,
+    response = await runtime_work_service.send_runtime_message_nonblocking(
         user_id=test_user.id,
         request=RuntimeSendRequest(
             address=RuntimeTaskAddress(

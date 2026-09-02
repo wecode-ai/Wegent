@@ -31,7 +31,7 @@ class DiscordUserResolver:
         self.user_mapping_mode = user_mapping_mode or USER_MAPPING_MODE_SELECT_USER
         self.user_mapping_config = user_mapping_config or {}
 
-    async def resolve_user(
+    def resolve_user_sync(
         self,
         discord_user_id: int,
         discord_username: Optional[str] = None,

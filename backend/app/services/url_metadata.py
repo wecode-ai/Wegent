@@ -20,6 +20,7 @@ import httpx
 import redis
 from pydantic import BaseModel
 
+from app.core.blocking_work import run_metadata_io
 from app.core.config import settings
 
 logger = logging.getLogger(__name__)
@@ -94,6 +95,25 @@ def _get_redis_client():
     except Exception as e:
         logger.warning(f"Failed to connect to Redis: {e}")
         return None
+
+
+def _read_cached_result(url: str) -> Optional[UrlMetadataResult]:
+    """Read and decode one cached value in the metadata worker pool."""
+    client = _get_redis_client()
+    if client is None:
+        return None
+    try:
+        cached = client.get(_get_cache_key(url))
+        if not cached:
+            return None
+        import json
+
+        return UrlMetadataResult(**json.loads(cached))
+    except Exception as error:
+        logger.warning("Failed to read URL metadata cache: %s", error)
+        return None
+    finally:
+        client.close()
 
 
 def _is_ip_blocked(ip_str: str) -> bool:
@@ -278,22 +298,13 @@ async def fetch_url_metadata(url: str) -> UrlMetadataResult:
         UrlMetadataResult with title, description, favicon
     """
     # Validate URL for SSRF protection
-    if not _validate_url_for_ssrf(url):
+    if not await run_metadata_io(_validate_url_for_ssrf, url):
         return UrlMetadataResult(url=url, success=False)
 
     # Check cache first
-    redis_client = _get_redis_client()
-    if redis_client:
-        cache_key = _get_cache_key(url)
-        try:
-            cached = redis_client.get(cache_key)
-            if cached:
-                import json
-
-                data = json.loads(cached)
-                return UrlMetadataResult(**data)
-        except Exception as e:
-            logger.warning(f"Failed to read from cache: {e}")
+    cached_result = await run_metadata_io(_read_cached_result, url)
+    if cached_result is not None:
+        return cached_result
 
     # Log SSL verification status if disabled
     if not URL_METADATA_SSL_VERIFY:
@@ -318,7 +329,10 @@ async def fetch_url_metadata(url: str) -> UrlMetadataResult:
             ) as response:
                 # Re-validate the final URL after redirects for SSRF protection
                 final_url = str(response.url)
-                if final_url != url and not _validate_url_for_ssrf(final_url):
+                if final_url != url and not await run_metadata_io(
+                    _validate_url_for_ssrf,
+                    final_url,
+                ):
                     logger.warning(
                         f"Blocked redirect to internal URL: {url} -> {final_url}"
                     )
@@ -332,26 +346,21 @@ async def fetch_url_metadata(url: str) -> UrlMetadataResult:
                 ):
                     # Not an HTML page, return minimal result
                     result = UrlMetadataResult(url=url, success=True)
-                    _cache_result(redis_client, url, result)
+                    await run_metadata_io(_cache_result, url, result)
                     return result
 
                 # Read limited content
-                content_bytes = b""
+                content_bytes = bytearray()
                 async for chunk in response.aiter_bytes():
-                    content_bytes += chunk
+                    content_bytes.extend(chunk)
                     if len(content_bytes) > MAX_CONTENT_SIZE:
                         break
 
-                html = content_bytes.decode("utf-8", errors="ignore")
-
-        # Extract metadata
-        title = _extract_title(html)
-        description = _extract_description(html)
-        favicon = _extract_favicon(html, url)
-
-        # Truncate long descriptions
-        if description and len(description) > 200:
-            description = description[:197] + "..."
+        title, description, favicon = await run_metadata_io(
+            _extract_metadata,
+            bytes(content_bytes),
+            url,
+        )
 
         result = UrlMetadataResult(
             url=url,
@@ -362,7 +371,7 @@ async def fetch_url_metadata(url: str) -> UrlMetadataResult:
         )
 
         # Cache the result
-        _cache_result(redis_client, url, result)
+        await run_metadata_io(_cache_result, url, result)
 
         return result
 
@@ -377,9 +386,24 @@ async def fetch_url_metadata(url: str) -> UrlMetadataResult:
         return UrlMetadataResult(url=url, success=False)
 
 
-def _cache_result(redis_client, url: str, result: UrlMetadataResult):
-    """Cache the metadata result in Redis"""
-    if not redis_client:
+def _extract_metadata(
+    content_bytes: bytes,
+    url: str,
+) -> tuple[Optional[str], Optional[str], Optional[str]]:
+    """Decode and parse bounded HTML outside the Uvicorn event loop."""
+    html = content_bytes.decode("utf-8", errors="ignore")
+    title = _extract_title(html)
+    description = _extract_description(html)
+    favicon = _extract_favicon(html, url)
+    if description and len(description) > 200:
+        description = description[:197] + "..."
+    return title, description, favicon
+
+
+def _cache_result(url: str, result: UrlMetadataResult) -> None:
+    """Cache metadata with a worker-owned synchronous Redis client."""
+    redis_client = _get_redis_client()
+    if redis_client is None:
         return
 
     try:
@@ -393,3 +417,5 @@ def _cache_result(redis_client, url: str, result: UrlMetadataResult):
         )
     except Exception as e:
         logger.warning(f"Failed to cache URL metadata: {e}")
+    finally:
+        redis_client.close()

@@ -6,6 +6,7 @@
 
 import asyncio
 import json
+import threading
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -69,6 +70,67 @@ class TestStreamingServiceReasoning:
             e["delta"] for e in events if e["type"] == "response.output_text.delta"
         ]
         assert "".join(text_deltas) == "Hello world"
+
+    @pytest.mark.asyncio
+    async def test_sse_codec_does_not_block_loop_and_preserves_order(
+        self,
+        streaming_service,
+        monkeypatch,
+    ):
+        from app.services.openapi import streaming as streaming_module
+
+        started = threading.Event()
+        release = threading.Event()
+        encoded_types: list[str] = []
+        worker_thread_ids: list[int] = []
+        original = streaming_module._format_sse_event
+
+        def blocking_first(data):
+            worker_thread_ids.append(threading.get_ident())
+            encoded_types.append(data["type"])
+            if len(encoded_types) == 1:
+                started.set()
+                release.wait(timeout=5)
+            return original(data)
+
+        monkeypatch.setattr(streaming_module, "_format_sse_event", blocking_first)
+
+        async def text_stream():
+            yield "first"
+            yield "second"
+
+        async def collect() -> list[str]:
+            return [
+                event
+                async for event in streaming_service.create_streaming_response(
+                    response_id="resp_tick",
+                    model_string="model",
+                    chat_stream=text_stream(),
+                    created_at=1,
+                )
+            ]
+
+        loop_thread_id = threading.get_ident()
+        task = asyncio.create_task(collect())
+        try:
+            for _ in range(200):
+                if started.is_set():
+                    break
+                await asyncio.sleep(0.005)
+            assert started.is_set()
+            ticked = asyncio.Event()
+            asyncio.get_running_loop().call_soon(ticked.set)
+            await asyncio.wait_for(ticked.wait(), timeout=0.1)
+            assert not task.done()
+            assert worker_thread_ids[0] != loop_thread_id
+        finally:
+            release.set()
+
+        events = await task
+        decoded_types = [
+            json.loads(event.removeprefix("data: ").strip())["type"] for event in events
+        ]
+        assert decoded_types == encoded_types
 
     @pytest.mark.asyncio
     async def test_reasoning_stream(self, streaming_service):

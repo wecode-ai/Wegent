@@ -39,7 +39,12 @@ ENV GRACEFUL_SHUTDOWN_TIMEOUT=600
 # Expose port
 EXPOSE ${PORT}
 
-# Start command with graceful shutdown support
-# --timeout-graceful-shutdown: Time to wait for active connections to close
-# Using exec form to ensure proper signal handling (SIGTERM)
-CMD ["sh", "-c", "exec uvicorn app.main:app --host 0.0.0.0 --port ${PORT} --workers 1 --timeout-graceful-shutdown ${GRACEFUL_SHUTDOWN_TIMEOUT}"]
+# The runtime supervisor owns graceful shutdown for every child role.
+STOPSIGNAL SIGTERM
+
+# Readiness includes the database and a real round trip to the sibling stream worker.
+HEALTHCHECK --interval=30s --timeout=5s --start-period=60s --retries=3 \
+    CMD curl -fsS http://localhost:${PORT}/api/ready || exit 1
+
+# Start one supervisor that owns heterogeneous Web and stream worker processes.
+CMD ["python", "-m", "app.runtime"]

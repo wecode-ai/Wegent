@@ -5,15 +5,13 @@
 """Web scraper API endpoints for fetching and converting web pages."""
 
 import logging
-from typing import Optional
+from typing import Any, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends
 from pydantic import BaseModel, Field
-from sqlalchemy.orm import Session
 
-from app.api.dependencies import get_db
-from app.core.security import get_current_user
-from app.models.user import User
+from app.core.payload_codec import run_payload_codec
+from app.core.security import DetachedUser, get_detached_current_user
 from app.schemas.knowledge import (
     KnowledgeDocumentResponse,
     WebScrapeRequest,
@@ -25,6 +23,30 @@ from app.services.web_scraper import get_web_scraper_service
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
+
+
+def _build_scrape_response(
+    title: str | None,
+    content: str,
+    url: str,
+    scraped_at: str,
+    content_length: int,
+    description: str | None,
+    success: bool,
+    error_code: str | None,
+    error_message: str | None,
+) -> WebScrapeResponse:
+    return WebScrapeResponse(
+        title=title,
+        content=content,
+        url=url,
+        scraped_at=scraped_at,
+        content_length=content_length,
+        description=description,
+        success=success,
+        error_code=error_code,
+        error_message=error_message,
+    )
 
 
 class WebDocumentCreateRequest(BaseModel):
@@ -68,10 +90,18 @@ class WebDocumentRefreshResponse(BaseModel):
     error_message: Optional[str] = Field(None, description="Error message if failed")
 
 
+def _build_create_response(result: dict[str, Any]) -> WebDocumentCreateResponse:
+    return WebDocumentCreateResponse.model_validate(result)
+
+
+def _build_refresh_response(result: dict[str, Any]) -> WebDocumentRefreshResponse:
+    return WebDocumentRefreshResponse.model_validate(result)
+
+
 @router.post("/scrape", response_model=WebScrapeResponse)
 async def scrape_web_page(
     request: WebScrapeRequest,
-    current_user: User = Depends(get_current_user),
+    current_user: DetachedUser = Depends(get_detached_current_user),
 ) -> WebScrapeResponse:
     """Scrape a web page and convert to Markdown.
 
@@ -95,38 +125,45 @@ async def scrape_web_page(
             f"Scrape failed for {request.url}: {result.error_code} - {result.error_message}"
         )
         # Return the error response with success=False
-        return WebScrapeResponse(
-            title=result.title,
-            content=result.content,
-            url=result.url,
-            scraped_at=result.scraped_at.isoformat(),
-            content_length=result.content_length,
-            description=result.description,
-            success=False,
-            error_code=result.error_code,
-            error_message=result.error_message,
+        return await run_payload_codec(
+            _build_scrape_response,
+            result.title,
+            result.content,
+            result.url,
+            result.scraped_at.isoformat(),
+            result.content_length,
+            result.description,
+            result.success,
+            result.error_code,
+            result.error_message,
+            payload_hint=result.content,
+            force_offload=True,
         )
 
     logger.info(
         f"Successfully scraped {request.url}: {result.content_length} chars, title={result.title}"
     )
 
-    return WebScrapeResponse(
-        title=result.title,
-        content=result.content,
-        url=result.url,
-        scraped_at=result.scraped_at.isoformat(),
-        content_length=result.content_length,
-        description=result.description,
-        success=True,
+    return await run_payload_codec(
+        _build_scrape_response,
+        result.title,
+        result.content,
+        result.url,
+        result.scraped_at.isoformat(),
+        result.content_length,
+        result.description,
+        result.success,
+        result.error_code,
+        result.error_message,
+        payload_hint=result.content,
+        force_offload=True,
     )
 
 
 @router.post("/create-document", response_model=WebDocumentCreateResponse)
 async def create_web_document(
     request: WebDocumentCreateRequest,
-    current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db),
+    current_user: DetachedUser = Depends(get_detached_current_user),
 ) -> WebDocumentCreateResponse:
     """Scrape a web page and create a document in the knowledge base.
 
@@ -139,8 +176,6 @@ async def create_web_document(
     Args:
         request: Web document creation request
         current_user: Current authenticated user
-        db: Database session
-
     Returns:
         WebDocumentCreateResponse with created document or error
     """
@@ -150,9 +185,8 @@ async def create_web_document(
     )
 
     # Use Orchestrator for unified business logic (REST API and MCP tools share the same logic)
-    result = await knowledge_orchestrator.create_web_document(
-        db=db,
-        user=current_user,
+    result = await knowledge_orchestrator.create_web_document_for_user(
+        user_id=current_user.id,
         url=request.url,
         knowledge_base_id=request.knowledge_base_id,
         name=request.name,
@@ -161,14 +195,18 @@ async def create_web_document(
         trigger_summary=True,
     )
 
-    return WebDocumentCreateResponse(**result)
+    return await run_payload_codec(
+        _build_create_response,
+        result,
+        payload_hint=result,
+        force_offload=True,
+    )
 
 
 @router.post("/refresh-document", response_model=WebDocumentRefreshResponse)
 async def refresh_web_document(
     request: WebDocumentRefreshRequest,
-    current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db),
+    current_user: DetachedUser = Depends(get_detached_current_user),
 ) -> WebDocumentRefreshResponse:
     """Refresh a web document by re-scraping its URL.
 
@@ -182,20 +220,22 @@ async def refresh_web_document(
     Args:
         request: Web document refresh request with document_id
         current_user: Current authenticated user
-        db: Database session
-
     Returns:
         WebDocumentRefreshResponse with refreshed document or error
     """
     logger.info(f"User {current_user.id} refreshing web document {request.document_id}")
 
     # Use Orchestrator for unified business logic (REST API and MCP tools share the same logic)
-    result = await knowledge_orchestrator.refresh_web_document(
-        db=db,
-        user=current_user,
+    result = await knowledge_orchestrator.refresh_web_document_for_user(
+        user_id=current_user.id,
         document_id=request.document_id,
         trigger_indexing=True,
         trigger_summary=False,  # Don't re-generate summary on refresh
     )
 
-    return WebDocumentRefreshResponse(**result)
+    return await run_payload_codec(
+        _build_refresh_response,
+        result,
+        payload_hint=result,
+        force_offload=True,
+    )

@@ -8,7 +8,7 @@ Wizard API schemas for agent creation wizard.
 
 from typing import Any, Dict, List, Optional
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 class CoreQuestion(BaseModel):
@@ -31,25 +31,28 @@ class CoreQuestionsResponse(BaseModel):
 class WizardAnswers(BaseModel):
     """User answers to wizard questions - simplified for non-technical users"""
 
-    purpose: str
+    purpose: str = Field(min_length=1, max_length=64 * 1024)
     # Input/Output example fields for better understanding user needs
-    example_input: Optional[str] = None
-    expected_output: Optional[str] = None
-    special_requirements: Optional[str] = None
+    example_input: Optional[str] = Field(default=None, max_length=64 * 1024)
+    expected_output: Optional[str] = Field(default=None, max_length=64 * 1024)
+    special_requirements: Optional[str] = Field(default=None, max_length=64 * 1024)
     # Legacy fields for backward compatibility
-    example_task: Optional[str] = None
-    knowledge_domain: Optional[str] = None
-    interaction_style: Optional[str] = None
-    output_format: Optional[List[str]] = None
-    constraints: Optional[str] = None
+    example_task: Optional[str] = Field(default=None, max_length=64 * 1024)
+    knowledge_domain: Optional[str] = Field(default=None, max_length=32 * 1024)
+    interaction_style: Optional[str] = Field(default=None, max_length=32 * 1024)
+    output_format: Optional[List[str]] = Field(default=None, max_length=64)
+    constraints: Optional[str] = Field(default=None, max_length=64 * 1024)
 
 
 class FollowUpRequest(BaseModel):
     """Request for generating follow-up questions"""
 
     answers: WizardAnswers
-    previous_followups: Optional[List[Dict[str, Any]]] = None
-    round_number: int = 1
+    previous_followups: Optional[List[Dict[str, Any]]] = Field(
+        default=None,
+        max_length=64,
+    )
+    round_number: int = Field(default=1, ge=1, le=32)
 
 
 class FollowUpQuestion(BaseModel):
@@ -73,7 +76,10 @@ class RecommendConfigRequest(BaseModel):
     """Request for shell/model recommendation"""
 
     answers: WizardAnswers
-    followup_answers: Optional[List[Dict[str, Any]]] = None
+    followup_answers: Optional[List[Dict[str, Any]]] = Field(
+        default=None,
+        max_length=64,
+    )
 
 
 class ShellRecommendation(BaseModel):
@@ -107,9 +113,12 @@ class GeneratePromptRequest(BaseModel):
     """Request for generating system prompt"""
 
     answers: WizardAnswers
-    followup_answers: Optional[List[Dict[str, Any]]] = None
-    shell_type: str
-    model_name: Optional[str] = None
+    followup_answers: Optional[List[Dict[str, Any]]] = Field(
+        default=None,
+        max_length=64,
+    )
+    shell_type: str = Field(min_length=1, max_length=64)
+    model_name: Optional[str] = Field(default=None, max_length=256)
 
 
 class AvailableSkill(BaseModel):
@@ -175,9 +184,9 @@ class CreateAllResponse(BaseModel):
 class TestPromptRequest(BaseModel):
     """Request for testing system prompt with a sample task"""
 
-    system_prompt: str
-    test_message: str
-    model_name: Optional[str] = None
+    system_prompt: str = Field(max_length=256 * 1024)
+    test_message: str = Field(max_length=256 * 1024)
+    model_name: Optional[str] = Field(default=None, max_length=256)
 
 
 class TestPromptResponse(BaseModel):
@@ -190,12 +199,12 @@ class TestPromptResponse(BaseModel):
 class IteratePromptRequest(BaseModel):
     """Request for iterating/improving system prompt based on feedback"""
 
-    current_prompt: str
-    test_message: str
-    model_response: str
-    user_feedback: str
-    selected_text: Optional[str] = None  # Text selected by user from model_response
-    model_name: Optional[str] = None
+    current_prompt: str = Field(max_length=256 * 1024)
+    test_message: str = Field(max_length=256 * 1024)
+    model_response: str = Field(max_length=256 * 1024)
+    user_feedback: str = Field(max_length=128 * 1024)
+    selected_text: Optional[str] = Field(default=None, max_length=128 * 1024)
+    model_name: Optional[str] = Field(default=None, max_length=256)
 
 
 class IteratePromptResponse(BaseModel):
@@ -212,10 +221,13 @@ class RecommendSkillsRequest(BaseModel):
     """Request for skill recommendations"""
 
     answers: WizardAnswers
-    followup_answers: Optional[List[Dict[str, Any]]] = None
-    system_prompt: str
-    shell_type: str
-    namespace: str = "default"
+    followup_answers: Optional[List[Dict[str, Any]]] = Field(
+        default=None,
+        max_length=64,
+    )
+    system_prompt: str = Field(max_length=256 * 1024)
+    shell_type: str = Field(min_length=1, max_length=64)
+    namespace: str = Field(default="default", min_length=1, max_length=256)
 
 
 class RecommendSkillsResponse(BaseModel):

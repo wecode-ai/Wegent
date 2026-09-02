@@ -8,6 +8,8 @@ import logging
 from dataclasses import dataclass
 from typing import Any
 
+from app.core.blocking_work import run_knowledge_io
+from app.core.bounded_executor import BoundedExecutorOverloaded
 from app.services.web_scraper.markdown.cleaner import MarkdownCleaner
 from app.services.web_scraper.markdown.html_to_markdown import HtmlToMarkdownConverter
 from app.services.web_scraper.models import InternalScrapeResult, SourcePart
@@ -93,6 +95,8 @@ class PlaywrightFrameExtractionStrategy:
                 security_error_code=exc.error_code,
                 extraction_method=attempted_method,
             )
+        except BoundedExecutorOverloaded:
+            raise
         except Exception as exc:
             logger.warning(
                 "Playwright frame extraction failed for %s: %s",
@@ -116,6 +120,8 @@ class PlaywrightFrameExtractionStrategy:
                     playwright, url, policy, profile, proxy_plan, guard, False
                 )
             except WebScraperSecurityError:
+                raise
+            except BoundedExecutorOverloaded:
                 raise
             except Exception as exc:
                 if proxy_plan.has_proxy:
@@ -198,7 +204,7 @@ class PlaywrightFrameExtractionStrategy:
             wait_until=self._normalize_wait_until(policy.wait_until),
             timeout=policy.page_timeout_ms,
         )
-        guard.validate_final_url(url, resources.page.url)
+        await run_knowledge_io(guard.validate_final_url, url, resources.page.url)
 
         if policy.wait_for:
             await resources.page.wait_for_selector(
@@ -214,23 +220,47 @@ class PlaywrightFrameExtractionStrategy:
 
         source_parts = await self._extract_source_parts(resources.page, policy, guard)
         page_title = await resources.page.title()
-        markdown = self._combine_source_parts(
-            page_title=page_title,
-            page_url=resources.page.url,
-            source_parts=source_parts,
-            max_total_chars=policy.max_total_chars,
+        markdown = await run_knowledge_io(
+            self._combine_source_parts,
+            page_title,
+            resources.page.url,
+            source_parts,
+            policy.max_total_chars,
         )
+        status_code = response.status if response else None
+        content_type = response.headers.get("content-type") if response else None
+        return await run_knowledge_io(
+            self._build_internal_result,
+            url,
+            resources.page.url,
+            page_title,
+            markdown,
+            content_type,
+            status_code,
+            source_parts,
+        )
+
+    def _build_internal_result(
+        self,
+        url: str,
+        final_url: str,
+        page_title: str,
+        markdown: str,
+        content_type: str | None,
+        status_code: int | None,
+        source_parts: list[SourcePart],
+    ) -> InternalScrapeResult:
         quality_level = self._result_quality_level(source_parts)
         extraction_method = (
             "playwright_text" if quality_level == "degraded" else "playwright_html"
         )
         return InternalScrapeResult(
             url=url,
-            final_url=resources.page.url,
+            final_url=final_url,
             title=page_title,
             markdown=markdown,
-            content_type=self._content_type_from_response(response),
-            status_code=response.status if response else None,
+            content_type=content_type,
+            status_code=status_code,
             success=bool(markdown),
             error_message=None if markdown else "No extractable frame content",
             extraction_method=extraction_method,
@@ -242,7 +272,7 @@ class PlaywrightFrameExtractionStrategy:
         self, context: Any, guard: WebScraperUrlGuard
     ) -> None:
         async def guard_route(route: Any, request: Any) -> None:
-            if guard.is_allowed_fetch_url(request.url):
+            if await run_knowledge_io(guard.is_allowed_fetch_url, request.url):
                 await route.continue_()
             else:
                 await route.abort()
@@ -257,27 +287,39 @@ class PlaywrightFrameExtractionStrategy:
     ) -> list[SourcePart]:
         parts: list[SourcePart] = []
         seen: set[str] = set()
+        total_chars = 0
         frames = page.frames[: policy.max_frames]
 
         for frame in frames:
             frame_url = frame.url or ""
-            if frame_url and not guard.is_allowed_frame_url(frame_url):
+            if frame_url and not await run_knowledge_io(
+                guard.is_allowed_frame_url,
+                frame_url,
+            ):
                 continue
 
             part = await self._extract_frame_part(frame, policy)
             if not part:
                 continue
 
-            normalized = " ".join(part.markdown.split())
+            normalized = await run_knowledge_io(
+                self._normalize_markdown_for_deduplication,
+                part.markdown,
+            )
             if len(normalized) < MIN_FRAME_TEXT_LENGTH or normalized in seen:
                 continue
             seen.add(normalized)
             parts.append(part)
+            total_chars += len(part.markdown)
 
-            if sum(len(item.markdown) for item in parts) >= policy.max_total_chars:
+            if total_chars >= policy.max_total_chars:
                 break
 
         return parts
+
+    @staticmethod
+    def _normalize_markdown_for_deduplication(markdown: str) -> str:
+        return " ".join(markdown.split())
 
     async def _extract_frame_part(
         self, frame: Any, policy: ScrapePolicy
@@ -295,32 +337,62 @@ class PlaywrightFrameExtractionStrategy:
 
         if policy.prefer_html_markdown:
             html = await self._frame_html(frame)
-            markdown = self._markdown_from_html(html, frame_url, policy)
-            quality = self._quality_evaluator.evaluate(markdown, policy, "structured")
-            if quality.acceptable:
-                return SourcePart(
-                    title=title or None,
-                    url=frame_url,
-                    markdown=markdown[: policy.max_chars_per_frame],
-                    text_length=len(markdown),
-                    method="playwright_html",
-                    quality_level="structured",
-                )
+            part = await run_knowledge_io(
+                self._prepare_html_source_part,
+                html,
+                title,
+                frame_url,
+                policy,
+            )
+            if part is not None:
+                return part
 
         if not policy.allow_text_degraded:
             return None
 
         text = await self._frame_text(frame)
-        text_markdown = self._cleaner.clean_plain_text(text, policy)
-        quality = self._quality_evaluator.evaluate(text_markdown, policy, "degraded")
+        return await run_knowledge_io(
+            self._prepare_plain_text_source_part,
+            text,
+            title,
+            frame_url,
+            policy,
+        )
+
+    def _prepare_html_source_part(
+        self,
+        html: str,
+        title: str,
+        frame_url: str | None,
+        policy: ScrapePolicy,
+    ) -> SourcePart | None:
+        markdown, quality = self._prepare_html_markdown(html, frame_url, policy)
         if not quality.acceptable:
             return None
-
         return SourcePart(
             title=title or None,
             url=frame_url,
-            markdown=text_markdown[: policy.max_chars_per_frame],
-            text_length=len(text_markdown),
+            markdown=markdown[: policy.max_chars_per_frame],
+            text_length=len(markdown),
+            method="playwright_html",
+            quality_level="structured",
+        )
+
+    def _prepare_plain_text_source_part(
+        self,
+        text: str,
+        title: str,
+        frame_url: str | None,
+        policy: ScrapePolicy,
+    ) -> SourcePart | None:
+        markdown, quality = self._prepare_plain_text_markdown(text, policy)
+        if not quality.acceptable:
+            return None
+        return SourcePart(
+            title=title or None,
+            url=frame_url,
+            markdown=markdown[: policy.max_chars_per_frame],
+            text_length=len(markdown),
             method="playwright_text",
             quality_level="degraded",
         )
@@ -331,6 +403,25 @@ class PlaywrightFrameExtractionStrategy:
         cleaned_html = self._cleaner.clean_html(html, policy)
         markdown = self._converter.to_markdown(cleaned_html, base_url=base_url)
         return self._cleaner.clean_markdown(markdown, policy)
+
+    def _prepare_html_markdown(
+        self,
+        html: str,
+        base_url: str | None,
+        policy: ScrapePolicy,
+    ) -> tuple[str, Any]:
+        markdown = self._markdown_from_html(html, base_url, policy)
+        quality = self._quality_evaluator.evaluate(markdown, policy, "structured")
+        return markdown, quality
+
+    def _prepare_plain_text_markdown(
+        self,
+        text: str,
+        policy: ScrapePolicy,
+    ) -> tuple[str, Any]:
+        markdown = self._cleaner.clean_plain_text(text, policy)
+        quality = self._quality_evaluator.evaluate(markdown, policy, "degraded")
+        return markdown, quality
 
     def _combine_source_parts(
         self,
@@ -404,11 +495,6 @@ class PlaywrightFrameExtractionStrategy:
         if profile.user_agent:
             kwargs["user_agent"] = profile.user_agent
         return kwargs
-
-    def _content_type_from_response(self, response: Any) -> str | None:
-        if not response:
-            return None
-        return response.headers.get("content-type")
 
     def _should_retry_with_proxy(
         self,

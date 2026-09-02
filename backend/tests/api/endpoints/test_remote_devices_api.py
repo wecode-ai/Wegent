@@ -60,7 +60,7 @@ async def test_create_docker_start_command_creates_credentials_without_device_cr
         "http://backend:8000",
     )
 
-    response = await remote_devices.create_docker_start_command(
+    response = remote_devices.create_docker_start_command(
         request=_FakeRequest(host="localhost:8000"),
         body=remote_devices.CreateDockerRemoteDeviceRequest(
             client_origin="http://localhost:1420",
@@ -140,7 +140,7 @@ async def test_create_docker_start_command_uses_current_system_urls(
         "wss://socket.example.com",
     )
 
-    response = await remote_devices.create_docker_start_command(
+    response = remote_devices.create_docker_start_command(
         request=_FakeRequest(host="backend.example.com", scheme="https"),
         body=remote_devices.CreateDockerRemoteDeviceRequest(
             client_origin="https://app.example.com",
@@ -161,7 +161,7 @@ async def test_create_docker_start_command_keeps_client_origin_optional(
     test_db,
     test_user,
 ):
-    response = await remote_devices.create_docker_start_command(
+    response = remote_devices.create_docker_start_command(
         request=_FakeRequest(host="backend.example.com", scheme="https"),
         body=remote_devices.CreateDockerRemoteDeviceRequest(),
         db=test_db,

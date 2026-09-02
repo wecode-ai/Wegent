@@ -28,7 +28,7 @@ Usage:
 import asyncio
 import logging
 import time
-from typing import Optional, Set
+from typing import Dict, Optional, Set
 
 logger = logging.getLogger(__name__)
 
@@ -44,13 +44,15 @@ class ShutdownManager:
     Tracks active streaming requests and provides mechanisms to:
     - Signal shutdown initiation
     - Wait for active streams to complete
-    - Continue accepting new requests during shutdown (graceful)
+    - Reject new streams after shutdown admission closes
     """
 
     def __init__(self):
         self._shutting_down: bool = False
         self._shutdown_event: asyncio.Event = asyncio.Event()
-        self._active_streams: Set[int] = set()
+        self._shutdown_event.set()
+        self._active_streams: Dict[int, int] = {}
+        self._active_stream_count = 0
         self._lock: asyncio.Lock = asyncio.Lock()
         self._shutdown_start_time: Optional[float] = None
 
@@ -68,11 +70,11 @@ class ShutdownManager:
 
     def get_active_stream_count(self) -> int:
         """Get the number of active streaming requests."""
-        return len(self._active_streams)
+        return self._active_stream_count
 
     def get_active_streams(self) -> Set[int]:
         """Get a copy of active stream IDs."""
-        return self._active_streams.copy()
+        return set(self._active_streams)
 
     async def initiate_shutdown(self) -> None:
         """
@@ -95,11 +97,12 @@ class ShutdownManager:
             self._shutdown_start_time = time.time()
             logger.info(
                 "Graceful shutdown initiated. Active streams: %d",
-                len(self._active_streams),
+                self._active_stream_count,
             )
 
-            # Try to notify other workers via Redis
-            await self._notify_shutdown_via_redis()
+        # Redis notification is not part of the admission critical section.
+        # Once the flag above is visible, every later registration is rejected.
+        await self._notify_shutdown_via_redis()
 
     async def _notify_shutdown_via_redis(self) -> None:
         """Notify other workers about shutdown via Redis."""
@@ -119,37 +122,29 @@ class ShutdownManager:
         """
         Register a new streaming request.
 
-        Note: During graceful shutdown, we still accept new streams from
-        existing WebSocket connections. New WebSocket connections are rejected
-        at the connection level (on_connect), but requests from already
-        connected clients should be allowed to complete gracefully.
-
         Args:
             subtask_id: The subtask ID for the stream
 
         Returns:
-            bool: Always True (registration always succeeds)
+            bool: True when admission succeeds
+
+        Raises:
+            StreamAdmissionClosedError: If shutdown has already started
         """
         async with self._lock:
-            # Reset shutdown event if we're adding a new stream during shutdown
-            # This ensures wait_for_streams will wait for this new stream too
-            if self._shutting_down and len(self._active_streams) == 0:
-                self._shutdown_event.clear()
-
-            self._active_streams.add(subtask_id)
             if self._shutting_down:
-                logger.info(
-                    "Registered stream during shutdown (from existing connection): "
-                    "subtask_id=%d, active_count=%d",
-                    subtask_id,
-                    len(self._active_streams),
-                )
-            else:
-                logger.debug(
-                    "Registered stream: subtask_id=%d, active_count=%d",
-                    subtask_id,
-                    len(self._active_streams),
-                )
+                raise StreamAdmissionClosedError(subtask_id)
+
+            self._active_streams[subtask_id] = (
+                self._active_streams.get(subtask_id, 0) + 1
+            )
+            self._active_stream_count += 1
+            self._shutdown_event.clear()
+            logger.debug(
+                "Registered stream: subtask_id=%d, active_count=%d",
+                subtask_id,
+                self._active_stream_count,
+            )
             return True
 
     async def unregister_stream(self, subtask_id: int) -> None:
@@ -160,17 +155,23 @@ class ShutdownManager:
             subtask_id: The subtask ID to unregister
         """
         async with self._lock:
-            self._active_streams.discard(subtask_id)
+            registration_count = self._active_streams.get(subtask_id, 0)
+            if registration_count > 1:
+                self._active_streams[subtask_id] = registration_count - 1
+            elif registration_count == 1:
+                del self._active_streams[subtask_id]
+            if registration_count > 0:
+                self._active_stream_count -= 1
             logger.debug(
                 "Unregistered stream: subtask_id=%d, active_count=%d",
                 subtask_id,
-                len(self._active_streams),
+                self._active_stream_count,
             )
 
-            # If shutting down and no more streams, set the event
-            if self._shutting_down and len(self._active_streams) == 0:
+            if self._active_stream_count == 0:
                 self._shutdown_event.set()
-                logger.info("All streams completed, shutdown can proceed")
+                if self._shutting_down:
+                    logger.info("All streams completed, shutdown can proceed")
 
     async def wait_for_streams(self, timeout: float = 30.0) -> bool:
         """
@@ -182,13 +183,15 @@ class ShutdownManager:
         Returns:
             bool: True if all streams completed, False if timeout
         """
-        if len(self._active_streams) == 0:
-            logger.info("No active streams, proceeding with shutdown")
-            return True
+        async with self._lock:
+            active_count = self._active_stream_count
+            if active_count == 0:
+                logger.info("No active streams, proceeding with shutdown")
+                return True
 
         logger.info(
             "Waiting for %d active streams to complete (timeout: %.1fs)",
-            len(self._active_streams),
+            active_count,
             timeout,
         )
 
@@ -197,11 +200,13 @@ class ShutdownManager:
             logger.info("All streams completed within timeout")
             return True
         except asyncio.TimeoutError:
-            remaining = len(self._active_streams)
+            async with self._lock:
+                remaining = self._active_stream_count
+                active_subtask_ids = list(self._active_streams)
             logger.warning(
                 "Timeout waiting for streams. %d streams still active: %s",
                 remaining,
-                list(self._active_streams),
+                active_subtask_ids,
             )
             return False
 
@@ -217,12 +222,13 @@ class ShutdownManager:
         from app.services.chat.storage import session_manager
 
         cancelled_count = 0
-        streams_to_cancel = self._active_streams.copy()
+        async with self._lock:
+            streams_to_cancel = self._active_streams.copy()
 
-        for subtask_id in streams_to_cancel:
+        for subtask_id, registration_count in streams_to_cancel.items():
             try:
                 await session_manager.cancel_stream(subtask_id)
-                cancelled_count += 1
+                cancelled_count += registration_count
                 logger.info(
                     "Cancelled stream during shutdown: subtask_id=%d", subtask_id
                 )
@@ -231,20 +237,28 @@ class ShutdownManager:
 
         return cancelled_count
 
-    def reset(self) -> None:
-        """
-        Reset shutdown state (for testing purposes).
-
-        WARNING: This should only be used in tests.
-        """
+    def _reset_for_testing(self) -> None:
+        """Reset local state in isolated tests; never call in application code."""
         from app.core.local_shutdown import reset_local_shutdown
 
         reset_local_shutdown()
         self._shutting_down = False
-        self._shutdown_event.clear()
         self._active_streams.clear()
+        self._active_stream_count = 0
+        self._shutdown_event.set()
         self._shutdown_start_time = None
         logger.debug("Shutdown manager state reset")
+
+
+class StreamAdmissionClosedError(RuntimeError):
+    """Raised when a new stream races with graceful shutdown."""
+
+    error_code = "server_shutting_down"
+
+    def __init__(self, subtask_id: int):
+        super().__init__(
+            f"Server is shutting down; stream {subtask_id} was not started"
+        )
 
 
 # Global shutdown manager instance

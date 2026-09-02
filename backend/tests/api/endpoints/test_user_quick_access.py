@@ -151,8 +151,7 @@ def _message(
     )
 
 
-@pytest.mark.asyncio
-async def test_quick_access_keeps_favorites_and_recommendations(monkeypatch):
+def test_quick_access_keeps_favorites_and_recommendations(monkeypatch):
     system_config = SimpleNamespace(version=2, config_value={"teams": [101]})
     db = _FakeDb(system_config)
     current_user = SimpleNamespace(
@@ -173,7 +172,7 @@ async def test_quick_access_keeps_favorites_and_recommendations(monkeypatch):
         },
     )
 
-    response = await users_endpoint.get_user_quick_access(
+    response = users_endpoint.get_user_quick_access(
         db=db,
         current_user=current_user,
     )
@@ -195,7 +194,7 @@ async def test_recent_teams_are_returned_independently(monkeypatch):
         lambda *a, **k: recent,
     )
 
-    response = await users_endpoint.get_user_recent_teams(
+    response = users_endpoint.get_user_recent_teams(
         db=SimpleNamespace(),
         current_user=SimpleNamespace(id=7),
     )

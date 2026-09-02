@@ -10,6 +10,7 @@ Central registry for MCP providers with plugin architecture support.
 
 from typing import Dict, List, Optional
 
+from app.core.payload_codec import run_payload_codec
 from app.schemas.mcp_provider_config import MCPProviderConfig
 from app.schemas.mcp_providers import MCPServer
 from app.services.mcp_providers.core.http_client import (
@@ -130,7 +131,14 @@ class MCPProviderRegistry:
                 mapper = DataMapper()
                 try:
                     raw_servers = await client.fetch_all_servers(token)
-                    servers = mapper.map_servers(raw_servers, config, token)
+                    servers = await run_payload_codec(
+                        mapper.map_servers,
+                        raw_servers,
+                        config,
+                        token,
+                        payload_hint=raw_servers,
+                        force_offload=True,
+                    )
                     return servers, None
                 finally:
                     await client.close()

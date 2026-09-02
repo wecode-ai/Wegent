@@ -48,11 +48,15 @@ async def test_list_devices_excludes_remote_devices(test_db):
     assert devices == []
 
 
-async def test_app_provider_lists_app_devices_separately(test_db):
+async def test_app_provider_lists_app_devices_separately(test_db, monkeypatch):
     """Desktop app registrations keep their explicit app device type."""
     test_db.add(_local_device("app-device", DeviceType.APP.value))
     test_db.add(_local_device("local-device", DeviceType.LOCAL.value))
     test_db.commit()
+    monkeypatch.setattr(
+        "app.services.device.local_provider.executor_version_service.get_latest_version",
+        AsyncMock(return_value="1.0.0"),
+    )
 
     app_devices = await AppDeviceProvider().list_devices(test_db, user_id=7)
     local_devices = await LocalDeviceProvider().list_devices(test_db, user_id=7)

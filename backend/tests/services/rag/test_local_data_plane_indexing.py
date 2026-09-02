@@ -2,6 +2,8 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
+import asyncio
+import threading
 from types import SimpleNamespace
 from unittest.mock import ANY, AsyncMock, MagicMock, patch
 
@@ -240,9 +242,7 @@ async def test_index_document_local_closes_owned_session_before_engine_indexing(
 
 
 @pytest.mark.asyncio
-async def test_index_document_local_closes_owned_session_before_external_attachment_get() -> (
-    None
-):
+async def test_index_document_local_keeps_blocking_preparation_off_event_loop() -> None:
     db = MagicMock()
     db.closed = False
 
@@ -250,26 +250,13 @@ async def test_index_document_local_closes_owned_session_before_external_attachm
         db.closed = True
 
     db.close.side_effect = close_db
-    context = SimpleNamespace(
-        id=9,
-        context_type=ContextType.ATTACHMENT.value,
-        status=ContextStatus.READY.value,
-        storage_backend="s3",
-        storage_key="attachments/9",
-        original_filename="notes.md",
-        file_extension=".md",
-        is_encrypted=False,
-    )
-    db.query.return_value.filter.return_value.first.return_value = context
+    preparation_started = threading.Event()
+    release_preparation = threading.Event()
 
-    attachment_backend = MagicMock()
-
-    def get_after_session_closed(storage_key):
-        assert storage_key == "attachments/9"
-        assert db.closed is True
+    def blocking_attachment_load(*_args):
+        preparation_started.set()
+        assert release_preparation.wait(timeout=2)
         return b"hello world"
-
-    attachment_backend.get.side_effect = get_after_session_closed
 
     spec = IndexRuntimeSpec(
         knowledge_base_id=1,
@@ -306,28 +293,44 @@ async def test_index_document_local_closes_owned_session_before_external_attachm
             return_value=db,
         ),
         patch(
-            "app.services.rag.local_data_plane.indexing.get_storage_backend",
-            return_value=attachment_backend,
-        ),
-        patch(
-            "app.services.rag.local_data_plane.indexing.create_storage_backend_from_runtime_config",
+            "app.services.rag.local_data_plane.indexing._build_index_storage_backend",
             return_value=MagicMock(),
         ),
         patch(
-            "app.services.rag.local_data_plane.indexing.create_embedding_model_from_runtime_config",
+            "app.services.rag.local_data_plane.indexing._build_index_embed_model",
             return_value=object(),
+        ),
+        patch(
+            "app.services.rag.local_data_plane.indexing._get_attachment_binary_source",
+            side_effect=lambda *_args: (blocking_attachment_load(), "notes.md", ".md"),
         ),
         patch(
             "app.services.rag.local_data_plane.indexing.EngineDocumentService.index_document_from_binary",
             side_effect=index_after_session_closed,
         ),
     ):
-        result = await index_document_local(spec)
+        task = asyncio.create_task(index_document_local(spec))
+        try:
+            while not preparation_started.is_set():
+                await asyncio.sleep(0)
+
+            ticked = False
+
+            def mark_tick() -> None:
+                nonlocal ticked
+                ticked = True
+
+            asyncio.get_running_loop().call_soon(mark_tick)
+            await asyncio.sleep(0)
+            assert ticked is True
+        finally:
+            release_preparation.set()
+
+        result = await task
 
     assert result == {"status": "success"}
     db.rollback.assert_called_once()
     db.close.assert_called_once()
-    attachment_backend.get.assert_called_once_with("attachments/9")
 
 
 @pytest.mark.asyncio

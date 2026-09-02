@@ -35,7 +35,7 @@ async def test_download_url_uses_task_archive_storage_key(monkeypatch):
         lambda storage_key: f"https://minio.local/{storage_key}",
     )
 
-    response = await get_workspace_archive_download_url(task_id=1, db=object())
+    response = get_workspace_archive_download_url(task_id=1, db=object())
 
     assert response.storage_key == "workspace-archives/1/archive.tar.gz"
     assert response.download_url == (
@@ -51,7 +51,7 @@ async def test_download_url_rejects_mismatched_storage_key(monkeypatch):
     )
 
     with pytest.raises(HTTPException) as exc:
-        await get_workspace_archive_download_url(
+        get_workspace_archive_download_url(
             task_id=1,
             storage_key="workspace-archives/other/archive.tar.gz",
             db=object(),

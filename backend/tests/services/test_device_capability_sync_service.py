@@ -3,7 +3,9 @@
 # SPDX-License-Identifier: Apache-2.0
 
 import pytest
+from sqlalchemy.orm import sessionmaker
 
+from app.db import session as db_session
 from app.models.kind import Kind
 from app.schemas.device import DeviceType
 from app.services.device.capability_sync_service import (
@@ -29,6 +31,45 @@ class FakeSio:
             }
         )
         return self.response
+
+
+@pytest.fixture(autouse=True)
+def worker_session_factory(test_db, monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setattr(
+        db_session,
+        "SessionLocal",
+        sessionmaker(
+            bind=test_db.get_bind(),
+            expire_on_commit=False,
+            join_transaction_mode="create_savepoint",
+        ),
+    )
+
+
+def _create_device(
+    test_db,
+    user_id: int,
+    device_id: str,
+    *,
+    device_type: str = "local",
+    runtime_device_id: str | None = None,
+) -> Kind:
+    row = Kind(
+        user_id=user_id,
+        kind="Device",
+        name=device_id,
+        namespace="default",
+        json={
+            "spec": {
+                "deviceId": runtime_device_id or device_id,
+                "deviceType": device_type,
+            }
+        },
+        is_active=True,
+    )
+    test_db.add(row)
+    test_db.commit()
+    return row
 
 
 def _runtime_route(
@@ -239,17 +280,19 @@ async def test_sync_user_global_capabilities_replaces_all_online_devices(
     skill = _create_skill(test_db, test_user.id)
     _create_installed_skill(test_db, test_user.id, skill)
     _create_installed_mcp(test_db, test_user.id)
+    _create_device(test_db, test_user.id, "device-a")
+    _create_device(test_db, test_user.id, "device-b")
     fake_sio = FakeSio()
 
-    async def fake_online_devices(db, user_id):
-        return [{"device_id": "device-a"}, {"device_id": "device-b"}]
+    async def fake_online_info(user_id, device_id):
+        return {"status": "online"}
 
     async def resolve_route(*, user_id, submitted_device_id):
         return _runtime_route(logical_device_id=submitted_device_id)
 
     monkeypatch.setattr(
-        "app.services.device.capability_sync_service.device_service.get_online_devices",
-        fake_online_devices,
+        "app.services.device.capability_sync_service.device_service.get_device_online_info",
+        fake_online_info,
     )
     monkeypatch.setattr(
         "app.services.device.capability_sync_service.runtime_route_resolver.resolve",
@@ -263,7 +306,6 @@ async def test_sync_user_global_capabilities_replaces_all_online_devices(
     service = DeviceCapabilitySyncService()
 
     result = await service.sync_user_global_capabilities(
-        test_db,
         user_id=test_user.id,
     )
 
@@ -282,9 +324,17 @@ async def test_sync_user_global_capabilities_uses_cloud_socket_device_id(
     test_db, test_user, monkeypatch
 ):
     fake_sio = FakeSio()
+    _create_device(
+        test_db,
+        test_user.id,
+        "sandbox-1",
+        device_type="cloud",
+        runtime_device_id="executor-device-1",
+    )
 
-    async def fake_online_devices(db, user_id):
-        return [{"device_id": "sandbox-1", "socket_device_id": "executor-device-1"}]
+    async def fake_online_info(user_id, device_id):
+        assert device_id == "executor-device-1"
+        return {"status": "online"}
 
     async def resolve_route(*, user_id, submitted_device_id):
         assert submitted_device_id == "executor-device-1"
@@ -294,8 +344,8 @@ async def test_sync_user_global_capabilities_uses_cloud_socket_device_id(
         )
 
     monkeypatch.setattr(
-        "app.services.device.capability_sync_service.device_service.get_online_devices",
-        fake_online_devices,
+        "app.services.device.capability_sync_service.device_service.get_device_online_info",
+        fake_online_info,
     )
     monkeypatch.setattr(
         "app.services.device.capability_sync_service.runtime_route_resolver.resolve",
@@ -309,7 +359,6 @@ async def test_sync_user_global_capabilities_uses_cloud_socket_device_id(
     service = DeviceCapabilitySyncService()
 
     result = await service.sync_user_global_capabilities(
-        test_db,
         user_id=test_user.id,
     )
 
@@ -375,7 +424,6 @@ async def test_sync_installed_plugin_to_device_merges_only_target_plugin(
     )
 
     result = await DeviceCapabilitySyncService().sync_installed_plugin_to_device(
-        test_db,
         user_id=test_user.id,
         device_id="sandbox-1",
         installed_plugin_id=installed_plugin.id,
@@ -435,7 +483,6 @@ async def test_sync_installed_plugin_to_device_rejects_missing_acknowledgement(
 
     with pytest.raises(DeviceCapabilitySyncError, match="not acknowledged"):
         await DeviceCapabilitySyncService().sync_installed_plugin_to_device(
-            test_db,
             user_id=test_user.id,
             device_id="device-1",
             installed_plugin_id=installed_plugin.id,

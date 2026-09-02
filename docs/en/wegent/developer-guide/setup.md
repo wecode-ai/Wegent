@@ -172,8 +172,8 @@ cp .env.example .env
 #### Run Development Server
 
 ```bash
-# Run with uvicorn, hot reload enabled
-uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+# Start the Backend parent and its Web, Stream, Maintenance, and Celery children
+HOST=0.0.0.0 PORT=8000 uv run python -m app.runtime
 ```
 
 Access API documentation:
@@ -395,7 +395,7 @@ For detailed testing framework documentation, best practices, and CI/CD configur
 ```bash
 # Enable verbose logging
 export LOG_LEVEL=DEBUG
-uvicorn app.main:app --reload --log-level debug
+PORT=8000 uv run python -m app.runtime
 ```
 
 ### Frontend Debugging

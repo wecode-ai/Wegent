@@ -18,11 +18,13 @@ import hmac
 import logging
 import re
 import time
+from dataclasses import dataclass
 from typing import Any, Dict, List, Optional
 
 import httpx
 from sqlalchemy.orm import Session
 
+from app.core.payload_codec import decode_sync_response_json, encode_http_json
 from app.models.kind import Kind
 from app.schemas.subscription import (
     NotificationLevel,
@@ -41,6 +43,48 @@ MESSAGER_KIND = "Messager"
 
 # Attachment URL pattern for link conversion
 ATTACHMENT_URL_PATTERN = r"/api/attachments/(\d+)/download"
+
+
+@dataclass(frozen=True)
+class _MessagerDelivery:
+    """Detached inputs for one external Messager delivery."""
+
+    channel_type: str
+    channel_id: int
+    user_id: int
+    sender_id: Optional[str]
+    sender_staff_id: Optional[str]
+    message: str
+    subscription_display_name: str
+    client_id: Optional[str] = None
+    client_secret: Optional[str] = None
+    card_template_id: Optional[str] = None
+    bot_token: Optional[str] = None
+    send_private: bool = True
+    send_group: bool = False
+    group_conversation_id: Optional[str] = None
+
+
+@dataclass(frozen=True)
+class _FollowerDeliveryPlan:
+    """Detached deliveries for one follower."""
+
+    user_id: int
+    deliveries: tuple[_MessagerDelivery, ...]
+    preparation_error: Optional[str] = None
+
+
+@dataclass(frozen=True)
+class _ExecutionNotificationPlan:
+    """Detached notification work loaded from one database session."""
+
+    subscription_id: int
+    execution_id: int
+    total_followers: int
+    silent_count: int
+    default_count: int
+    notify_count: int
+    followers: tuple[_FollowerDeliveryPlan, ...]
 
 
 def _convert_to_frontend_attachment_url(attachment_id: str | int) -> str:
@@ -128,110 +172,163 @@ class SubscriptionNotificationDispatcher:
         Returns:
             Dict with notification dispatch results
         """
-        logger.info(
-            f"[SubscriptionNotificationDispatcher] Dispatching notifications for "
-            f"subscription {subscription_id} execution {execution_id} result_summary: {result_summary}"
+        plan = self._prepare_execution_notifications(
+            db,
+            subscription_id=subscription_id,
+            execution_id=execution_id,
+            subscription_display_name=subscription_display_name,
+            result_summary=result_summary,
+            status=status,
+            detail_url=detail_url,
         )
-        # Get all accepted followers with their settings
-        followers_with_settings = (
-            subscription_notification_service.get_followers_with_settings(
-                db, subscription_id=subscription_id
-            )
-        )
+        return await self._dispatch_execution_notification_plan(plan)
 
-        results = {
-            "total_followers": len(followers_with_settings),
-            "silent_count": 0,
-            "default_count": 0,
-            "notify_count": 0,
-            "notify_success": 0,
-            "notify_failed": 0,
-            "errors": [],
-        }
-
-        for user_id, config in followers_with_settings:
-            level = config.notification_level
-
-            if level == NotificationLevel.SILENT:
-                results["silent_count"] += 1
-                # Silent: no notification sent, execution marked as COMPLETED_SILENT
-                continue
-
-            elif level == NotificationLevel.DEFAULT:
-                results["default_count"] += 1
-                # Default: no special notification, WebSocket handles it
-                continue
-
-            elif level == NotificationLevel.NOTIFY:
-                results["notify_count"] += 1
-                # Notify: send notification via Messager channels
-                if config.notification_channel_ids:
-                    try:
-                        await self._send_messager_notifications(
-                            db=db,
-                            user_id=user_id,
-                            channel_ids=config.notification_channel_ids,
-                            subscription_id=subscription_id,
-                            execution_id=execution_id,
-                            subscription_display_name=subscription_display_name,
-                            result_summary=result_summary,
-                            status=status,
-                            detail_url=detail_url,
-                        )
-                        results["notify_success"] += 1
-                    except Exception as e:
-                        results["notify_failed"] += 1
-                        results["errors"].append(
-                            f"Failed to notify user {user_id}: {str(e)}"
-                        )
-                        logger.warning(
-                            f"[SubscriptionNotificationDispatcher] Failed to notify user {user_id}: {e}"
-                        )
-                else:
-                    # No channels configured, log warning
-                    logger.warning(
-                        f"[SubscriptionNotificationDispatcher] User {user_id} has notify level "
-                        f"but no channels configured"
-                    )
-
-        logger.info(
-            f"[SubscriptionNotificationDispatcher] Dispatched notifications for "
-            f"subscription {subscription_id} execution {execution_id}: "
-            f"silent={results['silent_count']}, default={results['default_count']}, "
-            f"notify={results['notify_count']} (success={results['notify_success']}, "
-            f"failed={results['notify_failed']})"
-        )
-
-        return results
-
-    async def _send_messager_notifications(
+    async def dispatch_execution_notifications_from_store(
         self,
-        db: Session,
         *,
-        user_id: int,
-        channel_ids: List[int],
         subscription_id: int,
         execution_id: int,
         subscription_display_name: str,
         result_summary: str,
         status: str,
         detail_url: Optional[str] = None,
-    ) -> None:
-        """
-        Send notifications via Messager channels.
+    ) -> Dict[str, Any]:
+        """Load notification data in a worker session, then send asynchronously."""
+        from app.services.chat.storage.db import run_sync_in_executor
 
-        Args:
-            db: Database session
-            user_id: User ID to notify
-            channel_ids: List of Messager channel IDs
-            subscription_id: Subscription ID
-            execution_id: Background execution ID
-            subscription_display_name: Display name of the subscription
-            result_summary: Summary of the execution result
-            status: Execution status
-            detail_url: URL to view execution details
-        """
-        # Get user's IM bindings
+        plan = await run_sync_in_executor(
+            self._prepare_execution_notifications_from_store_sync,
+            subscription_id,
+            execution_id,
+            subscription_display_name,
+            result_summary,
+            status,
+            detail_url,
+        )
+        return await self._dispatch_execution_notification_plan(plan)
+
+    def _prepare_execution_notifications_from_store_sync(
+        self,
+        subscription_id: int,
+        execution_id: int,
+        subscription_display_name: str,
+        result_summary: str,
+        status: str,
+        detail_url: Optional[str],
+    ) -> _ExecutionNotificationPlan:
+        """Create a detached notification plan in a worker-owned session."""
+        from app.db.session import get_db_session
+
+        with get_db_session() as db:
+            return self._prepare_execution_notifications(
+                db,
+                subscription_id=subscription_id,
+                execution_id=execution_id,
+                subscription_display_name=subscription_display_name,
+                result_summary=result_summary,
+                status=status,
+                detail_url=detail_url,
+            )
+
+    def _prepare_execution_notifications(
+        self,
+        db: Session,
+        *,
+        subscription_id: int,
+        execution_id: int,
+        subscription_display_name: str,
+        result_summary: str,
+        status: str,
+        detail_url: Optional[str],
+    ) -> _ExecutionNotificationPlan:
+        """Load all database-backed delivery inputs into immutable values."""
+        logger.info(
+            f"[SubscriptionNotificationDispatcher] Dispatching notifications for "
+            f"subscription {subscription_id} execution {execution_id} result_summary: {result_summary}"
+        )
+        followers_with_settings = (
+            subscription_notification_service.get_followers_with_settings(
+                db, subscription_id=subscription_id
+            )
+        )
+        silent_count = 0
+        default_count = 0
+        notify_count = 0
+        follower_plans: list[_FollowerDeliveryPlan] = []
+
+        for user_id, config in followers_with_settings:
+            level = config.notification_level
+            if level == NotificationLevel.SILENT:
+                silent_count += 1
+                continue
+            if level == NotificationLevel.DEFAULT:
+                default_count += 1
+                continue
+            if level != NotificationLevel.NOTIFY:
+                continue
+
+            notify_count += 1
+            channel_ids = config.notification_channel_ids
+            if not channel_ids:
+                logger.warning(
+                    f"[SubscriptionNotificationDispatcher] User {user_id} has notify level "
+                    f"but no channels configured"
+                )
+                continue
+            try:
+                deliveries = self._prepare_messager_deliveries(
+                    db,
+                    user_id=user_id,
+                    channel_ids=channel_ids,
+                    subscription_id=subscription_id,
+                    subscription_display_name=subscription_display_name,
+                    result_summary=result_summary,
+                    status=status,
+                    detail_url=detail_url,
+                )
+                follower_plans.append(
+                    _FollowerDeliveryPlan(
+                        user_id=user_id,
+                        deliveries=deliveries,
+                    )
+                )
+            except Exception as exc:
+                logger.warning(
+                    "[SubscriptionNotificationDispatcher] Failed to prepare notification for user %s: %s",
+                    user_id,
+                    exc,
+                )
+                follower_plans.append(
+                    _FollowerDeliveryPlan(
+                        user_id=user_id,
+                        deliveries=(),
+                        preparation_error=str(exc),
+                    )
+                )
+
+        return _ExecutionNotificationPlan(
+            subscription_id=subscription_id,
+            execution_id=execution_id,
+            total_followers=len(followers_with_settings),
+            silent_count=silent_count,
+            default_count=default_count,
+            notify_count=notify_count,
+            followers=tuple(follower_plans),
+        )
+
+    def _prepare_messager_deliveries(
+        self,
+        db: Session,
+        *,
+        user_id: int,
+        channel_ids: List[int],
+        subscription_id: int,
+        subscription_display_name: str,
+        result_summary: str,
+        status: str,
+        detail_url: Optional[str] = None,
+    ) -> tuple[_MessagerDelivery, ...]:
+        """Prepare detached delivery inputs for one follower."""
         user_bindings = subscription_notification_service.get_user_im_bindings(
             db, user_id=user_id
         )
@@ -253,21 +350,14 @@ class SubscriptionNotificationDispatcher:
             result_summary=result_summary,
             detail_url=detail_url,
         )
-        # Convert attachment links to public share URLs for external IM channels
-        # This allows any logged-in user to download, not just the creator
-        formatted_message = self._convert_attachment_links(
-            formatted_message, db, subscription_owner_id or user_id
-        )
+        formatted_message = _convert_attachment_links_to_public(formatted_message)
         logger.info(
             f"[_send_messager_notifications] Formatted message with detail_url: {detail_url}, status: {status}"
         )
 
-        # Send to each configured channel
-        tasks = []
+        deliveries: list[_MessagerDelivery] = []
         for channel_id in channel_ids:
             channel_id_str = str(channel_id)
-
-            # Check if user has binding for this channel
             if channel_id_str not in user_bindings:
                 logger.warning(
                     f"[SubscriptionNotificationDispatcher] User {user_id} has no binding "
@@ -276,8 +366,6 @@ class SubscriptionNotificationDispatcher:
                 continue
 
             binding = user_bindings[channel_id_str]
-
-            # Get channel info
             channel = (
                 db.query(Kind)
                 .filter(
@@ -296,8 +384,6 @@ class SubscriptionNotificationDispatcher:
 
             spec = channel.json.get("spec", {})
             channel_type = spec.get("channelType", "")
-
-            # Dispatch based on channel type
             if channel_type == "dingtalk":
                 binding_config = (
                     subscription_notification_service.get_subscription_channel_binding_config(
@@ -313,32 +399,46 @@ class SubscriptionNotificationDispatcher:
                     send_private = bool(binding_config.get("bind_private", True))
                     send_group = bool(binding_config.get("bind_group", False))
                     group_conversation_id = binding_config.get("group_conversation_id")
-                tasks.append(
-                    self._send_dingtalk_notification(
-                        db=db,
-                        channel=channel,
-                        binding=binding,
+                config = spec.get("config", {})
+                client_secret = self._decrypt_channel_credential(
+                    config.get("client_secret"),
+                    channel_id=channel.id,
+                    credential_name="client_secret",
+                )
+                deliveries.append(
+                    _MessagerDelivery(
+                        channel_type=channel_type,
+                        channel_id=channel.id,
                         user_id=user_id,
+                        sender_id=binding.sender_id,
+                        sender_staff_id=binding.sender_staff_id,
                         message=formatted_message,
-                        subscription_id=subscription_id,
-                        execution_id=execution_id,
                         subscription_display_name=subscription_display_name,
+                        client_id=config.get("client_id"),
+                        client_secret=client_secret,
+                        card_template_id=config.get("card_template_id"),
                         send_private=send_private,
                         send_group=send_group,
                         group_conversation_id=group_conversation_id,
                     )
                 )
             elif channel_type == "telegram":
-                tasks.append(
-                    self._send_telegram_notification(
-                        db=db,
-                        channel=channel,
-                        binding=binding,
+                config = spec.get("config", {})
+                bot_token = self._decrypt_channel_credential(
+                    config.get("bot_token"),
+                    channel_id=channel.id,
+                    credential_name="bot_token",
+                )
+                deliveries.append(
+                    _MessagerDelivery(
+                        channel_type=channel_type,
+                        channel_id=channel.id,
                         user_id=user_id,
+                        sender_id=binding.sender_id,
+                        sender_staff_id=binding.sender_staff_id,
                         message=formatted_message,
-                        subscription_id=subscription_id,
-                        execution_id=execution_id,
                         subscription_display_name=subscription_display_name,
+                        bot_token=bot_token,
                     )
                 )
             else:
@@ -346,75 +446,124 @@ class SubscriptionNotificationDispatcher:
                     f"[SubscriptionNotificationDispatcher] Unsupported channel type: {channel_type}"
                 )
 
-        # Run all notification tasks concurrently
+        return tuple(deliveries)
+
+    def _decrypt_channel_credential(
+        self,
+        value: Optional[str],
+        *,
+        channel_id: int,
+        credential_name: str,
+    ) -> Optional[str]:
+        """Decrypt one stored channel credential during worker preparation."""
+        if not value:
+            return None
+        try:
+            from shared.utils.crypto import decrypt_sensitive_data
+
+            return decrypt_sensitive_data(value)
+        except Exception as exc:
+            logger.error(
+                "[SubscriptionNotificationDispatcher] Failed to decrypt %s for channel %s: %s",
+                credential_name,
+                channel_id,
+                exc,
+            )
+            return None
+
+    async def _dispatch_execution_notification_plan(
+        self,
+        plan: _ExecutionNotificationPlan,
+    ) -> Dict[str, Any]:
+        """Send a detached plan without performing synchronous database access."""
+        results: Dict[str, Any] = {
+            "total_followers": plan.total_followers,
+            "silent_count": plan.silent_count,
+            "default_count": plan.default_count,
+            "notify_count": plan.notify_count,
+            "notify_success": 0,
+            "notify_failed": 0,
+            "errors": [],
+        }
+        for follower in plan.followers:
+            if follower.preparation_error is not None:
+                results["notify_failed"] += 1
+                results["errors"].append(
+                    f"Failed to notify user {follower.user_id}: "
+                    f"{follower.preparation_error}"
+                )
+                continue
+            try:
+                await self._send_messager_notifications(follower.deliveries)
+                results["notify_success"] += 1
+            except Exception as exc:
+                results["notify_failed"] += 1
+                results["errors"].append(
+                    f"Failed to notify user {follower.user_id}: {str(exc)}"
+                )
+                logger.warning(
+                    "[SubscriptionNotificationDispatcher] Failed to notify user %s: %s",
+                    follower.user_id,
+                    exc,
+                )
+
+        logger.info(
+            f"[SubscriptionNotificationDispatcher] Dispatched notifications for "
+            f"subscription {plan.subscription_id} execution {plan.execution_id}: "
+            f"silent={results['silent_count']}, default={results['default_count']}, "
+            f"notify={results['notify_count']} (success={results['notify_success']}, "
+            f"failed={results['notify_failed']})"
+        )
+        return results
+
+    async def _send_messager_notifications(
+        self,
+        deliveries: tuple[_MessagerDelivery, ...],
+    ) -> None:
+        """Send detached Messager deliveries concurrently."""
+        tasks = []
+        for delivery in deliveries:
+            if delivery.channel_type == "dingtalk":
+                tasks.append(self._send_dingtalk_notification(delivery))
+            elif delivery.channel_type == "telegram":
+                tasks.append(self._send_telegram_notification(delivery))
         if tasks:
             await asyncio.gather(*tasks, return_exceptions=True)
 
     async def _send_dingtalk_notification(
         self,
-        db: Session,
-        *,
-        channel: Kind,
-        binding: Any,
-        user_id: int,
-        message: str,
-        subscription_id: int,
-        execution_id: int,
-        subscription_display_name: str,
-        send_private: bool = True,
-        send_group: bool = False,
-        group_conversation_id: Optional[str] = None,
+        delivery: _MessagerDelivery,
     ) -> None:
-        """
-        Send notification via DingTalk.
-
-        Args:
-            db: Database session
-            channel: Messager Kind
-            binding: User's IM binding info
-            user_id: User ID
-            message: Notification message
-            subscription_id: Subscription ID
-            execution_id: Background execution ID
-            subscription_display_name: Display name of the subscription
-        """
+        """Send one detached DingTalk delivery."""
+        user_id = delivery.user_id
+        message = delivery.message
+        subscription_display_name = delivery.subscription_display_name
+        send_private = delivery.send_private
+        send_group = delivery.send_group
+        group_conversation_id = delivery.group_conversation_id
         try:
-            dingtalk_user_id = binding.sender_staff_id or binding.sender_id
+            dingtalk_user_id = delivery.sender_staff_id or delivery.sender_id
             if send_private and not dingtalk_user_id:
                 logger.warning(
                     f"[SubscriptionNotificationDispatcher] User {user_id} has no "
-                    f"sender_staff_id or sender_id for DingTalk channel {channel.id}"
+                    f"sender_staff_id or sender_id for DingTalk channel {delivery.channel_id}"
                 )
                 return
 
-            # Get channel config for robot credentials
-            spec = channel.json.get("spec", {})
-            config = spec.get("config", {})
-            client_id = config.get("client_id")
-            client_secret_encrypted = config.get("client_secret")
-
-            if not client_id or not client_secret_encrypted:
+            if not delivery.client_id or not delivery.client_secret:
                 logger.warning(
-                    f"[SubscriptionNotificationDispatcher] Channel {channel.id} missing "
+                    f"[SubscriptionNotificationDispatcher] Channel {delivery.channel_id} missing "
                     f"client_id or client_secret"
                 )
                 return
 
-            # Decrypt the client_secret (stored encrypted in database)
-            from shared.utils.crypto import decrypt_sensitive_data
-
-            client_secret = decrypt_sensitive_data(client_secret_encrypted)
-
-            # Send actual DingTalk message via robot API
             from app.services.channels.dingtalk.sender import DingTalkRobotSender
 
             sender = DingTalkRobotSender(
-                client_id=client_id,
-                client_secret=client_secret,
+                client_id=delivery.client_id,
+                client_secret=delivery.client_secret,
             )
-
-            # Check if AI card template is configured
-            card_template_id = config.get("card_template_id")
+            card_template_id = delivery.card_template_id
 
             if card_template_id:
                 # Use AI card for better visual experience
@@ -528,61 +677,31 @@ class SubscriptionNotificationDispatcher:
 
     async def _send_telegram_notification(
         self,
-        db: Session,
-        *,
-        channel: Kind,
-        binding: Any,
-        user_id: int,
-        message: str,
-        subscription_id: int,
-        execution_id: int,
-        subscription_display_name: str,
+        delivery: _MessagerDelivery,
     ) -> None:
-        """
-        Send notification via Telegram.
-
-        Args:
-            db: Database session
-            channel: Messager Kind
-            binding: User's IM binding info
-            user_id: User ID
-            message: Notification message
-            subscription_id: Subscription ID
-            execution_id: Background execution ID
-            subscription_display_name: Display name of the subscription
-        """
+        """Send one detached Telegram delivery."""
+        user_id = delivery.user_id
+        message = delivery.message
+        subscription_display_name = delivery.subscription_display_name
         try:
-            # Get Telegram chat ID from binding
-            # For Telegram, we use sender_id which is the chat_id
-            telegram_chat_id = binding.sender_id
+            telegram_chat_id = delivery.sender_id
             if not telegram_chat_id:
                 logger.warning(
                     f"[SubscriptionNotificationDispatcher] User {user_id} has no "
-                    f"sender_id (chat_id) for Telegram channel {channel.id}"
+                    f"sender_id (chat_id) for Telegram channel {delivery.channel_id}"
                 )
                 return
 
-            # Get channel config for bot token
-            spec = channel.json.get("spec", {})
-            config = spec.get("config", {})
-            bot_token_encrypted = config.get("bot_token")
-
-            if not bot_token_encrypted:
+            if not delivery.bot_token:
                 logger.warning(
-                    f"[SubscriptionNotificationDispatcher] Channel {channel.id} missing "
+                    f"[SubscriptionNotificationDispatcher] Channel {delivery.channel_id} missing "
                     f"bot_token"
                 )
                 return
 
-            # Decrypt the bot_token (stored encrypted in database)
-            from shared.utils.crypto import decrypt_sensitive_data
-
-            bot_token = decrypt_sensitive_data(bot_token_encrypted)
-
-            # Send actual Telegram message via bot API
             from app.services.channels.telegram.sender import TelegramBotSender
 
-            sender = TelegramBotSender(bot_token=bot_token)
+            sender = TelegramBotSender(bot_token=delivery.bot_token)
 
             # Format message with subscription name as header (same as webhook)
             text_with_title = f"*{subscription_display_name}*\n\n{message}"
@@ -1001,9 +1120,13 @@ class SubscriptionNotificationDispatcher:
             )
 
             async with httpx.AsyncClient(timeout=30.0) as client:
-                response = await client.post(final_url, json=payload)
+                response = await client.post(
+                    final_url,
+                    content=await encode_http_json(payload),
+                    headers={"Content-Type": "application/json"},
+                )
                 response.raise_for_status()
-                result = response.json()
+                result = await decode_sync_response_json(response)
 
                 # Log response details
                 logger.info(
@@ -1095,9 +1218,13 @@ class SubscriptionNotificationDispatcher:
             payload["sign"] = sign
 
         async with httpx.AsyncClient(timeout=30.0) as client:
-            response = await client.post(url, json=payload)
+            response = await client.post(
+                url,
+                content=await encode_http_json(payload),
+                headers={"Content-Type": "application/json"},
+            )
             response.raise_for_status()
-            result = response.json()
+            result = await decode_sync_response_json(response)
 
             if result.get("code") == 0 or result.get("StatusCode") == 0:
                 logger.info(
@@ -1156,7 +1283,11 @@ class SubscriptionNotificationDispatcher:
             headers["X-Webhook-secret"] = secret
 
         async with httpx.AsyncClient(timeout=30.0) as client:
-            response = await client.post(url, json=payload, headers=headers)
+            response = await client.post(
+                url,
+                content=await encode_http_json(payload),
+                headers=headers,
+            )
             response.raise_for_status()
 
             logger.info(
@@ -1164,55 +1295,6 @@ class SubscriptionNotificationDispatcher:
                 f"for subscription {subscription_display_name} to {url}"
             )
             return {"success": True}
-
-    def _convert_attachment_links(self, message: str, db: Session, user_id: int) -> str:
-        """
-        Convert attachment download URLs to public share URLs.
-
-        This is necessary for external IM channels (DingTalk, etc.) to ensure
-        any logged-in user can download the attachment, not just the creator.
-
-        Converts:
-            /api/attachments/123/download
-        To:
-            https://wegent.com/download/attachment/public?token=xxx
-
-        The generated token contains a random nonce to prevent enumeration attacks.
-
-        Args:
-            message: Original message that may contain attachment links
-            db: Database session for generating share tokens
-            user_id: User ID (attachment owner) for generating share tokens
-
-        Returns:
-            Message with converted public share URLs
-        """
-        from app.api.endpoints.adapter.attachments import (
-            _generate_public_share_token,
-        )
-        from app.core.config import settings
-
-        base_url = settings.FRONTEND_URL.rstrip("/")
-
-        # Find all attachment URLs and replace with public share URLs
-        def replace_url(match: re.Match) -> str:
-            attachment_id = int(match.group(1))
-
-            # Generate public share token for this attachment
-            try:
-                token = _generate_public_share_token(
-                    attachment_id=attachment_id, expires_in_days=7
-                )
-                return f"{base_url}/download/shared?token={token}"
-            except Exception as e:
-                logger.warning(
-                    f"Failed to generate public share link for attachment {attachment_id}: {e}"
-                )
-                # Fallback to regular frontend URL
-                return _convert_to_frontend_attachment_url(attachment_id)
-
-        converted = re.sub(ATTACHMENT_URL_PATTERN, replace_url, message)
-        return converted
 
 
 # Singleton instance

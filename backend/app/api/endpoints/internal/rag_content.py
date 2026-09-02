@@ -51,7 +51,7 @@ def _verify_rag_download_authorization(
 
 
 @router.get("/{attachment_id}")
-async def stream_rag_attachment_content(
+def stream_rag_attachment_content(
     attachment_id: int,
     _: None = Depends(_verify_rag_download_authorization),
     db: Session = Depends(get_db),

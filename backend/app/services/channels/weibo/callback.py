@@ -58,28 +58,6 @@ class WeiboCallbackService(BaseChannelCallbackService[WeiboCallbackInfo]):
     def _parse_callback_info(self, data: Dict[str, Any]) -> WeiboCallbackInfo:
         return WeiboCallbackInfo.from_dict(data)
 
-    def _extract_thinking_display(self, thinking: Any) -> str:
-        if not thinking or not isinstance(thinking, list):
-            return ""
-        latest = thinking[-1] if thinking else None
-        if not isinstance(latest, dict):
-            return str(latest) if latest else ""
-
-        details = latest.get("details", {})
-        if not isinstance(details, dict):
-            return ""
-
-        detail_type = details.get("type", "")
-        if detail_type == "tool_use":
-            tool_name = details.get("name", "") or details.get("tool_name", "")
-            return f"工具使用: {tool_name}" if tool_name else "工具使用中..."
-        if detail_type == "tool_result":
-            tool_name = details.get("tool_name", "") or details.get("name", "")
-            return f"工具完成: {tool_name}" if tool_name else "工具执行完成"
-        if detail_type == "result":
-            return "生成结果中..."
-        return "处理中..."
-
     async def _create_emitter(
         self,
         task_id: int,

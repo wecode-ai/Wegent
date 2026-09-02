@@ -24,7 +24,7 @@ from app.services.resource_library_service import (
     _marketplace_config,
     _marketplace_recommendation_score,
 )
-from shared.telemetry.decorators import trace_async
+from shared.telemetry.decorators import trace_sync
 
 router = APIRouter()
 
@@ -110,8 +110,8 @@ def _to_response(
     "/marketplace-resources",
     response_model=AdminMarketplaceResourceList,
 )
-@trace_async()
-async def list_marketplace_resources(
+@trace_sync()
+def list_marketplace_resources(
     resource_type: str = Query(pattern="^(agent|skill)$"),
     page: int = Query(default=1, ge=1),
     limit: int = Query(default=50, ge=1, le=200),
@@ -178,8 +178,8 @@ async def list_marketplace_resources(
     "/marketplace-resources/{resource_id}",
     response_model=AdminMarketplaceResource,
 )
-@trace_async()
-async def update_marketplace_resource(
+@trace_sync()
+def update_marketplace_resource(
     update: AdminMarketplaceResourceUpdate,
     resource_id: int = Path(gt=0),
     db: Session = Depends(get_db),

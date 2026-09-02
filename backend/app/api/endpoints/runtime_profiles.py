@@ -3,6 +3,8 @@
 
 """Wework Runtime profile endpoints."""
 
+from dataclasses import dataclass
+
 from fastapi import APIRouter, Depends, Response, status
 from sqlalchemy.orm import Session
 
@@ -23,14 +25,40 @@ router = APIRouter()
 project_router = APIRouter()
 
 
+@dataclass(frozen=True)
+class _RuntimeProfileUser:
+    id: int
+
+
+def _get_runtime_profile_user(
+    current_user: User = Depends(get_current_user),
+) -> _RuntimeProfileUser:
+    return _RuntimeProfileUser(id=current_user.id)
+
+
+def _load_runtime_profiles(
+    user_id: int,
+    devices: list[dict],
+) -> list[RuntimeProfileView]:
+    from app.services.chat.storage.db import get_db_session
+
+    with get_db_session() as db:
+        runtime_profile_service.ensure_device_defaults(db, user_id, devices)
+        return runtime_profile_service.list(db, user_id)
+
+
 @router.get("", response_model=list[RuntimeProfileView])
 async def list_runtime_profiles(
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: _RuntimeProfileUser = Depends(_get_runtime_profile_user),
 ) -> list[RuntimeProfileView]:
-    devices = await device_service.get_all_devices(db, current_user.id)
-    runtime_profile_service.ensure_device_defaults(db, current_user.id, devices)
-    return runtime_profile_service.list(db, current_user.id)
+    from app.services.chat.storage.db import run_sync_in_executor
+
+    devices = await device_service.get_all_devices_nonblocking(current_user.id)
+    return await run_sync_in_executor(
+        _load_runtime_profiles,
+        current_user.id,
+        devices,
+    )
 
 
 @router.post(

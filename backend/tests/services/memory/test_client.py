@@ -5,6 +5,7 @@
 """Unit tests for LongTermMemoryClient."""
 
 import asyncio
+import json
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import aiohttp
@@ -27,7 +28,11 @@ async def test_add_memory_success(memory_client) -> None:
     """Test successful memory addition."""
     mock_response = MagicMock()
     mock_response.status = 200
-    mock_response.json = AsyncMock(return_value={"id": "test-memory-id"})
+    mock_response.headers = None
+    mock_response.read = AsyncMock(
+        return_value=json.dumps({"id": "test-memory-id"}).encode()
+    )
+    mock_response.get_encoding.return_value = "utf-8"
 
     with patch("aiohttp.ClientSession.post") as mock_post:
         mock_post.return_value.__aenter__.return_value = mock_response
@@ -77,17 +82,21 @@ async def test_search_memories_success(memory_client) -> None:
     """Test successful memory search."""
     mock_response = MagicMock()
     mock_response.status = 200
-    mock_response.json = AsyncMock(
-        return_value={
-            "results": [
-                {
-                    "id": "mem-1",
-                    "memory": "User prefers Python",
-                    "metadata": {"task_id": 123},
-                }
-            ]
-        }
+    mock_response.headers = None
+    mock_response.read = AsyncMock(
+        return_value=json.dumps(
+            {
+                "results": [
+                    {
+                        "id": "mem-1",
+                        "memory": "User prefers Python",
+                        "metadata": {"task_id": 123},
+                    }
+                ]
+            }
+        ).encode()
     )
+    mock_response.get_encoding.return_value = "utf-8"
 
     with patch("aiohttp.ClientSession.post") as mock_post:
         mock_post.return_value.__aenter__.return_value = mock_response

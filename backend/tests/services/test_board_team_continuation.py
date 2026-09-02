@@ -1,6 +1,7 @@
 # SPDX-FileCopyrightText: 2026 Weibo, Inc.
 # SPDX-License-Identifier: Apache-2.0
 
+from contextlib import contextmanager
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
@@ -13,6 +14,7 @@ from app.models.loop_item_execution import LoopItemExecution
 from app.models.project_chat_message import ProjectChatMessage
 from app.models.task import TaskResource
 from app.schemas.project_chat import ProjectChatWegentContinuation
+from app.services import board_team_continuation
 from app.services.board_team_continuation import board_team_continuation_service
 
 
@@ -117,20 +119,55 @@ async def test_reply_creates_one_native_follow_up_and_reuses_it_on_ack_retry(
     test_db.add_all([initial_response, trigger])
     test_db.commit()
 
-    create_chat_task = AsyncMock(
-        return_value=SimpleNamespace(
-            task=native_task,
-            user_subtask=SimpleNamespace(id=70),
-            assistant_subtask=SimpleNamespace(id=71),
-        )
+    created = SimpleNamespace(
+        task=native_task,
+        user_subtask=SimpleNamespace(id=70),
+        assistant_subtask=SimpleNamespace(id=71),
     )
+    create_storage = MagicMock(
+        return_value=SimpleNamespace(creation=created),
+    )
+    task_creation_output = SimpleNamespace()
+    build_output = MagicMock(return_value=task_creation_output)
+    run_side_effects = AsyncMock()
     enqueue = MagicMock()
+
+    @contextmanager
+    def test_db_session():
+        yield test_db
+
+    async def run_inline(function, *args):
+        return function(*args)
+
     monkeypatch.setattr(
-        "app.services.board_team_continuation.project_chat_service._require_scope",
+        board_team_continuation.project_chat_service,
+        "_require_scope",
         MagicMock(return_value=item),
     )
     monkeypatch.setattr(
-        "app.services.board_team_continuation.create_chat_task", create_chat_task
+        board_team_continuation,
+        "_create_task_and_subtasks_storage",
+        create_storage,
+    )
+    monkeypatch.setattr(
+        board_team_continuation,
+        "build_nonblocking_task_creation_output",
+        build_output,
+    )
+    monkeypatch.setattr(
+        board_team_continuation,
+        "run_task_creation_side_effects",
+        run_side_effects,
+    )
+    monkeypatch.setattr(
+        board_team_continuation,
+        "get_db_session",
+        test_db_session,
+    )
+    monkeypatch.setattr(
+        board_team_continuation,
+        "run_sync_in_executor",
+        run_inline,
     )
     monkeypatch.setattr(
         "app.tasks.project_automation_tasks.execute_board_team_continuation.delay",
@@ -143,11 +180,13 @@ async def test_reply_creates_one_native_follow_up_and_reuses_it_on_ack_retry(
         agent_id=agent.id,
     )
 
-    first = await board_team_continuation_service.start(
-        test_db, user_id=test_user.id, request=request
+    first = await board_team_continuation_service.start_nonblocking(
+        user_id=test_user.id,
+        request=request,
     )
-    repeated = await board_team_continuation_service.start(
-        test_db, user_id=test_user.id, request=request
+    repeated = await board_team_continuation_service.start_nonblocking(
+        user_id=test_user.id,
+        request=request,
     )
     second_trigger = ProjectChatMessage(
         message_id="user-second-confirmation",
@@ -167,8 +206,7 @@ async def test_reply_creates_one_native_follow_up_and_reuses_it_on_ack_retry(
     test_db.add(second_trigger)
     test_db.commit()
     with pytest.raises(HTTPException, match="previous Wegent continuation") as exc:
-        await board_team_continuation_service.start(
-            test_db,
+        await board_team_continuation_service.start_nonblocking(
             user_id=test_user.id,
             request=ProjectChatWegentContinuation(
                 project_id="project-1",
@@ -187,10 +225,12 @@ async def test_reply_creates_one_native_follow_up_and_reuses_it_on_ack_retry(
     assert first.message.runtime_address is None
     assert first.message.metadata["backend_task_id"] == native_task.id
     assert first.message.metadata["backend_subtask_id"] == 71
-    assert create_chat_task.await_count == 1
-    assert create_chat_task.await_args.kwargs["task_id"] == native_task.id
-    assert create_chat_task.await_args.kwargs["message"] == "确认"
-    assert create_chat_task.await_args.kwargs["commit"] is False
+    assert create_storage.call_count == 1
+    assert create_storage.call_args.kwargs["task_id"] == native_task.id
+    assert create_storage.call_args.kwargs["message"] == "确认"
+    assert create_storage.call_args.kwargs["commit"] is False
+    build_output.assert_called_once()
+    run_side_effects.assert_awaited_once_with(task_creation_output)
     enqueue.assert_called_once_with(
         task_id=native_task.id,
         assistant_subtask_id=71,

@@ -67,10 +67,10 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Set up Python 3.11 and uv
+      - name: Set up Python 3.12 and uv
         uses: ./.github/actions/setup-python-uv-cache
         with:
-          python-version: "3.11"
+          python-version: "3.12"
 
       - name: Install dependencies
         working-directory: ./backend
@@ -444,10 +444,10 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Set up Python 3.10 and uv
+      - name: Set up Python 3.12 and uv
         uses: ./.github/actions/setup-python-uv-cache
         with:
-          python-version: "3.10"
+          python-version: "3.12"
 
       - name: Install backend dependencies
         working-directory: ./backend
@@ -470,16 +470,17 @@ jobs:
           INIT_DATA_ENABLED: "False"
           PYTHONPATH: ${{ github.workspace }}
         run: |
-          uvicorn app.main:app --host 0.0.0.0 --port 8000 &
+          HOST=0.0.0.0 PORT=8000 uv run --no-sync python -m app.runtime &
           echo "Waiting for backend to start..."
           for i in {1..30}; do
-            if curl -s http://localhost:8000/api/health > /dev/null 2>&1; then
+            if curl -fsS http://localhost:8000/api/ready > /dev/null 2>&1; then
               echo "Backend is ready!"
               break
             fi
             echo "Waiting... ($i/30)"
             sleep 2
           done
+          curl -fsS http://localhost:8000/api/ready > /dev/null
 
       - name: Install wegent dependencies
         working-directory: ./wegent-cli

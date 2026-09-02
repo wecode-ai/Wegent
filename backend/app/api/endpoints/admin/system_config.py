@@ -157,7 +157,7 @@ def update_marketplace_tags_config(
 
 
 @router.get("/system-config/quick-access", response_model=SystemConfigResponse)
-async def get_quick_access_config(
+def get_quick_access_config(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_admin_user),
 ):
@@ -180,7 +180,7 @@ async def get_quick_access_config(
 
 
 @router.put("/system-config/quick-access", response_model=SystemConfigResponse)
-async def update_quick_access_config(
+def update_quick_access_config(
     config_data: SystemConfigUpdate,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_admin_user),
@@ -223,7 +223,7 @@ async def update_quick_access_config(
     "/system-config/quick-launch-functions",
     response_model=QuickLaunchFunctionsResponse,
 )
-async def get_quick_launch_functions_config(
+def get_quick_launch_functions_config(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_admin_user),
 ):
@@ -249,7 +249,7 @@ async def get_quick_launch_functions_config(
     "/system-config/quick-launch-functions",
     response_model=QuickLaunchFunctionsResponse,
 )
-async def update_quick_launch_functions_config(
+def update_quick_launch_functions_config(
     config_data: QuickLaunchFunctionsUpdate,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_admin_user),
@@ -289,7 +289,7 @@ async def update_quick_launch_functions_config(
 
 
 @router.get("/system-config/slogan-tips", response_model=ChatSloganTipsResponse)
-async def get_slogan_tips_config(
+def get_slogan_tips_config(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_admin_user),
 ):
@@ -323,7 +323,7 @@ async def get_slogan_tips_config(
 
 
 @router.put("/system-config/slogan-tips", response_model=ChatSloganTipsResponse)
-async def update_slogan_tips_config(
+def update_slogan_tips_config(
     config_data: ChatSloganTipsUpdate,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_admin_user),
@@ -372,7 +372,7 @@ async def update_slogan_tips_config(
 
 
 @router.post("/setup-complete", response_model=AdminSetupCompleteResponse)
-async def mark_admin_setup_complete(
+def mark_admin_setup_complete(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_admin_user),
 ):

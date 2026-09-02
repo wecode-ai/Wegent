@@ -574,6 +574,7 @@ def update_kb_summary_task(
     knowledge_base_id: int,
     user_id: int,
     user_name: str,
+    force: bool = False,
 ):
     """
     Celery task for updating knowledge base summary.
@@ -610,7 +611,10 @@ def update_kb_summary_task(
         try:
             loop.run_until_complete(
                 summary_service.trigger_kb_summary(
-                    knowledge_base_id, user_id, user_name
+                    knowledge_base_id,
+                    user_id,
+                    user_name,
+                    force=force,
                 )
             )
         finally:

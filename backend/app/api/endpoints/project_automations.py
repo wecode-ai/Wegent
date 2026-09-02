@@ -7,6 +7,7 @@ import hashlib
 import hmac
 import json
 import logging
+from dataclasses import dataclass
 from typing import Any
 
 from fastapi import (
@@ -41,6 +42,7 @@ from app.schemas.project_automation import (
     ProjectAutomationWorkflowMigration,
     ProjectAutomationWorkflowMigrationView,
 )
+from app.services.chat.storage.db import get_db_session, run_sync_in_executor
 from app.services.cloud_projects.access import require_cloud_project_role
 from app.services.loop_items.external_provider import external_loop_item_provider
 from app.services.project_automation_execution import project_automation_execution
@@ -54,6 +56,11 @@ router = APIRouter()
 logger = logging.getLogger(__name__)
 
 
+@dataclass(frozen=True)
+class _AutomationWebhookPlan:
+    event: ProjectAutomationEvent | None
+
+
 @router.post(
     "/automation-events/{webhook_event_id}", status_code=status.HTTP_202_ACCEPTED
 )
@@ -62,36 +69,85 @@ async def trigger_automation_event(
     request: Request,
     x_hub_signature_256: str = Header(default="", alias="X-Hub-Signature-256"),
     x_gitlab_token: str = Header(default="", alias="X-Gitlab-Token"),
-    db: Session = Depends(get_db),
 ) -> dict[str, int | str]:
     logger.info(
         "[ProjectAutomationWebhook] Received event rule=%s content_type=%s",
         webhook_event_id,
         request.headers.get("content-type", ""),
     )
-    rule = db.get(ProjectAutomationRule, webhook_event_id)
-    if rule is None:
-        logger.warning(
-            "[ProjectAutomationWebhook] Rule not found rule=%s", webhook_event_id
-        )
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "Automation event not found")
-    project_automation_service._rule(db, str(rule.cloud_project_id), webhook_event_id)
-    project = db.get(CloudProject, rule.cloud_project_id)
-    if project is None:
-        logger.warning(
-            "[ProjectAutomationWebhook] Project not found rule=%s project=%s",
-            webhook_event_id,
-            rule.cloud_project_id,
-        )
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "Automation event not found")
     raw_body = await request.body()
-    _verify_webhook_signature(
-        rule,
-        project.task_provider,
+    plan = await run_sync_in_executor(
+        _prepare_automation_webhook,
+        webhook_event_id,
         raw_body,
-        x_hub_signature_256=x_hub_signature_256,
-        x_gitlab_token=x_gitlab_token,
+        x_hub_signature_256,
+        x_gitlab_token,
     )
+    if plan.event is None:
+        return {"status": "ignored", "dispatched": 0}
+    event = plan.event
+    dispatched = await project_automation_processor.process_nonblocking(
+        event,
+        automation_id=webhook_event_id,
+    )
+    logger.info(
+        "[ProjectAutomationWebhook] Processed event rule=%s provider=%s "
+        "subject=%s dispatched=%s",
+        webhook_event_id,
+        event.source,
+        event.subject_id,
+        dispatched,
+    )
+    return {"status": "accepted", "dispatched": dispatched}
+
+
+def _prepare_automation_webhook(
+    webhook_event_id: str,
+    raw_body: bytes,
+    x_hub_signature_256: str,
+    x_gitlab_token: str,
+) -> _AutomationWebhookPlan:
+    """Validate and normalize a webhook in one worker-owned DB phase."""
+
+    with get_db_session() as db:
+        rule = db.get(ProjectAutomationRule, webhook_event_id)
+        if rule is None:
+            logger.warning(
+                "[ProjectAutomationWebhook] Rule not found rule=%s",
+                webhook_event_id,
+            )
+            raise HTTPException(
+                status.HTTP_404_NOT_FOUND,
+                "Automation event not found",
+            )
+        project_automation_service._rule(
+            db,
+            str(rule.cloud_project_id),
+            webhook_event_id,
+        )
+        project = db.get(CloudProject, rule.cloud_project_id)
+        if project is None:
+            logger.warning(
+                "[ProjectAutomationWebhook] Project not found rule=%s project=%s",
+                webhook_event_id,
+                rule.cloud_project_id,
+            )
+            raise HTTPException(
+                status.HTTP_404_NOT_FOUND,
+                "Automation event not found",
+            )
+        _verify_webhook_signature(
+            rule,
+            project.task_provider,
+            raw_body,
+            x_hub_signature_256=x_hub_signature_256,
+            x_gitlab_token=x_gitlab_token,
+        )
+        provider = str(project.task_provider)
+        project_key = str(project.project_key or "")
+        project_id = str(rule.cloud_project_id)
+        actor_user_id = rule.created_by_user_id
+
     try:
         payload = json.loads(raw_body)
     except (json.JSONDecodeError, UnicodeDecodeError) as exc:
@@ -100,9 +156,9 @@ async def trigger_automation_event(
         ) from exc
     if not isinstance(payload, dict):
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "Invalid webhook payload")
-    if project.task_provider == "github" and isinstance(payload.get("issue"), dict):
+    if provider == "github" and isinstance(payload.get("issue"), dict):
         event_name = f"issues.{payload.get('action')}"
-    elif project.task_provider == "gitlab" and payload.get("object_kind") == "issue":
+    elif provider == "gitlab" and payload.get("object_kind") == "issue":
         attributes = payload.get("object_attributes")
         action = attributes.get("action") if isinstance(attributes, dict) else None
         event_name = f"issue.{action}"
@@ -113,50 +169,38 @@ async def trigger_automation_event(
             "[ProjectAutomationWebhook] Ignored event rule=%s provider=%s "
             "object_kind=%s event_name=%s",
             webhook_event_id,
-            project.task_provider,
+            provider,
             payload.get("object_kind"),
             event_name,
         )
-        return {"status": "ignored", "dispatched": 0}
+        return _AutomationWebhookPlan(event=None)
     issue = payload.get("issue")
     if not isinstance(issue, dict):
         object_attributes = payload.get("object_attributes")
         issue = object_attributes if isinstance(object_attributes, dict) else payload
     issue = external_loop_item_provider.normalize_issue_payload(issue)
     number = issue.get("number") or issue.get("iid")
-    if not number or project is None or not project.project_key:
+    if not number or not project_key:
         logger.info(
             "[ProjectAutomationWebhook] Ignored event without subject rule=%s "
             "provider=%s has_number=%s has_project_key=%s",
             webhook_event_id,
-            project.task_provider,
+            provider,
             bool(number),
-            bool(project.project_key),
+            bool(project_key),
         )
-        return {"status": "ignored", "dispatched": 0}
-    subject_id = f"{project.project_key}-{number}"
-    source = project.task_provider
-    dispatched = await project_automation_processor.process(
-        db,
-        ProjectAutomationEvent(
+        return _AutomationWebhookPlan(event=None)
+    subject_id = f"{project_key}-{number}"
+    return _AutomationWebhookPlan(
+        event=ProjectAutomationEvent(
             event_type="task.created",
-            project_id=str(rule.cloud_project_id),
+            project_id=project_id,
             subject_id=subject_id,
-            source=source,
-            actor_user_id=rule.created_by_user_id,
+            source=provider,
+            actor_user_id=actor_user_id,
             payload=issue,
-        ),
-        automation_id=webhook_event_id,
+        )
     )
-    logger.info(
-        "[ProjectAutomationWebhook] Processed event rule=%s provider=%s "
-        "subject=%s dispatched=%s",
-        webhook_event_id,
-        source,
-        subject_id,
-        dispatched,
-    )
-    return {"status": "accepted", "dispatched": dispatched}
 
 
 def _verify_webhook_signature(
@@ -306,11 +350,14 @@ def rotate_automation_webhook_secret(
 async def run_automation(
     project_id: str,
     automation_id: str,
-    db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> ProjectAutomationRunView:
-    return await project_automation_service.run_now(
-        db, project_id, automation_id, current_user.id
+    user_id = int(current_user.id)
+    del current_user
+    return await project_automation_service.run_now_nonblocking(
+        project_id=project_id,
+        automation_id=automation_id,
+        user_id=user_id,
     )
 
 
@@ -323,16 +370,16 @@ async def run_workflow_node(
     item_id: str,
     workflow_node_id: str,
     automation_id: str,
-    db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> ProjectAutomationRunView:
-    return await project_automation_service.run_for_workflow_node(
-        db,
-        project_id,
-        automation_id,
-        item_id,
-        workflow_node_id,
-        current_user.id,
+    user_id = int(current_user.id)
+    del current_user
+    return await project_automation_service.run_for_workflow_node_nonblocking(
+        project_id=project_id,
+        automation_id=automation_id,
+        item_id=item_id,
+        workflow_node_id=workflow_node_id,
+        user_id=user_id,
     )
 
 
@@ -358,11 +405,14 @@ def list_runs(
 async def cancel_run(
     project_id: str,
     run_id: str,
-    db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> ProjectAutomationRunView:
-    return await project_automation_service.cancel_run(
-        db, project_id, run_id, current_user.id
+    user_id = int(current_user.id)
+    del current_user
+    return await project_automation_service.cancel_run_nonblocking(
+        project_id=project_id,
+        run_id=run_id,
+        user_id=user_id,
     )
 
 
@@ -373,11 +423,14 @@ async def cancel_run(
 async def retry_run(
     project_id: str,
     run_id: str,
-    db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> ProjectAutomationRunView:
-    return await project_automation_service.retry_run(
-        db, project_id, run_id, current_user.id
+    user_id = int(current_user.id)
+    del current_user
+    return await project_automation_service.retry_run_nonblocking(
+        project_id=project_id,
+        run_id=run_id,
+        user_id=user_id,
     )
 
 

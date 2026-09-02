@@ -2,10 +2,9 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-import asyncio
-
 from sqlalchemy.orm import Session
 
+from app.core.blocking_work import run_knowledge_io
 from app.services.rag.retrieval_service import RetrievalService
 from app.services.rag.runtime_specs import (
     DEFAULT_DIRECT_INJECTION_BUDGET,
@@ -69,7 +68,7 @@ async def query_local(
 def _extract_list_chunks_local_attributes(
     spec: ListChunksRuntimeSpec,
     *,
-    db: Session,
+    db: Session | None = None,
 ) -> dict[str, str | int]:
     del db
     return {
@@ -87,12 +86,17 @@ def _extract_list_chunks_local_attributes(
 async def list_chunks_local(
     spec: ListChunksRuntimeSpec,
     *,
-    db: Session,
+    db: Session | None = None,
 ) -> dict:
     del db
+    return await run_knowledge_io(_list_chunks_sync, spec)
+
+
+def _list_chunks_sync(spec: ListChunksRuntimeSpec) -> dict:
+    """Build the storage client and fetch chunks in one bounded worker."""
+
     storage_backend = create_storage_backend_from_runtime_config(spec.retriever_config)
-    chunks = await asyncio.to_thread(
-        storage_backend.get_all_chunks,
+    chunks = storage_backend.get_all_chunks(
         knowledge_id=str(spec.knowledge_base_id),
         max_chunks=spec.max_chunks,
         user_id=spec.index_owner_user_id,

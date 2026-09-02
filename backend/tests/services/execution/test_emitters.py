@@ -9,6 +9,8 @@ Tests the unified ResultEmitter interface and all implementations.
 """
 
 import asyncio
+import threading
+import time
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -102,6 +104,56 @@ class TestWebSocketResultEmitter:
             await emitter.emit_done(task_id=1, subtask_id=1, result={"value": "test"})
 
             mock_ws.emit_chat_done.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_large_done_guidance_projection_does_not_block_web_loop(
+        self, monkeypatch
+    ) -> None:
+        """Large terminal block scans must run in the bounded payload codec."""
+        from app.services.execution.emitters import WebSocketResultEmitter
+        from app.services.execution.emitters import websocket as websocket_module
+
+        started = threading.Event()
+        release = threading.Event()
+
+        def blocking_projection(result):
+            started.set()
+            release.wait(timeout=1.0)
+            return []
+
+        monkeypatch.setattr(
+            websocket_module,
+            "_select_guidance_blocks",
+            blocking_projection,
+        )
+
+        with patch(
+            "app.services.chat.webpage_ws_chat_emitter.get_webpage_ws_emitter"
+        ) as mock_get:
+            mock_ws = AsyncMock()
+            mock_get.return_value = mock_ws
+            emitter = WebSocketResultEmitter(task_id=1, subtask_id=1)
+            event = ExecutionEvent.create(
+                EventType.DONE,
+                task_id=1,
+                subtask_id=1,
+                result={"blocks": [{"content": "x" * (64 * 1024)}]},
+            )
+
+            started_at = time.monotonic()
+            emit_task = asyncio.create_task(emitter.emit(event))
+            while not started.is_set() and time.monotonic() - started_at < 1.5:
+                await asyncio.sleep(0)
+
+            assert started.is_set()
+            assert time.monotonic() - started_at < 0.2
+            await asyncio.sleep(0)
+            assert not emit_task.done()
+
+            release.set()
+            await asyncio.wait_for(emit_task, timeout=1.0)
+
+        mock_ws.emit_chat_done.assert_awaited_once()
 
     @pytest.mark.asyncio
     async def test_emit_error(self):
@@ -233,7 +285,7 @@ class TestWebSocketResultEmitter:
 
     @pytest.mark.asyncio
     async def test_emit_status_updated_event(self) -> None:
-        """Test emitting STATUS_UPDATED sends websocket event and caches snapshot."""
+        """STATUS_UPDATED only forwards; Stream owns Redis persistence."""
         from app.services.execution.emitters import WebSocketResultEmitter
 
         with (
@@ -241,7 +293,7 @@ class TestWebSocketResultEmitter:
                 "app.services.chat.webpage_ws_chat_emitter.get_webpage_ws_emitter"
             ) as mock_get,
             patch(
-                "app.services.execution.emitters.websocket.session_manager.save_context_metrics",
+                "app.services.chat.storage.session_manager.save_context_metrics",
                 new_callable=AsyncMock,
             ) as mock_save_context_metrics,
         ):
@@ -268,22 +320,7 @@ class TestWebSocketResultEmitter:
 
             await emitter.emit(event)
 
-            mock_save_context_metrics.assert_awaited_once_with(
-                2,
-                {
-                    "task_id": 1,
-                    "subtask_id": 2,
-                    "phase": "after_tool_end",
-                    "context_metrics": {
-                        "remaining_percent": 38,
-                        "is_over_trigger": False,
-                    },
-                    "context_compaction": {
-                        "type": "summary_compact",
-                        "status": "started",
-                    },
-                },
-            )
+            mock_save_context_metrics.assert_not_awaited()
             mock_ws.emit_chat_status_updated.assert_awaited_once_with(
                 task_id=1,
                 subtask_id=2,
@@ -299,47 +336,8 @@ class TestWebSocketResultEmitter:
             )
 
     @pytest.mark.asyncio
-    async def test_emit_status_updated_event_ignores_cache_failure(self) -> None:
-        """Status updates should still be emitted when cache persistence fails."""
-        from app.services.execution.emitters import WebSocketResultEmitter
-
-        with (
-            patch(
-                "app.services.chat.webpage_ws_chat_emitter.get_webpage_ws_emitter"
-            ) as mock_get,
-            patch(
-                "app.services.execution.emitters.websocket.session_manager.save_context_metrics",
-                new_callable=AsyncMock,
-                side_effect=RuntimeError("redis down"),
-            ),
-        ):
-            mock_ws = AsyncMock()
-            mock_get.return_value = mock_ws
-
-            emitter = WebSocketResultEmitter(task_id=1, subtask_id=2)
-            event = ExecutionEvent.create(
-                EventType.STATUS_UPDATED,
-                task_id=1,
-                subtask_id=2,
-                data={
-                    "phase": "after_tool_end",
-                    "context_metrics": {"remaining_percent": 38},
-                },
-            )
-
-            await emitter.emit(event)
-
-            mock_ws.emit_chat_status_updated.assert_awaited_once_with(
-                task_id=1,
-                subtask_id=2,
-                phase="after_tool_end",
-                context_metrics={"remaining_percent": 38},
-                context_compaction=None,
-            )
-
-    @pytest.mark.asyncio
-    async def test_direct_block_updated_emits_and_persists_block_update(self):
-        """Direct block updates should reach the websocket and update stored blocks."""
+    async def test_direct_block_updated_only_emits_websocket_update(self):
+        """Stream owns direct-block persistence; Web only forwards it."""
         from app.services.execution.emitters import WebSocketResultEmitter
 
         with (
@@ -350,16 +348,7 @@ class TestWebSocketResultEmitter:
         ):
             mock_ws = AsyncMock()
             mock_get.return_value = mock_ws
-            mock_session.get_blocks = AsyncMock(
-                return_value=[
-                    {
-                        "id": "codex-commentary-1",
-                        "type": "thinking",
-                        "content": "",
-                        "status": "streaming",
-                    }
-                ]
-            )
+            mock_session.get_blocks = AsyncMock()
             mock_session.add_block = AsyncMock()
 
             emitter = WebSocketResultEmitter(task_id=10, subtask_id=20)
@@ -382,15 +371,8 @@ class TestWebSocketResultEmitter:
                 content="Working",
                 status="done",
             )
-            mock_session.add_block.assert_awaited_once_with(
-                20,
-                {
-                    "id": "codex-commentary-1",
-                    "type": "thinking",
-                    "content": "Working",
-                    "status": "done",
-                },
-            )
+            mock_session.get_blocks.assert_not_awaited()
+            mock_session.add_block.assert_not_awaited()
 
     @pytest.mark.asyncio
     async def test_direct_subagent_update_preserves_nested_block_fields(self):
@@ -404,15 +386,7 @@ class TestWebSocketResultEmitter:
         ):
             mock_ws = AsyncMock()
             mock_get.return_value = mock_ws
-            mock_session.get_blocks = AsyncMock(
-                return_value=[
-                    {
-                        "id": "Agent_0",
-                        "type": "subagent",
-                        "status": "pending",
-                    }
-                ]
-            )
+            mock_session.get_blocks = AsyncMock()
             mock_session.add_block = AsyncMock()
 
             emitter = WebSocketResultEmitter(task_id=10, subtask_id=20)
@@ -444,22 +418,205 @@ class TestWebSocketResultEmitter:
                 children=[{"id": "child-1", "type": "text"}],
                 status="done",
             )
-            mock_session.add_block.assert_awaited_once_with(
-                20,
-                {
-                    "id": "Agent_0",
-                    "type": "subagent",
-                    "parent_tool_use_id": "Agent_parent",
-                    "output": "Detailed result",
-                    "summary": "Done",
-                    "children": [{"id": "child-1", "type": "text"}],
-                    "status": "done",
-                },
-            )
+            mock_session.get_blocks.assert_not_awaited()
+            mock_session.add_block.assert_not_awaited()
 
 
 class TestSSEResultEmitter:
     """Tests for SSEResultEmitter."""
+
+    def test_default_queue_is_bounded(self):
+        """The production emitter must never create an unbounded event queue."""
+        from app.services.execution.emitters import SSEResultEmitter
+        from app.services.execution.emitters.base import DEFAULT_QUEUE_MAXSIZE
+
+        emitter = SSEResultEmitter(task_id=1, subtask_id=1)
+
+        assert emitter._queue.maxsize == DEFAULT_QUEUE_MAXSIZE
+
+    @pytest.mark.asyncio
+    async def test_full_queue_applies_backpressure_without_dropping_events(self):
+        """A full queue must pause producers until the consumer catches up."""
+        from app.services.execution.emitters import SSEResultEmitter
+
+        emitter = SSEResultEmitter(task_id=1, subtask_id=1, maxsize=1)
+        first_event = ExecutionEvent.create(
+            EventType.CHUNK,
+            task_id=1,
+            subtask_id=1,
+            content="first",
+        )
+        second_event = ExecutionEvent.create(
+            EventType.CHUNK,
+            task_id=1,
+            subtask_id=1,
+            content="second",
+        )
+
+        await emitter.emit(first_event)
+        blocked_emit = asyncio.create_task(emitter.emit(second_event))
+        await asyncio.sleep(0)
+
+        assert blocked_emit.done() is False
+
+        stream = emitter.stream()
+        assert await anext(stream) is first_event
+        await asyncio.wait_for(blocked_emit, timeout=0.1)
+        assert await anext(stream) is second_event
+
+        await emitter.close()
+        await stream.aclose()
+
+    @pytest.mark.asyncio
+    async def test_close_returns_immediately_when_queue_is_full(self):
+        """Cancellation cleanup cannot block while no consumer drains the queue."""
+        from app.services.execution.emitters import SSEResultEmitter
+
+        emitter = SSEResultEmitter(task_id=1, subtask_id=1, maxsize=1)
+        await emitter.emit_chunk(
+            task_id=1,
+            subtask_id=1,
+            content="buffered",
+            offset=0,
+        )
+
+        await asyncio.wait_for(emitter.close(), timeout=0.1)
+
+        events = [event async for event in emitter.stream()]
+        assert [event.content for event in events] == ["buffered"]
+
+    @pytest.mark.asyncio
+    async def test_process_byte_budget_is_held_until_downstream_resumes(self):
+        """Queued bytes remain admitted through actual downstream handling."""
+        import orjson
+
+        from app.core.byte_admission import LoopLocalByteAdmission
+        from app.services.execution.emitters import SSEResultEmitter
+
+        first_event = ExecutionEvent.create(
+            EventType.CHUNK,
+            task_id=1,
+            subtask_id=1,
+            content="first",
+        )
+        event_size = len(orjson.dumps(first_event.to_dict()))
+        admission = LoopLocalByteAdmission(event_size, label="test event")
+        first = SSEResultEmitter(
+            task_id=1,
+            subtask_id=1,
+            byte_admission=admission,
+        )
+        second = SSEResultEmitter(
+            task_id=2,
+            subtask_id=2,
+            byte_admission=admission,
+        )
+
+        await first.emit(first_event)
+        second_emit = asyncio.create_task(
+            second.emit(
+                ExecutionEvent.create(
+                    EventType.CHUNK,
+                    task_id=2,
+                    subtask_id=2,
+                    content="x",
+                )
+            )
+        )
+        await asyncio.sleep(0)
+        assert not second_emit.done()
+
+        stream = first.stream()
+        assert await anext(stream) is first_event
+        await asyncio.sleep(0)
+        assert not second_emit.done()
+
+        await stream.aclose()
+        await asyncio.wait_for(second_emit, timeout=0.2)
+        await second.close()
+        second_stream = second.stream()
+        await second_stream.aclose()
+
+    @pytest.mark.asyncio
+    async def test_stream_cancellation_releases_all_buffered_byte_leases(self):
+        """Abandoning a stream cannot strand aggregate byte capacity."""
+        import orjson
+
+        from app.core.byte_admission import LoopLocalByteAdmission
+        from app.services.execution.emitters import SSEResultEmitter
+
+        first_event = ExecutionEvent.create(
+            EventType.CHUNK,
+            task_id=1,
+            subtask_id=1,
+            content="first",
+        )
+        event_size = len(orjson.dumps(first_event.to_dict()))
+        admission = LoopLocalByteAdmission(event_size * 2, label="test event")
+        source = SSEResultEmitter(
+            task_id=1,
+            subtask_id=1,
+            byte_admission=admission,
+        )
+        waiting = SSEResultEmitter(
+            task_id=2,
+            subtask_id=2,
+            byte_admission=admission,
+        )
+        await source.emit(first_event)
+        await source.emit(first_event)
+        waiting_emit = asyncio.create_task(waiting.emit(first_event))
+        await asyncio.sleep(0)
+        assert not waiting_emit.done()
+
+        stream = source.stream()
+        assert await anext(stream) is first_event
+        await stream.aclose()
+
+        await asyncio.wait_for(waiting_emit, timeout=0.2)
+        await waiting.close()
+        waiting_stream = waiting.stream()
+        await waiting_stream.aclose()
+
+    @pytest.mark.asyncio
+    async def test_sse_disconnect_releases_current_and_buffered_byte_leases(self):
+        """Closing the HTTP body releases every retained event byte."""
+        import orjson
+
+        from app.core.byte_admission import LoopLocalByteAdmission
+        from app.services.execution.emitters import SSEResultEmitter
+
+        event = ExecutionEvent.create(
+            EventType.CHUNK,
+            task_id=1,
+            subtask_id=1,
+            content="chunk",
+        )
+        event_size = len(orjson.dumps(event.to_dict()))
+        admission = LoopLocalByteAdmission(event_size * 2, label="test event")
+        source = SSEResultEmitter(
+            task_id=1,
+            subtask_id=1,
+            byte_admission=admission,
+        )
+        waiting = SSEResultEmitter(
+            task_id=2,
+            subtask_id=2,
+            byte_admission=admission,
+        )
+        await source.emit(event)
+        await source.emit(event)
+        waiting_emit = asyncio.create_task(waiting.emit(event))
+        await asyncio.sleep(0)
+        assert not waiting_emit.done()
+
+        body = source.stream_sse()
+        assert await anext(body)
+        await body.aclose()
+
+        await asyncio.wait_for(waiting_emit, timeout=0.2)
+        assert source._closed is True
+        await waiting.close()
 
     @pytest.mark.asyncio
     async def test_emit_and_stream(self):
@@ -547,6 +704,53 @@ class TestSSEResultEmitter:
         assert len(sse_data) == 2
         assert sse_data[0].startswith("data: ")
         assert "chunk" in sse_data[0]
+
+    @pytest.mark.asyncio
+    async def test_stream_sse_serialization_does_not_block_event_loop(
+        self, monkeypatch
+    ):
+        import threading
+
+        import app.services.execution.emitters.sse as sse_module
+        from app.services.execution.emitters import SSEResultEmitter
+
+        started = threading.Event()
+        release = threading.Event()
+        original_serialize = sse_module._serialize_sse_event
+
+        def blocking_serialize(event):
+            started.set()
+            release.wait(timeout=1)
+            return original_serialize(event)
+
+        monkeypatch.setattr(
+            sse_module,
+            "_serialize_sse_event",
+            blocking_serialize,
+        )
+        emitter = SSEResultEmitter(task_id=1, subtask_id=1)
+        await emitter.emit_done(
+            task_id=1,
+            subtask_id=1,
+            result={"value": "done"},
+        )
+        stream = emitter.stream_sse()
+        serialization = asyncio.create_task(anext(stream))
+
+        for _ in range(100):
+            if started.is_set():
+                break
+            await asyncio.sleep(0.01)
+        assert started.is_set()
+
+        loop_progressed = asyncio.Event()
+        asyncio.get_running_loop().call_soon(loop_progressed.set)
+        await asyncio.wait_for(loop_progressed.wait(), timeout=0.2)
+        assert not serialization.done()
+
+        release.set()
+        payload = await asyncio.wait_for(serialization, timeout=1)
+        assert payload.startswith("data: ")
 
 
 class TestCallbackResultEmitter:

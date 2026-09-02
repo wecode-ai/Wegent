@@ -34,16 +34,16 @@ from fastapi import FastAPI, Request
 from mcp.server.fastmcp import FastMCP
 from mcp.server.transport_security import TransportSecuritySettings
 from starlette.applications import Starlette
-from starlette.concurrency import run_in_threadpool
 from starlette.responses import JSONResponse
 from starlette.routing import Route
 from starlette.types import ASGIApp, Receive, Scope, Send
 
+from app.core.blocking_work import run_mcp_tool
 from app.core.config import settings
 from app.mcp_server.auth import (
     MCPAuthInfo,
     TaskTokenInfo,
-    authenticate_mcp_token,
+    authenticate_mcp_token_async,
     extract_token_from_header,
     verify_task_token,
 )
@@ -309,7 +309,7 @@ async def _resolve_external_knowledge_user(
     if iscoroutinefunction(_external_auth_handler):
         result = await _external_auth_handler(token, request)
     else:
-        result = await run_in_threadpool(_external_auth_handler, token, request)
+        result = await run_mcp_tool(_external_auth_handler, token, request)
 
     if isawaitable(result):
         return await result
@@ -873,7 +873,7 @@ def _build_mcp_app(spec: McpAppSpec) -> Starlette:
         mcp_ctx_token = None
 
         if token:
-            auth_info = authenticate_mcp_token(
+            auth_info = await authenticate_mcp_token_async(
                 token, allow_user_token=spec.allow_user_token
             )
             if auth_info:
@@ -886,7 +886,7 @@ def _build_mcp_app(spec: McpAppSpec) -> Starlette:
                     auth_info.user_name,
                 )
                 if auth_info.auth_type == "task":
-                    token_info = verify_task_token(token)
+                    token_info = await run_mcp_tool(verify_task_token, token)
                 # Set MCPRequestContext for decorator-based tools
                 if spec.name in MCP_CONTEXT_SERVER_NAMES:
                     mcp_ctx = MCPRequestContext(

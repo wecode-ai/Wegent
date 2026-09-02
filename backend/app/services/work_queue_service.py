@@ -12,12 +12,13 @@ from typing import Any, Dict, List, Optional, Tuple
 from sqlalchemy import and_, func
 from sqlalchemy.orm import Session
 
+from app.core.events import QueueMessageCreatedEvent, get_event_bus
 from app.core.exceptions import (
     ConflictException,
     ForbiddenException,
     NotFoundException,
 )
-from app.db.session import SessionLocal
+from app.db import session as db_session
 from app.models.kind import Kind
 from app.models.user import User
 from app.models.work_queue import (
@@ -39,6 +40,7 @@ from app.schemas.work_queue import (
     WorkQueueResponse,
     WorkQueueUpdate,
 )
+from app.services.chat.storage.db import run_sync_in_executor
 from app.services.group_permission import check_user_group_permission
 
 logger = logging.getLogger(__name__)
@@ -91,7 +93,7 @@ class WorkQueueService:
 
     def get_db(self) -> Session:
         """Get database session."""
-        return SessionLocal()
+        return db_session.SessionLocal()
 
     def _generate_invite_code(self) -> str:
         """Generate a random invite code."""
@@ -889,7 +891,7 @@ class QueueMessageService:
 
     def get_db(self) -> Session:
         """Get database session."""
-        return SessionLocal()
+        return db_session.SessionLocal()
 
     def _build_message_response(
         self, db_message: QueueMessage, sender: User
@@ -1522,23 +1524,12 @@ class QueueMessageService:
             sender = db.query(User).filter(User.id == message.sender_user_id).first()
             return self._build_message_response(message, sender)
 
-    async def process_message(
-        self, user_id: int, message_id: int
-    ) -> QueueMessageResponse:
-        """Manually trigger direct-agent processing of an inbox message.
-
-        Dispatches the message through the queue's configured auto-process
-        pipeline.  For direct_agent mode this creates a new Task directly;
-        for subscription mode it re-uses the existing dispatch path.
-
-        Only messages that are not already processing or processed can be
-        triggered.
-        """
-        from app.core.events import QueueMessageCreatedEvent, get_event_bus
-        from app.db.session import get_db_session
-        from app.models.kind import Kind
-        from app.schemas.work_queue import AutoProcessConfig
-
+    def _prepare_manual_process_sync(
+        self,
+        user_id: int,
+        message_id: int,
+    ) -> tuple[QueueMessageCreatedEvent, AutoProcessConfig]:
+        """Load and detach the configuration needed for manual processing."""
         with self.get_db() as db:
             message = (
                 db.query(QueueMessage).filter(QueueMessage.id == message_id).first()
@@ -1563,7 +1554,7 @@ class QueueMessageService:
                 .filter(
                     Kind.id == message.queue_id,
                     Kind.kind == "WorkQueue",
-                    Kind.is_active == True,
+                    Kind.is_active.is_(True),
                 )
                 .first()
             )
@@ -1578,12 +1569,53 @@ class QueueMessageService:
             try:
                 auto_process = AutoProcessConfig.model_validate(auto_process_data)
             except Exception as exc:
-                raise ConflictException(f"Invalid auto-process configuration: {exc}")
+                raise ConflictException(
+                    f"Invalid auto-process configuration: {exc}"
+                ) from exc
 
             if not auto_process.enabled:
                 raise ConflictException("Auto-process is not enabled for this queue")
 
-            sender = db.query(User).filter(User.id == message.sender_user_id).first()
+            fake_event = QueueMessageCreatedEvent(
+                message_id=message.id,
+                queue_id=message.queue_id,
+                recipient_user_id=message.recipient_user_id,
+                sender_user_id=message.sender_user_id,
+                priority=(
+                    message.priority.value
+                    if hasattr(message.priority, "value")
+                    else str(message.priority)
+                ),
+            )
+            return fake_event, auto_process
+
+    def _reset_subscription_message_sync(self, message_id: int) -> None:
+        with self.get_db() as db:
+            message = db.get(QueueMessage, message_id)
+            if message is None:
+                raise NotFoundException("Message not found")
+            message.status = QueueMessageStatus.UNREAD
+            db.commit()
+
+    def _load_message_response_sync(self, message_id: int) -> QueueMessageResponse:
+        with self.get_db() as db:
+            message = db.get(QueueMessage, message_id)
+            if message is None:
+                raise NotFoundException("Message not found")
+            sender = db.get(User, message.sender_user_id)
+            if sender is None:
+                raise NotFoundException("Message sender not found")
+            return self._build_message_response(message, sender)
+
+    async def process_message(
+        self, user_id: int, message_id: int
+    ) -> QueueMessageResponse:
+        """Dispatch manual processing without running database work on the loop."""
+        fake_event, auto_process = await run_sync_in_executor(
+            self._prepare_manual_process_sync,
+            user_id,
+            message_id,
+        )
 
         # Dispatch via the auto-process handler for the correct mode
         if auto_process.mode == "direct_agent":
@@ -1591,68 +1623,21 @@ class QueueMessageService:
                 inbox_direct_agent_handler,
             )
 
-            # Re-open a fresh session for the handler (it may commit internally)
-            with get_db_session() as handler_db:
-                msg = (
-                    handler_db.query(QueueMessage)
-                    .filter(QueueMessage.id == message_id)
-                    .first()
-                )
-                wq = (
-                    handler_db.query(Kind)
-                    .filter(Kind.id == msg.queue_id, Kind.kind == "WorkQueue")
-                    .first()
-                )
-                fake_event = QueueMessageCreatedEvent(
-                    message_id=msg.id,
-                    queue_id=msg.queue_id,
-                    recipient_user_id=msg.recipient_user_id,
-                    sender_user_id=msg.sender_user_id,
-                    priority=(
-                        msg.priority.value
-                        if hasattr(msg.priority, "value")
-                        else str(msg.priority)
-                    ),
-                )
-                await inbox_direct_agent_handler.handle(
-                    event=fake_event,
-                    auto_process=auto_process,
-                    message=msg,
-                    work_queue=wq,
-                    db=handler_db,
-                )
-                handler_db.refresh(msg)
-                return self._build_message_response(msg, sender)
-        else:
-            # Subscription mode: re-publish the event so the existing handler fires
-            event_bus = get_event_bus()
-            with self.get_db() as db:
-                message = (
-                    db.query(QueueMessage).filter(QueueMessage.id == message_id).first()
-                )
-                # Reset to UNREAD so the handler won't skip it
-                message.status = QueueMessageStatus.UNREAD
-                db.commit()
-                db.refresh(message)
-
-            event_bus.publish_sync(
-                QueueMessageCreatedEvent(
-                    message_id=message_id,
-                    queue_id=message.queue_id,
-                    recipient_user_id=message.recipient_user_id,
-                    sender_user_id=message.sender_user_id,
-                    priority=(
-                        message.priority.value
-                        if hasattr(message.priority, "value")
-                        else str(message.priority)
-                    ),
-                )
+            await inbox_direct_agent_handler.handle(fake_event, auto_process)
+            return await run_sync_in_executor(
+                self._load_message_response_sync,
+                message_id,
             )
-            with self.get_db() as db:
-                message = (
-                    db.query(QueueMessage).filter(QueueMessage.id == message_id).first()
-                )
-                return self._build_message_response(message, sender)
+
+        await run_sync_in_executor(
+            self._reset_subscription_message_sync,
+            message_id,
+        )
+        get_event_bus().publish_sync(fake_event)
+        return await run_sync_in_executor(
+            self._load_message_response_sync,
+            message_id,
+        )
 
 
 class ContactService:
@@ -1660,7 +1645,7 @@ class ContactService:
 
     def get_db(self) -> Session:
         """Get database session."""
-        return SessionLocal()
+        return db_session.SessionLocal()
 
     def record_contact(self, user_id: int, contact_user_id: int) -> None:
         """Record a contact interaction."""

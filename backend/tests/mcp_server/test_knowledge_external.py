@@ -2254,8 +2254,7 @@ def test_query_content_local_sync_builds_missing_local_configs():
         knowledge_base_configs=[],
     )
     db = MagicMock()
-    local_gateway = MagicMock()
-    local_gateway.query = AsyncMock(return_value={"total": 0, "records": []})
+    local_query = AsyncMock(return_value={"total": 0, "records": []})
 
     with (
         patch.object(knowledge_external, "SessionLocal", return_value=db),
@@ -2264,11 +2263,7 @@ def test_query_content_local_sync_builds_missing_local_configs():
             "build_query_knowledge_base_configs",
             return_value=["resolved-config"],
         ) as build_configs,
-        patch.object(
-            knowledge_external,
-            "LocalRagGateway",
-            return_value=local_gateway,
-        ),
+        patch.object(knowledge_external, "query_local", local_query),
     ):
         result = knowledge_external._query_content_local_sync(runtime_spec)
 
@@ -2279,8 +2274,8 @@ def test_query_content_local_sync_builds_missing_local_configs():
         current_user_id=7,
         user_name="alice",
     )
-    local_gateway.query.assert_awaited_once()
-    local_runtime_spec = local_gateway.query.await_args.args[0]
+    local_query.assert_awaited_once()
+    local_runtime_spec = local_query.await_args.args[0]
     assert local_runtime_spec.knowledge_base_configs == ["resolved-config"]
     db.close.assert_called_once()
 
@@ -2289,7 +2284,7 @@ def test_query_content_local_sync_builds_missing_local_configs():
 async def test_query_content_routes_local_gateway_through_threadpool():
     runtime_spec = MagicMock()
     local_result = {"total": 0, "records": []}
-    run_in_threadpool = AsyncMock(return_value=local_result)
+    run_knowledge_io = AsyncMock(return_value=local_result)
 
     with (
         patch.object(
@@ -2299,14 +2294,14 @@ async def test_query_content_routes_local_gateway_through_threadpool():
         ),
         patch.object(
             knowledge_external,
-            "run_in_threadpool",
-            run_in_threadpool,
+            "run_knowledge_io",
+            run_knowledge_io,
         ),
     ):
         result = await knowledge_external._query_content(runtime_spec)
 
     assert result == local_result
-    run_in_threadpool.assert_awaited_once_with(
+    run_knowledge_io.assert_awaited_once_with(
         knowledge_external._query_content_local_sync,
         runtime_spec,
     )
@@ -2323,21 +2318,21 @@ async def test_query_content_falls_back_to_local_threadpool_for_retryable_remote
             retryable=True,
         )
     )
-    run_in_threadpool = AsyncMock(return_value=fallback_result)
+    run_knowledge_io = AsyncMock(return_value=fallback_result)
 
     with (
         patch.object(knowledge_external, "get_query_gateway", return_value=gateway),
         patch.object(
             knowledge_external,
-            "run_in_threadpool",
-            run_in_threadpool,
+            "run_knowledge_io",
+            run_knowledge_io,
         ),
     ):
         result = await knowledge_external._query_content(runtime_spec)
 
     assert result == fallback_result
     gateway.query.assert_awaited_once_with(runtime_spec, db=None)
-    run_in_threadpool.assert_awaited_once_with(
+    run_knowledge_io.assert_awaited_once_with(
         knowledge_external._query_content_local_sync,
         runtime_spec,
     )
@@ -2378,11 +2373,7 @@ async def test_query_content_remote_fallback_builds_local_configs_before_query()
             "build_query_knowledge_base_configs",
             return_value=["resolved-config"],
         ) as build_configs,
-        patch.object(
-            knowledge_external.LocalRagGateway,
-            "query",
-            local_query,
-        ),
+        patch.object(knowledge_external, "query_local", local_query),
     ):
         result = await knowledge_external._query_content(runtime_spec)
 

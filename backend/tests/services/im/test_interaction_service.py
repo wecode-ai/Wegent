@@ -11,7 +11,7 @@ from sqlalchemy.orm import Session
 from app.models.im_session import IMPrivateSession
 from app.models.user import User
 from app.services.channels.callback import ChannelType
-from app.services.channels.handler import MessageContext
+from app.services.channels.handler import ChannelUserRef, MessageContext
 from app.services.im.interaction_service import im_interaction_service
 from app.services.im.session_service import im_session_service
 
@@ -47,8 +47,7 @@ class FakeInteractionPort:
 
     async def execute_private_im_bind_task(
         self,
-        db: Session,
-        user: User,
+        user: ChannelUserRef,
         im_session: IMPrivateSession,
         task_id: int | None,
         message_context: MessageContext,
@@ -57,8 +56,7 @@ class FakeInteractionPort:
 
     async def execute_private_im_continue_task(
         self,
-        db: Session,
-        user: User,
+        user: ChannelUserRef,
         im_session: IMPrivateSession,
         task_id: int | None,
         message: str,
@@ -70,8 +68,7 @@ class FakeInteractionPort:
 
     async def execute_private_im_create_task(
         self,
-        db: Session,
-        user: User,
+        user: ChannelUserRef,
         im_session: IMPrivateSession,
         project_id: int | None,
         message: str,
@@ -102,7 +99,6 @@ def _context(
 
 async def _session(test_db: Session, test_user: User) -> IMPrivateSession:
     return await im_session_service.get_or_create_private_session(
-        db=test_db,
         user_id=test_user.id,
         channel_type="telegram",
         channel_id=44,
@@ -134,15 +130,13 @@ async def test_new_chat_choice_deletes_cached_chat_and_replies(
     _stub_task_lists(monkeypatch)
 
     first = await im_interaction_service.route_private_message(
-        db=test_db,
-        user=test_user,
+        user=ChannelUserRef(id=test_user.id),
         im_session=session,
         message_context=_context("/new"),
         port=port,
     )
     second = await im_interaction_service.route_private_message(
-        db=test_db,
-        user=test_user,
+        user=ChannelUserRef(id=test_user.id),
         im_session=session,
         message_context=_context("1"),
         port=port,
@@ -175,15 +169,13 @@ async def test_pending_switch_choice_binds_selected_task(
     )
 
     await im_interaction_service.route_private_message(
-        db=test_db,
-        user=test_user,
+        user=ChannelUserRef(id=test_user.id),
         im_session=session,
         message_context=_context("/task"),
         port=port,
     )
     handled = await im_interaction_service.route_private_message(
-        db=test_db,
-        user=test_user,
+        user=ChannelUserRef(id=test_user.id),
         im_session=session,
         message_context=_context("2"),
         port=port,
@@ -201,12 +193,11 @@ async def test_task_mode_text_continues_active_task(
 ) -> None:
     port = FakeInteractionPort()
     session = await _session(test_db, test_user)
-    await im_session_service.bind_active_task(test_db, session=session, task_id=7001)
+    await im_session_service.bind_active_task(session=session, task_id=7001)
     _stub_task_lists(monkeypatch)
 
     handled = await im_interaction_service.route_private_message(
-        db=test_db,
-        user=test_user,
+        user=ChannelUserRef(id=test_user.id),
         im_session=session,
         message_context=_context("继续处理"),
         port=port,
@@ -223,11 +214,10 @@ async def test_task_mode_media_only_continues_active_task_with_empty_message(
 ) -> None:
     port = FakeInteractionPort()
     session = await _session(test_db, test_user)
-    await im_session_service.bind_active_task(test_db, session=session, task_id=7001)
+    await im_session_service.bind_active_task(session=session, task_id=7001)
 
     handled = await im_interaction_service.route_private_message(
-        db=test_db,
-        user=test_user,
+        user=ChannelUserRef(id=test_user.id),
         im_session=session,
         message_context=_context(
             "",
@@ -274,8 +264,7 @@ async def test_runtime_notification_reply_inherits_bound_model_selection(
     context.extra_data["reply_to_message_id"] = 901
 
     handled = await im_interaction_service.route_private_message(
-        db=test_db,
-        user=test_user,
+        user=ChannelUserRef(id=test_user.id),
         im_session=session,
         message_context=context,
         port=port,
@@ -313,29 +302,25 @@ async def test_pending_task_creation_creates_selected_project_task(
     )
 
     await im_interaction_service.route_private_message(
-        db=test_db,
-        user=test_user,
+        user=ChannelUserRef(id=test_user.id),
         im_session=session,
         message_context=_context("/task"),
         port=port,
     )
     await im_interaction_service.route_private_message(
-        db=test_db,
-        user=test_user,
+        user=ChannelUserRef(id=test_user.id),
         im_session=session,
         message_context=_context("new"),
         port=port,
     )
     project_choice = await im_interaction_service.route_private_message(
-        db=test_db,
-        user=test_user,
+        user=ChannelUserRef(id=test_user.id),
         im_session=session,
         message_context=_context("2"),
         port=port,
     )
     handled = await im_interaction_service.route_private_message(
-        db=test_db,
-        user=test_user,
+        user=ChannelUserRef(id=test_user.id),
         im_session=session,
         message_context=_context("创建新的任务需求"),
         port=port,
@@ -357,8 +342,7 @@ async def test_none_action_sends_router_reply(
     _stub_task_lists(monkeypatch)
 
     handled = await im_interaction_service.route_private_message(
-        db=test_db,
-        user=test_user,
+        user=ChannelUserRef(id=test_user.id),
         im_session=session,
         message_context=_context("/bind"),
         port=port,
@@ -379,8 +363,7 @@ async def test_unhandled_plain_chat_message_falls_through(
     _stub_task_lists(monkeypatch)
 
     handled = await im_interaction_service.route_private_message(
-        db=test_db,
-        user=test_user,
+        user=ChannelUserRef(id=test_user.id),
         im_session=session,
         message_context=_context("普通 Chat 消息"),
         port=port,
@@ -409,8 +392,7 @@ async def test_unhandled_router_action_falls_through(
     )
 
     handled = await im_interaction_service.route_private_message(
-        db=test_db,
-        user=test_user,
+        user=ChannelUserRef(id=test_user.id),
         im_session=session,
         message_context=_context("/unknown-action"),
         port=port,

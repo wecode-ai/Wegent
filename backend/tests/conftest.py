@@ -416,24 +416,35 @@ def test_client(
     """Create an isolated client for the worker's shared application."""
 
     from app.api.dependencies import get_db
+    from app.db import session as db_session
 
-    # Override database dependency to always return the same test_db session
+    # Keep the request dependency on the test transaction.  Expected HTTP
+    # errors must not roll back that whole transaction: production closes a
+    # request-owned Session, while this fixture deliberately reuses test_db.
+    # Worker-owned Sessions commit through nested savepoints on the same test
+    # connection, so a blanket rollback here would also erase successful work
+    # performed by those workers.
     def override_get_db():
-        try:
-            # Return the test_db session directly without yielding
-            # This ensures the same session is used across all requests
-            yield test_db
-        except Exception:
-            test_db.rollback()
-            raise
+        yield test_db
 
     original_overrides = test_app.dependency_overrides.copy()
+    original_session_local = db_session.SessionLocal
+    db_session.SessionLocal = sessionmaker(
+        autocommit=False,
+        autoflush=False,
+        bind=test_db.get_bind(),
+        expire_on_commit=False,
+        join_transaction_mode="create_savepoint",
+    )
     test_app.dependency_overrides[get_db] = override_get_db
     client = TestClient(test_app)
-    yield client
-    client.close()
-    test_app.dependency_overrides.clear()
-    test_app.dependency_overrides.update(original_overrides)
+    try:
+        yield client
+    finally:
+        client.close()
+        db_session.SessionLocal = original_session_local
+        test_app.dependency_overrides.clear()
+        test_app.dependency_overrides.update(original_overrides)
 
 
 @pytest.fixture(scope="function")

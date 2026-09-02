@@ -47,7 +47,7 @@ class TestTelegramUserResolver:
         )
 
         # Execute
-        result = await resolver.resolve_user(
+        result = resolver.resolve_user_sync(
             telegram_user_id=456789,
             telegram_username="telegram_user",
         )
@@ -65,7 +65,7 @@ class TestTelegramUserResolver:
             user_mapping_config={},  # No target_user_id
         )
 
-        result = await resolver.resolve_user(
+        result = resolver.resolve_user_sync(
             telegram_user_id=456789,
             telegram_username="telegram_user",
         )
@@ -83,7 +83,7 @@ class TestTelegramUserResolver:
             user_mapping_config={"target_user_id": 999},
         )
 
-        result = await resolver.resolve_user(
+        result = resolver.resolve_user_sync(
             telegram_user_id=456789,
             telegram_username="telegram_user",
         )
@@ -100,7 +100,7 @@ class TestTelegramUserResolver:
             user_mapping_mode=USER_MAPPING_MODE_USERNAME,
         )
 
-        result = await resolver.resolve_user(
+        result = resolver.resolve_user_sync(
             telegram_user_id=456789,
             telegram_username="testuser",
         )
@@ -115,7 +115,7 @@ class TestTelegramUserResolver:
             user_mapping_mode=USER_MAPPING_MODE_USERNAME,
         )
 
-        result = await resolver.resolve_user(
+        result = resolver.resolve_user_sync(
             telegram_user_id=456789,
             telegram_username=None,
         )
@@ -132,7 +132,7 @@ class TestTelegramUserResolver:
             user_mapping_mode=USER_MAPPING_MODE_EMAIL,
         )
 
-        result = await resolver.resolve_user(
+        result = resolver.resolve_user_sync(
             telegram_user_id=456789,
             telegram_username="testuser",
         )
@@ -152,7 +152,7 @@ class TestTelegramUserResolver:
         # Default mode should be select_user
         assert resolver.user_mapping_mode == USER_MAPPING_MODE_SELECT_USER
 
-        result = await resolver.resolve_user(
+        result = resolver.resolve_user_sync(
             telegram_user_id=456789,
         )
 

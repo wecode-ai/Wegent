@@ -18,6 +18,7 @@ from urllib.parse import parse_qs, urlparse
 
 import pytest
 
+from app.core.shutdown import StreamAdmissionClosedError
 from app.services.attachment.public_link import verify_public_attachment_token
 from shared.models import EventType, ExecutionRequest
 
@@ -185,6 +186,30 @@ class TestImageAgent:
         mock_session_manager.unregister_stream.assert_called_once_with(100)
         mock_shutdown_manager.register_stream.assert_awaited_once_with(100)
         mock_shutdown_manager.unregister_stream.assert_awaited_once_with(100)
+
+    @pytest.mark.asyncio
+    async def test_shutdown_rejection_does_not_allocate_session_stream(
+        self,
+        mock_session_manager,
+        mock_shutdown_manager,
+        mock_emitter,
+        sample_request,
+    ):
+        """The shutdown admission gate precedes local stream state."""
+        from app.services.execution.agents.image.image_agent import ImageAgent
+
+        mock_shutdown_manager.register_stream.side_effect = StreamAdmissionClosedError(
+            sample_request.subtask_id
+        )
+
+        with pytest.raises(StreamAdmissionClosedError) as raised:
+            await ImageAgent().execute(sample_request, mock_emitter)
+
+        assert raised.value.error_code == "server_shutting_down"
+        mock_session_manager.register_stream.assert_not_awaited()
+        mock_session_manager.unregister_stream.assert_not_awaited()
+        mock_shutdown_manager.unregister_stream.assert_not_awaited()
+        mock_emitter.emit.assert_not_awaited()
 
     @pytest.mark.asyncio
     async def test_execute_uses_prompt_image_as_direct_reference(

@@ -7,11 +7,11 @@
 import time
 import uuid
 from copy import deepcopy
+from dataclasses import dataclass
 from typing import Any, Optional
 
-from sqlalchemy.orm import Session
-
 from app.mcp_server.auth import TaskTokenInfo
+from app.services.chat.storage.db import run_sync_in_executor
 from app.services.context import context_service
 from app.services.execution.agents.generation_context import (
     resolve_generation_context,
@@ -29,23 +29,31 @@ from .download_url import (
 from .providers import get_image_provider
 
 
-class ImageGenerationService:
-    async def generate(
-        self,
-        db: Session,
-        token_info: TaskTokenInfo,
-        prompt: str,
-        size: Optional[str] = None,
-        max_images: int = 1,
-        reference_images: Optional[list[str | int]] = None,
-    ) -> dict[str, Any]:
-        """Generate images with the current or first available image model."""
-        prompt_text = (prompt or "").strip()
-        if not prompt_text:
-            raise ValueError("prompt is required")
-        if max_images < 1 or max_images > 15:
-            raise ValueError("max_images must be between 1 and 15")
+@dataclass(frozen=True)
+class _ImageGenerationPreparation:
+    prompt: str
+    model_config: dict[str, Any]
+    descriptors: list[dict[str, Any]]
 
+
+def _prepare_image_generation(
+    token_info: TaskTokenInfo,
+    prompt: str,
+    size: Optional[str],
+    max_images: int,
+    reference_images: Optional[list[str | int]],
+) -> _ImageGenerationPreparation:
+    """Resolve DB-backed image inputs in a worker-owned session."""
+    from app.db.session import SessionLocal
+
+    prompt_text = (prompt or "").strip()
+    if not prompt_text:
+        raise ValueError("prompt is required")
+    if max_images < 1 or max_images > 15:
+        raise ValueError("max_images must be between 1 and 15")
+
+    db = SessionLocal()
+    try:
         context = resolve_generation_context(db, token_info, prompt_text)
         model_config = deepcopy(
             resolve_generation_model(db, context, prompt_text, "image")
@@ -65,12 +73,41 @@ class ImageGenerationService:
             "image",
             token_info.user_id,
         )
-        self._validate_reference_images(image_config, descriptors)
+        ImageGenerationService._validate_reference_images(image_config, descriptors)
+    finally:
+        db.close()
 
+    return _ImageGenerationPreparation(
+        prompt=prompt_text,
+        model_config=model_config,
+        descriptors=descriptors,
+    )
+
+
+class ImageGenerationService:
+    async def generate(
+        self,
+        token_info: TaskTokenInfo,
+        prompt: str,
+        size: Optional[str] = None,
+        max_images: int = 1,
+        reference_images: Optional[list[str | int]] = None,
+    ) -> dict[str, Any]:
+        """Generate images with the current or first available image model."""
+        preparation = await run_sync_in_executor(
+            _prepare_image_generation,
+            token_info,
+            prompt,
+            size,
+            max_images,
+            reference_images,
+        )
+        model_config = preparation.model_config
+        image_config = dict(model_config.get("imageConfig") or {})
         protocol = model_config.get("protocol") or "seedream"
         result = await get_image_provider(protocol, model_config).generate(
-            prompt=prompt_text,
-            reference_images=[item["url"] for item in descriptors],
+            prompt=preparation.prompt,
+            reference_images=[item["url"] for item in preparation.descriptors],
         )
         if not result.images:
             raise ValueError("No images generated")

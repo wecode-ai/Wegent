@@ -17,6 +17,7 @@ from app.services.execution.agents.video.generation_service import (
 async def test_create_job_stages_images_before_provider_call() -> None:
     service = VideoGenerationService()
     db = MagicMock()
+    db.__enter__.return_value = db
     token_info = TaskTokenInfo(
         task_id=1,
         subtask_id=2,
@@ -29,6 +30,10 @@ async def test_create_job_stages_images_before_provider_call() -> None:
     staged = [{"url": "https://staging.example.com/reference.png"}]
 
     with (
+        patch(
+            "app.db.session.SessionLocal",
+            return_value=db,
+        ),
         patch(
             "app.services.execution.agents.video.generation_service."
             "resolve_generation_context",
@@ -65,7 +70,6 @@ async def test_create_job_stages_images_before_provider_call() -> None:
         ),
     ):
         await service.create_job(
-            db=db,
             token_info=token_info,
             prompt=(
                 "<attachment>\nreference image metadata\n</attachment>\n"

@@ -9,15 +9,20 @@ Uses slowapi with Redis backend for distributed rate limiting.
 Rate limits are applied per API key for authenticated endpoints.
 """
 
+import asyncio
+import functools
+import inspect
 import logging
 import time
 from enum import Enum
 from hashlib import sha256
-from typing import Optional
+from typing import Any, Callable, Optional
 
 from fastapi import Request
 from slowapi import Limiter
+from starlette.responses import Response
 
+from app.core.blocking_work import run_rate_limit_io
 from app.core.config import settings
 from app.services.auth.task_token import extract_token_from_header
 
@@ -242,6 +247,7 @@ def get_api_key_from_request(request: Request) -> str:
 limiter = Limiter(
     key_func=get_api_key_from_request,
     storage_uri=_get_redis_storage_uri(),
+    storage_options={"socket_connect_timeout": 1, "socket_timeout": 1},
     strategy="fixed-window",  # Simple and efficient
     default_limits=[],  # No default limits, apply per-endpoint
     enabled=_check_redis_available(),
@@ -251,6 +257,82 @@ limiter = Limiter(
 def get_limiter() -> Limiter:
     """Get the rate limiter instance."""
     return limiter
+
+
+def nonblocking_limit(
+    rate_limiter: Limiter,
+    limit_value: str | Callable[..., str],
+    **limit_options: Any,
+) -> Callable[[Callable[..., Any]], Callable[..., Any]]:
+    """Apply a SlowAPI limit without running its Redis check on the event loop.
+
+    SlowAPI's async decorator executes the synchronous limits storage call before
+    awaiting the endpoint. Register the route with SlowAPI as usual, then perform
+    that exact check in Starlette's worker pool. Limit evaluation, error handling,
+    response headers, and the shared Redis storage remain unchanged.
+    """
+
+    def decorator(endpoint: Callable[..., Any]) -> Callable[..., Any]:
+        if not asyncio.iscoroutinefunction(endpoint):
+            raise TypeError("nonblocking_limit requires an async endpoint")
+
+        # Register the original endpoint and its limits in SlowAPI's route maps.
+        # The generated wrapper is intentionally not used because it performs the
+        # synchronous storage check on the event-loop thread.
+        rate_limiter.limit(limit_value, **limit_options)(endpoint)
+
+        parameters = list(inspect.signature(endpoint).parameters.values())
+        request_index = next(
+            (
+                index
+                for index, parameter in enumerate(parameters)
+                if parameter.name == "request"
+            ),
+            None,
+        )
+        if request_index is None:
+            raise TypeError('limited endpoint must define a "request" parameter')
+
+        @functools.wraps(endpoint)
+        async def wrapper(*args: Any, **kwargs: Any) -> Response:
+            request = kwargs.get(
+                "request",
+                args[request_index] if len(args) > request_index else None,
+            )
+            if not isinstance(request, Request):
+                raise TypeError("request must be a Starlette Request")
+
+            if rate_limiter.enabled:
+                if rate_limiter._auto_check and not getattr(  # noqa: SLF001
+                    request.state,
+                    "_rate_limiting_complete",
+                    False,
+                ):
+                    await run_rate_limit_io(
+                        rate_limiter._check_request_limit,  # noqa: SLF001
+                        request,
+                        endpoint,
+                        False,
+                    )
+                    request.state._rate_limiting_complete = True
+
+            response = await endpoint(*args, **kwargs)
+            if rate_limiter.enabled:
+                if not isinstance(response, Response):
+                    rate_limiter._inject_headers(  # noqa: SLF001
+                        kwargs.get("response"),
+                        request.state.view_rate_limit,
+                    )
+                else:
+                    rate_limiter._inject_headers(  # noqa: SLF001
+                        response,
+                        request.state.view_rate_limit,
+                    )
+            return response
+
+        return wrapper
+
+    return decorator
 
 
 def is_rate_limit_enabled() -> bool:

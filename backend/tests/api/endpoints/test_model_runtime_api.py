@@ -2,9 +2,16 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
+import asyncio
+import threading
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
+import pytest
 from fastapi.testclient import TestClient
+
+from app.api.endpoints.adapter import model_runtime
+from app.schemas.model_runtime import StatelessResponseCreateRequest
 
 
 def _auth_header(token: str) -> dict[str, str]:
@@ -13,8 +20,8 @@ def _auth_header(token: str) -> dict[str, str]:
 
 def test_create_stateless_response_success(test_client: TestClient, test_token: str):
     with patch(
-        "app.api.endpoints.adapter.model_runtime.stateless_runtime_service.complete_text",
-        new=AsyncMock(return_value="hello from runtime"),
+        "app.api.endpoints.adapter.model_runtime.web_stream_worker_client.execute",
+        new=AsyncMock(return_value={"output_text": "hello from runtime"}),
     ):
         response = test_client.post(
             "/api/model-runtime/responses",
@@ -37,9 +44,9 @@ def test_create_stateless_response_accepts_string_input(
     test_client: TestClient, test_token: str
 ):
     with patch(
-        "app.api.endpoints.adapter.model_runtime.stateless_runtime_service.complete_text",
-        new=AsyncMock(return_value="ok"),
-    ) as mock_complete:
+        "app.api.endpoints.adapter.model_runtime.web_stream_worker_client.execute",
+        new=AsyncMock(return_value={"output_text": "ok"}),
+    ) as mock_execute:
         response = test_client.post(
             "/api/model-runtime/responses",
             headers=_auth_header(test_token),
@@ -51,8 +58,49 @@ def test_create_stateless_response_accepts_string_input(
         )
 
     assert response.status_code == 200
-    first_call = mock_complete.await_args_list[0].kwargs
-    assert first_call["input_data"] == "direct question"
+    _, payload = mock_execute.await_args.args
+    assert payload["input"] == "direct question"
+
+
+def test_streaming_response_only_relays_worker_bytes(
+    test_client: TestClient,
+    test_token: str,
+) -> None:
+    calls = []
+
+    async def worker_stream(operation, payload):
+        calls.append((operation, payload))
+        yield b'data: {"type":"response.output_text.delta"}\n\n'
+
+    with patch(
+        "app.api.endpoints.adapter.model_runtime.web_stream_worker_client.stream",
+        new=worker_stream,
+    ):
+        response = test_client.post(
+            "/api/model-runtime/responses",
+            headers=_auth_header(test_token),
+            json={
+                "model": "gpt-5.4",
+                "input": "hello",
+                "stream": True,
+            },
+        )
+
+    assert response.status_code == 200
+    assert response.content == b'data: {"type":"response.output_text.delta"}\n\n'
+    assert calls == [
+        (
+            "model_runtime",
+            {
+                "model": "gpt-5.4",
+                "input": "hello",
+                "instructions": None,
+                "metadata": None,
+                "model_config": None,
+                "tools": None,
+            },
+        )
+    ]
 
 
 def test_create_stateless_response_resolves_model_reference(
@@ -66,13 +114,17 @@ def test_create_stateless_response_resolves_model_reference(
     }
     with (
         patch(
-            "app.api.endpoints.adapter.model_runtime.resolve_llm_proxy_model_config",
+            "app.api.endpoints.adapter.model_runtime._resolve_model_reference_sync",
             return_value=resolved_config,
         ) as mock_resolve,
         patch(
-            "app.api.endpoints.adapter.model_runtime.stateless_runtime_service.complete_text",
-            new=AsyncMock(return_value='{"correction":null,"rationale":"aligned"}'),
-        ) as mock_complete,
+            "app.api.endpoints.adapter.model_runtime.web_stream_worker_client.execute",
+            new=AsyncMock(
+                return_value={
+                    "output_text": '{"correction":null,"rationale":"aligned"}'
+                }
+            ),
+        ) as mock_execute,
     ):
         response = test_client.post(
             "/api/model-runtime/responses",
@@ -92,5 +144,64 @@ def test_create_stateless_response_resolves_model_reference(
 
     assert response.status_code == 200
     assert response.json()["model"] == "upstream-model"
-    assert mock_resolve.call_args.kwargs["model_name"] == "review-model"
-    assert mock_complete.await_args.kwargs["model_config"] == resolved_config
+    assert mock_resolve.call_args.args[0].name == "review-model"
+    assert mock_execute.await_args.args[1]["model_config"] == resolved_config
+
+
+@pytest.mark.asyncio
+async def test_model_reference_db_resolution_does_not_block_loop(monkeypatch) -> None:
+    started = threading.Event()
+    release = threading.Event()
+    worker_thread_ids: list[int] = []
+
+    def blocking_resolve(reference, user_id, user_name):
+        worker_thread_ids.append(threading.get_ident())
+        started.set()
+        release.wait(timeout=5)
+        return {"model_id": "resolved-model"}
+
+    monkeypatch.setattr(
+        model_runtime,
+        "_resolve_model_reference_sync",
+        blocking_resolve,
+    )
+    monkeypatch.setattr(
+        model_runtime.web_stream_worker_client,
+        "execute",
+        AsyncMock(return_value={"output_text": "ok"}),
+    )
+    request = StatelessResponseCreateRequest.model_validate(
+        {
+            "model": "requested-model",
+            "model_ref": {
+                "name": "requested-model",
+                "type": "public",
+                "namespace": "default",
+                "resource_user_id": 0,
+            },
+            "input": "hello",
+        }
+    )
+    loop_thread_id = threading.get_ident()
+    task = asyncio.create_task(
+        model_runtime.create_stateless_response(
+            request,
+            current_user=SimpleNamespace(id=7, user_name="user"),
+        )
+    )
+    try:
+        for _ in range(200):
+            if started.is_set():
+                break
+            await asyncio.sleep(0.005)
+        assert started.is_set()
+        ticked = asyncio.Event()
+        asyncio.get_running_loop().call_soon(ticked.set)
+        await asyncio.wait_for(ticked.wait(), timeout=0.1)
+        assert not task.done()
+        assert worker_thread_ids[0] != loop_thread_id
+    finally:
+        release.set()
+
+    result = await task
+    assert result.model == "resolved-model"

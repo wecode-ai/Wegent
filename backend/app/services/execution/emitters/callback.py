@@ -13,11 +13,16 @@ from typing import Optional
 
 import httpx
 
+from app.core.payload_codec import encode_http_json, run_payload_codec
 from shared.models import EventType, ExecutionEvent
 
 from .base import BaseResultEmitter
 
 logger = logging.getLogger(__name__)
+
+
+def _events_to_payload(events: list[ExecutionEvent]) -> list[dict]:
+    return [event.to_dict() for event in events]
 
 
 class CallbackResultEmitter(BaseResultEmitter):
@@ -59,6 +64,11 @@ class CallbackResultEmitter(BaseResultEmitter):
             self._client = httpx.AsyncClient(timeout=self.timeout)
         return self._client
 
+    def _request_headers(self) -> httpx.Headers:
+        headers = httpx.Headers({"Content-Type": "application/json"})
+        headers.update(self.headers)
+        return headers
+
     async def emit(self, event: ExecutionEvent) -> None:
         """Emit event via HTTP POST.
 
@@ -72,10 +82,14 @@ class CallbackResultEmitter(BaseResultEmitter):
         client = await self._get_client()
 
         try:
+            payload = await run_payload_codec(
+                event.to_dict,
+                payload_hint=event,
+            )
             response = await client.post(
                 self.callback_url,
-                json=event.to_dict(),
-                headers=self.headers,
+                content=await encode_http_json(payload),
+                headers=self._request_headers(),
             )
 
             if response.status_code != 200:
@@ -158,10 +172,15 @@ class BatchCallbackEmitter(CallbackResultEmitter):
         try:
             # Use batch endpoint
             batch_url = self.callback_url.rstrip("/") + "/batch"
+            payload = await run_payload_codec(
+                _events_to_payload,
+                events_to_send,
+                payload_hint=events_to_send,
+            )
             response = await client.post(
                 batch_url,
-                json=[e.to_dict() for e in events_to_send],
-                headers=self.headers,
+                content=await encode_http_json(payload),
+                headers=self._request_headers(),
             )
 
             if response.status_code != 200:

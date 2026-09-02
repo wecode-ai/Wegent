@@ -81,7 +81,7 @@ cd backend
 # Or manually: uv sync && source .venv/bin/activate
 # Configure environment variables
 export DATABASE_URL="mysql://user:password@localhost/wegent"
-uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
+HOST=0.0.0.0 PORT=8000 uv run python -m app.runtime
 ```
 
 #### Executor Development

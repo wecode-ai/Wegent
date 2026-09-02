@@ -7,6 +7,7 @@ API endpoints for task members (group chat) management.
 """
 
 import logging
+from dataclasses import dataclass
 from typing import Optional
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
@@ -38,6 +39,29 @@ router = APIRouter()
 logger = logging.getLogger(__name__)
 
 
+@dataclass(frozen=True)
+class _TaskInvitation:
+    user_id: int
+    task_id: int
+    title: str
+    team_id: int
+    team_name: str
+    invited_by_user_id: int
+    invited_by_user_name: str
+
+
+@dataclass(frozen=True)
+class _AddTaskMemberResult:
+    response: TaskMemberResponse
+    invitation: _TaskInvitation
+
+
+@dataclass(frozen=True)
+class _JoinTaskResult:
+    response: JoinByInviteResponse
+    invitation: _TaskInvitation | None
+
+
 def _map_db_status_to_schema(db_status: str) -> SchemaMemberStatus:
     """
     Map database MemberStatus to schema MemberStatus.
@@ -58,6 +82,127 @@ def _map_db_status_to_schema(db_status: str) -> SchemaMemberStatus:
     else:
         # Default to ACTIVE for pending or unknown status
         return SchemaMemberStatus.ACTIVE
+
+
+def _add_task_member_sync(
+    task_id: int,
+    target_user_id: int,
+    current_user_id: int,
+) -> _AddTaskMemberResult:
+    """Persist membership and return detached response/notification data."""
+    from app.services.chat.storage.db import get_db_session
+
+    with get_db_session() as db:
+        is_current_member = task_member_service.is_member(
+            db,
+            task_id,
+            current_user_id,
+        )
+        if not is_current_member:
+            raise HTTPException(
+                status_code=403,
+                detail="You are not a member of this group chat",
+            )
+
+        target_user = task_member_service.get_user(db, target_user_id)
+        if not target_user:
+            raise HTTPException(status_code=404, detail="User not found")
+        if not task_member_service.is_group_chat(db, task_id):
+            raise HTTPException(status_code=400, detail="This task is not a group chat")
+
+        member = task_member_service.add_member(
+            db=db,
+            task_id=task_id,
+            user_id=target_user_id,
+            invited_by=current_user_id,
+        )
+        inviter = task_member_service.get_user(db, current_user_id)
+        task = task_member_service.get_task(db, task_id)
+        task_json = task.json if task and isinstance(task.json, dict) else {}
+        spec = task_json.get("spec", {})
+        task_title = spec.get("title", task.name if task else "Untitled")
+        team_id = task_member_service.get_team_id(db, task_id)
+        team_name = task_member_service.get_team_name(db, task_id)
+        inviter_name = inviter.user_name if inviter else "Unknown"
+        return _AddTaskMemberResult(
+            response=TaskMemberResponse(
+                id=member.id,
+                task_id=task_id,
+                user_id=target_user_id,
+                username=target_user.user_name,
+                avatar=None,
+                invited_by=current_user_id,
+                inviter_name=inviter_name,
+                status=_map_db_status_to_schema(member.status),
+                joined_at=member.joined_at,
+                is_owner=False,
+            ),
+            invitation=_TaskInvitation(
+                user_id=target_user_id,
+                task_id=task_id,
+                title=task_title,
+                team_id=team_id or 0,
+                team_name=team_name or "Unknown",
+                invited_by_user_id=current_user_id,
+                invited_by_user_name=inviter_name,
+            ),
+        )
+
+
+def _join_by_invite_sync(token: str, current_user_id: int) -> _JoinTaskResult:
+    """Validate an invite and persist membership in one database worker."""
+    from app.services.chat.storage.db import get_db_session
+
+    invite_data = task_invite_service.decode_invite_token(token)
+    if not invite_data:
+        raise HTTPException(status_code=400, detail="Invalid invite link")
+    if invite_data["is_expired"]:
+        raise HTTPException(status_code=400, detail="Invite link has expired")
+
+    task_id = int(invite_data["task_id"])
+    inviter_id = int(invite_data["inviter_id"])
+    with get_db_session() as db:
+        task = task_member_service.get_task(db, task_id)
+        if not task:
+            raise HTTPException(status_code=404, detail="Task not found")
+        if not task_member_service.is_group_chat(db, task_id):
+            raise HTTPException(status_code=400, detail="This task is not a group chat")
+        if task_member_service.is_member(db, task_id, current_user_id):
+            return _JoinTaskResult(
+                response=JoinByInviteResponse(
+                    message="You are already a member",
+                    task_id=task_id,
+                    already_member=True,
+                ),
+                invitation=None,
+            )
+
+        task_member_service.add_member(
+            db=db,
+            task_id=task_id,
+            user_id=current_user_id,
+            invited_by=inviter_id,
+        )
+        task_json = task.json if isinstance(task.json, dict) else {}
+        spec = task_json.get("spec", {})
+        inviter = task_member_service.get_user(db, inviter_id)
+        invitation = _TaskInvitation(
+            user_id=current_user_id,
+            task_id=task_id,
+            title=spec.get("title", task.name or "Untitled"),
+            team_id=task_member_service.get_team_id(db, task_id) or 0,
+            team_name=task_member_service.get_team_name(db, task_id) or "Unknown",
+            invited_by_user_id=inviter_id,
+            invited_by_user_name=inviter.user_name if inviter else "Unknown",
+        )
+        return _JoinTaskResult(
+            response=JoinByInviteResponse(
+                message="Successfully joined the group chat",
+                task_id=task_id,
+                already_member=False,
+            ),
+            invitation=invitation,
+        )
 
 
 async def _emit_task_invited(
@@ -148,93 +293,31 @@ def get_task_members(
 async def add_task_member(
     task_id: int,
     request: AddMemberRequest,
-    current_user: User = Depends(security.get_current_user),
-    db: Session = Depends(get_db),
+    current_user: security.DetachedUser = Depends(security.get_detached_current_user),
 ):
     """
     Manually add a user to a task (group chat).
     Any member can add new members.
     """
-    logger.info(
-        f"[add_task_member] Adding member: task_id={task_id}, user_id={request.user_id}, current_user_id={current_user.id}"
+    from app.services.chat.storage.db import run_sync_in_executor
+
+    result = await run_sync_in_executor(
+        _add_task_member_sync,
+        task_id,
+        request.user_id,
+        current_user.id,
     )
-
-    # Check if current user is a member
-    is_current_member = task_member_service.is_member(db, task_id, current_user.id)
-    logger.info(
-        f"[add_task_member] Current user membership check: task_id={task_id}, user_id={current_user.id}, is_member={is_current_member}"
-    )
-
-    if not is_current_member:
-        logger.warning(
-            f"[add_task_member] Current user {current_user.id} is not a member of task {task_id}"
-        )
-        raise HTTPException(
-            status_code=403, detail="You are not a member of this group chat"
-        )
-
-    # Check if target user exists
-    target_user = task_member_service.get_user(db, request.user_id)
-    logger.info(
-        f"[add_task_member] Target user lookup: user_id={request.user_id}, found={target_user is not None}"
-    )
-
-    if not target_user:
-        logger.warning(f"[add_task_member] Target user {request.user_id} not found")
-        raise HTTPException(status_code=404, detail="User not found")
-
-    # Check if task is a group chat
-    is_group_chat = task_member_service.is_group_chat(db, task_id)
-    logger.info(
-        f"[add_task_member] Group chat check: task_id={task_id}, is_group_chat={is_group_chat}"
-    )
-
-    if not is_group_chat:
-        logger.warning(f"[add_task_member] Task {task_id} is not a group chat")
-        raise HTTPException(status_code=400, detail="This task is not a group chat")
-
-    # Add member
-    member = task_member_service.add_member(
-        db=db,
-        task_id=task_id,
-        user_id=request.user_id,
-        invited_by=current_user.id,
-    )
-
-    # Get user info for response
-    inviter = task_member_service.get_user(db, current_user.id)
-
-    # Get task info for WebSocket notification
-    task = task_member_service.get_task(db, task_id)
-    task_json = task.json if task and isinstance(task.json, dict) else {}
-    spec = task_json.get("spec", {})
-    task_title = spec.get("title", task.name if task else "Untitled")
-    team_id = task_member_service.get_team_id(db, task_id)
-    team_name = task_member_service.get_team_name(db, task_id)
-
-    # Emit task:invited event to notify the invited user via WebSocket
+    invitation = result.invitation
     await _emit_task_invited(
-        user_id=request.user_id,
-        task_id=task_id,
-        title=task_title,
-        team_id=team_id or 0,
-        team_name=team_name or "Unknown",
-        invited_by_user_id=current_user.id,
-        invited_by_user_name=inviter.user_name if inviter else "Unknown",
+        user_id=invitation.user_id,
+        task_id=invitation.task_id,
+        title=invitation.title,
+        team_id=invitation.team_id,
+        team_name=invitation.team_name,
+        invited_by_user_id=invitation.invited_by_user_id,
+        invited_by_user_name=invitation.invited_by_user_name,
     )
-
-    return TaskMemberResponse(
-        id=member.id,
-        task_id=task_id,
-        user_id=request.user_id,
-        username=target_user.user_name,
-        avatar=None,
-        invited_by=current_user.id,
-        inviter_name=inviter.user_name if inviter else "Unknown",
-        status=_map_db_status_to_schema(member.status),
-        joined_at=member.joined_at,
-        is_owner=False,
-    )
+    return result.response
 
 
 @router.delete("/{task_id}/members/{user_id}", response_model=RemoveMemberResponse)
@@ -395,72 +478,29 @@ def get_invite_info(
 @router.post("/invite/join", response_model=JoinByInviteResponse)
 async def join_by_invite(
     token: str = Query(..., description="Invite token"),
-    current_user: User = Depends(security.get_current_user),
-    db: Session = Depends(get_db),
+    current_user: security.DetachedUser = Depends(security.get_detached_current_user),
 ):
     """
     Join a group chat via invite link.
     Requires authentication.
     Automatically adds the user as a group chat member.
     """
-    invite_data = task_invite_service.decode_invite_token(token)
-    if not invite_data:
-        raise HTTPException(status_code=400, detail="Invalid invite link")
+    from app.services.chat.storage.db import run_sync_in_executor
 
-    if invite_data["is_expired"]:
-        raise HTTPException(status_code=400, detail="Invite link has expired")
-
-    task_id = invite_data["task_id"]
-    inviter_id = invite_data["inviter_id"]
-
-    # Verify task exists and is a group chat
-    task = task_member_service.get_task(db, task_id)
-    if not task:
-        raise HTTPException(status_code=404, detail="Task not found")
-
-    if not task_member_service.is_group_chat(db, task_id):
-        raise HTTPException(status_code=400, detail="This task is not a group chat")
-
-    # Check if already a member
-    if task_member_service.is_member(db, task_id, current_user.id):
-        return JoinByInviteResponse(
-            message="You are already a member",
-            task_id=task_id,
-            already_member=True,
+    result = await run_sync_in_executor(
+        _join_by_invite_sync,
+        token,
+        current_user.id,
+    )
+    if result.invitation is not None:
+        invitation = result.invitation
+        await _emit_task_invited(
+            user_id=invitation.user_id,
+            task_id=invitation.task_id,
+            title=invitation.title,
+            team_id=invitation.team_id,
+            team_name=invitation.team_name,
+            invited_by_user_id=invitation.invited_by_user_id,
+            invited_by_user_name=invitation.invited_by_user_name,
         )
-
-    # Add as member
-    task_member_service.add_member(
-        db=db,
-        task_id=task_id,
-        user_id=current_user.id,
-        invited_by=inviter_id,
-    )
-
-    # Get task info for WebSocket notification
-    task_json = task.json if isinstance(task.json, dict) else {}
-    spec = task_json.get("spec", {})
-    task_title = spec.get("title", task.name or "Untitled")
-    team_id = task_member_service.get_team_id(db, task_id)
-    team_name = task_member_service.get_team_name(db, task_id)
-
-    # Get inviter info
-    inviter = task_member_service.get_user(db, inviter_id)
-
-    # Emit task:invited event to notify the joining user via WebSocket
-    # This updates their task list in real-time
-    await _emit_task_invited(
-        user_id=current_user.id,
-        task_id=task_id,
-        title=task_title,
-        team_id=team_id or 0,
-        team_name=team_name or "Unknown",
-        invited_by_user_id=inviter_id,
-        invited_by_user_name=inviter.user_name if inviter else "Unknown",
-    )
-
-    return JoinByInviteResponse(
-        message="Successfully joined the group chat",
-        task_id=task_id,
-        already_member=False,
-    )
+    return result.response

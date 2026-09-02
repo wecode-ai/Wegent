@@ -9,9 +9,13 @@ This module provides the main SubscriptionService class for CRUD operations
 on Subscription resources stored in the kinds table.
 """
 
+import hashlib
+import hmac
+import json
 import logging
 import secrets
 import string
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -55,6 +59,14 @@ from app.services.subscription.market_access import (
 from app.stores.tasks import task_store
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True)
+class _WebhookDispatchIntent:
+    subscription_id: int
+    execution_id: int
+    timeout_seconds: int
+    retry_count: int
 
 
 def generate_unique_subscription_name(
@@ -920,36 +932,126 @@ class SubscriptionService:
 
         return None
 
-    def trigger_subscription_by_webhook(
+    def _prepare_webhook_trigger_sync(
         self,
-        db: Session,
-        *,
         webhook_token: str,
-        payload: Dict[str, Any],
-    ) -> BackgroundExecutionInDB:
-        """Trigger a Subscription via webhook."""
-        subscription = self.get_subscription_by_webhook_token(
-            db, webhook_token=webhook_token
-        )
+        body: bytes,
+        signature: Optional[str],
+    ) -> tuple[BackgroundExecutionInDB, _WebhookDispatchIntent]:
+        """Validate and persist a webhook trigger in a worker-owned session."""
+        from app.core.config import settings
+        from app.services.chat.storage.db import get_db_session
 
-        if not subscription:
-            raise HTTPException(
-                status_code=404, detail="Subscription not found or disabled"
+        with get_db_session() as db:
+            subscription = self.get_subscription_by_webhook_token(
+                db,
+                webhook_token=webhook_token,
+            )
+            if not subscription:
+                raise HTTPException(
+                    status_code=404,
+                    detail="Subscription not found or disabled",
+                )
+
+            internal = subscription.json.get("_internal", {})
+            webhook_secret = internal.get("webhook_secret")
+            if webhook_secret:
+                if not signature:
+                    raise HTTPException(
+                        status_code=401,
+                        detail="Missing X-Webhook-Signature header",
+                    )
+                if not signature.startswith("sha256="):
+                    raise HTTPException(
+                        status_code=401,
+                        detail=(
+                            "Invalid signature format. Expected: sha256=<hex_digest>"
+                        ),
+                    )
+                expected_signature = hmac.new(
+                    webhook_secret.encode("utf-8"),
+                    body,
+                    hashlib.sha256,
+                ).hexdigest()
+                if not hmac.compare_digest(signature[7:], expected_signature):
+                    logger.warning(
+                        "[webhook] Invalid signature for subscription %s, token=%s...",
+                        subscription.id,
+                        webhook_token[:8],
+                    )
+                    raise HTTPException(
+                        status_code=401,
+                        detail="Invalid signature",
+                    )
+
+            payload: Dict[str, Any] = {}
+            if body:
+                try:
+                    payload = json.loads(body)
+                except json.JSONDecodeError:
+                    pass
+
+            execution = self.execution_manager.create_execution(
+                db,
+                subscription=subscription,
+                user_id=subscription.user_id,
+                trigger_type="webhook",
+                trigger_reason="Triggered by webhook",
+                extra_variables={"webhook_data": payload},
+            )
+            subscription_crd = validate_subscription_for_read(subscription.json)
+            timeout_seconds = getattr(
+                subscription_crd.spec,
+                "timeoutSeconds",
+                settings.FLOW_DEFAULT_TIMEOUT_SECONDS,
+            )
+            retry_count = (
+                subscription_crd.spec.retryCount or settings.FLOW_DEFAULT_RETRY_COUNT
+            )
+            return execution, _WebhookDispatchIntent(
+                subscription_id=subscription.id,
+                execution_id=execution.id,
+                timeout_seconds=timeout_seconds,
+                retry_count=retry_count,
             )
 
-        # Create execution with webhook data
-        execution = self.execution_manager.create_execution(
-            db,
-            subscription=subscription,
-            user_id=subscription.user_id,
-            trigger_type="webhook",
-            trigger_reason="Triggered by webhook",
-            extra_variables={"webhook_data": payload},
+    @staticmethod
+    def _dispatch_webhook_execution_sync(intent: _WebhookDispatchIntent) -> None:
+        """Submit the already-committed execution through bounded broker I/O."""
+        from app.tasks.subscription_tasks import execute_subscription_task
+
+        logger.info(
+            "[Subscription] Dispatching execution %s (celery): "
+            "subscription_id=%s, timeout=%ss, retry_count=%s",
+            intent.execution_id,
+            intent.subscription_id,
+            intent.timeout_seconds,
+            intent.retry_count,
+        )
+        execute_subscription_task.apply_async(
+            args=[intent.subscription_id, intent.execution_id],
+            kwargs={"timeout_seconds": intent.timeout_seconds},
+            max_retries=intent.retry_count,
         )
 
-        # Dispatch task for execution
-        self.dispatch_background_execution(subscription, execution)
+    async def trigger_subscription_webhook_nonblocking(
+        self,
+        *,
+        webhook_token: str,
+        body: bytes,
+        signature: Optional[str],
+    ) -> BackgroundExecutionInDB:
+        """Run webhook DB and synchronous broker phases outside the event loop."""
+        from app.core.blocking_work import run_execution_io
+        from app.services.chat.storage.db import run_sync_in_executor
 
+        execution, intent = await run_sync_in_executor(
+            self._prepare_webhook_trigger_sync,
+            webhook_token,
+            body,
+            signature,
+        )
+        await run_execution_io(self._dispatch_webhook_execution_sync, intent)
         return execution
 
     def dispatch_background_execution(

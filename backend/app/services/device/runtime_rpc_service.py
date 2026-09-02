@@ -16,9 +16,11 @@ from typing import Any, Optional
 from socketio.exceptions import BadNamespaceError, DisconnectedError
 from socketio.exceptions import TimeoutError as SocketTimeoutError
 
+from app.core.payload_codec import run_payload_codec
 from app.core.socketio import get_sio
 from app.db.session import get_db_session
 from app.schemas.device import DeviceType
+from app.services.chat.storage.db import run_sync_in_executor
 from app.services.device.remote_control_policy import (
     REMOTE_CONTROL_DISABLED_MESSAGE,
     remote_control_is_enabled,
@@ -130,12 +132,17 @@ async def _enforce_remote_runtime_proxy(
     ):
         return payload
 
-    next_payload = copy.deepcopy(payload)
+    next_payload = await run_payload_codec(
+        copy.deepcopy,
+        payload,
+        payload_hint=payload,
+        force_offload=True,
+    )
     model_configs = _runtime_model_configs(next_payload)
     if not model_configs:
         return payload
 
-    proxy_url = await asyncio.to_thread(_load_remote_runtime_proxy_url, user_id)
+    proxy_url = await run_sync_in_executor(_load_remote_runtime_proxy_url, user_id)
     cloud_model_config_count = 0
     for model_config in model_configs:
         if _uses_backend_cloud_model_gateway(model_config):
@@ -342,7 +349,7 @@ class RuntimeRpcService:
             ) from exc
 
         try:
-            result = self._decode_response(result, method=method)
+            result = await decode_runtime_rpc_response(result, method=method)
         except RuntimeRpcError as exc:
             logger.warning(
                 "[RuntimeRpcService] Runtime RPC response decoding failed: "
@@ -527,6 +534,25 @@ class RuntimeRpcService:
         return "runtime_rpc_failed", f"Runtime RPC '{method}' failed: {detail}"
 
 
+async def decode_runtime_rpc_response(
+    result: Any,
+    *,
+    method: str,
+) -> Any:
+    """Decode a compressed runtime response outside the serving event loop."""
+    if not (
+        isinstance(result, dict)
+        and result.get(RUNTIME_RPC_ENCODING_KEY) == RUNTIME_RPC_COMPRESSED_ENCODING
+    ):
+        return result
+    return await run_payload_codec(
+        lambda value: RuntimeRpcService._decode_response(value, method=method),
+        result,
+        payload_hint=result,
+        force_offload=True,
+    )
+
+
 runtime_rpc_service = RuntimeRpcService()
 
 
@@ -569,3 +595,16 @@ def encode_runtime_rpc_response(
         envelope_bytes,
     )
     return envelope
+
+
+async def encode_runtime_rpc_response_nonblocking(
+    response: dict[str, Any],
+    *,
+    method: str,
+) -> dict[str, Any]:
+    """Encode a browser-facing runtime response with bounded loop work."""
+    return await run_payload_codec(
+        lambda value: encode_runtime_rpc_response(value, method=method),
+        response,
+        payload_hint=response,
+    )

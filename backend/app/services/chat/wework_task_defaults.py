@@ -56,6 +56,30 @@ async def apply_wework_task_defaults(
     )
 
 
+async def apply_wework_task_defaults_nonblocking(
+    *,
+    user: User,
+    params: TaskCreationParams,
+) -> TaskCreationParams:
+    """Apply new-task Wework defaults without synchronous DB work on the loop."""
+    if params.client_origin != CLIENT_ORIGIN_WEWORK:
+        return params
+
+    from app.services.chat.storage.db import run_sync_in_executor
+
+    resolved = apply_wework_task_model_defaults(user=user, params=params)
+    if resolved.device_id:
+        return resolved
+
+    project_device_id = await run_sync_in_executor(
+        _load_project_device_id,
+        user.id,
+        resolved.project_id,
+    )
+    device_id = project_device_id or await _get_user_selected_device_id(user)
+    return replace(resolved, device_id=device_id) if device_id else resolved
+
+
 def apply_existing_wework_task_defaults(
     *,
     params: TaskCreationParams,
@@ -111,6 +135,41 @@ def apply_wework_task_model_defaults(
         force_override_bot_model=True,
         force_override_bot_model_type=selection.model_type,
         model_options=deepcopy(selection.model_options),
+    )
+
+
+def apply_wework_task_storage_defaults(
+    db: Session,
+    *,
+    user: User,
+    params: TaskCreationParams,
+    selected_device_type: str,
+    selected_device_id: str | None,
+) -> TaskCreationParams:
+    """Apply new-task defaults using only synchronous storage inputs.
+
+    The caller resolves the Redis-backed IM device selection before entering
+    the database worker. This function may therefore run as one bounded,
+    worker-owned transaction without carrying ``User`` across an await.
+    """
+
+    resolved = apply_wework_task_model_defaults(user=user, params=params)
+    project_device_id = _extract_project_device_id(
+        db,
+        user.id,
+        resolved.project_id,
+    )
+    if project_device_id:
+        return replace(resolved, device_id=project_device_id)
+    if selected_device_type == "local" and selected_device_id:
+        return replace(resolved, device_id=selected_device_id)
+    if selected_device_type == "cloud":
+        return resolved
+    default_device_id = _get_default_execution_target_device_id(user)
+    return (
+        replace(resolved, device_id=default_device_id)
+        if default_device_id
+        else resolved
     )
 
 
@@ -246,6 +305,14 @@ def _extract_project_device_id(
             return device_id
 
     return _clean_string(project.config.get("device_id"))
+
+
+def _load_project_device_id(user_id: int, project_id: int | None) -> str | None:
+    """Read a project device with a session owned by the DB worker."""
+    from app.services.chat.storage.db import get_db_session
+
+    with get_db_session() as db:
+        return _extract_project_device_id(db, user_id, project_id)
 
 
 async def _get_user_selected_device_id(user: User) -> str | None:

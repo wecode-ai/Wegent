@@ -7,7 +7,6 @@
 import logging
 from typing import Any, Optional
 
-from app.db.session import SessionLocal
 from app.mcp_server.auth import TaskTokenInfo
 from app.mcp_server.tools.decorator import mcp_tool
 from app.services.execution.agents.image.generation_service import (
@@ -41,10 +40,8 @@ async def generate_image(
     reference_images: Optional[list[str | int]] = None,
 ) -> dict[str, Any]:
     """Generate and persist images."""
-    db = SessionLocal()
     try:
         return await image_generation_service.generate(
-            db=db,
             token_info=token_info,
             prompt=prompt,
             size=size,
@@ -57,5 +54,3 @@ async def generate_image(
     except Exception as exc:
         logger.exception("[MCP:Image] generate_image failed")
         return {"error": str(exc)}
-    finally:
-        db.close()

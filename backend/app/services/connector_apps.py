@@ -16,7 +16,6 @@ from sqlalchemy.orm import Session
 from sqlalchemy.orm.attributes import flag_modified
 
 from app.models.kind import Kind
-from app.models.user import User
 from app.schemas.connector import (
     ConnectorAppAdminResponse,
     ConnectorAppResponse,
@@ -37,7 +36,7 @@ CONNECTOR_APP_NAMESPACE = "system"
 CONNECTOR_APP_USER_ID = 0
 
 
-@dataclass
+@dataclass(frozen=True)
 class ConnectorApp:
     """Runtime view of a connector app stored as a Kind resource."""
 
@@ -48,18 +47,17 @@ class ConnectorApp:
     icon_url: str | None
     enabled: bool
     visibility: str
-    allowed_roles: list[str]
+    allowed_roles: tuple[str, ...]
     auth_type: str
     transport: str
     mcp_url: str
     provider_headers_encrypted: str | None
     forward_user_context_headers: bool
-    tool_allowlist: list[str]
-    http_tools: list[dict[str, Any]]
+    tool_allowlist: tuple[str, ...]
+    http_tools: tuple[ConnectorHttpToolDefinition, ...]
     created_by: int | None
     created_at: datetime
     updated_at: datetime
-    row: Kind
 
 
 def _encrypt_json(value: dict[str, str]) -> str | None:
@@ -98,7 +96,7 @@ class ConnectorAppService:
 
     @staticmethod
     def create_app(
-        db: Session, payload: ConnectorAppWrite, admin: User
+        db: Session, payload: ConnectorAppWrite, created_by: int
     ) -> ConnectorApp:
         if ConnectorAppService._find_row_by_slug(db, payload.slug):
             raise HTTPException(
@@ -118,7 +116,7 @@ class ConnectorAppService:
             namespace=CONNECTOR_APP_NAMESPACE,
             json=ConnectorAppService._payload(
                 payload=payload,
-                created_by=admin.id,
+                created_by=created_by,
             ),
             is_active=True,
         )
@@ -131,7 +129,10 @@ class ConnectorAppService:
     def update_app(
         db: Session, app: ConnectorApp, payload: ConnectorAppUpdate
     ) -> ConnectorApp:
-        current = ConnectorAppService._spec(app.row)
+        row = ConnectorAppService._find_row_by_id(db, app.id)
+        if row is None:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "Connector app not found")
+        current = ConnectorAppService._spec(row)
 
         values = payload.model_dump(
             mode="json",
@@ -159,15 +160,15 @@ class ConnectorAppService:
             http_tools=list(current.get("httpTools") or []),
             tool_allowlist=list(current.get("toolAllowlist") or []),
         )
-        data = dict(app.row.json or {})
+        data = dict(row.json or {})
         data["spec"] = current
         display_name = str(current.get("name") or app.slug)
         data["metadata"] = _metadata(app.slug, display_name)
-        app.row.json = data
-        flag_modified(app.row, "json")
+        row.json = data
+        flag_modified(row, "json")
         db.commit()
-        db.refresh(app.row)
-        return ConnectorAppService._row_to_app(app.row)
+        db.refresh(row)
+        return ConnectorAppService._row_to_app(row)
 
     @staticmethod
     def _validate_configuration(
@@ -281,17 +282,17 @@ class ConnectorAppService:
         return [ConnectorAppService._row_to_app(row) for row in rows]
 
     @staticmethod
-    def list_visible_apps(db: Session, user: User) -> list[ConnectorApp]:
+    def list_visible_apps(db: Session, user_role: str) -> list[ConnectorApp]:
         apps = [app for app in ConnectorAppService.list_all_apps(db) if app.enabled]
         return [
             app
             for app in apps
-            if app.visibility == "all" or user.role in (app.allowed_roles or [])
+            if app.visibility == "all" or user_role in (app.allowed_roles or ())
         ]
 
     @staticmethod
     def user_response(
-        db: Session, app: ConnectorApp, user: User
+        db: Session, app: ConnectorApp, user_id: int
     ) -> ConnectorAppResponse:
         if app.auth_type == "none":
             connection = ConnectorConnectionResponse(
@@ -305,7 +306,7 @@ class ConnectorAppService:
                 connector_connection_service.get(
                     db,
                     slug=app.slug,
-                    user_id=user.id,
+                    user_id=user_id,
                 )
             )
         return ConnectorAppResponse(
@@ -320,13 +321,16 @@ class ConnectorAppService:
 
     @staticmethod
     def disable_app(db: Session, app: ConnectorApp) -> None:
-        app.row.is_active = False
-        spec = ConnectorAppService._spec(app.row)
+        row = ConnectorAppService._find_row_by_id(db, app.id)
+        if row is None:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "Connector app not found")
+        row.is_active = False
+        spec = ConnectorAppService._spec(row)
         spec["enabled"] = False
-        data = dict(app.row.json or {})
+        data = dict(row.json or {})
         data["spec"] = spec
-        app.row.json = data
-        flag_modified(app.row, "json")
+        row.json = data
+        flag_modified(row, "json")
         connections = (
             db.query(Kind)
             .filter(
@@ -361,6 +365,19 @@ class ConnectorAppService:
                 Kind.kind == CONNECTOR_APP_KIND,
                 Kind.namespace == CONNECTOR_APP_NAMESPACE,
                 Kind.name == slug,
+                Kind.is_active,
+            )
+            .first()
+        )
+
+    @staticmethod
+    def _find_row_by_id(db: Session, app_id: int) -> Kind | None:
+        return (
+            db.query(Kind)
+            .filter(
+                Kind.id == app_id,
+                Kind.kind == CONNECTOR_APP_KIND,
+                Kind.namespace == CONNECTOR_APP_NAMESPACE,
                 Kind.is_active,
             )
             .first()
@@ -409,7 +426,7 @@ class ConnectorAppService:
             icon_url=spec.get("iconUrl"),
             enabled=bool(spec.get("enabled", True)),
             visibility=str(spec.get("visibility") or "all"),
-            allowed_roles=list(spec.get("allowedRoles") or []),
+            allowed_roles=tuple(spec.get("allowedRoles") or []),
             auth_type=str(spec.get("authType") or "none"),
             transport=str(spec.get("transport") or "streamable-http"),
             mcp_url=str(spec.get("mcpUrl") or ""),
@@ -417,12 +434,14 @@ class ConnectorAppService:
             forward_user_context_headers=bool(
                 spec.get("forwardUserContextHeaders", False)
             ),
-            tool_allowlist=list(spec.get("toolAllowlist") or []),
-            http_tools=list(spec.get("httpTools") or []),
+            tool_allowlist=tuple(spec.get("toolAllowlist") or []),
+            http_tools=tuple(
+                ConnectorHttpToolDefinition.model_validate(item)
+                for item in (spec.get("httpTools") or [])
+            ),
             created_by=spec.get("createdBy"),
             created_at=row.created_at,
             updated_at=row.updated_at,
-            row=row,
         )
 
     @staticmethod

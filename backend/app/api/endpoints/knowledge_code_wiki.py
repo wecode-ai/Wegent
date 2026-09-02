@@ -18,6 +18,7 @@ directly under the router it extends: ``/code-wikis`` has to be matched before
 """
 
 import logging
+from dataclasses import dataclass
 
 from fastapi import (
     APIRouter,
@@ -57,6 +58,7 @@ from app.schemas.knowledge import (
     ResourceScope,
 )
 from app.services.adapters.task_kinds import task_kinds_service
+from app.services.chat.storage.db import get_db_session, run_sync_in_executor
 from app.services.knowledge import KnowledgeService
 from app.services.knowledge.code_wiki.diagnostics import diagnose
 from app.services.knowledge.code_wiki.generation import (
@@ -419,6 +421,69 @@ def _assert_caller_may_manage_generation(
         )
 
 
+@dataclass(frozen=True)
+class _WikiCancellation:
+    task_id: int
+    task_user_id: int
+
+
+def _prepare_wiki_cancellation(
+    knowledge_base_id: int,
+    generation_id: int,
+    caller_id: int,
+) -> _WikiCancellation:
+    """Authorize cancellation and detach the identifiers from the DB session."""
+    with get_db_session() as db:
+        caller = db.get(User, caller_id)
+        if caller is None:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="User not found",
+            )
+        knowledge_base = _readable_code_wiki(db, caller, knowledge_base_id)
+        _assert_caller_may_manage_generation(db, caller, knowledge_base)
+        generation = db.get(WikiGeneration, generation_id)
+        if (
+            generation is None
+            or generation.kind_id != knowledge_base.id
+            or generation.status != WikiGenerationStatus.RUNNING
+        ):
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="Code wiki generation is no longer running",
+            )
+        if not generation.task_id:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="Code wiki generation has no task to cancel",
+            )
+        return _WikiCancellation(
+            task_id=generation.task_id,
+            task_user_id=generation.user_id,
+        )
+
+
+def _finish_wiki_cancellation(
+    knowledge_base_id: int,
+    generation_id: int,
+) -> None:
+    """Settle a cancelled generation in a worker-owned transaction."""
+    with get_db_session() as db:
+        generation = db.get(WikiGeneration, generation_id)
+        if generation is None or generation.kind_id != knowledge_base_id:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="Code wiki generation is no longer running",
+            )
+        if generation.status == WikiGenerationStatus.RUNNING:
+            finish_run(
+                db,
+                generation=generation,
+                succeeded=False,
+                failure_code=FailureCode.CANCELLED_BY_USER,
+            )
+
+
 @router.get("/{knowledge_base_id}/code-wiki/status", response_model=CodeWikiRunStatus)
 @trace_sync("get_code_wiki_status", "knowledge.api")
 def get_code_wiki_status(
@@ -468,8 +533,7 @@ async def cancel_code_wiki_generation(
     knowledge_base_id: int,
     generation_id: int,
     background_tasks: BackgroundTasks,
-    current_user: User = Depends(security.get_current_user),
-    db: Session = Depends(get_db),
+    current_user: security.DetachedUser = Depends(security.get_detached_current_user),
 ) -> Response:
     """Stop the current generation and immediately settle its wiki state.
 
@@ -479,35 +543,21 @@ async def cancel_code_wiki_generation(
     allowed to stop a run, so this route authorizes that first and invokes the task
     service as the generation owner.
     """
-    knowledge_base = _readable_code_wiki(db, current_user, knowledge_base_id)
-    _assert_caller_may_manage_generation(db, current_user, knowledge_base)
-    generation = db.get(WikiGeneration, generation_id)
-    if (
-        generation is None
-        or generation.kind_id != knowledge_base.id
-        or generation.status != WikiGenerationStatus.RUNNING
-    ):
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail="Code wiki generation is no longer running",
-        )
-    if not generation.task_id:
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail="Code wiki generation has no task to cancel",
-        )
-
-    await task_kinds_service.cancel_task(
-        db=db,
-        task_id=generation.task_id,
-        user_id=generation.user_id,
+    cancellation = await run_sync_in_executor(
+        _prepare_wiki_cancellation,
+        knowledge_base_id,
+        generation_id,
+        current_user.id,
+    )
+    await task_kinds_service.cancel_task_nonblocking(
+        task_id=cancellation.task_id,
+        user_id=cancellation.task_user_id,
         background_task_runner=background_tasks.add_task,
     )
-    finish_run(
-        db,
-        generation=generation,
-        succeeded=False,
-        failure_code=FailureCode.CANCELLED_BY_USER,
+    await run_sync_in_executor(
+        _finish_wiki_cancellation,
+        knowledge_base_id,
+        generation_id,
     )
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 

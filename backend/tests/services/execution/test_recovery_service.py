@@ -168,7 +168,7 @@ async def test_recover_with_archive_continues_when_restore_fails():
         ) as prepare_executor_mock,
         patch.object(
             recovery_module.archive_service,
-            "restore_workspace",
+            "restore_workspace_snapshot",
             AsyncMock(return_value=None),
         ) as restore_mock,
     ):
@@ -245,7 +245,7 @@ async def test_recover_claude_continuation_rejects_missing_session_context():
         ),
         patch.object(
             recovery_module.archive_service,
-            "restore_workspace",
+            "restore_workspace_snapshot",
             AsyncMock(
                 return_value={
                     "success": True,
@@ -338,7 +338,7 @@ async def test_recover_claude_continuation_rejects_when_session_was_persisted() 
         ),
         patch.object(
             recovery_module.archive_service,
-            "restore_workspace",
+            "restore_workspace_snapshot",
             AsyncMock(
                 return_value={
                     "success": True,
@@ -420,7 +420,7 @@ async def test_recover_legacy_claude_task_without_session_evidence_continues() -
         ),
         patch.object(
             recovery_module.archive_service,
-            "restore_workspace",
+            "restore_workspace_snapshot",
             AsyncMock(
                 return_value={
                     "success": True,
@@ -490,7 +490,7 @@ async def test_recover_with_archive_cleans_up_prepared_executor_on_error() -> No
         ),
         patch.object(
             recovery_module.archive_service,
-            "restore_workspace",
+            "restore_workspace_snapshot",
             AsyncMock(side_effect=ValueError("restore exploded")),
         ),
         patch.object(
@@ -551,7 +551,7 @@ async def test_recover_claude_continuation_uses_persisted_session_mapping():
         ),
         patch.object(
             recovery_module.archive_service,
-            "restore_workspace",
+            "restore_workspace_snapshot",
             AsyncMock(
                 return_value={
                     "success": True,

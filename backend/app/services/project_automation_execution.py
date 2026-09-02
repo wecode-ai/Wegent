@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import logging
 import uuid
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any, Protocol
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
@@ -66,6 +67,30 @@ MISSING_MANAGER_PLAN_ERROR = "AI manager finished without submitting a workflow 
 
 if TYPE_CHECKING:
     from app.schemas.issue_workflow import WorkflowPlanSubmit, WorkflowPlanView
+
+
+@dataclass(frozen=True)
+class _WorkflowDispatchIntent:
+    run_id: str
+    rule_id: str
+    item_id: str
+    project_id: str
+    user_id: int
+    advancement_policy: str
+    node_count: int
+    adopted_existing_workflow: bool
+
+
+@dataclass(frozen=True)
+class _WegentManagerDispatchIntent:
+    run_id: str
+    owner_user_id: int
+    team_id: int
+    prompt: str
+    title: str
+    project_id: str
+    item_id: str
+    activity_message_id: str
 
 
 class AutomationRunNotRetryable(RuntimeError):
@@ -188,6 +213,181 @@ class ProjectAutomationExecution:
             )
             self._fail_run(db, run_id=str(run.id), error=str(exc) or "Dispatch failed")
 
+    @trace_async(
+        span_name="project_automation.execution.dispatch_nonblocking",
+        tracer_name="backend.project_automation",
+        extract_attributes=lambda self, **kwargs: {
+            "automation.run.id": kwargs["run_id"],
+        },
+    )
+    async def dispatch_nonblocking(self, *, run_id: str) -> None:
+        """Dispatch a stored run without sharing a Session with the caller loop."""
+
+        from app.services.chat.storage.db import run_sync_in_executor
+
+        try:
+            intent = await run_sync_in_executor(
+                self._prepare_dispatch_from_store,
+                run_id,
+            )
+            if isinstance(intent, _WorkflowDispatchIntent):
+                from app.services.issue_workflow_start import (
+                    issue_workflow_start_service,
+                )
+
+                started = await issue_workflow_start_service.start_nonblocking(
+                    item_id=intent.item_id,
+                    user_id=intent.user_id,
+                )
+                await run_sync_in_executor(
+                    self._finish_workflow_dispatch_from_store,
+                    intent,
+                    started,
+                )
+            elif isinstance(intent, _WegentManagerDispatchIntent):
+                from app.services.project_automation_managed_execution import (
+                    project_automation_managed_execution_service,
+                )
+
+                handle = await project_automation_managed_execution_service.dispatch_nonblocking(
+                    owner_user_id=intent.owner_user_id,
+                    team_id=intent.team_id,
+                    prompt=intent.prompt,
+                    title=intent.title,
+                    project_id=intent.project_id,
+                    loop_item_id=intent.item_id,
+                    automation_run_id=intent.run_id,
+                    project_chat_message_id=intent.activity_message_id,
+                )
+                await run_sync_in_executor(
+                    self._finish_wegent_manager_dispatch_from_store,
+                    intent,
+                    handle.task_id,
+                    handle.subtask_id,
+                )
+        except Exception as exc:
+            logger.exception(
+                "[ProjectAutomation] Nonblocking dispatch failed run=%s",
+                run_id,
+            )
+            await run_sync_in_executor(
+                self._fail_dispatch_from_store,
+                run_id,
+                str(exc) or "Dispatch failed",
+            )
+
+    def _prepare_dispatch_from_store(
+        self,
+        run_id: str,
+    ) -> _WorkflowDispatchIntent | _WegentManagerDispatchIntent | None:
+        from app.services.chat.storage.db import get_db_session
+
+        with get_db_session() as db:
+            run = db.get(ProjectAutomationRun, run_id)
+            if run is None:
+                raise RuntimeError("Automation run is unavailable")
+            if run.status not in {"pending", "queued"}:
+                return None
+            rule = db.get(ProjectAutomationRule, run.parent_id)
+            if rule is None:
+                raise RuntimeError("Automation rule is unavailable")
+            return self._prepare_dispatch(db, rule=rule, run=run)
+
+    def _prepare_dispatch(
+        self,
+        db: Session,
+        *,
+        rule: ProjectAutomationRule,
+        run: ProjectAutomationRun,
+    ) -> _WorkflowDispatchIntent | _WegentManagerDispatchIntent | None:
+        owner = db.get(User, rule.created_by_user_id)
+        project = db.get(CloudProject, rule.cloud_project_id)
+        if owner is None or project is None:
+            raise RuntimeError("Automation owner or project is unavailable")
+        run_metadata = metadata(run)
+        if not text(run_metadata.get("task_origin")):
+            run_metadata["task_origin"] = (
+                "existing_issue" if run.task_id else "automation_created"
+            )
+            run.metadata_json = run_metadata
+        workflow_definition = (
+            None
+            if run_metadata.get("bypass_workflow_definition")
+            else self._workflow_definition(rule)
+        )
+        self._ensure_run_task(db, project=project, owner=owner, rule=rule, run=run)
+        if workflow_definition is not None:
+            return self._prepare_workflow_dispatch(
+                db,
+                owner=owner,
+                project=project,
+                rule=rule,
+                run=run,
+                definition=workflow_definition,
+            )
+        context = self._automation_context(db, rule, run)
+        instruction = self._run_instruction(rule, run)
+        configured_mode = assignment_mode(metadata(rule))
+        if configured_mode == "manual":
+            configured_agent_id = str(context.get("agent_id") or "")
+            if not configured_agent_id and (
+                "workspace_binding" in context
+                or role_config(metadata(rule)).get("source") == "generic"
+            ):
+                self._dispatch_generic_robot(
+                    db,
+                    owner=owner,
+                    rule=rule,
+                    run=run,
+                    context=context,
+                )
+            else:
+                self._assign_project_robot(
+                    db,
+                    owner=owner,
+                    rule=rule,
+                    run=run,
+                    agent_id=configured_agent_id or rule.assignee_agent_id,
+                    context=context,
+                    instruction=instruction,
+                )
+            return None
+
+        configured_manager = manager_type(metadata(rule))
+        activity = self._create_manager_activity(
+            db,
+            rule=rule,
+            run=run,
+            configured_manager=configured_manager,
+        )
+        context["activity_message_id"] = activity.message_id
+        if configured_manager == "custom":
+            self._dispatch_custom_manager(
+                db,
+                owner=owner,
+                rule=rule,
+                run=run,
+                context=context,
+            )
+            return None
+        if configured_manager == "wegent":
+            return self._prepare_wegent_manager_dispatch(
+                db,
+                owner=owner,
+                project=project,
+                rule=rule,
+                run=run,
+                activity=activity,
+                context=context,
+            )
+        raise RuntimeError("AI manager configuration is incomplete")
+
+    def _fail_dispatch_from_store(self, run_id: str, error: str) -> None:
+        from app.services.chat.storage.db import get_db_session
+
+        with get_db_session() as db:
+            self._fail_run(db, run_id=run_id, error=error)
+
     @staticmethod
     def _workflow_definition(
         rule: ProjectAutomationRule,
@@ -210,6 +410,27 @@ class ProjectAutomationExecution:
         run: ProjectAutomationRun,
         definition: ProjectWorkflowDefinition,
     ) -> None:
+        intent = self._prepare_workflow_dispatch(
+            db,
+            owner=owner,
+            project=project,
+            rule=rule,
+            run=run,
+            definition=definition,
+        )
+        if intent is not None:
+            await self._continue_workflow_dispatch(db, intent)
+
+    def _prepare_workflow_dispatch(
+        self,
+        db: Session,
+        *,
+        owner: User,
+        project: CloudProject,
+        rule: ProjectAutomationRule,
+        run: ProjectAutomationRun,
+        definition: ProjectWorkflowDefinition,
+    ) -> _WorkflowDispatchIntent | None:
         if not run.task_id:
             raise RuntimeError("Workflow automation task is unavailable")
         item = (
@@ -258,14 +479,56 @@ class ProjectAutomationExecution:
         db.refresh(item)
         db.refresh(run)
 
+        return _WorkflowDispatchIntent(
+            run_id=str(run.id),
+            rule_id=str(rule.id),
+            item_id=str(item.id),
+            project_id=str(project.id),
+            user_id=owner.id,
+            advancement_policy=workflow.advancement_policy,
+            node_count=len(workflow.nodes),
+            adopted_existing_workflow=adopt_existing_workflow,
+        )
+
+    async def _continue_workflow_dispatch(
+        self,
+        db: Session,
+        intent: _WorkflowDispatchIntent,
+    ) -> None:
+        item = db.get(LoopItem, intent.item_id)
+        project = db.get(CloudProject, intent.project_id)
+        if item is None or project is None:
+            raise RuntimeError("Workflow automation resources are unavailable")
+
         from app.services.issue_workflow_start import issue_workflow_start_service
 
         started = await issue_workflow_start_service.start(
             db,
             item=item,
             project=project,
-            user_id=owner.id,
+            user_id=intent.user_id,
         )
+        self._finish_workflow_dispatch(db, intent, started)
+
+    def _finish_workflow_dispatch_from_store(
+        self,
+        intent: _WorkflowDispatchIntent,
+        started: int,
+    ) -> None:
+        from app.services.chat.storage.db import get_db_session
+
+        with get_db_session() as db:
+            self._finish_workflow_dispatch(db, intent, started)
+
+    def _finish_workflow_dispatch(
+        self,
+        db: Session,
+        intent: _WorkflowDispatchIntent,
+        started: int,
+    ) -> None:
+        item = db.get(LoopItem, intent.item_id)
+        if item is None:
+            raise RuntimeError("Workflow automation Issue is unavailable")
         from app.services.project_workflow_projection import (
             sync_workflow_automation_nodes,
             sync_workflow_automation_status,
@@ -280,7 +543,7 @@ class ProjectAutomationExecution:
             if isinstance(current_workflow, dict)
             else ""
         )
-        if workflow.advancement_policy == "manual":
+        if intent.advancement_policy == "manual":
             current_nodes = (
                 current_workflow.get("nodes")
                 if isinstance(current_workflow, dict)
@@ -314,12 +577,12 @@ class ProjectAutomationExecution:
         logger.info(
             "[ProjectAutomation] Workflow dispatched rule=%s run=%s item=%s "
             "nodes=%s started=%s adopted=%s",
-            rule.id,
-            run.id,
+            intent.rule_id,
+            intent.run_id,
             item.id,
-            len(workflow.nodes),
+            intent.node_count,
             started,
-            adopt_existing_workflow,
+            intent.adopted_existing_workflow,
         )
 
     def _ensure_run_task(
@@ -627,6 +890,77 @@ class ProjectAutomationExecution:
             owner.id,
             integer(manager_config(metadata(rule)).get("wegent_team_id")),
         )
+        intent = self._build_wegent_manager_dispatch_intent(
+            db,
+            owner=owner,
+            project=project,
+            rule=rule,
+            run=run,
+            activity=activity,
+            context=context,
+            team_id=team.id,
+        )
+        from app.services.project_automation_managed_execution import (
+            project_automation_managed_execution_service,
+        )
+
+        handle = await project_automation_managed_execution_service.dispatch(
+            db=db,
+            owner=owner,
+            team=team,
+            prompt=intent.prompt,
+            title=intent.title,
+            project_id=intent.project_id,
+            loop_item_id=intent.item_id,
+            automation_run_id=intent.run_id,
+            project_chat_message_id=intent.activity_message_id,
+        )
+        self._finish_wegent_manager_dispatch(
+            db,
+            intent,
+            handle.task_id,
+            handle.subtask_id,
+        )
+
+    def _prepare_wegent_manager_dispatch(
+        self,
+        db: Session,
+        *,
+        owner: User,
+        project: CloudProject,
+        rule: ProjectAutomationRule,
+        run: ProjectAutomationRun,
+        activity: ProjectChatMessage,
+        context: dict,
+    ) -> _WegentManagerDispatchIntent:
+        team = runnable_wegent_team(
+            db,
+            owner.id,
+            integer(manager_config(metadata(rule)).get("wegent_team_id")),
+        )
+        return self._build_wegent_manager_dispatch_intent(
+            db,
+            owner=owner,
+            project=project,
+            rule=rule,
+            run=run,
+            activity=activity,
+            context=context,
+            team_id=team.id,
+        )
+
+    def _build_wegent_manager_dispatch_intent(
+        self,
+        db: Session,
+        *,
+        owner: User,
+        project: CloudProject,
+        rule: ProjectAutomationRule,
+        run: ProjectAutomationRun,
+        activity: ProjectChatMessage,
+        context: dict,
+        team_id: int,
+    ) -> _WegentManagerDispatchIntent:
         if not run.task_id:
             raise RuntimeError("Automation task carrier is unavailable")
         prompt = self._managed_prompt(
@@ -637,41 +971,60 @@ class ProjectAutomationExecution:
             run=run,
             context=context,
         )
-        from app.services.project_automation_managed_execution import (
-            project_automation_managed_execution_service,
-        )
-
-        handle = await project_automation_managed_execution_service.dispatch(
-            db=db,
-            owner=owner,
-            team=team,
+        return _WegentManagerDispatchIntent(
+            run_id=str(run.id),
+            owner_user_id=owner.id,
+            team_id=team_id,
             prompt=prompt,
             title=rule.title or "AI managed automation",
             project_id=str(project.id),
-            loop_item_id=str(run.task_id),
-            automation_run_id=str(run.id),
-            project_chat_message_id=activity.message_id,
+            item_id=str(run.task_id),
+            activity_message_id=activity.message_id,
         )
+
+    def _finish_wegent_manager_dispatch_from_store(
+        self,
+        intent: _WegentManagerDispatchIntent,
+        task_id: int,
+        subtask_id: int,
+    ) -> None:
+        from app.services.chat.storage.db import get_db_session
+
+        with get_db_session() as db:
+            self._finish_wegent_manager_dispatch(
+                db,
+                intent,
+                task_id,
+                subtask_id,
+            )
+
+    def _finish_wegent_manager_dispatch(
+        self,
+        db: Session,
+        intent: _WegentManagerDispatchIntent,
+        task_id: int,
+        subtask_id: int,
+    ) -> None:
         db.expire_all()
-        refreshed_run = db.get(ProjectAutomationRun, run.id)
+        refreshed_run = db.get(ProjectAutomationRun, intent.run_id)
         refreshed_activity = (
             db.query(ProjectChatMessage)
-            .filter(ProjectChatMessage.message_id == activity.message_id)
+            .filter(ProjectChatMessage.message_id == intent.activity_message_id)
             .one()
         )
         if refreshed_run is None:
             raise RuntimeError("Automation run disappeared after dispatch")
-        refreshed_run.backend_task_id = handle.task_id
+        refreshed_run.backend_task_id = task_id
         if refreshed_run.status not in TERMINAL_RUN_STATUSES | {"running"}:
             refreshed_run.status = "queued"
             refreshed_run.version += 1
         activity_metadata = dict(refreshed_activity.metadata_json or {})
         activity_metadata.update(
             {
-                "backend_task_id": handle.task_id,
-                "backend_subtask_id": handle.subtask_id,
+                "backend_task_id": task_id,
+                "backend_subtask_id": subtask_id,
                 "execution_url": (
-                    f"{settings.FRONTEND_URL.rstrip('/')}/tasks?taskId={handle.task_id}"
+                    f"{settings.FRONTEND_URL.rstrip('/')}/tasks?taskId={task_id}"
                 ),
                 "run_status": (
                     refreshed_activity.status
@@ -689,8 +1042,8 @@ class ProjectAutomationExecution:
         logger.info(
             "[ProjectAutomation] Queued Wegent run=%s backend_task=%s team=%s",
             refreshed_run.id,
-            handle.task_id,
-            team.id,
+            task_id,
+            intent.team_id,
         )
 
     @staticmethod
@@ -1603,6 +1956,58 @@ class ProjectAutomationProcessor:
     ) -> ProjectAutomationRun:
         """Re-dispatch the same failed processor record and board task."""
 
+        run, rule = self._prepare_retry(
+            db,
+            run_id=run_id,
+            requested_by_user_id=requested_by_user_id,
+        )
+        await project_automation_execution.dispatch(db, rule, run)
+        db.refresh(run)
+        return run
+
+    async def retry_nonblocking(
+        self,
+        *,
+        run_id: str,
+        requested_by_user_id: int,
+    ) -> None:
+        """Retry one persisted run through worker-owned database phases."""
+
+        from app.services.chat.storage.db import run_sync_in_executor
+
+        prepared_run_id = await run_sync_in_executor(
+            self._prepare_retry_from_store,
+            run_id,
+            requested_by_user_id,
+        )
+        await project_automation_execution.dispatch_nonblocking(
+            run_id=prepared_run_id,
+        )
+
+    def _prepare_retry_from_store(
+        self,
+        run_id: str,
+        requested_by_user_id: int,
+    ) -> str:
+        from app.services.chat.storage.db import get_db_session
+
+        with get_db_session() as db:
+            run, _ = self._prepare_retry(
+                db,
+                run_id=run_id,
+                requested_by_user_id=requested_by_user_id,
+            )
+            return str(run.id)
+
+    @staticmethod
+    def _prepare_retry(
+        db: Session,
+        *,
+        run_id: str,
+        requested_by_user_id: int,
+    ) -> tuple[ProjectAutomationRun, ProjectAutomationRule]:
+        """Persist retry state synchronously and return session-owned rows."""
+
         run = (
             db.query(ProjectAutomationRun)
             .filter(ProjectAutomationRun.id == run_id)
@@ -1669,10 +2074,164 @@ class ProjectAutomationProcessor:
         sync_automation_workflow_node(db, run)
         db.commit()
         db.refresh(run)
+        return run, rule
 
-        await project_automation_execution.dispatch(db, rule, run)
-        db.refresh(run)
-        return run
+    async def process_nonblocking(
+        self,
+        event: ProjectAutomationEvent,
+        *,
+        automation_id: str | None = None,
+    ) -> int:
+        """Create and dispatch matching runs without blocking the caller loop."""
+
+        if event.event_type not in {"task.created", "task.status_changed"}:
+            logger.info(
+                "[ProjectAutomation] Ignoring unsupported event=%s",
+                event.event_type,
+            )
+            return 0
+
+        from app.services.chat.storage.db import run_sync_in_executor
+
+        rule_ids = await run_sync_in_executor(
+            self._matching_rule_ids_from_store,
+            event,
+            automation_id,
+        )
+        dispatched = 0
+        for rule_id in rule_ids:
+            run_id = await run_sync_in_executor(
+                self._create_event_run_from_store,
+                event,
+                rule_id,
+            )
+            await project_automation_execution.dispatch_nonblocking(run_id=run_id)
+            dispatched += 1
+
+        logger.info(
+            "[ProjectAutomation] Event complete project=%s subject=%s dispatched=%s",
+            event.project_id,
+            event.subject_id,
+            dispatched,
+        )
+        if dispatched:
+            from app.tasks.robot_queue_tasks import consume_queues_background
+
+            await consume_queues_background()
+        return dispatched
+
+    def _matching_rule_ids_from_store(
+        self,
+        event: ProjectAutomationEvent,
+        automation_id: str | None,
+    ) -> tuple[str, ...]:
+        from app.services.chat.storage.db import get_db_session
+
+        with get_db_session() as db:
+            matching_rules = self.matching_rules(
+                db,
+                event,
+                automation_id=automation_id,
+            )
+            logger.info(
+                "[ProjectAutomation] Event matched project=%s subject=%s event=%s "
+                "requested_rule=%s matching_rule_ids=%s",
+                event.project_id,
+                event.subject_id,
+                event.event_type,
+                automation_id,
+                [str(rule.id) for rule in matching_rules],
+            )
+            matching_rules = self._select_bound_rules(
+                db,
+                event,
+                matching_rules,
+                automation_id=automation_id,
+            )
+            return tuple(str(rule.id) for rule in matching_rules)
+
+    @staticmethod
+    def _select_bound_rules(
+        db: Session,
+        event: ProjectAutomationEvent,
+        matching_rules: list[ProjectAutomationRule],
+        *,
+        automation_id: str | None,
+    ) -> list[ProjectAutomationRule]:
+        if automation_id is not None or not matching_rules:
+            return matching_rules
+        issue = (
+            db.query(LoopItem)
+            .filter(
+                LoopItem.id == event.subject_id,
+                LoopItem.cloud_project_id == event.project_id,
+                loop_datetime_is_unset(LoopItem.deleted_at),
+            )
+            .one_or_none()
+        )
+        issue_metadata = (
+            issue.metadata_json
+            if issue is not None and isinstance(issue.metadata_json, dict)
+            else {}
+        )
+        workflow_binding = issue_metadata.get("workflow_automation")
+        bound_rule_id = (
+            str(workflow_binding.get("rule_id") or "")
+            if isinstance(workflow_binding, dict)
+            else ""
+        )
+        if bound_rule_id:
+            return [rule for rule in matching_rules if str(rule.id) == bound_rule_id]
+        if len(matching_rules) > 1:
+            logger.info(
+                "[ProjectAutomation] Selection required project=%s subject=%s "
+                "candidates=%s",
+                event.project_id,
+                event.subject_id,
+                [str(rule.id) for rule in matching_rules],
+            )
+            return []
+        return matching_rules
+
+    def _create_event_run_from_store(
+        self,
+        event: ProjectAutomationEvent,
+        rule_id: str,
+    ) -> str:
+        from app.services.chat.storage.db import get_db_session
+
+        with get_db_session() as db:
+            rule = (
+                db.query(ProjectAutomationRule)
+                .filter(
+                    ProjectAutomationRule.id == rule_id,
+                    ProjectAutomationRule.cloud_project_id == event.project_id,
+                    ProjectAutomationRule.status == "enabled",
+                    loop_datetime_is_unset(ProjectAutomationRule.deleted_at),
+                )
+                .one_or_none()
+            )
+            if rule is None:
+                raise RuntimeError("Automation rule is unavailable")
+            run_event_payload = self._event_payload_for_rule(db, event, rule)
+            run = self._create_run(db, rule, "event", utcnow())
+            run.task_id = event.subject_id
+            event_title = event.payload.get("title")
+            run.task_title = str(event_title) if event_title else ""
+            run_metadata = metadata(run)
+            run_metadata["event"] = {
+                "type": event.event_type,
+                "source": event.source,
+                "subject_id": event.subject_id,
+                "actor_user_id": event.actor_user_id,
+                "payload": run_event_payload,
+            }
+            execution_config = run_event_payload.get("execution_config")
+            if isinstance(execution_config, dict):
+                run_metadata["workflow_execution_config"] = execution_config
+            run.metadata_json = run_metadata
+            db.commit()
+            return str(run.id)
 
     @trace_async(
         span_name="project_automation.event.process",

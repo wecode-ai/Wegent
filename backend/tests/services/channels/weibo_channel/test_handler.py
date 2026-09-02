@@ -95,25 +95,19 @@ async def test_send_text_reply_logs_when_sender_returns_false(caplog):
 @pytest.mark.asyncio
 async def test_resolve_user_passes_weibo_fields_and_mapping_config(monkeypatch):
     calls = {}
-    resolved_user = object()
-    db = object()
 
-    class FakeResolver:
-        def __init__(self, db, user_mapping_mode=None, user_mapping_config=None):
-            calls["db"] = db
-            calls["user_mapping_mode"] = user_mapping_mode
-            calls["user_mapping_config"] = user_mapping_config
+    def fake_resolve(mapping_mode, mapping_config, weibo_user_id, weibo_email):
+        calls.update(
+            {
+                "user_mapping_mode": mapping_mode,
+                "user_mapping_config": mapping_config,
+                "weibo_user_id": weibo_user_id,
+                "weibo_email": weibo_email,
+            }
+        )
+        return 123
 
-        async def resolve_user(
-            self,
-            weibo_user_id: str,
-            weibo_email: str | None = None,
-        ):
-            calls["weibo_user_id"] = weibo_user_id
-            calls["weibo_email"] = weibo_email
-            return resolved_user
-
-    monkeypatch.setattr(weibo_handler, "WeiboUserResolver", FakeResolver)
+    monkeypatch.setattr(weibo_handler, "_resolve_weibo_user_id_sync", fake_resolve)
     handler = WeiboChannelHandler(
         channel_id=7,
         get_user_mapping_config=lambda: {
@@ -122,11 +116,10 @@ async def test_resolve_user_passes_weibo_fields_and_mapping_config(monkeypatch):
         },
     )
 
-    result = await handler.resolve_user(db, handler.parse_message(_event()))
+    result = await handler.resolve_user_id(handler.parse_message(_event()))
 
-    assert result is resolved_user
+    assert result == 123
     assert calls == {
-        "db": db,
         "user_mapping_mode": "email",
         "user_mapping_config": {"email_domain": "weibo.example"},
         "weibo_user_id": "10001",

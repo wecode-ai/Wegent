@@ -15,7 +15,11 @@ from app.models.task import TaskResource
 from app.models.user import User
 from app.services.channels.callback import BaseCallbackInfo, ChannelType
 from app.services.channels.commands import IM_CHANNEL_CONTEXT_HINT
-from app.services.channels.handler import BaseChannelHandler, MessageContext
+from app.services.channels.handler import (
+    BaseChannelHandler,
+    ChannelUserRef,
+    MessageContext,
+)
 from app.services.im.session_service import im_session_service
 
 
@@ -40,10 +44,8 @@ class FakeChannelHandler(BaseChannelHandler[dict[str, Any], BaseCallbackInfo]):
             files=raw_data.get("files", []),
         )
 
-    async def resolve_user(
-        self, db: Session, message_context: MessageContext
-    ) -> User | None:
-        return db.get(User, self.user.id)
+    async def resolve_user_id(self, message_context: MessageContext) -> int:
+        return int(self.user.id)
 
     async def send_text_reply(self, message_context: MessageContext, text: str) -> bool:
         self.replies.append(text)
@@ -73,8 +75,11 @@ def channel_sessionlocal(
         autocommit=False,
         autoflush=False,
         expire_on_commit=False,
+        join_transaction_mode="create_savepoint",
     )
     monkeypatch.setattr("app.services.channels.handler.SessionLocal", factory)
+    monkeypatch.setattr("app.db.session.SessionLocal", factory)
+    monkeypatch.setattr("app.services.im.interaction_service.SessionLocal", factory)
     return factory
 
 
@@ -88,8 +93,11 @@ def expiring_channel_sessionlocal(
         autocommit=False,
         autoflush=False,
         expire_on_commit=True,
+        join_transaction_mode="create_savepoint",
     )
     monkeypatch.setattr("app.services.channels.handler.SessionLocal", factory)
+    monkeypatch.setattr("app.db.session.SessionLocal", factory)
+    monkeypatch.setattr("app.services.im.interaction_service.SessionLocal", factory)
     return factory
 
 
@@ -226,9 +234,7 @@ async def test_group_bind_does_not_create_private_session_and_uses_fallback(
     )
 
     assert handled is True
-    sessions = await im_session_service.list_user_sessions(
-        test_db, user_id=test_user.id
-    )
+    sessions = await im_session_service.list_user_sessions(user_id=test_user.id)
     assert sessions == []
     assert handler.replies == [
         "请在私聊会话中使用该命令；任务模式正在初始化，请稍后重试。"
@@ -246,8 +252,7 @@ async def test_private_chat_mode_plain_text_fallthrough_keeps_user_fields_usable
     calls: dict[str, Any] = {}
 
     async def fake_route_private_im_session(
-        db: Session,
-        user: User,
+        user: ChannelUserRef,
         im_session: IMPrivateSession,
         message_context: MessageContext,
     ) -> bool:
@@ -255,10 +260,10 @@ async def test_private_chat_mode_plain_text_fallthrough_keeps_user_fields_usable
         return False
 
     async def fake_process_chat_message(
-        user: User,
+        user: Any,
         message_context: MessageContext,
     ) -> None:
-        calls["user_email"] = user.email
+        calls["user_id"] = user.id
         calls["content"] = message_context.content
 
     monkeypatch.setattr(
@@ -275,7 +280,7 @@ async def test_private_chat_mode_plain_text_fallthrough_keeps_user_fields_usable
     assert calls["session_key"] == session.session_key
     assert calls == {
         "session_key": session.session_key,
-        "user_email": test_user.email,
+        "user_id": test_user.id,
         "content": "普通私聊消息",
     }
 
@@ -370,7 +375,6 @@ async def test_task_mode_plain_text_appends_to_active_task_with_im_source_metada
     task = _create_wework_task(test_db, test_user, title="继续私聊任务")
     handler = FakeChannelHandler(test_user)
     session = await im_session_service.get_or_create_private_session(
-        db=test_db,
         user_id=test_user.id,
         channel_type="dingtalk",
         channel_id=77,
@@ -378,27 +382,29 @@ async def test_task_mode_plain_text_appends_to_active_task_with_im_source_metada
         sender_id="staff-a",
         display_name="Alice",
     )
-    await im_session_service.bind_active_task(test_db, session=session, task_id=task.id)
+    await im_session_service.bind_active_task(session=session, task_id=task.id)
 
     calls: dict[str, Any] = {}
 
-    async def fake_append_message_to_task(
-        db: Session,
+    async def fake_create_chat_task_ids_nonblocking(
         *,
-        user: User,
+        user_id: int,
+        team_id: int,
         task_id: int,
         message: str,
-        message_source: dict[str, Any] | None,
+        params: Any,
+        should_trigger_ai: bool,
+        **kwargs: Any,
     ):
         calls["append"] = {
             "task_id": task_id,
             "message": message,
-            "message_source": message_source,
+            "message_source": params.message_source,
         }
         return SimpleNamespace(
-            task=SimpleNamespace(id=task_id),
-            user_subtask=SimpleNamespace(id=501),
-            assistant_subtask=SimpleNamespace(id=502),
+            task_id=task_id,
+            user_subtask_id=501,
+            assistant_subtask_id=502,
         )
 
     async def fake_trigger_ai_response_unified(**kwargs):
@@ -415,8 +421,8 @@ async def test_task_mode_plain_text_appends_to_active_task_with_im_source_metada
         return FakeStreamingEmitter()
 
     monkeypatch.setattr(
-        "app.services.im.task_continuation_service.append_message_to_task",
-        fake_append_message_to_task,
+        "app.services.chat.storage.task_manager.create_chat_task_ids_nonblocking",
+        fake_create_chat_task_ids_nonblocking,
     )
     monkeypatch.setattr(
         "app.services.chat.trigger.trigger_ai_response_unified",
@@ -436,7 +442,7 @@ async def test_task_mode_plain_text_appends_to_active_task_with_im_source_metada
     assert calls["append"]["message_source"]["source"] == "im"
     assert calls["append"]["message_source"]["session_key"] == session.session_key
     assert calls["append"]["message_source"]["channel_label"] == "钉钉"
-    assert calls["trigger"]["task"].id == task.id
+    assert calls["trigger"]["task"] == task.id
     assert calls["trigger"]["user_subtask_id"] == 501
 
 
@@ -451,7 +457,6 @@ async def test_task_mode_runtime_message_registers_callback_without_static_ack(
 
     handler = FakeChannelHandler(test_user)
     session = await im_session_service.get_or_create_private_session(
-        db=test_db,
         user_id=test_user.id,
         channel_type="dingtalk",
         channel_id=77,
@@ -460,7 +465,6 @@ async def test_task_mode_runtime_message_registers_callback_without_static_ack(
         display_name="Alice",
     )
     await im_session_service.bind_active_runtime_task(
-        test_db,
         session=session,
         runtime_task={
             "deviceId": "device-1",
@@ -492,7 +496,7 @@ async def test_task_mode_runtime_message_registers_callback_without_static_ack(
     monkeypatch.setattr(handler, "get_callback_service", lambda: FakeCallbackService())
     monkeypatch.setattr(
         runtime_work_service,
-        "send_runtime_message",
+        "send_runtime_message_nonblocking",
         fake_send_runtime_message,
     )
 
@@ -531,7 +535,6 @@ async def test_dingtalk_runtime_message_registers_started_card_for_cross_worker(
 
     handler = FakeChannelHandler(test_user)
     session = await im_session_service.get_or_create_private_session(
-        db=test_db,
         user_id=test_user.id,
         channel_type="dingtalk",
         channel_id=77,
@@ -540,7 +543,6 @@ async def test_dingtalk_runtime_message_registers_started_card_for_cross_worker(
         display_name="Alice",
     )
     await im_session_service.bind_active_runtime_task(
-        test_db,
         session=session,
         runtime_task={
             "deviceId": "device-1",
@@ -591,7 +593,7 @@ async def test_dingtalk_runtime_message_registers_started_card_for_cross_worker(
     )
     monkeypatch.setattr(
         runtime_work_service,
-        "send_runtime_message",
+        "send_runtime_message_nonblocking",
         fake_send_runtime_message,
     )
 
@@ -628,7 +630,6 @@ async def test_weibo_runtime_message_registers_stream_without_status_prefix(
 
     handler = FakeChannelHandler(test_user, channel_type=ChannelType.WEIBO)
     session = await im_session_service.get_or_create_private_session(
-        db=test_db,
         user_id=test_user.id,
         channel_type="weibo",
         channel_id=77,
@@ -637,7 +638,6 @@ async def test_weibo_runtime_message_registers_stream_without_status_prefix(
         display_name="Alice",
     )
     await im_session_service.bind_active_runtime_task(
-        test_db,
         session=session,
         runtime_task={
             "deviceId": "device-1",
@@ -687,7 +687,7 @@ async def test_weibo_runtime_message_registers_stream_without_status_prefix(
     )
     monkeypatch.setattr(
         runtime_work_service,
-        "send_runtime_message",
+        "send_runtime_message_nonblocking",
         fake_send_runtime_message,
     )
 
@@ -719,7 +719,6 @@ async def test_task_mode_runtime_reply_uses_notification_target_without_rebindin
 
     handler = FakeChannelHandler(test_user)
     session = await im_session_service.get_or_create_private_session(
-        db=test_db,
         user_id=test_user.id,
         channel_type="dingtalk",
         channel_id=77,
@@ -728,7 +727,6 @@ async def test_task_mode_runtime_reply_uses_notification_target_without_rebindin
         display_name="Alice",
     )
     await im_session_service.bind_active_runtime_task(
-        test_db,
         session=session,
         runtime_task={
             "deviceId": "device-active",
@@ -768,7 +766,7 @@ async def test_task_mode_runtime_reply_uses_notification_target_without_rebindin
     monkeypatch.setattr(handler, "get_callback_service", lambda: FakeCallbackService())
     monkeypatch.setattr(
         runtime_work_service,
-        "send_runtime_message",
+        "send_runtime_message_nonblocking",
         fake_send_runtime_message,
     )
 
@@ -800,7 +798,6 @@ async def test_runtime_notification_reply_continues_task_from_chat_mode(
 
     handler = FakeChannelHandler(test_user)
     session = await im_session_service.get_or_create_private_session(
-        db=test_db,
         user_id=test_user.id,
         channel_type="dingtalk",
         channel_id=77,
@@ -808,7 +805,7 @@ async def test_runtime_notification_reply_continues_task_from_chat_mode(
         sender_id="staff-a",
         display_name="Alice",
     )
-    await im_session_service.set_mode(test_db, session=session, mode=IMSessionMode.CHAT)
+    await im_session_service.set_mode(session=session, mode=IMSessionMode.CHAT)
     await im_session_service.save_runtime_task_reply_target(
         session=session,
         message_id=902,
@@ -838,7 +835,7 @@ async def test_runtime_notification_reply_continues_task_from_chat_mode(
     monkeypatch.setattr(handler, "get_callback_service", lambda: FakeCallbackService())
     monkeypatch.setattr(
         runtime_work_service,
-        "send_runtime_message",
+        "send_runtime_message_nonblocking",
         fake_send_runtime_message,
     )
 
@@ -866,7 +863,6 @@ async def test_task_mode_runtime_message_rejects_invalid_address_before_callback
 
     handler = FakeChannelHandler(test_user)
     session = await im_session_service.get_or_create_private_session(
-        db=test_db,
         user_id=test_user.id,
         channel_type="dingtalk",
         channel_id=77,
@@ -875,7 +871,6 @@ async def test_task_mode_runtime_message_rejects_invalid_address_before_callback
         display_name="Alice",
     )
     await im_session_service.bind_active_runtime_task(
-        test_db,
         session=session,
         runtime_task={"deviceId": "device-1"},
     )
@@ -895,7 +890,7 @@ async def test_task_mode_runtime_message_rejects_invalid_address_before_callback
     monkeypatch.setattr(handler, "get_callback_service", lambda: FakeCallbackService())
     monkeypatch.setattr(
         runtime_work_service,
-        "send_runtime_message",
+        "send_runtime_message_nonblocking",
         fake_send_runtime_message,
     )
 
@@ -921,7 +916,6 @@ async def test_task_mode_media_only_message_appends_to_active_task_and_persists_
     task = _create_wework_task(test_db, test_user, title="继续图片任务")
     handler = FakeChannelHandler(test_user)
     session = await im_session_service.get_or_create_private_session(
-        db=test_db,
         user_id=test_user.id,
         channel_type="dingtalk",
         channel_id=77,
@@ -929,27 +923,29 @@ async def test_task_mode_media_only_message_appends_to_active_task_and_persists_
         sender_id="staff-a",
         display_name="Alice",
     )
-    await im_session_service.bind_active_task(test_db, session=session, task_id=task.id)
+    await im_session_service.bind_active_task(session=session, task_id=task.id)
 
     calls: dict[str, Any] = {}
 
-    async def fake_append_message_to_task(
-        db: Session,
+    async def fake_create_chat_task_ids_nonblocking(
         *,
-        user: User,
+        user_id: int,
+        team_id: int,
         task_id: int,
         message: str,
-        message_source: dict[str, Any] | None,
+        params: Any,
+        should_trigger_ai: bool,
+        **kwargs: Any,
     ):
         calls["append"] = {
             "task_id": task_id,
             "message": message,
-            "message_source": message_source,
+            "message_source": params.message_source,
         }
         return SimpleNamespace(
-            task=SimpleNamespace(id=task_id),
-            user_subtask=SimpleNamespace(id=601),
-            assistant_subtask=SimpleNamespace(id=602),
+            task_id=task_id,
+            user_subtask_id=601,
+            assistant_subtask_id=602,
         )
 
     async def fake_trigger_ai_response_unified(**kwargs):
@@ -965,22 +961,22 @@ async def test_task_mode_media_only_message_appends_to_active_task_and_persists_
     async def fake_create_streaming_emitter(message_context: MessageContext):
         return FakeStreamingEmitter()
 
-    def fake_persist_images_as_attachments(
-        db: Session,
+    async def fake_persist_im_media_nonblocking(
+        *,
         user_id: int,
         subtask_id: int,
-        images: list[dict[str, str]],
+        message_context: MessageContext,
     ):
         calls["persist_images"] = {
             "user_id": user_id,
             "subtask_id": subtask_id,
-            "images": images,
+            "images": message_context.images,
         }
-        return [9001]
+        return [{"id": 9001, "original_filename": "im_image_1.png"}]
 
     monkeypatch.setattr(
-        "app.services.im.task_continuation_service.append_message_to_task",
-        fake_append_message_to_task,
+        "app.services.chat.storage.task_manager.create_chat_task_ids_nonblocking",
+        fake_create_chat_task_ids_nonblocking,
     )
     monkeypatch.setattr(
         "app.services.chat.trigger.trigger_ai_response_unified",
@@ -993,8 +989,8 @@ async def test_task_mode_media_only_message_appends_to_active_task_and_persists_
     )
     monkeypatch.setattr(
         handler,
-        "_persist_im_images_as_attachments",
-        fake_persist_images_as_attachments,
+        "_persist_im_media_nonblocking",
+        fake_persist_im_media_nonblocking,
     )
 
     image = {"mime_type": "image/png", "base64_data": "aGVsbG8="}
@@ -1009,7 +1005,7 @@ async def test_task_mode_media_only_message_appends_to_active_task_and_persists_
         "subtask_id": 601,
         "images": [image],
     }
-    assert calls["trigger"]["task"].id == task.id
+    assert calls["trigger"]["task"] == task.id
     assert calls["trigger"]["message"] == IM_CHANNEL_CONTEXT_HINT
 
 
@@ -1024,27 +1020,26 @@ async def test_private_task_creation_uses_task_type_task_and_binds_new_task(
     handler = FakeChannelHandler(test_user)
     calls: dict[str, Any] = {}
 
-    async def fake_create_chat_task(
-        db: Session,
-        user: User,
-        team: Kind,
+    async def fake_create_chat_task_ids_nonblocking(
+        *,
+        user_id: int,
+        team_id: int,
         message: str,
         params: Any,
         task_id: int | None = None,
         should_trigger_ai: bool = True,
         rag_prompt: str | None = None,
-        source: str = "web",
+        **kwargs: Any,
     ):
         calls["create"] = {
             "message": message,
             "params": params,
             "should_trigger_ai": should_trigger_ai,
-            "source": source,
         }
         return SimpleNamespace(
-            task=SimpleNamespace(id=710),
-            user_subtask=SimpleNamespace(id=711),
-            assistant_subtask=SimpleNamespace(id=712),
+            task_id=710,
+            user_subtask_id=711,
+            assistant_subtask_id=712,
         )
 
     async def fake_trigger_ai_response_unified(**kwargs):
@@ -1060,14 +1055,17 @@ async def test_private_task_creation_uses_task_type_task_and_binds_new_task(
     async def fake_create_streaming_emitter(message_context: MessageContext):
         return FakeStreamingEmitter()
 
+    async def fake_get_task_mode_team_id(user_id: int) -> int:
+        return int(team.id)
+
     monkeypatch.setattr(
         handler,
-        "_get_task_mode_team",
-        lambda db, user_id: team,
+        "_get_task_mode_team_id",
+        fake_get_task_mode_team_id,
     )
     monkeypatch.setattr(
-        "app.services.chat.storage.task_manager.create_chat_task",
-        fake_create_chat_task,
+        "app.services.chat.storage.task_manager.create_chat_task_ids_nonblocking",
+        fake_create_chat_task_ids_nonblocking,
     )
     monkeypatch.setattr(
         "app.services.chat.trigger.trigger_ai_response_unified",
@@ -1092,7 +1090,6 @@ async def test_private_task_creation_uses_task_type_task_and_binds_new_task(
     assert calls["create"]["params"].client_origin == CLIENT_ORIGIN_WEWORK
     assert calls["create"]["params"].source == "im"
     assert calls["create"]["should_trigger_ai"] is True
-    assert calls["create"]["source"] == "im"
     assert session is not None
     assert session.active_task_id == 710
     assert session.state == IMSessionState.IDLE

@@ -11,6 +11,7 @@ Projects are containers for organizing tasks. Each task can belong to one projec
 import logging
 import posixpath
 import re
+from dataclasses import dataclass
 from typing import Any, Optional
 
 from fastapi import HTTPException
@@ -62,6 +63,17 @@ FIND_WORKTREES_TIMEOUT_SECONDS = 30
 WORKTREE_ROOT_DIR = "worktrees"
 WORKTREE_ID_PATTERN = re.compile(r"^[1-9][0-9]*$")
 logger = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True)
+class _GitWorkspaceProjectPlan:
+    project: ProjectResponse
+    checkout_path: str
+    device_id: str
+    git_url: str
+    branch: Optional[str]
+    git_user_name: Optional[str]
+    git_user_email: Optional[str]
 
 
 def _normalize_project_config(
@@ -326,67 +338,110 @@ def create_project(
 
 
 async def create_git_workspace_project(
-    db: Session,
     project_data: GitWorkspaceProjectCreate,
     user_id: int,
 ) -> GitWorkspaceProjectResponse:
     """Create a Git-backed workspace project and clone its checkout."""
 
-    repo_name = _default_git_project_name(project_data.git.repo, project_data.git.url)
-    config = ProjectConfig.model_validate(
-        {
-            "mode": "workspace",
-            "execution": {
-                "targetType": "local",
-                "deviceId": project_data.device_id,
-            },
-            "workspace": {"source": "git"},
-            "git": project_data.git.model_dump(),
-        }
-    )
-    if not config.workspace or not config.workspace.checkoutPath:
-        raise HTTPException(
-            status_code=400,
-            detail="Git workspace checkout path could not be resolved",
-        )
+    from app.services.chat.storage.db import run_sync_in_executor
 
-    project = create_project(
-        db=db,
-        project_data=ProjectCreate(
-            name=project_data.name or repo_name,
-            description=project_data.description,
-            color=project_data.color,
-            client_origin=project_data.client_origin,
-            config=config,
-        ),
-        user_id=user_id,
+    plan = await run_sync_in_executor(
+        _create_git_workspace_project_plan,
+        project_data,
+        user_id,
     )
-
     try:
+        reused_checkout = await _prepare_git_checkout(
+            user_id=user_id,
+            device_id=plan.device_id,
+            git_url=plan.git_url,
+            branch=plan.branch,
+            checkout_path=plan.checkout_path,
+            git_user_name=plan.git_user_name,
+            git_user_email=plan.git_user_email,
+        )
+    except BaseException:
+        await run_sync_in_executor(
+            _deactivate_git_workspace_project,
+            plan.project.id,
+            user_id,
+            project_data.client_origin,
+        )
+        raise
+
+    return GitWorkspaceProjectResponse(
+        project=plan.project,
+        checkout_path=plan.checkout_path,
+        reused_existing_checkout=reused_checkout,
+    )
+
+
+def _create_git_workspace_project_plan(
+    project_data: GitWorkspaceProjectCreate,
+    user_id: int,
+) -> _GitWorkspaceProjectPlan:
+    """Persist the project and return detached checkout inputs."""
+
+    from app.services.chat.storage.db import get_db_session
+
+    with get_db_session() as db:
+        repo_name = _default_git_project_name(
+            project_data.git.repo,
+            project_data.git.url,
+        )
+        config = ProjectConfig.model_validate(
+            {
+                "mode": "workspace",
+                "execution": {
+                    "targetType": "local",
+                    "deviceId": project_data.device_id,
+                },
+                "workspace": {"source": "git"},
+                "git": project_data.git.model_dump(),
+            }
+        )
+        if not config.workspace or not config.workspace.checkoutPath:
+            raise HTTPException(
+                status_code=400,
+                detail="Git workspace checkout path could not be resolved",
+            )
+
+        project = create_project(
+            db=db,
+            project_data=ProjectCreate(
+                name=project_data.name or repo_name,
+                description=project_data.description,
+                color=project_data.color,
+                client_origin=project_data.client_origin,
+                config=config,
+            ),
+            user_id=user_id,
+        )
         git_user_name, git_user_email = _resolve_user_git_identity(
             db,
             user_id=user_id,
             git_domain=project_data.git.domain,
         )
-        reused_checkout = await _prepare_git_checkout(
-            db=db,
-            user_id=user_id,
+        return _GitWorkspaceProjectPlan(
+            project=project,
+            checkout_path=config.workspace.checkoutPath,
             device_id=project_data.device_id,
             git_url=project_data.git.url,
             branch=project_data.git.branch,
-            checkout_path=config.workspace.checkoutPath,
             git_user_name=git_user_name,
             git_user_email=git_user_email,
         )
-    except Exception:
-        _deactivate_project(db, project.id, user_id, project_data.client_origin)
-        raise
 
-    return GitWorkspaceProjectResponse(
-        project=project,
-        checkout_path=config.workspace.checkoutPath,
-        reused_existing_checkout=reused_checkout,
-    )
+
+def _deactivate_git_workspace_project(
+    project_id: int,
+    user_id: int,
+    client_origin: str,
+) -> None:
+    from app.services.chat.storage.db import get_db_session
+
+    with get_db_session() as db:
+        _deactivate_project(db, project_id, user_id, client_origin)
 
 
 async def prepare_git_worktree_for_task(
@@ -398,7 +453,7 @@ async def prepare_git_worktree_for_task(
     task_id: int,
     base_branch: Optional[str] = None,
 ) -> dict[str, str]:
-    """Create a Git worktree for a project task and return task execution metadata."""
+    """Create a Git worktree for a legacy request-owned task transaction."""
 
     project = _get_active_project(
         db=db,
@@ -424,9 +479,7 @@ async def prepare_git_worktree_for_task(
             status_code=400,
             detail="Git worktree requires a project workspace path",
         )
-
     workspace_root = await _resolve_project_workspace_root(
-        db=db,
         user_id=user_id,
         device_id=config.execution.deviceId,
     )
@@ -436,13 +489,11 @@ async def prepare_git_worktree_for_task(
         source_workspace_path,
     )
     await _ensure_git_worktree_source(
-        db=db,
         user_id=user_id,
         device_id=config.execution.deviceId,
         source_checkout_path=source_checkout_path,
     )
     worktree_path = await _create_task_worktree(
-        db=db,
         user_id=user_id,
         device_id=config.execution.deviceId,
         executor_workspace_root=executor_workspace_root,
@@ -451,39 +502,126 @@ async def prepare_git_worktree_for_task(
         worktree_id=str(task_id),
         base_branch=base_branch,
     )
+    return {"source": "git_worktree", "path": worktree_path}
 
+
+def _load_git_worktree_preparation(
+    user_id: int,
+    project_id: int,
+    client_origin: Optional[str],
+) -> dict[str, str]:
+    """Load worktree configuration in a worker-owned database session."""
+    from app.services.chat.storage.db import get_db_session
+
+    with get_db_session() as db:
+        project = _get_active_project(
+            db=db,
+            project_id=project_id,
+            user_id=user_id,
+            client_origin=client_origin,
+        )
+        config = ProjectConfig.model_validate(project.config or {})
+        if not config.is_workspace or not config.execution or not config.workspace:
+            raise HTTPException(
+                status_code=400,
+                detail="Git worktree requires a local workspace project",
+            )
+        if config.execution.targetType != "local" or not config.execution.deviceId:
+            raise HTTPException(
+                status_code=400,
+                detail="Git worktree requires a bound local device",
+            )
+        source_workspace_path = _source_workspace_path(config.workspace)
+        if not source_workspace_path:
+            raise HTTPException(
+                status_code=400,
+                detail="Git worktree requires a project workspace path",
+            )
+        return {
+            "device_id": config.execution.deviceId,
+            "source_workspace_path": source_workspace_path,
+        }
+
+
+async def prepare_git_worktree_for_task_nonblocking(
+    *,
+    user_id: int,
+    project_id: int,
+    client_origin: Optional[str],
+    task_id: int,
+    base_branch: Optional[str] = None,
+) -> dict[str, str]:
+    """Create a task worktree without synchronous DB work on the event loop."""
+    from app.services.chat.storage.db import run_sync_in_executor
+
+    preparation = await run_sync_in_executor(
+        _load_git_worktree_preparation,
+        user_id,
+        project_id,
+        client_origin,
+    )
+    device_id = preparation["device_id"]
+    source_workspace_path = preparation["source_workspace_path"]
+    workspace_root = await _resolve_project_workspace_root(
+        user_id=user_id,
+        device_id=device_id,
+    )
+    executor_workspace_root = _resolve_executor_workspace_root(workspace_root)
+    source_checkout_path = _resolve_source_workspace_abs_path(
+        workspace_root,
+        source_workspace_path,
+    )
+    await _ensure_git_worktree_source(
+        user_id=user_id,
+        device_id=device_id,
+        source_checkout_path=source_checkout_path,
+    )
+    worktree_path = await _create_task_worktree(
+        user_id=user_id,
+        device_id=device_id,
+        executor_workspace_root=executor_workspace_root,
+        source_checkout_path=source_checkout_path,
+        source_workspace_path=source_workspace_path,
+        worktree_id=str(task_id),
+        base_branch=base_branch,
+    )
     return {"source": "git_worktree", "path": worktree_path}
 
 
 async def list_project_worktrees(
     *,
-    db: Session,
     user_id: int,
     client_origin: Optional[str],
 ) -> ProjectWorktreeListResponse:
     """List Wegent worktree directories by scanning each relevant online device once."""
 
-    project_refs = _collect_worktree_project_refs(
-        db=db,
-        user_id=user_id,
-        client_origin=client_origin,
+    from app.services.chat.storage.db import run_sync_in_executor
+
+    project_refs = await run_sync_in_executor(
+        _load_worktree_project_refs,
+        user_id,
+        client_origin,
     )
     device_ids = sorted({ref["device_id"] for ref in project_refs})
-    devices = await device_service.get_all_devices(db, user_id)
+    devices = await device_service.get_all_devices_nonblocking(user_id)
     devices_by_id = {str(device.get("device_id")): device for device in devices}
     project_index = _build_worktree_project_index(project_refs)
 
     groups = [
         await _build_worktree_device_group(
-            db=db,
             user_id=user_id,
-            client_origin=client_origin,
             device_id=device_id,
             device=devices_by_id.get(device_id, {}),
             project_index=project_index.get(device_id, {}),
         )
         for device_id in device_ids
     ]
+    groups = await run_sync_in_executor(
+        _attach_worktree_group_task_refs,
+        user_id,
+        client_origin,
+        tuple(groups),
+    )
     return ProjectWorktreeListResponse(
         devices=groups,
         total=sum(len(group.items) for group in groups),
@@ -492,7 +630,6 @@ async def list_project_worktrees(
 
 async def delete_project_worktree(
     *,
-    db: Session,
     user_id: int,
     client_origin: Optional[str],
     device_id: str,
@@ -501,27 +638,18 @@ async def delete_project_worktree(
 ) -> ProjectWorktreeDeleteResponse:
     """Delete a managed project worktree directory and its matching task."""
 
+    from app.services.chat.storage.db import run_sync_in_executor
+
     normalized_worktree_id = _normalize_worktree_id(worktree_id)
-    project = _get_active_project(
-        db=db,
-        project_id=project_id,
-        user_id=user_id,
-        client_origin=client_origin,
+    project_ref = await run_sync_in_executor(
+        _load_worktree_delete_project_ref,
+        user_id,
+        client_origin,
+        device_id,
+        project_id,
     )
-    project_ref = _worktree_project_ref_from_project(project)
-    if not project_ref:
-        raise HTTPException(
-            status_code=400,
-            detail="Project is not a local workspace project",
-        )
-    if project_ref["device_id"] != device_id:
-        raise HTTPException(
-            status_code=400,
-            detail="Worktree project is not bound to this device",
-        )
 
     workspace_root = await _resolve_project_workspace_root(
-        db=db,
         user_id=user_id,
         device_id=device_id,
     )
@@ -535,7 +663,7 @@ async def delete_project_worktree(
     )
 
     exists_result = await execute_configured_device_command(
-        db=db,
+        db=None,
         user_id=user_id,
         device_id=device_id,
         command_key="path_exists",
@@ -545,13 +673,13 @@ async def delete_project_worktree(
     if not _command_succeeded(exists_result):
         raise HTTPException(status_code=404, detail="Worktree not found")
 
-    matching_tasks = _find_worktree_tasks(
-        db=db,
-        user_id=user_id,
-        project_id=project_id,
-        client_origin=client_origin,
-        worktree_id=normalized_worktree_id,
-        worktree_path=target_path,
+    matching_task_ids = await run_sync_in_executor(
+        _load_matching_worktree_task_ids,
+        user_id,
+        project_id,
+        client_origin,
+        normalized_worktree_id,
+        target_path,
     )
     source_checkout_path = _resolve_source_workspace_abs_path(
         workspace_root,
@@ -559,22 +687,18 @@ async def delete_project_worktree(
     )
 
     await _remove_worktree_directory(
-        db=db,
         user_id=user_id,
         device_id=device_id,
         source_checkout_path=source_checkout_path,
         target_path=target_path,
     )
 
-    deleted_task_ids: list[int] = []
-    for task in matching_tasks:
-        task_kinds_service.delete_task(
-            db=db,
-            task_id=task.id,
-            user_id=user_id,
-            client_origin=client_origin,
-        )
-        deleted_task_ids.append(task.id)
+    deleted_task_ids = await run_sync_in_executor(
+        _delete_worktree_tasks,
+        user_id,
+        client_origin,
+        tuple(matching_task_ids),
+    )
 
     return ProjectWorktreeDeleteResponse(
         worktree_id=normalized_worktree_id,
@@ -585,9 +709,7 @@ async def delete_project_worktree(
 
 async def _build_worktree_device_group(
     *,
-    db: Session,
     user_id: int,
-    client_origin: Optional[str],
     device_id: str,
     device: dict[str, Any],
     project_index: dict[str, list[dict[str, Any]]],
@@ -606,9 +728,7 @@ async def _build_worktree_device_group(
 
     try:
         scanned_items = await _scan_device_worktree_items(
-            db=db,
             user_id=user_id,
-            client_origin=client_origin,
             device_id=device_id,
             project_index=project_index,
         )
@@ -639,7 +759,6 @@ def _default_git_project_name(repo: Optional[str], git_url: str) -> str:
 
 async def _prepare_git_checkout(
     *,
-    db: Session,
     user_id: int,
     device_id: str,
     git_url: str,
@@ -651,13 +770,12 @@ async def _prepare_git_checkout(
     """Clone the Git checkout on the selected local device."""
 
     workspace_root = await _resolve_project_workspace_root(
-        db=db,
         user_id=user_id,
         device_id=device_id,
     )
 
     root_mkdir_result = await execute_configured_device_command(
-        db=db,
+        db=None,
         user_id=user_id,
         device_id=device_id,
         command_key="mkdir_p",
@@ -670,7 +788,7 @@ async def _prepare_git_checkout(
 
     target_path = _join_device_path(workspace_root, checkout_path)
     exists_result = await execute_configured_device_command(
-        db=db,
+        db=None,
         user_id=user_id,
         device_id=device_id,
         command_key="path_exists",
@@ -684,7 +802,7 @@ async def _prepare_git_checkout(
     parent_path = posixpath.dirname(checkout_path)
     if parent_path and parent_path != ".":
         mkdir_result = await execute_configured_device_command(
-            db=db,
+            db=None,
             user_id=user_id,
             device_id=device_id,
             command_key="mkdir_p",
@@ -695,7 +813,7 @@ async def _prepare_git_checkout(
 
     clone_args = _build_git_clone_args(git_url, branch, checkout_path)
     clone_result = await execute_configured_device_command(
-        db=db,
+        db=None,
         user_id=user_id,
         device_id=device_id,
         command_key="git_clone",
@@ -706,7 +824,6 @@ async def _prepare_git_checkout(
     )
     _raise_for_failed_command(clone_result, "Failed to clone Git repository")
     await _configure_git_checkout_identity(
-        db=db,
         user_id=user_id,
         device_id=device_id,
         checkout_path=target_path,
@@ -718,7 +835,6 @@ async def _prepare_git_checkout(
 
 async def _configure_git_checkout_identity(
     *,
-    db: Session,
     user_id: int,
     device_id: str,
     checkout_path: str,
@@ -740,7 +856,7 @@ async def _configure_git_checkout_identity(
         return
 
     name_result = await execute_configured_device_command(
-        db=db,
+        db=None,
         user_id=user_id,
         device_id=device_id,
         command_key="git_config",
@@ -750,7 +866,7 @@ async def _configure_git_checkout_identity(
     _raise_for_failed_command(name_result, "Failed to configure Git user.name")
 
     email_result = await execute_configured_device_command(
-        db=db,
+        db=None,
         user_id=user_id,
         device_id=device_id,
         command_key="git_config",
@@ -800,12 +916,11 @@ def _resolve_user_git_identity(
 
 async def _resolve_project_workspace_root(
     *,
-    db: Session,
     user_id: int,
     device_id: str,
 ) -> str:
     root_result = await execute_configured_device_command(
-        db=db,
+        db=None,
         user_id=user_id,
         device_id=device_id,
         command_key="project_workspace_root",
@@ -844,13 +959,12 @@ def _resolve_executor_workspace_root(project_workspace_root: str) -> str:
 
 async def _ensure_git_worktree_source(
     *,
-    db: Session,
     user_id: int,
     device_id: str,
     source_checkout_path: str,
 ) -> None:
     result = await execute_configured_device_command(
-        db=db,
+        db=None,
         user_id=user_id,
         device_id=device_id,
         command_key="git_is_worktree",
@@ -868,7 +982,6 @@ async def _ensure_git_worktree_source(
 
 async def _create_task_worktree(
     *,
-    db: Session,
     user_id: int,
     device_id: str,
     executor_workspace_root: str,
@@ -881,7 +994,7 @@ async def _create_task_worktree(
     target_path = _join_device_path(executor_workspace_root, relative_path)
     worktree_id_path = posixpath.dirname(target_path)
     exists_result = await execute_configured_device_command(
-        db=db,
+        db=None,
         user_id=user_id,
         device_id=device_id,
         command_key="path_exists",
@@ -892,7 +1005,7 @@ async def _create_task_worktree(
         raise HTTPException(status_code=409, detail="Git worktree path already exists")
 
     mkdir_result = await execute_configured_device_command(
-        db=db,
+        db=None,
         user_id=user_id,
         device_id=device_id,
         command_key="mkdir_p",
@@ -905,7 +1018,7 @@ async def _create_task_worktree(
         worktree_args.append(base_branch.strip())
 
     worktree_result = await execute_configured_device_command(
-        db=db,
+        db=None,
         user_id=user_id,
         device_id=device_id,
         command_key="git_worktree_add",
@@ -986,6 +1099,47 @@ def _collect_worktree_project_refs(
     return refs
 
 
+def _load_worktree_project_refs(
+    user_id: int,
+    client_origin: Optional[str],
+) -> list[dict[str, Any]]:
+    from app.services.chat.storage.db import get_db_session
+
+    with get_db_session() as db:
+        return _collect_worktree_project_refs(
+            db=db,
+            user_id=user_id,
+            client_origin=client_origin,
+        )
+
+
+def _attach_worktree_group_task_refs(
+    user_id: int,
+    client_origin: Optional[str],
+    groups: tuple[ProjectWorktreeDeviceGroup, ...],
+) -> list[ProjectWorktreeDeviceGroup]:
+    from app.services.chat.storage.db import get_db_session
+
+    with get_db_session() as db:
+        return [
+            (
+                group.model_copy(
+                    update={
+                        "items": _attach_worktree_task_refs(
+                            db=db,
+                            user_id=user_id,
+                            client_origin=client_origin,
+                            items=group.items,
+                        )
+                    }
+                )
+                if group.items
+                else group
+            )
+            for group in groups
+        ]
+
+
 def _build_worktree_project_index(
     project_refs: list[dict[str, Any]],
 ) -> dict[str, dict[str, list[dict[str, Any]]]]:
@@ -1001,14 +1155,11 @@ def _build_worktree_project_index(
 
 async def _scan_device_worktree_items(
     *,
-    db: Session,
     user_id: int,
-    client_origin: Optional[str],
     device_id: str,
     project_index: dict[str, list[dict[str, Any]]],
 ) -> list[ProjectWorktreeItem]:
     workspace_root = await _resolve_project_workspace_root(
-        db=db,
         user_id=user_id,
         device_id=device_id,
     )
@@ -1017,7 +1168,7 @@ async def _scan_device_worktree_items(
         WORKTREE_ROOT_DIR,
     )
     result = await execute_configured_device_command(
-        db=db,
+        db=None,
         user_id=user_id,
         device_id=device_id,
         command_key="find_worktree_dirs",
@@ -1040,12 +1191,6 @@ async def _scan_device_worktree_items(
         for item in [_build_worktree_item(worktree_root, path, project_index)]
         if item is not None
     ]
-    items = _attach_worktree_task_refs(
-        db=db,
-        user_id=user_id,
-        client_origin=client_origin,
-        items=items,
-    )
     return sorted(items, key=lambda item: (item.project_name.lower(), item.worktree_id))
 
 
@@ -1170,14 +1315,13 @@ def _build_worktree_task_ref(
 
 async def _remove_worktree_directory(
     *,
-    db: Session,
     user_id: int,
     device_id: str,
     source_checkout_path: str,
     target_path: str,
 ) -> None:
     git_result = await execute_configured_device_command(
-        db=db,
+        db=None,
         user_id=user_id,
         device_id=device_id,
         command_key="git_worktree_remove",
@@ -1186,7 +1330,7 @@ async def _remove_worktree_directory(
         max_output_bytes=1024 * 1024,
     )
     remove_result = await execute_configured_device_command(
-        db=db,
+        db=None,
         user_id=user_id,
         device_id=device_id,
         command_key="remove_worktree_dir",
@@ -1225,6 +1369,78 @@ def _find_worktree_tasks(
     if task_execution_workspace_source(task) != "git_worktree":
         return []
     return [task]
+
+
+def _load_worktree_delete_project_ref(
+    user_id: int,
+    client_origin: Optional[str],
+    device_id: str,
+    project_id: int,
+) -> dict[str, Any]:
+    from app.services.chat.storage.db import get_db_session
+
+    with get_db_session() as db:
+        project = _get_active_project(
+            db=db,
+            project_id=project_id,
+            user_id=user_id,
+            client_origin=client_origin,
+        )
+        project_ref = _worktree_project_ref_from_project(project)
+        if not project_ref:
+            raise HTTPException(
+                status_code=400,
+                detail="Project is not a local workspace project",
+            )
+        if project_ref["device_id"] != device_id:
+            raise HTTPException(
+                status_code=400,
+                detail="Worktree project is not bound to this device",
+            )
+        return dict(project_ref)
+
+
+def _load_matching_worktree_task_ids(
+    user_id: int,
+    project_id: int,
+    client_origin: Optional[str],
+    worktree_id: str,
+    worktree_path: str,
+) -> list[int]:
+    from app.services.chat.storage.db import get_db_session
+
+    with get_db_session() as db:
+        return [
+            task.id
+            for task in _find_worktree_tasks(
+                db=db,
+                user_id=user_id,
+                project_id=project_id,
+                client_origin=client_origin,
+                worktree_id=worktree_id,
+                worktree_path=worktree_path,
+            )
+        ]
+
+
+def _delete_worktree_tasks(
+    user_id: int,
+    client_origin: Optional[str],
+    task_ids: tuple[int, ...],
+) -> list[int]:
+    from app.services.chat.storage.db import get_db_session
+
+    with get_db_session() as db:
+        deleted: list[int] = []
+        for task_id in task_ids:
+            task_kinds_service.delete_task(
+                db=db,
+                task_id=task_id,
+                user_id=user_id,
+                client_origin=client_origin,
+            )
+            deleted.append(task_id)
+        return deleted
 
 
 def _task_json(task: TaskResource) -> dict[str, Any]:

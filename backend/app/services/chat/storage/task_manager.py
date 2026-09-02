@@ -20,6 +20,7 @@ from sqlalchemy.orm import Session
 
 import app.stores.tasks as task_stores
 from app.core.constants import CLIENT_ORIGIN_FRONTEND
+from app.core.web_background_tasks import web_background_task_manager
 from app.models.kind import Kind
 from app.models.project import Project
 from app.models.subtask import Subtask, SubtaskRole, SubtaskStatus
@@ -45,6 +46,63 @@ class TaskCreationResult:
     assistant_subtask: Optional[Subtask]
     ai_triggered: bool
     rag_prompt: Optional[str] = None
+
+
+@dataclass(frozen=True)
+class TaskCreationIds:
+    """Persisted task identities safe to cross a worker boundary."""
+
+    task_id: int
+    user_subtask_id: int
+    assistant_subtask_id: Optional[int]
+    ai_triggered: bool
+    rag_prompt: Optional[str] = None
+    device_id: Optional[str] = None
+
+
+@dataclass
+class _TaskCreationStorageResult:
+    """Database phase output consumed before any async side effects run."""
+
+    creation: TaskCreationResult
+    existing_subtasks: List[Subtask]
+    is_group_chat: bool
+
+
+@dataclass(frozen=True)
+class _MemorySaveIntent:
+    user_id: int
+    team_id: int
+    task_id: int
+    subtask_id: int
+    messages: List[Dict[str, str]]
+    workspace_id: Optional[str]
+    project_id: Optional[int]
+    is_group_chat: bool
+
+
+@dataclass(frozen=True)
+class _GroupNotificationIntent:
+    task_id: int
+    member_user_ids: List[int]
+    status: str
+    progress: int
+
+
+@dataclass
+class _NonblockingTaskCreationOutput:
+    creation: TaskCreationResult
+    redis_history: List[Dict[str, str]]
+    memory: Optional[_MemorySaveIntent]
+    group_notification: Optional[_GroupNotificationIntent]
+
+
+@dataclass
+class _NonblockingTaskCreationIdsOutput:
+    creation: TaskCreationIds
+    redis_history: List[Dict[str, str]]
+    memory: Optional[_MemorySaveIntent]
+    group_notification: Optional[_GroupNotificationIntent]
 
 
 @dataclass
@@ -703,6 +761,102 @@ async def initialize_redis_chat_history(
             )
 
 
+def _create_task_and_subtasks_storage(
+    *,
+    db: Session,
+    user: User,
+    team: Kind,
+    message: str,
+    params: TaskCreationParams,
+    task_id: Optional[int],
+    should_trigger_ai: bool,
+    rag_prompt: Optional[str],
+    commit: bool,
+    prepared_task: Optional[TaskResource] = None,
+) -> _TaskCreationStorageResult:
+    """Persist a chat turn without performing async Redis or network work."""
+    from app.services.chat.trigger.group_chat import is_task_group_chat
+    from app.services.chat.trigger.lifecycle import prepare_execution_session
+
+    if params.pipeline_bot_ids:
+        bot_ids = params.pipeline_bot_ids
+        logger.info("[create_task_and_subtasks] Using pipeline_bot_ids: %s", bot_ids)
+    else:
+        bot_ids = get_bot_ids_from_team(db, team)
+
+    video_config = None
+    image_config = None
+    if params.generate_params and (
+        params.task_type == "video" or params.generate_params.get("model")
+    ):
+        video_config = {
+            "model": params.generate_params.get("model") or params.model_id,
+            "model_display_name": params.generate_params.get("model_display_name"),
+            "resolution": params.generate_params.get("resolution"),
+            "ratio": params.generate_params.get("ratio"),
+            "duration": params.generate_params.get("duration"),
+            "generation_mode_id": params.generate_params.get("generation_mode_id"),
+        }
+    elif params.task_type == "image" and params.generate_params:
+        image_config = {
+            "model": params.model_id,
+            "size": params.generate_params.get("size"),
+        }
+
+    execution_session = prepare_execution_session(
+        db=db,
+        user=user,
+        team=team,
+        input_text=message,
+        task_params=params,
+        task_id=task_id,
+        should_trigger_ai=should_trigger_ai,
+        bot_ids_override=bot_ids,
+        video_config=video_config,
+        image_config=image_config,
+        prepared_task=prepared_task,
+        commit=commit,
+    )
+    task = execution_session.task
+    user_subtask = execution_session.user_subtask
+    assistant_subtask = execution_session.assistant_subtask
+    group_chat = is_task_group_chat(task, params.is_group_chat)
+
+    if group_chat:
+        update_task_timestamp(db, task)
+
+    if not should_trigger_ai:
+        task_status = (task.json or {}).get("status", {}).get("status")
+        if task_status in ("PENDING", "RUNNING"):
+            mark_task_completed(task)
+            logger.info(
+                "[create_task_and_subtasks] Marked task %s as COMPLETED "
+                "(no AI triggered for group chat message)",
+                task.id,
+            )
+
+    if commit:
+        db.commit()
+    else:
+        db.flush()
+    db.refresh(task)
+    db.refresh(user_subtask)
+    if assistant_subtask:
+        db.refresh(assistant_subtask)
+
+    return _TaskCreationStorageResult(
+        creation=TaskCreationResult(
+            task=task,
+            user_subtask=user_subtask,
+            assistant_subtask=assistant_subtask,
+            ai_triggered=should_trigger_ai,
+            rag_prompt=rag_prompt,
+        ),
+        existing_subtasks=execution_session.existing_subtasks,
+        is_group_chat=group_chat,
+    )
+
+
 async def create_task_and_subtasks(
     db: Session,
     user: User,
@@ -736,46 +890,6 @@ async def create_task_and_subtasks(
     Returns:
         TaskCreationResult with task and subtask information
     """
-    from app.services.chat.trigger.group_chat import (
-        is_task_group_chat,
-        notify_group_members_task_updated,
-    )
-    from app.services.chat.trigger.lifecycle import prepare_execution_session
-
-    # Get bot IDs: use pipeline_bot_ids if provided (for pipeline stage confirmation),
-    # otherwise get all bot IDs from team members
-    if params.pipeline_bot_ids:
-        bot_ids = params.pipeline_bot_ids
-        logger.info(f"[create_task_and_subtasks] Using pipeline_bot_ids: {bot_ids}")
-    else:
-        bot_ids = get_bot_ids_from_team(db, team)
-
-    # Persist user-selected generation parameters for display and retry.
-    video_config = None
-    image_config = None
-    if params.generate_params and (
-        params.task_type == "video" or params.generate_params.get("model")
-    ):
-        video_config = {
-            "model": params.generate_params.get("model") or params.model_id,
-            "model_display_name": params.generate_params.get("model_display_name"),
-            "resolution": params.generate_params.get("resolution"),
-            "ratio": params.generate_params.get("ratio"),
-            "duration": params.generate_params.get("duration"),
-            "generation_mode_id": params.generate_params.get("generation_mode_id"),
-        }
-        logger.info(
-            f"[create_task_and_subtasks] Building video_config for task {task_id}: {video_config}"
-        )
-    elif params.task_type == "image" and params.generate_params:
-        image_config = {
-            "model": params.model_id,
-            "size": params.generate_params.get("size"),
-        }
-        logger.info(
-            f"[create_task_and_subtasks] Building image_config for task {task_id}: {image_config}"
-        )
-
     prepared_task = None
     if _requires_git_worktree_preparation(task_id, params):
         prepared_task = await _create_task_and_prepare_git_worktree(
@@ -785,56 +899,26 @@ async def create_task_and_subtasks(
             params=params,
         )
 
-    session = prepare_execution_session(
+    storage_result = _create_task_and_subtasks_storage(
         db=db,
         user=user,
         team=team,
-        input_text=message,
-        task_params=params,
+        message=message,
+        params=params,
         task_id=task_id,
         should_trigger_ai=should_trigger_ai,
-        bot_ids_override=bot_ids,
-        video_config=video_config,
-        image_config=image_config,
-        prepared_task=prepared_task,
+        rag_prompt=rag_prompt,
         commit=commit,
+        prepared_task=prepared_task,
     )
-    task = session.task
-    task_id = session.task_id
-    user_subtask = session.user_subtask
-    assistant_subtask = session.assistant_subtask
-    existing_subtasks = session.existing_subtasks
+    result = storage_result.creation
+    task = result.task
+    task_id = task.id
+    user_subtask = result.user_subtask
+    existing_subtasks = storage_result.existing_subtasks
 
-    # Update task.updated_at for group chat messages (even without AI trigger)
-    if is_task_group_chat(task, params.is_group_chat):
-        update_task_timestamp(db, task)
-
-    # If no AI is triggered for a group chat message, mark task as COMPLETED so
-    # subsequent messages are not blocked by the "Task is still running" check.
-    # This covers new group tasks created without an @mention (no assistant subtask
-    # will ever update the status, leaving the task stuck at PENDING).
-    if not should_trigger_ai:
-        task_crd_status = (task.json or {}).get("status", {}).get("status")
-        if task_crd_status in ("PENDING", "RUNNING"):
-            mark_task_completed(task)
-            logger.info(
-                f"[create_task_and_subtasks] Marked task {task.id} as COMPLETED "
-                f"(no AI triggered for group chat message)"
-            )
-
-    if commit:
-        db.commit()
-    else:
-        db.flush()
-    db.refresh(task)
-    if assistant_subtask:
-        db.refresh(assistant_subtask)
-
-    # Store user message in long-term memory (fire-and-forget)
+    # Store user message in long-term memory.
     # WebSocket chat (web) respects user preference for memory
-    # This runs in background and doesn't block the main flow
-    import asyncio
-
     from app.core.config import settings
     from app.services.memory import (
         build_context_messages,
@@ -869,46 +953,15 @@ async def create_task_and_subtasks(
                 context_limit=settings.MEMORY_CONTEXT_MESSAGES,
             )
 
-            # Create task with proper exception handling
-            def _log_memory_task_exception(task_obj: asyncio.Task) -> None:
-                """Log exceptions from background memory storage task."""
-                try:
-                    exc = task_obj.exception()
-                    if exc is not None:
-                        logger.error(
-                            "[create_task_and_subtasks] Memory storage task failed for user %d, task %d, subtask %d: %s",
-                            user.id,
-                            task.id,
-                            user_subtask.id,
-                            exc,
-                            exc_info=exc,
-                        )
-                except asyncio.CancelledError:
-                    logger.info(
-                        "[create_task_and_subtasks] Memory storage task cancelled for user %d, task %d, subtask %d",
-                        user.id,
-                        task.id,
-                        user_subtask.id,
-                    )
-
-            memory_save_task = asyncio.create_task(
-                memory_manager.save_user_message_async(
-                    user_id=str(user.id),
-                    team_id=str(team.id),
-                    task_id=str(task.id),
-                    subtask_id=str(user_subtask.id),
-                    messages=context_messages,
-                    workspace_id=workspace_id,
-                    project_id=str(task.project_id) if task.project_id else None,
-                    is_group_chat=is_group_chat,
-                )
-            )
-            memory_save_task.add_done_callback(_log_memory_task_exception)
-            logger.info(
-                "[create_task_and_subtasks] Started background task to store memory for user %d, task %d, subtask %d",
-                user.id,
-                task.id,
-                user_subtask.id,
+            await memory_manager.save_user_message_async(
+                user_id=str(user.id),
+                team_id=str(team.id),
+                task_id=str(task.id),
+                subtask_id=str(user_subtask.id),
+                messages=context_messages,
+                workspace_id=workspace_id,
+                project_id=str(task.project_id) if task.project_id else None,
+                is_group_chat=is_group_chat,
             )
 
     # Initialize Redis chat history from existing subtasks if needed
@@ -916,16 +969,529 @@ async def create_task_and_subtasks(
         await initialize_redis_chat_history(task_id, existing_subtasks)
 
     # Notify all group chat members about the new message via WebSocket
-    if is_task_group_chat(task, params.is_group_chat):
+    if storage_result.is_group_chat:
+        from app.services.chat.trigger.group_chat import (
+            notify_group_members_task_updated,
+        )
+
         await notify_group_members_task_updated(db, task, user.id)
 
-    return TaskCreationResult(
-        task=task,
-        user_subtask=user_subtask,
-        assistant_subtask=assistant_subtask,
-        ai_triggered=should_trigger_ai,
-        rag_prompt=rag_prompt,
+    return result
+
+
+def _serialize_completed_history(
+    existing_subtasks: List[Subtask],
+) -> List[Dict[str, str]]:
+    """Copy persisted history into primitives safe outside the DB worker."""
+    history: List[Dict[str, str]] = []
+    for subtask in sorted(existing_subtasks, key=lambda item: item.message_id):
+        if subtask.status != SubtaskStatus.COMPLETED:
+            continue
+        if subtask.role == SubtaskRole.USER and subtask.prompt:
+            history.append({"role": "user", "content": subtask.prompt})
+        elif subtask.role == SubtaskRole.ASSISTANT and isinstance(subtask.result, dict):
+            content = subtask.result.get("value")
+            if content:
+                history.append({"role": "assistant", "content": str(content)})
+    return history
+
+
+def _build_group_notification_intent(
+    db: Session,
+    *,
+    task: TaskResource,
+    sender_user_id: int,
+) -> _GroupNotificationIntent:
+    from app.models.resource_member import MemberStatus, ResourceMember
+    from app.models.share_link import ResourceType
+
+    members = (
+        db.query(ResourceMember.user_id)
+        .filter(
+            ResourceMember.resource_type == ResourceType.TASK,
+            ResourceMember.resource_id == task.id,
+            ResourceMember.status == MemberStatus.APPROVED,
+        )
+        .all()
     )
+    member_user_ids = {int(member.user_id) for member in members}
+    member_user_ids.add(task.user_id)
+    member_user_ids.discard(sender_user_id)
+    task_crd = Task.model_validate(task.json)
+    return _GroupNotificationIntent(
+        task_id=task.id,
+        member_user_ids=sorted(member_user_ids),
+        status=task_crd.status.status if task_crd.status else "PENDING",
+        progress=task_crd.status.progress if task_crd.status else 0,
+    )
+
+
+def _build_memory_save_intent(
+    db: Session,
+    *,
+    user: User,
+    team: Kind,
+    storage_result: _TaskCreationStorageResult,
+) -> Optional[_MemorySaveIntent]:
+    from app.core.config import settings
+    from app.services.memory import build_context_messages, is_memory_enabled_for_user
+
+    if not is_memory_enabled_for_user(user):
+        return None
+
+    from app.services.memory import get_memory_manager
+
+    if not get_memory_manager().is_enabled:
+        return None
+
+    creation = storage_result.creation
+    task_crd = Task.model_validate(creation.task.json)
+    workspace_id = (
+        f"{task_crd.spec.workspaceRef.namespace}/{task_crd.spec.workspaceRef.name}"
+        if task_crd.spec.workspaceRef
+        else None
+    )
+    messages = build_context_messages(
+        db=db,
+        existing_subtasks=storage_result.existing_subtasks,
+        current_message=creation.user_subtask.prompt,
+        current_user=user,
+        is_group_chat=storage_result.is_group_chat,
+        context_limit=settings.MEMORY_CONTEXT_MESSAGES,
+    )
+    return _MemorySaveIntent(
+        user_id=user.id,
+        team_id=team.id,
+        task_id=creation.task.id,
+        subtask_id=creation.user_subtask.id,
+        messages=messages,
+        workspace_id=workspace_id,
+        project_id=creation.task.project_id or None,
+        is_group_chat=storage_result.is_group_chat,
+    )
+
+
+def _detach_task_creation_result(db: Session, result: TaskCreationResult) -> None:
+    """Load result columns and detach them before crossing the thread boundary."""
+    for instance in (result.task, result.user_subtask, result.assistant_subtask):
+        if instance is None or not hasattr(instance, "_sa_instance_state"):
+            continue
+        db.refresh(instance)
+        db.expunge(instance)
+
+
+def build_nonblocking_task_creation_output(
+    db: Session,
+    *,
+    user: User,
+    team: Kind,
+    storage_result: _TaskCreationStorageResult,
+) -> _NonblockingTaskCreationOutput:
+    """Build async side-effect intents and detach persisted chat objects."""
+    output = _NonblockingTaskCreationOutput(
+        creation=storage_result.creation,
+        redis_history=_serialize_completed_history(storage_result.existing_subtasks),
+        memory=_build_memory_save_intent(
+            db,
+            user=user,
+            team=team,
+            storage_result=storage_result,
+        ),
+        group_notification=(
+            _build_group_notification_intent(
+                db,
+                task=storage_result.creation.task,
+                sender_user_id=user.id,
+            )
+            if storage_result.is_group_chat
+            else None
+        ),
+    )
+    _detach_task_creation_result(db, storage_result.creation)
+    return output
+
+
+def _create_chat_task_nonblocking_sync(
+    user_id: int,
+    team_id: int,
+    message: str,
+    params: TaskCreationParams,
+    task_id: Optional[int],
+    should_trigger_ai: bool,
+    rag_prompt: Optional[str],
+    prepared_task_id: Optional[int],
+    prepared_workspace: Optional[Dict[str, str]],
+) -> _NonblockingTaskCreationOutput:
+    """Run the complete chat persistence phase in a worker-owned session."""
+    from app.services.chat.storage.db import get_db_session
+
+    with get_db_session() as db:
+        user = db.query(User).filter(User.id == user_id).first()
+        if not user:
+            raise ValueError("User not found")
+        team = (
+            db.query(Kind)
+            .filter(
+                Kind.id == team_id,
+                Kind.kind == "Team",
+                Kind.is_active == True,
+            )
+            .first()
+        )
+        if not team:
+            raise ValueError("Team not found")
+
+        prepared_task = None
+        if prepared_task_id is not None:
+            prepared_task = task_stores.task_store.get_regular_active_task(
+                db,
+                task_id=prepared_task_id,
+            )
+            if not prepared_task or not prepared_workspace:
+                raise ValueError("Prepared Git worktree task not found")
+            _update_task_execution_workspace(prepared_task, prepared_workspace)
+            task_stores.task_store.update_json(
+                db,
+                task=prepared_task,
+                payload=prepared_task.json,
+            )
+
+        storage_result = _create_task_and_subtasks_storage(
+            db=db,
+            user=user,
+            team=team,
+            message=message,
+            params=params,
+            task_id=task_id,
+            should_trigger_ai=should_trigger_ai,
+            rag_prompt=rag_prompt,
+            commit=True,
+            prepared_task=prepared_task,
+        )
+        return build_nonblocking_task_creation_output(
+            db,
+            user=user,
+            team=team,
+            storage_result=storage_result,
+        )
+
+
+def _create_chat_task_ids_nonblocking_sync(
+    user_id: int,
+    team_id: int,
+    message: str,
+    params: TaskCreationParams,
+    task_id: Optional[int],
+    should_trigger_ai: bool,
+    rag_prompt: Optional[str],
+    prepared_task_id: Optional[int],
+    prepared_workspace: Optional[Dict[str, str]],
+) -> _NonblockingTaskCreationIdsOutput:
+    """Create a chat turn and return only scalar identities to the event loop."""
+
+    output = _create_chat_task_nonblocking_sync(
+        user_id,
+        team_id,
+        message,
+        params,
+        task_id,
+        should_trigger_ai,
+        rag_prompt,
+        prepared_task_id,
+        prepared_workspace,
+    )
+    creation = output.creation
+    task_json = creation.task.json if isinstance(creation.task.json, dict) else {}
+    task_spec = task_json.get("spec") if isinstance(task_json.get("spec"), dict) else {}
+    device_id = str(task_spec.get("device_id") or "").strip() or None
+    return _NonblockingTaskCreationIdsOutput(
+        creation=TaskCreationIds(
+            task_id=int(creation.task.id),
+            user_subtask_id=int(creation.user_subtask.id),
+            assistant_subtask_id=(
+                int(creation.assistant_subtask.id)
+                if creation.assistant_subtask is not None
+                else None
+            ),
+            ai_triggered=creation.ai_triggered,
+            rag_prompt=creation.rag_prompt,
+            device_id=device_id,
+        ),
+        redis_history=output.redis_history,
+        memory=output.memory,
+        group_notification=output.group_notification,
+    )
+
+
+def _create_prepared_git_task(
+    user_id: int,
+    team_id: int,
+    params: TaskCreationParams,
+) -> int:
+    """Create the task identity needed for a deterministic worktree path."""
+    from app.services.chat.storage.db import get_db_session
+
+    with get_db_session() as db:
+        user = db.query(User).filter(User.id == user_id).first()
+        team = (
+            db.query(Kind)
+            .filter(
+                Kind.id == team_id,
+                Kind.kind == "Team",
+                Kind.is_active == True,
+            )
+            .first()
+        )
+        if not user or not team:
+            raise ValueError("Git worktree task owner or team not found")
+        return create_new_task(db, user, team, params).id
+
+
+def _discard_prepared_git_task(user_id: int, task_id: int) -> None:
+    """Compensate a failed remote worktree preparation transaction."""
+    from app.services.chat.storage.db import get_db_session
+
+    with get_db_session() as db:
+        task = task_stores.task_store.get_by_id(
+            db, task_id=task_id, owner_user_id=user_id
+        )
+        if task is not None and task.kind != "Task":
+            task = None
+        if task:
+            task_stores.task_store.delete_resource(db, resource=task)
+        workspace = task_stores.task_store.get_workspace_by_ref(
+            db,
+            user_id=user_id,
+            name=f"workspace-{task_id}",
+            namespace="default",
+        )
+        if workspace:
+            task_stores.task_store.delete_resource(db, resource=workspace)
+
+
+async def _save_memory_intent(intent: _MemorySaveIntent) -> None:
+    """Forward one prepared memory write without synchronous Web work."""
+    from app.services.memory import get_memory_manager
+
+    await get_memory_manager().save_user_message_async(
+        user_id=str(intent.user_id),
+        team_id=str(intent.team_id),
+        task_id=str(intent.task_id),
+        subtask_id=str(intent.subtask_id),
+        messages=intent.messages,
+        workspace_id=intent.workspace_id,
+        project_id=str(intent.project_id) if intent.project_id else None,
+        is_group_chat=intent.is_group_chat,
+    )
+
+
+async def run_task_creation_side_effects(
+    output: _NonblockingTaskCreationOutput | _NonblockingTaskCreationIdsOutput,
+    *,
+    detach_memory_save: bool = False,
+) -> None:
+    """Run Redis and network side effects on the owning event loop."""
+    if output.redis_history:
+        from app.services.chat.storage import session_manager
+
+        task_id = (
+            output.creation.task_id
+            if isinstance(output.creation, TaskCreationIds)
+            else output.creation.task.id
+        )
+        try:
+            if not await session_manager.get_chat_history(task_id):
+                await session_manager.save_chat_history(task_id, output.redis_history)
+        except Exception as exc:
+            logger.warning(
+                "[task_manager] Failed to initialize Redis history for task %s: %s",
+                task_id,
+                exc,
+                exc_info=True,
+            )
+
+    if output.memory:
+        intent = output.memory
+        if detach_memory_save:
+            await web_background_task_manager.submit(
+                lambda: _save_memory_intent(intent),
+                name=f"memory-save-{intent.subtask_id}",
+            )
+        else:
+            await _save_memory_intent(intent)
+
+    if output.group_notification:
+        from app.services.chat.webpage_ws_extended_emitter import get_extended_emitter
+
+        intent = output.group_notification
+        emitter = get_extended_emitter()
+        try:
+            for member_user_id in intent.member_user_ids:
+                await emitter.emit_group_chat_new_message(
+                    user_id=member_user_id,
+                    task_id=intent.task_id,
+                    status=intent.status,
+                    progress=intent.progress,
+                )
+        except Exception as exc:
+            logger.warning(
+                "[task_manager] Failed to notify group members for task %s: %s",
+                intent.task_id,
+                exc,
+            )
+
+
+async def create_chat_task_nonblocking(
+    *,
+    user_id: int,
+    team_id: int,
+    message: str,
+    params: TaskCreationParams,
+    task_id: Optional[int] = None,
+    should_trigger_ai: bool = True,
+    rag_prompt: Optional[str] = None,
+    detach_memory_save: bool = False,
+) -> TaskCreationResult:
+    """Create a chat turn without executing synchronous storage on the event loop."""
+    from app.services.chat.storage.db import run_sync_in_executor
+
+    prepared_task_id = None
+    prepared_workspace = None
+    if _requires_git_worktree_preparation(task_id, params):
+        if not params.project_id:
+            raise HTTPException(
+                status_code=400,
+                detail="Git worktree execution requires a project",
+            )
+        prepared_task_id = await run_sync_in_executor(
+            _create_prepared_git_task,
+            user_id,
+            team_id,
+            params,
+        )
+        try:
+            from app.services import project_service
+
+            prepared_workspace = (
+                await project_service.prepare_git_worktree_for_task_nonblocking(
+                    user_id=user_id,
+                    project_id=params.project_id or 0,
+                    client_origin=params.client_origin,
+                    task_id=prepared_task_id,
+                    base_branch=(params.execution_workspace or {}).get("branch"),
+                )
+            )
+        except BaseException:
+            await run_sync_in_executor(
+                _discard_prepared_git_task,
+                user_id,
+                prepared_task_id,
+            )
+            raise
+
+    try:
+        output = await run_sync_in_executor(
+            _create_chat_task_nonblocking_sync,
+            user_id,
+            team_id,
+            message,
+            params,
+            task_id,
+            should_trigger_ai,
+            rag_prompt,
+            prepared_task_id,
+            prepared_workspace,
+        )
+    except BaseException:
+        if prepared_task_id is not None:
+            await run_sync_in_executor(
+                _discard_prepared_git_task,
+                user_id,
+                prepared_task_id,
+            )
+        raise
+    await run_task_creation_side_effects(
+        output,
+        detach_memory_save=detach_memory_save,
+    )
+    return output.creation
+
+
+async def create_chat_task_ids_nonblocking(
+    *,
+    user_id: int,
+    team_id: int,
+    message: str,
+    params: TaskCreationParams,
+    task_id: Optional[int] = None,
+    should_trigger_ai: bool = True,
+    rag_prompt: Optional[str] = None,
+    detach_memory_save: bool = False,
+) -> TaskCreationIds:
+    """Create a chat turn without transferring ORM instances to the caller."""
+
+    from app.services.chat.storage.db import run_sync_in_executor
+
+    prepared_task_id = None
+    prepared_workspace = None
+    if _requires_git_worktree_preparation(task_id, params):
+        if not params.project_id:
+            raise HTTPException(
+                status_code=400,
+                detail="Git worktree execution requires a project",
+            )
+        prepared_task_id = await run_sync_in_executor(
+            _create_prepared_git_task,
+            user_id,
+            team_id,
+            params,
+        )
+        try:
+            from app.services import project_service
+
+            prepared_workspace = (
+                await project_service.prepare_git_worktree_for_task_nonblocking(
+                    user_id=user_id,
+                    project_id=params.project_id or 0,
+                    client_origin=params.client_origin,
+                    task_id=prepared_task_id,
+                    base_branch=(params.execution_workspace or {}).get("branch"),
+                )
+            )
+        except BaseException:
+            await run_sync_in_executor(
+                _discard_prepared_git_task,
+                user_id,
+                prepared_task_id,
+            )
+            raise
+
+    try:
+        output = await run_sync_in_executor(
+            _create_chat_task_ids_nonblocking_sync,
+            user_id,
+            team_id,
+            message,
+            params,
+            task_id,
+            should_trigger_ai,
+            rag_prompt,
+            prepared_task_id,
+            prepared_workspace,
+        )
+    except BaseException:
+        if prepared_task_id is not None:
+            await run_sync_in_executor(
+                _discard_prepared_git_task,
+                user_id,
+                prepared_task_id,
+            )
+        raise
+    await run_task_creation_side_effects(
+        output,
+        detach_memory_save=detach_memory_save,
+    )
+    return output.creation
 
 
 async def create_chat_task(

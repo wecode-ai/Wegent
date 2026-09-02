@@ -10,8 +10,21 @@ from app.core.cache import cache_manager
 from app.core.config import settings
 from app.models.user import User
 from app.services.connector_connections import connector_connection_service
-from app.services.connector_oauth import ConnectorOAuthService
+from app.services.connector_oauth import (
+    ConnectorOAuthService,
+    GitHubToken,
+)
 from shared.utils.crypto import decrypt_sensitive_data
+
+
+def _oauth(test_db: Session) -> ConnectorOAuthService:
+    return ConnectorOAuthService(
+        lambda: Session(
+            bind=test_db.get_bind(),
+            expire_on_commit=False,
+            join_transaction_mode="create_savepoint",
+        )
+    )
 
 
 @pytest.mark.asyncio
@@ -36,35 +49,36 @@ async def test_github_oauth_session_persists_encrypted_user_connection(
     monkeypatch.setattr(settings, "CONNECTOR_OAUTH_STATE_SECRET", "state-secret")
     monkeypatch.setattr(cache_manager, "set", cache_set)
     monkeypatch.setattr(cache_manager, "get", cache_get)
+    service = _oauth(test_db)
     monkeypatch.setattr(
-        ConnectorOAuthService,
+        service,
         "_exchange_code",
         AsyncMock(
-            return_value={
-                "access_token": "github-access-token",
-                "token_type": "bearer",
-                "scope": "repo,read:org",
-            }
+            return_value=GitHubToken(
+                access_token="github-access-token",
+                refresh_token=None,
+                token_type="bearer",
+                scopes=("repo", "read:org"),
+                expires_in=None,
+            )
         ),
     )
     monkeypatch.setattr(
-        ConnectorOAuthService,
+        service,
         "_fetch_github_login",
         AsyncMock(return_value="octocat"),
     )
 
-    session = await ConnectorOAuthService.create_session(
+    session = await service.create_session(
         slug="github",
         user_id=test_user.id,
     )
     state = parse_qs(urlsplit(session.authorize_url).query)["state"][0]
-    message = await ConnectorOAuthService.complete_callback(
-        test_db,
+    message = await service.complete_callback(
         code="provider-code",
         state_token=state,
     )
-    result = await ConnectorOAuthService.poll_session(
-        test_db,
+    result = await service.poll_session(
         session_id=session.session_id,
         poll_token=session.poll_token,
         user_id=test_user.id,
@@ -85,7 +99,7 @@ async def test_github_oauth_session_persists_encrypted_user_connection(
         decrypt_sensitive_data(connection.access_token_encrypted)
         == "github-access-token"
     )
-    assert connection.granted_scopes == ["read:org", "repo"]
+    assert connection.granted_scopes == ("read:org", "repo")
 
 
 @pytest.mark.asyncio
@@ -107,14 +121,14 @@ async def test_oauth_poll_is_scoped_to_the_authorizing_user(
     monkeypatch.setattr(settings, "GITHUB_OAUTH_CLIENT_SECRET", "github-secret")
     monkeypatch.setattr(cache_manager, "set", cache_set)
     monkeypatch.setattr(cache_manager, "get", cache_get)
-    session = await ConnectorOAuthService.create_session(
+    service = _oauth(test_db)
+    session = await service.create_session(
         slug="github",
         user_id=test_user.id,
     )
 
     with pytest.raises(HTTPException) as exc_info:
-        await ConnectorOAuthService.poll_session(
-            test_db,
+        await service.poll_session(
             session_id=session.session_id,
             poll_token=session.poll_token,
             user_id=test_user.id + 1,
@@ -142,36 +156,27 @@ async def test_expiring_github_token_can_be_refreshed(
         - timedelta(seconds=1),
     )
 
-    class Response:
-        def raise_for_status(self) -> None:
-            return None
-
-        def json(self) -> dict:
-            return {
-                "access_token": "refreshed-token",
-                "refresh_token": "next-refresh-token",
-                "expires_in": 3600,
-                "token_type": "bearer",
-            }
-
-    class Client:
-        async def __aenter__(self):
-            return self
-
-        async def __aexit__(self, *_args):
-            return None
-
-        async def post(self, *_args, **_kwargs):
-            return Response()
-
     monkeypatch.setattr(settings, "GITHUB_OAUTH_CLIENT_ID", "github-client")
     monkeypatch.setattr(settings, "GITHUB_OAUTH_CLIENT_SECRET", "github-secret")
+    service = _oauth(test_db)
     monkeypatch.setattr(
-        "app.services.connector_oauth.httpx.AsyncClient",
-        lambda **_kwargs: Client(),
+        service,
+        "_refresh_github_token",
+        AsyncMock(
+            return_value=GitHubToken(
+                access_token="refreshed-token",
+                refresh_token="next-refresh-token",
+                token_type="bearer",
+                scopes=(),
+                expires_in=3600,
+            )
+        ),
     )
 
-    refreshed = await ConnectorOAuthService.refresh_connection(test_db, connection)
+    refreshed = await service.refresh_connection(
+        slug=connection.slug,
+        user_id=connection.user_id,
+    )
 
     assert refreshed is not None
     assert refreshed.access_token() == "refreshed-token"

@@ -4,10 +4,16 @@
 
 """Tests for custom rate limiting helpers."""
 
+import asyncio
+import threading
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
+import pytest
+from slowapi import Limiter
+from slowapi.errors import RateLimitExceeded
 from starlette.requests import Request
+from starlette.responses import Response
 
 from app.core import rate_limit
 from app.core.config import settings
@@ -44,6 +50,8 @@ def _make_request() -> Request:
     return Request(
         {
             "type": "http",
+            "method": "GET",
+            "path": "/test-rate-limit",
             "client": ("203.0.113.10", 12345),
             "headers": [(b"authorization", b"Bearer wg-secret-token")],
         }
@@ -54,6 +62,8 @@ def _make_request_with_authorization(authorization: str) -> Request:
     return Request(
         {
             "type": "http",
+            "method": "GET",
+            "path": "/test-rate-limit",
             "client": ("203.0.113.10", 12345),
             "headers": [(b"authorization", authorization.encode("utf-8"))],
         }
@@ -206,3 +216,79 @@ def test_check_redis_available_returns_false_when_ping_fails():
         patch.dict("sys.modules", {"redis": fake_redis}),
     ):
         assert rate_limit._check_redis_available() is False
+
+
+@pytest.mark.asyncio
+async def test_nonblocking_limit_keeps_event_loop_responsive() -> None:
+    """A blocking distributed-storage check must not occupy Uvicorn's loop."""
+    started = threading.Event()
+    release = threading.Event()
+    check_thread_id = None
+
+    class FakeLimiter:
+        enabled = True
+        _auto_check = True
+
+        def limit(self, _limit_value, **_options):
+            return lambda endpoint: endpoint
+
+        def _check_request_limit(self, request, endpoint, in_middleware):
+            nonlocal check_thread_id
+            check_thread_id = threading.get_ident()
+            request.state.view_rate_limit = ("limit", ["key"])
+            started.set()
+            release.wait(timeout=2)
+
+        def _inject_headers(self, response, current_limit):
+            assert current_limit == ("limit", ["key"])
+            response.headers["x-rate-limit-test"] = "injected"
+
+    async def endpoint(request: Request) -> Response:
+        return Response("ok")
+
+    limiter = FakeLimiter()
+    wrapped = rate_limit.nonblocking_limit(limiter, "1/minute")(endpoint)
+    request = _make_request()
+    event_loop_thread_id = threading.get_ident()
+    loop = asyncio.get_running_loop()
+    started_at = loop.time()
+    safety_release = threading.Timer(1, release.set)
+    safety_release.start()
+    task = asyncio.create_task(wrapped(request=request))
+
+    try:
+        assert await asyncio.to_thread(started.wait, 1)
+        assert loop.time() - started_at < 0.5
+        loop_tick = asyncio.Event()
+        loop.call_soon(loop_tick.set)
+        await asyncio.wait_for(loop_tick.wait(), timeout=0.1)
+    finally:
+        release.set()
+        safety_release.cancel()
+
+    response = await asyncio.wait_for(task, timeout=1)
+
+    assert check_thread_id != event_loop_thread_id
+    assert request.state._rate_limiting_complete is True
+    assert response.headers["x-rate-limit-test"] == "injected"
+
+
+@pytest.mark.asyncio
+async def test_nonblocking_limit_preserves_slowapi_limits_and_headers() -> None:
+    limiter = Limiter(
+        key_func=lambda: "test-client",
+        storage_uri="memory://",
+        headers_enabled=True,
+    )
+
+    async def endpoint(request: Request) -> Response:
+        return Response("ok")
+
+    wrapped = rate_limit.nonblocking_limit(limiter, "1/minute")(endpoint)
+
+    response = await wrapped(request=_make_request())
+
+    assert response.headers["x-ratelimit-limit"] == "1"
+    assert response.headers["x-ratelimit-remaining"] == "0"
+    with pytest.raises(RateLimitExceeded):
+        await wrapped(request=_make_request())

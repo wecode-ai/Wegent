@@ -15,7 +15,7 @@ from socketio.exceptions import ConnectionRefusedError
 from app.api.ws.connection_utils import enter_connect_room, save_connect_session
 from app.api.ws.decorators import trace_websocket_event
 from app.core.socketio import get_sio
-from app.services.chat.access import get_token_expiry, verify_jwt_token
+from app.services.chat.access import get_token_expiry_async, verify_jwt_token_async
 from app.services.device.terminal_session_service import (
     TerminalSessionRecord,
     terminal_session_service,
@@ -72,12 +72,12 @@ class TerminalNamespace(socketio.AsyncNamespace):
             logger.warning("[Terminal WS] Missing token in auth sid=%s", sid)
             raise ConnectionRefusedError("Missing authentication token")
 
-        user = verify_jwt_token(token)
+        user = await verify_jwt_token_async(token)
         if not user:
             logger.warning("[Terminal WS] Invalid JWT token sid=%s", sid)
             raise ConnectionRefusedError("Invalid or expired token")
 
-        token_exp = get_token_expiry(token)
+        token_exp = await get_token_expiry_async(token)
         await save_connect_session(
             self,
             sid,

@@ -9,7 +9,10 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from app.models.subtask import SubtaskStatus
-from app.services.execution.recovery_service import recovery_service
+from app.services.execution.recovery_service import (
+    ExecutorRecoveryOutcome,
+    recovery_service,
+)
 from app.services.execution.schedule_helper import _recover_executor
 from shared.models import ExecutionRequest
 
@@ -17,10 +20,10 @@ from shared.models import ExecutionRequest
 @pytest.mark.asyncio
 async def test_recover_executor_propagates_expired_archive_error():
     """Expired archive errors should propagate to the caller."""
-    db = MagicMock()
     subtask = MagicMock()
     subtask.id = 123
     task = MagicMock()
+    task.id = 1
     request = ExecutionRequest(
         task_id=1,
         subtask_id=123,
@@ -32,12 +35,11 @@ async def test_recover_executor_propagates_expired_archive_error():
 
     with patch.object(
         recovery_service,
-        "recover",
+        "recover_from_store",
         AsyncMock(side_effect=RuntimeError("archive expired")),
     ):
         with pytest.raises(RuntimeError, match="archive expired"):
             await _recover_executor(
-                db=db,
                 subtask=subtask,
                 task=task,
                 request=request,
@@ -47,13 +49,13 @@ async def test_recover_executor_propagates_expired_archive_error():
 @pytest.mark.asyncio
 async def test_recover_executor_updates_current_subtask_from_recovered_info():
     """Recovered executor info should be copied onto the current subtask."""
-    db = MagicMock()
     subtask = MagicMock()
     subtask.id = 123
     subtask.executor_name = "old-executor"
     subtask.executor_namespace = ""
     subtask.executor_deleted_at = True
     task = MagicMock()
+    task.id = 1
     request = ExecutionRequest(
         task_id=1,
         subtask_id=123,
@@ -66,23 +68,16 @@ async def test_recover_executor_updates_current_subtask_from_recovered_info():
     with (
         patch.object(
             recovery_service,
-            "recover",
+            "recover_from_store",
             AsyncMock(
-                return_value={
-                    "executor_name": "new-executor",
-                    "executor_namespace": "default",
-                }
+                return_value=ExecutorRecoveryOutcome(
+                    executor_name="new-executor",
+                    executor_namespace="default",
+                )
             ),
         ),
-        patch("app.stores.tasks.subtask_store") as mock_subtask_store,
     ):
-        mock_subtask_store.update_fields.side_effect = (
-            lambda _db, *, subtask, **fields: [
-                setattr(subtask, name, value) for name, value in fields.items()
-            ]
-        )
         result = await _recover_executor(
-            db=db,
             subtask=subtask,
             task=task,
             request=request,
@@ -92,14 +87,6 @@ async def test_recover_executor_updates_current_subtask_from_recovered_info():
     assert subtask.executor_name == "new-executor"
     assert subtask.executor_namespace == "default"
     assert subtask.executor_deleted_at is False
-    mock_subtask_store.update_fields.assert_called_once_with(
-        db,
-        subtask=subtask,
-        executor_name="new-executor",
-        executor_namespace="default",
-        executor_deleted_at=False,
-    )
-    db.commit.assert_called_once()
 
 
 @pytest.mark.asyncio

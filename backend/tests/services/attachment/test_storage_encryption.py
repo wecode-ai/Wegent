@@ -89,12 +89,8 @@ class TestMySQLStorageBackend:
         storage_key = "attachments/test123_20250113_1_100"
         test_data = b"Test attachment data"
 
-        mock_context = MagicMock(spec=SubtaskContext)
-        mock_context.id = 100
-        mock_context.binary_data = test_data
-
-        self.mock_db.query.return_value.filter.return_value.first.return_value = (
-            mock_context
+        self.mock_db.query.return_value.filter.return_value.scalar.return_value = (
+            test_data
         )
 
         # Act
@@ -102,6 +98,7 @@ class TestMySQLStorageBackend:
 
         # Assert - should return exactly what's stored
         assert result_data == test_data
+        self.mock_db.query.assert_called_once_with(SubtaskContext.binary_data)
 
     def test_get_returns_encrypted_data_as_is(self):
         """Test that get returns encrypted data without decryption (decryption is done at service layer)."""
@@ -114,12 +111,8 @@ class TestMySQLStorageBackend:
 
         encrypted_data = encrypt_attachment(original_data)
 
-        mock_context = MagicMock(spec=SubtaskContext)
-        mock_context.id = 100
-        mock_context.binary_data = encrypted_data
-
-        self.mock_db.query.return_value.filter.return_value.first.return_value = (
-            mock_context
+        self.mock_db.query.return_value.filter.return_value.scalar.return_value = (
+            encrypted_data
         )
 
         # Act
@@ -133,7 +126,7 @@ class TestMySQLStorageBackend:
         """Test retrieving attachment when context doesn't exist."""
         # Arrange
         storage_key = "attachments/test123_20250113_1_999"
-        self.mock_db.query.return_value.filter.return_value.first.return_value = None
+        self.mock_db.query.return_value.filter.return_value.scalar.return_value = None
 
         # Act
         result_data = self.storage.get(storage_key)

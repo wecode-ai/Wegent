@@ -132,7 +132,7 @@ def test_create_device_chat_task_endpoint_accepts_x_api_key(
     )
 
     assert response.status_code == 200
-    assert service_mock.await_args.kwargs["user"].id == api_key_record.user_id
+    assert service_mock.await_args.kwargs["user_id"] == api_key_record.user_id
     assert service_mock.await_args.kwargs["auth_token"] == raw_key
 
 
@@ -151,7 +151,7 @@ def test_create_device_chat_task_endpoint_accepts_bearer_api_key(
     )
 
     assert response.status_code == 200
-    assert service_mock.await_args.kwargs["user"].id == api_key_record.user_id
+    assert service_mock.await_args.kwargs["user_id"] == api_key_record.user_id
     assert service_mock.await_args.kwargs["auth_token"] == raw_key
 
 
@@ -170,7 +170,7 @@ def test_create_device_chat_task_endpoint_forwards_plain_api_key(
     )
 
     assert response.status_code == 200
-    assert service_mock.await_args.kwargs["user"].id == api_key_record.user_id
+    assert service_mock.await_args.kwargs["user_id"] == api_key_record.user_id
     assert service_mock.await_args.kwargs["auth_token"] == raw_key
 
 
@@ -193,7 +193,7 @@ def test_create_device_chat_task_endpoint_prefers_x_api_key_for_forwarding(
     )
 
     assert response.status_code == 200
-    assert service_mock.await_args.kwargs["user"].id == api_key_record.user_id
+    assert service_mock.await_args.kwargs["user_id"] == api_key_record.user_id
     assert service_mock.await_args.kwargs["auth_token"] == raw_key
 
 

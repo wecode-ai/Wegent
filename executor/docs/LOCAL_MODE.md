@@ -144,7 +144,7 @@ cargo test --all-features
 
 ```bash
 # Terminal 1: 启动 Backend
-cd backend && uv run uvicorn app.main:app --port 8000
+cd backend && PORT=8000 uv run python -m app.runtime
 
 # Terminal 2: 启动 Local Executor
 cd executor

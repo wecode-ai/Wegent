@@ -2,10 +2,13 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
+import asyncio
+import threading
 from unittest.mock import AsyncMock
 
 import pytest
 
+from app.services.channels.weibo import emitter as emitter_module
 from app.services.channels.weibo.emitter import WeiboStreamingResponseEmitter
 from shared.models import ExecutionEvent
 
@@ -180,3 +183,47 @@ async def test_emit_error_raises_when_weibo_send_fails():
     assert sender.send_stream_chunk.await_args.kwargs["text"] == (
         "任务执行失败: Device lost"
     )
+
+
+@pytest.mark.asyncio
+async def test_large_chunk_codec_keeps_loop_responsive(monkeypatch):
+    entered = threading.Event()
+    release = threading.Event()
+    original_join = emitter_module._join_text
+
+    def blocking_join(left, right):
+        entered.set()
+        assert release.wait(timeout=2)
+        return original_join(left, right)
+
+    monkeypatch.setattr(emitter_module, "_join_text", blocking_join)
+    monkeypatch.setattr(emitter_module, "MAX_WEIBO_CHUNK_CHARS", 64 * 1024**2)
+    sender = AsyncMock()
+    sender.send_stream_chunk.return_value = True
+    emitter = WeiboStreamingResponseEmitter(
+        channel_id=7,
+        to_user_id="10001",
+        sender=sender,
+        cache=FakeCache(),
+    )
+
+    emit_task = asyncio.create_task(
+        emitter.emit_chunk(
+            task_id=11,
+            subtask_id=13,
+            content="x" * (32 * 1024**2),
+            offset=0,
+        )
+    )
+    while not entered.is_set():
+        await asyncio.sleep(0)
+
+    ticks = 0
+    for _ in range(10):
+        await asyncio.sleep(0)
+        ticks += 1
+
+    assert ticks == 10
+    release.set()
+    await emit_task
+    assert len(emitter._sent_content) == 32 * 1024**2

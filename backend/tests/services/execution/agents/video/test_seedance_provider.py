@@ -2,6 +2,8 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
+import json
+
 import pytest
 
 from app.services.execution.agents.video.providers import get_video_provider
@@ -20,7 +22,8 @@ class _Response:
     def __init__(self, data, status_code=200, text=""):
         self._data = data
         self.status_code = status_code
-        self.text = text
+        self.text = text or json.dumps(data)
+        self.content = self.text.encode()
 
     def json(self):
         return self._data
@@ -75,7 +78,8 @@ def test_factory_passes_generation_mode_to_seedance_provider() -> None:
     assert provider.video_config["generation_mode_id"] == "edit"
 
 
-def test_extract_api_error_returns_raw_seedance_response() -> None:
+@pytest.mark.asyncio
+async def test_extract_api_error_returns_raw_seedance_response() -> None:
     raw_error = (
         '{"error":{"code":'
         '"InputImageSensitiveContentDetected.PrivacyInformation",'
@@ -88,7 +92,7 @@ def test_extract_api_error_returns_raw_seedance_response() -> None:
         text=raw_error,
     )
 
-    assert _extract_api_error(response) == raw_error  # type: ignore[arg-type]
+    assert await _extract_api_error(response) == raw_error  # type: ignore[arg-type]
 
 
 def test_media_url_for_log_removes_signed_query() -> None:
@@ -265,7 +269,7 @@ async def test_seedance_assigns_extra_images_as_references(monkeypatch) -> None:
         ],
     )
 
-    image_content = client.post_kwargs["json"]["content"][1:]
+    image_content = json.loads(client.post_kwargs["content"])["content"][1:]
     assert [item["role"] for item in image_content] == [
         "first_frame",
         "last_frame",
@@ -296,7 +300,7 @@ async def test_seedance_25_uses_model_defaults_and_edit_guidance(monkeypatch) ->
         image_mode="reference",
     )
 
-    payload = client.post_kwargs["json"]
+    payload = json.loads(client.post_kwargs["content"])
     assert payload["resolution"] == "720p"
     assert payload["ratio"] == "adaptive"
     assert payload["duration"] == -1
@@ -328,7 +332,7 @@ async def test_seedance_25_supports_explicit_output_options(monkeypatch) -> None
 
     await provider.create_job(prompt="Generate a video")
 
-    payload = client.post_kwargs["json"]
+    payload = json.loads(client.post_kwargs["content"])
     assert payload["resolution"] == "1080p"
     assert payload["ratio"] == "16:9"
     assert payload["duration"] == 30
@@ -379,8 +383,8 @@ async def test_seedance_25_uses_configured_asset_library(monkeypatch) -> None:
         image_mode="reference",
     )
 
-    payload = client.post_calls[1]["json"]
-    assert client.post_calls[0]["json"]["GroupId"] == "group-1"
+    payload = json.loads(client.post_calls[1]["content"])
+    assert json.loads(client.post_calls[0]["content"])["GroupId"] == "group-1"
     assert payload["content"][1]["image_url"]["url"] == "asset://asset-1"
     assert payload["omni_reference_task_type"] == "edit"
 
@@ -415,7 +419,7 @@ async def test_seedance_passes_through_external_content_blocks(monkeypatch) -> N
         ],
     )
 
-    assert client.post_kwargs["json"]["content"][1:] == [
+    assert json.loads(client.post_kwargs["content"])["content"][1:] == [
         {
             "type": "external_video_reference",
             "external_video_reference": "test-video-reference-id",

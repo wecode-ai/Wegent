@@ -24,8 +24,6 @@ class RagGateway(Protocol):
     async def query(
         self,
         spec: QueryRuntimeSpec,
-        *,
-        db: Session | None = None,
     ) -> dict: ...
 
     async def delete_document_index(
@@ -39,14 +37,14 @@ class RagGateway(Protocol):
         self,
         spec: PurgeKnowledgeRuntimeSpec,
         *,
-        db: Session,
+        db: Session | None = None,
     ) -> dict: ...
 
     async def drop_knowledge_index(
         self,
         spec: DropKnowledgeIndexRuntimeSpec,
         *,
-        db: Session,
+        db: Session | None = None,
     ) -> dict: ...
 
     async def list_chunks(

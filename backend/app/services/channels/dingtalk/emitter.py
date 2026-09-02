@@ -7,11 +7,17 @@
 import asyncio
 import logging
 import re
+import threading
 import time
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Callable, Optional
 
 from app.core.cache import cache_manager
+from app.core.payload_codec import run_payload_codec
+from app.services.channels.dingtalk.sdk_executor import (
+    DingTalkSDKTimeoutError,
+    run_dingtalk_sdk_operation,
+)
 from app.services.channels.emitter import SyncResponseEmitter
 from app.services.execution.emitters import ResultEmitter
 from shared.models import EventType, ExecutionEvent
@@ -27,6 +33,40 @@ __all__ = ["SyncResponseEmitter", "StreamingResponseEmitter"]
 
 _MARKDOWN_TOKEN_RE = re.compile(r"[`*_>#]+")
 _CONTROL_CHARACTER_RE = re.compile(r"[\x00-\x1f\x7f]+")
+
+
+def _join_text(left: str, right: str) -> str:
+    return f"{left}{right}"
+
+
+def _encode_utf8(value: str) -> bytes:
+    return value.encode("utf-8")
+
+
+def _decode_utf8(value: bytes) -> str:
+    return value.decode("utf-8")
+
+
+def _lower_text(value: Any) -> str:
+    return str(value or "").lower()
+
+
+def _cancelled_card_content(
+    answer: str,
+    limit: int,
+    suffix: str,
+) -> str:
+    answer = answer.rstrip()
+    content = f"{answer}\n\n⚠️ 任务已取消" if answer else "⚠️ 任务已取消"
+    if len(content) <= limit:
+        return content
+    return f"{content[: limit - len(suffix)]}{suffix}"
+
+
+def _truncate_text(content: str, limit: int, suffix: str) -> str:
+    if len(content) <= limit:
+        return content
+    return f"{content[: limit - len(suffix)]}{suffix}"
 
 
 def _compact_text(value: Any, limit: int) -> str:
@@ -239,6 +279,7 @@ class StreamingResponseEmitter(ResultEmitter):
     FINAL_TRUNCATION_SUFFIX = "\n\n…（内容已截断，请在 Wework 查看完整结果）"
     PROGRESS_STATE_SUFFIX = ":progress"
     DISPLAY_LOCK_SUFFIX = ":display-lock"
+    CARD_IO_TIMEOUT_SECONDS = 15.0
 
     def __init__(
         self,
@@ -259,6 +300,8 @@ class StreamingResponseEmitter(ResultEmitter):
         self._shared_content_key: Optional[str] = None
         self._progress = _CompactProgressState()
         self._update_lock = asyncio.Lock()
+        self._card_operation_lock = threading.Lock()
+        self._card_io_failed = False
         self._reconnected = bool(existing_card_instance_id)
 
         if existing_card_instance_id:
@@ -287,12 +330,55 @@ class StreamingResponseEmitter(ResultEmitter):
         """Enable Redis-backed answer and progress state sharing."""
         self._shared_content_key = key
 
+    async def _call_card_sdk(
+        self,
+        operation_name: str,
+        operation: Callable[..., Any],
+        *args: Any,
+        **kwargs: Any,
+    ) -> bool:
+        """Run blocking card I/O with bounded capacity and fail-closed timeout.
+
+        A timed-out synchronous SDK call cannot be cancelled safely. It keeps
+        running under the emitter's operation lock, while this emitter rejects
+        later card operations so calls can neither overtake nor be retried.
+        """
+
+        if self._card_io_failed:
+            return False
+        try:
+            await run_dingtalk_sdk_operation(
+                self._card_operation_lock,
+                operation,
+                *args,
+                timeout_seconds=self.CARD_IO_TIMEOUT_SECONDS,
+                **kwargs,
+            )
+            return True
+        except DingTalkSDKTimeoutError:
+            self._card_io_failed = True
+            logger.error(
+                "[StreamingEmitter] DingTalk %s timed out after %.1fs; "
+                "the in-flight SDK call remains serialized and later card "
+                "operations are suppressed",
+                operation_name,
+                self.CARD_IO_TIMEOUT_SECONDS,
+            )
+            return False
+        except Exception:
+            logger.exception(
+                "[StreamingEmitter] DingTalk %s failed",
+                operation_name,
+            )
+            return False
+
     async def _ensure_card_started(self) -> bool:
         if self._started:
             return True
         try:
             logger.info("[StreamingEmitter] Starting AI card...")
-            self._card.ai_start()
+            if not await self._call_card_sdk("ai_start", self._card.ai_start):
+                return False
             if not self._card.card_instance_id:
                 logger.error("[StreamingEmitter] AI card has no instance ID")
                 return False
@@ -311,7 +397,11 @@ class StreamingResponseEmitter(ResultEmitter):
         if key:
             cached = await cache_manager.get(key)
             if cached is not None:
-                self._progress = _CompactProgressState.from_dict(cached)
+                self._progress = await run_payload_codec(
+                    _CompactProgressState.from_dict,
+                    cached,
+                    payload_hint=cached,
+                )
 
     async def _save_progress_state(self) -> None:
         key = self._progress_state_key
@@ -332,7 +422,12 @@ class StreamingResponseEmitter(ResultEmitter):
 
         redis_client = await cache_manager._get_client()
         try:
-            await redis_client.append(self._shared_content_key, content.encode("utf-8"))
+            encoded = await run_payload_codec(
+                _encode_utf8,
+                content,
+                payload_hint=content,
+            )
+            await redis_client.append(self._shared_content_key, encoded)
             await redis_client.expire(
                 self._shared_content_key, CHANNEL_TASK_CALLBACK_TTL
             )
@@ -343,7 +438,13 @@ class StreamingResponseEmitter(ResultEmitter):
         redis_client = await cache_manager._get_client()
         try:
             raw = await redis_client.get(self._shared_content_key)
-            return raw.decode("utf-8") if raw else ""
+            if not raw:
+                return ""
+            return await run_payload_codec(
+                _decode_utf8,
+                raw,
+                payload_hint=raw,
+            )
         finally:
             await redis_client.aclose()
 
@@ -386,7 +487,13 @@ class StreamingResponseEmitter(ResultEmitter):
         if not await self._may_update_display(force):
             return False
         try:
-            self._card.ai_streaming(content, append=False)
+            if not await self._call_card_sdk(
+                "ai_streaming",
+                self._card.ai_streaming,
+                content,
+                append=False,
+            ):
+                return False
             self._last_update_time = time.time()
             return True
         except Exception:
@@ -396,7 +503,7 @@ class StreamingResponseEmitter(ResultEmitter):
     async def _render_current_mode(self, *, force: bool = False) -> None:
         if self._progress.mode == "answer":
             answer = await self._current_answer()
-            await self._write_card(self._truncate_final(answer), force=force)
+            await self._write_card(await self._truncate_final(answer), force=force)
             return
         await self._write_card(self._progress.render(), force=force)
 
@@ -416,7 +523,12 @@ class StreamingResponseEmitter(ResultEmitter):
     async def _current_answer(self) -> str:
         if self._shared_content_key:
             return await self._redis_get_answer()
-        return f"{self._full_content}{self._pending_content}"
+        return await run_payload_codec(
+            _join_text,
+            self._full_content,
+            self._pending_content,
+            payload_hint=(self._full_content, self._pending_content),
+        )
 
     async def _send_answer_update(self, content: str) -> None:
         if self._shared_content_key:
@@ -425,29 +537,50 @@ class StreamingResponseEmitter(ResultEmitter):
                 return
             self._full_content = await self._redis_get_answer()
         else:
-            self._pending_content += content
+            self._pending_content = await run_payload_codec(
+                _join_text,
+                self._pending_content,
+                content,
+                payload_hint=(self._pending_content, content),
+            )
             if not await self._may_update_display(False):
                 return
-            self._full_content += self._pending_content
+            self._full_content = await run_payload_codec(
+                _join_text,
+                self._full_content,
+                self._pending_content,
+                payload_hint=(self._full_content, self._pending_content),
+            )
             self._pending_content = ""
         await self._write_card_without_throttle(
-            self._truncate_final(self._full_content)
+            await self._truncate_final(self._full_content)
         )
 
-    async def _write_card_without_throttle(self, content: str) -> None:
+    async def _write_card_without_throttle(self, content: str) -> bool:
         if not content:
-            return
+            return False
         try:
-            self._card.ai_streaming(content, append=False)
+            if not await self._call_card_sdk(
+                "ai_streaming",
+                self._card.ai_streaming,
+                content,
+                append=False,
+            ):
+                return False
             self._last_update_time = time.time()
+            return True
         except Exception:
             logger.exception("[StreamingEmitter] Failed to stream answer")
+            return False
 
-    def _truncate_final(self, content: str) -> str:
-        suffix = self.FINAL_TRUNCATION_SUFFIX
-        if len(content) <= self.MAX_FINAL_CONTENT_LENGTH:
-            return content
-        return f"{content[: self.MAX_FINAL_CONTENT_LENGTH - len(suffix)]}{suffix}"
+    async def _truncate_final(self, content: str) -> str:
+        return await run_payload_codec(
+            _truncate_text,
+            content,
+            self.MAX_FINAL_CONTENT_LENGTH,
+            self.FINAL_TRUNCATION_SUFFIX,
+            payload_hint=content,
+        )
 
     async def emit(self, event: ExecutionEvent) -> None:
         event_type = (
@@ -508,21 +641,40 @@ class StreamingResponseEmitter(ResultEmitter):
         **kwargs: Any,
     ) -> None:
         """Show dispatch acknowledgement as progress, not answer content."""
-        await self._update_progress(lambda state: state.set_current(content))
+        text = await run_payload_codec(
+            _compact_text,
+            content,
+            _CompactProgressState.MAX_STEP_LENGTH,
+            payload_hint=content,
+        )
+        await self._update_progress(lambda state: state.set_current(text))
 
     async def emit_tool_start(self, event: ExecutionEvent) -> None:
-        label = _compact_text(
-            (event.data or {}).get("display_name") or event.tool_name, 40
+        label_value = (event.data or {}).get("display_name") or event.tool_name
+        label = await run_payload_codec(
+            _compact_text,
+            label_value,
+            40,
+            payload_hint=label_value,
         )
         await self._update_progress(
             lambda state: state.set_current(f"正在使用工具：{label or '工具'}")
         )
 
     async def emit_tool_result(self, event: ExecutionEvent) -> None:
-        label = _compact_text(
-            (event.data or {}).get("display_name") or event.tool_name, 40
+        label_value = (event.data or {}).get("display_name") or event.tool_name
+        label = await run_payload_codec(
+            _compact_text,
+            label_value,
+            40,
+            payload_hint=label_value,
         )
-        status = str((event.data or {}).get("status") or "").lower()
+        status_value = (event.data or {}).get("status")
+        status = await run_payload_codec(
+            _lower_text,
+            status_value,
+            payload_hint=status_value,
+        )
         failed = status in {"error", "failed"} or bool((event.data or {}).get("error"))
 
         def update(state: _CompactProgressState) -> None:
@@ -534,7 +686,12 @@ class StreamingResponseEmitter(ResultEmitter):
         await self._update_progress(update)
 
     async def emit_block_created(self, event: ExecutionEvent) -> None:
-        block = _safe_block((event.data or {}).get("block"))
+        raw_block = (event.data or {}).get("block")
+        block = await run_payload_codec(
+            _safe_block,
+            raw_block,
+            payload_hint=raw_block,
+        )
 
         def update(state: _CompactProgressState) -> None:
             state.remember_block(block)
@@ -548,17 +705,33 @@ class StreamingResponseEmitter(ResultEmitter):
         if not block_id or not isinstance(updates, dict):
             return
 
-        def update(state: _CompactProgressState) -> None:
-            existing = state.blocks.get(block_id, {"id": block_id})
-            block = _merge_safe_block(existing, updates, block_id)
-            state.remember_block(block)
-            _project_block(state, block)
-
-        await self._update_progress(update)
+        async with self._update_lock:
+            if self._finished or not await self._ensure_card_started():
+                return
+            await self._load_progress_state()
+            if self._progress.mode != "progress":
+                return
+            existing = self._progress.blocks.get(block_id, {"id": block_id})
+            block = await run_payload_codec(
+                _merge_safe_block,
+                existing,
+                updates,
+                block_id,
+                payload_hint=updates,
+            )
+            self._progress.remember_block(block)
+            _project_block(self._progress, block)
+            await self._save_progress_state()
+            await self._render_current_mode()
 
     async def emit_status_updated(self, event: ExecutionEvent) -> None:
         data = event.data or {}
-        phase = str(data.get("phase") or "").lower()
+        phase_value = data.get("phase")
+        phase = await run_payload_codec(
+            _lower_text,
+            phase_value,
+            payload_hint=phase_value,
+        )
         if data.get("context_compaction") or phase == "summary_compact":
             await self._update_progress(
                 lambda state: state.set_current("正在整理上下文…")
@@ -566,7 +739,12 @@ class StreamingResponseEmitter(ResultEmitter):
 
     async def emit_progress(self, event: ExecutionEvent) -> None:
         progress = max(0, min(int(event.progress or 0), 100))
-        status = _compact_text(event.status, 50)
+        status = await run_payload_codec(
+            _compact_text,
+            event.status,
+            50,
+            payload_hint=event.status,
+        )
         if not progress and not status:
             return
         text = f"任务进度 {progress}%" if progress else "正在处理"
@@ -600,7 +778,7 @@ class StreamingResponseEmitter(ResultEmitter):
                 if isinstance(result_value, str) and result_value:
                     content = result_value
                     break
-        return self._truncate_final(content)
+        return await self._truncate_final(content)
 
     async def emit_done(
         self,
@@ -628,10 +806,19 @@ class StreamingResponseEmitter(ResultEmitter):
                     subtask_id,
                     len(final_content),
                 )
-                self._card.ai_streaming(final_content, append=False)
+                if not await self._call_card_sdk(
+                    "ai_streaming",
+                    self._card.ai_streaming,
+                    final_content,
+                    append=False,
+                ):
+                    return
                 await asyncio.sleep(0.1)
-                self._card.ai_finish(final_content)
-                self._finished = True
+                self._finished = await self._call_card_sdk(
+                    "ai_finish",
+                    self._card.ai_finish,
+                    final_content,
+                )
             except Exception:
                 logger.exception("[StreamingEmitter] Failed to finish AI card")
             finally:
@@ -647,16 +834,23 @@ class StreamingResponseEmitter(ResultEmitter):
         async with self._update_lock:
             if self._finished:
                 return
+            safe_error = await run_payload_codec(
+                mask_string,
+                error,
+                payload_hint=error,
+            )
             logger.warning(
                 "[StreamingEmitter] error task=%s subtask=%s error=%s",
                 task_id,
                 subtask_id,
-                mask_string(error),
+                safe_error,
             )
             try:
                 if await self._ensure_card_started():
-                    self._card.ai_fail()
-                    self._finished = True
+                    self._finished = await self._call_card_sdk(
+                        "ai_fail",
+                        self._card.ai_fail,
+                    )
             except Exception:
                 logger.exception("[StreamingEmitter] Failed to mark AI card failed")
             finally:
@@ -674,13 +868,27 @@ class StreamingResponseEmitter(ResultEmitter):
             try:
                 if not await self._ensure_card_started():
                     return
-                answer = (await self._current_answer()).rstrip()
-                content = f"{answer}\n\n⚠️ 任务已取消" if answer else "⚠️ 任务已取消"
-                content = self._truncate_final(content)
-                self._card.ai_streaming(content, append=False)
+                answer = await self._current_answer()
+                content = await run_payload_codec(
+                    _cancelled_card_content,
+                    answer,
+                    self.MAX_FINAL_CONTENT_LENGTH,
+                    self.FINAL_TRUNCATION_SUFFIX,
+                    payload_hint=answer,
+                )
+                if not await self._call_card_sdk(
+                    "ai_streaming",
+                    self._card.ai_streaming,
+                    content,
+                    append=False,
+                ):
+                    return
                 await asyncio.sleep(0.1)
-                self._card.ai_finish(content)
-                self._finished = True
+                self._finished = await self._call_card_sdk(
+                    "ai_finish",
+                    self._card.ai_finish,
+                    content,
+                )
             except Exception:
                 logger.exception("[StreamingEmitter] Failed to cancel AI card")
             finally:

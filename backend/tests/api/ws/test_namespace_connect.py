@@ -25,10 +25,14 @@ async def test_device_connect_rejects_when_session_disappears(monkeypatch):
     monkeypatch.setattr(device_namespace, "is_api_key", lambda token: False)
     monkeypatch.setattr(
         device_namespace,
-        "verify_jwt_token",
-        lambda token: SimpleNamespace(id=7, user_name="testuser"),
+        "verify_jwt_token_async",
+        AsyncMock(return_value=SimpleNamespace(id=7, user_name="testuser")),
     )
-    monkeypatch.setattr(device_namespace, "get_token_expiry", lambda token: None)
+    monkeypatch.setattr(
+        device_namespace,
+        "get_token_expiry_async",
+        AsyncMock(return_value=None),
+    )
 
     with pytest.raises(ConnectionRefusedError, match="disconnected"):
         await namespace.on_connect("sid-1", {}, {"token": "token"})
@@ -72,10 +76,14 @@ async def test_device_connect_rejects_when_room_join_session_disappears(monkeypa
     monkeypatch.setattr(device_namespace, "is_api_key", lambda token: False)
     monkeypatch.setattr(
         device_namespace,
-        "verify_jwt_token",
-        lambda token: SimpleNamespace(id=7, user_name="testuser"),
+        "verify_jwt_token_async",
+        AsyncMock(return_value=SimpleNamespace(id=7, user_name="testuser")),
     )
-    monkeypatch.setattr(device_namespace, "get_token_expiry", lambda token: None)
+    monkeypatch.setattr(
+        device_namespace,
+        "get_token_expiry_async",
+        AsyncMock(return_value=None),
+    )
 
     with pytest.raises(ConnectionRefusedError, match="disconnected"):
         await namespace.on_connect("sid-1", {}, {"token": "token"})

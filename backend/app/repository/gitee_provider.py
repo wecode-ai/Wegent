@@ -14,8 +14,11 @@ from typing import Any, Dict, List, Optional
 import requests
 from fastapi import HTTPException
 
+from app.core.blocking_work import run_repository_io
 from app.core.cache import cache_manager
 from app.core.config import settings
+from app.core.payload_codec import decode_sync_response_json
+from app.core.web_background_tasks import web_background_task_manager
 from app.models.user import User
 from app.repository.interfaces.repository_provider import RepositoryProvider
 from app.schemas.github import Branch, Repository
@@ -155,7 +158,8 @@ class GiteeProvider(RepositoryProvider):
 
             try:
                 # Gitee uses access_token as query parameter
-                response = requests.get(
+                response = await run_repository_io(
+                    requests.get,
                     f"{api_base_url}/user/repos",
                     params={
                         "access_token": git_token,
@@ -168,7 +172,7 @@ class GiteeProvider(RepositoryProvider):
                 )
                 response.raise_for_status()
 
-                repos = response.json()
+                repos = await decode_sync_response_json(response)
 
                 if len(repos) < limit:
                     cache_key = cache_manager.generate_full_cache_key(
@@ -178,8 +182,11 @@ class GiteeProvider(RepositoryProvider):
                         cache_key, repos, expire=settings.REPO_CACHE_EXPIRED_TIME
                     )
                 else:
-                    asyncio.create_task(
-                        self._fetch_all_repositories_async(user, git_token, git_domain)
+                    await web_background_task_manager.submit(
+                        lambda: self._fetch_all_repositories_async(
+                            user, git_token, git_domain
+                        ),
+                        name=f"gitee-repository-refresh-{user.id}-{git_domain}",
                     )
 
                 all_repos.extend(
@@ -231,8 +238,8 @@ class GiteeProvider(RepositoryProvider):
 
         try:
             # Get the actual default branch name
-            default_branch_name = self._get_default_branch(
-                repo_name, git_domain, git_token
+            default_branch_name = await run_repository_io(
+                self._get_default_branch, repo_name, git_domain, git_token
             )
 
             all_branches = []
@@ -240,7 +247,8 @@ class GiteeProvider(RepositoryProvider):
             per_page = 100
 
             while True:
-                response = requests.get(
+                response = await run_repository_io(
+                    requests.get,
                     f"{api_base_url}/repos/{repo_name}/branches",
                     params={
                         "access_token": git_token,
@@ -251,7 +259,7 @@ class GiteeProvider(RepositoryProvider):
                 )
                 response.raise_for_status()
 
-                branches = response.json()
+                branches = await decode_sync_response_json(response)
                 if not branches:
                     break
 
@@ -518,7 +526,8 @@ class GiteeProvider(RepositoryProvider):
             # 5) Fallback: fetch first page for this domain only (avoid cross-domain aggregation)
             try:
                 api_base_url = self._get_api_base_url(git_domain)
-                response = requests.get(
+                response = await run_repository_io(
+                    requests.get,
                     f"{api_base_url}/user/repos",
                     params={
                         "access_token": git_token,
@@ -530,7 +539,7 @@ class GiteeProvider(RepositoryProvider):
                     timeout=settings.REPOSITORY_READ_TIMEOUT_SECONDS,
                 )
                 response.raise_for_status()
-                repos = response.json()
+                repos = await decode_sync_response_json(response)
                 mapped = [
                     {
                         "id": repo["id"],
@@ -608,7 +617,7 @@ class GiteeProvider(RepositoryProvider):
             )
 
             while True:
-                response = await asyncio.to_thread(
+                response = await run_repository_io(
                     requests.get,
                     f"{api_base_url}/user/repos",
                     params={
@@ -622,7 +631,7 @@ class GiteeProvider(RepositoryProvider):
                 )
                 response.raise_for_status()
 
-                repos = response.json()
+                repos = await decode_sync_response_json(response)
                 if not repos:
                     break
 
@@ -730,14 +739,15 @@ class GiteeProvider(RepositoryProvider):
             self.logger.info(
                 f"Comparing {repo_name}: {target_branch}...{source_branch}"
             )
-            response = requests.get(
+            response = await run_repository_io(
+                requests.get,
                 f"{api_base_url}/repos/{repo_name}/compare/{target_branch}...{source_branch}",
                 params={"access_token": git_token},
                 timeout=settings.REPOSITORY_READ_TIMEOUT_SECONDS,
             )
             response.raise_for_status()
 
-            compare_data = response.json()
+            compare_data = await decode_sync_response_json(response)
 
             # Log for debugging
             self.logger.info(

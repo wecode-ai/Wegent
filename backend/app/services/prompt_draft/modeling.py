@@ -18,6 +18,21 @@ def resolve_prompt_draft_model_config(
     current_user: User,
     requested_model_name: str | None,
 ) -> tuple[dict[str, Any] | None, str]:
+    return resolve_prompt_draft_model_config_for_user(
+        db,
+        user_id=current_user.id,
+        user_name=current_user.user_name or "",
+        requested_model_name=requested_model_name,
+    )
+
+
+def resolve_prompt_draft_model_config_for_user(
+    db: Session,
+    *,
+    user_id: int,
+    user_name: str,
+    requested_model_name: str | None,
+) -> tuple[dict[str, Any] | None, str]:
     model_kind = None
     if requested_model_name:
         model_kind = (
@@ -26,7 +41,7 @@ def resolve_prompt_draft_model_config(
                 Kind.kind == "Model",
                 Kind.name == requested_model_name,
                 Kind.is_active == True,
-                Kind.user_id.in_([current_user.id, 0]),
+                Kind.user_id.in_([user_id, 0]),
             )
             .first()
         )
@@ -38,7 +53,7 @@ def resolve_prompt_draft_model_config(
             .filter(
                 Kind.kind == "Model",
                 Kind.is_active == True,
-                Kind.user_id == current_user.id,
+                Kind.user_id == user_id,
             )
             .first()
         )
@@ -59,7 +74,7 @@ def resolve_prompt_draft_model_config(
     model_spec = (model_kind.json or {}).get("spec", {})
     model_config = extract_and_process_model_config(
         model_spec=model_spec,
-        user_id=current_user.id,
-        user_name=current_user.user_name or "",
+        user_id=user_id,
+        user_name=user_name,
     )
     return model_config, model_kind.name

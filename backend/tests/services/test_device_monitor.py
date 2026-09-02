@@ -37,10 +37,10 @@ async def test_check_and_mark_failed_subtasks_offloads_database_work() -> None:
 
     with (
         patch.object(
-            device_monitor.asyncio,
-            "to_thread",
+            device_monitor,
+            "run_sync_in_executor",
             new=AsyncMock(side_effect=run_in_thread),
-        ) as to_thread,
+        ) as run_sync,
         patch.object(
             device_monitor.device_service,
             "is_device_online",
@@ -55,7 +55,7 @@ async def test_check_and_mark_failed_subtasks_offloads_database_work() -> None:
         marked_count = await device_monitor.check_and_mark_failed_subtasks()
 
     assert marked_count == 1
-    assert to_thread.await_args_list == [
+    assert run_sync.await_args_list == [
         call(device_monitor._list_running_device_subtasks),
         call(device_monitor._mark_subtasks_failed, [offline]),
     ]

@@ -13,6 +13,7 @@ of AI responses. It leverages:
 - Real-time progress updates via WebSocket callbacks.
 """
 
+import asyncio
 import json
 import logging
 from collections.abc import Awaitable, Callable
@@ -21,6 +22,7 @@ from typing import Any
 from langchain_core.messages import AIMessage
 from langchain_core.tools import BaseTool
 
+from app.core.web_background_tasks import web_background_task_manager
 from chat_shell.agents import LangGraphAgentBuilder
 from chat_shell.messages import MessageConverter
 from chat_shell.models import LangChainModelFactory
@@ -268,15 +270,19 @@ class CorrectionService:
                 if kind == "tool_start":
                     # Determine stage based on tool name
                     if "search" in tool_name.lower():
-                        # Schedule progress callback (non-blocking)
                         if on_progress:
-                            asyncio.create_task(
-                                on_progress("verifying_facts", tool_name)
+                            web_background_task_manager.submit_nowait(
+                                lambda: on_progress("verifying_facts", tool_name),
+                                name="correction-progress-verifying-facts",
                             )
                     elif tool_name == "submit_evaluation_result":
                         if on_progress:
-                            asyncio.create_task(
-                                on_progress("generating_improvement", tool_name)
+                            web_background_task_manager.submit_nowait(
+                                lambda: on_progress(
+                                    "generating_improvement",
+                                    tool_name,
+                                ),
+                                name="correction-progress-generating-improvement",
                             )
 
             # 7. Execute with streaming events to capture tool events and final state

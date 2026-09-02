@@ -7,6 +7,8 @@
 from __future__ import annotations
 
 import logging
+from collections.abc import Callable
+from dataclasses import dataclass
 from typing import Any, Iterable, Optional
 
 from sqlalchemy import and_, or_
@@ -15,8 +17,12 @@ from sqlalchemy.orm import Session
 from app.core.socketio import get_sio
 from app.models.kind import Kind
 from app.models.plugin_marketplace import PluginDeviceInstallation, PluginRelease
-from app.models.user import User
-from app.schemas.device import DeviceCapabilitySyncResponse, DeviceCapabilitySyncResult
+from app.schemas.device import (
+    DeviceCapabilitySyncResponse,
+    DeviceCapabilitySyncResult,
+    DeviceType,
+)
+from app.services.chat.storage.db import run_sync_in_executor
 from app.services.device.runtime_route import RuntimeRouteError, runtime_route_resolver
 from app.services.device_service import device_service
 from app.services.plugin_device_installation_service import (
@@ -29,6 +35,15 @@ logger = logging.getLogger(__name__)
 SYNC_EVENT = "device:sync_capabilities"
 SYNC_NAMESPACE = "/local-executor"
 SYNC_TIMEOUT_SECONDS = 180
+
+
+@dataclass(frozen=True)
+class DeviceCapabilitySyncPlan:
+    """Detached database result consumed by the async transport phase."""
+
+    device_id: str
+    online_device_id: str
+    payload: dict[str, Any]
 
 
 class DeviceCapabilityResolutionError(RuntimeError):
@@ -45,6 +60,19 @@ class DeviceCapabilitySyncError(RuntimeError):
 
 class DeviceCapabilitySyncService:
     """Backend-side resolver and dispatcher for local executor capabilities."""
+
+    def __init__(
+        self,
+        session_factory: Callable[[], Session] | None = None,
+    ) -> None:
+        self._configured_session_factory = session_factory
+
+    def _session_factory(self) -> Session:
+        if self._configured_session_factory is not None:
+            return self._configured_session_factory()
+        from app.db.session import SessionLocal
+
+        return SessionLocal()
 
     def build_desired_capabilities(
         self,
@@ -73,7 +101,7 @@ class DeviceCapabilitySyncService:
         self,
         db: Session,
         *,
-        user: User,
+        user_id: int,
         skill_ids: list[int],
         installed_skill_ids: Optional[list[int]] = None,
         installed_plugin_ids: Optional[list[int]] = None,
@@ -93,7 +121,7 @@ class DeviceCapabilitySyncService:
             "mode": mode,
             "skills": self._resolve_skill_payloads(
                 db,
-                user_id=user.id,
+                user_id=user_id,
                 skill_ids=skill_ids,
                 installed_skill_ids=installed_skill_ids or [],
                 strict=True,
@@ -101,7 +129,7 @@ class DeviceCapabilitySyncService:
         }
         plugins = self._resolve_plugin_payloads(
             db,
-            user_id=user.id,
+            user_id=user_id,
             installed_plugin_ids=installed_plugin_ids or [],
             strict=True,
         )
@@ -109,7 +137,7 @@ class DeviceCapabilitySyncService:
             payload["plugins"] = plugins
         mcps = self._resolve_mcp_payloads(
             db,
-            user_id=user.id,
+            user_id=user_id,
             installed_mcp_ids=installed_mcp_ids or [],
             strict=True,
         )
@@ -119,43 +147,38 @@ class DeviceCapabilitySyncService:
 
     async def sync_user_global_capabilities(
         self,
-        db: Session,
         *,
         user_id: int,
         mode: str = "replace",
     ) -> DeviceCapabilitySyncResponse:
         """Sync the user's full desired capability set to all online devices."""
-        devices = await device_service.get_online_devices(db, user_id)
+        plans, skipped = await run_sync_in_executor(
+            self._build_global_sync_plans,
+            user_id,
+            mode,
+        )
+        online_plans: list[DeviceCapabilitySyncPlan] = []
+        for plan in plans:
+            online_info = await device_service.get_device_online_info(
+                user_id,
+                plan.online_device_id,
+            )
+            if online_info is not None:
+                online_plans.append(plan)
         logger.info(
             "Syncing global capabilities: user_id=%s mode=%s online_devices=%s",
             user_id,
             mode,
-            len(devices),
+            len(online_plans),
         )
         results: list[DeviceCapabilitySyncResult] = []
-        skipped = 0
 
-        for device in devices:
-            device_id = self._extract_device_id(device)
-            if not device_id:
-                skipped += 1
-                logger.warning(
-                    "Skipping capability sync for device without runtime id: user_id=%s device=%s",
-                    user_id,
-                    device,
-                )
-                continue
-            payload = self.build_desired_capabilities(
-                db,
-                user_id=user_id,
-                mode=mode,
-                device_id=device_id,
-            )
+        for plan in online_plans:
             results.append(
                 await self.sync_device_payload(
                     user_id=user_id,
-                    device_id=device_id,
-                    payload=payload,
+                    device_id=plan.device_id,
+                    payload=plan.payload,
                 )
             )
 
@@ -163,9 +186,8 @@ class DeviceCapabilitySyncService:
 
     async def sync_device_capabilities(
         self,
-        db: Session,
         *,
-        user: User,
+        user_id: int,
         device_id: str,
         skill_ids: list[int],
         installed_skill_ids: Optional[Iterable[int]] = None,
@@ -175,18 +197,18 @@ class DeviceCapabilitySyncService:
         mode: str = "merge",
     ) -> DeviceCapabilitySyncResponse:
         """Resolve selected capabilities and send them to one online device."""
-        payload = self.resolve_payload(
-            db,
-            user=user,
-            skill_ids=skill_ids,
-            installed_skill_ids=list(installed_skill_ids or []),
-            installed_plugin_ids=list(installed_plugin_ids or []),
-            installed_mcp_ids=list(installed_mcp_ids or []),
-            mcp_ids=mcp_ids,
-            mode=mode,
+        payload = await run_sync_in_executor(
+            self._resolve_payload_with_session,
+            user_id,
+            list(skill_ids),
+            list(installed_skill_ids or []),
+            list(installed_plugin_ids or []),
+            list(installed_mcp_ids or []),
+            list(mcp_ids or []),
+            mode,
         )
         result = await self._dispatch_payload_or_raise(
-            user_id=user.id,
+            user_id=user_id,
             device_id=device_id,
             payload=payload,
         )
@@ -194,7 +216,6 @@ class DeviceCapabilitySyncService:
 
     async def sync_device_selected_capabilities(
         self,
-        db: Session,
         *,
         user_id: int,
         device_id: str,
@@ -205,10 +226,8 @@ class DeviceCapabilitySyncService:
         mode: str = "replace",
     ) -> DeviceCapabilitySyncResponse:
         """Sync explicitly selected capability IDs to one device."""
-        user = User(id=user_id)
         return await self.sync_device_capabilities(
-            db,
-            user=user,
+            user_id=user_id,
             device_id=device_id,
             skill_ids=list(skill_ids or []),
             installed_skill_ids=list(installed_skill_ids or []),
@@ -219,7 +238,6 @@ class DeviceCapabilitySyncService:
 
     async def sync_installed_plugin_to_device(
         self,
-        db: Session,
         *,
         user_id: int,
         device_id: str,
@@ -227,7 +245,6 @@ class DeviceCapabilitySyncService:
     ) -> DeviceCapabilitySyncResponse:
         """Merge one installed plugin and require its explicit acknowledgement."""
         response = await self.sync_device_selected_capabilities(
-            db,
             user_id=user_id,
             device_id=device_id,
             installed_plugin_ids=[installed_plugin_id],
@@ -246,6 +263,92 @@ class DeviceCapabilitySyncService:
                 f"InstalledPlugin was not acknowledged by the device: {installed_plugin_id}"
             )
         return response
+
+    def _build_global_sync_plans(
+        self,
+        user_id: int,
+        mode: str,
+    ) -> tuple[list[DeviceCapabilitySyncPlan], int]:
+        """Build detached per-device payloads inside one bounded DB worker."""
+        self._validate_mode(mode)
+        with self._session_factory() as db:
+            rows = (
+                db.query(Kind)
+                .filter(
+                    and_(
+                        Kind.user_id == user_id,
+                        Kind.kind == "Device",
+                        Kind.namespace == "default",
+                        Kind.is_active == True,
+                    )
+                )
+                .all()
+            )
+            plans: list[DeviceCapabilitySyncPlan] = []
+            skipped = 0
+            for row in rows:
+                target = self._device_sync_target(row)
+                if target is None:
+                    skipped += 1
+                    continue
+                device_id, online_device_id = target
+                plans.append(
+                    DeviceCapabilitySyncPlan(
+                        device_id=device_id,
+                        online_device_id=online_device_id,
+                        payload=self.build_desired_capabilities(
+                            db,
+                            user_id=user_id,
+                            mode=mode,
+                            device_id=device_id,
+                        ),
+                    )
+                )
+            return plans, skipped
+
+    def _resolve_payload_with_session(
+        self,
+        user_id: int,
+        skill_ids: list[int],
+        installed_skill_ids: list[int],
+        installed_plugin_ids: list[int],
+        installed_mcp_ids: list[int],
+        mcp_ids: list[str],
+        mode: str,
+    ) -> dict[str, Any]:
+        with self._session_factory() as db:
+            return self.resolve_payload(
+                db,
+                user_id=user_id,
+                skill_ids=skill_ids,
+                installed_skill_ids=installed_skill_ids,
+                installed_plugin_ids=installed_plugin_ids,
+                installed_mcp_ids=installed_mcp_ids,
+                mcp_ids=mcp_ids,
+                mode=mode,
+            )
+
+    def _device_sync_target(self, row: Kind) -> tuple[str, str] | None:
+        spec = row.json.get("spec", {}) if isinstance(row.json, dict) else {}
+        raw_type = spec.get("deviceType", DeviceType.LOCAL.value)
+        try:
+            device_type = DeviceType(raw_type)
+        except (TypeError, ValueError):
+            device_type = DeviceType.LOCAL
+        if device_type == DeviceType.CLOUD:
+            cloud_config = spec.get("cloudConfig") or {}
+            runtime_id = str(
+                spec.get("deviceId") or cloud_config.get("deviceId") or row.name or ""
+            ).strip()
+            return (runtime_id, runtime_id) if runtime_id else None
+        if device_type == DeviceType.REMOTE:
+            device_id = str(spec.get("deviceId") or row.name or "").strip()
+            online_device_id = str(row.name or "").strip()
+            if not device_id or not online_device_id:
+                return None
+            return device_id, online_device_id
+        device_id = str(row.name or "").strip()
+        return (device_id, device_id) if device_id else None
 
     async def sync_device_payload(
         self,

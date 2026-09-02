@@ -12,13 +12,13 @@ attachments as subtask contexts.
 """
 
 import logging
-from typing import Annotated, Optional
+from typing import Annotated, BinaryIO, Optional
 
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
-from sqlalchemy.orm import Session
 
-from app.api.dependencies import get_db
+from app.core.bounded_executor import BoundedExecutor
 from app.core.security import AuthContext, get_auth_context
+from app.db.session import SessionLocal
 from app.models.subtask_context import SubtaskContext
 from app.schemas.subtask_context import AttachmentResponse, TruncationInfo
 from app.services.attachment.parser import DocumentParseError, DocumentParser
@@ -34,6 +34,11 @@ router = APIRouter()
 UPLOAD_CHUNK_SIZE_BYTES = 8192  # 8KB chunks for streaming read
 BYTES_PER_MIB = 1024 * 1024
 UNLINKED_SUBTASK_ID = 0  # subtask_id=0 indicates unlinked attachment
+_ATTACHMENT_UPLOAD_EXECUTOR = BoundedExecutor(
+    max_workers=2,
+    max_in_flight=4,
+    thread_name_prefix="wegent-attachment-upload",
+)
 
 
 def _build_attachment_response(
@@ -53,6 +58,41 @@ def _build_attachment_response(
     return AttachmentResponse.from_context(context, response_truncation_info)
 
 
+def _read_and_store_attachment(
+    file_object: BinaryIO,
+    user_id: int,
+    filename: str,
+) -> AttachmentResponse:
+    """Read, parse, store, and persist one upload in a bounded worker thread."""
+    binary_data = bytearray()
+    max_file_size = DocumentParser.get_max_file_size()
+    while chunk := file_object.read(UPLOAD_CHUNK_SIZE_BYTES):
+        binary_data.extend(chunk)
+        if len(binary_data) > max_file_size:
+            max_size_mb = max_file_size / BYTES_PER_MIB
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"File size exceeds maximum limit ({max_size_mb} MB)",
+            )
+
+    with SessionLocal() as db:
+        context, truncation_info = context_service.upload_attachment(
+            db=db,
+            user_id=user_id,
+            filename=filename,
+            binary_data=bytes(binary_data),
+            subtask_id=UNLINKED_SUBTASK_ID,
+        )
+        response = _build_attachment_response(context, truncation_info)
+        logger.info(
+            "[attachments_open.py] Attachment uploaded: id=%s, "
+            "user_id=%s, filename=<redacted>",
+            context.id,
+            user_id,
+        )
+        return response
+
+
 @router.post(
     "/upload",
     response_model=AttachmentResponse,
@@ -62,7 +102,6 @@ def _build_attachment_response(
 async def upload_attachment_open(
     file: Annotated[UploadFile, File(...)],
     auth_context: Annotated[AuthContext, Depends(get_auth_context)],
-    db: Annotated[Session, Depends(get_db)],
 ) -> AttachmentResponse:
     """
     Upload a document file for use with OpenAPI endpoints.
@@ -133,47 +172,15 @@ async def upload_attachment_open(
         f"filename=<redacted>"
     )
 
-    # Stream file content with bounded size check
-    binary_data = bytearray()
-    max_file_size = DocumentParser.get_max_file_size()
-
     try:
-        while chunk := await file.read(UPLOAD_CHUNK_SIZE_BYTES):
-            binary_data.extend(chunk)
-            # Check size after each chunk
-            if len(binary_data) > max_file_size:
-                max_size_mb = max_file_size / BYTES_PER_MIB
-                raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail=f"File size exceeds maximum limit ({max_size_mb} MB)",
-                )
+        return await _ATTACHMENT_UPLOAD_EXECUTOR.run(
+            _read_and_store_attachment,
+            file.file,
+            current_user.id,
+            file.filename,
+        )
     except HTTPException:
         raise
-    except Exception as e:
-        logger.error(f"Error reading uploaded file: {e}")
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Failed to read uploaded file",
-        ) from e
-
-    try:
-        # Upload attachment using context service (subtask_id=0 for unlinked attachments)
-        # Convert bytearray to bytes for type consistency
-        context, truncation_info = context_service.upload_attachment(
-            db=db,
-            user_id=current_user.id,
-            filename=file.filename,
-            binary_data=bytes(binary_data),
-            subtask_id=UNLINKED_SUBTASK_ID,  # Unlinked attachment - will be linked later via API
-        )
-
-        logger.info(
-            f"[attachments_open.py] Attachment uploaded: id={context.id}, "
-            f"user_id={current_user.id}, filename=<redacted>"
-        )
-
-        return _build_attachment_response(context, truncation_info)
-
     except ValueError as e:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,

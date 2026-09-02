@@ -9,19 +9,39 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING, Any, Callable, Dict, Optional
 
-from sqlalchemy.orm import Session
-
-from app.models.user import User
+from app.db.session import SessionLocal
 from app.services.channels.callback import BaseChannelCallbackService, ChannelType
 from app.services.channels.handler import BaseChannelHandler, MessageContext
 from app.services.channels.weibo.callback import WeiboCallbackInfo
 from app.services.channels.weibo.sender import WeiboSender
 from app.services.channels.weibo.user_resolver import WeiboUserResolver
+from app.services.chat.storage.db import run_sync_in_executor
 
 if TYPE_CHECKING:
     from app.services.execution.emitters import ResultEmitter
 
 logger = logging.getLogger(__name__)
+
+
+def _resolve_weibo_user_id_sync(
+    mapping_mode: str,
+    mapping_config: Optional[dict[str, Any]],
+    weibo_user_id: str,
+    weibo_email: Optional[str],
+) -> Optional[int]:
+    db = SessionLocal()
+    try:
+        user = WeiboUserResolver(
+            db,
+            user_mapping_mode=mapping_mode,
+            user_mapping_config=mapping_config,
+        ).resolve_user_sync(
+            weibo_user_id=weibo_user_id,
+            weibo_email=weibo_email,
+        )
+        return int(user.id) if user else None
+    finally:
+        db.close()
 
 
 class WeiboChannelHandler(BaseChannelHandler[dict[str, Any], WeiboCallbackInfo]):
@@ -89,20 +109,14 @@ class WeiboChannelHandler(BaseChannelHandler[dict[str, Any], WeiboCallbackInfo])
             extra_data={"event_type": event_type},
         )
 
-    async def resolve_user(
-        self,
-        db: Session,
-        message_context: MessageContext,
-    ) -> Optional[User]:
-        mapping_config = self.user_mapping_config
-        resolver = WeiboUserResolver(
-            db,
-            user_mapping_mode=mapping_config.mode,
-            user_mapping_config=mapping_config.config,
-        )
-        return await resolver.resolve_user(
-            weibo_user_id=message_context.extra_data.get("weibo_user_id", ""),
-            weibo_email=message_context.extra_data.get("weibo_email"),
+    async def resolve_user_id(self, message_context: MessageContext) -> Optional[int]:
+        mapping_config = await self.get_user_mapping_config_nonblocking()
+        return await run_sync_in_executor(
+            _resolve_weibo_user_id_sync,
+            mapping_config.mode,
+            mapping_config.config,
+            message_context.extra_data.get("weibo_user_id", ""),
+            message_context.extra_data.get("weibo_email"),
         )
 
     async def send_text_reply(self, message_context: MessageContext, text: str) -> bool:

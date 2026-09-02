@@ -18,6 +18,8 @@ import uuid
 from datetime import datetime, timedelta
 from typing import Any, Literal, Optional
 
+from app.core.blocking_work import run_mcp_tool
+from app.core.payload_codec import run_payload_codec
 from app.db.session import SessionLocal
 from app.mcp_server.auth import TaskTokenInfo
 from app.mcp_server.tools.decorator import mcp_tool
@@ -33,6 +35,18 @@ logger = logging.getLogger(__name__)
 # Preview storage key prefix
 PREVIEW_KEY_PREFIX = "subscription:preview:"
 PREVIEW_TTL_SECONDS = 86400  # 24 hours
+
+
+def _encode_json_result(payload: dict[str, Any]) -> str:
+    return json.dumps(payload, ensure_ascii=False)
+
+
+async def _encode_tool_result(payload: dict[str, Any]) -> str:
+    return await run_payload_codec(
+        _encode_json_result,
+        payload,
+        payload_hint=payload,
+    )
 
 
 async def _send_subscription_preview_block(
@@ -153,6 +167,12 @@ def _get_task_info(db: SessionLocal, task_id: int) -> Optional[dict]:
     except Exception as e:
         logger.warning(f"[SubscriptionMCP] Failed to get task info: {e}")
         return None
+
+
+def _get_task_info_from_store(task_id: int) -> Optional[dict]:
+    """Load detached Task metadata inside the bounded MCP pool."""
+    with SessionLocal() as db:
+        return _get_task_info(db, task_id)
 
 
 def _store_preview_data(preview_id: str, data: dict) -> bool:
@@ -324,61 +344,6 @@ def _generate_unique_name(display_name: str) -> str:
     return f"sub-{base_name}-{suffix}"
 
 
-def _format_preview_table(
-    display_name: str,
-    description: Optional[str],
-    trigger_type: str,
-    trigger_config: dict[str, Any],
-    prompt_template: str,
-    preserve_history: bool,
-    history_message_count: int,
-    retry_count: int,
-    timeout_seconds: int,
-    expires_at: Optional[str] = None,
-) -> str:
-    """Format a markdown preview table."""
-    trigger_desc = _format_trigger_description(trigger_type, trigger_config)
-
-    prompt_display = prompt_template
-    if len(prompt_display) > 100:
-        prompt_display = prompt_display[:97] + "..."
-    prompt_display = prompt_display.replace("|", "\\|")
-
-    expiration_desc = "无"
-    if expires_at:
-        expiration_desc = expires_at.replace("T", " ")
-
-    lines = [
-        "### 订阅任务预览",
-        "",
-        "| 配置项 | 值 |",
-        "|--------|-----|",
-        f"| **任务名称** | {display_name} |",
-        f"| **触发方式** | {trigger_desc} |",
-        f"| **保留历史** | {'是' if preserve_history else '否'} ({history_message_count} 条) |",
-        f"| **重试次数** | {retry_count} |",
-        f"| **超时时间** | {timeout_seconds} 秒 |",
-        f"| **过期时间** | {expiration_desc} |",
-    ]
-
-    if description:
-        desc_display = description.replace("|", "\\|")
-        lines.append(f"| **描述** | {desc_display} |")
-
-    lines.extend(
-        [
-            f"| **执行提示** | {prompt_display} |",
-            "",
-            "请确认以上配置是否正确？",
-            "- 回复 **「执行」** 或 **「确认」** 创建任务",
-            "- 回复 **「取消」** 放弃创建",
-            "- 或告诉我需要修改的内容",
-        ]
-    )
-
-    return "\n".join(lines)
-
-
 @mcp_tool(
     name="preview_subscription",
     description=(
@@ -457,14 +422,14 @@ async def preview_subscription(
         The preview is rendered as a block in the frontend.
     """
     # Get task info from database
-    db = SessionLocal()
-    task_info = None
     try:
-        task_info = _get_task_info(db, token_info.task_id)
+        task_info = await run_mcp_tool(
+            _get_task_info_from_store,
+            token_info.task_id,
+        )
     except Exception as e:
         logger.warning(f"[MCP:Subscription] Could not get task info: {e}")
-    finally:
-        db.close()
+        task_info = None
 
     team_id = task_info.get("team_id") if task_info else None
     team_namespace = (
@@ -489,41 +454,36 @@ async def preview_subscription(
         execute_at=execute_at,
     )
     if validation_error:
-        return json.dumps(
-            {"success": False, "error": validation_error}, ensure_ascii=False
-        )
+        return await _encode_tool_result({"success": False, "error": validation_error})
 
     # Validate and calculate expiration
     expires_at = None
     if expiration_type:
         if expiration_type == "fixed_date":
             if not expiration_fixed_date:
-                return json.dumps(
+                return await _encode_tool_result(
                     {
                         "success": False,
                         "error": "expiration_fixed_date is required when expiration_type='fixed_date'",
-                    },
-                    ensure_ascii=False,
+                    }
                 )
             try:
                 datetime.fromisoformat(expiration_fixed_date.replace("Z", "+00:00"))
                 expires_at = expiration_fixed_date
             except ValueError as e:
-                return json.dumps(
+                return await _encode_tool_result(
                     {
                         "success": False,
                         "error": f"Invalid expiration_fixed_date format: {e}",
-                    },
-                    ensure_ascii=False,
+                    }
                 )
         elif expiration_type == "duration_days":
             if expiration_duration_days is None:
-                return json.dumps(
+                return await _encode_tool_result(
                     {
                         "success": False,
                         "error": "expiration_duration_days is required when expiration_type='duration_days'",
-                    },
-                    ensure_ascii=False,
+                    }
                 )
             calculated = datetime.now() + timedelta(days=expiration_duration_days)
             expires_at = calculated.isoformat()
@@ -567,7 +527,7 @@ async def preview_subscription(
         "model_namespace": model_namespace,
     }
 
-    if not _store_preview_data(preview_id, preview_data):
+    if not await run_mcp_tool(_store_preview_data, preview_id, preview_data):
         return {
             "success": False,
             "error": "Failed to store preview data",
@@ -627,20 +587,6 @@ async def preview_subscription(
 
     logger.info(
         f"[MCP:Subscription] Generated preview {preview_id} with block rendering"
-    )
-
-    # Generate preview table
-    preview_table = _format_preview_table(
-        display_name=display_name,
-        description=description,
-        trigger_type=trigger_type,
-        trigger_config=trigger_config,
-        prompt_template=prompt_template,
-        preserve_history=preserve_history,
-        history_message_count=history_message_count,
-        retry_count=retry_count,
-        timeout_seconds=timeout_seconds,
-        expires_at=expires_at,
     )
 
     logger.info(f"[MCP:Subscription] Generated preview {preview_id}")

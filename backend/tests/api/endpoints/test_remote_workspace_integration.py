@@ -3,7 +3,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 from datetime import datetime
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session
@@ -11,6 +11,8 @@ from sqlalchemy.orm import Session
 from app.models.subtask import Subtask, SubtaskRole, SubtaskStatus
 from app.models.task import TaskResource
 from app.models.user import User
+from app.services.execution.stream_client import StreamWorkerExecutionError
+from app.services.remote_workspace_service import remote_workspace_service
 
 
 def _auth_header(token: str) -> dict[str, str]:
@@ -105,6 +107,16 @@ def test_remote_workspace_status_connected_but_unavailable_integration(
             return_value=None,
         ),
     ):
+        worker_result = remote_workspace_service.get_status(
+            db=test_db,
+            task_id=task.id,
+            user_id=test_user.id,
+        ).model_dump(mode="json")
+
+    with patch(
+        "app.api.endpoints.adapter.tasks.web_stream_worker_client.execute",
+        new=AsyncMock(return_value=worker_result),
+    ):
         response = test_client.get(
             f"/api/tasks/{task.id}/remote-workspace/status",
             headers=_auth_header(test_token),
@@ -140,6 +152,16 @@ def test_remote_workspace_status_connected_when_namespace_empty_integration(
             return_value=None,
         ),
     ):
+        worker_result = remote_workspace_service.get_status(
+            db=test_db,
+            task_id=task.id,
+            user_id=test_user.id,
+        ).model_dump(mode="json")
+
+    with patch(
+        "app.api.endpoints.adapter.tasks.web_stream_worker_client.execute",
+        new=AsyncMock(return_value=worker_result),
+    ):
         response = test_client.get(
             f"/api/tasks/{task.id}/remote-workspace/status",
             headers=_auth_header(test_token),
@@ -161,14 +183,13 @@ def test_remote_workspace_tree_root_path_and_escape_guard_integration(
 ):
     task = _create_task_with_executor_bound_subtask(test_db, test_user)
 
-    with (
-        patch(
-            "app.services.remote_workspace_service.RemoteWorkspaceService._get_sandbox_payload",
-            return_value=None,
-        ),
-        patch(
-            "app.services.remote_workspace_service.RemoteWorkspaceService._get_executor_payload",
-            return_value=None,
+    with patch(
+        "app.api.endpoints.adapter.tasks.web_stream_worker_client.execute",
+        new=AsyncMock(
+            side_effect=StreamWorkerExecutionError(
+                "Remote workspace is unavailable",
+                status_code=409,
+            )
         ),
     ):
         root_response = test_client.get(
@@ -180,11 +201,20 @@ def test_remote_workspace_tree_root_path_and_escape_guard_integration(
     assert root_response.status_code == 409
     assert root_response.json()["detail"] == "Remote workspace is unavailable"
 
-    escape_response = test_client.get(
-        f"/api/tasks/{task.id}/remote-workspace/tree",
-        params={"path": "/workspace/../etc"},
-        headers=_auth_header(test_token),
-    )
+    with patch(
+        "app.api.endpoints.adapter.tasks.web_stream_worker_client.execute",
+        new=AsyncMock(
+            side_effect=StreamWorkerExecutionError(
+                f"Path must stay within /workspace/{task.id}",
+                status_code=400,
+            )
+        ),
+    ):
+        escape_response = test_client.get(
+            f"/api/tasks/{task.id}/remote-workspace/tree",
+            params={"path": "/workspace/../etc"},
+            headers=_auth_header(test_token),
+        )
 
     assert escape_response.status_code == 400
     assert (

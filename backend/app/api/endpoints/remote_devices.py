@@ -67,7 +67,7 @@ class DockerRemoteDeviceCommandResponse(BaseModel):
     "/docker/start-command",
     response_model=DockerRemoteDeviceCommandResponse,
 )
-async def create_docker_start_command(
+def create_docker_start_command(
     request: Request,
     body: Optional[CreateDockerRemoteDeviceRequest] = None,
     db: Session = Depends(get_db),

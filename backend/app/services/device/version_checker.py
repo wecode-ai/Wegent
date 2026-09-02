@@ -4,11 +4,11 @@
 
 """Version checkers for fetching executor latest version."""
 
-import asyncio
 import logging
 from abc import ABC, abstractmethod
 from typing import Optional
 
+from app.core.blocking_work import run_device_io
 from shared.utils.http_client import traced_session
 
 logger = logging.getLogger(__name__)
@@ -69,7 +69,7 @@ class GithubVersionChecker(VersionChecker):
 
     async def get_latest_version(self) -> Optional[VersionInfo]:
         """Fetch latest release from GitHub without blocking the event loop."""
-        return await asyncio.to_thread(self._fetch_latest_version)
+        return await run_device_io(self._fetch_latest_version)
 
 
 class RegistryVersionChecker(VersionChecker):
@@ -119,4 +119,4 @@ class RegistryVersionChecker(VersionChecker):
 
     async def get_latest_version(self) -> Optional[VersionInfo]:
         """Fetch latest version from registry without blocking the event loop."""
-        return await asyncio.to_thread(self._fetch_latest_version)
+        return await run_device_io(self._fetch_latest_version)

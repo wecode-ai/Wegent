@@ -1360,6 +1360,7 @@ run_new_container() {
     docker run -d \\
         --name "\$STANDALONE_CONTAINER_NAME" \\
         --restart unless-stopped \\
+        --stop-timeout 610 \\
         -p 3000:3000 \\
         -v "\$STANDALONE_VOLUME_NAME:/app/data" \\
         -v "\$STANDALONE_WORKSPACE_VOLUME_NAME:/workspace" \\
@@ -1944,6 +1945,7 @@ start_standalone_service() {
     local docker_run_cmd="docker run -d"
     docker_run_cmd+=" --name ${STANDALONE_CONTAINER_NAME}"
     docker_run_cmd+=" --restart unless-stopped"
+    docker_run_cmd+=" --stop-timeout 610"
     docker_run_cmd+=" -p 3000:3000"
     docker_run_cmd+=" -v ${STANDALONE_VOLUME_NAME}:/app/data"
     docker_run_cmd+=" -v ${STANDALONE_WORKSPACE_VOLUME_NAME}:/workspace"
@@ -2278,6 +2280,7 @@ main() {
         echo "This installer supports macOS and Linux."
         echo "For Windows, please use Docker Desktop and run:"
         echo "  docker run -d --name wegent-standalone \\"
+        echo "    --stop-timeout 610 \\"
         echo "    -p 3000:3000 \\"
         echo "    -v wegent-data:/app/data -v wegent-workspace:/workspace \\"
         echo "    -e RUNTIME_SOCKET_DIRECT_URL=http://localhost:3000 -e RUNTIME_PUBLIC_API_URL=http://localhost:3000/api \\"

@@ -4,15 +4,15 @@
 
 """Video generation service used by the MCP tool."""
 
-import asyncio
 import uuid
 from copy import deepcopy
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any, Optional
 
-from sqlalchemy.orm import Session
-
+from app.core.blocking_work import run_execution_io
 from app.mcp_server.auth import TaskTokenInfo
+from app.services.chat.storage.db import run_sync_in_executor
 from app.services.execution.agents.generation_context import (
     resolve_generation_context,
     resolve_generation_model,
@@ -28,23 +28,33 @@ from .prompt import normalize_video_prompt
 from .providers import get_video_provider
 
 
-class VideoGenerationService:
-    async def create_job(
-        self,
-        db: Session,
-        token_info: TaskTokenInfo,
-        prompt: str,
-        ratio: Optional[str] = None,
-        duration: Optional[str] = None,
-        reference_images: Optional[list[str | int]] = None,
-        reference_videos: Optional[list[str | int]] = None,
-        reference_audios: Optional[list[str | int]] = None,
-    ) -> dict[str, Any]:
-        """Create a durable video generation job and return immediately."""
-        prompt_text = normalize_video_prompt(prompt or "")
-        if not prompt_text:
-            raise ValueError("prompt is required")
+@dataclass(frozen=True)
+class _VideoJobPreparation:
+    prompt: str
+    model_config: dict[str, Any]
+    images: list[dict[str, Any]]
+    videos: list[dict[str, Any]]
+    audios: list[dict[str, Any]]
+    image_mode: Optional[str]
 
+
+def _prepare_video_job(
+    token_info: TaskTokenInfo,
+    prompt: str,
+    ratio: Optional[str],
+    duration: Optional[str],
+    reference_images: Optional[list[str | int]],
+    reference_videos: Optional[list[str | int]],
+    reference_audios: Optional[list[str | int]],
+) -> _VideoJobPreparation:
+    """Resolve DB-backed generation inputs inside one worker-owned session."""
+    from app.db.session import SessionLocal
+
+    prompt_text = normalize_video_prompt(prompt or "")
+    if not prompt_text:
+        raise ValueError("prompt is required")
+
+    with SessionLocal() as db:
         context = resolve_generation_context(db, token_info, prompt_text)
         model_config = deepcopy(
             resolve_generation_model(db, context, prompt_text, "video")
@@ -70,19 +80,87 @@ class VideoGenerationService:
             db, reference_audios, "audio", token_info.user_id
         )
         validate_reference_materials(model_config, images, videos, audios)
-
         image_mode = determine_image_mode(model_config, images, videos, audios)
-        images = await stage_video_reference_images(images, token_info.user_id)
+
+    return _VideoJobPreparation(
+        prompt=prompt_text,
+        model_config=model_config,
+        images=images,
+        videos=videos,
+        audios=audios,
+        image_mode=image_mode,
+    )
+
+
+def _persist_and_dispatch_video_job(
+    *,
+    token_info: TaskTokenInfo,
+    video_job: dict[str, Any],
+    job_id: str,
+    protocol: str,
+    video_block_id: str,
+    model_config: dict[str, Any],
+) -> None:
+    from app.tasks.video_tasks import (
+        dispatch_video_polling_task,
+        update_subtask_video_job,
+    )
+
+    update_subtask_video_job(token_info.subtask_id, video_job)
+    dispatch_video_polling_task(
+        subtask_id=token_info.subtask_id,
+        task_id=token_info.task_id,
+        user_id=token_info.user_id,
+        job_id=job_id,
+        provider_protocol=protocol,
+        video_block_id=video_block_id,
+        model_config=model_config,
+        message_id=None,
+    )
+
+
+def _fail_video_job_start(subtask_id: int, error: str) -> None:
+    from app.tasks.video_tasks import fail_video_generation_start
+
+    fail_video_generation_start(subtask_id, error)
+
+
+class VideoGenerationService:
+    async def create_job(
+        self,
+        token_info: TaskTokenInfo,
+        prompt: str,
+        ratio: Optional[str] = None,
+        duration: Optional[str] = None,
+        reference_images: Optional[list[str | int]] = None,
+        reference_videos: Optional[list[str | int]] = None,
+        reference_audios: Optional[list[str | int]] = None,
+    ) -> dict[str, Any]:
+        """Create a durable video generation job and return immediately."""
+        preparation = await run_sync_in_executor(
+            _prepare_video_job,
+            token_info,
+            prompt,
+            ratio,
+            duration,
+            reference_images,
+            reference_videos,
+            reference_audios,
+        )
+        model_config = preparation.model_config
+        images = await stage_video_reference_images(
+            preparation.images, token_info.user_id
+        )
         reference_image = images[0]["url"] if images else None
         protocol = model_config.get("protocol") or "seedance"
         provider = get_video_provider(protocol, model_config)
         job_id = await provider.create_job(
-            prompt=prompt_text,
+            prompt=preparation.prompt,
             reference_image=reference_image,
-            image_mode=image_mode,
+            image_mode=preparation.image_mode,
             reference_images=images,
-            reference_videos=videos,
-            reference_audios=audios,
+            reference_videos=preparation.videos,
+            reference_audios=preparation.audios,
         )
 
         video_block_id = f"video-{uuid.uuid4().hex[:8]}"
@@ -99,35 +177,19 @@ class VideoGenerationService:
             "model_namespace": model_config.get("model_namespace"),
         }
 
-        from app.tasks.video_tasks import (
-            dispatch_video_polling_task,
-            fail_video_generation_start,
-            update_subtask_video_job,
-        )
-
         try:
-            await asyncio.to_thread(
-                update_subtask_video_job,
-                token_info.subtask_id,
-                video_job,
-            )
-            dispatch_video_polling_task(
-                subtask_id=token_info.subtask_id,
-                task_id=token_info.task_id,
-                user_id=token_info.user_id,
+            await run_execution_io(
+                _persist_and_dispatch_video_job,
+                token_info=token_info,
+                video_job=video_job,
                 job_id=job_id,
-                provider_protocol=protocol,
+                protocol=protocol,
                 video_block_id=video_block_id,
                 model_config=model_config,
-                message_id=None,
             )
         except Exception as exc:
             error = f"Failed to persist or dispatch video job {job_id}: {exc}"
-            await asyncio.to_thread(
-                fail_video_generation_start,
-                token_info.subtask_id,
-                error,
-            )
+            await run_execution_io(_fail_video_job_start, token_info.subtask_id, error)
             raise RuntimeError(error) from exc
 
         return {

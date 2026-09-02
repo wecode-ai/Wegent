@@ -21,6 +21,7 @@ Usage:
 """
 
 import logging
+from dataclasses import dataclass
 from typing import Any, Dict, Optional
 
 from sqlalchemy.orm import Session
@@ -33,8 +34,10 @@ from app.models.task import TaskResource
 from app.schemas.kind import Task
 from app.schemas.subscription import (
     BackgroundExecutionStatus,
+    NotificationWebhook,
 )
 from app.services.adapters.executor_kinds import executor_kinds_service
+from app.services.chat.storage.db import run_sync_in_executor
 from app.services.execution import get_executor_runtime_client
 from app.services.subscription.execution import background_execution_manager
 from app.services.subscription.helpers import validate_subscription_for_read
@@ -45,6 +48,46 @@ from app.services.subscription.state_machine import is_terminal_state
 from app.stores.tasks import subtask_store, task_store
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True)
+class _RuntimeSubtask:
+    subtask_id: int
+    executor_name: Optional[str]
+    executor_namespace: str
+
+
+@dataclass(frozen=True)
+class _RuntimeCleanupPlan:
+    task_id: int
+    cleanup_source: str
+    subtasks: tuple[_RuntimeSubtask, ...]
+
+
+@dataclass(frozen=True)
+class _RuntimeCleanupOutcome:
+    sandbox_deleted: bool
+    deleted_executors: frozenset[tuple[str, str]]
+
+
+@dataclass(frozen=True)
+class _NotificationIntent:
+    subscription_id: int
+    execution_id: int
+    result_summary: Optional[str]
+    execution_status: str
+
+
+@dataclass(frozen=True)
+class _NotificationContext:
+    subscription_display_name: str
+    webhooks: tuple[NotificationWebhook, ...]
+
+
+@dataclass(frozen=True)
+class _TaskCompletionPlan:
+    cleanup: Optional[_RuntimeCleanupPlan] = None
+    notification: Optional[_NotificationIntent] = None
 
 
 class SubscriptionTaskCompletionHandler:
@@ -61,14 +104,7 @@ class SubscriptionTaskCompletionHandler:
         self.execution_manager = background_execution_manager
 
     async def on_task_completed(self, event: TaskCompletedEvent) -> None:
-        """Handle TaskCompletedEvent.
-
-        This method is called by the event bus when a task completes.
-        It finds the associated BackgroundExecution and updates its status.
-
-        Args:
-            event: TaskCompletedEvent containing task_id, subtask_id, status, result
-        """
+        """Persist completion, clean runtimes, and notify without blocking."""
         logger.info(
             f"[TaskCompletionHandler] Received TaskCompletedEvent: "
             f"task_id={event.task_id}, subtask_id={event.subtask_id}, "
@@ -76,109 +112,135 @@ class SubscriptionTaskCompletionHandler:
         )
 
         try:
-            with get_db_session() as db:
-                # Find BackgroundExecution by task_id
-                execution = self._find_execution_by_task_id(db, event.task_id)
-
-                if not execution:
-                    logger.debug(
-                        f"[TaskCompletionHandler] No BackgroundExecution found for "
-                        f"task_id={event.task_id}, checking task auto-delete label"
-                    )
-                    await self._cleanup_auto_delete_task_executor(db, event)
-                    return
-
-                # Skip if already in terminal state
-                current_status = BackgroundExecutionStatus(execution.status)
-                if is_terminal_state(current_status):
-                    logger.info(
-                        f"[TaskCompletionHandler] Execution {execution.id} already in "
-                        f"terminal state {current_status.value}, skipping update"
-                    )
-                    return
-
-                # Extract result summary from event
-                result_summary = self._extract_result_summary(event)
-
-                # Check if this is a silent exit BEFORE mapping status
-                is_silent_exit = self._is_silent_exit(event)
-
-                # Map event status to BackgroundExecutionStatus
-                # Use COMPLETED_SILENT for silent exits
-                if is_silent_exit and event.status == "COMPLETED":
-                    status = BackgroundExecutionStatus.COMPLETED_SILENT
-                else:
-                    status = self._map_status(event.status)
-
-                # Update execution status
-                logger.info(
-                    f"[TaskCompletionHandler] Updating execution {execution.id}: "
-                    f"status={status.value}, result_summary_length={len(result_summary or '')}, "
-                    f"is_silent_exit={is_silent_exit}"
-                )
-
-                self.execution_manager.update_execution_status(
-                    db,
-                    execution_id=execution.id,
-                    status=status,
-                    result_summary=result_summary,
-                    error_message=event.error,
-                    skip_notifications=True,  # We'll handle notifications separately
-                )
-
-                # Write back result to inbox message if this is an inbox-triggered execution
-                # inbox_message_id is NOT NULL DEFAULT 0; 0 means no inbox message
-                if getattr(execution, "inbox_message_id", 0) > 0:
-                    try:
-                        from app.services.inbox.result_writeback import (
-                            write_execution_result_to_message,
-                        )
-
-                        write_execution_result_to_message(
-                            db,
-                            inbox_message_id=execution.inbox_message_id,
-                            status=event.status,
-                            result_summary=result_summary,
-                            error_message=event.error,
-                            task_id=event.task_id,
-                        )
-                    except Exception as wb_err:
-                        logger.error(
-                            f"[TaskCompletionHandler] Failed to write back "
-                            f"inbox result for message {execution.inbox_message_id}: "
-                            f"{wb_err}",
-                            exc_info=True,
-                        )
-
-                if status in (
-                    BackgroundExecutionStatus.COMPLETED,
-                    BackgroundExecutionStatus.COMPLETED_SILENT,
-                ):
-                    await self._cleanup_completed_managed_subscription_executor(
-                        db, execution, event.task_id
-                    )
-
-                # Skip notifications for silent exits
-                if is_silent_exit:
-                    logger.info(
-                        f"[TaskCompletionHandler] Silent exit detected for execution "
-                        f"{execution.id}, status set to COMPLETED_SILENT, skipping notifications"
-                    )
-                    return
-
-                # Dispatch notifications for terminal states
-                if status in (
-                    BackgroundExecutionStatus.COMPLETED,
-                    BackgroundExecutionStatus.FAILED,
-                ):
-                    await self._dispatch_notifications(
-                        db, execution, event, result_summary
-                    )
-
+            plan = await run_sync_in_executor(
+                self._prepare_task_completion_sync,
+                event,
+            )
+            if plan.cleanup is not None:
+                await self._execute_runtime_cleanup(plan.cleanup)
+            if plan.notification is not None:
+                await self._dispatch_notifications(plan.notification)
         except Exception as e:
             logger.error(
                 f"[TaskCompletionHandler] Failed to handle TaskCompletedEvent: "
                 f"task_id={event.task_id}, error={e}",
+                exc_info=True,
+            )
+
+    def _prepare_task_completion_sync(
+        self,
+        event: TaskCompletedEvent,
+    ) -> _TaskCompletionPlan:
+        """Persist terminal state and return detached follow-up work."""
+        with get_db_session() as db:
+            execution = self._find_execution_by_task_id(db, event.task_id)
+            if not execution:
+                logger.debug(
+                    "[TaskCompletionHandler] No BackgroundExecution found for "
+                    "task_id=%s, checking task auto-delete label",
+                    event.task_id,
+                )
+                return _TaskCompletionPlan(
+                    cleanup=self._prepare_auto_delete_cleanup_sync(db, event)
+                )
+
+            current_status = BackgroundExecutionStatus(execution.status)
+            if is_terminal_state(current_status):
+                logger.info(
+                    "[TaskCompletionHandler] Execution %s already in terminal "
+                    "state %s, skipping update",
+                    execution.id,
+                    current_status.value,
+                )
+                return _TaskCompletionPlan()
+
+            result_summary = self._extract_result_summary(event)
+            is_silent_exit = self._is_silent_exit(event)
+            status = (
+                BackgroundExecutionStatus.COMPLETED_SILENT
+                if is_silent_exit and event.status == "COMPLETED"
+                else self._map_status(event.status)
+            )
+            logger.info(
+                "[TaskCompletionHandler] Updating execution %s: status=%s, "
+                "result_summary_length=%s, is_silent_exit=%s",
+                execution.id,
+                status.value,
+                len(result_summary or ""),
+                is_silent_exit,
+            )
+            self.execution_manager.update_execution_status(
+                db,
+                execution_id=execution.id,
+                status=status,
+                result_summary=result_summary,
+                error_message=event.error,
+            )
+            self._write_inbox_result_sync(db, execution, event, result_summary)
+
+            cleanup = None
+            if status in (
+                BackgroundExecutionStatus.COMPLETED,
+                BackgroundExecutionStatus.COMPLETED_SILENT,
+            ):
+                cleanup = self._prepare_completed_cleanup_sync(
+                    db,
+                    execution,
+                    event.task_id,
+                )
+
+            notification = None
+            if is_silent_exit:
+                logger.info(
+                    "[TaskCompletionHandler] Silent exit detected for execution "
+                    "%s, status set to COMPLETED_SILENT, skipping notifications",
+                    execution.id,
+                )
+            elif status in (
+                BackgroundExecutionStatus.COMPLETED,
+                BackgroundExecutionStatus.FAILED,
+            ):
+                notification = _NotificationIntent(
+                    subscription_id=execution.subscription_id,
+                    execution_id=execution.id,
+                    result_summary=result_summary,
+                    execution_status=status.value,
+                )
+
+            return _TaskCompletionPlan(
+                cleanup=cleanup,
+                notification=notification,
+            )
+
+    def _write_inbox_result_sync(
+        self,
+        db: Session,
+        execution: BackgroundExecution,
+        event: TaskCompletedEvent,
+        result_summary: Optional[str],
+    ) -> None:
+        """Write an inbox-linked result within the active worker session."""
+        if getattr(execution, "inbox_message_id", 0) <= 0:
+            return
+        try:
+            from app.services.inbox.result_writeback import (
+                write_execution_result_to_message,
+            )
+
+            write_execution_result_to_message(
+                db,
+                inbox_message_id=execution.inbox_message_id,
+                status=event.status,
+                result_summary=result_summary,
+                error_message=event.error,
+                task_id=event.task_id,
+            )
+        except Exception as exc:
+            logger.error(
+                "[TaskCompletionHandler] Failed to write back inbox result for "
+                "message %s: %s",
+                execution.inbox_message_id,
+                exc,
                 exc_info=True,
             )
 
@@ -274,19 +336,19 @@ class SubscriptionTaskCompletionHandler:
 
         return event.result.get("silent_exit", False) is True
 
-    async def _cleanup_auto_delete_task_executor(
+    def _prepare_auto_delete_cleanup_sync(
         self,
         db: Session,
         event: TaskCompletedEvent,
-    ) -> None:
-        """Delete executor runtime for non-subscription tasks with auto-delete enabled."""
+    ) -> Optional[_RuntimeCleanupPlan]:
+        """Prepare runtime cleanup for an auto-delete task."""
         if event.status not in {"COMPLETED", "FAILED", "CANCELLED"}:
             logger.debug(
                 "[TaskCompletionHandler] Skip auto-delete for non-terminal task_id=%s status=%s",
                 event.task_id,
                 event.status,
             )
-            return
+            return None
 
         task = task_store.get_task_by_states(
             db,
@@ -298,7 +360,7 @@ class SubscriptionTaskCompletionHandler:
                 "[TaskCompletionHandler] Cannot auto-delete executor: task_id=%s not found",
                 event.task_id,
             )
-            return
+            return None
 
         task_crd = Task.model_validate(task.json)
         labels = task_crd.metadata.labels or {}
@@ -307,21 +369,21 @@ class SubscriptionTaskCompletionHandler:
                 "[TaskCompletionHandler] Task %s autoDeleteExecutor is not enabled",
                 event.task_id,
             )
-            return
+            return None
 
-        await self._cleanup_task_runtime(
+        return self._build_runtime_cleanup_plan_sync(
             db,
             event.task_id,
             "auto-delete task",
         )
 
-    async def _cleanup_completed_managed_subscription_executor(
+    def _prepare_completed_cleanup_sync(
         self,
         db: Session,
         execution: BackgroundExecution,
         task_id: int,
-    ) -> None:
-        """Delete executors immediately for completed subscription tasks."""
+    ) -> Optional[_RuntimeCleanupPlan]:
+        """Prepare runtime cleanup for a completed subscription task."""
         subscription = (
             db.query(Kind)
             .filter(
@@ -336,7 +398,7 @@ class SubscriptionTaskCompletionHandler:
                 "[TaskCompletionHandler] Cannot clean executor: subscription %s not found",
                 execution.subscription_id,
             )
-            return
+            return None
 
         subscription_crd = validate_subscription_for_read(subscription.json)
         execution_target = getattr(subscription_crd.spec, "executionTarget", None)
@@ -347,19 +409,19 @@ class SubscriptionTaskCompletionHandler:
             getattr(execution_target, "type", None),
         )
 
-        await self._cleanup_task_runtime(
+        return self._build_runtime_cleanup_plan_sync(
             db,
             task_id,
             f"subscription {execution.subscription_id}",
         )
 
-    async def _cleanup_task_runtime(
+    def _build_runtime_cleanup_plan_sync(
         self,
         db: Session,
         task_id: int,
         cleanup_source: str,
-    ) -> None:
-        """Delete sandbox or executor runtime for a completed task."""
+    ) -> Optional[_RuntimeCleanupPlan]:
+        """Load runtime cleanup inputs while the worker session is active."""
         task = task_store.get_task_by_states(
             db,
             task_id=task_id,
@@ -371,7 +433,7 @@ class SubscriptionTaskCompletionHandler:
                 cleanup_source,
                 task_id,
             )
-            return
+            return None
 
         subtasks = subtask_store.list_not_executor_deleted_by_task(
             db,
@@ -384,27 +446,44 @@ class SubscriptionTaskCompletionHandler:
                 cleanup_source,
                 task_id,
             )
-            return
+            return None
 
-        executor_subtasks = [subtask for subtask in subtasks if subtask.executor_name]
-        successful_keys = set()
+        return _RuntimeCleanupPlan(
+            task_id=task_id,
+            cleanup_source=cleanup_source,
+            subtasks=tuple(
+                _RuntimeSubtask(
+                    subtask_id=subtask.id,
+                    executor_name=subtask.executor_name,
+                    executor_namespace=subtask.executor_namespace or "",
+                )
+                for subtask in subtasks
+            ),
+        )
+
+    async def _execute_runtime_cleanup(self, plan: _RuntimeCleanupPlan) -> None:
+        """Delete runtime asynchronously and persist the detached outcome."""
+        executor_subtasks = [
+            subtask for subtask in plan.subtasks if subtask.executor_name
+        ]
+        successful_keys: set[tuple[str, str]] = set()
         unique_executors = {
-            ((subtask.executor_namespace or ""), subtask.executor_name)
+            (subtask.executor_namespace, subtask.executor_name)
             for subtask in executor_subtasks
             if subtask.executor_name
         }
 
         runtime_client = get_executor_runtime_client()
         sandbox_payload, sandbox_lookup_error = await runtime_client.get_sandbox(
-            str(task_id)
+            str(plan.task_id)
         )
         cleanup_mode = "sandbox" if sandbox_payload is not None else "executor"
         if sandbox_lookup_error:
             cleanup_mode = "fallback"
         logger.info(
             "[TaskCompletionHandler] Immediate runtime cleanup mode resolved for %s task_id=%s mode=%s sandbox_lookup_error=%s",
-            cleanup_source,
-            task_id,
+            plan.cleanup_source,
+            plan.task_id,
             cleanup_mode,
             sandbox_lookup_error,
         )
@@ -412,19 +491,19 @@ class SubscriptionTaskCompletionHandler:
         sandbox_deleted = False
         if cleanup_mode in {"sandbox", "fallback"}:
             sandbox_deleted, sandbox_error = await runtime_client.delete_sandbox(
-                str(task_id)
+                str(plan.task_id)
             )
             if sandbox_deleted:
                 logger.info(
                     "[TaskCompletionHandler] Immediate sandbox cleanup succeeded for %s task_id=%s",
-                    cleanup_source,
-                    task_id,
+                    plan.cleanup_source,
+                    plan.task_id,
                 )
             else:
                 logger.info(
                     "[TaskCompletionHandler] Immediate sandbox cleanup skipped or failed for %s task_id=%s error=%s",
-                    cleanup_source,
-                    task_id,
+                    plan.cleanup_source,
+                    plan.task_id,
                     sandbox_error,
                 )
 
@@ -432,14 +511,14 @@ class SubscriptionTaskCompletionHandler:
             if not unique_executors:
                 logger.info(
                     "[TaskCompletionHandler] No executor-backed subtasks found for %s task_id=%s",
-                    cleanup_source,
-                    task_id,
+                    plan.cleanup_source,
+                    plan.task_id,
                 )
             else:
                 logger.info(
                     "[TaskCompletionHandler] Attempting immediate executor cleanup for %s task_id=%s executors=%s",
-                    cleanup_source,
-                    task_id,
+                    plan.cleanup_source,
+                    plan.task_id,
                     sorted(unique_executors),
                 )
 
@@ -453,7 +532,7 @@ class SubscriptionTaskCompletionHandler:
                     except Exception as exc:
                         logger.warning(
                             "[TaskCompletionHandler] Failed to delete executor for %s: %s/%s: %s",
-                            cleanup_source,
+                            plan.cleanup_source,
                             executor_namespace,
                             executor_name,
                             exc,
@@ -462,129 +541,135 @@ class SubscriptionTaskCompletionHandler:
         if not successful_keys and not sandbox_deleted:
             logger.warning(
                 "[TaskCompletionHandler] Immediate runtime cleanup finished without successful deletions for %s task_id=%s mode=%s",
-                cleanup_source,
-                task_id,
+                plan.cleanup_source,
+                plan.task_id,
                 cleanup_mode,
             )
             return
 
-        for subtask in subtasks:
-            executor_key = ((subtask.executor_namespace or ""), subtask.executor_name)
-            if sandbox_deleted or executor_key in successful_keys:
+        outcome = _RuntimeCleanupOutcome(
+            sandbox_deleted=sandbox_deleted,
+            deleted_executors=frozenset(successful_keys),
+        )
+        await run_sync_in_executor(
+            self._persist_runtime_cleanup_sync,
+            plan,
+            outcome,
+        )
+        logger.info(
+            "[TaskCompletionHandler] Immediate executor cleanup succeeded for %s task_id=%s deleted_executors=%s sandbox_deleted=%s",
+            plan.cleanup_source,
+            plan.task_id,
+            sorted(successful_keys),
+            sandbox_deleted,
+        )
+
+    def _persist_runtime_cleanup_sync(
+        self,
+        plan: _RuntimeCleanupPlan,
+        outcome: _RuntimeCleanupOutcome,
+    ) -> None:
+        """Persist successful runtime deletions in a worker-owned session."""
+        with get_db_session() as db:
+            for detached_subtask in plan.subtasks:
+                executor_key = (
+                    detached_subtask.executor_namespace,
+                    detached_subtask.executor_name,
+                )
+                if not (
+                    outcome.sandbox_deleted or executor_key in outcome.deleted_executors
+                ):
+                    continue
+                subtask = subtask_store.get_basic_by_id(
+                    db,
+                    subtask_id=detached_subtask.subtask_id,
+                )
+                if not subtask:
+                    logger.warning(
+                        "[TaskCompletionHandler] Cannot mark deleted runtime: subtask_id=%s not found",
+                        detached_subtask.subtask_id,
+                    )
+                    continue
                 subtask_store.update_fields(
                     db,
                     subtask=subtask,
                     executor_deleted_at=True,
                 )
-
-        db.commit()
-        logger.info(
-            "[TaskCompletionHandler] Immediate executor cleanup succeeded for %s task_id=%s deleted_executors=%s sandbox_deleted=%s",
-            cleanup_source,
-            task_id,
-            sorted(successful_keys),
-            sandbox_deleted,
-        )
+            db.commit()
 
     async def _dispatch_notifications(
         self,
-        db: Session,
-        execution: BackgroundExecution,
-        event: TaskCompletedEvent,
-        result_summary: Optional[str],
+        intent: _NotificationIntent,
     ) -> None:
-        """Dispatch notifications for completed execution.
-
-        Args:
-            db: Database session
-            execution: BackgroundExecution record
-            event: TaskCompletedEvent
-            result_summary: Extracted result summary
-        """
+        """Load notification metadata in a worker, then send on this event loop."""
         try:
-            # Get subscription info
-            subscription = (
-                db.query(Kind)
-                .filter(
-                    Kind.id == execution.subscription_id,
-                    Kind.kind == "Subscription",
-                    Kind.is_active == True,
-                )
-                .first()
+            context = await run_sync_in_executor(
+                self._load_notification_context_sync,
+                intent.subscription_id,
             )
-
-            if not subscription:
-                logger.warning(
-                    f"[TaskCompletionHandler] Subscription {execution.subscription_id} not found"
-                )
+            if context is None:
                 return
 
-            # Get display names
-            from app.schemas.kind import Team
-
-            subscription_crd = validate_subscription_for_read(subscription.json)
-            subscription_display_name = (
-                subscription_crd.spec.displayName or subscription.name
-            )
-
-            # Get team display name
-            team_display_name = None
-            if subscription_crd.spec.teamRef:
-                team = (
-                    db.query(Kind)
-                    .filter(
-                        Kind.name == subscription_crd.spec.teamRef.name,
-                        Kind.namespace == subscription_crd.spec.teamRef.namespace,
-                        Kind.kind == "Team",
-                        Kind.is_active == True,
-                    )
-                    .first()
-                )
-                if team:
-                    try:
-                        team_crd = Team.model_validate(team.json)
-                        team_display_name = (
-                            team_crd.spec.displayName if team_crd.spec else None
-                        ) or team.name
-                    except Exception:
-                        team_display_name = team.name
-
-            # Build subscription info string
-            subscription_info = subscription_display_name
-            if team_display_name:
-                subscription_info = f"{subscription_info} ({team_display_name})"
-
-            # Dispatch follower notifications (via Messager channels)
-            await subscription_notification_dispatcher.dispatch_execution_notifications(
-                db,
-                subscription_id=execution.subscription_id,
-                execution_id=execution.id,
-                subscription_display_name=subscription_display_name,
-                result_summary=result_summary or "",
-                status=execution.status,
+            await subscription_notification_dispatcher.dispatch_execution_notifications_from_store(
+                subscription_id=intent.subscription_id,
+                execution_id=intent.execution_id,
+                subscription_display_name=context.subscription_display_name,
+                result_summary=intent.result_summary or "",
+                status=intent.execution_status,
                 detail_url=None,  # Could be added if needed
             )
-            # Dispatch webhook notifications (configured on subscription)
-            # Title is the subscription display name
-            if subscription_crd.spec.notificationWebhooks:
+            if context.webhooks:
                 await subscription_notification_dispatcher.dispatch_webhook_notifications(
-                    webhooks=subscription_crd.spec.notificationWebhooks,
-                    subscription_display_name=subscription_display_name,
-                    result_summary=result_summary or "",
-                    status=execution.status,
-                    execution_id=execution.id,
+                    webhooks=list(context.webhooks),
+                    subscription_display_name=context.subscription_display_name,
+                    result_summary=intent.result_summary or "",
+                    status=intent.execution_status,
+                    execution_id=intent.execution_id,
                     detail_url=None,
                 )
 
             logger.info(
                 f"[TaskCompletionHandler] Notifications dispatched for "
-                f"execution {execution.id}"
+                f"execution {intent.execution_id}"
             )
         except Exception as e:
             logger.error(
                 f"[TaskCompletionHandler] Failed to dispatch notifications for "
-                f"execution {execution.id}: {e}",
+                f"execution {intent.execution_id}: {e}",
                 exc_info=True,
+            )
+
+    def _load_notification_context_sync(
+        self,
+        subscription_id: int,
+    ) -> Optional[_NotificationContext]:
+        """Load detached subscription notification metadata in a fresh session."""
+        with get_db_session() as db:
+            subscription = (
+                db.query(Kind)
+                .filter(
+                    Kind.id == subscription_id,
+                    Kind.kind == "Subscription",
+                    Kind.is_active == True,
+                )
+                .first()
+            )
+            if not subscription:
+                logger.warning(
+                    "[TaskCompletionHandler] Subscription %s not found",
+                    subscription_id,
+                )
+                return None
+
+            subscription_crd = validate_subscription_for_read(subscription.json)
+            display_name = subscription_crd.spec.displayName or subscription.name
+            webhooks = tuple(
+                webhook.model_copy(deep=True)
+                for webhook in (subscription_crd.spec.notificationWebhooks or ())
+            )
+            return _NotificationContext(
+                subscription_display_name=display_name,
+                webhooks=webhooks,
             )
 
     def _format_result_summary(

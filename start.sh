@@ -1263,7 +1263,7 @@ Options:
   --init                        Interactive configuration initialization
   --stop [services...]          Stop all known service ports by default. Can specify multiple:
                                 $(valid_service_names)
-  -g, --graceful                Use graceful shutdown with stop/restart (SIGTERM, wait 30s, then SIGKILL)
+  -g, --graceful                Use graceful shutdown with stop/restart (SIGTERM, configured wait, then SIGKILL)
   --restart [services...]       Restart services (default: all)
   --status                      Check service status
   -h, --help                    Show help information
@@ -1740,23 +1740,20 @@ stop_services() {
             if kill -0 "$pid" 2>/dev/null; then
                 echo -e "  Stopping $service (PID: $pid)..."
 
-                # For backend service in graceful mode, call shutdown API first (like K8s preStop hook)
-                if [ "$graceful" = "true" ] && [ "$service" = "backend" ]; then
-                    local backend_port
-                    backend_port=$(get_runtime_service_port "backend")
-                    echo -e "    Calling /api/shutdown/wait (K8s preStop style)..."
-                    curl -s -X POST "http://localhost:${backend_port}/api/shutdown/wait" -m 30 2>/dev/null || true
-                    echo ""
-                fi
-
                 if [ "$graceful" = "true" ]; then
-                    # Graceful shutdown: send SIGTERM to process group, wait, then SIGKILL if needed
-                    kill -TERM -- -"$pid" 2>/dev/null || true
-                    kill -TERM "$pid" 2>/dev/null || true
+                    if [ "$service" = "backend" ]; then
+                        # app.runtime owns the dependency-aware shutdown order.
+                        # Signalling its whole group here would terminate Stream
+                        # and Channel before their consumers have drained.
+                        kill -TERM "$pid" 2>/dev/null || true
+                    else
+                        kill -TERM -- -"$pid" 2>/dev/null || \
+                            kill -TERM "$pid" 2>/dev/null || true
+                    fi
                 else
                     # Force kill: SIGKILL immediately
-                    kill -9 -- -"$pid" 2>/dev/null || true
-                    kill -9 "$pid" 2>/dev/null || true
+                    kill -KILL -- -"$pid" 2>/dev/null || \
+                        kill -KILL "$pid" 2>/dev/null || true
                 fi
             fi
         fi
@@ -1766,7 +1763,15 @@ stop_services() {
     # Similar to K8s terminationGracePeriodSeconds behavior
     if [ "$graceful" = "true" ]; then
         local wait_time=0
-        local max_wait=60  # K8s uses 700s, but local dev uses 60s
+        local max_wait=60
+        if [[ " ${services[*]} " == *" backend "* ]]; then
+            local backend_grace_period="${GRACEFUL_SHUTDOWN_TIMEOUT:-600}"
+            if [[ "$backend_grace_period" =~ ^[1-9][0-9]*$ ]]; then
+                max_wait=$((backend_grace_period + 10))
+            else
+                max_wait=610
+            fi
+        fi
         local all_stopped=false
 
         # Give processes a moment to start shutting down
@@ -1782,10 +1787,11 @@ stop_services() {
                 local port="${service_ports[$i]}"
                 local service_stopped=true
 
-                # Check if main process still exists
+                # A failed group leader can leave worker descendants alive.
                 if [ -f "$pid_file" ]; then
                     local pid=$(cat "$pid_file")
-                    if kill -0 "$pid" 2>/dev/null; then
+                    if kill -0 "$pid" 2>/dev/null || \
+                        kill -0 -- -"$pid" 2>/dev/null; then
                         all_stopped=false
                         service_stopped=false
                     fi
@@ -1818,31 +1824,33 @@ stop_services() {
             echo -e "  Waiting for services to stop... (${wait_time}s/${max_wait}s)"
         done
 
-        # Force kill any remaining processes and clean up ports
-        local i=0
-        for service in "${services[@]}"; do
-            local pid_file="$PID_DIR/${service}.pid"
-            local port="${service_ports[$i]}"
+        if [ "$all_stopped" != "true" ]; then
+            # Only the timeout path may bypass app.runtime and kill its group.
+            local i=0
+            for service in "${services[@]}"; do
+                local pid_file="$PID_DIR/${service}.pid"
+                local port="${service_ports[$i]}"
 
-            # Kill main process if still running
-            if [ -f "$pid_file" ]; then
-                local pid=$(cat "$pid_file")
-                if kill -0 "$pid" 2>/dev/null; then
-                    echo -e "  ${YELLOW}Force killing $service process after graceful timeout${NC}"
-                    kill -9 -- -"$pid" 2>/dev/null || true
-                    kill -9 "$pid" 2>/dev/null || true
+                if [ -f "$pid_file" ]; then
+                    local pid=$(cat "$pid_file")
+                    if kill -0 "$pid" 2>/dev/null || \
+                        kill -0 -- -"$pid" 2>/dev/null; then
+                        echo -e "  ${YELLOW}Force killing $service group after graceful timeout${NC}"
+                        kill -KILL -- -"$pid" 2>/dev/null || \
+                            kill -KILL "$pid" 2>/dev/null || true
+                    fi
                 fi
-            fi
 
-            # Force kill any processes still occupying the port
-            local pids=$(get_port_listener_pids "$port" | tr '\n' ' ')
-            if [ -n "$pids" ]; then
-                echo -e "  ${YELLOW}Force killing processes on port $port after graceful timeout${NC}"
-                echo "$pids" | xargs kill -9 2>/dev/null || true
-            fi
+                # Force kill any processes still occupying the port.
+                local pids=$(get_port_listener_pids "$port" | tr '\n' ' ')
+                if [ -n "$pids" ]; then
+                    echo -e "  ${YELLOW}Force killing processes on port $port after graceful timeout${NC}"
+                    echo "$pids" | xargs kill -9 2>/dev/null || true
+                fi
 
-            i=$((i + 1))
-        done
+                i=$((i + 1))
+            done
+        fi
     fi
 
     # Clean up PID files
@@ -1952,9 +1960,12 @@ start_service() {
 
     cd "$SCRIPT_DIR/$dir"
 
-    # Run in background and save PID
+    # Give every service its own process group. Graceful Backend shutdown targets
+    # only app.runtime; the group is reserved for timeout/force cleanup.
+    set -m
     nohup bash -c "$cmd" > "$log_file" 2>&1 &
     local pid=$!
+    set +m
 
     # Wait for service to start
     sleep 2
@@ -1986,20 +1997,14 @@ check_service_health() {
     for ((i=1; i<=max_retries; i++)); do
         # Try health endpoint first if provided
         if [ -n "$health_path" ]; then
-            if curl -s --connect-timeout 2 "http://localhost:$port$health_path" >/dev/null 2>&1; then
+            if curl -fsS --connect-timeout 2 "http://localhost:$port$health_path" >/dev/null 2>&1; then
                 echo -e " ${GREEN}✓${NC} healthy (port $port)"
                 return 0
             fi
-        fi
-
-        # Fallback: try root endpoint or just check if port is responding
-        if curl -s --connect-timeout 2 "http://localhost:$port/" >/dev/null 2>&1; then
+        elif curl -fsS --connect-timeout 2 "http://localhost:$port/" >/dev/null 2>&1; then
             echo -e " ${GREEN}✓${NC} healthy (port $port)"
             return 0
-        fi
-
-        # Also try connecting to port directly (for services that may not respond to HTTP immediately)
-        if nc -z localhost $port 2>/dev/null; then
+        elif nc -z localhost $port 2>/dev/null; then
             # Port is open, give it a bit more time for HTTP
             if [ $i -ge 5 ]; then
                 echo -e " ${GREEN}✓${NC} responding (port $port)"
@@ -2289,10 +2294,10 @@ start_services() {
         # WEGENT_BACKEND_PUBLIC_URL: URL embedded in runtime MCP configuration.
         # CHAT_SHELL_URL: URL for backend to call chat_shell service
         # LOG_LEVEL: Application log level (DEBUG enables debug logging)
-        # --reload-dir: Watch shared module for changes (editable dependency)
-        # --reload-exclude: Exclude .venv and __pycache__ to reduce CPU usage
+        # app.dev_runtime reloads the complete app.runtime process topology when
+        # Backend or shared Python source changes during local development.
         start_service "backend" "backend" \
-            "export INTERNAL_SERVICE_TOKEN=\"\$INTERNAL_SERVICE_TOKEN\" && export WEGENT_SOCKET_URL=\"$WEGENT_SOCKET_URL\" && export EXECUTOR_MANAGER_URL=$EXECUTOR_MANAGER_URL && export CHAT_SHELL_URL=http://localhost:$CHAT_SHELL_PORT && export BACKEND_INTERNAL_URL=$TASK_API_DOMAIN && export WEGENT_BACKEND_PUBLIC_URL=$TASK_API_DOMAIN && export LOG_LEVEL=DEBUG && export LOG_FILE_ENABLED=$LOCAL_LOG_FILE_ENABLED && export LOG_DIR=\"$BACKEND_LOCAL_LOG_DIR\" && source .venv/bin/activate && uvicorn app.main:app --reload --reload-dir . --reload-dir ../shared $RELOAD_EXCLUDE --host 0.0.0.0 --port $BACKEND_PORT --log-level debug" \
+            "export INTERNAL_SERVICE_TOKEN=\"\$INTERNAL_SERVICE_TOKEN\" && export WEGENT_SOCKET_URL=\"$WEGENT_SOCKET_URL\" && export EXECUTOR_MANAGER_URL=$EXECUTOR_MANAGER_URL && export CHAT_SHELL_URL=http://localhost:$CHAT_SHELL_PORT && export BACKEND_INTERNAL_URL=$TASK_API_DOMAIN && export WEGENT_BACKEND_PUBLIC_URL=$TASK_API_DOMAIN && export LOG_LEVEL=DEBUG && export LOG_FILE_ENABLED=$LOCAL_LOG_FILE_ENABLED && export LOG_DIR=\"$BACKEND_LOCAL_LOG_DIR\" && export HOST=0.0.0.0 && export PORT=$BACKEND_PORT && exec \"$SCRIPT_DIR/backend/.venv/bin/python\" -m app.dev_runtime" \
             "$BACKEND_PORT"
     fi
 
@@ -2420,7 +2425,7 @@ start_services() {
     # Health check only for started services
     local failed=0
     if [ "$start_backend" = true ]; then
-        check_service_health "backend" $BACKEND_PORT "/health" || failed=1
+        check_service_health "backend" $BACKEND_PORT "/api/ready" || failed=1
     fi
     if [ "$start_chat_shell" = true ]; then
         check_service_health "chat_shell" $CHAT_SHELL_PORT "/health" || failed=1

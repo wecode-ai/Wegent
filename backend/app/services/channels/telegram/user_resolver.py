@@ -52,7 +52,7 @@ class TelegramUserResolver:
         self.user_mapping_mode = user_mapping_mode or USER_MAPPING_MODE_SELECT_USER
         self.user_mapping_config = user_mapping_config or {}
 
-    async def resolve_user(
+    def resolve_user_sync(
         self,
         telegram_user_id: int,
         telegram_username: Optional[str] = None,

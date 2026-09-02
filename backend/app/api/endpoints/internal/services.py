@@ -9,7 +9,6 @@ Provides internal API for chat_shell's expose_service tool to update task servic
 These endpoints are intended for service-to-service communication, not user access.
 """
 
-import asyncio
 import logging
 from typing import Any, Optional
 
@@ -18,11 +17,9 @@ from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from app.api.dependencies import get_db
+from app.core.web_background_tasks import web_background_task_manager
 from app.models.task import TaskResource
-from app.services.chat.webpage_ws_chat_emitter import (
-    get_extended_emitter,
-    get_main_event_loop,
-)
+from app.services.chat.webpage_ws_chat_emitter import get_extended_emitter
 from app.stores.tasks import task_store
 
 logger = logging.getLogger(__name__)
@@ -65,7 +62,7 @@ class HealthResponse(BaseModel):
 
 
 @router.get("/health", response_model=HealthResponse)
-async def health_check():
+def health_check():
     """Health check endpoint for internal services API."""
     return HealthResponse(status="ok")
 
@@ -124,16 +121,10 @@ def update_task_services(
 
     # Emit WebSocket event to notify frontend about app update
     extended_emitter = get_extended_emitter()
-    loop = get_main_event_loop()
-    if loop and loop.is_running():
-        asyncio.run_coroutine_threadsafe(
-            extended_emitter.emit_task_app_update(request.task_id, app_data),
-            loop,
-        )
-    else:
-        logger.warning(
-            f"Cannot emit task:app_update for task {request.task_id}: event loop not running"
-        )
+    web_background_task_manager.submit_from_sync(
+        lambda: extended_emitter.emit_task_app_update(request.task_id, app_data),
+        name=f"task-app-update-{request.task_id}",
+    )
 
     return ServiceResponse(success=True, app=app_data)
 

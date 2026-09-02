@@ -744,10 +744,10 @@ sudo sysctl -p
 pnpm --dir frontend run dev
 ```
 
-**后端热重载**:
+**后端代码变更**:
 ```bash
-# 确保使用 --reload 参数
-uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
+# 重启完整 Backend 进程组，避免 Web 与 Stream 加载不同版本的代码
+HOST=0.0.0.0 PORT=8000 uv run python -m app.runtime
 
 # 检查文件权限
 ls -la backend/app/

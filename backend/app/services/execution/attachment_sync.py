@@ -6,7 +6,6 @@
 
 from __future__ import annotations
 
-import json
 import logging
 from dataclasses import dataclass
 from typing import Any
@@ -14,6 +13,12 @@ from typing import Any
 import httpx
 
 from app.core.config import settings
+from app.core.payload_codec import (
+    decode_sync_response_json,
+    decode_sync_response_text,
+    encode_http_json,
+    run_payload_codec,
+)
 from shared.models import (
     AttachmentSyncRequest,
     AttachmentSyncResponse,
@@ -36,14 +41,14 @@ class _AttachmentPromptUpdate:
     subtask_id: int | None
 
 
-def _format_http_error(error: Exception) -> str:
+async def _format_http_error(error: Exception) -> str:
     """Build a stable error string from executor-manager HTTP failures."""
     if isinstance(error, httpx.HTTPStatusError):
         response = error.response
         detail = ""
         try:
-            payload = response.json()
-        except (ValueError, json.JSONDecodeError):
+            payload = await decode_sync_response_json(response)
+        except ValueError:
             payload = None
         if isinstance(payload, dict):
             detail = (
@@ -53,7 +58,7 @@ def _format_http_error(error: Exception) -> str:
                 or ""
             )
         if not detail:
-            detail = response.text or str(error)
+            detail = await decode_sync_response_text(response) or str(error)
         return (
             f"executor-manager attachment sync failed: "
             f"status={response.status_code} detail={detail}"
@@ -79,14 +84,23 @@ async def sync_executor_attachments(
         f"{base_url}/executor-manager/tasks/" f"{sync_request.task_id}/attachments/sync"
     )
     try:
+        payload = await run_payload_codec(
+            sync_request.to_dict,
+            payload_hint=sync_request,
+        )
         async with httpx.AsyncClient(timeout=180.0) as client:
             response = await client.post(
                 url,
-                json=sync_request.to_dict(),
+                content=await encode_http_json(payload),
                 headers={"Content-Type": "application/json"},
             )
             response.raise_for_status()
-            sync_response = AttachmentSyncResponse.from_dict(response.json())
+            response_payload = await decode_sync_response_json(response)
+            sync_response = await run_payload_codec(
+                AttachmentSyncResponse.from_dict,
+                response_payload,
+                payload_hint=response_payload,
+            )
             logger.info(
                 "[attachment_sync] Synced attachments: task_id=%s, "
                 "subtask_id=%s, executor_name=%s, success_count=%d, failed_count=%d",
@@ -98,7 +112,7 @@ async def sync_executor_attachments(
             )
             return sync_response
     except Exception as e:
-        error = _format_http_error(e)
+        error = await _format_http_error(e)
         logger.error(
             "[attachment_sync] Failed to sync attachments: task_id=%s, "
             "subtask_id=%s, attachments=%d, error=%s",

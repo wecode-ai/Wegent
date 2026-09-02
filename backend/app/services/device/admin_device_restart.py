@@ -7,8 +7,6 @@
 from dataclasses import dataclass
 from typing import Awaitable, Callable, Optional
 
-from sqlalchemy.orm import Session
-
 
 @dataclass(frozen=True)
 class AdminDeviceRestartResult:
@@ -18,9 +16,7 @@ class AdminDeviceRestartResult:
     message: str
 
 
-AdminDeviceRestartHandler = Callable[
-    [Session, int, str], Awaitable[AdminDeviceRestartResult]
-]
+AdminDeviceRestartHandler = Callable[[int, str], Awaitable[AdminDeviceRestartResult]]
 
 _restart_handler: Optional[AdminDeviceRestartHandler] = None
 
@@ -35,7 +31,6 @@ def register_admin_device_restart_handler(
 
 
 async def restart_admin_device(
-    db: Session,
     user_id: int,
     device_id: str,
 ) -> AdminDeviceRestartResult:
@@ -46,7 +41,7 @@ async def restart_admin_device(
             message="Device restart is not configured in this deployment",
         )
 
-    return await _restart_handler(db, user_id, device_id)
+    return await _restart_handler(user_id, device_id)
 
 
 def _reset_admin_device_restart_handler_for_tests() -> None:

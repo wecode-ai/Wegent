@@ -9,22 +9,20 @@ This module provides APIs for the step-by-step agent creation wizard,
 including AI-powered follow-up questions and prompt generation.
 """
 
-import asyncio
 import json
 import logging
 import re
-from typing import Any, AsyncGenerator, Dict, List, Optional
+from typing import Any, List
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import StreamingResponse
-from sqlalchemy.orm import Session
+from pydantic import TypeAdapter
 
-from app.api.dependencies import get_db
 from app.core import security
-from app.core.config import settings
-from app.models.kind import Kind
+from app.core.payload_codec import run_payload_codec
+from app.core.request_body_limit import WIZARD_BODY_MAX_BYTES
+from app.core.request_json import validate_json_request
 from app.models.user import User
-from app.schemas.kind import Bot, Ghost, Shell, Team
 from app.schemas.wizard import (
     AvailableSkill,
     CoreQuestion,
@@ -38,20 +36,70 @@ from app.schemas.wizard import (
     GeneratePromptResponse,
     IteratePromptRequest,
     IteratePromptResponse,
-    ModelRecommendation,
     RecommendConfigRequest,
     RecommendConfigResponse,
-    ShellRecommendation,
     SkillRecommendation,
     TestPromptRequest,
     TestPromptResponse,
 )
-from app.services.chat.config import extract_and_process_model_config
-from app.services.simple_chat import simple_chat_service
+from app.services.chat.storage.db import run_sync_in_executor
+from app.services.execution.web_stream_client import web_stream_worker_client
+from app.services.execution.web_stream_protocol import (
+    WIZARD_PROMPT_EXECUTE,
+    WIZARD_PROMPT_STREAM,
+)
+from app.services.wizard_db import WizardSkillPlan, wizard_db_service
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
+_FOLLOW_UP_VALIDATOR = TypeAdapter(FollowUpRequest)
+_RECOMMEND_CONFIG_VALIDATOR = TypeAdapter(RecommendConfigRequest)
+_GENERATE_PROMPT_VALIDATOR = TypeAdapter(GeneratePromptRequest)
+_TEST_PROMPT_STREAM_VALIDATOR = TypeAdapter(TestPromptRequest)
+_ITERATE_PROMPT_VALIDATOR = TypeAdapter(IteratePromptRequest)
+
+
+def _request_body_openapi(schema: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "requestBody": {
+            "required": True,
+            "content": {"application/json": {"schema": schema}},
+        }
+    }
+
+
+async def _decode_wizard_request(
+    request: Request,
+    validator: TypeAdapter,
+) -> Any:
+    return await validate_json_request(
+        request,
+        validator,
+        max_bytes=WIZARD_BODY_MAX_BYTES,
+    )
+
+
+async def _decode_follow_up_request(request: Request) -> FollowUpRequest:
+    return await _decode_wizard_request(request, _FOLLOW_UP_VALIDATOR)
+
+
+async def _decode_recommend_config_request(request: Request) -> RecommendConfigRequest:
+    return await _decode_wizard_request(request, _RECOMMEND_CONFIG_VALIDATOR)
+
+
+async def _decode_generate_prompt_request(request: Request) -> GeneratePromptRequest:
+    return await _decode_wizard_request(request, _GENERATE_PROMPT_VALIDATOR)
+
+
+async def _decode_test_prompt_stream_request(
+    request: Request,
+) -> TestPromptRequest:
+    return await _decode_wizard_request(request, _TEST_PROMPT_STREAM_VALIDATOR)
+
+
+async def _decode_iterate_prompt_request(request: Request) -> IteratePromptRequest:
+    return await _decode_wizard_request(request, _ITERATE_PROMPT_VALIDATOR)
 
 
 def get_core_questions() -> List[CoreQuestion]:
@@ -89,7 +137,7 @@ def get_core_questions() -> List[CoreQuestion]:
 
 
 @router.get("/core-questions", response_model=CoreQuestionsResponse)
-async def get_wizard_core_questions(
+def get_wizard_core_questions(
     current_user: User = Depends(security.get_current_user),
 ):
     """Get the 5 core questions for wizard step 1"""
@@ -97,218 +145,72 @@ async def get_wizard_core_questions(
 
 
 async def _call_llm_for_wizard(
-    db: Session,
-    user: User,
+    user_id: int,
+    user_name: str,
     system_prompt: str,
     user_message: str,
+    model_name: str | None = None,
 ) -> str:
-    """
-    Call LLM for wizard functionality using an available model.
-    Returns the LLM response as a string.
-
-    Model selection priority:
-    1. If WIZARD_MODEL_NAME is configured, use that public model
-    2. Otherwise, try user's models first
-    3. Fall back to any available public model
-    """
-    model_kind = None
-
-    logger.info(
-        f"[Wizard] Looking for model. WIMODEL_NAME={settings.WIZARD_MODEL_NAME}, "
-        f"user_id={user.id}"
+    model_plan = await run_sync_in_executor(
+        wizard_db_service.resolve_model_config,
+        user_id,
+        user_name,
+        model_name,
+        "No available models found. Please configure a model first, "
+        "or set WIZARD_MODEL_NAME in environment variables.",
     )
-
-    # Priority 1: Use configured wizard model if specified
-    if settings.WIZARD_MODEL_NAME:
-        logger.info(
-            f"[Wizard] Priority 1: Looking for configured model '{settings.WIZARD_MODEL_NAME}'"
-        )
-        model_kind = (
-            db.query(Kind)
-            .filter(
-                Kind.user_id == 0,  # Public model
-                Kind.kind == "Model",
-                Kind.name == settings.WIZARD_MODEL_NAME,
-                Kind.is_active == True,
-            )
-            .first()
-        )
-        if model_kind:
-            logger.info(f"[Wizard] Found configured model: {model_kind.name}")
-        else:
-            logger.warning(
-                f"[Wizard] Configured WIZARD_MODEL_NAME '{settings.WIZARD_MODEL_NAME}' not found, "
-                "falling back to other available models"
-            )
-
-    # Priority 2: Try user's models
-    if not model_kind:
-        logger.info(
-            f"[Wizard] Priority 2: Looking for user's models (user_id={user.id})"
-        )
-        user_models = (
-            db.query(Kind)
-            .filter(
-                Kind.user_id == user.id,
-                Kind.kind == "Model",
-                Kind.is_active == True,
-            )
-            .all()
-        )
-        logger.info(
-            f"[Wizard] Found {len(user_models)} user models: {[m.name for m in user_models]}"
-        )
-        if user_models:
-            model_kind = user_models[0]
-            logger.info(f"[Wizard] Using user model: {model_kind.name}")
-
-    # Priority 3: Fall back to any public model
-    if not model_kind:
-        logger.info("[Wizard] Priority 3: Looking for any public model (user_id=0)")
-        public_models = (
-            db.query(Kind)
-            .filter(
-                Kind.user_id == 0,
-                Kind.kind == "Model",
-                Kind.is_active == True,
-            )
-            .all()
-        )
-        logger.info(
-            f"[Wizard] Found {len(public_models)} public models: {[m.name for m in public_models]}"
-        )
-        if public_models:
-            model_kind = public_models[0]
-            logger.info(f"[Wizard] Using public model: {model_kind.name}")
-
-    if not model_kind:
-        # Log all models in the database for debugging
-        all_models = db.query(Kind).filter(Kind.kind == "Model").all()
-        logger.error(
-            f"[Wizard] No available models found! "
-            f"All models in DB: {[(m.id, m.name, m.user_id, m.is_active) for m in all_models]}"
-        )
-        raise HTTPException(
-            status_code=400,
-            detail="No available models found. Please configure a model first, "
-            "or set WIZARD_MODEL_NAME in environment variables.",
-        )
-
-    model_json = model_kind.json or {}
-    logger.info(f"[Wizard] Model '{model_kind.name}' found, extracting config...")
-    model_spec = model_json.get("spec", {})
-
-    # Extract model config and process all placeholders (api_key, default_headers)
-    # The extract_and_process_model_config function handles both api_key and
-    # default_headers placeholder replacement internally
-    model_config = extract_and_process_model_config(
-        model_spec=model_spec,
-        user_id=user.id,
-        user_name=user.user_name or "",
+    model_config = await run_payload_codec(
+        dict,
+        model_plan.config,
+        payload_hint=model_plan.config,
+        force_offload=True,
     )
-
-    logger.info(
-        f"[Wizard] Extracted model config - model={model_config.get('model')}, "
-        f"base_url={model_config.get('base_url')}, model_id={model_config.get('model_id')}, "
-        f"has_api_key={bool(model_config.get('api_key'))}"
-    )
-
-    # Use non-streaming chat
     try:
-        response = await simple_chat_service.chat_completion(
-            message=user_message,
-            model_config=model_config,
-            system_prompt=system_prompt,
+        return await _execute_wizard_model(
+            model_config,
+            system_prompt,
+            user_message,
         )
-        return response
-    except Exception as e:
-        logger.error(f"[Wizard] LLM call failed: {e}")
+    except Exception as exc:
+        logger.error("[Wizard] LLM call failed: %s", exc)
         raise HTTPException(
             status_code=500,
-            detail=f"Failed to generate response: {str(e)}",
-        )
+            detail=f"Failed to generate response: {exc}",
+        ) from exc
 
 
-async def _get_skills_for_wizard(
-    db: Session,
-    user: User,
+async def _execute_wizard_model(
+    model_config: dict[str, Any],
+    system_prompt: str,
+    message: str | dict[str, Any],
+) -> str:
+    result = await web_stream_worker_client.execute(
+        WIZARD_PROMPT_EXECUTE,
+        {
+            "message": message,
+            "model_config": model_config,
+            "system_prompt": system_prompt,
+        },
+    )
+    response = result.get("response")
+    if not isinstance(response, str):
+        raise RuntimeError("Wizard model worker returned an invalid result")
+    return response
+
+
+def _skill_recommendation_prompts(
+    plan: WizardSkillPlan,
     purpose: str,
     system_prompt: str,
-    shell_type: str,
-) -> tuple[List[AvailableSkill], List[SkillRecommendation]]:
-    """
-    Get available skills and AI-recommended skills for the wizard.
-
-    Returns:
-        Tuple of (available_skills, recommended_skills)
-    """
-    from sqlalchemy import or_
-
-    # Get all available skills (user's + public)
-    skill_kinds = (
-        db.query(Kind)
-        .filter(
-            Kind.kind == "Skill",
-            Kind.is_active == True,
-            or_(Kind.user_id == user.id, Kind.user_id == 0),
-        )
-        .order_by(Kind.created_at.desc())
-        .all()
+) -> tuple[str, str] | None:
+    skills_text = "\n".join(
+        f"- {skill.name}: {skill.description}"
+        for skill in plan.skill_info
+        if skill.description
     )
-
-    # Build available skills list
-    available_skills: List[AvailableSkill] = []
-    skill_info_for_llm: List[Dict[str, Any]] = []
-
-    for kind in skill_kinds:
-        spec = kind.json.get("spec", {})
-        bind_shells = spec.get("bindShells")
-
-        # Filter by shell type if bindShells is specified
-        if bind_shells and shell_type not in bind_shells:
-            continue
-
-        skill = AvailableSkill(
-            name=kind.name,
-            display_name=spec.get("displayName"),
-            description=spec.get("description", ""),
-            is_public=kind.user_id == 0,
-            bind_shells=bind_shells,
-        )
-        available_skills.append(skill)
-
-        # Collect info for LLM recommendation
-        skill_info_for_llm.append(
-            {
-                "name": kind.name,
-                "display_name": spec.get("displayName") or kind.name,
-                "description": spec.get("description", ""),
-                "is_public": kind.user_id == 0,
-            }
-        )
-
-    # If no skills available, return empty lists
-    if not available_skills:
-        return [], []
-
-    # Use LLM to recommend skills based on user's purpose
-    recommended_skills: List[SkillRecommendation] = []
-
-    try:
-        # Build skill list for LLM
-        skills_text = "\n".join(
-            [
-                f"- {s['name']}: {s['description']}"
-                for s in skill_info_for_llm
-                if s["description"]
-            ]
-        )
-
-        if not skills_text:
-            # No skills with descriptions, return all as available but no recommendations
-            return available_skills, []
-
-        recommend_system_prompt = """You are an expert at matching AI assistant capabilities with available skills.
+    if not skills_text:
+        return None
+    recommend_system_prompt = """You are an expert at matching AI assistant capabilities with available skills.
 Based on the user's purpose and the generated system prompt, recommend the most relevant skills.
 
 IMPORTANT:
@@ -325,8 +227,7 @@ Response format (JSON):
 }
 
 Output ONLY valid JSON, no other text."""
-
-        recommend_user_message = f"""User's purpose: {purpose}
+    recommend_user_message = f"""User's purpose: {purpose}
 
 Generated system prompt:
 {system_prompt[:500]}...
@@ -335,56 +236,135 @@ Available skills:
 {skills_text}
 
 Which skills would be most useful for this AI assistant? Only recommend skills that are directly relevant."""
+    return recommend_system_prompt, recommend_user_message
 
-        response = await _call_llm_for_wizard(
-            db, user, recommend_system_prompt, recommend_user_message
-        )
 
-        # Parse response
-        json_match = re.search(r"\{[\s\S]*\}", response)
-        if json_match:
-            result = json.loads(json_match.group())
-        else:
-            result = json.loads(response)
+def _skill_results(
+    plan: WizardSkillPlan,
+    recommendations: list[SkillRecommendation],
+) -> tuple[list[AvailableSkill], list[SkillRecommendation]]:
+    return list(plan.available_skills), list(recommendations)
 
-        # Build recommended skills list
-        for rec in result.get("recommendations", []):
-            skill_name = rec.get("name")
-            # Find the skill in available skills
-            matching_skill = next(
-                (s for s in skill_info_for_llm if s["name"] == skill_name), None
+
+def _parse_skill_recommendations(
+    response: str,
+    plan: WizardSkillPlan,
+) -> list[SkillRecommendation]:
+    json_match = re.search(r"\{[\s\S]*\}", response)
+    result = json.loads(json_match.group() if json_match else response)
+    by_name = {skill.name: skill for skill in plan.skill_info}
+    recommendations: list[SkillRecommendation] = []
+    for item in result.get("recommendations", []):
+        matching = by_name.get(item.get("name"))
+        if matching is None:
+            continue
+        recommendations.append(
+            SkillRecommendation(
+                name=matching.name,
+                display_name=matching.display_name,
+                description=matching.description,
+                reason=item.get("reason", "Recommended for your use case"),
+                confidence=item.get("confidence", 0.7),
+                is_public=matching.is_public,
             )
-            if matching_skill:
-                recommended_skills.append(
-                    SkillRecommendation(
-                        name=skill_name,
-                        display_name=matching_skill.get("display_name"),
-                        description=matching_skill.get("description"),
-                        reason=rec.get("reason", "Recommended for your use case"),
-                        confidence=rec.get("confidence", 0.7),
-                        is_public=matching_skill.get("is_public", False),
-                    )
-                )
-
-    except Exception as e:
-        logger.warning(f"[Wizard] Failed to get skill recommendations: {e}")
-        # Return available skills without recommendations on error
-
-    return available_skills, recommended_skills
+        )
+    return recommendations
 
 
-@router.post("/generate-followup", response_model=FollowUpResponse)
-async def generate_followup_questions(
-    request: FollowUpRequest,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(security.get_current_user),
-):
-    """
-    Generate AI-powered follow-up questions based on user answers.
-    This endpoint is called for wizard step 2.
-    Designed for non-technical users like operations, finance, sales staff.
-    """
-    # Build context from answers - using input/output example fields
+async def _get_skills_for_wizard(
+    user_id: int,
+    user_name: str,
+    purpose: str,
+    system_prompt: str,
+    shell_type: str,
+) -> tuple[List[AvailableSkill], List[SkillRecommendation]]:
+    plan = await run_sync_in_executor(
+        wizard_db_service.load_skill_plan,
+        user_id,
+        shell_type,
+    )
+    if not plan.available_skills:
+        return [], []
+    prompts = await run_payload_codec(
+        _skill_recommendation_prompts,
+        plan,
+        purpose,
+        system_prompt,
+        payload_hint=plan,
+        force_offload=True,
+    )
+    if prompts is None:
+        return list(plan.available_skills), []
+    try:
+        response = await _call_llm_for_wizard(
+            user_id,
+            user_name,
+            prompts[0],
+            prompts[1],
+        )
+        recommendations = await run_payload_codec(
+            _parse_skill_recommendations,
+            response,
+            plan,
+            payload_hint=response,
+            force_offload=True,
+        )
+    except Exception as exc:
+        logger.warning("[Wizard] Failed to get skill recommendations: %s", exc)
+        recommendations = []
+    return await run_payload_codec(
+        _skill_results,
+        plan,
+        recommendations,
+        payload_hint=(plan, recommendations),
+        force_offload=True,
+    )
+
+
+def _parse_json_object(response: str) -> dict[str, Any]:
+    json_match = re.search(r"\{[\s\S]*\}", response)
+    result = json.loads(json_match.group() if json_match else response)
+    if not isinstance(result, dict):
+        raise json.JSONDecodeError("Expected a JSON object", response, 0)
+    return result
+
+
+def _followup_response(response: str, round_number: int) -> FollowUpResponse:
+    result = _parse_json_object(response)
+    return FollowUpResponse(
+        questions=[
+            FollowUpQuestion(
+                question=item.get("question", ""),
+                input_type=item.get("input_type", "text"),
+                options=item.get("options"),
+                default_answer=item.get("default_answer"),
+            )
+            for item in result.get("questions", [])
+        ],
+        is_complete=result.get("is_complete", False),
+        round_number=round_number,
+    )
+
+
+def _default_followup_response(round_number: int) -> FollowUpResponse:
+    return FollowUpResponse(
+        questions=[
+            FollowUpQuestion(
+                question="Could you provide more details about your specific use case?",
+                input_type="text",
+            ),
+            FollowUpQuestion(
+                question="What level of expertise do you have in this domain?",
+                input_type="single_choice",
+                options=["Beginner", "Intermediate", "Expert"],
+            ),
+        ],
+        is_complete=False,
+        round_number=round_number,
+    )
+
+
+def _followup_user_message(request: FollowUpRequest) -> str:
     example_input = (
         request.answers.example_input
         or request.answers.example_task
@@ -395,22 +375,55 @@ async def generate_followup_questions(
     special_requirements = (
         request.answers.special_requirements or request.answers.constraints or "None"
     )
-
-    answers_text = f"""
-What the user wants help with: {request.answers.purpose}
-Example input they would provide: {example_input}
-Expected output format/content: {expected_output}
-Special requirements or preferences: {special_requirements}
-"""
-
-    # Add previous follow-up answers if any
+    answers = [
+        "\nWhat the user wants help with: ",
+        request.answers.purpose,
+        "\nExample input they would provide: ",
+        example_input,
+        "\nExpected output format/content: ",
+        expected_output,
+        "\nSpecial requirements or preferences: ",
+        special_requirements,
+        "\n",
+    ]
     if request.previous_followups:
-        answers_text += "\n\nPrevious follow-up answers:\n"
-        for i, followup in enumerate(request.previous_followups, 1):
-            answers_text += f"Round {i}:\n"
-            for q, a in followup.items():
-                answers_text += f"  Q: {q}\n  A: {a}\n"
+        answers.append("\nPrevious follow-up answers:\n")
+        for round_number, followup in enumerate(request.previous_followups, 1):
+            answers.append(f"Round {round_number}:\n")
+            for question, answer in followup.items():
+                answers.append(f"  Q: {question}\n  A: {answer}\n")
+    return f"""Current round: {request.round_number}
+Maximum rounds allowed: 5
 
+User's answers so far:
+{''.join(answers)}
+
+IMPORTANT:
+
+- Output ONLY valid JSON, no other text
+- Generate 3-5 focused questions in each round
+- If the user's purpose and expected output are reasonably clear, set is_complete to true
+- The user's examples are just references - create a GENERAL-PURPOSE assistant
+- Do NOT ask about details, edge cases, or nice-to-have features"""
+
+
+@router.post(
+    "/generate-followup",
+    response_model=FollowUpResponse,
+    openapi_extra=_request_body_openapi(FollowUpRequest.model_json_schema()),
+)
+async def generate_followup_questions(
+    request: FollowUpRequest = Depends(_decode_follow_up_request),
+    current_user: User = Depends(security.get_current_user),
+):
+    """
+    Generate AI-powered follow-up questions based on user answers.
+    This endpoint is called for wizard step 2.
+    Designed for non-technical users like operations, finance, sales staff.
+    """
+    user_id = current_user.id
+    user_name = current_user.user_name or ""
+    del current_user
     system_prompt = """You are a friendly AI assistant helping non-technical users (like operations staff, finance, sales, HR) create their own AI assistant.
 
 Your goal is to ask ONLY the most essential follow-up questions to understand their core needs. Be efficient and focused.
@@ -486,281 +499,125 @@ IMPORTANT:
 - After round 5, you MUST set is_complete to true unless critical information is missing, or earlier if you have enough info
 - ALWAYS provide a default_answer for each question - this helps users save time
 - At least 80% of your questions should be single_choice or multiple_choice, NOT text!"""
-
-    user_message = f"""Current round: {request.round_number}
-Maximum rounds allowed: 5 
-
-User's answers so far:
-{answers_text}
-
-IMPORTANT:
-
-- Output ONLY valid JSON, no other text
-- Generate 3-5 focused questions in each round
-- If the user's purpose and expected output are reasonably clear, set is_complete to true
-- The user's examples are just references - create a GENERAL-PURPOSE assistant
-- Do NOT ask about details, edge cases, or nice-to-have features"""
+    user_message = await run_payload_codec(
+        _followup_user_message,
+        request,
+        payload_hint=request,
+        force_offload=True,
+    )
 
     try:
         response = await _call_llm_for_wizard(
-            db, current_user, system_prompt, user_message
+            user_id, user_name, system_prompt, user_message
         )
-
-        # Parse JSON response
-        # Try to extract JSON from the response
-        json_match = re.search(r"\{[\s\S]*\}", response)
-        if json_match:
-            result = json.loads(json_match.group())
-        else:
-            result = json.loads(response)
-
-        questions = [
-            FollowUpQuestion(
-                question=q.get("question", ""),
-                input_type=q.get("input_type", "text"),
-                options=q.get("options"),
-                default_answer=q.get("default_answer"),
-            )
-            for q in result.get("questions", [])
-        ]
-
-        return FollowUpResponse(
-            questions=questions,
-            is_complete=result.get("is_complete", False),
-            round_number=request.round_number,
+        return await run_payload_codec(
+            _followup_response,
+            response,
+            request.round_number,
+            payload_hint=response,
+            force_offload=True,
         )
 
     except json.JSONDecodeError:
-        logger.error(f"Failed to parse LLM response as JSON: {response}")
-        # Return default questions if parsing fails
-        return FollowUpResponse(
-            questions=[
-                FollowUpQuestion(
-                    question="Could you provide more details about your specific use case?",
-                    input_type="text",
-                ),
-                FollowUpQuestion(
-                    question="What level of expertise do you have in this domain?",
-                    input_type="single_choice",
-                    options=["Beginner", "Intermediate", "Expert"],
-                ),
-            ],
-            is_complete=False,
-            round_number=request.round_number,
+        logger.error("Failed to parse wizard follow-up response as JSON")
+        return await run_payload_codec(
+            _default_followup_response,
+            request.round_number,
+            payload_hint=request.round_number,
+            force_offload=True,
         )
 
 
-@router.post("/recommend-config", response_model=RecommendConfigResponse)
+@router.post(
+    "/recommend-config",
+    response_model=RecommendConfigResponse,
+    openapi_extra=_request_body_openapi(RecommendConfigRequest.model_json_schema()),
+)
 async def recommend_shell_and_model(
-    request: RecommendConfigRequest,
-    db: Session = Depends(get_db),
+    request: RecommendConfigRequest = Depends(_decode_recommend_config_request),
     current_user: User = Depends(security.get_current_user),
-):
-    """
-    Recommend Shell and Model based on user's answers.
-    This endpoint is called for wizard step 3.
-    For non-technical users, we use friendly descriptions instead of technical terms.
-    """
-    # Analyze the purpose to determine shell type
-    purpose_lower = request.answers.purpose.lower()
-    # Support both old and new field names - example_input is the new primary field
-    example_input = (
-        request.answers.example_input
-        or request.answers.example_task
+) -> RecommendConfigResponse:
+    """Recommend a shell and model in the bounded DB worker."""
+    user_id = current_user.id
+    del current_user
+    return await run_sync_in_executor(
+        wizard_db_service.recommend_config,
+        request,
+        user_id,
+    )
+
+
+def _parse_generated_prompt(response: str) -> tuple[str, str, str, str]:
+    result = _parse_json_object(response)
+    return (
+        str(result.get("system_prompt") or ""),
+        str(result.get("suggested_name") or "my-agent"),
+        str(result.get("suggested_description") or ""),
+        str(result.get("sample_test_message") or ""),
+    )
+
+
+def _generate_prompt_response(
+    fields: tuple[str, str, str, str],
+    available_skills: list[AvailableSkill],
+    recommended_skills: list[SkillRecommendation],
+) -> GeneratePromptResponse:
+    return GeneratePromptResponse(
+        system_prompt=fields[0],
+        suggested_name=fields[1],
+        suggested_description=fields[2],
+        sample_test_message=fields[3],
+        recommended_skills=recommended_skills,
+        available_skills=available_skills,
+    )
+
+
+def _default_prompt(request: GeneratePromptRequest) -> tuple[str, str]:
+    example_task = (
+        request.answers.example_task
         or request.answers.knowledge_domain
-        or ""
+        or "general tasks"
     )
-    expected_output = request.answers.expected_output or ""
-    example_text_lower = (example_input + " " + expected_output).lower()
-
-    # Default recommendation - Chat mode for most non-technical users
-    shell_type = "Chat"
-    shell_reason = "Perfect for everyday conversations and quick Q&A"
-    shell_reason_friendly = "Best for chatting and getting quick answers"
-    confidence = 0.85  # Higher confidence for Chat as default for non-tech users
-
-    # Determine shell type based on keywords
-    code_keywords = [
-        "code",
-        "coding",
-        "programming",
-        "develop",
-        "debug",
-        "bug",
-        "fix",
-        "implement",
-        "build",
-        "feature",
-        "refactor",
-        "test",
-        "api",
-        "frontend",
-        "backend",
-        "database",
-        "script",
-        "automation",
-        "代码",
-        "编程",
-        "开发",
-        "调试",
-        "实现",
-        "构建",
-        "重构",
-        "测试",
-    ]
-
-    complex_keywords = [
-        "complex",
-        "multi-step",
-        "workflow",
-        "pipeline",
-        "coordinate",
-        "collaborate",
-        "team",
-        "multiple agents",
-        "复杂",
-        "多步骤",
-        "工作流",
-        "协调",
-        "协作",
-        "团队",
-    ]
-
-    if any(kw in purpose_lower or kw in example_text_lower for kw in code_keywords):
-        shell_type = "ClaudeCode"
-        shell_reason = "Ideal for working with code and technical projects"
-        shell_reason_friendly = "Best for coding and technical work"
-        confidence = 0.9
-    elif any(
-        kw in purpose_lower or kw in example_text_lower for kw in complex_keywords
-    ):
-        shell_type = "Agno"
-        shell_reason = "Great for complex tasks that need multiple steps"
-        shell_reason_friendly = "Best for complex multi-step tasks"
-        confidence = 0.85
-
-    # Get available shells
-    available_shells = (
-        db.query(Kind)
-        .filter(
-            Kind.kind == "Shell",
-            Kind.is_active == True,
-            ((Kind.user_id == current_user.id) | (Kind.user_id == 0)),
-        )
-        .all()
+    special_reqs = (
+        request.answers.special_requirements
+        or request.answers.constraints
+        or "None specified"
     )
+    prompt = f"""# Your AI Assistant
 
-    # Find a matching shell
-    shell_name = shell_type.lower()
-    for shell in available_shells:
-        shell_json = shell.json or {}
-        shell_spec = shell_json.get("spec", {})
-        if shell_spec.get("shellType") == shell_type:
-            shell_name = shell.name
-            break
+I'm here to help you with: {request.answers.purpose}
 
-    # Get available models for recommendation
-    available_models = (
-        db.query(Kind)
-        .filter(
-            Kind.kind == "Model",
-            Kind.is_active == True,
-            ((Kind.user_id == current_user.id) | (Kind.user_id == 0)),
-        )
-        .all()
+## What I can do
+- {example_task}
+
+## How I work
+- I'll be friendly and helpful
+- I'll keep things simple and clear
+- {special_reqs}
+"""
+    description = (
+        request.answers.purpose[:100] if request.answers.purpose else "AI Assistant"
     )
+    return prompt, description
 
-    model_recommendation = None
-    alternative_models = []
 
-    if available_models:
-        # Recommend based on shell type
-        for model in available_models:
-            model_json = model.json or {}
-            model_spec = model_json.get("spec", {})
-            protocol = model_spec.get("protocol", "openai")
-
-            if shell_type == "ClaudeCode" and protocol == "anthropic":
-                model_recommendation = ModelRecommendation(
-                    model_name=model.name,
-                    model_id=model_spec.get("modelConfig", {}).get("modelId"),
-                    reason="Recommended for this type of work",
-                    confidence=0.9,
-                )
-                break
-            elif shell_type == "Agno" and protocol == "openai":
-                model_recommendation = ModelRecommendation(
-                    model_name=model.name,
-                    model_id=model_spec.get("modelConfig", {}).get("modelId"),
-                    reason="Works great for complex tasks",
-                    confidence=0.85,
-                )
-                break
-
-        # If no specific match, use the first available
-        if not model_recommendation and available_models:
-            model = available_models[0]
-            model_json = model.json or {}
-            model_spec = model_json.get("spec", {})
-            model_recommendation = ModelRecommendation(
-                model_name=model.name,
-                model_id=model_spec.get("modelConfig", {}).get("modelId"),
-                reason="Ready to use",
-                confidence=0.7,
-            )
-
-    # Build alternative shells with user-friendly descriptions
-    alternative_shells = []
-    friendly_shell_info = {
-        "Chat": (
-            "Simple and fast conversations",
-            "Best for quick Q&A and everyday tasks",
-        ),
-        "ClaudeCode": (
-            "For coding and technical work",
-            "Best when you need to work with code",
-        ),
-        "Agno": (
-            "For complex multi-step tasks",
-            "Best for tasks that need multiple steps",
-        ),
-    }
-
-    for alt_type, (alt_reason, _) in friendly_shell_info.items():
-        if alt_type != shell_type:
-            alternative_shells.append(
-                ShellRecommendation(
-                    shell_name=alt_type.lower(),
-                    shell_type=alt_type,
-                    reason=alt_reason,
-                    confidence=0.5,
-                )
-            )
-
-    return RecommendConfigResponse(
-        shell=ShellRecommendation(
-            shell_name=shell_name,
-            shell_type=shell_type,
-            reason=shell_reason,
-            confidence=confidence,
-        ),
-        model=model_recommendation,
-        alternative_shells=alternative_shells,
-        alternative_models=alternative_models,
+def _default_generate_prompt_response(
+    default_prompt: str,
+    description: str,
+    available_skills: list[AvailableSkill],
+    recommended_skills: list[SkillRecommendation],
+) -> GeneratePromptResponse:
+    return GeneratePromptResponse(
+        system_prompt=default_prompt,
+        suggested_name="my-agent",
+        suggested_description=description,
+        sample_test_message="",
+        recommended_skills=recommended_skills,
+        available_skills=available_skills,
     )
 
 
-@router.post("/generate-prompt", response_model=GeneratePromptResponse)
-async def generate_system_prompt(
-    request: GeneratePromptRequest,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(security.get_current_user),
-):
-    """
-    Generate system prompt based on all collected answers.
-    This endpoint is called for wizard step 4.
-    """
-    # Build context - using input/output example fields
+def _generate_prompt_user_message(request: GeneratePromptRequest) -> str:
     example_input = (
         request.answers.example_input
         or request.answers.example_task
@@ -771,20 +628,49 @@ async def generate_system_prompt(
     special_requirements = (
         request.answers.special_requirements or request.answers.constraints or "None"
     )
-
-    answers_text = f"""
-What the user wants help with: {request.answers.purpose}
-Example input they would provide: {example_input}
-Expected output format/content: {expected_output}
-Special requirements or preferences: {special_requirements}
-"""
-
+    answers = [
+        "\nWhat the user wants help with: ",
+        request.answers.purpose,
+        "\nExample input they would provide: ",
+        example_input,
+        "\nExpected output format/content: ",
+        expected_output,
+        "\nSpecial requirements or preferences: ",
+        special_requirements,
+        "\n",
+    ]
     if request.followup_answers:
-        answers_text += "\nAdditional details from conversation:\n"
-        for i, followup in enumerate(request.followup_answers, 1):
-            for q, a in followup.items():
-                answers_text += f"- {q}: {a}\n"
+        answers.append("\nAdditional details from conversation:\n")
+        for followup in request.followup_answers:
+            for question, answer in followup.items():
+                answers.append(f"- {question}: {answer}\n")
+    return f"""Create a system prompt for an AI assistant based on these requirements:
 
+{''.join(answers)}
+
+IMPORTANT REMINDERS:
+- The user's examples are just REFERENCES - create a GENERAL-PURPOSE assistant
+- The assistant should handle ANY task in this category, not just the specific examples given
+- Keep the prompt versatile and flexible
+- This is for a non-technical user - make the prompt friendly and easy to understand"""
+
+
+@router.post(
+    "/generate-prompt",
+    response_model=GeneratePromptResponse,
+    openapi_extra=_request_body_openapi(GeneratePromptRequest.model_json_schema()),
+)
+async def generate_system_prompt(
+    request: GeneratePromptRequest = Depends(_decode_generate_prompt_request),
+    current_user: User = Depends(security.get_current_user),
+):
+    """
+    Generate system prompt based on all collected answers.
+    This endpoint is called for wizard step 4.
+    """
+    user_id = current_user.id
+    user_name = current_user.user_name or ""
+    del current_user
     system_prompt = """You are an expert at creating AI assistant configurations for non-technical users.
 Based on the user's needs, create a friendly and effective system prompt.
 
@@ -885,83 +771,55 @@ IMPORTANT:
 - Ensure the assistant's capabilities align with what Wegent can actually do
 - Create a GENERAL-PURPOSE assistant, NOT one tailored to specific examples
 - Generate a meaningful sample test message that showcases the assistant's capabilities"""
-
-    user_message = f"""Create a system prompt for an AI assistant based on these requirements:
-
-{answers_text}
-
-IMPORTANT REMINDERS:
-- The user's examples are just REFERENCES - create a GENERAL-PURPOSE assistant
-- The assistant should handle ANY task in this category, not just the specific examples given
-- Keep the prompt versatile and flexible
-- This is for a non-technical user - make the prompt friendly and easy to understand"""
+    user_message = await run_payload_codec(
+        _generate_prompt_user_message,
+        request,
+        payload_hint=request,
+        force_offload=True,
+    )
 
     try:
         response = await _call_llm_for_wizard(
-            db, current_user, system_prompt, user_message
+            user_id, user_name, system_prompt, user_message
         )
-
-        # Parse JSON response
-        json_match = re.search(r"\{[\s\S]*\}", response)
-        if json_match:
-            result = json.loads(json_match.group())
-        else:
-            result = json.loads(response)
-
-        generated_prompt = result.get("system_prompt", "")
-        suggested_name = result.get("suggested_name", "my-agent")
-        suggested_description = result.get("suggested_description", "")
-        sample_test_message = result.get("sample_test_message", "")
+        fields = await run_payload_codec(
+            _parse_generated_prompt,
+            response,
+            payload_hint=response,
+            force_offload=True,
+        )
+        generated_prompt = fields[0]
 
         # Get available skills and recommend skills based on user's purpose
         available_skills, recommended_skills = await _get_skills_for_wizard(
-            db=db,
-            user=current_user,
+            user_id=user_id,
+            user_name=user_name,
             purpose=request.answers.purpose,
             system_prompt=generated_prompt,
             shell_type=request.shell_type,
         )
-
-        return GeneratePromptResponse(
-            system_prompt=generated_prompt,
-            suggested_name=suggested_name,
-            suggested_description=suggested_description,
-            sample_test_message=sample_test_message,
-            recommended_skills=recommended_skills,
-            available_skills=available_skills,
+        return await run_payload_codec(
+            _generate_prompt_response,
+            fields,
+            available_skills,
+            recommended_skills,
+            payload_hint=(fields, available_skills, recommended_skills),
+            force_offload=True,
         )
 
     except json.JSONDecodeError:
-        logger.error(f"Failed to parse LLM response: {response}")
-        # Generate a default prompt if parsing fails - using simplified fields
-        example_task = (
-            request.answers.example_task
-            or request.answers.knowledge_domain
-            or "general tasks"
+        logger.error("Failed to parse wizard prompt response as JSON")
+        default_prompt, description = await run_payload_codec(
+            _default_prompt,
+            request,
+            payload_hint=request,
+            force_offload=True,
         )
-        special_reqs = (
-            request.answers.special_requirements
-            or request.answers.constraints
-            or "None specified"
-        )
-
-        default_prompt = f"""# Your AI Assistant
-
-I'm here to help you with: {request.answers.purpose}
-
-## What I can do
-- {example_task}
-
-## How I work
-- I'll be friendly and helpful
-- I'll keep things simple and clear
-- {special_reqs}
-"""
         # Still try to get skills even if prompt generation failed
         try:
             available_skills, recommended_skills = await _get_skills_for_wizard(
-                db=db,
-                user=current_user,
+                user_id=user_id,
+                user_name=user_name,
                 purpose=request.answers.purpose,
                 system_prompt=default_prompt,
                 shell_type=request.shell_type,
@@ -970,395 +828,93 @@ I'm here to help you with: {request.answers.purpose}
             available_skills = []
             recommended_skills = []
 
-        return GeneratePromptResponse(
-            system_prompt=default_prompt,
-            suggested_name="my-agent",
-            suggested_description=(
-                request.answers.purpose[:100]
-                if request.answers.purpose
-                else "AI Assistant"
-            ),
-            sample_test_message="",
-            recommended_skills=recommended_skills,
-            available_skills=available_skills,
+        return await run_payload_codec(
+            _default_generate_prompt_response,
+            default_prompt,
+            description,
+            available_skills,
+            recommended_skills,
+            payload_hint=(default_prompt, available_skills, recommended_skills),
+            force_offload=True,
         )
 
 
 @router.post("/create-all", response_model=CreateAllResponse)
 async def create_all_resources(
     request: CreateAllRequest,
-    db: Session = Depends(get_db),
     current_user: User = Depends(security.get_current_user),
-):
-    """
-    Create Ghost + Bot + Team in one transaction.
-    This endpoint is called for wizard step 5.
-    """
-    try:
-        # 1. Create Ghost
-        ghost_name = f"{request.name}-ghost"
-        ghost_json = {
-            "kind": "Ghost",
-            "apiVersion": "agent.wecode.io/v1",
-            "metadata": {
-                "name": ghost_name,
-                "namespace": request.namespace,
-            },
-            "spec": {
-                "systemPrompt": request.system_prompt,
-                "mcpServers": {},
-                "skills": request.skills or [],
-            },
-        }
-
-        ghost = Kind(
-            user_id=current_user.id,
-            kind="Ghost",
-            name=ghost_name,
-            namespace=request.namespace,
-            json=ghost_json,
-            is_active=True,
-        )
-        db.add(ghost)
-        db.flush()  # Get ghost.id
-
-        # 2. Find the shell
-        shell = (
-            db.query(Kind)
-            .filter(
-                Kind.kind == "Shell",
-                Kind.is_active == True,
-                ((Kind.user_id == current_user.id) | (Kind.user_id == 0)),
-                Kind.name == request.shell_name,
-            )
-            .first()
-        )
-
-        # If not found by name, try to find by shell type
-        if not shell:
-            shells = (
-                db.query(Kind)
-                .filter(
-                    Kind.kind == "Shell",
-                    Kind.is_active == True,
-                    ((Kind.user_id == current_user.id) | (Kind.user_id == 0)),
-                )
-                .all()
-            )
-            for s in shells:
-                s_json = s.json or {}
-                if s_json.get("spec", {}).get("shellType") == request.shell_type:
-                    shell = s
-                    break
-
-        if not shell:
-            raise HTTPException(
-                status_code=400,
-                detail=f"Shell '{request.shell_name}' not found",
-            )
-
-        # 3. Create Bot
-        bot_name = f"{request.name}-bot"
-        bot_spec = {
-            "ghostRef": {
-                "name": ghost_name,
-                "namespace": request.namespace,
-            },
-            "shellRef": {
-                "name": shell.name,
-                "namespace": shell.namespace,
-            },
-        }
-
-        # Add model reference if specified
-        if request.model_name:
-            model = (
-                db.query(Kind)
-                .filter(
-                    Kind.kind == "Model",
-                    Kind.is_active == True,
-                    Kind.name == request.model_name,
-                    ((Kind.user_id == current_user.id) | (Kind.user_id == 0)),
-                )
-                .first()
-            )
-            if model:
-                # Set modelRef to point to the selected model
-                bot_spec["modelRef"] = {
-                    "name": request.model_name,
-                    "namespace": model.namespace,
-                }
-
-        bot_json = {
-            "kind": "Bot",
-            "apiVersion": "agent.wecode.io/v1",
-            "metadata": {
-                "name": bot_name,
-                "namespace": request.namespace,
-            },
-            "spec": bot_spec,
-        }
-
-        bot = Kind(
-            user_id=current_user.id,
-            kind="Bot",
-            name=bot_name,
-            namespace=request.namespace,
-            json=bot_json,
-            is_active=True,
-        )
-        db.add(bot)
-        db.flush()  # Get bot.id
-
-        # 4. Create Team
-        team_json = {
-            "kind": "Team",
-            "apiVersion": "agent.wecode.io/v1",
-            "metadata": {
-                "name": request.name,
-                "namespace": request.namespace,
-            },
-            "spec": {
-                "members": [
-                    {
-                        "botRef": {
-                            "name": bot_name,
-                            "namespace": request.namespace,
-                        },
-                        "role": "leader",
-                        "prompt": "",
-                    }
-                ],
-                "collaborationModel": "solo",
-                "bind_mode": request.bind_mode,
-                "description": request.description,
-                "icon": request.icon,
-            },
-        }
-
-        team = Kind(
-            user_id=current_user.id,
-            kind="Team",
-            name=request.name,
-            namespace=request.namespace,
-            json=team_json,
-            is_active=True,
-        )
-
-        db.add(team)
-        db.commit()
-
-        db.refresh(ghost)
-        db.refresh(bot)
-        db.refresh(team)
-
-        return CreateAllResponse(
-            team_id=team.id,
-            team_name=team.name,
-            bot_id=bot.id,
-            bot_name=bot.name,
-            ghost_id=ghost.id,
-            ghost_name=ghost.name,
-            message="Agent created successfully!",
-        )
-
-    except HTTPException:
-        db.rollback()
-        raise
-    except Exception as e:
-        db.rollback()
-        logger.error(f"Failed to create resources: {e}")
-        raise HTTPException(
-            status_code=500,
-            detail=f"Failed to create agent: {str(e)}",
-        )
+) -> CreateAllResponse:
+    """Create Ghost, Bot, and Team atomically in the bounded DB worker."""
+    user_id = current_user.id
+    del current_user
+    return await run_sync_in_executor(
+        wizard_db_service.create_all,
+        request,
+        user_id,
+    )
 
 
-@router.post("/test-prompt", response_model=TestPromptResponse)
+def _test_prompt_response(response: str, success: bool) -> TestPromptResponse:
+    return TestPromptResponse(response=response, success=success)
+
+
+@router.post(
+    "/test-prompt",
+    response_model=TestPromptResponse,
+    openapi_extra=_request_body_openapi(TestPromptRequest.model_json_schema()),
+)
 async def test_system_prompt(
-    request: TestPromptRequest,
-    db: Session = Depends(get_db),
+    request: TestPromptRequest = Depends(_decode_test_prompt_stream_request),
     current_user: User = Depends(security.get_current_user),
-):
-    """
-    Test a system prompt with a sample task message.
-    This allows users to see how the AI assistant would respond
-    before finalizing the configuration.
-    """
+) -> TestPromptResponse:
+    """Test a prompt without retaining user ORM state during the LLM call."""
+    user_id = current_user.id
+    user_name = current_user.user_name or ""
+    del current_user
     try:
-        # Find the model to use for testing
-        model_kind = None
-
-        if request.model_name:
-            model_kind = (
-                db.query(Kind)
-                .filter(
-                    Kind.kind == "Model",
-                    Kind.is_active == True,
-                    Kind.name == request.model_name,
-                    ((Kind.user_id == current_user.id) | (Kind.user_id == 0)),
-                )
-                .first()
-            )
-
-        # Fall back to wizard model selection logic
-        if not model_kind:
-            if settings.WIZARD_MODEL_NAME:
-                model_kind = (
-                    db.query(Kind)
-                    .filter(
-                        Kind.user_id == 0,
-                        Kind.kind == "Model",
-                        Kind.name == settings.WIZARD_MODEL_NAME,
-                        Kind.is_active == True,
-                    )
-                    .first()
-                )
-
-            if not model_kind:
-                user_models = (
-                    db.query(Kind)
-                    .filter(
-                        Kind.user_id == current_user.id,
-                        Kind.kind == "Model",
-                        Kind.is_active == True,
-                    )
-                    .all()
-                )
-                if user_models:
-                    model_kind = user_models[0]
-
-            if not model_kind:
-                public_models = (
-                    db.query(Kind)
-                    .filter(
-                        Kind.user_id == 0,
-                        Kind.kind == "Model",
-                        Kind.is_active == True,
-                    )
-                    .all()
-                )
-                if public_models:
-                    model_kind = public_models[0]
-
-        if not model_kind:
-            raise HTTPException(
-                status_code=400,
-                detail="No available models found for testing.",
-            )
-
-        model_json = model_kind.json or {}
-        model_spec = model_json.get("spec", {})
-        model_config = extract_and_process_model_config(
-            model_spec=model_spec,
-            user_id=current_user.id,
-            user_name=current_user.user_name or "",
+        model_plan = await run_sync_in_executor(
+            wizard_db_service.resolve_model_config,
+            user_id,
+            user_name,
+            request.model_name,
         )
-
-        # Call the model with the user's system prompt and test message
-        response = await simple_chat_service.chat_completion(
-            message=request.test_message,
-            model_config=model_config,
-            system_prompt=request.system_prompt,
+        model_config = await run_payload_codec(
+            dict,
+            model_plan.config,
+            payload_hint=model_plan.config,
+            force_offload=True,
         )
-
-        return TestPromptResponse(
-            response=response,
-            success=True,
+        response = await _execute_wizard_model(
+            model_config,
+            request.system_prompt,
+            request.test_message,
         )
-
+        return await run_payload_codec(
+            _test_prompt_response,
+            response,
+            True,
+            payload_hint=response,
+            force_offload=True,
+        )
     except HTTPException:
         raise
-    except Exception as e:
-        logger.error(f"[Wizard] Test prompt failed: {e}")
-        return TestPromptResponse(
-            response=f"Test failed: {str(e)}",
-            success=False,
+    except Exception as exc:
+        logger.error("[Wizard] Test prompt failed: %s", exc)
+        return await run_payload_codec(
+            _test_prompt_response,
+            f"Test failed: {exc}",
+            False,
+            payload_hint=str(exc),
+            force_offload=True,
         )
 
 
-def _get_model_for_wizard(
-    db: Session,
-    user: User,
-    model_name: Optional[str] = None,
-) -> Kind:
-    """
-    Get model for wizard functionality.
-
-    Model selection priority:
-    1. If model_name is specified, use that model
-    2. If WIZARD_MODEL_NAME is configured, use that public model
-    3. Otherwise, try user's models first
-    4. Fall back to any available public model
-    """
-    model_kind = None
-
-    # Priority 0: Use specified model if provided
-    if model_name:
-        model_kind = (
-            db.query(Kind)
-            .filter(
-                Kind.kind == "Model",
-                Kind.is_active == True,
-                Kind.name == model_name,
-                ((Kind.user_id == user.id) | (Kind.user_id == 0)),
-            )
-            .first()
-        )
-        if model_kind:
-            return model_kind
-
-    # Priority 1: Use configured wizard model if specified
-    if settings.WIZARD_MODEL_NAME:
-        model_kind = (
-            db.query(Kind)
-            .filter(
-                Kind.user_id == 0,  # Public model
-                Kind.kind == "Model",
-                Kind.name == settings.WIZARD_MODEL_NAME,
-                Kind.is_active == True,
-            )
-            .first()
-        )
-        if model_kind:
-            return model_kind
-
-    # Priority 2: Try user's models
-    user_models = (
-        db.query(Kind)
-        .filter(
-            Kind.user_id == user.id,
-            Kind.kind == "Model",
-            Kind.is_active == True,
-        )
-        .all()
-    )
-    if user_models:
-        return user_models[0]
-
-    # Priority 3: Fall back to any public model
-    public_models = (
-        db.query(Kind)
-        .filter(
-            Kind.user_id == 0,
-            Kind.kind == "Model",
-            Kind.is_active == True,
-        )
-        .all()
-    )
-    if public_models:
-        return public_models[0]
-
-    raise HTTPException(
-        status_code=400,
-        detail="No available models found for testing.",
-    )
-
-
-@router.post("/test-prompt/stream")
+@router.post(
+    "/test-prompt/stream",
+    openapi_extra=_request_body_openapi(TestPromptRequest.model_json_schema()),
+)
 async def test_system_prompt_stream(
-    request: TestPromptRequest,
-    db: Session = Depends(get_db),
+    request: TestPromptRequest = Depends(_decode_test_prompt_stream_request),
     current_user: User = Depends(security.get_current_user),
 ):
     """
@@ -1366,35 +922,112 @@ async def test_system_prompt_stream(
     This allows users to see the AI response in real-time
     before finalizing the configuration.
     """
-    # Get model for testing
-    model_kind = _get_model_for_wizard(db, current_user, request.model_name)
+    user_id = current_user.id
+    user_name = current_user.user_name or ""
+    message = request.test_message
+    system_prompt = request.system_prompt
+    model_name = request.model_name
+    del current_user
 
-    model_json = model_kind.json or {}
-    model_spec = model_json.get("spec", {})
-    model_config = extract_and_process_model_config(
-        model_spec=model_spec,
-        user_id=current_user.id,
-        user_name=current_user.user_name or "",
+    model_plan = await run_sync_in_executor(
+        wizard_db_service.resolve_model_config,
+        user_id,
+        user_name,
+        model_name,
+    )
+    model_config = await run_payload_codec(
+        dict,
+        model_plan.config,
+        payload_hint=model_plan.config,
+        force_offload=True,
     )
 
-    # Use simple_chat_service.chat_stream in simple mode (no subtask_id/task_id)
-    return await simple_chat_service.chat_stream(
-        message=request.test_message,
-        model_config=model_config,
-        system_prompt=request.system_prompt,
+    return StreamingResponse(
+        web_stream_worker_client.stream(
+            WIZARD_PROMPT_STREAM,
+            {
+                "message": message,
+                "model_config": model_config,
+                "system_prompt": system_prompt,
+            },
+        ),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+            "Content-Encoding": "none",
+        },
     )
 
 
-@router.post("/iterate-prompt", response_model=IteratePromptResponse)
+def _iterate_prompt_response(
+    response: str,
+    current_prompt: str,
+) -> IteratePromptResponse:
+    result = _parse_json_object(response)
+    return IteratePromptResponse(
+        improved_prompt=result.get("improved_prompt", current_prompt),
+        changes_summary=result.get(
+            "changes_summary", "Prompt updated based on feedback."
+        ),
+    )
+
+
+def _iterate_prompt_fallback(current_prompt: str) -> IteratePromptResponse:
+    return IteratePromptResponse(
+        improved_prompt=current_prompt,
+        changes_summary=(
+            "Could not parse the improvement. "
+            "Please try again with different feedback."
+        ),
+    )
+
+
+def _iterate_user_message(request: IteratePromptRequest) -> str:
+    selected_text_section = ""
+    if request.selected_text:
+        selected_text_section = f"""
+The user selected this specific part of the AI response:
+>>> {request.selected_text} <<<
+
+This selection helps you understand which part of the response the user's feedback refers to.
+"""
+    return f"""Here is the current system prompt:
+---
+{request.current_prompt}
+---
+
+The user tested it with this message:
+"{request.test_message}"
+
+The AI responded with:
+---
+{request.model_response}
+---
+{selected_text_section}
+The user's feedback/request for changes:
+"{request.user_feedback}"
+
+Please improve the system prompt based on this feedback. The full response context above helps you understand the structure and location of the selected content."""
+
+
+@router.post(
+    "/iterate-prompt",
+    response_model=IteratePromptResponse,
+    openapi_extra=_request_body_openapi(IteratePromptRequest.model_json_schema()),
+)
 async def iterate_system_prompt(
-    request: IteratePromptRequest,
-    db: Session = Depends(get_db),
+    request: IteratePromptRequest = Depends(_decode_iterate_prompt_request),
     current_user: User = Depends(security.get_current_user),
 ):
     """
     Iterate and improve the system prompt based on user feedback.
     This allows users to refine the prompt by describing what they want changed.
     """
+    user_id = current_user.id
+    user_name = current_user.user_name or ""
+    del current_user
     system_prompt = """You are an expert at improving AI assistant system prompts.
 The user has tested their AI assistant and wants to make changes based on the results.
 
@@ -1451,60 +1084,36 @@ IMPORTANT:
 - When user gives a specific example of unwanted content, add a GENERAL rule to avoid that type
 - When user gives a specific value they want, use that EXACT value
 - Treat user feedback as a command, but understand the underlying intent"""
-
-    # Build user message with optional selected text context
-    selected_text_section = ""
-    if request.selected_text:
-        selected_text_section = f"""
-The user selected this specific part of the AI response:
->>> {request.selected_text} <<<
-
-This selection helps you understand which part of the response the user's feedback refers to.
-"""
-
-    user_message = f"""Here is the current system prompt:
----
-{request.current_prompt}
----
-
-The user tested it with this message:
-"{request.test_message}"
-
-The AI responded with:
----
-{request.model_response}
----
-{selected_text_section}
-The user's feedback/request for changes:
-"{request.user_feedback}"
-
-Please improve the system prompt based on this feedback. The full response context above helps you understand the structure and location of the selected content."""
+    user_message = await run_payload_codec(
+        _iterate_user_message,
+        request,
+        payload_hint=request,
+        force_offload=True,
+    )
 
     try:
         response = await _call_llm_for_wizard(
-            db, current_user, system_prompt, user_message
+            user_id,
+            user_name,
+            system_prompt,
+            user_message,
+            request.model_name,
         )
-
-        # Parse JSON response
-        json_match = re.search(r"\{[\s\S]*\}", response)
-        if json_match:
-            result = json.loads(json_match.group())
-        else:
-            result = json.loads(response)
-
-        return IteratePromptResponse(
-            improved_prompt=result.get("improved_prompt", request.current_prompt),
-            changes_summary=result.get(
-                "changes_summary", "Prompt updated based on feedback."
-            ),
+        return await run_payload_codec(
+            _iterate_prompt_response,
+            response,
+            request.current_prompt,
+            payload_hint=response,
+            force_offload=True,
         )
 
     except json.JSONDecodeError:
-        logger.error(f"Failed to parse iterate prompt response: {response}")
-        # Return the original prompt with a note
-        return IteratePromptResponse(
-            improved_prompt=request.current_prompt,
-            changes_summary="Could not parse the improvement. Please try again with different feedback.",
+        logger.error("Failed to parse wizard iterate response as JSON")
+        return await run_payload_codec(
+            _iterate_prompt_fallback,
+            request.current_prompt,
+            payload_hint=request.current_prompt,
+            force_offload=True,
         )
     except Exception as e:
         logger.error(f"[Wizard] Iterate prompt failed: {e}")
