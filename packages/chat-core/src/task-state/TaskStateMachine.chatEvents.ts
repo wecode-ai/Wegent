@@ -432,7 +432,20 @@ export function reduceChatErrorEvent({
     return state
   }
 
-  if (isTerminalTaskStatus(state.runtime.taskStatus)) return state
+  if (isTerminalTaskStatus(state.runtime.taskStatus)) {
+    if (!event.allowTerminalMessageUpdate) return state
+
+    const messages = new Map(state.messages)
+    messages.set(aiMessageId, {
+      ...existingMessage,
+      status: 'error',
+      timestamp: Date.now(),
+      error: event.error,
+      errorType: event.errorType ?? existingMessage.errorType,
+      messageId: event.messageId ?? existingMessage.messageId,
+    })
+    return { ...state, messages }
+  }
 
   const isActiveStreamEvent =
     state.status === 'streaming' && state.runtime.activeStreamSubtaskId === event.subtaskId

@@ -1181,6 +1181,29 @@ describe('TaskStateMachine', () => {
     expect(message?.error).toBeUndefined()
   })
 
+  it('projects an allowed late error onto the message without changing completed task state', () => {
+    const machine = new TaskStateMachine(100, {
+      joinTask: vi.fn(),
+      isConnected: () => true,
+    })
+
+    machine.handleTaskStatus('RUNNING')
+    machine.handleChatStart(42, 'Chat', 7)
+    machine.handleTaskStatus('COMPLETED', '2026-05-31T10:01:00.000Z')
+    machine.handleChatError(42, 'blocked', 7, 'policy_blocked', {
+      allowTerminalMessageUpdate: true,
+    })
+
+    const state = machine.getState()
+    expect(state.runtime.taskStatus).toBe('COMPLETED')
+    expect(state.messages.get('ai-42')).toMatchObject({
+      status: 'error',
+      subtaskStatus: 'COMPLETED',
+      error: 'blocked',
+      errorType: 'policy_blocked',
+    })
+  })
+
   it('keeps completed terminal status authoritative when chat cancelled arrives late', () => {
     const machine = new TaskStateMachine(100, {
       joinTask: vi.fn(),
@@ -2123,27 +2146,6 @@ describe('TaskStateMachine', () => {
     expect(machine.getState().runtime.phase).toBe('terminal')
 
     consoleInfoSpy.mockRestore()
-  })
-
-  it('requests a full snapshot without the current message cursor', async () => {
-    const actions = createRuntimeActions()
-    const machine = new TaskStateMachine(42, actions)
-    machine.addUserMessage({
-      id: 'user-1',
-      type: 'user',
-      status: 'completed',
-      content: 'ask',
-      timestamp: Date.now(),
-      subtaskId: 1,
-      messageId: 1,
-    })
-
-    await machine.recover({ force: true, fullSnapshot: true })
-
-    expect(actions.joinTask).toHaveBeenCalledWith(42, {
-      forceRefresh: true,
-      afterMessageId: undefined,
-    })
   })
 
   it('resyncs a completed video placeholder when reconnect lost the active stream id', async () => {

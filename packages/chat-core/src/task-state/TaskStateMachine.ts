@@ -65,7 +65,6 @@ export class TaskStateMachine {
     resumeFromCursor?: number
     activeStreamSubtaskId?: number
     syncAfterMessageId?: number
-    fullSnapshot?: boolean
   }
   private lastRecoveryTime: number = 0
   private recoveryDebounceMs: number = 1000
@@ -203,7 +202,6 @@ export class TaskStateMachine {
     resumeFromCursor?: number
     activeStreamSubtaskId?: number
     syncAfterMessageId?: number
-    fullSnapshot?: boolean
     syncUpdatedAt?: string
   }): Promise<void> {
     const event: Event = {
@@ -213,7 +211,6 @@ export class TaskStateMachine {
       resumeFromCursor: options?.resumeFromCursor,
       activeStreamSubtaskId: options?.activeStreamSubtaskId,
       syncAfterMessageId: options?.syncAfterMessageId,
-      fullSnapshot: options?.fullSnapshot,
       syncUpdatedAt: options?.syncUpdatedAt,
     }
     await this.dispatch(event)
@@ -384,8 +381,21 @@ export class TaskStateMachine {
   /**
    * Handle chat:error event
    */
-  handleChatError(subtaskId: number, error: string, messageId?: number, errorType?: string): void {
-    this.dispatch({ type: 'CHAT_ERROR', subtaskId, error, messageId, errorType })
+  handleChatError(
+    subtaskId: number,
+    error: string,
+    messageId?: number,
+    errorType?: string,
+    options?: { allowTerminalMessageUpdate?: boolean }
+  ): void {
+    this.dispatch({
+      type: 'CHAT_ERROR',
+      subtaskId,
+      error,
+      messageId,
+      errorType,
+      allowTerminalMessageUpdate: options?.allowTerminalMessageUpdate,
+    })
   }
 
   /**
@@ -858,7 +868,6 @@ export class TaskStateMachine {
         resumeFromCursor: event.resumeFromCursor,
         activeStreamSubtaskId: event.activeStreamSubtaskId,
         syncAfterMessageId: event.syncAfterMessageId,
-        fullSnapshot: event.fullSnapshot,
       }
       return
     }
@@ -873,7 +882,6 @@ export class TaskStateMachine {
         resumeFromCursor: event.resumeFromCursor,
         activeStreamSubtaskId: event.activeStreamSubtaskId,
         syncAfterMessageId: event.syncAfterMessageId,
-        fullSnapshot: event.fullSnapshot,
       }
 
       this.enterWaitingSocket(event.reason)

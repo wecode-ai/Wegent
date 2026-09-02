@@ -26,7 +26,7 @@ export function buildRecoverJoinOptions(
   const joinOptions: RecoverJoinOptions = {
     forceRefresh: true,
     afterMessageId:
-      event.fullSnapshot || event.reason === 'websocket-reconnect'
+      event.reason === 'websocket-reconnect'
         ? undefined
         : event.syncAfterMessageId ?? maxMessageId,
   }

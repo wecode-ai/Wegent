@@ -224,7 +224,6 @@ export type Event =
       resumeFromCursor?: number
       activeStreamSubtaskId?: number
       syncAfterMessageId?: number
-      fullSnapshot?: boolean
       syncUpdatedAt?: string
     }
   | {
@@ -258,7 +257,14 @@ export type Event =
       subtaskId: number
       block: Partial<MessageBlock> & { id: string }
     }
-  | { type: 'CHAT_ERROR'; subtaskId: number; error: string; messageId?: number; errorType?: string }
+  | {
+      type: 'CHAT_ERROR'
+      subtaskId: number
+      error: string
+      messageId?: number
+      errorType?: string
+      allowTerminalMessageUpdate?: boolean
+    }
   | { type: 'CHAT_CANCELLED'; subtaskId: number }
   | { type: 'SEND_ACCEPTED'; acceptedAt: string }
   | { type: 'TASK_STATUS_RECEIVED'; taskStatus: ApiTaskStatus; updatedAt?: string }

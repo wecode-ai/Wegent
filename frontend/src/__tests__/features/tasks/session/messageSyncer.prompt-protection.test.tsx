@@ -63,9 +63,10 @@ describe('useMessageSyncer prompt protection', () => {
       1734,
       blockedMessage,
       7,
-      PROMPT_PROTECTION_BLOCKED_ERROR_TYPE
+      PROMPT_PROTECTION_BLOCKED_ERROR_TYPE,
+      { allowTerminalMessageUpdate: true }
     )
-    expect(machine.recover).toHaveBeenCalledWith({ force: true, fullSnapshot: true })
+    expect(machine.recover).not.toHaveBeenCalled()
 
     machine.recover.mockClear()
     act(() => {
