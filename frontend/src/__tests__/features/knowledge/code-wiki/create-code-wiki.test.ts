@@ -6,7 +6,7 @@ import { codeWikiApi } from '@/apis/code-wiki'
 import { createCodeWiki } from '@/features/knowledge/code-wiki/createCodeWiki'
 
 jest.mock('@/apis/code-wiki', () => ({
-  codeWikiApi: { create: jest.fn(), configureAutomaticUpdate: jest.fn() },
+  codeWikiApi: { create: jest.fn(), configureScheduledUpdate: jest.fn() },
 }))
 
 describe('createCodeWiki', () => {
@@ -109,9 +109,9 @@ describe('createCodeWiki', () => {
     expect(codeWikiApi.create).not.toHaveBeenCalledWith(
       expect.objectContaining({ scheduled_update: expect.anything() })
     )
-    expect(codeWikiApi.configureAutomaticUpdate).toHaveBeenCalledWith(17, schedule)
+    expect(codeWikiApi.configureScheduledUpdate).toHaveBeenCalledWith(17, schedule)
     expect(jest.mocked(codeWikiApi.create).mock.invocationCallOrder[0]).toBeLessThan(
-      jest.mocked(codeWikiApi.configureAutomaticUpdate).mock.invocationCallOrder[0]
+      jest.mocked(codeWikiApi.configureScheduledUpdate).mock.invocationCallOrder[0]
     )
   })
 
@@ -127,7 +127,7 @@ describe('createCodeWiki', () => {
       updated_at: '2026-08-11T00:00:00Z',
     })
     jest
-      .mocked(codeWikiApi.configureAutomaticUpdate)
+      .mocked(codeWikiApi.configureScheduledUpdate)
       .mockRejectedValue(new Error('Schedule service unavailable'))
 
     await expect(

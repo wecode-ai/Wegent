@@ -1206,7 +1206,7 @@
       "modelRequired": "请选择生成模型",
       "created": "代码 Wiki 已创建，正在生成内容。",
       "scheduleNotConfigured": "代码 Wiki 已创建，但定期更新未保存；可进入 Wiki 后重新配置。",
-      "scheduledUpdate": "定期自动更新",
+      "scheduledUpdate": "定期更新",
       "scheduledUpdateHint": "首次生成会在创建后立即开始；也可以启用后续定期检查。"
     },
     "reader": {
@@ -1239,12 +1239,12 @@
       "emptyFailed": "上次生成没有完成",
       "emptyFailedHint": "可以重新触发一次；如果反复失败，看看下面的原因。"
     },
-    "automatic": {
-      "title": "自动更新",
-      "button": "自动更新",
+    "scheduledUpdate": {
+      "title": "定期更新",
+      "button": "定期更新",
       "description": "定期检查仓库；失败会记录原因并在下个周期继续尝试。关闭不会清除设置。",
-      "enabled": "启用自动更新",
-      "enabledCadence": "自动更新 · {{cadence}}",
+      "enabled": "启用定期更新",
+      "enabledCadence": "定期更新 · {{cadence}}",
       "days": "每 {{days}} 天",
       "cadence": "更新周期",
       "customDays": "自定义周期天数（2–365 天）",
@@ -1273,7 +1273,7 @@
       "custom": "自定义",
       "next": "下次检查：{{when}}",
       "afterSave": "保存后计算",
-      "saved": "自动更新设置已保存",
+      "saved": "定期更新设置已保存",
       "saving": "保存中…"
     },
     "progress": {
@@ -1335,7 +1335,7 @@
       "republishHint": "会替换当前页面；引用旧页面的链接不会因此修复",
       "republishConfirmTitle": "恢复这个版本？",
       "republishConfirmBody": "当前所有页面会被这个版本替换。被替换掉的页面不会保留原来的文档 id，指向它们的链接会失效。",
-      "republishAutomaticWarning": "自动更新仍处于启用状态，未来运行可能再次覆盖这个版本；如需冻结，请先关闭自动更新。",
+      "republishScheduledWarning": "定期更新仍处于启用状态，未来运行可能再次覆盖这个版本；如需冻结，请先关闭定期更新。",
       "viewFailure": "查看完整错误",
       "failureDetailsTitle": "生成错误",
       "failureDetailsDescription": "本次生成的完整错误信息。"

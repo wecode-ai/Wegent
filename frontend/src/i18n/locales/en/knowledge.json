@@ -1239,12 +1239,12 @@
       "emptyFailed": "The last run did not finish",
       "emptyFailedHint": "You can start it again. If it keeps failing, the reason is below."
     },
-    "automatic": {
-      "title": "Automatic update",
-      "button": "Automatic update",
+    "scheduledUpdate": {
+      "title": "Scheduled update",
+      "button": "Scheduled update",
       "description": "Periodically checks the repository. Failures remain visible and retry next cycle. Disabling preserves the settings.",
-      "enabled": "Enable automatic updates",
-      "enabledCadence": "Automatic · {{cadence}}",
+      "enabled": "Enable scheduled updates",
+      "enabledCadence": "Scheduled · {{cadence}}",
       "days": "Every {{days}} days",
       "cadence": "Cadence",
       "customDays": "Custom cadence in days (2–365)",
@@ -1273,7 +1273,7 @@
       "custom": "Custom",
       "next": "Next check: {{when}}",
       "afterSave": "calculated after saving",
-      "saved": "Automatic update settings saved",
+      "saved": "Scheduled update settings saved",
       "saving": "Saving…"
     },
     "progress": {
@@ -1335,7 +1335,7 @@
       "republishHint": "Replaces the current pages. Citations of deleted pages are not repaired by this.",
       "republishConfirmTitle": "Restore this version?",
       "republishConfirmBody": "Every current page is replaced by this version. The pages it replaces do not keep their document ids, so links pointing at them will break.",
-      "republishAutomaticWarning": "Automatic updates remain enabled and a future run may replace this version again. Disable automatic updates first if you want to freeze it.",
+      "republishScheduledWarning": "Scheduled updates remain enabled and a future run may replace this version again. Disable scheduled updates first if you want to freeze it.",
       "viewFailure": "View full error",
       "failureDetailsTitle": "Generation error",
       "failureDetailsDescription": "Full error message from this generation run."

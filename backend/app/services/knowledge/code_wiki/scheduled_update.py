@@ -16,9 +16,9 @@ from app.models.kind import Kind
 from app.models.subscription import BackgroundExecution
 from app.models.user import User
 from app.schemas.knowledge import (
-    CodeWikiAutomaticUpdate,
-    CodeWikiAutomaticUpdateExecution,
-    CodeWikiAutomaticUpdateRequest,
+    CodeWikiScheduledUpdate,
+    CodeWikiScheduledUpdateExecution,
+    CodeWikiScheduledUpdateRequest,
 )
 from app.schemas.subscription import BackgroundExecutionStatus
 from app.services.knowledge.code_wiki.generation import (
@@ -90,7 +90,7 @@ def scheduled_update_for(db: Session, knowledge_base: Kind | int) -> Kind | None
 
 
 def first_scheduled_time(
-    data: CodeWikiAutomaticUpdateRequest, now: datetime | None = None
+    data: CodeWikiScheduledUpdateRequest, now: datetime | None = None
 ) -> datetime:
     """Return the first allowed slot as naive UTC; creation day is never eligible."""
     try:
@@ -142,7 +142,7 @@ def validate_runner_for_source(
 
 
 def configure_scheduled_update(
-    db: Session, *, knowledge_base: Kind, data: CodeWikiAutomaticUpdateRequest
+    db: Session, *, knowledge_base: Kind, data: CodeWikiScheduledUpdateRequest
 ) -> Kind:
     """Create or update one scheduler row while serializing on its Code Wiki."""
     knowledge_base = (
@@ -243,11 +243,11 @@ def configure_scheduled_update(
 
 def read_scheduled_update(
     db: Session, *, knowledge_base: Kind, can_configure: bool
-) -> CodeWikiAutomaticUpdate:
+) -> CodeWikiScheduledUpdate:
     subscription = scheduled_update_for(db, knowledge_base)
     runner_id = (knowledge_base.json or {}).get("spec", {}).get(RUNNER_SPEC_KEY)
     if subscription is None:
-        return CodeWikiAutomaticUpdate(
+        return CodeWikiScheduledUpdate(
             can_configure=can_configure,
             execution_principal_user_id=runner_id,
         )
@@ -260,14 +260,14 @@ def read_scheduled_update(
         .limit(20)
         .all()
     )
-    return CodeWikiAutomaticUpdate(
+    return CodeWikiScheduledUpdate(
         can_configure=can_configure,
         configured=True,
         enabled=bool(internal.get("enabled", False)),
         next_execution_time=internal.get("next_execution_time"),
         execution_principal_user_id=runner_id,
         executions=[
-            CodeWikiAutomaticUpdateExecution(
+            CodeWikiScheduledUpdateExecution(
                 id=row.id,
                 status=row.status,
                 error_message=row.error_message,

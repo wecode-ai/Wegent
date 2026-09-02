@@ -29,7 +29,7 @@ import { codeWikiApi } from '@/apis/code-wiki'
 import { knowledgeCapableTeams } from '@/features/knowledge/document/utils/knowledgeTeams'
 import { useCodeWikiRunStatus } from './useCodeWikiRunStatus'
 import type {
-  CodeWikiAutomaticUpdate,
+  CodeWikiScheduledUpdate,
   CodeWikiPageNode,
   CodeWikiRunStatus,
 } from '@/types/code-wiki'
@@ -38,7 +38,7 @@ import { PageOutline } from './PageOutline'
 import { RunHistory } from './RunHistory'
 import { failureText } from './failureText'
 import { GenerationProgress } from './GenerationProgress'
-import { AutomaticUpdateDialog } from './AutomaticUpdateDialog'
+import { ScheduledUpdateDialog } from './ScheduledUpdateDialog'
 import { WikiNavigation } from './WikiNavigation'
 import { WikiPageContent } from './WikiPageContent'
 
@@ -182,9 +182,9 @@ export function CodeWikiReader({ wiki, canConfigure = false, onConfigure }: Code
   // the request, and confirming it again would be asking about work already agreed.
   const [confirmingRegenerate, setConfirmingRegenerate] = useState(false)
   const [updateMode, setUpdateMode] = useState<'check' | 'full'>('check')
-  const [automaticOpen, setAutomaticOpen] = useState(false)
-  const [automaticPlan, setAutomaticPlan] = useState<CodeWikiAutomaticUpdate | null>(null)
-  const [automaticPlanLoadFailed, setAutomaticPlanLoadFailed] = useState(false)
+  const [scheduledUpdateOpen, setScheduledUpdateOpen] = useState(false)
+  const [scheduledUpdate, setScheduledUpdate] = useState<CodeWikiScheduledUpdate | null>(null)
+  const [scheduledUpdateLoadFailed, setScheduledUpdateLoadFailed] = useState(false)
   const [scrollHost, setScrollHost] = useState<HTMLElement | null>(null)
   // Whether the chat is still showing its empty state, reported by the page body as
   // it mounts and unmounts inside it. The chat replaces that state with the
@@ -215,22 +215,22 @@ export function CodeWikiReader({ wiki, canConfigure = false, onConfigure }: Code
   const runStatus = useCodeWikiRunStatus(wiki.id)
   const control = regenerateControl(runStatus.status, regenerating, t)
   const emptyState = emptyStateText(runStatus.status, t)
-  const automaticCadence = automaticPlan
-    ? automaticPlan.cadence === 'custom'
-      ? t('codeWiki.automatic.days', { days: automaticPlan.interval_days })
-      : t(`codeWiki.automatic.${automaticPlan.cadence}`)
+  const scheduledCadence = scheduledUpdate
+    ? scheduledUpdate.cadence === 'custom'
+      ? t('codeWiki.scheduledUpdate.days', { days: scheduledUpdate.interval_days })
+      : t(`codeWiki.scheduledUpdate.${scheduledUpdate.cadence}`)
     : ''
 
   useEffect(() => {
     if (!canConfigure) return
     codeWikiApi
-      .automaticUpdate(wiki.id)
+      .scheduledUpdate(wiki.id)
       .then(plan => {
-        setAutomaticPlan(plan)
-        setAutomaticPlanLoadFailed(false)
+        setScheduledUpdate(plan)
+        setScheduledUpdateLoadFailed(false)
       })
       .catch(error => {
-        setAutomaticPlanLoadFailed(true)
+        setScheduledUpdateLoadFailed(true)
         toast.error(error instanceof Error ? error.message : String(error))
       })
   }, [canConfigure, wiki.id])
@@ -388,7 +388,7 @@ export function CodeWikiReader({ wiki, canConfigure = false, onConfigure }: Code
                     knowledgeBaseId={wiki.id}
                     status={runStatus.status}
                     onRepublished={handleRepublished}
-                    automaticUpdateEnabled={automaticPlan?.enabled}
+                    scheduledUpdateEnabled={scheduledUpdate?.enabled}
                   />
                 </div>
                 <WikiNavigation
@@ -428,18 +428,18 @@ export function CodeWikiReader({ wiki, canConfigure = false, onConfigure }: Code
             {runStatus.status?.last_published_at ? t('codeWiki.reader.update') : control.label}
           </Button>
         )}
-        {(automaticPlan?.can_configure || automaticPlanLoadFailed) && (
+        {(scheduledUpdate?.can_configure || scheduledUpdateLoadFailed) && (
           <Button
             variant="outline"
             size="sm"
-            onClick={() => setAutomaticOpen(true)}
-            data-testid="code-wiki-automatic-update"
+            onClick={() => setScheduledUpdateOpen(true)}
+            data-testid="code-wiki-scheduled-update"
             className="h-11 sm:h-9"
           >
             <CalendarClock className="mr-1.5 h-4 w-4" />
-            {automaticPlan?.enabled
-              ? t('codeWiki.automatic.enabledCadence', { cadence: automaticCadence })
-              : t('codeWiki.automatic.button')}
+            {scheduledUpdate?.enabled
+              ? t('codeWiki.scheduledUpdate.enabledCadence', { cadence: scheduledCadence })
+              : t('codeWiki.scheduledUpdate.button')}
           </Button>
         )}
         {canConfigure && onConfigure && (
@@ -505,14 +505,14 @@ export function CodeWikiReader({ wiki, canConfigure = false, onConfigure }: Code
           </DialogContent>
         </Dialog>
       )}
-      {(automaticPlan?.can_configure || automaticPlanLoadFailed) && (
-        <AutomaticUpdateDialog
+      {(scheduledUpdate?.can_configure || scheduledUpdateLoadFailed) && (
+        <ScheduledUpdateDialog
           knowledgeBaseId={wiki.id}
-          open={automaticOpen}
-          onOpenChange={setAutomaticOpen}
+          open={scheduledUpdateOpen}
+          onOpenChange={setScheduledUpdateOpen}
           onSaved={plan => {
-            setAutomaticPlan(plan)
-            setAutomaticPlanLoadFailed(false)
+            setScheduledUpdate(plan)
+            setScheduledUpdateLoadFailed(false)
           }}
         />
       )}
@@ -530,7 +530,7 @@ export function CodeWikiReader({ wiki, canConfigure = false, onConfigure }: Code
               knowledgeBaseId={wiki.id}
               status={runStatus.status}
               onRepublished={handleRepublished}
-              automaticUpdateEnabled={automaticPlan?.enabled}
+              scheduledUpdateEnabled={scheduledUpdate?.enabled}
             />
           </div>
           {pages.length > 0 && (

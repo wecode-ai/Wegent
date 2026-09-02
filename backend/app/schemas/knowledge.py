@@ -500,7 +500,7 @@ class KnowledgeBaseUpdate(MultimodalAnalysisFieldsMixin):
         return v
 
 
-class CodeWikiScheduledUpdateRequest(BaseModel):
+class CodeWikiScheduledUpdateSettings(BaseModel):
     enabled: bool = True
     cadence: Literal["daily", "weekly", "biweekly", "four_weeks", "custom"] = "weekly"
     interval_days: int = Field(7, ge=1, le=365)
@@ -761,13 +761,13 @@ class CodeWikiRunResponse(BaseModel):
     task_id: int = Field(0, description="Task running the agent, when started")
 
 
-class CodeWikiAutomaticUpdateRequest(CodeWikiScheduledUpdateRequest):
+class CodeWikiScheduledUpdateRequest(CodeWikiScheduledUpdateSettings):
     """The future schedule for one Code Wiki."""
 
     enabled: bool = False
 
 
-class CodeWikiAutomaticUpdateExecution(BaseModel):
+class CodeWikiScheduledUpdateExecution(BaseModel):
     id: int
     status: str
     error_message: str = ""
@@ -776,7 +776,7 @@ class CodeWikiAutomaticUpdateExecution(BaseModel):
     created_at: datetime
 
 
-class CodeWikiAutomaticUpdate(BaseModel):
+class CodeWikiScheduledUpdate(BaseModel):
     can_configure: bool = False
     enabled: bool = False
     configured: bool = False
@@ -788,7 +788,7 @@ class CodeWikiAutomaticUpdate(BaseModel):
     timezone: str = "UTC"
     execution_principal_user_id: Optional[int] = None
     next_execution_time: Optional[datetime] = None
-    executions: List[CodeWikiAutomaticUpdateExecution] = Field(default_factory=list)
+    executions: List[CodeWikiScheduledUpdateExecution] = Field(default_factory=list)
 
 
 class CodeWikiRunRecord(BaseModel):

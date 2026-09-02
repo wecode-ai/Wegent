@@ -187,7 +187,7 @@ class SubscriptionKnowledgeBaseRef(BaseModel):
 
 
 class SubscriptionCodeWikiRef(BaseModel):
-    """Reference controlled by the Code Wiki automatic-update API."""
+    """Reference controlled by the Code Wiki scheduled-update API."""
 
     id: int = Field(..., gt=0, description="Knowledge base id")
 
@@ -517,7 +517,7 @@ class SubscriptionInDB(SubscriptionBase):
 
     id: int
     code_wiki_id: Optional[int] = Field(
-        None, description="Code Wiki id when this row is an automatic-update plan"
+        None, description="Code Wiki id when this row is a scheduled-update plan"
     )
     user_id: int
     namespace: str = "default"
