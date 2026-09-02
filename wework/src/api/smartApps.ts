@@ -60,8 +60,7 @@ export interface SmartAppAccess {
   targets: SmartAppAccessTarget[]
 }
 
-export interface SmartAppSubmissionMetadata {
-  smartAppId?: number
+interface SmartAppSubmissionMetadataBase {
   name: string
   displayName: string
   version: string
@@ -73,9 +72,22 @@ export interface SmartAppSubmissionMetadata {
   releaseNotes: string
   extensions?: Record<string, unknown>
   releaseExtensions?: Record<string, unknown>
-  scope?: 'private' | 'restricted' | 'public'
   targets: SmartAppAccessTarget[]
 }
+
+export interface SmartAppNewSubmissionMetadata extends SmartAppSubmissionMetadataBase {
+  smartAppId?: never
+  scope: 'restricted' | 'public'
+}
+
+export interface SmartAppExistingSubmissionMetadata extends SmartAppSubmissionMetadataBase {
+  smartAppId: number
+  scope?: 'private' | 'restricted' | 'public'
+}
+
+export type SmartAppSubmissionMetadata =
+  | SmartAppNewSubmissionMetadata
+  | SmartAppExistingSubmissionMetadata
 
 interface SmartAppSubmissionInitResponse {
   submissionId: number

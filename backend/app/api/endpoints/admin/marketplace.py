@@ -7,6 +7,7 @@
 from copy import deepcopy
 
 from fastapi import APIRouter, Depends, HTTPException, Path, Query, status
+from sqlalchemy import case
 from sqlalchemy.orm import Session
 from sqlalchemy.orm.attributes import flag_modified
 
@@ -274,30 +275,29 @@ async def list_marketplace_smart_apps(
     current_user: User = Depends(get_admin_user),
 ) -> AdminMarketplaceSmartAppList:
     """List official and user-published Smart apps visible to everyone."""
+    filters = (
+        SmartApp.status == "published",
+        SmartApp.visibility == "public",
+    )
+    total = db.query(SmartApp.id).filter(*filters).count()
     rows = (
         db.query(SmartApp, User.user_name)
         .outerjoin(User, User.id == SmartApp.owner_user_id)
-        .filter(
-            SmartApp.status == "published",
-            SmartApp.visibility == "public",
+        .filter(*filters)
+        .order_by(
+            SmartApp.featured_rank.desc(),
+            case((SmartApp.source_type == "official", 1), else_=0).desc(),
+            SmartApp.updated_at.desc(),
+            SmartApp.id.desc(),
         )
+        .offset((page - 1) * limit)
+        .limit(limit)
         .all()
     )
-    rows.sort(
-        key=lambda row: (
-            row[0].featured_rank,
-            row[0].source_type == "official",
-            row[0].updated_at,
-            row[0].id,
-        ),
-        reverse=True,
-    )
-    total = len(rows)
-    start = (page - 1) * limit
     return AdminMarketplaceSmartAppList(
         items=[
             _smart_app_response(app, publisher_user_name)
-            for app, publisher_user_name in rows[start : start + limit]
+            for app, publisher_user_name in rows
         ],
         total=total,
         page=page,

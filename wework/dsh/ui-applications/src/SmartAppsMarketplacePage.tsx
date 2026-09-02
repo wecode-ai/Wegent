@@ -2055,7 +2055,7 @@ function SmartAppShareDialog({
             <div className="mt-5 grid grid-cols-3 gap-2 rounded-xl bg-surface p-1">
               <button
                 type="button"
-                className={`h-10 rounded-lg ${scope === 'private' ? 'bg-background shadow-sm' : ''}`}
+                className={`h-11 rounded-lg ${scope === 'private' ? 'bg-background shadow-sm' : ''}`}
                 onClick={() => setScope('private')}
                 data-testid="smart-app-share-scope-private"
               >
@@ -2063,7 +2063,7 @@ function SmartAppShareDialog({
               </button>
               <button
                 type="button"
-                className={`h-10 rounded-lg ${scope === 'restricted' ? 'bg-background shadow-sm' : ''}`}
+                className={`h-11 rounded-lg ${scope === 'restricted' ? 'bg-background shadow-sm' : ''}`}
                 onClick={() => setScope('restricted')}
                 data-testid="smart-app-share-scope-restricted"
               >
@@ -2071,7 +2071,7 @@ function SmartAppShareDialog({
               </button>
               <button
                 type="button"
-                className={`h-10 rounded-lg ${scope === 'public' ? 'bg-background shadow-sm' : ''}`}
+                className={`h-11 rounded-lg ${scope === 'public' ? 'bg-background shadow-sm' : ''}`}
                 onClick={() => setScope('public')}
                 data-testid="smart-app-share-scope-public"
               >
@@ -2195,8 +2195,7 @@ function SmartAppPublishDialog({
     setPublishing(true)
     setError(null)
     try {
-      const metadata = {
-        smartAppId: item?.id,
+      const metadataBase = {
         name: manifest.name,
         displayName: manifest.displayName,
         version: manifest.version,
@@ -2206,9 +2205,14 @@ function SmartAppPublishDialog({
         iconDataUrl: await readDataUrl(icon),
         screenshotDataUrls: await Promise.all(screenshots.slice(0, 5).map(readDataUrl)),
         releaseNotes: notes,
-        scope: item ? undefined : scope,
-        targets: !item && scope === 'restricted' ? targets : [],
       }
+      const metadata = item
+        ? { ...metadataBase, smartAppId: item.id, targets: [] }
+        : {
+            ...metadataBase,
+            scope,
+            targets: scope === 'restricted' ? targets : [],
+          }
       if (installation) {
         const exported = await harnessAppsApi.export(installation.id)
         const initialized = await api.initSubmission(
@@ -2389,7 +2393,7 @@ function SmartAppPublishDialog({
               <div className="mt-2 grid grid-cols-2 gap-2 rounded-xl bg-surface p-1">
                 <button
                   type="button"
-                  className={`h-10 rounded-lg ${scope === 'restricted' ? 'bg-background shadow-sm' : ''}`}
+                  className={`h-11 rounded-lg ${scope === 'restricted' ? 'bg-background shadow-sm' : ''}`}
                   onClick={() => setScope('restricted')}
                   data-testid="smart-app-publish-scope-restricted"
                 >
@@ -2397,7 +2401,7 @@ function SmartAppPublishDialog({
                 </button>
                 <button
                   type="button"
-                  className={`h-10 rounded-lg ${scope === 'public' ? 'bg-background shadow-sm' : ''}`}
+                  className={`h-11 rounded-lg ${scope === 'public' ? 'bg-background shadow-sm' : ''}`}
                   onClick={() => setScope('public')}
                   data-testid="smart-app-publish-scope-public"
                 >

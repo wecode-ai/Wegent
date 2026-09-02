@@ -265,6 +265,10 @@ def test_admin_prioritizes_only_public_marketplace_smart_apps(
         "/api/admin/marketplace-smart-apps",
         headers=_headers(test_admin_token),
     )
+    second_page = test_client.get(
+        "/api/admin/marketplace-smart-apps?page=2&limit=1",
+        headers=_headers(test_admin_token),
+    )
 
     assert listed.status_code == 200
     assert [item["id"] for item in listed.json()["items"]] == [
@@ -278,4 +282,7 @@ def test_admin_prioritizes_only_public_marketplace_smart_apps(
         official.id,
         public_user_app.id,
     ]
+    assert second_page.status_code == 200
+    assert second_page.json()["total"] == 2
+    assert [item["id"] for item in second_page.json()["items"]] == [public_user_app.id]
     assert restricted.id not in {item["id"] for item in relisted.json()["items"]}
