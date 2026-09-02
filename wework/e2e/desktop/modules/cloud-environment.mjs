@@ -1136,7 +1136,7 @@ class RealCloudEnvironment {
   }
 
   async waitForDevice(deviceId, logPath) {
-    await this.waitForDeviceStatus(deviceId, 'online', logPath)
+    return this.waitForDeviceStatus(deviceId, 'online', logPath)
   }
 
   async waitForDeviceStatus(deviceId, expectedStatus, logPath) {
