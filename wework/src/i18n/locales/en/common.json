@@ -766,6 +766,7 @@
     "use_existing_folder_desc": "Choose one or more folders on the local device. Multiple folders form one project.",
     "add_remote_project_title": "New remote project",
     "add_remote_project_desc": "Choose a remote host, then open a directory, create a project, or clone a Git repository.",
+    "add_remote_project_desc_without_git": "Choose a remote host, then open a directory or create a project.",
     "cloud_work_title": "Cloud work",
     "cloud_work_desc": "Choose the directory that contains the project code. Future tasks run on the selected cloud device.",
     "cloud_work_connect_desc": "No cloud device is available yet. Run a connection script below on a cloud host or another computer.",

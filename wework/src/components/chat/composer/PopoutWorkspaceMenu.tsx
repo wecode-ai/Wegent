@@ -11,6 +11,7 @@ import {
 import { useCallback, useEffect, useMemo, useRef, useState, type RefObject } from 'react'
 import { createPortal } from 'react-dom'
 import { useTranslation } from '@/hooks/useTranslation'
+import { useGitPluginInstalled } from '@/features/dsh-runtime/gitPlugin'
 import { cn } from '@/lib/utils'
 import type { ProjectExecutionMode, ProjectWithTasks } from '@/types/api'
 import type { ProjectWorktreeAvailability } from '@/lib/worktree-availability'
@@ -95,6 +96,7 @@ export function PopoutWorkspaceMenu({
   onSelectProject,
 }: PopoutWorkspaceMenuProps) {
   const { t } = useTranslation('common')
+  const gitPluginInstalled = useGitPluginInstalled()
   const triggerRef = useRef<HTMLButtonElement>(null)
   const menuRef = useRef<HTMLDivElement>(null)
   const submenuRef = useRef<HTMLDivElement>(null)
@@ -252,7 +254,9 @@ export function PopoutWorkspaceMenu({
         {(
           [
             ['current_workspace', t('workbench.popout_workspace_menu_current_workspace')],
-            ['git_worktree', t('workbench.popout_workspace_menu_worktree')],
+            ...(gitPluginInstalled
+              ? ([['git_worktree', t('workbench.popout_workspace_menu_worktree')]] as const)
+              : []),
           ] as const
         ).map(([mode, label]) => {
           const modeDisabled =

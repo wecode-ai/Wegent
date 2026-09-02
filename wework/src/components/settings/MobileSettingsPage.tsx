@@ -19,6 +19,7 @@ import { useState } from 'react'
 import { AppearanceSettingsPage } from '@/features/appearance/AppearanceSettingsPage'
 import { ExperimentalBadge } from '@/features/experimental-features/ExperimentalBadge'
 import { useExperimentalFeaturesEnabled } from '@/features/experimental-features/useExperimentalFeaturesEnabled'
+import { useGitPluginInstalled } from '@/features/dsh-runtime/gitPlugin'
 import { SHOW_PLUGINS_NAVIGATION } from '@/features/plugins/visibility'
 import { useTranslation } from '@/hooks/useTranslation'
 import { GeneralSettingsPage } from './GeneralSettingsPage'
@@ -55,6 +56,7 @@ export function MobileSettingsPage({
   onRefreshWorkLists,
 }: MobileSettingsPageProps) {
   const { t } = useTranslation('common')
+  const gitPluginInstalled = useGitPluginInstalled()
   const experimentalFeaturesEnabled = useExperimentalFeaturesEnabled()
   const [activePage, setActivePage] = useState<
     | 'menu'
@@ -102,7 +104,7 @@ export function MobileSettingsPage({
     )
   }
 
-  if (activePage === 'git-hosting') {
+  if (activePage === 'git-hosting' && gitPluginInstalled) {
     return (
       <main
         data-testid="mobile-git-hosting-settings-page"
@@ -326,7 +328,7 @@ export function MobileSettingsPage({
     )
   }
 
-  if (activePage === 'worktrees') {
+  if (activePage === 'worktrees' && gitPluginInstalled) {
     return (
       <main
         data-testid="mobile-worktrees-settings-page"
@@ -621,28 +623,34 @@ export function MobileSettingsPage({
             <ChevronRight className="h-5 w-5 shrink-0 text-text-muted" />
           </button>
         ) : null}
-        <button
-          type="button"
-          data-testid="mobile-settings-git-hosting-button"
-          onClick={() => setActivePage('git-hosting')}
-          className="flex min-h-[56px] w-full items-center gap-3 rounded-2xl bg-surface px-4 text-left text-base font-medium text-text-primary hover:bg-muted"
-        >
-          <GitPullRequest className="h-5 w-5 shrink-0 text-text-secondary" />
-          <span className="min-w-0 flex-1 truncate">
-            {t('workbench.settings_nav_git_hosting', '代码托管')}
-          </span>
-          <ChevronRight className="h-5 w-5 shrink-0 text-text-muted" />
-        </button>
-        <button
-          type="button"
-          data-testid="mobile-settings-worktrees-button"
-          onClick={() => setActivePage('worktrees')}
-          className="flex min-h-[56px] w-full items-center gap-3 rounded-2xl bg-surface px-4 text-left text-base font-medium text-text-primary hover:bg-muted"
-        >
-          <FolderGit2 className="h-5 w-5 shrink-0 text-text-secondary" />
-          <span className="min-w-0 flex-1 truncate">{t('workbench.settings_nav_worktrees')}</span>
-          <ChevronRight className="h-5 w-5 shrink-0 text-text-muted" />
-        </button>
+        {gitPluginInstalled ? (
+          <>
+            <button
+              type="button"
+              data-testid="mobile-settings-git-hosting-button"
+              onClick={() => setActivePage('git-hosting')}
+              className="flex min-h-[56px] w-full items-center gap-3 rounded-2xl bg-surface px-4 text-left text-base font-medium text-text-primary hover:bg-muted"
+            >
+              <GitPullRequest className="h-5 w-5 shrink-0 text-text-secondary" />
+              <span className="min-w-0 flex-1 truncate">
+                {t('workbench.settings_nav_git_hosting', '代码托管')}
+              </span>
+              <ChevronRight className="h-5 w-5 shrink-0 text-text-muted" />
+            </button>
+            <button
+              type="button"
+              data-testid="mobile-settings-worktrees-button"
+              onClick={() => setActivePage('worktrees')}
+              className="flex min-h-[56px] w-full items-center gap-3 rounded-2xl bg-surface px-4 text-left text-base font-medium text-text-primary hover:bg-muted"
+            >
+              <FolderGit2 className="h-5 w-5 shrink-0 text-text-secondary" />
+              <span className="min-w-0 flex-1 truncate">
+                {t('workbench.settings_nav_worktrees')}
+              </span>
+              <ChevronRight className="h-5 w-5 shrink-0 text-text-muted" />
+            </button>
+          </>
+        ) : null}
         <button
           type="button"
           data-testid="mobile-settings-archived-conversations-button"

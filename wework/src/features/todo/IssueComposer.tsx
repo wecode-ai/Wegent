@@ -24,6 +24,7 @@ import { AttachmentBadges } from '@/components/chat/composer/AttachmentBadges'
 import { BufferedChatInput } from '@/components/layout/BufferedChatInput'
 import { WorkbenchHarnessSelector } from '@/components/layout/WorkbenchHarnessSelector'
 import { Tooltip } from '@/components/ui/tooltip'
+import { useGitPluginInstalled } from '@/features/dsh-runtime/gitPlugin'
 import { selectedModelExecutionFields } from '@/features/workbench/runtimeModelSelection'
 import { WorkbenchPaneContext } from '@/features/workbench/useWorkbench'
 import { useTranslation } from '@/hooks/useTranslation'
@@ -162,6 +163,7 @@ export function IssueComposer({
   onCancel,
   onCreate,
 }: IssueComposerProps) {
+  const gitPluginInstalled = useGitPluginInstalled()
   const { t } = useTranslation()
   const workbench = useContext(WorkbenchPaneContext)
   const initialMode = initialStartExecution ? 'task' : 'issue'
@@ -439,7 +441,7 @@ export function IssueComposer({
               runtime: 'codex',
               message: description,
               ...(selectedWorkspaceBinding ?? {}),
-              ...(executionMode === 'git_worktree'
+              ...(gitPluginInstalled && executionMode === 'git_worktree'
                 ? {
                     execution: {
                       workspace: {

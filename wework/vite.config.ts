@@ -122,6 +122,7 @@ export default defineConfig({
           'dsh/ui-core-settings/src/settings-page.tsx'
         ),
         'wework-ui-core-apps': path.resolve(__dirname, 'dsh/ui-core-apps/src/app-surface.tsx'),
+        'wework-ui-git-settings': path.resolve(__dirname, 'dsh/ui-git/src/settings-page.tsx'),
         'wework-ui-plugin-center-catalog': path.resolve(
           __dirname,
           'dsh/ui-plugin-center/src/catalog-route.tsx'

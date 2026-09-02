@@ -5,6 +5,7 @@ import type { CloudProject } from '@/api/deliveries'
 import type { RuntimeProfile } from '@/api/runtimeProfiles'
 import { MenuSelect } from '@/components/common/MenuSelect'
 import { CloudTodoModal } from '@/features/todo/CloudTodoModal'
+import { useGitPluginInstalled } from '@/features/dsh-runtime/gitPlugin'
 import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
 import { useTranslation } from '@/hooks/useTranslation'
 import { isSupportedModelFamily } from '@/lib/model-ui'
@@ -25,6 +26,7 @@ export function RuntimeSettingsPage({
   modelApi,
 }: RuntimeSettingsPageProps) {
   const { t } = useTranslation('common')
+  const gitPluginInstalled = useGitPluginInstalled()
   const [profiles, setProfiles] = useState<RuntimeProfile[]>([])
   const [projects, setProjects] = useState<CloudProject[]>([])
   const [projectDefaults, setProjectDefaults] = useState<Record<string, string>>({})
@@ -39,6 +41,8 @@ export function RuntimeSettingsPage({
   const [deviceId, setDeviceId] = useState('')
   const [model, setModel] = useState('')
   const [workspacePolicy, setWorkspacePolicy] = useState<'project' | 'git_worktree'>('project')
+  const effectiveWorkspacePolicy =
+    gitPluginInstalled && workspacePolicy === 'git_worktree' ? 'git_worktree' : 'project'
 
   const load = useCallback(async () => {
     if (!runtimeProfileApi) return
@@ -108,7 +112,7 @@ export function RuntimeSettingsPage({
         executionEnvironment: environment,
         executionDeviceId: deviceId,
         model,
-        workspacePolicy,
+        workspacePolicy: effectiveWorkspacePolicy,
       })
       await load()
       setCreating(false)
@@ -278,17 +282,21 @@ export function RuntimeSettingsPage({
             />
             <MenuSelect
               testId="runtime-profile-workspace"
-              value={workspacePolicy}
+              value={effectiveWorkspacePolicy}
               onChange={value => setWorkspacePolicy(value as 'project' | 'git_worktree')}
               options={[
                 {
                   value: 'project',
                   label: t('workbench.runtime_profile_workspace_project'),
                 },
-                {
-                  value: 'git_worktree',
-                  label: t('workbench.runtime_profile_workspace_worktree'),
-                },
+                ...(gitPluginInstalled
+                  ? [
+                      {
+                        value: 'git_worktree',
+                        label: t('workbench.runtime_profile_workspace_worktree'),
+                      },
+                    ]
+                  : []),
               ]}
             />
             {error ? <p className="text-xs text-destructive">{error}</p> : null}

@@ -243,6 +243,7 @@ function installDefaultDshUiTestRuntime() {
   const entries = new Map<string, readonly WeworkDshSlotEntry[]>([
     [WEWORK_DSH_SLOTS.action, testActions],
     [WEWORK_DSH_SLOTS.app, testApps],
+    [WEWORK_DSH_SLOTS.git, [{ id: 'git' }]],
     [WEWORK_DSH_SLOTS.settingsPage, testSettings],
     [WEWORK_DSH_SLOTS.route, []],
     [WEWORK_DSH_SLOTS.sidebarNavigation, testSidebarNavigation],
@@ -265,6 +266,7 @@ function installDefaultDshUiTestModules() {
       import('../../dsh/ui-cloud-work/src/sidebar-navigation'),
     'plugins/wework-ui-core-settings.js': () =>
       import('../../dsh/ui-core-settings/src/settings-page'),
+    'plugins/wework-ui-git-settings.js': () => import('../../dsh/ui-git/src/settings-page'),
     'plugins/wework-ui-core-apps.js': () => import('../../dsh/ui-core-apps/src/app-surface'),
     'plugins/wework-ui-plugin-center-catalog.js': {
       default: () => null,

@@ -2,6 +2,7 @@ import { useMemo, type ReactNode } from 'react'
 import type { ProjectWorkControls } from '@/components/chat/ChatInput'
 import { useWorkbenchPaneEnvironment } from '@/components/layout/useWorkbenchPaneEnvironment'
 import { useWorkbenchProjectWorkControls } from '@/components/layout/useWorkbenchProjectWorkControls'
+import { useGitPluginInstalled } from '@/features/dsh-runtime/gitPlugin'
 import { useWorkbenchPaneContext } from '@/features/workbench/useWorkbench'
 import { findRuntimeTaskWorkspace } from '@/features/workbench/workbenchRuntimeHelpers'
 import { runtimeProjectUiId } from '@/lib/runtime-project'
@@ -32,6 +33,7 @@ export function ConnectedIssueProjectWork({
   inheritFromTask = null,
   children,
 }: ConnectedIssueProjectWorkProps) {
+  const gitPluginInstalled = useGitPluginInstalled()
   const { state } = useWorkbenchPaneContext()
   const resolvedProject = useMemo<ProjectWithTasks>(() => {
     const stateProject = state.projects.find(candidate => candidate.id === project.id) ?? project
@@ -84,11 +86,12 @@ export function ConnectedIssueProjectWork({
       currentProjectId: resolvedProject.id,
       selectedDeviceWorkspaceId,
       pendingProjectWorkspaceProjectId: null,
-      executionMode:
-        executionMode ??
-        (inheritedWorkspace?.workspaceKind === 'worktree' || inheritedWorkspace?.worktreeId
-          ? 'git_worktree'
-          : projectWork.executionMode),
+      executionMode: gitPluginInstalled
+        ? (executionMode ??
+          (inheritedWorkspace?.workspaceKind === 'worktree' || inheritedWorkspace?.worktreeId
+            ? 'git_worktree'
+            : projectWork.executionMode))
+        : 'current_workspace',
       worktreeBranch: worktreeBranch ?? projectWork.worktreeBranch,
       isGitProject: true,
       showProjectClearButton: false,
@@ -101,6 +104,7 @@ export function ConnectedIssueProjectWork({
       inheritedWorkspace?.workspaceKind,
       inheritedWorkspace?.worktreeId,
       executionMode,
+      gitPluginInstalled,
       onSelectProject,
       onSelectProjectWorkspace,
       onExecutionModeChange,

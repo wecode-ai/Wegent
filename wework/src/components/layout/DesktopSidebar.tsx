@@ -54,6 +54,7 @@ import { AppReleaseNotesDialog } from '@/features/app-update/AppReleaseNotesDial
 import { useOptionalAppUpdate } from '@/features/app-update/app-update-context'
 import type { WeworkInstalledReleaseNotes } from '@/features/app-update/app-release-notes'
 import type { WeworkDshSidebarNavigationItem } from '@/features/dsh-runtime/dshSidebarNavigation'
+import { useChangeRequestStatusEnabled } from '@/features/dsh-runtime/gitPlugin'
 import { DshIcon } from '@/features/dsh-runtime/DshIcon'
 import { WEWORK_DSH_SLOTS } from '@/features/dsh-runtime/dshUiSlots'
 import { useDshSlotEntries } from '@/features/dsh-runtime/useDshSlotEntries'
@@ -1454,6 +1455,7 @@ function RuntimeTaskRow({
   const [forceStarting, setForceStarting] = useState(false)
   const [queueReordering, setQueueReordering] = useState(false)
   const [repairingChangeRequest, setRepairingChangeRequest] = useState(false)
+  const changeRequestStatusEnabled = useChangeRequestStatusEnabled()
   const workbench = useContext(WorkbenchContext)
   const [taskMenuPosition, setTaskMenuPosition] = useState<ProjectCreateMenuPosition | null>(null)
   const archiveDelayRef = useRef<number | null>(null)
@@ -1492,7 +1494,10 @@ function RuntimeTaskRow({
       workbench?.services?.deviceApi ? getChangeRequestMonitor(workbench.services.deviceApi) : null,
     [workbench]
   )
-  const changeRequestSnapshot = useTaskChangeRequest(changeRequestMonitor, changeRequestTarget)
+  const changeRequestSnapshot = useTaskChangeRequest(
+    changeRequestStatusEnabled ? changeRequestMonitor : null,
+    changeRequestStatusEnabled ? changeRequestTarget : null
+  )
   const taskLifecycle = useRuntimeTaskLifecycle(taskAddress)
   const queuePaused = useRuntimeTaskQueuePaused(taskAddress)
   const queued = isRuntimeTaskQueued(task)

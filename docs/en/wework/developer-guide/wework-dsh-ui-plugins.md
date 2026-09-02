@@ -52,6 +52,7 @@ resident model directory and keeps the Wework surface stable.
 | ------------------------------ | ---------------------------------------- | --------------------------------- | -------------------------- |
 | `wework.action`                | Host-invoked navigation action           | `id`, `path`                      | No component               |
 | `wework.app`                   | Product switcher and app surface         | `id`, `label`, `mode`             | `visible`, `tab`           |
+| `wework.git`                   | Git and code-hosting capability          | `id`, `commands`, `surfaces`      | No component               |
 | `wework.route`                 | Top-level auxiliary page                 | `id`, `path`, `telemetryFeature`  | `search`, `onNavigate`     |
 | `wework.sidebar.navigation`    | Left-sidebar navigation entry            | `id`, `path`, `label`             | Usually metadata-only      |
 | `wework.settings.page`         | Settings navigation and content          | `id`, `path`, `label`, `category` | Settings context, `onBack` |
@@ -176,6 +177,7 @@ Wework bundles these UI plugins with Core DSH:
 - `@wegent/dsh-ui-applications`
 - `@wegent/dsh-ui-automations`
 - `@wegent/dsh-ui-cloud-work`
+- `@wegent/dsh-ui-git`
 
 They use the same slot protocol as third-party plugins. A first-party plugin
 may declare a private Wework `component` id in its contribution descriptor so
@@ -183,6 +185,16 @@ the existing page implementation is rendered inside the Wework React tree and
 inherits Auth, Cloud, and Workbench contexts. Third-party plugins must not use
 this field; they should pass their own React component as the fourth argument
 to `ctx.wework.ui.register`.
+
+`@wegent/dsh-ui-git` uses `wework.git` to declare repositories, branches,
+worktrees, changes review, commit and push actions, plus pull or merge request
+status in task rows, the environment panel, and project boards. It also owns the
+Git hosting and Worktrees settings pages. The host exposes Git project creation,
+Git execution modes, and Git command calls only while this contribution is
+alive. When the plugin is disabled or absent, task requests are forced to the
+current workspace, status polling stops, and the related controls and settings
+pages disappear. A Wework installation that does not use this plugin therefore
+does not itself require `git`, `gh`, or `glab` on the machine.
 
 ## Plugin sync and fingerprint-based reload
 

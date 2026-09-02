@@ -72,6 +72,7 @@ import type {
   ArchiveRuntimeTaskOptions,
   ArchiveRuntimeTaskResult,
 } from '@/features/workbench/workbenchContextTypes'
+import { useChangeRequestStatusEnabled } from '@/features/dsh-runtime/gitPlugin'
 import type {
   DeliveryApi,
   ProjectSpaceLocation,
@@ -1110,9 +1111,13 @@ export function CloudTodoWorkspace({
 }: CloudTodoWorkspaceProps) {
   const { t } = useTranslation('common')
   const workbench = useContext(WorkbenchContext)
+  const changeRequestStatusEnabled = useChangeRequestStatusEnabled()
   const changeRequestMonitor = useMemo(
-    () => (services.deviceApi ? getChangeRequestMonitor(services.deviceApi) : null),
-    [services.deviceApi]
+    () =>
+      changeRequestStatusEnabled && services.deviceApi
+        ? getChangeRequestMonitor(services.deviceApi)
+        : null,
+    [changeRequestStatusEnabled, services.deviceApi]
   )
   const projectSpaceApis = useMemo(() => {
     if (services.projectSpaceApis) return services.projectSpaceApis

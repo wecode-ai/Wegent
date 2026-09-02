@@ -126,6 +126,7 @@ describe('core DSH runtime', () => {
         '@wegent/dsh-ui-applications': expect.stringContaining('wework-ui-applications'),
         '@wegent/dsh-ui-automations': expect.stringContaining('wework-ui-automations'),
         '@wegent/dsh-ui-cloud-work': expect.stringContaining('wework-ui-cloud-work'),
+        '@wegent/dsh-ui-git': expect.stringContaining('wework-ui-git'),
       },
       dsh: {
         profile: {
@@ -144,6 +145,7 @@ describe('core DSH runtime', () => {
             '@wegent/dsh-ui-applications',
             '@wegent/dsh-ui-automations',
             '@wegent/dsh-ui-cloud-work',
+            '@wegent/dsh-ui-git',
           ],
         },
       },
@@ -199,6 +201,9 @@ describe('core DSH runtime', () => {
     ).resolves.toBe('{}')
     await expect(
       readFile(join(profileModules, 'dsh-ui-cloud-work', 'package.json'), 'utf8')
+    ).resolves.toBe('{}')
+    await expect(
+      readFile(join(profileModules, 'dsh-ui-git', 'package.json'), 'utf8')
     ).resolves.toBe('{}')
     await root.remove()
   })
@@ -746,6 +751,7 @@ async function writeRuntime(
       ['@wegent/dsh-ui-applications', 'wework-ui-applications'],
       ['@wegent/dsh-ui-automations', 'wework-ui-automations'],
       ['@wegent/dsh-ui-cloud-work', 'wework-ui-cloud-work'],
+      ['@wegent/dsh-ui-git', 'wework-ui-git'],
     ].map(([packageName, directory]) => [packageName, join(pluginsRoot, directory)])
   )
   await mkdir(join(packageRoot, 'lib'), { recursive: true })

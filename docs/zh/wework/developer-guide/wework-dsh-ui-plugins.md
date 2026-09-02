@@ -42,6 +42,7 @@ Core DSH 中仍有效的现有默认模型应在目录同步后保留；只有�
 | ------------------------------ | ---------------------------- | --------------------------------- | ------------------------- |
 | `wework.action`                | 可由宿主入口调用的导航动作   | `id`、`path`                      | 无组件                    |
 | `wework.app`                   | 产品切换器与应用 surface     | `id`、`label`、`mode`             | `visible`、`tab`          |
+| `wework.git`                   | Git 与代码托管能力           | `id`、`commands`、`surfaces`      | 无组件                    |
 | `wework.route`                 | 顶层辅助页面                 | `id`、`path`、`telemetryFeature`  | `search`、`onNavigate`    |
 | `wework.sidebar.navigation`    | 左侧边栏导航入口             | `id`、`path`、`label`             | 元数据入口通常无组件      |
 | `wework.settings.page`         | 设置导航与设置内容           | `id`、`path`、`label`、`category` | 设置上下文与 `onBack`     |
@@ -158,11 +159,19 @@ Wework 当前随 Core DSH 打包以下 UI 插件：
 - `@wegent/dsh-ui-applications`
 - `@wegent/dsh-ui-automations`
 - `@wegent/dsh-ui-cloud-work`
+- `@wegent/dsh-ui-git`
 
 这些包与第三方插件使用相同的 slot 协议。内置插件可以在 contribution 描述中
 声明 Wework 私有的 `component` id，由 Wework React 树渲染已有页面实现，以继承
 Auth、Cloud、Workbench 等宿主 Context。第三方插件不应使用该字段，应把自己的
 React 组件传给 `ctx.wework.ui.register` 的第四个参数。
+
+`@wegent/dsh-ui-git` 通过 `wework.git` 一次性声明 Git 仓库、分支、Worktree、
+变更审查、提交与推送，以及左侧任务栏、环境面板和项目看板中的 PR / MR 状态。
+插件还独立贡献“代码托管”和“工作树”设置页。宿主只在该 contribution 存活时
+开放 Git 项目创建、Git 执行模式和相关命令调用；禁用或不安装插件时，任务请求会
+强制使用当前工作区，Git 状态轮询停止，相关入口和设置页同时消失。因而不使用该
+插件的 Wework 安装本身不要求机器提供 `git`、`gh` 或 `glab` 命令。
 
 ## 插件同步与指纹重载
 

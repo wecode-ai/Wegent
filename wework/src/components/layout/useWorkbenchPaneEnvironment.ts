@@ -1,5 +1,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { ProjectWorkControls } from '@/components/chat/ChatInput'
+import {
+  useChangeRequestStatusEnabled,
+  useGitPluginInstalled,
+} from '@/features/dsh-runtime/gitPlugin'
 import { useWorkbenchPaneContext } from '@/features/workbench/useWorkbench'
 import {
   getChangeRequestMonitor,
@@ -119,6 +123,8 @@ export function useWorkbenchPaneEnvironment({
     createEnvironmentBranch,
   } = useWorkbenchPaneContext()
   const runtimeWorkApi = services?.runtimeWorkApi
+  const gitPluginInstalled = useGitPluginInstalled()
+  const changeRequestStatusEnabled = useChangeRequestStatusEnabled()
   const [environmentInfo, setEnvironmentInfo] = useState<EnvironmentInfo>({
     additions: '',
     deletions: '',
@@ -154,8 +160,8 @@ export function useWorkbenchPaneEnvironment({
     [services?.deviceApi]
   )
   const sharedChangeRequestSnapshot = useTaskChangeRequest(
-    changeRequestMonitor,
-    currentChangeRequestTarget
+    changeRequestStatusEnabled ? changeRequestMonitor : null,
+    changeRequestStatusEnabled ? currentChangeRequestTarget : null
   )
   const activeConversationProject = currentProject ?? runtimeWorkspaceContext?.project ?? null
   const selectedWorkspaceProject = resolveSelectedWorkspaceProject({
@@ -207,6 +213,7 @@ export function useWorkbenchPaneEnvironment({
 
   useEffect(() => {
     if (
+      !gitPluginInstalled ||
       currentRuntimeTask ||
       !selectedWorkspaceProject ||
       !selectedProjectDeviceWorkspace ||
@@ -236,6 +243,7 @@ export function useWorkbenchPaneEnvironment({
     }
   }, [
     currentRuntimeTask,
+    gitPluginInstalled,
     projectWork.worktreeBranch,
     selectedProjectDeviceWorkspace,
     selectedWorkspaceProject,
@@ -316,9 +324,11 @@ export function useWorkbenchPaneEnvironment({
     environmentInfo.workspacePath === activeWorkspaceTarget.path &&
     environmentInfo.deviceId === activeWorkspaceTarget.deviceId
   )
-  const isGitProject = environmentMatchesActiveWorkspace
-    ? environmentInfo.isGitRepository !== false
-    : Boolean(workspaceProject && isGitWorkspaceProject(workspaceProject))
+  const isGitProject =
+    gitPluginInstalled &&
+    (environmentMatchesActiveWorkspace
+      ? environmentInfo.isGitRepository !== false
+      : Boolean(workspaceProject && isGitWorkspaceProject(workspaceProject)))
   const workspaceProjectKey = workspaceProject ? String(workspaceProject.id) : ''
   const activeConversationProjectKey = activeConversationProject
     ? String(activeConversationProject.id)
@@ -332,7 +342,8 @@ export function useWorkbenchPaneEnvironment({
   const hasEnvironmentProject = Boolean(workspaceProject)
   const environmentWorkspaceReady = !hasEnvironmentProject || Boolean(activeWorkspaceTarget)
   const gitActionsAvailable =
-    !environmentMatchesActiveWorkspace || environmentInfo.isGitRepository !== false
+    gitPluginInstalled &&
+    (!environmentMatchesActiveWorkspace || environmentInfo.isGitRepository !== false)
 
   useEffect(() => {
     environmentContextRef.current = { workspaceProject, activeWorkspaceTarget }
@@ -425,6 +436,19 @@ export function useWorkbenchPaneEnvironment({
         environmentWorkspaceReady,
       })
 
+      if (!gitPluginInstalled) {
+        setEnvironmentInfo({
+          additions: '',
+          deletions: '',
+          executionTarget: 'local',
+          isGitRepository: false,
+          loading: false,
+          branchLoading: false,
+        })
+        logLoad('git_plugin_unavailable')
+        return
+      }
+
       if (workspaceTargetResolving) {
         if (showLoading) {
           setEnvironmentInfo(info => ({ ...info, loading: true, branchLoading: true }))
@@ -506,7 +530,10 @@ export function useWorkbenchPaneEnvironment({
               ...(preserveCurrentFields && !info.deletions && current.deletions
                 ? { deletions: current.deletions }
                 : {}),
-              ...(preserveCurrentFields && !info.changeRequest && current.changeRequest
+              ...(preserveCurrentFields &&
+              changeRequestStatusEnabled &&
+              !info.changeRequest &&
+              current.changeRequest
                 ? { changeRequest: current.changeRequest }
                 : {}),
               workspaceRoots,
@@ -528,6 +555,7 @@ export function useWorkbenchPaneEnvironment({
           latestActiveWorkspaceTarget,
           {
             ...(force ? { force: true } : {}),
+            changeRequestStatusEnabled,
             onPartialInfo: partialInfo => applyEnvironmentInfo(partialInfo, true),
           }
         )
@@ -549,8 +577,10 @@ export function useWorkbenchPaneEnvironment({
     [
       activeWorkspaceTarget?.deviceId,
       activeWorkspaceTarget?.path,
+      changeRequestStatusEnabled,
       currentRuntimeTask,
       environmentWorkspaceReady,
+      gitPluginInstalled,
       loadEnvironmentInfo,
       workspaceRoots,
       workspaceTargetError,
@@ -561,9 +591,11 @@ export function useWorkbenchPaneEnvironment({
   const refreshEnvironmentInfo = useCallback(async () => {
     await Promise.all([
       loadCurrentEnvironmentInfo({ force: true, showLoading: true }),
-      changeRequestMonitor?.refresh({ shareInflight: false }),
+      changeRequestStatusEnabled
+        ? changeRequestMonitor?.refresh({ shareInflight: false })
+        : undefined,
     ])
-  }, [changeRequestMonitor, loadCurrentEnvironmentInfo])
+  }, [changeRequestMonitor, changeRequestStatusEnabled, loadCurrentEnvironmentInfo])
 
   useEffect(() => {
     if (!activeConversationProjectKey && !currentRuntimeTaskKey) return

@@ -10,6 +10,7 @@ const packages = [
   'ui-applications',
   'ui-automations',
   'ui-cloud-work',
+  'ui-git',
 ]
 
 async function loadPlugin(packageName) {
@@ -93,7 +94,7 @@ test('core apps are contributed through wework.app', async () => {
 test('core settings are metadata-driven DSH pages', async () => {
   const { injections, registrations } = await registrationsOf('ui-core-settings')
   assert.deepEqual(injections, ['wework.settings.page'])
-  assert.equal(registrations.length, 20)
+  assert.equal(registrations.length, 18)
   assert.equal(registrations[0].component.wework.path, '/settings')
   assert.equal(registrations[0].component.wework.module, 'plugins/wework-ui-core-settings.js')
   assert.equal(registrations.at(-1).component.wework.module, 'plugins/wework-ui-core-settings.js')
@@ -137,4 +138,24 @@ test('first-party route packages own their routes and sidebar navigation', async
   assert.ok(routes.every(entry => typeof entry.component.wework.title === 'string'))
   assert.ok(routes.every(entry => !('component' in entry.component.wework)))
   assert.ok(registrations.every(entry => !('path' in entry.options)))
+})
+
+test('Git commands and UI are contributed as one DSH-managed capability', async () => {
+  const { injections, registrations } = await registrationsOf('ui-git')
+  assert.deepEqual(injections, ['wework.git', 'wework.settings.page'])
+  assert.equal(registrations.length, 3)
+  assert.equal(registrations[0].options.id, 'git')
+  assert.deepEqual(Array.from(registrations[0].component.wework.surfaces), [
+    'repositories',
+    'worktrees',
+    'sidebar',
+    'environment',
+    'changes-review',
+    'board',
+  ])
+  assert.deepEqual(Array.from(registrations[0].component.wework.commands), ['git', 'gh', 'glab'])
+  assert.deepEqual(
+    registrations.slice(1).map(entry => entry.options.id),
+    ['git-hosting', 'worktrees']
+  )
 })

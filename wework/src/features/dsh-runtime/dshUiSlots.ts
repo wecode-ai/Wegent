@@ -1,6 +1,7 @@
 export const WEWORK_DSH_SLOTS = {
   action: 'wework.action',
   app: 'wework.app',
+  git: 'wework.git',
   route: 'wework.route',
   settingsPage: 'wework.settings.page',
   sidebarNavigation: 'wework.sidebar.navigation',

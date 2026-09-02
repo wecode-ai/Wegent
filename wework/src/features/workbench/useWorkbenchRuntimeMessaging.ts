@@ -24,6 +24,7 @@ import {
 import { notifyMainRuntimeWorkChanged } from '@/desktop/runtimeWorkSync'
 import type { AppPreferences } from '@/desktop/appPreferences'
 import { useAppPreferencesState } from '@/features/app-preferences/useAppPreferencesState'
+import { useGitPluginInstalled } from '@/features/dsh-runtime/gitPlugin'
 import {
   findWorkbenchDevice,
   getActiveWorkbenchDeviceId,
@@ -102,7 +103,7 @@ export function buildRuntimeTaskCreateHandle(
   }
 }
 
-interface PreparedRuntimeTaskIntent {
+export interface PreparedRuntimeTaskIntent {
   projectId: number | null
   message: string
   title?: string
@@ -113,6 +114,19 @@ interface PreparedRuntimeTaskIntent {
   attachmentIds?: number[]
   attachments?: Attachment[]
   execution?: RuntimeTaskCreateRequest['execution']
+}
+
+export function runtimeIntentForGitPlugin(
+  intent: PreparedRuntimeTaskIntent,
+  gitPluginInstalled: boolean
+): PreparedRuntimeTaskIntent {
+  if (gitPluginInstalled || intent.execution?.workspace?.source !== 'git_worktree') {
+    return intent
+  }
+  return {
+    ...intent,
+    execution: undefined,
+  }
 }
 import { getDesktopE2ERuntimeConfig } from '@/e2e/runtime-config'
 import type { WorkbenchServices } from './workbenchServices'
@@ -383,6 +397,7 @@ export function useWorkbenchRuntimeMessaging({
   refreshWorkLists,
 }: UseWorkbenchRuntimeMessagingOptions) {
   const appPreferences = useAppPreferencesState()
+  const gitPluginInstalled = useGitPluginInstalled()
   const preferences = appPreferences?.preferences
   const reportError = useCallback(
     (error: string, options?: RuntimePaneActionOptions) => {
@@ -847,7 +862,7 @@ export function useWorkbenchRuntimeMessaging({
       const selectedModelOptions =
         modelSelection.getSelectedModelOptions?.() ?? modelSelection.selectedModelOptions
 
-      if (activeProject && projectExecutionMode === 'git_worktree') {
+      if (gitPluginInstalled && activeProject && projectExecutionMode === 'git_worktree') {
         const branch = projectWorktreeBranch?.trim()
         intent.execution = {
           workspace: {
@@ -899,6 +914,7 @@ export function useWorkbenchRuntimeMessaging({
     },
     [
       attachmentSelection.attachments,
+      gitPluginInstalled,
       isOptionsLocked,
       modelSelection,
       projectExecutionMode,
@@ -946,10 +962,12 @@ export function useWorkbenchRuntimeMessaging({
         taskCreateRequest?: RuntimeTaskCreateRequest | null
       }
     ): Promise<RuntimeTaskAddress | false> => {
+      intent = runtimeIntentForGitPlugin(intent, gitPluginInstalled)
       const launchStartedAt = options?.launchStartedAt ?? runtimeLaunchNowMs()
       const sourceBlankChatKey = state.currentRuntimeTask ? null : state.standaloneChatKey
       const projectId = intent.projectId
-      const requestedWorktree = intent.execution?.workspace?.source === 'git_worktree'
+      const requestedWorktree =
+        gitPluginInstalled && intent.execution?.workspace?.source === 'git_worktree'
       const hasOverrideSelection = Boolean(
         options && Object.prototype.hasOwnProperty.call(options, 'modelSelection')
       )
@@ -1551,6 +1569,7 @@ export function useWorkbenchRuntimeMessaging({
       preferences,
       dispatch,
       executorClient,
+      gitPluginInstalled,
       lifecycleStore,
       modelSelection,
       refreshWorkLists,

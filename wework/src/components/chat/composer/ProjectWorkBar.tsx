@@ -22,6 +22,7 @@ import {
 } from 'react'
 import { createPortal } from 'react-dom'
 import { BranchSelector } from '@/components/common/BranchSelector'
+import { useGitPluginInstalled } from '@/features/dsh-runtime/gitPlugin'
 import { ProjectFolderIcon } from '@/components/projects/ProjectFolderIcon'
 import { useIsMobile } from '@/hooks/useIsMobile'
 import { useTranslation } from '@/hooks/useTranslation'
@@ -159,6 +160,7 @@ export function ProjectWorkBar({
   endContext,
 }: ProjectWorkBarProps) {
   const { t } = useTranslation('common')
+  const gitPluginInstalled = useGitPluginInstalled()
   const isMobile = useIsMobile()
   const containerRef = useRef<HTMLDivElement>(null)
   const menuRef = useRef<HTMLDivElement>(null)
@@ -510,6 +512,7 @@ export function ProjectWorkBar({
 
   const handleExecutionModeChange = (mode: ProjectExecutionMode) => {
     if (executionModeLocked) return
+    if (mode === 'git_worktree' && !gitPluginInstalled) return
     if (mode === 'git_worktree' && !resolvedWorktreeAvailability.available) return
     if (mode !== executionMode) {
       onExecutionModeChange(mode)
@@ -1072,26 +1075,28 @@ export function ProjectWorkBar({
                   </span>
                   {executionMode === 'current_workspace' && <Check className="h-4 w-4 shrink-0" />}
                 </button>
-                <button
-                  type="button"
-                  data-testid="execution-mode-git-worktree-button"
-                  disabled={executionModeLocked || !resolvedWorktreeAvailability.available}
-                  onClick={() => handleExecutionModeChange('git_worktree')}
-                  className={cn(
-                    'flex h-9 w-full items-center gap-3 rounded-lg px-2 text-left text-sm font-medium leading-[18px] disabled:cursor-not-allowed disabled:opacity-60',
-                    isMobile && 'h-14 rounded-2xl bg-surface px-4 text-base leading-5',
-                    executionMode === 'git_worktree'
-                      ? 'text-text-primary'
-                      : 'text-text-secondary hover:bg-muted'
-                  )}
-                >
-                  <GitBranch className="h-4 w-4 shrink-0" />
-                  <span className="min-w-0 flex-1">
-                    {t('workbench.execution_mode_git_worktree', '新工作树')}
-                  </span>
-                  {executionMode === 'git_worktree' && <Check className="h-4 w-4 shrink-0" />}
-                </button>
-                {worktreeUnavailableMessage && (
+                {gitPluginInstalled ? (
+                  <button
+                    type="button"
+                    data-testid="execution-mode-git-worktree-button"
+                    disabled={executionModeLocked || !resolvedWorktreeAvailability.available}
+                    onClick={() => handleExecutionModeChange('git_worktree')}
+                    className={cn(
+                      'flex h-9 w-full items-center gap-3 rounded-lg px-2 text-left text-sm font-medium leading-[18px] disabled:cursor-not-allowed disabled:opacity-60',
+                      isMobile && 'h-14 rounded-2xl bg-surface px-4 text-base leading-5',
+                      executionMode === 'git_worktree'
+                        ? 'text-text-primary'
+                        : 'text-text-secondary hover:bg-muted'
+                    )}
+                  >
+                    <GitBranch className="h-4 w-4 shrink-0" />
+                    <span className="min-w-0 flex-1">
+                      {t('workbench.execution_mode_git_worktree', '新工作树')}
+                    </span>
+                    {executionMode === 'git_worktree' && <Check className="h-4 w-4 shrink-0" />}
+                  </button>
+                ) : null}
+                {gitPluginInstalled && worktreeUnavailableMessage && (
                   <p
                     data-testid="execution-mode-worktree-unavailable-reason"
                     className="px-2 pt-1 text-xs leading-4 text-text-muted"
@@ -1127,6 +1132,7 @@ export function ProjectWorkBar({
         </div>
       )}
       {currentProject &&
+        gitPluginInstalled &&
         projectExecutionUi.displayedMode === 'current_workspace' &&
         !executionModeLocked &&
         desktopIsGitProject &&
@@ -1146,6 +1152,7 @@ export function ProjectWorkBar({
           />
         )}
       {currentProject &&
+        gitPluginInstalled &&
         projectExecutionUi.supportsWorktree &&
         projectExecutionUi.displayedMode === 'git_worktree' &&
         !executionModeLocked &&

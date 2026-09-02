@@ -8,9 +8,35 @@ import {
   resolveRuntimeTaskCreateWorkspacePath,
   runtimeExecutablePathForTarget,
   resolveTemporaryChatSource,
+  runtimeIntentForGitPlugin,
   runtimeThreadId,
   titleModelForGeneration,
 } from './useWorkbenchRuntimeMessaging'
+
+describe('runtimeIntentForGitPlugin', () => {
+  const worktreeIntent = {
+    projectId: 1,
+    message: 'Implement the change',
+    execution: {
+      workspace: {
+        source: 'git_worktree' as const,
+        branch: 'feature/example',
+      },
+    },
+  }
+
+  test('keeps Git worktree execution while the plugin is installed', () => {
+    expect(runtimeIntentForGitPlugin(worktreeIntent, true)).toBe(worktreeIntent)
+  })
+
+  test('removes stale Git worktree execution while the plugin is absent', () => {
+    expect(runtimeIntentForGitPlugin(worktreeIntent, false)).toEqual({
+      projectId: 1,
+      message: 'Implement the change',
+      execution: undefined,
+    })
+  })
+})
 
 describe('buildRuntimeTaskCreateHandle', () => {
   test('keeps board ownership in the optimistic runtime address', () => {
