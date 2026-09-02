@@ -62,6 +62,10 @@ from app.services.knowledge.code_wiki.repo_state import read_repository_state
 from app.services.knowledge.code_wiki.run_mode import ChangedPath, RunMode
 from app.services.knowledge.code_wiki.side_effects import build_projection_side_effects
 from app.services.knowledge.code_wiki.source import SourceRepository
+from app.services.knowledge.code_wiki.version_store import (
+    BACKGROUND_EXECUTION_EXT_KEY,
+    BACKGROUND_EXECUTION_TIMEOUT_EXT_KEY,
+)
 from app.services.readers import KindType, kindReader
 
 logger = logging.getLogger(__name__)
@@ -143,6 +147,8 @@ def start_run(
     changed_paths: Optional[Sequence[ChangedPath]] = None,
     total_source_files: Optional[int] = None,
     force_full: bool = False,
+    background_execution_id: int = 0,
+    background_execution_timeout_seconds: int = 0,
 ) -> StartedRun:
     """Start a run for ``knowledge_base`` and hand its instructions to a task.
 
@@ -157,6 +163,10 @@ def start_run(
             read from the provider alongside the commit.
         total_source_files: Repository size, used by the change-ratio threshold.
         force_full: Whether an explicit caller requested a fresh full rebuild.
+        background_execution_id: Scheduler execution used to recover a Task callback
+            if the launcher dies before binding its task id. Zero for manual runs.
+        background_execution_timeout_seconds: Logical scheduled-run deadline. Zero
+            leaves the ordinary Code Wiki stale-generation policy unchanged.
 
     Returns:
         The started run, or a reason why none was needed.
@@ -202,9 +212,8 @@ def start_run(
         db,
         knowledge_base=knowledge_base,
         # The account that runs the task, not the one that asked: it is the identity
-        # the agent authenticates as, so anything scoped to "this run's owner" has to
-        # agree with it, and it is the account that owns the knowledge base being
-        # published into.
+        # the agent authenticates as, so the generation records who actually ran it.
+        # Publishing separately keeps KB content under the knowledge-base owner.
         user=task_user,
         head_commit=head_commit,
         changed_paths=changed_paths,
@@ -222,6 +231,14 @@ def start_run(
         )
 
     generation = started.generation
+    if background_execution_id > 0:
+        generation_ext = dict(generation.ext or {})
+        generation_ext[BACKGROUND_EXECUTION_EXT_KEY] = background_execution_id
+        if background_execution_timeout_seconds > 0:
+            generation_ext[BACKGROUND_EXECUTION_TIMEOUT_EXT_KEY] = (
+                background_execution_timeout_seconds
+            )
+        generation.ext = generation_ext
     full = RunMode(started.decision.mode) is RunMode.FULL
     reviewer_agent_type = ""
     section_writer_agent_type = ""
@@ -310,11 +327,15 @@ def finish_run(
             f"generation {generation.id} has no knowledge base to publish into"
         )
 
-    user = db.get(User, generation.user_id)
-    if user is None:
+    runner = db.get(User, generation.user_id)
+    if runner is None:
         raise CodeWikiRunError(
-            f"generation {generation.id} has no user to publish as "
-            f"(user {generation.user_id})"
+            f"generation {generation.id} has no runner " f"(user {generation.user_id})"
+        )
+    owner = db.get(User, knowledge_base.user_id)
+    if owner is None:
+        raise CodeWikiRunError(
+            f"Code wiki {knowledge_base.id} has no owner to publish its version"
         )
 
     if head_commit:
@@ -327,9 +348,13 @@ def finish_run(
         db,
         knowledge_base=knowledge_base,
         generation=generation,
-        user=user,
+        # The configured runner owns the execution and remains recorded on the
+        # generation. Published files still belong to the knowledge-base owner;
+        # changing who performs future runs must not transfer existing content or
+        # make newly generated pages change hands.
+        user=owner,
         effects=build_projection_side_effects(
-            db, knowledge_base=knowledge_base, user=user
+            db, knowledge_base=knowledge_base, user=owner
         ),
         succeeded=succeeded,
         error_message=error_message,
@@ -357,16 +382,10 @@ def _resolve_execution_context(
 ) -> tuple[Kind, User]:
     """Find the team that runs code wikis, and the user it runs as.
 
-    **The run executes as the knowledge base's owner, not as whoever triggered it.**
-    It said so and did the other thing: it took the caller. Anyone the wiki is shared
-    with who has write access to the repository may trigger a run, and doing so made
-    them the identity that clones it, owns the version, and owns every page projected
-    out of it. A member with no credentials for that host failed at checkout on
-    somebody else's wiki, and the pages a successful run wrote changed hands.
-
-    The owner is the right identity because the wiki is theirs: an expired token
-    fails their own wiki and is attributable to them, where a shared account's expiry
-    would fail everybody's at once.
+    By default the owner executes it; an explicitly configured future runner replaces
+    that execution identity. The request caller never does. The runner clones the
+    repository and owns the generation record, while publishing separately keeps
+    documents and attachments under the knowledge-base owner.
 
     The team, by contrast, comes from configuration rather than from the request: it
     carries the prompt and the tools the agent gets, so letting the caller choose it
@@ -374,15 +393,32 @@ def _resolve_execution_context(
     """
     from app.services.adapters.team_kinds import team_kinds_service
 
-    task_user = db.get(User, knowledge_base.user_id)
+    configured_user_id = (
+        (knowledge_base.json or {}).get("spec", {}).get("executionPrincipalUserId")
+    )
+    task_user = db.get(User, configured_user_id or knowledge_base.user_id)
     if task_user is None:
         raise CodeWikiRunError(
-            f"Code wiki {knowledge_base.id} has no owner to execute its generation"
+            "RUNNER_INACTIVE: configured generation runner does not exist"
+            if configured_user_id
+            else f"Code wiki {knowledge_base.id} has no owner to execute its generation"
         )
     if not task_user.is_active:
         raise CodeWikiRunError(
-            f"Code wiki {knowledge_base.id} has no active owner to execute its generation"
+            "RUNNER_INACTIVE: configured generation runner is inactive"
+            if configured_user_id
+            else f"Code wiki {knowledge_base.id} has no active owner to execute its generation"
         )
+    if configured_user_id:
+        from app.services.knowledge.code_wiki.source import (
+            SourceAccessDenied,
+            assert_user_can_read_source,
+        )
+
+        try:
+            assert_user_can_read_source(db, task_user.id, source_of(knowledge_base))
+        except SourceAccessDenied as exc:
+            raise CodeWikiRunError(f"REPOSITORY_ACCESS_DENIED: {exc}") from exc
     team_name = wiki_settings.CODE_WIKI_TEAM_NAME
     if not team_name:
         raise CodeWikiRunError(

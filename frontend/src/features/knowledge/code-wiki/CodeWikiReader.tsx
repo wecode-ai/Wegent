@@ -6,20 +6,20 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
-import { ArrowLeft, PanelLeft, RefreshCw, Settings } from 'lucide-react'
+import { ArrowLeft, CalendarClock, PanelLeft, RefreshCw, Settings } from 'lucide-react'
 import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
 import { Drawer, DrawerContent, DrawerTitle, DrawerTrigger } from '@/components/ui/drawer'
 import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-} from '@/components/ui/alert-dialog'
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog'
+import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group'
+import { Label } from '@/components/ui/label'
 import { Spinner } from '@/components/ui/spinner'
 import { ChatArea } from '@/features/tasks/components/chat'
 import { useTeamContext } from '@/contexts/TeamContext'
@@ -28,12 +28,17 @@ import { getFirstSearchParam } from '@/lib/search-params'
 import { codeWikiApi } from '@/apis/code-wiki'
 import { knowledgeCapableTeams } from '@/features/knowledge/document/utils/knowledgeTeams'
 import { useCodeWikiRunStatus } from './useCodeWikiRunStatus'
-import type { CodeWikiPageNode, CodeWikiRunStatus } from '@/types/code-wiki'
+import type {
+  CodeWikiScheduledUpdate,
+  CodeWikiPageNode,
+  CodeWikiRunStatus,
+} from '@/types/code-wiki'
 import type { KnowledgeBase } from '@/types/knowledge'
 import { PageOutline } from './PageOutline'
 import { RunHistory } from './RunHistory'
 import { failureText } from './failureText'
 import { GenerationProgress } from './GenerationProgress'
+import { ScheduledUpdateDialog } from './ScheduledUpdateDialog'
 import { WikiNavigation } from './WikiNavigation'
 import { WikiPageContent } from './WikiPageContent'
 
@@ -176,6 +181,10 @@ export function CodeWikiReader({ wiki, canConfigure = false, onConfigure }: Code
   // is asked for twice. The first run after creation is not: creating the wiki was
   // the request, and confirming it again would be asking about work already agreed.
   const [confirmingRegenerate, setConfirmingRegenerate] = useState(false)
+  const [updateMode, setUpdateMode] = useState<'check' | 'full'>('check')
+  const [scheduledUpdateOpen, setScheduledUpdateOpen] = useState(false)
+  const [scheduledUpdate, setScheduledUpdate] = useState<CodeWikiScheduledUpdate | null>(null)
+  const [scheduledUpdateLoadFailed, setScheduledUpdateLoadFailed] = useState(false)
   const [scrollHost, setScrollHost] = useState<HTMLElement | null>(null)
   // Whether the chat is still showing its empty state, reported by the page body as
   // it mounts and unmounts inside it. The chat replaces that state with the
@@ -206,6 +215,25 @@ export function CodeWikiReader({ wiki, canConfigure = false, onConfigure }: Code
   const runStatus = useCodeWikiRunStatus(wiki.id)
   const control = regenerateControl(runStatus.status, regenerating, t)
   const emptyState = emptyStateText(runStatus.status, t)
+  const scheduledCadence = scheduledUpdate
+    ? scheduledUpdate.cadence === 'custom'
+      ? t('codeWiki.scheduledUpdate.days', { days: scheduledUpdate.interval_days })
+      : t(`codeWiki.scheduledUpdate.${scheduledUpdate.cadence}`)
+    : ''
+
+  useEffect(() => {
+    if (!canConfigure) return
+    codeWikiApi
+      .scheduledUpdate(wiki.id)
+      .then(plan => {
+        setScheduledUpdate(plan)
+        setScheduledUpdateLoadFailed(false)
+      })
+      .catch(error => {
+        setScheduledUpdateLoadFailed(true)
+        toast.error(error instanceof Error ? error.message : String(error))
+      })
+  }, [canConfigure, wiki.id])
 
   const reloadPages = useCallback(
     async (showError = true, showLoading = true) => {
@@ -305,7 +333,7 @@ export function CodeWikiReader({ wiki, canConfigure = false, onConfigure }: Code
     setConfirmingRegenerate(false)
     setRegenerating(true)
     try {
-      const result = await codeWikiApi.regenerate(wiki.id)
+      const result = await codeWikiApi.regenerate(wiki.id, updateMode === 'full')
       runStatus.refresh()
       // "Nothing to do" is the answer the caller asked for, not a failure: the
       // repository has not moved since the published version.
@@ -315,7 +343,7 @@ export function CodeWikiReader({ wiki, canConfigure = false, onConfigure }: Code
     } finally {
       setRegenerating(false)
     }
-  }, [wiki.id, t, runStatus])
+  }, [wiki.id, t, runStatus, updateMode])
 
   const knowledgeTeams = useMemo(() => knowledgeCapableTeams(teams), [teams])
 
@@ -360,6 +388,7 @@ export function CodeWikiReader({ wiki, canConfigure = false, onConfigure }: Code
                     knowledgeBaseId={wiki.id}
                     status={runStatus.status}
                     onRepublished={handleRepublished}
+                    scheduledUpdateEnabled={scheduledUpdate?.enabled}
                   />
                 </div>
                 <WikiNavigation
@@ -385,6 +414,34 @@ export function CodeWikiReader({ wiki, canConfigure = false, onConfigure }: Code
           {projectName || wiki.name}
         </Button>
         <span className="flex-1" />
+        {canConfigure && (
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => setConfirmingRegenerate(true)}
+            disabled={control.disabled}
+            title={control.hint || undefined}
+            data-testid="code-wiki-regenerate"
+            className="h-11 sm:h-9"
+          >
+            <RefreshCw className={`mr-1.5 h-4 w-4 ${control.busy ? 'animate-spin' : ''}`} />
+            {runStatus.status?.last_published_at ? t('codeWiki.reader.update') : control.label}
+          </Button>
+        )}
+        {(scheduledUpdate?.can_configure || scheduledUpdateLoadFailed) && (
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => setScheduledUpdateOpen(true)}
+            data-testid="code-wiki-scheduled-update"
+            className="h-11 sm:h-9"
+          >
+            <CalendarClock className="mr-1.5 h-4 w-4" />
+            {scheduledUpdate?.enabled
+              ? t('codeWiki.scheduledUpdate.enabledCadence', { cadence: scheduledCadence })
+              : t('codeWiki.scheduledUpdate.button')}
+          </Button>
+        )}
         {canConfigure && onConfigure && (
           <Button
             variant="ghost"
@@ -397,42 +454,67 @@ export function CodeWikiReader({ wiki, canConfigure = false, onConfigure }: Code
             <Settings className="h-4 w-4" />
           </Button>
         )}
-        {canConfigure && (
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={() => setConfirmingRegenerate(true)}
-            disabled={control.disabled}
-            title={control.hint || undefined}
-            data-testid="code-wiki-regenerate"
-            className="h-11 sm:h-9"
-          >
-            <RefreshCw className={`mr-1.5 h-4 w-4 ${control.busy ? 'animate-spin' : ''}`} />
-            {control.label}
-          </Button>
-        )}
       </div>
 
       {canConfigure && (
-        <AlertDialog open={confirmingRegenerate} onOpenChange={setConfirmingRegenerate}>
-          <AlertDialogContent data-testid="code-wiki-regenerate-confirm">
-            <AlertDialogHeader>
-              <AlertDialogTitle>{t('codeWiki.reader.regenerateConfirmTitle')}</AlertDialogTitle>
-              <AlertDialogDescription>
-                {t('codeWiki.reader.regenerateConfirmBody')}
-              </AlertDialogDescription>
-            </AlertDialogHeader>
-            <AlertDialogFooter>
-              <AlertDialogCancel>{t('common:actions.cancel')}</AlertDialogCancel>
-              <AlertDialogAction
+        <Dialog open={confirmingRegenerate} onOpenChange={setConfirmingRegenerate}>
+          <DialogContent data-testid="code-wiki-regenerate-confirm">
+            <DialogHeader>
+              <DialogTitle>{t('codeWiki.reader.updateTitle')}</DialogTitle>
+              <DialogDescription>{t('codeWiki.reader.updateDescription')}</DialogDescription>
+            </DialogHeader>
+            {runStatus.status?.last_published_at && (
+              <RadioGroup
+                value={updateMode}
+                onValueChange={value => setUpdateMode(value as 'check' | 'full')}
+              >
+                <div className="flex items-start gap-3 rounded-md border p-3">
+                  <RadioGroupItem value="check" id="code-wiki-update-check" />
+                  <Label htmlFor="code-wiki-update-check" className="space-y-1">
+                    <span>{t('codeWiki.reader.checkAndUpdate')}</span>
+                    <span className="block text-xs font-normal text-text-secondary">
+                      {t('codeWiki.reader.checkAndUpdateHint')}
+                    </span>
+                  </Label>
+                </div>
+                <div className="flex items-start gap-3 rounded-md border p-3">
+                  <RadioGroupItem value="full" id="code-wiki-update-full" />
+                  <Label htmlFor="code-wiki-update-full" className="space-y-1">
+                    <span>{t('codeWiki.reader.fullUpdate')}</span>
+                    <span className="block text-xs font-normal text-text-secondary">
+                      {t('codeWiki.reader.regenerateConfirmBody')}
+                    </span>
+                  </Label>
+                </div>
+              </RadioGroup>
+            )}
+            <DialogFooter>
+              <Button variant="outline" onClick={() => setConfirmingRegenerate(false)}>
+                {t('common:actions.cancel')}
+              </Button>
+              <Button
+                variant="primary"
                 onClick={handleRegenerate}
                 data-testid="code-wiki-regenerate-confirm-action"
               >
-                {t('codeWiki.reader.regenerate')}
-              </AlertDialogAction>
-            </AlertDialogFooter>
-          </AlertDialogContent>
-        </AlertDialog>
+                {runStatus.status?.last_published_at
+                  ? t('codeWiki.reader.startUpdate')
+                  : t('codeWiki.reader.generateFirst')}
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+      )}
+      {(scheduledUpdate?.can_configure || scheduledUpdateLoadFailed) && (
+        <ScheduledUpdateDialog
+          knowledgeBaseId={wiki.id}
+          open={scheduledUpdateOpen}
+          onOpenChange={setScheduledUpdateOpen}
+          onSaved={plan => {
+            setScheduledUpdate(plan)
+            setScheduledUpdateLoadFailed(false)
+          }}
+        />
       )}
 
       <div className="flex min-h-0 flex-1">
@@ -448,6 +530,7 @@ export function CodeWikiReader({ wiki, canConfigure = false, onConfigure }: Code
               knowledgeBaseId={wiki.id}
               status={runStatus.status}
               onRepublished={handleRepublished}
+              scheduledUpdateEnabled={scheduledUpdate?.enabled}
             />
           </div>
           {pages.length > 0 && (

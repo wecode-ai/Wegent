@@ -435,6 +435,16 @@ export interface KnowledgeBaseCreate {
    * sees it is the creator's choice rather than the team bot's default.
    */
   execution_model_ref?: SummaryModelRef | null
+  /** Optional future updates; the first generation always starts after creation. */
+  scheduled_update?: {
+    enabled: boolean
+    cadence: 'daily' | 'weekly' | 'biweekly' | 'four_weeks' | 'custom'
+    interval_days: number
+    weekday: number
+    hour: number
+    minute: number
+    timezone: string
+  } | null
   /** Guided questions list (max 3) for notebook mode quick user interaction */
   guided_questions?: string[]
   /** Maximum number of knowledge base tool calls allowed per conversation */

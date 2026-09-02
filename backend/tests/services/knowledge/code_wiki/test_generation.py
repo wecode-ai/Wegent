@@ -31,6 +31,7 @@ from app.services.knowledge.code_wiki.projection import ProjectionSideEffects
 from app.services.knowledge.code_wiki.publisher import published_generation_id
 from app.services.knowledge.code_wiki.run_mode import ChangedPath, RunMode
 from app.services.knowledge.code_wiki.version_store import (
+    BACKGROUND_EXECUTION_TIMEOUT_EXT_KEY,
     STALE_RUN_AFTER_HOURS,
     set_page_path,
 )
@@ -690,6 +691,31 @@ def test_a_run_whose_worker_went_quiet_is_reported_as_stale(
 
     assert state.status == "running"
     assert state.is_stale
+
+
+def test_a_scheduled_run_uses_its_execution_timeout_for_reader_status(
+    test_db: Session, knowledge_base: Kind, test_user: User
+) -> None:
+    started = start_generation(
+        test_db,
+        knowledge_base=knowledge_base,
+        user=test_user,
+        head_commit=HEAD,
+        changed_paths=None,
+        now=NOW,
+    )
+    started.generation.ext = {
+        BACKGROUND_EXECUTION_TIMEOUT_EXT_KEY: 6 * 60 * 60,
+    }
+    test_db.commit()
+
+    touched = started.generation.updated_at or started.generation.created_at
+    assert not current_run_state(
+        test_db, knowledge_base, now=touched + timedelta(hours=5)
+    ).is_stale
+    assert current_run_state(
+        test_db, knowledge_base, now=touched + timedelta(hours=7)
+    ).is_stale
 
 
 @pytest.mark.parametrize(

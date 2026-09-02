@@ -381,6 +381,31 @@ export function SubscriptionList({
               const history = executionHistory[subscription.id] || []
               const isLoadingHistory = executionHistoryLoading === subscription.id
 
+              if (subscription.code_wiki_id) {
+                return (
+                  <a
+                    key={subscription.id}
+                    href={`/knowledge?type=document&kb=${subscription.code_wiki_id}`}
+                    className="flex min-h-16 items-center gap-4 border-b border-border px-4 py-3 hover:bg-surface/50"
+                    data-testid="code-wiki-subscription-row"
+                  >
+                    <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-surface text-text-secondary">
+                      <CalendarClock className="h-4 w-4" />
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <div className="truncate font-medium">{subscription.display_name}</div>
+                      <div className="text-xs text-text-muted">
+                        {getTriggerLabel(subscription)} · {t('next_execution')}:{' '}
+                        {formatNextExecution(subscription.next_execution_time)}
+                      </div>
+                    </div>
+                    <Badge variant={subscription.enabled ? 'default' : 'secondary'}>
+                      {subscription.enabled ? t('enabled') : t('disabled')}
+                    </Badge>
+                  </a>
+                )
+              }
+
               return (
                 <div key={subscription.id} className="border-b border-border last:border-b-0">
                   {/* Main subscription row */}

@@ -1056,6 +1056,20 @@ class KnowledgeService:
 
         forget_repository(db, knowledge_base_id)
 
+        # The scheduler projection belongs to the wiki. It is deliberately removed
+        # in the same transaction so no due worker can observe an orphaned plan.
+        from app.models.subscription import BackgroundExecution
+        from app.services.knowledge.code_wiki.scheduled_update import (
+            scheduled_update_for,
+        )
+
+        scheduled_update = scheduled_update_for(db, kb)
+        if scheduled_update is not None:
+            db.query(BackgroundExecution).filter(
+                BackgroundExecution.subscription_id == scheduled_update.id
+            ).delete(synchronize_session=False)
+            db.delete(scheduled_update)
+
         # Delete all members for this KB
         knowledge_share_service.delete_members_for_kb(db, knowledge_base_id)
 
@@ -1082,6 +1096,7 @@ class KnowledgeService:
                 Kind.user_id == knowledge_base.user_id,
                 Kind.is_active.is_(True),
             )
+            .populate_existing()
             .with_for_update()
             .first()
         )

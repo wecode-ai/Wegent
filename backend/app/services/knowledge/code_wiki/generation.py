@@ -57,11 +57,11 @@ from app.services.knowledge.code_wiki.run_mode import (
     decide_run_mode,
 )
 from app.services.knowledge.code_wiki.version_store import (
-    STALE_RUN_AFTER_HOURS,
     _as_naive_utc,
     apply_retention,
     reclaim_stale_generations,
     seed_from_published,
+    stale_after,
 )
 
 logger = logging.getLogger(__name__)
@@ -536,9 +536,7 @@ def current_run_state(
     if reported == "running":
         moment = _as_naive_utc(now or datetime.now(timezone.utc))
         touched = latest.updated_at or latest.created_at
-        stale = bool(
-            touched and (moment - touched) > timedelta(hours=STALE_RUN_AFTER_HOURS)
-        )
+        stale = bool(touched and (moment - touched) > stale_after(latest))
         return RunState(
             status="running",
             generation_id=latest.id,

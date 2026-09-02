@@ -57,6 +57,17 @@ from app.stores.tasks import task_store
 logger = logging.getLogger(__name__)
 
 
+def _reject_code_wiki_scheduled_update(subscription: Kind) -> None:
+    from app.services.knowledge.code_wiki.scheduled_update import (
+        reject_code_wiki_scheduled_update,
+    )
+
+    reject_code_wiki_scheduled_update(
+        subscription,
+        detail="Code Wiki scheduled updates must be managed from the Code Wiki",
+    )
+
+
 def generate_unique_subscription_name(
     db: Session,
     user_id: int,
@@ -503,6 +514,7 @@ class SubscriptionService:
 
         if not subscription:
             raise HTTPException(status_code=404, detail="Subscription not found")
+        _reject_code_wiki_scheduled_update(subscription)
 
         # Validate subscription with legacy trigger compatibility
         subscription_crd = validate_subscription_for_read(subscription.json)
@@ -793,6 +805,7 @@ class SubscriptionService:
 
         if not subscription:
             raise HTTPException(status_code=404, detail="Subscription not found")
+        _reject_code_wiki_scheduled_update(subscription)
 
         # Soft delete
         subscription.is_active = False
@@ -826,6 +839,7 @@ class SubscriptionService:
 
         if not subscription:
             raise HTTPException(status_code=404, detail="Subscription not found")
+        _reject_code_wiki_scheduled_update(subscription)
 
         # Validate subscription with legacy trigger compatibility
         subscription_crd = validate_subscription_for_read(subscription.json)
@@ -879,6 +893,7 @@ class SubscriptionService:
 
         if not subscription:
             raise HTTPException(status_code=404, detail="Subscription not found")
+        _reject_code_wiki_scheduled_update(subscription)
 
         # Create execution record
         execution = self.execution_manager.create_execution(
@@ -1275,6 +1290,11 @@ class SubscriptionService:
 
         return SubscriptionInDB(
             id=subscription.id,
+            code_wiki_id=(
+                subscription_crd.spec.codeWikiRef.id
+                if subscription_crd.spec.codeWikiRef
+                else None
+            ),
             user_id=subscription.user_id,
             name=subscription.name,
             namespace=subscription.namespace,

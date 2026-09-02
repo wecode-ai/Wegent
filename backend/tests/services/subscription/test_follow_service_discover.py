@@ -6,6 +6,8 @@
 
 import uuid
 
+import pytest
+from fastapi import HTTPException
 from sqlalchemy.orm import Session
 from sqlalchemy.orm.attributes import flag_modified
 
@@ -14,6 +16,29 @@ from app.models.user import User
 from app.schemas.subscription import SubscriptionCreate, SubscriptionVisibility
 from app.services.subscription.follow_service import subscription_follow_service
 from app.services.subscription.service import SubscriptionService
+
+
+def test_code_wiki_plan_cannot_be_shared(test_db: Session, test_user: User):
+    plan = Kind(
+        user_id=test_user.id,
+        kind="Subscription",
+        name="code-wiki-123",
+        namespace="default",
+        json={"spec": {"codeWikiRef": {"id": 123}}},
+        is_active=True,
+    )
+    test_db.add(plan)
+    test_db.commit()
+
+    with pytest.raises(HTTPException) as exc_info:
+        subscription_follow_service.invite_user(
+            test_db,
+            subscription_id=plan.id,
+            owner_user_id=test_user.id,
+            target_email="nobody@example.com",
+        )
+
+    assert exc_info.value.status_code == 409
 
 
 def _create_team(db: Session, owner_user_id: int, name: str) -> Kind:

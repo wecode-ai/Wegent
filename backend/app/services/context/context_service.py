@@ -1660,6 +1660,19 @@ class ContextService:
         if context is None:
             return False
 
+        return self._delete_unlinked_context(db, context)
+
+    def delete_unlinked_context_by_id(self, db: Session, context_id: int) -> bool:
+        """Delete an unlinked context for trusted ownership-cleanup callers."""
+        context = db.get(SubtaskContext, context_id)
+        if context is None:
+            return False
+        return self._delete_unlinked_context(db, context)
+
+    @staticmethod
+    def _delete_unlinked_context(db: Session, context: SubtaskContext) -> bool:
+        context_id = context.id
+
         # Only allow deletion of unlinked contexts (subtask_id == 0)
         if context.subtask_id > 0:
             logger.warning(

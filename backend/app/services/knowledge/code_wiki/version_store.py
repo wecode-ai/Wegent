@@ -47,6 +47,8 @@ PATH_EXT_KEY = "path"
 # duplicated run, whereas never expiring costs a wiki that can never be regenerated
 # again — the lock below would refuse every later run forever.
 STALE_RUN_AFTER_HOURS = 6.0
+BACKGROUND_EXECUTION_EXT_KEY = "backgroundExecutionId"
+BACKGROUND_EXECUTION_TIMEOUT_EXT_KEY = "backgroundExecutionTimeoutSeconds"
 
 IN_FLIGHT_STATUSES = (
     WikiGenerationStatus.PENDING,
@@ -83,6 +85,16 @@ def _as_naive_utc(value: Optional[datetime]) -> datetime:
     if value.tzinfo is None:
         return value
     return value.astimezone(timezone.utc).replace(tzinfo=None)
+
+
+def stale_after(
+    generation: WikiGeneration, *, default_hours: float = STALE_RUN_AFTER_HOURS
+) -> timedelta:
+    """Return the applicable worker-silence deadline for one generation."""
+    timeout_seconds = (generation.ext or {}).get(BACKGROUND_EXECUTION_TIMEOUT_EXT_KEY)
+    if isinstance(timeout_seconds, int) and timeout_seconds > 0:
+        return timedelta(seconds=timeout_seconds)
+    return timedelta(hours=default_hours)
 
 
 @dataclass(frozen=True)
@@ -232,23 +244,25 @@ def reclaim_stale_generations(
     Returns:
         Ids of the generations that were failed.
     """
-    cutoff = _as_naive_utc(now) - timedelta(hours=stale_after_hours)
-
     stale: Sequence[WikiGeneration] = (
         db.query(WikiGeneration)
         .filter(
             WikiGeneration.kind_id == kind_id,
             WikiGeneration.status.in_(IN_FLIGHT_STATUSES),
-            WikiGeneration.updated_at < cutoff,
         )
         .all()
     )
     if not stale:
         return ()
 
+    reclaimed: list[int] = []
+    moment = _as_naive_utc(now)
     for generation in stale:
+        deadline = stale_after(generation, default_hours=stale_after_hours)
+        if generation.updated_at >= moment - deadline:
+            continue
         generation.status = WikiGenerationStatus.FAILED
-        generation.completed_at = _as_naive_utc(now)
+        generation.completed_at = moment
         # Recorded, because a reclaimed run left no reason at all: the reader was
         # told it had failed and given nothing, which is the same as being told
         # nothing. There is no detail to add -- the worker is gone and never said
@@ -256,16 +270,19 @@ def reclaim_stale_generations(
         ext = dict(generation.ext or {})
         ext.setdefault(FAILURE_CODE_EXT_KEY, WORKER_ABANDONED_CODE)
         generation.ext = ext
+        reclaimed.append(generation.id)
     db.flush()
 
-    reclaimed = tuple(generation.id for generation in stale)
+    reclaimed_ids = tuple(reclaimed)
+    if not reclaimed_ids:
+        return ()
     logger.warning(
         "[code_wiki] reclaimed %s abandoned generation(s) for kb %s: %s",
-        len(reclaimed),
+        len(reclaimed_ids),
         kind_id,
-        reclaimed,
+        reclaimed_ids,
     )
-    return reclaimed
+    return reclaimed_ids
 
 
 def apply_retention(

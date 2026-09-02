@@ -14,7 +14,7 @@ jest.mock('next/navigation', () => ({
 }))
 
 jest.mock('sonner', () => ({
-  toast: { success: jest.fn() },
+  toast: { success: jest.fn(), warning: jest.fn() },
 }))
 
 jest.mock('@/hooks/useTranslation', () => ({
@@ -80,5 +80,45 @@ describe('creating a Code Wiki', () => {
     expect(result.current.isCreating).toBe(false)
 
     resolveRefresh?.()
+  })
+
+  it('keeps the created wiki visible when only schedule configuration fails', async () => {
+    jest.mocked(createCodeWiki).mockResolvedValue({
+      id: 42,
+      name: 'Wegent',
+      project_name: 'wecode-ai/Wegent',
+      source_url: 'https://github.com/wecode-ai/Wegent.git',
+      last_published_commit: '',
+      document_count: 0,
+      created_at: '2026-08-18T00:00:00Z',
+      updated_at: '2026-08-18T00:00:00Z',
+      scheduledUpdateError: 'Schedule service unavailable',
+    })
+    const sidebar = {
+      groups: [],
+      selectedGroupId: null,
+      currentUser: { id: 1 },
+      selectedKbId: null,
+      refreshAll: jest.fn().mockResolvedValue(undefined),
+      clearSelection: jest.fn(),
+    }
+    const { result } = renderHook(() =>
+      useKnowledgeBaseDialogs({ sidebar, reloadGroupKbs: jest.fn() })
+    )
+
+    await act(async () => {
+      await result.current.handleCreate({
+        name: 'Wegent',
+        kb_type: 'code_wiki',
+        source_type: 'github',
+        source_url: 'https://github.com/wecode-ai/Wegent.git',
+        execution_model_ref: { name: 'model-a', namespace: 'default', type: 'public' },
+      })
+    })
+
+    expect(sidebar.refreshAll).toHaveBeenCalledTimes(1)
+    expect(toast.warning).toHaveBeenCalledWith('codeWiki.create.scheduleNotConfigured')
+    expect(toast.success).not.toHaveBeenCalled()
+    expect(result.current.isCreating).toBe(false)
   })
 })
