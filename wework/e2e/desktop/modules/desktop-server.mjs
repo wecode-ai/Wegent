@@ -253,6 +253,7 @@ const ELECTRON_OBSERVATION_ACTIONS = new Set([
   'activeElement',
   'getAttribute',
   'getElementCount',
+  'getTerminalText',
   'getText',
   'metrics',
   'snapshot',

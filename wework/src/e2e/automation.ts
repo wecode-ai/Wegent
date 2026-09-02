@@ -1211,6 +1211,7 @@ function selectDesktopControlText(selector: string, value: string): string {
 
 type XtermAutomationTarget = HTMLElement & {
   __weworkInputForE2E?: (value: string) => void
+  __weworkTextForE2E?: () => string
   __weworkSelectTextForE2E?: (value: string) => string
 }
 
@@ -1220,9 +1221,20 @@ function findXtermAutomationTarget(root: HTMLElement | null): XtermAutomationTar
   return (
     candidates.find(candidate => {
       const target = candidate as XtermAutomationTarget
-      return Boolean(target.__weworkInputForE2E || target.__weworkSelectTextForE2E)
+      return Boolean(
+        target.__weworkInputForE2E || target.__weworkTextForE2E || target.__weworkSelectTextForE2E
+      )
     }) ?? null
   )
+}
+
+function getDesktopControlTerminalText(selector: string): string {
+  const terminalRoot = findDesktopControlElements(selector)[0]
+  const target = findXtermAutomationTarget(terminalRoot ?? null)
+  if (!target?.__weworkTextForE2E) {
+    throw new Error(`Unable to locate the xterm text bridge inside "${selector}"`)
+  }
+  return target.__weworkTextForE2E()
 }
 
 function selectDesktopControlTerminalText(selector: string, value: string): string {
@@ -1726,6 +1738,8 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
       return waitForDesktopControlElement(command)
     case 'getText':
       return desktopControlElementText(command.selector, command.visible)
+    case 'getTerminalText':
+      return getDesktopControlTerminalText(command.selector)
     case 'getElementCount':
       return String(
         command.visible

@@ -101,11 +101,10 @@ import {
 } from './workspace-flows.mjs'
 
 const REMOTE_TERMINAL_SIZE_MARKER = 'WEWORK_DESKTOP_E2E_REMOTE_TERMINAL_SIZE'
-const REMOTE_TERMINAL_LINE_SELECTOR =
-  '[data-testid="remote-terminal"] .xterm-accessibility-tree [role="listitem"]'
+const REMOTE_TERMINAL_SELECTOR = '[data-testid="remote-terminal"]'
 
 async function verifyRemoteTerminalUsesPanelWidth(control) {
-  await control.command('waitFor', REMOTE_TERMINAL_LINE_SELECTOR, {
+  await control.command('waitFor', `${REMOTE_TERMINAL_SELECTOR} .xterm-screen`, {
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
 
@@ -113,11 +112,11 @@ async function verifyRemoteTerminalUsesPanelWidth(control) {
   let lastReportedSize = 'none'
   let terminalText = ''
   while (Date.now() - startedAt < DEFAULT_STEP_TIMEOUT_MS) {
-    await control.command('terminalInput', '[data-testid="remote-terminal"]', {
+    await control.command('terminalInput', REMOTE_TERMINAL_SELECTOR, {
       value: `stty size | sed 's/^/${REMOTE_TERMINAL_SIZE_MARKER}=/'\r`,
     })
     await new Promise(resolvePromise => setTimeout(resolvePromise, 200))
-    terminalText = await control.command('getText', REMOTE_TERMINAL_LINE_SELECTOR)
+    terminalText = await control.command('getTerminalText', REMOTE_TERMINAL_SELECTOR)
     const sizes = Array.from(
       terminalText.matchAll(/WEWORK_DESKTOP_E2E_REMOTE_TERMINAL_SIZE=(\d+)\s+(\d+)/gu)
     )
