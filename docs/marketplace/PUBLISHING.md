@@ -104,7 +104,10 @@ For a Wework-created MR, the Backend registers auto-merge immediately after MR
 creation with the exact materialized commit SHA. The controlled GitLab project
 must enable **Pipelines must succeed**; otherwise materialization fails before
 repository writes. Retrying the same accepted revision reuses the bound MR and
-registers auto-merge again idempotently.
+registers auto-merge again idempotently. Because GitLab may create the MR before
+its Pipeline record is visible, the Backend waits for a same-SHA `head_pipeline`
+and retries only a transient `405` from auto-merge registration with bounded
+backoff.
 
 After `code_changes_requested`, a developer fixes the existing controlled branch
 and MR and reruns its Pipeline. A non-technical author does not create a

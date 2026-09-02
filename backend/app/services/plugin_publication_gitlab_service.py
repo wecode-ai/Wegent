@@ -12,7 +12,9 @@ import hashlib
 import hmac
 import json
 import logging
+import time
 import unicodedata
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import PurePosixPath
 from typing import Any, Protocol
@@ -30,6 +32,7 @@ from app.services.plugin_publication_artifact import (
 )
 
 logger = logging.getLogger(__name__)
+AUTO_MERGE_RETRY_DELAYS_SECONDS = (0.25, 0.5, 1.0, 2.0, 4.0)
 
 
 class PluginPublicationGitLabError(RuntimeError):
@@ -116,6 +119,7 @@ class PluginPublicationGitLabService:
         timeout_seconds: float | None = None,
         max_files: int | None = None,
         client_factory: Any | None = None,
+        sleep: Callable[[float], None] | None = None,
     ) -> None:
         self.api_url = (
             api_url or settings.WEWORK_PLUGIN_PUBLICATION_GITLAB_API_URL
@@ -142,6 +146,7 @@ class PluginPublicationGitLabService:
             max_files or settings.WEWORK_PLUGIN_PUBLICATION_GITLAB_MAX_FILES
         )
         self._client_factory = client_factory or httpx.Client
+        self._sleep = sleep or time.sleep
 
     def materialize(
         self,
@@ -804,15 +809,17 @@ class PluginPublicationGitLabService:
             raise PluginPublicationGitLabVerificationError(
                 "Controlled GitLab merge request has no valid IID"
             )
-        response = self._request(
+        ready_merge_request = self._wait_for_merge_request_pipeline(
             client,
-            "PUT",
-            f"/merge_requests/{merge_request_iid}/merge",
-            json={
-                "merge_when_pipeline_succeeds": True,
-                "sha": commit_sha,
-                "should_remove_source_branch": True,
-            },
+            merge_request=merge_request,
+            commit_sha=commit_sha,
+        )
+        if str(ready_merge_request.get("state") or "") == "merged":
+            return {**merge_request, **ready_merge_request}
+        response = self._request_auto_merge(
+            client,
+            merge_request=ready_merge_request,
+            commit_sha=commit_sha,
         )
         if not isinstance(response, dict):
             raise PluginPublicationGitLabVerificationError(
@@ -834,7 +841,130 @@ class PluginPublicationGitLabService:
             raise PluginPublicationGitLabVerificationError(
                 "GitLab did not register auto-merge for the controlled revision"
             )
-        return {**merge_request, **response}
+        return {**merge_request, **ready_merge_request, **response}
+
+    def _wait_for_merge_request_pipeline(
+        self,
+        client: httpx.Client,
+        *,
+        merge_request: dict[str, Any],
+        commit_sha: str,
+    ) -> dict[str, Any]:
+        merge_request_iid = self._positive_int(merge_request.get("iid"))
+        for attempt in range(len(AUTO_MERGE_RETRY_DELAYS_SECONDS) + 1):
+            current = self._request(
+                client,
+                "GET",
+                f"/merge_requests/{merge_request_iid}",
+            )
+            self._verify_auto_merge_target(
+                current,
+                merge_request=merge_request,
+                commit_sha=commit_sha,
+            )
+            if str(current.get("state") or "") == "merged":
+                return current
+            pipeline = current.get("head_pipeline")
+            if isinstance(pipeline, dict) and self._positive_int(pipeline.get("id")):
+                if self._commit_sha(pipeline.get("sha")) != commit_sha:
+                    raise PluginPublicationGitLabVerificationError(
+                        "GitLab MR pipeline does not match the controlled commit"
+                    )
+                return current
+            if attempt < len(AUTO_MERGE_RETRY_DELAYS_SECONDS):
+                self._sleep(AUTO_MERGE_RETRY_DELAYS_SECONDS[attempt])
+        raise PluginPublicationGitLabError(
+            "GitLab MR pipeline was not created before the auto-merge deadline"
+        )
+
+    def _request_auto_merge(
+        self,
+        client: httpx.Client,
+        *,
+        merge_request: dict[str, Any],
+        commit_sha: str,
+    ) -> dict[str, Any]:
+        merge_request_iid = self._positive_int(merge_request.get("iid"))
+        path = f"/merge_requests/{merge_request_iid}/merge"
+        url = f"{self._project_api()}{path}"
+        payload = {
+            "merge_when_pipeline_succeeds": True,
+            "sha": commit_sha,
+            "should_remove_source_branch": True,
+        }
+        for attempt in range(len(AUTO_MERGE_RETRY_DELAYS_SECONDS) + 1):
+            try:
+                response = client.request("PUT", url, json=payload)
+                if response.status_code != 405:
+                    response.raise_for_status()
+                    result = response.json()
+                    if not isinstance(result, dict):
+                        raise PluginPublicationGitLabVerificationError(
+                            "GitLab auto-merge response is invalid"
+                        )
+                    return result
+            except PluginPublicationGitLabVerificationError:
+                raise
+            except (httpx.HTTPError, ValueError) as exc:
+                status_code = (
+                    exc.response.status_code
+                    if isinstance(exc, httpx.HTTPError) and exc.response is not None
+                    else None
+                )
+                logger.warning(
+                    "Controlled GitLab request failed: method=PUT path=%s status=%s",
+                    path,
+                    status_code,
+                )
+                raise PluginPublicationGitLabError(
+                    f"GitLab request failed for PUT {path}"
+                ) from exc
+            if attempt == len(AUTO_MERGE_RETRY_DELAYS_SECONDS):
+                logger.warning(
+                    "Controlled GitLab auto-merge remained unavailable: iid=%s",
+                    merge_request_iid,
+                )
+                raise PluginPublicationGitLabError(
+                    "GitLab auto-merge was not ready before the retry deadline"
+                )
+            current = self._request(
+                client,
+                "GET",
+                f"/merge_requests/{merge_request_iid}",
+            )
+            self._verify_auto_merge_target(
+                current,
+                merge_request=merge_request,
+                commit_sha=commit_sha,
+            )
+            if str(current.get("state") or "") == "merged":
+                return current
+            self._sleep(AUTO_MERGE_RETRY_DELAYS_SECONDS[attempt])
+        raise AssertionError("unreachable")
+
+    def _verify_auto_merge_target(
+        self,
+        current: Any,
+        *,
+        merge_request: dict[str, Any],
+        commit_sha: str,
+    ) -> None:
+        if not isinstance(current, dict):
+            raise PluginPublicationGitLabVerificationError(
+                "GitLab merge request response is invalid"
+            )
+        if (
+            self._positive_int(current.get("iid"))
+            != self._positive_int(merge_request.get("iid"))
+            or str(current.get("state") or "") not in {"opened", "merged"}
+            or str(current.get("source_branch") or "")
+            != str(merge_request.get("source_branch") or "")
+            or str(current.get("target_branch") or "") != self.target_branch
+            or self._merge_request_head_sha(current) != commit_sha
+        ):
+            raise PluginPublicationGitLabVerificationError(
+                "GitLab merge request changed before auto-merge registration"
+            )
 
     @staticmethod
     def _commit_sha(value: Any) -> str:

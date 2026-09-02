@@ -18,6 +18,8 @@ from app.services.plugin_publication_artifact import (
     canonical_source_tree_sha256,
 )
 from app.services.plugin_publication_gitlab_service import (
+    AUTO_MERGE_RETRY_DELAYS_SECONDS,
+    PluginPublicationGitLabError,
     PluginPublicationGitLabService,
     PluginPublicationGitLabVerificationError,
 )
@@ -75,6 +77,23 @@ class FakeClient:
             )
         if method == "GET" and url.endswith("/merge_requests"):
             return httpx.Response(200, request=request, json=[])
+        if method == "GET" and url.endswith("/merge_requests/8"):
+            return httpx.Response(
+                200,
+                request=request,
+                json={
+                    "iid": 8,
+                    "state": "opened",
+                    "sha": "a" * 40,
+                    "source_branch": "wework/publication-12-r3",
+                    "target_branch": "master",
+                    "head_pipeline": {
+                        "id": 73,
+                        "status": "pending",
+                        "sha": "a" * 40,
+                    },
+                },
+            )
         if method == "GET" and "/repository/branches/" in url:
             return httpx.Response(404, request=request, json={"message": "missing"})
         if method == "GET" and "/repository/files/" in url:
@@ -299,6 +318,87 @@ class AutoMergeNotScheduledClient(FakeClient):
                     "target_branch": "master",
                     "merge_when_pipeline_succeeds": False,
                 },
+            )
+        return super().request(method, url, **kwargs)
+
+
+class DelayedAutoMergeClient(FakeClient):
+    def __init__(self, calls: list, **kwargs) -> None:
+        super().__init__(calls, **kwargs)
+        self.merge_request_reads = 0
+        self.merge_attempts = 0
+
+    def request(self, method: str, url: str, **kwargs) -> httpx.Response:
+        request = httpx.Request(method, url)
+        if method == "GET" and url.endswith("/merge_requests/8"):
+            self.calls.append((method, url, kwargs))
+            self.merge_request_reads += 1
+            payload = {
+                "iid": 8,
+                "state": "opened",
+                "sha": "a" * 40,
+                "source_branch": "wework/publication-12-r3",
+                "target_branch": "master",
+                "head_pipeline": None,
+            }
+            if self.merge_request_reads > 1:
+                payload["head_pipeline"] = {
+                    "id": 73,
+                    "status": "pending",
+                    "sha": "a" * 40,
+                }
+            return httpx.Response(200, request=request, json=payload)
+        if method == "PUT" and url.endswith("/merge_requests/8/merge"):
+            self.calls.append((method, url, kwargs))
+            self.merge_attempts += 1
+            if self.merge_attempts == 1:
+                return httpx.Response(
+                    405,
+                    request=request,
+                    json={"message": "405 Method Not Allowed"},
+                )
+            return httpx.Response(
+                200,
+                request=request,
+                json={
+                    "iid": 8,
+                    "state": "opened",
+                    "sha": "a" * 40,
+                    "source_branch": "wework/publication-12-r3",
+                    "target_branch": "master",
+                    "merge_when_pipeline_succeeds": True,
+                },
+            )
+        return super().request(method, url, **kwargs)
+
+
+class MissingPipelineClient(FakeClient):
+    def request(self, method: str, url: str, **kwargs) -> httpx.Response:
+        if method == "GET" and url.endswith("/merge_requests/8"):
+            self.calls.append((method, url, kwargs))
+            return httpx.Response(
+                200,
+                request=httpx.Request(method, url),
+                json={
+                    "iid": 8,
+                    "state": "opened",
+                    "sha": "a" * 40,
+                    "source_branch": "wework/publication-12-r3",
+                    "target_branch": "master",
+                    "head_pipeline": None,
+                },
+            )
+        return super().request(method, url, **kwargs)
+
+
+class AutoMergeUnauthorizedClient(FakeClient):
+    def request(self, method: str, url: str, **kwargs) -> httpx.Response:
+        if method == "PUT" and url.endswith("/merge_requests/8/merge"):
+            self.calls.append((method, url, kwargs))
+            return httpx.Response(
+                401,
+                request=httpx.Request(method, url),
+                json={"message": "401 Unauthorized"},
             )
         return super().request(method, url, **kwargs)
 
@@ -725,6 +825,116 @@ def test_materialization_fails_when_gitlab_does_not_register_auto_merge() -> Non
             risk_declaration={},
             test_notes="tested",
         )
+
+
+def test_materialization_waits_for_pipeline_and_retries_transient_405() -> None:
+    package = _package()
+    calls: list = []
+    sleeps: list[float] = []
+    client = DelayedAutoMergeClient(calls)
+    service = PluginPublicationGitLabService(
+        api_url="https://git.invalid/api/v4",
+        project_id="42",
+        project_url="https://git.invalid/project",
+        token="test-token",
+        materializer_user_id=77,
+        target_branch="master",
+        client_factory=lambda **_kwargs: client,
+        sleep=sleeps.append,
+    )
+
+    result = service.materialize(
+        request_id=12,
+        revision=3,
+        slug="draft-test",
+        plugin_name="Draft Test",
+        version="1.0.0",
+        snapshot_sha256="b" * 64,
+        source_tree_sha256=canonical_source_tree_sha256(package),
+        package=package,
+        risk_declaration={},
+        test_notes="tested",
+    )
+
+    assert result.merge_request_iid == 8
+    assert client.merge_request_reads == 3
+    assert client.merge_attempts == 2
+    assert sleeps == [0.25, 0.25]
+
+
+def test_materialization_stops_when_pipeline_never_appears() -> None:
+    package = _package()
+    calls: list = []
+    sleeps: list[float] = []
+    service = PluginPublicationGitLabService(
+        api_url="https://git.invalid/api/v4",
+        project_id="42",
+        project_url="https://git.invalid/project",
+        token="test-token",
+        materializer_user_id=77,
+        target_branch="master",
+        client_factory=lambda **kwargs: MissingPipelineClient(calls, **kwargs),
+        sleep=sleeps.append,
+    )
+
+    with pytest.raises(
+        PluginPublicationGitLabError,
+        match="pipeline was not created before the auto-merge deadline",
+    ):
+        service.materialize(
+            request_id=12,
+            revision=3,
+            slug="draft-test",
+            plugin_name="Draft Test",
+            version="1.0.0",
+            snapshot_sha256="b" * 64,
+            source_tree_sha256=canonical_source_tree_sha256(package),
+            package=package,
+            risk_declaration={},
+            test_notes="tested",
+        )
+
+    assert sleeps == list(AUTO_MERGE_RETRY_DELAYS_SECONDS)
+    assert not any(method == "PUT" for method, _url, _kwargs in calls)
+
+
+def test_materialization_does_not_retry_non_transient_auto_merge_error() -> None:
+    package = _package()
+    calls: list = []
+    sleeps: list[float] = []
+    service = PluginPublicationGitLabService(
+        api_url="https://git.invalid/api/v4",
+        project_id="42",
+        project_url="https://git.invalid/project",
+        token="test-token",
+        materializer_user_id=77,
+        target_branch="master",
+        client_factory=lambda **kwargs: AutoMergeUnauthorizedClient(calls, **kwargs),
+        sleep=sleeps.append,
+    )
+
+    with pytest.raises(PluginPublicationGitLabError):
+        service.materialize(
+            request_id=12,
+            revision=3,
+            slug="draft-test",
+            plugin_name="Draft Test",
+            version="1.0.0",
+            snapshot_sha256="b" * 64,
+            source_tree_sha256=canonical_source_tree_sha256(package),
+            package=package,
+            risk_declaration={},
+            test_notes="tested",
+        )
+
+    assert sleeps == []
+    assert (
+        sum(
+            method == "PUT" and url.endswith("/merge_requests/8/merge")
+            for method, url, _kwargs in calls
+        )
+        == 1
+    )
 
 
 def test_materialization_reuses_controlled_mr_and_registers_auto_merge() -> None:

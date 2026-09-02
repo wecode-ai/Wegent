@@ -103,7 +103,11 @@ Auto-merge is not driven by the webhook. After creating or reusing a controlled
 MR, the Backend calls GitLab's merge endpoint with
 `merge_when_pipeline_succeeds=true`, the exact MR head `sha`, and source-branch
 removal enabled. GitLab then waits for required approvals and the successful MR
-Pipeline before merging into protected `master`.
+Pipeline before merging into protected `master`. The Backend first waits for a
+same-SHA MR Pipeline because GitLab can expose a newly created MR before creating
+its Pipeline record. Only a transient `405` from this registration is retried,
+using bounded backoff; other HTTP failures are returned immediately, and a
+permanent `405` fails when the retry deadline is exhausted.
 
 ## Release credential operations
 
