@@ -341,28 +341,12 @@ class RealCloudEnvironment {
     }
     for (let index = 1; index <= count; index += 1) {
       const slug = `desktop-e2e-auto-update-${index}`
-      const first = await this.publishPluginRelease({ headers, slug, version: '1.0.0' })
-      await fetchJson(
-        `${this.backendUrl}/api/admin/plugins/submissions/${first.submissionId}/review`,
-        {
-          method: 'POST',
-          headers,
-          body: JSON.stringify({ approved: true, note: 'Desktop E2E initial release' }),
-        }
-      )
+      const first = await this.publishPluginRelease({ slug, version: '1.0.0' })
       await fetchJson(
         `${this.backendUrl}/api/plugins/marketplace/${first.pluginId}/install?device_id=${CLOUD_DEVICE_ID}`,
         { method: 'POST', headers }
       )
-      const latest = await this.publishPluginRelease({ headers, slug, version: '2.0.0' })
-      await fetchJson(
-        `${this.backendUrl}/api/admin/plugins/submissions/${latest.submissionId}/review`,
-        {
-          method: 'POST',
-          headers,
-          body: JSON.stringify({ approved: true, note: 'Desktop E2E update release' }),
-        }
-      )
+      await this.publishPluginRelease({ slug, version: '2.0.0' })
       this.pluginAutoUpdateFixtures.push({ pluginId: first.pluginId, slug })
     }
     this.pluginAutoUpdateFixturesSeeded = true
@@ -378,45 +362,37 @@ class RealCloudEnvironment {
     }
   }
 
-  async publishPluginRelease({ headers, slug, version }) {
+  async publishPluginRelease({ slug, version }) {
     const packageRoot = join(resultDir, 'plugin-auto-update-fixtures', `${slug}-${version}`)
     const manifestDir = join(packageRoot, '.codex-plugin')
-    const packagePath = join(resultDir, 'plugin-auto-update-fixtures', `${slug}-${version}.zip`)
     await mkdir(manifestDir, { recursive: true })
     await writeFile(
       join(manifestDir, 'plugin.json'),
       `${JSON.stringify({ name: slug, version, description: `Desktop E2E ${slug}` }, null, 2)}\n`,
       'utf8'
     )
-    await rm(packagePath, { force: true })
-    await runChecked('python3', ['-m', 'zipfile', '-c', packagePath, '.codex-plugin'], {
-      cwd: packageRoot,
-    })
-    const packageBytes = await readFile(packagePath)
-    const initialized = await fetchJson(`${this.backendUrl}/api/plugins/submissions/init`, {
-      method: 'POST',
-      headers,
-      body: JSON.stringify({
+    const output = commandOutput(
+      'uv',
+      [
+        'run',
+        'python',
+        'scripts/publish_official_plugin.py',
+        packageRoot,
+        '--slug',
         slug,
-        displayName: `Auto Update ${slug.split('-').at(-1)}`,
-        version,
-        filename: `${slug}.zip`,
-        sha256: createHash('sha256').update(packageBytes).digest('hex'),
-        sizeBytes: packageBytes.length,
-        visibility: 'workspace',
-      }),
-    })
-    const upload = await fetch(initialized.uploadUrl, {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/zip' },
-      body: packageBytes,
-    })
-    assert.equal(upload.ok, true, `Plugin E2E upload failed with HTTP ${upload.status}`)
-    await fetchJson(
-      `${this.backendUrl}/api/plugins/submissions/${initialized.submissionId}/complete`,
-      { method: 'POST', headers }
+        '--visibility',
+        'workspace',
+        '--created-by-user-id',
+        '1',
+        '--publisher',
+        'desktop-e2e',
+      ],
+      { cwd: join(repoDir, 'backend'), env: this.backendEnv }
     )
-    return initialized
+    const published = JSON.parse(output)
+    assert.ok(published.pluginId, 'Plugin E2E publisher did not return a plugin ID')
+    assert.ok(published.releaseId, 'Plugin E2E publisher did not return a release ID')
+    return published
   }
 
   async assertPluginAutoUpdateComplete(codexHome, expectedCount = 6) {
