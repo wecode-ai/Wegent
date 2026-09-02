@@ -151,7 +151,7 @@ pnpm exec playwright test e2e/tests/knowledge/dingtalk-import.spec.ts \
 - Normal mode Chat Shell dialogue and follow-up.
 - Normal mode ClaudeCode dialogue, follow-up, and executor session resume.
 - Coding mode ClaudeCode dialogue and follow-up.
-- Device mode ClaudeCode dialogue and follow-up through a Wework app device.
+- Wework app-device discovery, card-to-chat navigation, ClaudeCode dialogue, and follow-up.
 
 The regression runs in the dedicated `executor-e2e-tests` GitHub Actions job. Ordinary sharded E2E jobs skip this spec so they do not install executor dependencies, build executor images, or start executor-manager. It uses global setup authentication like the rest of `frontend/e2e`; no external Playwright auth-state secret is required.
 

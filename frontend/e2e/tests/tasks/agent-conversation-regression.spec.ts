@@ -432,14 +432,32 @@ test.describe('Agent conversation regression', () => {
     const followUpPrompt = 'What context token did I provide in the previous device turn?'
 
     await waitForWeworkDeviceOnline(request)
-    await page.goto('/devices')
+    await configureTaskPagePreferences(page, deviceTeam.id, 'task')
+    await page.goto('/devices', { waitUntil: 'domcontentloaded' })
     await expect(page.getByTestId('device-section-app')).toContainText('E2E ClaudeCode Device')
-    await expect(page.getByTestId(`start-device-chat-${DEVICE_ID}`)).toBeEnabled()
-    await openTaskPage(page, `/devices/chat?deviceId=${DEVICE_ID}`, deviceTeam.id, 'task')
+    const startChatButton = page.getByTestId(`start-device-chat-${DEVICE_ID}`)
+    await expect(startChatButton).toBeEnabled()
+    await startChatButton.click()
+    await expect(page).toHaveURL(url => {
+      return url.pathname === '/devices/chat' && url.searchParams.get('deviceId') === DEVICE_ID
+    })
+    await dismissOnboardingTour(page)
+    await ensureMessageInputReady(page)
+    const deviceSelector = page.getByTestId('device-chat-target-select')
+    await expect(deviceSelector).toHaveValue(DEVICE_ID)
+    await expect(
+      page.getByTestId('wework-device-options').locator(`option[value="${DEVICE_ID}"]`)
+    ).toContainText('E2E ClaudeCode Device')
+    await selectModel(page, DEVICE_CLAUDE_MODEL_NAME)
 
     await sendMessage(page, firstPrompt)
     const taskId = await waitForTaskId(page)
     createdTaskIds.add(taskId)
+    await expect(page).toHaveURL(url => {
+      return url.pathname === '/devices/chat' && url.searchParams.get('taskId') === String(taskId)
+    })
+    await expect(deviceSelector).toHaveValue(DEVICE_ID)
+    await expect(deviceSelector).toBeDisabled()
     await expect(page.getByTestId('messages-container')).toContainText(
       `Mock model remembered ${contextToken}`,
       { timeout: RESPONSE_TIMEOUT_MS }
@@ -471,7 +489,7 @@ test.describe('Agent conversation regression', () => {
     const prompt = `Remember this device Git context token: ${contextToken}`
 
     try {
-      await waitForLocalDeviceOnline(request)
+      await waitForWeworkDeviceOnline(request)
 
       const gitAccountResponse = await request.put(`${API_BASE_URL}/api/users/me`, {
         headers: authHeaders(),
@@ -1203,6 +1221,19 @@ test.describe('Agent conversation regression', () => {
     teamId: number,
     mode: 'chat' | 'code' | 'task'
   ): Promise<void> {
+    await configureTaskPagePreferences(page, teamId, mode)
+
+    const separator = path.includes('?') ? '&' : '?'
+    await page.goto(`${path}${separator}teamId=${teamId}`, { waitUntil: 'domcontentloaded' })
+    await dismissOnboardingTour(page)
+    await ensureMessageInputReady(page)
+  }
+
+  async function configureTaskPagePreferences(
+    page: Page,
+    teamId: number,
+    mode: 'chat' | 'code' | 'task'
+  ): Promise<void> {
     await page.addInitScript(
       ({ selectedTeamId, selectedMode }) => {
         localStorage.setItem('user_onboarding_completed', 'true')
@@ -1217,11 +1248,21 @@ test.describe('Agent conversation regression', () => {
       },
       { selectedTeamId: teamId, selectedMode: mode }
     )
+  }
 
-    const separator = path.includes('?') ? '&' : '?'
-    await page.goto(`${path}${separator}teamId=${teamId}`, { waitUntil: 'domcontentloaded' })
-    await dismissOnboardingTour(page)
-    await ensureMessageInputReady(page)
+  async function selectModel(page: Page, modelName: string): Promise<void> {
+    const modelSelector = page.getByTestId('model-selector')
+    await expect(modelSelector).toBeEnabled()
+    await modelSelector.click()
+
+    const modelSearch = page.getByTestId('model-cascade-search-input')
+    await modelSearch.fill(modelName)
+    const modelOption = page.getByTestId(`model-option-${modelName}`)
+    await expect(modelOption).toBeVisible()
+    await modelOption.click()
+
+    await expect(modelSelector).toHaveAttribute('aria-expanded', 'false')
+    await expect(modelSelector).toContainText(modelName)
   }
 
   async function sendMessage(page: Page, message: string): Promise<void> {
