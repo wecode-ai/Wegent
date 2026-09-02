@@ -9,6 +9,7 @@ export const CORE_PLUGIN_DIRECTORIES = [
   'ui-applications',
   'ui-automations',
   'ui-cloud-work',
+  'plugin-developer',
 ]
 
 const CORE_PLUGIN_TARGETS = {
@@ -22,6 +23,7 @@ const CORE_PLUGIN_TARGETS = {
   'ui-applications': 'wework-ui-applications',
   'ui-automations': 'wework-ui-automations',
   'ui-cloud-work': 'wework-ui-cloud-work',
+  'plugin-developer': 'wework-plugin-developer',
 }
 
 export function corePluginTarget(directory) {

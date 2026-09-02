@@ -13,4 +13,13 @@ describe('Electron desktop E2E automation', () => {
 
     expect(isWeworkAutomationEnabled()).toBe(true)
   })
+
+  test('is disabled explicitly for isolated plugin development instances', () => {
+    window.__WEWORK_DESKTOP_E2E_RUNTIME_CONFIG__ = {
+      controlUrl: 'http://127.0.0.1:43111',
+      disabled: true,
+    }
+
+    expect(isWeworkAutomationEnabled()).toBe(false)
+  })
 })

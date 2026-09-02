@@ -1,0 +1,21 @@
+{
+  "name": "wework-plugin-developer",
+  "version": "0.1.0",
+  "description": "创建、扩展和调试 Wework Core DSH 插件。",
+  "author": {
+    "name": "Wework"
+  },
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "Wework 插件开发",
+    "shortDescription": "创建并在隔离 Wework 实例中调试 Core DSH 插件",
+    "longDescription": "在 Wework 中创建本地 Core DSH 插件项目，指导 Codex 编写 DSH UI 与 Skill，并通过隔离开发实例和 HMR 完成调试。",
+    "developerName": "Wework",
+    "category": "开发工具",
+    "capabilities": ["Read", "Write", "Shell", "Wework UI"],
+    "defaultPrompt": [
+      "帮我创建一个 Wework Core DSH 插件，并在插件调试面板中运行。",
+      "检查当前项目的 Wework 插件结构、Skill 和可调试性。"
+    ]
+  }
+}

@@ -2,6 +2,7 @@ import { describe, expect, test, vi } from 'vitest'
 import {
   attachRightWorkspaceSidebarController,
   encodeRightWorkspaceExtensionTabId,
+  isWeworkWorkspaceSidebarTabAvailable,
   rightWorkspaceDshSidebar,
 } from './rightWorkspaceDshSidebar'
 
@@ -83,6 +84,49 @@ describe('rightWorkspaceDshSidebar', () => {
     expect(encodeRightWorkspaceExtensionTabId('native-plugin:panel')).toBe(
       'dsh:native-plugin%3Apanel'
     )
+  })
+
+  test('filters conditional tabs from cached project context without filesystem access', () => {
+    const descriptor = {
+      id: 'plugin-debug',
+      title: '插件调试',
+      when: {
+        projectKinds: ['wework-core-dsh-plugin'] as const,
+        codexPluginKeys: ['wework-plugin-developer'],
+      },
+    }
+
+    expect(isWeworkWorkspaceSidebarTabAvailable(descriptor, 'standard')).toBe(false)
+    expect(
+      isWeworkWorkspaceSidebarTabAvailable(descriptor, 'wework-core-dsh-plugin', () => false)
+    ).toBe(false)
+    expect(
+      isWeworkWorkspaceSidebarTabAvailable(
+        descriptor,
+        'wework-core-dsh-plugin',
+        pluginKey => pluginKey === 'wework-plugin-developer'
+      )
+    ).toBe(true)
+  })
+
+  test('preserves plugin-only conditions from DSH descriptors', () => {
+    window.__WEWORK_DSH_UI__ = {
+      getEntries: () => [
+        {
+          id: 'plugin-only',
+          label: 'Plugin only',
+          when: { codexPluginKeys: ['plugin-a'] },
+        },
+      ],
+      subscribe: vi.fn(() => () => undefined),
+      attach: vi.fn(),
+    }
+
+    expect(rightWorkspaceDshSidebar.getTab('plugin-only')?.when).toEqual({
+      projectKinds: undefined,
+      codexPluginKeys: ['plugin-a'],
+    })
+    delete window.__WEWORK_DSH_UI__
   })
 
   test('does not expose the removed Better Sidebar compatibility globals', () => {

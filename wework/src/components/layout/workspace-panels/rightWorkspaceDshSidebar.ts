@@ -35,6 +35,10 @@ export interface WeworkWorkspaceSidebarTabDescriptor {
   id: string
   title: string
   order?: number
+  when?: {
+    projectKinds?: readonly ('standard' | 'wework-core-dsh-plugin')[]
+    codexPluginKeys?: readonly string[]
+  }
 }
 
 export interface WeworkWorkspaceSidebarOpenTabSeed {
@@ -108,6 +112,19 @@ export function titleOfWeworkWorkspaceSidebarTab(
   return descriptor.title
 }
 
+export function isWeworkWorkspaceSidebarTabAvailable(
+  descriptor: WeworkWorkspaceSidebarTabDescriptor,
+  projectKind: 'standard' | 'wework-core-dsh-plugin',
+  isPluginInstalled: (pluginKey: string) => boolean = () => true
+): boolean {
+  const projectKinds = descriptor.when?.projectKinds
+  const codexPluginKeys = descriptor.when?.codexPluginKeys
+  return (
+    (!projectKinds?.length || projectKinds.includes(projectKind)) &&
+    (!codexPluginKeys?.length || codexPluginKeys.every(isPluginInstalled))
+  )
+}
+
 export const rightWorkspaceDshSidebar: RightWorkspaceSidebarService = {
   getTabs() {
     const entries = getDshSlotEntries(WEWORK_DSH_SLOTS.workspaceSidebarTab)
@@ -117,11 +134,33 @@ export const rightWorkspaceDshSidebar: RightWorkspaceSidebarService = {
       cachedDshTabs = EMPTY_SIDEBAR_TABS
       return cachedDshTabs
     }
-    cachedDshTabs = entries.map(entry => ({
-      id: entry.id,
-      title: entry.label ?? entry.id,
-      order: entry.order,
-    }))
+    cachedDshTabs = entries.map(entry => {
+      const when =
+        entry.when && typeof entry.when === 'object'
+          ? (entry.when as {
+              projectKinds?: unknown
+              codexPluginKeys?: unknown
+            })
+          : null
+      const projectKinds = Array.isArray(when?.projectKinds)
+        ? (when.projectKinds as Array<'standard' | 'wework-core-dsh-plugin'>)
+        : undefined
+      const codexPluginKeys = Array.isArray(when?.codexPluginKeys)
+        ? (when.codexPluginKeys as string[])
+        : undefined
+      return {
+        id: entry.id,
+        title: entry.label ?? entry.id,
+        order: entry.order,
+        when:
+          projectKinds || codexPluginKeys
+            ? {
+                projectKinds,
+                codexPluginKeys,
+              }
+            : undefined,
+      }
+    })
     return cachedDshTabs
   },
   getTab(id) {

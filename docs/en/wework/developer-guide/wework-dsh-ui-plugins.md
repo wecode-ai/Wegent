@@ -52,6 +52,7 @@ resident model directory and keeps the Wework surface stable.
 | ------------------------------ | ---------------------------------------- | --------------------------------- | -------------------------- |
 | `wework.action`                | Host-invoked navigation action           | `id`, `path`                      | No component               |
 | `wework.app`                   | Product switcher and app surface         | `id`, `label`, `mode`             | `visible`, `tab`           |
+| `wework.plugins.action`        | Plugins-page action                      | `id`, `label`                     | Host-provided callbacks    |
 | `wework.route`                 | Top-level auxiliary page                 | `id`, `path`, `telemetryFeature`  | `search`, `onNavigate`     |
 | `wework.sidebar.navigation`    | Left-sidebar navigation entry            | `id`, `path`, `label`             | Usually metadata-only      |
 | `wework.settings.page`         | Settings navigation and content          | `id`, `path`, `label`, `category` | Settings context, `onBack` |

@@ -14,7 +14,7 @@ import {
   X,
 } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
-import { memo, useCallback, useEffect, useState, useSyncExternalStore } from 'react'
+import { memo, useCallback, useEffect, useMemo, useState, useSyncExternalStore } from 'react'
 import type { ComponentType, KeyboardEvent as ReactKeyboardEvent, ReactNode } from 'react'
 import {
   FileChangesReviewPanel,
@@ -39,6 +39,16 @@ import { isDesktopRuntime } from '@/lib/runtime-environment'
 import { getPlatform } from '@/lib/platform'
 import { reloadEmbeddedBrowser, type EmbeddedBrowserOpenRequest } from '@/lib/embedded-browser'
 import { cn } from '@/lib/utils'
+import {
+  observePluginDevelopmentWorkspace,
+  pluginDevelopmentProjectKind,
+  pluginDevelopmentProjectsRevision,
+  subscribePluginDevelopmentProjects,
+} from '@/features/dsh-plugins/pluginDevelopmentProjects'
+import {
+  getComposerApps,
+  subscribeComposerApps,
+} from '@/components/chat/composer/composerAppsSnapshot'
 import type { DeviceInfo, ProjectWithTasks, RuntimeTaskAddress } from '@/types/api'
 import { isEditableShortcutTarget } from '@/lib/keybindings'
 import { FileWorkspacePanel, type FileWorkspacePanelSelection } from './FileWorkspacePanel'
@@ -51,6 +61,7 @@ import { BrowserAgentCursorIcon } from './BrowserAgentCursorIcon'
 import {
   resolveRightWorkspaceExtensionDescriptor,
   rightWorkspaceDshSidebar,
+  isWeworkWorkspaceSidebarTabAvailable,
   isRightWorkspaceExtensionTab,
   titleOfWeworkWorkspaceSidebarTab,
   type WeworkWorkspaceScope,
@@ -412,6 +423,26 @@ export const RightWorkspacePanel = memo(function RightWorkspacePanel({
     rightWorkspaceDshSidebar.getTabs,
     rightWorkspaceDshSidebar.getTabs
   )
+  useSyncExternalStore(
+    subscribePluginDevelopmentProjects,
+    pluginDevelopmentProjectsRevision,
+    pluginDevelopmentProjectsRevision
+  )
+  const composerApps = useSyncExternalStore(subscribeComposerApps, getComposerApps, getComposerApps)
+  useEffect(
+    () => observePluginDevelopmentWorkspace(extensionScope.cwd ?? null),
+    [extensionScope.cwd]
+  )
+  const currentProjectKind = pluginDevelopmentProjectKind(extensionScope.cwd)
+  const availableExtensionTabs = registeredExtensionTabs.filter(descriptor =>
+    isWeworkWorkspaceSidebarTabAvailable(descriptor, currentProjectKind, pluginKey =>
+      composerApps.some(app => app.pluginKey === pluginKey)
+    )
+  )
+  const availableExtensionTabIds = useMemo(
+    () => new Set(availableExtensionTabs.map(descriptor => descriptor.id)),
+    [availableExtensionTabs]
+  )
   const [pluginDialog, setPluginDialog] = useState<{
     tab: RightWorkspaceBrowserTab
     installationId: string
@@ -428,6 +459,14 @@ export const RightWorkspacePanel = memo(function RightWorkspacePanel({
   const harnessSessionsById = new Map(
     harnessSessions.map(session => [session.sessionId, session] as const)
   )
+
+  useEffect(() => {
+    for (const tab of openTabs) {
+      if (!isRightWorkspaceExtensionTab(tab)) continue
+      const descriptor = resolveRightWorkspaceExtensionDescriptor(extensionTabs[tab])
+      if (descriptor && !availableExtensionTabIds.has(descriptor.id)) onCloseTab(tab)
+    }
+  }, [availableExtensionTabIds, extensionTabs, onCloseTab, openTabs])
 
   useEffect(() => {
     if (!visible) return
@@ -484,7 +523,7 @@ export const RightWorkspacePanel = memo(function RightWorkspacePanel({
 
   const getNewTabOptions = (): WorkspaceAddMenuItem[] => [
     ...workspaceActions,
-    ...[...registeredExtensionTabs]
+    ...[...availableExtensionTabs]
       .sort((left, right) => (left.order ?? 100) - (right.order ?? 100))
       .map(
         (descriptor): WorkspaceAddMenuItem => ({
@@ -644,7 +683,7 @@ export const RightWorkspacePanel = memo(function RightWorkspacePanel({
             canBrowseFiles={canBrowseFiles}
             allowTemporaryChat={allowTemporaryChat}
             workspaceActions={workspaceActions}
-            extensionTabs={registeredExtensionTabs}
+            extensionTabs={availableExtensionTabs}
             onSelectReview={onSelectReview}
             onSelectTerminal={onSelectTerminal}
             onSelectBrowser={onSelectBrowser}

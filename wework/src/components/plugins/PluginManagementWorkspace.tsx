@@ -107,6 +107,7 @@ interface PluginManagementWorkspaceProps {
   topBarLeftActions?: ReactNode
   cloudApiBaseUrl?: string
   cloudToken?: string | null
+  onCreateWeworkPlugin?: () => Promise<void>
 }
 
 type PluginManagementTab = 'codex' | 'core-dsh'
@@ -116,6 +117,7 @@ export function PluginManagementWorkspace({
   topBarLeftActions,
   cloudApiBaseUrl,
   cloudToken,
+  onCreateWeworkPlugin,
 }: PluginManagementWorkspaceProps) {
   const { t } = useTranslation('common')
   const runtime = getRuntimeConfig()
@@ -163,6 +165,10 @@ export function PluginManagementWorkspace({
   const [activeTab, setActiveTab] = useState<PluginManagementTab>('codex')
   const showCoreDshTab = isElectronRuntime()
   const localPluginApi = useMemo(() => createLocalCodexPluginApi(), [])
+  const pluginDeveloperInstalled = installedPlugins.some(
+    plugin => plugin.raw.spec.source.pluginKey === 'wework-plugin-developer'
+  )
+
   const cloudPluginApi = useMemo(() => {
     return createPluginApi(
       createHttpClient({
@@ -1017,7 +1023,9 @@ export function PluginManagementWorkspace({
             aria-labelledby="plugin-management-core-dsh-tab"
             data-testid="plugin-management-core-dsh-panel"
           >
-            <CoreDshPluginManagementSection />
+            <CoreDshPluginManagementSection
+              onCreatePlugin={pluginDeveloperInstalled ? onCreateWeworkPlugin : undefined}
+            />
           </div>
         ) : null}
         {!showCoreDshTab || activeTab === 'codex' ? (

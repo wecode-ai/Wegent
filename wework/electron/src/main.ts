@@ -19,7 +19,8 @@ import {
 } from 'electron'
 import electronUpdater from 'electron-updater'
 import { execFile } from 'node:child_process'
-import { existsSync } from 'node:fs'
+import { existsSync, watch, type FSWatcher } from 'node:fs'
+import { mkdir, writeFile } from 'node:fs/promises'
 import { createRequire } from 'node:module'
 import { release } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
@@ -92,6 +93,7 @@ import { GlobalShortcutController } from './host/global-shortcut-controller.js'
 import { resolveDshAppRoute } from './host/dsh-app-route.js'
 import { BrowserAnnotationController } from './host/browser-annotation-controller.js'
 import { LogRetentionService, type LogCleanupResult } from './runtime/log-retention.js'
+import { PluginDevelopmentManager } from './runtime/plugin-development-manager.js'
 
 const packageRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const packageMetadata = createRequire(import.meta.url)('../package.json') as {
@@ -115,6 +117,11 @@ const applicationId =
   'io.wecode.wework'
 const DEFAULT_POPOUT_WINDOW_SHORTCUT = 'Alt+Shift+Space'
 const startupStartedAt = performance.now()
+const pluginDevelopmentInstance = process.env.WEWORK_INSTANCE_MODE === 'core-dsh-plugin-development'
+const pluginDevelopmentCommand = commandLineValue(
+  process.argv,
+  '--wework-plugin-development-command'
+)
 
 function logStartupStep(
   step: string,
@@ -127,6 +134,12 @@ function logStartupStep(
     elapsedMs: Math.round(performance.now() - startupStartedAt),
     ...details,
   })
+}
+
+function commandLineValue(argv: string[], name: string): string | null {
+  const index = argv.lastIndexOf(name)
+  const value = index >= 0 ? argv[index + 1]?.trim() : ''
+  return value || null
 }
 
 const configuredUserDataPath = process.env.WEWORK_USER_DATA_DIR?.trim()
@@ -163,6 +176,10 @@ let pendingSystemDrops: Array<{
 let runtimeError: string | null = null
 let runtimePhase: 'initializing' | 'ready' | 'failed' = 'initializing'
 let runtimeStartPromise: Promise<void> | null = null
+let pluginDevelopmentWatcher: FSWatcher | null = null
+let pluginDevelopmentReloadTimer: NodeJS.Timeout | null = null
+let pluginDevelopmentReloadPromise: Promise<void> = Promise.resolve()
+let pluginDevelopmentHmrGeneration = 0
 let computerUseStartupScheduled = false
 let electronNodeRuntimePromise: Promise<ElectronNodeRuntime> | null = null
 let quitting = false
@@ -176,6 +193,7 @@ let windowClosePolicy: WindowClosePolicy | null = null
 let startupSplash: StartupSplash | null = null
 let startupRecovery: StartupRecoveryService | null = null
 let componentUpdates: DesktopComponentUpdateController | null = null
+let pluginDevelopment: PluginDevelopmentManager | null = null
 let trayManager: ElectronTrayManager<Electron.Menu | null, Tray> | null = null
 let trayNativeStatus: TrayNativeStatusController | null = null
 const desktopHostEvents = new DesktopHostEventBroker()
@@ -214,7 +232,9 @@ const appUpdates = new AppUpdateService({
   updateBaseUrl,
 })
 const systemResume = new SystemResumeBridge(powerMonitor, () => webContents.getAllWebContents())
-const hasSingleInstanceLock = app.requestSingleInstanceLock()
+const hasSingleInstanceLock = app.requestSingleInstanceLock({
+  pluginDevelopmentCommand,
+})
 
 if (keepE2EWindowInBackground) {
   app.setActivationPolicy('prohibited')
@@ -231,7 +251,19 @@ function focusStartupSplashIfActive(): boolean {
   return true
 }
 
-app.on('second-instance', () => {
+app.on('second-instance', (_event, _argv, _workingDirectory, additionalData) => {
+  const instanceData =
+    additionalData && typeof additionalData === 'object'
+      ? (additionalData as Record<string, unknown>)
+      : {}
+  const command =
+    typeof instanceData.pluginDevelopmentCommand === 'string'
+      ? instanceData.pluginDevelopmentCommand
+      : null
+  if (pluginDevelopmentInstance && command) {
+    void handlePluginDevelopmentCommand(command)
+    return
+  }
   if (keepE2EWindowInBackground) return
   if (focusStartupSplashIfActive()) return
   if (!mainWindow) return
@@ -239,6 +271,110 @@ app.on('second-instance', () => {
   mainWindow.show()
   mainWindow.focus()
 })
+
+async function handlePluginDevelopmentCommand(command: string): Promise<void> {
+  if (command === 'focus') {
+    await reactivateMainWindow()
+    return
+  }
+  if (command === 'open-devtools') {
+    mainWindow?.webContents.openDevTools({ mode: 'detach', activate: true })
+    return
+  }
+  if (command === 'restart-core-dsh') {
+    await desktopRuntime?.restartCoreDsh()
+    await loadPrimaryDshView()
+    await writePluginDevelopmentState('ready')
+    return
+  }
+  if (command === 'stop') {
+    requestApplicationShutdown(() => app.quit())
+  }
+}
+
+async function writePluginDevelopmentState(
+  status: 'validating' | 'starting' | 'ready' | 'reloading' | 'error' | 'stopping' | 'stopped',
+  error: Error | null = null
+): Promise<void> {
+  const path = process.env.WEWORK_PLUGIN_DEVELOPMENT_STATE_PATH?.trim()
+  if (!pluginDevelopmentInstance || !path) return
+  await mkdir(dirname(path), { recursive: true, mode: 0o700 })
+  await writeFile(
+    path,
+    `${JSON.stringify(
+      {
+        status,
+        coreDshPid: desktopRuntime?.diagnostics().coreDshPid ?? null,
+        hmrGeneration: pluginDevelopmentHmrGeneration,
+        lastError: error
+          ? {
+              stage: 'core-dsh',
+              message: error.message,
+              timestamp: new Date().toISOString(),
+            }
+          : null,
+      },
+      null,
+      2
+    )}\n`,
+    { mode: 0o600 }
+  )
+}
+
+function isPluginDevelopmentSourceChange(filename: string | Buffer | null): boolean {
+  if (!filename) return true
+  const segments = filename.toString().split(/[\\/]/)
+  return !segments.some(segment => segment === '.git' || segment === 'node_modules')
+}
+
+function schedulePluginDevelopmentReload(): void {
+  if (pluginDevelopmentReloadTimer) clearTimeout(pluginDevelopmentReloadTimer)
+  pluginDevelopmentReloadTimer = setTimeout(() => {
+    pluginDevelopmentReloadTimer = null
+    pluginDevelopmentReloadPromise = pluginDevelopmentReloadPromise
+      .catch(() => undefined)
+      .then(async () => {
+        if (quitting || !desktopRuntime) return
+        await writePluginDevelopmentState('reloading')
+        try {
+          await desktopRuntime.restartCoreDsh()
+          await loadPrimaryDshView()
+          pluginDevelopmentHmrGeneration += 1
+          await writePluginDevelopmentState('ready')
+        } catch (error) {
+          const normalized = error instanceof Error ? error : new Error(String(error))
+          await writePluginDevelopmentState('error', normalized)
+          console.error('[plugin-development] hot reload failed', normalized)
+        }
+      })
+  }, 300)
+}
+
+function startPluginDevelopmentWatcher(): void {
+  if (!pluginDevelopmentInstance || pluginDevelopmentWatcher) return
+  const sourceRoot = process.env.WEWORK_PLUGIN_DEVELOPMENT_ROOT?.trim()
+  if (!sourceRoot) return
+  pluginDevelopmentWatcher = watch(
+    sourceRoot,
+    { persistent: false, recursive: true },
+    (_event, filename) => {
+      if (isPluginDevelopmentSourceChange(filename)) schedulePluginDevelopmentReload()
+    }
+  )
+  pluginDevelopmentWatcher.on('error', error => {
+    console.error('[plugin-development] source watcher failed', error)
+    void writePluginDevelopmentState('error', error)
+  })
+}
+
+function stopPluginDevelopmentWatcher(): void {
+  if (pluginDevelopmentReloadTimer) {
+    clearTimeout(pluginDevelopmentReloadTimer)
+    pluginDevelopmentReloadTimer = null
+  }
+  pluginDevelopmentWatcher?.close()
+  pluginDevelopmentWatcher = null
+}
 
 rendererHealth.on('change', () => {
   mainWindow?.webContents.send('runtime:changed')
@@ -448,7 +584,16 @@ const loadPrimaryDshView = createSingleFlight(async (): Promise<void> => {
           originMatchingMode: 'origin-in-all-contexts',
         }),
     })
-    await contents.loadURL(dshUrl, {
+    const targetUrl = new URL(dshUrl)
+    if (pluginDevelopmentInstance) {
+      targetUrl.searchParams.set(
+        'weworkDevTitle',
+        process.env.WEWORK_PLUGIN_DEVELOPMENT_TITLE?.trim() || 'Core DSH plugin'
+      )
+      const sourceRoot = process.env.WEWORK_PLUGIN_DEVELOPMENT_ROOT?.trim()
+      if (sourceRoot) targetUrl.searchParams.set('weworkDevWorktree', sourceRoot)
+    }
+    await contents.loadURL(targetUrl.toString(), {
       extraHeaders: 'X-Wework-Window-Label: main',
     })
   } catch (error) {
@@ -745,11 +890,16 @@ async function updateDesktopPreferences(
 
 async function createWindow(startupTheme: StartupSplashTheme): Promise<void> {
   logStartupStep('windows-create', 'started', { theme: startupTheme })
+  const developmentTitle = process.env.WEWORK_PLUGIN_DEVELOPMENT_TITLE?.trim()
+  const windowTitle =
+    pluginDevelopmentInstance && developmentTitle
+      ? `Wework Plugin Development — ${developmentTitle}`
+      : 'Wework'
   mainWindow = new BrowserWindow({
     ...desktopWindowFrameOptions(),
     width: 1440,
     height: 960,
-    title: 'Wework',
+    title: windowTitle,
     backgroundColor: startupTheme === 'dark' ? '#101316' : '#fafafa',
     show: false,
     webPreferences: {
@@ -765,7 +915,7 @@ async function createWindow(startupTheme: StartupSplashTheme): Promise<void> {
     ...desktopWindowFrameOptions(),
     width: 1440,
     height: 960,
-    title: 'Wework',
+    title: windowTitle,
     backgroundColor: startupTheme === 'dark' ? '#101316' : '#fafafa',
     show: false,
     webPreferences: {
@@ -805,6 +955,10 @@ async function createWindow(startupTheme: StartupSplashTheme): Promise<void> {
   mainWindow.on('resize', layoutPrimaryView)
   mainWindow.on('close', event => {
     if (quitting) return
+    if (pluginDevelopmentInstance) {
+      requestApplicationShutdown(() => app.quit())
+      return
+    }
     event.preventDefault()
     void handleMainWindowCloseRequest()
   })
@@ -1041,6 +1195,8 @@ function installIpc(): void {
 }
 
 async function shutdown(): Promise<void> {
+  stopPluginDevelopmentWatcher()
+  await writePluginDevelopmentState('stopping')
   await logRetention.stop()
   systemResume.stop()
   systemSleep.stop()
@@ -1067,12 +1223,16 @@ async function shutdown(): Promise<void> {
   embeddedBrowserBridge = null
   const computerUseService = computerUse
   computerUse = null
+  const development = pluginDevelopment
+  pluginDevelopment = null
   await Promise.allSettled([
     browserBridge?.stop(),
     computerUseService?.stop(),
     plugins?.shutdown(),
+    development?.stop(),
     desktopRuntime?.stop(),
   ])
+  await writePluginDevelopmentState('stopped')
 }
 
 function requestApplicationShutdown(exit: () => void): void {
@@ -1102,6 +1262,25 @@ async function configureDesktopRuntime(): Promise<void> {
   if (desktopRuntime) return
   logStartupStep('runtime-configure', 'started')
   const environment = await desktopEnvironment()
+  if (!pluginDevelopmentInstance && !pluginDevelopment) {
+    pluginDevelopment = new PluginDevelopmentManager({
+      ...currentElectronLaunch(),
+      environment,
+      userDataDirectory: app.getPath('userData'),
+      onStateChanged: state => {
+        desktopHostEvents.publish(
+          'plugin-development.state',
+          state as unknown as Record<string, unknown>
+        )
+      },
+      onProjectClassificationChanged: classification => {
+        desktopHostEvents.publish(
+          'plugin-development.project-classification',
+          classification as unknown as Record<string, unknown>
+        )
+      },
+    })
+  }
   if (!preferences) throw new Error('Desktop preferences are unavailable')
   if (!rendererStorage) throw new Error('Renderer storage is unavailable')
   workbenchPlugins = new WorkbenchPluginManager()
@@ -1170,6 +1349,30 @@ async function configureDesktopRuntime(): Promise<void> {
         computerUse,
         {
           coreDshPlugins: () => desktopRuntime,
+          pluginDevelopment: () =>
+            pluginDevelopment
+              ? {
+                  classify: sourceRoot => pluginDevelopment!.classify(sourceRoot),
+                  deleteData: () => pluginDevelopment!.deleteData(),
+                  focus: () => pluginDevelopment!.focus(),
+                  initialize: sourceRoot => pluginDevelopment!.initialize(sourceRoot),
+                  list: () => pluginDevelopment!.list(),
+                  observe: sourceRoot => pluginDevelopment!.observe(sourceRoot),
+                  openDevTools: () => pluginDevelopment!.openDevTools(),
+                  openLogDirectory: async () => {
+                    const [developmentSession] = await pluginDevelopment!.list()
+                    if (!developmentSession) {
+                      throw new Error('No Wework plugin development session exists')
+                    }
+                    const error = await shell.openPath(developmentSession.logDirectory)
+                    if (error) throw new Error(error)
+                  },
+                  restartCoreDsh: () => pluginDevelopment!.restartCoreDsh(),
+                  start: sourceRoot => pluginDevelopment!.start(sourceRoot),
+                  stop: () => pluginDevelopment!.stop(),
+                  validate: sourceRoot => pluginDevelopment!.validate(sourceRoot),
+                }
+              : null,
           appUpdates,
           browserAnnotations,
           cleanupStaleTemporaryImages,
@@ -1249,6 +1452,7 @@ async function configureDesktopRuntime(): Promise<void> {
           runtimeDiagnostics: () =>
             desktopRuntime?.diagnostics() ?? {
               coreDshPid: null,
+              developmentPlugin: null,
               executorPid: null,
               workbenchRuntimes: [],
             },
@@ -1299,6 +1503,12 @@ async function configureDesktopRuntime(): Promise<void> {
   logStartupStep('runtime-configure', 'completed')
 }
 
+function currentElectronLaunch(): { command: string; args: string[] } {
+  return app.isPackaged
+    ? { command: process.execPath, args: [] }
+    : { command: process.execPath, args: [packageRoot] }
+}
+
 function scheduleComputerUseStartup(): void {
   if (computerUseStartupScheduled || quitting) return
   const service = computerUse
@@ -1325,6 +1535,7 @@ function startDesktopRuntime(): Promise<void> {
   logStartupStep('desktop-runtime-start', 'started')
   runtimePhase = 'initializing'
   runtimeError = null
+  void writePluginDevelopmentState('starting')
   notifyRuntimeChanged()
   runtimeStartPromise = (async () => {
     await configureDesktopRuntime()
@@ -1337,8 +1548,10 @@ function startDesktopRuntime(): Promise<void> {
     await componentUpdates?.confirmStartup()
     logStartupStep('component-update-confirmation', 'completed')
     runtimePhase = 'ready'
+    startPluginDevelopmentWatcher()
+    await writePluginDevelopmentState('ready')
     logStartupStep('desktop-runtime-start', 'completed')
-    if (shouldStageDesktopComponentUpdates(process.env)) {
+    if (!pluginDevelopmentInstance && shouldStageDesktopComponentUpdates(process.env)) {
       void componentUpdates
         ?.stageAvailableUpdate()
         .then(staged => {
@@ -1358,6 +1571,10 @@ function startDesktopRuntime(): Promise<void> {
       }
       runtimePhase = 'failed'
       runtimeError = error instanceof Error ? error.message : String(error)
+      await writePluginDevelopmentState(
+        'error',
+        error instanceof Error ? error : new Error(String(error))
+      )
       logStartupStep('desktop-runtime-start', 'failed', {
         errorType: error instanceof Error ? error.name : typeof error,
       })
@@ -1389,9 +1606,11 @@ if (hasSingleInstanceLock) {
     preferences = new PreferencesStore(app.getPath('userData'))
     rendererStorage = new RendererStorageStore(app.getPath('userData'))
     logStartupStep('desktop-stores-create', 'completed')
-    popoutShortcut = new GlobalShortcutController(globalShortcut, showPopoutWindow, error =>
-      console.error('[popout-window] global shortcut failed', error)
-    )
+    if (!pluginDevelopmentInstance) {
+      popoutShortcut = new GlobalShortcutController(globalShortcut, showPopoutWindow, error =>
+        console.error('[popout-window] global shortcut failed', error)
+      )
+    }
     cloudCredentials = new CloudCredentialService(app.getPath('userData'))
     startupRecovery = new StartupRecoveryService({
       rendererStorage,
@@ -1425,13 +1644,15 @@ if (hasSingleInstanceLock) {
         await preferences?.update({ closeToTrayHintSeen: true })
       },
     })
-    const createdTrayManager = createTrayManager()
-    createdTrayManager.create()
-    trayManager = createdTrayManager
+    if (!pluginDevelopmentInstance) {
+      const createdTrayManager = createTrayManager()
+      createdTrayManager.create()
+      trayManager = createdTrayManager
+    }
     const startupPreferences = await preferences.read()
     logStartupStep('startup-preferences-read', 'completed')
     try {
-      popoutShortcut.configure(resolvePopoutShortcut(startupPreferences))
+      popoutShortcut?.configure(resolvePopoutShortcut(startupPreferences))
     } catch (error) {
       console.warn('[popout-window] failed to register global shortcut', error)
     }

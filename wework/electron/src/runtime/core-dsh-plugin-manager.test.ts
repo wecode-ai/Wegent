@@ -1,7 +1,11 @@
 import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { describe, expect, test, vi } from 'vitest'
-import { CoreDshPluginManager, parseBlockedBuildMatcher } from './core-dsh-plugin-manager.js'
+import {
+  CoreDshPluginManager,
+  parseBlockedBuildMatcher,
+  validateCoreDshDevelopmentPlugin,
+} from './core-dsh-plugin-manager.js'
 import { temporaryDirectory } from './test-helpers.js'
 
 describe('CoreDshPluginManager', () => {
@@ -99,6 +103,75 @@ describe('CoreDshPluginManager', () => {
       join(fixture.runtimeRoot, 'dsh.js'),
     ])
     await fixture.remove()
+  })
+
+  test('links a development plugin and enables HMR only for its source root', async () => {
+    const runCommand = vi.fn(async (_command: string, args: string[]) => {
+      if (args.includes('add')) {
+        const manifest = await fixture.manifest()
+        manifest.dependencies['dsh-development'] = 'link:development-plugin'
+        await fixture.writeManifest(manifest)
+        await fixture.writePackage('dsh-development', {
+          name: 'dsh-development',
+          displayName: 'Development plugin',
+          version: '0.1.0',
+          dsh: { bundle: { patch: './cordis.patch.yml' } },
+        })
+      }
+      return { stdout: '', stderr: '' }
+    })
+    const fixture = await createFixture({ runCommand })
+    const source = join(fixture.root, 'development-plugin')
+    await mkdir(source, { recursive: true })
+    await writeJson(join(source, 'package.json'), {
+      name: 'dsh-development',
+      displayName: 'Development plugin',
+      version: '0.1.0',
+      dsh: { bundle: { patch: './cordis.patch.yml' } },
+    })
+    await writeFile(join(source, 'cordis.patch.yml'), '[]\n')
+
+    const plugin = await fixture.manager().ensureDevelopmentPlugin(source)
+
+    expect(plugin).toMatchObject({
+      name: 'dsh-development',
+      displayName: 'Development plugin',
+      sourceRoot: source,
+    })
+    expect(runCommand.mock.calls.some(([, args]) => args.includes(`link:${source}`))).toBe(true)
+    expect(await readFile(join(fixture.profileRoot, 'cordis.patch.yml'), 'utf8')).toContain(
+      JSON.stringify(source)
+    )
+    expect(await fixture.userBundles()).toEqual(['dsh-alpha', 'dsh-beta', 'dsh-development'])
+    await fixture.remove()
+  })
+
+  test('validates an absolute Core DSH development plugin directory', async () => {
+    const root = await temporaryDirectory('core-dsh-development-validation-')
+    await writeJson(join(root.path, 'package.json'), {
+      name: 'dsh-development',
+      version: '0.1.0',
+      dsh: { bundle: { patch: './cordis.patch.yml' } },
+    })
+    await writeFile(join(root.path, 'cordis.patch.yml'), '[]\n')
+
+    await expect(validateCoreDshDevelopmentPlugin(root.path)).resolves.toMatchObject({
+      name: 'dsh-development',
+      sourceRoot: root.path,
+    })
+    await expect(validateCoreDshDevelopmentPlugin('./relative-plugin')).rejects.toThrow(
+      'absolute source directory'
+    )
+    await writeJson(join(root.path, 'package.json'), {
+      name: 'dsh-development',
+      version: '0.1.0',
+      dsh: { bundle: { patch: '../outside.yml' } },
+    })
+    await writeFile(join(root.path, '..', 'outside.yml'), '[]\n')
+    await expect(validateCoreDshDevelopmentPlugin(root.path)).rejects.toThrow(
+      'outside the plugin directory'
+    )
+    await root.remove()
   })
 
   test('parses only the exact pnpm git build matcher', () => {
@@ -200,6 +273,7 @@ async function createFixture(
       ),
     writeManifest: (value: typeof manifest) => writeJson(join(profileRoot, 'package.json'), value),
     writePackage,
+    root: root.path,
     profileRoot,
     runtimeRoot,
     userBundles: async () =>

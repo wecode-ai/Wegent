@@ -3,7 +3,11 @@ import type { HostPipeServer } from '../host/host-pipe.js'
 import { prepareCoreDshLaunch } from './core-dsh-runtime.js'
 import { resolveDesktopDeviceId } from './desktop-device-id.js'
 import { resolveDesktopDeviceName } from './desktop-device-name.js'
-import { CoreDshPluginManager, type CoreDshPlugin } from './core-dsh-plugin-manager.js'
+import {
+  CoreDshPluginManager,
+  type CoreDshDevelopmentPlugin,
+  type CoreDshPlugin,
+} from './core-dsh-plugin-manager.js'
 import { DshRuntime } from './dsh-runtime.js'
 import { ManagedExecutorRuntime, managedExecutorHome } from './managed-executor-runtime.js'
 import {
@@ -32,6 +36,7 @@ export interface DesktopRuntimeState {
 
 export interface DesktopRuntimeDiagnostics {
   coreDshPid: number | null
+  developmentPlugin: CoreDshDevelopmentPlugin | null
   executorPid: number | null
   workbenchRuntimes: WorkbenchRuntimeSnapshot[]
 }
@@ -41,6 +46,7 @@ export class DesktopRuntime {
   private coreDsh: DshRuntime | null = null
   private coreDshPlugins: CoreDshPluginManager | null = null
   private coreDshPort: number | null = null
+  private developmentPlugin: CoreDshDevelopmentPlugin | null = null
   private readonly workbench = new WorkbenchRuntimeManager()
   private started = false
 
@@ -80,6 +86,7 @@ export class DesktopRuntime {
   diagnostics(): DesktopRuntimeDiagnostics {
     return {
       coreDshPid: this.coreDsh?.pid() ?? null,
+      developmentPlugin: this.developmentPlugin,
       executorPid: this.executor?.pid() ?? null,
       workbenchRuntimes: this.workbench.list(),
     }
@@ -128,6 +135,7 @@ export class DesktopRuntime {
     const previous = this.coreDsh
     this.coreDsh = null
     this.coreDshPlugins = null
+    this.developmentPlugin = null
     await previous?.stop()
     try {
       await this.startCoreDsh()
@@ -206,6 +214,10 @@ export class DesktopRuntime {
         nodeCommand: launch.command,
         environment: launch.environment,
       })
+      const developmentRoot = this.options.environment.WEWORK_PLUGIN_DEVELOPMENT_ROOT?.trim()
+      if (developmentRoot) {
+        this.developmentPlugin = await this.coreDshPlugins.ensureDevelopmentPlugin(developmentRoot)
+      }
     }
     const runtime = new DshRuntime({
       name: 'dsh-core',

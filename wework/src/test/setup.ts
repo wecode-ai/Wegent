@@ -243,6 +243,7 @@ function installDefaultDshUiTestRuntime() {
   const entries = new Map<string, readonly WeworkDshSlotEntry[]>([
     [WEWORK_DSH_SLOTS.action, testActions],
     [WEWORK_DSH_SLOTS.app, testApps],
+    [WEWORK_DSH_SLOTS.pluginsAction, []],
     [WEWORK_DSH_SLOTS.settingsPage, testSettings],
     [WEWORK_DSH_SLOTS.route, []],
     [WEWORK_DSH_SLOTS.sidebarNavigation, testSidebarNavigation],

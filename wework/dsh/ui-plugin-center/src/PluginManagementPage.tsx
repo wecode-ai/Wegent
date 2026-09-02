@@ -17,6 +17,9 @@ import { navigateTo } from '@/lib/navigation'
 import { isElectronRuntime } from '@/lib/runtime-environment'
 import { track } from '@/telemetry/client'
 import { prefetchPluginsWorkspace } from '@/components/plugins/workspace/prefetchPluginsWorkspace'
+import { initializePluginDevelopmentProject } from '@/features/dsh-plugins/pluginDevelopment'
+import { openNativeDirectoryPicker } from '@/lib/native-directory-picker'
+import { getPreferredStandaloneDeviceId } from '@/lib/device-selection'
 import { createPluginRouteRuntimeTaskOpener } from './plugin-route-navigation'
 
 export function PluginManagementPage() {
@@ -93,6 +96,20 @@ export function PluginManagementPage() {
   const handleStartStandaloneChat = () => {
     navigateTo('/')
     startStandaloneChat()
+  }
+
+  const handleCreateWeworkPlugin = async () => {
+    const sourceRoot = await openNativeDirectoryPicker()
+    if (!sourceRoot) return
+    const deviceId = getPreferredStandaloneDeviceId(
+      state.devices,
+      state.standaloneDeviceId ?? state.user?.preferences?.default_execution_target
+    )
+    if (!deviceId) throw new Error(t('workbench.no_local_device', '没有可用的本地设备'))
+    const plugin = await initializePluginDevelopmentProject(sourceRoot)
+    await openStandaloneWorkspace(deviceId, plugin.sourceRoot, plugin.displayName, [
+      plugin.sourceRoot,
+    ])
   }
 
   const topBarLeftActions =
@@ -204,6 +221,7 @@ export function PluginManagementPage() {
         cloudToken={cloudConnection.token}
         sidebarCollapsed={sidebarCollapsed && !isMobile}
         topBarLeftActions={topBarLeftActions}
+        onCreateWeworkPlugin={handleCreateWeworkPlugin}
       />
       <WorkbenchSearchDialog
         open={searchOpen}

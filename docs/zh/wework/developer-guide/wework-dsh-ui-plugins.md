@@ -42,6 +42,7 @@ Core DSH 中仍有效的现有默认模型应在目录同步后保留；只有�
 | ------------------------------ | ---------------------------- | --------------------------------- | ------------------------- |
 | `wework.action`                | 可由宿主入口调用的导航动作   | `id`、`path`                      | 无组件                    |
 | `wework.app`                   | 产品切换器与应用 surface     | `id`、`label`、`mode`             | `visible`、`tab`          |
+| `wework.plugins.action`        | 插件页操作                   | `id`、`label`                     | 宿主提供的操作回调        |
 | `wework.route`                 | 顶层辅助页面                 | `id`、`path`、`telemetryFeature`  | `search`、`onNavigate`    |
 | `wework.sidebar.navigation`    | 左侧边栏导航入口             | `id`、`path`、`label`             | 元数据入口通常无组件      |
 | `wework.settings.page`         | 设置导航与设置内容           | `id`、`path`、`label`、`category` | 设置上下文与 `onBack`     |

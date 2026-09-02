@@ -1,6 +1,6 @@
 import { spawn } from 'node:child_process'
 import { access, mkdir, readFile, rm, writeFile } from 'node:fs/promises'
-import { join } from 'node:path'
+import { isAbsolute, join, relative, resolve } from 'node:path'
 import { runtimeNodeArgs } from './electron-node-runtime.js'
 
 const PROFILE_NAME = 'wework-core'
@@ -9,6 +9,7 @@ const SNAPSHOT_FILES = [
   'package.json',
   'pnpm-lock.yaml',
   'pnpm-workspace.yaml',
+  'cordis.patch.yml',
   STATE_FILE,
 ] as const
 
@@ -19,6 +20,7 @@ export const IMMUTABLE_CORE_DSH_PLUGINS = new Set([
   '@wegent/dsh-electron-host',
   '@wegent/dsh-executor-runtime',
   '@wegent/dsh-terminal-runtime',
+  '@wegent/dsh-wework-plugin-developer',
 ])
 
 export interface CoreDshPlugin {
@@ -64,6 +66,14 @@ interface PackageManifest {
       patch?: string
     }
   }
+}
+
+export interface CoreDshDevelopmentPlugin {
+  name: string
+  displayName: string
+  description: string
+  version: string
+  sourceRoot: string
 }
 
 interface CommandResult {
@@ -123,6 +133,33 @@ export class CoreDshPluginManager {
       await this.writeState(state)
       await this.writeActiveBundles(after, state)
       await this.preflight()
+    })
+  }
+
+  ensureDevelopmentPlugin(sourceRoot: string): Promise<CoreDshDevelopmentPlugin> {
+    return this.serial(async () => {
+      const source = await readDevelopmentPlugin(sourceRoot)
+      const snapshot = await this.snapshot()
+      try {
+        await this.runPnpm(['add', `link:${source.sourceRoot}`])
+        await this.requireBundle(source.name)
+        const manifest = await this.readManifest()
+        const state = await this.readState(manifest)
+        state.order = [...state.order.filter(item => item !== source.name), source.name]
+        state.disabled = state.disabled.filter(item => item !== source.name)
+        await this.writeState(state)
+        await this.writeActiveBundles(manifest, state)
+        await this.writeDevelopmentPatch(source.sourceRoot)
+        await this.preflight()
+        return source
+      } catch (error) {
+        await this.restore(snapshot).catch(restoreError => {
+          throw new Error(
+            `${errorMessage(error)}\nProfile recovery failed: ${errorMessage(restoreError)}`
+          )
+        })
+        throw error
+      }
     })
   }
 
@@ -352,6 +389,22 @@ export class CoreDshPluginManager {
     })
   }
 
+  private async writeDevelopmentPatch(sourceRoot: string): Promise<void> {
+    const patch = [
+      '- id: hmr',
+      '  disabled: false',
+      '  config:',
+      '    root:',
+      `      - ${JSON.stringify(sourceRoot)}`,
+      '    ignored:',
+      "      - '**/node_modules'",
+      "      - '**/.git'",
+      '    debounce: 100',
+      '',
+    ].join('\n')
+    await writeFile(join(this.profileRoot, 'cordis.patch.yml'), patch, { mode: 0o600 })
+  }
+
   private pnpmCommandOptions(): { cwd: string; env: NodeJS.ProcessEnv } {
     return this.commandOptions(this.profileRoot)
   }
@@ -389,6 +442,12 @@ export class CoreDshPluginManager {
       await this.runPnpm(['install', '--frozen-lockfile'])
     }
   }
+}
+
+export async function validateCoreDshDevelopmentPlugin(
+  sourceRoot: string
+): Promise<CoreDshDevelopmentPlugin> {
+  return readDevelopmentPlugin(sourceRoot)
 }
 
 export function parseBlockedBuildMatcher(output: string): string | null {
@@ -432,6 +491,31 @@ function validateMutableName(name: string): void {
   }
   if (IMMUTABLE_CORE_DSH_PLUGINS.has(name)) {
     throw new Error(`${name} is a built-in Core DSH plugin`)
+  }
+}
+
+async function readDevelopmentPlugin(sourceRoot: string): Promise<CoreDshDevelopmentPlugin> {
+  const input = sourceRoot.trim()
+  if (!input || !isAbsolute(input)) {
+    throw new Error('Wework plugin development requires an absolute source directory')
+  }
+  const root = resolve(input)
+  const manifest = (await readRequiredJson(join(root, 'package.json'))) as PackageManifest
+  const name = manifest.name?.trim() ?? ''
+  validateMutableName(name)
+  const patch = manifest.dsh?.bundle?.patch?.trim()
+  if (!patch) throw new Error(`${name} does not declare dsh.bundle.patch`)
+  const patchPath = resolve(root, patch)
+  if (relative(root, patchPath).startsWith('..') || isAbsolute(relative(root, patchPath))) {
+    throw new Error(`${name} declares a dsh.bundle.patch outside the plugin directory`)
+  }
+  await access(patchPath)
+  return {
+    name,
+    displayName: manifest.displayName?.trim() || name,
+    description: manifest.description?.trim() || '',
+    version: manifest.version?.trim() || '',
+    sourceRoot: root,
   }
 }
 

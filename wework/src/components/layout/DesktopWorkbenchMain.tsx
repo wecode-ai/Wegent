@@ -2854,7 +2854,10 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
   const rightWorkspaceExtensionSessionId = currentRuntimeConversationSource
     ? `${currentRuntimeConversationSource.deviceId}:${currentRuntimeConversationSource.taskId}`
     : paneKey
-  const rightWorkspaceExtensionCwd = workspacePanelTarget?.path
+  const rightWorkspaceExtensionCwd =
+    workspacePanelTarget?.path ??
+    currentProject?.config?.workspace?.localPath ??
+    currentProject?.config?.path
   const rightWorkspaceExtensionScope = useMemo<WeworkWorkspaceScope>(
     () => ({
       sessionId: rightWorkspaceExtensionSessionId,

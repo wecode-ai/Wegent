@@ -240,6 +240,7 @@ export function runtimeConfigScript(environment = process.env, windowLabel = 'ma
       environment.WEWORK_E2E_CONTROL_TOKEN || environment.VITE_WEWORK_DESKTOP_E2E_CONTROL_TOKEN,
     controlUrl:
       environment.WEWORK_E2E_CONTROL_URL || environment.VITE_WEWORK_DESKTOP_E2E_CONTROL_URL,
+    disabled: environment.WEWORK_INSTANCE_MODE === 'core-dsh-plugin-development' || undefined,
     localModelsCatalogReady: environmentBoolean(
       environment,
       'WEWORK_E2E_LOCAL_MODELS_CATALOG_READY',

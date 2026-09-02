@@ -1,6 +1,8 @@
 import { type FormEvent, useEffect, useMemo, useState } from 'react'
 import { LoaderCircle, PackagePlus, PlugZap, RefreshCw, RotateCw, Trash2 } from 'lucide-react'
 import { ConfirmDialog } from '@/components/common/ConfirmDialog'
+import { DshSlotSurface } from '@/features/dsh-runtime/DshSlotSurface'
+import { WEWORK_DSH_SLOTS } from '@/features/dsh-runtime/dshUiSlots'
 import {
   installCoreDshPlugin,
   readCoreDshPlugins,
@@ -20,7 +22,11 @@ type Operation =
   | `update:${string}`
   | null
 
-export function CoreDshPluginManagementSection() {
+export function CoreDshPluginManagementSection({
+  onCreatePlugin,
+}: {
+  onCreatePlugin?: () => Promise<void>
+}) {
   const { t } = useTranslation('common')
   const [plugins, setPlugins] = useState<CoreDshPlugin[]>([])
   const [spec, setSpec] = useState('')
@@ -84,16 +90,27 @@ export function CoreDshPluginManagementSection() {
   return (
     <>
       <section data-testid="core-dsh-plugin-management">
-        <header className="mb-5">
-          <h2 className="heading-section text-text-primary">
-            {t('workbench.core_dsh_plugins_title', 'Wework 插件')}
-          </h2>
-          <p className="mt-1 text-sm leading-5 text-text-secondary">
-            {t(
-              'workbench.core_dsh_plugins_description',
-              '管理直接扩展 Wework 桌面能力的插件。修改会在重启 Wework 插件运行时后生效。'
-            )}
-          </p>
+        <header className="mb-5 flex items-start justify-between gap-4">
+          <div className="min-w-0">
+            <h2 className="heading-section text-text-primary">
+              {t('workbench.core_dsh_plugins_title', 'Wework 插件')}
+            </h2>
+            <p className="mt-1 text-sm leading-5 text-text-secondary">
+              {t(
+                'workbench.core_dsh_plugins_description',
+                '管理直接扩展 Wework 桌面能力的插件。修改会在重启 Wework 插件运行时后生效。'
+              )}
+            </p>
+          </div>
+          {onCreatePlugin ? (
+            <DshSlotSurface
+              className="shrink-0"
+              entryId="wework-plugin-developer.create"
+              props={{ onCreate: onCreatePlugin }}
+              slot={WEWORK_DSH_SLOTS.pluginsAction}
+              testId="core-dsh-plugin-page-actions"
+            />
+          ) : null}
         </header>
 
         <form
