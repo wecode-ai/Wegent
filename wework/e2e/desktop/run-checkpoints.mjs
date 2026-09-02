@@ -5,6 +5,10 @@ import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 import { DESKTOP_CHECKPOINTS } from './checkpoints.mjs'
+import {
+  compactInactiveDesktopE2EResults,
+  resolveDesktopE2EResultRoot,
+} from './result-retention.mjs'
 import { prepareDesktopE2EBuild } from '../../scripts/lib/desktop-e2e-build.mjs'
 import { runCommandToLog } from '../../scripts/lib/command-log.mjs'
 
@@ -505,6 +509,13 @@ async function runCheckpoints(checkpoints) {
 
 async function runAllCheckpoints() {
   await runCheckpoints(DEFAULT_DESKTOP_CHECKPOINTS)
+}
+
+const previousResults = await compactInactiveDesktopE2EResults(
+  resolveDesktopE2EResultRoot(weworkDir)
+)
+if (previousResults.compacted > 0) {
+  console.log(`[desktop-e2e] compacted ${previousResults.compacted} previous result directories`)
 }
 
 if (requestedArgs.length > 0) {
