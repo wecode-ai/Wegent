@@ -8,6 +8,7 @@ use std::{
 };
 
 use serde::{Deserialize, Serialize};
+use toml_edit::DocumentMut;
 
 const EXECUTOR_HOME_ENV: &str = "WEGENT_EXECUTOR_HOME";
 const CODEX_HOME_ENV: &str = "WEGENT_CODEX_HOME";
@@ -46,6 +47,25 @@ pub struct ExternalContentImportResult {
     imported_entries: Vec<String>,
 }
 
+#[derive(Clone, Debug, Default, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CodexLocalConfigPatch {
+    remote_apps_enabled: Option<bool>,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+pub struct CodexLocalConfigUpdateRequest {
+    pub patch: CodexLocalConfigPatch,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CodexLocalConfig {
+    codex_home: String,
+    config_path: String,
+    remote_apps_enabled: bool,
+}
+
 fn default_remote_apps_enabled() -> bool {
     true
 }
@@ -73,6 +93,21 @@ pub fn import_external_content(
     let home = dirs::home_dir().ok_or_else(|| "Unable to resolve home directory".to_owned())?;
     let destination = wework_codex_home_path()?;
     import_external_content_from_paths(&request.source, &home, &destination)
+}
+
+pub fn read_codex_local_config() -> Result<CodexLocalConfig, String> {
+    let codex_home = wework_codex_home_path()?;
+    read_codex_local_config_from_path(&codex_home)
+}
+
+pub fn update_codex_local_config(
+    request: CodexLocalConfigUpdateRequest,
+) -> Result<CodexLocalConfig, String> {
+    let codex_home = wework_codex_home_path()?;
+    if let Some(enabled) = request.patch.remote_apps_enabled {
+        write_remote_apps_enabled(&codex_home, enabled)?;
+    }
+    read_codex_local_config_from_path(&codex_home)
 }
 
 fn codex_home_migration_status_from_paths(
@@ -133,6 +168,29 @@ fn native_codex_home_path() -> Result<PathBuf, String> {
     dirs::home_dir()
         .map(|home| home.join(".codex"))
         .ok_or_else(|| "Unable to resolve native Codex home".to_owned())
+}
+
+fn read_codex_local_config_from_path(codex_home: &Path) -> Result<CodexLocalConfig, String> {
+    let config_path = codex_home.join("config.toml");
+    let content = fs::read_to_string(&config_path).unwrap_or_default();
+    Ok(CodexLocalConfig {
+        codex_home: codex_home.display().to_string(),
+        config_path: config_path.display().to_string(),
+        remote_apps_enabled: read_remote_apps_enabled(&content),
+    })
+}
+
+fn read_remote_apps_enabled(content: &str) -> bool {
+    content
+        .parse::<DocumentMut>()
+        .ok()
+        .and_then(|config| {
+            config
+                .get("features")
+                .and_then(|features| features.get("apps"))
+                .and_then(|apps| apps.as_bool())
+        })
+        .unwrap_or_else(default_remote_apps_enabled)
 }
 
 fn write_remote_apps_enabled(codex_home: &Path, enabled: bool) -> Result<(), String> {
@@ -364,6 +422,31 @@ mod tests {
             fs::read_to_string(wework_home.join("skills/example/SKILL.md")).unwrap(),
             "example"
         );
+    }
+
+    #[test]
+    fn reads_and_updates_remote_apps_config() {
+        let root = tempfile::tempdir().unwrap();
+        let codex_home = root.path().join("codex");
+        fs::create_dir_all(&codex_home).unwrap();
+        assert!(read_remote_apps_enabled(""));
+        assert!(read_remote_apps_enabled("model = \"gpt-5\"\n"));
+        fs::write(
+            codex_home.join("config.toml"),
+            "model = \"gpt-5\"\n\n[features]\napps = true # enabled\n",
+        )
+        .unwrap();
+
+        let current = read_codex_local_config_from_path(&codex_home).unwrap();
+        assert!(current.remote_apps_enabled);
+
+        write_remote_apps_enabled(&codex_home, false).unwrap();
+
+        let updated = read_codex_local_config_from_path(&codex_home).unwrap();
+        assert!(!updated.remote_apps_enabled);
+        assert!(fs::read_to_string(codex_home.join("config.toml"))
+            .unwrap()
+            .contains("model = \"gpt-5\""));
     }
 
     #[test]

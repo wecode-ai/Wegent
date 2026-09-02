@@ -26,7 +26,8 @@ use crate::{
     local::bundled_plugins::{initialize_bundled_plugin_marketplace, BundledPluginMarketplace},
     local::codex_home::{
         codex_home_migration_status, import_external_content, initialize_codex_home,
-        CodexHomeInitializeRequest, ExternalContentImportRequest,
+        read_codex_local_config, update_codex_local_config, CodexHomeInitializeRequest,
+        CodexLocalConfigUpdateRequest, ExternalContentImportRequest,
     },
     local::command::{CommandHandler, CommandRequest, CommandResult, DeviceCommandHandler},
     local::git_commit_message::generate_commit_message,
@@ -98,6 +99,8 @@ const APP_IPC_RENDERER_METHODS: &[&str] = &[
     "executions.*",
     "executor.backend.configure",
     "executor.backend.status",
+    "executor.codex_home.config.read",
+    "executor.codex_home.config.update",
     "executor.codex_home.import_external_content",
     "executor.codex_home.initialize",
     "executor.codex_home.status",
@@ -641,6 +644,24 @@ impl AppIpcServer {
             return serde_json::to_value(
                 codex_home_migration_status()
                     .map_err(|error| AppIpcError::new("codex_home_status_failed", error))?,
+            )
+            .map_err(|error| AppIpcError::new("serialization_failed", error.to_string()));
+        }
+
+        if method == "executor.codex_home.config.read" {
+            return serde_json::to_value(
+                read_codex_local_config()
+                    .map_err(|error| AppIpcError::new("codex_home_config_read_failed", error))?,
+            )
+            .map_err(|error| AppIpcError::new("serialization_failed", error.to_string()));
+        }
+
+        if method == "executor.codex_home.config.update" {
+            let request = serde_json::from_value::<CodexLocalConfigUpdateRequest>(params)
+                .map_err(|error| AppIpcError::new("bad_request", error.to_string()))?;
+            return serde_json::to_value(
+                update_codex_local_config(request)
+                    .map_err(|error| AppIpcError::new("codex_home_config_update_failed", error))?,
             )
             .map_err(|error| AppIpcError::new("serialization_failed", error.to_string()));
         }

@@ -219,6 +219,49 @@ async fn app_ipc_initializes_a_blank_codex_home() {
 }
 
 #[tokio::test]
+async fn app_ipc_reads_and_updates_codex_local_config() {
+    let _lock = env_lock().await;
+    let root = tempfile::tempdir().unwrap();
+    let codex_home = root.path().join("codex");
+    fs::create_dir_all(&codex_home).unwrap();
+    fs::write(
+        codex_home.join("config.toml"),
+        "model = \"gpt-5\"\n\n[features]\napps = false\n",
+    )
+    .unwrap();
+    let _codex_home = EnvGuard::set("WEGENT_CODEX_HOME", &codex_home.display().to_string());
+    let server = AppIpcServer::new();
+
+    let current = server
+        .dispatch("executor.codex_home.config.read", json!({}))
+        .await
+        .unwrap();
+    assert_eq!(current["codexHome"], codex_home.display().to_string());
+    assert_eq!(
+        current["configPath"],
+        codex_home.join("config.toml").display().to_string()
+    );
+    assert_eq!(current["remoteAppsEnabled"], false);
+
+    let updated = server
+        .dispatch(
+            "executor.codex_home.config.update",
+            json!({"patch": {"remoteAppsEnabled": true}}),
+        )
+        .await
+        .unwrap();
+    assert_eq!(updated["remoteAppsEnabled"], true);
+    let current = server
+        .dispatch("executor.codex_home.config.read", json!({}))
+        .await
+        .unwrap();
+    assert_eq!(current["remoteAppsEnabled"], true);
+    let config = fs::read_to_string(codex_home.join("config.toml")).unwrap();
+    assert!(config.contains("model = \"gpt-5\""));
+    assert!(config.contains("[features]\napps = true"));
+}
+
+#[tokio::test]
 async fn app_ipc_imports_external_codex_content() {
     let _lock = env_lock().await;
     let root = tempfile::tempdir().unwrap();
@@ -1915,6 +1958,14 @@ async fn app_ipc_describes_the_versioned_desktop_protocol() {
         .as_array()
         .unwrap()
         .contains(&json!("executor.codex_home.status")));
+    assert!(description["renderer_methods"]
+        .as_array()
+        .unwrap()
+        .contains(&json!("executor.codex_home.config.read")));
+    assert!(description["renderer_methods"]
+        .as_array()
+        .unwrap()
+        .contains(&json!("executor.codex_home.config.update")));
     assert!(description["renderer_methods"]
         .as_array()
         .unwrap()

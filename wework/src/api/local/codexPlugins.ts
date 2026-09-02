@@ -210,7 +210,10 @@ export interface LocalCodexPluginApi {
     shareInflight?: boolean
   }): Promise<InstalledPluginListResponse & { deviceId?: string }>
   listSkills(params?: { cwds?: string[]; forceReload?: boolean }): Promise<LocalDeviceSkill[]>
-  listApps(params?: { forceRefetch?: boolean }): Promise<LocalDeviceApp[]>
+  listApps(params?: {
+    forceRefetch?: boolean
+    includeInaccessible?: boolean
+  }): Promise<LocalDeviceApp[]>
   listAvailablePlugins(params?: {
     q?: string
     marketplaceId?: string
@@ -3058,7 +3061,9 @@ export function createLocalCodexPluginApi(): LocalCodexPluginApi {
         apps.push(...response.data.map(toLocalDeviceApp))
         cursor = response.nextCursor
       } while (cursor)
-      return apps.filter(app => app.isEnabled !== false && app.isAccessible !== false)
+      return apps.filter(
+        app => app.isEnabled !== false && (params.includeInaccessible || app.isAccessible !== false)
+      )
     },
     async listAvailablePlugins(params = {}) {
       const state = await readState({

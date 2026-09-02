@@ -458,6 +458,17 @@ function expectCodexAppServerRequestNotCalled(method: string) {
   })
 }
 
+function expectFetchRequest(path: string, method = 'GET') {
+  expect(vi.mocked(fetch).mock.calls).toEqual(
+    expect.arrayContaining([
+      expect.arrayContaining([
+        expect.stringMatching(new RegExp(`${path.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`)),
+        expect.objectContaining({ method }),
+      ]),
+    ])
+  )
+}
+
 function mockSystemSkillsFetch(
   overrides: Partial<{
     installState: 'not_installed' | 'installed' | 'update_available'
@@ -2620,15 +2631,10 @@ describe('PluginsWorkspace', () => {
 
     await userEvent.click(screen.getByTestId('plugins-refresh-button'))
 
-    await waitFor(() =>
-      expect(fetch).toHaveBeenCalledWith(
-        '/api/plugins/marketplace',
-        expect.objectContaining({ method: 'GET' })
-      )
-    )
+    await waitFor(() => expectFetchRequest('/api/plugins/marketplace'))
     const marketplaceFetches = vi
       .mocked(fetch)
-      .mock.calls.filter(([url]) => String(url).startsWith('/api/plugins/marketplace'))
+      .mock.calls.filter(([url]) => String(url).endsWith('/api/plugins/marketplace'))
     expect(marketplaceFetches.length).toBeGreaterThanOrEqual(2)
   })
 
@@ -3053,10 +3059,7 @@ describe('PluginsWorkspace', () => {
       'Codex App Server rejected install'
     )
     expect(screen.getByTestId('plugin-detail-actions-101')).toBeInTheDocument()
-    expect(fetch).toHaveBeenCalledWith(
-      '/api/plugins/marketplace?device_id=current-device',
-      expect.objectContaining({ method: 'GET' })
-    )
+    expectFetchRequest('/api/plugins/marketplace?device_id=current-device')
   })
 
   test('auto-syncs account installs onto the current device once per session', async () => {
@@ -6289,7 +6292,7 @@ describe('PluginsWorkspace', () => {
     })
   })
 
-  test('lists enabled local apps through Codex app-server', async () => {
+  test('lists enabled accessible apps and can retain inaccessible apps for internal merging', async () => {
     window.__WEWORK_RUNTIME_CONFIG__ = { desktopHost: 'electron' }
     mockCodexAppServerInvoke({
       apps: [
@@ -6333,6 +6336,9 @@ describe('PluginsWorkspace', () => {
         source: 'codex-app',
       },
     ])
+    await expect(
+      localPluginApi.listApps({ includeInaccessible: true }).then(apps => apps.map(app => app.id))
+    ).resolves.toEqual(['google-calendar', 'inaccessible-app'])
     expectCodexAppServerRequest('app/list', {
       cursor: null,
       limit: 100,
