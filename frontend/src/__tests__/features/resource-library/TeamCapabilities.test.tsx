@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import '@testing-library/jest-dom'
-import { fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import type { ReactNode } from 'react'
 
@@ -207,11 +207,15 @@ describe('TeamCapabilities', () => {
     fireEvent.mouseEnter(trigger)
     expect(await screen.findByTestId('team-capability-group-all')).toBeInTheDocument()
 
-    fireEvent.mouseLeave(trigger)
+    jest.useFakeTimers()
+    try {
+      fireEvent.mouseLeave(trigger)
+      act(() => jest.advanceTimersByTime(150))
 
-    await waitFor(() => expect(screen.queryByTestId('team-capability-group-all')).toBeNull(), {
-      timeout: 500,
-    })
+      expect(screen.queryByTestId('team-capability-group-all')).toBeNull()
+    } finally {
+      jest.useRealTimers()
+    }
   })
 
   it('keeps the trigger interactive while the hover menu is open', async () => {
