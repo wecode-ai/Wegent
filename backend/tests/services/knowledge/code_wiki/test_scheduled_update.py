@@ -3,12 +3,14 @@
 # SPDX-License-Identifier: Apache-2.0
 
 from datetime import datetime, timezone
+from typing import Any
 
 from sqlalchemy.orm import Session
 
 from app.models.kind import Kind
 from app.schemas.knowledge import CodeWikiAutomaticUpdateRequest
 from app.services.knowledge.code_wiki.scheduled_update import (
+    SCHEDULED_UPDATE_TIMEOUT_SECONDS,
     advance_scheduled_update,
     configure_scheduled_update,
     first_scheduled_time,
@@ -17,8 +19,8 @@ from app.services.knowledge.code_wiki.scheduled_update import (
 from app.services.subscription.helpers import validate_subscription_for_read
 
 
-def schedule(**overrides) -> CodeWikiAutomaticUpdateRequest:
-    values = {
+def schedule(**overrides: Any) -> CodeWikiAutomaticUpdateRequest:
+    values: dict[str, Any] = {
         "enabled": True,
         "cadence": "weekly",
         "interval_days": 7,
@@ -133,6 +135,10 @@ def test_reconfiguring_reuses_the_explicitly_linked_subscription(
         == 14
     )
     assert validate_subscription_for_read(second.json).spec.codeWikiRef.id == wiki.id
+    assert (
+        validate_subscription_for_read(second.json).spec.timeoutSeconds
+        == SCHEDULED_UPDATE_TIMEOUT_SECONDS
+    )
 
 
 def test_disabling_does_not_require_the_runner_to_still_be_eligible(

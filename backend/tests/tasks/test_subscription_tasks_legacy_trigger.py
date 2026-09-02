@@ -25,14 +25,15 @@ from app.tasks.subscription_tasks import (
     _cleanup_stale_running_executions,
     _disable_expired_subscription_if_needed,
     _dispatch_due_subscription,
+    _recover_stale_pending_executions,
     check_due_subscriptions,
     check_due_subscriptions_sync,
 )
 
 
 def test_code_wiki_execution_uses_subscription_timeout(
-    test_db: Session, test_user: User, monkeypatch
-):
+    test_db: Session, test_user: User, monkeypatch: pytest.MonkeyPatch
+) -> None:
     from app.services.subscription.execution import background_execution_manager
 
     cancel_task = AsyncMock(return_value=True)
@@ -58,7 +59,7 @@ def test_code_wiki_execution_uses_subscription_timeout(
                 "teamRef": {"name": "code-wiki-team", "namespace": "default"},
                 "promptTemplate": "update",
                 "retryCount": 0,
-                "timeoutSeconds": 86400,
+                "timeoutSeconds": 21600,
                 "enabled": True,
                 "executionTarget": {"type": "managed"},
                 "codeWikiRef": {"id": 99},
@@ -87,12 +88,80 @@ def test_code_wiki_execution_uses_subscription_timeout(
     cancel_task.assert_not_awaited()
 
     execution.started_at = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(
-        hours=25
+        hours=7
     )
     test_db.commit()
     assert _cleanup_stale_running_executions(test_db) == 1
     assert execution.status == "FAILED"
     cancel_task.assert_awaited_once_with(test_db, task_id=123, user_id=test_user.id)
+
+
+def test_recovery_uses_the_code_wiki_dispatcher(
+    test_db: Session, test_user: User
+) -> None:
+    from app.core.config import settings
+    from app.services.subscription import subscription_service
+
+    plan = Kind(
+        user_id=test_user.id,
+        kind="Subscription",
+        name="wiki-plan-recovery",
+        namespace="default",
+        is_active=True,
+        json={
+            "apiVersion": "agent.wecode.io/v1",
+            "kind": "Subscription",
+            "metadata": {"name": "wiki-plan-recovery", "namespace": "default"},
+            "spec": {
+                "displayName": "Wiki plan",
+                "taskType": "execution",
+                "visibility": "private",
+                "trigger": {
+                    "type": "interval",
+                    "interval": {"value": 1, "unit": "days"},
+                },
+                "teamRef": {"name": "code-wiki-team", "namespace": "default"},
+                "promptTemplate": "update",
+                "retryCount": 0,
+                "timeoutSeconds": 21600,
+                "enabled": True,
+                "executionTarget": {"type": "managed"},
+                "codeWikiRef": {"id": 99},
+            },
+            "status": {},
+            "_internal": {},
+        },
+    )
+    test_db.add(plan)
+    test_db.flush()
+    execution = BackgroundExecution(
+        user_id=test_user.id,
+        subscription_id=plan.id,
+        task_id=0,
+        trigger_type="interval",
+        trigger_reason="scheduled",
+        prompt="check wiki",
+        status="PENDING",
+        created_at=datetime.now(timezone.utc).replace(tzinfo=None)
+        - timedelta(hours=settings.FLOW_STALE_PENDING_HOURS + 1),
+    )
+    test_db.add(execution)
+    test_db.commit()
+
+    with (
+        patch(
+            "app.tasks.subscription_tasks.execute_code_wiki_scheduled_update.delay"
+        ) as dispatch,
+        patch.object(
+            subscription_service, "dispatch_background_execution"
+        ) as generic_dispatch,
+    ):
+        assert _recover_stale_pending_executions(test_db) == 1
+
+    test_db.refresh(execution)
+    assert execution.status == "RUNNING"
+    dispatch.assert_called_once_with(plan.id, execution.id)
+    generic_dispatch.assert_not_called()
 
 
 @pytest.fixture(autouse=True)

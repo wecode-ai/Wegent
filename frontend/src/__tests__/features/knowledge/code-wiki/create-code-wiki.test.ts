@@ -114,4 +114,46 @@ describe('createCodeWiki', () => {
       jest.mocked(codeWikiApi.configureAutomaticUpdate).mock.invocationCallOrder[0]
     )
   })
+
+  it('keeps a successfully created wiki when schedule configuration fails', async () => {
+    jest.mocked(codeWikiApi.create).mockResolvedValue({
+      id: 17,
+      name: 'Wegent',
+      project_name: 'wecode-ai/Wegent',
+      source_url: 'https://github.com/wecode-ai/Wegent.git',
+      last_published_commit: '',
+      document_count: 0,
+      created_at: '2026-08-11T00:00:00Z',
+      updated_at: '2026-08-11T00:00:00Z',
+    })
+    jest
+      .mocked(codeWikiApi.configureAutomaticUpdate)
+      .mockRejectedValue(new Error('Schedule service unavailable'))
+
+    await expect(
+      createCodeWiki({
+        namespace: 'default',
+        data: {
+          name: 'Wegent',
+          kb_type: 'code_wiki',
+          source_type: 'github',
+          source_url: 'https://github.com/wecode-ai/Wegent.git',
+          execution_model_ref: { name: 'model-a', namespace: 'default', type: 'public' },
+          scheduled_update: {
+            enabled: true,
+            cadence: 'daily',
+            interval_days: 1,
+            weekday: 0,
+            hour: 9,
+            minute: 0,
+            timezone: 'Asia/Shanghai',
+          },
+        },
+      })
+    ).resolves.toMatchObject({
+      id: 17,
+      scheduledUpdateError: 'Schedule service unavailable',
+    })
+    expect(codeWikiApi.create).toHaveBeenCalledTimes(1)
+  })
 })

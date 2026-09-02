@@ -763,6 +763,33 @@ def execute_code_wiki_scheduled_update(subscription_id: int, execution_id: int) 
     _run_code_wiki_scheduled_update(subscription_id, execution_id)
 
 
+def _dispatch_scheduled_execution(
+    subscription: Any, execution: Any, subscription_service: Any, *, use_sync: bool
+) -> None:
+    """Send a Code Wiki execution through its runner, otherwise use the generic path."""
+    from app.services.knowledge.code_wiki.scheduled_update import (
+        is_code_wiki_scheduled_update,
+    )
+
+    if not is_code_wiki_scheduled_update(subscription):
+        subscription_service.dispatch_background_execution(
+            subscription, execution, use_sync=use_sync
+        )
+        return
+
+    if use_sync:
+        import threading
+
+        threading.Thread(
+            target=_run_code_wiki_scheduled_update,
+            args=(subscription.id, execution.id),
+            daemon=True,
+        ).start()
+        return
+
+    execute_code_wiki_scheduled_update.delay(subscription.id, execution.id)
+
+
 def _iter_active_subscription_id_batches(
     db: Session,
     batch_size: int = SUBSCRIPTION_BATCH_SIZE,
@@ -912,23 +939,9 @@ def _dispatch_due_subscription(
             return False
 
         try:
-            if is_code_wiki_scheduled_update(subscription):
-                if use_sync:
-                    import threading
-
-                    threading.Thread(
-                        target=_run_code_wiki_scheduled_update,
-                        args=(subscription.id, execution.id),
-                        daemon=True,
-                    ).start()
-                else:
-                    execute_code_wiki_scheduled_update.delay(
-                        subscription.id, execution.id
-                    )
-            else:
-                subscription_service.dispatch_background_execution(
-                    subscription, execution, use_sync=use_sync
-                )
+            _dispatch_scheduled_execution(
+                subscription, execution, subscription_service, use_sync=use_sync
+            )
         except Exception as exc:
             logger.error(
                 f"[subscription_tasks] Failed to dispatch execution {execution.id} "
@@ -1286,8 +1299,8 @@ def _recover_stale_pending_executions(db: Session) -> int:
                     updated_at=execution.updated_at,
                 )
 
-                subscription_service.dispatch_background_execution(
-                    subscription, exec_in_db, use_sync=False
+                _dispatch_scheduled_execution(
+                    subscription, exec_in_db, subscription_service, use_sync=False
                 )
                 recovered += 1
 

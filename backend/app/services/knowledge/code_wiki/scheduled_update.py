@@ -35,11 +35,13 @@ from app.services.knowledge.code_wiki.source import (
     SourceRepository,
     assert_user_can_read_source,
 )
+from app.services.knowledge.code_wiki.version_store import STALE_RUN_AFTER_HOURS
 from app.services.subscription import subscription_service
 
 RUNNER_SPEC_KEY = "executionPrincipalUserId"
 SUBSCRIPTION_SPEC_KEY = "scheduledUpdateSubscriptionId"
 CODE_WIKI_REF_KEY = "codeWikiRef"
+SCHEDULED_UPDATE_TIMEOUT_SECONDS = int(STALE_RUN_AFTER_HOURS * 60 * 60)
 
 
 def code_wiki_id(subscription: Kind) -> int | None:
@@ -141,7 +143,7 @@ def configure_scheduled_update(
     """Create or update one scheduler row while serializing on its Code Wiki."""
     knowledge_base = (
         db.query(Kind)
-        .filter(Kind.id == knowledge_base.id, Kind.is_active == True)
+        .filter(Kind.id == knowledge_base.id, Kind.is_active)
         .populate_existing()
         .with_for_update()
         .first()
@@ -186,7 +188,7 @@ def configure_scheduled_update(
             },
             "promptTemplate": "Check and update Code Wiki",
             "retryCount": 0,
-            "timeoutSeconds": 86400,
+            "timeoutSeconds": SCHEDULED_UPDATE_TIMEOUT_SECONDS,
             "enabled": data.enabled,
             "executionTarget": {"type": "managed"},
             CODE_WIKI_REF_KEY: {"id": knowledge_base.id},
@@ -354,7 +356,9 @@ def execute_scheduled_update(
             force_full=False,
             background_execution_id=execution_id,
             background_execution_timeout_seconds=int(
-                (subscription.json or {}).get("spec", {}).get("timeoutSeconds", 86400)
+                (subscription.json or {})
+                .get("spec", {})
+                .get("timeoutSeconds", SCHEDULED_UPDATE_TIMEOUT_SECONDS)
             ),
         )
     except GenerationInFlight:

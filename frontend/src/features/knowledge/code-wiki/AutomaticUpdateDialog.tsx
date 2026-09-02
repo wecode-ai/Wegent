@@ -4,7 +4,7 @@
 
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
 import {
@@ -44,28 +44,45 @@ export function AutomaticUpdateDialog({ knowledgeBaseId, open, onOpenChange, onS
   const [plan, setPlan] = useState<CodeWikiAutomaticUpdate | null>(null)
   const [selectedRunners, setSelectedRunners] = useState<SearchUser[]>([])
   const [saving, setSaving] = useState(false)
+  const [loadError, setLoadError] = useState<string | null>(null)
 
-  useEffect(() => {
-    if (!open) return
-    codeWikiApi
-      .automaticUpdate(knowledgeBaseId)
-      .then(async value => {
-        setPlan(
-          value.configured
-            ? value
-            : { ...value, timezone: Intl.DateTimeFormat().resolvedOptions().timeZone }
-        )
-        setSelectedRunners([])
-        if (value.execution_principal_user_id) {
+  const loadPlan = useCallback(async () => {
+    setLoadError(null)
+    try {
+      const value = await codeWikiApi.automaticUpdate(knowledgeBaseId)
+      setPlan(
+        value.configured
+          ? value
+          : { ...value, timezone: Intl.DateTimeFormat().resolvedOptions().timeZone }
+      )
+      setSelectedRunners([])
+      if (value.execution_principal_user_id) {
+        try {
           const response = await userApis.getUsersByIds([value.execution_principal_user_id])
           setSelectedRunners(response.users)
+        } catch (error) {
+          toast.error(error instanceof Error ? error.message : String(error))
         }
-      })
-      .catch(error => toast.error(error instanceof Error ? error.message : String(error)))
-  }, [knowledgeBaseId, open])
+      }
+    } catch (error) {
+      setPlan(null)
+      setLoadError(error instanceof Error ? error.message : String(error))
+    }
+  }, [knowledgeBaseId])
+
+  useEffect(() => {
+    if (open) void loadPlan()
+  }, [loadPlan, open])
 
   const save = async () => {
     if (!plan) return
+    if (
+      plan.cadence === 'custom' &&
+      (!Number.isInteger(plan.interval_days) || plan.interval_days < 2 || plan.interval_days > 365)
+    ) {
+      toast.error(t('codeWiki.automatic.invalidCustomDays'))
+      return
+    }
     setSaving(true)
     try {
       const saved = await codeWikiApi.configureAutomaticUpdate(knowledgeBaseId, {
@@ -102,6 +119,7 @@ export function AutomaticUpdateDialog({ knowledgeBaseId, open, onOpenChange, onS
               <Label htmlFor="code-wiki-auto-enabled">{t('codeWiki.automatic.enabled')}</Label>
               <Switch
                 id="code-wiki-auto-enabled"
+                data-testid="code-wiki-auto-enabled"
                 checked={plan.enabled}
                 onCheckedChange={enabled => setPlan(current => current && { ...current, enabled })}
               />
@@ -148,6 +166,7 @@ export function AutomaticUpdateDialog({ knowledgeBaseId, open, onOpenChange, onS
                     )
                   }
                   aria-label={t('codeWiki.automatic.customDays')}
+                  data-testid="code-wiki-auto-custom-days"
                 />
               )}
             </div>
@@ -199,6 +218,7 @@ export function AutomaticUpdateDialog({ knowledgeBaseId, open, onOpenChange, onS
                     const [hour, minute] = event.target.value.split(':').map(Number)
                     setPlan(current => current && { ...current, hour, minute })
                   }}
+                  data-testid="code-wiki-auto-time"
                 />
               </div>
             </div>
@@ -211,6 +231,7 @@ export function AutomaticUpdateDialog({ knowledgeBaseId, open, onOpenChange, onS
                   setPlan(current => current && { ...current, timezone: event.target.value })
                 }
                 placeholder="Asia/Shanghai"
+                data-testid="code-wiki-auto-timezone"
               />
             </div>
             <p className="text-xs text-text-secondary">
@@ -249,11 +270,34 @@ export function AutomaticUpdateDialog({ knowledgeBaseId, open, onOpenChange, onS
             )}
           </div>
         )}
+        {loadError && (
+          <div className="space-y-3 py-2">
+            <p className="text-sm text-destructive" role="alert">
+              {loadError}
+            </p>
+            <Button
+              variant="outline"
+              onClick={() => void loadPlan()}
+              data-testid="code-wiki-auto-retry"
+            >
+              {t('common:actions.retry')}
+            </Button>
+          </div>
+        )}
         <DialogFooter>
-          <Button variant="outline" onClick={() => onOpenChange(false)}>
+          <Button
+            variant="outline"
+            onClick={() => onOpenChange(false)}
+            data-testid="code-wiki-auto-cancel"
+          >
             {t('common:actions.cancel')}
           </Button>
-          <Button variant="primary" onClick={save} disabled={!plan || saving}>
+          <Button
+            variant="primary"
+            onClick={save}
+            disabled={!plan || saving}
+            data-testid="code-wiki-auto-save"
+          >
             {saving ? t('codeWiki.automatic.saving') : t('common:actions.save')}
           </Button>
         </DialogFooter>

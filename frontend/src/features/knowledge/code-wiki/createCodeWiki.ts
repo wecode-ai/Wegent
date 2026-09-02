@@ -15,6 +15,10 @@ interface CreateCodeWikiParams {
   data: CodeWikiFormData
 }
 
+export type CreateCodeWikiResult = CodeWikiSummary & {
+  scheduledUpdateError?: string
+}
+
 /**
  * Send the shared knowledge-base form through Code Wiki's creation boundary.
  *
@@ -26,7 +30,7 @@ interface CreateCodeWikiParams {
 export async function createCodeWiki({
   namespace,
   data,
-}: CreateCodeWikiParams): Promise<CodeWikiSummary> {
+}: CreateCodeWikiParams): Promise<CreateCodeWikiResult> {
   const {
     name,
     description,
@@ -55,7 +59,14 @@ export async function createCodeWiki({
     execution_model_ref,
   })
   if (scheduled_update) {
-    await codeWikiApi.configureAutomaticUpdate(created.id, scheduled_update)
+    try {
+      await codeWikiApi.configureAutomaticUpdate(created.id, scheduled_update)
+    } catch (error) {
+      return {
+        ...created,
+        scheduledUpdateError: error instanceof Error ? error.message : String(error),
+      }
+    }
   }
   return created
 }
