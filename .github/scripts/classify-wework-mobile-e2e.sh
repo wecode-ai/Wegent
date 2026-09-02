@@ -15,6 +15,7 @@ else
         .github/actions/setup-python-uv-cache/* | \
         .github/actions/setup-python-uv-cache/**/* | \
         .github/scripts/build-wework-mobile-ios-app.sh | \
+        .github/scripts/build-wework-mobile-ios-e2e-artifact.sh | \
         .github/scripts/classify-wework-mobile-e2e.sh | \
         .github/scripts/create-wework-mobile-ios-simulator.sh | \
         pnpm-lock.yaml | \

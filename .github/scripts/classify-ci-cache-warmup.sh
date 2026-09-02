@@ -2,80 +2,99 @@
 
 set -euo pipefail
 
-declare -A changed=(
-  [docker]=false
-  [executor_rust]=false
-  [node]=false
-  [python]=false
-  [wework_target]=false
-)
+docker=false
+executor_rust=false
+node=false
+python=false
+wework_mobile_ios=false
+wework_target=false
 
 mark_all() {
-  local key
-  for key in "${!changed[@]}"; do
-    changed["$key"]=true
-  done
+  docker=true
+  executor_rust=true
+  node=true
+  python=true
+  wework_mobile_ios=true
+  wework_target=true
 }
 
 classify_path() {
   local path="$1"
 
   case "$path" in
-    .github/actions/* | .github/scripts/lib/apt-packages.sh | \
+    .github/actions/* | .github/scripts/classify-ci-cache-warmup.sh | \
+      .github/scripts/lib/apt-packages.sh | \
       .github/workflows/ci-cache-warmup.yml)
       mark_all
       ;;
     .github/scripts/resolve-executor-e2e-runtime.sh)
-      changed[docker]=true
+      docker=true
       ;;
     .github/workflows/test.yml | .github/workflows/lint.yml)
-      changed[executor_rust]=true
-      changed[node]=true
-      changed[python]=true
+      executor_rust=true
+      node=true
+      python=true
       ;;
     .github/workflows/e2e-tests.yml)
-      changed[docker]=true
-      changed[node]=true
-      changed[python]=true
+      docker=true
+      node=true
+      python=true
       ;;
     .github/workflows/wework-e2e.yml)
-      changed[node]=true
-      changed[python]=true
-      changed[wework_target]=true
+      node=true
+      python=true
+      wework_mobile_ios=true
+      wework_target=true
+      ;;
+    .github/scripts/build-wework-mobile-ios-app.sh | \
+      .github/scripts/build-wework-mobile-ios-e2e-artifact.sh | \
+      .github/scripts/create-wework-mobile-ios-simulator.sh | \
+      wework-mobile/*)
+      wework_mobile_ios=true
       ;;
     .github/scripts/install-executor-rust-system-dependencies.sh)
-      changed[executor_rust]=true
+      executor_rust=true
       ;;
     .github/claude-code-cli/* | frontend/src/* | package.json | \
       pnpm-workspace.yaml | \
       frontend/package.json | wework/package.json | packages/*/package.json)
-      changed[node]=true
+      node=true
       ;;
     pnpm-lock.yaml | wework/electron/package.json | \
       wework/electron/pnpm-lock.yaml)
-      changed[node]=true
-      changed[wework_target]=true
+      node=true
+      wework_target=true
       ;;
     backend/uv.lock | executor_manager/uv.lock | \
       knowledge_engine/uv.lock | shared/uv.lock | \
       wegent-cli/requirements.txt)
-      changed[python]=true
+      python=true
       ;;
     executor/Cargo.lock)
-      changed[docker]=true
-      changed[executor_rust]=true
-      changed[wework_target]=true
+      docker=true
+      executor_rust=true
+      wework_mobile_ios=true
+      wework_target=true
       ;;
     docker/wework-e2e/desktop.Dockerfile)
-      changed[docker]=true
-      changed[wework_target]=true
+      docker=true
+      wework_target=true
       ;;
     executor/*)
-      changed[docker]=true
-      changed[executor_rust]=true
+      docker=true
+      executor_rust=true
+      wework_mobile_ios=true
       ;;
-    frontend/e2e/fixtures/claudecode-executor/* | shared/assets/*)
-      changed[docker]=true
+    frontend/e2e/fixtures/claudecode-executor/*)
+      docker=true
+      ;;
+    shared/assets/*)
+      docker=true
+      wework_mobile_ios=true
+      ;;
+    wework/codex-binaries.lock.json | \
+      wework/e2e/desktop/modules/desktop-build-flows.mjs)
+      wework_mobile_ios=true
       ;;
   esac
 }
@@ -93,6 +112,6 @@ else
 fi
 
 output_file="${GITHUB_OUTPUT:-/dev/stdout}"
-for key in docker executor_rust node python wework_target; do
-  printf '%s=%s\n' "$key" "${changed[$key]}" >> "$output_file"
+for key in docker executor_rust node python wework_mobile_ios wework_target; do
+  printf '%s=%s\n' "$key" "${!key}" >> "$output_file"
 done

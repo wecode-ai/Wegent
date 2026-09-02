@@ -62,6 +62,7 @@ docker=false
 executor_rust=false
 node=false
 python=false
+wework_mobile_ios=false
 wework_target=false
 EOF
 )
@@ -86,8 +87,17 @@ assert_warmup_case "uv lock" "$python_only" "backend/uv.lock"
 
 executor_lock="${warmup_all_false/docker=false/docker=true}"
 executor_lock="${executor_lock/executor_rust=false/executor_rust=true}"
+executor_lock="${executor_lock/wework_mobile_ios=false/wework_mobile_ios=true}"
 executor_lock="${executor_lock/wework_target=false/wework_target=true}"
 assert_warmup_case "executor lock" "$executor_lock" "executor/Cargo.lock"
+
+mobile_ios_only="${warmup_all_false/wework_mobile_ios=false/wework_mobile_ios=true}"
+assert_warmup_case "Wework Mobile source" "$mobile_ios_only" \
+  "wework-mobile/src/services/runtimeApi.ts"
+assert_warmup_case "Wework Mobile artifact builder" "$mobile_ios_only" \
+  ".github/scripts/build-wework-mobile-ios-e2e-artifact.sh"
+assert_warmup_case "Wework Mobile Codex lock" "$mobile_ios_only" \
+  "wework/codex-binaries.lock.json"
 
 docker_only="${warmup_all_false/docker=false/docker=true}"
 assert_warmup_case "Executor E2E resolver" "$docker_only" \
@@ -260,6 +270,37 @@ if [[ "$macos_warmup_section" != *'name: Warm Wework macOS Electron Build Cache'
   [[ "$macos_warmup_section" != *'~/Library/Caches/electron'* ]] ||
   [[ "$macos_warmup_section" != *'pnpm --filter wework ai:verify:electron:build'* ]]; then
   fail "Wework macOS Electron builds must be prewarmed with the shared build cache"
+fi
+
+mobile_ios_warmup_section="$(
+  sed -n \
+    '/^  warm-wework-mobile-ios:/,/^  prepare-wework-desktop-image:/p' \
+    "$warmup_workflow"
+)"
+mobile_ios_pr_section="$(
+  sed -n \
+    '/^  build-wework-mobile-ios-e2e:/,/^  wework-mobile-ios-e2e:/p' \
+    "$workflow_dir/wework-e2e.yml"
+)"
+mobile_ios_dependency_key="wework-mobile-ios-dependencies-v1-\${{ hashFiles('executor/Cargo.lock', 'wework/codex-binaries.lock.json', 'wework-mobile/pnpm-lock.yaml', 'wework-mobile/ios/Podfile.lock') }}"
+mobile_executor_product_key="wework-mobile-executor-products-v1-\${{ hashFiles('executor/Cargo.lock') }}-\${{ hashFiles('executor/Cargo.toml', 'executor/src/**', 'shared/assets/**') }}"
+mobile_xcode_product_key="wework-mobile-xcode-products-v1-\${{ hashFiles('wework-mobile/pnpm-lock.yaml', 'wework-mobile/ios/Podfile.lock') }}-\${{ hashFiles('wework-mobile/App.tsx', 'wework-mobile/index.ts', 'wework-mobile/app.json', 'wework-mobile/metro.config.js', 'wework-mobile/package.json', 'wework-mobile/pnpm-workspace.yaml', 'wework-mobile/src/**', 'wework-mobile/assets/**', 'wework-mobile/ios/Podfile', 'wework-mobile/ios/Podfile.properties.json', 'wework-mobile/ios/Wegent.xcodeproj/**', 'wework-mobile/ios/Wegent.xcworkspace/**', 'wework-mobile/ios/Wegent/**') }}"
+for section in "$mobile_ios_warmup_section" "$mobile_ios_pr_section"; do
+  if [[ "$section" != *"$mobile_ios_dependency_key"* ]] ||
+    [[ "$section" != *"$mobile_executor_product_key"* ]] ||
+    [[ "$section" != *"$mobile_xcode_product_key"* ]] ||
+    [[ "$section" != *'wework-mobile/node_modules/.cache/ios-e2e-derived-data'* ]] ||
+    [[ "$section" != *'.github/scripts/build-wework-mobile-ios-e2e-artifact.sh'* ]]; then
+    fail "Wework Mobile iOS CI and warmup must share dependency and product caches"
+  fi
+done
+
+if [[ "$mobile_ios_warmup_section" != *'name: Warm Wework Mobile iOS Build Cache'* ]] ||
+  [[ "$mobile_ios_warmup_section" != *'runs-on: macos-26'* ]] ||
+  [[ "$mobile_ios_warmup_section" != *"needs.changes.outputs.wework_mobile_ios == 'true'"* ]] ||
+  [[ "$mobile_ios_warmup_section" != *'uses: ./.github/actions/setup-sccache'* ]] ||
+  [[ "$mobile_ios_warmup_section" != *'uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830'* ]]; then
+  fail "Wework Mobile iOS builds must be prewarmed on main"
 fi
 
 if grep -R -q 'type=gha' \

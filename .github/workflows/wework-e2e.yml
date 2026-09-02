@@ -947,22 +947,48 @@ jobs:
         with:
           node-version: "24"
 
+      - name: Resolve pnpm store path
+        id: mobile-pnpm-store
+        run: echo "path=$(pnpm store path --silent)" >> "$GITHUB_OUTPUT"
+
       - name: Set up Rust
         uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8
 
       - name: Set up sccache
         uses: ./.github/actions/setup-sccache
 
-      - name: Restore Mobile iOS E2E build caches
+      - name: Restore Mobile pnpm store
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830
+        with:
+          path: ${{ steps.mobile-pnpm-store.outputs.path }}
+          key: ${{ runner.os }}-${{ runner.arch }}-wework-mobile-pnpm-store-v1-${{ hashFiles('wework-mobile/pnpm-lock.yaml') }}
+
+      - name: Restore Mobile iOS dependencies
         uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830
         with:
           path: |
-            executor/target
+            ~/.cargo/registry
+            ~/.cargo/git
             ~/Library/Caches/wegent/codex
             ~/Library/Caches/CocoaPods
-          key: ${{ runner.os }}-${{ runner.arch }}-wework-mobile-ios-e2e-v1-${{ hashFiles('executor/Cargo.lock', 'wework/codex-binaries.lock.json', 'wework-mobile/pnpm-lock.yaml', 'wework-mobile/ios/Podfile.lock') }}
+            wework-mobile/ios/Pods
+          key: ${{ runner.os }}-${{ runner.arch }}-wework-mobile-ios-dependencies-v1-${{ hashFiles('executor/Cargo.lock', 'wework/codex-binaries.lock.json', 'wework-mobile/pnpm-lock.yaml', 'wework-mobile/ios/Podfile.lock') }}
+
+      - name: Restore Mobile Executor build products
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830
+        with:
+          path: executor/target
+          key: ${{ runner.os }}-${{ runner.arch }}-wework-mobile-executor-products-v1-${{ hashFiles('executor/Cargo.lock') }}-${{ hashFiles('executor/Cargo.toml', 'executor/src/**', 'shared/assets/**') }}
           restore-keys: |
-            ${{ runner.os }}-${{ runner.arch }}-wework-mobile-ios-e2e-v1-
+            ${{ runner.os }}-${{ runner.arch }}-wework-mobile-executor-products-v1-${{ hashFiles('executor/Cargo.lock') }}-
+
+      - name: Restore Mobile Xcode build products
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830
+        with:
+          path: wework-mobile/node_modules/.cache/ios-e2e-derived-data
+          key: ${{ runner.os }}-${{ runner.arch }}-wework-mobile-xcode-products-v1-${{ hashFiles('wework-mobile/pnpm-lock.yaml', 'wework-mobile/ios/Podfile.lock') }}-${{ hashFiles('wework-mobile/App.tsx', 'wework-mobile/index.ts', 'wework-mobile/app.json', 'wework-mobile/metro.config.js', 'wework-mobile/package.json', 'wework-mobile/pnpm-workspace.yaml', 'wework-mobile/src/**', 'wework-mobile/assets/**', 'wework-mobile/ios/Podfile', 'wework-mobile/ios/Podfile.properties.json', 'wework-mobile/ios/Wegent.xcodeproj/**', 'wework-mobile/ios/Wegent.xcworkspace/**', 'wework-mobile/ios/Wegent/**') }}
+          restore-keys: |
+            ${{ runner.os }}-${{ runner.arch }}-wework-mobile-xcode-products-v1-${{ hashFiles('wework-mobile/pnpm-lock.yaml', 'wework-mobile/ios/Podfile.lock') }}-
 
       - name: Install Mobile dependencies
         run: pnpm --dir wework-mobile install --frozen-lockfile
@@ -975,24 +1001,9 @@ jobs:
           EXPO_PUBLIC_BACKEND_URL: http://127.0.0.1:8000
         run: |
           artifact="$GITHUB_WORKSPACE/.ci-artifacts/wework-mobile-ios-e2e"
-          mkdir -p "$artifact"
-          cargo build --locked --manifest-path executor/Cargo.toml --bin wegent-executor
-          cp executor/target/debug/wegent-executor "$artifact/wegent-executor"
-          ARTIFACT_DIR="$artifact" node --input-type=module <<'NODE'
-          import { copyFile } from 'node:fs/promises'
-          import { join } from 'node:path'
-          import { resolveDesktopCodexBinary } from './wework/e2e/desktop/modules/desktop-build-flows.mjs'
-
-          const codex = await resolveDesktopCodexBinary()
-          await copyFile(codex, join(process.env.ARTIFACT_DIR, 'codex'))
-          NODE
-          .github/scripts/build-wework-mobile-ios-app.sh \
+          .github/scripts/build-wework-mobile-ios-e2e-artifact.sh \
             "$WEWORK_MOBILE_E2E_DEVICE" \
-            "$artifact/Wegent.app"
-          ditto -c -k --sequesterRsrc --keepParent \
-            "$artifact/Wegent.app" \
-            "$artifact/Wegent.app.zip"
-          rm -rf "$artifact/Wegent.app"
+            "$artifact"
 
       - name: Upload Mobile iOS E2E build
         uses: actions/upload-artifact@v4
