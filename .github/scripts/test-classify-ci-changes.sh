@@ -612,15 +612,15 @@ wework_desktop_other_e2e=false
 wework_desktop_other_e2e_matrix={"include":[]}' \
   "wework/src/features/todo/TaskBoardAssociationDialog.tsx"
 
-assert_desktop_case "backend runtime Worktree changes select the cloud lifecycle checkpoint" \
+assert_desktop_case "device WebSocket changes select cloud task and Worktree coverage" \
   'wework_desktop_e2e=true
 wework_desktop_core_e2e=false
 wework_desktop_core_e2e_matrix={"include":[]}
 wework_desktop_cloud_e2e=true
-wework_desktop_cloud_e2e_matrix={"include":[{"id":"cloud-2","name":"Cloud / shard 2","segments":"cloud-worktree-device-restart"},{"id":"cloud-3","name":"Cloud / shard 3","segments":"cloud-worktree-archive-restore"},{"id":"cloud-7","name":"Cloud / shard 7","segments":"cloud-worktree-tools"},{"id":"cloud-9","name":"Cloud / shard 9","segments":"cloud-worktree-create"},{"id":"cloud-10","name":"Cloud / shard 10","segments":"cloud-worktree-capability"},{"id":"cloud-14","name":"Cloud / shard 14","segments":"cloud-worktree-queued-cancel"}]}
+wework_desktop_cloud_e2e_matrix={"include":[{"id":"cloud-1","name":"Cloud / shard 1","segments":"core-task-flow"},{"id":"cloud-2","name":"Cloud / shard 2","segments":"cloud-worktree-device-restart"},{"id":"cloud-3","name":"Cloud / shard 3","segments":"cloud-worktree-archive-restore"},{"id":"cloud-7","name":"Cloud / shard 7","segments":"cloud-worktree-tools"},{"id":"cloud-9","name":"Cloud / shard 9","segments":"cloud-worktree-create"},{"id":"cloud-10","name":"Cloud / shard 10","segments":"cloud-worktree-capability"},{"id":"cloud-14","name":"Cloud / shard 14","segments":"cloud-worktree-queued-cancel"}]}
 wework_desktop_other_e2e=false
 wework_desktop_other_e2e_matrix={"include":[]}' \
-  "backend/app/services/device/runtime_route.py"
+  "backend/app/api/ws/device_namespace.py"
 
 assert_desktop_case "runtime task queue scenario is invoked by the core CI shard" \
   'wework_desktop_e2e=true

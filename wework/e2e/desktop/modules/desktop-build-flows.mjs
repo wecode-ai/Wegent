@@ -918,7 +918,7 @@ async function verifyCloudProjectFlow(
     'runtime-local-task-running-'
   )
   await control.command('click', `[data-testid="${taskRowTestId}"]`)
-  await waitForSnapshot(
+  const streamingTaskSnapshot = await waitForSnapshot(
     control,
     value =>
       value.testIds.includes(runningTaskTestId) &&
@@ -926,6 +926,11 @@ async function verifyCloudProjectFlow(
       !value.testIds.includes('send-message-button'),
     'The initial cloud task did not remain active while streaming text',
     DEFAULT_STEP_TIMEOUT_MS
+  )
+  assert.equal(
+    streamingTaskSnapshot.workbench?.currentRuntimeTask?.deviceId,
+    CLOUD_DEVICE_ID,
+    'The streamed cloud task was projected onto a non-logical Device ID'
   )
   await control.command('waitFor', '[data-testid="message-assistant"]', {
     text: CLOUD_COMPLETION_TEXT,

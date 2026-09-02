@@ -696,6 +696,7 @@ classify_path() {
       backend/tests/services/test_runtime_rpc_service.py | \
       backend/tests/services/test_runtime_work_service.py | \
       docker/device/Dockerfile)
+      select_target "cloud:core-task-flow"
       select_cloud_worktree_checkpoints
       ;;
     executor/* | packages/chat-core/* | package.json | pnpm-lock.yaml | pnpm-workspace.yaml)

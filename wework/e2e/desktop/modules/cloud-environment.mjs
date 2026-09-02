@@ -6,6 +6,8 @@ import { rm } from 'node:fs/promises'
 
 import {
   CLOUD_DEVICE_ID,
+  CLOUD_DEVICE_RUNTIME_ID,
+  CLOUD_DEVICE_SANDBOX_ID,
   REMOTE_DOCKER_DEVICE_ID,
   CLOUD_MODEL_CASES,
   CLOUD_MULTIMODAL_VISION_CASE,
@@ -322,8 +324,50 @@ class RealCloudEnvironment {
     })
     this.authToken = setup.access_token
     assert.ok(this.authToken, 'Real cloud backend did not return an authentication token')
+    await this.seedCloudDeviceIdentity()
     await this.seedCloudProtocolModels()
     await this.seedCloudVisionSidecarModels()
+  }
+
+  async seedCloudDeviceIdentity() {
+    const user = await fetchJson(`${this.backendUrl}/api/users/me`, {
+      headers: { Authorization: `Bearer ${this.authToken}` },
+    })
+    assert.ok(Number.isInteger(user.id), 'Cloud E2E user did not expose a numeric ID')
+    const resource = {
+      apiVersion: 'agent.wecode.io/v1',
+      kind: 'Device',
+      metadata: {
+        name: CLOUD_DEVICE_ID,
+        namespace: 'default',
+      },
+      spec: {
+        deviceId: CLOUD_DEVICE_RUNTIME_ID,
+        deviceType: 'cloud',
+        connectionMode: 'websocket',
+        bindShell: 'claudecode',
+        displayName: 'Wework E2E Cloud Device',
+        isDefault: false,
+        cloudConfig: {
+          sandboxId: CLOUD_DEVICE_SANDBOX_ID,
+          deviceId: CLOUD_DEVICE_RUNTIME_ID,
+        },
+      },
+    }
+    const serialized = JSON.stringify(resource)
+    assert.equal(
+      serialized.includes("'"),
+      false,
+      'Cloud Device fixture cannot contain unescaped SQLite string delimiters'
+    )
+    await runChecked('sqlite3', [
+      this.databasePath,
+      [
+        'INSERT INTO kinds (user_id, kind, name, namespace, json, is_active)',
+        `VALUES (${user.id}, 'Device', '${CLOUD_DEVICE_ID}', 'default',`,
+        `json('${serialized}'), 1);`,
+      ].join(' '),
+    ])
   }
 
   async publishOfficialSmartApp(sourcePath) {
@@ -525,7 +569,7 @@ class RealCloudEnvironment {
     await writeCodexConfig(this.remoteCodexHome, this.modelServerUrl, this.scenarioConfigToml)
     await writeCodexConfig(this.remoteDockerCodexHome, this.modelServerUrl)
     this.remoteExecutorEnv = this.executorEnv({
-      deviceId: CLOUD_DEVICE_ID,
+      deviceId: CLOUD_DEVICE_RUNTIME_ID,
       deviceName: 'Wework E2E Cloud Device',
       deviceType: 'cloud',
       home: remoteHome,
@@ -548,10 +592,30 @@ class RealCloudEnvironment {
       this.remoteDockerExecutorEnv,
       this.remoteDockerExecutorLogPath
     )
-    await Promise.all([
+    const [cloudDevice] = await Promise.all([
       this.waitForDevice(CLOUD_DEVICE_ID, this.remoteExecutorLogPath),
       this.waitForDevice(REMOTE_DOCKER_DEVICE_ID, this.remoteDockerExecutorLogPath),
     ])
+    assert.equal(
+      cloudDevice.device_id,
+      CLOUD_DEVICE_ID,
+      'Cloud Device discovery replaced the logical Device ID'
+    )
+    assert.equal(
+      cloudDevice.socket_device_id,
+      CLOUD_DEVICE_RUNTIME_ID,
+      'Cloud Device discovery did not preserve the Executor route ID'
+    )
+    assert.equal(
+      cloudDevice.cloud_config?.sandboxId,
+      CLOUD_DEVICE_SANDBOX_ID,
+      'Cloud Device discovery did not preserve the sandbox ID'
+    )
+    assert.equal(
+      cloudDevice.cloud_config?.deviceId,
+      CLOUD_DEVICE_RUNTIME_ID,
+      'Cloud Device configuration did not preserve the Executor route ID'
+    )
   }
 
   async describePluginWorkspace(pluginRoot, taskWorkspace, taskId) {
