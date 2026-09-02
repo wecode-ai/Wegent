@@ -1,5 +1,6 @@
 import '@testing-library/jest-dom'
 import { act, render, screen, waitFor } from '@testing-library/react'
+import type { ReactNode } from 'react'
 
 import ChatInput from '@/features/tasks/components/input/ChatInput'
 
@@ -12,6 +13,15 @@ jest.mock('@/hooks/useTranslation', () => ({
 
 jest.mock('@/features/layout/hooks/useMediaQuery', () => ({
   useIsMobile: () => false,
+}))
+
+jest.mock('@/components/ui/tooltip', () => ({
+  TooltipProvider: ({ children }: { children: ReactNode }) => <>{children}</>,
+  Tooltip: ({ children }: { children: ReactNode }) => <>{children}</>,
+  TooltipTrigger: ({ children }: { children: ReactNode }) => <>{children}</>,
+  TooltipContent: ({ children, className }: { children: ReactNode; className?: string }) => (
+    <div className={className}>{children}</div>
+  ),
 }))
 
 jest.mock('@/features/common/UserContext', () => ({
@@ -110,5 +120,18 @@ describe('ChatInput external focus', () => {
     expect(range?.collapsed).toBe(true)
     expect(range?.startContainer).toBe(input.firstChild)
     expect(range?.startOffset).toBe('quick phrase'.length)
+  })
+
+  test('hides keyboard shortcut guidance below the desktop breakpoint', () => {
+    render(
+      <ChatInput
+        message=""
+        setMessage={jest.fn()}
+        handleSendMessage={jest.fn()}
+        isLoading={false}
+      />
+    )
+
+    expect(screen.getByText('chat:send_shortcut').parentElement).toHaveClass('hidden', 'md:block')
   })
 })
