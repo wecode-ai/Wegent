@@ -215,7 +215,7 @@ afterEach(async () => {
 })
 
 describe('authentication generation', () => {
-  it('M1-A: stale refresh continuation cannot restore auth after logout', async () => {
+  it('stale refresh continuation cannot restore auth after logout', async () => {
     seedCredential()
     await renderHook()
     await waitForStatus('authenticated')
@@ -245,7 +245,7 @@ describe('authentication generation', () => {
     expect(harness.secureStore.has(CREDENTIAL_KEY)).toBe(false)
   })
 
-  it('M1-B: stale claim continuation cannot authenticate or persist after logout', async () => {
+  it('stale authorization completion cannot authenticate or persist after logout', async () => {
     await renderHook()
     await waitForStatus('unauthenticated')
 
@@ -280,7 +280,7 @@ describe('authentication generation', () => {
     expect(harness.secureStoreWrites.some(value => value.includes('refresh-claim'))).toBe(false)
   })
 
-  it('M1-B2: stale persistence vs backend switch cannot leave a stored credential', async () => {
+  it('a credential write invalidated by a backend change cannot leave stale credentials', async () => {
     await renderHook()
     await waitForStatus('unauthenticated')
 
