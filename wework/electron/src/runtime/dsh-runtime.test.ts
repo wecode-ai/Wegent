@@ -1,5 +1,9 @@
 import { createServer } from 'node:http'
+import { createInterface } from 'node:readline'
+import { PassThrough } from 'node:stream'
 import { afterEach, describe, expect, test, vi } from 'vitest'
+import { HostCapabilityRouter } from '../host/capability-router.js'
+import { HostPipeServer } from '../host/host-pipe.js'
 import { DshRuntime } from './dsh-runtime.js'
 
 const servers: Array<ReturnType<typeof createServer>> = []
@@ -88,3 +92,57 @@ function listen(server: ReturnType<typeof createServer>): Promise<void> {
     server.listen(0, '127.0.0.1', resolve)
   })
 }
+
+describe('DSH host session ownership', () => {
+  test('M3-D: a stale runtime stop keeps the current host session attached', async () => {
+    const httpServer = createServer((_request, response) => {
+      response.writeHead(200)
+      response.end()
+    })
+    servers.push(httpServer)
+    await listen(httpServer)
+    const address = httpServer.address()
+    if (!address || typeof address === 'string') throw new Error('HTTP server has no port')
+    const origin = `http://127.0.0.1:${address.port}`
+
+    const router = new HostCapabilityRouter()
+    router.grant('@wegent/dsh-app-wework', ['window.getState'])
+    router.register('window.getState', async () => ({ maximized: false }))
+    const hostPipe = new HostPipeServer(router)
+
+    const stale = new DshRuntime({
+      url: origin,
+      command: process.execPath,
+      args: ['-e', 'setInterval(() => {}, 1000)'],
+      probeUrls: [origin],
+      startTimeoutMs: 2_000,
+      hostPipe,
+    })
+    await stale.start()
+
+    // The new generation attaches its own session, replacing the stale child.
+    const currentToHost = new PassThrough()
+    const hostToCurrent = new PassThrough()
+    const replies = createInterface({ input: hostToCurrent })
+    const nextReply = () =>
+      new Promise<Record<string, unknown>>(resolve =>
+        replies.once('line', line => resolve(JSON.parse(line) as Record<string, unknown>))
+      )
+    hostPipe.attachStreams(currentToHost, hostToCurrent)
+
+    // Old generation cleanup resumes: it must not detach the new session.
+    await stale.stop()
+
+    const reply = nextReply()
+    currentToHost.write(
+      `${JSON.stringify({
+        type: 'hello',
+        protocolVersion: 1,
+        token: hostPipe.environment().WEWORK_ELECTRON_HOST_TOKEN,
+        principal: '@wegent/dsh-app-wework',
+      })}\n`
+    )
+    await expect(reply).resolves.toMatchObject({ type: 'hello', ok: true })
+    hostPipe.stop()
+  })
+})
