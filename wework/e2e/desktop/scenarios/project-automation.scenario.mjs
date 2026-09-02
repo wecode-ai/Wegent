@@ -4,6 +4,7 @@ import { join } from 'node:path'
 import { ensureExperimentalFeaturesEnabled } from '../modules/preferences-automation-flows.mjs'
 
 import {
+  AUTOMATION_SCHEDULE_TIMEOUT_MS,
   CHECKPOINT_TASK_COMPLETION_TEXT,
   CHECKPOINT_TASK_PROMPT,
   DEFAULT_MODEL_ID,
@@ -307,7 +308,10 @@ function assertExecutionTruthContract(execution) {
 export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspacePath }) {
   // Cloud executions are claimed asynchronously. Keep the assertion budget
   // beyond one complete claim window so a commit at the boundary is observed.
-  const automationRuntimeTimeoutMs = Math.max(uiTimeoutMs * 6, 60_000)
+  const automationRuntimeTimeoutMs = Math.max(
+    uiTimeoutMs * 6,
+    AUTOMATION_SCHEDULE_TIMEOUT_MS + 10_000
+  )
   const rules = [RULE]
   const runs = [
     {
