@@ -25,7 +25,6 @@ from app.core.config import settings
 from app.core.constants import CLIENT_ORIGIN_WEWORK
 from app.models.im_session import IMPrivateSession
 from app.models.project import Project
-from app.models.subtask import Subtask, SubtaskRole, SubtaskStatus
 from app.models.subtask_context import ContextStatus, ContextType, SubtaskContext
 from app.models.task import TaskResource
 from app.models.user import User
@@ -109,6 +108,10 @@ from app.services.runtime_work_kind_store import (
     list_device_workspace_kinds,
     touch_device_workspace_kind,
     upsert_device_workspace_kind,
+)
+from app.stores.tasks.transient import (
+    build_transient_assistant_subtask,
+    build_transient_task,
 )
 from shared.models.execution import ExecutionRequest
 
@@ -4036,17 +4039,14 @@ def _build_team_runtime_execution_request(
         team=team,
         target=target,
     )
-    subtask = Subtask(
-        id=subtask_id,
+    subtask = build_transient_assistant_subtask(
+        subtask_id=subtask_id,
         user_id=user.id,
         task_id=task_id,
         team_id=team.id,
         title=f"{title} - Assistant",
-        bot_ids=[],
-        role=SubtaskRole.ASSISTANT,
         prompt=message,
         message_id=1,
-        status=SubtaskStatus.PENDING,
     )
     execution_request = TaskRequestBuilder(db).build(
         subtask=subtask,
@@ -4103,15 +4103,14 @@ def _transient_runtime_team_task(
             "execution": {"workspace": workspace},
         },
     }
-    return TaskResource(
-        id=task_id,
+    return build_transient_task(
+        task_id=task_id,
         user_id=user_id,
-        kind="Task",
         name=name,
         namespace="default",
         project_id=project_id,
         client_origin=CLIENT_ORIGIN_WEWORK,
-        json=payload,
+        payload=payload,
     )
 
 
