@@ -43,7 +43,7 @@ async fn run_git(
     hide_windows_console(&mut command);
     command.args(args);
     command.env_clear();
-    command.envs(env);
+    command.envs(sanitized_git_env(env));
     if let Some(cwd) = cwd {
         command.current_dir(cwd);
     }
@@ -68,6 +68,39 @@ async fn run_git(
     let stdout = truncate_bytes(&output.stdout, max_output_bytes);
     let stderr = String::from_utf8_lossy(&output.stderr).into_owned();
     Ok((stdout, stderr, success))
+}
+
+/// Drop environment variables that would redirect git away from the workspace
+/// directory passed as `cwd`. Device commands operate on an explicit
+/// workspace, so an ambient `GIT_DIR` or similar variable from the parent
+/// process must not make them read another repository.
+fn sanitized_git_env(env: &HashMap<String, String>) -> HashMap<String, String> {
+    // Keep in sync with the local git environment list used by the native
+    // turn-file-changes runner (`services::turn_file_changes`).
+    const LOCAL_GIT_ENV_KEYS: &[&str] = &[
+        "GIT_ALTERNATE_OBJECT_DIRECTORIES",
+        "GIT_CONFIG",
+        "GIT_CONFIG_PARAMETERS",
+        "GIT_CONFIG_COUNT",
+        "GIT_OBJECT_DIRECTORY",
+        "GIT_DIR",
+        "GIT_WORK_TREE",
+        "GIT_IMPLICIT_WORK_TREE",
+        "GIT_GRAFT_FILE",
+        "GIT_INDEX_FILE",
+        "GIT_NO_REPLACE_OBJECTS",
+        "GIT_REPLACE_REF_BASE",
+        "GIT_PREFIX",
+        "GIT_SHALLOW_FILE",
+        "GIT_COMMON_DIR",
+        "GIT_NAMESPACE",
+        "GIT_CEILING_DIRECTORIES",
+        "GIT_DISCOVERY_ACROSS_FILESYSTEM",
+    ];
+    env.iter()
+        .filter(|(key, _)| !LOCAL_GIT_ENV_KEYS.contains(&key.as_str()))
+        .map(|(key, value)| (key.clone(), value.clone()))
+        .collect()
 }
 
 fn truncate_bytes(bytes: &[u8], max_bytes: usize) -> Vec<u8> {
@@ -681,10 +714,24 @@ mod tests {
 
     use super::*;
 
+    fn git_setup_env(home: &Path) -> HashMap<String, String> {
+        // Build a minimal environment so ambient GIT_* variables or a parent
+        // repository cannot redirect the fixture repository operations.
+        let mut env = HashMap::new();
+        if let Ok(path) = std::env::var("PATH") {
+            env.insert("PATH".to_owned(), path);
+        }
+        env.insert("HOME".to_owned(), home.display().to_string());
+        env.insert("GIT_CONFIG_NOSYSTEM".to_owned(), "1".to_owned());
+        env
+    }
+
     fn run_git_setup(repo: &Path, args: &[&str]) {
         let output = StdCommand::new("git")
             .args(args)
             .current_dir(repo)
+            .env_clear()
+            .envs(git_setup_env(repo))
             .output()
             .expect("git setup should run");
         assert!(
