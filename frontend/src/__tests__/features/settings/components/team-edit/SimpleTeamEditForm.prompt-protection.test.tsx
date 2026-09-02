@@ -100,7 +100,7 @@ describe('SimpleTeamEditForm prompt protection', () => {
     expect(toggle).not.toBeChecked()
     const hitTarget = toggle.parentElement
     expect(hitTarget?.tagName).toBe('LABEL')
-    expect(hitTarget).toHaveClass('min-h-11', 'min-w-11')
+    expect(hitTarget).toHaveClass('min-h-11', 'min-w-11', 'justify-start', 'md:justify-end')
     expect(screen.getByText('Prompt protection')).toBeInTheDocument()
     fireEvent.click(hitTarget!)
     expect(setPromptProtectionEnabled).toHaveBeenCalledWith(true)

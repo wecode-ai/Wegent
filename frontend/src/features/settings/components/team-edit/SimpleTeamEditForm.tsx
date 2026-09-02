@@ -412,7 +412,7 @@ export default function SimpleTeamEditForm({
           >
             <label
               htmlFor="simple-prompt-protection-enabled"
-              className="flex min-h-11 min-w-11 cursor-pointer items-center justify-center"
+              className="flex min-h-11 min-w-11 cursor-pointer items-center justify-start md:justify-end"
             >
               <Switch
                 id="simple-prompt-protection-enabled"
