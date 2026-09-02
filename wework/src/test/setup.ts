@@ -305,10 +305,10 @@ function installDefaultDshUiTestModules() {
   }
 }
 
-export async function preloadDefaultDshUiTestModules() {
+export async function preloadDefaultDshUiTestModules(moduleNames?: readonly string[]) {
   installDefaultDshUiTestModules()
   const modules = window.__WEWORK_DSH_UI_MODULES__ ?? {}
-  await Promise.all(Object.keys(modules).map(module => importDshUiModule(module)))
+  await Promise.all((moduleNames ?? Object.keys(modules)).map(module => importDshUiModule(module)))
 }
 
 function requestUrl(input: RequestInfo | URL): string {

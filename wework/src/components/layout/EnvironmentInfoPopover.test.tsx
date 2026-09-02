@@ -10,7 +10,7 @@ describe('EnvironmentInfoPopover', () => {
   const portalContainers: HTMLElement[] = []
 
   beforeEach(async () => {
-    await preloadDefaultDshUiTestModules()
+    await preloadDefaultDshUiTestModules(['plugins/wework-ui-git-environment-section.js'])
   })
 
   afterEach(() => {
