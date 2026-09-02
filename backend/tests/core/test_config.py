@@ -63,6 +63,7 @@ class TestSettings:
         assert s.ENABLE_API_DOCS is True
         assert s.ALGORITHM == "HS256"
         assert s.ACCESS_TOKEN_EXPIRE_MINUTES == 10080  # 7 days
+        assert s.PROMPT_PROTECTION_TIMEOUT_SECONDS == 20.0
 
     @pytest.mark.parametrize("timeout", [0, -0.1])
     def test_prompt_protection_timeout_must_be_positive(self, timeout: float) -> None:
