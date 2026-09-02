@@ -69,13 +69,9 @@ function routePartition(label: string, hostGeneration: number) {
   return `${route}${ROUTE_HOST_SEPARATOR}${rendererInstanceId}:${hostGeneration}`
 }
 
-function createHostedWebview(label: string): HostedElectronWebview {
-  const container = document.createElement('div')
+function createElectronWebview(label: string): ElectronWebviewElement {
   const webview = document.createElement('webview') as ElectronWebviewElement
-  const cursorHost = document.createElement('div')
   const hostGeneration = ++nextHostGeneration
-  container.dataset.testid = 'workspace-browser-electron-webview'
-  container.dataset.weworkBrowserWebview = label
   webview.setAttribute('data-wework-browser-label', label)
   webview.setAttribute('data-browser-sidebar-conversation-id', 'wework')
   webview.setAttribute('data-browser-sidebar-browser-tab-id', label)
@@ -89,6 +85,15 @@ function createHostedWebview(label: string): HostedElectronWebview {
     height: '100%',
     width: '100%',
   })
+  return webview
+}
+
+function createHostedWebview(label: string): HostedElectronWebview {
+  const container = document.createElement('div')
+  const webview = createElectronWebview(label)
+  const cursorHost = document.createElement('div')
+  container.dataset.testid = 'workspace-browser-electron-webview'
+  container.dataset.weworkBrowserWebview = label
   Object.assign(container.style, {
     overflow: 'hidden',
     position: 'fixed',
@@ -121,13 +126,17 @@ function clearRetentionTimeout(host: HostedElectronWebview) {
   host.retentionTimeout = null
 }
 
+function destroyElectronWebview(webview: ElectronWebviewElement): void {
+  if (typeof webview.destroy === 'function') webview.destroy()
+  webview.remove()
+}
+
 function destroyHostedWebview(host: HostedElectronWebview) {
   if (host.destroyed) return
   host.destroyed = true
   clearRetentionTimeout(host)
   if (hostedWebviews.get(host.label) === host) hostedWebviews.delete(host.label)
-  if (typeof host.webview.destroy === 'function') host.webview.destroy()
-  else host.webview.remove()
+  destroyElectronWebview(host.webview)
   host.container.remove()
 }
 
@@ -249,6 +258,15 @@ export function relabelElectronEmbeddedBrowserView(
 ): void {
   if (host.owner !== owner || host.label === label) return
   assignHostedWebviewLabel(host, label)
+}
+
+export function resetElectronEmbeddedBrowserView(host: HostedElectronWebview, owner: symbol): void {
+  if (host.destroyed || host.owner !== owner) return
+  const previousWebview = host.webview
+  const nextWebview = createElectronWebview(host.label)
+  host.webview = nextWebview
+  destroyElectronWebview(previousWebview)
+  host.container.insertBefore(nextWebview, host.cursorHost)
 }
 
 export function positionElectronEmbeddedBrowserView(

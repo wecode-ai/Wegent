@@ -9,6 +9,8 @@ import {
 } from './electronEmbeddedBrowserHost'
 
 const embeddedBrowserMocks = vi.hoisted(() => ({
+  closeRequestHandler: null as ((event: { label: string; nativeLabel: string }) => void) | null,
+  listenEmbeddedBrowserCloseRequests: vi.fn(),
   notifyEmbeddedBrowserAgentCursorArrived: vi.fn(),
 }))
 
@@ -31,6 +33,16 @@ describe('ElectronEmbeddedBrowserView', () => {
     vi.useFakeTimers()
     embeddedBrowserMocks.notifyEmbeddedBrowserAgentCursorArrived.mockReset()
     embeddedBrowserMocks.notifyEmbeddedBrowserAgentCursorArrived.mockResolvedValue(undefined)
+    embeddedBrowserMocks.closeRequestHandler = null
+    embeddedBrowserMocks.listenEmbeddedBrowserCloseRequests.mockReset()
+    embeddedBrowserMocks.listenEmbeddedBrowserCloseRequests.mockImplementation(handler => {
+      embeddedBrowserMocks.closeRequestHandler = handler
+      return Promise.resolve(() => {
+        if (embeddedBrowserMocks.closeRequestHandler === handler) {
+          embeddedBrowserMocks.closeRequestHandler = null
+        }
+      })
+    })
     vi.stubGlobal('ResizeObserver', ResizeObserverMock)
     document.querySelector('[data-wework-browser-webview-host-root]')?.remove()
   })
@@ -200,6 +212,35 @@ describe('ElectronEmbeddedBrowserView', () => {
       await Promise.resolve()
     })
     expect(screen.queryByTestId('workspace-browser-electron-webview')).not.toBeInTheDocument()
+  })
+
+  test('replaces a closed webview before the same route is reopened', async () => {
+    render(
+      <ElectronEmbeddedBrowserView
+        active
+        interactionBlocked={false}
+        label="workspace-browser"
+        visualRect={null}
+      />
+    )
+    const host = screen.getByTestId('workspace-browser-electron-webview')
+    const previousWebview = host.querySelector('webview')
+    const previousPartition = previousWebview?.getAttribute('partition')
+
+    await act(async () => {
+      embeddedBrowserMocks.closeRequestHandler?.({
+        label: 'workspace-browser',
+        nativeLabel: 'electron-browser-1',
+      })
+    })
+
+    const nextWebview = host.querySelector('webview')
+    expect(nextWebview).not.toBe(previousWebview)
+    expect(host.querySelectorAll('webview')).toHaveLength(1)
+    expect(nextWebview?.getAttribute('partition')).not.toBe(previousPartition)
+    expect(previousWebview?.isConnected).toBe(false)
+    expect(host.style.visibility).toBe('visible')
+    expect(host.style.pointerEvents).toBe('auto')
   })
 
   test('does not replace an active host while relabeling', () => {
