@@ -277,6 +277,33 @@ function findNestedString(value, predicate) {
   return null
 }
 
+function requestContainsSkillLocator(body, skillPath, skillName) {
+  const requestText = JSON.stringify(body)
+  if (requestText.includes(skillPath)) return true
+
+  const normalizedSkillPath = skillPath.replaceAll('\\', '/')
+  const relativeSkillPath = `${skillName}/SKILL.md`
+  const skillRoot = normalizedSkillPath.slice(0, -relativeSkillPath.length).replace(/\/$/u, '')
+  const catalog = findNestedString(
+    body,
+    value => value.includes('### Skill roots') && value.includes(relativeSkillPath)
+  )
+  if (!catalog) return false
+
+  for (const line of catalog.split(/\r?\n/u)) {
+    const rootMatch = line.match(/^- `([^`]+)` = `([^`]+)`$/u)
+    if (!rootMatch) continue
+    const [, alias, root] = rootMatch
+    if (
+      root.replaceAll('\\', '/') === skillRoot &&
+      catalog.includes(`(file: ${alias}/${relativeSkillPath})`)
+    ) {
+      return true
+    }
+  }
+  return false
+}
+
 function toolOutputText(request, callId) {
   const findOutput = value => {
     if (Array.isArray(value)) {
@@ -3185,7 +3212,7 @@ class DesktopE2EServer {
         assert.ok(
           requestText.includes(OFFICIAL_PLUGIN_NAME) &&
             requestText.includes(OFFICIAL_PLUGIN_SKILL_NAME) &&
-            requestText.includes(skillPath),
+            requestContainsSkillLocator(body, skillPath, OFFICIAL_PLUGIN_SKILL_NAME),
           'The real Codex request did not inject the selected official plugin skill'
         )
         const shell = selectShellToolCommand(
