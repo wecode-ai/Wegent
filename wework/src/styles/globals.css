@@ -1014,11 +1014,8 @@ button:disabled {
   }
 
   .activity-shimmer-band {
-    position: absolute;
-    inset: 0;
     animation: activity-shimmer-band 1.6s linear infinite;
     animation-delay: var(--activity-shimmer-delay);
-    clip-path: inset(0 var(--activity-shimmer-right) 0 var(--activity-shimmer-left));
     color: rgb(var(--color-text-secondary));
     opacity: 0;
     will-change: opacity;
@@ -1029,8 +1026,7 @@ button:disabled {
   }
 
   .activity-shimmer-band::before {
-    content: attr(data-text);
-    white-space: inherit;
+    content: attr(data-grapheme);
   }
 
   @media (prefers-reduced-motion: reduce) {

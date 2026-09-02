@@ -1447,7 +1447,15 @@ describe('MessageList', () => {
     expect(shimmer).toHaveClass('tool-activity-shimmer')
     const shimmerBands = shimmer.querySelectorAll('.activity-shimmer-band')
     expect(shimmerBands).toHaveLength(6)
-    expect(shimmerBands[0]).toHaveAttribute('data-text', '正在搜索代码')
+    expect(Array.from(shimmerBands, band => band.getAttribute('data-grapheme'))).toEqual([
+      '正',
+      '在',
+      '搜',
+      '索',
+      '代',
+      '码',
+    ])
+    expect(shimmer.querySelector('[data-text]')).not.toBeInTheDocument()
     expect(screen.queryByTestId('thinking-indicator')).not.toBeInTheDocument()
   })
 
