@@ -4,17 +4,16 @@
 
 import { useCallback } from 'react'
 
-import { isVideoFileName } from '@/apis/attachments'
-import { downloadKnowledgeDocument } from '@/apis/knowledge'
+import { downloadAttachment, isVideoFileName } from '@/apis/attachments'
 import { getKnowledgeVideoDownloader } from '../video-download-registry'
 
 /**
  * Unified knowledge-base document download.
  *
- * The core path always asks the document-scoped knowledge endpoint for a
- * download token. Internal deployments may register a video downloader for
- * non-local video storage; it is used only after the caller has allowed the
- * document download action.
+ * The core path uses the shared attachment download endpoint, where the
+ * backend applies the knowledge-document policy only to KB attachments.
+ * Internal deployments may register a video downloader for non-local video
+ * storage; it is used only after the caller has allowed the action.
  */
 export function useKnowledgeDocumentDownload() {
   return useCallback(
@@ -39,7 +38,7 @@ export function useKnowledgeDocumentDownload() {
         }
       }
 
-      await downloadKnowledgeDocument(document.id, document.name)
+      await downloadAttachment(document.attachment_id, document.name)
     },
     []
   )

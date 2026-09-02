@@ -10,7 +10,7 @@ import type { DocumentSummary, KnowledgeDocument } from '@/types/knowledge'
 import { toast } from 'sonner'
 
 const mockRouterPush = jest.fn()
-const mockDownloadKnowledgeDocument = jest.fn()
+const mockDownloadDocument = jest.fn()
 let mockDocumentSummary: DocumentSummary | null = null
 const mockDialogContent = jest.fn(
   ({ children }: { children: React.ReactNode; className?: string }) => <div>{children}</div>
@@ -57,7 +57,6 @@ jest.mock('@/apis/knowledge', () => ({
     chunk_storage_enabled: false,
   }),
   listKnowledgeBases: (...args: unknown[]) => mockListKnowledgeBases(...args),
-  downloadKnowledgeDocument: (...args: unknown[]) => mockDownloadKnowledgeDocument(...args),
 }))
 
 jest.mock('@/apis/knowledge-base', () => ({
@@ -92,7 +91,7 @@ jest.mock('@/features/knowledge/document/hooks/useDocumentDetail', () => ({
 
 jest.mock('@/features/knowledge/document/hooks/useKnowledgeDocumentDownload', () => ({
   useKnowledgeDocumentDownload: () => (document: KnowledgeDocument) =>
-    mockDownloadKnowledgeDocument(document.id, document.name),
+    mockDownloadDocument(document.id, document.name),
 }))
 
 jest.mock('@/features/knowledge/document/components/ChunksSection', () => ({
@@ -148,7 +147,7 @@ jest.mock('sonner', () => ({
 beforeEach(() => {
   mockRouterPush.mockClear()
   mockDialogContent.mockClear()
-  mockDownloadKnowledgeDocument.mockReset()
+  mockDownloadDocument.mockReset()
   mockDocumentSummary = null
   mockListKnowledgeBases.mockResolvedValue({ items: [] })
 })
@@ -608,7 +607,7 @@ describe('DocumentDetailDialog original file preview', () => {
 
   it('downloads the original file from the dialog header and preserves the preview on failure', async () => {
     const user = userEvent.setup()
-    mockDownloadKnowledgeDocument.mockRejectedValue(new Error('download failed'))
+    mockDownloadDocument.mockRejectedValue(new Error('download failed'))
     render(
       <DocumentDetailDialog
         open={true}
@@ -620,7 +619,7 @@ describe('DocumentDetailDialog original file preview', () => {
 
     await user.click(screen.getByTestId('knowledge-source-preview-download'))
 
-    expect(mockDownloadKnowledgeDocument).toHaveBeenCalledWith(22, 'report.docx')
+    expect(mockDownloadDocument).toHaveBeenCalledWith(22, 'report.docx')
     expect(toast.error).toHaveBeenCalledWith(
       'document.document.detail.sourcePreview.downloadFailed'
     )

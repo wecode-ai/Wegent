@@ -7,7 +7,6 @@
  */
 
 import { apiClient } from './client'
-import { getApiBaseUrl } from '@/lib/runtime-config'
 import type {
   AccessibleKnowledgeResponse,
   ChunkListResponse,
@@ -60,38 +59,6 @@ export async function getKnowledgeBase(id: number): Promise<KnowledgeBase> {
 /** Return the effective reader capability used only for knowledge UI state. */
 export async function getDocumentProtection(id: number): Promise<DocumentProtection> {
   return apiClient.get<DocumentProtection>(`/knowledge-bases/${id}/document-protection`)
-}
-
-interface KnowledgeDocumentDownloadTokenResponse {
-  download_token: string
-  expires_in: number
-}
-
-/**
- * Create a browser download URL that remains scoped to one knowledge document.
- */
-export async function createKnowledgeDocumentDownloadUrl(documentId: number): Promise<string> {
-  const response = await apiClient.post<KnowledgeDocumentDownloadTokenResponse>(
-    `/knowledge-documents/${documentId}/download-token`
-  )
-  return `${getApiBaseUrl()}/knowledge-documents/${documentId}/download?download_token=${encodeURIComponent(
-    response.download_token
-  )}`
-}
-
-/** Trigger an original-file download through the knowledge-document endpoint. */
-export async function downloadKnowledgeDocument(
-  documentId: number,
-  filename?: string
-): Promise<void> {
-  const link = document.createElement('a')
-  link.href = await createKnowledgeDocumentDownloadUrl(documentId)
-  if (filename) {
-    link.download = filename
-  }
-  document.body.appendChild(link)
-  link.click()
-  document.body.removeChild(link)
 }
 
 /**
