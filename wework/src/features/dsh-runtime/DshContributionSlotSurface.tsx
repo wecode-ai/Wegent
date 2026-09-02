@@ -1,4 +1,4 @@
-import { createElement, Fragment, Suspense, use, type ComponentType } from 'react'
+import { createElement, Fragment, useEffect, useState, type ComponentType } from 'react'
 
 import { DshSlotSurface } from './DshSlotSurface'
 import { getLoadedDshUiModule, importDshUiModule } from './dshUiModules'
@@ -20,8 +20,28 @@ interface DshContributionModule {
 }
 
 function DshContributionModuleLoader({ module, props }: { module: string; props: object }) {
-  const cached = getLoadedDshUiModule<DshContributionModule>(module)
-  const loaded = cached ?? use(importDshUiModule<DshContributionModule>(module))
+  const [loaded, setLoaded] = useState<DshContributionModule | null>(() =>
+    getLoadedDshUiModule<DshContributionModule>(module)
+  )
+  const [error, setError] = useState<unknown>(null)
+
+  useEffect(() => {
+    let active = true
+    void importDshUiModule<DshContributionModule>(module).then(
+      value => {
+        if (active) setLoaded(value)
+      },
+      reason => {
+        if (active) setError(reason)
+      }
+    )
+    return () => {
+      active = false
+    }
+  }, [module])
+
+  if (error) throw error
+  if (!loaded) return null
   return createElement(loaded.default, props)
 }
 
@@ -38,9 +58,11 @@ export function DshContributionSlotSurface({
     <Fragment>
       {entries.map(entry =>
         entry.module ? (
-          <Suspense key={entry.id} fallback={null}>
-            <DshContributionModuleLoader module={entry.module} props={props} />
-          </Suspense>
+          <DshContributionModuleLoader
+            key={`${entry.id}:${entry.module}`}
+            module={entry.module}
+            props={props}
+          />
         ) : (
           <DshSlotSurface
             key={entry.id}
