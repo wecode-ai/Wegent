@@ -26,18 +26,18 @@ def test_gate_exports_failure_groups_for_offline_evaluation():
         {"missing_model_config", "timeout", "call_error"}
     )
     assert prompt_protection.PARSE_FAILURE_TYPES == frozenset(
-        {"invalid_json", "invalid_structure", "unknown_risk"}
+        {"invalid_format", "unknown_risk"}
     )
 
 
 @pytest.mark.parametrize(
     ("payload", "expected"),
     [
-        ('{"risks": []}', ()),
-        ('{"risks": ["purpose_violation"]}', ("purpose_violation",)),
+        ("ALLOW", ()),
+        ("\nALLOW\t", ()),
+        ("BLOCK|purpose_violation", ("purpose_violation",)),
         (
-            '{"risks": ["system_prompt_extraction", '
-            '"default_knowledge_exfiltration"]}',
+            "BLOCK|system_prompt_extraction,default_knowledge_exfiltration",
             ("system_prompt_extraction", "default_knowledge_exfiltration"),
         ),
     ],
@@ -49,16 +49,17 @@ def test_parse_gate_result_accepts_only_known_risks(payload, expected):
 @pytest.mark.parametrize(
     "payload",
     [
-        "not-json",
-        "[]",
-        "{}",
-        '{"risks": [], "reason": "no"}',
-        '{"risks": "purpose_violation"}',
-        '{"risks": ["unknown"]}',
-        '{"risks": ["purpose_violation", "purpose_violation"]}',
+        '{"risks": []}',
+        "The request is safe.",
+        "```text\nALLOW\n```",
+        "ALLOW because no risk applies",
+        "ALLOW\nBLOCK|purpose_violation",
+        "BLOCK|",
+        "BLOCK|unknown",
+        "BLOCK|purpose_violation,purpose_violation",
     ],
 )
-def test_parse_gate_result_rejects_schema_drift(payload):
+def test_parse_gate_result_rejects_protocol_drift(payload):
     with pytest.raises(ValueError):
         parse_gate_result(payload)
 
@@ -66,21 +67,21 @@ def test_parse_gate_result_rejects_schema_drift(payload):
 def test_extract_model_text_supports_responses_anthropic_and_gemini():
     assert (
         prompt_protection._extract_responses_text(
-            {"output": [{"content": [{"text": '{"risks": []}'}]}]}
+            {"output": [{"content": [{"text": "ALLOW"}]}]}
         )
-        == '{"risks": []}'
+        == "ALLOW"
     )
     assert (
         prompt_protection._extract_anthropic_text(
-            {"content": [{"type": "text", "text": '{"risks": []}'}]}
+            {"content": [{"type": "text", "text": "ALLOW"}]}
         )
-        == '{"risks": []}'
+        == "ALLOW"
     )
     assert (
         prompt_protection._extract_gemini_text(
-            {"candidates": [{"content": {"parts": [{"text": '{"risks": []}'}]}}]}
+            {"candidates": [{"content": {"parts": [{"text": "ALLOW"}]}}]}
         )
-        == '{"risks": []}'
+        == "ALLOW"
     )
 
 
@@ -120,7 +121,7 @@ async def test_model_call_keeps_credentials_out_of_request_body(monkeypatch):
             return None
 
         def json(self):
-            return {"choices": [{"message": {"content": '{"risks": []}'}}]}
+            return {"choices": [{"message": {"content": "ALLOW"}}]}
 
     class FakeClient:
         def __init__(self, *, timeout):
@@ -145,7 +146,7 @@ async def test_model_call_keeps_credentials_out_of_request_body(monkeypatch):
         timeout=10,
     )
 
-    assert result == '{"risks": []}'
+    assert result == "ALLOW"
     assert captured["headers"]["Authorization"] == "Bearer secret-key"
     assert "secret-key" not in json.dumps(captured["body"])
     assert "api_key" not in captured["body"]
@@ -154,7 +155,7 @@ async def test_model_call_keeps_credentials_out_of_request_body(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_gate_blocks_on_any_known_risk():
-    call = AsyncMock(return_value='{"risks": ["system_prompt_extraction"]}')
+    call = AsyncMock(return_value="BLOCK|system_prompt_extraction")
     adapter = SimpleNamespace(complete=call)
 
     result = await evaluate_prompt_protection(**_evaluation_kwargs(adapter))
@@ -168,7 +169,7 @@ async def test_gate_blocks_on_any_known_risk():
 
 @pytest.mark.asyncio
 async def test_gate_allows_empty_risks():
-    adapter = SimpleNamespace(complete=AsyncMock(return_value='{"risks": []}'))
+    adapter = SimpleNamespace(complete=AsyncMock(return_value="ALLOW"))
 
     result = await evaluate_prompt_protection(**_evaluation_kwargs(adapter))
 
@@ -179,9 +180,9 @@ async def test_gate_allows_empty_risks():
 @pytest.mark.parametrize(
     ("model_result", "failure_type"),
     [
-        ("invalid", "invalid_json"),
-        ('{"risks": [], "reason": "extra"}', "invalid_structure"),
-        ('{"risks": ["new_risk"]}', "unknown_risk"),
+        ("The request appears safe.", "invalid_format"),
+        ("BLOCK|purpose_violation,purpose_violation", "invalid_format"),
+        ("BLOCK|new_risk", "unknown_risk"),
     ],
 )
 async def test_gate_fails_open_for_invalid_results(model_result, failure_type):
@@ -218,7 +219,7 @@ async def test_gate_telemetry_contains_no_protected_content_or_credentials(monke
     tracer = MagicMock()
     tracer.start_as_current_span.return_value = span_context
     monkeypatch.setattr(prompt_protection, "get_tracer", lambda name: tracer)
-    adapter = SimpleNamespace(complete=AsyncMock(return_value='{"risks": []}'))
+    adapter = SimpleNamespace(complete=AsyncMock(return_value="ALLOW"))
 
     await evaluate_prompt_protection(**_evaluation_kwargs(adapter))
 
@@ -234,9 +235,9 @@ async def test_gate_telemetry_contains_no_protected_content_or_credentials(monke
 @pytest.mark.parametrize(
     ("model_result", "expected_decision", "expected_failure_type"),
     [
-        ('{"risks": []}', "allow", None),
-        ('{"risks": ["system_prompt_extraction"]}', "block", None),
-        ("invalid", "allow_due_to_error", "invalid_json"),
+        ("ALLOW", "allow", None),
+        ("BLOCK|system_prompt_extraction", "block", None),
+        ("natural-language result", "allow_due_to_error", "invalid_format"),
     ],
 )
 async def test_gate_logs_content_free_decision_without_otel(
