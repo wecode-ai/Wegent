@@ -14,7 +14,7 @@ import {
 } from 'electron'
 import { stat } from 'node:fs/promises'
 import { cpus, freemem, totalmem } from 'node:os'
-import { join } from 'node:path'
+import { join, resolve } from 'node:path'
 import {
   HOST_CAPABILITIES,
   HostCapabilityError,
@@ -52,6 +52,15 @@ import { RotatingLog } from '../runtime/rotating-log.js'
 export { captureWebContentsDataUrl } from './web-contents-capture.js'
 
 export const WEWORK_APP_PRINCIPAL = '@wegent/dsh-app-wework'
+
+export function e2eOpenDialogOverride(
+  environment: NodeJS.ProcessEnv = process.env
+): { canceled: false; filePaths: string[] } | null {
+  const controlUrl = environment.WEWORK_E2E_CONTROL_URL?.trim()
+  const selectedPath = environment.WEWORK_E2E_OPEN_DIALOG_PATH?.trim()
+  if (!controlUrl || !selectedPath) return null
+  return { canceled: false, filePaths: [resolve(selectedPath)] }
+}
 
 export interface ElectronDesktopServices {
   appUpdates?: AppUpdateService
@@ -552,9 +561,10 @@ export function createElectronCapabilityRouter(
     else target.maximize()
   })
   router.register('window.close', () => requiredWindow(window).close())
-  router.register('dialog.open', params =>
-    dialog.showOpenDialog(requiredWindow(window), openDialogOptions(params))
-  )
+  router.register('dialog.open', params => {
+    const override = e2eOpenDialogOverride()
+    return override ?? dialog.showOpenDialog(requiredWindow(window), openDialogOptions(params))
+  })
   router.register('dialog.save', params =>
     dialog.showSaveDialog(requiredWindow(window), saveDialogOptions(params))
   )

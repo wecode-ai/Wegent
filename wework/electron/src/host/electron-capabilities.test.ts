@@ -9,6 +9,7 @@ import type {
 import {
   captureWebContentsDataUrl,
   cpuLoadRatioBetween,
+  e2eOpenDialogOverride,
   registerAppUpdateCapabilities,
   registerBrowserHistoryCapabilities,
   registerCoreDshPluginCapabilities,
@@ -29,6 +30,25 @@ describe('cpuLoadRatioBetween', () => {
       0.7
     )
     expect(cpuLoadRatioBetween({ idle: 100, total: 200 }, { idle: 100, total: 200 })).toBe(0)
+  })
+})
+
+describe('e2eOpenDialogOverride', () => {
+  test('returns the selected directory only for a controlled desktop E2E process', () => {
+    expect(
+      e2eOpenDialogOverride({
+        WEWORK_E2E_CONTROL_URL: 'http://127.0.0.1:1234',
+        WEWORK_E2E_OPEN_DIALOG_PATH: '/workspace/plugin',
+      })
+    ).toEqual({
+      canceled: false,
+      filePaths: ['/workspace/plugin'],
+    })
+  })
+
+  test('does not bypass the native dialog without both E2E signals', () => {
+    expect(e2eOpenDialogOverride({ WEWORK_E2E_OPEN_DIALOG_PATH: '/workspace/plugin' })).toBeNull()
+    expect(e2eOpenDialogOverride({ WEWORK_E2E_CONTROL_URL: 'http://127.0.0.1:1234' })).toBeNull()
   })
 })
 

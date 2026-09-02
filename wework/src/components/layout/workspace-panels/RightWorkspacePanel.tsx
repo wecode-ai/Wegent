@@ -428,7 +428,14 @@ export const RightWorkspacePanel = memo(function RightWorkspacePanel({
     pluginDevelopmentProjectsRevision,
     pluginDevelopmentProjectsRevision
   )
-  const composerApps = useSyncExternalStore(subscribeComposerApps, getComposerApps, getComposerApps)
+  const [composerApps, setComposerApps] = useState(getComposerApps)
+  useEffect(
+    () =>
+      subscribeComposerApps(() => {
+        setComposerApps(getComposerApps())
+      }),
+    []
+  )
   useEffect(
     () => observePluginDevelopmentWorkspace(extensionScope.cwd ?? null),
     [extensionScope.cwd]

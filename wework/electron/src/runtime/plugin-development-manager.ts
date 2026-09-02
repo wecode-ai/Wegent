@@ -67,6 +67,7 @@ export class PluginDevelopmentManager {
   private child: ChildProcessWithoutNullStreams | null = null
   private session: PluginDevelopmentSession | null = null
   private statePoll: NodeJS.Timeout | null = null
+  private statePollGeneration = 0
   private classificationWatcher: FSWatcher | null = null
   private classificationRefresh: NodeJS.Timeout | null = null
   private observedProjectRoot: string | null = null
@@ -189,7 +190,11 @@ export class PluginDevelopmentManager {
         2
       )}\n`,
       'cordis.patch.yml': `- insert:\n    - id: ${slug}\n      name: '${packageName}'\n`,
-      'index.js': `export const name = ${JSON.stringify(slug)}\n`,
+      'index.js': [
+        `export const name = ${JSON.stringify(slug)}`,
+        'export function apply() {}',
+        '',
+      ].join('\n'),
       'client.js': [
         'window.__ModuleLoader__.load({',
         `  id: ${JSON.stringify(packageName)},`,
@@ -391,17 +396,19 @@ export class PluginDevelopmentManager {
 
   private startPolling(): void {
     this.stopPolling()
-    this.statePoll = setInterval(() => void this.refreshChildState(), 250)
+    const generation = this.statePollGeneration
+    this.statePoll = setInterval(() => void this.refreshChildState(generation), 250)
     this.statePoll.unref()
   }
 
   private stopPolling(): void {
+    this.statePollGeneration += 1
     if (this.statePoll) clearInterval(this.statePoll)
     this.statePoll = null
   }
 
-  private async refreshChildState(): Promise<void> {
-    if (!this.session) return
+  private async refreshChildState(generation = this.statePollGeneration): Promise<void> {
+    if (!this.session || !this.isRunning()) return
     const statePath = join(resolve(this.session.userDataDirectory, '..'), 'state.json')
     let state: ChildState
     try {
@@ -409,6 +416,7 @@ export class PluginDevelopmentManager {
     } catch {
       return
     }
+    if (generation !== this.statePollGeneration || !this.isRunning()) return
     this.updateSession({
       status: state.status ?? this.session.status,
       coreDshPid: state.coreDshPid ?? null,

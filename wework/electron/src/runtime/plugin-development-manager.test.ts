@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, rm } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, test } from 'vitest'
@@ -6,6 +6,7 @@ import {
   PluginDevelopmentManager,
   pluginDevelopmentEnvironment,
   pluginDevelopmentId,
+  type PluginDevelopmentSession,
 } from './plugin-development-manager.js'
 
 describe('PluginDevelopmentManager', () => {
@@ -88,6 +89,7 @@ describe('PluginDevelopmentManager', () => {
         schemaVersion: 1,
         kind: 'wework-core-dsh-plugin',
       })
+      expect(await readFile(join(root, 'index.js'), 'utf8')).toContain('export function apply() {}')
 
       const first = manager.classify(root)
       const second = manager.classify(root)
@@ -96,6 +98,46 @@ describe('PluginDevelopmentManager', () => {
         kind: 'wework-core-dsh-plugin',
         sourceRoot: root,
       })
+    } finally {
+      await rm(parent, { recursive: true, force: true })
+    }
+  })
+
+  test('does not restore stale child state after the development instance stops', async () => {
+    const parent = await mkdtemp(join(tmpdir(), 'wework-plugin-development-state-'))
+    const instanceRoot = join(parent, 'plugin-development', 'development-id')
+    const userDataDirectory = join(instanceRoot, 'user-data')
+    const manager = new PluginDevelopmentManager({
+      command: process.execPath,
+      args: [],
+      environment: {},
+      userDataDirectory: parent,
+    })
+    const session: PluginDevelopmentSession = {
+      id: 'development-id',
+      name: '@wework/example-plugin',
+      displayName: 'Example plugin',
+      version: '0.1.0',
+      sourceRoot: join(parent, 'example-plugin'),
+      patchPath: join(parent, 'example-plugin', 'cordis.patch.yml'),
+      status: 'stopped',
+      electronPid: null,
+      coreDshPid: null,
+      hmrGeneration: 1,
+      lastError: null,
+      userDataDirectory,
+      logDirectory: join(instanceRoot, 'logs'),
+    }
+    Object.assign(manager, { session })
+
+    try {
+      await mkdir(instanceRoot, { recursive: true })
+      await writeFile(
+        join(instanceRoot, 'state.json'),
+        JSON.stringify({ status: 'starting', hmrGeneration: 0 })
+      )
+
+      await expect(manager.list()).resolves.toEqual([session])
     } finally {
       await rm(parent, { recursive: true, force: true })
     }
