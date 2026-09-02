@@ -146,6 +146,41 @@ describe('AigcVideoCard', () => {
     window.removeEventListener(OPEN_TASK_RIGHT_PANEL_EVENT, handleOpen)
   })
 
+  it('requests OpenCut auto-open when a timeline card first becomes ready', () => {
+    const handleOpen = jest.fn()
+    window.addEventListener(OPEN_TASK_RIGHT_PANEL_EVENT, handleOpen)
+    const { rerender } = render(
+      <AigcVideoCard
+        block={buildCard({
+          card_status: 'pending',
+          card_data: {
+            title: '视频剪辑规划',
+            link: 'http://localhost:3030/chat?taskId=53&openPanel=timeline',
+          },
+        })}
+      />
+    )
+
+    rerender(
+      <AigcVideoCard
+        block={buildCard({
+          card_status: 'populated',
+          card_data: {
+            title: '视频剪辑规划',
+            link: 'http://localhost:3030/chat?taskId=53&openPanel=timeline',
+          },
+        })}
+      />
+    )
+
+    expect(handleOpen).toHaveBeenCalledTimes(1)
+    const event = handleOpen.mock.calls[0][0] as CustomEvent<
+      TaskRightPanelRequest<AigcVideoPanelPayload>
+    >
+    expect(event.detail.panelProps.autoOpenOpenCut).toBe(true)
+    window.removeEventListener(OPEN_TASK_RIGHT_PANEL_EVENT, handleOpen)
+  })
+
   it('passes the public task share token to the video panel', () => {
     const handleOpen = jest.fn()
     window.addEventListener(OPEN_TASK_RIGHT_PANEL_EVENT, handleOpen)
