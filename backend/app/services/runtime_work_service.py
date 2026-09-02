@@ -4033,11 +4033,12 @@ def _build_team_runtime_execution_request(
 ):
     """Build a canonical Team execution request without persistent Task rows."""
 
-    from app.models.task import TaskResource
     from app.services.execution import TaskRequestBuilder
     from app.services.project_automation_domain import runnable_wegent_team
-    from shared.models.db.enums import SubtaskRole, SubtaskStatus
-    from shared.models.db.subtask import Subtask
+    from app.stores.tasks.transient import (
+        build_transient_assistant_subtask,
+        build_transient_task,
+    )
 
     user = _get_user(db, user_id)
     team = runnable_wegent_team(db, user_id, team_id)
@@ -4047,15 +4048,14 @@ def _build_team_runtime_execution_request(
         request.message,
         request.additional_context,
     )
-    task = TaskResource(
-        id=task_id,
+    task = build_transient_task(
+        task_id=task_id,
         user_id=user.id,
-        kind="Task",
         name=f"wework-runtime-{task_id}",
         namespace="default",
         project_id=target.project.id if target.project else 0,
         client_origin=CLIENT_ORIGIN_WEWORK,
-        json=_runtime_team_task_json(
+        payload=_runtime_team_task_json(
             task_id=task_id,
             title=title,
             message=message,
@@ -4063,17 +4063,14 @@ def _build_team_runtime_execution_request(
             target=target,
         ),
     )
-    subtask = Subtask(
-        id=subtask_id,
+    subtask = build_transient_assistant_subtask(
+        subtask_id=subtask_id,
         user_id=user.id,
         task_id=task_id,
         team_id=team.id,
         title=f"{title} - Assistant",
-        bot_ids=[],
-        role=SubtaskRole.ASSISTANT,
         prompt=message,
         message_id=1,
-        status=SubtaskStatus.PENDING,
     )
     execution_request = TaskRequestBuilder(db).build(
         subtask=subtask,
