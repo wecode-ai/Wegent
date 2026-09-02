@@ -830,6 +830,7 @@ jobs:
           BIND_SHELL: claudecode
           WEGENT_EXECUTOR_HOME: ${{ runner.temp }}/wegent-executor
           LOCAL_WORKSPACE_ROOT: ${{ runner.temp }}/wegent-workspace
+          WORKSPACE_ROOT: ${{ runner.temp }}/wegent-workspace
           LOCAL_HEARTBEAT_INTERVAL: "5"
           LOG_LEVEL: info
           CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: "1"
