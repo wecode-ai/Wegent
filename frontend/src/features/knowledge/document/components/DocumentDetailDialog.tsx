@@ -177,8 +177,12 @@ export function DocumentDetailDialog({
 
   // Check if document is editable
   const isEditable = useMemo(
-    () => isDocumentEditable(document?.source_type, document?.file_extension, canEdit),
-    [document?.source_type, document?.file_extension, canEdit]
+    // Editing loads the full raw document into an editable view, which would
+    // bypass the download protection of a protected knowledge base. Hide the
+    // edit entry whenever original-file download is not allowed.
+    () =>
+      allowDownload && isDocumentEditable(document?.source_type, document?.file_extension, canEdit),
+    [allowDownload, document?.source_type, document?.file_extension, canEdit]
   )
   const canPreviewSource = useMemo(
     () => Boolean(document && allowDownload && isKnowledgeSourcePreviewSupported(document)),
