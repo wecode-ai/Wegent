@@ -12,6 +12,8 @@ ISOLATED_EXECUTOR_HOME=""
 MANAGED_SOURCE_EXECUTOR="false"
 MANAGED_DWS_BINARY="false"
 MANAGED_HARNESS_RUNTIME="false"
+MANAGED_SOURCE_EXECUTOR_BINARY=""
+EXECUTOR_BINARY_TEMP=""
 WEWORK_APP_WATCH_PID=""
 WEWORK_APP_WATCH_READY_FILE=""
 
@@ -143,6 +145,9 @@ cleanup() {
   if [ -n "$WEWORK_APP_WATCH_READY_FILE" ]; then
     rm -f "$WEWORK_APP_WATCH_READY_FILE"
   fi
+  if [ -n "$EXECUTOR_BINARY_TEMP" ]; then
+    rm -f "$EXECUTOR_BINARY_TEMP"
+  fi
 }
 
 trap cleanup EXIT
@@ -179,9 +184,11 @@ else
   export WEWORK_EXECUTOR_PATH="$SCRIPT_DIR/dev-executor-sidecar.sh"
   MANAGED_SOURCE_EXECUTOR="true"
   configure_wegent_cargo_target_dir "$PROJECT_DIR" "executor-dev"
-  export WEGENT_EXECUTOR_BINARY="$(
+  MANAGED_SOURCE_EXECUTOR_BINARY="$(
     cargo_target_binary_path "$PROJECT_DIR/executor" debug wegent-executor
   )"
+  export WEGENT_EXECUTOR_BINARY="$WEWORK_DIR/node_modules/.cache/wework-executor-dev/wegent-executor"
+  export WEGENT_EXECUTOR_DEV_BUILD_ID="$WEWORK_DEV_INSTANCE_ID"
 fi
 export WEWORK_DEV_CACHE_ROOT="${WEWORK_DEV_CACHE_ROOT:-$HOME/Library/Caches/wegent/wework-dev}"
 export WEWORK_HARNESS_RUNTIME_ASSET_CACHE_ROOT="${WEWORK_HARNESS_RUNTIME_ASSET_CACHE_ROOT:-$WEWORK_DEV_CACHE_ROOT/harness-runtime}"
@@ -259,6 +266,12 @@ fi
 
 if [ "$MANAGED_SOURCE_EXECUTOR" = "true" ]; then
   cargo build --manifest-path "$PROJECT_DIR/executor/Cargo.toml" --bin wegent-executor
+  mkdir -p "$(dirname "$WEGENT_EXECUTOR_BINARY")"
+  EXECUTOR_BINARY_TEMP="$WEGENT_EXECUTOR_BINARY.tmp.$$"
+  cp "$MANAGED_SOURCE_EXECUTOR_BINARY" "$EXECUTOR_BINARY_TEMP"
+  chmod 0755 "$EXECUTOR_BINARY_TEMP"
+  mv -f "$EXECUTOR_BINARY_TEMP" "$WEGENT_EXECUTOR_BINARY"
+  EXECUTOR_BINARY_TEMP=""
 fi
 if [ ! -x "$WEWORK_EXECUTOR_PATH" ]; then
   echo "Error: Executor command is not executable: $WEWORK_EXECUTOR_PATH" >&2
