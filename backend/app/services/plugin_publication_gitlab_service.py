@@ -221,7 +221,12 @@ class PluginPublicationGitLabService:
                     snapshot_sha256=snapshot_sha256,
                     binding=binding,
                 )
-                self._verify_branch_binding(client, source_branch, binding)
+                commit_sha = self._verify_branch_binding(client, source_branch, binding)
+                if self._merge_request_head_sha(existing_mr) != commit_sha:
+                    raise PluginPublicationGitLabVerificationError(
+                        "Existing GitLab merge request head does not match its "
+                        "controlled source branch"
+                    )
                 self._verify_materialized_marker(
                     client,
                     source_branch=source_branch,
@@ -234,7 +239,12 @@ class PluginPublicationGitLabService:
                 self._verify_marketplace_entry(
                     client, source_branch=source_branch, slug=slug
                 )
-                return self._materialization(existing_mr, source_branch)
+                merge_request = self._schedule_auto_merge(
+                    client,
+                    merge_request=existing_mr,
+                    commit_sha=commit_sha,
+                )
+                return self._materialization(merge_request, source_branch)
             marketplace_file = self._marketplace_file(
                 client,
                 slug=slug,
@@ -265,6 +275,7 @@ class PluginPublicationGitLabService:
                     "actions": actions,
                 },
             )
+            commit_sha = self._commit_sha(commit.get("id"))
             merge_request = self._request(
                 client,
                 "POST",
@@ -291,7 +302,7 @@ class PluginPublicationGitLabService:
                     "remove_source_branch": True,
                 },
             )
-            merge_request.setdefault("sha", str(commit.get("id") or ""))
+            merge_request.setdefault("sha", commit_sha)
             self._verify_controlled_merge_request(
                 merge_request,
                 identity=identity,
@@ -300,6 +311,16 @@ class PluginPublicationGitLabService:
                 revision=revision,
                 snapshot_sha256=snapshot_sha256,
                 binding=binding,
+            )
+            if self._merge_request_head_sha(merge_request) != commit_sha:
+                raise PluginPublicationGitLabVerificationError(
+                    "Created GitLab merge request head does not match the "
+                    "materialized commit"
+                )
+            merge_request = self._schedule_auto_merge(
+                client,
+                merge_request=merge_request,
+                commit_sha=commit_sha,
             )
             return self._materialization(merge_request, source_branch)
 
@@ -681,6 +702,11 @@ class PluginPublicationGitLabService:
             raise PluginPublicationGitLabVerificationError(
                 "GitLab token is not bound to the configured materializer identity"
             )
+        if project.get("only_allow_merge_if_pipeline_succeeds") is not True:
+            raise PluginPublicationGitLabVerificationError(
+                "Controlled GitLab project must require a successful pipeline "
+                "before merge"
+            )
         return GitLabMaterializerIdentity(
             user_id=user_id,
             username=username,
@@ -755,7 +781,7 @@ class PluginPublicationGitLabService:
 
     def _verify_branch_binding(
         self, client: httpx.Client, source_branch: str, binding: str
-    ) -> None:
+    ) -> str:
         branch = self._branch(client, source_branch)
         commit = branch.get("commit") if branch else None
         message = str(commit.get("message") or "") if isinstance(commit, dict) else ""
@@ -764,6 +790,69 @@ class PluginPublicationGitLabService:
             raise PluginPublicationGitLabVerificationError(
                 "Existing GitLab source branch is not bound to this materializer"
             )
+        return self._commit_sha(commit.get("id") if isinstance(commit, dict) else None)
+
+    def _schedule_auto_merge(
+        self,
+        client: httpx.Client,
+        *,
+        merge_request: dict[str, Any],
+        commit_sha: str,
+    ) -> dict[str, Any]:
+        merge_request_iid = self._positive_int(merge_request.get("iid"))
+        if merge_request_iid <= 0:
+            raise PluginPublicationGitLabVerificationError(
+                "Controlled GitLab merge request has no valid IID"
+            )
+        response = self._request(
+            client,
+            "PUT",
+            f"/merge_requests/{merge_request_iid}/merge",
+            json={
+                "merge_when_pipeline_succeeds": True,
+                "sha": commit_sha,
+                "should_remove_source_branch": True,
+            },
+        )
+        if not isinstance(response, dict):
+            raise PluginPublicationGitLabVerificationError(
+                "GitLab auto-merge response is invalid"
+            )
+        state = str(response.get("state") or "")
+        if (
+            self._positive_int(response.get("iid")) != merge_request_iid
+            or state not in {"opened", "merged"}
+            or str(response.get("source_branch") or "")
+            != str(merge_request.get("source_branch") or "")
+            or str(response.get("target_branch") or "") != self.target_branch
+            or self._merge_request_head_sha(response) != commit_sha
+            or (
+                state != "merged"
+                and response.get("merge_when_pipeline_succeeds") is not True
+            )
+        ):
+            raise PluginPublicationGitLabVerificationError(
+                "GitLab did not register auto-merge for the controlled revision"
+            )
+        return {**merge_request, **response}
+
+    @staticmethod
+    def _commit_sha(value: Any) -> str:
+        commit_sha = str(value or "").lower()
+        if len(commit_sha) != 40 or any(
+            character not in "0123456789abcdef" for character in commit_sha
+        ):
+            raise PluginPublicationGitLabVerificationError(
+                "GitLab commit SHA is invalid"
+            )
+        return commit_sha
+
+    def _merge_request_head_sha(self, merge_request: dict[str, Any]) -> str:
+        diff_refs = merge_request.get("diff_refs") or {}
+        return self._commit_sha(
+            merge_request.get("sha")
+            or (diff_refs.get("head_sha") if isinstance(diff_refs, dict) else None)
+        )
 
     def _verify_controlled_merge_request(
         self,
@@ -1028,13 +1117,11 @@ class PluginPublicationGitLabService:
         self, merge_request: dict[str, Any], source_branch: str
     ) -> GitLabMaterialization:
         diff_refs = merge_request.get("diff_refs") or {}
-        commit_sha = str(
-            (
-                merge_request.get("merge_commit_sha")
-                or merge_request.get("squash_commit_sha")
-            )
-            if str(merge_request.get("state") or "") == "merged"
-            else (merge_request.get("sha") or diff_refs.get("head_sha") or "")
+        commit_sha = self._commit_sha(
+            merge_request.get("merge_commit_sha")
+            or merge_request.get("squash_commit_sha")
+            or merge_request.get("sha")
+            or (diff_refs.get("head_sha") if isinstance(diff_refs, dict) else None)
         )
         return GitLabMaterialization(
             project_id=self.project_id,

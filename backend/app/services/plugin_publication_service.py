@@ -1816,8 +1816,13 @@ class PluginPublicationService:
         materialization: GitLabMaterialization,
     ) -> None:
         self._apply_materialization_coordinates(revision, materialization)
-        revision.status = "draft_mr_open"
-        request.aggregate_status = "draft_mr_open"
+        target_status = (
+            "merged"
+            if materialization.merge_request_status == "merged"
+            else "draft_mr_open"
+        )
+        revision.status = target_status
+        request.aggregate_status = target_status
 
     def _apply_reconciliation(
         self,

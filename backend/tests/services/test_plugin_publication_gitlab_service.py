@@ -3,6 +3,8 @@
 # SPDX-License-Identifier: Apache-2.0
 
 import base64
+import hashlib
+import hmac
 import io
 import json
 import zipfile
@@ -63,7 +65,14 @@ class FakeClient:
                 json={"id": 77, "username": "wegent-materializer"},
             )
         if method == "GET" and url.endswith("/projects/42"):
-            return httpx.Response(200, request=request, json={"id": 42})
+            return httpx.Response(
+                200,
+                request=request,
+                json={
+                    "id": 42,
+                    "only_allow_merge_if_pipeline_succeeds": True,
+                },
+            )
         if method == "GET" and url.endswith("/merge_requests"):
             return httpx.Response(200, request=request, json=[])
         if method == "GET" and "/repository/branches/" in url:
@@ -115,6 +124,21 @@ class FakeClient:
                     "source_branch": payload["source_branch"],
                     "target_branch": payload["target_branch"],
                     "description": payload["description"],
+                },
+            )
+        if method == "PUT" and url.endswith("/merge_requests/8/merge"):
+            payload = kwargs["json"]
+            return httpx.Response(
+                200,
+                request=request,
+                json={
+                    "iid": 8,
+                    "web_url": "https://git.invalid/project/-/merge_requests/8",
+                    "state": "opened",
+                    "sha": payload["sha"],
+                    "source_branch": "wework/publication-12-r3",
+                    "target_branch": "master",
+                    "merge_when_pipeline_succeeds": True,
                 },
             )
         raise AssertionError(f"Unexpected GitLab call: {method} {url}")
@@ -245,6 +269,130 @@ class PreoccupiedClient(FakeClient):
         return super().request(method, url, **kwargs)
 
 
+class PipelineCheckDisabledClient(FakeClient):
+    def request(self, method: str, url: str, **kwargs) -> httpx.Response:
+        if method == "GET" and url.endswith("/projects/42"):
+            self.calls.append((method, url, kwargs))
+            return httpx.Response(
+                200,
+                request=httpx.Request(method, url),
+                json={
+                    "id": 42,
+                    "only_allow_merge_if_pipeline_succeeds": False,
+                },
+            )
+        return super().request(method, url, **kwargs)
+
+
+class AutoMergeNotScheduledClient(FakeClient):
+    def request(self, method: str, url: str, **kwargs) -> httpx.Response:
+        if method == "PUT" and url.endswith("/merge_requests/8/merge"):
+            self.calls.append((method, url, kwargs))
+            return httpx.Response(
+                200,
+                request=httpx.Request(method, url),
+                json={
+                    "iid": 8,
+                    "state": "opened",
+                    "sha": "a" * 40,
+                    "source_branch": "wework/publication-12-r3",
+                    "target_branch": "master",
+                    "merge_when_pipeline_succeeds": False,
+                },
+            )
+        return super().request(method, url, **kwargs)
+
+
+class ExistingControlledMergeRequestClient(FakeClient):
+    def __init__(
+        self,
+        calls: list,
+        *,
+        binding: str,
+        source_tree_sha256: str,
+        **kwargs,
+    ) -> None:
+        super().__init__(calls, **kwargs)
+        self.binding = binding
+        self.source_tree_sha256 = source_tree_sha256
+
+    def request(self, method: str, url: str, **kwargs) -> httpx.Response:
+        request = httpx.Request(method, url)
+        if method == "GET" and url.endswith("/merge_requests"):
+            self.calls.append((method, url, kwargs))
+            return httpx.Response(
+                200,
+                request=request,
+                json=[
+                    {
+                        "iid": 8,
+                        "web_url": ("https://git.invalid/project/-/merge_requests/8"),
+                        "state": "opened",
+                        "sha": "a" * 40,
+                        "author": {"id": 77},
+                        "source_project_id": 42,
+                        "target_project_id": 42,
+                        "source_branch": "wework/publication-12-r3",
+                        "target_branch": "master",
+                        "description": (
+                            "Wework publication request #12, revision 3.\n\n"
+                            f"Snapshot SHA256: `{'b' * 64}`\n\n"
+                            "<!-- Wegent-Materializer-Binding: "
+                            f"{self.binding} -->"
+                        ),
+                    }
+                ],
+            )
+        if method == "GET" and "/repository/branches/" in url:
+            self.calls.append((method, url, kwargs))
+            return httpx.Response(
+                200,
+                request=request,
+                json={
+                    "name": "wework/publication-12-r3",
+                    "commit": {
+                        "id": "a" * 40,
+                        "message": (
+                            "feat(plugin): submit draft-test publication\n\n"
+                            f"Wegent-Materializer-Binding: {self.binding}"
+                        ),
+                    },
+                },
+            )
+        if method == "GET" and "/repository/files/" in url:
+            self.calls.append((method, url, kwargs))
+            if ".wework-publication.json" in url:
+                payload = {
+                    "requestId": 12,
+                    "revision": 3,
+                    "snapshotSha256": "b" * 64,
+                    "sourceTreeSha256": self.source_tree_sha256,
+                }
+            else:
+                payload = {
+                    "plugins": [
+                        {
+                            "name": "draft-test",
+                            "source": {
+                                "source": "local",
+                                "path": "./plugins/draft-test",
+                            },
+                        }
+                    ]
+                }
+            return httpx.Response(
+                200,
+                request=request,
+                json={
+                    "encoding": "base64",
+                    "content": base64.b64encode(
+                        json.dumps(payload).encode("utf-8")
+                    ).decode("ascii"),
+                },
+            )
+        return super().request(method, url, **kwargs)
+
+
 def test_materialization_writes_exact_risk_marker_and_review_ready_mr() -> None:
     package = _package()
     calls: list = []
@@ -345,6 +493,16 @@ def test_materialization_writes_exact_risk_marker_and_review_ready_mr() -> None:
     assert "- Name: 发布测试插件" in merge_request_payload["description"]
     assert "- Slug: `draft-test`" in merge_request_payload["description"]
     assert "- Version: `v1.0.0`" in merge_request_payload["description"]
+    auto_merge_payload = next(
+        kwargs["json"]
+        for method, url, kwargs in calls
+        if method == "PUT" and url.endswith("/merge_requests/8/merge")
+    )
+    assert auto_merge_payload == {
+        "merge_when_pipeline_succeeds": True,
+        "sha": "a" * 40,
+        "should_remove_source_branch": True,
+    }
     assert result.merge_request_iid == 8
 
 
@@ -503,6 +661,126 @@ def test_materialization_requires_the_configured_dedicated_identity() -> None:
         )
 
     assert not any(method == "POST" for method, _url, _kwargs in calls)
+
+
+def test_materialization_requires_pipeline_success_before_merge() -> None:
+    package = _package()
+    calls: list = []
+    service = PluginPublicationGitLabService(
+        api_url="https://git.invalid/api/v4",
+        project_id="42",
+        project_url="https://git.invalid/project",
+        token="test-token",
+        materializer_user_id=77,
+        target_branch="master",
+        client_factory=lambda **kwargs: PipelineCheckDisabledClient(calls, **kwargs),
+    )
+
+    with pytest.raises(
+        PluginPublicationGitLabVerificationError,
+        match="must require a successful pipeline",
+    ):
+        service.materialize(
+            request_id=12,
+            revision=3,
+            slug="draft-test",
+            plugin_name="Draft Test",
+            version="1.0.0",
+            snapshot_sha256="b" * 64,
+            source_tree_sha256=canonical_source_tree_sha256(package),
+            package=package,
+            risk_declaration={},
+            test_notes="tested",
+        )
+
+    assert not any(method in {"POST", "PUT"} for method, _url, _kwargs in calls)
+
+
+def test_materialization_fails_when_gitlab_does_not_register_auto_merge() -> None:
+    package = _package()
+    calls: list = []
+    service = PluginPublicationGitLabService(
+        api_url="https://git.invalid/api/v4",
+        project_id="42",
+        project_url="https://git.invalid/project",
+        token="test-token",
+        materializer_user_id=77,
+        target_branch="master",
+        client_factory=lambda **kwargs: AutoMergeNotScheduledClient(calls, **kwargs),
+    )
+
+    with pytest.raises(
+        PluginPublicationGitLabVerificationError,
+        match="did not register auto-merge",
+    ):
+        service.materialize(
+            request_id=12,
+            revision=3,
+            slug="draft-test",
+            plugin_name="Draft Test",
+            version="1.0.0",
+            snapshot_sha256="b" * 64,
+            source_tree_sha256=canonical_source_tree_sha256(package),
+            package=package,
+            risk_declaration={},
+            test_notes="tested",
+        )
+
+
+def test_materialization_reuses_controlled_mr_and_registers_auto_merge() -> None:
+    package = _package()
+    source_tree_sha256 = canonical_source_tree_sha256(package)
+    calls: list = []
+    binding_payload = "\0".join(
+        (
+            "wegent-plugin-materializer-v1",
+            "77",
+            "42",
+            "wework/publication-12-r3",
+            "12",
+            "3",
+            "draft-test",
+            "b" * 64,
+            source_tree_sha256,
+        )
+    ).encode("utf-8")
+    binding = (
+        "v1:" + hmac.new(b"test-token", binding_payload, hashlib.sha256).hexdigest()
+    )
+    service = PluginPublicationGitLabService(
+        api_url="https://git.invalid/api/v4",
+        project_id="42",
+        project_url="https://git.invalid/project",
+        token="test-token",
+        materializer_user_id=77,
+        target_branch="master",
+        client_factory=lambda **kwargs: ExistingControlledMergeRequestClient(
+            calls,
+            binding=binding,
+            source_tree_sha256=source_tree_sha256,
+            **kwargs,
+        ),
+    )
+
+    result = service.materialize(
+        request_id=12,
+        revision=3,
+        slug="draft-test",
+        plugin_name="Draft Test",
+        version="1.0.0",
+        snapshot_sha256="b" * 64,
+        source_tree_sha256=source_tree_sha256,
+        package=package,
+        risk_declaration={},
+        test_notes="tested",
+    )
+
+    assert result.merge_request_iid == 8
+    assert not any(method == "POST" for method, _url, _kwargs in calls)
+    assert any(
+        method == "PUT" and url.endswith("/merge_requests/8/merge")
+        for method, url, _kwargs in calls
+    )
 
 
 @pytest.mark.parametrize("existing_mr", [False, True])

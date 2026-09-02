@@ -28,6 +28,9 @@ approval of that still-undecided path.
 - Configure the approved internal GitLab project, protected `master` branch,
   native Windows/macOS runners, MR rules, webhook secret, and reconciliation job
   before deploying enterprise publication requests.
+- Enable **Settings → Merge requests → Merge checks → Pipelines must succeed**.
+  The Backend verifies this setting before materialization and registers GitLab
+  native auto-merge for each controlled MR using its exact source commit SHA.
 - Create a dedicated `plugin_release` machine key and store its raw value only as a
   protected, masked variable available to the protected `master` release job.
 
@@ -95,6 +98,12 @@ The webhook secret belongs in the Backend environment and the GitLab Webhook
 configuration. It is not a CI/CD variable and is distinct from both the
 materializer token and `WEWORK_PLUGIN_RELEASE_TOKEN`. Webhooks only synchronize
 MR and Pipeline state; they never publish an artifact.
+
+Auto-merge is not driven by the webhook. After creating or reusing a controlled
+MR, the Backend calls GitLab's merge endpoint with
+`merge_when_pipeline_succeeds=true`, the exact MR head `sha`, and source-branch
+removal enabled. GitLab then waits for required approvals and the successful MR
+Pipeline before merging into protected `master`.
 
 ## Release credential operations
 

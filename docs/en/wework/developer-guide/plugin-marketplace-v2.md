@@ -295,14 +295,16 @@ sequenceDiagram
   API->>API: Repackage, SHA256, automated checks
   A->>API: Return or accept current revision
   API->>GL: On acceptance, create controlled branch + MR
+  API->>GL: Register auto-merge with the current MR head SHA
   GL->>CI: MR Pipeline
   CI->>CI: Risks, tests, Windows, macOS
+  CI->>GL: GitLab merges after every required gate passes
   GL->>CI: Merge to protected master starts master Pipeline
   CI->>R: Bearer plugin_release token + artifact/provenance
   R->>R: Revalidate and idempotently publish enterprise Release
 ```
 
-The GitLab materializer writes only a server-validated snapshot to the controlled `plugins/<slug>/` path and updates the controlled catalog registry. Branch names, paths, and commit messages must not concatenate unvalidated user input. MR creation uses a request/revision idempotency key and records project, branch, MR IID, and commit SHA.
+The GitLab materializer writes only a server-validated snapshot to the controlled `plugins/<slug>/` path and updates the controlled catalog registry. Branch names, paths, and commit messages must not concatenate unvalidated user input. MR creation uses a request/revision idempotency key and records project, branch, MR IID, and commit SHA. The controlled project must enable `Pipelines must succeed`; after creating or reusing the MR, the Backend calls the GitLab merge API with the current MR head SHA and `merge_when_pipeline_succeeds=true`. The webhook only synchronizes and reconciles status and does not trigger the merge.
 
 ### 6.3 Developer-direct GitLab submission
 

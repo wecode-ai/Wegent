@@ -295,14 +295,16 @@ sequenceDiagram
   API->>API: 重新打包、SHA256、自动检查
   A->>API: 退回或接受当前 revision
   API->>GL: 接受后创建受控分支 + MR
+  API->>GL: 使用 MR 当前 SHA 登记 Pipeline 成功后自动合并
   GL->>CI: MR Pipeline
   CI->>CI: 风险、测试、Windows、macOS
+  CI->>GL: 全部门禁通过后由 GitLab 合并到 protected master
   GL->>CI: 合并 protected master 后启动 master Pipeline
   CI->>R: Bearer plugin_release token + artifact/provenance
   R->>R: 再校验并幂等发布企业 Release
 ```
 
-GitLab 物化服务只把服务端已验证 snapshot 写入约定的 `plugins/<slug>/` 并更新受控清单；分支名、路径、commit message 等不能直接拼接未经校验的用户输入。创建 MR 必须使用 request/revision 幂等键，并写回 project、branch、MR IID 和 commit SHA。
+GitLab 物化服务只把服务端已验证 snapshot 写入约定的 `plugins/<slug>/` 并更新受控清单；分支名、路径、commit message 等不能直接拼接未经校验的用户输入。创建 MR 必须使用 request/revision 幂等键，并写回 project、branch、MR IID 和 commit SHA。受控项目必须开启 `Pipelines must succeed`；Backend 创建或复用 MR 后，以当前 MR head SHA 调用 GitLab merge API 登记 `merge_when_pipeline_succeeds=true`。Webhook 只做状态同步和对账，不负责触发合并。
 
 ### 6.3 开发者直接 GitLab 投稿
 

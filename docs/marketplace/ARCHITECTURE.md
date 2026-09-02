@@ -156,6 +156,12 @@ exact master commit and calls the backend release API with a dedicated
 `plugin_release` machine key. GitLab webhooks only synchronize and reconcile MR,
 pipeline, and merge status; they never independently publish a package.
 
+For controlled Wework submissions, MR creation and auto-merge registration are
+one materialization operation. The Backend supplies the exact MR head SHA to
+GitLab's merge endpoint, and rejects the operation unless the project requires a
+successful Pipeline before merge. GitLab, rather than the webhook handler,
+performs the merge after all configured checks and approvals pass.
+
 Administrators create that key with `POST /api/admin/plugin-release-keys`, list
 keys with `GET /api/admin/plugin-release-keys`, and disable or re-enable one with
 `POST /api/admin/plugin-release-keys/{id}/toggle-status`. The raw value appears

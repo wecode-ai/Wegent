@@ -91,13 +91,20 @@ paths use exactly the same controls:
 2. package and risk checks;
 3. native Windows compatibility checks;
 4. native macOS compatibility checks;
-5. protected-branch approval and merge;
+5. protected-branch approval, followed by GitLab native auto-merge after the MR
+   Pipeline succeeds;
 6. deterministic publication from the protected `master` pipeline.
 
 MR pipelines must not receive production release credentials. A GitLab webhook
 may synchronize MR, pipeline, and merge state into the publication-request
 timeline, and a scheduled reconciliation job may repair missed events, but
 neither is an independent publication trigger.
+
+For a Wework-created MR, the Backend registers auto-merge immediately after MR
+creation with the exact materialized commit SHA. The controlled GitLab project
+must enable **Pipelines must succeed**; otherwise materialization fails before
+repository writes. Retrying the same accepted revision reuses the bound MR and
+registers auto-merge again idempotently.
 
 After `code_changes_requested`, a developer fixes the existing controlled branch
 and MR and reruns its Pipeline. A non-technical author does not create a

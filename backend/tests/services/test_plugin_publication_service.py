@@ -191,6 +191,28 @@ class FakeGitLab:
         self.verification_calls.append(kwargs)
 
 
+def test_materialization_records_an_immediately_merged_request() -> None:
+    service = PluginPublicationService(storage=FakeStorage(), gitlab=FakeGitLab())
+    request = SimpleNamespace()
+    revision = SimpleNamespace()
+    materialization = GitLabMaterialization(
+        project_id="42",
+        project_url="https://git.invalid/wework-plugins",
+        source_branch="wework/publication-12-r3",
+        merge_request_iid=7,
+        merge_request_url="https://git.invalid/wework-plugins/-/merge_requests/7",
+        merge_request_status="merged",
+        commit_sha="b" * 40,
+    )
+
+    service._apply_materialization(request, revision, materialization)
+
+    assert request.aggregate_status == "merged"
+    assert revision.status == "merged"
+    assert revision.merge_request_status == "merged"
+    assert revision.commit_sha == "b" * 40
+
+
 class BlockingMarketplace:
     def __init__(self) -> None:
         self.entered = threading.Event()
