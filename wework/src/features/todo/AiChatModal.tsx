@@ -13,7 +13,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { CloudLoopItem, CloudProject } from '@/api/deliveries'
 import { WorkbenchHarnessSelector } from '@/components/layout/WorkbenchHarnessSelector'
 import { TemporaryChatPanel } from '@/components/layout/workspace-panels/TemporaryChatPanel'
-import { useGitPluginInstalled } from '@/features/dsh-runtime/gitPlugin'
+import { useSourceControlProviderInstalled } from '@/features/dsh-runtime/sourceControlProviders'
 import { useWorkbenchPaneContext } from '@/features/workbench/useWorkbench'
 import { useTranslation } from '@/hooks/useTranslation'
 import { resolveRuntimeTaskProjects } from '@/lib/runtime-project'
@@ -96,7 +96,7 @@ export function AiChatModal({
   prepareTask,
   embedded = false,
 }: AiChatModalProps) {
-  const gitPluginInstalled = useGitPluginInstalled()
+  const gitPluginInstalled = useSourceControlProviderInstalled('git')
   const { t } = useTranslation('common')
   const { state } = useWorkbenchPaneContext()
   const runtimeTaskProjects = useMemo(

@@ -14,7 +14,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { useEscapeKey } from '@/hooks/useEscapeKey'
 import { useTranslation } from '@/hooks/useTranslation'
-import { useGitPluginInstalled } from '@/features/dsh-runtime/gitPlugin'
+import { useSourceControlProviderInstalled } from '@/features/dsh-runtime/sourceControlProviders'
 import { hasEmbeddedHttpGitCredentials } from '@/lib/git-url'
 import { isImeEnterEvent } from '@/lib/ime'
 import { openNativeProjectDirectoryPickers } from '@/lib/native-directory-picker'
@@ -393,7 +393,7 @@ export function StandaloneFolderProjectDialog({
   onRefreshDevices?: () => Promise<void>
 }) {
   const { t } = useTranslation('common')
-  const gitPluginInstalled = useGitPluginInstalled()
+  const gitPluginInstalled = useSourceControlProviderInstalled('git')
   const [startupCommand, setStartupCommand] = useState<DockerRemoteDeviceCommandResponse | null>(
     null
   )

@@ -7,6 +7,10 @@
 
 - `wework.action`
 - `wework.app`
+- `wework.task.status`
+- `wework.environment.section`
+- `wework.board.card.status`
+- `wework.source-control.provider`
 - `wework.route`
 - `wework.sidebar.navigation`
 - `wework.settings.page`

@@ -140,22 +140,24 @@ test('first-party route packages own their routes and sidebar navigation', async
   assert.ok(registrations.every(entry => !('path' in entry.options)))
 })
 
-test('Git commands and UI are contributed as one DSH-managed capability', async () => {
+test('Git implements generic source-control and status extension points', async () => {
   const { injections, registrations } = await registrationsOf('ui-git')
-  assert.deepEqual(injections, ['wework.git', 'wework.settings.page'])
-  assert.equal(registrations.length, 3)
-  assert.equal(registrations[0].options.id, 'git')
-  assert.deepEqual(Array.from(registrations[0].component.wework.surfaces), [
-    'repositories',
-    'worktrees',
-    'sidebar',
-    'environment',
-    'changes-review',
-    'board',
+  assert.deepEqual(injections, [
+    'wework.source-control.provider',
+    'wework.task.status',
+    'wework.environment.section',
+    'wework.board.card.status',
+    'wework.settings.page',
   ])
-  assert.deepEqual(Array.from(registrations[0].component.wework.commands), ['git', 'gh', 'glab'])
+  assert.equal(registrations.length, 6)
+  assert.equal(registrations[0].options.id, 'git')
+  assert.deepEqual(Array.from(registrations[0].component.wework.workspaceModes), ['git_worktree'])
   assert.deepEqual(
-    registrations.slice(1).map(entry => entry.options.id),
+    registrations.slice(1, 4).map(entry => entry.options.name),
+    ['wework.task.status', 'wework.environment.section', 'wework.board.card.status']
+  )
+  assert.deepEqual(
+    registrations.slice(4).map(entry => entry.options.id),
     ['git-hosting', 'worktrees']
   )
 })

@@ -1,12 +1,13 @@
 import { fireEvent, render, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { describe, expect, it, vi } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 import '@/i18n'
 import type { TaskChangeRequestSnapshot } from '@/api/changeRequests'
 import type { CloudLoopItem } from '@/api/deliveries'
 import { WorkbenchContext } from '@/features/workbench/workbenchContexts'
 import type { WorkbenchContextValue } from '@/features/workbench/workbenchContextTypes'
 import { projectRuntimeConversationTurns } from '@/features/workbench/runtimeConversationTurns'
+import { preloadDefaultDshUiTestModules } from '@/test/setup'
 import type { RuntimeConversationTurn } from '@/types/workbench'
 import { CloudTodoBoardCard } from './CloudTodoBoardCard'
 
@@ -89,6 +90,10 @@ function conversationTurn(
 }
 
 describe('CloudTodoBoardCard', () => {
+  beforeEach(async () => {
+    await preloadDefaultDshUiTestModules()
+  })
+
   it('opens execution configuration from the blocking card action', async () => {
     changeRequestMonitorMocks.useTaskChangeRequest.mockReturnValue(null)
     const onClick = vi.fn()

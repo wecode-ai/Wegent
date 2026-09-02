@@ -34,7 +34,7 @@ import type { WorkspaceTarget } from '@/types/workspace-files'
 import type { WorkbenchState } from '@/types/workbench'
 import { getParentPath } from '@/components/projects/device-folder-path'
 import { hasEmbeddedHttpGitCredentials } from '@/lib/git-url'
-import { useGitPluginInstalled } from '@/features/dsh-runtime/gitPlugin'
+import { useSourceControlProviderInstalled } from '@/features/dsh-runtime/sourceControlProviders'
 import { useTranslation } from '@/hooks/useTranslation'
 import type { ProjectMutationOptions, RefreshWorkLists } from './workbenchContextTypes'
 import type { WorkbenchAction } from './workbenchReducer'
@@ -129,7 +129,7 @@ export function useWorkbenchProjectActions({
   enqueueRemoteProjectStateMutation,
 }: UseWorkbenchProjectActionsOptions) {
   const { t } = useTranslation('common')
-  const gitPluginInstalled = useGitPluginInstalled()
+  const gitPluginInstalled = useSourceControlProviderInstalled('git')
   const runtimeTaskPinMutationTailsRef = useRef(new Map<string, Promise<void>>())
   const requireGitPlugin = useCallback(() => {
     if (!gitPluginInstalled) {

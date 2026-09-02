@@ -1,9 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { ProjectWorkControls } from '@/components/chat/ChatInput'
-import {
-  useChangeRequestStatusEnabled,
-  useGitPluginInstalled,
-} from '@/features/dsh-runtime/gitPlugin'
+import { useAppPreferencesState } from '@/features/app-preferences/useAppPreferencesState'
+import { useSourceControlProviderInstalled } from '@/features/dsh-runtime/sourceControlProviders'
 import { useWorkbenchPaneContext } from '@/features/workbench/useWorkbench'
 import {
   getChangeRequestMonitor,
@@ -125,8 +123,10 @@ export function useWorkbenchPaneEnvironment({
   } = useWorkbenchPaneContext()
   const runtimeWorkApi = services?.runtimeWorkApi
   const { t } = useTranslation('common')
-  const gitPluginInstalled = useGitPluginInstalled()
-  const changeRequestStatusEnabled = useChangeRequestStatusEnabled()
+  const gitPluginInstalled = useSourceControlProviderInstalled('git')
+  const preferences = useAppPreferencesState()
+  const changeRequestStatusEnabled =
+    gitPluginInstalled && (preferences?.preferences.changeRequestStatusEnabled ?? true)
   const [environmentInfo, setEnvironmentInfo] = useState<EnvironmentInfo>({
     additions: '',
     deletions: '',

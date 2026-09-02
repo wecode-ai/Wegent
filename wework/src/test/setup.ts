@@ -246,13 +246,35 @@ function installDefaultDshUiTestRuntime() {
   const entries = new Map<string, readonly WeworkDshSlotEntry[]>([
     [WEWORK_DSH_SLOTS.action, testActions],
     [WEWORK_DSH_SLOTS.app, testApps],
-    [WEWORK_DSH_SLOTS.git, [{ id: 'git' }]],
+    [
+      WEWORK_DSH_SLOTS.boardCardStatus,
+      [
+        {
+          id: 'git-change-request',
+          module: 'plugins/wework-ui-git-board-card-status.js',
+        },
+      ],
+    ],
+    [
+      WEWORK_DSH_SLOTS.environmentSection,
+      [
+        {
+          id: 'git-change-request',
+          module: 'plugins/wework-ui-git-environment-section.js',
+        },
+      ],
+    ],
     [WEWORK_DSH_SLOTS.settingsPage, testSettings],
     [WEWORK_DSH_SLOTS.route, []],
     [WEWORK_DSH_SLOTS.sidebarNavigation, testSidebarNavigation],
     [WEWORK_DSH_SLOTS.shellAfter, []],
     [WEWORK_DSH_SLOTS.shellBefore, []],
     [WEWORK_DSH_SLOTS.shellOverlay, []],
+    [WEWORK_DSH_SLOTS.sourceControlProvider, [{ id: 'git', workspaceModes: ['git_worktree'] }]],
+    [
+      WEWORK_DSH_SLOTS.taskStatus,
+      [{ id: 'git-change-request', module: 'plugins/wework-ui-git-task-status.js' }],
+    ],
     [WEWORK_DSH_SLOTS.workspaceSidebarTab, []],
     [WEWORK_DSH_SLOTS.workspaceTab, []],
   ])
@@ -269,7 +291,12 @@ function installDefaultDshUiTestModules() {
       import('../../dsh/ui-cloud-work/src/sidebar-navigation'),
     'plugins/wework-ui-core-settings.js': () =>
       import('../../dsh/ui-core-settings/src/settings-page'),
+    'plugins/wework-ui-git-board-card-status.js': () =>
+      import('../../dsh/ui-git/src/board-card-status'),
+    'plugins/wework-ui-git-environment-section.js': () =>
+      import('../../dsh/ui-git/src/environment-section'),
     'plugins/wework-ui-git-settings.js': () => import('../../dsh/ui-git/src/settings-page'),
+    'plugins/wework-ui-git-task-status.js': () => import('../../dsh/ui-git/src/task-status'),
     'plugins/wework-ui-core-apps.js': () => import('../../dsh/ui-core-apps/src/app-surface'),
     'plugins/wework-ui-plugin-center-catalog.js': {
       default: () => null,

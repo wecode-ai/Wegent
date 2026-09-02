@@ -12,8 +12,8 @@ const mocks = vi.hoisted(() => ({
   gitPluginInstalled: true,
 }))
 
-vi.mock('@/features/dsh-runtime/gitPlugin', () => ({
-  useGitPluginInstalled: () => mocks.gitPluginInstalled,
+vi.mock('@/features/dsh-runtime/sourceControlProviders', () => ({
+  useSourceControlProviderInstalled: () => mocks.gitPluginInstalled,
 }))
 
 vi.mock('@/features/workbench/useWorkbench', () => ({

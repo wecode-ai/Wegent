@@ -24,7 +24,7 @@ import {
 import { notifyMainRuntimeWorkChanged } from '@/desktop/runtimeWorkSync'
 import type { AppPreferences } from '@/desktop/appPreferences'
 import { useAppPreferencesState } from '@/features/app-preferences/useAppPreferencesState'
-import { useGitPluginInstalled } from '@/features/dsh-runtime/gitPlugin'
+import { useSourceControlProviderInstalled } from '@/features/dsh-runtime/sourceControlProviders'
 import {
   findWorkbenchDevice,
   getActiveWorkbenchDeviceId,
@@ -397,7 +397,7 @@ export function useWorkbenchRuntimeMessaging({
   refreshWorkLists,
 }: UseWorkbenchRuntimeMessagingOptions) {
   const appPreferences = useAppPreferencesState()
-  const gitPluginInstalled = useGitPluginInstalled()
+  const gitPluginInstalled = useSourceControlProviderInstalled('git')
   const preferences = appPreferences?.preferences
   const reportError = useCallback(
     (error: string, options?: RuntimePaneActionOptions) => {

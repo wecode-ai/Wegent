@@ -48,19 +48,22 @@ resident model directory and keeps the Wework surface stable.
 
 ## Extension points
 
-| Slot                           | Purpose                                  | Required metadata                 | Component props            |
-| ------------------------------ | ---------------------------------------- | --------------------------------- | -------------------------- |
-| `wework.action`                | Host-invoked navigation action           | `id`, `path`                      | No component               |
-| `wework.app`                   | Product switcher and app surface         | `id`, `label`, `mode`             | `visible`, `tab`           |
-| `wework.git`                   | Git and code-hosting capability          | `id`, `commands`, `surfaces`      | No component               |
-| `wework.route`                 | Top-level auxiliary page                 | `id`, `path`, `telemetryFeature`  | `search`, `onNavigate`     |
-| `wework.sidebar.navigation`    | Left-sidebar navigation entry            | `id`, `path`, `label`             | Usually metadata-only      |
-| `wework.settings.page`         | Settings navigation and content          | `id`, `path`, `label`, `category` | Settings context, `onBack` |
-| `wework.workspace.tab`         | Closable top workspace tab               | `id`, `label`                     | `visible`, `tab`           |
-| `wework.workspace.sidebar.tab` | Right workspace-panel tab type           | `id`, `label`                     | `visible`, `scope`, `tab`  |
-| `wework.shell.before`          | Before the workbench root                | `id`                              | Empty object               |
-| `wework.shell.after`           | After the workbench root                 | `id`                              | Empty object               |
-| `wework.shell.overlay`         | Global pointer-transparent overlay layer | `id`                              | Empty object               |
+| Slot                             | Purpose                                  | Required metadata                 | Component props                        |
+| -------------------------------- | ---------------------------------------- | --------------------------------- | -------------------------------------- |
+| `wework.action`                  | Host-invoked navigation action           | `id`, `path`                      | No component                           |
+| `wework.app`                     | Product switcher and app surface         | `id`, `label`, `mode`             | `visible`, `tab`                       |
+| `wework.task.status`             | Left task-row status                     | `id`                              | `task`, `workspace`, layout hints      |
+| `wework.environment.section`     | Additional environment-panel section     | `id`                              | `info`, `onClose`                      |
+| `wework.board.card.status`       | Board task-card status                   | `id`                              | Board item, task binding, layout hints |
+| `wework.source-control.provider` | Source-control provider declaration      | `id`, `workspaceModes`            | No component                           |
+| `wework.route`                   | Top-level auxiliary page                 | `id`, `path`, `telemetryFeature`  | `search`, `onNavigate`                 |
+| `wework.sidebar.navigation`      | Left-sidebar navigation entry            | `id`, `path`, `label`             | Usually metadata-only                  |
+| `wework.settings.page`           | Settings navigation and content          | `id`, `path`, `label`, `category` | Settings context, `onBack`             |
+| `wework.workspace.tab`           | Closable top workspace tab               | `id`, `label`                     | `visible`, `tab`                       |
+| `wework.workspace.sidebar.tab`   | Right workspace-panel tab type           | `id`, `label`                     | `visible`, `scope`, `tab`              |
+| `wework.shell.before`            | Before the workbench root                | `id`                              | Empty object                           |
+| `wework.shell.after`             | After the workbench root                 | `id`                              | Empty object                           |
+| `wework.shell.overlay`           | Global pointer-transparent overlay layer | `id`                              | Empty object                           |
 
 `wework.app` supports three modes:
 
@@ -72,6 +75,13 @@ resident model directory and keeps the Wework surface stable.
 channel. Register `{ id, path }` so existing host entry points can resolve the
 action by id and navigate. Do not put functions, tokens, or non-serializable
 state in a descriptor.
+
+The three status and section slots are positional interfaces. They do not
+assume Git, SVN, or any source-control semantics. A plugin can pass a React
+component as the fourth argument to `ctx.wework.ui.register`; the host renders
+contributions in slot order and provides only the generic context for that
+position. `wework.source-control.provider` is a separate capability declaration
+for supported workspace modes and does not replace the visual slots.
 
 Third-party `wework.settings.page` and `wework.route` contributions must not set
 the Wework-internal `module` or `component` fields. Pass the React component as
@@ -186,14 +196,14 @@ inherits Auth, Cloud, and Workbench contexts. Third-party plugins must not use
 this field; they should pass their own React component as the fourth argument
 to `ctx.wework.ui.register`.
 
-`@wegent/dsh-ui-git` uses `wework.git` to declare repositories, branches,
-worktrees, changes review, commit and push actions, plus pull or merge request
-status in task rows, the environment panel, and project boards. It also owns the
-Git hosting and Worktrees settings pages. The host exposes Git project creation,
-Git execution modes, and Git command calls only while this contribution is
-alive. When the plugin is disabled or absent, task requests are forced to the
-current workspace, status polling stops, and the related controls and settings
-pages disappear. A Wework installation that does not use this plugin therefore
+`@wegent/dsh-ui-git` is one implementation of these generic contracts. It
+declares a `wework.source-control.provider` with id `git` and contributes PR or
+MR status components to `wework.task.status`, `wework.environment.section`,
+and `wework.board.card.status`. It also contributes the Git hosting and
+Worktrees settings pages. The host contracts contain neither Git command names
+nor a list of Git surfaces. When the plugin is disabled or absent, task
+requests are forced to the current workspace, Git status polling stops, and
+the related controls and settings pages disappear. The Wework host therefore
 does not itself require `git`, `gh`, or `glab` on the machine.
 
 ## Plugin sync and fingerprint-based reload

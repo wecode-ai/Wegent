@@ -22,7 +22,7 @@ import {
 } from 'react'
 import { createPortal } from 'react-dom'
 import { BranchSelector } from '@/components/common/BranchSelector'
-import { useGitPluginInstalled } from '@/features/dsh-runtime/gitPlugin'
+import { useSourceControlProviderInstalled } from '@/features/dsh-runtime/sourceControlProviders'
 import { ProjectFolderIcon } from '@/components/projects/ProjectFolderIcon'
 import { useIsMobile } from '@/hooks/useIsMobile'
 import { useTranslation } from '@/hooks/useTranslation'
@@ -160,7 +160,7 @@ export function ProjectWorkBar({
   endContext,
 }: ProjectWorkBarProps) {
   const { t } = useTranslation('common')
-  const gitPluginInstalled = useGitPluginInstalled()
+  const gitPluginInstalled = useSourceControlProviderInstalled('git')
   const isMobile = useIsMobile()
   const containerRef = useRef<HTMLDivElement>(null)
   const menuRef = useRef<HTMLDivElement>(null)

@@ -86,13 +86,16 @@ test('registers Wework as the DSH root application', async () => {
     JSON.stringify({
       'wework.action': { kind: 'list', scope: 'root' },
       'wework.app': { kind: 'list', scope: 'root' },
-      'wework.git': { kind: 'list', scope: 'root' },
+      'wework.board.card.status': { kind: 'list', scope: 'root' },
+      'wework.environment.section': { kind: 'list', scope: 'root' },
       'wework.route': { kind: 'list', scope: 'root' },
       'wework.settings.page': { kind: 'list', scope: 'root' },
       'wework.sidebar.navigation': { kind: 'list', scope: 'root' },
       'wework.shell.after': { kind: 'list', scope: 'root' },
       'wework.shell.before': { kind: 'list', scope: 'root' },
       'wework.shell.overlay': { kind: 'list', scope: 'root' },
+      'wework.source-control.provider': { kind: 'list', scope: 'root' },
+      'wework.task.status': { kind: 'list', scope: 'root' },
       'wework.workspace.sidebar.tab': { kind: 'list', scope: 'root' },
       'wework.workspace.tab': { kind: 'list', scope: 'root' },
     })

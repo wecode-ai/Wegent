@@ -72,7 +72,8 @@ import type {
   ArchiveRuntimeTaskOptions,
   ArchiveRuntimeTaskResult,
 } from '@/features/workbench/workbenchContextTypes'
-import { useChangeRequestStatusEnabled } from '@/features/dsh-runtime/gitPlugin'
+import { useAppPreferencesState } from '@/features/app-preferences/useAppPreferencesState'
+import { useSourceControlProviderInstalled } from '@/features/dsh-runtime/sourceControlProviders'
 import type {
   DeliveryApi,
   ProjectSpaceLocation,
@@ -1111,7 +1112,10 @@ export function CloudTodoWorkspace({
 }: CloudTodoWorkspaceProps) {
   const { t } = useTranslation('common')
   const workbench = useContext(WorkbenchContext)
-  const changeRequestStatusEnabled = useChangeRequestStatusEnabled()
+  const gitProviderInstalled = useSourceControlProviderInstalled('git')
+  const preferences = useAppPreferencesState()
+  const changeRequestStatusEnabled =
+    gitProviderInstalled && (preferences?.preferences.changeRequestStatusEnabled ?? true)
   const changeRequestMonitor = useMemo(
     () =>
       changeRequestStatusEnabled && services.deviceApi

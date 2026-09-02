@@ -5,7 +5,7 @@ import type { CloudProject } from '@/api/deliveries'
 import type { RuntimeProfile } from '@/api/runtimeProfiles'
 import { MenuSelect } from '@/components/common/MenuSelect'
 import { CloudTodoModal } from '@/features/todo/CloudTodoModal'
-import { useGitPluginInstalled } from '@/features/dsh-runtime/gitPlugin'
+import { useSourceControlProviderInstalled } from '@/features/dsh-runtime/sourceControlProviders'
 import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
 import { useTranslation } from '@/hooks/useTranslation'
 import { isSupportedModelFamily } from '@/lib/model-ui'
@@ -26,7 +26,7 @@ export function RuntimeSettingsPage({
   modelApi,
 }: RuntimeSettingsPageProps) {
   const { t } = useTranslation('common')
-  const gitPluginInstalled = useGitPluginInstalled()
+  const gitPluginInstalled = useSourceControlProviderInstalled('git')
   const [profiles, setProfiles] = useState<RuntimeProfile[]>([])
   const [projects, setProjects] = useState<CloudProject[]>([])
   const [projectDefaults, setProjectDefaults] = useState<Record<string, string>>({})

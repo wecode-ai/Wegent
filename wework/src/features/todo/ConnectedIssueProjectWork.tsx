@@ -2,7 +2,7 @@ import { useMemo, type ReactNode } from 'react'
 import type { ProjectWorkControls } from '@/components/chat/ChatInput'
 import { useWorkbenchPaneEnvironment } from '@/components/layout/useWorkbenchPaneEnvironment'
 import { useWorkbenchProjectWorkControls } from '@/components/layout/useWorkbenchProjectWorkControls'
-import { useGitPluginInstalled } from '@/features/dsh-runtime/gitPlugin'
+import { useSourceControlProviderInstalled } from '@/features/dsh-runtime/sourceControlProviders'
 import { useWorkbenchPaneContext } from '@/features/workbench/useWorkbench'
 import { findRuntimeTaskWorkspace } from '@/features/workbench/workbenchRuntimeHelpers'
 import { runtimeProjectUiId } from '@/lib/runtime-project'
@@ -33,7 +33,7 @@ export function ConnectedIssueProjectWork({
   inheritFromTask = null,
   children,
 }: ConnectedIssueProjectWorkProps) {
-  const gitPluginInstalled = useGitPluginInstalled()
+  const gitPluginInstalled = useSourceControlProviderInstalled('git')
   const { state } = useWorkbenchPaneContext()
   const resolvedProject = useMemo<ProjectWithTasks>(() => {
     const stateProject = state.projects.find(candidate => candidate.id === project.id) ?? project

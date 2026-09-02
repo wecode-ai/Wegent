@@ -1,13 +1,16 @@
 export const WEWORK_DSH_SLOTS = {
   action: 'wework.action',
   app: 'wework.app',
-  git: 'wework.git',
+  boardCardStatus: 'wework.board.card.status',
+  environmentSection: 'wework.environment.section',
   route: 'wework.route',
   settingsPage: 'wework.settings.page',
   sidebarNavigation: 'wework.sidebar.navigation',
   shellAfter: 'wework.shell.after',
   shellBefore: 'wework.shell.before',
   shellOverlay: 'wework.shell.overlay',
+  sourceControlProvider: 'wework.source-control.provider',
+  taskStatus: 'wework.task.status',
   workspaceSidebarTab: 'wework.workspace.sidebar.tab',
   workspaceTab: 'wework.workspace.tab',
 } as const

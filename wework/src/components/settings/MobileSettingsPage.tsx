@@ -19,7 +19,7 @@ import { useState } from 'react'
 import { AppearanceSettingsPage } from '@/features/appearance/AppearanceSettingsPage'
 import { ExperimentalBadge } from '@/features/experimental-features/ExperimentalBadge'
 import { useExperimentalFeaturesEnabled } from '@/features/experimental-features/useExperimentalFeaturesEnabled'
-import { useGitPluginInstalled } from '@/features/dsh-runtime/gitPlugin'
+import { useSourceControlProviderInstalled } from '@/features/dsh-runtime/sourceControlProviders'
 import { SHOW_PLUGINS_NAVIGATION } from '@/features/plugins/visibility'
 import { useTranslation } from '@/hooks/useTranslation'
 import { GeneralSettingsPage } from './GeneralSettingsPage'
@@ -56,7 +56,7 @@ export function MobileSettingsPage({
   onRefreshWorkLists,
 }: MobileSettingsPageProps) {
   const { t } = useTranslation('common')
-  const gitPluginInstalled = useGitPluginInstalled()
+  const gitPluginInstalled = useSourceControlProviderInstalled('git')
   const experimentalFeaturesEnabled = useExperimentalFeaturesEnabled()
   const [activePage, setActivePage] = useState<
     | 'menu'
