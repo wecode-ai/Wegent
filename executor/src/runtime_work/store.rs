@@ -242,15 +242,25 @@ impl PersistedRuntimeTask {
 }
 
 fn persisted_runtime_handle(runtime_handle: &Value) -> Value {
-    Value::Object(
-        runtime_handle
-            .as_object()
-            .into_iter()
-            .flat_map(|runtime_handle| runtime_handle.iter())
-            .filter(|(key, _)| PERSISTED_RUNTIME_HANDLE_KEYS.contains(&key.as_str()))
-            .map(|(key, value)| (key.clone(), value.clone()))
-            .collect(),
-    )
+    let mut persisted = runtime_handle
+        .as_object()
+        .into_iter()
+        .flat_map(|runtime_handle| runtime_handle.iter())
+        .filter(|(key, _)| PERSISTED_RUNTIME_HANDLE_KEYS.contains(&key.as_str()))
+        .filter(|(key, _)| key.as_str() != "wegentTeam")
+        .map(|(key, value)| (key.clone(), value.clone()))
+        .collect::<serde_json::Map<String, Value>>();
+    if let Some(team_id) = runtime_handle
+        .get("wegentTeam")
+        .and_then(|team| team.get("id"))
+        .cloned()
+    {
+        persisted.insert(
+            "wegentTeam".to_owned(),
+            serde_json::json!({ "id": team_id }),
+        );
+    }
+    Value::Object(persisted)
 }
 
 fn merge_persisted_runtime_handle(current: &Value, persisted: Value) -> Value {
@@ -1012,7 +1022,10 @@ mod tests {
             "transcriptSnapshotMessages": [{"id": "snapshot-message"}],
             "transcriptSnapshotThreadId": "thread-1",
             "modelSelection": {"modelName": "gpt-5.6-sol"},
-            "wegentTeam": {"id": 7},
+            "wegentTeam": {
+                "id": 7,
+                "agent_config": {"api_key": "must-not-persist"}
+            },
             "teamExecutionProfile": {"agent_config": {"api_key": "must-not-persist"}}
         });
 
@@ -1050,6 +1063,9 @@ mod tests {
             "gpt-5.6-sol"
         );
         assert_eq!(task["runtime_handle"]["wegentTeam"]["id"], 7);
+        assert!(task["runtime_handle"]["wegentTeam"]
+            .get("agent_config")
+            .is_none());
         assert!(task["runtime_handle"].get("teamExecutionProfile").is_none());
 
         let restored = RuntimeWorkStore::new(index_path)

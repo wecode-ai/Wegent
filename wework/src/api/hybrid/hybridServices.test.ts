@@ -47,6 +47,7 @@ const mocks = vi.hoisted(() => {
     runAutomationNow: vi.fn(),
     listAutomationRuns: vi.fn().mockResolvedValue({ items: [] }),
   }
+  const captureLocalAppOptions = vi.fn()
   const captureRuntimeIpcOptions = vi.fn()
   const captureAutomationIpcOptions = vi.fn()
   const captureRuntimeChatStreamDeps = vi.fn()
@@ -201,6 +202,7 @@ const mocks = vi.hoisted(() => {
     localDeleteAttachment,
     cloudUploadAttachment,
     localAutomationApi,
+    captureLocalAppOptions,
     captureRuntimeIpcOptions,
     captureAutomationIpcOptions,
     captureRuntimeChatStreamDeps,
@@ -217,7 +219,10 @@ const mocks = vi.hoisted(() => {
 })
 
 vi.mock('@/api/local/localServices', () => ({
-  createLocalAppServices: () => mocks.localServices,
+  createLocalAppServices: (options: unknown) => {
+    mocks.captureLocalAppOptions(options)
+    return mocks.localServices
+  },
   createAutomationApiFromIpc: (
     request: (
       method: string,
@@ -781,6 +786,26 @@ describe('createHybridWorkbenchServices', () => {
       preload_skills: [],
     })
     expect(mocks.cloudListTeams).toHaveBeenCalledTimes(1)
+  })
+
+  it('restores a bound Team directly by id without depending on the first list page', async () => {
+    const profile = {
+      id: 108,
+      name: 'restored-team',
+      namespace: 'default',
+      updatedAt: '2026-09-02T00:00:00Z',
+      collaborationMode: 'pipeline',
+      bots: [],
+    }
+    mocks.cloudGetExecutionProfile.mockResolvedValue(profile)
+    createServices()
+    const options = mocks.captureLocalAppOptions.mock.calls.at(-1)?.[0] as {
+      resolveTeamExecutionProfile: (teamId: number) => Promise<typeof profile>
+    }
+
+    await expect(options.resolveTeamExecutionProfile(108)).resolves.toEqual(profile)
+    expect(mocks.cloudGetExecutionProfile).toHaveBeenCalledWith(108)
+    expect(mocks.cloudListTeams).not.toHaveBeenCalled()
   })
 
   it('returns local devices from the primary device list', async () => {

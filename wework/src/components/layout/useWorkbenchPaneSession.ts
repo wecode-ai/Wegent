@@ -2105,6 +2105,10 @@ export function useWorkbenchPaneSession({
             ...(options.runtimePermissionMode
               ? { runtimePermissionMode: options.runtimePermissionMode }
               : {}),
+            ...(options.teamId ? { teamId: options.teamId } : {}),
+            ...(options.teamExecutionProfile
+              ? { teamExecutionProfile: options.teamExecutionProfile }
+              : {}),
             ...(Object.prototype.hasOwnProperty.call(options, 'modelSelection')
               ? { modelSelection: options.modelSelection }
               : {}),

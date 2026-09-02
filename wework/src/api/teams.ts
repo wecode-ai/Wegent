@@ -22,12 +22,14 @@ export function createTeamApi(client: HttpClient) {
     return response.items
   }
 
-  async function getExecutionProfile(team: Team): Promise<TeamExecutionProfile> {
-    const detail = await client.get<TeamDetailResponse>(`/teams/${team.id}`)
+  async function getExecutionProfile(team: Team | number): Promise<TeamExecutionProfile> {
+    const teamId = typeof team === 'number' ? team : team.id
+    const namespace = typeof team === 'number' ? 'default' : team.namespace?.trim() || 'default'
+    const detail = await client.get<TeamDetailResponse>(`/teams/${teamId}`)
     return {
       id: detail.id,
       name: detail.name,
-      namespace: team.namespace?.trim() || 'default',
+      namespace,
       updatedAt: detail.updated_at,
       collaborationMode: detail.workflow?.mode?.trim() || 'solo',
       bots: detail.bots,

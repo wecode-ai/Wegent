@@ -1442,10 +1442,7 @@ function buildLocalRuntimeExecutionRequest(
   if (teamProfile && runnableTeamMembers.length === 0) {
     throw new Error('Selected Wegent Team has no runnable Bots')
   }
-  const activeTeamMembers =
-    teamProfile?.collaborationMode === 'pipeline'
-      ? runnableTeamMembers.slice(0, 1)
-      : runnableTeamMembers
+  const activeTeamMembers = runnableTeamMembers
   const teamBots = activeTeamMembers.map(teamBotConfig)
   const primaryTeamBot = activeTeamMembers[0]
   // The backend resolves gateway routing for cloud/public models in the claim

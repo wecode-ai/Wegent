@@ -356,10 +356,11 @@ export function createHybridWorkbenchServices(
     cloudModelGateway,
     user: options.user,
     resolveTeamExecutionProfile: async teamId => {
-      const teams = await cloudServices.teamApi.listTeams()
-      const team = teams.find(candidate => candidate.id === teamId)
-      if (!team) throw new Error(`Wegent Team ${teamId} is unavailable`)
-      return cloudServices.teamApi.getExecutionProfile(team)
+      try {
+        return await cloudServices.teamApi.getExecutionProfile(teamId)
+      } catch {
+        throw new Error(`Wegent Team ${teamId} is unavailable`)
+      }
     },
   })
   const cloudRuntimeIpc = createCloudRuntimeIpcClient({

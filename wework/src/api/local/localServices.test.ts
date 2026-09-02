@@ -202,7 +202,7 @@ describe('createLocalAppServices', () => {
       name: 'review-team',
       namespace: 'engineering',
       updatedAt: '2026-09-02T10:00:00Z',
-      collaborationMode: 'coordinate',
+      collaborationMode: 'pipeline',
       bots: [
         {
           bot_prompt: 'Review the implementation.',
@@ -219,6 +219,24 @@ describe('createLocalAppServices', () => {
             mcp_servers: { source: { type: 'stdio', command: 'source-mcp' } },
             skills: ['review'],
             preload_skills: ['review'],
+            is_active: true,
+          },
+        },
+        {
+          bot_prompt: 'Implement the approved changes.',
+          role: 'worker',
+          bot: {
+            id: 12,
+            user_id: 9,
+            name: 'implementer',
+            namespace: 'engineering',
+            shell_name: 'Codex',
+            shell_type: 'Codex',
+            agent_config: { model_id: 'team-model', api_format: 'responses' },
+            system_prompt: 'You are an implementer.',
+            mcp_servers: {},
+            skills: ['implementation'],
+            preload_skills: ['implementation'],
             is_active: true,
           },
         },
@@ -262,10 +280,10 @@ describe('createLocalAppServices', () => {
       team_id: 7,
       team_name: 'review-team',
       team_namespace: 'engineering',
-      collaboration_model: 'coordinate',
+      collaboration_model: 'pipeline',
       model_config: { model_id: 'team-model', api_format: 'responses' },
       system_prompt: 'You are a reviewer.\n\nReview the implementation.',
-      skill_names: ['review'],
+      skill_names: ['review', 'implementation'],
       preload_skills: ['review'],
       bot: [
         expect.objectContaining({
@@ -274,6 +292,11 @@ describe('createLocalAppServices', () => {
           shell_type: 'Codex',
           role: 'leader',
           mcp_servers: [{ name: 'source', type: 'stdio', command: 'source-mcp' }],
+        }),
+        expect.objectContaining({
+          id: 12,
+          name: 'implementer',
+          role: 'worker',
         }),
       ],
     })

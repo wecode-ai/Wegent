@@ -30,4 +30,22 @@ describe('createTeamApi', () => {
     })
     expect(get).toHaveBeenCalledWith('/teams/7')
   })
+
+  test('loads a persisted Team binding directly by id', async () => {
+    const get = vi.fn().mockResolvedValue({
+      id: 108,
+      name: 'restored-team',
+      updated_at: '2026-09-02T10:00:00Z',
+      workflow: { mode: 'pipeline' },
+      bots: [],
+    })
+    const api = createTeamApi({ get } as unknown as HttpClient)
+
+    await expect(api.getExecutionProfile(108)).resolves.toMatchObject({
+      id: 108,
+      namespace: 'default',
+      collaborationMode: 'pipeline',
+    })
+    expect(get).toHaveBeenCalledWith('/teams/108')
+  })
 })

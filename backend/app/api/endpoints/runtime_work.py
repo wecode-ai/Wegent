@@ -834,7 +834,7 @@ async def create_team_runtime_task_endpoint(
     request: RuntimeTeamTaskCreateRequest,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
-):
+) -> RuntimeTaskCreateResponse:
     """Create a Team-backed runtime task through a remote device executor."""
 
     return await runtime_work_service.create_team_runtime_task(

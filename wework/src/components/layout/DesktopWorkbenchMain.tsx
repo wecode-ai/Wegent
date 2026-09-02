@@ -1082,6 +1082,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
       setCentralHarnessError(null)
       if (!team) {
         setSelectedTeamProfile(null)
+        setTeamsLoading(false)
         return
       }
       setTeamsLoading(true)

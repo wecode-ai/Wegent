@@ -191,7 +191,7 @@ def test_create_team_runtime_task_uses_explicit_team_endpoint(
     test_client,
     test_token,
     monkeypatch,
-):
+) -> None:
     from app.api.endpoints import runtime_work
 
     service_mock = AsyncMock(
@@ -228,7 +228,7 @@ def test_create_team_runtime_task_uses_explicit_team_endpoint(
 def test_create_team_runtime_task_rejects_missing_team(
     test_client,
     test_token,
-):
+) -> None:
     response = test_client.post(
         "/api/runtime-work/team/create",
         headers=_auth_headers(test_token),
