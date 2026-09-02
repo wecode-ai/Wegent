@@ -66,7 +66,7 @@ def _reject_code_wiki_scheduled_update(subscription: Kind) -> None:
 
     reject_code_wiki_scheduled_update(
         subscription,
-        detail="Code Wiki automatic updates cannot be shared",
+        detail="Code Wiki scheduled updates cannot be shared",
     )
 
 

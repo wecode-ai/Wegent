@@ -64,7 +64,7 @@ def _reject_code_wiki_scheduled_update(subscription: Kind) -> None:
 
     reject_code_wiki_scheduled_update(
         subscription,
-        detail="Code Wiki automatic updates must be managed from the Code Wiki",
+        detail="Code Wiki scheduled updates must be managed from the Code Wiki",
     )
 
 

@@ -60,7 +60,7 @@ export async function createCodeWiki({
   })
   if (scheduled_update) {
     try {
-      await codeWikiApi.configureAutomaticUpdate(created.id, scheduled_update)
+      await codeWikiApi.configureScheduledUpdate(created.id, scheduled_update)
     } catch (error) {
       return {
         ...created,

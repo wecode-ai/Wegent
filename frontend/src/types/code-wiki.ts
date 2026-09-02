@@ -132,7 +132,7 @@ export interface CodeWikiRunResponse {
   strategy_revision?: number
 }
 
-export interface CodeWikiAutomaticUpdateExecution {
+export interface CodeWikiScheduledUpdateExecution {
   id: number
   status: string
   error_message: string
@@ -141,10 +141,10 @@ export interface CodeWikiAutomaticUpdateExecution {
   created_at: string
 }
 
-export interface CodeWikiAutomaticUpdate {
+export interface CodeWikiScheduledUpdate {
   can_configure: boolean
   configured: boolean
-  cadence: CodeWikiUpdateCadence
+  cadence: CodeWikiScheduledUpdateCadence
   enabled: boolean
   interval_days: number
   weekday: number
@@ -153,12 +153,12 @@ export interface CodeWikiAutomaticUpdate {
   timezone: string
   execution_principal_user_id?: number | null
   next_execution_time?: string | null
-  executions: CodeWikiAutomaticUpdateExecution[]
+  executions: CodeWikiScheduledUpdateExecution[]
 }
 
-export interface CodeWikiAutomaticUpdateRequest {
+export interface CodeWikiScheduledUpdateRequest {
   enabled: boolean
-  cadence: CodeWikiUpdateCadence
+  cadence: CodeWikiScheduledUpdateCadence
   interval_days: number
   weekday: number
   hour: number
@@ -167,7 +167,12 @@ export interface CodeWikiAutomaticUpdateRequest {
   execution_principal_user_id?: number | null
 }
 
-export type CodeWikiUpdateCadence = 'daily' | 'weekly' | 'biweekly' | 'four_weeks' | 'custom'
+export type CodeWikiScheduledUpdateCadence =
+  | 'daily'
+  | 'weekly'
+  | 'biweekly'
+  | 'four_weeks'
+  | 'custom'
 
 /**
  * One node of the reader's navigation.

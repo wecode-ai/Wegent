@@ -8,7 +8,7 @@ from typing import Any
 from sqlalchemy.orm import Session
 
 from app.models.kind import Kind
-from app.schemas.knowledge import CodeWikiAutomaticUpdateRequest
+from app.schemas.knowledge import CodeWikiScheduledUpdateRequest
 from app.services.knowledge.code_wiki.scheduled_update import (
     SCHEDULED_UPDATE_TIMEOUT_SECONDS,
     advance_scheduled_update,
@@ -20,7 +20,7 @@ from app.services.knowledge.code_wiki.scheduled_update import (
 from app.services.subscription.helpers import validate_subscription_for_read
 
 
-def schedule(**overrides: Any) -> CodeWikiAutomaticUpdateRequest:
+def schedule(**overrides: Any) -> CodeWikiScheduledUpdateRequest:
     values: dict[str, Any] = {
         "enabled": True,
         "cadence": "weekly",
@@ -31,7 +31,7 @@ def schedule(**overrides: Any) -> CodeWikiAutomaticUpdateRequest:
         "timezone": "Asia/Shanghai",
     }
     values.update(overrides)
-    return CodeWikiAutomaticUpdateRequest(**values)
+    return CodeWikiScheduledUpdateRequest(**values)
 
 
 def test_first_weekly_slot_never_uses_the_creation_day():

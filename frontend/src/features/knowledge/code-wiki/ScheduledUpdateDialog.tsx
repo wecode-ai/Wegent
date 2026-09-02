@@ -29,19 +29,19 @@ import { codeWikiApi } from '@/apis/code-wiki'
 import { userApis } from '@/apis/user'
 import { UserSearchSelect } from '@/components/common/UserSearchSelect'
 import { useTranslation } from '@/hooks/useTranslation'
-import type { CodeWikiAutomaticUpdate } from '@/types/code-wiki'
+import type { CodeWikiScheduledUpdate } from '@/types/code-wiki'
 import type { SearchUser } from '@/types/api'
 
 interface Props {
   knowledgeBaseId: number
   open: boolean
   onOpenChange: (open: boolean) => void
-  onSaved: (plan: CodeWikiAutomaticUpdate) => void
+  onSaved: (plan: CodeWikiScheduledUpdate) => void
 }
 
-export function AutomaticUpdateDialog({ knowledgeBaseId, open, onOpenChange, onSaved }: Props) {
+export function ScheduledUpdateDialog({ knowledgeBaseId, open, onOpenChange, onSaved }: Props) {
   const { t } = useTranslation('knowledge')
-  const [plan, setPlan] = useState<CodeWikiAutomaticUpdate | null>(null)
+  const [plan, setPlan] = useState<CodeWikiScheduledUpdate | null>(null)
   const [selectedRunners, setSelectedRunners] = useState<SearchUser[]>([])
   const [saving, setSaving] = useState(false)
   const [loadError, setLoadError] = useState<string | null>(null)
@@ -49,7 +49,7 @@ export function AutomaticUpdateDialog({ knowledgeBaseId, open, onOpenChange, onS
   const loadPlan = useCallback(async () => {
     setLoadError(null)
     try {
-      const value = await codeWikiApi.automaticUpdate(knowledgeBaseId)
+      const value = await codeWikiApi.scheduledUpdate(knowledgeBaseId)
       setPlan(
         value.configured
           ? value
@@ -80,12 +80,12 @@ export function AutomaticUpdateDialog({ knowledgeBaseId, open, onOpenChange, onS
       plan.cadence === 'custom' &&
       (!Number.isInteger(plan.interval_days) || plan.interval_days < 2 || plan.interval_days > 365)
     ) {
-      toast.error(t('codeWiki.automatic.invalidCustomDays'))
+      toast.error(t('codeWiki.scheduledUpdate.invalidCustomDays'))
       return
     }
     setSaving(true)
     try {
-      const saved = await codeWikiApi.configureAutomaticUpdate(knowledgeBaseId, {
+      const saved = await codeWikiApi.configureScheduledUpdate(knowledgeBaseId, {
         enabled: plan.enabled,
         cadence: plan.cadence,
         interval_days: plan.interval_days,
@@ -98,7 +98,7 @@ export function AutomaticUpdateDialog({ knowledgeBaseId, open, onOpenChange, onS
       setPlan(saved)
       onSaved(saved)
       onOpenChange(false)
-      toast.success(t('codeWiki.automatic.saved'))
+      toast.success(t('codeWiki.scheduledUpdate.saved'))
     } catch (error) {
       toast.error(error instanceof Error ? error.message : String(error))
     } finally {
@@ -108,28 +108,30 @@ export function AutomaticUpdateDialog({ knowledgeBaseId, open, onOpenChange, onS
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent data-testid="code-wiki-automatic-update-dialog">
+      <DialogContent data-testid="code-wiki-scheduled-update-dialog">
         <DialogHeader>
-          <DialogTitle>{t('codeWiki.automatic.title')}</DialogTitle>
-          <DialogDescription>{t('codeWiki.automatic.description')}</DialogDescription>
+          <DialogTitle>{t('codeWiki.scheduledUpdate.title')}</DialogTitle>
+          <DialogDescription>{t('codeWiki.scheduledUpdate.description')}</DialogDescription>
         </DialogHeader>
         {plan && (
           <div className="space-y-4 py-2">
             <div className="flex items-center justify-between gap-4">
-              <Label htmlFor="code-wiki-auto-enabled">{t('codeWiki.automatic.enabled')}</Label>
+              <Label htmlFor="code-wiki-scheduled-enabled">
+                {t('codeWiki.scheduledUpdate.enabled')}
+              </Label>
               <Switch
-                id="code-wiki-auto-enabled"
-                data-testid="code-wiki-auto-enabled"
+                id="code-wiki-scheduled-enabled"
+                data-testid="code-wiki-scheduled-enabled"
                 checked={plan.enabled}
                 onCheckedChange={enabled => setPlan(current => current && { ...current, enabled })}
               />
             </div>
             <div className="space-y-2">
-              <Label>{t('codeWiki.automatic.cadence')}</Label>
+              <Label>{t('codeWiki.scheduledUpdate.cadence')}</Label>
               <Select
                 value={plan.cadence}
                 onValueChange={value => {
-                  const cadence = value as CodeWikiAutomaticUpdate['cadence']
+                  const cadence = value as CodeWikiScheduledUpdate['cadence']
                   const fixed = { daily: 1, weekly: 7, biweekly: 14, four_weeks: 28 }
                   setPlan(
                     current =>
@@ -142,15 +144,17 @@ export function AutomaticUpdateDialog({ knowledgeBaseId, open, onOpenChange, onS
                   )
                 }}
               >
-                <SelectTrigger data-testid="code-wiki-auto-cadence">
+                <SelectTrigger data-testid="code-wiki-scheduled-cadence">
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="daily">{t('codeWiki.automatic.daily')}</SelectItem>
-                  <SelectItem value="weekly">{t('codeWiki.automatic.weekly')}</SelectItem>
-                  <SelectItem value="biweekly">{t('codeWiki.automatic.biweekly')}</SelectItem>
-                  <SelectItem value="four_weeks">{t('codeWiki.automatic.four_weeks')}</SelectItem>
-                  <SelectItem value="custom">{t('codeWiki.automatic.custom')}</SelectItem>
+                  <SelectItem value="daily">{t('codeWiki.scheduledUpdate.daily')}</SelectItem>
+                  <SelectItem value="weekly">{t('codeWiki.scheduledUpdate.weekly')}</SelectItem>
+                  <SelectItem value="biweekly">{t('codeWiki.scheduledUpdate.biweekly')}</SelectItem>
+                  <SelectItem value="four_weeks">
+                    {t('codeWiki.scheduledUpdate.four_weeks')}
+                  </SelectItem>
+                  <SelectItem value="custom">{t('codeWiki.scheduledUpdate.custom')}</SelectItem>
                 </SelectContent>
               </Select>
               {plan.cadence === 'custom' && (
@@ -165,43 +169,45 @@ export function AutomaticUpdateDialog({ knowledgeBaseId, open, onOpenChange, onS
                         current && { ...current, interval_days: Number(event.target.value) }
                     )
                   }
-                  aria-label={t('codeWiki.automatic.customDays')}
-                  data-testid="code-wiki-auto-custom-days"
+                  aria-label={t('codeWiki.scheduledUpdate.customDays')}
+                  data-testid="code-wiki-scheduled-custom-days"
                 />
               )}
             </div>
             <details className="rounded-md border border-border p-3">
               <summary className="cursor-pointer text-sm font-medium">
-                {t('codeWiki.automatic.advanced')}
+                {t('codeWiki.scheduledUpdate.advanced')}
               </summary>
               <div className="mt-3 space-y-2">
-                <Label>{t('codeWiki.automatic.runner')}</Label>
-                <p className="text-xs text-text-secondary">{t('codeWiki.automatic.runnerHint')}</p>
+                <Label>{t('codeWiki.scheduledUpdate.runner')}</Label>
+                <p className="text-xs text-text-secondary">
+                  {t('codeWiki.scheduledUpdate.runnerHint')}
+                </p>
                 <UserSearchSelect
                   selectedUsers={selectedRunners}
                   onSelectedUsersChange={setSelectedRunners}
                   multiple={false}
-                  placeholder={t('codeWiki.automatic.runnerPlaceholder')}
+                  placeholder={t('codeWiki.scheduledUpdate.runnerPlaceholder')}
                 />
               </div>
             </details>
             <div className="grid grid-cols-2 gap-3">
               {['weekly', 'biweekly', 'four_weeks'].includes(plan.cadence) && (
                 <div className="space-y-2">
-                  <Label>{t('codeWiki.automatic.weekday')}</Label>
+                  <Label>{t('codeWiki.scheduledUpdate.weekday')}</Label>
                   <Select
                     value={String(plan.weekday)}
                     onValueChange={value =>
                       setPlan(current => current && { ...current, weekday: Number(value) })
                     }
                   >
-                    <SelectTrigger data-testid="code-wiki-auto-weekday">
+                    <SelectTrigger data-testid="code-wiki-scheduled-weekday">
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent>
                       {[0, 1, 2, 3, 4, 5, 6].map(day => (
                         <SelectItem key={day} value={String(day)}>
-                          {t(`codeWiki.automatic.weekdays.${day}`)}
+                          {t(`codeWiki.scheduledUpdate.weekdays.${day}`)}
                         </SelectItem>
                       ))}
                     </SelectContent>
@@ -209,46 +215,50 @@ export function AutomaticUpdateDialog({ knowledgeBaseId, open, onOpenChange, onS
                 </div>
               )}
               <div className="space-y-2">
-                <Label htmlFor="code-wiki-auto-time">{t('codeWiki.automatic.time')}</Label>
+                <Label htmlFor="code-wiki-scheduled-time">
+                  {t('codeWiki.scheduledUpdate.time')}
+                </Label>
                 <Input
-                  id="code-wiki-auto-time"
+                  id="code-wiki-scheduled-time"
                   type="time"
                   value={`${String(plan.hour).padStart(2, '0')}:${String(plan.minute).padStart(2, '0')}`}
                   onChange={event => {
                     const [hour, minute] = event.target.value.split(':').map(Number)
                     setPlan(current => current && { ...current, hour, minute })
                   }}
-                  data-testid="code-wiki-auto-time"
+                  data-testid="code-wiki-scheduled-time"
                 />
               </div>
             </div>
             <div className="space-y-2">
-              <Label htmlFor="code-wiki-auto-timezone">{t('codeWiki.automatic.timezone')}</Label>
+              <Label htmlFor="code-wiki-scheduled-timezone">
+                {t('codeWiki.scheduledUpdate.timezone')}
+              </Label>
               <Input
-                id="code-wiki-auto-timezone"
+                id="code-wiki-scheduled-timezone"
                 value={plan.timezone}
                 onChange={event =>
                   setPlan(current => current && { ...current, timezone: event.target.value })
                 }
                 placeholder="Asia/Shanghai"
-                data-testid="code-wiki-auto-timezone"
+                data-testid="code-wiki-scheduled-timezone"
               />
             </div>
             <p className="text-xs text-text-secondary">
-              {t('codeWiki.automatic.next', {
+              {t('codeWiki.scheduledUpdate.next', {
                 when: plan.next_execution_time
                   ? new Date(plan.next_execution_time).toLocaleString()
-                  : t('codeWiki.automatic.afterSave'),
+                  : t('codeWiki.scheduledUpdate.afterSave'),
               })}
             </p>
             {plan.executions[0]?.status === 'FAILED' && (
-              <p className="text-sm text-destructive" data-testid="code-wiki-auto-last-error">
+              <p className="text-sm text-destructive" data-testid="code-wiki-scheduled-last-error">
                 {plan.executions[0].error_message}
               </p>
             )}
             {plan.executions.length > 0 && (
               <div className="space-y-2">
-                <Label>{t('codeWiki.automatic.history')}</Label>
+                <Label>{t('codeWiki.scheduledUpdate.history')}</Label>
                 <ul className="max-h-40 divide-y divide-border overflow-y-auto rounded-md border border-border px-3">
                   {plan.executions.map(execution => (
                     <li key={execution.id} className="py-2 text-xs">
@@ -278,7 +288,7 @@ export function AutomaticUpdateDialog({ knowledgeBaseId, open, onOpenChange, onS
             <Button
               variant="outline"
               onClick={() => void loadPlan()}
-              data-testid="code-wiki-auto-retry"
+              data-testid="code-wiki-scheduled-retry"
             >
               {t('common:actions.retry')}
             </Button>
@@ -288,7 +298,7 @@ export function AutomaticUpdateDialog({ knowledgeBaseId, open, onOpenChange, onS
           <Button
             variant="outline"
             onClick={() => onOpenChange(false)}
-            data-testid="code-wiki-auto-cancel"
+            data-testid="code-wiki-scheduled-cancel"
           >
             {t('common:actions.cancel')}
           </Button>
@@ -296,9 +306,9 @@ export function AutomaticUpdateDialog({ knowledgeBaseId, open, onOpenChange, onS
             variant="primary"
             onClick={save}
             disabled={!plan || saving}
-            data-testid="code-wiki-auto-save"
+            data-testid="code-wiki-scheduled-save"
           >
-            {saving ? t('codeWiki.automatic.saving') : t('common:actions.save')}
+            {saving ? t('codeWiki.scheduledUpdate.saving') : t('common:actions.save')}
           </Button>
         </DialogFooter>
       </DialogContent>

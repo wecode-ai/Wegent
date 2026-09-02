@@ -274,7 +274,7 @@ export function CreateKnowledgeBaseDialog({
         initialIntervalDays < 2 ||
         initialIntervalDays > 365)
     ) {
-      setError(t('knowledge:codeWiki.automatic.invalidCustomDays'))
+      setError(t('knowledge:codeWiki.scheduledUpdate.invalidCustomDays'))
       return
     }
 
@@ -533,19 +533,19 @@ export function CreateKnowledgeBaseDialog({
                             </SelectTrigger>
                             <SelectContent>
                               <SelectItem value="daily">
-                                {t('knowledge:codeWiki.automatic.daily')}
+                                {t('knowledge:codeWiki.scheduledUpdate.daily')}
                               </SelectItem>
                               <SelectItem value="weekly">
-                                {t('knowledge:codeWiki.automatic.weekly')}
+                                {t('knowledge:codeWiki.scheduledUpdate.weekly')}
                               </SelectItem>
                               <SelectItem value="biweekly">
-                                {t('knowledge:codeWiki.automatic.biweekly')}
+                                {t('knowledge:codeWiki.scheduledUpdate.biweekly')}
                               </SelectItem>
                               <SelectItem value="four_weeks">
-                                {t('knowledge:codeWiki.automatic.four_weeks')}
+                                {t('knowledge:codeWiki.scheduledUpdate.four_weeks')}
                               </SelectItem>
                               <SelectItem value="custom">
-                                {t('knowledge:codeWiki.automatic.custom')}
+                                {t('knowledge:codeWiki.scheduledUpdate.custom')}
                               </SelectItem>
                             </SelectContent>
                           </Select>
@@ -556,7 +556,7 @@ export function CreateKnowledgeBaseDialog({
                               max={365}
                               value={initialIntervalDays}
                               onChange={event => setInitialIntervalDays(Number(event.target.value))}
-                              aria-label={t('knowledge:codeWiki.automatic.customDays')}
+                              aria-label={t('knowledge:codeWiki.scheduledUpdate.customDays')}
                               data-testid="code-wiki-create-custom-days"
                             />
                           )}
@@ -571,7 +571,7 @@ export function CreateKnowledgeBaseDialog({
                               <SelectContent>
                                 {[0, 1, 2, 3, 4, 5, 6].map(day => (
                                   <SelectItem key={day} value={String(day)}>
-                                    {t(`knowledge:codeWiki.automatic.weekdays.${day}`)}
+                                    {t(`knowledge:codeWiki.scheduledUpdate.weekdays.${day}`)}
                                   </SelectItem>
                                 ))}
                               </SelectContent>

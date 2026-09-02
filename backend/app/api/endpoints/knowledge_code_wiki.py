@@ -38,8 +38,6 @@ from app.models.kind import Kind
 from app.models.user import User
 from app.models.wiki import WikiGeneration, WikiGenerationStatus
 from app.schemas.knowledge import (
-    CodeWikiAutomaticUpdate,
-    CodeWikiAutomaticUpdateRequest,
     CodeWikiCreate,
     CodeWikiExisting,
     CodeWikiGenerationStrategyCapabilities,
@@ -56,6 +54,8 @@ from app.schemas.knowledge import (
     CodeWikiRunRecord,
     CodeWikiRunResponse,
     CodeWikiRunStatus,
+    CodeWikiScheduledUpdate,
+    CodeWikiScheduledUpdateRequest,
     KnowledgeBaseResponse,
     KnowledgeBaseType,
     ResourceScope,
@@ -489,19 +489,19 @@ def _assert_caller_owns_schedule(user: User, knowledge_base: Kind) -> None:
     if user.id != knowledge_base.user_id and user.role != "admin":
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail="Only the Knowledge Base owner or a system administrator may configure automatic updates",
+            detail="Only the Knowledge Base owner or a system administrator may configure scheduled updates",
         )
 
 
 @router.get(
-    "/{knowledge_base_id}/code-wiki/automatic-update",
-    response_model=CodeWikiAutomaticUpdate,
+    "/{knowledge_base_id}/code-wiki/scheduled-update",
+    response_model=CodeWikiScheduledUpdate,
 )
-def get_code_wiki_automatic_update(
+def get_code_wiki_scheduled_update(
     knowledge_base_id: int,
     current_user: User = Depends(security.get_current_user),
     db: Session = Depends(get_db),
-) -> CodeWikiAutomaticUpdate:
+) -> CodeWikiScheduledUpdate:
     knowledge_base = _readable_code_wiki(db, current_user, knowledge_base_id)
     return read_scheduled_update(
         db,
@@ -513,15 +513,15 @@ def get_code_wiki_automatic_update(
 
 
 @router.put(
-    "/{knowledge_base_id}/code-wiki/automatic-update",
-    response_model=CodeWikiAutomaticUpdate,
+    "/{knowledge_base_id}/code-wiki/scheduled-update",
+    response_model=CodeWikiScheduledUpdate,
 )
-def put_code_wiki_automatic_update(
+def put_code_wiki_scheduled_update(
     knowledge_base_id: int,
-    data: CodeWikiAutomaticUpdateRequest,
+    data: CodeWikiScheduledUpdateRequest,
     current_user: User = Depends(security.get_current_user),
     db: Session = Depends(get_db),
-) -> CodeWikiAutomaticUpdate:
+) -> CodeWikiScheduledUpdate:
     knowledge_base = _readable_code_wiki(db, current_user, knowledge_base_id)
     _assert_caller_owns_schedule(current_user, knowledge_base)
     try:
@@ -530,7 +530,7 @@ def put_code_wiki_automatic_update(
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)
         ) from exc
-    return get_code_wiki_automatic_update(knowledge_base_id, current_user, db)
+    return get_code_wiki_scheduled_update(knowledge_base_id, current_user, db)
 
 
 @router.get("/{knowledge_base_id}/code-wiki/status", response_model=CodeWikiRunStatus)
