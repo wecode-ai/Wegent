@@ -65,7 +65,7 @@ async function waitForPongIncrease(
 }
 
 describe('HostPipeServer session ownership', () => {
-  test('M3-D: detaches only the host session owned by the given child', async () => {
+  test('detachChild only detaches the session owned by the given child', async () => {
     const router = new HostCapabilityRouter()
     router.grant('@wegent/dsh-app-wework', ['window.getState'])
     router.register('window.getState', async () => ({ maximized: false }))

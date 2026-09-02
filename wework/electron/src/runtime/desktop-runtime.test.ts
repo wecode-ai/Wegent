@@ -91,7 +91,7 @@ describe('DesktopRuntime lifecycle generation', () => {
     prepareState.resolveLaunch = null
   })
 
-  test('M3-A: a restart continuation cannot publish a runtime after shutdown', async () => {
+  test('a restart continuation cannot publish a runtime after shutdown', async () => {
     const runtime = createRuntime(EXTERNAL_DSH)
     await runtime.start()
     expect(created).toHaveLength(1)
@@ -113,7 +113,7 @@ describe('DesktopRuntime lifecycle generation', () => {
     expect(runtime.state().coreDshUrl).toBeNull()
   })
 
-  test('M3-B: concurrent restarts stop the old runtime once and create exactly one replacement', async () => {
+  test('concurrent restart calls share one replacement operation', async () => {
     const runtime = createRuntime(EXTERNAL_DSH)
     await runtime.start()
     expect(created).toHaveLength(1)
@@ -134,7 +134,7 @@ describe('DesktopRuntime lifecycle generation', () => {
     expect(runtime.state().coreDshUrl).not.toBeNull()
   })
 
-  test('M3-E: an old-generation restart flight cannot absorb or clear a new-generation restart', async () => {
+  test('an old-generation restart cannot absorb or clear a new-generation restart', async () => {
     const runtime = createRuntime(EXTERNAL_DSH)
     await runtime.start()
     const a = created[0]
@@ -166,7 +166,7 @@ describe('DesktopRuntime lifecycle generation', () => {
     expect(runtime.state().coreDshUrl).not.toBeNull()
   })
 
-  test('M3-C: startup preparation continuation cannot publish a runtime after shutdown', async () => {
+  test('shutdown prevents pending startup preparation from publishing a runtime', async () => {
     const runtime = createRuntime({ WEWORK_HARNESS_RUNTIME_ROOT: '/tmp/wework-harness-root' })
     const start = runtime.start()
     await vi.waitFor(() => expect(prepareState.prepareCalls).toBe(1))

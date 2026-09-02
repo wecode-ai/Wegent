@@ -94,7 +94,7 @@ function listen(server: ReturnType<typeof createServer>): Promise<void> {
 }
 
 describe('DSH host session ownership', () => {
-  test('M3-D: a stale runtime stop keeps the current host session attached', async () => {
+  test('stale runtime cleanup cannot detach the current child host session', async () => {
     const httpServer = createServer((_request, response) => {
       response.writeHead(200)
       response.end()
