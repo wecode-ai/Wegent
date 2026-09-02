@@ -2,7 +2,22 @@ interface ElectronWebviewElement extends HTMLElement {
   destroy?: () => void
 }
 
+interface HostedElectronWebviewClaim {
+  active: boolean
+  bounds: ElectronEmbeddedBrowserBounds | null
+  interactionBlocked: boolean
+  owner: symbol
+}
+
+export interface ElectronEmbeddedBrowserBounds {
+  height: number
+  left: number
+  top: number
+  width: number
+}
+
 export interface HostedElectronWebview {
+  claims: HostedElectronWebviewClaim[]
   container: HTMLDivElement
   cursorHost: HTMLDivElement
   destroyed: boolean
@@ -88,6 +103,7 @@ function createHostedWebview(label: string): HostedElectronWebview {
   container.append(webview, cursorHost)
   getWebviewHostRoot().append(container)
   return {
+    claims: [],
     container,
     cursorHost,
     destroyed: false,
@@ -135,6 +151,46 @@ function assignHostedWebviewLabel(host: HostedElectronWebview, label: string): v
   hostedWebviews.set(label, host)
 }
 
+function currentClaim(host: HostedElectronWebview): HostedElectronWebviewClaim | null {
+  return host.claims.at(-1) ?? null
+}
+
+function applyClaim(host: HostedElectronWebview, claim: HostedElectronWebviewClaim): void {
+  if (claim.bounds) {
+    Object.assign(host.container.style, {
+      height: `${claim.bounds.height}px`,
+      left: `${claim.bounds.left}px`,
+      top: `${claim.bounds.top}px`,
+      width: `${claim.bounds.width}px`,
+    })
+  }
+  host.container.style.pointerEvents = claim.interactionBlocked ? 'none' : 'auto'
+  host.container.style.visibility = claim.active ? 'visible' : 'hidden'
+}
+
+function claimForOwner(
+  host: HostedElectronWebview,
+  owner: symbol
+): HostedElectronWebviewClaim | null {
+  return host.claims.find(claim => claim.owner === owner) ?? null
+}
+
+function assignOwner(host: HostedElectronWebview, owner: symbol): void {
+  const existingClaim = claimForOwner(host, owner)
+  if (existingClaim) {
+    host.claims = host.claims.filter(claim => claim !== existingClaim)
+    host.claims.push(existingClaim)
+  } else {
+    host.claims.push({
+      active: false,
+      bounds: null,
+      interactionBlocked: true,
+      owner,
+    })
+  }
+  host.owner = owner
+}
+
 export function claimElectronEmbeddedBrowserView(
   label: string,
   owner: symbol,
@@ -146,13 +202,13 @@ export function claimElectronEmbeddedBrowserView(
   if (existing) {
     assignHostedWebviewLabel(existing, label)
     clearRetentionTimeout(existing)
-    existing.owner = owner
+    assignOwner(existing, owner)
     existing.retained = false
     return existing
   }
 
   const host = createHostedWebview(label)
-  host.owner = owner
+  assignOwner(host, owner)
   hostedWebviews.set(label, host)
   return host
 }
@@ -161,8 +217,17 @@ export function releaseElectronEmbeddedBrowserView(
   host: HostedElectronWebview,
   owner: symbol
 ): void {
-  if (host.owner !== owner) return
-  host.owner = null
+  const claim = claimForOwner(host, owner)
+  if (!claim) return
+  const wasCurrentOwner = host.owner === owner
+  host.claims = host.claims.filter(candidate => candidate !== claim)
+  if (!wasCurrentOwner) return
+  const nextClaim = currentClaim(host)
+  host.owner = nextClaim?.owner ?? null
+  if (nextClaim) {
+    applyClaim(host, nextClaim)
+    return
+  }
   host.container.style.pointerEvents = 'none'
   if (host.retained) return
   host.container.style.visibility = 'hidden'
@@ -181,15 +246,28 @@ export function relabelElectronEmbeddedBrowserView(
   assignHostedWebviewLabel(host, label)
 }
 
+export function positionElectronEmbeddedBrowserView(
+  host: HostedElectronWebview,
+  owner: symbol,
+  bounds: ElectronEmbeddedBrowserBounds
+): void {
+  const claim = claimForOwner(host, owner)
+  if (!claim || bounds.width <= 0 || bounds.height <= 0) return
+  claim.bounds = bounds
+  if (host.owner === owner) applyClaim(host, claim)
+}
+
 export function syncElectronEmbeddedBrowserView(
   host: HostedElectronWebview,
   owner: symbol,
   active: boolean,
   interactionBlocked: boolean
 ): void {
-  if (host.owner !== owner) return
-  host.container.style.pointerEvents = interactionBlocked ? 'none' : 'auto'
-  host.container.style.visibility = active ? 'visible' : 'hidden'
+  const claim = claimForOwner(host, owner)
+  if (!claim) return
+  claim.active = active
+  claim.interactionBlocked = interactionBlocked
+  if (host.owner === owner) applyClaim(host, claim)
 }
 
 export function retainElectronEmbeddedBrowserView(label: string): void {

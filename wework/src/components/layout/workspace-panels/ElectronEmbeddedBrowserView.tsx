@@ -7,6 +7,7 @@ import {
 import { BrowserAgentCursorIcon } from './BrowserAgentCursorIcon'
 import {
   claimElectronEmbeddedBrowserView,
+  positionElectronEmbeddedBrowserView,
   relabelElectronEmbeddedBrowserView,
   releaseElectronEmbeddedBrowserView,
   syncElectronEmbeddedBrowserView,
@@ -69,13 +70,12 @@ export function ElectronEmbeddedBrowserView({
     setCursorOverlayHost(host.cursorHost)
 
     const syncBounds = () => {
-      if (host.owner !== owner) return
       const rect = placeholder.getBoundingClientRect()
-      Object.assign(host.container.style, {
-        height: `${Math.max(0, rect.height)}px`,
-        left: `${rect.left}px`,
-        top: `${rect.top}px`,
-        width: `${Math.max(0, rect.width)}px`,
+      positionElectronEmbeddedBrowserView(host, owner, {
+        height: Math.max(0, rect.height),
+        left: rect.left,
+        top: rect.top,
+        width: Math.max(0, rect.width),
       })
     }
 

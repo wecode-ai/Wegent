@@ -1792,8 +1792,7 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
         if (animationFrame) window.cancelAnimationFrame(animationFrame)
       }
       const captureFrame = (time: number) => {
-        const elements = findDesktopControlElements(command.selector)
-        const element = command.visible ? elements.find(desktopControlElementVisible) : elements[0]
+        const element = initialElement
         const rect = element?.getBoundingClientRect()
         const testIds = element
           ? [element, ...element.querySelectorAll<HTMLElement>('[data-testid]')]

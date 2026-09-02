@@ -10,6 +10,7 @@ import {
   listenEmbeddedBrowserOpenRequests,
   listenEmbeddedBrowserPageStateChanges,
   migrateEmbeddedBrowserLabel,
+  migrateEmbeddedBrowserLabelSequence,
   relabelEmbeddedBrowser,
   notifyEmbeddedBrowserAgentCursorArrived,
   resolveEmbeddedBrowserAgentApproval,
@@ -116,6 +117,40 @@ describe('embedded-browser', () => {
       })
     ).rejects.toThrow('Browser label already exists')
     expect(desktopHostMocks.invoke).toHaveBeenCalledTimes(1)
+  })
+
+  test('reports each successful label migration before a later migration fails', async () => {
+    const onMigrated = vi.fn()
+    desktopHostMocks.invoke
+      .mockResolvedValueOnce(undefined)
+      .mockRejectedValueOnce(new Error('Browser label already exists'))
+
+    await expect(
+      migrateEmbeddedBrowserLabelSequence(
+        [
+          {
+            tab: 'browser-1',
+            fromLabel: 'workspace-browser-blank-0',
+            toLabel: 'workspace-browser-task-1',
+            waitForSource: true,
+          },
+          {
+            tab: 'browser-2',
+            fromLabel: 'workspace-browser-blank-0:tab-2',
+            toLabel: 'workspace-browser-task-1:tab-2',
+            waitForSource: true,
+          },
+        ],
+        { onMigrated }
+      )
+    ).rejects.toThrow('Browser label already exists')
+    expect(onMigrated).toHaveBeenCalledOnce()
+    expect(onMigrated).toHaveBeenCalledWith(
+      expect.objectContaining({
+        tab: 'browser-1',
+        toLabel: 'workspace-browser-task-1',
+      })
+    )
   })
 
   test('closes only the expected native browser identity', async () => {

@@ -517,6 +517,30 @@ export async function migrateEmbeddedBrowserLabel(
   }
 }
 
+export async function migrateEmbeddedBrowserLabelSequence<
+  T extends {
+    fromLabel: string
+    toLabel: string
+    waitForSource: boolean
+  },
+>(
+  mappings: readonly T[],
+  options: {
+    onMigrated: (mapping: T) => void
+    signal?: AbortSignal
+  }
+): Promise<void> {
+  for (const mapping of mappings) {
+    if (mapping.fromLabel === mapping.toLabel) continue
+    await migrateEmbeddedBrowserLabel(mapping.fromLabel, mapping.toLabel, {
+      waitForSource: mapping.waitForSource,
+      signal: options.signal,
+    })
+    if (options.signal?.aborted) return
+    options.onMigrated(mapping)
+  }
+}
+
 export async function setEmbeddedBrowserActiveTab(
   baseLabel: string,
   activeTabLabel: string

@@ -283,6 +283,51 @@ describe('ElectronEmbeddedBrowserView', () => {
     expect(screen.queryByTestId('workspace-browser-electron-webview')).not.toBeInTheDocument()
   })
 
+  test('restores the prior owner when the newer overlapping panel unmounts first', async () => {
+    const first = render(
+      <ElectronEmbeddedBrowserView
+        active
+        interactionBlocked={false}
+        label="workspace-browser-overlap-reverse"
+        visualRect={null}
+      />
+    )
+    const host = screen.getByTestId('workspace-browser-electron-webview')
+    const webview = host.querySelector('webview')
+    const second = render(
+      <ElectronEmbeddedBrowserView
+        active
+        interactionBlocked={false}
+        label="workspace-browser-overlap-reverse"
+        visualRect={null}
+      />
+    )
+
+    second.unmount()
+    await act(async () => {
+      await Promise.resolve()
+    })
+
+    expect(screen.getByTestId('workspace-browser-electron-webview')).toBe(host)
+    expect(host.querySelector('webview')).toBe(webview)
+    first.rerender(
+      <ElectronEmbeddedBrowserView
+        active={false}
+        interactionBlocked
+        label="workspace-browser-overlap-reverse"
+        visualRect={null}
+      />
+    )
+    expect(host.style.visibility).toBe('hidden')
+    expect(host.style.pointerEvents).toBe('none')
+
+    first.unmount()
+    await act(async () => {
+      await Promise.resolve()
+    })
+    expect(screen.queryByTestId('workspace-browser-electron-webview')).not.toBeInTheDocument()
+  })
+
   test('ignores stale bounds updates after ownership moves to the task pane', () => {
     const source = render(
       <ElectronEmbeddedBrowserView
@@ -313,7 +358,21 @@ describe('ElectronEmbeddedBrowserView', () => {
       '[data-testid="workspace-browser-electron-webview-placeholder"]'
     )
     expect(destinationPlaceholder).not.toBeNull()
-    vi.spyOn(destinationPlaceholder, 'getBoundingClientRect').mockReturnValue({
+    const destinationRect = vi
+      .spyOn(destinationPlaceholder, 'getBoundingClientRect')
+      .mockReturnValue({
+        height: 0,
+        left: 0,
+        top: 0,
+        width: 0,
+      } as DOMRect)
+    resizeObserverCallbacks[1]?.()
+
+    const host = screen.getByTestId('workspace-browser-electron-webview')
+    expect(host.style.left).toBe('10px')
+    expect(host.style.width).toBe('600px')
+
+    destinationRect.mockReturnValue({
       height: 500,
       left: 700,
       top: 30,
@@ -321,7 +380,6 @@ describe('ElectronEmbeddedBrowserView', () => {
     } as DOMRect)
     resizeObserverCallbacks[1]?.()
 
-    const host = screen.getByTestId('workspace-browser-electron-webview')
     expect(host.style.left).toBe('700px')
     expect(host.style.width).toBe('800px')
 

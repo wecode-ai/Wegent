@@ -57,6 +57,14 @@ interface BrowserEntry {
   historyGeneration: number
 }
 
+interface BrowserOpenInput {
+  label: string
+  url: string
+  bounds: BrowserBounds
+  visible: boolean
+  navigateExisting: boolean
+}
+
 export interface BrowserHostEvent {
   sequence: number
   type:
@@ -337,20 +345,20 @@ export class EmbeddedBrowserManager {
       this.setAgentControlPaused(entry.label, true)
     })
     contents.once('destroyed', () => {
+      const removedLabels = new Set<string>()
       for (const [attachedLabel, attached] of this.attachedContents) {
-        if (attached.id === contents.id) this.attachedContents.delete(attachedLabel)
+        if (attached.id !== contents.id) continue
+        this.attachedContents.delete(attachedLabel)
+        removedLabels.add(attachedLabel)
       }
       for (const [entryLabel, entry] of this.entries) {
-        if (entry.contents.id === contents.id) this.entries.delete(entryLabel)
+        if (entry.contents.id !== contents.id) continue
+        this.entries.delete(entryLabel)
+        removedLabels.add(entryLabel)
       }
+      for (const removedLabel of removedLabels) this.clearLabelScopedState(removedLabel)
     })
-    const waiters = this.attachmentWaiters.get(normalizedLabel)
-    if (!waiters) return
-    this.attachmentWaiters.delete(normalizedLabel)
-    for (const waiter of waiters) {
-      clearTimeout(waiter.timeout)
-      waiter.resolve(contents)
-    }
+    this.resolveAttachmentWaiters(normalizedLabel, contents)
   }
 
   requestPopupTab(parentLabel: string, url: string): void {
@@ -373,26 +381,13 @@ export class EmbeddedBrowserManager {
     })
   }
 
-  async open(input: {
-    label: string
-    url: string
-    bounds: BrowserBounds
-    visible: boolean
-    navigateExisting: boolean
-  }): Promise<BrowserPageState> {
+  async open(input: BrowserOpenInput): Promise<BrowserPageState> {
     const label = requiredLabel(input.label)
     const existing = this.entries.get(label)
-    if (existing) {
-      existing.bounds = validBounds(input.bounds)
-      existing.visible = input.visible
-      if (input.navigateExisting && existing.contents.getURL() !== input.url) {
-        const url = validBrowserUrl(input.url)
-        existing.requestedUrl = url
-        await this.load(existing, url)
-      }
-      return this.state(label)
-    }
+    if (existing) return this.openExisting(existing, input)
     const contents = await this.waitForAttachedContents(label)
+    const migrated = this.entries.get(label)
+    if (migrated) return this.openExisting(migrated, input)
     const entry: BrowserEntry = {
       label,
       nativeLabel: `electron-browser-${randomUUID()}`,
@@ -486,6 +481,20 @@ export class EmbeddedBrowserManager {
     // The requested URL is already authoritative in state() while Chromium finishes loading.
     await this.load(entry, entry.requestedUrl as string)
     return this.state(label)
+  }
+
+  private async openExisting(
+    entry: BrowserEntry,
+    input: BrowserOpenInput
+  ): Promise<BrowserPageState> {
+    entry.bounds = validBounds(input.bounds)
+    entry.visible = input.visible
+    if (input.navigateExisting && entry.contents.getURL() !== input.url) {
+      const url = validBrowserUrl(input.url)
+      entry.requestedUrl = url
+      await this.load(entry, url)
+    }
+    return this.state(entry.label)
   }
 
   setBounds(label: string, bounds: BrowserBounds, visible: boolean): void {
@@ -654,6 +663,7 @@ export class EmbeddedBrowserManager {
     this.clearAgentCursorHide(fromLabel)
     if (cursorState && !this.agentActive.has(fromLabel)) this.scheduleAgentCursorHide(target)
     if (this.agentActive.delete(fromLabel)) this.agentActive.add(target)
+    if (attached && !attached.isDestroyed()) this.resolveAttachmentWaiters(target, attached)
   }
 
   setActiveTab(baseLabel: string, activeLabel: string): void {
@@ -896,6 +906,11 @@ export class EmbeddedBrowserManager {
     if (!entry) return
     if (expectedNativeLabel && entry.nativeLabel !== expectedNativeLabel) return
     this.entries.delete(label)
+    this.clearLabelScopedState(label)
+    if (!entry.contents.isDestroyed()) entry.contents.close()
+  }
+
+  private clearLabelScopedState(label: string): void {
     this.agentControlPaused.delete(label)
     this.agentActive.delete(label)
     this.clearAgentCursorHide(label)
@@ -906,7 +921,10 @@ export class EmbeddedBrowserManager {
       if (approval.label === label) this.agentApprovals.delete(approvalId)
     }
     this.attachedContents.delete(label)
-    if (!entry.contents.isDestroyed()) entry.contents.close()
+    this.rejectAttachmentWaiters(
+      label,
+      new Error(`Embedded browser webview was closed before attachment: ${label}`)
+    )
   }
 
   closeMany(labels: string[]): void {
@@ -1280,6 +1298,26 @@ export class EmbeddedBrowserManager {
       waiters.add({ resolve, reject, timeout })
       this.attachmentWaiters.set(label, waiters)
     })
+  }
+
+  private resolveAttachmentWaiters(label: string, contents: WebContents): void {
+    const waiters = this.attachmentWaiters.get(label)
+    if (!waiters) return
+    this.attachmentWaiters.delete(label)
+    for (const waiter of waiters) {
+      clearTimeout(waiter.timeout)
+      waiter.resolve(contents)
+    }
+  }
+
+  private rejectAttachmentWaiters(label: string, error: Error): void {
+    const waiters = this.attachmentWaiters.get(label)
+    if (!waiters) return
+    this.attachmentWaiters.delete(label)
+    for (const waiter of waiters) {
+      clearTimeout(waiter.timeout)
+      waiter.reject(error)
+    }
   }
 }
 

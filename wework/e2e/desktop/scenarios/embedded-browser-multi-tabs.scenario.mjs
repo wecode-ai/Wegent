@@ -17,6 +17,7 @@ const RIGHT_NEW_TAB_TERMINAL_OPTION_SELECTOR =
 const ACTIVE_BROWSER_PANEL_SELECTOR =
   ACTIVE_WORKBENCH_SELECTOR +
   ' [data-testid="right-workspace-panel"] div:not(.hidden) > [data-testid="workspace-browser-panel"]'
+const ACTIVE_BROWSER_WEBVIEW_HOST_SELECTOR = '[data-testid="workspace-browser-electron-webview"]'
 const BROWSER_INPUT_SELECTOR =
   ACTIVE_BROWSER_PANEL_SELECTOR + ' [data-testid="workspace-browser-url-input"]'
 const FIRST_BROWSER_TAB_SELECTOR = '[data-testid="right-workspace-browser-tab-1"]'
@@ -285,7 +286,8 @@ export function createDesktopScenario({ captureScreenshot, executorHome, resultD
         return true
       }
       if (url.pathname === NAVIGATION_FAILURE_PATH) {
-        request.socket.destroy()
+        response.writeHead(302, { location: NAVIGATION_FAILURE_PATH })
+        response.end()
         return true
       }
       return false
@@ -672,7 +674,7 @@ export function createDesktopScenario({ captureScreenshot, executorHome, resultD
       await control.command('fill', ACTIVE_COMPOSER_SELECTOR, {
         value: CHECKPOINT_TASK_PROMPT,
       })
-      await control.command('startElementMetricsSampling', ACTIVE_BROWSER_PANEL_SELECTOR, {
+      await control.command('startElementMetricsSampling', ACTIVE_BROWSER_WEBVIEW_HOST_SELECTOR, {
         value: '2000',
         visible: true,
       })
@@ -693,6 +695,13 @@ export function createDesktopScenario({ captureScreenshot, executorHome, resultD
         JSON.stringify(elementMetricsSample, null, 2) + '\n',
         'utf8'
       )
+      const disconnectedFrames = elementMetricsSample.frames.filter(frame => !frame.connected)
+      assert.equal(
+        disconnectedFrames.length,
+        0,
+        `Creating the first task remounted the browser webview for ` +
+          `${disconnectedFrames.length} frames`
+      )
       const sampledWidths = elementMetricsSample.frames.map(frame => frame.width)
       const sampledLefts = elementMetricsSample.frames.map(frame => frame.left)
       const minimumWidth = Math.min(...sampledWidths)
@@ -700,25 +709,24 @@ export function createDesktopScenario({ captureScreenshot, executorHome, resultD
       const minimumLeft = Math.min(...sampledLefts)
       const maximumLeft = Math.max(...sampledLefts)
       console.log(
-        '[browser-multi-tabs] migration panel bounds: ' +
+        '[browser-multi-tabs] migration webview bounds: ' +
           `width=${minimumWidth}..${maximumWidth}, left=${minimumLeft}..${maximumLeft}`
       )
       assert.ok(
         maximumWidth - minimumWidth <= 1,
-        `Creating the first task resized the browser panel: ${minimumWidth}..${maximumWidth}`
+        `Creating the first task resized the browser webview: ${minimumWidth}..${maximumWidth}`
       )
       assert.ok(
         maximumLeft - minimumLeft <= 1,
-        `Creating the first task shifted the browser panel: ${minimumLeft}..${maximumLeft}`
+        `Creating the first task shifted the browser webview: ${minimumLeft}..${maximumLeft}`
       )
-      const framesWithoutNativeView = elementMetricsSample.frames.filter(
-        frame => !frame.testIds.includes('workspace-browser-native-view')
+      const hiddenFrames = elementMetricsSample.frames.filter(
+        frame => frame.visibility !== 'visible'
       )
       assert.equal(
-        framesWithoutNativeView.length,
+        hiddenFrames.length,
         0,
-        `Creating the first task briefly rendered the empty browser state for ` +
-          `${framesWithoutNativeView.length} frames`
+        `Creating the first task hid the browser webview for ${hiddenFrames.length} frames`
       )
       const activeSuffix = activeTemporaryLabel.slice(firstBrowserLabel.length)
       const activeMigratedLabel = migratedBaseLabel + activeSuffix

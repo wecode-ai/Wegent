@@ -83,7 +83,6 @@ const SCENARIO_ONLY_CHECKPOINTS = new Set([
   'browser-annotation-anchors',
   'browser-annotation-design',
   'external-content-import',
-  'browser-multi-tabs',
 ])
 const CLOUD_ONLY_CHECKPOINTS = new Set([
   'cloud-git-worktree',

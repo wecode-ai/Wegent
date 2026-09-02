@@ -165,7 +165,7 @@ import {
   listenEmbeddedBrowserOpenRequests,
   listenEmbeddedBrowserPopupRequests,
   markEmbeddedBrowserLabelTransferred,
-  migrateEmbeddedBrowserLabel,
+  migrateEmbeddedBrowserLabelSequence,
   setEmbeddedBrowserActiveTab,
   type EmbeddedBrowserOpenRequest,
 } from '@/lib/embedded-browser'
@@ -2523,32 +2523,22 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
         waitForSource: Boolean(state.nativeLabel || state.openRequest),
       }))
 
-    void mappings
-      .reduce(async (previous, { fromLabel, toLabel, waitForSource }) => {
-        await previous
-        if (fromLabel === toLabel) return
-        await migrateEmbeddedBrowserLabel(fromLabel, toLabel, {
-          waitForSource,
-          signal: abortController.signal,
-        })
-      }, Promise.resolve())
-      .then(() => {
+    void migrateEmbeddedBrowserLabelSequence(mappings, {
+      signal: abortController.signal,
+      onMigrated: ({ tab, toLabel }) => {
         if (disposed) return
         setBrowserStates(current => {
-          let changed = false
-          const next = { ...current }
-          mappings.forEach(({ tab, toLabel }) => {
-            const state = next[tab]
-            if (!state || state.label === toLabel) return
-            next[tab] = { ...state, label: toLabel }
-            changed = true
-          })
-          return changed ? next : current
+          const state = current[tab]
+          if (!state || state.label === toLabel) return current
+          return {
+            ...current,
+            [tab]: { ...state, label: toLabel },
+          }
         })
-      })
-      .catch(error => {
-        console.error('Failed to migrate embedded browser label:', error)
-      })
+      },
+    }).catch(error => {
+      console.error('Failed to migrate embedded browser label:', error)
+    })
 
     return () => {
       disposed = true
