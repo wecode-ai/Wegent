@@ -2057,6 +2057,75 @@ describe('WorkspaceBrowserPanel', () => {
     })
   })
 
+  test('opens an agent browser while its task is backgrounded', async () => {
+    window.__WEWORK_RUNTIME_CONFIG__ = {
+      ...window.__WEWORK_RUNTIME_CONFIG__,
+      desktopHost: 'electron',
+    }
+    const openRequest = {
+      id: 'test-background-agent',
+      baseLabel: 'workspace-browser',
+      source: 'agent' as const,
+      disposition: 'current-tab' as const,
+      label: 'workspace-browser',
+      url: 'https://example.test/',
+    }
+
+    render(<WorkspaceBrowserPanel active={false} backgroundActive openRequest={openRequest} />)
+
+    const webviewHost = await screen.findByTestId('workspace-browser-electron-webview')
+    expect(webviewHost).toHaveStyle({ visibility: 'hidden' })
+    await waitFor(() => {
+      expect(embeddedBrowserMocks.openEmbeddedBrowser).toHaveBeenCalledWith(
+        'about:blank',
+        {
+          x: 0,
+          y: 0,
+          width: 1,
+          height: 1,
+        },
+        'workspace-browser',
+        false,
+        true,
+        false
+      )
+    })
+    expect(embeddedBrowserMocks.closeEmbeddedBrowser).not.toHaveBeenCalled()
+  })
+
+  test('reclaims a background agent browser when background execution ends', async () => {
+    window.__WEWORK_RUNTIME_CONFIG__ = {
+      ...window.__WEWORK_RUNTIME_CONFIG__,
+      desktopHost: 'electron',
+    }
+    const openRequest = {
+      id: 'test-background-agent',
+      baseLabel: 'workspace-browser',
+      source: 'agent' as const,
+      disposition: 'current-tab' as const,
+      label: 'workspace-browser',
+      url: 'https://example.test/',
+    }
+    const view = render(
+      <WorkspaceBrowserPanel active={false} backgroundActive openRequest={openRequest} />
+    )
+
+    await waitFor(() => {
+      expect(embeddedBrowserMocks.openEmbeddedBrowser).toHaveBeenCalledOnce()
+    })
+    embeddedBrowserMocks.closeEmbeddedBrowser.mockClear()
+
+    view.rerender(<WorkspaceBrowserPanel active={false} openRequest={openRequest} />)
+
+    await waitFor(() => {
+      expect(screen.queryByTestId('workspace-browser-electron-webview')).not.toBeInTheDocument()
+      expect(embeddedBrowserMocks.closeEmbeddedBrowser).toHaveBeenCalledWith(
+        'workspace-browser',
+        'workspace-browser-native-1'
+      )
+    })
+  })
+
   test('closes an in-flight browser and reopens it after the panel becomes active', async () => {
     mockBrowserHostRect()
     let resolveOpen:

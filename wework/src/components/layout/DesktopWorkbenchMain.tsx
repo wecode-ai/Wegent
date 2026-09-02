@@ -5056,6 +5056,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
             <RightWorkspacePanel
               showWorkbenchBackground={hasMainBackground && !rightPanelExpanded}
               visible={paneVisible && workbenchVisible && rightPanelOpen}
+              backgrounded={!paneVisible && rightPanelOpen}
               renderTabsInAppTitlebar={!splitMode}
               expanded={rightPanelExpanded}
               activeView={effectiveRightPanelView}

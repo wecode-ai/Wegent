@@ -181,6 +181,7 @@ function browserOcclusionReducer(
 
 export interface WorkspaceBrowserPanelProps {
   active: boolean
+  backgroundActive?: boolean
   hideToolbar?: boolean
   label?: string
   browserTabId?: string
@@ -339,6 +340,7 @@ function observeElementIfPresent(observer: ResizeObserver, element: Element | nu
 
 export function WorkspaceBrowserTabPanel({
   active,
+  backgroundActive = false,
   hideToolbar = false,
   label = 'workspace-browser',
   browserTabId = label,
@@ -371,6 +373,8 @@ export function WorkspaceBrowserTabPanel({
   const annotationModeRef = useRef(false)
   const currentLabelRef = useRef(label)
   const activeRef = useRef(active)
+  const browserRuntimeActive = active || backgroundActive
+  const browserRuntimeActiveRef = useRef(browserRuntimeActive)
   const nativeLabelRef = useRef<string | null>(null)
   const adoptedDownloadOwnerLabelRef = useRef<string | null>(null)
   const trackedTerminalDownloadIdsRef = useRef(new Set<string>())
@@ -562,9 +566,10 @@ export function WorkspaceBrowserTabPanel({
   useLayoutEffect(() => {
     currentLabelRef.current = label
     activeRef.current = active
+    browserRuntimeActiveRef.current = browserRuntimeActive
     nativeBrowserLifecycleGenerationRef.current += 1
     pageStateRequestGenerationRef.current += 1
-  }, [active, label])
+  }, [active, browserRuntimeActive, label])
 
   useEffect(() => {
     return subscribeEmbeddedBrowserDownloadEvents(download => {
@@ -1254,9 +1259,9 @@ export function WorkspaceBrowserTabPanel({
   }, [currentUrl])
 
   useEffect(() => {
-    if (!active || !embeddedBrowserAvailable || !currentUrl) return
+    if (!browserRuntimeActive || !embeddedBrowserAvailable || !currentUrl) return
     if (nativeBrowserOpenRef.current) {
-      schedulePostOpenBoundsSync(true)
+      schedulePostOpenBoundsSync(active)
       return
     }
     if (nativeBrowserOpeningGenerationRef.current !== null) return
@@ -1268,7 +1273,7 @@ export function WorkspaceBrowserTabPanel({
     const lifecycleGeneration = nativeBrowserLifecycleGenerationRef.current
     const isAbandoned = () =>
       !mountedRef.current ||
-      !activeRef.current ||
+      !browserRuntimeActiveRef.current ||
       currentLabelRef.current !== openingLabel ||
       nativeBrowserLifecycleGenerationRef.current !== lifecycleGeneration
     nativeBrowserOpeningGenerationRef.current = lifecycleGeneration
@@ -1432,6 +1437,7 @@ export function WorkspaceBrowserTabPanel({
     active,
     adoptNativeLabel,
     applyNativePageStatus,
+    browserRuntimeActive,
     browserOpenAttempt,
     currentUrl,
     embeddedBrowserAvailable,
@@ -1442,7 +1448,14 @@ export function WorkspaceBrowserTabPanel({
   ])
 
   useEffect(() => {
-    if (!active || !embeddedBrowserAvailable || nativeBrowserOpenRef.current || currentUrl) return
+    if (
+      !browserRuntimeActive ||
+      !embeddedBrowserAvailable ||
+      nativeBrowserOpenRef.current ||
+      currentUrl
+    ) {
+      return
+    }
 
     let disposed = false
 
@@ -1476,6 +1489,7 @@ export function WorkspaceBrowserTabPanel({
     active,
     adoptNativeLabel,
     applyNativePageStatus,
+    browserRuntimeActive,
     currentUrl,
     embeddedBrowserAvailable,
     label,
@@ -1498,7 +1512,9 @@ export function WorkspaceBrowserTabPanel({
         setOriginalViewHeld(false)
         setAnnotationMode(false)
       })
+    }
 
+    if (!browserRuntimeActive) {
       const expectedNativeLabel = nativeLabelRef.current ?? undefined
       const ownsNativeBrowser =
         nativeBrowserOpenRef.current ||
@@ -1526,6 +1542,7 @@ export function WorkspaceBrowserTabPanel({
     scheduleEmbeddedBrowserBoundsSync(active)
   }, [
     active,
+    browserRuntimeActive,
     clearScheduledBoundsSync,
     embeddedBrowserAvailable,
     label,
@@ -2963,9 +2980,9 @@ export function WorkspaceBrowserTabPanel({
             )}
             aria-label={t('workbench.browser')}
           >
-            {electronRuntime && active ? (
+            {electronRuntime && browserRuntimeActive ? (
               <ElectronEmbeddedBrowserView
-                active
+                active={active}
                 cursor={agentCursor}
                 cursorScale={
                   deviceToolbar.isEnabled

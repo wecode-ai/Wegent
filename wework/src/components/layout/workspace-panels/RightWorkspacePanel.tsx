@@ -159,6 +159,7 @@ interface RightWorkspaceReviewState {
 interface RightWorkspacePanelProps {
   showWorkbenchBackground?: boolean
   visible: boolean
+  backgrounded?: boolean
   renderTabsInAppTitlebar?: boolean
   expanded?: boolean
   allowTemporaryChat?: boolean
@@ -232,6 +233,7 @@ interface RightWorkspacePanelProps {
 interface RightWorkspaceBrowserPanelSlotProps {
   tab: RightWorkspaceBrowserTab
   active: boolean
+  backgroundActive: boolean
   state: RightWorkspaceBrowserState
   codeCommentCount: number
   codeCommentContexts: CodeCommentContext[]
@@ -251,6 +253,7 @@ interface RightWorkspaceBrowserPanelSlotProps {
 function RightWorkspaceBrowserPanelSlot({
   tab,
   active,
+  backgroundActive,
   state,
   codeCommentCount,
   codeCommentContexts,
@@ -288,6 +291,7 @@ function RightWorkspaceBrowserPanelSlot({
   return (
     <WorkspaceBrowserPanel
       active={active}
+      backgroundActive={backgroundActive}
       hideToolbar={Boolean(state.developmentPreview)}
       label={state.label}
       browserTabId={tab}
@@ -351,6 +355,7 @@ function SmartAppDevelopmentPreviewState({
 export const RightWorkspacePanel = memo(function RightWorkspacePanel({
   showWorkbenchBackground = false,
   visible,
+  backgrounded = false,
   renderTabsInAppTitlebar = true,
   expanded = false,
   allowTemporaryChat = true,
@@ -750,6 +755,9 @@ export const RightWorkspacePanel = memo(function RightWorkspacePanel({
             <RightWorkspaceBrowserPanelSlot
               tab={tab}
               active={visible && activeView === tab}
+              backgroundActive={
+                backgrounded && activeView === tab && browserState.openRequest?.source === 'agent'
+              }
               state={browserState}
               codeCommentCount={codeCommentCount}
               codeCommentContexts={codeCommentContexts}
