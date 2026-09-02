@@ -683,6 +683,30 @@ def test_get_by_id_reads_new_task_id_from_shard_without_legacy_row(
     )
 
 
+def test_get_by_id_for_update_reads_new_task_id_from_shard(test_db):
+    store = ShardedTaskStore()
+    task_id_value = new_task_id(31, 2)
+    add_shard_resource(test_db, task_id_value=task_id_value, user_id=31)
+
+    task = store.get_by_id_for_update(
+        test_db,
+        task_id=task_id_value,
+        owner_user_id=31,
+    )
+
+    assert task is not None
+    assert task.id == task_id_value
+    assert task.__table__.name == task_model_for_task_id(task_id_value).__table__.name
+    assert (
+        store.get_by_id_for_update(
+            test_db,
+            task_id=task_id_value,
+            owner_user_id=99,
+        )
+        is None
+    )
+
+
 def test_get_by_id_rejects_same_slot_different_owner(test_db, fixed_clock):
     store = ShardedTaskStore()
     task_id_value = new_task_id(1068, 1)

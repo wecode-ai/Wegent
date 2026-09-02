@@ -58,6 +58,20 @@ class ShardedTaskStore(SqlAlchemyTaskStore):
         )
         return query.first()
 
+    def get_by_id_for_update(
+        self, db: Session, *, task_id: int, owner_user_id: int | None = None
+    ) -> TaskResource | None:
+        model = self._model_for_task_id_lookup(
+            db, task_id=task_id, owner_user_id=owner_user_id
+        )
+        if model is None:
+            return None
+        query = db.query(model).filter(model.id == task_id)
+        query = self._filter_model_owner_user_id(
+            query, model, owner_user_id=owner_user_id
+        )
+        return query.with_for_update().one_or_none()
+
     def is_valid_task_id(
         self, db: Session, *, task_id: int, owner_user_id: int | None = None
     ) -> bool:
