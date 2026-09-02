@@ -405,23 +405,24 @@ export default function SimpleTeamEditForm({
 
       <SimpleSection title={t('settings:team.simple.sections.prompt')} sectionId="prompt">
         <SimpleConfigGroup>
-          <SimpleConfigRow
-            label={t('settings:team.simple.prompt_protection.label')}
-            description={t('settings:team.simple.prompt_protection.description')}
-            align="start"
-          >
-            <label
-              htmlFor="simple-prompt-protection-enabled"
-              className="flex min-h-11 min-w-11 cursor-pointer items-center justify-start md:justify-end"
-            >
-              <Switch
-                id="simple-prompt-protection-enabled"
-                aria-label={t('settings:team.simple.prompt_protection.label')}
-                checked={promptProtectionEnabled}
-                onCheckedChange={setPromptProtectionEnabled}
-                data-testid="prompt-protection-enabled-switch"
-              />
-            </label>
+          <SimpleConfigRow label={t('settings:team.simple.prompt_protection.label')} align="start">
+            <div className="flex items-start justify-between gap-4">
+              <p className="min-w-0 flex-1 text-xs leading-5 text-text-muted">
+                {t('settings:team.simple.prompt_protection.description')}
+              </p>
+              <label
+                htmlFor="simple-prompt-protection-enabled"
+                className="flex min-h-11 min-w-11 shrink-0 cursor-pointer items-center justify-center"
+              >
+                <Switch
+                  id="simple-prompt-protection-enabled"
+                  aria-label={t('settings:team.simple.prompt_protection.label')}
+                  checked={promptProtectionEnabled}
+                  onCheckedChange={setPromptProtectionEnabled}
+                  data-testid="prompt-protection-enabled-switch"
+                />
+              </label>
+            </div>
           </SimpleConfigRow>
           <div className="space-y-2">
             <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">

@@ -100,7 +100,12 @@ describe('SimpleTeamEditForm prompt protection', () => {
     expect(toggle).not.toBeChecked()
     const hitTarget = toggle.parentElement
     expect(hitTarget?.tagName).toBe('LABEL')
-    expect(hitTarget).toHaveClass('min-h-11', 'min-w-11', 'justify-start', 'md:justify-end')
+    expect(hitTarget).toHaveClass('min-h-11', 'min-w-11', 'shrink-0', 'justify-center')
+    expect(hitTarget?.parentElement).toHaveClass('flex', 'items-start', 'justify-between', 'gap-4')
+    expect(screen.getByText('Best-effort extra model call; not a security boundary.')).toHaveClass(
+      'min-w-0',
+      'flex-1'
+    )
     expect(screen.getByText('Prompt protection')).toBeInTheDocument()
     fireEvent.click(hitTarget!)
     expect(setPromptProtectionEnabled).toHaveBeenCalledWith(true)
