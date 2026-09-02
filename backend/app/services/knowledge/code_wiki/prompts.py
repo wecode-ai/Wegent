@@ -76,7 +76,11 @@ wiki_submit, delegate another Reviewer, write pages, or call `complete`; stop th
 and return that terminal diagnostic immediately.
 This run uses the backend-enforced `plan_only` review policy. The Writer opens the Plan
 handoff but never submits the Reviewer verdict. After Plan passes, write every planned
-page and call `complete`; do not open QA or Recheck. Confirm that `review-status`
+page and call `complete`; do not open QA or Recheck. If the Coordinator discovers one
+necessary page that the passed Plan did not cover, do not submit it directly: before
+delegating or writing that page, use the Plan amendment protocol in REVIEW_CONTRACT.md.
+Only the Coordinator opens that handoff; its passed effective plan becomes the new
+authoritative page set. Confirm that `review-status`
 returns `reviewPolicy=plan_only` and follow its `nextAction` as authoritative.
 When the passed Writing Plan uses scoped mode, delegate each Work Package to
 `{context.section_writer_agent_type or "the configured Section Writer agent"}` with
