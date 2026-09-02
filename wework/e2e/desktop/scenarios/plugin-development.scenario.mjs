@@ -21,12 +21,12 @@ async function waitForSnapshot(control, predicate, message, timeoutMs) {
 }
 
 async function waitForStatus(control, expected, timeoutMs) {
-  await control.command('waitFor', STATUS, {
+  await control.commandForWindow('main', 'waitFor', STATUS, {
     text: expected,
     timeoutMs,
     visible: true,
   })
-  const status = await control.command('getText', STATUS, { visible: true })
+  const status = await control.commandForWindow('main', 'getText', STATUS, { visible: true })
   assert.ok(status.includes(expected), `Unexpected plugin development status: ${status}`)
 }
 
@@ -56,6 +56,7 @@ export async function createDesktopScenario({
   return {
     appEnvironment: {
       WEWORK_E2E_OPEN_DIALOG_PATH: pluginRoot,
+      WEWORK_PLUGIN_DEVELOPMENT_E2E: '1',
     },
 
     async verify(control) {
@@ -97,6 +98,7 @@ export async function createDesktopScenario({
       })
       await captureScreenshot(control, 'plugin-development-04-create-entry.png', 'body')
 
+      const readyCountBeforeStart = control.readyCount
       await control.command(
         'clickWhenEnabled',
         '[data-testid="wework-plugin-developer-create-button"]',
@@ -144,6 +146,13 @@ export async function createDesktopScenario({
         '[data-testid="wework-plugin-development-sidebar-start"]',
         { timeoutMs: workbenchReadyTimeoutMs, visible: true }
       )
+      const isolatedReady = await control.awaitReadyAfter(readyCountBeforeStart)
+      assert.ok(
+        isolatedReady.windowLabel.startsWith('plugin-development-'),
+        `Unexpected plugin development window label: ${isolatedReady.windowLabel}`
+      )
+      const isolatedWindowLabel = isolatedReady.windowLabel
+      control.activateWindow('main')
       await waitForStatus(control, 'ready · HMR 0', workbenchReadyTimeoutMs)
       const focusSnapshot = JSON.parse(await control.command('getWindowFocusSnapshot', 'body'))
       assert.equal(
@@ -156,9 +165,37 @@ export async function createDesktopScenario({
 
       const clientPath = join(pluginRoot, 'client.js')
       const client = await readFile(clientPath, 'utf8')
-      await writeFile(clientPath, `${client}\n// desktop-e2e-hmr-generation-1\n`)
+      assert.ok(client.includes('    apply() {},'), 'Generated plugin client apply hook is missing')
+      const changedClient = client.replace(
+        '    apply() {},',
+        [
+          '    apply() {',
+          "      const marker = document.createElement('div')",
+          "      marker.dataset.testid = 'plugin-development-hmr-behavior'",
+          "      marker.textContent = 'Plugin HMR behavior loaded'",
+          "      marker.style.cssText = 'position:fixed;right:24px;bottom:24px;z-index:2147483647;padding:12px 16px;border-radius:10px;background:#111827;color:#fff;font:600 14px system-ui;box-shadow:0 10px 30px rgba(0,0,0,.3)'",
+          '      document.body.appendChild(marker)',
+          '    },',
+        ].join('\n')
+      )
+      const readyCountBeforeHmr = control.readyCount
+      await writeFile(clientPath, changedClient)
       await waitForStatus(control, 'ready · HMR 1', workbenchReadyTimeoutMs)
-      await captureScreenshot(control, 'plugin-development-08-hmr-applied.png', 'body')
+      await control.awaitReadyAfter(readyCountBeforeHmr)
+      await control.commandForWindow(
+        isolatedWindowLabel,
+        'waitFor',
+        '[data-testid="plugin-development-hmr-behavior"]',
+        {
+          text: 'Plugin HMR behavior loaded',
+          timeoutMs: workbenchReadyTimeoutMs,
+          visible: true,
+        }
+      )
+      control.activateWindow(isolatedWindowLabel)
+      await captureScreenshot(control, 'plugin-development-08-hmr-behavior.png', 'body')
+      control.activateWindow('main')
+      await captureScreenshot(control, 'plugin-development-09-hmr-applied.png', 'body')
 
       await control.command(
         'clickWhenEnabled',
@@ -166,7 +203,7 @@ export async function createDesktopScenario({
         { timeoutMs: workbenchReadyTimeoutMs, visible: true }
       )
       await waitForStatus(control, 'stopped · HMR 1', workbenchReadyTimeoutMs)
-      await captureScreenshot(control, 'plugin-development-09-debug-stopped-after-hmr.png', 'body')
+      await captureScreenshot(control, 'plugin-development-10-debug-stopped-after-hmr.png', 'body')
     },
   }
 }

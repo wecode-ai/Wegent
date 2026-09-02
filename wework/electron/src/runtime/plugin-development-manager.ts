@@ -60,6 +60,8 @@ const INHERITED_ELECTRON_SWITCHES = [
   'in-process-gpu',
   'disable-dev-shm-usage',
 ] as const
+const PLUGIN_DEVELOPMENT_APPEARANCE_MODES = new Set(['light', 'dark', 'system'])
+const PLUGIN_DEVELOPMENT_LANGUAGES = new Set(['system', 'zh-CN', 'en'])
 
 export interface PluginDevelopmentManagerOptions {
   command: string
@@ -72,6 +74,47 @@ export interface PluginDevelopmentManagerOptions {
 
 export function pluginDevelopmentElectronArguments(hasSwitch: (name: string) => boolean): string[] {
   return INHERITED_ELECTRON_SWITCHES.filter(hasSwitch).map(name => `--${name}`)
+}
+
+export async function seedPluginDevelopmentPreferences(
+  parentUserDataDirectory: string,
+  childUserDataDirectory: string
+): Promise<void> {
+  let preferences: unknown
+  try {
+    preferences = JSON.parse(
+      await readFile(join(parentUserDataDirectory, 'app-preferences.json'), 'utf8')
+    )
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return
+    throw error
+  }
+  if (!preferences || typeof preferences !== 'object') return
+
+  const source = preferences as Record<string, unknown>
+  const inherited: Record<string, unknown> = {}
+  if (
+    typeof source.appearanceMode === 'string' &&
+    PLUGIN_DEVELOPMENT_APPEARANCE_MODES.has(source.appearanceMode)
+  ) {
+    inherited.appearanceMode = source.appearanceMode
+  }
+  if (typeof source.language === 'string' && PLUGIN_DEVELOPMENT_LANGUAGES.has(source.language)) {
+    inherited.language = source.language
+  }
+  if (typeof source.telemetryConsentAsked === 'boolean') {
+    inherited.telemetryConsentAsked = source.telemetryConsentAsked
+  }
+  if (typeof source.telemetryEnabled === 'boolean') {
+    inherited.telemetryEnabled = source.telemetryEnabled
+  }
+
+  await mkdir(childUserDataDirectory, { recursive: true, mode: 0o700 })
+  await writeFile(
+    join(childUserDataDirectory, 'app-preferences.json'),
+    `${JSON.stringify(inherited, null, 2)}\n`,
+    { mode: 0o600 }
+  )
 }
 
 export class PluginDevelopmentManager {
@@ -259,6 +302,7 @@ export class PluginDevelopmentManager {
     const logDirectory = join(root, 'logs')
     const statePath = join(root, 'state.json')
     await mkdir(logDirectory, { recursive: true, mode: 0o700 })
+    await seedPluginDevelopmentPreferences(this.options.userDataDirectory, userDataDirectory)
     await rm(statePath, { force: true })
     const environment = pluginDevelopmentEnvironment(
       this.options.environment,
@@ -530,6 +574,9 @@ export function pluginDevelopmentEnvironment(
   userDataDirectory: string,
   statePath: string
 ): NodeJS.ProcessEnv {
+  const e2eControlUrl = base.WEWORK_E2E_CONTROL_URL?.trim()
+  const e2eControlToken = base.WEWORK_E2E_CONTROL_TOKEN?.trim()
+  const e2eEnabled = base.WEWORK_PLUGIN_DEVELOPMENT_E2E === '1' && Boolean(e2eControlUrl)
   const environment = { ...base }
   delete environment.ELECTRON_RUN_AS_NODE
   delete environment.CODEX_HOME
@@ -546,6 +593,14 @@ export function pluginDevelopmentEnvironment(
   return {
     ...environment,
     WEWORK_INSTANCE_MODE: 'core-dsh-plugin-development',
+    ...(e2eEnabled
+      ? {
+          WEWORK_E2E_CONTROL_URL: e2eControlUrl,
+          ...(e2eControlToken ? { WEWORK_E2E_CONTROL_TOKEN: e2eControlToken } : {}),
+          WEWORK_PLUGIN_DEVELOPMENT_E2E: '1',
+          WEWORK_PLUGIN_DEVELOPMENT_E2E_WINDOW_LABEL: `plugin-development-${id}`,
+        }
+      : {}),
     WEWORK_PLUGIN_DEVELOPMENT_ROOT: plugin.sourceRoot,
     WEWORK_PLUGIN_DEVELOPMENT_STATE_PATH: statePath,
     WEWORK_PLUGIN_DEVELOPMENT_TITLE: plugin.displayName,

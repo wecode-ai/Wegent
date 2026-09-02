@@ -11,6 +11,7 @@ export interface DesktopE2ERuntimeConfig {
   posthogKey?: string
   seedLocalModels?: boolean
   transcriptPageSize?: number
+  windowLabel?: string
   worktreeCreationDelayMs?: number
 }
 

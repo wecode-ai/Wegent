@@ -2405,10 +2405,12 @@ async function runDesktopControlClient(url: string, windowLabel: string): Promis
 function installDesktopControlClient() {
   if (!isDesktopRuntime()) return
   const url = desktopControlUrl()
-  const windowLabel = getDesktopWindowLabel()
+  const windowLabel = getDesktopE2ERuntimeConfig().windowLabel ?? getDesktopWindowLabel()
   if (
     !url ||
-    (windowLabel !== 'main' && !windowLabel.startsWith('workspace-')) ||
+    (windowLabel !== 'main' &&
+      !windowLabel.startsWith('workspace-') &&
+      !windowLabel.startsWith('plugin-development-')) ||
     window.location.pathname.startsWith('/system-drag')
   ) {
     return

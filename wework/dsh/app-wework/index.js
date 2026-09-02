@@ -240,7 +240,10 @@ export function runtimeConfigScript(environment = process.env, windowLabel = 'ma
       environment.WEWORK_E2E_CONTROL_TOKEN || environment.VITE_WEWORK_DESKTOP_E2E_CONTROL_TOKEN,
     controlUrl:
       environment.WEWORK_E2E_CONTROL_URL || environment.VITE_WEWORK_DESKTOP_E2E_CONTROL_URL,
-    disabled: environment.WEWORK_INSTANCE_MODE === 'core-dsh-plugin-development' || undefined,
+    disabled:
+      (environment.WEWORK_INSTANCE_MODE === 'core-dsh-plugin-development' &&
+        environment.WEWORK_PLUGIN_DEVELOPMENT_E2E !== '1') ||
+      undefined,
     localModelsCatalogReady: environmentBoolean(
       environment,
       'WEWORK_E2E_LOCAL_MODELS_CATALOG_READY',
@@ -260,6 +263,7 @@ export function runtimeConfigScript(environment = process.env, windowLabel = 'ma
       'WEWORK_E2E_TRANSCRIPT_PAGE_SIZE',
       'VITE_WEWORK_E2E_TRANSCRIPT_PAGE_SIZE'
     ),
+    windowLabel: environment.WEWORK_PLUGIN_DEVELOPMENT_E2E_WINDOW_LABEL,
     worktreeCreationDelayMs: environmentPositiveInteger(
       environment,
       'WEWORK_E2E_WORKTREE_CREATION_DELAY_MS',

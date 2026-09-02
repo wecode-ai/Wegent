@@ -4,6 +4,7 @@ import {
   encodeRightWorkspaceExtensionTabId,
   isWeworkWorkspaceSidebarTabAvailable,
   rightWorkspaceDshSidebar,
+  shouldCloseUnavailableWeworkWorkspaceSidebarTab,
 } from './rightWorkspaceDshSidebar'
 
 describe('rightWorkspaceDshSidebar', () => {
@@ -97,6 +98,7 @@ describe('rightWorkspaceDshSidebar', () => {
     }
 
     expect(isWeworkWorkspaceSidebarTabAvailable(descriptor, 'standard')).toBe(false)
+    expect(isWeworkWorkspaceSidebarTabAvailable(descriptor, 'unresolved')).toBe(false)
     expect(
       isWeworkWorkspaceSidebarTabAvailable(descriptor, 'wework-core-dsh-plugin', () => false)
     ).toBe(false)
@@ -107,6 +109,12 @@ describe('rightWorkspaceDshSidebar', () => {
         pluginKey => pluginKey === 'wework-plugin-developer'
       )
     ).toBe(true)
+    expect(shouldCloseUnavailableWeworkWorkspaceSidebarTab(descriptor, 'unresolved', false)).toBe(
+      false
+    )
+    expect(shouldCloseUnavailableWeworkWorkspaceSidebarTab(descriptor, 'standard', false)).toBe(
+      true
+    )
   })
 
   test('preserves plugin-only conditions from DSH descriptors', () => {

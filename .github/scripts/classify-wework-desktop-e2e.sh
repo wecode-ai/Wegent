@@ -319,6 +319,9 @@ classify_wework_path() {
       wework/src/components/layout/workspace-panels/rightWorkspaceDshSidebar* | \
       wework/src/components/layout/workspace-panels/RightWorkspacePanel.tsx)
       select_target "core:plugin-development"
+      if [[ "$path" == wework/src/components/layout/workspace-panels/RightWorkspacePanel.tsx ]]; then
+        select_target "core:temporary-chat"
+      fi
       return
       ;;
 

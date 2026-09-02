@@ -2876,7 +2876,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
       const tab = {
         id: seed.id ?? descriptor.id,
         type: descriptor.id,
-        title: seed.title ?? titleOfWeworkWorkspaceSidebarTab(descriptor),
+        title: seed.title ?? titleOfWeworkWorkspaceSidebarTab(descriptor, t),
         ...(seed.path || seed.url ? { path: seed.path ?? seed.url } : {}),
         ...(seed.diff !== undefined ? { diff: seed.diff } : {}),
         ...(seed.meta !== undefined ? { meta: seed.meta } : {}),
@@ -2894,7 +2894,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
       }))
       openRightPanelTab(internalId)
     },
-    [openRightPanelTab]
+    [openRightPanelTab, t]
   )
   const currentWorkItemGuideProject =
     boundCloudProject ?? pendingCloudProject ?? defaultProject ?? defaultWorkItemPreviewProject

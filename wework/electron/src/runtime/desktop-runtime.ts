@@ -1,4 +1,5 @@
 import { createServer } from 'node:net'
+import { resolve } from 'node:path'
 import type { HostPipeServer } from '../host/host-pipe.js'
 import { prepareCoreDshLaunch } from './core-dsh-runtime.js'
 import { resolveDesktopDeviceId } from './desktop-device-id.js'
@@ -135,7 +136,6 @@ export class DesktopRuntime {
     const previous = this.coreDsh
     this.coreDsh = null
     this.coreDshPlugins = null
-    this.developmentPlugin = null
     await previous?.stop()
     try {
       await this.startCoreDsh()
@@ -215,7 +215,7 @@ export class DesktopRuntime {
         environment: launch.environment,
       })
       const developmentRoot = this.options.environment.WEWORK_PLUGIN_DEVELOPMENT_ROOT?.trim()
-      if (developmentRoot) {
+      if (developmentRoot && this.developmentPlugin?.sourceRoot !== resolve(developmentRoot)) {
         this.developmentPlugin = await this.coreDshPlugins.ensureDevelopmentPlugin(developmentRoot)
       }
     }

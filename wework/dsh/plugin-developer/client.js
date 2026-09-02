@@ -3,8 +3,6 @@ window.__ModuleLoader__.load({
   factory: require => {
     const React = require('react')
     const { createElement, useCallback, useEffect, useState } = React
-    const text = (zh, en) =>
-      document.documentElement.lang.toLowerCase().startsWith('zh') ? zh : en
 
     async function invoke(capability, params = {}) {
       const response = await fetch('/wework/electron-host/v1/invoke', {
@@ -19,7 +17,7 @@ window.__ModuleLoader__.load({
       return body.result
     }
 
-    function CreatePluginAction({ onCreate }) {
+    function CreatePluginAction({ onCreate, t }) {
       const [busy, setBusy] = useState(false)
       const [error, setError] = useState('')
       return createElement(
@@ -46,7 +44,9 @@ window.__ModuleLoader__.load({
               }
             },
           },
-          busy ? text('正在创建…', 'Creating…') : text('创建新插件', 'Create plugin')
+          busy
+            ? t('workbench.plugin_development_creating', 'Creating…')
+            : t('workbench.plugin_development_create', 'Create plugin')
         ),
         error
           ? createElement(
@@ -61,20 +61,21 @@ window.__ModuleLoader__.load({
       )
     }
 
-    function PluginDebugPanel({ scope, visible }) {
+    function PluginDebugPanel({ scope, t, visible }) {
       const [session, setSession] = useState(null)
       const [error, setError] = useState('')
       const [busy, setBusy] = useState('')
+      const sourceRoot = scope?.cwd || ''
 
       const refresh = useCallback(async () => {
         try {
           const sessions = await invoke('pluginDevelopment.list')
-          setSession(sessions[0] || null)
+          setSession(sessions.find(candidate => candidate.sourceRoot === sourceRoot) || null)
           setError('')
         } catch (reason) {
           setError(reason instanceof Error ? reason.message : String(reason))
         }
-      }, [])
+      }, [sourceRoot])
 
       useEffect(() => {
         if (!visible) return
@@ -100,8 +101,7 @@ window.__ModuleLoader__.load({
       )
 
       if (!visible) return null
-      const sourceRoot = scope?.cwd || ''
-      const currentSession = session?.sourceRoot === sourceRoot ? session : null
+      const currentSession = session
       const running = currentSession && !['stopped', 'error'].includes(currentSession.status)
       return createElement(
         'aside',
@@ -115,7 +115,7 @@ window.__ModuleLoader__.load({
           createElement(
             'h2',
             { className: 'heading-section' },
-            text('插件调试', 'Plugin debugging')
+            t('workbench.plugin_development_debug', 'Plugin debugging')
           ),
           createElement(
             'p',
@@ -145,7 +145,7 @@ window.__ModuleLoader__.load({
                   'data-testid': 'wework-plugin-development-sidebar-status',
                   className: 'mt-1 text-sm text-text-secondary',
                 },
-                `${text('状态', 'Status')}: ${currentSession.status} · HMR ${currentSession.hmrGeneration}`
+                `${t('workbench.plugin_development_status', 'Status')}: ${currentSession.status} · HMR ${currentSession.hmrGeneration}`
               ),
               currentSession.lastError
                 ? createElement(
@@ -174,8 +174,8 @@ window.__ModuleLoader__.load({
                   onClick: () => run('start', 'pluginDevelopment.start', { sourceRoot }),
                 },
                 busy === 'start'
-                  ? text('启动中…', 'Starting…')
-                  : text('启动调试实例', 'Start debug instance')
+                  ? t('workbench.plugin_development_starting', 'Starting…')
+                  : t('workbench.plugin_development_start', 'Start debug instance')
               )
             : createElement(
                 'button',
@@ -187,7 +187,7 @@ window.__ModuleLoader__.load({
                     'inline-flex min-h-9 items-center rounded-lg bg-text-primary px-3 text-sm text-background disabled:opacity-50',
                   onClick: () => run('focus', 'pluginDevelopment.focus'),
                 },
-                text('切换到调试实例', 'Focus debug instance')
+                t('workbench.plugin_development_focus', 'Focus debug instance')
               ),
           running
             ? createElement(
@@ -202,7 +202,7 @@ window.__ModuleLoader__.load({
                     className: 'min-h-9 rounded-lg border border-border px-3 text-sm',
                     onClick: () => run('restart', 'pluginDevelopment.restartCoreDsh'),
                   },
-                  text('重启 Core DSH', 'Restart Core DSH')
+                  t('workbench.plugin_development_restart_core_dsh', 'Restart Core DSH')
                 ),
                 createElement(
                   'button',
@@ -224,7 +224,7 @@ window.__ModuleLoader__.load({
                     className: 'min-h-9 rounded-lg border border-border px-3 text-sm',
                     onClick: () => run('logs', 'pluginDevelopment.openLogDirectory'),
                   },
-                  text('日志', 'Logs')
+                  t('workbench.plugin_development_logs', 'Logs')
                 ),
                 createElement(
                   'button',
@@ -236,7 +236,7 @@ window.__ModuleLoader__.load({
                       'min-h-9 rounded-lg border border-destructive/40 px-3 text-sm text-destructive',
                     onClick: () => run('stop', 'pluginDevelopment.stop'),
                   },
-                  text('停止', 'Stop')
+                  t('workbench.plugin_development_stop', 'Stop')
                 )
               )
             : null
@@ -249,7 +249,8 @@ window.__ModuleLoader__.load({
         slot: 'wework.plugins.action',
         descriptor: {
           id: 'wework-plugin-developer.create',
-          label: text('创建新插件', 'Create plugin'),
+          label: 'Create plugin',
+          labelKey: 'workbench.plugin_development_create',
           order: 10,
         },
         component: CreatePluginAction,
@@ -258,7 +259,8 @@ window.__ModuleLoader__.load({
         slot: 'wework.workspace.sidebar.tab',
         descriptor: {
           id: 'wework-plugin-developer.debug',
-          label: text('插件调试', 'Plugin debugging'),
+          label: 'Plugin debugging',
+          labelKey: 'workbench.plugin_development_debug',
           order: 15,
           when: {
             projectKinds: ['wework-core-dsh-plugin'],

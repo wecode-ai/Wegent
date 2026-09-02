@@ -1,5 +1,6 @@
 import { describe, expect, test, vi } from 'vitest'
 import type { WebContents } from 'electron'
+import { resolve } from 'node:path'
 import type { EmbeddedBrowserManager } from './embedded-browser-manager.js'
 import type {
   HostCapability,
@@ -42,7 +43,7 @@ describe('e2eOpenDialogOverride', () => {
       })
     ).toEqual({
       canceled: false,
-      filePaths: ['/workspace/plugin'],
+      filePaths: [resolve('/workspace/plugin')],
     })
   })
 

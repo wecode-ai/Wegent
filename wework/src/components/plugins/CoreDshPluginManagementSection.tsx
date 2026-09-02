@@ -106,7 +106,7 @@ export function CoreDshPluginManagementSection({
             <DshSlotSurface
               className="shrink-0"
               entryId="wework-plugin-developer.create"
-              props={{ onCreate: onCreatePlugin }}
+              props={{ onCreate: onCreatePlugin, t }}
               slot={WEWORK_DSH_SLOTS.pluginsAction}
               testId="core-dsh-plugin-page-actions"
             />

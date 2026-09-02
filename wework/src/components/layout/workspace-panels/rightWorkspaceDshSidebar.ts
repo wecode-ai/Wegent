@@ -34,6 +34,7 @@ export interface WeworkWorkspaceSidebarTabComponentProps {
 export interface WeworkWorkspaceSidebarTabDescriptor {
   id: string
   title: string
+  titleKey?: string
   order?: number
   when?: {
     projectKinds?: readonly ('standard' | 'wework-core-dsh-plugin')[]
@@ -107,22 +108,36 @@ function notifyState() {
 }
 
 export function titleOfWeworkWorkspaceSidebarTab(
-  descriptor: WeworkWorkspaceSidebarTabDescriptor
+  descriptor: WeworkWorkspaceSidebarTabDescriptor,
+  translate?: (key: string, fallback: string) => string
 ): string {
+  if (descriptor.titleKey && translate) {
+    return translate(descriptor.titleKey, descriptor.title)
+  }
   return descriptor.title
 }
 
 export function isWeworkWorkspaceSidebarTabAvailable(
   descriptor: WeworkWorkspaceSidebarTabDescriptor,
-  projectKind: 'standard' | 'wework-core-dsh-plugin',
+  projectKind: 'standard' | 'wework-core-dsh-plugin' | 'unresolved',
   isPluginInstalled: (pluginKey: string) => boolean = () => true
 ): boolean {
   const projectKinds = descriptor.when?.projectKinds
   const codexPluginKeys = descriptor.when?.codexPluginKeys
   return (
-    (!projectKinds?.length || projectKinds.includes(projectKind)) &&
+    (!projectKinds?.length ||
+      (projectKind !== 'unresolved' && projectKinds.includes(projectKind))) &&
     (!codexPluginKeys?.length || codexPluginKeys.every(isPluginInstalled))
   )
+}
+
+export function shouldCloseUnavailableWeworkWorkspaceSidebarTab(
+  descriptor: WeworkWorkspaceSidebarTabDescriptor,
+  projectKind: 'standard' | 'wework-core-dsh-plugin' | 'unresolved',
+  available: boolean
+): boolean {
+  if (available) return false
+  return projectKind !== 'unresolved' || !descriptor.when?.projectKinds?.length
 }
 
 export const rightWorkspaceDshSidebar: RightWorkspaceSidebarService = {
@@ -148,9 +163,11 @@ export const rightWorkspaceDshSidebar: RightWorkspaceSidebarService = {
       const codexPluginKeys = Array.isArray(when?.codexPluginKeys)
         ? (when.codexPluginKeys as string[])
         : undefined
+      const titleKey = typeof entry.labelKey === 'string' ? entry.labelKey : undefined
       return {
         id: entry.id,
         title: entry.label ?? entry.id,
+        titleKey,
         order: entry.order,
         when:
           projectKinds || codexPluginKeys

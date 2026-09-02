@@ -5,7 +5,9 @@ import {
 import { subscribeDesktopHostEvents } from '@/api/dsh/desktopHost'
 import { isElectronRuntime } from '@/lib/runtime-environment'
 
-export type PluginDevelopmentProjectKind = PluginDevelopmentProjectClassification['kind']
+export type PluginDevelopmentProjectKind =
+  | PluginDevelopmentProjectClassification['kind']
+  | 'unresolved'
 
 const classifications = new Map<string, PluginDevelopmentProjectClassification>()
 const listeners = new Set<() => void>()
@@ -41,7 +43,7 @@ export function pluginDevelopmentProjectKind(
 ): PluginDevelopmentProjectKind {
   const normalized = sourceRoot?.trim()
   if (!normalized) return 'standard'
-  return classifications.get(normalized)?.kind ?? 'standard'
+  return classifications.get(normalized)?.kind ?? 'unresolved'
 }
 
 export function subscribePluginDevelopmentProjects(listener: () => void): () => void {

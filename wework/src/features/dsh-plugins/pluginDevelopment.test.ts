@@ -10,6 +10,7 @@ import {
   stopPluginDevelopment,
   subscribePluginDevelopment,
 } from './pluginDevelopment'
+import { pluginDevelopmentProjectKind } from './pluginDevelopmentProjects'
 
 const mocks = vi.hoisted(() => ({
   invoke: vi.fn(),
@@ -61,5 +62,10 @@ describe('Core DSH plugin development desktop API', () => {
 
     expect(handler).toHaveBeenCalledOnce()
     expect(handler).toHaveBeenCalledWith({ status: 'ready' })
+  })
+
+  test('keeps an unobserved project unresolved until host classification arrives', () => {
+    expect(pluginDevelopmentProjectKind('/workspace/unobserved-plugin')).toBe('unresolved')
+    expect(pluginDevelopmentProjectKind(null)).toBe('standard')
   })
 })

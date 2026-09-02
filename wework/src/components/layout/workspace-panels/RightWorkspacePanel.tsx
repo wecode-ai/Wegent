@@ -62,6 +62,7 @@ import {
   resolveRightWorkspaceExtensionDescriptor,
   rightWorkspaceDshSidebar,
   isWeworkWorkspaceSidebarTabAvailable,
+  shouldCloseUnavailableWeworkWorkspaceSidebarTab,
   isRightWorkspaceExtensionTab,
   titleOfWeworkWorkspaceSidebarTab,
   type WeworkWorkspaceScope,
@@ -471,9 +472,18 @@ export const RightWorkspacePanel = memo(function RightWorkspacePanel({
     for (const tab of openTabs) {
       if (!isRightWorkspaceExtensionTab(tab)) continue
       const descriptor = resolveRightWorkspaceExtensionDescriptor(extensionTabs[tab])
-      if (descriptor && !availableExtensionTabIds.has(descriptor.id)) onCloseTab(tab)
+      if (
+        descriptor &&
+        shouldCloseUnavailableWeworkWorkspaceSidebarTab(
+          descriptor,
+          currentProjectKind,
+          availableExtensionTabIds.has(descriptor.id)
+        )
+      ) {
+        onCloseTab(tab)
+      }
     }
-  }, [availableExtensionTabIds, extensionTabs, onCloseTab, openTabs])
+  }, [availableExtensionTabIds, currentProjectKind, extensionTabs, onCloseTab, openTabs])
 
   useEffect(() => {
     if (!visible) return
@@ -537,7 +547,7 @@ export const RightWorkspacePanel = memo(function RightWorkspacePanel({
           id: `wework-sidebar-extension:${descriptor.id}`,
           testId: `right-workspace-extension-option-${descriptor.id}`,
           icon: PanelRight,
-          label: titleOfWeworkWorkspaceSidebarTab(descriptor),
+          label: titleOfWeworkWorkspaceSidebarTab(descriptor, t),
           onSelect: () => rightWorkspaceDshSidebar.openTab({ type: descriptor.id }),
         })
       ),
@@ -1155,7 +1165,7 @@ function RightWorkspaceLauncher({
               key={descriptor.id}
               data-testid={`right-workspace-extension-option-${descriptor.id}`}
               icon={PanelRight}
-              label={titleOfWeworkWorkspaceSidebarTab(descriptor)}
+              label={titleOfWeworkWorkspaceSidebarTab(descriptor, t)}
               onClick={() => rightWorkspaceDshSidebar.openTab({ type: descriptor.id })}
             />
           ))}
@@ -1258,7 +1268,7 @@ function getRightWorkspaceTabLabel(
   if (isRightWorkspaceExtensionTab(tab)) {
     const descriptor = resolveRightWorkspaceExtensionDescriptor(extensionTabs[tab])
     if (!descriptor) return t('workbench.workspace_tab_plugin', '插件')
-    return titleOfWeworkWorkspaceSidebarTab(descriptor)
+    return titleOfWeworkWorkspaceSidebarTab(descriptor, t)
   }
   if (tab === 'review') return t('workbench.workspace_tab_review', '审查')
   if (isRightWorkspaceTerminalTab(tab)) {

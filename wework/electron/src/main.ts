@@ -293,8 +293,7 @@ async function handlePluginDevelopmentCommand(command: string): Promise<void> {
     return
   }
   if (command === 'restart-core-dsh') {
-    await desktopRuntime?.restartCoreDsh()
-    await loadPrimaryDshView()
+    await restartPrimaryCoreDsh()
     await writePluginDevelopmentState('ready')
     return
   }
@@ -348,8 +347,7 @@ function schedulePluginDevelopmentReload(): void {
         if (quitting || !desktopRuntime) return
         await writePluginDevelopmentState('reloading')
         try {
-          await desktopRuntime.restartCoreDsh()
-          await loadPrimaryDshView()
+          await restartPrimaryCoreDsh()
           pluginDevelopmentHmrGeneration += 1
           await writePluginDevelopmentState('ready')
         } catch (error) {
@@ -636,6 +634,14 @@ function disposeCoreDshViews(): void {
   primaryDshLoaded = false
 }
 
+async function restartPrimaryCoreDsh(): Promise<void> {
+  if (!desktopRuntime) throw new Error('Core desktop runtime is unavailable')
+  disposeCoreDshViews()
+  await mainWindow?.webContents.loadURL('about:blank')
+  await desktopRuntime.restartCoreDsh()
+  await loadPrimaryDshView()
+}
+
 function scheduleCoreDshRestart(): void {
   setTimeout(() => {
     void (async () => {
@@ -644,10 +650,7 @@ function scheduleCoreDshRestart(): void {
       runtimeError = null
       rendererHealth.loading()
       notifyRuntimeChanged()
-      disposeCoreDshViews()
-      await mainWindow?.webContents.loadURL('about:blank')
-      await desktopRuntime.restartCoreDsh()
-      await loadPrimaryDshView()
+      await restartPrimaryCoreDsh()
       runtimePhase = 'ready'
       notifyRuntimeChanged()
     })().catch(error => {

@@ -7,6 +7,7 @@ import {
   pluginDevelopmentElectronArguments,
   pluginDevelopmentEnvironment,
   pluginDevelopmentId,
+  seedPluginDevelopmentPreferences,
   type PluginDevelopmentSession,
 } from './plugin-development-manager.js'
 
@@ -45,9 +46,9 @@ describe('PluginDevelopmentManager', () => {
       {
         name: 'dsh-development',
         displayName: 'Development plugin',
+        description: 'Development plugin',
         version: '0.1.0',
         sourceRoot: '/plugins/dsh-development',
-        patchPath: '/plugins/dsh-development/cordis.patch.yml',
       },
       'development-id',
       userDataDirectory,
@@ -74,6 +75,66 @@ describe('PluginDevelopmentManager', () => {
       WEGENT_EXECUTOR_HOME: join(userDataDirectory, 'executor-home'),
       WEGENT_EXECUTOR_LOG_DIR: join(userDataDirectory, 'executor-logs'),
     })
+  })
+
+  test('forwards desktop control only for an explicit plugin development E2E run', () => {
+    const userDataDirectory = join('/tmp', 'wework-plugin-development')
+    const environment = pluginDevelopmentEnvironment(
+      {
+        WEWORK_E2E_CONTROL_TOKEN: 'control-token',
+        WEWORK_E2E_CONTROL_URL: 'http://127.0.0.1:1234',
+        WEWORK_PLUGIN_DEVELOPMENT_E2E: '1',
+      },
+      {
+        name: 'dsh-development',
+        displayName: 'Development plugin',
+        description: 'Development plugin',
+        version: '0.1.0',
+        sourceRoot: '/plugins/dsh-development',
+      },
+      'development-id',
+      userDataDirectory,
+      join(userDataDirectory, '..', 'state.json')
+    )
+
+    expect(environment).toMatchObject({
+      WEWORK_E2E_CONTROL_TOKEN: 'control-token',
+      WEWORK_E2E_CONTROL_URL: 'http://127.0.0.1:1234',
+      WEWORK_PLUGIN_DEVELOPMENT_E2E: '1',
+      WEWORK_PLUGIN_DEVELOPMENT_E2E_WINDOW_LABEL: 'plugin-development-development-id',
+    })
+  })
+
+  test('inherits only safe global preferences into the isolated development instance', async () => {
+    const parent = await mkdtemp(join(tmpdir(), 'wework-plugin-development-preferences-'))
+    const child = join(parent, 'plugin-development', 'development-id', 'user-data')
+
+    try {
+      await writeFile(
+        join(parent, 'app-preferences.json'),
+        JSON.stringify({
+          appearanceMode: 'dark',
+          language: 'en',
+          telemetryConsentAsked: true,
+          telemetryEnabled: false,
+          cloudConnection: { accessToken: 'must-not-be-copied' },
+          quickPhrases: [{ id: 'private', content: 'must-not-be-copied' }],
+        })
+      )
+
+      await seedPluginDevelopmentPreferences(parent, child)
+
+      await expect(
+        readFile(join(child, 'app-preferences.json'), 'utf8').then(JSON.parse)
+      ).resolves.toEqual({
+        appearanceMode: 'dark',
+        language: 'en',
+        telemetryConsentAsked: true,
+        telemetryEnabled: false,
+      })
+    } finally {
+      await rm(parent, { recursive: true, force: true })
+    }
   })
 
   test('initializes and caches a Wework plugin project classification', async () => {
@@ -127,9 +188,9 @@ describe('PluginDevelopmentManager', () => {
       id: 'development-id',
       name: '@wework/example-plugin',
       displayName: 'Example plugin',
+      description: 'Example plugin',
       version: '0.1.0',
       sourceRoot: join(parent, 'example-plugin'),
-      patchPath: join(parent, 'example-plugin', 'cordis.patch.yml'),
       status: 'stopped',
       electronPid: null,
       coreDshPid: null,
