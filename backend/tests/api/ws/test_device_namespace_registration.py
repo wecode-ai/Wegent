@@ -9,7 +9,11 @@ import pytest
 from sqlalchemy.orm import sessionmaker
 
 from app.api.ws import device_namespace
-from app.api.ws.device_namespace import DeviceNamespace, DeviceRegistrationFingerprint
+from app.api.ws.device_namespace import (
+    CloudDeviceMatch,
+    DeviceNamespace,
+    DeviceRegistrationFingerprint,
+)
 from app.models.kind import Kind
 from app.schemas.device import DeviceType
 
@@ -65,6 +69,7 @@ async def test_cloud_runtime_mismatch_returns_registration_failed_without_side_d
     monkeypatch,
 ):
     logical_device_id = "cloud-logical-device"
+    sandbox_id = "sandbox-cloud-logical-device"
     runtime_device_id = "cloud-runtime-route"
     device = Kind(
         user_id=test_user.id,
@@ -84,7 +89,7 @@ async def test_cloud_runtime_mismatch_returns_registration_failed_without_side_d
                 "deviceType": DeviceType.CLOUD.value,
                 "runtimeInstanceId": "runtime-instance-before-rebuild",
                 "cloudConfig": {
-                    "sandboxId": logical_device_id,
+                    "sandboxId": sandbox_id,
                     "deviceId": runtime_device_id,
                 },
             },
@@ -157,6 +162,7 @@ def test_cloud_runtime_matching_pins_first_runtime_instance(
     monkeypatch,
 ):
     logical_device_id = "cloud-unpinned-device"
+    sandbox_id = "sandbox-cloud-unpinned-device"
     runtime_device_id = "cloud-unpinned-route"
     device = Kind(
         user_id=test_user.id,
@@ -176,7 +182,7 @@ def test_cloud_runtime_matching_pins_first_runtime_instance(
                 "deviceType": DeviceType.CLOUD.value,
                 "runtimeInstanceId": None,
                 "cloudConfig": {
-                    "sandboxId": logical_device_id,
+                    "sandboxId": sandbox_id,
                     "deviceId": runtime_device_id,
                 },
             },
@@ -209,8 +215,66 @@ def test_cloud_runtime_matching_pins_first_runtime_instance(
         )
         .one()
     )
-    assert matched == (logical_device_id, False, None)
+    assert matched == CloudDeviceMatch(
+        logical_device_id=logical_device_id,
+        sandbox_id=sandbox_id,
+    )
     assert persisted.json["spec"]["runtimeInstanceId"] == "runtime-instance-first"
+
+
+@pytest.mark.asyncio
+async def test_cloud_runtime_match_returns_crd_logical_device_id(
+    test_db,
+    test_user,
+    monkeypatch,
+):
+    logical_device_id = "0794cef0-5a69-4bc8-817e-2eee56efc01f"
+    sandbox_id = "sandbox-e7p5pg8fto8l"
+    runtime_device_id = "cloud-runtime-route"
+    test_db.add(
+        Kind(
+            user_id=test_user.id,
+            kind="Device",
+            name=logical_device_id,
+            namespace="default",
+            is_active=True,
+            json={
+                "apiVersion": "agent.wecode.io/v1",
+                "kind": "Device",
+                "metadata": {
+                    "name": logical_device_id,
+                    "namespace": "default",
+                },
+                "spec": {
+                    "deviceId": runtime_device_id,
+                    "deviceType": DeviceType.CLOUD.value,
+                    "cloudConfig": {
+                        "sandboxId": sandbox_id,
+                        "deviceId": runtime_device_id,
+                    },
+                },
+            },
+        )
+    )
+    test_db.commit()
+
+    @contextmanager
+    def test_db_session():
+        yield test_db
+
+    async def run_inline(func, *args):
+        return func(*args)
+
+    monkeypatch.setattr(device_namespace, "get_db_session", test_db_session)
+    monkeypatch.setattr(device_namespace, "run_sync_in_executor", run_inline)
+
+    matched = await DeviceNamespace()._match_cloud_device(
+        test_user.id,
+        "198.51.100.31",
+        runtime_device_id,
+    )
+
+    assert matched == logical_device_id
 
 
 @pytest.mark.asyncio
