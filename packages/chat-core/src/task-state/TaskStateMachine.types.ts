@@ -224,6 +224,7 @@ export type Event =
       resumeFromCursor?: number
       activeStreamSubtaskId?: number
       syncAfterMessageId?: number
+      fullSnapshot?: boolean
       syncUpdatedAt?: string
     }
   | {

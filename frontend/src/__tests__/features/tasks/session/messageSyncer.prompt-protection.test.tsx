@@ -65,7 +65,7 @@ describe('useMessageSyncer prompt protection', () => {
       7,
       PROMPT_PROTECTION_BLOCKED_ERROR_TYPE
     )
-    expect(machine.recover).toHaveBeenCalledWith({ force: true })
+    expect(machine.recover).toHaveBeenCalledWith({ force: true, fullSnapshot: true })
 
     machine.recover.mockClear()
     act(() => {

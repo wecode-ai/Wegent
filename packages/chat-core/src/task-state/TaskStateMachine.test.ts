@@ -2125,6 +2125,27 @@ describe('TaskStateMachine', () => {
     consoleInfoSpy.mockRestore()
   })
 
+  it('requests a full snapshot without the current message cursor', async () => {
+    const actions = createRuntimeActions()
+    const machine = new TaskStateMachine(42, actions)
+    machine.addUserMessage({
+      id: 'user-1',
+      type: 'user',
+      status: 'completed',
+      content: 'ask',
+      timestamp: Date.now(),
+      subtaskId: 1,
+      messageId: 1,
+    })
+
+    await machine.recover({ force: true, fullSnapshot: true })
+
+    expect(actions.joinTask).toHaveBeenCalledWith(42, {
+      forceRefresh: true,
+      afterMessageId: undefined,
+    })
+  })
+
   it('resyncs a completed video placeholder when reconnect lost the active stream id', async () => {
     const consoleInfoSpy = vi.spyOn(console, 'info').mockImplementation(() => {})
     const finalAssistantSubtask = {

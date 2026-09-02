@@ -65,6 +65,7 @@ export class TaskStateMachine {
     resumeFromCursor?: number
     activeStreamSubtaskId?: number
     syncAfterMessageId?: number
+    fullSnapshot?: boolean
   }
   private lastRecoveryTime: number = 0
   private recoveryDebounceMs: number = 1000
@@ -202,6 +203,7 @@ export class TaskStateMachine {
     resumeFromCursor?: number
     activeStreamSubtaskId?: number
     syncAfterMessageId?: number
+    fullSnapshot?: boolean
     syncUpdatedAt?: string
   }): Promise<void> {
     const event: Event = {
@@ -211,6 +213,7 @@ export class TaskStateMachine {
       resumeFromCursor: options?.resumeFromCursor,
       activeStreamSubtaskId: options?.activeStreamSubtaskId,
       syncAfterMessageId: options?.syncAfterMessageId,
+      fullSnapshot: options?.fullSnapshot,
       syncUpdatedAt: options?.syncUpdatedAt,
     }
     await this.dispatch(event)
@@ -855,6 +858,7 @@ export class TaskStateMachine {
         resumeFromCursor: event.resumeFromCursor,
         activeStreamSubtaskId: event.activeStreamSubtaskId,
         syncAfterMessageId: event.syncAfterMessageId,
+        fullSnapshot: event.fullSnapshot,
       }
       return
     }
@@ -869,6 +873,7 @@ export class TaskStateMachine {
         resumeFromCursor: event.resumeFromCursor,
         activeStreamSubtaskId: event.activeStreamSubtaskId,
         syncAfterMessageId: event.syncAfterMessageId,
+        fullSnapshot: event.fullSnapshot,
       }
 
       this.enterWaitingSocket(event.reason)

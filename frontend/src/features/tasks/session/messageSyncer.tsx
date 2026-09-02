@@ -313,7 +313,7 @@ export function useMessageSyncer({
       if (machine) {
         machine.handleChatError(subtask_id, error, message_id, errorType)
         if (errorType === PROMPT_PROTECTION_BLOCKED_ERROR_TYPE) {
-          void machine.recover({ force: true })
+          void machine.recover({ force: true, fullSnapshot: true })
         }
       }
 
