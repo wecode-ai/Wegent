@@ -220,6 +220,7 @@ export default function DeviceChatPage() {
           <div className="flex items-center gap-2 mr-2">
             <Monitor className="w-4 h-4 text-text-muted" />
             <select
+              data-testid="device-chat-target-select"
               value={activeDeviceId || ''}
               onChange={e => handleDeviceSelect(e.target.value)}
               disabled={isProjectContext || isExistingTask}
