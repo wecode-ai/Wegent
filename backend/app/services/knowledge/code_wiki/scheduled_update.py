@@ -48,9 +48,13 @@ def code_wiki_id(subscription: Kind) -> int | None:
     """Return the explicitly referenced Code Wiki id, if this is its scheduler row."""
     if subscription.kind != "Subscription":
         return None
-    value = (
-        (subscription.json or {}).get("spec", {}).get(CODE_WIKI_REF_KEY, {}).get("id")
-    )
+    spec = (subscription.json or {}).get("spec")
+    if not isinstance(spec, dict):
+        return None
+    code_wiki_ref = spec.get(CODE_WIKI_REF_KEY)
+    if not isinstance(code_wiki_ref, dict):
+        return None
+    value = code_wiki_ref.get("id")
     return value if isinstance(value, int) and value > 0 else None
 
 

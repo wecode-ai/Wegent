@@ -14,6 +14,7 @@ from app.services.knowledge.code_wiki.scheduled_update import (
     advance_scheduled_update,
     configure_scheduled_update,
     first_scheduled_time,
+    is_code_wiki_scheduled_update,
     scheduled_update_for,
 )
 from app.services.subscription.helpers import validate_subscription_for_read
@@ -52,6 +53,15 @@ def test_first_daily_slot_is_the_next_local_calendar_day():
 
 def test_fixed_cadence_controls_interval_days():
     assert schedule(cadence="biweekly", interval_days=60).interval_days == 14
+
+
+def test_a_null_code_wiki_ref_is_not_a_scheduled_update() -> None:
+    subscription = Kind(
+        kind="Subscription",
+        json={"spec": {"codeWikiRef": None}},
+    )
+
+    assert not is_code_wiki_scheduled_update(subscription)
 
 
 def test_advancing_a_late_plan_skips_missed_periods():
