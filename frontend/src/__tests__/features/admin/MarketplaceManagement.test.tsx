@@ -12,6 +12,8 @@ jest.mock('@/apis/admin', () => ({
   adminApis: {
     getMarketplaceResources: jest.fn(),
     updateMarketplaceResource: jest.fn(),
+    getMarketplaceSmartApps: jest.fn(),
+    updateMarketplaceSmartApp: jest.fn(),
   },
 }))
 
@@ -60,6 +62,33 @@ describe('MarketplaceManagement', () => {
       recommendation_score: update.recommendation_score || 0,
       example_conversations: update.example_conversations || [],
     }))
+    mockedAdminApis.getMarketplaceSmartApps.mockResolvedValue({
+      items: [
+        {
+          id: 33,
+          name: 'smart-app',
+          display_name: 'Smart App',
+          summary: 'Available to everyone',
+          publisher_user_name: 'alice',
+          is_system: false,
+          featured_rank: 0,
+        },
+      ],
+      total: 1,
+      page: 1,
+      limit: 50,
+    })
+    mockedAdminApis.updateMarketplaceSmartApp.mockImplementation(
+      async (smartAppId, featuredRank) => ({
+        id: smartAppId,
+        name: 'smart-app',
+        display_name: 'Smart App',
+        summary: 'Available to everyone',
+        publisher_user_name: 'alice',
+        is_system: false,
+        featured_rank: featuredRank,
+      })
+    )
   })
 
   it('loads both marketplace tabs and updates the recommendation score', async () => {
@@ -105,5 +134,21 @@ describe('MarketplaceManagement', () => {
       expect(mockedAdminApis.getMarketplaceResources).toHaveBeenLastCalledWith('skill', 1, 50)
     )
     expect(await screen.findByText('skill resource')).toBeInTheDocument()
+
+    fireEvent.mouseDown(screen.getByTestId('marketplace-management-tab-smart-app'))
+
+    await waitFor(() =>
+      expect(mockedAdminApis.getMarketplaceSmartApps).toHaveBeenLastCalledWith(1, 50)
+    )
+    expect(await screen.findByText('Smart App')).toBeInTheDocument()
+    fireEvent.click(screen.getByTestId('marketplace-recommendation-score-33'))
+    fireEvent.change(screen.getByTestId('marketplace-recommendation-score-input'), {
+      target: { value: '100' },
+    })
+    fireEvent.click(screen.getByTestId('marketplace-recommendation-score-save'))
+
+    await waitFor(() =>
+      expect(mockedAdminApis.updateMarketplaceSmartApp).toHaveBeenCalledWith(33, 100)
+    )
   })
 })

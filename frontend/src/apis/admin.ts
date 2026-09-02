@@ -401,7 +401,7 @@ export interface AdminPublicTeamIconUpload {
   url: string
 }
 
-export type AdminMarketplaceResourceType = 'agent' | 'skill'
+export type AdminMarketplaceResourceType = 'agent' | 'skill' | 'smart_app'
 
 export interface AdminMarketplaceExampleConversation {
   title: string
@@ -427,6 +427,23 @@ export interface AdminMarketplaceResourceUpdate {
 
 export interface AdminMarketplaceResourceListResponse {
   items: AdminMarketplaceResource[]
+  total: number
+  page: number
+  limit: number
+}
+
+export interface AdminMarketplaceSmartApp {
+  id: number
+  name: string
+  display_name: string
+  summary: string
+  publisher_user_name: string | null
+  is_system: boolean
+  featured_rank: number
+}
+
+export interface AdminMarketplaceSmartAppListResponse {
+  items: AdminMarketplaceSmartApp[]
   total: number
   page: number
   limit: number
@@ -1152,7 +1169,7 @@ export const adminApis = {
   },
 
   async getMarketplaceResources(
-    resourceType: AdminMarketplaceResourceType,
+    resourceType: Exclude<AdminMarketplaceResourceType, 'smart_app'>,
     page: number = 1,
     limit: number = 50
   ): Promise<AdminMarketplaceResourceListResponse> {
@@ -1166,6 +1183,22 @@ export const adminApis = {
     update: AdminMarketplaceResourceUpdate
   ): Promise<AdminMarketplaceResource> {
     return apiClient.put(`/admin/marketplace-resources/${resourceId}`, update)
+  },
+
+  async getMarketplaceSmartApps(
+    page: number = 1,
+    limit: number = 50
+  ): Promise<AdminMarketplaceSmartAppListResponse> {
+    return apiClient.get(`/admin/marketplace-smart-apps?page=${page}&limit=${limit}`)
+  },
+
+  async updateMarketplaceSmartApp(
+    smartAppId: number,
+    featuredRank: number
+  ): Promise<AdminMarketplaceSmartApp> {
+    return apiClient.put(`/admin/marketplace-smart-apps/${smartAppId}`, {
+      featured_rank: featuredRank,
+    })
   },
 
   // ==================== Public Bot Management ====================

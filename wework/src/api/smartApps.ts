@@ -25,7 +25,8 @@ export interface SmartAppMarketplaceItem {
   sourceType: 'official' | 'user'
   ownerUserId: number
   ownerDisplayName: string
-  accessRole: 'official' | 'owner' | 'recipient'
+  accessRole: 'official' | 'owner' | 'public' | 'recipient'
+  visibility: 'private' | 'restricted' | 'public'
   tags: string[]
   iconUrl: string
   screenshotUrls: string[]
@@ -55,7 +56,7 @@ export interface SmartAppDownloadDescriptor {
 
 export interface SmartAppAccess {
   smartAppId: number
-  scope: 'private' | 'restricted'
+  scope: 'private' | 'restricted' | 'public'
   targets: SmartAppAccessTarget[]
 }
 
@@ -72,6 +73,7 @@ export interface SmartAppSubmissionMetadata {
   releaseNotes: string
   extensions?: Record<string, unknown>
   releaseExtensions?: Record<string, unknown>
+  scope?: 'private' | 'restricted' | 'public'
   targets: SmartAppAccessTarget[]
 }
 

@@ -4,6 +4,7 @@
 
 from app.models.kind import Kind
 from app.models.marketplace_resource import MarketplaceResource
+from app.models.smart_app_marketplace import SmartApp
 
 
 def _headers(token: str) -> dict[str, str]:
@@ -205,3 +206,76 @@ def test_system_recommendation_score_changes_keep_listing_public(
     assert reset.status_code == 200
     assert detail.status_code == 200
     assert detail.json()["id"] == agent.id
+
+
+def test_admin_prioritizes_only_public_marketplace_smart_apps(
+    test_client,
+    test_db,
+    test_admin_token,
+    test_token,
+    test_user,
+):
+    official = SmartApp(
+        owner_user_id=0,
+        name="official-smart-app",
+        display_name="Official Smart App",
+        summary="Official",
+        source_type="official",
+        visibility="public",
+        status="published",
+        featured_rank=0,
+    )
+    public_user_app = SmartApp(
+        owner_user_id=test_user.id,
+        name="public-user-smart-app",
+        display_name="Public User Smart App",
+        summary="Public user app",
+        source_type="user",
+        visibility="public",
+        status="published",
+        featured_rank=20,
+    )
+    restricted = SmartApp(
+        owner_user_id=test_user.id,
+        name="restricted-smart-app",
+        display_name="Restricted Smart App",
+        source_type="user",
+        visibility="restricted",
+        status="published",
+        featured_rank=100,
+    )
+    test_db.add_all([official, public_user_app, restricted])
+    test_db.commit()
+
+    listed = test_client.get(
+        "/api/admin/marketplace-smart-apps",
+        headers=_headers(test_admin_token),
+    )
+    forbidden = test_client.put(
+        f"/api/admin/marketplace-smart-apps/{official.id}",
+        json={"featured_rank": 90},
+        headers=_headers(test_token),
+    )
+    updated = test_client.put(
+        f"/api/admin/marketplace-smart-apps/{official.id}",
+        json={"featured_rank": 90},
+        headers=_headers(test_admin_token),
+    )
+    relisted = test_client.get(
+        "/api/admin/marketplace-smart-apps",
+        headers=_headers(test_admin_token),
+    )
+
+    assert listed.status_code == 200
+    assert [item["id"] for item in listed.json()["items"]] == [
+        public_user_app.id,
+        official.id,
+    ]
+    assert forbidden.status_code == 403
+    assert updated.status_code == 200
+    assert updated.json()["featured_rank"] == 90
+    assert [item["id"] for item in relisted.json()["items"]] == [
+        official.id,
+        public_user_app.id,
+    ]
+    assert restricted.id not in {item["id"] for item in relisted.json()["items"]}

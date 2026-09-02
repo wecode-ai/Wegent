@@ -233,7 +233,7 @@ export function SmartAppsMarketplacePage({
   const [removedInstallationIds, setRemovedInstallationIds] = useState<Set<string>>(() => new Set())
   const [tags, setTags] = useState<SmartAppMarketplaceTag[]>([])
   const [query, setQuery] = useState('')
-  const [source, setSource] = useState<'all' | 'official' | 'shared'>('all')
+  const [source, setSource] = useState<'all' | 'official' | 'public' | 'shared'>('all')
   const [tag, setTag] = useState('')
   const [marketplaceSort, setMarketplaceSort] = useState<MarketplaceSort>('recommended')
   const [ownedFilter, setOwnedFilter] = useState<OwnedFilter>('all')
@@ -936,6 +936,9 @@ export function SmartAppsMarketplacePage({
                 <option value="official">
                   {t('workbench.smart_apps_source_official', '官方工作台')}
                 </option>
+                <option value="public">
+                  {t('workbench.smart_apps_source_public', '全员应用')}
+                </option>
                 <option value="shared">
                   {t('workbench.smart_apps_source_shared', '分享给我')}
                 </option>
@@ -1135,16 +1138,11 @@ export function SmartAppsMarketplacePage({
                     description={description}
                     tags={item?.tags ?? []}
                     visibility={{
-                      kind:
-                        item?.accessRole === 'official'
-                          ? 'public'
-                          : item?.accessRole === 'owner'
-                            ? 'restricted'
-                            : 'private',
+                      kind: item?.visibility ?? 'private',
                       label:
-                        item?.accessRole === 'official'
-                          ? t('workbench.smart_apps_visibility_public', '公开')
-                          : item?.accessRole === 'owner'
+                        item?.visibility === 'public'
+                          ? t('workbench.smart_apps_visibility_public', '全员')
+                          : item?.visibility === 'restricted'
                             ? t('workbench.smart_apps_visibility_restricted', '指定成员')
                             : t('workbench.smart_apps_visibility_private', '仅自己'),
                       onClick: isOwner && item ? () => setShareItem(item) : undefined,
@@ -1296,15 +1294,17 @@ export function SmartAppsMarketplacePage({
                   sourceLabel={
                     item.sourceType === 'official'
                       ? t('workbench.smart_apps_official', '官方')
-                      : t('workbench.smart_apps_shared_with_me', '分享给我')
+                      : item.accessRole === 'public'
+                        ? t('workbench.smart_apps_public_for_everyone', '全员应用')
+                        : t('workbench.smart_apps_shared_with_me', '分享给我')
                   }
                   description={item.summary}
                   tags={item.tags}
                   visibility={{
-                    kind: item.sourceType === 'official' ? 'public' : 'restricted',
+                    kind: item.visibility,
                     label:
-                      item.sourceType === 'official'
-                        ? t('workbench.smart_apps_visibility_public', '公开')
+                      item.visibility === 'public'
+                        ? t('workbench.smart_apps_visibility_public', '全员')
                         : t('workbench.smart_apps_visibility_restricted', '指定成员'),
                   }}
                   stateLabel={
@@ -1992,7 +1992,7 @@ function SmartAppShareDialog({
 }) {
   const { t } = useTranslation('common')
   const [access, setAccess] = useState<SmartAppAccess | null>(null)
-  const [scope, setScope] = useState<'private' | 'restricted'>('restricted')
+  const [scope, setScope] = useState<'private' | 'restricted' | 'public'>('restricted')
   const [targets, setTargets] = useState<SmartAppAccessTarget[]>([])
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -2052,11 +2052,12 @@ function SmartAppShareDialog({
         </header>
         {access ? (
           <>
-            <div className="mt-5 grid grid-cols-2 gap-2 rounded-xl bg-surface p-1">
+            <div className="mt-5 grid grid-cols-3 gap-2 rounded-xl bg-surface p-1">
               <button
                 type="button"
                 className={`h-10 rounded-lg ${scope === 'private' ? 'bg-background shadow-sm' : ''}`}
                 onClick={() => setScope('private')}
+                data-testid="smart-app-share-scope-private"
               >
                 {t('workbench.smart_apps_private', '仅自己')}
               </button>
@@ -2064,8 +2065,17 @@ function SmartAppShareDialog({
                 type="button"
                 className={`h-10 rounded-lg ${scope === 'restricted' ? 'bg-background shadow-sm' : ''}`}
                 onClick={() => setScope('restricted')}
+                data-testid="smart-app-share-scope-restricted"
               >
                 {t('workbench.smart_apps_restricted', '指定成员/部门')}
+              </button>
+              <button
+                type="button"
+                className={`h-10 rounded-lg ${scope === 'public' ? 'bg-background shadow-sm' : ''}`}
+                onClick={() => setScope('public')}
+                data-testid="smart-app-share-scope-public"
+              >
+                {t('workbench.smart_apps_public', '全员')}
               </button>
             </div>
             {scope === 'restricted' ? (
@@ -2074,10 +2084,15 @@ function SmartAppShareDialog({
               </div>
             ) : (
               <p className="mt-4 text-sm text-text-secondary">
-                {t(
-                  'workbench.smart_apps_revoke_hint',
-                  '取消分享后，接收者不能继续下载或更新；已安装到本地的副本仍可离线运行。'
-                )}
+                {scope === 'public'
+                  ? t(
+                      'workbench.smart_apps_public_hint',
+                      '保存后立即上架到智能应用市场，所有成员均可查看和安装。'
+                    )
+                  : t(
+                      'workbench.smart_apps_revoke_hint',
+                      '取消分享后，接收者不能继续下载或更新；已安装到本地的副本仍可离线运行。'
+                    )}
               </p>
             )}
           </>
@@ -2092,10 +2107,14 @@ function SmartAppShareDialog({
           </p>
         ) : null}
         <footer className="mt-5 flex justify-end gap-2">
-          <Button variant="ghost" onClick={onClose}>
+          <Button variant="ghost" onClick={onClose} data-testid="smart-app-share-cancel">
             {t('common.cancel', '取消')}
           </Button>
-          <Button disabled={!access || saving} onClick={() => void save()}>
+          <Button
+            disabled={!access || saving}
+            onClick={() => void save()}
+            data-testid="smart-app-share-save"
+          >
             {saving ? t('workbench.smart_apps_saving', '保存中…') : t('common.save', '保存')}
           </Button>
         </footer>
@@ -2130,6 +2149,7 @@ function SmartAppPublishDialog({
   const [icon, setIcon] = useState<File | null>(null)
   const [screenshots, setScreenshots] = useState<File[]>([])
   const [notes, setNotes] = useState('')
+  const [scope, setScope] = useState<'restricted' | 'public'>('restricted')
   const [targets, setTargets] = useState<SmartAppAccessTarget[]>([])
   const [publishing, setPublishing] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -2166,7 +2186,7 @@ function SmartAppPublishDialog({
       )
       return
     }
-    if (!item && !targets.length) {
+    if (!item && scope === 'restricted' && !targets.length) {
       setError(
         t('workbench.smart_apps_first_target_required', '首次发布必须选择至少一个成员或部门')
       )
@@ -2186,7 +2206,8 @@ function SmartAppPublishDialog({
         iconDataUrl: await readDataUrl(icon),
         screenshotDataUrls: await Promise.all(screenshots.slice(0, 5).map(readDataUrl)),
         releaseNotes: notes,
-        targets,
+        scope: item ? undefined : scope,
+        targets: !item && scope === 'restricted' ? targets : [],
       }
       if (installation) {
         const exported = await harnessAppsApi.export(installation.id)
@@ -2363,11 +2384,38 @@ function SmartAppPublishDialog({
           ) : (
             <fieldset>
               <legend className="text-sm font-medium">
-                {t('workbench.smart_apps_targets_required', '分享对象（必选）')}
+                {t('workbench.smart_apps_publish_scope', '发布范围')}
               </legend>
-              <div className="mt-2">
-                <TargetPicker api={api} targets={targets} onChange={setTargets} />
+              <div className="mt-2 grid grid-cols-2 gap-2 rounded-xl bg-surface p-1">
+                <button
+                  type="button"
+                  className={`h-10 rounded-lg ${scope === 'restricted' ? 'bg-background shadow-sm' : ''}`}
+                  onClick={() => setScope('restricted')}
+                  data-testid="smart-app-publish-scope-restricted"
+                >
+                  {t('workbench.smart_apps_restricted', '指定成员/部门')}
+                </button>
+                <button
+                  type="button"
+                  className={`h-10 rounded-lg ${scope === 'public' ? 'bg-background shadow-sm' : ''}`}
+                  onClick={() => setScope('public')}
+                  data-testid="smart-app-publish-scope-public"
+                >
+                  {t('workbench.smart_apps_public', '全员')}
+                </button>
               </div>
+              {scope === 'restricted' ? (
+                <div className="mt-3">
+                  <TargetPicker api={api} targets={targets} onChange={setTargets} />
+                </div>
+              ) : (
+                <p className="mt-3 text-sm text-text-secondary">
+                  {t(
+                    'workbench.smart_apps_public_hint',
+                    '发布成功后立即上架到智能应用市场，所有成员均可查看和安装。'
+                  )}
+                </p>
+              )}
             </fieldset>
           )}
         </div>

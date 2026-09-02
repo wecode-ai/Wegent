@@ -69,6 +69,7 @@ describe('createSmartAppsApi', () => {
       releaseNotes: '',
       extensions: { 'io.wegent.test': { owner: 'api-test' } },
       releaseExtensions: { 'io.wegent.build': { pipeline: 'test' } },
+      scope: 'restricted',
       targets: [{ entityType: 'user', entityId: '2', displayName: 'Alice' }],
     })
 
@@ -81,6 +82,7 @@ describe('createSmartAppsApi', () => {
         sha256: '039058c6f2c0cb492c533b0a4d14ef77cc0f78abccced5287d84a1a2011cfb81',
         extensions: { 'io.wegent.test': { owner: 'api-test' } },
         releaseExtensions: { 'io.wegent.build': { pipeline: 'test' } },
+        scope: 'restricted',
       })
     )
     expect(upload).toHaveBeenCalledWith(

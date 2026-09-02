@@ -6,6 +6,7 @@
 
 import { useCallback, useEffect, useState } from 'react'
 import {
+  AppWindow,
   Bot,
   CheckCircle2,
   ChevronLeft,
@@ -71,7 +72,23 @@ export default function MarketplaceManagement() {
   const loadResources = useCallback(async () => {
     setLoading(true)
     try {
-      const response = await adminApis.getMarketplaceResources(resourceType, page, PAGE_SIZE)
+      const response =
+        resourceType === 'smart_app'
+          ? await adminApis.getMarketplaceSmartApps(page, PAGE_SIZE).then(result => ({
+              ...result,
+              items: result.items.map(item => ({
+                id: item.id,
+                resource_type: 'smart_app' as const,
+                name: item.name,
+                display_name: item.display_name,
+                description: item.summary || null,
+                publisher_user_name: item.publisher_user_name,
+                is_system: item.is_system,
+                recommendation_score: item.featured_rank,
+                example_conversations: [],
+              })),
+            }))
+          : await adminApis.getMarketplaceResources(resourceType, page, PAGE_SIZE)
       setItems(response.items)
       setTotal(response.total)
       setExampleConversations(
@@ -109,9 +126,21 @@ export default function MarketplaceManagement() {
     if (!recommendationScoreValid) return
     setSavingScoreIds(previous => new Set(previous).add(item.id))
     try {
-      const updated = await adminApis.updateMarketplaceResource(item.id, {
-        recommendation_score: parsedRecommendationScore,
-      })
+      const updated =
+        item.resource_type === 'smart_app'
+          ? await adminApis
+              .updateMarketplaceSmartApp(item.id, parsedRecommendationScore)
+              .then(smartApp => ({
+                ...item,
+                display_name: smartApp.display_name,
+                description: smartApp.summary || null,
+                publisher_user_name: smartApp.publisher_user_name,
+                is_system: smartApp.is_system,
+                recommendation_score: smartApp.featured_rank,
+              }))
+          : await adminApis.updateMarketplaceResource(item.id, {
+              recommendation_score: parsedRecommendationScore,
+            })
       setItems(previous => previous.map(current => (current.id === updated.id ? updated : current)))
       toast({
         title: t('marketplace_management.recommendation_score_saved'),
@@ -186,7 +215,10 @@ export default function MarketplaceManagement() {
       >
         {items.map(item => {
           const exampleCount = (exampleConversations[item.id] || []).length
-          const isFeatured = item.recommendation_score >= FEATURED_RECOMMENDATION_SCORE
+          const isFeatured =
+            item.resource_type === 'smart_app'
+              ? item.recommendation_score > 0
+              : item.recommendation_score >= FEATURED_RECOMMENDATION_SCORE
           const sourceLabel = item.is_system
             ? t('marketplace_management.system_source')
             : item.publisher_user_name
@@ -202,11 +234,17 @@ export default function MarketplaceManagement() {
               data-testid={`marketplace-management-item-${item.id}`}
             >
               <div className="flex min-w-0 items-start gap-3">
-                <ResourceIcon
-                  resourceType={item.resource_type}
-                  name={item.display_name}
-                  size={item.resource_type === 'agent' ? 'sm' : 'md'}
-                />
+                {item.resource_type === 'smart_app' ? (
+                  <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-muted text-text-secondary">
+                    <AppWindow className="h-5 w-5" aria-hidden />
+                  </div>
+                ) : (
+                  <ResourceIcon
+                    resourceType={item.resource_type}
+                    name={item.display_name}
+                    size={item.resource_type === 'agent' ? 'sm' : 'md'}
+                  />
+                )}
                 <div className="min-w-0 flex-1">
                   <h3 className="truncate font-semibold text-text-primary">{item.display_name}</h3>
                   <p className="mt-0.5 truncate text-xs text-text-muted">{sourceLabel}</p>
@@ -273,9 +311,12 @@ export default function MarketplaceManagement() {
                     />
                   )}
                   <span className="truncate">
-                    {t('marketplace_management.recommendation_score_value', {
-                      score: item.recommendation_score,
-                    })}
+                    {t(
+                      item.resource_type === 'smart_app'
+                        ? 'marketplace_management.priority_value'
+                        : 'marketplace_management.recommendation_score_value',
+                      { score: item.recommendation_score }
+                    )}
                   </span>
                 </Button>
               </div>
@@ -297,7 +338,7 @@ export default function MarketplaceManagement() {
 
       <Tabs value={resourceType} onValueChange={handleTypeChange}>
         <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-          <TabsList className="grid w-full grid-cols-2 border border-border bg-surface shadow-sm sm:w-auto sm:min-w-80">
+          <TabsList className="grid w-full grid-cols-3 border border-border bg-surface shadow-sm sm:w-auto sm:min-w-[30rem]">
             <TabsTrigger
               value="agent"
               className="data-[state=active]:bg-primary data-[state=active]:text-white"
@@ -314,6 +355,14 @@ export default function MarketplaceManagement() {
               <Sparkles className="mr-2 h-4 w-4" aria-hidden />
               {t('marketplace_management.skill_tab')}
             </TabsTrigger>
+            <TabsTrigger
+              value="smart_app"
+              className="data-[state=active]:bg-primary data-[state=active]:text-white"
+              data-testid="marketplace-management-tab-smart-app"
+            >
+              <AppWindow className="mr-2 h-4 w-4" aria-hidden />
+              {t('marketplace_management.smart_app_tab')}
+            </TabsTrigger>
           </TabsList>
           {!loading && (
             <span className="text-sm text-text-muted">
@@ -326,6 +375,9 @@ export default function MarketplaceManagement() {
         </TabsContent>
         <TabsContent value="skill" className="mt-4">
           {resourceType === 'skill' ? renderList() : null}
+        </TabsContent>
+        <TabsContent value="smart_app" className="mt-4">
+          {resourceType === 'smart_app' ? renderList() : null}
         </TabsContent>
       </Tabs>
 
@@ -367,29 +419,46 @@ export default function MarketplaceManagement() {
       >
         <DialogContent className="max-w-md" data-testid="marketplace-recommendation-score-dialog">
           <DialogHeader>
-            <DialogTitle>{t('marketplace_management.edit_recommendation_score')}</DialogTitle>
+            <DialogTitle>
+              {t(
+                editingScoreItem?.resource_type === 'smart_app'
+                  ? 'marketplace_management.edit_priority'
+                  : 'marketplace_management.edit_recommendation_score'
+              )}
+            </DialogTitle>
             <DialogDescription>
               {editingScoreItem?.display_name} ·{' '}
-              {t('marketplace_management.recommendation_score_description')}
+              {t(
+                editingScoreItem?.resource_type === 'smart_app'
+                  ? 'marketplace_management.priority_description'
+                  : 'marketplace_management.recommendation_score_description'
+              )}
             </DialogDescription>
           </DialogHeader>
 
           <div className="space-y-4">
             <div className="grid grid-cols-3 gap-2">
-              {[
-                {
-                  score: 0,
-                  label: t('marketplace_management.score_none'),
-                },
-                {
-                  score: FEATURED_RECOMMENDATION_SCORE,
-                  label: t('marketplace_management.score_featured'),
-                },
-                {
-                  score: 90,
-                  label: t('marketplace_management.score_premium'),
-                },
-              ].map(option => (
+              {(editingScoreItem?.resource_type === 'smart_app'
+                ? [
+                    { score: 0, label: t('marketplace_management.priority_none') },
+                    { score: 50, label: t('marketplace_management.priority_medium') },
+                    { score: 100, label: t('marketplace_management.priority_high') },
+                  ]
+                : [
+                    {
+                      score: 0,
+                      label: t('marketplace_management.score_none'),
+                    },
+                    {
+                      score: FEATURED_RECOMMENDATION_SCORE,
+                      label: t('marketplace_management.score_featured'),
+                    },
+                    {
+                      score: 90,
+                      label: t('marketplace_management.score_premium'),
+                    },
+                  ]
+              ).map(option => (
                 <Button
                   key={option.score}
                   type="button"
@@ -408,7 +477,11 @@ export default function MarketplaceManagement() {
                 htmlFor="marketplace-recommendation-score"
                 className="text-sm font-medium text-text-primary"
               >
-                {t('marketplace_management.recommendation_score')}
+                {t(
+                  editingScoreItem?.resource_type === 'smart_app'
+                    ? 'marketplace_management.priority'
+                    : 'marketplace_management.recommendation_score'
+                )}
               </label>
               <Input
                 id="marketplace-recommendation-score"
@@ -421,7 +494,11 @@ export default function MarketplaceManagement() {
                 data-testid="marketplace-recommendation-score-input"
               />
               <p className="text-xs leading-5 text-text-muted">
-                {t('marketplace_management.recommendation_score_hint')}
+                {t(
+                  editingScoreItem?.resource_type === 'smart_app'
+                    ? 'marketplace_management.priority_hint'
+                    : 'marketplace_management.recommendation_score_hint'
+                )}
               </p>
             </div>
           </div>

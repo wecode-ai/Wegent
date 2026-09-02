@@ -302,6 +302,7 @@ export async function createDesktopScenario({ captureScreenshot, resultDir, uiTi
           releaseExtensions: {
             'io.wegent.build': { pipeline: 'desktop-e2e-user' },
           },
+          scope: 'restricted',
           targets: [
             {
               entityType: 'user',
@@ -348,6 +349,20 @@ export async function createDesktopScenario({ captureScreenshot, resultDir, uiTi
         ),
         `Unrelated user ${stranger.user_name} discovered the shared Smart app`
       )
+      await ownerRequest(`/api/smart-apps/${initialized.smartAppId}/access`, {
+        method: 'PUT',
+        body: JSON.stringify({ scope: 'public', targets: [] }),
+      })
+      const publicCatalog = await requestJson(
+        backendUrl,
+        strangerLogin.access_token,
+        '/api/smart-apps/marketplace?source=public'
+      )
+      const publicItem = publicCatalog.items.find(
+        item => item.name === INSTALLATION_ID && item.sourceType === 'user'
+      )
+      assert.equal(publicItem?.accessRole, 'public')
+      assert.equal(publicItem?.visibility, 'public')
       await ownerRequest(`/api/smart-apps/${initialized.smartAppId}/access`, {
         method: 'PUT',
         body: JSON.stringify({ scope: 'private', targets: [] }),

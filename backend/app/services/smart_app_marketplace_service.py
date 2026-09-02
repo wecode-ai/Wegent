@@ -75,18 +75,18 @@ class SmartAppMarketplaceService:
     ) -> SmartAppMarketplaceListResponse:
         apps = db.query(SmartApp).filter(SmartApp.status == "published").all()
         normalized_query = query.strip().lower()
-        items = []
+        ranked_items: list[tuple[int, SmartAppMarketplaceItem]] = []
         for app in apps:
             role = self._access_role(db, app=app, user_id=user_id)
             if role is None:
                 continue
             if app.source_type == "user" and role == "owner":
                 continue
-            if (
-                source
-                and source != app.source_type
-                and not (source == "shared" and role == "recipient")
-            ):
+            if source == "official" and app.source_type != "official":
+                continue
+            if source == "public" and role != "public":
+                continue
+            if source == "shared" and role != "recipient":
                 continue
             tags = list(app.tags_json or [])
             if tag and tag not in tags:
@@ -99,15 +99,19 @@ class SmartAppMarketplaceService:
                 ).lower()
             ):
                 continue
-            items.append(self._item(db, app=app, role=role))
-        items.sort(
-            key=lambda item: (
-                item.sourceType != "official",
-                not item.featured,
-                -item.updatedAt.timestamp(),
-            )
+            ranked_items.append((app.featured_rank, self._item(db, app=app, role=role)))
+        ranked_items.sort(
+            key=lambda row: (
+                row[0],
+                row[1].sourceType == "official",
+                row[1].updatedAt.timestamp(),
+                row[1].id,
+            ),
+            reverse=True,
         )
-        return SmartAppMarketplaceListResponse(items=items)
+        return SmartAppMarketplaceListResponse(
+            items=[item for _featured_rank, item in ranked_items]
+        )
 
     def list_owned(self, db: Session, *, user_id: int) -> SmartAppOwnedListResponse:
         apps = (
@@ -159,15 +163,21 @@ class SmartAppMarketplaceService:
             name=request.name,
             display_name=request.displayName,
         )
-        if request.smartAppId is None and not request.targets:
-            raise HTTPException(
-                status_code=422, detail="User Smart apps require at least one recipient"
+        scope = request.scope or app.visibility
+        targets = []
+        if scope == "restricted":
+            targets = (
+                self._validated_targets(
+                    db, owner_user_id=user_id, targets=request.targets
+                )
+                if request.targets
+                else self._grant_targets(db, app.id)
             )
-        targets = (
-            self._validated_targets(db, owner_user_id=user_id, targets=request.targets)
-            if request.targets
-            else self._grant_targets(db, app.id)
-        )
+            if not targets:
+                raise HTTPException(
+                    status_code=422,
+                    detail="Restricted sharing requires at least one target",
+                )
         self._ensure_newer_version(db, app=app, version=request.version)
         pending = (
             db.query(SmartAppSubmission.id)
@@ -215,6 +225,7 @@ class SmartAppMarketplaceService:
                     "releaseExtensions": release_extensions,
                     "icon": {"key": icon_key, "contentType": icon[2]},
                     "screenshots": asset_keys,
+                    "scope": scope,
                     "targets": [target.model_dump() for target in targets],
                 },
             )
@@ -270,11 +281,18 @@ class SmartAppMarketplaceService:
                 metadata=dict(submission.metadata_json or {}),
                 created_by_user_id=user_id,
             )
+            scope = str((submission.metadata_json or {}).get("scope") or "private")
             targets = [
                 SmartAppAccessTarget.model_validate(target)
                 for target in (submission.metadata_json or {}).get("targets", [])
             ]
-            self._replace_grants(db, app=app, owner_user_id=user_id, targets=targets)
+            self._replace_access(
+                db,
+                app=app,
+                owner_user_id=user_id,
+                scope=scope,
+                targets=targets,
+            )
             submission.status = "published"
             db.commit()
             db.refresh(app)
@@ -309,10 +327,12 @@ class SmartAppMarketplaceService:
         self, db: Session, *, smart_app_id: int, user_id: int
     ) -> SmartAppAccessResponse:
         app = self._owned_user_app(db, smart_app_id, user_id)
-        targets = self._grant_targets(db, app.id)
+        targets = (
+            self._grant_targets(db, app.id) if app.visibility == "restricted" else []
+        )
         return SmartAppAccessResponse(
             smartAppId=app.id,
-            scope="restricted" if targets else "private",
+            scope=app.visibility,
             targets=targets,
         )
 
@@ -330,8 +350,13 @@ class SmartAppMarketplaceService:
             if request.scope == "restricted"
             else []
         )
-        self._replace_grants(db, app=app, owner_user_id=user_id, targets=targets)
-        app.visibility = "restricted" if targets else "private"
+        self._replace_access(
+            db,
+            app=app,
+            owner_user_id=user_id,
+            scope=request.scope,
+            targets=targets,
+        )
         db.commit()
         return self.get_access(db, smart_app_id=smart_app_id, user_id=user_id)
 
@@ -618,6 +643,7 @@ class SmartAppMarketplaceService:
             ownerUserId=app.owner_user_id,
             ownerDisplayName=(owner.user_name if owner else "Wegent"),
             accessRole=role,
+            visibility=app.visibility,
             tags=list(app.tags_json or []),
             iconUrl=icon_url,
             screenshotUrls=screenshot_urls,
@@ -714,6 +740,8 @@ class SmartAppMarketplaceService:
             return "official"
         if app.owner_user_id == user_id:
             return "owner"
+        if app.visibility == "public":
+            return "public"
         if app.visibility != "restricted":
             return None
         namespace_ids = self._user_namespace_ids(db, user_id)
@@ -816,12 +844,13 @@ class SmartAppMarketplaceService:
             )
         return normalized
 
-    def _replace_grants(
+    def _replace_access(
         self,
         db: Session,
         *,
         app: SmartApp,
         owner_user_id: int,
+        scope: str,
         targets: list[SmartAppAccessTarget],
     ) -> None:
         db.query(ResourceMember).filter(
@@ -830,22 +859,23 @@ class SmartAppMarketplaceService:
             ),
             ResourceMember.resource_id == app.id,
         ).delete(synchronize_session=False)
-        now = datetime.now()
-        for target in targets:
-            db.add(
-                ResourceMember.create(
-                    resource_type=ResourceType.SMART_APP.value,
-                    resource_id=app.id,
-                    entity_type=target.entityType,
-                    entity_id=target.entityId,
-                    entity_display_name=target.displayName,
-                    status=MemberStatus.APPROVED.value,
-                    invited_by_user_id=owner_user_id,
-                    reviewed_by_user_id=owner_user_id,
-                    reviewed_at=now,
+        if scope == "restricted":
+            now = datetime.now()
+            for target in targets:
+                db.add(
+                    ResourceMember.create(
+                        resource_type=ResourceType.SMART_APP.value,
+                        resource_id=app.id,
+                        entity_type=target.entityType,
+                        entity_id=target.entityId,
+                        entity_display_name=target.displayName,
+                        status=MemberStatus.APPROVED.value,
+                        invited_by_user_id=owner_user_id,
+                        reviewed_by_user_id=owner_user_id,
+                        reviewed_at=now,
+                    )
                 )
-            )
-        app.visibility = "restricted" if targets else "private"
+        app.visibility = scope
 
     def _grant_targets(self, db: Session, app_id: int) -> list[SmartAppAccessTarget]:
         grants = (

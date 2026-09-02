@@ -109,6 +109,7 @@ def _submission(
     target: User,
     *,
     version: str = "1.0.0",
+    scope: str = "restricted",
     extensions: dict | None = None,
     release_extensions: dict | None = None,
 ):
@@ -125,11 +126,18 @@ def _submission(
         iconDataUrl=_image_data_url(),
         extensions=extensions or {},
         releaseExtensions=release_extensions or {},
-        targets=[
-            SmartAppAccessTarget(
-                entityType="user", entityId=str(target.id), displayName=target.user_name
-            )
-        ],
+        scope=scope,
+        targets=(
+            [
+                SmartAppAccessTarget(
+                    entityType="user",
+                    entityId=str(target.id),
+                    displayName=target.user_name,
+                )
+            ]
+            if scope == "restricted"
+            else []
+        ),
     )
 
 
@@ -162,6 +170,95 @@ def test_user_publication_is_visible_only_to_owner_and_recipient(
         ).items
         == []
     )
+
+
+def test_public_app_is_immediately_visible_and_keeps_scope_for_new_versions(
+    test_db, test_user, monkeypatch
+):
+    unrelated_user = _user(test_db, "public-smart-app-user")
+    package = _package()
+    _mock_storage(monkeypatch, package)
+
+    initialized = smart_app_marketplace_service.init_submission(
+        test_db,
+        user_id=test_user.id,
+        request=_submission(package, unrelated_user, scope="public"),
+    )
+    completed = smart_app_marketplace_service.complete_submission(
+        test_db, submission_id=initialized.submissionId, user_id=test_user.id
+    )
+
+    assert completed.item is not None
+    assert completed.item.visibility == "public"
+    public_items = smart_app_marketplace_service.list_marketplace(
+        test_db, user_id=unrelated_user.id, source="public"
+    ).items
+    assert [(item.id, item.accessRole) for item in public_items] == [
+        (completed.item.id, "public")
+    ]
+    assert (
+        smart_app_marketplace_service.list_marketplace(
+            test_db, user_id=unrelated_user.id, source="shared"
+        ).items
+        == []
+    )
+
+    official_package = _package(name="official-unpinned")
+    _mock_storage(monkeypatch, official_package)
+    official_app, _, _ = smart_app_marketplace_service.publish_official_package(
+        test_db,
+        package=official_package,
+        summary="Official unpinned app",
+        description_md="# Official unpinned app",
+        tags=["data_analysis"],
+        icon=b"png-image",
+        icon_content_type="image/png",
+        screenshots=[],
+    )
+    public_app = test_db.get(SmartApp, completed.item.id)
+    assert public_app is not None
+    public_app.featured_rank = 50
+    test_db.commit()
+    assert (
+        smart_app_marketplace_service.list_marketplace(
+            test_db, user_id=unrelated_user.id
+        )
+        .items[0]
+        .id
+        == completed.item.id
+    )
+
+    next_package = _package(version="1.1.0")
+    _mock_storage(monkeypatch, next_package)
+    next_request = _submission(
+        next_package, unrelated_user, version="1.1.0", scope="public"
+    )
+    next_request.smartAppId = completed.item.id
+    next_request.scope = None
+    next_version = smart_app_marketplace_service.init_submission(
+        test_db, user_id=test_user.id, request=next_request
+    )
+    smart_app_marketplace_service.complete_submission(
+        test_db, submission_id=next_version.submissionId, user_id=test_user.id
+    )
+
+    refreshed = smart_app_marketplace_service.list_marketplace(
+        test_db, user_id=unrelated_user.id
+    ).items[0]
+    assert refreshed.version == "1.1.0"
+    assert refreshed.visibility == "public"
+
+    private_access = smart_app_marketplace_service.update_access(
+        test_db,
+        smart_app_id=completed.item.id,
+        user_id=test_user.id,
+        request=SmartAppAccessUpdateRequest(scope="private", targets=[]),
+    )
+    assert private_access.scope == "private"
+    remaining_items = smart_app_marketplace_service.list_marketplace(
+        test_db, user_id=unrelated_user.id
+    ).items
+    assert [item.id for item in remaining_items] == [official_app.id]
 
 
 def test_publication_persists_versioned_extensions_and_preserves_unknown_app_fields(

@@ -46,3 +46,30 @@ class AdminMarketplaceResourceUpdate(BaseModel):
         default=None,
         max_length=10,
     )
+
+
+class AdminMarketplaceSmartApp(BaseModel):
+    """One public Smart app available for marketplace curation."""
+
+    id: int
+    name: str
+    display_name: str
+    summary: str = ""
+    publisher_user_name: str | None = None
+    is_system: bool
+    featured_rank: int
+
+
+class AdminMarketplaceSmartAppList(BaseModel):
+    """Paginated public Smart app marketplace response."""
+
+    items: list[AdminMarketplaceSmartApp]
+    total: int
+    page: int
+    limit: int
+
+
+class AdminMarketplaceSmartAppUpdate(BaseModel):
+    """Editable Smart app marketplace priority."""
+
+    featured_rank: int = Field(ge=0, le=100)
