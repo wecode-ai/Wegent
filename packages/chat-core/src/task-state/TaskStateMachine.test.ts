@@ -958,6 +958,66 @@ describe('TaskStateMachine', () => {
     consoleInfoSpy.mockRestore()
   })
 
+  it.each([false, true])(
+    'recovers a completed policy-blocked subtask as a dedicated message error (transient error: %s)',
+    async hasTransientError => {
+      const consoleInfoSpy = vi.spyOn(console, 'info').mockImplementation(() => {})
+      const joinTask = vi.fn().mockResolvedValue({
+        subtasks: [
+          {
+            id: 42,
+            task_id: 100,
+            team_id: 1,
+            title: 'blocked',
+            bot_ids: [],
+            role: 'TEAM',
+            message_id: 7,
+            parent_id: 0,
+            prompt: '',
+            executor_namespace: '',
+            executor_name: '',
+            status: 'COMPLETED',
+            progress: 100,
+            batch: 0,
+            result: {
+              value: '',
+              policy_blocked: true,
+              error_type: 'PROMPT_PROTECTION_BLOCKED',
+              error_message: '该请求无法处理，请调整问题后再试。',
+            },
+            error_message: '',
+            user_id: 1,
+            created_at: '2026-05-31T10:00:00.000Z',
+            updated_at: '2026-05-31T10:00:00.000Z',
+            completed_at: '2026-05-31T10:00:00.000Z',
+            bots: [],
+          },
+        ],
+      })
+      const machine = new TaskStateMachine(100, {
+        joinTask,
+        isConnected: () => true,
+      })
+
+      if (hasTransientError) {
+        machine.handleChatStart(42, 'Chat', 7)
+        machine.handleChatError(42, 'temporary error', 7, 'generic_error')
+      }
+      machine.handleTaskStatus('COMPLETED')
+      await machine.recover({ force: true })
+
+      expect(machine.getState().messages.get('ai-42')).toMatchObject({
+        status: 'error',
+        subtaskStatus: 'COMPLETED',
+        errorType: 'PROMPT_PROTECTION_BLOCKED',
+        error: '该请求无法处理，请调整问题后再试。',
+      })
+      expect(machine.getState().runtime.taskStatus).toBe('COMPLETED')
+
+      consoleInfoSpy.mockRestore()
+    }
+  )
+
   it('syncs join subtasks when task detail marks the task terminal before join ack returns', async () => {
     const consoleInfoSpy = vi.spyOn(console, 'info').mockImplementation(() => {})
     let resolveJoin: (value: {

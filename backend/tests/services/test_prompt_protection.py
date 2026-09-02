@@ -743,7 +743,12 @@ async def test_blocked_turn_is_persisted_completed_for_follow_up(monkeypatch):
     from app.api.ws import chat_namespace
     from app.services.chat.trigger import lifecycle
 
-    blocked_result = {"value": "", "policy_blocked": True}
+    blocked_result = {
+        "value": "",
+        "policy_blocked": True,
+        "error_type": "PROMPT_PROTECTION_BLOCKED",
+        "error_message": "该请求无法处理，请调整问题后再试。",
+    }
     collect = AsyncMock(return_value=blocked_result)
     persist = AsyncMock()
     monkeypatch.setattr(lifecycle, "collect_completed_result", collect)

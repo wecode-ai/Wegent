@@ -83,6 +83,9 @@ export interface UnifiedMessage {
     retrieval_summary?: RetrievalSummaryPayload
     reasoning_content?: string
     reasoning_chunk?: string
+    policy_blocked?: boolean
+    error_type?: string
+    error_message?: string
     blocks?: MessageBlock[]
     context_metrics?: ContextMetricsSnapshot
     /** Video generation config (stored in user message subtask for display) */

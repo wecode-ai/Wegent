@@ -31,6 +31,7 @@ from app.services.chat.storage.task_manager import (
     get_task_with_access_check,
 )
 from app.services.chat.task_device_resolution import ensure_task_device_id
+from app.services.prompt_protection import BLOCKED_ERROR_CODE, BLOCKED_MESSAGE
 from app.services.readers.kinds import KindType, kindReader
 from app.services.task_fork_history import task_fork_history_resolver
 from app.services.task_status import mark_task_pending_payload
@@ -653,7 +654,12 @@ async def finalize_prompt_protection_block(
     result = await collect_completed_result(
         subtask_id,
         status="COMPLETED",
-        result={"value": "", "policy_blocked": True},
+        result={
+            "value": "",
+            "policy_blocked": True,
+            "error_type": BLOCKED_ERROR_CODE,
+            "error_message": BLOCKED_MESSAGE,
+        },
     )
     await persist_completed_result(
         subtask_id=subtask_id,
