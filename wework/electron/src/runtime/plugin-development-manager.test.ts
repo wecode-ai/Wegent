@@ -4,12 +4,22 @@ import { join } from 'node:path'
 import { describe, expect, test } from 'vitest'
 import {
   PluginDevelopmentManager,
+  pluginDevelopmentElectronArguments,
   pluginDevelopmentEnvironment,
   pluginDevelopmentId,
   type PluginDevelopmentSession,
 } from './plugin-development-manager.js'
 
 describe('PluginDevelopmentManager', () => {
+  test('inherits Electron runtime switches required by an isolated parent process', () => {
+    const enabled = new Set(['no-sandbox', 'disable-gpu', 'unrelated-switch'])
+
+    expect(pluginDevelopmentElectronArguments(name => enabled.has(name))).toEqual([
+      '--no-sandbox',
+      '--disable-gpu',
+    ])
+  })
+
   test('creates a stable identifier for each source root', () => {
     const firstRoot = join('/tmp', 'plugin-one')
     const secondRoot = join('/tmp', 'plugin-two')

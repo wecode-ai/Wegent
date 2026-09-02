@@ -94,7 +94,10 @@ import { GlobalShortcutController } from './host/global-shortcut-controller.js'
 import { resolveDshAppRoute } from './host/dsh-app-route.js'
 import { BrowserAnnotationController } from './host/browser-annotation-controller.js'
 import { LogRetentionService, type LogCleanupResult } from './runtime/log-retention.js'
-import { PluginDevelopmentManager } from './runtime/plugin-development-manager.js'
+import {
+  PluginDevelopmentManager,
+  pluginDevelopmentElectronArguments,
+} from './runtime/plugin-development-manager.js'
 import { SecureValueStore } from './host/secure-value-store.js'
 import { resolveDevelopmentDockIdentity } from './host/development-dock-identity.js'
 import { isEffectivePackagedApplication } from './host/application-packaging-mode.js'
@@ -1515,9 +1518,12 @@ async function configureDesktopRuntime(): Promise<void> {
 }
 
 function currentElectronLaunch(): { command: string; args: string[] } {
+  const inheritedArguments = pluginDevelopmentElectronArguments(name =>
+    app.commandLine.hasSwitch(name)
+  )
   return packagedApplication
-    ? { command: process.execPath, args: [] }
-    : { command: process.execPath, args: [packageRoot] }
+    ? { command: process.execPath, args: inheritedArguments }
+    : { command: process.execPath, args: [packageRoot, ...inheritedArguments] }
 }
 
 function scheduleComputerUseStartup(): void {

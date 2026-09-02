@@ -54,6 +54,13 @@ interface ChildState {
   lastError?: PluginDevelopmentError | null
 }
 
+const INHERITED_ELECTRON_SWITCHES = [
+  'no-sandbox',
+  'disable-gpu',
+  'in-process-gpu',
+  'disable-dev-shm-usage',
+] as const
+
 export interface PluginDevelopmentManagerOptions {
   command: string
   args: string[]
@@ -61,6 +68,10 @@ export interface PluginDevelopmentManagerOptions {
   userDataDirectory: string
   onStateChanged?: (session: PluginDevelopmentSession) => void
   onProjectClassificationChanged?: (classification: PluginDevelopmentProjectClassification) => void
+}
+
+export function pluginDevelopmentElectronArguments(hasSwitch: (name: string) => boolean): string[] {
+  return INHERITED_ELECTRON_SWITCHES.filter(hasSwitch).map(name => `--${name}`)
 }
 
 export class PluginDevelopmentManager {
