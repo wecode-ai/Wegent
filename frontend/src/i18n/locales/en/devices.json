@@ -136,6 +136,8 @@
   "cloud_coming_soon_title": "Cloud Devices Coming Soon",
   "cloud_coming_soon_description": "Cloud device support is under active development. Stay tuned for updates!",
   "openclaw_badge": "🦞 OpenClaw",
+  "advanced_mode": "Advanced mode",
+  "advanced_mode_description": "Show OpenClaw devices",
   "got_it": "Got it",
   "actions": {
     "upgrade": "Upgrade"
