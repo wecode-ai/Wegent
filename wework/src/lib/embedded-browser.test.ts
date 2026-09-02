@@ -9,6 +9,7 @@ import {
   listenEmbeddedBrowserAgentState,
   listenEmbeddedBrowserOpenRequests,
   listenEmbeddedBrowserPageStateChanges,
+  migrateEmbeddedBrowserLabel,
   relabelEmbeddedBrowser,
   notifyEmbeddedBrowserAgentCursorArrived,
   resolveEmbeddedBrowserAgentApproval,
@@ -72,6 +73,49 @@ describe('embedded-browser', () => {
       fromLabel: 'workspace-browser-blank-0',
       toLabel: 'workspace-browser-task-1',
     })
+  })
+
+  test('waits for an opening browser before migrating its label', async () => {
+    vi.useFakeTimers()
+    desktopHostMocks.invoke
+      .mockRejectedValueOnce(
+        new Error('Embedded browser is unavailable: workspace-browser-blank-0')
+      )
+      .mockResolvedValueOnce(undefined)
+
+    const migration = migrateEmbeddedBrowserLabel(
+      'workspace-browser-blank-0',
+      'workspace-browser-task-1',
+      { waitForSource: true }
+    )
+    await vi.advanceTimersByTimeAsync(50)
+
+    await expect(migration).resolves.toBeUndefined()
+    expect(desktopHostMocks.invoke).toHaveBeenCalledTimes(2)
+  })
+
+  test('migrates an empty browser label without waiting for a native browser', async () => {
+    desktopHostMocks.invoke.mockRejectedValueOnce(
+      new Error('Embedded browser is unavailable: workspace-browser-blank-0')
+    )
+
+    await expect(
+      migrateEmbeddedBrowserLabel('workspace-browser-blank-0', 'workspace-browser-task-1', {
+        waitForSource: false,
+      })
+    ).resolves.toBeUndefined()
+    expect(desktopHostMocks.invoke).toHaveBeenCalledTimes(1)
+  })
+
+  test('does not retry unrelated browser migration errors', async () => {
+    desktopHostMocks.invoke.mockRejectedValueOnce(new Error('Browser label already exists'))
+
+    await expect(
+      migrateEmbeddedBrowserLabel('workspace-browser-blank-0', 'workspace-browser-task-1', {
+        waitForSource: true,
+      })
+    ).rejects.toThrow('Browser label already exists')
+    expect(desktopHostMocks.invoke).toHaveBeenCalledTimes(1)
   })
 
   test('closes only the expected native browser identity', async () => {

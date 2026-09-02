@@ -737,6 +737,40 @@ describe('EmbeddedBrowserManager lifecycle', () => {
     await rm(directory, { recursive: true, force: true })
   })
 
+  test('keeps existing browser routes valid after relabeling a browser entry', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'wework-browser-manager-'))
+    const manager = new EmbeddedBrowserManager(directory)
+    const contents = new FakeWebContents()
+    contents.loadURL.mockImplementation(async url => {
+      contents.commitUrl(url)
+    })
+    const temporaryLabel = 'workspace-browser-blank-1'
+    const taskLabel = 'workspace-browser-task-1'
+    manager.attach(temporaryLabel, contents as unknown as WebContents)
+    await manager.open({
+      label: temporaryLabel,
+      url: 'https://example.test/',
+      bounds: { x: 0, y: 0, width: 800, height: 600 },
+      visible: true,
+      navigateExisting: true,
+    })
+    manager.setActiveTab(temporaryLabel, temporaryLabel)
+    manager.setActiveTab('workspace-browser', temporaryLabel)
+
+    manager.relabel(temporaryLabel, taskLabel)
+
+    expect(manager.activeLabel(temporaryLabel)).toBe(taskLabel)
+    expect(manager.activeLabel('workspace-browser')).toBe(taskLabel)
+    expect(manager.state(manager.activeLabel(temporaryLabel))).toMatchObject({
+      label: taskLabel,
+      url: 'https://example.test/',
+    })
+
+    contents.close()
+    expect(manager.has(taskLabel)).toBe(false)
+    await rm(directory, { recursive: true, force: true })
+  })
+
   test('records, searches, removes, and clears persisted browser history', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'wework-browser-manager-'))
     const manager = new EmbeddedBrowserManager(directory)

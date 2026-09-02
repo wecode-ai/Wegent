@@ -337,11 +337,11 @@ export class EmbeddedBrowserManager {
       this.setAgentControlPaused(entry.label, true)
     })
     contents.once('destroyed', () => {
-      if (this.attachedContents.get(normalizedLabel)?.id === contents.id) {
-        this.attachedContents.delete(normalizedLabel)
+      for (const [attachedLabel, attached] of this.attachedContents) {
+        if (attached.id === contents.id) this.attachedContents.delete(attachedLabel)
       }
-      if (this.entries.get(normalizedLabel)?.contents.id === contents.id) {
-        this.entries.delete(normalizedLabel)
+      for (const [entryLabel, entry] of this.entries) {
+        if (entry.contents.id === contents.id) this.entries.delete(entryLabel)
       }
     })
     const waiters = this.attachmentWaiters.get(normalizedLabel)
@@ -615,6 +615,28 @@ export class EmbeddedBrowserManager {
     const entry = this.required(fromLabel)
     const target = requiredLabel(toLabel)
     if (this.entries.has(target)) throw new Error(`Browser label already exists: ${target}`)
+    const attached = this.attachedContents.get(entry.label)
+    const targetAttached = this.attachedContents.get(target)
+    if (
+      attached &&
+      targetAttached &&
+      attached.id !== targetAttached.id &&
+      !targetAttached.isDestroyed()
+    ) {
+      targetAttached.close()
+    }
+    this.attachedContents.delete(entry.label)
+    if (attached && !attached.isDestroyed()) this.attachedContents.set(target, attached)
+    for (const [baseLabel, activeLabel] of this.activeTabs) {
+      if (activeLabel === entry.label) this.activeTabs.set(baseLabel, target)
+    }
+    if (this.agentControlPaused.delete(entry.label)) this.agentControlPaused.add(target)
+    for (const approval of this.agentApprovals.values()) {
+      if (approval.label === entry.label) approval.label = target
+    }
+    for (const download of this.downloads.values()) {
+      if (download.label === entry.label) download.label = target
+    }
     this.entries.delete(entry.label)
     entry.label = target
     this.entries.set(target, entry)

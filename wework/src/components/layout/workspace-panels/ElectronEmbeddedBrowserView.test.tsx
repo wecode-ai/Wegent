@@ -1,6 +1,7 @@
 import { act, render, screen } from '@testing-library/react'
-import { beforeEach, describe, expect, test, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 import { ElectronEmbeddedBrowserView } from './ElectronEmbeddedBrowserView'
+import { retainElectronEmbeddedBrowserView } from './electronEmbeddedBrowserHost'
 
 const embeddedBrowserMocks = vi.hoisted(() => ({
   notifyEmbeddedBrowserAgentCursorArrived: vi.fn(),
@@ -8,17 +9,30 @@ const embeddedBrowserMocks = vi.hoisted(() => ({
 
 vi.mock('@/lib/embedded-browser', () => embeddedBrowserMocks)
 
+const resizeObserverCallbacks: Array<() => void> = []
+
 class ResizeObserverMock {
+  constructor(callback: ResizeObserverCallback) {
+    resizeObserverCallbacks.push(() => callback([], this as unknown as ResizeObserver))
+  }
+
   observe = vi.fn()
   disconnect = vi.fn()
 }
 
 describe('ElectronEmbeddedBrowserView', () => {
   beforeEach(() => {
+    resizeObserverCallbacks.length = 0
     vi.useFakeTimers()
     embeddedBrowserMocks.notifyEmbeddedBrowserAgentCursorArrived.mockReset()
     embeddedBrowserMocks.notifyEmbeddedBrowserAgentCursorArrived.mockResolvedValue(undefined)
     vi.stubGlobal('ResizeObserver', ResizeObserverMock)
+    document.querySelector('[data-wework-browser-webview-host-root]')?.remove()
+  })
+
+  afterEach(() => {
+    vi.useRealTimers()
+    vi.unstubAllGlobals()
     document.querySelector('[data-wework-browser-webview-host-root]')?.remove()
   })
 
@@ -132,5 +146,190 @@ describe('ElectronEmbeddedBrowserView', () => {
       'workspace-browser',
       8
     )
+  })
+
+  test('reuses the loaded webview when a blank conversation becomes a task', async () => {
+    const source = render(
+      <ElectronEmbeddedBrowserView
+        active
+        interactionBlocked={false}
+        label="workspace-browser-blank-0"
+        visualRect={null}
+      />
+    )
+    const sourceHost = screen.getByTestId('workspace-browser-electron-webview')
+    const loadedWebview = sourceHost.querySelector('webview')
+
+    retainElectronEmbeddedBrowserView('workspace-browser-blank-0')
+    source.unmount()
+    expect(screen.getByTestId('workspace-browser-electron-webview')).toBe(sourceHost)
+    expect(sourceHost.style.visibility).toBe('visible')
+    expect(sourceHost.style.pointerEvents).toBe('none')
+
+    const destination = render(
+      <ElectronEmbeddedBrowserView
+        active
+        interactionBlocked={false}
+        label="workspace-browser-blank-0"
+        visualRect={null}
+      />
+    )
+    const transferredHost = screen.getByTestId('workspace-browser-electron-webview')
+    expect(transferredHost.querySelector('webview')).toBe(loadedWebview)
+
+    destination.rerender(
+      <ElectronEmbeddedBrowserView
+        active
+        interactionBlocked={false}
+        label="workspace-browser-task-1"
+        visualRect={null}
+      />
+    )
+    expect(transferredHost).toHaveAttribute(
+      'data-wework-browser-webview',
+      'workspace-browser-task-1'
+    )
+
+    destination.unmount()
+    await act(async () => {
+      await Promise.resolve()
+    })
+    expect(screen.queryByTestId('workspace-browser-electron-webview')).not.toBeInTheDocument()
+  })
+
+  test('claims the retained blank webview when the task label renders first', async () => {
+    const source = render(
+      <ElectronEmbeddedBrowserView
+        active
+        interactionBlocked={false}
+        label="workspace-browser-blank-0"
+        visualRect={null}
+      />
+    )
+    const sourceHost = screen.getByTestId('workspace-browser-electron-webview')
+    const loadedWebview = sourceHost.querySelector('webview')
+    const sourcePartition = loadedWebview?.getAttribute('partition')
+
+    retainElectronEmbeddedBrowserView('workspace-browser-blank-0')
+    source.unmount()
+
+    const destination = render(
+      <ElectronEmbeddedBrowserView
+        active
+        interactionBlocked={false}
+        label="workspace-browser-runtime-1"
+        transferFromLabel="workspace-browser-blank-0"
+        visualRect={null}
+      />
+    )
+
+    const transferredHost = screen.getByTestId('workspace-browser-electron-webview')
+    expect(screen.getAllByTestId('workspace-browser-electron-webview')).toEqual([sourceHost])
+    expect(transferredHost.querySelector('webview')).toBe(loadedWebview)
+    expect(loadedWebview).toHaveAttribute('partition', sourcePartition)
+    expect(transferredHost).toHaveAttribute(
+      'data-wework-browser-webview',
+      'workspace-browser-runtime-1'
+    )
+
+    destination.unmount()
+    await act(async () => {
+      await Promise.resolve()
+    })
+    expect(screen.queryByTestId('workspace-browser-electron-webview')).not.toBeInTheDocument()
+  })
+
+  test('keeps one webview when ownership overlaps during a panel transition', async () => {
+    const first = render(
+      <ElectronEmbeddedBrowserView
+        active
+        interactionBlocked={false}
+        label="workspace-browser-overlap"
+        visualRect={null}
+      />
+    )
+    const host = screen.getByTestId('workspace-browser-electron-webview')
+    const webview = host.querySelector('webview')
+
+    const second = render(
+      <ElectronEmbeddedBrowserView
+        active
+        interactionBlocked={false}
+        label="workspace-browser-overlap"
+        visualRect={null}
+      />
+    )
+    expect(screen.getAllByTestId('workspace-browser-electron-webview')).toEqual([host])
+    expect(host.querySelector('webview')).toBe(webview)
+
+    first.rerender(
+      <ElectronEmbeddedBrowserView
+        active={false}
+        interactionBlocked
+        label="workspace-browser-overlap"
+        visualRect={null}
+      />
+    )
+    expect(host.style.visibility).toBe('visible')
+    expect(host.style.pointerEvents).toBe('auto')
+
+    first.unmount()
+    expect(screen.getByTestId('workspace-browser-electron-webview')).toBe(host)
+
+    second.unmount()
+    await act(async () => {
+      await Promise.resolve()
+    })
+    expect(screen.queryByTestId('workspace-browser-electron-webview')).not.toBeInTheDocument()
+  })
+
+  test('ignores stale bounds updates after ownership moves to the task pane', () => {
+    const source = render(
+      <ElectronEmbeddedBrowserView
+        active
+        interactionBlocked={false}
+        label="workspace-browser-overlap"
+        visualRect={null}
+      />
+    )
+    const sourcePlaceholder = source.getByTestId('workspace-browser-electron-webview-placeholder')
+    vi.spyOn(sourcePlaceholder, 'getBoundingClientRect').mockReturnValue({
+      height: 400,
+      left: 10,
+      top: 20,
+      width: 600,
+    } as DOMRect)
+    resizeObserverCallbacks[0]?.()
+
+    const destination = render(
+      <ElectronEmbeddedBrowserView
+        active
+        interactionBlocked={false}
+        label="workspace-browser-overlap"
+        visualRect={null}
+      />
+    )
+    const destinationPlaceholder = destination.container.querySelector<HTMLElement>(
+      '[data-testid="workspace-browser-electron-webview-placeholder"]'
+    )
+    expect(destinationPlaceholder).not.toBeNull()
+    vi.spyOn(destinationPlaceholder, 'getBoundingClientRect').mockReturnValue({
+      height: 500,
+      left: 700,
+      top: 30,
+      width: 800,
+    } as DOMRect)
+    resizeObserverCallbacks[1]?.()
+
+    const host = screen.getByTestId('workspace-browser-electron-webview')
+    expect(host.style.left).toBe('700px')
+    expect(host.style.width).toBe('800px')
+
+    resizeObserverCallbacks[0]?.()
+
+    expect(host.style.left).toBe('700px')
+    expect(host.style.top).toBe('30px')
+    expect(host.style.width).toBe('800px')
+    expect(host.style.height).toBe('500px')
   })
 })
