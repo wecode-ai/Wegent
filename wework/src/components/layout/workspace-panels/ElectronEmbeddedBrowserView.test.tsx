@@ -1,7 +1,12 @@
 import { act, render, screen } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 import { ElectronEmbeddedBrowserView } from './ElectronEmbeddedBrowserView'
-import { retainElectronEmbeddedBrowserView } from './electronEmbeddedBrowserHost'
+import {
+  claimElectronEmbeddedBrowserView,
+  relabelElectronEmbeddedBrowserView,
+  releaseElectronEmbeddedBrowserView,
+  retainElectronEmbeddedBrowserView,
+} from './electronEmbeddedBrowserHost'
 
 const embeddedBrowserMocks = vi.hoisted(() => ({
   notifyEmbeddedBrowserAgentCursorArrived: vi.fn(),
@@ -163,7 +168,7 @@ describe('ElectronEmbeddedBrowserView', () => {
     retainElectronEmbeddedBrowserView('workspace-browser-blank-0')
     source.unmount()
     expect(screen.getByTestId('workspace-browser-electron-webview')).toBe(sourceHost)
-    expect(sourceHost.style.visibility).toBe('visible')
+    expect(sourceHost.style.visibility).toBe('hidden')
     expect(sourceHost.style.pointerEvents).toBe('none')
 
     const destination = render(
@@ -195,6 +200,24 @@ describe('ElectronEmbeddedBrowserView', () => {
       await Promise.resolve()
     })
     expect(screen.queryByTestId('workspace-browser-electron-webview')).not.toBeInTheDocument()
+  })
+
+  test('does not replace an active host while relabeling', () => {
+    const sourceOwner = Symbol('source')
+    const targetOwner = Symbol('target')
+    const source = claimElectronEmbeddedBrowserView('workspace-browser-source', sourceOwner)
+    const target = claimElectronEmbeddedBrowserView('workspace-browser-target', targetOwner)
+
+    expect(() =>
+      relabelElectronEmbeddedBrowserView(source, sourceOwner, 'workspace-browser-target')
+    ).toThrow('Embedded browser label already has an active host')
+    expect(source.destroyed).toBe(false)
+    expect(target.destroyed).toBe(false)
+    expect(source.container.isConnected).toBe(true)
+    expect(target.container.isConnected).toBe(true)
+
+    releaseElectronEmbeddedBrowserView(source, sourceOwner)
+    releaseElectronEmbeddedBrowserView(target, targetOwner)
   })
 
   test('claims the retained blank webview when the task label renders first', async () => {

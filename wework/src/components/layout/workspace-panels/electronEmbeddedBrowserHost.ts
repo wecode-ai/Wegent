@@ -142,7 +142,12 @@ function connectedHostedWebview(label: string): HostedElectronWebview | null {
 function assignHostedWebviewLabel(host: HostedElectronWebview, label: string): void {
   if (host.label === label) return
   const existing = connectedHostedWebview(label)
-  if (existing && existing !== host) destroyHostedWebview(existing)
+  if (existing && existing !== host) {
+    if (existing.owner !== null || existing.claims.length > 0) {
+      throw new Error(`Embedded browser label already has an active host: ${label}`)
+    }
+    destroyHostedWebview(existing)
+  }
   if (hostedWebviews.get(host.label) === host) hostedWebviews.delete(host.label)
   host.label = label
   host.container.dataset.weworkBrowserWebview = label
@@ -229,8 +234,8 @@ export function releaseElectronEmbeddedBrowserView(
     return
   }
   host.container.style.pointerEvents = 'none'
-  if (host.retained) return
   host.container.style.visibility = 'hidden'
+  if (host.retained) return
   queueMicrotask(() => {
     if (host.owner !== null || host.retained) return
     destroyHostedWebview(host)

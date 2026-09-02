@@ -193,7 +193,7 @@ async function waitForBridgeText(identity, label, text, timeoutMs, message) {
       },
       label
     ).catch(() => null)
-    if (page?.inspectText.includes(text)) return page
+    if (page?.inspectText?.includes(text)) return page
     lastInspectText = page?.inspectText ?? null
     lastPageState = await callBridge(identity, { action: 'pageState' }, label).catch(() => null)
     await new Promise(resolve => setTimeout(resolve, 100))
