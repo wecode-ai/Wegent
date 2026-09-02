@@ -39,12 +39,16 @@ interface RefreshResponse {
 const CREDENTIAL_KEY = 'wegent.mobile.cloud-credentials.v2'
 
 export class DeviceCredentialService {
+  private serial: Promise<unknown> = Promise.resolve()
+
   async publicKey(): Promise<DevicePublicKey> {
-    const existing = await this.read()
-    if (existing) return existing.publicKey
-    const created = createCredential()
-    await this.write(created)
-    return created.publicKey
+    return this.enqueue(async () => {
+      const existing = await this.readStored()
+      if (existing) return existing.publicKey
+      const created = createCredential()
+      await this.writeStored(created)
+      return created.publicKey
+    })
   }
 
   async claimAuthorization(input: {
@@ -54,6 +58,7 @@ export class DeviceCredentialService {
   }): Promise<{
     status: PollResponse['status']
     accessToken?: string
+    refreshToken?: string
     username?: string
     error?: string
   }> {
@@ -68,18 +73,32 @@ export class DeviceCredentialService {
     }
     if (!body.access_token) throw new Error('授权响应缺少 access token')
     if (!body.refresh_token) throw new Error('授权响应缺少设备绑定 refresh token')
-
-    const current = (await this.read()) ?? createCredential()
-    await this.write({
-      ...current,
-      apiBaseUrl: normalizeApiBaseUrl(input.apiBaseUrl),
-      refreshToken: body.refresh_token,
-    })
     return {
       status: 'success',
       accessToken: body.access_token,
+      refreshToken: body.refresh_token,
       username: body.username,
     }
+  }
+
+  persistRefreshToken(
+    apiBaseUrl: string,
+    refreshToken: string,
+    isStillValid: () => boolean
+  ): Promise<void> {
+    return this.enqueue(async () => {
+      if (!isStillValid()) return
+      const current = (await this.readStored()) ?? createCredential()
+      if (!isStillValid()) return
+      const persisted: StoredDeviceCredential = {
+        ...current,
+        apiBaseUrl: normalizeApiBaseUrl(apiBaseUrl),
+        refreshToken,
+      }
+      await this.writeStored(persisted)
+      if (isStillValid()) return
+      await this.removeWrittenCredential(persisted)
+    })
   }
 
   async refreshAccessToken(apiBaseUrl: string): Promise<{
@@ -124,21 +143,51 @@ export class DeviceCredentialService {
   }
 
   clear(): Promise<void> {
-    return SecureStore.deleteItemAsync(CREDENTIAL_KEY)
+    return this.enqueue(() => SecureStore.deleteItemAsync(CREDENTIAL_KEY))
   }
 
-  private async read(): Promise<StoredDeviceCredential | null> {
+  private read(): Promise<StoredDeviceCredential | null> {
+    return this.enqueue(() => this.readStored())
+  }
+
+  // Runs inside the serial queue, so no queued credential operation can
+  // interleave between this operation's write and this check; the identity
+  // comparison still guards against deleting a record this operation did not
+  // write.
+  private async removeWrittenCredential(written: StoredDeviceCredential): Promise<void> {
+    const current = await this.readStored()
+    if (
+      !current ||
+      current.privateKey !== written.privateKey ||
+      current.apiBaseUrl !== written.apiBaseUrl ||
+      current.refreshToken !== written.refreshToken
+    ) {
+      return
+    }
+    await SecureStore.deleteItemAsync(CREDENTIAL_KEY)
+  }
+
+  private enqueue<T>(operation: () => Promise<T>): Promise<T> {
+    const previous = this.serial
+    let release!: () => void
+    this.serial = new Promise<void>(resolve => {
+      release = resolve
+    })
+    return previous.then(operation, operation).finally(release)
+  }
+
+  private async readStored(): Promise<StoredDeviceCredential | null> {
     const raw = await SecureStore.getItemAsync(CREDENTIAL_KEY)
     if (!raw) return null
     try {
       return normalizeCredential(JSON.parse(raw))
     } catch {
-      await this.clear()
+      await SecureStore.deleteItemAsync(CREDENTIAL_KEY)
       return null
     }
   }
 
-  private write(credential: StoredDeviceCredential): Promise<void> {
+  private writeStored(credential: StoredDeviceCredential): Promise<void> {
     return SecureStore.setItemAsync(CREDENTIAL_KEY, JSON.stringify(credential), {
       keychainAccessible: SecureStore.WHEN_UNLOCKED_THIS_DEVICE_ONLY,
     })

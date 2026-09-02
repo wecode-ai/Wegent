@@ -50,8 +50,14 @@ export function useWegentAuth(): WegentAuthState {
   const activeGeneration = useRef(0)
 
   const applyToken = useCallback(
-    async (config: BackendConfig, token: string, explicitExpiry?: number): Promise<void> => {
+    async (
+      config: BackendConfig,
+      token: string,
+      generation: number,
+      explicitExpiry?: number
+    ): Promise<void> => {
       const currentUser = await fetchCurrentUser(config, token)
+      if (activeGeneration.current !== generation) return
       setBackend(config)
       setAccessToken(token)
       setAccessTokenExpiresAt(explicitExpiry ?? jwtExpiry(token))
@@ -71,6 +77,7 @@ export function useWegentAuth(): WegentAuthState {
       await applyToken(
         backend,
         result.accessToken,
+        generation,
         result.expiresIn > 0 ? Date.now() + result.expiresIn * 1000 : undefined
       )
       return true
@@ -109,6 +116,7 @@ export function useWegentAuth(): WegentAuthState {
         await applyToken(
           config,
           result.accessToken,
+          generation,
           result.expiresIn > 0 ? Date.now() + result.expiresIn * 1000 : undefined
         )
       } catch (cause) {
@@ -161,9 +169,17 @@ export function useWegentAuth(): WegentAuthState {
         if (result.status === 'pending') continue
         if (result.status === 'declined') throw new Error('授权已取消')
         if (result.status === 'failed') throw new Error(result.error || '授权失败')
-        if (!result.accessToken) throw new Error('授权没有返回 access token')
+        if (!result.accessToken || !result.refreshToken)
+          throw new Error('授权没有返回 access token')
+        if (activeGeneration.current !== generation) return
+        await credentials.persistRefreshToken(
+          config.apiBaseUrl,
+          result.refreshToken,
+          () => activeGeneration.current === generation
+        )
+        if (activeGeneration.current !== generation) return
         WebBrowser.dismissBrowser()
-        await applyToken(config, result.accessToken)
+        await applyToken(config, result.accessToken, generation)
         return
       }
       throw new Error('授权已超时，请重新登录')
