@@ -10,6 +10,8 @@ use std::{
 use serde::{Deserialize, Serialize};
 use toml_edit::{table, value, DocumentMut};
 
+use crate::agents::replace_config;
+
 const EXECUTOR_HOME_ENV: &str = "WEGENT_EXECUTOR_HOME";
 const CODEX_HOME_ENV: &str = "WEGENT_CODEX_HOME";
 const E2E_NATIVE_CODEX_HOME_ENV: &str = "WEWORK_E2E_NATIVE_CODEX_HOME";
@@ -207,8 +209,7 @@ fn write_remote_apps_enabled(codex_home: &Path, enabled: bool) -> Result<(), Str
             config_path.display()
         )
     })?;
-    fs::write(&config_path, updated)
-        .map_err(|error| format!("Failed to write {}: {error}", config_path.display()))
+    replace_config(&config_path, updated)
 }
 
 fn read_optional_config(config_path: &Path) -> Result<String, String> {
@@ -469,6 +470,24 @@ mod tests {
 
         assert!(error.contains("Failed to parse Codex config"));
         assert_eq!(fs::read_to_string(config_path).unwrap(), invalid_config);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn preserves_codex_config_permissions_when_updating() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let root = tempfile::tempdir().unwrap();
+        let codex_home = root.path().join("codex");
+        fs::create_dir_all(&codex_home).unwrap();
+        let config_path = codex_home.join("config.toml");
+        fs::write(&config_path, "[features]\napps = false\n").unwrap();
+        fs::set_permissions(&config_path, fs::Permissions::from_mode(0o640)).unwrap();
+
+        write_remote_apps_enabled(&codex_home, true).unwrap();
+
+        let mode = fs::metadata(config_path).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode, 0o640);
     }
 
     #[test]
