@@ -265,6 +265,18 @@ export function CreateKnowledgeBaseDialog({
       return
     }
 
+    if (
+      kind === 'code' &&
+      scheduledUpdateEnabled &&
+      initialCadence === 'custom' &&
+      (!Number.isInteger(initialIntervalDays) ||
+        initialIntervalDays < 2 ||
+        initialIntervalDays > 365)
+    ) {
+      setError(t('knowledge:codeWiki.automatic.invalidCustomDays'))
+      return
+    }
+
     if (name.length > 100) {
       setError(t('knowledge:document.knowledgeBase.nameTooLong'))
       return
@@ -480,6 +492,7 @@ export function CreateKnowledgeBaseDialog({
                         checked={scheduledUpdateEnabled}
                         onCheckedChange={setScheduledUpdateEnabled}
                         aria-label={t('knowledge:codeWiki.create.scheduledUpdate')}
+                        data-testid="code-wiki-create-scheduled-update"
                       />
                       {scheduledUpdateEnabled && (
                         <div className="mt-3 grid grid-cols-2 gap-2">
@@ -521,6 +534,7 @@ export function CreateKnowledgeBaseDialog({
                               value={initialIntervalDays}
                               onChange={event => setInitialIntervalDays(Number(event.target.value))}
                               aria-label={t('knowledge:codeWiki.automatic.customDays')}
+                              data-testid="code-wiki-create-custom-days"
                             />
                           )}
                           {['weekly', 'biweekly', 'four_weeks'].includes(initialCadence) && (
@@ -544,10 +558,12 @@ export function CreateKnowledgeBaseDialog({
                             type="time"
                             value={initialTime}
                             onChange={event => setInitialTime(event.target.value)}
+                            data-testid="code-wiki-create-time"
                           />
                           <Input
                             value={initialTimezone}
                             onChange={event => setInitialTimezone(event.target.value)}
+                            data-testid="code-wiki-create-timezone"
                           />
                         </div>
                       )}

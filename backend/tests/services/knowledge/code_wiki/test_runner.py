@@ -1052,8 +1052,8 @@ def test_a_configured_runner_runs_future_generations_without_taking_file_ownersh
     test_user: User,
     tasks: FakeTasks,
     no_side_effects: FakeEffects,
-    monkeypatch,
-):
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     from app.services.knowledge.code_wiki import source
 
     runner = User(

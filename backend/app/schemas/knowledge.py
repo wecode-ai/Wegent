@@ -9,7 +9,7 @@ Pydantic schemas for knowledge base and document management.
 import logging
 from datetime import datetime
 from enum import Enum
-from typing import Annotated, Any, Dict, List, Literal, Optional
+from typing import Annotated, Any, Dict, List, Literal, Optional, Self
 
 from pydantic import (
     BaseModel,
@@ -511,7 +511,7 @@ class CodeWikiScheduledUpdateRequest(BaseModel):
     execution_principal_user_id: Optional[int] = Field(None, gt=0)
 
     @model_validator(mode="after")
-    def validate_cadence(self):
+    def validate_cadence(self) -> Self:
         fixed_intervals = {
             "daily": 1,
             "weekly": 7,

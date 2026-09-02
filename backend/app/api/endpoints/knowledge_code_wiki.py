@@ -434,7 +434,7 @@ def get_code_wiki_automatic_update(
     knowledge_base_id: int,
     current_user: User = Depends(security.get_current_user),
     db: Session = Depends(get_db),
-):
+) -> CodeWikiAutomaticUpdate:
     knowledge_base = _readable_code_wiki(db, current_user, knowledge_base_id)
     return read_scheduled_update(
         db,
@@ -454,7 +454,7 @@ def put_code_wiki_automatic_update(
     data: CodeWikiAutomaticUpdateRequest,
     current_user: User = Depends(security.get_current_user),
     db: Session = Depends(get_db),
-):
+) -> CodeWikiAutomaticUpdate:
     knowledge_base = _readable_code_wiki(db, current_user, knowledge_base_id)
     _assert_caller_owns_schedule(current_user, knowledge_base)
     try:

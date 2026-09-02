@@ -1205,6 +1205,7 @@
       "modelPlaceholder": "选择模型",
       "modelRequired": "请选择生成模型",
       "created": "代码 Wiki 已创建，正在生成内容。",
+      "scheduleNotConfigured": "代码 Wiki 已创建，但定期更新未保存；可进入 Wiki 后重新配置。",
       "scheduledUpdate": "定期自动更新",
       "scheduledUpdateHint": "首次生成会在创建后立即开始；也可以启用后续定期检查。"
     },
@@ -1247,6 +1248,7 @@
       "days": "每 {{days}} 天",
       "cadence": "更新周期",
       "customDays": "自定义周期天数（2–365 天）",
+      "invalidCustomDays": "请输入 2 到 365 之间的整数天数。",
       "weekday": "星期",
       "time": "时间",
       "timezone": "时区",

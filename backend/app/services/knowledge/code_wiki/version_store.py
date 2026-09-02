@@ -87,6 +87,16 @@ def _as_naive_utc(value: Optional[datetime]) -> datetime:
     return value.astimezone(timezone.utc).replace(tzinfo=None)
 
 
+def stale_after(
+    generation: WikiGeneration, *, default_hours: float = STALE_RUN_AFTER_HOURS
+) -> timedelta:
+    """Return the applicable worker-silence deadline for one generation."""
+    timeout_seconds = (generation.ext or {}).get(BACKGROUND_EXECUTION_TIMEOUT_EXT_KEY)
+    if isinstance(timeout_seconds, int) and timeout_seconds > 0:
+        return timedelta(seconds=timeout_seconds)
+    return timedelta(hours=default_hours)
+
+
 @dataclass(frozen=True)
 class SeedOutcome:
     """What seeding did."""
@@ -234,14 +244,11 @@ def reclaim_stale_generations(
     Returns:
         Ids of the generations that were failed.
     """
-    cutoff = _as_naive_utc(now) - timedelta(hours=stale_after_hours)
-
     stale: Sequence[WikiGeneration] = (
         db.query(WikiGeneration)
         .filter(
             WikiGeneration.kind_id == kind_id,
             WikiGeneration.status.in_(IN_FLIGHT_STATUSES),
-            WikiGeneration.updated_at < cutoff,
         )
         .all()
     )
@@ -251,14 +258,8 @@ def reclaim_stale_generations(
     reclaimed: list[int] = []
     moment = _as_naive_utc(now)
     for generation in stale:
-        scheduled_timeout = (generation.ext or {}).get(
-            BACKGROUND_EXECUTION_TIMEOUT_EXT_KEY
-        )
-        if (
-            isinstance(scheduled_timeout, int)
-            and scheduled_timeout > 0
-            and generation.updated_at >= moment - timedelta(seconds=scheduled_timeout)
-        ):
+        deadline = stale_after(generation, default_hours=stale_after_hours)
+        if generation.updated_at >= moment - deadline:
             continue
         generation.status = WikiGenerationStatus.FAILED
         generation.completed_at = moment

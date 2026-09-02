@@ -10,7 +10,7 @@ from app.schemas.subscription import (
 )
 
 
-def test_code_wiki_callback_recovers_execution_link_from_generation():
+def test_code_wiki_callback_recovers_execution_link_from_generation() -> None:
     from app.models.subscription import BackgroundExecution
     from app.models.wiki import WikiGeneration
     from app.services.knowledge.code_wiki.runner import BACKGROUND_EXECUTION_EXT_KEY

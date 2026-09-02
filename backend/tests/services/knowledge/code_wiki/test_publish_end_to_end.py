@@ -294,8 +294,11 @@ def test_a_second_publish_replaces_the_content_and_keeps_the_document(
 
 
 def test_a_new_runner_deletes_the_previous_runners_superseded_attachment(
-    test_db: Session, knowledge_base: Kind, test_user: User, generation
-):
+    test_db: Session,
+    knowledge_base: Kind,
+    test_user: User,
+    generation: Callable[[], WikiGeneration],
+) -> None:
     first = generation()
     _page(test_db, first, "index", "first owner")
     enqueued: list[int] = []

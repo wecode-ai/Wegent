@@ -184,6 +184,7 @@ export function CodeWikiReader({ wiki, canConfigure = false, onConfigure }: Code
   const [updateMode, setUpdateMode] = useState<'check' | 'full'>('check')
   const [automaticOpen, setAutomaticOpen] = useState(false)
   const [automaticPlan, setAutomaticPlan] = useState<CodeWikiAutomaticUpdate | null>(null)
+  const [automaticPlanLoadFailed, setAutomaticPlanLoadFailed] = useState(false)
   const [scrollHost, setScrollHost] = useState<HTMLElement | null>(null)
   // Whether the chat is still showing its empty state, reported by the page body as
   // it mounts and unmounts inside it. The chat replaces that state with the
@@ -224,8 +225,14 @@ export function CodeWikiReader({ wiki, canConfigure = false, onConfigure }: Code
     if (!canConfigure) return
     codeWikiApi
       .automaticUpdate(wiki.id)
-      .then(setAutomaticPlan)
-      .catch(() => undefined)
+      .then(plan => {
+        setAutomaticPlan(plan)
+        setAutomaticPlanLoadFailed(false)
+      })
+      .catch(error => {
+        setAutomaticPlanLoadFailed(true)
+        toast.error(error instanceof Error ? error.message : String(error))
+      })
   }, [canConfigure, wiki.id])
 
   const reloadPages = useCallback(
@@ -421,7 +428,7 @@ export function CodeWikiReader({ wiki, canConfigure = false, onConfigure }: Code
             {runStatus.status?.last_published_at ? t('codeWiki.reader.update') : control.label}
           </Button>
         )}
-        {automaticPlan?.can_configure && (
+        {(automaticPlan?.can_configure || automaticPlanLoadFailed) && (
           <Button
             variant="outline"
             size="sm"
@@ -430,7 +437,7 @@ export function CodeWikiReader({ wiki, canConfigure = false, onConfigure }: Code
             className="h-11 sm:h-9"
           >
             <CalendarClock className="mr-1.5 h-4 w-4" />
-            {automaticPlan.enabled
+            {automaticPlan?.enabled
               ? t('codeWiki.automatic.enabledCadence', { cadence: automaticCadence })
               : t('codeWiki.automatic.button')}
           </Button>
@@ -498,12 +505,15 @@ export function CodeWikiReader({ wiki, canConfigure = false, onConfigure }: Code
           </DialogContent>
         </Dialog>
       )}
-      {automaticPlan?.can_configure && (
+      {(automaticPlan?.can_configure || automaticPlanLoadFailed) && (
         <AutomaticUpdateDialog
           knowledgeBaseId={wiki.id}
           open={automaticOpen}
           onOpenChange={setAutomaticOpen}
-          onSaved={setAutomaticPlan}
+          onSaved={plan => {
+            setAutomaticPlan(plan)
+            setAutomaticPlanLoadFailed(false)
+          }}
         />
       )}
 

@@ -1205,6 +1205,7 @@
       "modelPlaceholder": "Select a model",
       "modelRequired": "Select the model to generate with",
       "created": "Code Wiki created. Content is generating.",
+      "scheduleNotConfigured": "Code Wiki created. Scheduled updates were not saved; configure them from the wiki.",
       "scheduledUpdate": "Scheduled updates",
       "scheduledUpdateHint": "The first generation starts after creation; optionally enable future checks too."
     },
@@ -1247,6 +1248,7 @@
       "days": "Every {{days}} days",
       "cadence": "Cadence",
       "customDays": "Custom cadence in days (2–365)",
+      "invalidCustomDays": "Enter a whole number between 2 and 365 days.",
       "weekday": "Weekday",
       "time": "Time",
       "timezone": "Time zone",

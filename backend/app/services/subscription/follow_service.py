@@ -470,12 +470,12 @@ class SubscriptionFollowService:
         if not subscription:
             raise HTTPException(status_code=404, detail="Subscription not found")
 
-        _reject_code_wiki_scheduled_update(subscription)
-
         if subscription.user_id != owner_user_id:
             raise HTTPException(
                 status_code=403, detail="Only the owner can send invitations"
             )
+
+        _reject_code_wiki_scheduled_update(subscription)
 
         # Find target user
         target_user = None
@@ -584,12 +584,12 @@ class SubscriptionFollowService:
         if not subscription:
             raise HTTPException(status_code=404, detail="Subscription not found")
 
-        _reject_code_wiki_scheduled_update(subscription)
-
         if subscription.user_id != owner_user_id:
             raise HTTPException(
                 status_code=403, detail="Only the owner can send invitations"
             )
+
+        _reject_code_wiki_scheduled_update(subscription)
 
         # Verify namespace exists
         namespace = db.query(Namespace).filter(Namespace.id == namespace_id).first()
