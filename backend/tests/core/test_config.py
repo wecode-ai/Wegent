@@ -82,9 +82,29 @@ class TestSettings:
         """Prevent capacity configuration from disabling publication globally."""
         with pytest.raises(
             ValidationError,
-            match="PLUGIN_PUBLICATION_MAX_ACTIVE_REQUESTS must be at least 1",
+            match="WEWORK_PLUGIN_PUBLICATION_MAX_ACTIVE_REQUESTS must be at least 1",
         ):
-            build_settings(PLUGIN_PUBLICATION_MAX_ACTIVE_REQUESTS=0)
+            build_settings(WEWORK_PLUGIN_PUBLICATION_MAX_ACTIVE_REQUESTS=0)
+
+    def test_wework_plugin_publication_settings_load_from_environment(
+        self, monkeypatch
+    ):
+        """Keep the WeWork publication environment contract explicit."""
+        monkeypatch.setenv(
+            "WEWORK_PLUGIN_PUBLICATION_GITLAB_PROJECT_ID",
+            "37282",
+        )
+        monkeypatch.setenv(
+            "WEWORK_PLUGIN_PUBLICATION_GITLAB_WEBHOOK_SECRET",
+            "webhook-secret",
+        )
+        monkeypatch.setenv("WEWORK_PLUGIN_RELEASE_KEY_MAX_DAYS", "90")
+
+        s = build_settings_from_env()
+
+        assert s.WEWORK_PLUGIN_PUBLICATION_GITLAB_PROJECT_ID == "37282"
+        assert s.WEWORK_PLUGIN_PUBLICATION_GITLAB_WEBHOOK_SECRET == "webhook-secret"
+        assert s.WEWORK_PLUGIN_RELEASE_KEY_MAX_DAYS == 90
 
     def test_git_token_crypto_environment_uses_dotenv_without_overriding_process_env(
         self, monkeypatch, tmp_path

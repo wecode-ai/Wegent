@@ -43,29 +43,29 @@ ATTACHMENT_S3_USE_SSL
 PLUGIN_STORAGE_BUCKET
 PLUGIN_PACKAGE_URL_EXPIRES_SECONDS
 PLUGIN_SUBMISSION_SCAN_TIMEOUT_SECONDS
-PLUGIN_PUBLICATION_MAX_ACTIVE_REQUESTS
-PLUGIN_PUBLICATION_GITLAB_API_URL
-PLUGIN_PUBLICATION_GITLAB_PROJECT_ID
-PLUGIN_PUBLICATION_GITLAB_PROJECT_URL
-PLUGIN_PUBLICATION_GITLAB_TOKEN
-PLUGIN_PUBLICATION_GITLAB_MATERIALIZER_USER_ID
-PLUGIN_PUBLICATION_GITLAB_TARGET_BRANCH
-PLUGIN_PUBLICATION_GITLAB_MAX_FILES
-PLUGIN_PUBLICATION_GITLAB_WEBHOOK_SECRET
-PLUGIN_RELEASE_KEY_MAX_DAYS
+WEWORK_PLUGIN_PUBLICATION_MAX_ACTIVE_REQUESTS
+WEWORK_PLUGIN_PUBLICATION_GITLAB_API_URL
+WEWORK_PLUGIN_PUBLICATION_GITLAB_PROJECT_ID
+WEWORK_PLUGIN_PUBLICATION_GITLAB_PROJECT_URL
+WEWORK_PLUGIN_PUBLICATION_GITLAB_TOKEN
+WEWORK_PLUGIN_PUBLICATION_GITLAB_MATERIALIZER_USER_ID
+WEWORK_PLUGIN_PUBLICATION_GITLAB_TARGET_BRANCH
+WEWORK_PLUGIN_PUBLICATION_GITLAB_MAX_FILES
+WEWORK_PLUGIN_PUBLICATION_GITLAB_WEBHOOK_SECRET
+WEWORK_PLUGIN_RELEASE_KEY_MAX_DAYS
 ```
 
 Keep credentials in environment configuration. Never place them in plugin
 manifests, documentation examples, logs, or source control.
 
-`PLUGIN_PUBLICATION_MAX_ACTIVE_REQUESTS` limits all non-terminal publication
+`WEWORK_PLUGIN_PUBLICATION_MAX_ACTIVE_REQUESTS` limits all non-terminal publication
 Requests owned by one user; it is separate from the invariant that one personal
-source may have only one active Request. `PLUGIN_PUBLICATION_GITLAB_MAX_FILES`
-bounds controlled MR materialization. `PLUGIN_RELEASE_KEY_MAX_DAYS` bounds the
+source may have only one active Request. `WEWORK_PLUGIN_PUBLICATION_GITLAB_MAX_FILES`
+bounds controlled MR materialization. `WEWORK_PLUGIN_RELEASE_KEY_MAX_DAYS` bounds the
 expiry accepted when creating a Release key.
 
-`PLUGIN_PUBLICATION_GITLAB_TOKEN` must belong to a dedicated materializer
-bot/service account. Set `PLUGIN_PUBLICATION_GITLAB_MATERIALIZER_USER_ID` to the
+`WEWORK_PLUGIN_PUBLICATION_GITLAB_TOKEN` must belong to a dedicated materializer
+bot/service account. Set `WEWORK_PLUGIN_PUBLICATION_GITLAB_MATERIALIZER_USER_ID` to the
 positive numeric `id` returned by GitLab `GET /user` when authenticated with
 that token. The backend refuses materialization if the identities differ and
 refuses to reuse an existing branch or MR that lacks the request/revision HMAC
@@ -75,9 +75,26 @@ remove that failed partial materialization before retrying with the new token.
 
 There is no publication enable/disable setting and no people allowlist. Once the
 Backend is deployed, every authenticated personal-plugin owner can create an
-enterprise Request. `PLUGIN_PUBLICATION_MAX_ACTIVE_REQUESTS` must be at least
+enterprise Request. `WEWORK_PLUGIN_PUBLICATION_MAX_ACTIVE_REQUESTS` must be at least
 `1`; it is an abuse/capacity bound and cannot be used as an implicit shutdown.
 Legacy `/plugins/submissions` accepts `restricted_share + personal` only.
+
+## GitLab webhook configuration
+
+Set `WEWORK_PLUGIN_PUBLICATION_GITLAB_WEBHOOK_SECRET` in the Backend runtime
+environment to a dedicated random secret. In the controlled GitLab project,
+open **Settings → Webhooks** and configure:
+
+- URL: `https://<backend-host>/api/internal/plugins/gitlab/events`
+- Secret token: the exact same value as
+  `WEWORK_PLUGIN_PUBLICATION_GITLAB_WEBHOOK_SECRET`
+- Triggers: **Merge request events** and **Pipeline events**
+- SSL verification: enabled
+
+The webhook secret belongs in the Backend environment and the GitLab Webhook
+configuration. It is not a CI/CD variable and is distinct from both the
+materializer token and `WEWORK_PLUGIN_RELEASE_TOKEN`. Webhooks only synchronize
+MR and Pipeline state; they never publish an artifact.
 
 ## Release credential operations
 

@@ -172,6 +172,20 @@ def test_endpoint_requires_exact_release_path_and_https() -> None:
         )
 
 
+def test_release_ref_rejects_merge_request_artifact(tmp_path: Path) -> None:
+    metadata_path, package_path = _artifact_files(tmp_path)
+    raw_metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+    raw_metadata["source"]["ref"] = "wework/publication-1-r10"
+    metadata_path.write_text(json.dumps(raw_metadata), encoding="utf-8")
+    preflight = SCRIPT.load_release_artifact(metadata_path, package_path)
+
+    with pytest.raises(
+        SCRIPT.ReleaseSmokeTestError,
+        match="post-merge push pipeline",
+    ):
+        SCRIPT.validate_release_ref(preflight.metadata, "master")
+
+
 def test_rendered_curl_is_copyable_and_keeps_token_redacted(tmp_path: Path) -> None:
     metadata_path, package_path = _artifact_files(tmp_path)
 
@@ -181,10 +195,35 @@ def test_rendered_curl_is_copyable_and_keeps_token_redacted(tmp_path: Path) -> N
         package_path=package_path,
         package_filename="plugin.zip",
         idempotency_key="wework-plugin-v1:" + "a" * 64,
-        token_env="WEGENT_PLUGIN_RELEASE_TOKEN",
+        token_env="WEWORK_PLUGIN_RELEASE_TOKEN",
     )
 
     assert "\n+  " not in command
-    assert "${WEGENT_PLUGIN_RELEASE_TOKEN}" in command
+    assert "${WEWORK_PLUGIN_RELEASE_TOKEN}" in command
     assert "filename=plugin.zip" in command
     assert "wg-secret" not in command
+
+
+def test_preflight_cli_does_not_require_release_endpoint(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    metadata_path, package_path = _artifact_files(tmp_path)
+    monkeypatch.delenv("WEWORK_PLUGIN_RELEASE_URL", raising=False)
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "test_plugin_release.py",
+            "--metadata",
+            str(metadata_path),
+            "--package",
+            str(package_path),
+        ],
+    )
+
+    assert SCRIPT.main() == 0
+    output = capsys.readouterr().out
+    assert "Preflight passed" in output
+    assert "curl generation was skipped" in output

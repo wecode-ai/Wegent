@@ -117,24 +117,30 @@ class PluginPublicationGitLabService:
         max_files: int | None = None,
         client_factory: Any | None = None,
     ) -> None:
-        self.api_url = (api_url or settings.PLUGIN_PUBLICATION_GITLAB_API_URL).rstrip(
-            "/"
+        self.api_url = (
+            api_url or settings.WEWORK_PLUGIN_PUBLICATION_GITLAB_API_URL
+        ).rstrip("/")
+        self.project_id = (
+            project_id or settings.WEWORK_PLUGIN_PUBLICATION_GITLAB_PROJECT_ID
         )
-        self.project_id = project_id or settings.PLUGIN_PUBLICATION_GITLAB_PROJECT_ID
-        self.project_url = project_url or settings.PLUGIN_PUBLICATION_GITLAB_PROJECT_URL
-        self.token = token or settings.PLUGIN_PUBLICATION_GITLAB_TOKEN
+        self.project_url = (
+            project_url or settings.WEWORK_PLUGIN_PUBLICATION_GITLAB_PROJECT_URL
+        )
+        self.token = token or settings.WEWORK_PLUGIN_PUBLICATION_GITLAB_TOKEN
         self.materializer_user_id = (
             materializer_user_id
             if materializer_user_id is not None
-            else settings.PLUGIN_PUBLICATION_GITLAB_MATERIALIZER_USER_ID
+            else settings.WEWORK_PLUGIN_PUBLICATION_GITLAB_MATERIALIZER_USER_ID
         )
         self.target_branch = (
-            target_branch or settings.PLUGIN_PUBLICATION_GITLAB_TARGET_BRANCH
+            target_branch or settings.WEWORK_PLUGIN_PUBLICATION_GITLAB_TARGET_BRANCH
         )
         self.timeout_seconds = timeout_seconds or float(
             settings.REPOSITORY_READ_TIMEOUT_SECONDS
         )
-        self.max_files = max_files or settings.PLUGIN_PUBLICATION_GITLAB_MAX_FILES
+        self.max_files = (
+            max_files or settings.WEWORK_PLUGIN_PUBLICATION_GITLAB_MAX_FILES
+        )
         self._client_factory = client_factory or httpx.Client
 
     def materialize(

@@ -348,7 +348,7 @@ def test_active_request_capacity_is_enforced_for_ordinary_owner(
 ) -> None:
     storage = FakeStorage()
     service = PluginPublicationService(storage=storage, gitlab=FakeGitLab())
-    monkeypatch.setattr(settings, "PLUGIN_PUBLICATION_MAX_ACTIVE_REQUESTS", 1)
+    monkeypatch.setattr(settings, "WEWORK_PLUGIN_PUBLICATION_MAX_ACTIVE_REQUESTS", 1)
 
     service.create_request(
         test_db,
@@ -392,7 +392,7 @@ def test_terminal_request_reactivation_rechecks_owner_capacity(
 ) -> None:
     storage = FakeStorage()
     service = PluginPublicationService(storage=storage, gitlab=FakeGitLab())
-    monkeypatch.setattr(settings, "PLUGIN_PUBLICATION_MAX_ACTIVE_REQUESTS", 1)
+    monkeypatch.setattr(settings, "WEWORK_PLUGIN_PUBLICATION_MAX_ACTIVE_REQUESTS", 1)
     first = service.create_request(
         test_db,
         user_id=test_user.id,

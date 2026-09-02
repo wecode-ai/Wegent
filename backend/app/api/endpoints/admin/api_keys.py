@@ -92,7 +92,7 @@ def create_plugin_release_key(
         expires_at = expires_at.astimezone(timezone.utc).replace(tzinfo=None)
     if expires_at <= now:
         raise HTTPException(status_code=422, detail="expiresAt must be in the future")
-    if expires_at > now + timedelta(days=settings.PLUGIN_RELEASE_KEY_MAX_DAYS):
+    if expires_at > now + timedelta(days=settings.WEWORK_PLUGIN_RELEASE_KEY_MAX_DAYS):
         raise HTTPException(
             status_code=422,
             detail="Plugin release key lifetime exceeds the configured maximum",

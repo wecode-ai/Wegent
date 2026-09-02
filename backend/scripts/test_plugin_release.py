@@ -30,8 +30,8 @@ from app.services.plugin_publication_artifact import (  # noqa: E402
     expected_release_idempotency_key,
 )
 
-DEFAULT_RELEASE_URL_ENV = "WEGENT_PLUGIN_RELEASE_URL"
-DEFAULT_RELEASE_TOKEN_ENV = "WEGENT_PLUGIN_RELEASE_TOKEN"
+DEFAULT_RELEASE_URL_ENV = "WEWORK_PLUGIN_RELEASE_URL"
+DEFAULT_RELEASE_TOKEN_ENV = "WEWORK_PLUGIN_RELEASE_TOKEN"
 RELEASE_PATH = "/api/internal/plugins/releases"
 
 
@@ -114,6 +114,20 @@ def validate_endpoint(endpoint: str, *, allow_http: bool) -> str:
         "Release endpoint must be absolute HTTPS; use --allow-http only for a "
         "trusted local test deployment"
     )
+
+
+def validate_release_ref(metadata: PluginReleaseMetadata, expected_ref: str) -> None:
+    """Reject MR artifacts before attempting a protected-branch release."""
+    normalized_expected = expected_ref.strip().removeprefix("refs/heads/")
+    normalized_actual = metadata.source.ref.removeprefix("refs/heads/")
+    if not normalized_expected:
+        raise ReleaseSmokeTestError("Expected release ref must not be empty")
+    if normalized_actual != normalized_expected:
+        raise ReleaseSmokeTestError(
+            f"Artifact ref is {metadata.source.ref!r}, expected protected "
+            f"{normalized_expected!r}; download artifacts from the post-merge "
+            "push pipeline"
+        )
 
 
 def render_curl(
@@ -295,6 +309,11 @@ def _parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--timeout", type=float, default=60.0)
     parser.add_argument(
+        "--expected-ref",
+        default="master",
+        help="Protected release branch expected in metadata (default: master)",
+    )
+    parser.add_argument(
         "--allow-http",
         action="store_true",
         help="Allow HTTP only for a trusted local test deployment",
@@ -315,8 +334,17 @@ def _parser() -> argparse.ArgumentParser:
 def main() -> int:
     args = _parser().parse_args()
     try:
-        endpoint = validate_endpoint(args.endpoint, allow_http=args.allow_http)
+        endpoint = (
+            validate_endpoint(args.endpoint, allow_http=args.allow_http)
+            if args.endpoint.strip()
+            else ""
+        )
+        if args.execute and not endpoint:
+            raise ReleaseSmokeTestError(
+                f"--endpoint or {DEFAULT_RELEASE_URL_ENV} is required with --execute"
+            )
         preflight = load_release_artifact(args.metadata, args.package)
+        validate_release_ref(preflight.metadata, args.expected_ref)
         summary = {
             "mode": "execute" if args.execute else "preflight",
             "slug": preflight.metadata.plugin.slug,
@@ -332,17 +360,20 @@ def main() -> int:
             "revision": preflight.metadata.revision,
         }
         print(json.dumps(summary, ensure_ascii=False, indent=2))
-        print("\nEquivalent curl command (token value is not printed):")
-        print(
-            render_curl(
-                endpoint=endpoint,
-                metadata_path=args.metadata,
-                package_path=args.package,
-                package_filename=preflight.metadata.artifact.file,
-                idempotency_key=preflight.idempotency_key,
-                token_env=args.token_env,
+        if endpoint:
+            print("\nEquivalent curl command (token value is not printed):")
+            print(
+                render_curl(
+                    endpoint=endpoint,
+                    metadata_path=args.metadata,
+                    package_path=args.package,
+                    package_filename=preflight.metadata.artifact.file,
+                    idempotency_key=preflight.idempotency_key,
+                    token_env=args.token_env,
+                )
             )
-        )
+        else:
+            print("\nRelease endpoint is not configured; curl generation was skipped.")
         if not args.execute:
             print("\nPreflight passed. Re-run with --execute to publish.")
             return 0

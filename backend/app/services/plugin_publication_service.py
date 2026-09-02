@@ -1624,7 +1624,7 @@ class PluginPublicationService:
     def _lock_active_requests_with_capacity(
         self, db: Session, *, user_id: int
     ) -> list[tuple[int, int]]:
-        capacity = settings.PLUGIN_PUBLICATION_MAX_ACTIVE_REQUESTS
+        capacity = settings.WEWORK_PLUGIN_PUBLICATION_MAX_ACTIVE_REQUESTS
         active_requests = (
             db.query(
                 PluginPublicationRequest.id,

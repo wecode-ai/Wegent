@@ -471,7 +471,7 @@ Wework 与 Web 使用相同状态投影：MR、评审中、需修改、CI 运行
 ### 10.2 GitLab 受控分支、MR 与包检查
 
 - Web 投稿的受控分支名固定为 `wework/publication-<requestId>-r<revisionNumber>`。分支内 marker 必须存在并绑定 request、revision、原始快照 SHA256 和规范化 source-tree SHA256；source-tree 同时包含带 version 的 Manifest。不得通过删除或篡改 marker 降级为开发者直提流程。
-- GitLab 写入必须使用专用 Materializer 身份。`PLUGIN_PUBLICATION_GITLAB_TOKEN` 只能属于该机器人/服务账号，`PLUGIN_PUBLICATION_GITLAB_MATERIALIZER_USER_ID` 必须配置为该 token 调用 GitLab `GET /user` 返回的数值 ID；服务端同时校验项目、MR 作者、源/目标项目和 HMAC 绑定。已存在但不具备同一绑定的同名分支或 MR 一律拒绝复用，不能把开发者账号或通用运维 token 当作 Materializer。
+- GitLab 写入必须使用专用 Materializer 身份。`WEWORK_PLUGIN_PUBLICATION_GITLAB_TOKEN` 只能属于该机器人/服务账号，`WEWORK_PLUGIN_PUBLICATION_GITLAB_MATERIALIZER_USER_ID` 必须配置为该 token 调用 GitLab `GET /user` 返回的数值 ID；服务端同时校验项目、MR 作者、源/目标项目和 HMAC 绑定。已存在但不具备同一绑定的同名分支或 MR 一律拒绝复用，不能把开发者账号或通用运维 token 当作 Materializer。
 - 插件发布 MR 只允许修改 `plugins/<slug>/**` 和市场清单中该插件的一条已验证记录；不得混改 `.gitlab-ci.yml`、CI/发布脚本或其他插件。基础设施变更必须使用独立 MR。
 - ZIP 必须对所有 entry 做完整校验，只允许一个预期插件根目录；拒绝根目录外文件、多根包、绝对路径、路径穿越和不安全链接，不能只验证或提取命中的子目录。
 - Secret scan 必须覆盖 `git ls-files` 返回的全仓所有 tracked 文件，而非只扫描 `plugins/`。扫描日志和 artifact 不得泄露凭据内容。

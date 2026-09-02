@@ -91,8 +91,10 @@ def test_release_endpoint_accepts_exact_multipart_envelope(
 ):
     package = _plugin_zip()
     raw_key = _release_key(test_db, test_user)
-    monkeypatch.setattr(settings, "PLUGIN_PUBLICATION_GITLAB_PROJECT_ID", "42")
-    monkeypatch.setattr(settings, "PLUGIN_PUBLICATION_GITLAB_TARGET_BRANCH", "master")
+    monkeypatch.setattr(settings, "WEWORK_PLUGIN_PUBLICATION_GITLAB_PROJECT_ID", "42")
+    monkeypatch.setattr(
+        settings, "WEWORK_PLUGIN_PUBLICATION_GITLAB_TARGET_BRANCH", "master"
+    )
     captured = {}
 
     def publish(db, **kwargs):
@@ -156,7 +158,7 @@ def test_release_endpoint_rejects_wrong_key_type_and_artifact_hash(
     monkeypatch,
 ):
     package = _plugin_zip()
-    monkeypatch.setattr(settings, "PLUGIN_PUBLICATION_GITLAB_PROJECT_ID", "42")
+    monkeypatch.setattr(settings, "WEWORK_PLUGIN_PUBLICATION_GITLAB_PROJECT_ID", "42")
     metadata = _metadata(package)
     idempotency_key = expected_release_idempotency_key(metadata)
     personal_raw_key, _ = test_api_key
@@ -199,7 +201,7 @@ def test_release_endpoint_requires_bearer_authorization_scheme(
     package = _plugin_zip()
     raw_key = _release_key(test_db, test_user)
     metadata = _metadata(package)
-    monkeypatch.setattr(settings, "PLUGIN_PUBLICATION_GITLAB_PROJECT_ID", "42")
+    monkeypatch.setattr(settings, "WEWORK_PLUGIN_PUBLICATION_GITLAB_PROJECT_ID", "42")
 
     response = test_client.post(
         RELEASE_URL,
@@ -226,7 +228,7 @@ def test_release_endpoint_requires_configured_gitlab_project(
     package = _plugin_zip()
     raw_key = _release_key(test_db, test_user)
     metadata = _metadata(package)
-    monkeypatch.setattr(settings, "PLUGIN_PUBLICATION_GITLAB_PROJECT_ID", "")
+    monkeypatch.setattr(settings, "WEWORK_PLUGIN_PUBLICATION_GITLAB_PROJECT_ID", "")
 
     response = test_client.post(
         RELEASE_URL,
@@ -255,7 +257,7 @@ def test_release_endpoint_rejects_malformed_idempotency_key(
     package = _plugin_zip()
     raw_key = _release_key(test_db, test_user)
     metadata = _metadata(package)
-    monkeypatch.setattr(settings, "PLUGIN_PUBLICATION_GITLAB_PROJECT_ID", "42")
+    monkeypatch.setattr(settings, "WEWORK_PLUGIN_PUBLICATION_GITLAB_PROJECT_ID", "42")
 
     response = test_client.post(
         RELEASE_URL,
@@ -277,9 +279,9 @@ def test_gitlab_webhook_rejects_events_from_another_project(
     monkeypatch,
 ):
     monkeypatch.setattr(
-        settings, "PLUGIN_PUBLICATION_GITLAB_WEBHOOK_SECRET", "webhook-secret"
+        settings, "WEWORK_PLUGIN_PUBLICATION_GITLAB_WEBHOOK_SECRET", "webhook-secret"
     )
-    monkeypatch.setattr(settings, "PLUGIN_PUBLICATION_GITLAB_PROJECT_ID", "42")
+    monkeypatch.setattr(settings, "WEWORK_PLUGIN_PUBLICATION_GITLAB_PROJECT_ID", "42")
 
     response = test_client.post(
         GITLAB_EVENTS_URL,

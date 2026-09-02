@@ -102,7 +102,7 @@ async def synchronize_gitlab_event(
     db: Session = Depends(get_db),
 ) -> PluginGitLabWebhookResponse:
     """Synchronize GitLab state; this endpoint never publishes an artifact."""
-    expected = settings.PLUGIN_PUBLICATION_GITLAB_WEBHOOK_SECRET
+    expected = settings.WEWORK_PLUGIN_PUBLICATION_GITLAB_WEBHOOK_SECRET
     if not expected:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -113,7 +113,7 @@ async def synchronize_gitlab_event(
     payload = await request.json()
     if not isinstance(payload, dict):
         raise HTTPException(status_code=422, detail="GitLab event must be an object")
-    configured_project = settings.PLUGIN_PUBLICATION_GITLAB_PROJECT_ID
+    configured_project = settings.WEWORK_PLUGIN_PUBLICATION_GITLAB_PROJECT_ID
     if not configured_project:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -151,7 +151,7 @@ def _gitlab_project_id(payload: dict[str, Any]) -> str:
 
 
 def _ensure_protected_master(provenance: PluginReleaseProvenance) -> None:
-    configured_project = settings.PLUGIN_PUBLICATION_GITLAB_PROJECT_ID
+    configured_project = settings.WEWORK_PLUGIN_PUBLICATION_GITLAB_PROJECT_ID
     if not configured_project:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -159,7 +159,7 @@ def _ensure_protected_master(provenance: PluginReleaseProvenance) -> None:
         )
     if provenance.projectId != configured_project:
         raise HTTPException(status_code=403, detail="Release project is not configured")
-    target_branch = settings.PLUGIN_PUBLICATION_GITLAB_TARGET_BRANCH
+    target_branch = settings.WEWORK_PLUGIN_PUBLICATION_GITLAB_TARGET_BRANCH
     allowed_refs = {target_branch, f"refs/heads/{target_branch}"}
     if provenance.ref not in allowed_refs:
         raise HTTPException(
