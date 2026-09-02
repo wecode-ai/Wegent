@@ -138,6 +138,8 @@ export interface CodeWikiPageNode {
 
 export interface CodeWikiPageTree {
   pages: CodeWikiPageNode[]
+  /** The published version the returned navigation belongs to; zero means none. */
+  published_generation_id?: number
 }
 
 export type CodeWikiProgressStage =

@@ -457,7 +457,9 @@ spec:
     review-status exactly once and follow nextAction. A remaining ready state means the
     Reviewer returned without a verdict: fail with that diagnostic. Do not sleep, poll,
     or delegate a replacement. The Writer opens handoffs and repairs content but never
-    submits a Reviewer verdict. When reviewPolicy=plan_only, write every planned page
+    submits a Reviewer verdict. Only the Coordinator may open a Plan amendment when a
+    necessary page was omitted: do so before delegating or writing that page and follow
+    the persisted effective plan after it passes. When reviewPolicy=plan_only, write every planned page
     after Plan passes and call complete without opening QA or Recheck. If the persisted
     Writing Plan uses scoped mode, delegate each Work Package only to the exact Section
     Writer agent type named by the run prompt, passing only its generation ID and Work

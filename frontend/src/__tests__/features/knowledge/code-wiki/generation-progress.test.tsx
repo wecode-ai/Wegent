@@ -109,4 +109,14 @@ describe('code wiki generation progress', () => {
     expect(visibleProgress(status({ status: 'completed' }))).toBeNull()
     expect(visibleProgress(status({ is_stale: true }))).toBeNull()
   })
+
+  it('offers an enabled manager a stop action without toggling the stages', () => {
+    const onCancel = jest.fn()
+    render(<GenerationProgress status={status()} onCancel={onCancel} />)
+
+    fireEvent.click(screen.getByTestId('code-wiki-progress-cancel'))
+
+    expect(onCancel).toHaveBeenCalledTimes(1)
+    expect(screen.getByTestId('code-wiki-progress-steps')).toBeInTheDocument()
+  })
 })

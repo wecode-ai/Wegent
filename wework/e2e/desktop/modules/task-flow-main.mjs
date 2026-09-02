@@ -65,6 +65,12 @@ import { DesktopE2EServer } from './desktop-server.mjs'
 import { resolveElectronLaunchArguments } from './electron-launch-arguments.mjs'
 
 import {
+  clearDesktopE2EResultActive,
+  compactDesktopE2EResult,
+  markDesktopE2EResultActive,
+} from '../result-retention.mjs'
+
+import {
   verifyActiveGoalIdleUnreadLifecycle,
   verifyBusyTurnGoalHandoff,
   verifyGoalRestartRecoveryLifecycle,
@@ -882,6 +888,7 @@ async function main() {
   validateDesktopSegmentOptions()
   const runsProjectPluginE2E = DESKTOP_SEGMENT === 'project-ai-settings'
   await mkdir(resultDir, { recursive: true })
+  await markDesktopE2EResultActive(resultDir, { ownerProcessId: process.pid })
   console.log(`[desktop-e2e] result directory: ${resultDir}`)
   const workspacePath = join(resultDir, 'workspace')
   const secondaryProjectPath = join(resultDir, 'secondary-project-root')
@@ -989,6 +996,7 @@ async function main() {
   let cloudEnvironment
   let phase = 'startup'
   let desktopScenarioVerified = false
+  let testFailed = false
   try {
     await control.start()
     if (RUNS_PLUGIN_E2E) {
@@ -1171,6 +1179,10 @@ async function main() {
         env: appEnvironment,
         stdio: ['ignore', 'pipe', 'pipe'],
         detached: process.platform !== 'win32',
+      })
+      await markDesktopE2EResultActive(resultDir, {
+        applicationProcessId: child.pid,
+        ownerProcessId: process.pid,
       })
       await Promise.all([
         appendProcessOutput(child.stdout, appLogPath),
@@ -3979,6 +3991,7 @@ last_updated = "2026-07-30T00:00:00Z"`
     )
     console.log(`Wework desktop task-flow E2E passed. Diagnostics: ${resultDir}`)
   } catch (error) {
+    testFailed = true
     await writeFile(
       join(resultDir, 'model-requests.json'),
       `${JSON.stringify(control.modelRequests, null, 2)}\n`,
@@ -4044,19 +4057,65 @@ last_updated = "2026-07-30T00:00:00Z"`
     )
     throw error
   } finally {
-    await cloudEnvironment?.stop()
-    await blockingNetworkProxy?.stop()
-    await stopDesktopAppProcess(app)
-    await control.close()
-    await desktopScenario?.cleanup?.()
-    await rm(codexSqliteHome, {
-      recursive: true,
-      force: true,
-      maxRetries: process.platform === 'win32' ? 20 : 0,
-      retryDelay: 100,
+    const teardownFailures = []
+    const runTeardownStep = async (label, action) => {
+      try {
+        await action()
+      } catch (error) {
+        teardownFailures.push({ error, label })
+      }
+    }
+    await runTeardownStep('cloud environment', async () => cloudEnvironment?.stop())
+    await runTeardownStep('blocking network proxy', async () => blockingNetworkProxy?.stop())
+    await runTeardownStep('desktop application', async () => stopDesktopAppProcess(app))
+    await runTeardownStep('desktop controller', async () => control.close())
+    await runTeardownStep('desktop scenario', async () => desktopScenario?.cleanup?.())
+    await runTeardownStep('Codex SQLite home', async () =>
+      rm(codexSqliteHome, {
+        recursive: true,
+        force: true,
+        maxRetries: process.platform === 'win32' ? 20 : 0,
+        retryDelay: 100,
+      })
+    )
+    await runTeardownStep('macOS Launch Services registration', async () => {
+      if (appBundlePath && process.platform === 'darwin') {
+        spawnSync(MACOS_LAUNCH_SERVICES_REGISTER, ['-u', appBundlePath])
+      }
     })
-    if (appBundlePath && process.platform === 'darwin') {
-      spawnSync(MACOS_LAUNCH_SERVICES_REGISTER, ['-u', appBundlePath])
+    let cleanupError
+    if (teardownFailures.length === 0) {
+      try {
+        const removed = await compactDesktopE2EResult(resultDir)
+        if (removed > 0) {
+          console.log(`[desktop-e2e] removed ${removed} transient runtime artifacts`)
+        }
+      } catch (error) {
+        cleanupError = error
+      }
+      try {
+        await clearDesktopE2EResultActive(resultDir)
+      } catch (error) {
+        cleanupError ??= error
+      }
+    }
+    if (testFailed) {
+      for (const failure of teardownFailures) {
+        console.error(`[desktop-e2e] ${failure.label} teardown failed: ${String(failure.error)}`)
+      }
+      if (cleanupError) {
+        console.error(`[desktop-e2e] result cleanup failed: ${String(cleanupError)}`)
+      }
+    } else {
+      if (teardownFailures.length > 0) {
+        throw new AggregateError(
+          teardownFailures.map(failure => failure.error),
+          `Desktop E2E teardown failed: ${teardownFailures
+            .map(failure => failure.label)
+            .join(', ')}`
+        )
+      }
+      if (cleanupError) throw cleanupError
     }
   }
 }

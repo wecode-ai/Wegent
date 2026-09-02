@@ -66,7 +66,9 @@ export const codeWikiApi = {
    * tree to be wrong.
    */
   pages: async (knowledgeBaseId: number): Promise<CodeWikiPageTree> =>
-    client.get<CodeWikiPageTree>(`/knowledge-bases/${knowledgeBaseId}/code-wiki/pages`),
+    client.get<CodeWikiPageTree>(`/knowledge-bases/${knowledgeBaseId}/code-wiki/pages`, {
+      cache: 'no-store',
+    }),
 
   /**
    * Whether anything is being done to this wiki, and what came of it last time.
@@ -107,4 +109,12 @@ export const codeWikiApi = {
     client.post<CodeWikiRunResponse>(`/knowledge-bases/${knowledgeBaseId}/code-wiki/generations`, {
       force_full: true,
     }),
+
+  /** Stop the currently running version without changing the published wiki. */
+  cancel: async (knowledgeBaseId: number, generationId: number): Promise<void> => {
+    await client.post(
+      `/knowledge-bases/${knowledgeBaseId}/code-wiki/generations/${generationId}/cancel`,
+      {}
+    )
+  },
 }
