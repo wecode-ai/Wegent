@@ -850,12 +850,7 @@ def _prompt_protection_context(
         return None
 
     shell_type = _request_shell_type(request)
-    supported_shell_types = (
-        {"Chat", "ClaudeCode"}
-        if entrypoint is PromptProtectionEntrypoint.WEB_USER_MESSAGE
-        else None
-    )
-    if supported_shell_types is not None and shell_type not in supported_shell_types:
+    if shell_type != "Chat":
         return None
     context = PromptProtectionContext(
         team_id=team.id,

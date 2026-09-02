@@ -4,6 +4,7 @@
 
 import '@testing-library/jest-dom'
 import { fireEvent, render, screen } from '@testing-library/react'
+import { cloneElement } from 'react'
 
 import SimpleTeamEditForm from '@/features/settings/components/team-edit/SimpleTeamEditForm'
 
@@ -46,7 +47,7 @@ describe('SimpleTeamEditForm prompt protection', () => {
   it('renders a stable switch and forwards changes', () => {
     const setPromptProtectionEnabled = jest.fn()
 
-    render(
+    const form = (
       <SimpleTeamEditForm
         name="support"
         setName={jest.fn()}
@@ -94,6 +95,7 @@ describe('SimpleTeamEditForm prompt protection', () => {
         toast={jest.fn()}
       />
     )
+    const { rerender } = render(form)
 
     const toggle = screen.getByRole('switch', { name: 'Prompt protection' })
     expect(toggle).toHaveAttribute('data-testid', 'prompt-protection-enabled-switch')
@@ -109,5 +111,8 @@ describe('SimpleTeamEditForm prompt protection', () => {
     expect(screen.getByText('Prompt protection')).toBeInTheDocument()
     fireEvent.click(hitTarget!)
     expect(setPromptProtectionEnabled).toHaveBeenCalledWith(true)
+
+    rerender(cloneElement(form, { executorMode: 'complex' }))
+    expect(screen.queryByTestId('prompt-protection-enabled-switch')).not.toBeInTheDocument()
   })
 })

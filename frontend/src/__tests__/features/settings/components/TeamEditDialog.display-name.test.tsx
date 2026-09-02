@@ -140,12 +140,12 @@ jest.mock('@/features/settings/components/team-edit/SimpleTeamEditForm', () => (
 
 const mockedUpdateTeam = updateTeam as jest.MockedFunction<typeof updateTeam>
 
-const makeBot = (): Bot => ({
+const makeBot = (shellType = 'ClaudeCode'): Bot => ({
   id: 10,
   name: 'bot',
   namespace: 'default',
-  shell_name: 'ClaudeCode',
-  shell_type: 'ClaudeCode',
+  shell_name: shellType,
+  shell_type: shellType,
   agent_config: {},
   system_prompt: '',
   mcp_servers: {},
@@ -317,7 +317,7 @@ describe('TeamEditDialog display name', () => {
         teams={[team]}
         setTeams={jest.fn()}
         editingTeamId={team.id}
-        bots={[makeBot()]}
+        bots={[makeBot('Chat')]}
         setBots={jest.fn()}
         toast={jest.fn()}
       />
@@ -356,7 +356,7 @@ describe('TeamEditDialog display name', () => {
         teams={[team]}
         setTeams={jest.fn()}
         editingTeamId={team.id}
-        bots={[makeBot()]}
+        bots={[makeBot('Chat')]}
         setBots={jest.fn()}
         toast={jest.fn()}
       />
@@ -381,5 +381,25 @@ describe('TeamEditDialog display name', () => {
         expect.objectContaining({ promptProtectionEnabled: true })
       )
     })
+  })
+
+  it('hides prompt protection in the advanced editor for non-Chat leaders', async () => {
+    const team = makeTeam()
+
+    render(
+      <TeamEditDialog
+        open
+        onClose={jest.fn()}
+        teams={[team]}
+        setTeams={jest.fn()}
+        editingTeamId={team.id}
+        bots={[makeBot()]}
+        setBots={jest.fn()}
+        toast={jest.fn()}
+      />
+    )
+
+    await screen.findByRole('button', { name: 'Save' })
+    expect(screen.queryByTestId('advanced-prompt-protection-setting')).not.toBeInTheDocument()
   })
 })

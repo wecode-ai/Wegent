@@ -719,13 +719,13 @@ class TestOpenAPIResponsesCreate:
         execution_request = SimpleNamespace(
             task_id=101,
             subtask_id=654,
-            bot=[{"shell_type": "ClaudeCode"}],
+            bot=[{"shell_type": "Chat"}],
             model_config={"model_id": "selected-model"},
         )
         blocked = PromptProtectionBlocked(
             ("purpose_violation", "system_prompt_extraction"),
             bot_name="test-bot",
-            shell_type="ClaudeCode",
+            shell_type="Chat",
         )
 
         with (
@@ -805,9 +805,8 @@ class TestOpenAPIResponsesCreate:
         [
             (False, True, "Chat", "completed"),
             (True, True, "Chat", "in_progress"),
-            (False, False, "ClaudeCode", "queued"),
         ],
-        ids=["sync", "background", "queued-callback"],
+        ids=["sync", "background"],
     )
     async def test_prompt_protection_allows_non_streaming_protocol_paths(
         self,

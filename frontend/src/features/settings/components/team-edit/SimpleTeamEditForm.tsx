@@ -38,7 +38,7 @@ import QuickPhraseEditor from './QuickPhraseEditor'
 import InputPlaceholderEditor from './InputPlaceholderEditor'
 import TeamBindModeCards from './TeamBindModeCards'
 import { parseModelSelectValue, toModelSelectValue } from './model-select-utils'
-import type { SimpleExecutorMode } from './simple-team-edit-utils'
+import { resolveShellForExecutor, type SimpleExecutorMode } from './simple-team-edit-utils'
 
 interface SimpleTeamEditFormProps {
   name: string
@@ -195,6 +195,8 @@ export default function SimpleTeamEditForm({
   const [skillManagementModalOpen, setSkillManagementModalOpen] = useState(false)
   const [promptFineTuneOpen, setPromptFineTuneOpen] = useState(false)
   const showRequiresWorkspace = bindMode.includes('code')
+  const selectedShell = resolveShellForExecutor(shells, executorMode, customShellName)
+  const showPromptProtection = executorMode === 'simple' || selectedShell?.shellType === 'Chat'
   const modelSelectValue = toModelSelectValue(modelName, modelType, modelNamespace)
   const selectedModel = useMemo(
     () =>
@@ -405,25 +407,30 @@ export default function SimpleTeamEditForm({
 
       <SimpleSection title={t('settings:team.simple.sections.prompt')} sectionId="prompt">
         <SimpleConfigGroup>
-          <SimpleConfigRow label={t('settings:team.simple.prompt_protection.label')} align="start">
-            <div className="flex items-start justify-between gap-4">
-              <p className="min-w-0 flex-1 text-xs leading-5 text-text-muted">
-                {t('settings:team.simple.prompt_protection.description')}
-              </p>
-              <label
-                htmlFor="simple-prompt-protection-enabled"
-                className="flex min-h-11 min-w-11 shrink-0 cursor-pointer items-center justify-center"
-              >
-                <Switch
-                  id="simple-prompt-protection-enabled"
-                  aria-label={t('settings:team.simple.prompt_protection.label')}
-                  checked={promptProtectionEnabled}
-                  onCheckedChange={setPromptProtectionEnabled}
-                  data-testid="prompt-protection-enabled-switch"
-                />
-              </label>
-            </div>
-          </SimpleConfigRow>
+          {showPromptProtection && (
+            <SimpleConfigRow
+              label={t('settings:team.simple.prompt_protection.label')}
+              align="start"
+            >
+              <div className="flex items-start justify-between gap-4">
+                <p className="min-w-0 flex-1 text-xs leading-5 text-text-muted">
+                  {t('settings:team.simple.prompt_protection.description')}
+                </p>
+                <label
+                  htmlFor="simple-prompt-protection-enabled"
+                  className="flex min-h-11 min-w-11 shrink-0 cursor-pointer items-center justify-center"
+                >
+                  <Switch
+                    id="simple-prompt-protection-enabled"
+                    aria-label={t('settings:team.simple.prompt_protection.label')}
+                    checked={promptProtectionEnabled}
+                    onCheckedChange={setPromptProtectionEnabled}
+                    data-testid="prompt-protection-enabled-switch"
+                  />
+                </label>
+              </div>
+            </SimpleConfigRow>
+          )}
           <div className="space-y-2">
             <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
               <p className="text-xs leading-5 text-text-muted">

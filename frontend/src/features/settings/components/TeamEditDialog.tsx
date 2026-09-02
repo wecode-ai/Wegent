@@ -894,6 +894,12 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
     return map
   }, [shells])
 
+  const advancedPromptProtectionSupported = useMemo(() => {
+    if (leaderBotId === null) return false
+    const leader = filteredBots.find((bot: Bot) => bot.id === leaderBotId)
+    return getActualShellType(leader?.shell_type || '', shellMap) === 'Chat'
+  }, [filteredBots, leaderBotId, shellMap])
+
   // Leader change handler
   const onLeaderChange = (botId: number) => {
     // If new Leader is in selected members, remove it first
@@ -1571,33 +1577,35 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
                   requiresWorkspace={requiresWorkspace}
                   setRequiresWorkspace={setRequiresWorkspace}
                 />
-                <div
-                  className="flex items-start justify-between gap-4 rounded-lg border border-border bg-surface p-4"
-                  data-testid="advanced-prompt-protection-setting"
-                >
-                  <label
-                    htmlFor="advanced-prompt-protection-enabled"
-                    className="min-h-11 flex-1 cursor-pointer space-y-1"
+                {advancedPromptProtectionSupported && (
+                  <div
+                    className="flex items-start justify-between gap-4 rounded-lg border border-border bg-surface p-4"
+                    data-testid="advanced-prompt-protection-setting"
                   >
-                    <span className="block text-sm font-medium text-text-primary">
-                      {t('settings:team.simple.prompt_protection.label')}
-                    </span>
-                    <span className="block text-xs leading-5 text-text-secondary">
-                      {t('settings:team.simple.prompt_protection.description')}
-                    </span>
-                  </label>
-                  <label
-                    htmlFor="advanced-prompt-protection-enabled"
-                    className="flex min-h-11 min-w-11 cursor-pointer items-center justify-center"
-                  >
-                    <Switch
-                      id="advanced-prompt-protection-enabled"
-                      checked={promptProtectionEnabled}
-                      onCheckedChange={setPromptProtectionEnabled}
-                      data-testid="advanced-prompt-protection-enabled-switch"
-                    />
-                  </label>
-                </div>
+                    <label
+                      htmlFor="advanced-prompt-protection-enabled"
+                      className="min-h-11 flex-1 cursor-pointer space-y-1"
+                    >
+                      <span className="block text-sm font-medium text-text-primary">
+                        {t('settings:team.simple.prompt_protection.label')}
+                      </span>
+                      <span className="block text-xs leading-5 text-text-secondary">
+                        {t('settings:team.simple.prompt_protection.description')}
+                      </span>
+                    </label>
+                    <label
+                      htmlFor="advanced-prompt-protection-enabled"
+                      className="flex min-h-11 min-w-11 cursor-pointer items-center justify-center"
+                    >
+                      <Switch
+                        id="advanced-prompt-protection-enabled"
+                        checked={promptProtectionEnabled}
+                        onCheckedChange={setPromptProtectionEnabled}
+                        data-testid="advanced-prompt-protection-enabled-switch"
+                      />
+                    </label>
+                  </div>
+                )}
                 {isEditing && technicalNameUnlocked && (
                   <div
                     className="rounded-md border border-yellow-300 bg-yellow-50 p-3 text-sm text-yellow-900"
