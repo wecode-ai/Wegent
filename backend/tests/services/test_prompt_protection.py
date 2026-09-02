@@ -5,6 +5,7 @@
 import json
 import logging
 from types import SimpleNamespace
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -633,6 +634,41 @@ async def test_blocked_turn_finalizes_when_notification_fails(
 
     finalize.assert_awaited_once_with(task_id=22, assistant_subtask_id=33)
     namespace.emit.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_blocked_turn_notifies_before_finalization(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from app.api.ws import chat_namespace
+
+    events: list[str] = []
+
+    async def emit(event: str, payload: dict[str, Any], *, room: str) -> None:
+        events.append(event)
+
+    async def finalize(**kwargs: Any) -> None:
+        events.append("finalize")
+
+    monkeypatch.setattr(chat_namespace, "_finalize_blocked_ai_trigger", finalize)
+
+    await chat_namespace._handle_prompt_protection_block(
+        namespace=SimpleNamespace(emit=emit),
+        task_id=22,
+        assistant_subtask=SimpleNamespace(id=33, message_id=44),
+        blocked=PromptProtectionBlocked(
+            ("purpose_violation",),
+            bot_name="support",
+            shell_type="Chat",
+        ),
+        task_room="task:22",
+    )
+
+    assert events == [
+        chat_namespace.ServerEvents.CHAT_START,
+        chat_namespace.ServerEvents.CHAT_ERROR,
+        "finalize",
+    ]
 
 
 @pytest.mark.asyncio
