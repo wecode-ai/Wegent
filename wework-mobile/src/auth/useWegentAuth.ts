@@ -161,22 +161,18 @@ export function useWegentAuth(): WegentAuthState {
       while (Date.now() < session.expires_at * 1000) {
         await delay(pollDelay)
         if (activeGeneration.current !== generation) return
-        const result = await credentials.claimAuthorization({
-          apiBaseUrl: config.apiBaseUrl,
-          sessionId: session.session_id,
-          pollToken: session.poll_token,
-        })
+        const result = await credentials.claimAuthorization(
+          {
+            apiBaseUrl: config.apiBaseUrl,
+            sessionId: session.session_id,
+            pollToken: session.poll_token,
+          },
+          () => activeGeneration.current === generation
+        )
         if (result.status === 'pending') continue
         if (result.status === 'declined') throw new Error('授权已取消')
         if (result.status === 'failed') throw new Error(result.error || '授权失败')
-        if (!result.accessToken || !result.refreshToken)
-          throw new Error('授权没有返回 access token')
-        if (activeGeneration.current !== generation) return
-        await credentials.persistRefreshToken(
-          config.apiBaseUrl,
-          result.refreshToken,
-          () => activeGeneration.current === generation
-        )
+        if (!result.accessToken) throw new Error('授权没有返回 access token')
         if (activeGeneration.current !== generation) return
         WebBrowser.dismissBrowser()
         await applyToken(config, result.accessToken, generation)

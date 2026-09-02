@@ -3,7 +3,7 @@ import { sha256 } from '@noble/hashes/sha2.js'
 import { base64urlnopad } from '@scure/base'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { createDeviceProof, encodeBase64Url, publicKeyFromPrivate } from './deviceProof'
+import { createDeviceProof, publicKeyFromPrivate } from './deviceProof'
 import { DeviceCredentialService } from './deviceCredentials'
 
 const CREDENTIAL_KEY = 'wegent.mobile.cloud-credentials.v2'
@@ -13,10 +13,16 @@ const writeGate = vi.hoisted(() => ({
   entered: false,
   release: (): void => undefined,
 }))
+const writeFailure = vi.hoisted(() => ({ active: false }))
+const claimState = vi.hoisted(() => ({ refreshToken: 'refresh-1' }))
 
 vi.mock('expo-secure-store', () => ({
   getItemAsync: async (key: string) => store.get(key) ?? null,
   setItemAsync: async (key: string, value: string) => {
+    if (writeFailure.active) {
+      writeFailure.active = false
+      throw new Error('native write failed')
+    }
     if (writeGate.hangOnToken && value.includes(writeGate.hangOnToken) && !writeGate.entered) {
       writeGate.entered = true
       await new Promise<void>(resolve => {
@@ -35,18 +41,6 @@ vi.mock('expo-crypto', () => ({
   randomUUID: () => 'test-uuid',
   getRandomBytes: (count: number) => new Uint8Array(count).fill(1),
 }))
-
-function claimResponse(): Response {
-  return new Response(
-    JSON.stringify({
-      status: 'success',
-      access_token: 'access-1',
-      refresh_token: 'refresh-1',
-      username: 'alice',
-    }),
-    { status: 200, headers: { 'Content-Type': 'application/json' } }
-  )
-}
 
 describe('device credentials', () => {
   it('creates the same ES256 device proof required by Wework refresh', () => {
@@ -89,9 +83,22 @@ describe('DeviceCredentialService serialized storage', () => {
     writeGate.hangOnToken = null
     writeGate.entered = false
     writeGate.release = (): void => undefined
+    writeFailure.active = false
+    claimState.refreshToken = 'refresh-1'
     vi.stubGlobal(
       'fetch',
-      vi.fn(async () => claimResponse())
+      vi.fn(
+        async () =>
+          new Response(
+            JSON.stringify({
+              status: 'success',
+              access_token: 'access-1',
+              refresh_token: claimState.refreshToken,
+              username: 'alice',
+            }),
+            { status: 200, headers: { 'Content-Type': 'application/json' } }
+          )
+      )
     )
   })
 
@@ -99,24 +106,28 @@ describe('DeviceCredentialService serialized storage', () => {
     vi.unstubAllGlobals()
   })
 
-  it('claims a session without persisting the refresh credential', async () => {
-    const service = new DeviceCredentialService()
-    const result = await service.claimAuthorization({
-      apiBaseUrl: 'https://example.com/api',
-      sessionId: 's1',
-      pollToken: 'pt',
-    })
+  function claimOn(service: DeviceCredentialService): Promise<{
+    status: 'pending' | 'success' | 'declined' | 'failed'
+    accessToken?: string
+    username?: string
+    error?: string
+  }> {
+    return service.claimAuthorization(
+      {
+        apiBaseUrl: 'https://example.com/api',
+        sessionId: 's1',
+        pollToken: 'pt',
+      },
+      () => true
+    )
+  }
+
+  it('claims a session, persists the refresh credential, and never exposes the refresh token', async () => {
+    const result = await claimOn(new DeviceCredentialService())
 
     expect(result.status).toBe('success')
     expect(result.accessToken).toBe('access-1')
-    expect(result.refreshToken).toBe('refresh-1')
-    expect(store.has(CREDENTIAL_KEY)).toBe(false)
-  })
-
-  it('persists the refresh credential only through persistRefreshToken', async () => {
-    const service = new DeviceCredentialService()
-    await service.persistRefreshToken('https://example.com/api', 'refresh-1', () => true)
-
+    expect(result).not.toHaveProperty('refreshToken')
     const stored = JSON.parse(store.get(CREDENTIAL_KEY) as string)
     expect(stored.apiBaseUrl).toBe('https://example.com/api')
     expect(stored.refreshToken).toBe('refresh-1')
@@ -124,8 +135,16 @@ describe('DeviceCredentialService serialized storage', () => {
 
   it('skips the write entirely when the generation is already stale', async () => {
     const service = new DeviceCredentialService()
-    await service.persistRefreshToken('https://example.com/api', 'refresh-1', () => false)
+    const result = await service.claimAuthorization(
+      {
+        apiBaseUrl: 'https://example.com/api',
+        sessionId: 's1',
+        pollToken: 'pt',
+      },
+      () => false
+    )
 
+    expect(result.status).toBe('success')
     expect(store.has(CREDENTIAL_KEY)).toBe(false)
   })
 
@@ -133,54 +152,43 @@ describe('DeviceCredentialService serialized storage', () => {
     writeGate.hangOnToken = 'refresh-1'
     let valid = true
     const service = new DeviceCredentialService()
-    const persist = service.persistRefreshToken('https://example.com/api', 'refresh-1', () => valid)
+    const pending = service.claimAuthorization(
+      {
+        apiBaseUrl: 'https://example.com/api',
+        sessionId: 's1',
+        pollToken: 'pt',
+      },
+      () => valid
+    )
 
     await vi.waitFor(() => expect(writeGate.entered).toBe(true))
     valid = false
     writeGate.release()
-    await persist
+    await pending
 
     expect(store.has(CREDENTIAL_KEY)).toBe(false)
   })
 
-  it('stale cleanup never deletes a credential it did not write', async () => {
-    const newerKey = p256.utils.randomSecretKey(new Uint8Array(48).fill(9))
-    const newerCredential = JSON.stringify({
-      version: 2,
-      apiBaseUrl: 'https://example.com/api',
-      privateKey: encodeBase64Url(newerKey),
-      publicKey: publicKeyFromPrivate(newerKey),
-      refreshToken: 'refresh-newer',
-    })
-    const service = new DeviceCredentialService()
-    let calls = 0
-    const persist = service.persistRefreshToken('https://example.com/api', 'refresh-1', () => {
-      calls += 1
-      if (calls < 3) return true
-      // Simulate a newer credential landing between the stale write and its
-      // cleanup; the rollback must leave it in place.
-      store.set(CREDENTIAL_KEY, newerCredential)
-      return false
-    })
-
-    await persist
-
-    const stored = JSON.parse(store.get(CREDENTIAL_KEY) as string)
-    expect(stored.refreshToken).toBe('refresh-newer')
-  })
-
-  it('keeps the newer valid persist when an older stale persist rolls back', async () => {
+  it('keeps the newer valid claim when an older stale claim rolls back', async () => {
     writeGate.hangOnToken = 'refresh-stale'
+    claimState.refreshToken = 'refresh-stale'
     let staleValid = true
     const service = new DeviceCredentialService()
-    const stale = service.persistRefreshToken(
-      'https://example.com/api',
-      'refresh-stale',
+    const stale = service.claimAuthorization(
+      {
+        apiBaseUrl: 'https://example.com/api',
+        sessionId: 's1',
+        pollToken: 'pt',
+      },
       () => staleValid
     )
-    const valid = service.persistRefreshToken(
-      'https://example.com/api',
-      'refresh-valid',
+    claimState.refreshToken = 'refresh-valid'
+    const valid = service.claimAuthorization(
+      {
+        apiBaseUrl: 'https://example.com/api',
+        sessionId: 's1',
+        pollToken: 'pt',
+      },
       () => true
     )
 
@@ -195,37 +203,51 @@ describe('DeviceCredentialService serialized storage', () => {
 
   it('clears the stored credential', async () => {
     const service = new DeviceCredentialService()
-    await service.persistRefreshToken('https://example.com/api', 'refresh-1', () => true)
+    await claimOn(service)
     await service.clear()
 
     expect(store.has(CREDENTIAL_KEY)).toBe(false)
   })
 
   it('linearizes a persisted refresh credential followed by clear', async () => {
+    writeGate.hangOnToken = 'refresh-1'
     const service = new DeviceCredentialService()
-    const persist = service.persistRefreshToken('https://example.com/api', 'refresh-1', () => true)
+    const persist = claimOn(service)
+    await vi.waitFor(() => expect(writeGate.entered).toBe(true))
+    // The clear joins the queue behind the in-flight write, so the write can
+    // never land after the clear and resurrect the credential.
     const clear = service.clear()
+    writeGate.release()
     await Promise.all([persist, clear])
 
     expect(store.has(CREDENTIAL_KEY)).toBe(false)
   })
 
-  it('does not deadlock concurrent writes and clears', async () => {
+  it('does not deadlock concurrent claims and clears', async () => {
     const service = new DeviceCredentialService()
-    const writes = Array.from({ length: 10 }, (_, index) =>
-      service.persistRefreshToken('https://example.com/api', `refresh-${index}`, () => true)
-    )
+    const claims = Array.from({ length: 10 }, () => claimOn(service))
     const clears = Array.from({ length: 5 }, () => service.clear())
 
-    const results = await Promise.allSettled([...writes, ...clears])
+    const results = await Promise.allSettled([...claims, ...clears])
     expect(results.every(result => result.status === 'fulfilled')).toBe(true)
   })
 
   it('recovers a corrupt stored credential without deadlocking the queue', async () => {
     store.set(CREDENTIAL_KEY, 'not-json')
-    const service = new DeviceCredentialService()
-    await service.persistRefreshToken('https://example.com/api', 'refresh-1', () => true)
+    await claimOn(new DeviceCredentialService())
 
+    const stored = JSON.parse(store.get(CREDENTIAL_KEY) as string)
+    expect(stored.refreshToken).toBe('refresh-1')
+  })
+
+  it('a rejected SecureStore write fails once without poisoning the queue', async () => {
+    const service = new DeviceCredentialService()
+    writeFailure.active = true
+    await expect(claimOn(service)).rejects.toThrow('native write failed')
+    expect(store.has(CREDENTIAL_KEY)).toBe(false)
+
+    const result = await claimOn(service)
+    expect(result.status).toBe('success')
     const stored = JSON.parse(store.get(CREDENTIAL_KEY) as string)
     expect(stored.refreshToken).toBe('refresh-1')
   })

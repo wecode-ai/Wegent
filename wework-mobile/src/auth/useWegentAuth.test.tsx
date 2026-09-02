@@ -37,6 +37,7 @@ function json(body: unknown): Response {
 
 const harness = vi.hoisted(() => ({
   secureStore: new Map<string, string>(),
+  secureStoreWrites: [] as string[],
   secureStoreWriteGate: {
     hangOnToken: null as string | null,
     entered: false,
@@ -54,6 +55,7 @@ const harness = vi.hoisted(() => ({
 vi.mock('expo-secure-store', () => ({
   getItemAsync: async (key: string) => harness.secureStore.get(key) ?? null,
   setItemAsync: async (key: string, value: string) => {
+    harness.secureStoreWrites.push(value)
     const gate = harness.secureStoreWriteGate
     if (gate.hangOnToken && value.includes(gate.hangOnToken) && !gate.entered) {
       gate.entered = true
@@ -191,6 +193,7 @@ async function waitFor(condition: () => boolean, timeoutMs = 5_000): Promise<voi
 
 beforeEach(() => {
   harness.secureStore.clear()
+  harness.secureStoreWrites = []
   harness.secureStoreWriteGate.hangOnToken = null
   harness.secureStoreWriteGate.entered = false
   harness.secureStoreWriteGate.release = (): void => undefined
@@ -211,7 +214,7 @@ afterEach(async () => {
   vi.unstubAllGlobals()
 })
 
-describe('auth generation closure', () => {
+describe('authentication generation', () => {
   it('M1-A: stale refresh continuation cannot restore auth after logout', async () => {
     seedCredential()
     await renderHook()
@@ -272,6 +275,9 @@ describe('auth generation closure', () => {
 
     expect(latest?.status).not.toBe('authenticated')
     expect(harness.secureStore.has(CREDENTIAL_KEY)).toBe(false)
+    // The invalidated claim continuation must not even attempt to persist the
+    // refresh credential, not merely have it cleaned up afterwards.
+    expect(harness.secureStoreWrites.some(value => value.includes('refresh-claim'))).toBe(false)
   })
 
   it('M1-B2: stale persistence vs backend switch cannot leave a stored credential', async () => {

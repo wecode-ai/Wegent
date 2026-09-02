@@ -51,14 +51,16 @@ export class DeviceCredentialService {
     })
   }
 
-  async claimAuthorization(input: {
-    apiBaseUrl: string
-    sessionId: string
-    pollToken: string
-  }): Promise<{
+  async claimAuthorization(
+    input: {
+      apiBaseUrl: string
+      sessionId: string
+      pollToken: string
+    },
+    isStillValid: () => boolean
+  ): Promise<{
     status: PollResponse['status']
     accessToken?: string
-    refreshToken?: string
     username?: string
     error?: string
   }> {
@@ -71,33 +73,30 @@ export class DeviceCredentialService {
     if (body.status !== 'success') {
       return { status: body.status, error: body.error }
     }
-    if (!body.access_token) throw new Error('授权响应缺少 access token')
-    if (!body.refresh_token) throw new Error('授权响应缺少设备绑定 refresh token')
-    return {
-      status: 'success',
-      accessToken: body.access_token,
-      refreshToken: body.refresh_token,
-      username: body.username,
-    }
-  }
-
-  persistRefreshToken(
-    apiBaseUrl: string,
-    refreshToken: string,
-    isStillValid: () => boolean
-  ): Promise<void> {
+    const accessToken = body.access_token
+    const refreshToken = body.refresh_token
+    if (!accessToken) throw new Error('授权响应缺少 access token')
+    if (!refreshToken) throw new Error('授权响应缺少设备绑定 refresh token')
+    // The refresh credential never leaves this service: persistence runs inside
+    // the serialization authority so an invalidated generation cannot leave a
+    // stale credential behind. The hook only ever sees the access token.
     return this.enqueue(async () => {
-      if (!isStillValid()) return
+      const accepted = { status: 'success' as const, accessToken, username: body.username }
+      if (!isStillValid()) return accepted
       const current = (await this.readStored()) ?? createCredential()
-      if (!isStillValid()) return
       const persisted: StoredDeviceCredential = {
         ...current,
-        apiBaseUrl: normalizeApiBaseUrl(apiBaseUrl),
+        apiBaseUrl: normalizeApiBaseUrl(input.apiBaseUrl),
         refreshToken,
       }
       await this.writeStored(persisted)
-      if (isStillValid()) return
-      await this.removeWrittenCredential(persisted)
+      if (!isStillValid()) {
+        // The generation was invalidated while the native write was in flight.
+        // Runs inside the serial queue, so no queued mutation can land between
+        // this operation's write and this cleanup.
+        await SecureStore.deleteItemAsync(CREDENTIAL_KEY)
+      }
+      return accepted
     })
   }
 
@@ -148,23 +147,6 @@ export class DeviceCredentialService {
 
   private read(): Promise<StoredDeviceCredential | null> {
     return this.enqueue(() => this.readStored())
-  }
-
-  // Runs inside the serial queue, so no queued credential operation can
-  // interleave between this operation's write and this check; the identity
-  // comparison still guards against deleting a record this operation did not
-  // write.
-  private async removeWrittenCredential(written: StoredDeviceCredential): Promise<void> {
-    const current = await this.readStored()
-    if (
-      !current ||
-      current.privateKey !== written.privateKey ||
-      current.apiBaseUrl !== written.apiBaseUrl ||
-      current.refreshToken !== written.refreshToken
-    ) {
-      return
-    }
-    await SecureStore.deleteItemAsync(CREDENTIAL_KEY)
   }
 
   private enqueue<T>(operation: () => Promise<T>): Promise<T> {
