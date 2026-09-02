@@ -54,6 +54,7 @@ from .emitters import (
     StatusUpdatingEmitter,
     WebSocketResultEmitter,
 )
+from .git_credentials import build_device_git_execution_payload
 from .polling_dispatcher import dispatch_polling
 from .recovery_service import recovery_service
 from .router import CommunicationMode, ExecutionRouter, ExecutionTarget
@@ -1682,7 +1683,8 @@ class ExecutionDispatcher:
         )
 
         # Send task to specified room
-        await self._emit_socketio_in_main_loop(sio, target, request.to_dict())
+        payload = build_device_git_execution_payload(request)
+        await self._emit_socketio_in_main_loop(sio, target, payload)
 
         logger.info(
             f"[ExecutionDispatcher] WebSocket dispatch: "
