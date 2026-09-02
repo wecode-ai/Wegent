@@ -305,6 +305,7 @@ describe('DocumentList summary header', () => {
     rerender(<DocumentList knowledgeBase={createKnowledgeBase({ id: 2 })} />)
 
     await waitFor(() => {
+      expect(mockGetDocumentProtection).toHaveBeenLastCalledWith(2)
       expect(mockKnowledgeDocumentTreeGrid).toHaveBeenLastCalledWith(
         expect.objectContaining({ allowDownload: false })
       )
@@ -312,10 +313,16 @@ describe('DocumentList summary header', () => {
 
     await act(async () => {
       resolveProtectedKnowledgeBase!({
-        original_download_allowed: false,
-        copy_allowed: false,
-        watermark_text: 'Protected',
+        original_download_allowed: true,
+        copy_allowed: true,
+        watermark_text: null,
       })
+    })
+
+    await waitFor(() => {
+      expect(mockKnowledgeDocumentTreeGrid).toHaveBeenLastCalledWith(
+        expect.objectContaining({ allowDownload: true })
+      )
     })
   })
 
