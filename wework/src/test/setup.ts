@@ -227,7 +227,10 @@ const testSettings = [
   ],
 ].map(([id, path, icon, labelKey, label, group]) => ({
   id,
-  module: 'plugins/wework-ui-core-settings.js',
+  module:
+    id === 'git-hosting' || id === 'worktrees'
+      ? 'plugins/wework-ui-git-settings.js'
+      : 'plugins/wework-ui-core-settings.js',
   path,
   icon,
   labelKey,

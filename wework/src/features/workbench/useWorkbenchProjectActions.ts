@@ -35,6 +35,7 @@ import type { WorkbenchState } from '@/types/workbench'
 import { getParentPath } from '@/components/projects/device-folder-path'
 import { hasEmbeddedHttpGitCredentials } from '@/lib/git-url'
 import { useGitPluginInstalled } from '@/features/dsh-runtime/gitPlugin'
+import { useTranslation } from '@/hooks/useTranslation'
 import type { ProjectMutationOptions, RefreshWorkLists } from './workbenchContextTypes'
 import type { WorkbenchAction } from './workbenchReducer'
 import { findProjectMetadataDeviceWorkspace, writeLastProjectId } from './workbenchRuntimeHelpers'
@@ -127,13 +128,14 @@ export function useWorkbenchProjectActions({
   clearRemoteProjectSyncRemoval,
   enqueueRemoteProjectStateMutation,
 }: UseWorkbenchProjectActionsOptions) {
+  const { t } = useTranslation('common')
   const gitPluginInstalled = useGitPluginInstalled()
   const runtimeTaskPinMutationTailsRef = useRef(new Map<string, Promise<void>>())
   const requireGitPlugin = useCallback(() => {
     if (!gitPluginInstalled) {
-      throw new Error('The Wework Git plugin is not installed')
+      throw new Error(t('workbench.git_plugin_unavailable'))
     }
-  }, [gitPluginInstalled])
+  }, [gitPluginInstalled, t])
 
   const createProject = useCallback(
     async (data: CreateProjectRequest, options: ProjectMutationOptions = {}) => {

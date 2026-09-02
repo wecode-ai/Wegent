@@ -9875,6 +9875,7 @@ describe('DesktopWorkbenchLayout', () => {
           taskId: 'runtime-1',
         },
         {
+          changeRequestStatusEnabled: true,
           onPartialInfo: expect.any(Function),
         }
       )
@@ -9972,6 +9973,7 @@ describe('DesktopWorkbenchLayout', () => {
         runtimeProject,
         expect.objectContaining({ path: '/workspace/worktrees/8/project-alpha' }),
         {
+          changeRequestStatusEnabled: true,
           force: true,
           onPartialInfo: expect.any(Function),
         }
@@ -10097,6 +10099,7 @@ describe('DesktopWorkbenchLayout', () => {
           source: 'project',
         },
         {
+          changeRequestStatusEnabled: true,
           onPartialInfo: expect.any(Function),
         }
       )
@@ -10189,6 +10192,7 @@ describe('DesktopWorkbenchLayout', () => {
           source: 'project',
         },
         {
+          changeRequestStatusEnabled: true,
           onPartialInfo: expect.any(Function),
         }
       )

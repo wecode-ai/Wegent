@@ -93,7 +93,7 @@ export function ConnectedIssueProjectWork({
             : projectWork.executionMode))
         : 'current_workspace',
       worktreeBranch: worktreeBranch ?? projectWork.worktreeBranch,
-      isGitProject: true,
+      isGitProject: gitPluginInstalled && projectWork.isGitProject,
       showProjectClearButton: false,
       onSelectProject,
       onSelectProjectWorkspace,

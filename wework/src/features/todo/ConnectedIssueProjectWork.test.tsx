@@ -1,6 +1,6 @@
 import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { describe, expect, it, vi } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import type { ProjectWorkControls } from '@/components/chat/ChatInput'
 import type { ProjectWithTasks } from '@/types/api'
@@ -9,6 +9,11 @@ import { ConnectedIssueProjectWork } from './ConnectedIssueProjectWork'
 const mocks = vi.hoisted(() => ({
   globalSelectProject: vi.fn(),
   globalSelectProjectWorkspace: vi.fn(),
+  gitPluginInstalled: true,
+}))
+
+vi.mock('@/features/dsh-runtime/gitPlugin', () => ({
+  useGitPluginInstalled: () => mocks.gitPluginInstalled,
 }))
 
 vi.mock('@/features/workbench/useWorkbench', () => ({
@@ -32,6 +37,7 @@ vi.mock('@/components/layout/useWorkbenchProjectWorkControls', () => ({
     onSelectStandaloneDevice: vi.fn(),
     onSelectProjectWorkspace: mocks.globalSelectProjectWorkspace,
     onExecutionModeChange: vi.fn(),
+    isGitProject: true,
   }),
 }))
 
@@ -42,6 +48,10 @@ vi.mock('@/components/layout/useWorkbenchPaneEnvironment', () => ({
 }))
 
 describe('ConnectedIssueProjectWork', () => {
+  beforeEach(() => {
+    mocks.gitPluginInstalled = true
+  })
+
   it('keeps project workspace selection inside the Issue composer', async () => {
     const project: ProjectWithTasks = { id: 92, name: '研发工作区', tasks: [] }
     const onSelectProject = vi.fn()
@@ -77,5 +87,23 @@ describe('ConnectedIssueProjectWork', () => {
     expect(onSelectProjectWorkspace).toHaveBeenCalledWith(92, 203)
     expect(mocks.globalSelectProjectWorkspace).not.toHaveBeenCalled()
     expect(mocks.globalSelectProject).not.toHaveBeenCalled()
+  })
+
+  it('does not classify the project as Git when the Git plugin is unavailable', () => {
+    mocks.gitPluginInstalled = false
+    const project: ProjectWithTasks = { id: 92, name: '研发工作区', tasks: [] }
+
+    render(
+      <ConnectedIssueProjectWork
+        project={project}
+        selectedDeviceWorkspaceId={202}
+        onSelectProject={vi.fn()}
+        onSelectProjectWorkspace={vi.fn()}
+      >
+        {projectWork => <span data-testid="git-project">{String(projectWork.isGitProject)}</span>}
+      </ConnectedIssueProjectWork>
+    )
+
+    expect(screen.getByTestId('git-project')).toHaveTextContent('false')
   })
 })

@@ -510,6 +510,7 @@
     "execution_mode_current_workspace": "Current workspace",
     "execution_mode_git_worktree": "New worktree",
     "execution_mode_save_failed": "Failed to save launch mode",
+    "git_plugin_unavailable": "Install or enable the Wework Git plugin to use Git features.",
     "worktree_unavailable_no_project": "Select a project before creating a worktree.",
     "worktree_unavailable_project_ineligible": "This project cannot use worktree launch mode.",
     "worktree_unavailable_no_workspace": "Select a code workspace before creating a worktree.",

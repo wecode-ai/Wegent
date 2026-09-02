@@ -20,6 +20,7 @@ import { normalizeRuntimeWorkspacePath, runtimeProjectUiId } from '@/lib/runtime
 import { isCloudDevice } from '@/lib/device-selection'
 import { isRemoteDevice } from '@/lib/device-capabilities'
 import { findWorkbenchDevice } from '@/lib/workbench-device'
+import { useTranslation } from '@/hooks/useTranslation'
 import {
   probeProjectWorktreeAvailability,
   resolveProjectWorktreeAvailability,
@@ -123,6 +124,7 @@ export function useWorkbenchPaneEnvironment({
     createEnvironmentBranch,
   } = useWorkbenchPaneContext()
   const runtimeWorkApi = services?.runtimeWorkApi
+  const { t } = useTranslation('common')
   const gitPluginInstalled = useGitPluginInstalled()
   const changeRequestStatusEnabled = useChangeRequestStatusEnabled()
   const [environmentInfo, setEnvironmentInfo] = useState<EnvironmentInfo>({
@@ -344,6 +346,14 @@ export function useWorkbenchPaneEnvironment({
   const gitActionsAvailable =
     gitPluginInstalled &&
     (!environmentMatchesActiveWorkspace || environmentInfo.isGitRepository !== false)
+  const requireGitActionsAvailable = useCallback(() => {
+    if (!gitPluginInstalled) {
+      throw new Error(t('workbench.git_plugin_unavailable'))
+    }
+    if (!gitActionsAvailable) {
+      throw new Error(t('workbench.worktree_unavailable_not_git'))
+    }
+  }, [gitActionsAvailable, gitPluginInstalled, t])
 
   useEffect(() => {
     environmentContextRef.current = { workspaceProject, activeWorkspaceTarget }
@@ -627,17 +637,25 @@ export function useWorkbenchPaneEnvironment({
 
   const commitPaneEnvironmentChanges = useCallback(
     async (message: string) => {
+      requireGitActionsAvailable()
       if (!activeWorkspaceTarget) {
         throw new Error(workspaceTargetError ?? 'Workspace is not ready')
       }
       await commitEnvironmentChanges(workspaceProject, message, activeWorkspaceTarget)
       setEnvironmentInfo(info => ({ ...info, additions: '', deletions: '' }))
     },
-    [activeWorkspaceTarget, commitEnvironmentChanges, workspaceProject, workspaceTargetError]
+    [
+      activeWorkspaceTarget,
+      commitEnvironmentChanges,
+      requireGitActionsAvailable,
+      workspaceProject,
+      workspaceTargetError,
+    ]
   )
 
   const commitAndPushPaneEnvironmentChanges = useCallback(
     async (message: string) => {
+      requireGitActionsAvailable()
       if (!activeWorkspaceTarget) {
         throw new Error(workspaceTargetError ?? 'Workspace is not ready')
       }
@@ -649,12 +667,14 @@ export function useWorkbenchPaneEnvironment({
       activeWorkspaceTarget,
       commitAndPushEnvironmentChanges,
       loadCurrentEnvironmentInfo,
+      requireGitActionsAvailable,
       workspaceProject,
       workspaceTargetError,
     ]
   )
 
   const pushPaneEnvironmentChanges = useCallback(async () => {
+    requireGitActionsAvailable()
     if (!activeWorkspaceTarget) {
       throw new Error(workspaceTargetError ?? 'Workspace is not ready')
     }
@@ -664,11 +684,13 @@ export function useWorkbenchPaneEnvironment({
     activeWorkspaceTarget,
     loadCurrentEnvironmentInfo,
     pushEnvironmentChanges,
+    requireGitActionsAvailable,
     workspaceProject,
     workspaceTargetError,
   ])
 
   const listPaneEnvironmentBranches = useCallback(() => {
+    requireGitActionsAvailable()
     const {
       workspaceProject: latestWorkspaceProject,
       activeWorkspaceTarget: latestActiveWorkspaceTarget,
@@ -677,10 +699,11 @@ export function useWorkbenchPaneEnvironment({
       return Promise.reject(new Error(workspaceTargetError ?? 'Workspace is not ready'))
     }
     return listEnvironmentBranches(latestWorkspaceProject, latestActiveWorkspaceTarget)
-  }, [listEnvironmentBranches, workspaceTargetError])
+  }, [listEnvironmentBranches, requireGitActionsAvailable, workspaceTargetError])
 
   const checkoutPaneEnvironmentBranch = useCallback(
     async (branchName: string) => {
+      requireGitActionsAvailable()
       const {
         workspaceProject: latestWorkspaceProject,
         activeWorkspaceTarget: latestActiveWorkspaceTarget,
@@ -695,11 +718,12 @@ export function useWorkbenchPaneEnvironment({
       )
       setEnvironmentInfo(info => ({ ...info, branchName }))
     },
-    [checkoutEnvironmentBranch, workspaceTargetError]
+    [checkoutEnvironmentBranch, requireGitActionsAvailable, workspaceTargetError]
   )
 
   const createPaneEnvironmentBranch = useCallback(
     async (branchName: string) => {
+      requireGitActionsAvailable()
       const {
         workspaceProject: latestWorkspaceProject,
         activeWorkspaceTarget: latestActiveWorkspaceTarget,
@@ -710,7 +734,7 @@ export function useWorkbenchPaneEnvironment({
       await createEnvironmentBranch(latestWorkspaceProject, branchName, latestActiveWorkspaceTarget)
       setEnvironmentInfo(info => ({ ...info, branchName }))
     },
-    [createEnvironmentBranch, workspaceTargetError]
+    [createEnvironmentBranch, requireGitActionsAvailable, workspaceTargetError]
   )
   const sharedEnvironmentInfo = useMemo<EnvironmentInfo>(() => {
     if (!currentChangeRequestTarget || !sharedChangeRequestSnapshot) {
