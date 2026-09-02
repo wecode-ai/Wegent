@@ -909,22 +909,13 @@ async function loadProjectEnvironmentUncached(
       changeRequestPromise,
     ])
     const diff = parseGitShortStat(shortStat)
-
-    // Count pending files from porcelain (untracked, staged, modified).
-    // git diff --shortstat only covers tracked files, so we merge
-    // porcelain data to include untracked and no-commit scenarios.
     const porcelainLines = porcelain.split('\n').filter(line => line.trim().length > 0)
 
-    if (shortStat) {
-      // Repo has commits — diff stat covers tracked changes.
-      // Add untracked file count on top.
-      const untrackedCount = porcelainLines.filter(line => line.startsWith('??')).length
-      if (untrackedCount > 0) {
-        const trackedAdditions = parseInt(diff.additions.replace(/^\+/, ''), 10) || 0
-        diff.additions = `+${trackedAdditions + untrackedCount}`
-      }
-    } else if (porcelainLines.length > 0) {
-      // Repo has no commits — every porcelain line is a pending change.
+    // git diff --shortstat counts changed lines of tracked files, which is the
+    // same basis code hosting uses, so untracked files never inflate the line
+    // counts. When no shortstat exists (a repository without any commit) the
+    // pending file count is the closest indicator available.
+    if (!shortStat && porcelainLines.length > 0) {
       diff.additions = `+${porcelainLines.length}`
     }
 

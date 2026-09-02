@@ -1710,7 +1710,7 @@ describe('loadProjectEnvironment', () => {
     })
   })
 
-  test('adds untracked file count to diff additions', async () => {
+  test('keeps shortstat line counts without counting untracked files as lines', async () => {
     const executeCommand = vi.fn((_: string, data: { command_key: string; args?: string[] }) => {
       if (data.command_key === 'git_branch') {
         return Promise.resolve({
@@ -1770,8 +1770,8 @@ describe('loadProjectEnvironment', () => {
       }
     )
 
-    // 5 tracked insertions + 2 untracked files = +7
-    expect(info.additions).toBe('+7')
+    // 5 tracked insertions; untracked files are files, not lines.
+    expect(info.additions).toBe('+5')
     expect(info.deletions).toBe('-2')
     expect(info.branchName).toBe('main')
   })
