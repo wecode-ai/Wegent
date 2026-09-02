@@ -1770,7 +1770,8 @@ async function createLocalRuntimeTaskPayload(
   cloudModelGateway: CloudModelGateway | undefined,
   runtimeProxyUrl: string | undefined,
   user: User,
-  requireLocalCodexCatalog: boolean
+  requireLocalCodexCatalog: boolean,
+  teamExecutionProfile?: TeamExecutionProfile
 ): Promise<Record<string, unknown>> {
   const runtimeWorkspace = await prepareLocalRuntimeWorkspace(data, requestWithLocalDevice)
   const execution = runtimeWorkspace ? executionWithWorkspace(data, runtimeWorkspace) : null
@@ -1784,9 +1785,9 @@ async function createLocalRuntimeTaskPayload(
   const collaborationMode = runtimeCollaborationMode(normalizedData.modelOptions)
   const turnSeed = createRuntimeTurnSeed()
   const payload = { ...normalizedData } as Record<string, unknown>
-  delete payload.teamExecutionProfile
   delete payload.teamId
-  if (normalizedData.teamExecutionProfile) {
+  delete payload.wegentTeamId
+  if (teamExecutionProfile) {
     delete payload.modelId
     delete payload.modelType
     delete payload.modelOptions
@@ -1841,10 +1842,10 @@ async function createLocalRuntimeTaskPayload(
 
   return {
     ...payload,
-    ...(normalizedData.teamExecutionProfile
+    ...(teamExecutionProfile
       ? {
           runtimeHandle: {
-            wegentTeam: { id: normalizedData.teamExecutionProfile.id },
+            wegentTeam: { id: teamExecutionProfile.id },
           },
         }
       : {}),
@@ -1886,7 +1887,7 @@ async function createLocalRuntimeTaskPayload(
       ephemeral: normalizedData.ephemeral,
       requireLocalCodexCatalog,
       user,
-      teamExecutionProfile: normalizedData.teamExecutionProfile,
+      teamExecutionProfile,
     }),
   } as unknown as Record<string, unknown>
 }
@@ -2337,12 +2338,7 @@ export function createRuntimeWorkApiFromIpc(
   const modelCatalogSyncInFlight = new Map<string, Promise<boolean>>()
   const modelCatalogSyncQueues = new Map<string, Promise<void>>()
   const teamExecutionProfiles = new Map<number, TeamExecutionProfile>()
-  const resolveBoundTeamExecutionProfile = async (
-    address: RuntimeTaskAddress
-  ): Promise<TeamExecutionProfile | undefined> => {
-    const binding = recordValue(recordValue(address.runtimeHandle).wegentTeam)
-    const teamId = typeof binding.id === 'number' && binding.id > 0 ? binding.id : null
-    if (!teamId) return undefined
+  const resolveTeamExecutionProfile = async (teamId: number): Promise<TeamExecutionProfile> => {
     const cached = teamExecutionProfiles.get(teamId)
     if (cached) return cached
     if (!options.resolveTeamExecutionProfile) {
@@ -2351,6 +2347,14 @@ export function createRuntimeWorkApiFromIpc(
     const profile = await options.resolveTeamExecutionProfile(teamId)
     teamExecutionProfiles.set(teamId, profile)
     return profile
+  }
+  const resolveBoundTeamExecutionProfile = async (
+    address: RuntimeTaskAddress
+  ): Promise<TeamExecutionProfile | undefined> => {
+    const binding = recordValue(recordValue(address.runtimeHandle).wegentTeam)
+    const teamId = typeof binding.id === 'number' && binding.id > 0 ? binding.id : null
+    if (!teamId) return undefined
+    return resolveTeamExecutionProfile(teamId)
   }
   const normalizeRequest = async <T extends object>(
     data: T
@@ -3067,6 +3071,9 @@ export function createRuntimeWorkApiFromIpc(
         supervisorModelId: supervisorModelId ?? null,
         elapsedMs: Date.now() - startedAt,
       })
+      const teamExecutionProfile = resolvedData.wegentTeamId
+        ? await resolveTeamExecutionProfile(resolvedData.wegentTeamId)
+        : undefined
       const payload = await createLocalRuntimeTaskPayload(
         resolvedData,
         localDeviceId,
@@ -3074,7 +3081,8 @@ export function createRuntimeWorkApiFromIpc(
         options.cloudModelGateway,
         options.getRuntimeProxyUrl?.(),
         user,
-        requireLocalCodexCatalog
+        requireLocalCodexCatalog,
+        teamExecutionProfile
       )
       logRuntimeTaskCreateStage('local-payload-built', {
         taskId: resolvedData.taskId ?? null,
@@ -3106,12 +3114,6 @@ export function createRuntimeWorkApiFromIpc(
         payload,
         localDeviceId
       )
-      if (resolvedData.teamExecutionProfile) {
-        teamExecutionProfiles.set(
-          resolvedData.teamExecutionProfile.id,
-          resolvedData.teamExecutionProfile
-        )
-      }
       logRuntimeTaskCreateStage('local-rpc-resolved', {
         taskId: resolvedData.taskId ?? null,
         deviceId: localDeviceId,
@@ -3129,9 +3131,10 @@ export function createRuntimeWorkApiFromIpc(
         stringValue(responseRecord.task_id) ??
         stringValue(executionRequest.task_id) ??
         createRuntimeExecutionIds(resolvedData)[0]
-      const runtimeHandle = recordValue(
-        responseRecord.runtimeHandle ?? responseRecord.runtime_handle
-      )
+      const runtimeHandle = {
+        ...recordValue(payload.runtimeHandle),
+        ...recordValue(responseRecord.runtimeHandle ?? responseRecord.runtime_handle),
+      }
       return {
         ...response,
         accepted: response.accepted ?? true,

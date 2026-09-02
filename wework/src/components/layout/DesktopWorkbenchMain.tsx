@@ -59,7 +59,7 @@ import type {
   WorkspaceFileOpenRequest,
   WorkspaceTarget,
 } from '@/types/workspace-files'
-import type { Team, TeamExecutionProfile } from '@/types/api'
+import type { Team } from '@/types/api'
 import { cn } from '@/lib/utils'
 import { runtimeProjectUiId } from '@/lib/runtime-project'
 import {
@@ -1019,9 +1019,8 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
   const setPaneInput = paneSession.setInput
   const [newChatRuntime, setNewChatRuntime] = useState<'codex' | LocalHarnessId>('codex')
   const [wegentTeams, setWegentTeams] = useState<Team[]>([])
-  const [selectedTeamProfile, setSelectedTeamProfile] = useState<TeamExecutionProfile | null>(null)
+  const [selectedTeam, setSelectedTeam] = useState<Team | null>(null)
   const [teamsLoading, setTeamsLoading] = useState(false)
-  const teamProfileRequestRef = useRef(0)
   const [localHarnessModelKeys, setLocalHarnessModelKeys] = useState<
     Partial<Record<LocalHarnessId, string | null>>
   >({})
@@ -1076,37 +1075,10 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
       cancelled = true
     }
   }, [experimentalFeaturesEnabled, services.teamApi])
-  const selectWegentTeam = useCallback(
-    (team: Team | null) => {
-      const requestId = ++teamProfileRequestRef.current
-      setCentralHarnessError(null)
-      if (!team) {
-        setSelectedTeamProfile(null)
-        setTeamsLoading(false)
-        return
-      }
-      setTeamsLoading(true)
-      void services.teamApi
-        .getExecutionProfile(team)
-        .then(profile => {
-          if (teamProfileRequestRef.current === requestId) {
-            setSelectedTeamProfile(profile)
-          }
-        })
-        .catch(error => {
-          if (teamProfileRequestRef.current !== requestId) return
-          console.error('[Wework] Failed to load Wegent Team execution profile', error)
-          setSelectedTeamProfile(null)
-          setCentralHarnessError(
-            t('workbench.team_profile_load_failed', '无法加载 Wegent 智能体执行配置')
-          )
-        })
-        .finally(() => {
-          if (teamProfileRequestRef.current === requestId) setTeamsLoading(false)
-        })
-    },
-    [services.teamApi, t]
-  )
+  const selectWegentTeam = useCallback((team: Team | null) => {
+    setCentralHarnessError(null)
+    setSelectedTeam(team)
+  }, [])
   useEffect(() => {
     if (!experimentalFeaturesEnabled || !isLocalHarnessAvailable()) return
 
@@ -1243,8 +1215,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
         runtimeExecutablePath?: string
         runtimePermissionMode?: 'default' | 'acceptEdits' | 'plan' | 'auto' | 'bypassPermissions'
         modelSelection?: ModelSelectionConfig | null
-        teamId?: number
-        teamExecutionProfile?: TeamExecutionProfile
+        wegentTeamId?: number
       }
     ) => {
       const supervisorConfig =
@@ -1293,8 +1264,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
         runtimeExecutablePath?: string
         runtimePermissionMode?: 'default' | 'acceptEdits' | 'plan' | 'auto' | 'bypassPermissions'
         modelSelection?: ModelSelectionConfig | null
-        teamId?: number
-        teamExecutionProfile?: TeamExecutionProfile
+        wegentTeamId?: number
       }
     ) => {
       const submitted = (value ?? paneSession.input).trim()
@@ -2006,8 +1976,8 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     experimentalFeaturesEnabled && newChatRuntime !== 'codex' && selectedHarnessInstalled
       ? newChatRuntime
       : 'codex'
-  const activeTeamProfile =
-    experimentalFeaturesEnabled && activeNewChatRuntime === 'codex' ? selectedTeamProfile : null
+  const activeTeam =
+    experimentalFeaturesEnabled && activeNewChatRuntime === 'codex' ? selectedTeam : null
   const localPluginApi = useMemo(() => createLocalCodexPluginApi(), [])
   const resolveHarnessPluginRoots = useCallback(async () => {
     const [skillsResult, installedResult] = await Promise.allSettled([
@@ -2333,8 +2303,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
       runtimeExecutablePath?: string
       runtimePermissionMode?: 'default' | 'acceptEdits' | 'plan' | 'auto' | 'bypassPermissions'
       modelSelection?: ModelSelectionConfig | null
-      teamId?: number
-      teamExecutionProfile?: TeamExecutionProfile
+      wegentTeamId?: number
     }
   ) => {
     if (currentRuntimeTask) {
@@ -2343,12 +2312,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     if (activeNewChatRuntime === 'codex') {
       return submitPaneInput(value, {
         ...options,
-        ...(activeTeamProfile
-          ? {
-              teamId: activeTeamProfile.id,
-              teamExecutionProfile: activeTeamProfile,
-            }
-          : {}),
+        ...(activeTeam ? { wegentTeamId: activeTeam.id } : {}),
       })
     }
     if (activeNewChatRuntime === 'claude_code') {
@@ -4957,7 +4921,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
                                 {activeNewChatRuntime === 'codex' && (
                                   <WorkbenchTeamSelector
                                     teams={wegentTeams}
-                                    selectedTeamId={activeTeamProfile?.id ?? null}
+                                    selectedTeamId={activeTeam?.id ?? null}
                                     loading={teamsLoading}
                                     onTeamChange={selectWegentTeam}
                                   />

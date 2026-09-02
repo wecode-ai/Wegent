@@ -254,16 +254,17 @@ describe('createLocalAppServices', () => {
       }
       return { accepted: true }
     })
+    const resolveTeamExecutionProfile = vi.fn().mockResolvedValue(teamExecutionProfile)
     const services = createLocalAppServices({
       ensure: vi.fn().mockResolvedValue({ running: true, ready: true, deviceId: 'device-uuid' }),
       request,
       subscribe: vi.fn(),
       user: AUTHENTICATED_CLOUD_USER,
+      resolveTeamExecutionProfile,
     })
 
-    await services.runtimeWorkApi?.createRuntimeTask({
-      teamId: 7,
-      teamExecutionProfile,
+    const createResponse = await services.runtimeWorkApi?.createRuntimeTask({
+      wegentTeamId: 7,
       deviceId: 'local-device',
       workspacePath: '/Users/me/project',
       taskId: 'team-task',
@@ -274,8 +275,12 @@ describe('createLocalAppServices', () => {
 
     const payload = request.mock.calls.find(([method]) => method === 'runtime.tasks.create')?.[1]
     expect(payload).not.toHaveProperty('teamId')
+    expect(payload).not.toHaveProperty('wegentTeamId')
     expect(payload).not.toHaveProperty('teamExecutionProfile')
+    expect(resolveTeamExecutionProfile).toHaveBeenCalledOnce()
+    expect(resolveTeamExecutionProfile).toHaveBeenCalledWith(7)
     expect(payload.runtimeHandle).toEqual({ wegentTeam: { id: 7 } })
+    expect(createResponse?.runtimeHandle).toEqual({ wegentTeam: { id: 7 } })
     expect(payload.executionRequest).toMatchObject({
       team_id: 7,
       team_name: 'review-team',
@@ -319,13 +324,13 @@ describe('createLocalAppServices', () => {
       prompt: 'Continue the review',
     })
 
-    const resolveTeamExecutionProfile = vi.fn().mockResolvedValue(teamExecutionProfile)
+    const resolveRestartedTeamExecutionProfile = vi.fn().mockResolvedValue(teamExecutionProfile)
     const restartedServices = createLocalAppServices({
       ensure: vi.fn().mockResolvedValue({ running: true, ready: true, deviceId: 'device-uuid' }),
       request,
       subscribe: vi.fn(),
       user: AUTHENTICATED_CLOUD_USER,
-      resolveTeamExecutionProfile,
+      resolveTeamExecutionProfile: resolveRestartedTeamExecutionProfile,
     })
 
     await restartedServices.runtimeWorkApi?.interruptAndSendRuntimeMessage({
@@ -338,8 +343,8 @@ describe('createLocalAppServices', () => {
       message: 'Stop and re-check the implementation',
     })
 
-    expect(resolveTeamExecutionProfile).toHaveBeenCalledOnce()
-    expect(resolveTeamExecutionProfile).toHaveBeenCalledWith(7)
+    expect(resolveRestartedTeamExecutionProfile).toHaveBeenCalledOnce()
+    expect(resolveRestartedTeamExecutionProfile).toHaveBeenCalledWith(7)
     const interruptPayload = request.mock.calls.find(
       ([method]) => method === 'runtime.tasks.interrupt_and_send'
     )?.[1]

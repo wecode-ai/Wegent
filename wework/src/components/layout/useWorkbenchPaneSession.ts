@@ -140,8 +140,7 @@ interface RuntimePaneSendOptions {
   cloudProjectId?: string
   origin?: RuntimeTaskCreateRequest['origin']
   initialSupervisor?: RuntimeSupervisorCreateInput | null
-  teamId?: number
-  teamExecutionProfile?: RuntimeTaskCreateRequest['teamExecutionProfile']
+  wegentTeamId?: number
   onRuntimeTaskCreated?: (address: RuntimeTaskAddress) => void
   onRuntimeTaskReady?: (address: RuntimeTaskAddress) => void
 }
@@ -1950,10 +1949,7 @@ export function useWorkbenchPaneSession({
             ...(options.runtimePermissionMode
               ? { runtimePermissionMode: options.runtimePermissionMode }
               : {}),
-            ...(options.teamId ? { teamId: options.teamId } : {}),
-            ...(options.teamExecutionProfile
-              ? { teamExecutionProfile: options.teamExecutionProfile }
-              : {}),
+            ...(options.wegentTeamId ? { wegentTeamId: options.wegentTeamId } : {}),
             ...(Object.prototype.hasOwnProperty.call(options, 'modelSelection')
               ? { modelSelection: options.modelSelection }
               : {}),
@@ -2050,10 +2046,7 @@ export function useWorkbenchPaneSession({
             ...(options.runtimePermissionMode
               ? { runtimePermissionMode: options.runtimePermissionMode }
               : {}),
-            ...(options.teamId ? { teamId: options.teamId } : {}),
-            ...(options.teamExecutionProfile
-              ? { teamExecutionProfile: options.teamExecutionProfile }
-              : {}),
+            ...(options.wegentTeamId ? { wegentTeamId: options.wegentTeamId } : {}),
             ...(Object.prototype.hasOwnProperty.call(options, 'modelSelection')
               ? { modelSelection: options.modelSelection }
               : {}),
@@ -2105,10 +2098,7 @@ export function useWorkbenchPaneSession({
             ...(options.runtimePermissionMode
               ? { runtimePermissionMode: options.runtimePermissionMode }
               : {}),
-            ...(options.teamId ? { teamId: options.teamId } : {}),
-            ...(options.teamExecutionProfile
-              ? { teamExecutionProfile: options.teamExecutionProfile }
-              : {}),
+            ...(options.wegentTeamId ? { wegentTeamId: options.wegentTeamId } : {}),
             ...(Object.prototype.hasOwnProperty.call(options, 'modelSelection')
               ? { modelSelection: options.modelSelection }
               : {}),

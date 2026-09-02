@@ -205,7 +205,7 @@ def test_create_team_runtime_task_uses_explicit_team_endpoint(
     )
     monkeypatch.setattr(
         runtime_work.runtime_work_service,
-        "create_team_runtime_task",
+        "create_runtime_task",
         service_mock,
     )
 
@@ -223,6 +223,7 @@ def test_create_team_runtime_task_uses_explicit_team_endpoint(
 
     assert response.status_code == 200
     assert service_mock.await_args.kwargs["request"].team_id == 42
+    assert service_mock.await_args.kwargs["team_id"] == 42
 
 
 def test_create_team_runtime_task_rejects_missing_team(

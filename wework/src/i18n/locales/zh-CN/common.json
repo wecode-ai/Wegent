@@ -1537,7 +1537,7 @@
     "collaboration_default": "默认模式",
     "collaboration_default_description": "按普通 Codex 流程直接处理。",
     "team_selector": "选择 Wegent 智能体",
-    "team_profile_load_failed": "无法加载 Wegent 智能体执行配置",
+    "remote_team_backend_unsupported": "当前 Wegent Backend 不支持远程智能体执行，请更新服务后重试。",
     "intelligence_low": "轻度",
     "intelligence_medium": "中",
     "intelligence_high": "高",

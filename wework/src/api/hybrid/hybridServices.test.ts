@@ -1375,14 +1375,6 @@ describe('createHybridWorkbenchServices', () => {
 
   it('routes runtime task creation by device source', async () => {
     const services = createServices()
-    const teamExecutionProfile = {
-      id: 1,
-      name: 'cloud-wework',
-      namespace: 'default',
-      updatedAt: '2026-09-02T00:00:00Z',
-      collaborationMode: 'solo',
-      bots: [],
-    }
     await services.deviceApi.listDevices()
     mocks.localCreateRuntimeTask.mockResolvedValue({
       accepted: true,
@@ -1406,16 +1398,14 @@ describe('createHybridWorkbenchServices', () => {
     await services.runtimeWorkApi?.createRuntimeTask({
       deviceId: 'local-device',
       workspacePath: '/tmp/local',
-      teamId: 1,
-      teamExecutionProfile,
+      wegentTeamId: 1,
       runtime: 'codex',
       message: 'local',
     })
     await services.runtimeWorkApi?.createRuntimeTask({
       deviceId: 'cloud-device',
       workspacePath: '/tmp/cloud',
-      teamId: 1,
-      teamExecutionProfile,
+      wegentTeamId: 1,
       runtime: 'codex',
       message: 'cloud',
     })
@@ -1428,7 +1418,7 @@ describe('createHybridWorkbenchServices', () => {
         deviceId: 'cloud-device',
         message: 'cloud',
         teamId: 1,
-        teamExecutionProfile: undefined,
+        wegentTeamId: undefined,
       })
     )
   })
@@ -1447,14 +1437,6 @@ describe('createHybridWorkbenchServices', () => {
       },
     ])
     const services = createServices()
-    const teamExecutionProfile = {
-      id: 1,
-      name: 'cloud-wework',
-      namespace: 'default',
-      updatedAt: '2026-09-02T00:00:00Z',
-      collaborationMode: 'solo',
-      bots: [],
-    }
     mocks.cloudCreateTeamRuntimeTask.mockResolvedValueOnce({
       accepted: true,
       deviceId: 'remote-device',
@@ -1465,8 +1447,7 @@ describe('createHybridWorkbenchServices', () => {
     await services.runtimeWorkApi?.createRuntimeTask({
       deviceId: 'remote-device',
       workspacePath: '/workspace/remote',
-      teamId: 1,
-      teamExecutionProfile,
+      wegentTeamId: 1,
       runtime: 'codex',
       message: 'remote',
     })
@@ -1478,6 +1459,7 @@ describe('createHybridWorkbenchServices', () => {
         deviceId: 'remote-device',
         workspacePath: '/workspace/remote',
         teamId: 1,
+        wegentTeamId: undefined,
       })
     )
   })

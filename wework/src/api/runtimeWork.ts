@@ -87,6 +87,8 @@ import type {
 import type { HttpClient, HttpRequestOptions } from './http'
 import type { KeybindingOverride } from '@/lib/keybindings'
 
+export const REMOTE_TEAM_BACKEND_UNSUPPORTED = 'REMOTE_TEAM_BACKEND_UNSUPPORTED'
+
 export function createRuntimeWorkApi(client: HttpClient) {
   return {
     prepareRuntimeModel(data: RuntimeModelPrepareRequest): Promise<boolean> {

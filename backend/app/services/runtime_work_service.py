@@ -25,7 +25,9 @@ from app.core.config import settings
 from app.core.constants import CLIENT_ORIGIN_WEWORK
 from app.models.im_session import IMPrivateSession
 from app.models.project import Project
+from app.models.subtask import Subtask, SubtaskRole, SubtaskStatus
 from app.models.subtask_context import ContextStatus, ContextType, SubtaskContext
+from app.models.task import TaskResource
 from app.models.user import User
 from app.schemas.project import ProjectConfig
 from app.schemas.runtime_work import (
@@ -73,7 +75,6 @@ from app.schemas.runtime_work import (
     RuntimeTaskQueueReorderRequest,
     RuntimeTaskQueueReorderResponse,
     RuntimeTaskRenameRequest,
-    RuntimeTeamTaskCreateRequest,
     RuntimeTranscriptRequest,
     RuntimeTranscriptResponse,
     RuntimeWorkListResponse,
@@ -109,6 +110,7 @@ from app.services.runtime_work_kind_store import (
     touch_device_workspace_kind,
     upsert_device_workspace_kind,
 )
+from shared.models.execution import ExecutionRequest
 
 logger = logging.getLogger(__name__)
 
@@ -1312,6 +1314,7 @@ async def create_runtime_task(
     db: Session,
     user_id: int,
     request: RuntimeTaskCreateRequest,
+    team_id: int | None = None,
 ) -> RuntimeTaskCreateResponse:
     """Create a LocalTask on the selected device executor without DB Task rows."""
 
@@ -1319,27 +1322,7 @@ async def create_runtime_task(
         db=db,
         user_id=user_id,
         request=request,
-    )
-    return await _dispatch_compiled_runtime_task(
-        user_id=user_id,
-        request=request,
-        compiled=compiled,
-    )
-
-
-async def create_team_runtime_task(
-    *,
-    db: Session,
-    user_id: int,
-    request: RuntimeTeamTaskCreateRequest,
-) -> RuntimeTaskCreateResponse:
-    """Create a Team-backed LocalTask on a remote device executor."""
-
-    compiled = compile_runtime_task_create(
-        db=db,
-        user_id=user_id,
-        request=request,
-        team_id=request.team_id,
+        team_id=team_id,
     )
     return await _dispatch_compiled_runtime_task(
         user_id=user_id,
@@ -4030,15 +4013,11 @@ def _build_team_runtime_execution_request(
     request: RuntimeTaskCreateRequest,
     target: RuntimeTaskTarget,
     team_id: int,
-):
+) -> ExecutionRequest:
     """Build a canonical Team execution request without persistent Task rows."""
 
     from app.services.execution import TaskRequestBuilder
     from app.services.project_automation_domain import runnable_wegent_team
-    from app.stores.tasks.transient import (
-        build_transient_assistant_subtask,
-        build_transient_task,
-    )
 
     user = _get_user(db, user_id)
     team = runnable_wegent_team(db, user_id, team_id)
@@ -4048,29 +4027,26 @@ def _build_team_runtime_execution_request(
         request.message,
         request.additional_context,
     )
-    task = build_transient_task(
+    task = _transient_runtime_team_task(
         task_id=task_id,
         user_id=user.id,
-        name=f"wework-runtime-{task_id}",
-        namespace="default",
         project_id=target.project.id if target.project else 0,
-        client_origin=CLIENT_ORIGIN_WEWORK,
-        payload=_runtime_team_task_json(
-            task_id=task_id,
-            title=title,
-            message=message,
-            team=team,
-            target=target,
-        ),
+        title=title,
+        message=message,
+        team=team,
+        target=target,
     )
-    subtask = build_transient_assistant_subtask(
-        subtask_id=subtask_id,
+    subtask = Subtask(
+        id=subtask_id,
         user_id=user.id,
         task_id=task_id,
         team_id=team.id,
         title=f"{title} - Assistant",
+        bot_ids=[],
+        role=SubtaskRole.ASSISTANT,
         prompt=message,
         message_id=1,
+        status=SubtaskStatus.PENDING,
     )
     execution_request = TaskRequestBuilder(db).build(
         subtask=subtask,
@@ -4087,24 +4063,27 @@ def _build_team_runtime_execution_request(
     return execution_request
 
 
-def _runtime_team_task_json(
+def _transient_runtime_team_task(
     *,
     task_id: int,
+    user_id: int,
+    project_id: int,
     title: str,
     message: str,
     team: Any,
     target: RuntimeTaskTarget,
-) -> dict[str, Any]:
-    """Build the transient Task CRD consumed by TaskRequestBuilder."""
+) -> TaskResource:
+    """Build the transient Task consumed by TaskRequestBuilder."""
 
+    name = f"wework-runtime-{task_id}"
     workspace: dict[str, Any] = {"source": target.workspace_source}
     if target.workspace_path:
         workspace["path"] = target.workspace_path
-    return {
+    payload = {
         "apiVersion": "agent.wecode.io/v1",
         "kind": "Task",
         "metadata": {
-            "name": f"wework-runtime-{task_id}",
+            "name": name,
             "namespace": "default",
             "labels": {"taskType": "code"},
         },
@@ -4117,13 +4096,23 @@ def _runtime_team_task_json(
                 "user_id": team.user_id,
             },
             "workspaceRef": {
-                "name": f"wework-runtime-{task_id}",
+                "name": name,
                 "namespace": "default",
             },
             "device_id": target.device_id,
             "execution": {"workspace": workspace},
         },
     }
+    return TaskResource(
+        id=task_id,
+        user_id=user_id,
+        kind="Task",
+        name=name,
+        namespace="default",
+        project_id=project_id,
+        client_origin=CLIENT_ORIGIN_WEWORK,
+        json=payload,
+    )
 
 
 def _build_direct_wework_runtime_execution_request(
@@ -4132,10 +4121,8 @@ def _build_direct_wework_runtime_execution_request(
     user_id: int,
     request: RuntimeTaskCreateRequest,
     target: RuntimeTaskTarget,
-):
+) -> ExecutionRequest:
     """Build a direct Wework execution without resolving a Wegent Team."""
-
-    from shared.models.execution import ExecutionRequest
 
     user = _get_user(db, user_id)
     task_id = request.local_task_id or str(_runtime_execution_ids()[0])

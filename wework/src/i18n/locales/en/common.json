@@ -1538,7 +1538,7 @@
     "collaboration_default": "Default mode",
     "collaboration_default_description": "Use the normal Codex flow.",
     "team_selector": "Choose a Wegent Agent",
-    "team_profile_load_failed": "Failed to load the Wegent Agent execution configuration",
+    "remote_team_backend_unsupported": "This Wegent Backend does not support remote Wegent Agent execution. Update the service and try again.",
     "intelligence_low": "Light",
     "intelligence_medium": "Medium",
     "intelligence_high": "High",

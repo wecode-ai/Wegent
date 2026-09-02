@@ -830,6 +830,7 @@ async def create_runtime_task_endpoint(
     response_model=RuntimeTaskCreateResponse,
     response_model_by_alias=True,
 )
+@trace_async("runtime_work.team.create", "runtime_work.api")
 async def create_team_runtime_task_endpoint(
     request: RuntimeTeamTaskCreateRequest,
     db: Session = Depends(get_db),
@@ -837,10 +838,11 @@ async def create_team_runtime_task_endpoint(
 ) -> RuntimeTaskCreateResponse:
     """Create a Team-backed runtime task through a remote device executor."""
 
-    return await runtime_work_service.create_team_runtime_task(
+    return await runtime_work_service.create_runtime_task(
         db=db,
         user_id=current_user.id,
         request=request,
+        team_id=request.team_id,
     )
 
 

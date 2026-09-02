@@ -11,6 +11,7 @@ import {
   createRuntimeWorkApiFromIpc,
 } from '@/api/local/localServices'
 import { createRuntimeChatStream } from '@/api/runtime/runtimeChatStream'
+import { REMOTE_TEAM_BACKEND_UNSUPPORTED } from '@/api/runtimeWork'
 import type { ChatStreamHandlers } from '@/stream/chatStream'
 import { createCloudProjectSpaceApi } from './cloudProjectSpaceApi'
 import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
@@ -1137,21 +1138,21 @@ export function createHybridWorkbenchServices(
         let response
         try {
           response =
-            data.teamExecutionProfile && data.teamId && route === 'cloud'
+            data.wegentTeamId && route === 'cloud'
               ? await cloudServices.runtimeWorkApi!.createTeamRuntimeTask({
                   ...data,
-                  teamExecutionProfile: undefined,
+                  teamId: data.wegentTeamId,
+                  wegentTeamId: undefined,
                 })
               : await api.createRuntimeTask(data)
         } catch (error) {
           if (
-            data.teamExecutionProfile &&
-            data.teamId &&
+            data.wegentTeamId &&
             route === 'cloud' &&
             error instanceof ApiError &&
             (error.status === 404 || error.status === 405)
           ) {
-            throw new Error('当前 Backend 版本不支持远程 Wegent 智能体执行，请升级后重试', {
+            throw new Error(REMOTE_TEAM_BACKEND_UNSUPPORTED, {
               cause: error,
             })
           }
