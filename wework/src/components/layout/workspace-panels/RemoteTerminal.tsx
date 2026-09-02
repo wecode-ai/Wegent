@@ -17,6 +17,7 @@ import { focusTerminalUnlessComposerFocusRequested } from '@/lib/workbenchCompos
 import { defaultAppearance, useOptionalAppearance } from '@/features/appearance'
 import { createXtermWebLinksAddon } from './xtermLinks'
 import { installXtermInputFallback, type XtermInputFallbackController } from './xtermInputFallback'
+import { installXtermMacKeybindings } from './xtermMacKeybindings'
 import { installXtermSelectionGuard } from './xtermSelectionGuard'
 import { installXtermTextDrag } from './xtermTextDrag'
 import {
@@ -193,14 +194,15 @@ export function RemoteTerminal({
       noteData: () => undefined,
       dispose: () => undefined,
     }
-    const dataDisposable = terminal.onData(data => {
+    const writeTerminalInput = (data: string) => {
       inputFallback.noteData(data)
       void client.write(data).catch(error => {
         if (!disposed) {
           console.error('Failed to write to remote terminal:', error)
         }
       })
-    })
+    }
+    const dataDisposable = terminal.onData(writeTerminalInput)
     const unsubscribeOutput = client.onOutput(payload => {
       if (!disposed && payload.session_id === sessionId) {
         writeTerminalOutput(payload.data)
@@ -222,15 +224,9 @@ export function RemoteTerminal({
     const textDrag = installXtermTextDrag({ container, terminal })
     inputFallback = installXtermInputFallback({
       terminal,
-      writeData: data => {
-        inputFallback.noteData(data)
-        void client.write(data).catch(error => {
-          if (!disposed) {
-            console.error('Failed to write fallback input to remote terminal:', error)
-          }
-        })
-      },
+      writeData: writeTerminalInput,
     })
+    installXtermMacKeybindings({ terminal, writeData: writeTerminalInput })
     terminalRef.current = terminal
     fitAddonRef.current = fitAddon
     clientRef.current = client
