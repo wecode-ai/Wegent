@@ -39,6 +39,8 @@ describe('PluginDevelopmentManager', () => {
         WEGENT_EXECUTOR_LOG_DIR: '/parent/executor-logs',
         WEWORK_E2E_CONTROL_URL: 'http://127.0.0.1:1234',
         VITE_WEWORK_E2E_MODE: '1',
+        VITE_WEWORK_DESKTOP_E2E_CONTROL_TOKEN: 'desktop-control-token',
+        VITE_WEWORK_DESKTOP_E2E_CONTROL_URL: 'http://127.0.0.1:5678',
         WEWORK_NODE_PATH: '/parent/runtime/bin/node',
         WEWORK_NODE_RUNTIME_KIND: 'electron',
         WEWORK_RUNTIME_BIN: '/parent/runtime/bin',
@@ -60,6 +62,8 @@ describe('PluginDevelopmentManager', () => {
     expect(environment).not.toHaveProperty('WEGENT_CODEX_HOME')
     expect(environment).not.toHaveProperty('WEWORK_E2E_CONTROL_URL')
     expect(environment).not.toHaveProperty('VITE_WEWORK_E2E_MODE')
+    expect(environment).not.toHaveProperty('VITE_WEWORK_DESKTOP_E2E_CONTROL_TOKEN')
+    expect(environment).not.toHaveProperty('VITE_WEWORK_DESKTOP_E2E_CONTROL_URL')
     expect(environment).not.toHaveProperty('WEWORK_NODE_PATH')
     expect(environment).not.toHaveProperty('WEWORK_NODE_RUNTIME_KIND')
     expect(environment).not.toHaveProperty('WEWORK_RUNTIME_BIN')

@@ -293,8 +293,16 @@ async function handlePluginDevelopmentCommand(command: string): Promise<void> {
     return
   }
   if (command === 'restart-core-dsh') {
-    await restartPrimaryCoreDsh()
-    await writePluginDevelopmentState('ready')
+    try {
+      await restartPrimaryCoreDsh()
+      await writePluginDevelopmentState('ready')
+    } catch (reason) {
+      const error = reason instanceof Error ? reason : new Error(String(reason))
+      await writePluginDevelopmentState('error', error).catch(stateError => {
+        console.error('[plugin-development] Failed to persist restart error state', stateError)
+      })
+      throw error
+    }
     return
   }
   if (command === 'stop') {

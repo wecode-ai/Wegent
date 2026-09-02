@@ -586,7 +586,11 @@ export function pluginDevelopmentEnvironment(
   delete environment.WEWORK_NODE_RUNTIME_KIND
   delete environment.WEWORK_RUNTIME_BIN
   for (const key of Object.keys(environment)) {
-    if (key.startsWith('WEWORK_E2E_') || key.startsWith('VITE_WEWORK_E2E_')) {
+    if (
+      key.startsWith('WEWORK_E2E_') ||
+      key.startsWith('VITE_WEWORK_E2E_') ||
+      key.startsWith('VITE_WEWORK_DESKTOP_E2E_')
+    ) {
       delete environment[key]
     }
   }
