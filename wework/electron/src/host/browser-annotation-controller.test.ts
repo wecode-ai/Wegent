@@ -99,6 +99,45 @@ describe('BrowserAnnotationController', () => {
     expect(runtimeComment).not.toHaveProperty('screenshotDataUrl')
   })
 
+  test('publishes a saved comment under the latest URL after same-document navigation', () => {
+    const { controller } = harness()
+    const navigatedUrl = 'https://example.com/page?tab=latest'
+    const navigatedAnchor = {
+      ...anchor(),
+      pageUrl: navigatedUrl,
+      frameUrl: navigatedUrl,
+    }
+
+    controller.start(LABEL, 'batch')
+    controller.handleRuntimeEvent(7, {
+      type: 'create-draft',
+      pageSessionId: 'page-session-1',
+      pageUrl: navigatedUrl,
+      anchor: navigatedAnchor,
+    })
+    controller.handleRuntimeEvent(7, {
+      type: 'save-draft',
+      pageSessionId: 'page-session-1',
+      pageUrl: navigatedUrl,
+      comment: 'Keep the SPA annotation visible',
+      designChanges: [],
+    })
+
+    expect(controller.state(LABEL)).toMatchObject({
+      scope: {
+        pageSessionId: 'page-session-1',
+        url: navigatedUrl,
+      },
+      revision: 1,
+      comments: [
+        {
+          comment: 'Keep the SPA annotation visible',
+          anchor: { pageUrl: navigatedUrl },
+        },
+      ],
+    })
+  })
+
   test('exits annotation mode and closes a stale draft after real navigation', async () => {
     const { controller, sent } = harness()
     controller.start(LABEL, 'batch')
@@ -272,5 +311,17 @@ describe('BrowserAnnotationController', () => {
     controller.handleRuntimeEvent(7, { type: 'open-comment', commentId, anchor: anchor() })
     controller.handleRuntimeEvent(7, { type: 'delete-draft' })
     expect(controller.state(LABEL).comments).toEqual([])
+  })
+
+  test('accepts Escape exit from the page runtime', () => {
+    const { controller } = harness()
+    controller.start(LABEL, 'batch')
+
+    controller.handleRuntimeEvent(7, { type: 'stop-annotation' })
+
+    expect(controller.state(LABEL)).toMatchObject({
+      mode: 'off',
+      originalView: false,
+    })
   })
 })

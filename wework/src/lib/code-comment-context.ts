@@ -23,6 +23,26 @@ function contextLocationLabel(context: CodeCommentContext): string {
   return `File: ${context.filePath}, lines ${lineRangeLabel(context)}`
 }
 
+function selectedTextForSend(context: CodeCommentContext): string {
+  if (contextSource(context) !== 'browser_annotation') return context.selectedText
+  try {
+    const parsed: unknown = JSON.parse(context.selectedText)
+    if (
+      !parsed ||
+      typeof parsed !== 'object' ||
+      Array.isArray(parsed) ||
+      (parsed as { type?: unknown }).type !== 'browser_annotation'
+    ) {
+      return context.selectedText
+    }
+    const sendable = { ...(parsed as Record<string, unknown>) }
+    delete sendable.screenshotDataUrl
+    return JSON.stringify(sendable, null, 2)
+  } catch {
+    return context.selectedText
+  }
+}
+
 function serializedCodeCommentContexts(contexts: CodeCommentContext[]): string {
   const payload = contexts.map((context, index) => {
     const source = contextSource(context)
@@ -33,7 +53,7 @@ function serializedCodeCommentContexts(contexts: CodeCommentContext[]): string {
       filePath: context.filePath,
       fileName: context.fileName,
       lines: source === 'code_selection' ? lineRangeLabel(context) : null,
-      selectedText: context.selectedText,
+      selectedText: selectedTextForSend(context),
       userComment: context.comment,
       adjustments: context.adjustments?.length ? context.adjustments : undefined,
       createdAt: context.createdAt,

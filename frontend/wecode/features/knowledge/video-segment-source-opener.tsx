@@ -18,12 +18,17 @@ import type { SourceReference } from '@/types/socket'
 import { resolveVideoSegmentBounds, type VideoSegmentBounds } from './video-segment-bounds'
 import { formatVideoTime } from './video-time'
 import { activatePlayer, getActivePlayerId, subscribeActivePlayer } from './active-video-store'
+import { VideoChaptersCard } from './video-chapters-card'
 import { useVideoSegmentPlayback } from './use-video-segment-playback'
 
 type VideoSegment = NonNullable<SourceReference['segments']>[number]
 
 export { resolveVideoSegmentBounds }
 export type { VideoSegmentBounds }
+
+function videoSegmentKey(segment: VideoSegment): string {
+  return segment.id ?? `${segment.start_sec}-${segment.end_sec}`
+}
 
 function VideoSegmentCard({
   segment,
@@ -264,6 +269,8 @@ function VideoSegmentCard({
 export function VideoSegmentSource({ source }: { source: SourceReference }) {
   const { t } = useTranslation('chat')
   const segments = source.segments ?? []
+  const availableSegments = source.available_segments ?? []
+  const hasMultipleReferencedSegments = segments.length > 1
   const documentId = source.document_id ?? 0
   const reactId = useId()
   // Scope this source instance so the same video cited in multiple messages
@@ -286,26 +293,49 @@ export function VideoSegmentSource({ source }: { source: SourceReference }) {
   if (!documentId || segments.length === 0) return null
 
   return (
-    <div className="grid w-full grid-cols-1 gap-3 lg:grid-cols-2">
-      {segments.map(segment => {
-        const segmentKey = segment.id ?? `${segment.start_sec}-${segment.end_sec}`
-        return (
-          <VideoSegmentCard
-            key={segmentKey}
-            segment={segment}
-            playUrl={playUrl ?? ''}
-            mimeType={mimeType}
-            fallbackTitle={t('sourceReferences.videoSegment')}
-            isActive={activeSegmentKey === segmentKey}
-            isLoading={isLoading}
-            notReady={notReady}
-            hasUrlError={hasError}
-            onActivate={() => activatePlayer(`${playerPrefix}:${segmentKey}`)}
-            onRetry={retry}
-          />
-        )
-      })}
-    </div>
+    <section
+      className={`w-full space-y-2 ${hasMultipleReferencedSegments ? 'max-w-2xl' : 'max-w-md'}`}
+      data-testid={`video-segment-source-${source.index}`}
+    >
+      <div
+        className={`grid w-full grid-cols-1 gap-3 ${
+          hasMultipleReferencedSegments ? 'md:grid-cols-2' : ''
+        }`}
+      >
+        {segments.map(segment => {
+          const segmentKey = videoSegmentKey(segment)
+          return (
+            <VideoSegmentCard
+              key={segmentKey}
+              segment={segment}
+              playUrl={playUrl ?? ''}
+              mimeType={mimeType}
+              fallbackTitle={t('sourceReferences.videoSegment')}
+              isActive={activeSegmentKey === segmentKey}
+              isLoading={isLoading}
+              notReady={notReady}
+              hasUrlError={hasError}
+              onActivate={() => activatePlayer(`${playerPrefix}:${segmentKey}`)}
+              onRetry={retry}
+            />
+          )
+        })}
+        {availableSegments.length > 0 && (
+          <div className={hasMultipleReferencedSegments ? 'md:col-span-2' : ''}>
+            <VideoChaptersCard
+              source={{
+                ...source,
+                segments: availableSegments,
+                segments_truncated: source.available_segments_truncated,
+              }}
+              triggerLabel={t('sourceReferences.moreVideoChaptersCount', {
+                count: availableSegments.length,
+              })}
+            />
+          </div>
+        )}
+      </div>
+    </section>
   )
 }
 

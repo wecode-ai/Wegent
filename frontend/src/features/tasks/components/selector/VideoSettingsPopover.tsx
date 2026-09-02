@@ -13,7 +13,7 @@
 'use client'
 
 import React, { useState } from 'react'
-import { SlidersHorizontal } from 'lucide-react'
+import { ChevronRight, SlidersHorizontal } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { useTranslation } from '@/hooks/useTranslation'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
@@ -126,18 +126,30 @@ export function VideoSettingsPopover({
           aria-label={iconOnly ? summaryText : undefined}
           title={iconOnly ? summaryText : undefined}
           className={cn(
-            'flex items-center gap-1.5 min-w-0 text-text-primary hover:bg-hover',
+            'flex min-w-0 items-center text-text-primary hover:bg-hover',
             triggerVariant === 'menu-item'
-              ? 'h-11 w-full rounded-md px-3'
+              ? 'min-h-14 w-full gap-3 px-3 py-2.5 text-left'
               : iconOnly
                 ? 'h-9 w-9 justify-center rounded-full border border-border bg-base p-0'
-                : 'h-9 rounded-full border border-border bg-base pl-2.5 pr-3 py-2.5',
+                : 'h-9 gap-1.5 rounded-full border border-border bg-base py-2.5 pl-2.5 pr-3',
             'transition-colors focus:outline-none focus:ring-0',
             'disabled:cursor-not-allowed disabled:opacity-50'
           )}
         >
-          <SlidersHorizontal className="h-4 w-4 flex-shrink-0" />
-          {!iconOnly && <span className="truncate text-xs min-w-0">{summaryText}</span>}
+          <SlidersHorizontal className="h-4 w-4 flex-shrink-0 text-text-muted" />
+          {triggerVariant === 'menu-item' ? (
+            <>
+              <span className="min-w-0 flex-1">
+                <span className="block truncate text-sm font-medium text-text-primary">
+                  {t('video.settings_title')}
+                </span>
+                <span className="mt-0.5 block truncate text-xs text-text-muted">{summaryText}</span>
+              </span>
+              <ChevronRight className="h-4 w-4 shrink-0 text-text-muted" aria-hidden="true" />
+            </>
+          ) : (
+            !iconOnly && <span className="min-w-0 truncate text-xs">{summaryText}</span>
+          )}
         </button>
       </PopoverTrigger>
 

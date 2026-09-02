@@ -1,0 +1,3 @@
+- insert:
+    - id: wework-secure-storage
+      name: '@wegent/dsh-secure-storage'

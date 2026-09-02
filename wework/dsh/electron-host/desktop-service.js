@@ -35,6 +35,21 @@ export function createWeworkDesktopService(client) {
     notification: Object.freeze({
       show: options => invoke('notification.show', options),
     }),
+    browser: Object.freeze({
+      setRequestHeaderRule: rule => invoke('browser.setRequestHeaderRule', rule),
+      removeRequestHeaderRule: id => invoke('browser.removeRequestHeaderRule', { id }),
+      createBackgroundPage: id => invoke('browser.createBackgroundPage', { id }),
+      navigateBackgroundPage: (id, url) => invoke('browser.navigateBackgroundPage', { id, url }),
+      setBackgroundPageUserAgent: (id, userAgent) =>
+        invoke('browser.setBackgroundPageUserAgent', { id, userAgent }),
+      backgroundPageState: id => invoke('browser.backgroundPageState', { id }),
+      closeBackgroundPage: id => invoke('browser.closeBackgroundPage', { id }),
+    }),
+    secureStorage: Object.freeze({
+      get: key => invoke('secureStorage.get', { key }),
+      set: (key, value) => invoke('secureStorage.set', { key, value }),
+      delete: key => invoke('secureStorage.delete', { key }),
+    }),
     rendererHealth: Object.freeze({
       getState: () => invoke('rendererHealth.getState'),
     }),

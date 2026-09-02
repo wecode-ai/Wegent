@@ -119,6 +119,37 @@ describe('resolveVideoSegmentBounds', () => {
     expect(document.querySelectorAll('video')).toHaveLength(1)
   })
 
+  it('shows complete video chapters separately from referenced segments', () => {
+    render(
+      <VideoSegmentSource
+        source={{
+          index: 1,
+          title: '811.video.md',
+          document_id: 811,
+          segments: [{ id: 'segment_0_6', start_sec: 0, end_sec: 6, title: '引用章节' }],
+          available_segments: [
+            { id: 'segment_0_6', start_sec: 0, end_sec: 6, title: '引用章节' },
+            { id: 'segment_6_15', start_sec: 6, end_sec: 15, title: '更多章节' },
+          ],
+        }}
+      />
+    )
+
+    expect(screen.getByTestId('video-segment-card-0')).toBeInTheDocument()
+    expect(screen.getByTestId('video-chapters-toggle-1')).toHaveTextContent(
+      'sourceReferences.moreVideoChaptersCount'
+    )
+    expect(screen.getByTestId('video-segment-source-1')).toHaveClass('max-w-md')
+    expect(screen.queryByTitle('811.video.md')).not.toBeInTheDocument()
+
+    fireEvent.click(screen.getByTestId('video-chapters-toggle-1'))
+
+    expect(screen.getByTestId('video-chapters-card-1')).toBeInTheDocument()
+    expect(screen.getByTestId('video-chapter-item-1-0')).toHaveTextContent('引用章节')
+    expect(screen.getByTestId('video-chapter-item-1-1')).toHaveTextContent('更多章节')
+    expect(screen.queryByTestId('video-chapters-toggle-1')).not.toBeInTheDocument()
+  })
+
   it('allows a failed signed URL to be refreshed from the active card', () => {
     mockHasError = true
     render(
