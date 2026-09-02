@@ -198,6 +198,23 @@ describe('DeviceSelectorTab', () => {
     expect(screen.getByText('local_device_prefixOpenClaw Device')).toBeInTheDocument()
   })
 
+  it('renders Wework app devices in a dedicated selector section', () => {
+    mockDevices = [
+      createDevice({ device_id: 'local-device', name: 'Local Device' }),
+      createDevice({
+        id: 2,
+        device_id: 'wework-device',
+        name: 'Wework Device',
+        device_type: 'app',
+      }),
+    ]
+
+    render(<DeviceSelectorTab />)
+
+    expect(screen.getByTestId('wework-device-section')).toHaveTextContent('wework_devices_section')
+    expect(screen.getByTestId('wework-device-section')).toHaveTextContent('Wework Device')
+  })
+
   it('initializes a new task from the exact account default without fallback', async () => {
     mockDefaultExecutionTarget = 'offline-default'
     mockDevices = [

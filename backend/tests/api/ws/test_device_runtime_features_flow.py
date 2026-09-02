@@ -229,7 +229,7 @@ async def test_remote_heartbeat_runtime_features_reach_provider_projection(
 
 
 @pytest.mark.asyncio
-async def test_app_only_heartbeat_does_not_reconcile_cloud_work(
+async def test_app_heartbeat_reconciles_wegent_tasks(
     test_db,
     test_user,
     monkeypatch,
@@ -262,11 +262,21 @@ async def test_app_only_heartbeat_does_not_reconcile_cloud_work(
             "runtime_instance_id": "runtime-instance-app",
         },
     )
+    await _wait_for_registration_followups(namespace)
 
     assert registered == {"success": True, "device_id": device_id}
     assert heartbeat == {"success": True}
     assert session["device_type"] == DeviceType.APP.value
-    reconcile.assert_not_awaited()
+    assert reconcile.await_count == 2
+    reconcile.assert_any_await(
+        user_id=test_user.id,
+        device_id=device_id,
+    )
+    reconcile.assert_any_await(
+        user_id=test_user.id,
+        device_id=device_id,
+        needs_confirmation_only=True,
+    )
 
 
 @pytest.mark.asyncio

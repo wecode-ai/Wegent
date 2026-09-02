@@ -5,7 +5,6 @@
 import type { DeviceInfo } from '@/apis/devices'
 import {
   filterDevicesByAdvancedMode,
-  isWegentExecutionDevice,
   resolveOrdinaryDeviceChatTarget,
 } from '@/features/devices/utils/device-visibility'
 
@@ -30,7 +29,7 @@ function createDevice(overrides: Partial<DeviceInfo>): DeviceInfo {
 }
 
 describe('device visibility', () => {
-  it('keeps OpenClaw registered with Wegent while hiding it from ordinary choices', () => {
+  it('hides OpenClaw from ordinary choices', () => {
     const executor = createDevice({ device_id: 'executor' })
     const openclaw = createDevice({
       id: 2,
@@ -38,7 +37,6 @@ describe('device visibility', () => {
       bind_shell: 'openclaw',
     })
 
-    expect(isWegentExecutionDevice(openclaw)).toBe(true)
     expect(filterDevicesByAdvancedMode([executor, openclaw], false)).toEqual([executor])
   })
 

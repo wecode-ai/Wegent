@@ -107,7 +107,6 @@ describe('LocalRuntimeInitializer', () => {
           socketBaseUrl: 'wss://socket.example.com',
           isConnected: true,
           token: 'token-a',
-          registrationDeviceType: 'app',
         }}
       >
         <div data-testid="main-app">Main app</div>
@@ -149,7 +148,6 @@ describe('LocalRuntimeInitializer', () => {
           socketBaseUrl: 'https://backend.example.com',
           isConnected: true,
           token: 'token-a',
-          registrationDeviceType: 'app',
         }}
       >
         <div data-testid="main-app">Main app</div>
@@ -165,7 +163,6 @@ describe('LocalRuntimeInitializer', () => {
           socketBaseUrl: 'wss://socket.example.com',
           isConnected: true,
           token: 'token-a',
-          registrationDeviceType: 'app',
         }}
       >
         <div data-testid="main-app">Main app</div>
@@ -195,7 +192,6 @@ describe('LocalRuntimeInitializer', () => {
         initialCloudConnection={{
           isConnected: false,
           token: null,
-          registrationDeviceType: 'app',
         }}
       >
         <div data-testid="main-app">Main app</div>
@@ -221,7 +217,6 @@ describe('LocalRuntimeInitializer', () => {
           socketBaseUrl: 'wss://socket.example.com',
           isConnected: true,
           token: 'token-a',
-          registrationDeviceType: 'remote',
         }}
       >
         <div data-testid="main-app">Main app</div>
@@ -248,7 +243,6 @@ describe('LocalRuntimeInitializer', () => {
           socketBaseUrl: 'wss://socket.example.com',
           isConnected: true,
           token: 'token-a',
-          registrationDeviceType: 'remote',
         }}
       >
         <div data-testid="main-app">Main app</div>

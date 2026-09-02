@@ -45,4 +45,22 @@ describe('DeviceSection remote devices', () => {
     expect(screen.getByTestId('device-remote-1')).toBeInTheDocument()
     expect(screen.queryByTestId('device-local-1')).not.toBeInTheDocument()
   })
+
+  it('renders Wework app devices in their own section', () => {
+    render(
+      <DeviceSection
+        title="Wework devices"
+        icon={Server}
+        devices={[device('app-1', 'app'), device('local-1', 'local')]}
+        type="app"
+        emptyMessage="No Wework devices"
+      >
+        {item => <div data-testid={`device-${item.device_id}`}>{item.name}</div>}
+      </DeviceSection>
+    )
+
+    expect(screen.getByTestId('device-section-app')).toHaveTextContent('(1)')
+    expect(screen.getByTestId('device-app-1')).toBeInTheDocument()
+    expect(screen.queryByTestId('device-local-1')).not.toBeInTheDocument()
+  })
 })

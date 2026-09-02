@@ -24,7 +24,7 @@ import { paths } from '@/config/paths'
 import { useDevices } from '@/contexts/DeviceContext'
 import { DeviceInfo } from '@/apis/devices'
 import { getToken } from '@/apis/user'
-import { Monitor, Loader2, Cloud, Server } from 'lucide-react'
+import { AppWindow, Monitor, Loader2, Cloud, Server } from 'lucide-react'
 import { getSocketUrl } from '@/lib/runtime-config'
 import {
   DeviceCard,
@@ -210,6 +210,28 @@ export default function DevicesPage() {
                   devices={visibleDevices}
                   type="local"
                   emptyMessage={t('no_local_devices')}
+                >
+                  {device => (
+                    <DeviceCard
+                      device={device}
+                      onStartTask={handlers.handleStartTask}
+                      onSetDefault={handlers.handleSetDefault}
+                      onDelete={handlers.handleDeleteDevice}
+                      onCancelTask={handlers.handleCancelTask}
+                      onUpgrade={handlers.handleUpgradeDevice}
+                      onEditAlias={handleOpenEditAliasDialog}
+                      isUpgrading={isDeviceUpgrading(device.device_id)}
+                      upgradeStatus={getUpgradeStatus(device.device_id)}
+                    />
+                  )}
+                </DeviceSection>
+
+                <DeviceSection
+                  title={t('wework_devices_section')}
+                  icon={AppWindow}
+                  devices={sortedDevices}
+                  type="app"
+                  emptyMessage={t('no_wework_devices')}
                 >
                   {device => (
                     <DeviceCard

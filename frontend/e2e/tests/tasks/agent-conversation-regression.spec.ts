@@ -5,7 +5,7 @@
  * backend execution routing. CI uses:
  * - mock-model-server for Chat Shell and ClaudeCode model requests
  * - real executor-manager plus a real ClaudeCode executor image for ClaudeCode HTTP tasks
- * - real local executor in local mode for device WebSocket tasks
+ * - real local executor registered as a Wework app device for device WebSocket tasks
  */
 
 import { APIRequestContext, Page, expect, test } from '@playwright/test'
@@ -423,12 +423,18 @@ test.describe('Agent conversation regression', () => {
     expect(extractText(secondRequest.body)).toContain(firstPrompt)
   })
 
-  test('device mode ClaudeCode supports dialogue and follow-up', async ({ page, request }) => {
+  test('Wework app device supports ClaudeCode dialogue and follow-up', async ({
+    page,
+    request,
+  }) => {
     const contextToken = makeContextToken('device')
     const firstPrompt = `Remember this device context token: ${contextToken}`
     const followUpPrompt = 'What context token did I provide in the previous device turn?'
 
-    await waitForLocalDeviceOnline(request)
+    await waitForWeworkDeviceOnline(request)
+    await page.goto('/devices')
+    await expect(page.getByTestId('device-section-app')).toContainText('E2E ClaudeCode Device')
+    await expect(page.getByTestId(`start-device-chat-${DEVICE_ID}`)).toBeEnabled()
     await openTaskPage(page, `/devices/chat?deviceId=${DEVICE_ID}`, deviceTeam.id, 'task')
 
     await sendMessage(page, firstPrompt)
@@ -1329,7 +1335,7 @@ test.describe('Agent conversation regression', () => {
     throw new Error(`Timed out waiting for ${label}`)
   }
 
-  async function waitForLocalDeviceOnline(request: APIRequestContext): Promise<void> {
+  async function waitForWeworkDeviceOnline(request: APIRequestContext): Promise<void> {
     await expect
       .poll(
         async () => {
@@ -1340,17 +1346,24 @@ test.describe('Agent conversation regression', () => {
             return `HTTP_${response.status()}`
           }
           const body = (await response.json()) as {
-            items?: Array<{ device_id: string; status: string; bind_shell?: string }>
+            items?: Array<{
+              device_id: string
+              status: string
+              bind_shell?: string
+              device_type?: string
+            }>
           }
           const device = body.items?.find(item => item.device_id === DEVICE_ID)
-          return device ? `${device.status}:${device.bind_shell || ''}` : 'missing'
+          return device
+            ? `${device.status}:${device.bind_shell || ''}:${device.device_type || ''}`
+            : 'missing'
         },
         {
-          message: 'Local ClaudeCode executor device should be online',
+          message: 'Wework app device should be online',
           timeout: 30_000,
         }
       )
-      .toBe('online:claudecode')
+      .toBe('online:claudecode:app')
   }
 
   async function expectServiceHealthy(

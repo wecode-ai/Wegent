@@ -185,7 +185,6 @@ async def test_device_register_does_not_mark_online_when_session_disappears(
             "executor_version": "1.8.0",
         },
     )
-
     assert result == {"error": "Client disconnected during device registration"}
     set_device_online.assert_not_awaited()
     namespace.enter_room.assert_not_awaited()
@@ -355,6 +354,8 @@ async def test_device_register_passes_app_device_type_and_app_device_id(monkeypa
             "app_device_id": "local-app-device",
         },
     )
+    if namespace._background_tasks:
+        await asyncio.gather(*tuple(namespace._background_tasks))
 
     assert result == {"success": True, "device_id": "local-app-device"}
     assert len(upsert_calls) == 1
@@ -369,7 +370,10 @@ async def test_device_register_passes_app_device_type_and_app_device_id(monkeypa
         "sid-app",
         "execution-target:7:local-app-device",
     )
-    reconcile.assert_not_awaited()
+    reconcile.assert_awaited_once_with(
+        user_id=7,
+        device_id="local-app-device",
+    )
 
 
 @pytest.mark.asyncio
