@@ -52,7 +52,11 @@ def build_marketplace_submission_upload_url(
     path = f"{api_prefix}/{resource}/submissions/{submission_id}/artifact"
     relative_url = f"{path}?{urlencode({'token': token})}"
     public_backend_url = settings.WEGENT_BACKEND_PUBLIC_URL.strip().rstrip("/")
-    if urlparse(public_backend_url).scheme == "https":
+    parsed_backend_url = urlparse(public_backend_url)
+    is_loopback_http = parsed_backend_url.scheme == "http" and (
+        parsed_backend_url.hostname in {"127.0.0.1", "localhost", "::1"}
+    )
+    if parsed_backend_url.scheme == "https" or is_loopback_http:
         return f"{public_backend_url}{relative_url}", expires_at
     return relative_url, expires_at
 

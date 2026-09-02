@@ -9,6 +9,7 @@ import stat
 import zipfile
 from datetime import datetime, timedelta, timezone
 from unittest.mock import Mock
+from urllib.parse import parse_qs, urlsplit
 
 import pytest
 from fastapi import HTTPException
@@ -315,9 +316,11 @@ def test_submission_upload_uses_backend_ticket_and_stores_validated_package(
         package=package,
     )
 
-    assert initialized.uploadUrl.startswith(
-        f"/api/plugins/submissions/{initialized.submissionId}/artifact?token="
+    upload_url = urlsplit(initialized.uploadUrl)
+    assert upload_url.path == (
+        f"/api/plugins/submissions/{initialized.submissionId}/artifact"
     )
+    assert parse_qs(upload_url.query)["token"]
     assert list(stored_packages.values()) == [package]
 
 

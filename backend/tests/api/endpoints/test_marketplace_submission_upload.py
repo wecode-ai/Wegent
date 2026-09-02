@@ -98,6 +98,22 @@ def test_submission_upload_uses_https_public_backend_url(monkeypatch) -> None:
     )
 
 
+def test_submission_upload_uses_loopback_backend_url(monkeypatch) -> None:
+    monkeypatch.setattr(
+        settings,
+        "WEGENT_BACKEND_PUBLIC_URL",
+        "http://127.0.0.1:8000",
+    )
+
+    upload_url, _ = build_marketplace_submission_upload_url(
+        kind="plugin", submission_id=11, user_id=5
+    )
+
+    assert upload_url.startswith(
+        "http://127.0.0.1:8000/api/plugins/submissions/11/artifact?token="
+    )
+
+
 def test_smart_app_submission_upload_enforces_package_limit(
     test_client: TestClient, monkeypatch
 ) -> None:

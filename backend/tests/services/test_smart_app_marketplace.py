@@ -147,9 +147,11 @@ def test_submission_upload_uses_backend_ticket_and_stores_validated_package(
         package=package,
     )
 
-    assert initialized.uploadUrl.startswith(
-        f"/api/smart-apps/submissions/{initialized.submissionId}/artifact?token="
+    upload_url = urlsplit(initialized.uploadUrl)
+    assert upload_url.path == (
+        f"/api/smart-apps/submissions/{initialized.submissionId}/artifact"
     )
+    assert parse_qs(upload_url.query)["token"]
     assert package in values.values()
 
 
