@@ -32,7 +32,7 @@ export default defineConfig([
   },
   {
     files: ['electron/src/**/*.{ts,tsx}'],
-    ignores: ['electron/src/runtime/process.ts'],
+    ignores: ['electron/src/runtime/process.ts', 'electron/src/**/*.test.{ts,tsx}'],
     rules: {
       'no-restricted-imports': [
         'error',
