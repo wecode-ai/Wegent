@@ -187,6 +187,62 @@ def test_create_runtime_task_preserves_delivery_context(
     assert request.delivery_id == "12345678-1234-1234-1234-123456789abc"
 
 
+def test_create_team_runtime_task_uses_explicit_team_endpoint(
+    test_client,
+    test_token,
+    monkeypatch,
+):
+    from app.api.endpoints import runtime_work
+
+    service_mock = AsyncMock(
+        return_value={
+            "accepted": True,
+            "deviceId": "cloud-device-1",
+            "taskId": "task-1",
+            "workspacePath": "/repo",
+            "runtime": "codex",
+        }
+    )
+    monkeypatch.setattr(
+        runtime_work.runtime_work_service,
+        "create_team_runtime_task",
+        service_mock,
+    )
+
+    response = test_client.post(
+        "/api/runtime-work/team/create",
+        headers=_auth_headers(test_token),
+        json={
+            "teamId": 42,
+            "deviceId": "cloud-device-1",
+            "workspacePath": "/repo",
+            "runtime": "codex",
+            "message": "Run through the selected Team",
+        },
+    )
+
+    assert response.status_code == 200
+    assert service_mock.await_args.kwargs["request"].team_id == 42
+
+
+def test_create_team_runtime_task_rejects_missing_team(
+    test_client,
+    test_token,
+):
+    response = test_client.post(
+        "/api/runtime-work/team/create",
+        headers=_auth_headers(test_token),
+        json={
+            "deviceId": "cloud-device-1",
+            "workspacePath": "/repo",
+            "runtime": "codex",
+            "message": "Missing Team",
+        },
+    )
+
+    assert response.status_code == 422
+
+
 def test_upsert_device_workspace_endpoint_returns_mapping(
     test_client,
     test_token,

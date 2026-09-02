@@ -1,4 +1,5 @@
 import { createBackendWorkbenchServices } from '@/api/backend/backendServices'
+import { ApiError } from '@/api/http'
 import {
   createCloudRuntimeIpcClient,
   RUNTIME_TRANSCRIPT_ACK_TIMEOUT_MS,
@@ -351,7 +352,16 @@ export function createHybridWorkbenchServices(
     apiKey: options.token,
     ...(options.backendUrl ? { backendUrl: options.backendUrl } : {}),
   }
-  const localServices = createLocalAppServices({ cloudModelGateway, user: options.user })
+  const localServices = createLocalAppServices({
+    cloudModelGateway,
+    user: options.user,
+    resolveTeamExecutionProfile: async teamId => {
+      const teams = await cloudServices.teamApi.listTeams()
+      const team = teams.find(candidate => candidate.id === teamId)
+      if (!team) throw new Error(`Wegent Team ${teamId} is unavailable`)
+      return cloudServices.teamApi.getExecutionProfile(team)
+    },
+  })
   const cloudRuntimeIpc = createCloudRuntimeIpcClient({
     socketBaseUrl: options.socketBaseUrl,
     socketPath: options.socketPath,
@@ -444,7 +454,7 @@ export function createHybridWorkbenchServices(
       route,
       discoveryRequired,
     })
-    return api
+    return { api, route }
   }
   const invalidateCloudArchiveCache = () => {
     rememberedCloudArchives.clear()
@@ -1117,13 +1127,35 @@ export function createHybridWorkbenchServices(
         runtime: data.runtime,
       })
       try {
-        const api = await runtimeApiForCreate(data.deviceId, data.taskId)
+        const { api, route } = await runtimeApiForCreate(data.deviceId, data.taskId)
         logRuntimeTaskCreateStage('hybrid-create-forwarded', {
           taskId: data.taskId ?? null,
           deviceId: data.deviceId ?? null,
           elapsedMs: Date.now() - startedAt,
         })
-        const response = await api.createRuntimeTask(data)
+        let response
+        try {
+          response =
+            data.teamExecutionProfile && data.teamId && route === 'cloud'
+              ? await cloudServices.runtimeWorkApi!.createTeamRuntimeTask({
+                  ...data,
+                  teamExecutionProfile: undefined,
+                })
+              : await api.createRuntimeTask(data)
+        } catch (error) {
+          if (
+            data.teamExecutionProfile &&
+            data.teamId &&
+            route === 'cloud' &&
+            error instanceof ApiError &&
+            (error.status === 404 || error.status === 405)
+          ) {
+            throw new Error('当前 Backend 版本不支持远程 Wegent 智能体执行，请升级后重试', {
+              cause: error,
+            })
+          }
+          throw error
+        }
         logRuntimeTaskCreateStage('hybrid-create-resolved', {
           taskId: response.taskId || data.taskId || null,
           deviceId: response.deviceId || data.deviceId || null,
@@ -1141,6 +1173,9 @@ export function createHybridWorkbenchServices(
         })
         throw error
       }
+    },
+    createTeamRuntimeTask(data: RuntimeTaskCreateRequest) {
+      return hybridRuntimeWorkApi.createRuntimeTask(data)
     },
     forkRuntimeTask(data: RuntimeTaskForkRequest) {
       return runtimeApiForDevice(data.target.deviceId).then(api => api.forkRuntimeTask(data))
@@ -1360,6 +1395,7 @@ export function createHybridWorkbenchServices(
     teamApi: {
       // Wegent Teams are exposed only for explicitly selected Wegent execution.
       listTeams: cloudServices.teamApi.listTeams,
+      getExecutionProfile: cloudServices.teamApi.getExecutionProfile,
     },
     skillApi: localServices.skillApi,
     projectApi: {

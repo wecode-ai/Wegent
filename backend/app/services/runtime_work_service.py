@@ -73,6 +73,7 @@ from app.schemas.runtime_work import (
     RuntimeTaskQueueReorderRequest,
     RuntimeTaskQueueReorderResponse,
     RuntimeTaskRenameRequest,
+    RuntimeTeamTaskCreateRequest,
     RuntimeTranscriptRequest,
     RuntimeTranscriptResponse,
     RuntimeWorkListResponse,
@@ -158,6 +159,7 @@ class CompiledRuntimeTaskCreate:
 
     target: RuntimeTaskTarget
     payload: dict[str, Any]
+    team_id: Optional[int] = None
 
 
 @dataclass(frozen=True)
@@ -1318,6 +1320,42 @@ async def create_runtime_task(
         user_id=user_id,
         request=request,
     )
+    return await _dispatch_compiled_runtime_task(
+        user_id=user_id,
+        request=request,
+        compiled=compiled,
+    )
+
+
+async def create_team_runtime_task(
+    *,
+    db: Session,
+    user_id: int,
+    request: RuntimeTeamTaskCreateRequest,
+) -> RuntimeTaskCreateResponse:
+    """Create a Team-backed LocalTask on a remote device executor."""
+
+    compiled = compile_runtime_task_create(
+        db=db,
+        user_id=user_id,
+        request=request,
+        team_id=request.team_id,
+    )
+    return await _dispatch_compiled_runtime_task(
+        user_id=user_id,
+        request=request,
+        compiled=compiled,
+    )
+
+
+async def _dispatch_compiled_runtime_task(
+    *,
+    user_id: int,
+    request: RuntimeTaskCreateRequest,
+    compiled: CompiledRuntimeTaskCreate,
+) -> RuntimeTaskCreateResponse:
+    """Dispatch one already compiled runtime task."""
+
     try:
         result = await runtime_rpc_service.call(
             user_id=user_id,
@@ -1331,13 +1369,19 @@ async def create_runtime_task(
             status_code=status.HTTP_502_BAD_GATEWAY,
             detail=str(exc),
         ) from exc
-    return _runtime_create_response(
+    response = _runtime_create_response(
         result,
         request.runtime,
         compiled.target.device_id,
         compiled.target.workspace_path,
         compiled.target.workspace_source,
     )
+    if compiled.team_id is not None:
+        response.runtime_handle = {
+            **(response.runtime_handle or {}),
+            "wegentTeam": {"id": compiled.team_id},
+        }
+    return response
 
 
 def compile_runtime_task_create(
@@ -1345,6 +1389,7 @@ def compile_runtime_task_create(
     db: Session,
     user_id: int,
     request: RuntimeTaskCreateRequest,
+    team_id: int | None = None,
 ) -> CompiledRuntimeTaskCreate:
     """Compile the canonical create request without performing transport."""
 
@@ -1355,6 +1400,7 @@ def compile_runtime_task_create(
         user_id=user_id,
         request=request,
         target=target,
+        team_id=team_id,
     )
     return CompiledRuntimeTaskCreate(
         target=target,
@@ -1365,6 +1411,7 @@ def compile_runtime_task_create(
             target=target,
             execution_request=execution_request,
         ),
+        team_id=team_id,
     )
 
 
@@ -2404,6 +2451,9 @@ def _runtime_create_response(
         )
 
     resolved_workspace_path = response_workspace_path or workspace_path
+    runtime_handle = result.get("runtimeHandle") or result.get("runtime_handle")
+    if not isinstance(runtime_handle, dict):
+        runtime_handle = None
     if result.get("success") is False:
         return RuntimeTaskCreateResponse(
             accepted=False,
@@ -2411,6 +2461,7 @@ def _runtime_create_response(
             taskId=str(result.get("taskId") or ""),
             workspacePath=resolved_workspace_path,
             runtime=result.get("runtime") or runtime,
+            runtimeHandle=runtime_handle,
             error=str(result.get("error") or "Runtime task creation failed"),
             errorCode=_runtime_result_error_code(result),
         )
@@ -2420,6 +2471,7 @@ def _runtime_create_response(
         taskId=str(result.get("taskId") or ""),
         workspacePath=resolved_workspace_path,
         runtime=result.get("runtime") or runtime,
+        runtimeHandle=runtime_handle,
         error=result.get("error"),
         errorCode=_runtime_result_error_code(result),
     )
@@ -3952,14 +4004,129 @@ def _build_runtime_execution_request(
     user_id: int,
     request: RuntimeTaskCreateRequest,
     target: RuntimeTaskTarget,
+    team_id: int | None = None,
 ):
     """Compile a Wework task intent without resolving Wegent CRDs."""
+    if team_id is not None:
+        return _build_team_runtime_execution_request(
+            db=db,
+            user_id=user_id,
+            request=request,
+            target=target,
+            team_id=team_id,
+        )
     return _build_direct_wework_runtime_execution_request(
         db=db,
         user_id=user_id,
         request=request,
         target=target,
     )
+
+
+def _build_team_runtime_execution_request(
+    *,
+    db: Session,
+    user_id: int,
+    request: RuntimeTaskCreateRequest,
+    target: RuntimeTaskTarget,
+    team_id: int,
+):
+    """Build a canonical Team execution request without persistent Task rows."""
+
+    from app.models.task import TaskResource
+    from app.services.execution import TaskRequestBuilder
+    from app.services.project_automation_domain import runnable_wegent_team
+    from shared.models.db.enums import SubtaskRole, SubtaskStatus
+    from shared.models.db.subtask import Subtask
+
+    user = _get_user(db, user_id)
+    team = runnable_wegent_team(db, user_id, team_id)
+    task_id, subtask_id = _runtime_execution_ids()
+    title = _runtime_task_title(request)
+    message = _message_with_application_context(
+        request.message,
+        request.additional_context,
+    )
+    task = TaskResource(
+        id=task_id,
+        user_id=user.id,
+        kind="Task",
+        name=f"wework-runtime-{task_id}",
+        namespace="default",
+        project_id=target.project.id if target.project else 0,
+        client_origin=CLIENT_ORIGIN_WEWORK,
+        json=_runtime_team_task_json(
+            task_id=task_id,
+            title=title,
+            message=message,
+            team=team,
+            target=target,
+        ),
+    )
+    subtask = Subtask(
+        id=subtask_id,
+        user_id=user.id,
+        task_id=task_id,
+        team_id=team.id,
+        title=f"{title} - Assistant",
+        bot_ids=[],
+        role=SubtaskRole.ASSISTANT,
+        prompt=message,
+        message_id=1,
+        status=SubtaskStatus.PENDING,
+    )
+    execution_request = TaskRequestBuilder(db).build(
+        subtask=subtask,
+        task=task,
+        user=user,
+        team=team,
+        message=message,
+        new_session=True,
+        preload_skills=list(request.additional_skills),
+        attachments=_runtime_create_attachment_payloads(db, user_id, request),
+    )
+    _apply_runtime_task_target(execution_request, target)
+    _apply_runtime_create_request(execution_request, request)
+    return execution_request
+
+
+def _runtime_team_task_json(
+    *,
+    task_id: int,
+    title: str,
+    message: str,
+    team: Any,
+    target: RuntimeTaskTarget,
+) -> dict[str, Any]:
+    """Build the transient Task CRD consumed by TaskRequestBuilder."""
+
+    workspace: dict[str, Any] = {"source": target.workspace_source}
+    if target.workspace_path:
+        workspace["path"] = target.workspace_path
+    return {
+        "apiVersion": "agent.wecode.io/v1",
+        "kind": "Task",
+        "metadata": {
+            "name": f"wework-runtime-{task_id}",
+            "namespace": "default",
+            "labels": {"taskType": "code"},
+        },
+        "spec": {
+            "title": title,
+            "prompt": message,
+            "teamRef": {
+                "name": team.name,
+                "namespace": team.namespace,
+                "user_id": team.user_id,
+            },
+            "workspaceRef": {
+                "name": f"wework-runtime-{task_id}",
+                "namespace": "default",
+            },
+            "device_id": target.device_id,
+            "execution": {"workspace": workspace},
+        },
+    }
 
 
 def _build_direct_wework_runtime_execution_request(
@@ -4533,7 +4700,7 @@ def _build_runtime_send_execution_request(
     model_selection: Optional[RuntimeModelSelection] = None,
     additional_context: Optional[dict[str, dict[str, Any]]] = None,
 ):
-    """Compile the Wework continuation request without Wegent Team lookup."""
+    """Compile a Wework continuation using its immutable Team binding."""
     target = RuntimeTaskTarget(
         device_id=address.device_id,
         workspace_path=address.workspace_path or "",
@@ -4557,7 +4724,21 @@ def _build_runtime_send_execution_request(
         user_id=user_id,
         request=request,
         target=target,
+        team_id=_runtime_address_team_id(address),
     )
+
+
+def _runtime_address_team_id(address: RuntimeTaskAddress) -> Optional[int]:
+    """Read the additive Team binding used by new Wework clients."""
+
+    handle = address.runtime_handle
+    if not isinstance(handle, dict):
+        return None
+    binding = handle.get("wegentTeam")
+    if not isinstance(binding, dict):
+        return None
+    team_id = binding.get("id")
+    return team_id if isinstance(team_id, int) and team_id > 0 else None
 
 
 def _ensure_owned_device(db: Session, user_id: int, device_id: str) -> None:

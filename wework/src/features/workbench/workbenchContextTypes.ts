@@ -114,6 +114,8 @@ export interface SendCurrentInputOptions {
   additionalContext?: RuntimeAdditionalContext
   cloudProjectId?: string
   origin?: RuntimeTaskCreateRequest['origin']
+  teamId?: number
+  teamExecutionProfile?: RuntimeTaskCreateRequest['teamExecutionProfile']
 }
 
 export interface CreateTemporaryRuntimeTaskOptions {

@@ -6,6 +6,8 @@ import { createHybridWorkbenchServices } from './hybridServices'
 const mocks = vi.hoisted(() => {
   const localCreateRuntimeTask = vi.fn()
   const cloudCreateRuntimeTask = vi.fn()
+  const cloudCreateTeamRuntimeTask = vi.fn()
+  const cloudGetExecutionProfile = vi.fn()
   const localListDevices = vi.fn()
   const cloudListDevices = vi.fn()
   const localListRuntimeWork = vi.fn()
@@ -65,6 +67,7 @@ const mocks = vi.hoisted(() => {
   const localServices = {
     teamApi: {
       listTeams: vi.fn().mockResolvedValue([]),
+      getExecutionProfile: vi.fn(),
     },
     modelApi: { listModels: localListModels },
     skillApi: {
@@ -124,6 +127,7 @@ const mocks = vi.hoisted(() => {
   const cloudServices = {
     teamApi: {
       listTeams: cloudListTeams,
+      getExecutionProfile: cloudGetExecutionProfile,
     },
     modelApi: { listModels: cloudListModels },
     skillApi: {},
@@ -134,6 +138,7 @@ const mocks = vi.hoisted(() => {
       prepareRuntimeModel: vi.fn().mockResolvedValue(true),
       listRuntimeWork: cloudListRuntimeWork,
       createRuntimeTask: cloudCreateRuntimeTask,
+      createTeamRuntimeTask: cloudCreateTeamRuntimeTask,
       rollbackRuntimeTask: vi.fn(),
       compactRuntimeTask: vi.fn(),
       searchRuntimeWork: cloudSearchRuntimeWork,
@@ -164,6 +169,7 @@ const mocks = vi.hoisted(() => {
   return {
     localCreateRuntimeTask,
     cloudCreateRuntimeTask,
+    cloudCreateTeamRuntimeTask,
     localListDevices,
     cloudListDevices,
     localListRuntimeWork,
@@ -176,6 +182,7 @@ const mocks = vi.hoisted(() => {
     localListSkills,
     localGetTeamSkills,
     cloudListTeams,
+    cloudGetExecutionProfile,
     localSearchRuntimeWork,
     localGetWorktreeCapabilities,
     localPreflightWorktree,
@@ -1343,6 +1350,14 @@ describe('createHybridWorkbenchServices', () => {
 
   it('routes runtime task creation by device source', async () => {
     const services = createServices()
+    const teamExecutionProfile = {
+      id: 1,
+      name: 'cloud-wework',
+      namespace: 'default',
+      updatedAt: '2026-09-02T00:00:00Z',
+      collaborationMode: 'solo',
+      bots: [],
+    }
     await services.deviceApi.listDevices()
     mocks.localCreateRuntimeTask.mockResolvedValue({
       accepted: true,
@@ -1356,11 +1371,18 @@ describe('createHybridWorkbenchServices', () => {
       taskId: 'cloud-task',
       workspacePath: '/tmp/cloud',
     })
+    mocks.cloudCreateTeamRuntimeTask.mockResolvedValueOnce({
+      accepted: true,
+      deviceId: 'cloud-device',
+      taskId: 'cloud-task',
+      workspacePath: '/tmp/cloud',
+    })
 
     await services.runtimeWorkApi?.createRuntimeTask({
       deviceId: 'local-device',
       workspacePath: '/tmp/local',
       teamId: 1,
+      teamExecutionProfile,
       runtime: 'codex',
       message: 'local',
     })
@@ -1368,16 +1390,21 @@ describe('createHybridWorkbenchServices', () => {
       deviceId: 'cloud-device',
       workspacePath: '/tmp/cloud',
       teamId: 1,
+      teamExecutionProfile,
       runtime: 'codex',
       message: 'cloud',
     })
 
     expect(mocks.localCreateRuntimeTask).toHaveBeenCalledTimes(1)
     expect(mocks.cloudCreateRuntimeTask).not.toHaveBeenCalled()
-    expect(mocks.cloudRuntimeIpcRequest).toHaveBeenCalledWith(
-      'runtime.tasks.create',
-      expect.objectContaining({ deviceId: 'cloud-device', message: 'cloud' }),
-      'cloud-device'
+    expect(mocks.cloudRuntimeIpcRequest).not.toHaveBeenCalled()
+    expect(mocks.cloudCreateTeamRuntimeTask).toHaveBeenCalledWith(
+      expect.objectContaining({
+        deviceId: 'cloud-device',
+        message: 'cloud',
+        teamId: 1,
+        teamExecutionProfile: undefined,
+      })
     )
   })
 
@@ -1395,23 +1422,38 @@ describe('createHybridWorkbenchServices', () => {
       },
     ])
     const services = createServices()
+    const teamExecutionProfile = {
+      id: 1,
+      name: 'cloud-wework',
+      namespace: 'default',
+      updatedAt: '2026-09-02T00:00:00Z',
+      collaborationMode: 'solo',
+      bots: [],
+    }
+    mocks.cloudCreateTeamRuntimeTask.mockResolvedValueOnce({
+      accepted: true,
+      deviceId: 'remote-device',
+      taskId: 'remote-task',
+      workspacePath: '/workspace/remote',
+    })
 
     await services.runtimeWorkApi?.createRuntimeTask({
       deviceId: 'remote-device',
       workspacePath: '/workspace/remote',
       teamId: 1,
+      teamExecutionProfile,
       runtime: 'codex',
       message: 'remote',
     })
 
     expect(mocks.localCreateRuntimeTask).not.toHaveBeenCalled()
-    expect(mocks.cloudRuntimeIpcRequest).toHaveBeenCalledWith(
-      'runtime.tasks.create',
+    expect(mocks.cloudRuntimeIpcRequest).not.toHaveBeenCalled()
+    expect(mocks.cloudCreateTeamRuntimeTask).toHaveBeenCalledWith(
       expect.objectContaining({
         deviceId: 'remote-device',
         workspacePath: '/workspace/remote',
-      }),
-      'remote-device'
+        teamId: 1,
+      })
     )
   })
 

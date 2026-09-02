@@ -38,6 +38,7 @@ const PERSISTED_RUNTIME_HANDLE_KEYS: &[&str] = &[
     "runtime",
     "supersededTranscriptTurnIds",
     "threadPath",
+    "wegentTeam",
     "turnIdsBySubtask",
     "userMessagePresentations",
 ];
@@ -1010,7 +1011,9 @@ mod tests {
             "completedTranscriptThreadId": "thread-1",
             "transcriptSnapshotMessages": [{"id": "snapshot-message"}],
             "transcriptSnapshotThreadId": "thread-1",
-            "modelSelection": {"modelName": "gpt-5.6-sol"}
+            "modelSelection": {"modelName": "gpt-5.6-sol"},
+            "wegentTeam": {"id": 7},
+            "teamExecutionProfile": {"agent_config": {"api_key": "must-not-persist"}}
         });
 
         store.upsert_task(completed);
@@ -1046,6 +1049,8 @@ mod tests {
             task["runtime_handle"]["modelSelection"]["modelName"],
             "gpt-5.6-sol"
         );
+        assert_eq!(task["runtime_handle"]["wegentTeam"]["id"], 7);
+        assert!(task["runtime_handle"].get("teamExecutionProfile").is_none());
 
         let restored = RuntimeWorkStore::new(index_path)
             .get_task("completed-task")

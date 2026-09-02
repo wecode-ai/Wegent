@@ -360,6 +360,9 @@ export function createRuntimeWorkApi(client: HttpClient) {
     createRuntimeTask(data: RuntimeTaskCreateRequest): Promise<RuntimeTaskCreateResponse> {
       return client.post('/runtime-work/create', data)
     },
+    createTeamRuntimeTask(data: RuntimeTaskCreateRequest): Promise<RuntimeTaskCreateResponse> {
+      return client.post('/runtime-work/team/create', data)
+    },
     forkRuntimeTask(data: RuntimeTaskForkRequest): Promise<RuntimeTaskForkResponse> {
       return client.post('/runtime-work/fork', data)
     },

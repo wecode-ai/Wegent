@@ -1537,6 +1537,8 @@
     "collaboration_mode": "Mode",
     "collaboration_default": "Default mode",
     "collaboration_default_description": "Use the normal Codex flow.",
+    "team_selector": "Choose a Wegent Agent",
+    "team_profile_load_failed": "Failed to load the Wegent Agent execution configuration",
     "intelligence_low": "Light",
     "intelligence_medium": "Medium",
     "intelligence_high": "High",

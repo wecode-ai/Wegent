@@ -81,6 +81,10 @@ class RuntimeTaskAddress(BaseModel):
         validation_alias=AliasChoices("taskId", "localTaskId", "local_task_id"),
         min_length=1,
     )
+    runtime_handle: Optional[dict[str, Any]] = Field(
+        default=None,
+        alias="runtimeHandle",
+    )
 
 
 class RuntimeModelSelection(BaseModel):
@@ -991,6 +995,12 @@ class RuntimeTaskCreateRequest(BaseModel):
         return self
 
 
+class RuntimeTeamTaskCreateRequest(RuntimeTaskCreateRequest):
+    """Remote runtime task intent that explicitly selects a Wegent Team."""
+
+    team_id: int = Field(..., alias="teamId", ge=1)
+
+
 class RuntimeTaskCreatePayload(BaseModel):
     """Executor-facing wire payload after Backend materialization."""
 
@@ -1088,6 +1098,10 @@ class RuntimeTaskCreateResponse(BaseModel):
     local_task_id: str = Field(..., alias="taskId")
     workspace_path: str = Field(..., alias="workspacePath")
     runtime: RuntimeName
+    runtime_handle: Optional[dict[str, Any]] = Field(
+        default=None,
+        alias="runtimeHandle",
+    )
     error: Optional[str] = None
     error_code: Optional[str] = Field(default=None, alias="errorCode")
 

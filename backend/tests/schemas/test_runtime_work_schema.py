@@ -14,6 +14,7 @@ from app.schemas.runtime_work import (
     RuntimeGuidanceRequest,
     RuntimeTaskAddress,
     RuntimeTaskCreateRequest,
+    RuntimeTeamTaskCreateRequest,
 )
 
 PROTOCOL_DIR = Path(__file__).resolve().parents[3] / "shared" / "protocol"
@@ -39,6 +40,48 @@ def test_runtime_task_create_v2_matches_cross_runtime_golden_contract() -> None:
         assert serialized["modelType"] == fixture["modelType"]
         assert serialized["modelOptions"] == fixture["modelOptions"]
         assert "modelConfig" not in serialized
+
+
+def test_runtime_team_task_create_requires_team_without_changing_legacy_request() -> (
+    None
+):
+    legacy = RuntimeTaskCreateRequest(
+        teamId=99,
+        deviceId="device-1",
+        workspacePath="/repo",
+        runtime="codex",
+        message="legacy request",
+    )
+    assert "teamId" not in legacy.model_dump(by_alias=True, exclude_none=True)
+
+    request = RuntimeTeamTaskCreateRequest(
+        teamId=7,
+        deviceId="device-1",
+        workspacePath="/repo",
+        runtime="codex",
+        message="team request",
+    )
+    assert request.team_id == 7
+
+    with pytest.raises(ValidationError):
+        RuntimeTeamTaskCreateRequest(
+            deviceId="device-1",
+            workspacePath="/repo",
+            runtime="codex",
+            message="missing team",
+        )
+
+
+def test_runtime_task_address_accepts_additive_team_binding() -> None:
+    address = RuntimeTaskAddress.model_validate(
+        {
+            "deviceId": "device-1",
+            "taskId": "runtime-1",
+            "runtimeHandle": {"wegentTeam": {"id": 7}},
+        }
+    )
+
+    assert address.runtime_handle == {"wegentTeam": {"id": 7}}
 
 
 def test_local_task_summary_projects_model_identity_without_runtime_handle() -> None:

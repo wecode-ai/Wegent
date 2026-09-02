@@ -44,6 +44,7 @@ from app.schemas.runtime_work import (
     RuntimeTaskQueueReorderRequest,
     RuntimeTaskQueueReorderResponse,
     RuntimeTaskRenameRequest,
+    RuntimeTeamTaskCreateRequest,
     RuntimeTranscriptRequest,
     RuntimeTranscriptResponse,
     RuntimeWorkListResponse,
@@ -818,6 +819,25 @@ async def create_runtime_task_endpoint(
     """Create a native runtime LocalTask through the owning local executor."""
 
     return await runtime_work_service.create_runtime_task(
+        db=db,
+        user_id=current_user.id,
+        request=request,
+    )
+
+
+@router.post(
+    "/team/create",
+    response_model=RuntimeTaskCreateResponse,
+    response_model_by_alias=True,
+)
+async def create_team_runtime_task_endpoint(
+    request: RuntimeTeamTaskCreateRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Create a Team-backed runtime task through a remote device executor."""
+
+    return await runtime_work_service.create_team_runtime_task(
         db=db,
         user_id=current_user.id,
         request=request,

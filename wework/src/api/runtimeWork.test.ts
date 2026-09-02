@@ -3,6 +3,22 @@ import { createRuntimeWorkApi } from './runtimeWork'
 import type { HttpClient } from './http'
 
 describe('createRuntimeWorkApi', () => {
+  test('uses a dedicated endpoint for remote Team execution', async () => {
+    const post = vi.fn().mockResolvedValue({ accepted: true })
+    const api = createRuntimeWorkApi({ post } as unknown as HttpClient)
+    const request = {
+      teamId: 42,
+      deviceId: 'cloud-device-1',
+      workspacePath: '/repo',
+      runtime: 'codex' as const,
+      message: 'run with team',
+    }
+
+    await api.createTeamRuntimeTask(request)
+
+    expect(post).toHaveBeenCalledWith('/runtime-work/team/create', request)
+  })
+
   test('lists runtime work without client origin query', async () => {
     const get = vi.fn().mockResolvedValue({
       projects: [],

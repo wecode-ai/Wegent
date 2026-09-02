@@ -931,6 +931,8 @@ export function useWorkbenchRuntimeMessaging({
         | 'runtimeExecutablePath'
         | 'runtimePermissionMode'
         | 'modelSelection'
+        | 'teamId'
+        | 'teamExecutionProfile'
       > & {
         collaborationMode?: 'default' | 'plan'
         deliveryId?: string
@@ -1175,6 +1177,10 @@ export function useWorkbenchRuntimeMessaging({
         ...(runtimeExecutablePath ? { runtimeExecutablePath } : {}),
         ...(options?.runtimePermissionMode
           ? { runtimePermissionMode: options.runtimePermissionMode }
+          : {}),
+        ...(options?.teamId ? { teamId: options.teamId } : {}),
+        ...(options?.teamExecutionProfile
+          ? { teamExecutionProfile: options.teamExecutionProfile }
           : {}),
         message: runtimeCreateMessage(intent),
         ...(clientUserMessageId ? { clientUserMessageId } : {}),
@@ -1708,6 +1714,10 @@ export function useWorkbenchRuntimeMessaging({
             : {}),
           ...(options?.runtimePermissionMode
             ? { runtimePermissionMode: options.runtimePermissionMode }
+            : {}),
+          ...(options?.teamId ? { teamId: options.teamId } : {}),
+          ...(options?.teamExecutionProfile
+            ? { teamExecutionProfile: options.teamExecutionProfile }
             : {}),
           ...(options && Object.prototype.hasOwnProperty.call(options, 'modelSelection')
             ? { modelSelection: options.modelSelection }

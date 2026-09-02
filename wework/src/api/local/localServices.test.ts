@@ -196,6 +196,138 @@ describe('createLocalAppServices', () => {
     expect(request).toHaveBeenCalledWith('runtime.tasks.list', {})
   })
 
+  test('materializes a selected Team locally without extending the Executor protocol', async () => {
+    const teamExecutionProfile = {
+      id: 7,
+      name: 'review-team',
+      namespace: 'engineering',
+      updatedAt: '2026-09-02T10:00:00Z',
+      collaborationMode: 'coordinate',
+      bots: [
+        {
+          bot_prompt: 'Review the implementation.',
+          role: 'leader',
+          bot: {
+            id: 11,
+            user_id: 9,
+            name: 'reviewer',
+            namespace: 'engineering',
+            shell_name: 'Codex',
+            shell_type: 'Codex',
+            agent_config: { model_id: 'team-model', api_format: 'responses' },
+            system_prompt: 'You are a reviewer.',
+            mcp_servers: { source: { type: 'stdio', command: 'source-mcp' } },
+            skills: ['review'],
+            preload_skills: ['review'],
+            is_active: true,
+          },
+        },
+      ],
+    }
+    const request = vi.fn().mockImplementation(async (method: string) => {
+      if (method === 'runtime.tasks.create') {
+        return {
+          accepted: true,
+          deviceId: 'device-uuid',
+          taskId: 'team-task',
+          workspacePath: '/Users/me/project',
+          runtime: 'codex',
+        }
+      }
+      return { accepted: true }
+    })
+    const services = createLocalAppServices({
+      ensure: vi.fn().mockResolvedValue({ running: true, ready: true, deviceId: 'device-uuid' }),
+      request,
+      subscribe: vi.fn(),
+      user: AUTHENTICATED_CLOUD_USER,
+    })
+
+    await services.runtimeWorkApi?.createRuntimeTask({
+      teamId: 7,
+      teamExecutionProfile,
+      deviceId: 'local-device',
+      workspacePath: '/Users/me/project',
+      taskId: 'team-task',
+      runtime: 'codex',
+      message: 'Review this change',
+      title: 'Review change',
+    })
+
+    const payload = request.mock.calls.find(([method]) => method === 'runtime.tasks.create')?.[1]
+    expect(payload).not.toHaveProperty('teamId')
+    expect(payload).not.toHaveProperty('teamExecutionProfile')
+    expect(payload.runtimeHandle).toEqual({ wegentTeam: { id: 7 } })
+    expect(payload.executionRequest).toMatchObject({
+      team_id: 7,
+      team_name: 'review-team',
+      team_namespace: 'engineering',
+      collaboration_model: 'coordinate',
+      model_config: { model_id: 'team-model', api_format: 'responses' },
+      system_prompt: 'You are a reviewer.\n\nReview the implementation.',
+      skill_names: ['review'],
+      preload_skills: ['review'],
+      bot: [
+        expect.objectContaining({
+          id: 11,
+          name: 'reviewer',
+          shell_type: 'Codex',
+          role: 'leader',
+          mcp_servers: [{ name: 'source', type: 'stdio', command: 'source-mcp' }],
+        }),
+      ],
+    })
+
+    await services.runtimeWorkApi?.sendRuntimeMessage({
+      address: {
+        deviceId: 'local-device',
+        taskId: 'team-task',
+        workspacePath: '/Users/me/project',
+        runtimeHandle: payload.runtimeHandle,
+      },
+      message: 'Continue the review',
+    })
+
+    const sendPayload = request.mock.calls.find(([method]) => method === 'runtime.tasks.send')?.[1]
+    expect(sendPayload.executionRequest).toMatchObject({
+      team_id: 7,
+      team_name: 'review-team',
+      model_config: { model_id: 'team-model', api_format: 'responses' },
+      prompt: 'Continue the review',
+    })
+
+    const resolveTeamExecutionProfile = vi.fn().mockResolvedValue(teamExecutionProfile)
+    const restartedServices = createLocalAppServices({
+      ensure: vi.fn().mockResolvedValue({ running: true, ready: true, deviceId: 'device-uuid' }),
+      request,
+      subscribe: vi.fn(),
+      user: AUTHENTICATED_CLOUD_USER,
+      resolveTeamExecutionProfile,
+    })
+
+    await restartedServices.runtimeWorkApi?.interruptAndSendRuntimeMessage({
+      address: {
+        deviceId: 'local-device',
+        taskId: 'team-task',
+        workspacePath: '/Users/me/project',
+        runtimeHandle: payload.runtimeHandle,
+      },
+      message: 'Stop and re-check the implementation',
+    })
+
+    expect(resolveTeamExecutionProfile).toHaveBeenCalledOnce()
+    expect(resolveTeamExecutionProfile).toHaveBeenCalledWith(7)
+    const interruptPayload = request.mock.calls.find(
+      ([method]) => method === 'runtime.tasks.interrupt_and_send'
+    )?.[1]
+    expect(interruptPayload.executionRequest).toMatchObject({
+      team_id: 7,
+      team_name: 'review-team',
+      model_config: { model_id: 'team-model', api_format: 'responses' },
+      prompt: 'Stop and re-check the implementation',
+    })
+  })
+
   test('generates a branch name with the title model in an isolated ephemeral request', async () => {
     const request = vi.fn().mockImplementation(async (method: string) => {
       if (method === 'runtime.text.generate') {
