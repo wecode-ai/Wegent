@@ -9,6 +9,8 @@
  * keyword matching as fallback.
  */
 
+import { PROMPT_PROTECTION_BLOCKED_ERROR_TYPE } from '@/types/socket'
+
 export type ErrorType =
   | 'context_length_exceeded'
   | 'quota_exceeded'
@@ -59,7 +61,7 @@ const VALID_BACKEND_TYPES = new Set<string>([
   'model_protocol_error',
   'invalid_role',
   'permission_denied',
-  'PROMPT_PROTECTION_BLOCKED',
+  PROMPT_PROTECTION_BLOCKED_ERROR_TYPE,
   'generic_error',
 ])
 
@@ -84,7 +86,7 @@ const BACKEND_TYPE_MAP: Record<string, ErrorType> = {
   model_protocol_error: 'model_protocol_error',
   invalid_role: 'invalid_role',
   permission_denied: 'permission_denied',
-  PROMPT_PROTECTION_BLOCKED: 'prompt_protection_blocked',
+  [PROMPT_PROTECTION_BLOCKED_ERROR_TYPE]: 'prompt_protection_blocked',
   generic_error: 'generic_error',
 }
 

@@ -241,7 +241,11 @@ async def _handle_prompt_protection_block(
     blocked: PromptProtectionBlocked,
     task_room: str,
 ) -> None:
-    """Notify a blocked turn before finalizing it, even when notification fails."""
+    """Persist a blocked turn before sending best-effort notifications."""
+    await _finalize_blocked_ai_trigger(
+        task_id=task_id,
+        assistant_subtask_id=assistant_subtask.id,
+    )
     try:
         await namespace.emit(
             ServerEvents.CHAT_START,
@@ -272,11 +276,6 @@ async def _handle_prompt_protection_block(
             task_id,
             assistant_subtask.id,
             type(exc).__name__,
-        )
-    finally:
-        await _finalize_blocked_ai_trigger(
-            task_id=task_id,
-            assistant_subtask_id=assistant_subtask.id,
         )
 
 

@@ -643,7 +643,7 @@ async def test_blocked_turn_finalizes_when_notification_fails(
 
 
 @pytest.mark.asyncio
-async def test_blocked_turn_notifies_before_finalization(
+async def test_blocked_turn_finalizes_before_notifications(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     from app.api.ws import chat_namespace
@@ -671,9 +671,9 @@ async def test_blocked_turn_notifies_before_finalization(
     )
 
     assert events == [
+        "finalize",
         chat_namespace.ServerEvents.CHAT_START,
         chat_namespace.ServerEvents.CHAT_ERROR,
-        "finalize",
     ]
 
 

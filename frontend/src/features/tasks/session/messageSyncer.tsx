@@ -26,6 +26,7 @@ import {
   ChatBlockUpdatedPayload,
   SkillRequestPayload,
   SkillResponsePayload,
+  PROMPT_PROTECTION_BLOCKED_ERROR_TYPE,
 } from '@/types/socket'
 import type { InteractiveFormAnswerPayload, TaskDetailSubtask, Team, TaskType } from '@/types/api'
 import type { ArtifactNodeContext } from '@/types/knowledge-artifact'
@@ -311,6 +312,9 @@ export function useMessageSyncer({
       const machine = getMachineForTask(taskId)
       if (machine) {
         machine.handleChatError(subtask_id, error, message_id, errorType)
+        if (errorType === PROMPT_PROTECTION_BLOCKED_ERROR_TYPE) {
+          void machine.recover({ force: true })
+        }
       }
 
       // Call error callback
