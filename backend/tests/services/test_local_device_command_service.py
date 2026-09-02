@@ -1009,7 +1009,7 @@ def test_local_device_command_registry_default_includes_workspace_file_commands(
     assert "MAX_BYTES = 262144" in read_definition.command
 
 
-def test_branch_diff_prefers_fork_parent_default_branch(tmp_path):
+def test_branch_diff_prefers_fork_parent_default_branch(tmp_path: Path) -> None:
     """Fork branches should compare with their parent base instead of stale origin."""
     from app.services.device.command_registry import resolve_local_device_command
 
