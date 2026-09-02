@@ -1273,8 +1273,13 @@ async fn app_ipc_resolves_review_and_git_device_commands() {
 
     assert_eq!(git_response["ok"], true);
     assert_eq!(
-        seen_request.lock().unwrap().as_ref().unwrap().argv[0],
-        "bash"
+        seen_request
+            .lock()
+            .unwrap()
+            .as_ref()
+            .map(|request| request.argv[0].clone()),
+        None,
+        "git_diff must run through the native handler instead of a shell"
     );
 
     let worktree_response = server

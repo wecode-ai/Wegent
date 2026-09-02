@@ -13,6 +13,9 @@ use std::{
     time::{Duration, Instant},
 };
 
+#[cfg(windows)]
+use std::process::Command as WindowsCommand;
+
 #[cfg(unix)]
 use regex::Regex;
 
@@ -91,9 +94,98 @@ pub fn hydrate_process_environment() -> Result<Option<ShellEnvironmentLoad>, Str
         }))
     }
 
-    #[cfg(not(unix))]
+    #[cfg(windows)]
     {
-        Ok(None)
+        // Windows has no login shell to capture, so merge the current user and
+        // machine PATH from the registry instead. A GUI app inherits PATH from
+        // its parent, which may predate a `setx`/Settings PATH edit, so the
+        // executor would otherwise never see tools a fresh pwsh can resolve.
+        let (machine_path, user_path) = windows_registry_paths()?;
+        let current_path = env::var("PATH").unwrap_or_default();
+        let mut merged = Vec::new();
+        for value in [machine_path, user_path].into_iter().flatten() {
+            append_unique_windows_path(&mut merged, &value);
+        }
+        // Keep parent-provided entries that are not in the registry so extra
+        // developer/runtime directories survive a refresh.
+        append_unique_windows_path(&mut merged, &current_path);
+        let merged = env::join_paths(merged)
+            .map_err(|error| format!("Failed to join Windows PATH entries: {error}"))?;
+        let merged = merged.to_string_lossy().into_owned();
+        let path_entry_count = env::split_paths(&merged).count();
+        env::set_var("PATH", &merged);
+        Ok(Some(ShellEnvironmentLoad {
+            shell: "windows-registry".to_owned(),
+            path_entry_count,
+        }))
+    }
+}
+
+#[cfg(windows)]
+fn windows_registry_paths() -> Result<(Option<String>, Option<String>), String> {
+    let system_root = env::var("SystemRoot").unwrap_or_else(|_| "C:\\Windows".to_owned());
+    let powershell = format!("{system_root}\\System32\\WindowsPowerShell\\v1.0\\powershell.exe");
+    let script = "[string]::Join('===', @(";
+    let script = format!(
+        "{script}[Environment]::GetEnvironmentVariable('Path','Machine'),\
+        [Environment]::GetEnvironmentVariable('Path','User')))"
+    );
+    let output = WindowsCommand::new(&powershell)
+        .args([
+            "-NoLogo",
+            "-NoProfile",
+            "-NonInteractive",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-Command",
+            script,
+        ])
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .output()
+        .map_err(|error| {
+            format!("Failed to read Windows registry PATH with {powershell}: {error}")
+        })?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_owned();
+        return Err(if stderr.is_empty() {
+            "PowerShell failed to read the Windows registry PATH".to_owned()
+        } else {
+            stderr
+        });
+    }
+    let combined = String::from_utf8_lossy(&output.stdout).trim().to_owned();
+    let (machine_path, user_path) = match combined.split_once("===") {
+        Some((machine, user)) => (machine, user),
+        None => (combined.as_str(), ""),
+    };
+    let machine_path = if machine_path.is_empty() {
+        None
+    } else {
+        Some(machine_path.to_owned())
+    };
+    let user_path = if user_path.is_empty() {
+        None
+    } else {
+        Some(user_path.to_owned())
+    };
+    Ok((machine_path, user_path))
+}
+
+#[cfg(windows)]
+fn append_unique_windows_path(paths: &mut Vec<std::path::PathBuf>, value: &str) {
+    for path in env::split_paths(value) {
+        if path.as_os_str().is_empty() {
+            continue;
+        }
+        let normalized = path.to_string_lossy().to_lowercase();
+        if !paths
+            .iter()
+            .any(|existing| existing.to_string_lossy().to_lowercase() == normalized)
+        {
+            paths.push(path);
+        }
     }
 }
 

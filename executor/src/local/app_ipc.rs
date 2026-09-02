@@ -29,6 +29,7 @@ use crate::{
         CodexHomeInitializeRequest, ExternalContentImportRequest,
     },
     local::command::{CommandHandler, CommandRequest, CommandResult, DeviceCommandHandler},
+    local::git_commands::{branch_diff, branch_diff_shortstat, hosting_cli_status, workspace_diff},
     local::git_commit_message::generate_commit_message,
     local::harnesses::{
         list_local_harnesses, prepare_local_harness_launch, ListLocalHarnessesRequest,
@@ -178,76 +179,6 @@ if target.exists() and target.is_file():
 
 print(json.dumps(result, ensure_ascii=False))
 "#;
-const GIT_HOSTING_CLI_STATUS_SCRIPT: &str = r#"
-import json
-import re
-import shutil
-import subprocess
-import sys
-
-tool = sys.argv[1]
-timeout_seconds = float(sys.argv[2]) if len(sys.argv) > 2 else 10
-executable = shutil.which(tool)
-if not executable:
-    print(json.dumps({
-        "tool": tool,
-        "installed": False,
-        "authenticated": False,
-        "executablePath": None,
-        "version": None,
-        "detectionError": None,
-    }))
-    raise SystemExit(0)
-
-def run(*args):
-    return subprocess.run(
-        [executable, *args],
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        text=True,
-        timeout=timeout_seconds,
-        check=False,
-    )
-
-def is_authenticated(auth_result):
-    if auth_result.returncode == 0:
-        return True
-    if tool != "glab":
-        return False
-
-    output = "\n".join((auth_result.stdout, auth_result.stderr))
-    return re.search(r"(?m)^\s*[✓✔]\s+Logged in to\s+", output) is not None
-
-try:
-    version_result = run("--version")
-    version = next(
-        (line.strip() for line in version_result.stdout.splitlines() if line.strip()),
-        None,
-    )
-    auth_result = run("auth", "status")
-except subprocess.TimeoutExpired:
-    print(json.dumps({
-        "tool": tool,
-        "installed": True,
-        "authenticated": False,
-        "executablePath": executable,
-        "version": None,
-        "detectionError": "timeout",
-    }))
-    raise SystemExit(0)
-
-print(json.dumps({
-    "tool": tool,
-    "installed": True,
-    "authenticated": is_authenticated(auth_result),
-    "executablePath": executable,
-    "version": version,
-    "detectionError": None,
-}))
-"#;
-const GIT_BRANCH_DIFF_SHORTSTAT_SCRIPT: &str = r#"base=""; for candidate in "$(git symbolic-ref --quiet --short refs/remotes/origin/HEAD 2>/dev/null)" origin/main main origin/master master; do [ -n "$candidate" ] || continue; if git rev-parse --verify --quiet "$candidate^{commit}" >/dev/null; then base="$candidate"; break; fi; done; [ -n "$base" ] || { git diff --shortstat HEAD --; exit 0; }; merge_base=$(git merge-base "$base" HEAD 2>/dev/null || true); [ -n "$merge_base" ] || { git diff --shortstat HEAD --; exit 0; }; git diff --shortstat "$merge_base" --"#;
-const GIT_WORKSPACE_DIFF_SCRIPT: &str = r#"if git rev-parse --verify --quiet HEAD >/dev/null; then git diff --binary HEAD --; else git diff --binary --; fi; git ls-files --others --exclude-standard -z | while IFS= read -r -d "" file; do git diff --binary --no-index -- /dev/null "$file" || true; done"#;
-const GIT_BRANCH_DIFF_SCRIPT: &str = r#"base=""; for candidate in "$(git symbolic-ref --quiet --short refs/remotes/origin/HEAD 2>/dev/null)" origin/main main origin/master master; do [ -n "$candidate" ] || continue; if git rev-parse --verify --quiet "$candidate^{commit}" >/dev/null; then base="$candidate"; break; fi; done; if [ -n "$base" ]; then merge_base=$(git merge-base "$base" HEAD 2>/dev/null || true); fi; if [ -n "$merge_base" ]; then git diff --binary "$merge_base" --; elif git rev-parse --verify --quiet HEAD >/dev/null; then git diff --binary HEAD --; else git diff --binary --; fi; git ls-files --others --exclude-standard -z | while IFS= read -r -d "" file; do git diff --binary --no-index -- /dev/null "$file" || true; done"#;
 const TURN_FILE_CHANGES_SCRIPT: &str = r#"
 import gzip
 import hashlib
@@ -1485,6 +1416,59 @@ impl AppIpcServer {
 
         if command_key == "ls_skills" {
             let result = list_local_skills().await;
+            return serde_json::to_value(result)
+                .map_err(|error| AppIpcError::new("internal_error", error.to_string()));
+        }
+
+        // Git queries that used to run through `bash` or `python3` run natively
+        // so they work on Windows machines where those interpreters are not on
+        // PATH (Git for Windows only adds `cmd\`, which has git but no bash).
+        let native_path = string_field(&params, "path").or_else(|| string_field(&params, "cwd"));
+        let native_env = string_env(params.get("env"))?;
+        let native_timeout =
+            positive_number(params.get("timeout_seconds"), DEFAULT_TIMEOUT_SECONDS);
+        let native_max_output = positive_number(
+            params.get("max_output_bytes"),
+            DEFAULT_MAX_OUTPUT_BYTES as f64,
+        )
+        .round() as usize;
+        let native_result = match command_key {
+            "git_diff" => Some(
+                workspace_diff(
+                    native_path.clone(),
+                    &native_env,
+                    native_timeout,
+                    native_max_output,
+                )
+                .await,
+            ),
+            "git_branch_diff" => Some(
+                branch_diff(
+                    native_path.clone(),
+                    &native_env,
+                    native_timeout,
+                    native_max_output,
+                )
+                .await,
+            ),
+            "git_branch_diff_shortstat" => Some(
+                branch_diff_shortstat(
+                    native_path.clone(),
+                    &native_env,
+                    native_timeout,
+                    native_max_output,
+                )
+                .await,
+            ),
+            "git_github_cli_status" => {
+                Some(hosting_cli_status("gh", &native_env, native_timeout).await)
+            }
+            "git_gitlab_cli_status" => {
+                Some(hosting_cli_status("glab", &native_env, native_timeout).await)
+            }
+            _ => None,
+        };
+        if let Some(result) = native_result {
             return serde_json::to_value(result)
                 .map_err(|error| AppIpcError::new("internal_error", error.to_string()));
         }
@@ -3068,21 +3052,6 @@ fn local_app_command(command_key: &str) -> Option<LocalAppCommandDefinition> {
             &["git", "diff", "--shortstat"],
             None,
         )),
-        "git_diff" => Some(command_definition(
-            "bash -c <git_workspace_diff>",
-            &["bash", "-c", GIT_WORKSPACE_DIFF_SCRIPT],
-            None,
-        )),
-        "git_branch_diff" => Some(command_definition(
-            "bash -c <git_branch_diff>",
-            &["bash", "-c", GIT_BRANCH_DIFF_SCRIPT],
-            None,
-        )),
-        "git_branch_diff_shortstat" => Some(command_definition(
-            "bash -c <git_branch_diff_shortstat>",
-            &["bash", "-c", GIT_BRANCH_DIFF_SHORTSTAT_SCRIPT],
-            None,
-        )),
         "git_diff_unstaged" => Some(command_definition(
             "git diff --binary --",
             &["git", "diff", "--binary", "--"],
@@ -3107,16 +3076,6 @@ fn local_app_command(command_key: &str) -> Option<LocalAppCommandDefinition> {
             "git remote get-url origin",
             &["git", "remote", "get-url", "origin"],
             None,
-        )),
-        "git_github_cli_status" => Some(command_definition(
-            "python3 -c <git_hosting_cli_status> gh",
-            &["python3", "-c", GIT_HOSTING_CLI_STATUS_SCRIPT, "gh"],
-            Some(PostProcessor::Json),
-        )),
-        "git_gitlab_cli_status" => Some(command_definition(
-            "python3 -c <git_hosting_cli_status> glab",
-            &["python3", "-c", GIT_HOSTING_CLI_STATUS_SCRIPT, "glab"],
-            Some(PostProcessor::Json),
         )),
         "git_github_pull_requests" => Some(command_definition(
             "gh pr list --state all --head <branch>",
@@ -3836,13 +3795,18 @@ mod tests {
     }
 
     #[test]
-    fn git_diff_commands_do_not_start_a_login_shell() {
-        for command_key in ["git_diff", "git_branch_diff", "git_branch_diff_shortstat"] {
-            let command = local_app_command(command_key).expect("command must be registered");
-
-            assert_eq!(command.argv.first(), Some(&"bash"));
-            assert_eq!(command.argv.get(1), Some(&"-c"));
-            assert!(!command.argv.contains(&"-l"));
+    fn git_native_commands_are_not_registered_as_shell_commands() {
+        for command_key in [
+            "git_diff",
+            "git_branch_diff",
+            "git_branch_diff_shortstat",
+            "git_github_cli_status",
+            "git_gitlab_cli_status",
+        ] {
+            assert!(
+                local_app_command(command_key).is_none(),
+                "{command_key} must run through the native handler, not the shell registry"
+            );
         }
     }
 
