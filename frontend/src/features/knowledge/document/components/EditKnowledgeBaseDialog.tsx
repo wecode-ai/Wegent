@@ -66,7 +66,7 @@ export function EditKnowledgeBaseDialog({
   const [description, setDescription] = useState('')
   const [directAccessRequirement, setDirectAccessRequirement] =
     useState<DirectAccessRequirement>('read')
-  const [allowDocumentDownload, setAllowDocumentDownload] = useState(true)
+  const [allowDocumentDownload, setAllowDocumentDownload] = useState<boolean | undefined>()
   const [summaryEnabled, setSummaryEnabled] = useState(false)
   const [summaryModelRef, setSummaryModelRef] = useState<SummaryModelRef | null>(null)
   // Editable so a wiki created before the field existed can be given a model. Left
@@ -161,7 +161,7 @@ export function EditKnowledgeBaseDialog({
       setName(kb.name)
       setDescription(kb.description || '')
       setDirectAccessRequirement(kb.direct_access_requirement ?? 'read')
-      setAllowDocumentDownload(kb.allow_document_download ?? true)
+      setAllowDocumentDownload(kb.allow_document_download)
       setSummaryEnabled(kb.summary_enabled || false)
       setSummaryModelRef(kb.summary_model_ref || null)
       setExecutionModelRef(kb.execution_model_ref || null)

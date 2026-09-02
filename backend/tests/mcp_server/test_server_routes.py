@@ -270,7 +270,11 @@ def test_default_external_knowledge_auth_uses_api_key_owner(
         user = _default_external_auth_handler(raw_key, request)
 
     test_db.refresh(api_key_record)
-    assert user == ExternalKnowledgeUser(id=test_user.id, user_name=test_user.user_name)
+    assert user == ExternalKnowledgeUser(
+        id=test_user.id,
+        user_name=test_user.user_name,
+        document_download_exempt=True,
+    )
     assert api_key_record.last_used_at == original_last_used
 
 
@@ -285,6 +289,9 @@ def test_external_knowledge_mcp_auth_ignores_x_api_key(
             {
                 "user_id": user.id if user else None,
                 "user_name": user.user_name if user else None,
+                "document_download_exempt": (
+                    user.document_download_exempt if user else None
+                ),
             }
         )
 
@@ -391,6 +398,9 @@ def test_external_knowledge_mcp_custom_auth_sets_lightweight_user_context():
             {
                 "user_id": user.id if user else None,
                 "user_name": user.user_name if user else None,
+                "document_download_exempt": (
+                    user.document_download_exempt if user else None
+                ),
             }
         )
 
@@ -420,7 +430,11 @@ def test_external_knowledge_mcp_custom_auth_sets_lightweight_user_context():
         )
 
     assert response.status_code == 200
-    assert response.json() == {"user_id": 7, "user_name": "alice"}
+    assert response.json() == {
+        "user_id": 7,
+        "user_name": "alice",
+        "document_download_exempt": True,
+    }
     auth_handler.assert_called_once()
 
 

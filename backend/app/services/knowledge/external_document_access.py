@@ -69,6 +69,7 @@ class DocumentDownloadToken:
     user_id: int
     document_id: int
     disposition: str
+    document_download_exempt: bool = False
 
 
 @dataclass(frozen=True)
@@ -216,6 +217,7 @@ def get_document_file_or_raise(
     user_id: int,
     document_id: int,
     disposition: str,
+    document_download_exempt: bool = False,
 ) -> ExternalDocumentAccess:
     """Validate a file download request and return document access metadata."""
     access = get_document_access_or_raise(
@@ -236,10 +238,11 @@ def get_document_file_or_raise(
         require_document_download_allowed,
     )
 
-    try:
-        require_document_download_allowed(db, knowledge_base)
-    except DocumentDownloadDisabledError as exc:
-        raise ExternalDocumentAccessError(str(exc), exc.code) from exc
+    if not document_download_exempt:
+        try:
+            require_document_download_allowed(db, knowledge_base)
+        except DocumentDownloadDisabledError as exc:
+            raise ExternalDocumentAccessError(str(exc), exc.code) from exc
 
     if not access.downloadable or access.attachment is None:
         raise ExternalDocumentAccessError(
@@ -258,6 +261,7 @@ def load_document_file_or_raise(
     user_id: int,
     document_id: int,
     disposition: str,
+    document_download_exempt: bool = False,
 ) -> ExternalDocumentFile:
     """Load a validated original document file for external download."""
     from app.services.context.context_service import context_service
@@ -267,6 +271,7 @@ def load_document_file_or_raise(
         user_id=user_id,
         document_id=document_id,
         disposition=disposition,
+        document_download_exempt=document_download_exempt,
     )
     binary_data = context_service.get_attachment_binary_data(
         db=db,
@@ -289,6 +294,7 @@ def create_document_download_token(
     user_id: int,
     document_id: int,
     disposition: str,
+    document_download_exempt: bool = False,
     expires_seconds: int = DOCUMENT_DOWNLOAD_TOKEN_EXPIRES_SECONDS,
 ) -> str:
     """Create a short-lived signed token for external document downloads."""
@@ -298,6 +304,7 @@ def create_document_download_token(
         "user_id": user_id,
         "document_id": document_id,
         "disposition": disposition,
+        "document_download_exempt": document_download_exempt,
         "exp": expire,
     }
     return jwt.encode(payload, settings.SECRET_KEY, algorithm=settings.ALGORITHM)
@@ -322,12 +329,14 @@ def verify_document_download_token(token: str) -> Optional[DocumentDownloadToken
     user_id = payload.get("user_id")
     document_id = payload.get("document_id")
     disposition = payload.get("disposition")
+    document_download_exempt = payload.get("document_download_exempt", False)
     if (
         type(user_id) is not int
         or user_id <= 0
         or type(document_id) is not int
         or document_id <= 0
         or disposition not in ALLOWED_DOWNLOAD_DISPOSITIONS
+        or type(document_download_exempt) is not bool
     ):
         return None
 
@@ -335,4 +344,5 @@ def verify_document_download_token(token: str) -> Optional[DocumentDownloadToken
         user_id=user_id,
         document_id=document_id,
         disposition=disposition,
+        document_download_exempt=document_download_exempt,
     )

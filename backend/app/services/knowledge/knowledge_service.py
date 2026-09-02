@@ -309,7 +309,6 @@ class KnowledgeService:
             "name": data.name,
             "description": data.description or "",
             "directAccessRequirement": data.direct_access_requirement,
-            "allowDocumentDownload": data.allow_document_download,
             # A code wiki is fixed here; there is deliberately no code path that turns
             # an existing knowledge base into one, or out of one.
             "kbType": KnowledgeBaseType(
@@ -318,6 +317,8 @@ class KnowledgeService:
             "retrievalConfig": _to_json_dict(data.retrieval_config),
             "summaryEnabled": data.summary_enabled,
         }
+        if data.allow_document_download is not None:
+            spec_kwargs["allowDocumentDownload"] = data.allow_document_download
         # A code wiki records the repository it is generated from, and the language
         # its pages are written in. Both are omitted entirely when absent rather than
         # stored empty: absent means "fall back to the deployment default", which is
@@ -353,6 +354,8 @@ class KnowledgeService:
 
         # Build resource data
         resource_data = kb_crd.model_dump()
+        if data.allow_document_download is None:
+            resource_data["spec"].pop("allowDocumentDownload", None)
         if "status" not in resource_data or resource_data["status"] is None:
             resource_data["status"] = {"state": "Available"}
 

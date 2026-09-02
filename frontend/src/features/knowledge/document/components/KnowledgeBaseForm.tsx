@@ -461,7 +461,7 @@ export function KnowledgeBaseForm({
             >
               <Switch
                 id="knowledge-base-allow-document-download"
-                checked={allowDocumentDownload}
+                checked={allowDocumentDownload ?? true}
                 onCheckedChange={onAllowDocumentDownloadChange}
                 data-testid="knowledge-base-allow-document-download"
               />

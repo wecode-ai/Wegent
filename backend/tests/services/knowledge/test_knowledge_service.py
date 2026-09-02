@@ -30,6 +30,39 @@ from app.services.knowledge.knowledge_service import (
 
 @pytest.mark.unit
 class TestKnowledgeServiceCreateKnowledgeBase:
+    def test_create_keeps_document_download_setting_absent_when_not_provided(
+        self, test_db, test_user
+    ) -> None:
+        knowledge_base_id = KnowledgeService.create_knowledge_base(
+            db=test_db,
+            user_id=test_user.id,
+            data=KnowledgeBaseCreate(name="download-default-kb"),
+        )
+
+        knowledge_base = test_db.query(Kind).filter(Kind.id == knowledge_base_id).one()
+
+        assert "allowDocumentDownload" not in knowledge_base.json["spec"]
+
+    @pytest.mark.parametrize("allow_document_download", [True, False])
+    def test_create_persists_explicit_document_download_setting(
+        self, test_db, test_user, allow_document_download: bool
+    ) -> None:
+        knowledge_base_id = KnowledgeService.create_knowledge_base(
+            db=test_db,
+            user_id=test_user.id,
+            data=KnowledgeBaseCreate(
+                name=f"download-{allow_document_download}-kb",
+                allow_document_download=allow_document_download,
+            ),
+        )
+
+        knowledge_base = test_db.query(Kind).filter(Kind.id == knowledge_base_id).one()
+
+        assert (
+            knowledge_base.json["spec"]["allowDocumentDownload"]
+            is allow_document_download
+        )
+
     def test_create_knowledge_base_persists_retrieval_config_as_dict(
         self, test_db, test_user
     ) -> None:

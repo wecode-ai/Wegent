@@ -300,9 +300,7 @@ export function DocumentList({
     }
   }, [knowledgeBase.allow_document_download, knowledgeBase.id])
 
-  // Internal deployments retain their organization-level protection boundary.
-  // The core endpoint controls all other knowledge bases.
-  const allowDownload = documentProtection.original_download_allowed && !isOrganization
+  const allowDownload = documentProtection.original_download_allowed
 
   // Folder state
   const {

@@ -473,6 +473,7 @@ def _get_document_download_sync(
     document_id: int,
     disposition: str,
     resource_url: str,
+    document_download_exempt: bool = False,
 ) -> str:
     db = SessionLocal()
     try:
@@ -481,12 +482,14 @@ def _get_document_download_sync(
             user_id=user_id,
             document_id=document_id,
             disposition=disposition,
+            document_download_exempt=document_download_exempt,
         )
 
         token = create_document_download_token(
             user_id=user_id,
             document_id=document_id,
             disposition=disposition,
+            document_download_exempt=document_download_exempt,
         )
         return ExternalDocumentDownloadResponse(
             document_id=document_id,
@@ -766,6 +769,7 @@ async def wegent_kb_get_document_download(
             document_id=document_id,
             disposition=normalized_disposition,
             resource_url=resource_url,
+            document_download_exempt=getattr(user, "document_download_exempt", False),
         )
     )
 

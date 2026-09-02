@@ -13,11 +13,7 @@ from dataclasses import dataclass
 
 from sqlalchemy.orm import Session
 
-from app.core.config import settings
 from app.models.kind import Kind
-from app.services.knowledge.namespace_utils import get_namespace_level
-
-_NAMESPACE_LEVELS = frozenset({"personal", "group", "organization"})
 
 
 class DocumentDownloadDisabledError(ValueError):
@@ -32,24 +28,6 @@ class DocumentDownloadDecision:
 
     original_download_allowed: bool
     protected_by_configuration: bool
-    protected_by_namespace: bool
-
-
-def forced_protected_namespace_levels() -> frozenset[str]:
-    """Return configured forced protection levels or fail on invalid settings."""
-    raw_levels = settings.KNOWLEDGE_DOCUMENT_FORCE_PROTECT_NAMESPACE_LEVELS.split(",")
-    levels = frozenset(level.strip().lower() for level in raw_levels if level.strip())
-    if levels == {"none"}:
-        return frozenset()
-
-    invalid_levels = levels - _NAMESPACE_LEVELS
-    if invalid_levels or "none" in levels:
-        invalid = ", ".join(sorted(invalid_levels or {"none"}))
-        raise RuntimeError(
-            "KNOWLEDGE_DOCUMENT_FORCE_PROTECT_NAMESPACE_LEVELS contains "
-            f"unsupported level(s): {invalid}"
-        )
-    return levels
 
 
 def resolve_document_download_decision(
@@ -59,16 +37,9 @@ def resolve_document_download_decision(
     """Resolve the one core policy shared by all original-file exits."""
     spec = knowledge_base.json.get("spec", {}) if knowledge_base.json else {}
     protected_by_configuration = spec.get("allowDocumentDownload", True) is False
-    protected_by_namespace = (
-        get_namespace_level(db, knowledge_base.namespace)
-        in forced_protected_namespace_levels()
-    )
     return DocumentDownloadDecision(
-        original_download_allowed=not (
-            protected_by_configuration or protected_by_namespace
-        ),
+        original_download_allowed=not protected_by_configuration,
         protected_by_configuration=protected_by_configuration,
-        protected_by_namespace=protected_by_namespace,
     )
 
 

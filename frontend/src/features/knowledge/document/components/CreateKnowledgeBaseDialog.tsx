@@ -124,7 +124,7 @@ export function CreateKnowledgeBaseDialog({
   const [description, setDescription] = useState('')
   const [directAccessRequirement, setDirectAccessRequirement] =
     useState<DirectAccessRequirement>('read')
-  const [allowDocumentDownload, setAllowDocumentDownload] = useState(true)
+  const [allowDocumentDownload, setAllowDocumentDownload] = useState<boolean | undefined>()
   // Selected KB type (can be changed by user)
   const [selectedKbType, setSelectedKbType] = useState<KnowledgeBaseType>(initialKbType)
   // Which kind of knowledge base is being created. Chosen first because it decides

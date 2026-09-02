@@ -118,7 +118,7 @@ export function DocumentDetailDialog({
 }: DocumentDetailDialogProps) {
   const { t, getCurrentLanguage } = useTranslation('knowledge')
   const downloadDocument = useKnowledgeDocumentDownload()
-  const protectedPreview = !allowDownload || isOrganization
+  const protectedPreview = !allowDownload
   const effectiveWatermarkText = watermarkText || t('document.document.detail.protectedWatermark')
   const [copiedContent, setCopiedContent] = useState(false)
   const [copiedLink, setCopiedLink] = useState(false)

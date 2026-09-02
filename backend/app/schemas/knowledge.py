@@ -304,8 +304,8 @@ class KnowledgeBaseCreate(MultimodalAnalysisFieldsMixin):
         default="read",
         description="Minimum capability required for direct knowledge base access",
     )
-    allow_document_download: bool = Field(
-        default=True,
+    allow_document_download: Optional[bool] = Field(
+        default=None,
         description="Whether readers may download original knowledge documents",
     )
     kb_type: KnowledgeBaseType = Field(
@@ -852,7 +852,7 @@ class KnowledgeBaseResponse(MultimodalAnalysisResponseFieldsMixin):
     user_id: int
     namespace: str
     direct_access_requirement: Literal["read", "edit"] = "read"
-    allow_document_download: bool = True
+    allow_document_download: Optional[bool] = None
     source: Optional[Dict[str, Any]] = Field(
         None,
         description=(
@@ -979,7 +979,7 @@ class KnowledgeBaseResponse(MultimodalAnalysisResponseFieldsMixin):
             user_id=kind.user_id,
             namespace=kind.namespace,
             direct_access_requirement=spec.get("directAccessRequirement", "read"),
-            allow_document_download=spec.get("allowDocumentDownload", True),
+            allow_document_download=spec.get("allowDocumentDownload"),
             kb_type=kb_type,
             source=source,
             language=language,
