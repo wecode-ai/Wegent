@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import time
 from dataclasses import dataclass
 from enum import Enum
@@ -23,6 +24,8 @@ from app.services.llm_proxy_service import (
     resolve_upstream_target,
 )
 from shared.telemetry import get_tracer
+
+logger = logging.getLogger(__name__)
 
 POLICY_VERSION = "prompt-protection-v1"
 BLOCKED_ERROR_CODE = "PROMPT_PROTECTION_BLOCKED"
@@ -350,12 +353,49 @@ def _set_span_attributes(span: Any, attributes: dict[str, Any]) -> None:
             span.set_attribute(key, value)
 
 
+def _log_prompt_protection_decision(
+    *,
+    context: PromptProtectionContext,
+    decision: PromptProtectionDecision,
+    risks: tuple[str, ...],
+    duration_ms: float,
+    failure_type: str | None,
+) -> None:
+    """Log one content-free decision for environments without tracing."""
+    payload = {
+        "decision": decision.value,
+        "duration_ms": round(duration_ms, 3),
+        "entrypoint": context.entrypoint,
+        "event": "prompt_protection_decision",
+        "failure_type": failure_type,
+        "model_id": context.model_id,
+        "policy_version": POLICY_VERSION,
+        "risks": list(risks),
+        "subtask_id": context.subtask_id,
+        "task_id": context.task_id,
+        "team_id": context.team_id,
+        "team_namespace": context.team_namespace,
+        "user_id": context.user_id,
+    }
+    logger.info(
+        "prompt_protection_decision %s",
+        json.dumps(payload, ensure_ascii=True, sort_keys=True),
+    )
+
+
 def record_prompt_protection_failure(
     *,
     context: PromptProtectionContext,
     failure_type: str,
 ) -> None:
     """Record a fail-open setup error without protected content."""
+    _log_prompt_protection_decision(
+        context=context,
+        decision=PromptProtectionDecision.ALLOW_DUE_TO_ERROR,
+        risks=(),
+        duration_ms=0.0,
+        failure_type=failure_type,
+    )
     tracer = get_tracer(__name__)
     with tracer.start_as_current_span("prompt_protection.evaluate") as span:
         _set_span_attributes(
@@ -427,6 +467,13 @@ async def evaluate_prompt_protection(
             ),
         )
         duration_ms = (time.perf_counter() - started_at) * 1000
+        _log_prompt_protection_decision(
+            context=context,
+            decision=decision,
+            risks=risks,
+            duration_ms=duration_ms,
+            failure_type=failure_type,
+        )
         _set_span_attributes(
             span,
             {

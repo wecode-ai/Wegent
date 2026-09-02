@@ -3,6 +3,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 import json
+import logging
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -227,6 +228,76 @@ async def test_gate_telemetry_contains_no_protected_content_or_credentials(monke
     assert "secret-key" not in serialized
     assert attributes["prompt_protection.model_id"] == "selected-model"
     assert attributes["prompt_protection.decision"] == "allow"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("model_result", "expected_decision", "expected_failure_type"),
+    [
+        ('{"risks": []}', "allow", None),
+        ('{"risks": ["system_prompt_extraction"]}', "block", None),
+        ("invalid", "allow_due_to_error", "invalid_json"),
+    ],
+)
+async def test_gate_logs_content_free_decision_without_otel(
+    caplog: pytest.LogCaptureFixture,
+    model_result: str,
+    expected_decision: str,
+    expected_failure_type: str | None,
+) -> None:
+    adapter = SimpleNamespace(complete=AsyncMock(return_value=model_result))
+
+    with caplog.at_level(logging.INFO, logger=prompt_protection.__name__):
+        await evaluate_prompt_protection(**_evaluation_kwargs(adapter))
+
+    messages = [
+        record.getMessage()
+        for record in caplog.records
+        if record.getMessage().startswith("prompt_protection_decision ")
+    ]
+    assert len(messages) == 1
+    payload = json.loads(messages[0].removeprefix("prompt_protection_decision "))
+    assert payload["decision"] == expected_decision
+    assert payload["failure_type"] == expected_failure_type
+    assert payload["task_id"] == 22
+    assert payload["subtask_id"] == 33
+    assert payload["entrypoint"] == "web_user_message:Chat"
+    assert payload["model_id"] == "selected-model"
+
+    serialized = json.dumps(payload)
+    assert "Internal support prompt" not in serialized
+    assert "How do I reset my password?" not in serialized
+    assert "secret-key" not in serialized
+
+
+def test_setup_failure_logs_content_free_fail_open_decision(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    context = PromptProtectionContext(
+        team_id=1,
+        team_namespace="default",
+        task_id=2,
+        subtask_id=3,
+        user_id=4,
+        entrypoint="web:Chat",
+        model_id="selected-model",
+    )
+
+    with caplog.at_level(logging.INFO, logger=prompt_protection.__name__):
+        prompt_protection.record_prompt_protection_failure(
+            context=context,
+            failure_type="prompt_resolution_error",
+        )
+
+    message = next(
+        record.getMessage()
+        for record in caplog.records
+        if record.getMessage().startswith("prompt_protection_decision ")
+    )
+    payload = json.loads(message.removeprefix("prompt_protection_decision "))
+    assert payload["decision"] == "allow_due_to_error"
+    assert payload["failure_type"] == "prompt_resolution_error"
+    assert payload["risks"] == []
 
 
 @pytest.mark.asyncio
