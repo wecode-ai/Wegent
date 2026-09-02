@@ -4,13 +4,13 @@ import {
   Archive,
   ChevronDown,
   FileText,
-  LoaderCircle,
   MessageCircle,
   Pencil,
   Search,
   SquareTerminal,
   Wrench,
 } from 'lucide-react'
+import { CompositedSpinner } from '@/components/common/CompositedSpinner'
 import { useTranslation } from '@/hooks/useTranslation'
 import type { RequestUserInputResponse } from '@/types/api'
 import type { ProcessingBlock, ToolBlock } from '@/types/workbench'
@@ -437,11 +437,7 @@ function ProcessingSummaryHeader({
       {isRunning || duration ? (
         <span className="ml-auto inline-flex shrink-0 items-center gap-1">
           {isRunning ? (
-            <LoaderCircle
-              className="h-3 w-3 animate-spin text-blue-500 motion-reduce:animate-none"
-              strokeWidth={1.8}
-              aria-hidden="true"
-            />
+            <CompositedSpinner className="h-3 w-3 text-blue-500" strokeWidth={1.8} />
           ) : null}
           {duration}
         </span>
