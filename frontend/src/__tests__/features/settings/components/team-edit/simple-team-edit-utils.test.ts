@@ -13,6 +13,7 @@ import {
   normalizeExecutorForBindMode,
   resolveSimpleExecutorFromBot,
   resolveShellForExecutor,
+  shellSupportsPreloadSkills,
   type SimpleExecutorMode,
 } from '@/features/settings/components/team-edit/simple-team-edit-utils'
 import type { Bot } from '@/types/api'
@@ -102,6 +103,12 @@ describe('simple team edit utils', () => {
 
   it('resolves complex executor to ClaudeCode shell', () => {
     expect(resolveShellForExecutor(shells, 'complex')?.name).toBe('ClaudeCode')
+  })
+
+  it('supports preload skills for Chat and Claude Code shells', () => {
+    expect(shellSupportsPreloadSkills(resolveShellForExecutor(shells, 'simple'))).toBe(true)
+    expect(shellSupportsPreloadSkills(resolveShellForExecutor(shells, 'complex'))).toBe(true)
+    expect(shellSupportsPreloadSkills({ name: 'Agno', shellType: 'Agno' })).toBe(false)
   })
 
   it('resolves custom executor by selected custom shell name', () => {
