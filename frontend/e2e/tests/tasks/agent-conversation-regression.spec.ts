@@ -11,6 +11,7 @@
 import { APIRequestContext, Page, expect, test } from '@playwright/test'
 import { ADMIN_USER } from '../../config/test-users'
 import { ApiClient, createApiClient } from '../../utils/api-client'
+import { createGitHttpFixture } from '../../utils/device-git-http-fixture'
 
 const API_BASE_URL = process.env.E2E_API_URL || 'http://localhost:8000'
 const MOCK_MODEL_SERVER_URL = process.env.MOCK_MODEL_SERVER_URL || 'http://localhost:9999'
@@ -80,6 +81,8 @@ test.describe('Agent conversation regression', () => {
   let manualPipelineTeam: CreatedPipelineTeam
   let automaticPipelineTeam: CreatedPipelineTeam
   const createdTaskIds = new Set<number>()
+  const createdProjectIds = new Set<number>()
+  const createdGitAccountIds = new Set<string>()
   const streamRuleMatchTexts = new Set<string>()
 
   test.beforeAll(async ({ request }) => {
@@ -97,10 +100,14 @@ test.describe('Agent conversation regression', () => {
     await cleanupStreamRules(request)
     await clearMockModelRequests(request)
     await cleanupCreatedTasks(request)
+    await cleanupCreatedProjects(request)
+    await cleanupCreatedGitAccounts(request)
   })
 
   test.afterAll(async ({ request }) => {
     await cleanupCreatedTasks(request)
+    await cleanupCreatedProjects(request)
+    await cleanupCreatedGitAccounts(request)
     await cleanupTestResources(request)
   })
 
@@ -448,6 +455,91 @@ test.describe('Agent conversation regression', () => {
     )
     expect(extractText(secondRequest.body)).toContain(contextToken)
     expect(extractText(secondRequest.body)).toContain(firstPrompt)
+  })
+
+  test('device Git project runs without server AES keys on the executor', async ({ request }) => {
+    const gitFixture = await createGitHttpFixture()
+    const gitAccountId = `${TEST_PREFIX}-device-git-account`
+    const projectName = `${TEST_PREFIX}-device-git-project`
+    const contextToken = makeContextToken('device_git')
+    const prompt = `Remember this device Git context token: ${contextToken}`
+
+    try {
+      await waitForLocalDeviceOnline(request)
+
+      const gitAccountResponse = await request.put(`${API_BASE_URL}/api/users/me`, {
+        headers: authHeaders(),
+        data: {
+          git_info: [
+            {
+              id: gitAccountId,
+              git_domain: gitFixture.domain,
+              git_token: 'device-git-e2e-token',
+              type: 'gitea',
+            },
+          ],
+        },
+      })
+      expect(gitAccountResponse.status()).toBe(200)
+      createdGitAccountIds.add(gitAccountId)
+
+      const projectResponse = await request.post(`${API_BASE_URL}/api/projects`, {
+        headers: authHeaders(),
+        data: {
+          name: projectName,
+          description: 'E2E project for device-local Git credential transport',
+          client_origin: 'frontend',
+          config: {
+            mode: 'workspace',
+            execution: {
+              targetType: 'local',
+              deviceId: DEVICE_ID,
+            },
+            workspace: {
+              source: 'git',
+              checkoutPath: projectName,
+            },
+            git: {
+              url: gitFixture.url,
+              repo: 'repository',
+              domain: gitFixture.domain,
+              branch: 'main',
+            },
+          },
+        },
+      })
+      expect(projectResponse.status()).toBe(201)
+      const project = (await projectResponse.json()) as { id?: number }
+      expect(project.id).toBeTruthy()
+      createdProjectIds.add(project.id!)
+
+      const taskResponse = await request.post(`${API_BASE_URL}/api/device-chat/tasks`, {
+        headers: authHeaders(),
+        data: {
+          teamId: deviceTeam.id,
+          message: prompt,
+          deviceId: DEVICE_ID,
+          projectId: project.id,
+          taskType: 'task',
+          clientOrigin: 'frontend',
+        },
+      })
+      expect(taskResponse.status()).toBe(200)
+      const task = (await taskResponse.json()) as { taskId?: number }
+      expect(task.taskId).toBeTruthy()
+      createdTaskIds.add(task.taskId!)
+
+      await waitForBackendTerminal(request, task.taskId!)
+      const modelRequest = await waitForCapturedModelRequest(
+        request,
+        capture =>
+          isAnthropicMessagesRequest(capture) && extractText(capture.body).includes(prompt),
+        `device Git model request containing ${contextToken}`
+      )
+      expect(extractText(modelRequest.body)).toContain(contextToken)
+    } finally {
+      await gitFixture.close()
+    }
   })
 
   test('manual pipeline next step sends handoff user message and next bot prompt to the second model', async ({
@@ -953,6 +1045,29 @@ test.describe('Agent conversation regression', () => {
           .catch(() => null)
       )
     )
+  }
+
+  async function cleanupCreatedProjects(request: APIRequestContext): Promise<void> {
+    const projectIds = [...createdProjectIds]
+    createdProjectIds.clear()
+    for (const projectId of projectIds) {
+      const response = await request.delete(`${API_BASE_URL}/api/projects/${projectId}`, {
+        headers: authHeaders(),
+      })
+      expect(response.status()).toBe(204)
+    }
+  }
+
+  async function cleanupCreatedGitAccounts(request: APIRequestContext): Promise<void> {
+    const accountIds = [...createdGitAccountIds]
+    createdGitAccountIds.clear()
+    for (const accountId of accountIds) {
+      const response = await request.delete(
+        `${API_BASE_URL}/api/users/me/git-token/e2e?git_info_id=${encodeURIComponent(accountId)}`,
+        { headers: authHeaders() }
+      )
+      expect(response.status()).toBe(200)
+    }
   }
 
   async function configureStreamRule(

@@ -154,6 +154,8 @@ def test_full_prompt_names_executor_generated_reviewer_agent_type() -> None:
     assert "`section-writer-107`" in prompt
     assert "Work Package ID" in prompt
     assert "missing planned pages" in prompt
+    assert "Plan amendment protocol" in prompt
+    assert "do not submit it directly" in prompt
     assert "write_pages_then_complete" not in prompt
 
 

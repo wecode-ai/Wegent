@@ -665,6 +665,55 @@ def test_plan_only_progress_skips_qa_and_publishes_after_all_pages_are_written(
     )
 
 
+def test_plan_only_progress_uses_the_passed_amendment_page_total(
+    test_db: Session, knowledge_base: Kind, test_user: User
+) -> None:
+    started = start_generation(
+        test_db,
+        knowledge_base=knowledge_base,
+        user=test_user,
+        head_commit=HEAD,
+        changed_paths=None,
+        now=NOW,
+    )
+    generation = started.generation
+    generation.ext = {
+        "qualityReview": {
+            "required": True,
+            "policy": "plan_only",
+            "handoffs": [
+                {"phase": "plan", "attempt": 1, "paths": ["index"]},
+                {
+                    "phase": "plan_amendment",
+                    "attempt": 1,
+                    "paths": ["index", "architecture", "operations"],
+                },
+            ],
+            "checkpoints": [
+                {
+                    "phase": "plan",
+                    "attempt": 1,
+                    "status": "passed",
+                    "paths": ["index"],
+                    "focusPaths": ["index"],
+                },
+                {
+                    "phase": "plan_amendment",
+                    "attempt": 1,
+                    "status": "passed",
+                    "paths": ["index", "architecture", "operations"],
+                },
+            ],
+        }
+    }
+    _write_page(test_db, generation, "index", "# Wiki")
+    test_db.commit()
+
+    progress = current_run_state(test_db, knowledge_base, now=NOW).progress
+
+    assert progress and (progress.stage, progress.pages_total) == ("writing", 3)
+
+
 def test_a_run_whose_worker_went_quiet_is_reported_as_stale(
     test_db: Session, knowledge_base: Kind, test_user: User
 ):
