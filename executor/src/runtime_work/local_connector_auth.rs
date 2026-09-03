@@ -671,7 +671,7 @@ async fn run_plugin_command(
     }
     let program = resolve_program(plugin_root, &args[0])?;
     let rest = &args[1..];
-    let mut command = plugin_command(&program, rest);
+    let mut command = plugin_command(&program, rest)?;
     command
         .current_dir(plugin_root)
         .stdin(Stdio::null())
@@ -713,35 +713,89 @@ async fn run_plugin_command(
     Ok(parsed)
 }
 
-fn plugin_command(program: &Path, rest: &[String]) -> Command {
+fn plugin_command(program: &Path, rest: &[String]) -> Result<Command, AppIpcError> {
     if looks_like_shell_script(program) {
         let mut cmd = Command::new("sh");
         cmd.arg(program);
         for arg in rest {
             cmd.arg(arg);
         }
-        cmd
-    } else if program.extension().and_then(|ext| ext.to_str()) == Some("ps1") {
-        let mut cmd = Command::new("pwsh");
-        cmd.args([
-            "-NoProfile",
-            "-NonInteractive",
-            "-ExecutionPolicy",
-            "Bypass",
-            "-File",
-        ]);
-        cmd.arg(program);
-        for arg in rest {
-            cmd.arg(arg);
-        }
-        cmd
+        Ok(cmd)
+    } else if program
+        .extension()
+        .and_then(|ext| ext.to_str())
+        .is_some_and(|ext| ext.eq_ignore_ascii_case("ps1"))
+    {
+        Ok(powershell_command(
+            program,
+            rest,
+            &resolve_powershell_program()?,
+        ))
     } else {
         let mut cmd = Command::new(program);
         for arg in rest {
             cmd.arg(arg);
         }
-        cmd
+        Ok(cmd)
     }
+}
+
+fn powershell_command(program: &Path, rest: &[String], powershell_program: &Path) -> Command {
+    let mut cmd = Command::new(powershell_program);
+    cmd.args([
+        "-NoProfile",
+        "-NonInteractive",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-File",
+    ]);
+    cmd.arg(program);
+    for arg in rest {
+        cmd.arg(arg);
+    }
+    cmd
+}
+
+fn resolve_powershell_program() -> Result<PathBuf, AppIpcError> {
+    if !cfg!(windows) {
+        return Ok(PathBuf::from("pwsh"));
+    }
+
+    let search_paths = env::var_os("PATH")
+        .map(|value| env::split_paths(&value).collect::<Vec<_>>())
+        .unwrap_or_default();
+    let system_root = env::var_os("SystemRoot")
+        .or_else(|| env::var_os("WINDIR"))
+        .map(PathBuf::from);
+    resolve_windows_powershell_program(&search_paths, system_root.as_deref())
+}
+
+fn resolve_windows_powershell_program(
+    search_paths: &[PathBuf],
+    system_root: Option<&Path>,
+) -> Result<PathBuf, AppIpcError> {
+    if let Some(pwsh) = search_paths
+        .iter()
+        .map(|directory| directory.join("pwsh.exe"))
+        .find(|candidate| candidate.is_file())
+    {
+        return Ok(pwsh);
+    }
+
+    let windows_powershell = system_root
+        .unwrap_or_else(|| Path::new(r"C:\Windows"))
+        .join("System32")
+        .join("WindowsPowerShell")
+        .join("v1.0")
+        .join("powershell.exe");
+    if windows_powershell.is_file() {
+        return Ok(windows_powershell);
+    }
+
+    Err(AppIpcError::new(
+        "local_auth_powershell_missing",
+        "PowerShell was not found. Install PowerShell 7 (pwsh.exe) or enable Windows PowerShell 5.1 (powershell.exe).",
+    ))
 }
 
 fn resolve_program(plugin_root: &Path, arg: &str) -> Result<PathBuf, AppIpcError> {
@@ -959,7 +1013,8 @@ mod tests {
         let command = plugin_command(
             Path::new("plugin with spaces/scripts/local-auth.sh"),
             &["login".to_owned(), "中文".to_owned()],
-        );
+        )
+        .unwrap();
         let command = command.as_std();
         assert_eq!(command.get_program(), "sh");
         assert_eq!(
@@ -970,9 +1025,10 @@ mod tests {
 
     #[test]
     fn powershell_command_uses_process_scoped_execution_policy_bypass() {
-        let command = plugin_command(
+        let command = powershell_command(
             Path::new("plugin with spaces/scripts/local-auth.ps1"),
             &["login".to_owned(), "中文".to_owned()],
+            Path::new("pwsh"),
         );
         let command = command.as_std();
         assert_eq!(command.get_program(), "pwsh");
@@ -989,6 +1045,56 @@ mod tests {
                 "中文"
             ]
         );
+    }
+
+    #[test]
+    fn windows_powershell_prefers_pwsh_from_path() {
+        let temp = tempfile::tempdir().unwrap();
+        let tools = temp.path().join("tools");
+        let system_root = temp.path().join("Windows");
+        fs::create_dir_all(&tools).unwrap();
+        fs::write(tools.join("pwsh.exe"), "").unwrap();
+        let windows_powershell = system_root
+            .join("System32")
+            .join("WindowsPowerShell")
+            .join("v1.0")
+            .join("powershell.exe");
+        fs::create_dir_all(windows_powershell.parent().unwrap()).unwrap();
+        fs::write(&windows_powershell, "").unwrap();
+
+        assert_eq!(
+            resolve_windows_powershell_program(std::slice::from_ref(&tools), Some(&system_root))
+                .unwrap(),
+            tools.join("pwsh.exe")
+        );
+    }
+
+    #[test]
+    fn windows_powershell_falls_back_to_system_51() {
+        let temp = tempfile::tempdir().unwrap();
+        let system_root = temp.path().join("Windows");
+        let windows_powershell = system_root
+            .join("System32")
+            .join("WindowsPowerShell")
+            .join("v1.0")
+            .join("powershell.exe");
+        fs::create_dir_all(windows_powershell.parent().unwrap()).unwrap();
+        fs::write(&windows_powershell, "").unwrap();
+
+        assert_eq!(
+            resolve_windows_powershell_program(&[], Some(&system_root)).unwrap(),
+            windows_powershell
+        );
+    }
+
+    #[test]
+    fn windows_powershell_reports_clear_error_when_unavailable() {
+        let temp = tempfile::tempdir().unwrap();
+        let error = resolve_windows_powershell_program(&[], Some(temp.path())).unwrap_err();
+
+        assert_eq!(error.code, "local_auth_powershell_missing");
+        assert!(error.message.contains("PowerShell 7"));
+        assert!(error.message.contains("PowerShell 5.1"));
     }
 
     #[test]
