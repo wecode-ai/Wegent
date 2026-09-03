@@ -39,7 +39,7 @@
       "description": "Wework GPT 5.6 Sol compatibility profile",
       "apply_patch_tool_type": "freeform",
       "context_window": 272000,
-      "max_context_window": 272000,
+      "max_context_window": null,
       "supports_search_tool": true
     },
     {
@@ -48,7 +48,7 @@
       "description": "Wework GPT 5.6 Terra compatibility profile",
       "apply_patch_tool_type": "freeform",
       "context_window": 272000,
-      "max_context_window": 272000,
+      "max_context_window": null,
       "supports_search_tool": true
     },
     {
@@ -57,7 +57,7 @@
       "description": "Wework GPT 5.6 Luna compatibility profile",
       "apply_patch_tool_type": "freeform",
       "context_window": 272000,
-      "max_context_window": 272000,
+      "max_context_window": null,
       "supports_search_tool": true
     }
   ]

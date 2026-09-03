@@ -432,7 +432,7 @@ export interface AdminPublicTeamIconUpload {
   url: string
 }
 
-export type AdminMarketplaceResourceType = 'agent' | 'skill'
+export type AdminMarketplaceResourceType = 'agent' | 'skill' | 'smart_app'
 
 export interface AdminMarketplaceExampleConversation {
   title: string
@@ -458,6 +458,46 @@ export interface AdminMarketplaceResourceUpdate {
 
 export interface AdminMarketplaceResourceListResponse {
   items: AdminMarketplaceResource[]
+  total: number
+  page: number
+  limit: number
+}
+
+export interface AdminMarketplaceSmartApp {
+  id: number
+  name: string
+  display_name: string
+  summary: string
+  description_md: string
+  tags: string[]
+  icon_url: string
+  publisher_user_name: string | null
+  is_system: boolean
+  featured_rank: number
+  is_listed: boolean
+  needs_metadata: boolean
+}
+
+export interface AdminMarketplaceSmartAppFilters {
+  search?: string
+  listingStatus?: 'all' | 'listed' | 'unlisted'
+  source?: 'all' | 'official' | 'user'
+}
+
+export interface AdminMarketplaceSmartAppUpdate {
+  featured_rank?: number
+  is_listed?: boolean
+}
+
+export interface AdminMarketplaceSmartAppMetadataUpdate {
+  summary: string
+  descriptionMd: string
+  tags: string[]
+  icon?: File | null
+}
+
+export interface AdminMarketplaceSmartAppListResponse {
+  items: AdminMarketplaceSmartApp[]
   total: number
   page: number
   limit: number
@@ -1209,7 +1249,7 @@ export const adminApis = {
   },
 
   async getMarketplaceResources(
-    resourceType: AdminMarketplaceResourceType,
+    resourceType: Exclude<AdminMarketplaceResourceType, 'smart_app'>,
     page: number = 1,
     limit: number = 50
   ): Promise<AdminMarketplaceResourceListResponse> {
@@ -1223,6 +1263,49 @@ export const adminApis = {
     update: AdminMarketplaceResourceUpdate
   ): Promise<AdminMarketplaceResource> {
     return apiClient.put(`/admin/marketplace-resources/${resourceId}`, update)
+  },
+
+  async getMarketplaceSmartApps(
+    page: number = 1,
+    limit: number = 50,
+    filters: AdminMarketplaceSmartAppFilters = {}
+  ): Promise<AdminMarketplaceSmartAppListResponse> {
+    const query = new URLSearchParams({ page: String(page), limit: String(limit) })
+    if (filters.search) query.set('search', filters.search)
+    if (filters.listingStatus && filters.listingStatus !== 'all') {
+      query.set('listing_status', filters.listingStatus)
+    }
+    if (filters.source && filters.source !== 'all') query.set('source', filters.source)
+    return apiClient.get(`/admin/marketplace-smart-apps?${query.toString()}`)
+  },
+
+  async updateMarketplaceSmartApp(
+    smartAppId: number,
+    update: AdminMarketplaceSmartAppUpdate
+  ): Promise<AdminMarketplaceSmartApp> {
+    return apiClient.put(`/admin/marketplace-smart-apps/${smartAppId}`, update)
+  },
+
+  async importOfficialMarketplaceSmartApp(packageFile: File): Promise<AdminMarketplaceSmartApp> {
+    const form = new FormData()
+    form.append('package', packageFile)
+    return apiClient.postForm('/admin/marketplace-smart-apps/import', form)
+  },
+
+  async updateOfficialMarketplaceSmartAppMetadata(
+    smartAppId: number,
+    update: AdminMarketplaceSmartAppMetadataUpdate
+  ): Promise<AdminMarketplaceSmartApp> {
+    const form = new FormData()
+    form.append('summary', update.summary)
+    form.append('description_md', update.descriptionMd)
+    form.append('tags', JSON.stringify(update.tags))
+    if (update.icon) form.append('icon', update.icon)
+    return apiClient.putForm(`/admin/marketplace-smart-apps/${smartAppId}/metadata`, form)
+  },
+
+  async deleteOfficialMarketplaceSmartApp(smartAppId: number): Promise<void> {
+    return apiClient.delete(`/admin/marketplace-smart-apps/${smartAppId}`)
   },
 
   // ==================== Public Bot Management ====================

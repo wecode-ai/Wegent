@@ -14,7 +14,7 @@ import {
 } from 'electron'
 import { stat } from 'node:fs/promises'
 import { cpus, freemem, totalmem } from 'node:os'
-import { join } from 'node:path'
+import { join, resolve } from 'node:path'
 import {
   HOST_CAPABILITIES,
   HostCapabilityError,
@@ -53,6 +53,15 @@ export { captureWebContentsDataUrl } from './web-contents-capture.js'
 
 export const WEWORK_APP_PRINCIPAL = '@wegent/dsh-app-wework'
 
+export function e2eOpenDialogOverride(
+  environment: NodeJS.ProcessEnv = process.env
+): { canceled: false; filePaths: string[] } | null {
+  const controlUrl = environment.WEWORK_E2E_CONTROL_URL?.trim()
+  const selectedPath = environment.WEWORK_E2E_OPEN_DIALOG_PATH?.trim()
+  if (!controlUrl || !selectedPath) return null
+  return { canceled: false, filePaths: [resolve(selectedPath)] }
+}
+
 export interface ElectronDesktopServices {
   appUpdates?: AppUpdateService
   browserAnnotations?: BrowserAnnotationController
@@ -63,6 +72,8 @@ export interface ElectronDesktopServices {
   secureStorage: SecureValueStore
   cleanupStaleTemporaryImages: () => Promise<void>
   coreDshPlugins: () => CoreDshPluginService | null
+  pluginDevelopment: () => PluginDevelopmentService | null
+  takePendingWorkspaceOpenRequests?: () => Array<{ path: string; label?: string }>
   updatePreferences?: (patch: Record<string, unknown>) => Promise<Record<string, unknown>>
 }
 
@@ -102,6 +113,21 @@ export interface CoreDshPluginService {
   updateCoreDshPlugin(name: string): Promise<unknown>
   setCoreDshPluginEnabled(name: string, enabled: boolean): Promise<unknown>
   uninstallCoreDshPlugin(name: string): Promise<unknown>
+}
+
+export interface PluginDevelopmentService {
+  classify(sourceRoot: string): Promise<unknown>
+  deleteData(): Promise<void>
+  focus(): Promise<void>
+  initialize(sourceRoot: string): Promise<unknown>
+  list(): Promise<unknown>
+  observe(sourceRoot: string | null): Promise<unknown>
+  openDevTools(): Promise<void>
+  openLogDirectory(): Promise<void>
+  restartCoreDsh(): Promise<void>
+  start(sourceRoot: string): Promise<unknown>
+  stop(): Promise<void>
+  validate(sourceRoot: string): Promise<unknown>
 }
 
 export interface ElectronE2EHost {
@@ -179,6 +205,7 @@ export function createElectronCapabilityRouter(
     getSystemDragContext: () => ({ conversationTitle: null }),
     runtimeDiagnostics: () => ({
       coreDshPid: null,
+      developmentPlugin: null,
       executorPid: null,
       workbenchRuntimes: [],
     }),
@@ -535,9 +562,10 @@ export function createElectronCapabilityRouter(
     else target.maximize()
   })
   router.register('window.close', () => requiredWindow(window).close())
-  router.register('dialog.open', params =>
-    dialog.showOpenDialog(requiredWindow(window), openDialogOptions(params))
-  )
+  router.register('dialog.open', params => {
+    const override = e2eOpenDialogOverride()
+    return override ?? dialog.showOpenDialog(requiredWindow(window), openDialogOptions(params))
+  })
   router.register('dialog.save', params =>
     dialog.showSaveDialog(requiredWindow(window), saveDialogOptions(params))
   )
@@ -600,6 +628,7 @@ export function createElectronCapabilityRouter(
   registerRendererStorageCapabilities(router, rendererStorage)
   router.register('rendererHealth.getState', () => rendererHealth())
   registerCoreDshPluginCapabilities(router, desktopServices)
+  registerPluginDevelopmentCapabilities(router, desktopServices)
   router.register('runtime.restartCoreDsh', () => {
     e2eHost.scheduleCoreDshRestart()
     return { scheduled: true }
@@ -622,6 +651,10 @@ export function createElectronCapabilityRouter(
     shell.showItemInFolder(stringParam(params, 'path'))
   )
   router.register('workspace.listOpeners', () => listLocalWorkspaceOpeners(app.getPath('userData')))
+  router.register(
+    'workspace.takePendingOpenRequests',
+    () => desktopServices.takePendingWorkspaceOpenRequests?.() ?? []
+  )
   router.register('workspace.open', async params => {
     const opener = stringParam(params, 'opener')
     const path = stringParam(params, 'path')
@@ -947,6 +980,46 @@ export function registerCoreDshPluginCapabilities(
   )
 }
 
+export function registerPluginDevelopmentCapabilities(
+  router: HostCapabilityRouter,
+  services: ElectronDesktopServices
+): void {
+  router.register('pluginDevelopment.classify', params =>
+    requiredPluginDevelopmentService(services).classify(stringParam(params, 'sourceRoot'))
+  )
+  router.register('pluginDevelopment.initialize', params =>
+    requiredPluginDevelopmentService(services).initialize(stringParam(params, 'sourceRoot'))
+  )
+  router.register('pluginDevelopment.list', () => requiredPluginDevelopmentService(services).list())
+  router.register('pluginDevelopment.observe', params =>
+    requiredPluginDevelopmentService(services).observe(
+      optionalStringParam(params, 'sourceRoot') ?? null
+    )
+  )
+  router.register('pluginDevelopment.validate', params =>
+    requiredPluginDevelopmentService(services).validate(stringParam(params, 'sourceRoot'))
+  )
+  router.register('pluginDevelopment.start', params =>
+    requiredPluginDevelopmentService(services).start(stringParam(params, 'sourceRoot'))
+  )
+  router.register('pluginDevelopment.focus', () =>
+    requiredPluginDevelopmentService(services).focus()
+  )
+  router.register('pluginDevelopment.restartCoreDsh', () =>
+    requiredPluginDevelopmentService(services).restartCoreDsh()
+  )
+  router.register('pluginDevelopment.openDevTools', () =>
+    requiredPluginDevelopmentService(services).openDevTools()
+  )
+  router.register('pluginDevelopment.openLogDirectory', () =>
+    requiredPluginDevelopmentService(services).openLogDirectory()
+  )
+  router.register('pluginDevelopment.stop', () => requiredPluginDevelopmentService(services).stop())
+  router.register('pluginDevelopment.deleteData', () =>
+    requiredPluginDevelopmentService(services).deleteData()
+  )
+}
+
 async function mkdirDirectory(path: string): Promise<void> {
   const { mkdir } = await import('node:fs/promises')
   await mkdir(path, { recursive: true })
@@ -1052,6 +1125,19 @@ function requiredCoreDshPluginService(services: ElectronDesktopServices): CoreDs
     throw new HostCapabilityError(
       'capability_unavailable',
       'Core DSH plugin management requires the managed desktop runtime'
+    )
+  }
+  return service
+}
+
+function requiredPluginDevelopmentService(
+  services: ElectronDesktopServices
+): PluginDevelopmentService {
+  const service = services.pluginDevelopment()
+  if (!service) {
+    throw new HostCapabilityError(
+      'capability_unavailable',
+      'Wework plugin development is unavailable in this instance'
     )
   }
   return service

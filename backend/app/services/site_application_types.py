@@ -112,6 +112,7 @@ class SiteApplicationHandler(ApplicationTypeHandler):
         "publish",
         "edit",
         "delete",
+        "configure_environment",
     )
     create_plugin_name = BUILTIN_SITES_PLUGIN_NAME
 
@@ -124,6 +125,13 @@ class SiteApplicationHandler(ApplicationTypeHandler):
         network = normalize_site_network(payload.get("network"))
         version_status = payload.get("version_status")
         project_id = payload.get("id")
+        owner_username = payload.get("owner_username")
+        access_role = payload.get("access_role")
+        if not isinstance(owner_username, str) or access_role not in {
+            "owner",
+            "collaborator",
+        }:
+            raise InvalidApplicationProjectError("site project has invalid membership")
         created_at = payload.get("created_at")
         snapshot = payload.get("snapshot")
         site = {
@@ -131,7 +139,9 @@ class SiteApplicationHandler(ApplicationTypeHandler):
             "siteid": project_id,
             "project_id": project_id,
             "taskid": project_id,
-            "username": username,
+            "username": owner_username,
+            "owner_username": owner_username,
+            "access_role": access_role,
             "name": payload.get("title"),
             "slug": payload.get("slug") or project_id,
             "custom_domain_prefix": payload.get("custom_domain_prefix"),
@@ -173,12 +183,21 @@ class MiniProgramApplicationHandler(ApplicationTypeHandler):
         created_at = payload.get("created_at")
         snapshot = payload.get("snapshot")
         network = normalize_site_network(payload.get("network"))
+        owner_username = payload.get("owner_username")
+        access_role = payload.get("access_role")
+        if not isinstance(owner_username, str) or access_role not in {
+            "owner",
+            "collaborator",
+        }:
+            raise InvalidApplicationProjectError("mini program has invalid membership")
         mini_program = {
             "app_type": self.app_type,
             "siteid": project_id,
             "project_id": project_id,
             "taskid": project_id,
-            "username": username,
+            "username": owner_username,
+            "owner_username": owner_username,
+            "access_role": access_role,
             "name": payload.get("title"),
             "slug": project_id,
             "app_id": payload.get("app_id"),

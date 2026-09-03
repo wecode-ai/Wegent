@@ -72,6 +72,7 @@ import type {
 import { useWorkbenchAttachments } from './useWorkbenchAttachments'
 import { useWorkbenchDeviceUpgrades } from './useWorkbenchDeviceUpgrades'
 import { useWorkbenchModels } from './useWorkbenchModels'
+import { useRuntimeTaskModelSelection } from './useRuntimeTaskModelSelection'
 import { useWorkbenchProjectActions } from './useWorkbenchProjectActions'
 import { useWorkbenchRuntimeMessaging } from './useWorkbenchRuntimeMessaging'
 import { useWorkbenchRuntimeTasks } from './useWorkbenchRuntimeTasks'
@@ -104,6 +105,10 @@ import {
   getNewChatModelSelection,
   getRuntimeTaskChatScopeKey,
 } from './workbenchProviderHelpers'
+import {
+  queueWorkbenchWorkspaceLaunch,
+  type WorkbenchWorkspaceLaunchOptions,
+} from './workspaceLaunchRequest'
 import {
   createRuntimeTaskLifecycleOwnershipView,
   RuntimeTaskLifecycleProvider,
@@ -913,6 +918,16 @@ export function WorkbenchProvider({
         : null,
     [modelSelection.models, modelSelectionConfig, state.currentRuntimeTask]
   )
+  const {
+    resolveRuntimeTaskModelSelection,
+    setRuntimeTaskSelectedModel,
+    setRuntimeTaskSelectedModelAndOptions,
+    setRuntimeTaskSelectedModelOption,
+  } = useRuntimeTaskModelSelection({
+    userId: user.id,
+    runtimeWork: state.runtimeWork,
+    modelStore: modelSelection,
+  })
   const conversationModels = modelSelection.models
   const skillSelection = useWorkbenchSkills({
     api: resolvedServices.skillApi,
@@ -1216,7 +1231,13 @@ export function WorkbenchProvider({
   )
 
   const openStandaloneWorkspace = useCallback(
-    async (deviceId: string, workspacePath: string, label?: string, projectRoots?: string[]) => {
+    async (
+      deviceId: string,
+      workspacePath: string,
+      label?: string,
+      projectRoots?: string[],
+      launchOptions?: WorkbenchWorkspaceLaunchOptions
+    ) => {
       projectSelectionStartedRef.current = true
       const requestDeviceId = deviceId.trim()
       const normalizedWorkspacePath = workspacePath.trim()
@@ -1273,6 +1294,9 @@ export function WorkbenchProvider({
           })
         )
         await refreshWorkLists()
+        if (launchOptions) {
+          queueWorkbenchWorkspaceLaunch(response.deviceId, response.roots[0], launchOptions)
+        }
         dispatch({
           type: 'runtime_workspace_opened',
           deviceId: response.deviceId,
@@ -1303,6 +1327,9 @@ export function WorkbenchProvider({
         requestDeviceId
 
       writeLastProjectId(user.id, null)
+      if (launchOptions) {
+        queueWorkbenchWorkspaceLaunch(openedDeviceId, openedWorkspacePath, launchOptions)
+      }
       dispatch({
         type: 'runtime_workspace_opened',
         deviceId: openedDeviceId,
@@ -2505,6 +2532,10 @@ export function WorkbenchProvider({
       setSelectedModelOption: modelSelection.setSelectedModelOption,
       getSelectedModel: modelSelection.getSelectedModel,
       getSelectedModelOptions: modelSelection.getSelectedModelOptions,
+      resolveRuntimeTaskModelSelection,
+      setRuntimeTaskSelectedModel,
+      setRuntimeTaskSelectedModelAndOptions,
+      setRuntimeTaskSelectedModelOption,
       onBlockedModelSelect: handleBlockedModelSelect,
       setInput: setDraftInput,
       setInputForScope: setDraftInputForScope,
@@ -2565,6 +2596,10 @@ export function WorkbenchProvider({
       modelSelection.setSelectedModelOption,
       modelSelection.getSelectedModel,
       modelSelection.getSelectedModelOptions,
+      resolveRuntimeTaskModelSelection,
+      setRuntimeTaskSelectedModel,
+      setRuntimeTaskSelectedModelAndOptions,
+      setRuntimeTaskSelectedModelOption,
       setDraftInput,
       setDraftInputForScope,
       setComposerError,
@@ -2607,6 +2642,10 @@ export function WorkbenchProvider({
       setSelectedModelOption: modelSelection.setSelectedModelOption,
       getSelectedModel: modelSelection.getSelectedModel,
       getSelectedModelOptions: modelSelection.getSelectedModelOptions,
+      resolveRuntimeTaskModelSelection,
+      setRuntimeTaskSelectedModel,
+      setRuntimeTaskSelectedModelAndOptions,
+      setRuntimeTaskSelectedModelOption,
       onBlockedModelSelect: handleBlockedModelSelect,
       setInput: setDraftInput,
       setInputForScope: setDraftInputForScope,
@@ -2666,6 +2705,10 @@ export function WorkbenchProvider({
       modelSelection.setSelectedModelOption,
       modelSelection.getSelectedModel,
       modelSelection.getSelectedModelOptions,
+      resolveRuntimeTaskModelSelection,
+      setRuntimeTaskSelectedModel,
+      setRuntimeTaskSelectedModelAndOptions,
+      setRuntimeTaskSelectedModelOption,
       setDraftInput,
       setDraftInputForScope,
       setComposerError,

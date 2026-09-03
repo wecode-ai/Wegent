@@ -46,7 +46,7 @@ import {
 } from '@/features/workbench/runtimeThinking'
 import { useTranslation } from '@/hooks/useTranslation'
 import { cn } from '@/lib/utils'
-import type { RuntimeTaskAddress } from '@/types/api'
+import type { ModelSelectionConfig, RuntimeTaskAddress } from '@/types/api'
 import type { ProcessingBlock, WorkbenchMessage } from '@/types/workbench'
 import type { ChangeRequestMonitor } from '@/features/workbench/changeRequestMonitor'
 import { useTaskChangeRequest } from '@/features/workbench/changeRequestMonitor'
@@ -289,9 +289,11 @@ export interface CloudTodoBoardTaskBinding {
   device_id: string
   task_id: string
   task_title: string | null
+  workflow_node_id?: string | null
   running: boolean
   changeRequestTarget?: TaskChangeRequestTarget | null
   finalResponsePreview?: string | null
+  modelSelection?: ModelSelectionConfig | null
 }
 
 interface CloudTodoBoardCardProps {
@@ -680,23 +682,17 @@ function RuntimeTaskProgressSummary({
   onContinueChangeRequestRepair?: () => Promise<void>
 }) {
   const { t } = useTranslation('common')
-  const activityAddress = useMemo<RuntimeTaskAddress | null>(
-    () =>
-      active
-        ? {
-            deviceId: binding.device_id,
-            taskId: binding.task_id,
-          }
-        : null,
-    [active, binding.device_id, binding.task_id]
-  )
   const taskAddress = useMemo<RuntimeTaskAddress>(
     () => ({
       deviceId: binding.device_id,
       taskId: binding.task_id,
+      ...(binding.modelSelection
+        ? { runtimeHandle: { modelSelection: binding.modelSelection } }
+        : {}),
     }),
-    [binding.device_id, binding.task_id]
+    [binding.device_id, binding.modelSelection, binding.task_id]
   )
+  const activityAddress = active ? taskAddress : null
   const activity = useRuntimeTaskActivity(activityAddress)
   const liveMessage = useRuntimeTaskLatestAssistantMessage(taskAddress)
   const cachedFinalResponse = useRuntimeTaskFinalResponse(

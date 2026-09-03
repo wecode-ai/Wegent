@@ -38,24 +38,26 @@ Core DSH 中仍有效的现有默认模型应在目录同步后保留；只有�
 
 ## 扩展点
 
-| Slot                            | 用途                         | 必要元数据                        | 组件 props                    |
-| ------------------------------- | ---------------------------- | --------------------------------- | ----------------------------- |
-| `wework.action`                 | 可由宿主入口调用的导航动作   | `id`、`path`                      | 无组件                        |
-| `wework.app`                    | 产品切换器与应用 surface     | `id`、`label`、`mode`             | `visible`、`tab`              |
-| `wework.task.status`            | 左侧任务行状态               | `id`                              | `task`、`workspace`、布局提示 |
-| `wework.environment.section`    | 环境面板附加区域             | `id`                              | `info`、`onClose`             |
-| `wework.board.card.status`      | 看板任务卡状态               | `id`                              | 看板项、任务绑定与布局提示    |
-| `wework.workspace.menu.section` | 工作区弹出菜单附加区域       | `id`                              | 通用工作区上下文、关闭回调    |
-| `wework.project.work.section`   | 项目工作栏附加区域           | `id`                              | 通用项目上下文                |
-| `wework.project.create.section` | 项目创建菜单附加区域         | `id`                              | 通用项目创建上下文、关闭回调  |
-| `wework.route`                  | 顶层辅助页面                 | `id`、`path`、`telemetryFeature`  | `search`、`onNavigate`        |
-| `wework.sidebar.navigation`     | 左侧边栏导航入口             | `id`、`path`、`label`             | 元数据入口通常无组件          |
-| `wework.settings.page`          | 设置导航与设置内容           | `id`、`path`、`label`、`category` | 设置上下文与 `onBack`         |
-| `wework.workspace.tab`          | 顶部可关闭工作区 Tab         | `id`、`label`                     | `visible`、`tab`              |
-| `wework.workspace.sidebar.tab`  | 右侧工作区面板 Tab 类型      | `id`、`label`                     | `visible`、`scope`、`tab`     |
-| `wework.shell.before`           | 工作台根节点之前             | `id`                              | 空对象                        |
-| `wework.shell.after`            | 工作台根节点之后             | `id`                              | 空对象                        |
-| `wework.shell.overlay`          | 全局浮层，容器不接收指针事件 | `id`                              | 空对象                        |
+| Slot                                      | 用途                         | 必要元数据                        | 组件 props                    |
+| ----------------------------------------- | ---------------------------- | --------------------------------- | ----------------------------- |
+| `wework.action`                           | 可由宿主入口调用的导航动作   | `id`、`path`                      | 无组件                        |
+| `wework.app`                              | 产品切换器与应用 surface     | `id`、`label`、`mode`             | `visible`、`tab`              |
+| `wework.plugins.action`                   | 插件页操作                   | `id`、`label`                     | 宿主提供的操作回调            |
+| `wework.task.status`                      | 左侧任务行状态               | `id`                              | `task`、`workspace`、布局提示 |
+| `wework.environment.section`              | 环境面板附加区域             | `id`                              | `info`、`onClose`             |
+| `wework.board.card.status`                | 看板任务卡状态               | `id`                              | 看板项、任务绑定与布局提示    |
+| `wework.workspace.menu.section`           | 工作区弹出菜单附加区域       | `id`                              | 通用工作区上下文、关闭回调    |
+| `wework.project.work.section`             | 项目工作栏附加区域           | `id`                              | 通用项目上下文                |
+| `wework.project.create.section`           | 项目创建菜单附加区域         | `id`                              | 通用项目创建上下文、关闭回调  |
+| `wework.runtime-profile.workspace-policy` | 运行时工作区策略选项         | `id`、`label`                     | 无组件                        |
+| `wework.route`                            | 顶层辅助页面                 | `id`、`path`、`telemetryFeature`  | `search`、`onNavigate`        |
+| `wework.sidebar.navigation`               | 左侧边栏导航入口             | `id`、`path`、`label`             | 元数据入口通常无组件          |
+| `wework.settings.page`                    | 设置导航与设置内容           | `id`、`path`、`label`、`category` | 设置上下文与 `onBack`         |
+| `wework.workspace.tab`                    | 顶部可关闭工作区 Tab         | `id`、`label`                     | `visible`、`tab`              |
+| `wework.workspace.sidebar.tab`            | 右侧工作区面板 Tab 类型      | `id`、`label`                     | `visible`、`scope`、`tab`     |
+| `wework.shell.before`                     | 工作台根节点之前             | `id`                              | 空对象                        |
+| `wework.shell.after`                      | 工作台根节点之后             | `id`                              | 空对象                        |
+| `wework.shell.overlay`                    | 全局浮层，容器不接收指针事件 | `id`                              | 空对象                        |
 
 `wework.app` 的 `mode` 可以是：
 
@@ -133,17 +135,18 @@ Wework 描述直接塞进 DSH options。DSH 会在宿主 slot 挂载、卸载或
 
 ## 可运行插件 Demo
 
-仓库中的
-[`wework/dsh/examples/ui-extension-demo`](https://github.com/wecode-ai/Wegent/tree/main/wework/dsh/examples/ui-extension-demo)
+“Wework 插件开发”Skill 携带的
+[`assets/ui-extension-demo`](https://github.com/wecode-ai/Wegent/tree/main/wework/dsh/plugin-developer/codex-plugin/skills/develop-wework-plugin/assets/ui-extension-demo)
 是一个不依赖 Wework 私有 React 模块的完整第三方插件。它包含标准
 `package.json`、`cordis.patch.yml`、host 入口、client 入口和 Node 回归测试，并
-覆盖上表全部 slot。
+覆盖上表全部 slot。模型可以直接检查这份真实代码，并将其复制到可写项目目录后
+按需裁剪。
 
 开发环境中可以在“插件 → 管理 → Wework 插件”安装 Demo 目录的绝对路径，或者
 使用：
 
 ```text
-file:/absolute/path/to/Wegent/wework/dsh/examples/ui-extension-demo
+file:/absolute/path/to/copied/ui-extension-demo
 ```
 
 安装、更新、启停或卸载会修改受管的 `wework-core` profile；配置变更后需要重启

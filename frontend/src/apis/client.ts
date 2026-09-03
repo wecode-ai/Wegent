@@ -198,6 +198,13 @@ class APIClient {
     )
   }
 
+  async putForm<T>(endpoint: string, data: FormData): Promise<T> {
+    return this.request<T>(endpoint, {
+      method: 'PUT',
+      body: data,
+    })
+  }
+
   async patch<T>(endpoint: string, data?: unknown, requestOptions?: RequestOptions): Promise<T> {
     return this.request<T>(
       endpoint,

@@ -40,7 +40,7 @@ vi.mock('@/lib/embedded-browser', () => ({
 }))
 
 describe('MessageList', () => {
-  test('renders complete user and assistant message regions with medium weight', () => {
+  test('lets complete user and assistant message regions inherit the UI weight', () => {
     render(
       <MessageList
         messages={[
@@ -62,8 +62,8 @@ describe('MessageList', () => {
       />
     )
 
-    expect(screen.getByTestId('message-user')).toHaveClass('font-medium')
-    expect(screen.getByTestId('message-assistant')).toHaveClass('font-medium')
+    expect(screen.getByTestId('message-user')).not.toHaveClass('font-medium')
+    expect(screen.getByTestId('message-assistant')).not.toHaveClass('font-medium')
     expect(screen.getByTestId('user-message-content')).not.toHaveClass('font-medium')
     expect(screen.getByTestId('assistant-message-content')).not.toHaveClass('font-medium')
   })
@@ -1474,16 +1474,9 @@ describe('MessageList', () => {
     const shimmer = screen.getByText('正在搜索代码')
     expect(shimmer).toHaveClass('tool-activity-shimmer')
     const shimmerBands = shimmer.querySelectorAll('.activity-shimmer-band')
-    expect(shimmerBands).toHaveLength(6)
-    expect(Array.from(shimmerBands, band => band.getAttribute('data-grapheme'))).toEqual([
-      '正',
-      '在',
-      '搜',
-      '索',
-      '代',
-      '码',
-    ])
-    expect(shimmer.querySelector('[data-text]')).not.toBeInTheDocument()
+    expect(shimmerBands).toHaveLength(1)
+    expect(shimmerBands[0]).toHaveAttribute('data-text', '正在搜索代码')
+    expect(shimmer.querySelector('[data-grapheme]')).not.toBeInTheDocument()
     expect(screen.queryByTestId('thinking-indicator')).not.toBeInTheDocument()
   })
 
@@ -2222,7 +2215,9 @@ describe('MessageList', () => {
     expect(processContent).toHaveClass('text-text-primary')
     expect(processContent).not.toHaveClass('text-text-secondary')
     expect(processContent).not.toHaveClass('text-sm')
-    expect(processContent.closest('[data-testid="message-assistant"]')).toHaveClass('font-medium')
+    expect(processContent.closest('[data-testid="message-assistant"]')).not.toHaveClass(
+      'font-medium'
+    )
   })
 
   test('does not restore hidden failed content from runtime display order', () => {

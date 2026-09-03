@@ -18,7 +18,10 @@ from fastapi.responses import Response
 from sqlalchemy.orm import Session
 
 from app.api.dependencies import get_db
-from app.core.security import get_current_user, get_current_user_flexible_for_executor
+from app.core.security import (
+    get_current_user,
+    get_current_user_jwt_apikey_tasktoken,
+)
 from app.models.delivery import LoopItem
 from app.models.user import User
 from app.schemas.cloud_file import (
@@ -80,9 +83,9 @@ def _project_response(
 def create_cloud_project(
     values: CloudProjectCreate,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user_flexible_for_executor),
+    current_user: User = Depends(get_current_user_jwt_apikey_tasktoken),
 ) -> CloudProjectResponse:
-    """Create a cloud board using a user JWT or personal API key."""
+    """Create a cloud board using a user JWT, personal API key, or task token."""
 
     project = cloud_project_service.create(db, current_user.id, values)
     return _project_response(db, project, current_user)
@@ -91,7 +94,7 @@ def create_cloud_project(
 @router.get("", response_model=CloudProjectListResponse)
 def list_cloud_projects(
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(get_current_user_jwt_apikey_tasktoken),
 ) -> CloudProjectListResponse:
     projects = cloud_project_service.list_accessible(db, current_user.id)
     return CloudProjectListResponse(
@@ -114,7 +117,7 @@ def update_cloud_project(
     project_id: int,
     values: CloudProjectUpdate,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(get_current_user_jwt_apikey_tasktoken),
 ) -> CloudProjectResponse:
     project = cloud_project_service.update(db, project_id, current_user.id, values)
     return _project_response(db, project, current_user)
@@ -124,7 +127,7 @@ def update_cloud_project(
 def list_project_chat_agents(
     project_id: int,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(get_current_user_jwt_apikey_tasktoken),
 ) -> list[ProjectChatAgentView]:
     return project_chat_service.list_agents(
         db, user_id=current_user.id, project_id=str(project_id)
@@ -345,7 +348,7 @@ def archive_cloud_project(
 def list_cloud_project_members(
     project_id: int,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(get_current_user_jwt_apikey_tasktoken),
 ) -> list[CloudProjectMemberResponse]:
     members = cloud_project_service.list_members(db, project_id, current_user.id)
     return [CloudProjectMemberResponse.model_validate(member) for member in members]
@@ -401,7 +404,7 @@ def list_cloud_files(
     project_id: int,
     prefix: str | None = Query(default=None),
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(get_current_user_jwt_apikey_tasktoken),
 ) -> CloudFileListResponse:
     files = cloud_file_service.list(db, project_id, current_user.id, prefix)
     return CloudFileListResponse(
@@ -487,7 +490,7 @@ def upload_cloud_file(
 def access_cloud_file(
     file_id: int,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(get_current_user_jwt_apikey_tasktoken),
 ) -> CloudFileAccessResponse:
     return CloudFileAccessResponse(
         url=cloud_file_service.access_url(db, file_id, current_user.id)
