@@ -156,7 +156,7 @@ Wework 将 executor 高频到达的文本增量与 Markdown 展示节奏分离�
 
 状态旋转图标和文字扫光属于常驻动画：即使页面没有输入或流式消息，它们也可能持续驱动 Web Content 进程。实现这类效果时，应保持每帧只更新可合成的 `transform` 或 `opacity`，避免动画化 `background-position`、`mask-position` 等需要重新绘制的属性，也不要直接旋转带有复杂描边的 SVG。
 
-旋转图标应把静态 SVG 放在固定尺寸的 HTML 包装层中，由包装层执行 `transform` 动画并声明 `will-change: transform`。文字扫光应使用固定位置的高亮层，通过分段且错峰的 `opacity` 动画形成从左到右的扫光；基础文字始终正常渲染。两类实现都必须保留 `prefers-reduced-motion` 行为。
+旋转图标应把静态 SVG 放在固定尺寸的 HTML 包装层中，由包装层执行 `transform` 动画并声明 `will-change: transform`。文字扫光应始终正常渲染基础文字，并使用固定宽度的裁剪窗口扫过单个高亮文字副本；窗口与副本通过方向相反、时间一致的 `transform` 保持文字位置不变。不得按字素拆分常驻动画，因为动画节点和 `animationiteration` 事件会随文字长度线性增长。用于柔化扫光边缘的渐变蒙版必须保持静态，不能动画化蒙版位置。两类实现都必须保留 `prefers-reduced-motion` 行为。
 
 不能仅凭 CSS 属性名称判断动画是否进入合成线程。`will-change` 只是提示，`clip-path` 等看似可合成的属性在实际 Electron 版本中仍可能每帧触发主线程工作。修改常驻动画后，应在同一 Electron 版本、相同元素数量和相同窗口状态下分别录制至少 10 秒的旧实现与新实现，并验证：
 

@@ -630,7 +630,7 @@ async function openWorkspaceWindow(input: {
     width: 1280,
     height: 800,
     title: input.title,
-    backgroundColor: '#101316',
+    backgroundColor: '#181818',
     show: false,
     webPreferences: {
       backgroundThrottling: false,
@@ -857,7 +857,7 @@ async function createWindow(startupTheme: StartupSplashTheme): Promise<void> {
     width: 1440,
     height: 960,
     title: windowTitle,
-    backgroundColor: startupTheme === 'dark' ? '#101316' : '#fafafa',
+    backgroundColor: startupTheme === 'dark' ? '#181818' : '#fafafa',
     show: false,
     webPreferences: {
       backgroundThrottling: false,
@@ -873,7 +873,7 @@ async function createWindow(startupTheme: StartupSplashTheme): Promise<void> {
     width: 1440,
     height: 960,
     title: windowTitle,
-    backgroundColor: startupTheme === 'dark' ? '#101316' : '#fafafa',
+    backgroundColor: startupTheme === 'dark' ? '#181818' : '#fafafa',
     show: false,
     webPreferences: {
       preload: startupSplashPreloadPath,

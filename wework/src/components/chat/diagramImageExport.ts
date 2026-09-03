@@ -90,7 +90,7 @@ export async function renderDiagramPng(
   if (!context) throw new Error('Canvas is unavailable')
 
   context.scale(scale, scale)
-  context.fillStyle = theme === 'dark' ? '#111316' : '#ffffff'
+  context.fillStyle = theme === 'dark' ? '#181818' : '#ffffff'
   context.fillRect(0, 0, width, height)
   context.drawImage(image, 0, 0, width, height)
   return await canvasToPng(canvas)
