@@ -425,6 +425,9 @@ class DesktopE2EServer {
     this.failedCloudModelWaiter = null
     this.sitesPluginInstalled = false
     this.sitesPluginDeviceId = null
+    this.siteEnvironmentRevision = 0
+    this.siteEnvironmentVariables = []
+    this.siteCollaborators = []
     this.miniProgramPluginInstalled = false
     this.miniProgramPluginDeviceId = null
     this.sitesConnectionBootstrapRequests = 0
@@ -1263,7 +1266,7 @@ class DesktopE2EServer {
             app_type: 'web',
             enabled: true,
             order: 10,
-            capabilities: ['create', 'publish', 'edit', 'delete'],
+            capabilities: ['create', 'publish', 'edit', 'delete', 'configure_environment'],
             create: {
               plugin_name: 'wegent-sites',
               marketplace_name: 'wegent',
@@ -1295,6 +1298,8 @@ class DesktopE2EServer {
                 siteid: 'prj_e2e_mini',
                 taskid: 'prj_e2e_mini',
                 username: 'wework-desktop-e2e-cloud-user',
+                owner_username: 'wework-desktop-e2e-cloud-user',
+                access_role: 'owner',
                 name: 'E2E Mini Program',
                 slug: 'prj_e2e_mini',
                 app_id: 'wx-e2e-mini',
@@ -1312,6 +1317,8 @@ class DesktopE2EServer {
                 siteid: 'prj_e2e_product',
                 taskid: 'prj_e2e_product',
                 username: 'wework-desktop-e2e-cloud-user',
+                owner_username: 'wework-desktop-e2e-cloud-user',
+                access_role: 'owner',
                 name: 'E2E Product Site',
                 slug: 'prj_e2e_product',
                 internal_url: 'https://sites.internal/e2e-product',
@@ -1333,6 +1340,106 @@ class DesktopE2EServer {
         offset: Number.parseInt(url.searchParams.get('offset') || '0', 10),
         limit: Number.parseInt(url.searchParams.get('limit') || '20', 10),
       })
+      return
+    }
+
+    if (
+      url.pathname === '/api/sites/prj_e2e_product/environment-variables' &&
+      request.method === 'GET'
+    ) {
+      json(response, 200, {
+        revision_id:
+          this.siteEnvironmentRevision > 0 ? `env_e2e_${this.siteEnvironmentRevision}` : null,
+        project_id: 'prj_e2e_product',
+        revision_number: this.siteEnvironmentRevision,
+        items: this.siteEnvironmentVariables,
+      })
+      return
+    }
+    if (
+      url.pathname === '/api/sites/prj_e2e_product/environment-variables' &&
+      request.method === 'PATCH'
+    ) {
+      assert.ok(
+        typeof request.headers['idempotency-key'] === 'string' &&
+          request.headers['idempotency-key'].length > 0,
+        'Updating Site environment variables did not include an Idempotency-Key'
+      )
+      const body = await readRequestBody(request)
+      assert.ok(Array.isArray(body.operations))
+      for (const operation of body.operations) {
+        if (operation.op === 'remove') {
+          this.siteEnvironmentVariables = this.siteEnvironmentVariables.filter(
+            item => item.key !== operation.key
+          )
+          continue
+        }
+        assert.equal(operation.op, 'upsert')
+        const item =
+          operation.type === 'secret'
+            ? {
+                key: operation.key,
+                type: 'secret',
+                configured: true,
+                updated_by: 'wework-desktop-e2e-cloud-user',
+                updated_at: '2026-09-03T00:00:00Z',
+              }
+            : {
+                key: operation.key,
+                type: 'plain',
+                value: operation.value,
+                updated_by: 'wework-desktop-e2e-cloud-user',
+                updated_at: '2026-09-03T00:00:00Z',
+              }
+        this.siteEnvironmentVariables = [
+          ...this.siteEnvironmentVariables.filter(existing => existing.key !== operation.key),
+          item,
+        ]
+      }
+      this.siteEnvironmentRevision += 1
+      json(response, 201, {
+        id: `env_e2e_${this.siteEnvironmentRevision}`,
+        project_id: 'prj_e2e_product',
+        revision_number: this.siteEnvironmentRevision,
+        variables: this.siteEnvironmentVariables,
+        created_by: 'wework-desktop-e2e-cloud-user',
+        created_at: '2026-09-03T00:00:00Z',
+      })
+      return
+    }
+
+    const siteCollaboratorsMatch = url.pathname.match(
+      /^\/api\/sites\/prj_e2e_product\/collaborators(?:\/([^/]+))?$/
+    )
+    if (siteCollaboratorsMatch && request.method === 'GET' && !siteCollaboratorsMatch[1]) {
+      json(response, 200, { items: this.siteCollaborators })
+      return
+    }
+    if (siteCollaboratorsMatch && request.method === 'POST' && !siteCollaboratorsMatch[1]) {
+      assert.ok(
+        typeof request.headers['idempotency-key'] === 'string' &&
+          request.headers['idempotency-key'].length > 0,
+        'Adding a Site collaborator did not include an Idempotency-Key'
+      )
+      const body = await readRequestBody(request)
+      assert.equal(typeof body.subject, 'string')
+      const collaborator = {
+        subject: body.subject,
+        added_by: 'wework-desktop-e2e-cloud-user',
+        created_at: '2026-09-03T00:00:00Z',
+      }
+      this.siteCollaborators = [
+        ...this.siteCollaborators.filter(item => item.subject !== collaborator.subject),
+        collaborator,
+      ]
+      json(response, 201, collaborator)
+      return
+    }
+    if (siteCollaboratorsMatch && request.method === 'DELETE' && siteCollaboratorsMatch[1]) {
+      const subject = decodeURIComponent(siteCollaboratorsMatch[1])
+      this.siteCollaborators = this.siteCollaborators.filter(item => item.subject !== subject)
+      response.writeHead(204)
+      response.end()
       return
     }
 

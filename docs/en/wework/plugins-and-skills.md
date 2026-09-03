@@ -122,6 +122,10 @@ The Wegent cloud marketplace publishes `wegent-sites` and `weibo-miniapp-h5-deve
 
 Built-in application plugins use `visibility=workspace`, so Sites use `plugin://wegent-sites@wegent`; Mini Programs use `plugin://weibo-miniapp-h5-develop-agent@wegent`, which also supplies its plugin-provided creation prompt. The Applications page shows an installation notice while that preparation is running. Repeated clicks reuse the plugin already installed on the current device instead of creating duplicate installation records or sending another install request.
 
+The Sites list contains both Sites you own and Sites where you are a collaborator. A Site owner can use **… → Manage collaborators** to add or remove collaborators by username. Collaborators can continue development, edit, publish, delete, and configure environment variables, but cannot manage collaborators. **Continue developing** makes sure `wegent-sites` is installed on the selected device and inserts both the plugin reference and Site reference into a fresh task composer so the AI receives the Site workflow and target-project context together.
+
+Use **… → Environment variables** on a Site row to add, change, or remove `Plain` and `Secret` variables as one update. Secret values are never returned by the server; leave an already configured Secret empty to keep its value unchanged. A saved revision takes effect on the next deployment. Static Sites inject variables into the browser bundle, so their Secret values are visible to Site visitors and are suitable only for internal audiences.
+
 Wegent marketplace publication and upload accept packages containing either `.codex-plugin/plugin.json` or `.claude-plugin/plugin.json`. Backend adds the missing runtime manifest before storing the package, so every installed plugin is synchronized into both the Codex and Claude Code plugin directories on each device.
 
 Local mode must be connected to Wegent cloud first. Click a plugin badge in the composer to open its matching detail page in the Wegent cloud marketplace.
