@@ -1,9 +1,11 @@
 import { fireEvent, render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { describe, expect, it, vi } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 import '@/i18n'
 import type { TaskChangeRequestSnapshot } from '@/api/changeRequests'
 import type { CloudLoopItem } from '@/api/deliveries'
+import { WEWORK_DSH_SLOTS } from '@/features/dsh-runtime/dshUiSlots'
+import { installDshUiTestContributions } from '@/test/setup'
 import { CloudTodoBoardCard } from './CloudTodoBoardCard'
 
 const changeRequestMonitorMocks = vi.hoisted(() => ({
@@ -81,6 +83,23 @@ const snapshot: TaskChangeRequestSnapshot = {
 }
 
 describe('CloudTodoBoardCard', () => {
+  beforeEach(async () => {
+    await installDshUiTestContributions(
+      {
+        [WEWORK_DSH_SLOTS.boardCardStatus]: [
+          {
+            id: 'git-change-request',
+            module: 'plugins/wework-ui-git-board-card-status.js',
+          },
+        ],
+      },
+      {
+        'plugins/wework-ui-git-board-card-status.js': () =>
+          import('../../../dsh/ui-git/src/board-card-status'),
+      }
+    )
+  })
+
   it('opens execution configuration from the blocking card action', async () => {
     changeRequestMonitorMocks.useTaskChangeRequest.mockReturnValue(null)
     const onClick = vi.fn()

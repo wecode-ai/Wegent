@@ -35,6 +35,7 @@ import type { TaskChangeRequestSnapshot } from '@/api/changeRequests'
 import * as changeRequestMonitor from '@/features/workbench/changeRequestMonitor'
 import { WEWORK_DSH_SLOTS } from '@/features/dsh-runtime/dshUiSlots'
 import { preloadDefaultDshUiTestModules } from '@/test/setup'
+import { installGitUiTestContributions } from '../../../dsh/ui-git/test-support'
 
 const experimentalFeatures = vi.hoisted(() => ({ enabled: true }))
 
@@ -208,6 +209,7 @@ await preloadDefaultDshUiTestModules()
 describe('DesktopSidebar', () => {
   beforeEach(async () => {
     await preloadDefaultDshUiTestModules()
+    await installGitUiTestContributions()
     experimentalFeatures.enabled = true
     window.history.replaceState({}, '', '/')
     localStorage.clear()

@@ -20,8 +20,9 @@ import {
 } from 'react'
 import type { CloudLoopItem } from '@/api/deliveries'
 import type { TaskChangeRequestSnapshot, TaskChangeRequestTarget } from '@/api/changeRequests'
+import { DshContributionSlotSurface } from '@/features/dsh-runtime/DshContributionSlotSurface'
+import { WEWORK_DSH_SLOTS } from '@/features/dsh-runtime/dshUiSlots'
 import { ActivityShimmerText } from '@/components/chat/ActivityShimmerText'
-import { ChangeRequestStatusIcon } from '@/components/common/ChangeRequestStatusIcon'
 import { AssistantThinkingIndicator } from '@/components/chat/AssistantThinkingIndicator'
 import { ToolBlocksDisplay } from '@/components/chat/blocks/ToolBlocksDisplay'
 import { TemporaryChatPanel } from '@/components/layout/workspace-panels/TemporaryChatPanel'
@@ -715,29 +716,21 @@ function RuntimeTaskProgressSummary({
       data-testid={`cloud-todo-card-task-summary-${item.id}-${binding.id}`}
       className={cn('min-w-0 text-left', compact && 'relative rounded-md px-1 py-0.5')}
     >
-      {showCompactChangeRequest ? (
-        <ChangeRequestStatusIcon
-          snapshot={changeRequestSnapshot}
-          testId={`cloud-todo-card-change-request-${item.id}-${binding.id}`}
-          className="absolute right-0 top-0 z-10"
-          popoverAlign="left"
-          repairing={repairingChangeRequest}
-          onContinueRepair={onContinueChangeRequestRepair}
-        />
-      ) : null}
+      <DshContributionSlotSurface
+        attachedClassName="contents"
+        props={{
+          binding,
+          compact,
+          itemId: item.id,
+          onContinueRepair: onContinueChangeRequestRepair,
+          repairing: repairingChangeRequest,
+          snapshot: changeRequestSnapshot,
+        }}
+        slot={WEWORK_DSH_SLOTS.boardCardStatus}
+      />
       {!compact ? (
         <div className="flex min-w-0 items-center gap-2 text-xs text-text-secondary">
-          {changeRequestSnapshot?.changeRequest ? (
-            <ChangeRequestStatusIcon
-              snapshot={changeRequestSnapshot}
-              testId={`cloud-todo-card-change-request-${item.id}-${binding.id}`}
-              popoverAlign="left"
-              repairing={repairingChangeRequest}
-              onContinueRepair={onContinueChangeRequestRepair}
-            />
-          ) : (
-            <ListTodo className="h-3.5 w-3.5" />
-          )}
+          {!changeRequestSnapshot?.changeRequest ? <ListTodo className="h-3.5 w-3.5" /> : null}
           <span
             data-testid={`cloud-todo-card-task-${item.id}-${binding.id}`}
             className="min-w-0 flex-1 truncate"

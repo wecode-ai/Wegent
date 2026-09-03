@@ -568,6 +568,12 @@ async def lifespan(app: FastAPI):
         await shutdown_pending_request_registry()
         logger.info("✓ PendingRequestRegistry shutdown completed")
 
+        from app.services.loop_items.external_provider import (
+            external_loop_item_provider,
+        )
+
+        external_loop_item_provider.close()
+
         # Step 7: Stop device heartbeat monitor
         from app.services.device_monitor import stop_device_monitor_async
 

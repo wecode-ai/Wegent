@@ -47,6 +47,7 @@ import { configuredWorkspacePath, executionDeviceId } from '@/lib/project-worksp
 import { setActiveKeybindings } from '@/lib/keybindings'
 import { queueSmartAppDevelopmentPreview } from '@/features/harness-apps/smartAppDevelopmentPreview'
 import { preloadDefaultDshUiTestModules } from '@/test/setup'
+import { installGitUiTestContributions } from '../../../dsh/ui-git/test-support'
 import type { ProjectWithTasks, RuntimeTaskAddress, RuntimeWorkListResponse } from '@/types/api'
 import type { EnvironmentInfo } from '@/types/environment'
 import type { RuntimeSubagentStatus, WorkbenchMessage } from '@/types/workbench'
@@ -664,6 +665,7 @@ describe('DesktopWorkbenchLayout', () => {
 
   beforeEach(async () => {
     await preloadDefaultDshUiTestModules()
+    await installGitUiTestContributions()
     experimentalFeatures.enabled = true
     runtimeMocks.electron = false
     vi.clearAllMocks()
@@ -8775,10 +8777,18 @@ describe('DesktopWorkbenchLayout', () => {
     )
 
     await user.click(await screen.findByText('first.ts'))
-    await waitFor(() => expect(getWorkspaceCodeViewText()).toContain('first'))
+    await waitFor(() =>
+      expect(screen.getByTestId('workspace-file-preview-code-view')).toHaveAttribute(
+        'data-file-path',
+        '/workspace/project/first.ts'
+      )
+    )
     await user.click(screen.getByText('second.ts'))
 
-    expect(getWorkspaceCodeViewText()).toContain('first')
+    expect(screen.getByTestId('workspace-file-preview-code-view')).toHaveAttribute(
+      'data-file-path',
+      '/workspace/project/first.ts'
+    )
     expect(screen.getByTestId('workspace-file-preview-loading-indicator')).toBeInTheDocument()
     expect(screen.queryByTestId('workspace-file-preview-progress')).not.toBeInTheDocument()
 
@@ -8794,7 +8804,12 @@ describe('DesktopWorkbenchLayout', () => {
       })
     })
 
-    await waitFor(() => expect(getWorkspaceCodeViewText()).toContain('second'))
+    await waitFor(() =>
+      expect(screen.getByTestId('workspace-file-preview-code-view')).toHaveAttribute(
+        'data-file-path',
+        '/workspace/project/second.ts'
+      )
+    )
     expect(screen.queryByTestId('workspace-file-preview-loading-indicator')).not.toBeInTheDocument()
   })
 
@@ -9875,6 +9890,7 @@ describe('DesktopWorkbenchLayout', () => {
           taskId: 'runtime-1',
         },
         {
+          changeRequestStatusEnabled: true,
           onPartialInfo: expect.any(Function),
         }
       )
@@ -9972,6 +9988,7 @@ describe('DesktopWorkbenchLayout', () => {
         runtimeProject,
         expect.objectContaining({ path: '/workspace/worktrees/8/project-alpha' }),
         {
+          changeRequestStatusEnabled: true,
           force: true,
           onPartialInfo: expect.any(Function),
         }
@@ -10097,6 +10114,7 @@ describe('DesktopWorkbenchLayout', () => {
           source: 'project',
         },
         {
+          changeRequestStatusEnabled: true,
           onPartialInfo: expect.any(Function),
         }
       )
@@ -10189,6 +10207,7 @@ describe('DesktopWorkbenchLayout', () => {
           source: 'project',
         },
         {
+          changeRequestStatusEnabled: true,
           onPartialInfo: expect.any(Function),
         }
       )

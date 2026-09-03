@@ -539,6 +539,49 @@ async fn app_ipc_initializes_a_blank_codex_home() {
 }
 
 #[tokio::test]
+async fn app_ipc_reads_and_updates_codex_local_config() {
+    let _lock = env_lock().await;
+    let root = tempfile::tempdir().unwrap();
+    let codex_home = root.path().join("codex");
+    fs::create_dir_all(&codex_home).unwrap();
+    fs::write(
+        codex_home.join("config.toml"),
+        "model = \"gpt-5\"\n\n[features]\napps = false\n",
+    )
+    .unwrap();
+    let _codex_home = EnvGuard::set("WEGENT_CODEX_HOME", &codex_home.display().to_string());
+    let server = AppIpcServer::new();
+
+    let current = server
+        .dispatch("executor.codex_home.config.read", json!({}))
+        .await
+        .unwrap();
+    assert_eq!(current["codexHome"], codex_home.display().to_string());
+    assert_eq!(
+        current["configPath"],
+        codex_home.join("config.toml").display().to_string()
+    );
+    assert_eq!(current["remoteAppsEnabled"], false);
+
+    let updated = server
+        .dispatch(
+            "executor.codex_home.config.update",
+            json!({"patch": {"remoteAppsEnabled": true}}),
+        )
+        .await
+        .unwrap();
+    assert_eq!(updated["remoteAppsEnabled"], true);
+    let current = server
+        .dispatch("executor.codex_home.config.read", json!({}))
+        .await
+        .unwrap();
+    assert_eq!(current["remoteAppsEnabled"], true);
+    let config = fs::read_to_string(codex_home.join("config.toml")).unwrap();
+    assert!(config.contains("model = \"gpt-5\""));
+    assert!(config.contains("[features]\napps = true"));
+}
+
+#[tokio::test]
 async fn app_ipc_imports_external_codex_content() {
     let _lock = env_lock().await;
     let root = tempfile::tempdir().unwrap();
@@ -1593,8 +1636,13 @@ async fn app_ipc_resolves_review_and_git_device_commands() {
 
     assert_eq!(git_response["ok"], true);
     assert_eq!(
-        seen_request.lock().unwrap().as_ref().unwrap().argv[0],
-        "bash"
+        seen_request
+            .lock()
+            .unwrap()
+            .as_ref()
+            .map(|request| request.argv[0].clone()),
+        None,
+        "git_diff must run through the native handler instead of a shell"
     );
 
     let worktree_response = server
@@ -1614,12 +1662,10 @@ async fn app_ipc_resolves_review_and_git_device_commands() {
         .unwrap();
 
     assert_eq!(worktree_response["ok"], true);
-    let request = seen_request.lock().unwrap().clone().unwrap();
-    assert_eq!(request.argv[0], "sh");
-    assert_eq!(request.argv[3], "--");
-    assert_eq!(request.argv[4], "/tmp/project");
-    assert_eq!(request.argv[5], "/tmp/worktrees/1/project");
-    assert_eq!(request.argv.len(), 6);
+    assert!(
+        seen_request.lock().unwrap().is_none(),
+        "git_worktree_add must run through the native handler instead of a shell"
+    );
 
     let selected_branch_worktree_response = server
         .handle_line(
@@ -1638,12 +1684,10 @@ async fn app_ipc_resolves_review_and_git_device_commands() {
         .unwrap();
 
     assert_eq!(selected_branch_worktree_response["ok"], true);
-    let request = seen_request.lock().unwrap().clone().unwrap();
-    assert_eq!(request.argv[0], "sh");
-    assert_eq!(request.argv[3], "--");
-    assert_eq!(request.argv[4], "/tmp/project");
-    assert_eq!(request.argv[5], "/tmp/worktrees/2/project");
-    assert_eq!(request.argv[6], "main");
+    assert!(
+        seen_request.lock().unwrap().is_none(),
+        "git_worktree_add with a branch must run through the native handler"
+    );
 
     let remove_worktree_response = server
         .handle_line(
@@ -1662,12 +1706,10 @@ async fn app_ipc_resolves_review_and_git_device_commands() {
         .unwrap();
 
     assert_eq!(remove_worktree_response["ok"], true);
-    let request = seen_request.lock().unwrap().clone().unwrap();
-    assert_eq!(request.argv[0], "sh");
-    assert_eq!(request.argv[3], "--");
-    assert_eq!(request.argv[4], "/tmp/worktrees/2/project");
-    assert_eq!(request.argv[5], "/tmp/worktrees/2/project");
-    assert_eq!(request.argv.len(), 6);
+    assert!(
+        seen_request.lock().unwrap().is_none(),
+        "git_worktree_remove must run through the native handler instead of a shell"
+    );
 
     let review_response = server
         .handle_line(
@@ -1687,11 +1729,10 @@ async fn app_ipc_resolves_review_and_git_device_commands() {
         .unwrap();
 
     assert_eq!(review_response["ok"], true);
-    let request = seen_request.lock().unwrap().clone().unwrap();
-    assert_eq!(request.argv[0], "python3");
-    assert_eq!(request.argv[3], "review");
-    assert_eq!(request.argv[4], "turn-file-changes/0/1");
-    let review_request = request;
+    assert!(
+        seen_request.lock().unwrap().is_none(),
+        "turn_file_changes_review must run through the native handler"
+    );
 
     let commit_message_response = server
         .handle_line(
@@ -1717,7 +1758,7 @@ async fn app_ipc_resolves_review_and_git_device_commands() {
     );
     assert_eq!(
         seen_request.lock().unwrap().as_ref(),
-        Some(&review_request),
+        None,
         "native commit message generation must not dispatch through the generic command handler"
     );
     let push_response = server
@@ -1737,12 +1778,9 @@ async fn app_ipc_resolves_review_and_git_device_commands() {
         .unwrap();
 
     assert_eq!(push_response["ok"], true);
-    let request = seen_request.lock().unwrap().clone().unwrap();
-    assert_eq!(request.argv[0], "sh");
-    assert!(!request.argv[2].contains("@{u}"));
     assert!(
-        request.argv[2].contains("exec git push -u origin \"$branch\""),
-        "push must publish the current branch under the same remote branch name"
+        seen_request.lock().unwrap().is_none(),
+        "git_push must run through the native handler instead of a shell"
     );
 }
 
@@ -2244,6 +2282,14 @@ async fn app_ipc_describes_the_versioned_desktop_protocol() {
         .as_array()
         .unwrap()
         .contains(&json!("executor.codex_home.status")));
+    assert!(description["renderer_methods"]
+        .as_array()
+        .unwrap()
+        .contains(&json!("executor.codex_home.config.read")));
+    assert!(description["renderer_methods"]
+        .as_array()
+        .unwrap()
+        .contains(&json!("executor.codex_home.config.update")));
     assert!(description["renderer_methods"]
         .as_array()
         .unwrap()

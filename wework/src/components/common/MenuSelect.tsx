@@ -314,7 +314,7 @@ export function PopupMenu({
               onClick={() => {
                 if (!keepOpen) close()
               }}
-              className="fixed z-[11000] max-h-[360px] overflow-y-auto rounded-2xl border border-border bg-background p-1.5 shadow-[0_16px_44px_rgba(0,0,0,0.16)]"
+              className="fixed z-[11000] max-h-[360px] overflow-y-auto rounded-2xl border border-border bg-background p-1.5 text-text-primary shadow-[0_16px_44px_rgba(0,0,0,0.16)]"
               role="menu"
             >
               {children(close)}
