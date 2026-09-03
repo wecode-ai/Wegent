@@ -47,6 +47,7 @@ interface EnvironmentLoadDiagnostics {
 export type EnvironmentDiffMode = 'branch' | 'unstaged' | 'staged' | 'commit'
 
 export interface EnvironmentInfoLoadOptions {
+  changeRequestStatusEnabled?: boolean
   force?: boolean
   onPartialInfo?: (info: EnvironmentInfo) => void
 }
@@ -797,6 +798,7 @@ async function loadProjectEnvironmentUncached(
   project: ProjectWithTasks | null,
   target?: EnvironmentWorkspaceTarget | null,
   onPartialInfo?: (info: EnvironmentInfo) => void,
+  changeRequestStatusEnabled?: boolean,
   diagnostics: EnvironmentLoadDiagnostics = {
     loadId: ++environmentLoadSequence,
     startedAt: environmentNow(),
@@ -853,11 +855,12 @@ async function loadProjectEnvironmentUncached(
     const remoteUrlPromise = traceEnvironmentOperation(diagnostics, 'git_remote', () =>
       runGitCommand(api, deviceId, 'git_remote_url', path)
     ).catch(() => '')
-    const changeRequestEnabledPromise = traceEnvironmentOperation(
-      diagnostics,
-      'change_request_preference',
-      () => getAppPreferences().then(preferences => preferences.changeRequestStatusEnabled)
-    )
+    const changeRequestEnabledPromise =
+      changeRequestStatusEnabled === undefined
+        ? traceEnvironmentOperation(diagnostics, 'change_request_preference', () =>
+            getAppPreferences().then(preferences => preferences.changeRequestStatusEnabled)
+          )
+        : Promise.resolve(changeRequestStatusEnabled)
     const branchInfoPromise = Promise.all([branchNamePromise, remoteUrlPromise]).then(
       ([branchName, remoteUrl]) => {
         const branchInfo: EnvironmentInfo = {
@@ -972,11 +975,21 @@ export async function loadProjectEnvironment(
     return cloneEnvironmentInfo(EMPTY_ENVIRONMENT_INFO)
   }
 
-  const cacheKey = environmentInfoCacheKey(project, target)
-  if (!cacheKey) {
+  const workspaceCacheKey = environmentInfoCacheKey(project, target)
+  if (!workspaceCacheKey) {
     logEnvironmentLoad(diagnostics, 'cache_bypassed')
-    return loadProjectEnvironmentUncached(api, project, target, options.onPartialInfo, diagnostics)
+    return loadProjectEnvironmentUncached(
+      api,
+      project,
+      target,
+      options.onPartialInfo,
+      options.changeRequestStatusEnabled,
+      diagnostics
+    )
   }
+  const cacheKey = `${workspaceCacheKey}\0change-request:${String(
+    options.changeRequestStatusEnabled ?? 'preference'
+  )}`
 
   const now = Date.now()
   const environmentInfoCache = getEnvironmentInfoCache(api)
@@ -1040,6 +1053,7 @@ export async function loadProjectEnvironment(
         listener(cloneEnvironmentInfo(partialState.info ?? partialInfo))
       )
     },
+    options.changeRequestStatusEnabled,
     diagnostics
   )
   logEnvironmentLoad(diagnostics, 'cache_miss', {
