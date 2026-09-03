@@ -1,4 +1,5 @@
 import { p256 } from '@noble/curves/nist.js'
+import * as WebBrowser from 'expo-web-browser'
 import { act, create } from 'react-test-renderer'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -44,9 +45,16 @@ const harness = vi.hoisted(() => ({
     release: (): void => undefined,
   },
   backendAddress: { current: 'https://example.com' },
+  backendAddressSaveDeferred: null as Deferred<void> | null,
+  backendAddressSaveCalls: 0,
   fetchState: {
+    configCalls: 0,
+    healthCalls: 0,
+    sessionCalls: 0,
     usersMeCalls: 0,
     claimCalls: 0,
+    configDeferred: null as Deferred<Response> | null,
+    sessionDeferred: null as Deferred<Response> | null,
     usersMeDeferred: null as Deferred<Response> | null,
     claimDeferred: null as Deferred<Response> | null,
   },
@@ -90,7 +98,10 @@ vi.mock('react-native', () => ({
 
 vi.mock('@/services/backendAddressStore', () => ({
   loadBackendAddress: async () => harness.backendAddress.current,
-  saveBackendAddress: async () => undefined,
+  saveBackendAddress: async () => {
+    harness.backendAddressSaveCalls += 1
+    await harness.backendAddressSaveDeferred?.promise
+  },
 }))
 
 function mockFetch(): void {
@@ -100,9 +111,14 @@ function mockFetch(): void {
       const url =
         typeof input === 'string' ? input : input instanceof URL ? input.toString() : String(input)
       if (url.includes('/auth/wework/config')) {
+        harness.fetchState.configCalls += 1
+        if (harness.fetchState.configDeferred) return harness.fetchState.configDeferred.promise
         return json({ web_url: 'https://web.example.com' })
       }
-      if (url.includes('/health')) return json({})
+      if (url.includes('/health')) {
+        harness.fetchState.healthCalls += 1
+        return json({})
+      }
       if (url.includes('/auth/wework/sessions/')) {
         harness.fetchState.claimCalls += 1
         if (harness.fetchState.claimDeferred) return harness.fetchState.claimDeferred.promise
@@ -114,6 +130,8 @@ function mockFetch(): void {
         })
       }
       if (url.includes('/auth/wework/sessions')) {
+        harness.fetchState.sessionCalls += 1
+        if (harness.fetchState.sessionDeferred) return harness.fetchState.sessionDeferred.promise
         return json({
           session_id: 's1',
           poll_token: 'pt',
@@ -198,10 +216,19 @@ beforeEach(() => {
   harness.secureStoreWriteGate.entered = false
   harness.secureStoreWriteGate.release = (): void => undefined
   harness.backendAddress.current = BACKEND_INPUT
+  harness.backendAddressSaveDeferred = null
+  harness.backendAddressSaveCalls = 0
+  harness.fetchState.configCalls = 0
+  harness.fetchState.healthCalls = 0
+  harness.fetchState.sessionCalls = 0
   harness.fetchState.usersMeCalls = 0
   harness.fetchState.claimCalls = 0
+  harness.fetchState.configDeferred = null
+  harness.fetchState.sessionDeferred = null
   harness.fetchState.usersMeDeferred = null
   harness.fetchState.claimDeferred = null
+  vi.mocked(WebBrowser.openBrowserAsync).mockClear()
+  vi.mocked(WebBrowser.dismissBrowser).mockClear()
   mockFetch()
 })
 
@@ -236,13 +263,115 @@ describe('authentication generation', () => {
 
     await act(async () => {
       hanging.resolve(json({ id: 1, user_name: 'alice' }))
-      await refreshPromise
+      expect(await refreshPromise).toBe(false)
     })
 
     expect(latest?.status).toBe('unauthenticated')
     expect(latest?.user).toBeNull()
     expect(latest?.config).toBeNull()
     expect(harness.secureStore.has(CREDENTIAL_KEY)).toBe(false)
+  })
+
+  it('a backend change while config resolution is pending stops before the health check', async () => {
+    await renderHook()
+    await waitForStatus('unauthenticated')
+    const initialConfigCalls = harness.fetchState.configCalls
+    const initialHealthCalls = harness.fetchState.healthCalls
+    harness.fetchState.configDeferred = deferred<Response>()
+
+    let loginPromise: Promise<void> | undefined
+    await act(async () => {
+      loginPromise = latest?.login()
+    })
+    await waitFor(() => harness.fetchState.configCalls === initialConfigCalls + 1)
+
+    await act(async () => {
+      latest?.setBackendUrl('https://other.example.com')
+      harness.fetchState.configDeferred?.resolve(json({ web_url: 'https://web.example.com' }))
+      await loginPromise
+    })
+
+    expect(harness.fetchState.healthCalls).toBe(initialHealthCalls)
+    expect(latest?.backendUrl).toBe('https://other.example.com')
+    expect(latest?.status).toBe('unauthenticated')
+  })
+
+  it('a backend change while saving the address stops before publishing config', async () => {
+    await renderHook()
+    await waitForStatus('unauthenticated')
+    harness.backendAddressSaveDeferred = deferred<void>()
+
+    let loginPromise: Promise<void> | undefined
+    await act(async () => {
+      loginPromise = latest?.login()
+    })
+    await waitFor(() => harness.backendAddressSaveCalls === 1)
+
+    await act(async () => {
+      latest?.setBackendUrl('https://other.example.com')
+      harness.backendAddressSaveDeferred?.resolve()
+      await loginPromise
+    })
+
+    expect(latest?.backendUrl).toBe('https://other.example.com')
+    expect(latest?.backend).toBeNull()
+    expect(harness.fetchState.sessionCalls).toBe(0)
+    expect(WebBrowser.openBrowserAsync).not.toHaveBeenCalled()
+  })
+
+  it('a backend change while loading the device key stops before session creation', async () => {
+    await renderHook()
+    await waitForStatus('unauthenticated')
+    harness.secureStoreWriteGate.hangOnToken = '"refreshToken":""'
+
+    let loginPromise: Promise<void> | undefined
+    await act(async () => {
+      loginPromise = latest?.login()
+    })
+    await waitFor(() => harness.secureStoreWriteGate.entered)
+
+    await act(async () => {
+      latest?.setBackendUrl('https://other.example.com')
+      harness.secureStoreWriteGate.release()
+      await loginPromise
+    })
+
+    expect(latest?.backendUrl).toBe('https://other.example.com')
+    expect(latest?.backend).toBeNull()
+    expect(harness.fetchState.sessionCalls).toBe(0)
+    expect(WebBrowser.openBrowserAsync).not.toHaveBeenCalled()
+  })
+
+  it('a backend change while creating a session does not open the authorization browser', async () => {
+    await renderHook()
+    await waitForStatus('unauthenticated')
+    harness.fetchState.sessionDeferred = deferred<Response>()
+
+    let loginPromise: Promise<void> | undefined
+    await act(async () => {
+      loginPromise = latest?.login()
+    })
+    await waitFor(() => harness.fetchState.sessionCalls === 1)
+
+    await act(async () => {
+      latest?.setBackendUrl('https://other.example.com')
+      harness.fetchState.sessionDeferred?.resolve(
+        json({
+          session_id: 's1',
+          poll_token: 'pt',
+          authorize_url: 'https://auth.example.com/authorize',
+          web_url: 'https://web.example.com',
+          expires_at: 4_102_444_800,
+          poll_interval_seconds: 0.5,
+        })
+      )
+      await loginPromise
+    })
+
+    expect(latest?.backendUrl).toBe('https://other.example.com')
+    expect(latest?.backend).toBeNull()
+    expect(harness.fetchState.claimCalls).toBe(0)
+    expect(WebBrowser.openBrowserAsync).not.toHaveBeenCalled()
   })
 
   it('stale authorization completion cannot authenticate or persist after logout', async () => {
