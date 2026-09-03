@@ -125,6 +125,8 @@ You can still collapse the left sidebar while the workspace is expanded, leaving
 
 When a conversation is taller than the current viewport, turn markers appear along the left side of the message area. The navigation stays centered in the conversation viewport instead of scrolling with message content. Select a marker to jump to that turn, or hover over it to preview the user request and assistant response summary.
 
+While an assistant response is still growing, navigation keeps the current turn active until the message area finishes its next layout measurement. This prevents bottom-follow scrolling from briefly clearing the marker or switching it to another turn.
+
 ## Switch conversations and restore position
 
 When switching conversations, the desktop workbench saves runtime state, recent messages, right-workspace tabs, and panel state, so returning restores the workspace as it was left. The Files tab restores the selected file and its actual directory, including absolute paths opened from assistant messages outside the workspace root. The Review tab restores the selected review scope and loaded diff. Ordinary conversations do not retain a hidden full-page DOM, which bounds WebView memory growth from long conversations.

@@ -4985,6 +4985,69 @@ def test_build_runtime_execution_request_v2_without_team_uses_direct_wework_path
     assert execution_request.model_config["model_id"] == "doubao-seed-2.0-lite"
 
 
+def test_build_runtime_send_execution_request_includes_valid_task_token(
+    test_db,
+    test_user,
+):
+    from app.schemas.runtime_work import RuntimeTaskAddress
+    from app.services import runtime_work_service
+    from app.services.auth import verify_task_token
+
+    execution_request = runtime_work_service._build_runtime_send_execution_request(
+        db=test_db,
+        user_id=test_user.id,
+        address=RuntimeTaskAddress(
+            deviceId="device-1",
+            localTaskId="codex-1",
+            workspacePath="/repo/Wegent",
+        ),
+        message="continue",
+        attachment_ids=[],
+    )
+
+    token_info = verify_task_token(execution_request.auth_token)
+    assert token_info is not None
+    assert token_info.task_id == 0
+    assert token_info.subtask_id == 0
+    assert token_info.user_id == test_user.id
+
+
+def test_build_runtime_send_execution_request_refreshes_task_token(
+    test_db,
+    test_user,
+    monkeypatch,
+):
+    from app.schemas.runtime_work import RuntimeTaskAddress
+    from app.services import auth, runtime_work_service
+
+    create_task_token = Mock(side_effect=["first-task-token", "second-task-token"])
+    monkeypatch.setattr(auth, "create_task_token", create_task_token)
+    address = RuntimeTaskAddress(
+        deviceId="device-1",
+        localTaskId="codex-1",
+        workspacePath="/repo/Wegent",
+    )
+
+    first_request = runtime_work_service._build_runtime_send_execution_request(
+        db=test_db,
+        user_id=test_user.id,
+        address=address,
+        message="continue once",
+        attachment_ids=[],
+    )
+    second_request = runtime_work_service._build_runtime_send_execution_request(
+        db=test_db,
+        user_id=test_user.id,
+        address=address,
+        message="continue later",
+        attachment_ids=[],
+    )
+
+    assert first_request.auth_token == "first-task-token"
+    assert second_request.auth_token == "second-task-token"
+    assert create_task_token.call_count == 2
+
+
 def test_build_runtime_execution_request_resolves_crd_model_id(
     test_db,
     test_user,

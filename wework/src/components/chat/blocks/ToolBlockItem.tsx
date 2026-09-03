@@ -952,7 +952,7 @@ function ProcessTextBlockItem({
 
   return (
     <div
-      className="min-w-0 overflow-x-hidden text-chat text-text-secondary"
+      className="min-w-0 overflow-x-hidden text-chat text-text-primary"
       data-processing-block-id={block.id}
       data-message-selectable-text
       role={isRunning ? 'status' : undefined}

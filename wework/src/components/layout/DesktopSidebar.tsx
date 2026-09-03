@@ -44,7 +44,6 @@ import type {
 } from 'react'
 import { createPortal } from 'react-dom'
 import { ActionMenu } from '@/components/common/ActionMenu'
-import { ChangeRequestStatusIcon } from '@/components/common/ChangeRequestStatusIcon'
 import { CompositedSpinner } from '@/components/common/CompositedSpinner'
 import { TextInputDialog } from '@/components/common/TextInputDialog'
 import { ProjectFolderIcon } from '@/components/projects/ProjectFolderIcon'
@@ -56,21 +55,12 @@ import { useOptionalAppUpdate } from '@/features/app-update/app-update-context'
 import type { WeworkInstalledReleaseNotes } from '@/features/app-update/app-release-notes'
 import type { WeworkDshSidebarNavigationItem } from '@/features/dsh-runtime/dshSidebarNavigation'
 import { DshIcon } from '@/features/dsh-runtime/DshIcon'
+import { DshContributionSlotSurface } from '@/features/dsh-runtime/DshContributionSlotSurface'
 import { WEWORK_DSH_SLOTS } from '@/features/dsh-runtime/dshUiSlots'
 import { useDshSlotEntries } from '@/features/dsh-runtime/useDshSlotEntries'
 import { getRuntimeTaskReminderItemKey } from '@/features/workbench/runtimeTaskReminders'
 import { getRuntimeTaskThreadId } from '@/features/workbench/workbenchRuntimeHelpers'
 import { WorkbenchContext } from '@/features/workbench/workbenchContexts'
-import {
-  getChangeRequestMonitor,
-  runtimeTaskChangeRequestTarget,
-  useTaskChangeRequest,
-} from '@/features/workbench/changeRequestMonitor'
-import {
-  autoRepairStatus,
-  buildChangeRequestRepairPrompt,
-} from '@/features/workbench/changeRequestStatus'
-import { createRuntimeUserMessage } from '@/features/workbench/runtimeUserMessage'
 import {
   getRuntimeConversationQueuePaused,
   subscribeRuntimeConversation,
@@ -1408,7 +1398,7 @@ function RuntimeTaskRow({
   onToggleRuntimeTaskNotification,
   priorityReason,
   priorityLayout = false,
-  changeRequestInIndent = false,
+  statusInIndent = false,
   splitGroup,
 }: {
   workspace: RuntimeDeviceWorkspace
@@ -1436,7 +1426,7 @@ function RuntimeTaskRow({
   ) => Promise<void> | void
   priorityReason?: RuntimeTaskPriorityReason
   priorityLayout?: boolean
-  changeRequestInIndent?: boolean
+  statusInIndent?: boolean
   splitGroup?: WorkbenchSplitGroupMembership
 }) {
   const { t } = useTranslation('common')
@@ -1452,7 +1442,6 @@ function RuntimeTaskRow({
   const [renameOpen, setRenameOpen] = useState(false)
   const [forceStarting, setForceStarting] = useState(false)
   const [queueReordering, setQueueReordering] = useState(false)
-  const [repairingChangeRequest, setRepairingChangeRequest] = useState(false)
   const workbench = useContext(WorkbenchContext)
   const [taskMenuPosition, setTaskMenuPosition] = useState<ProjectCreateMenuPosition | null>(null)
   const archiveDelayRef = useRef<number | null>(null)
@@ -1482,16 +1471,6 @@ function RuntimeTaskRow({
   const archiveDisabled =
     !workspace.available || !onArchiveRuntimeTask || archiving || archivePending
   const taskAddress = getRuntimeTaskAddress(workspace, task)
-  const changeRequestTarget = useMemo(
-    () => runtimeTaskChangeRequestTarget(workspace, task),
-    [task, workspace]
-  )
-  const changeRequestMonitor = useMemo(
-    () =>
-      workbench?.services?.deviceApi ? getChangeRequestMonitor(workbench.services.deviceApi) : null,
-    [workbench]
-  )
-  const changeRequestSnapshot = useTaskChangeRequest(changeRequestMonitor, changeRequestTarget)
   const taskLifecycle = useRuntimeTaskLifecycle(taskAddress)
   const queuePaused = useRuntimeTaskQueuePaused(taskAddress)
   const queued = isRuntimeTaskQueued(task)
@@ -1636,25 +1615,6 @@ function RuntimeTaskRow({
       setQueueReordering(false)
     }
   }
-  const continueChangeRequestRepair = async () => {
-    const changeRequest = changeRequestSnapshot?.changeRequest
-    if (!workbench || !changeRequest || !autoRepairStatus(changeRequest)) return
-    setRepairingChangeRequest(true)
-    try {
-      const prompt = buildChangeRequestRepairPrompt(changeRequest, task.title)
-      const optimisticUserMessage = createRuntimeUserMessage(prompt)
-      await workbench.sendRuntimePaneMessage(
-        {
-          address: taskAddress,
-          message: prompt,
-          source: { source: 'manual' },
-        },
-        { optimisticUserMessage }
-      )
-    } finally {
-      setRepairingChangeRequest(false)
-    }
-  }
   const notificationActionLabel = notificationsSubscribed
     ? t('workbench.unsubscribe_runtime_task_notifications', '取消任务通知')
     : t('workbench.subscribe_runtime_task_notifications', '订阅任务通知')
@@ -1743,18 +1703,10 @@ function RuntimeTaskRow({
             (archivePending || archiving) && 'hidden'
           )}
         >
-          <ChangeRequestStatusIcon
-            snapshot={changeRequestSnapshot}
-            testId={`runtime-local-task-change-request-${task.taskId}`}
-            repairing={repairingChangeRequest}
-            onContinueRepair={
-              changeRequestSnapshot?.changeRequest &&
-              autoRepairStatus(changeRequestSnapshot.changeRequest)
-                ? continueChangeRequestRepair
-                : undefined
-            }
-            className={changeRequestInIndent && !priorityLayout ? '-ml-7 mr-1' : 'mr-1'}
-            popoverAlign="left"
+          <DshContributionSlotSurface
+            attachedClassName="contents"
+            props={{ priorityLayout, statusInIndent, task, workspace }}
+            slot={WEWORK_DSH_SLOTS.taskStatus}
           />
           {priorityLayout ? (
             <span className="flex min-w-0 flex-1 flex-col justify-center gap-0.5">
@@ -2894,7 +2846,7 @@ function ProjectItem({
                       unread={unreadTaskKeys.has(getRuntimeTaskReminderItemKey(workspace, task))}
                       marked={task.pinned}
                       indentClassName="pl-9"
-                      changeRequestInIndent
+                      statusInIndent
                       imNotificationSettings={imNotificationSettings}
                       showDeviceMarker={showDeviceMarker}
                       onOpenRuntimeTask={onOpenRuntimeTask}

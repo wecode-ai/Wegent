@@ -5,7 +5,7 @@ import { useWorkbenchModels } from './useWorkbenchModels'
 import { useWorkbenchSkills } from './useWorkbenchSkills'
 import { LOCAL_MODEL_SETTINGS_CHANGED_EVENT } from '@/features/model-settings/localModelSettings'
 import { notifyWorkbenchModelsChanged } from './workbenchCloudDataEvents'
-import type { Attachment, UnifiedModel, UnifiedSkill } from '@/types/api'
+import type { Attachment, ModelSelectionConfig, UnifiedModel, UnifiedSkill } from '@/types/api'
 
 describe('workbench project chat hooks', () => {
   test('loads models and ignores model changes when locked', async () => {
@@ -419,6 +419,63 @@ describe('workbench project chat hooks', () => {
     act(() => notifyWorkbenchModelsChanged())
 
     await waitFor(() => expect(result.current.models).toEqual([localModel, cloudModel]))
+  })
+
+  test('keeps an explicit background task model when that task becomes active', async () => {
+    const deepseekModel: UnifiedModel = {
+      name: 'deepseek-v4-flash-vision-exp',
+      type: 'public',
+      runtime: { family: 'openai.openai-responses' },
+    }
+    const gptModel: UnifiedModel = {
+      name: 'gpt-5.6-sol',
+      type: 'public',
+      runtime: { family: 'openai.openai-responses' },
+    }
+    const taskSelection: ModelSelectionConfig = {
+      modelName: gptModel.name,
+      modelType: gptModel.type,
+      options: { reasoning: 'high' },
+    }
+    const api = {
+      listModels: vi.fn().mockResolvedValue({ data: [deepseekModel, gptModel] }),
+    }
+    const { result, rerender } = renderHook(
+      ({ scopeKey, selectionConfig }) =>
+        useWorkbenchModels({
+          api,
+          locked: false,
+          scopeKey,
+          persistSelection: false,
+          selectionConfig,
+        }),
+      {
+        initialProps: {
+          scopeKey: 'new-task',
+          selectionConfig: {
+            modelName: deepseekModel.name,
+            modelType: deepseekModel.type,
+            options: {},
+          } as ModelSelectionConfig,
+        },
+      }
+    )
+
+    await waitFor(() => expect(result.current.selectedModel).toEqual(deepseekModel))
+    act(() => {
+      result.current.setSelectionForScope(
+        'runtime:task-1',
+        gptModel,
+        taskSelection.options,
+        taskSelection
+      )
+    })
+
+    expect(result.current.selectedModel).toEqual(deepseekModel)
+    rerender({ scopeKey: 'runtime:task-1', selectionConfig: taskSelection })
+
+    await waitFor(() => expect(result.current.selectedModel).toEqual(gptModel))
+    expect(result.current.selectedModelOptions).toEqual({ reasoning: 'high' })
   })
 
   test('keeps executor-backed model choices selectable across protocol families', async () => {

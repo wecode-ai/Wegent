@@ -26,10 +26,6 @@ import {
   subscribeRuntimeConversation,
 } from '@/features/workbench/runtimeConversationCache'
 import {
-  resolveTemporaryChatActiveModel,
-  resolveTemporaryChatModelSelection,
-} from '@/features/workbench/temporaryChatModelContext'
-import {
   consumeRuntimeTaskLifecycleBlock,
   type RuntimeTaskLifecycleSnapshot,
   useRuntimeTaskLifecycle,
@@ -51,6 +47,7 @@ import type {
   RuntimeSendRequest,
   RuntimeGoalCreateInput,
   RuntimeTaskAddress,
+  UnifiedModel,
 } from '@/types/api'
 import type { RuntimePaneQueuedMessage, WorkbenchMessage } from '@/types/workbench'
 
@@ -137,22 +134,31 @@ export function TemporaryChatPanel({
     scopeKey: instanceId,
   })
   const [address, setAddress] = useState<RuntimeTaskAddress | null>(initialAddress)
-  const activeModel = useMemo(
-    () => resolveTemporaryChatActiveModel(projectChat.models, state.runtimeWork, address),
-    [address, projectChat.models, state.runtimeWork]
-  )
-  const activeModelSelection = useMemo(
-    () => resolveTemporaryChatModelSelection(state.runtimeWork, address),
-    [address, state.runtimeWork]
-  )
+  const taskModelSelection = address ? projectChat.resolveRuntimeTaskModelSelection(address) : null
   const globalSelectedModel = projectChat.getSelectedModel?.() ?? projectChat.selectedModel
   const globalSelectedModelOptions =
     projectChat.getSelectedModelOptions?.() ?? projectChat.selectedModelOptions
-  const taskModelIdentityPending = Boolean(address && !activeModelSelection)
+  const taskModelIdentityPending = Boolean(address && !taskModelSelection?.taskSelection)
   const sideChatProjectChat = useMemo(
     () => ({
       ...projectChat,
-      activeModel,
+      ...(address && taskModelSelection
+        ? {
+            activeModel: taskModelSelection.activeModel,
+            selectedModel: taskModelSelection.selectedModel,
+            selectedModelOptions: taskModelSelection.selectedModelOptions,
+            setSelectedModel: (model: UnifiedModel | null) =>
+              projectChat.setRuntimeTaskSelectedModel(address, model),
+            setSelectedModelAndOptions: (model: UnifiedModel, options: ModelOptions) =>
+              projectChat.setRuntimeTaskSelectedModelAndOptions(address, model, options),
+            setSelectedModelOption: (optionId: string, value: string) =>
+              projectChat.setRuntimeTaskSelectedModelOption(address, optionId, value),
+            getSelectedModel: () =>
+              projectChat.resolveRuntimeTaskModelSelection(address).selectedModel,
+            getSelectedModelOptions: () =>
+              projectChat.resolveRuntimeTaskModelSelection(address).selectedModelOptions,
+          }
+        : {}),
       hasConversationContext: Boolean(address),
       attachments: attachmentSelection.attachments,
       uploadingFiles: attachmentSelection.uploadingFiles,
@@ -163,7 +169,7 @@ export function TemporaryChatPanel({
       removeAttachment: attachmentSelection.removeAttachment,
       resetAttachments: attachmentSelection.resetAttachments,
     }),
-    [activeModel, address, attachmentSelection, projectChat]
+    [address, attachmentSelection, projectChat, taskModelSelection]
   )
   const [messages, setMessages] = useState<WorkbenchMessage[]>(() =>
     initialAddress ? getRuntimeConversationMessages(initialAddress) : []
@@ -322,27 +328,35 @@ export function TemporaryChatPanel({
   }, [address, subscribeRuntimeTaskStream])
 
   const selectedModelFields = useMemo(() => {
-    if (address && activeModelSelection) {
-      return {
-        modelId: activeModelSelection.modelName,
-        modelType: activeModelSelection.modelType,
-        modelOptions: activeModelSelection.options ?? {},
+    if (address && taskModelSelection) {
+      if (taskModelSelection.selectedModel) {
+        return selectedModelExecutionFields(
+          taskModelSelection.selectedModel,
+          taskModelSelection.selectedModelOptions
+        )
+      }
+      if (taskModelSelection.taskSelection?.modelName) {
+        return {
+          modelId: taskModelSelection.taskSelection.modelName,
+          modelType: taskModelSelection.taskSelection.modelType,
+          modelOptions: taskModelSelection.selectedModelOptions,
+        }
       }
     }
     return selectedModelExecutionFields(globalSelectedModel, globalSelectedModelOptions)
-  }, [activeModelSelection, address, globalSelectedModel, globalSelectedModelOptions])
+  }, [address, globalSelectedModel, globalSelectedModelOptions, taskModelSelection])
 
   useEffect(() => {
     if (!address) return
     console.info('[runtime-v2] task conversation identity resolved', {
       deviceId: address.deviceId,
       taskId: address.taskId,
-      taskModel: activeModelSelection?.modelName ?? null,
-      taskModelType: activeModelSelection?.modelType ?? null,
-      resolvedCatalogModel: activeModel?.name ?? null,
+      taskModel: taskModelSelection?.taskSelection?.modelName ?? null,
+      taskModelType: taskModelSelection?.taskSelection?.modelType ?? null,
+      resolvedCatalogModel: taskModelSelection?.activeModel?.name ?? null,
       globalComposerModel: globalSelectedModel?.name ?? null,
     })
-  }, [activeModel, activeModelSelection, address, globalSelectedModel])
+  }, [address, globalSelectedModel, taskModelSelection])
 
   const sendQueuedMessage = useCallback(
     async (queuedMessage: RuntimePaneQueuedMessage) => {

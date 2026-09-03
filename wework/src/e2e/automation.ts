@@ -80,7 +80,26 @@ interface ScrollStabilitySample {
   stop: () => void
 }
 
+interface ElementMetricsSamplePoint {
+  connected: boolean
+  height: number
+  label: string | null
+  left: number
+  testIds: string[]
+  time: number
+  top: number
+  visibility: string
+  width: number
+}
+
+interface ElementMetricsSample {
+  done: boolean
+  frames: ElementMetricsSamplePoint[]
+  stop: () => void
+}
+
 let activeScrollStabilitySample: ScrollStabilitySample | null = null
+let activeElementMetricsSample: ElementMetricsSample | null = null
 
 export interface WeworkAutomationBridge {
   version: 1
@@ -1763,6 +1782,67 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
     }
     case 'getElementMetrics':
       return desktopControlElementMetrics(command.selector)
+    case 'startElementMetricsSampling': {
+      const durationMs = Number(command.value)
+      if (!Number.isFinite(durationMs) || durationMs <= 0) {
+        throw new Error('startElementMetricsSampling requires a finite positive durationMs')
+      }
+      const initialElements = findDesktopControlElements(command.selector)
+      const initialElement = command.visible
+        ? initialElements.find(desktopControlElementVisible)
+        : initialElements[0]
+      if (!initialElement) throw new Error(`Unable to find selector "${command.selector}"`)
+      activeElementMetricsSample?.stop()
+      const startedAt = performance.now()
+      let animationFrame = 0
+      const sample: ElementMetricsSample = {
+        done: false,
+        frames: [],
+        stop: () => {},
+      }
+      const finish = () => {
+        if (sample.done) return
+        sample.done = true
+        if (animationFrame) window.cancelAnimationFrame(animationFrame)
+      }
+      const captureFrame = (time: number) => {
+        const element = initialElement
+        const rect = element?.getBoundingClientRect()
+        const testIds = element
+          ? [element, ...element.querySelectorAll<HTMLElement>('[data-testid]')]
+              .map(candidate => candidate.dataset.testid)
+              .filter((testId): testId is string => Boolean(testId))
+          : []
+        sample.frames.push({
+          connected: element?.isConnected ?? false,
+          height: rect?.height ?? 0,
+          label: element?.dataset.weworkBrowserWebview ?? null,
+          left: rect?.left ?? 0,
+          testIds,
+          time: time - startedAt,
+          top: rect?.top ?? 0,
+          visibility: element ? window.getComputedStyle(element).visibility : '',
+          width: rect?.width ?? 0,
+        })
+        if (time - startedAt >= durationMs) {
+          finish()
+          return
+        }
+        animationFrame = window.requestAnimationFrame(captureFrame)
+      }
+      sample.stop = finish
+      activeElementMetricsSample = sample
+      animationFrame = window.requestAnimationFrame(captureFrame)
+      return ''
+    }
+    case 'getElementMetricsSample': {
+      const sample = activeElementMetricsSample
+      if (!sample) throw new Error('Element metrics sampling has not started')
+      return JSON.stringify({
+        done: sample.done,
+        frames: sample.frames,
+      })
+    }
     case 'startScrollStabilitySampling': {
       const options = JSON.parse(command.value ?? '{}') as {
         anchorText?: string

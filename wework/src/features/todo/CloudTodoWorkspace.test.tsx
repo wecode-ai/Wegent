@@ -466,6 +466,11 @@ function services(overrides: Partial<WorkbenchServices> = {}): WorkbenchServices
       })),
       reorderLoopItems: vi.fn(async () => ({ items: [item] })),
       listLoopItems: vi.fn(async () => ({ items: [item] })),
+      listLoopItemsPage: vi.fn(async () => ({
+        items: [],
+        task_bindings: [],
+        next_cursor: null,
+      })),
       listDeliveries: vi.fn(async () => ({ items: [] })),
       listLoopItemAttachments: vi.fn(async () => []),
       addLoopItemAttachment: vi.fn(async (_itemId, file) => ({
@@ -701,6 +706,78 @@ describe('CloudTodoWorkspace', () => {
     expect(workspace).toHaveAttribute('data-embedded', 'true')
     expect(workspace.querySelector('aside')).not.toBeInTheDocument()
     expect(screen.queryByTestId('cloud-todo-collapsed-chrome-controls')).not.toBeInTheDocument()
+  })
+
+  it('loads Git-backed boards by column and fetches details only after opening a card', async () => {
+    const infoSpy = vi.spyOn(console, 'info').mockImplementation(() => {})
+    const workbenchServices = services()
+    const githubProject = {
+      ...project,
+      id: String(project.id),
+      task_provider: 'github' as const,
+    }
+    const summary = {
+      ...item,
+      cloud_project_id: String(project.id),
+      status: 'pending',
+      description: '',
+      detail_loaded: false,
+    }
+    const next = { ...summary, id: 'WEG-2', sequence_number: 2, title: 'Second issue' }
+    vi.mocked(workbenchServices.deliveryApi!.listCloudProjects).mockResolvedValue({
+      items: [githubProject],
+    })
+    workbenchServices.deliveryApi!.listLoopItemsPage = vi.fn(async (_projectId, options) => ({
+      items: options.status === 'pending' ? (options.cursor ? [summary, next] : [summary]) : [],
+      task_bindings: [],
+      next_cursor: options.status === 'pending' && !options.cursor ? 'next-page' : null,
+    }))
+    workbenchServices.deliveryApi!.getLoopItem = vi.fn(async () => ({
+      ...summary,
+      description: 'Full issue body',
+      detail_loaded: true,
+    }))
+
+    render(
+      <CloudTodoWorkspace
+        user={{ id: 1, user_name: 'local', email: 'local@example.com' } as User}
+        localProjects={[]}
+        services={workbenchServices}
+        embedded
+        activeProjectRef={{ projectStore: 'backend', projectId: String(project.id) }}
+      />
+    )
+
+    await screen.findByTestId(`cloud-todo-card-${summary.id}`)
+    expect(workbenchServices.deliveryApi!.getBoardSnapshot).not.toHaveBeenCalled()
+    expect(workbenchServices.deliveryApi!.listLoopItemsPage).toHaveBeenCalledTimes(5)
+    expect(
+      vi
+        .mocked(workbenchServices.deliveryApi!.listLoopItemsPage)
+        .mock.calls.every(([, options]) => options.limit === 10)
+    ).toBe(true)
+    expect(screen.getByTestId('cloud-todo-column-load-more-pending')).toHaveTextContent('加载更多')
+
+    await userEvent.click(screen.getByTestId('cloud-todo-column-load-more-pending'))
+    await screen.findByTestId(`cloud-todo-card-${next.id}`)
+    expect(screen.getAllByTestId(`cloud-todo-card-${summary.id}`)).toHaveLength(1)
+    expect(workbenchServices.deliveryApi!.listLoopItemsPage).toHaveBeenLastCalledWith(
+      String(project.id),
+      expect.objectContaining({ status: 'pending', cursor: 'next-page', limit: 10 })
+    )
+    expect(infoSpy).toHaveBeenCalledWith(
+      '[Wework project board] column page merged',
+      expect.objectContaining({
+        status: 'pending',
+        cursor: 'next-page',
+        receivedIds: [summary.id, next.id],
+        duplicateIds: [summary.id],
+      })
+    )
+    fireEvent.click(screen.getByTestId(`cloud-todo-card-${summary.id}`))
+    await waitFor(() => {
+      expect(workbenchServices.deliveryApi!.getLoopItem).toHaveBeenCalledWith(summary.id)
+    })
   })
 
   it('refreshes the active board when a runtime task binding changes externally', async () => {
