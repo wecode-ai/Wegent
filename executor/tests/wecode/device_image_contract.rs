@@ -37,7 +37,7 @@ fn internal_device_image_pipeline_keeps_policy_in_wecode() {
         .any(|argument| argument == "--use"));
     assert!(publish_script.contains("--builder \"$BUILDER_NAME\""));
     assert!(publish_script.contains("inspect \"$BUILDER_NAME\" --bootstrap"));
-    assert!(publish_script.contains("registry.api.weibo.com/weibo_rd_if/ubuntu:22.04.5"));
+    assert!(publish_script.contains("DEVICE_BASE_IMAGE=${DEVICE_BASE_IMAGE:-ubuntu:26.04}"));
     assert!(publish_script.contains("https://rsproxy.cn/rustup-init.sh"));
     assert!(publish_script.contains("https://npmmirror.com/mirrors/node"));
     assert!(publish_script.contains("https://registry.npmmirror.com"));
@@ -81,6 +81,23 @@ fn internal_device_image_pipeline_keeps_policy_in_wecode() {
     assert!(publish_script.contains("${MASTER_BRANCH:-main}"));
     assert!(publish_script.contains("executor_version_push_image"));
     assert!(publish_script.contains("executor_version_runtime_image"));
+
+    let device_dockerfile = fs::read_to_string("../wecode/docker/device/Dockerfile").unwrap();
+    assert!(device_dockerfile.contains("ARG DEVICE_BASE_IMAGE=ubuntu:26.04"));
+    assert!(device_dockerfile.contains("/etc/apt/sources.list.d/ubuntu.sources"));
+    assert!(device_dockerfile.contains("ENV DEVICE_CODE_SERVER_ENABLED=true"));
+    assert!(device_dockerfile.contains("ENV DEVICE_TERMINAL_ENABLED=true"));
+    assert!(device_dockerfile.contains(
+        "DEVICE_CODE_SERVER_ENABLED=\"$(normalize_enabled_flag DEVICE_CODE_SERVER_ENABLED)\""
+    ));
+    assert!(device_dockerfile
+        .contains("DEVICE_TERMINAL_ENABLED=\"$(normalize_enabled_flag DEVICE_TERMINAL_ENABLED)\""));
+    assert!(device_dockerfile.contains(
+        "export DEVICE_SESSION_GATEWAY_ENABLED DEVICE_CODE_SERVER_ENABLED DEVICE_TERMINAL_ENABLED"
+    ));
+    assert!(device_dockerfile.contains(
+        "if [ \"$DEVICE_CODE_SERVER_ENABLED\" = \"true\" ] && [ \"$DEVICE_SESSION_GATEWAY_ENABLED\" = \"true\" ]; then"
+    ));
 }
 
 #[cfg(unix)]

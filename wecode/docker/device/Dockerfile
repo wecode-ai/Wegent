@@ -8,7 +8,7 @@
 # it can be built directly from the repository root without reproducing the CI
 # build arguments.
 
-ARG DEVICE_BASE_IMAGE=registry.api.weibo.com/weibo_rd_if/ubuntu:22.04.5
+ARG DEVICE_BASE_IMAGE=ubuntu:26.04
 ARG DEVICE_IMAGE_PLATFORM=linux/amd64
 
 # ---------------------------------------------------------------------------
@@ -28,11 +28,17 @@ ARG CARGO_HTTPS_PROXY=http://wproxy.intra.weibo.com:8889
 ENV DEBIAN_FRONTEND=noninteractive
 
 RUN if [ -n "$DEVICE_APT_MIRROR" ]; then \
-        sed -i \
-          -e "s|http://archive.ubuntu.com/ubuntu|$DEVICE_APT_MIRROR|g" \
-          -e "s|http://security.ubuntu.com/ubuntu|$DEVICE_APT_MIRROR|g" \
-          -e "s|http://ports.ubuntu.com/ubuntu-ports|$DEVICE_APT_PORTS_MIRROR|g" \
-          /etc/apt/sources.list; \
+        for sources_file in \
+          /etc/apt/sources.list \
+          /etc/apt/sources.list.d/ubuntu.sources; do \
+            if [ -f "$sources_file" ]; then \
+              sed -i \
+                -e "s|http://archive.ubuntu.com/ubuntu|$DEVICE_APT_MIRROR|g" \
+                -e "s|http://security.ubuntu.com/ubuntu|$DEVICE_APT_MIRROR|g" \
+                -e "s|http://ports.ubuntu.com/ubuntu-ports|$DEVICE_APT_PORTS_MIRROR|g" \
+                "$sources_file"; \
+            fi; \
+        done; \
     fi \
     && apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
@@ -85,11 +91,17 @@ LABEL org.opencontainers.image.version=${APP_VERSION} \
       org.opencontainers.image.revision=${VCS_REF}
 
 RUN if [ -n "$DEVICE_APT_MIRROR" ]; then \
-        sed -i \
-          -e "s|http://archive.ubuntu.com/ubuntu|$DEVICE_APT_MIRROR|g" \
-          -e "s|http://security.ubuntu.com/ubuntu|$DEVICE_APT_MIRROR|g" \
-          -e "s|http://ports.ubuntu.com/ubuntu-ports|$DEVICE_APT_PORTS_MIRROR|g" \
-          /etc/apt/sources.list; \
+        for sources_file in \
+          /etc/apt/sources.list \
+          /etc/apt/sources.list.d/ubuntu.sources; do \
+            if [ -f "$sources_file" ]; then \
+              sed -i \
+                -e "s|http://archive.ubuntu.com/ubuntu|$DEVICE_APT_MIRROR|g" \
+                -e "s|http://security.ubuntu.com/ubuntu|$DEVICE_APT_MIRROR|g" \
+                -e "s|http://ports.ubuntu.com/ubuntu-ports|$DEVICE_APT_PORTS_MIRROR|g" \
+                "$sources_file"; \
+            fi; \
+        done; \
     fi \
     && apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates \
@@ -211,6 +223,8 @@ ENV WEGENT_WORKSPACE_ROOTS=/home/wegent
 ENV DEVICE_PUBLIC_BASE_URL=
 ENV DEVICE_SESSION_GATEWAY_HOST=0.0.0.0
 ENV DEVICE_SESSION_GATEWAY_PORT=17888
+ENV DEVICE_CODE_SERVER_ENABLED=true
+ENV DEVICE_TERMINAL_ENABLED=true
 
 RUN cat >/usr/local/bin/wegent-device-entrypoint <<'EOF'
 #!/usr/bin/env bash
@@ -220,6 +234,25 @@ export WEGENT_BACKEND_URL="${WEGENT_BACKEND_URL:-http://localhost:8000}"
 export DEVICE_SESSION_GATEWAY_HOST="${DEVICE_SESSION_GATEWAY_HOST:-0.0.0.0}"
 export DEVICE_SESSION_GATEWAY_PORT="${DEVICE_SESSION_GATEWAY_PORT:-17888}"
 export DEVICE_CODE_SERVER_PORT="${DEVICE_CODE_SERVER_PORT:-18080}"
+
+normalize_enabled_flag() {
+    local name="$1"
+    local value="${!name:-true}"
+    case "${value,,}" in
+        true | 1 | yes | on) printf 'true' ;;
+        false | 0 | no | off) printf 'false' ;;
+        *)
+            echo "$name must be true or false" >&2
+            return 1
+            ;;
+    esac
+}
+
+DEVICE_SESSION_GATEWAY_ENABLED="$(normalize_enabled_flag DEVICE_SESSION_GATEWAY_ENABLED)"
+DEVICE_CODE_SERVER_ENABLED="$(normalize_enabled_flag DEVICE_CODE_SERVER_ENABLED)"
+DEVICE_TERMINAL_ENABLED="$(normalize_enabled_flag DEVICE_TERMINAL_ENABLED)"
+export DEVICE_SESSION_GATEWAY_ENABLED DEVICE_CODE_SERVER_ENABLED DEVICE_TERMINAL_ENABLED
+
 DEVICE_LOG_DIR="$WEGENT_EXECUTOR_HOME/logs"
 
 mkdir -p "$WEGENT_EXECUTOR_HOME/bin" "$LOCAL_WORKSPACE_ROOT" "$DEVICE_LOG_DIR"
@@ -231,19 +264,20 @@ if [ -z "${DEVICE_PUBLIC_BASE_URL:-}" ]; then
     export DEVICE_PUBLIC_BASE_URL="http://${_device_ip}:${DEVICE_SESSION_GATEWAY_PORT}"
 fi
 
-mkdir -p "$HOME/.config/code-server"
-printf "bind-addr: 127.0.0.1:%s\nauth: none\ncert: false\n" "$DEVICE_CODE_SERVER_PORT" >"$HOME/.config/code-server/config.yaml"
-
 pids=()
 
-code-server /home/wegent \
-    --bind-addr "127.0.0.1:${DEVICE_CODE_SERVER_PORT}" \
-    --auth none \
-    --disable-telemetry \
-    --disable-update-check \
-    >"$DEVICE_LOG_DIR/code-server.log" \
-    2>"$DEVICE_LOG_DIR/code-server-error.log" &
-pids+=("$!")
+if [ "$DEVICE_CODE_SERVER_ENABLED" = "true" ] && [ "$DEVICE_SESSION_GATEWAY_ENABLED" = "true" ]; then
+    mkdir -p "$HOME/.config/code-server"
+    printf "bind-addr: 127.0.0.1:%s\nauth: none\ncert: false\n" "$DEVICE_CODE_SERVER_PORT" >"$HOME/.config/code-server/config.yaml"
+    code-server /home/wegent \
+        --bind-addr "127.0.0.1:${DEVICE_CODE_SERVER_PORT}" \
+        --auth none \
+        --disable-telemetry \
+        --disable-update-check \
+        >"$DEVICE_LOG_DIR/code-server.log" \
+        2>"$DEVICE_LOG_DIR/code-server-error.log" &
+    pids+=("$!")
+fi
 
 if [ -n "${WEGENT_AUTH_TOKEN:-}" ]; then
     wegent-executor >"$DEVICE_LOG_DIR/wegent-executor.log" 2>&1 &

@@ -60,7 +60,11 @@ async fn local_backend_registers_device_with_python_compatible_payload() {
     assert_eq!(calls[0].payload["executor_version"], "test-version");
     assert_eq!(calls[0].payload["client_ip"], "192.0.2.10");
     assert_eq!(calls[0].payload["runtime_transfer_host"], "192.0.2.10");
-    assert_eq!(calls[0].payload["runtime_features"]["schemaVersion"], 2);
+    assert_eq!(calls[0].payload["runtime_features"]["schemaVersion"], 3);
+    assert_eq!(
+        calls[0].payload["runtime_features"]["interactiveSessions"],
+        json!({"codeServer": true, "terminal": true})
+    );
     assert_eq!(
         calls[0].payload["runtime_features"]["runtimeTaskCreate"]["schemaVersions"],
         json!([1, 2])
@@ -137,7 +141,11 @@ async fn local_backend_heartbeat_reports_running_tasks_capabilities_and_auth_fil
     assert_eq!(calls[0].payload["executor_version"], "test-version");
     assert_eq!(calls[0].payload["capabilities"]["revision"], 0);
     assert_eq!(calls[0].payload["capabilities"]["skills"], json!([]));
-    assert_eq!(calls[0].payload["runtime_features"]["schemaVersion"], 2);
+    assert_eq!(calls[0].payload["runtime_features"]["schemaVersion"], 3);
+    assert_eq!(
+        calls[0].payload["runtime_features"]["interactiveSessions"],
+        json!({"codeServer": true, "terminal": true})
+    );
     assert_eq!(
         calls[0].payload["runtime_features"]["runtimeTaskCreate"]["schemaVersions"],
         json!([1, 2])

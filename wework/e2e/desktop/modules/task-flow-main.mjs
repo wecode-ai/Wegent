@@ -51,6 +51,7 @@ import {
   toolDetailsMcpConfigToml,
   verifyCloudProjectFlow,
   verifyConnectedModelsOnLocalExecution,
+  verifyDisabledRemoteSessionCapabilities,
   verifyLocalRemoteControlFlow,
   verifyModelProtocolMatrix,
   verifyRemoteDockerCommandFlow,
@@ -1358,7 +1359,10 @@ last_updated = "2026-07-30T00:00:00Z"`
     if (DESKTOP_SEGMENT === 'remote-device-onboarding') {
       phase = 'remote-device-onboarding'
       await verifyLocalRemoteControlFlow(control, cloudEnvironment)
-      await verifyRemoteDockerCommandFlow(control, cloudEnvironment)
+      const generatedDevice = await verifyRemoteDockerCommandFlow(control, cloudEnvironment, {
+        interactiveSessions: { codeServer: false, terminal: false },
+      })
+      await verifyDisabledRemoteSessionCapabilities(control, cloudEnvironment, generatedDevice)
       console.log(
         `Wework desktop remote-device onboarding checkpoint passed. Evidence: ${resultDir}`
       )
