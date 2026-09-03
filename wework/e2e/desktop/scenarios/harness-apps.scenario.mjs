@@ -232,6 +232,7 @@ export async function createDesktopScenario({ captureScreenshot, resultDir, uiTi
     version: '0.0.9',
   })
   const officialSource = await createOfficialSource(resultDir, packagePath)
+  let sharedSmartAppId = null
   return {
     requiresCloudEnvironment: true,
 
@@ -302,6 +303,7 @@ export async function createDesktopScenario({ captureScreenshot, resultDir, uiTi
           releaseExtensions: {
             'io.wegent.build': { pipeline: 'desktop-e2e-user' },
           },
+          scope: 'restricted',
           targets: [
             {
               entityType: 'user',
@@ -311,6 +313,7 @@ export async function createDesktopScenario({ captureScreenshot, resultDir, uiTi
           ],
         }),
       })
+      sharedSmartAppId = initialized.smartAppId
       const upload = await fetch(initialized.uploadUrl, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/zip' },
@@ -348,6 +351,29 @@ export async function createDesktopScenario({ captureScreenshot, resultDir, uiTi
         ),
         `Unrelated user ${stranger.user_name} discovered the shared Smart app`
       )
+      const publicAccess = await ownerRequest(`/api/smart-apps/${initialized.smartAppId}/access`, {
+        method: 'PUT',
+        body: JSON.stringify({ scope: 'public', targets: [] }),
+      })
+      assert.equal(publicAccess.isListed, true)
+      assert.equal(publicAccess.latestReleaseId, completed.item.latestReleaseId)
+      assert.equal(publicAccess.version, completed.item.version)
+      const publicCatalog = await requestJson(
+        backendUrl,
+        strangerLogin.access_token,
+        '/api/smart-apps/marketplace?source=public'
+      )
+      const publicItem = publicCatalog.items.find(
+        item => item.name === INSTALLATION_ID && item.sourceType === 'user'
+      )
+      assert.equal(publicItem?.accessRole, 'public')
+      assert.equal(publicItem?.visibility, 'public')
+      const ownerPublicCatalog = await ownerRequest('/api/smart-apps/marketplace?source=public')
+      const ownerPublicItem = ownerPublicCatalog.items.find(
+        item => item.id === initialized.smartAppId
+      )
+      assert.equal(ownerPublicItem?.accessRole, 'owner')
+      assert.equal(ownerPublicItem?.latestReleaseId, completed.item.latestReleaseId)
       await ownerRequest(`/api/smart-apps/${initialized.smartAppId}/access`, {
         method: 'PUT',
         body: JSON.stringify({ scope: 'private', targets: [] }),
@@ -918,6 +944,57 @@ export async function createDesktopScenario({ captureScreenshot, resultDir, uiTi
       )
       assert.ok(managementTabId, 'Harness management page did not expose its workspace tab ID')
       const activeWorkspaceContentSelector = '[data-workspace-tab-content][aria-hidden="false"]'
+      assert.ok(sharedSmartAppId, 'Shared Smart app fixture did not expose its catalog ID')
+      const sharedVisibilitySelector =
+        `${activeWorkspaceContentSelector} ` +
+        `[data-testid="smart-app-visibility-${sharedSmartAppId}"]`
+      await control.command('click', sharedVisibilitySelector)
+      await control.command('waitFor', '[data-testid="smart-app-share-dialog"]', {
+        text: '管理范围',
+        timeoutMs: uiTimeoutMs,
+      })
+      await control.command('click', '[data-testid="smart-app-share-scope-public"]')
+      await control.command('waitFor', '[data-testid="smart-app-share-dialog"]', {
+        text: '本地后续修改不会自动同步',
+        timeoutMs: uiTimeoutMs,
+      })
+      await control.command('clickWhenEnabled', '[data-testid="smart-app-share-save"]', {
+        timeoutMs: uiTimeoutMs,
+      })
+      await control.command('waitFor', '[data-testid="smart-app-access-success"]', {
+        text: 'v0.0.9 已上架到智能应用市场。',
+        timeoutMs: uiTimeoutMs,
+      })
+      await captureScreenshot(control, 'harness-apps-05a-public-snapshot-listed.png', 'body')
+      await control.command('click', '[data-testid="smart-app-access-view-marketplace"]')
+      await control.command(
+        'waitFor',
+        `${activeWorkspaceContentSelector} ` +
+          `[data-testid="smart-app-marketplace-item-${sharedSmartAppId}"]`,
+        {
+          text: '我发布的',
+          timeoutMs: uiTimeoutMs,
+        }
+      )
+      await control.command(
+        'click',
+        `${activeWorkspaceContentSelector} [data-testid="smart-apps-section-owned"]`
+      )
+      await control.command('waitFor', sharedVisibilitySelector, {
+        timeoutMs: uiTimeoutMs,
+      })
+      await control.command('click', sharedVisibilitySelector)
+      await control.command('waitFor', '[data-testid="smart-app-share-dialog"]', {
+        timeoutMs: uiTimeoutMs,
+      })
+      await control.command('click', '[data-testid="smart-app-share-scope-private"]')
+      await control.command('clickWhenEnabled', '[data-testid="smart-app-share-save"]', {
+        timeoutMs: uiTimeoutMs,
+      })
+      await control.command('waitFor', '[data-testid="smart-app-access-success"]', {
+        text: '分享范围已保存。',
+        timeoutMs: uiTimeoutMs,
+      })
       await captureScreenshot(control, 'harness-apps-05-installed.png', 'body')
       await control.command('click', `[data-testid="smart-app-actions-${INSTALLATION_ID}"]`)
       await control.command(

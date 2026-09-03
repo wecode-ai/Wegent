@@ -92,6 +92,7 @@ function item(overrides: Partial<SmartAppMarketplaceItem> = {}): SmartAppMarketp
     ownerUserId: 0,
     ownerDisplayName: 'Wework',
     accessRole: 'official',
+    visibility: 'public',
     tags: ['data_analysis'],
     iconUrl: '',
     screenshotUrls: [],
@@ -101,6 +102,8 @@ function item(overrides: Partial<SmartAppMarketplaceItem> = {}): SmartAppMarketp
     releaseNotes: 'New release',
     sizeBytes: 1024,
     requirements: {},
+    extensions: {},
+    releaseExtensions: {},
     scanStatus: 'passed',
     updatedAt: '2026-08-20T00:00:00Z',
     publishedAt: '2026-08-20T00:00:00Z',
@@ -203,16 +206,39 @@ describe('SmartAppsMarketplacePage', () => {
     revealLocalFile.mockReset().mockResolvedValue(undefined)
   })
 
-  test('shows official and shared marketplace metadata', async () => {
+  test('shows official, public, and shared marketplace metadata', async () => {
     render(
       <SmartAppsMarketplacePage
-        api={api([item(), item({ id: 8, sourceType: 'user', ownerDisplayName: 'Alice' })])}
+        api={api([
+          item(),
+          item({
+            id: 8,
+            sourceType: 'user',
+            ownerDisplayName: 'Alice',
+            accessRole: 'recipient',
+            visibility: 'restricted',
+          }),
+          item({
+            id: 9,
+            sourceType: 'user',
+            ownerDisplayName: 'Bob',
+            accessRole: 'public',
+          }),
+          item({
+            id: 10,
+            sourceType: 'user',
+            ownerDisplayName: 'Current user',
+            accessRole: 'owner',
+          }),
+        ])}
       />
     )
 
-    expect(await screen.findAllByText('研究工作台')).toHaveLength(2)
+    expect(await screen.findAllByText('研究工作台')).toHaveLength(4)
     expect(screen.getByText('官方')).toBeInTheDocument()
+    expect(screen.getByText('我发布的')).toBeInTheDocument()
     expect(screen.getAllByText('分享给我')).toHaveLength(2)
+    expect(screen.getAllByText('全员应用')).toHaveLength(2)
     expect(screen.getByTestId('smart-apps-marketplace-sort')).toHaveValue('recommended')
     expect(screen.queryByText('智能工作台市场')).not.toBeInTheDocument()
     expect(
@@ -542,7 +568,14 @@ describe('SmartAppsMarketplacePage', () => {
 
     expect(screen.getAllByText('选择文件')).toHaveLength(2)
     expect(screen.getAllByText('未选择文件')).toHaveLength(2)
-    expect(screen.getByText('分享对象（必选）')).toBeInTheDocument()
+    expect(screen.getByText('发布范围')).toBeInTheDocument()
+    expect(screen.getByTestId('smart-app-target-search')).toBeInTheDocument()
+
+    fireEvent.click(screen.getByTestId('smart-app-publish-scope-public'))
+    expect(screen.queryByTestId('smart-app-target-search')).not.toBeInTheDocument()
+    expect(
+      screen.getByText('发布成功后立即上架到智能应用市场，所有成员均可查看和安装。')
+    ).toBeInTheDocument()
 
     fireEvent.change(screen.getByTestId('smart-app-publish-icon'), {
       target: { files: [new File(['icon'], '应用图标.png', { type: 'image/png' })] },
@@ -558,6 +591,102 @@ describe('SmartAppsMarketplacePage', () => {
 
     expect(screen.getByText('应用图标.png')).toBeInTheDocument()
     expect(screen.getByText('已选择 2 个文件')).toBeInTheDocument()
+  })
+
+  test('switches an owned app to everyone without sharing targets', async () => {
+    const ownedItem = item({
+      sourceType: 'user',
+      ownerUserId: 1,
+      ownerDisplayName: 'Alice',
+      accessRole: 'owner',
+      visibility: 'restricted',
+    })
+    const smartAppsApi = api([ownedItem])
+    vi.mocked(smartAppsApi.getAccess).mockResolvedValue({
+      smartAppId: ownedItem.id,
+      scope: 'restricted',
+      targets: [{ entityType: 'user', entityId: '2', displayName: 'Bob' }],
+      isListed: true,
+      latestReleaseId: ownedItem.latestReleaseId,
+      version: ownedItem.version,
+    })
+    vi.mocked(smartAppsApi.updateAccess).mockResolvedValue({
+      smartAppId: ownedItem.id,
+      scope: 'public',
+      targets: [],
+      isListed: true,
+      latestReleaseId: ownedItem.latestReleaseId,
+      version: ownedItem.version,
+    })
+    listInstalled.mockResolvedValue([{ ...importedInstallation, smartAppId: ownedItem.id }])
+
+    render(<SmartAppsMarketplacePage api={smartAppsApi} mode="owned" />)
+
+    fireEvent.click(await screen.findByTestId(`smart-app-visibility-${ownedItem.id}`))
+    await screen.findByTestId('smart-app-share-dialog')
+    fireEvent.click(screen.getByTestId('smart-app-share-scope-public'))
+    expect(screen.queryByTestId('smart-app-target-search')).not.toBeInTheDocument()
+    expect(
+      screen.getByText(
+        '将当前已发布版本 v1.2.0 上架到智能应用市场，所有成员均可查看和安装。本地后续修改不会自动同步，需发布新版本。'
+      )
+    ).toBeInTheDocument()
+    fireEvent.click(screen.getByTestId('smart-app-share-save'))
+
+    await waitFor(() =>
+      expect(smartAppsApi.updateAccess).toHaveBeenCalledWith(ownedItem.id, {
+        scope: 'public',
+        targets: [],
+      })
+    )
+    expect(screen.getByTestId('smart-app-access-success')).toHaveTextContent(
+      'v1.2.0 已上架到智能应用市场。'
+    )
+    const viewMarketplaceButton = screen.getByTestId('smart-app-access-view-marketplace')
+    expect(viewMarketplaceButton).toHaveClass('border-success/30', 'bg-background', 'shadow-sm')
+    fireEvent.click(viewMarketplaceButton)
+    expect(navigateTo).toHaveBeenCalledWith('/sites?app_type=smart_app')
+    expect(screen.queryByTestId('smart-app-access-success')).not.toBeInTheDocument()
+  })
+
+  test('reports when an administrator has unlisted a public app', async () => {
+    const ownedItem = item({
+      sourceType: 'user',
+      ownerUserId: 1,
+      ownerDisplayName: 'Alice',
+      accessRole: 'owner',
+      visibility: 'restricted',
+    })
+    const smartAppsApi = api([ownedItem])
+    vi.mocked(smartAppsApi.getAccess).mockResolvedValue({
+      smartAppId: ownedItem.id,
+      scope: 'restricted',
+      targets: [{ entityType: 'user', entityId: '2', displayName: 'Bob' }],
+      isListed: false,
+      latestReleaseId: ownedItem.latestReleaseId,
+      version: ownedItem.version,
+    })
+    vi.mocked(smartAppsApi.updateAccess).mockResolvedValue({
+      smartAppId: ownedItem.id,
+      scope: 'public',
+      targets: [],
+      isListed: false,
+      latestReleaseId: ownedItem.latestReleaseId,
+      version: ownedItem.version,
+    })
+    listInstalled.mockResolvedValue([{ ...importedInstallation, smartAppId: ownedItem.id }])
+
+    render(<SmartAppsMarketplacePage api={smartAppsApi} mode="owned" />)
+
+    fireEvent.click(await screen.findByTestId(`smart-app-visibility-${ownedItem.id}`))
+    await screen.findByTestId('smart-app-share-dialog')
+    fireEvent.click(screen.getByTestId('smart-app-share-scope-public'))
+    fireEvent.click(screen.getByTestId('smart-app-share-save'))
+
+    expect(await screen.findByTestId('smart-app-access-success')).toHaveTextContent(
+      '已发布给全员，但当前已被管理员下架。'
+    )
+    expect(screen.queryByTestId('smart-app-access-view-marketplace')).not.toBeInTheDocument()
   })
 
   test('localizes an unavailable marketplace file store', async () => {
