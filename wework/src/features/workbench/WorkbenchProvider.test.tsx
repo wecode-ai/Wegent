@@ -1071,6 +1071,12 @@ function ProjectSendProbe({
   const currentModelSelection =
     currentRuntimeTaskSummary?.modelSelection ??
     modelSelectionFromRuntimeHandle(currentRuntimeTask?.runtimeHandle)
+  const backgroundRuntimeTaskModelSelection =
+    workbench.projectChat.resolveRuntimeTaskModelSelection({
+      deviceId: 'device-1',
+      workspacePath: '/workspace/project-alpha',
+      taskId: 'runtime-a',
+    })
 
   return (
     <div>
@@ -1078,6 +1084,9 @@ function ProjectSendProbe({
         {currentRuntimeTask
           ? `${currentRuntimeTask.deviceId}:${currentRuntimeTask.taskId}`
           : 'none'}
+      </span>
+      <span data-testid="background-runtime-task-model">
+        {backgroundRuntimeTaskModelSelection.selectedModel?.name ?? 'none'}
       </span>
       <span data-testid="current-project-name">
         {workbench.state.currentProject?.name ?? 'none'}
@@ -2059,11 +2068,22 @@ function RuntimeModelCompatibilityProbe() {
 function RuntimeModelSelectionProbe() {
   const workbench = useWorkbench()
   const mimoModel = workbench.projectChat.models.find(model => model.name === 'local-model:mimo')
+  const backgroundTaskModel = workbench.projectChat.resolveRuntimeTaskModelSelection({
+    deviceId: 'device-1',
+    workspacePath: '/workspace/project-alpha',
+    taskId: 'runtime-a',
+  })
 
   return (
     <div>
       <span data-testid="selected-model">{workbench.projectChat.selectedModel?.name ?? ''}</span>
       <span data-testid="active-model">{workbench.projectChat.activeModel?.name ?? ''}</span>
+      <span data-testid="background-task-selected-model">
+        {backgroundTaskModel.selectedModel?.name ?? ''}
+      </span>
+      <span data-testid="background-task-active-model">
+        {backgroundTaskModel.activeModel?.name ?? ''}
+      </span>
       <span data-testid="selected-mode">
         {workbench.projectChat.selectedModelOptions.collaborationMode ?? 'default'}
       </span>
@@ -5588,6 +5608,14 @@ describe('WorkbenchProvider runtime tasks', () => {
 
     renderWorkbench(<RuntimeModelSelectionProbe />, services)
 
+    await waitFor(() =>
+      expect(screen.getByTestId('background-task-selected-model')).toHaveTextContent(
+        'local-model:mimo'
+      )
+    )
+    expect(screen.getByTestId('background-task-active-model')).toHaveTextContent('local-model:mimo')
+    expect(screen.getByTestId('selected-model')).not.toHaveTextContent('local-model:mimo')
+
     await userEvent.click(await screen.findByText('open runtime a'))
 
     await waitFor(() =>
@@ -5655,6 +5683,9 @@ describe('WorkbenchProvider runtime tasks', () => {
 
     renderWorkbench(<ProjectSendProbe />, services)
 
+    await waitFor(() =>
+      expect(screen.getByTestId('background-runtime-task-model')).toHaveTextContent('gpt-5.6-sol')
+    )
     await userEvent.click(await screen.findByText('open project runtime task'))
 
     await waitFor(() =>
