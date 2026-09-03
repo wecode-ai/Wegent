@@ -105,6 +105,10 @@ import {
   getRuntimeTaskChatScopeKey,
 } from './workbenchProviderHelpers'
 import {
+  queueWorkbenchWorkspaceLaunch,
+  type WorkbenchWorkspaceLaunchOptions,
+} from './workspaceLaunchRequest'
+import {
   createRuntimeTaskLifecycleOwnershipView,
   RuntimeTaskLifecycleProvider,
   RuntimeTaskLifecycleStore,
@@ -1216,7 +1220,13 @@ export function WorkbenchProvider({
   )
 
   const openStandaloneWorkspace = useCallback(
-    async (deviceId: string, workspacePath: string, label?: string, projectRoots?: string[]) => {
+    async (
+      deviceId: string,
+      workspacePath: string,
+      label?: string,
+      projectRoots?: string[],
+      launchOptions?: WorkbenchWorkspaceLaunchOptions
+    ) => {
       projectSelectionStartedRef.current = true
       const requestDeviceId = deviceId.trim()
       const normalizedWorkspacePath = workspacePath.trim()
@@ -1273,6 +1283,9 @@ export function WorkbenchProvider({
           })
         )
         await refreshWorkLists()
+        if (launchOptions) {
+          queueWorkbenchWorkspaceLaunch(response.deviceId, response.roots[0], launchOptions)
+        }
         dispatch({
           type: 'runtime_workspace_opened',
           deviceId: response.deviceId,
@@ -1303,6 +1316,9 @@ export function WorkbenchProvider({
         requestDeviceId
 
       writeLastProjectId(user.id, null)
+      if (launchOptions) {
+        queueWorkbenchWorkspaceLaunch(openedDeviceId, openedWorkspacePath, launchOptions)
+      }
       dispatch({
         type: 'runtime_workspace_opened',
         deviceId: openedDeviceId,

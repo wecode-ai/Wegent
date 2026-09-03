@@ -107,9 +107,16 @@ export function PluginManagementPage() {
     )
     if (!deviceId) throw new Error(t('workbench.no_local_device', '没有可用的本地设备'))
     const plugin = await initializePluginDevelopmentProject(sourceRoot)
-    await openStandaloneWorkspace(deviceId, plugin.sourceRoot, plugin.displayName, [
+    await openStandaloneWorkspace(
+      deviceId,
       plugin.sourceRoot,
-    ])
+      plugin.displayName,
+      [plugin.sourceRoot],
+      {
+        initialInput: t('workbench.plugin_development_initial_prompt', '开发这个 Wework 插件：'),
+        rightSidebarTab: { type: 'wework-plugin-developer.debug' },
+      }
+    )
   }
 
   const topBarLeftActions =

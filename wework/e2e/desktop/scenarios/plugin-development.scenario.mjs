@@ -2,20 +2,7 @@ import assert from 'node:assert/strict'
 import { access, mkdir, readFile, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 
-const DEBUG_OPTION =
-  '[data-testid="right-workspace-extension-option-wework-plugin-developer.debug"]'
 const STATUS = '[data-testid="wework-plugin-development-sidebar-status"]'
-
-async function waitForSnapshot(control, predicate, message, timeoutMs) {
-  const startedAt = Date.now()
-  let lastSnapshot = null
-  while (Date.now() - startedAt < timeoutMs) {
-    lastSnapshot = JSON.parse(await control.command('snapshot', 'body'))
-    if (predicate(lastSnapshot)) return lastSnapshot
-    await new Promise(resolve => setTimeout(resolve, 100))
-  }
-  throw new Error(`${message}; last snapshot: ${JSON.stringify(lastSnapshot)}`)
-}
 
 async function waitForStatus(control, expected, timeoutMs) {
   await control.commandForWindow('main', 'waitFor', STATUS, {
@@ -109,23 +96,15 @@ export async function createDesktopScenario({
       assert.equal(codexManifest.wework, undefined)
       assert.equal(codexManifest.dsh, undefined)
 
-      await waitForSnapshot(
-        control,
-        snapshot => snapshot.testIds.includes('toggle-right-workspace-panel-button'),
-        'The plugin project conversation did not expose the right workspace',
-        workbenchReadyTimeoutMs
-      )
-      await control.command('click', '[data-testid="toggle-right-workspace-panel-button"]')
-      await control.command('waitFor', DEBUG_OPTION, {
+      await control.command('waitFor', '[data-testid="wework-plugin-development-sidebar"]', {
         timeoutMs: workbenchReadyTimeoutMs,
         visible: true,
       })
-      await captureScreenshot(control, 'plugin-development-02-debug-option.png', 'body')
-      await control.command('click', DEBUG_OPTION, { visible: true })
-      await control.command('waitFor', '[data-testid="wework-plugin-development-sidebar"]', {
-        timeoutMs: uiTimeoutMs,
-        visible: true,
-      })
+      assert.equal(
+        await control.command('getValue', '[data-testid="chat-message-input"]'),
+        '开发这个 Wework 插件：',
+        'The plugin project conversation did not receive its initial development prompt'
+      )
       await control.command('waitFor', '[data-testid="wework-plugin-development-debug-target"]', {
         text: 'Wework 调试实例（运行端）',
         timeoutMs: uiTimeoutMs,
@@ -136,7 +115,7 @@ export async function createDesktopScenario({
         timeoutMs: uiTimeoutMs,
         visible: true,
       })
-      await captureScreenshot(control, 'plugin-development-03-debug-stopped.png', 'body')
+      await captureScreenshot(control, 'plugin-development-02-debug-opened.png', 'body')
 
       await control.command(
         'clickWhenEnabled',

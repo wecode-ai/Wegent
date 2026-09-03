@@ -207,6 +207,7 @@ import {
   findRuntimeTask,
   truncateRuntimeTaskTitle,
 } from '@/features/workbench/workbenchRuntimeHelpers'
+import { consumeWorkbenchWorkspaceLaunch } from '@/features/workbench/workspaceLaunchRequest'
 import { useWorkbenchPaneEnvironment } from './useWorkbenchPaneEnvironment'
 import { useWorkbenchProjectWorkControls } from './useWorkbenchProjectWorkControls'
 import { useRuntimeTaskContinueInIm } from './useRuntimeTaskContinueInIm'
@@ -3606,6 +3607,32 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
       workbenchVisible,
     ]
   )
+  const workspaceLaunchDeviceId = composerWorkspaceTarget?.deviceId
+  const workspaceLaunchPath = composerWorkspaceTarget?.path
+  useEffect(() => {
+    if (!paneActive || !paneVisible || !workbenchVisible) return
+    if (!workspaceLaunchDeviceId || !workspaceLaunchPath) return
+    const launch = consumeWorkbenchWorkspaceLaunch(workspaceLaunchDeviceId, workspaceLaunchPath)
+    if (!launch) return
+
+    if (launch.initialInput) {
+      setPaneInput(launch.initialInput)
+    }
+    if (launch.rightSidebarTab) {
+      rightWorkspaceDshSidebar.openTab(
+        { type: launch.rightSidebarTab.type },
+        rightWorkspaceExtensionScope
+      )
+    }
+  }, [
+    paneActive,
+    paneVisible,
+    rightWorkspaceExtensionScope,
+    setPaneInput,
+    workbenchVisible,
+    workspaceLaunchDeviceId,
+    workspaceLaunchPath,
+  ])
 
   const openReviewFromDiffLoader = useCallback(
     async (loadDiff: () => Promise<string>, metadata: DesktopReviewMetadata = {}) => {

@@ -57,6 +57,7 @@ import type {
   UnifiedSkill,
   User,
 } from '@/types/api'
+import type { WorkbenchWorkspaceLaunchOptions } from './workspaceLaunchRequest'
 import type { DeviceUpgradeState } from '@/types/device-events'
 import type { DockerRemoteDeviceCommandResponse } from '@/types/devices'
 import type { EnvironmentInfo } from '@/types/environment'
@@ -253,7 +254,8 @@ export interface WorkbenchContextValue {
     deviceId: string,
     workspacePath: string,
     label?: string,
-    projectRoots?: string[]
+    projectRoots?: string[],
+    launchOptions?: WorkbenchWorkspaceLaunchOptions
   ) => Promise<void>
   startNewChat: () => void
   startNewSkillChat: (

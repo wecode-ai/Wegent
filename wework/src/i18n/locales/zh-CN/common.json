@@ -417,6 +417,7 @@
     "project_search_no_results": "没有匹配的项目",
     "plugins": "插件",
     "plugin_development_create": "创建新插件",
+    "plugin_development_initial_prompt": "开发这个 Wework 插件：",
     "plugin_development_creating": "正在创建…",
     "plugin_development_connected": "已连接",
     "plugin_development_current_project": "当前项目（开发端）",
