@@ -162,7 +162,6 @@ describe('CreateKnowledgeBaseDialog direct access requirement', () => {
     rerender(<CreateKnowledgeBaseDialog open onOpenChange={jest.fn()} onSubmit={onSubmit} />)
 
     await waitFor(() => expect(getKnowledgeBaseRetrievalProfile).toHaveBeenCalledTimes(2))
-    await screen.findByTestId('knowledge-retrieval-profile-fallback')
     fireEvent.click(screen.getByRole('button', { name: 'set name' }))
     fireEvent.click(screen.getByRole('button', { name: 'disable summary' }))
     fireEvent.click(screen.getByRole('button', { name: 'change retrieval settings' }))

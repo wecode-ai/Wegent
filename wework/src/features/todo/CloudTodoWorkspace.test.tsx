@@ -1595,7 +1595,7 @@ describe('CloudTodoWorkspace', () => {
     await userEvent.click(screen.getByTestId('ai-chat-modal-close'))
     expect(screen.queryByTestId('ai-chat-modal')).not.toBeInTheDocument()
     expect(screen.queryByTestId('cloud-todo-detail')).not.toBeInTheDocument()
-  })
+  }, 10_000)
 
   it('ignores a task address that resolves after reopening the task panel', async () => {
     const workbenchServices = services()

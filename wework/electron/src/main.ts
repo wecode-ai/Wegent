@@ -62,6 +62,7 @@ import {
 import { assertStartupRecoverySender, StartupRecoveryService } from './host/startup-recovery.js'
 import { ElectronTrayManager, type TrayAction } from './host/tray-manager.js'
 import { createTrayIcon } from './host/tray-icon.js'
+import { trayGuidForApplicationId } from './host/tray-guid.js'
 import { TrayNativeStatusController } from './host/tray-native-status.js'
 import { WindowClosePolicy, type WindowCloseDecision } from './host/window-close-policy.js'
 import { AppUpdateService } from './host/app-update-service.js'
@@ -93,6 +94,8 @@ import { resolveDshAppRoute } from './host/dsh-app-route.js'
 import { BrowserAnnotationController } from './host/browser-annotation-controller.js'
 import { LogRetentionService, type LogCleanupResult } from './runtime/log-retention.js'
 import { SecureValueStore } from './host/secure-value-store.js'
+import { resolveDevelopmentDockIdentity } from './host/development-dock-identity.js'
+import { isEffectivePackagedApplication } from './host/application-packaging-mode.js'
 
 const packageRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const packageMetadata = createRequire(import.meta.url)('../package.json') as {
@@ -114,8 +117,12 @@ const applicationId =
   process.env.WEWORK_APP_IDENTIFIER?.trim() ||
   packageMetadata.weworkAppId?.trim() ||
   'io.wecode.wework'
+const developmentDockIdentity = resolveDevelopmentDockIdentity(process.env)
+const packagedApplication = isEffectivePackagedApplication(app.isPackaged, process.env)
 const DEFAULT_POPOUT_WINDOW_SHORTCUT = 'Alt+Shift+Space'
 const startupStartedAt = performance.now()
+
+if (developmentDockIdentity) process.title = developmentDockIdentity.displayName
 
 function logStartupStep(
   step: string,
@@ -203,7 +210,7 @@ autoUpdater.logger = appUpdateLogger
 const appUpdates = new AppUpdateService({
   updater: autoUpdater,
   currentVersion: () => app.getVersion(),
-  isPackaged: () => app.isPackaged,
+  isPackaged: () => packagedApplication,
   prepareInstall: async () => {
     await prepareApplicationShutdown()
     await appUpdateLogger
@@ -750,7 +757,7 @@ async function createWindow(startupTheme: StartupSplashTheme): Promise<void> {
     ...desktopWindowFrameOptions(),
     width: 1440,
     height: 960,
-    title: 'Wework',
+    title: developmentDockIdentity?.displayName ?? 'Wework',
     backgroundColor: startupTheme === 'dark' ? '#101316' : '#fafafa',
     show: false,
     webPreferences: {
@@ -766,7 +773,7 @@ async function createWindow(startupTheme: StartupSplashTheme): Promise<void> {
     ...desktopWindowFrameOptions(),
     width: 1440,
     height: 960,
-    title: 'Wework',
+    title: developmentDockIdentity?.displayName ?? 'Wework',
     backgroundColor: startupTheme === 'dark' ? '#101316' : '#fafafa',
     show: false,
     webPreferences: {
@@ -922,10 +929,11 @@ function dispatchTrayAction(action: TrayAction): void {
 }
 
 function createTrayManager(): ElectronTrayManager<Electron.Menu | null, Tray> {
-  const resourcesRoot = app.isPackaged ? process.resourcesPath : developmentResourcesRoot
+  const resourcesRoot = packagedApplication ? process.resourcesPath : developmentResourcesRoot
   const iconPath = join(resourcesRoot, 'icons', '128x128.png')
+  const trayGuid = trayGuidForApplicationId(applicationId)
   return new ElectronTrayManager({
-    createTray: () => new Tray(createTrayIcon(nativeImage, iconPath)),
+    createTray: () => new Tray(createTrayIcon(nativeImage, iconPath), trayGuid),
     buildMenu: template => Menu.buildFromTemplate(template as MenuItemConstructorOptions[]),
     dispatchAction: dispatchTrayAction,
     applyIcon: (tray, state) => {
@@ -1143,7 +1151,7 @@ async function configureDesktopRuntime(): Promise<void> {
       environment,
       runtimeHost: smartAppRuntimeHost,
       ensureWorkbenchRuntime:
-        app.isPackaged && !process.env.WEWORK_HARNESS_RUNTIME_ROOT?.trim()
+        packagedApplication && !process.env.WEWORK_HARNESS_RUNTIME_ROOT?.trim()
           ? async () => {
               const paths = packagedHarnessRuntimePaths()
               const resources = environment.WEWORK_HARNESS_RESOURCE_ROOT?.trim()
@@ -1381,6 +1389,10 @@ function startDesktopRuntime(): Promise<void> {
 if (hasSingleInstanceLock) {
   app.whenReady().then(async () => {
     logStartupStep('electron-ready', 'completed')
+    if (process.platform === 'darwin' && app.dock && developmentDockIdentity) {
+      app.dock.setBadge(developmentDockIdentity.badge)
+      console.info('[development] Dock identity configured', developmentDockIdentity)
+    }
     logStartupStep('log-retention-start', 'started')
     await logRetention.start()
     logStartupStep('log-retention-start', 'completed')
@@ -1462,14 +1474,14 @@ function reportLogCleanup(result: LogCleanupResult): void {
 }
 
 async function desktopEnvironment(): Promise<NodeJS.ProcessEnv> {
-  const resourcesRoot = app.isPackaged ? process.resourcesPath : developmentResourcesRoot
+  const resourcesRoot = packagedApplication ? process.resourcesPath : developmentResourcesRoot
   const configuredComponentResourcesRoot = process.env.WEWORK_COMPONENT_RESOURCES_ROOT?.trim()
   const componentResourcesRoot =
-    !app.isPackaged && configuredComponentResourcesRoot
+    !packagedApplication && configuredComponentResourcesRoot
       ? resolve(configuredComponentResourcesRoot)
       : resourcesRoot
   const preparedComponents = await prepareDesktopComponents({
-    isPackaged: app.isPackaged,
+    isPackaged: packagedApplication,
     managerOptions: {
       resourcesRoot: componentResourcesRoot,
       dataDirectory: app.getPath('userData'),

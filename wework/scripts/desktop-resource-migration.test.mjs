@@ -75,7 +75,10 @@ describe('desktop resource migration', () => {
     expect(aiVerifyBuildScript).toContain("process.platform === 'win32' ? 'pnpm.cmd' : 'pnpm'")
     expect(aiVerifyBuildScript).toContain('wrapWindowsScriptCommand(command, args)')
     expect(devMacScript).toContain('WEWORK_USER_DATA_DIR=')
-    expect(devMacScript).toContain('io.wecode.wework.dev/$WEWORK_DEV_INSTANCE_ID')
+    expect(devMacScript).toContain(
+      'WEWORK_DEV_APP_IDENTIFIER:-io.wecode.wework.dev.$WEWORK_DEV_INSTANCE_ID'
+    )
+    expect(devMacScript).toContain('${WEWORK_DEV_USER_DATA_DIR:-}')
     expect(aiVerifyBuildScript).not.toContain("['run', 'build:dsh-app']")
     expect(packageJson.scripts['build:dsh-app']).toBe(
       'vite build --base /wework/app/ --outDir dsh/app-wework/web --emptyOutDir'

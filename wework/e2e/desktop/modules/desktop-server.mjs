@@ -253,6 +253,7 @@ const ELECTRON_OBSERVATION_ACTIONS = new Set([
   'activeElement',
   'getAttribute',
   'getElementCount',
+  'getTerminalText',
   'getText',
   'metrics',
   'snapshot',
@@ -275,6 +276,33 @@ function findNestedString(value, predicate) {
     if (match) return match
   }
   return null
+}
+
+function requestContainsSkillLocator(body, skillPath, skillName) {
+  const requestText = JSON.stringify(body)
+  if (requestText.includes(skillPath)) return true
+
+  const normalizedSkillPath = skillPath.replaceAll('\\', '/')
+  const relativeSkillPath = `${skillName}/SKILL.md`
+  const skillRoot = normalizedSkillPath.slice(0, -relativeSkillPath.length).replace(/\/$/u, '')
+  const catalog = findNestedString(
+    body,
+    value => value.includes('### Skill roots') && value.includes(relativeSkillPath)
+  )
+  if (!catalog) return false
+
+  for (const line of catalog.split(/\r?\n/u)) {
+    const rootMatch = line.match(/^- `([^`]+)` = `([^`]+)`$/u)
+    if (!rootMatch) continue
+    const [, alias, root] = rootMatch
+    if (
+      root.replaceAll('\\', '/') === skillRoot &&
+      catalog.includes(`(file: ${alias}/${relativeSkillPath})`)
+    ) {
+      return true
+    }
+  }
+  return false
 }
 
 function toolOutputText(request, callId) {
@@ -523,6 +551,9 @@ class DesktopE2EServer {
     })
     this.toolBlockGenericRelease = new Promise(resolvePromise => {
       this.releaseToolBlockGeneric = resolvePromise
+    })
+    this.cloudInitialRelease = new Promise(resolvePromise => {
+      this.releaseCloudInitial = resolvePromise
     })
     this.cloudFollowUpRelease = new Promise(resolvePromise => {
       this.releaseCloudFollowUp = resolvePromise
@@ -949,6 +980,10 @@ class DesktopE2EServer {
 
   markGoalRestartResumeRequested() {
     this.goalRestartResumeRequested = true
+  }
+
+  releaseCloudInitialResponse() {
+    this.releaseCloudInitial()
   }
 
   releaseCloudFollowUpResponse() {
@@ -2531,12 +2566,30 @@ class DesktopE2EServer {
         true,
         'The real cloud executor did not expose the authenticated Wework user identity'
       )
+      const stream = streamingTextEvents(responseId, CLOUD_COMPLETION_TEXT)
+      this.cloudModelStage = 'streaming'
+      response.writeHead(200, {
+        'Access-Control-Allow-Origin': '*',
+        'Cache-Control': 'no-cache',
+        Connection: 'keep-alive',
+        'Content-Type': 'text/event-stream; charset=utf-8',
+      })
+      response.write(
+        createSse([
+          ...stream.start,
+          {
+            type: 'response.output_text.delta',
+            item_id: stream.itemId,
+            output_index: 0,
+            content_index: 0,
+            delta: CLOUD_COMPLETION_TEXT,
+            offset: 0,
+          },
+        ])
+      )
+      await this.cloudInitialRelease
       this.cloudModelStage = 'complete'
-      this.writeSse(response, [
-        responseCreated(responseId),
-        assistantMessage(CLOUD_COMPLETION_TEXT),
-        responseCompleted(responseId),
-      ])
+      response.end(createSse(stream.finish))
       return
     }
 
@@ -3160,7 +3213,7 @@ class DesktopE2EServer {
         assert.ok(
           requestText.includes(OFFICIAL_PLUGIN_NAME) &&
             requestText.includes(OFFICIAL_PLUGIN_SKILL_NAME) &&
-            requestText.includes(skillPath),
+            requestContainsSkillLocator(body, skillPath, OFFICIAL_PLUGIN_SKILL_NAME),
           'The real Codex request did not inject the selected official plugin skill'
         )
         const shell = selectShellToolCommand(

@@ -830,6 +830,7 @@ jobs:
           BIND_SHELL: claudecode
           WEGENT_EXECUTOR_HOME: ${{ runner.temp }}/wegent-executor
           LOCAL_WORKSPACE_ROOT: ${{ runner.temp }}/wegent-workspace
+          WORKSPACE_ROOT: ${{ runner.temp }}/wegent-workspace
           LOCAL_HEARTBEAT_INTERVAL: "5"
           LOG_LEVEL: info
           CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: "1"
@@ -892,8 +893,11 @@ jobs:
           PY
           )
           test -x executor/target/release/wegent-executor
-          WEGENT_AUTH_TOKEN="$TOKEN" \
-            nohup executor/target/release/wegent-executor > executor/local-executor.log 2>&1 &
+          nohup env \
+            -u GIT_TOKEN_AES_KEY \
+            -u GIT_TOKEN_AES_IV \
+            WEGENT_AUTH_TOKEN="$TOKEN" \
+            executor/target/release/wegent-executor > executor/local-executor.log 2>&1 &
           echo $! > executor/local-executor.pid
 
       - name: Start Executor Manager

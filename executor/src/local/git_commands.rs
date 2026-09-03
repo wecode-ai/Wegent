@@ -155,15 +155,55 @@ async fn git_stdout_trimmed(
     }
 }
 
-/// Resolve the branch base used by diff commands, matching the shell scripts
-/// these commands replaced: origin/HEAD if published, otherwise the first
-/// resolvable candidate among origin/main, main, origin/master, master.
+/// Ordered base candidates for branch diffs.
+///
+/// Fork workflows compare the fork branch against the parent remote
+/// (`upstream/HEAD`, then `upstream/main`/`upstream/master`) before falling
+/// back to the fork's own `origin` and finally the local default branches.
+/// This mirrors the candidate order the replaced shell scripts used.
+fn diff_base_candidates(upstream_head: Option<String>, origin_head: Option<String>) -> Vec<String> {
+    let mut candidates = Vec::new();
+    for candidate in [
+        upstream_head,
+        Some("upstream/main".to_owned()),
+        Some("upstream/master".to_owned()),
+        origin_head,
+        Some("origin/main".to_owned()),
+        Some("origin/master".to_owned()),
+        Some("main".to_owned()),
+        Some("master".to_owned()),
+    ]
+    .into_iter()
+    .flatten()
+    {
+        if !candidates.contains(&candidate) {
+            candidates.push(candidate);
+        }
+    }
+    candidates
+}
+
+/// Resolve the branch base used by diff commands: the fork parent remote's
+/// default branch when present, otherwise origin, otherwise a local default
+/// branch.
 async fn resolve_diff_base(
     cwd: Option<&Path>,
     env: &HashMap<String, String>,
     timeout: Duration,
 ) -> Option<String> {
-    let remote_head = git_stdout_trimmed(
+    let upstream_head = git_stdout_trimmed(
+        &[
+            "symbolic-ref",
+            "--quiet",
+            "--short",
+            "refs/remotes/upstream/HEAD",
+        ],
+        cwd,
+        env,
+        timeout,
+    )
+    .await;
+    let origin_head = git_stdout_trimmed(
         &[
             "symbolic-ref",
             "--quiet",
@@ -175,7 +215,7 @@ async fn resolve_diff_base(
         timeout,
     )
     .await;
-    if let Some(candidate) = remote_head {
+    for candidate in diff_base_candidates(upstream_head, origin_head) {
         if git_probe_succeeds(
             &[
                 "rev-parse",
@@ -190,24 +230,6 @@ async fn resolve_diff_base(
         .await
         {
             return Some(candidate);
-        }
-    }
-
-    for candidate in ["origin/main", "main", "origin/master", "master"] {
-        if git_probe_succeeds(
-            &[
-                "rev-parse",
-                "--verify",
-                "--quiet",
-                &format!("{candidate}^{{commit}}"),
-            ],
-            cwd,
-            env,
-            timeout,
-        )
-        .await
-        {
-            return Some(candidate.to_owned());
         }
     }
     None
@@ -832,6 +854,52 @@ mod tests {
         assert_eq!(
             result.stdout["tool"],
             Value::String("wegent-definitely-missing-tool".to_owned())
+        );
+    }
+
+    #[test]
+    fn diff_base_prefers_fork_parent_remote_before_origin() {
+        let candidates = diff_base_candidates(
+            Some("upstream/main".to_owned()),
+            Some("origin/main".to_owned()),
+        );
+        let upstream = candidates
+            .iter()
+            .position(|candidate| candidate == "upstream/main")
+            .expect("upstream/main should be a candidate");
+        let origin = candidates
+            .iter()
+            .position(|candidate| candidate == "origin/main")
+            .expect("origin/main should be a candidate");
+        let local = candidates
+            .iter()
+            .position(|candidate| candidate == "main")
+            .expect("main should be a candidate");
+        assert!(
+            upstream < origin,
+            "fork parent remote must be checked first"
+        );
+        assert!(origin < local, "origin must be checked before local main");
+        assert_eq!(
+            candidates.len(),
+            6,
+            "duplicated symbolic defaults should be deduplicated"
+        );
+    }
+
+    #[test]
+    fn diff_base_keeps_upstream_remotes_even_without_symbolic_heads() {
+        let candidates = diff_base_candidates(None, None);
+        assert_eq!(
+            candidates,
+            vec![
+                "upstream/main",
+                "upstream/master",
+                "origin/main",
+                "origin/master",
+                "main",
+                "master"
+            ]
         );
     }
 }
