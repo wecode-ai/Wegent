@@ -360,7 +360,6 @@
         "updatedAt": "Updated"
       },
       "type": {
-        "table": "Table",
         "web": "Web Page",
         "external": "External"
       },
@@ -529,33 +528,10 @@
       "insert": "Insert",
       "clickToRename": "Click to rename",
       "unsupportedFileType": "Multimedia files require multimodal analysis to be enabled for this knowledge base before uploading",
-      "addTable": "Add Data Table",
-      "tableHint": "Enter the table link and name to add it to your knowledge base.",
-      "tableUrlHint": "Please enter a valid table URL. Ensure the link is accessible and you have read permission. Currently supports DingTalk tables.",
-      "tableName": "Document Name",
-      "tableNamePlaceholder": "Enter document name",
-      "tableUrl": "Table Link",
-      "tableUrlPlaceholder": "Paste table link",
-      "tableUrlRequired": "Please enter the table link",
-      "tableNameRequired": "Please enter document name",
-      "tableAddFailed": "Failed to add, please try again",
       "adding": "Adding...",
       "confirmAdd": "Confirm Add",
       "validation": {
-        "validating": "Validating URL...",
-        "success": "URL validation passed",
-        "invalidUrlFormat": "Please enter a valid URL format",
-        "unsupportedProvider": "Unsupported link source. Currently only DingTalk tables are supported",
-        "parseFailed": "Unable to parse the link. Please check if the URL format is correct",
-        "missingDingtalkId": "You do not have a DingTalk ID configured. Please log in using DingTalk to access table documents",
-        "tableAccessFailed": "Unable to access the table. Please check if you have access permissions",
-        "tableAccessFailedLinkedTable": "The table might be a linked table. Please use the original table link",
-        "unknownError": "Validation failed. Please check if the URL is correct",
-        "networkError": "Network error. Please try again later",
-        "pleaseFixUrl": "Please fix the URL before submitting",
-        "provider": {
-          "dingtalk": "DingTalk Table"
-        }
+        "invalidUrlFormat": "Please enter a valid URL format"
       },
       "documentCount": "Document Count",
       "web": {
@@ -968,26 +944,6 @@
   "regenerate": "Regenerate",
   "view_detail": "View Details",
   "coming_soon": "Coming Soon",
-  "dingtalkTable": {
-    "title": "DingTalk Tables",
-    "empty": "No DingTalk tables",
-    "emptyHint": "Add DingTalk tables in your knowledge base to see them here",
-    "error": {
-      "noAssistant": "AI Assistant agent not found. Please ensure a team named 'AI助理' is configured in the system",
-      "loadFailed": "Failed to load DingTalk tables"
-    },
-    "analyzing": "Analyzing DingTalk table data..."
-  },
-  "table": {
-    "title": "Data Tables",
-    "empty": "No data tables",
-    "emptyHint": "Add data tables in your knowledge base to see them here",
-    "error": {
-      "noAssistant": "AI Assistant agent not found. Please ensure a team named 'AI助理' is configured in the system",
-      "loadFailed": "Failed to load data tables"
-    },
-    "analyzing": "Analyzing data table..."
-  },
   "artifact": {
     "tab": "Tools",
     "title": "Tools",

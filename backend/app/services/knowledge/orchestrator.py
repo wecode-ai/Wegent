@@ -1957,11 +1957,6 @@ class KnowledgeOrchestrator:
         )
 
         skip_reason = get_rag_indexing_skip_reason(
-            (
-                data.source_type.value
-                if data.source_type
-                else DocumentSourceType.FILE.value
-            ),
             data.file_extension,
             data.file_size,
         )
@@ -2523,7 +2518,7 @@ class KnowledgeOrchestrator:
         assert_user_content_is_mutable(getattr(document, "origin", "user"))
 
         skip_reason = get_rag_indexing_skip_reason(
-            document.source_type, document.file_extension, document.file_size
+            document.file_extension, document.file_size
         )
         if skip_reason:
             raise ValueError(skip_reason)

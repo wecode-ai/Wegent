@@ -85,31 +85,6 @@ class TestSubtaskContextBrief:
         assert brief.document_ids == [10, 11]
         assert brief.scope_restricted is True
 
-    def test_subtask_brief_includes_table_document_id(self) -> None:
-        """Table context briefs expose the underlying document ID."""
-        from app.models.subtask_context import (
-            ContextStatus,
-            ContextType,
-            SubtaskContext,
-        )
-        from app.schemas.subtask import SubtaskContextBrief
-
-        context = SubtaskContext(
-            subtask_id=100,
-            user_id=1,
-            context_type=ContextType.TABLE.value,
-            name="Roadmap",
-            status=ContextStatus.READY.value,
-            type_data={"document_id": 456, "url": "https://example.com/table"},
-        )
-        context.id = 888
-
-        brief = SubtaskContextBrief.from_model(context)
-
-        assert brief.id == 888
-        assert brief.document_id == 456
-        assert brief.source_config == {"url": "https://example.com/table"}
-
 
 class TestContextServiceAttachmentCopy:
     """Test trusted attachment copy operations."""

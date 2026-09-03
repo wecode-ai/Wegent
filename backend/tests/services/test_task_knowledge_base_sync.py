@@ -49,7 +49,6 @@ class TestPrepareContextsForCreation:
 
         (
             kb_contexts,
-            table_contexts,
             selected_docs_contexts,
             external_contexts,
         ) = _prepare_contexts_for_creation(
@@ -59,7 +58,6 @@ class TestPrepareContextsForCreation:
         )
 
         assert len(kb_contexts) == 1
-        assert table_contexts == []
         assert selected_docs_contexts == []
         assert external_contexts == []
         assert kb_contexts[0].type_data == {
@@ -83,7 +81,7 @@ class TestPrepareContextsForCreation:
             },
         )
 
-        kb_contexts, _, _, external_contexts = _prepare_contexts_for_creation(
+        kb_contexts, _, external_contexts = _prepare_contexts_for_creation(
             contexts=[context_item],
             subtask_id=100,
             user_id=1,
@@ -111,7 +109,7 @@ class TestPrepareContextsForCreation:
             },
         )
 
-        kb_contexts, _, _, external_contexts = _prepare_contexts_for_creation(
+        kb_contexts, _, external_contexts = _prepare_contexts_for_creation(
             contexts=[context_item],
             subtask_id=100,
             user_id=1,
@@ -141,7 +139,7 @@ class TestPrepareContextsForCreation:
             },
         )
 
-        kb_contexts, _, _, external_contexts = _prepare_contexts_for_creation(
+        kb_contexts, _, external_contexts = _prepare_contexts_for_creation(
             contexts=[context_item],
             subtask_id=100,
             user_id=1,
@@ -172,7 +170,7 @@ class TestPrepareContextsForCreation:
             },
         )
 
-        kb_contexts, _, _, external_contexts = _prepare_contexts_for_creation(
+        kb_contexts, _, external_contexts = _prepare_contexts_for_creation(
             contexts=[context_item],
             subtask_id=100,
             user_id=1,
@@ -202,7 +200,7 @@ class TestPrepareContextsForCreation:
             },
         )
 
-        kb_contexts, _, _, external_contexts = _prepare_contexts_for_creation(
+        kb_contexts, _, external_contexts = _prepare_contexts_for_creation(
             contexts=[context_item],
             subtask_id=100,
             user_id=1,

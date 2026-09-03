@@ -1221,14 +1221,6 @@ class ChatNamespace(socketio.AsyncNamespace):
         # Use Pydantic's model_dump to ensure all fields are serialized correctly
         contexts_list = [ctx.model_dump(mode="json") for ctx in contexts_briefs]
 
-        # DEBUG: Log contexts being sent via WebSocket
-        for ctx_dict in contexts_list:
-            if ctx_dict.get("context_type") == "table":
-                logger.info(
-                    f"[WS] Sending table context via WebSocket: id={ctx_dict.get('id')}, "
-                    f"name={ctx_dict.get('name')}, source_config={ctx_dict.get('source_config')}"
-                )
-
         # Build legacy attachment info for backward compatibility
         # Note: attachments field is kept for backward compatibility but set to empty
         # All context data should be read from the 'contexts' field

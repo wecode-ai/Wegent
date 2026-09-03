@@ -5,7 +5,7 @@
 'use client'
 
 import React from 'react'
-import { X, Database, Table2, MessageSquare, FileText } from 'lucide-react'
+import { X, Database, MessageSquare, FileText } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import {
   getExternalKnowledgeSourceLabel,
@@ -36,8 +36,6 @@ const getContextIcon = (type: ContextItem['type']) => {
   switch (type) {
     case 'knowledge_base':
       return Database
-    case 'table':
-      return Table2
     case 'queue_message':
       return MessageSquare
     case 'dingtalk_doc':
@@ -69,8 +67,6 @@ export default function ContextBadge({
     switch (context.type) {
       case 'knowledge_base':
         return 'border-primary bg-primary/10 text-primary'
-      case 'table':
-        return 'border-blue-500 bg-blue-500/10 text-blue-600'
       case 'queue_message':
         return 'border-orange-500 bg-orange-500/10 text-orange-600'
       case 'dingtalk_doc':
@@ -84,10 +80,6 @@ export default function ContextBadge({
 
   // Handle badge click - open URL in new window for clickable types (only if not disabled)
   const handleBadgeClick = (e: React.MouseEvent) => {
-    if (!disableUrlClick && context.type === 'table' && context.source_config?.url) {
-      e.stopPropagation()
-      window.open(context.source_config.url, '_blank', 'noopener,noreferrer')
-    }
     if (
       !disableUrlClick &&
       context.type === 'dingtalk_doc' &&
@@ -99,10 +91,7 @@ export default function ContextBadge({
   }
 
   const isClickable =
-    (!disableUrlClick && context.type === 'table' && context.source_config?.url) ||
-    (!disableUrlClick &&
-      context.type === 'dingtalk_doc' &&
-      !!(context as DingTalkDocContext).doc_url)
+    !disableUrlClick && context.type === 'dingtalk_doc' && !!(context as DingTalkDocContext).doc_url
 
   const externalProvider =
     context.type === 'external_knowledge'
@@ -125,8 +114,6 @@ export default function ContextBadge({
   // Get remove button color based on context type
   const getRemoveButtonColor = () => {
     switch (context.type) {
-      case 'table':
-        return 'text-blue-600 hover:text-blue-600 hover:bg-blue-500/20'
       case 'queue_message':
         return 'text-orange-600 hover:text-orange-600 hover:bg-orange-500/20'
       case 'dingtalk_doc':
@@ -158,11 +145,6 @@ export default function ContextBadge({
         ) : knowledgeScopeLabel ? (
           <span className="text-xs opacity-70">{knowledgeScopeLabel}</span>
         ) : null}
-        {context.type === 'table' && context.source_config?.url && (
-          <span className="text-xs opacity-70 truncate" title={context.source_config.url}>
-            {new URL(context.source_config.url).hostname}
-          </span>
-        )}
         {context.type === 'queue_message' && (
           <span className="text-xs opacity-70 truncate">
             {t('inbox:message.from', { name: (context as QueueMessageContext).senderName })} ·{' '}

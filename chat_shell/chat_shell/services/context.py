@@ -877,7 +877,7 @@ class ChatContext:
     ) -> list:
         """Build the complete list of extra tools from all sources.
 
-        This includes builtin tools (LoadSkillTool, WebSearchTool, DataTableTool),
+        This includes builtin tools (LoadSkillTool, WebSearchTool),
         KB tools, skill tools, and MCP tools.
 
         Args:
@@ -949,26 +949,6 @@ class ChatContext:
                 search_engine,
                 default_max_results,
             )
-        # Add DataTableTool if table_contexts provided
-        logger.debug(
-            "[CHAT_CONTEXT] Checking table_contexts: has_table_contexts=%s, count=%d",
-            bool(self._request.table_contexts),
-            len(self._request.table_contexts) if self._request.table_contexts else 0,
-        )
-        if self._request.table_contexts:
-            from chat_shell.tools.builtin import DataTableTool
-
-            data_table_tool = DataTableTool(
-                table_contexts=self._request.table_contexts,
-                user_id=self._request.user_id,
-                user_name=self._request.user_name,
-            )
-            extra_tools.append(data_table_tool)
-            logger.info(
-                "[CHAT_CONTEXT] Added DataTableTool with %d table context(s)",
-                len(self._request.table_contexts),
-            )
-
         # Add ReadAttachmentTool when the conversation carries an attachment, so
         # the model can page the full extracted text beyond the inline preview.
         if has_attachments:

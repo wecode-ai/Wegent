@@ -356,12 +356,9 @@ export function KnowledgeDocumentTreeGrid({
           const indent = depth * 16
           if (node.kind === 'document') {
             const document = node.document
-            const isTable = document.source_type === 'table'
             const isWeb = document.source_type === 'web'
             const sourceUrl =
-              (isTable || isWeb) &&
-              document.source_config?.url &&
-              typeof document.source_config.url === 'string'
+              isWeb && document.source_config?.url && typeof document.source_config.url === 'string'
                 ? document.source_config.url
                 : null
             const displayName = getDocumentDisplayName(document)
@@ -530,17 +527,6 @@ export function KnowledgeDocumentTreeGrid({
           if (document.source_type === 'external') {
             return <ExternalDocumentBadge />
           }
-          if (document.source_type === 'table') {
-            return (
-              <Badge
-                variant="default"
-                size="sm"
-                className="bg-blue-500/10 text-blue-600 border-blue-500/20"
-              >
-                {t('document.document.type.table')}
-              </Badge>
-            )
-          }
           if (document.source_type === 'web') {
             return (
               <Badge
@@ -569,9 +555,7 @@ export function KnowledgeDocumentTreeGrid({
           const document = node.document
           return (
             <span className="text-xs text-text-muted">
-              {document.source_type === 'table' || document.source_type === 'web'
-                ? '-'
-                : formatFileSize(document.file_size)}
+              {document.source_type === 'web' ? '-' : formatFileSize(document.file_size)}
             </span>
           )
         },
@@ -760,7 +744,6 @@ export function KnowledgeDocumentTreeGrid({
           const document = node.document
           if (!(canManage?.(document) ?? true)) return null
           const isWeb = document.source_type === 'web'
-          const isTable = document.source_type === 'table'
           const isExternal = document.source_type === 'external'
           const isNotIndexed = document.index_status === 'not_indexed'
           const isIndexFailed = document.index_status === 'failed'
@@ -784,7 +767,7 @@ export function KnowledgeDocumentTreeGrid({
                   label: t('document.document.retryImport'),
                 }
               }
-            } else if (ragConfigured && !isTable && (isIndexFailed || isNotIndexed)) {
+            } else if (ragConfigured && (isIndexFailed || isNotIndexed)) {
               retryAction = {
                 testId: `reindex-document-${document.id}`,
                 label: t('document.document.reindex'),
@@ -793,8 +776,8 @@ export function KnowledgeDocumentTreeGrid({
           }
           const normalizedExt = `.${(document.file_extension || '').replace(/^\.+/, '')}`
           const isMultimodalDoc = isVideoFileName(document.name) || isImageExtension(normalizedExt)
-          // Gate on source_type=file + attachment_id like showDownload: a table
-          // or web doc could have a multimodal-looking name (e.g. "demo.mp4")
+          // Gate on source_type=file + attachment_id like showDownload: a web
+          // doc could have a multimodal-looking name (e.g. "demo.mp4")
           // but has no attachment to stage/re-analyze.
           const canReanalyze =
             multimodalFeatureEnabled &&

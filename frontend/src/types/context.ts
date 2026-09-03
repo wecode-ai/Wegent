@@ -8,12 +8,7 @@
  *
  * Future types to be added: 'person' | 'bot' | 'team'
  */
-export type ContextType =
-  | 'knowledge_base'
-  | 'table'
-  | 'queue_message'
-  | 'dingtalk_doc'
-  | 'external_knowledge'
+export type ContextType = 'knowledge_base' | 'queue_message' | 'dingtalk_doc' | 'external_knowledge'
 
 /**
  * Canonical external knowledge reference shape.
@@ -62,18 +57,6 @@ export interface KnowledgeBaseContext extends BaseContextItem {
   folder_names?: string[]
   include_subfolders?: boolean
   scope_restricted?: boolean
-}
-
-/**
- * Table context item (supports DingTalk, Feishu, etc.)
- * 多维表格上下文项（支持钉钉、飞书等）
- */
-export interface TableContext extends BaseContextItem {
-  type: 'table'
-  document_id: number
-  source_config?: {
-    url?: string
-  }
 }
 
 /** Inbox attachment metadata for display as badge in chat input */
@@ -161,7 +144,6 @@ export interface ExternalKnowledgeContext extends BaseContextItem {
  */
 export type ContextItem =
   | KnowledgeBaseContext
-  | TableContext
   | QueueMessageContext
   | DingTalkDocContext
   | ExternalKnowledgeContext

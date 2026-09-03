@@ -360,7 +360,6 @@
         "updatedAt": "更新时间"
       },
       "type": {
-        "table": "表格",
         "web": "网页",
         "external": "外部"
       },
@@ -529,33 +528,10 @@
       "insert": "插入",
       "clickToRename": "点击修改文件名",
       "unsupportedFileType": "多媒体文件需要在该知识库启用多模态分析后才能上传",
-      "addTable": "添加数据表",
-      "tableHint": "输入数据表的链接和名称，即可将其添加到知识库。",
-      "tableUrlHint": "请输入有效的多维表URL，确保链接可访问且有读取权限。目前支持钉钉多维表。",
-      "tableName": "文档名称",
-      "tableNamePlaceholder": "输入文档名称",
-      "tableUrl": "数据表链接",
-      "tableUrlPlaceholder": "粘贴数据表链接",
-      "tableUrlRequired": "请输入数据表链接",
-      "tableNameRequired": "请输入文档名称",
-      "tableAddFailed": "添加失败，请重试",
       "adding": "添加中...",
       "confirmAdd": "确认添加",
       "validation": {
-        "validating": "正在验证URL...",
-        "success": "URL验证通过",
-        "invalidUrlFormat": "请输入有效的URL格式",
-        "unsupportedProvider": "不支持该链接来源,目前仅支持钉钉多维表",
-        "parseFailed": "无法解析该链接，请检查URL格式是否正确",
-        "missingDingtalkId": "您尚未配置钉钉ID，请使用钉钉登录以访问多维表格",
-        "tableAccessFailed": "无法访问该表格，请检查您是否有权限访问",
-        "tableAccessFailedLinkedTable": "表格可能是链接表格，请使用原始表格链接",
-        "unknownError": "验证失败，请检查URL是否正确",
-        "networkError": "网络错误，请稍后重试",
-        "pleaseFixUrl": "请先修正URL后再提交",
-        "provider": {
-          "dingtalk": "钉钉多维表"
-        }
+        "invalidUrlFormat": "请输入有效的URL格式"
       },
       "documentCount": "文档数量",
       "web": {
@@ -968,26 +944,6 @@
   "regenerate": "重新生成",
   "view_detail": "查看详情",
   "coming_soon": "即将推出",
-  "dingtalkTable": {
-    "title": "钉钉表格",
-    "empty": "暂无钉钉表格",
-    "emptyHint": "在知识库中添加钉钉多维表后，可在此处查看",
-    "error": {
-      "noAssistant": "未找到AI助理智能体，请确保系统已配置名为'AI助理'的智能体",
-      "loadFailed": "加载钉钉表格失败"
-    },
-    "analyzing": "正在分析钉钉多维表格数据..."
-  },
-  "table": {
-    "title": "数据表",
-    "empty": "暂无数据表",
-    "emptyHint": "在知识库中添加数据表后，可在此处查看",
-    "error": {
-      "noAssistant": "未找到AI助理智能体，请确保系统已配置名为'AI助理'的智能体",
-      "loadFailed": "加载数据表失败"
-    },
-    "analyzing": "正在分析数据表..."
-  },
   "artifact": {
     "tab": "工具",
     "title": "工具",

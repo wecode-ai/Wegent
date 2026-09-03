@@ -48,65 +48,6 @@ logger = logging.getLogger(__name__)
 if TYPE_CHECKING:
     from app.models.task import TaskResource
 
-# Table context prompt template - will be dynamically generated with table info
-TABLE_PROMPT_TEMPLATE = """
-
-<table_context>
-# IMPORTANT: Data Table Context - HIGHEST PRIORITY
-
-The user has selected data table(s) for this conversation. This indicates that the user's request is related to these tables.
-
-## Available Tables:
-{tables_info}
-
-## Critical Rules - READ CAREFULLY:
-1. **ALWAYS assume the user's request is about the selected table(s)** unless they explicitly mention otherwise
-2. When the user says "分析" (analyze), "查看" (view), "统计" (statistics), or similar words, they mean to analyze/view the selected table(s)
-3. **DO NOT** use other analysis tools (like PaaS analysis) when a table is selected - use the table tool instead
-4. **You MUST pass `provider`, `base_id`, and `sheet_id_or_name` parameters** when calling the table tool
-
-## Available Table Tool:
-- `data_table_query`: Query table data including both schema (field definitions) and records (data rows)
-
-## Workflow:
-1. Call `data_table_query` with the correct `provider`, `base_id`, and `sheet_id_or_name` to get table schema and data
-2. Analyze the returned data based on user's request
-3. Present the results
-
-The user explicitly selected these table(s) - prioritize table operations over any other tools.
-</table_context>
-"""
-
-
-def build_table_prompt(table_contexts: List[dict]) -> str:
-    """
-    Build dynamic TABLE_PROMPT with actual table information.
-
-    Args:
-        table_contexts: List of table context dicts with name, provider, baseId, sheetIdOrName
-
-    Returns:
-        Formatted prompt string with table info
-    """
-    if not table_contexts:
-        return ""
-
-    tables_info_lines = []
-    for i, ctx in enumerate(table_contexts, 1):
-        name = ctx.get("name", f"Table {i}")
-        provider = ctx.get("provider", "")
-        base_id = ctx.get("baseId", "")
-        sheet_id = ctx.get("sheetIdOrName", "")
-        tables_info_lines.append(
-            f"{i}. **{name}**\n"
-            f"   - provider: `{provider}`\n"
-            f"   - base_id: `{base_id}`\n"
-            f"   - sheet_id_or_name: `{sheet_id}`"
-        )
-
-    tables_info = "\n".join(tables_info_lines)
-    return TABLE_PROMPT_TEMPLATE.format(tables_info=tables_info)
-
 
 async def process_contexts(
     db: Session,
@@ -543,15 +484,13 @@ def link_contexts_to_subtask(
     user_name: Optional[str] = None,
 ) -> List[int]:
     """
-    Link attachments and create knowledge base/table contexts for a subtask.
+    Link attachments and create knowledge base contexts for a subtask.
 
     This function handles display and retrieval contexts in a single database transaction:
     1. Attachments: Pre-uploaded files with existing context IDs, batch update subtask_id
     2. Knowledge bases: Selected at send time, batch create SubtaskContext records
        (without extracted_text - RAG retrieval is done later via tools/Service)
-    3. Tables: Selected at send time, batch create SubtaskContext records
-       (table context is used for MCP tool injection)
-    4. External knowledge refs: Selected at send time, batch create SubtaskContext
+    3. External knowledge refs: Selected at send time, batch create SubtaskContext
        records and sync them to task-level externalKnowledgeRefs.
 
     When knowledge bases or external knowledge refs are created, they are
@@ -566,7 +505,7 @@ def link_contexts_to_subtask(
         subtask_id: Subtask ID to link contexts to
         user_id: User ID
         attachment_ids: List of pre-uploaded attachment context IDs to link
-        contexts: List of ContextItem objects from payload (for knowledge bases and tables)
+        contexts: List of ContextItem objects from payload (for knowledge bases)
         task: Optional pre-queried TaskResource object for syncing KB to task level
         user_name: Optional pre-queried user name for KB sync boundBy field
 
@@ -590,10 +529,9 @@ def link_contexts_to_subtask(
     else:
         valid_attachment_ids = None
 
-    # Prepare knowledge base, table, and selected_documents contexts for batch creation
+    # Prepare knowledge base and selected_documents contexts for batch creation
     (
         kb_contexts_to_create,
-        table_contexts_to_create,
         selected_docs_contexts_to_create,
         external_knowledge_contexts_to_create,
     ) = _prepare_contexts_for_creation(contexts, subtask_id, user_id, db=db)
@@ -601,7 +539,6 @@ def link_contexts_to_subtask(
     # Combine all contexts to create
     all_contexts_to_create = (
         kb_contexts_to_create
-        + table_contexts_to_create
         + selected_docs_contexts_to_create
         + external_knowledge_contexts_to_create
     )
@@ -970,10 +907,9 @@ def _prepare_contexts_for_creation(
     List[SubtaskContext],
     List[SubtaskContext],
     List[SubtaskContext],
-    List[SubtaskContext],
 ]:
     """
-    Prepare knowledge base, table, and selected_documents contexts for batch creation.
+    Prepare knowledge base and selected_documents contexts for batch creation.
 
     Args:
         contexts: List of ContextItem objects from payload
@@ -981,18 +917,16 @@ def _prepare_contexts_for_creation(
         user_id: User ID
 
     Returns:
-        Tuple of (kb_contexts, table_contexts, selected_docs_contexts,
+        Tuple of (kb_contexts, selected_docs_contexts,
         external_knowledge_contexts) ready for insertion
     """
     kb_contexts_to_create: List[SubtaskContext] = []
-    table_contexts_to_create: List[SubtaskContext] = []
     selected_docs_contexts_to_create: List[SubtaskContext] = []
     external_knowledge_contexts_to_create: List[SubtaskContext] = []
 
     if not contexts:
         return (
             kb_contexts_to_create,
-            table_contexts_to_create,
             selected_docs_contexts_to_create,
             external_knowledge_contexts_to_create,
         )
@@ -1043,32 +977,6 @@ def _prepare_contexts_for_creation(
                 kb_contexts_to_create.append(kb_context)
             except Exception as e:
                 logger.warning(f"Failed to prepare knowledge base context: {e}")
-                continue
-
-        elif ctx.type == "table":
-            try:
-                table_data = ctx.data
-                document_id = table_data.get("document_id")
-                table_name = table_data.get("name", f"Table {document_id}")
-                # URL is in source_config.url from frontend TableContext
-                source_config = table_data.get("source_config", {})
-                table_url = source_config.get("url", "") if source_config else ""
-
-                # Create SubtaskContext object for table (not yet committed)
-                table_context = SubtaskContext(
-                    subtask_id=subtask_id,
-                    user_id=user_id,
-                    context_type=ContextType.TABLE.value,
-                    name=table_name,
-                    status=ContextStatus.READY.value,
-                    type_data={
-                        "document_id": int(document_id) if document_id else 0,
-                        "url": table_url,
-                    },
-                )
-                table_contexts_to_create.append(table_context)
-            except Exception as e:
-                logger.warning(f"Failed to prepare table context: {e}")
                 continue
 
         elif ctx.type == "selected_documents":
@@ -1152,7 +1060,6 @@ def _prepare_contexts_for_creation(
 
     return (
         kb_contexts_to_create,
-        table_contexts_to_create,
         selected_docs_contexts_to_create,
         external_knowledge_contexts_to_create,
     )
@@ -1171,7 +1078,7 @@ def _batch_update_and_insert_contexts(
     Args:
         db: Database session
         attachment_ids: List of validated attachment context IDs to update
-        contexts_to_create: List of contexts (KB or table) to insert
+        contexts_to_create: List of contexts (KB or selected documents) to insert
         subtask_id: Subtask ID for logging
         task_id: Optional task ID for additional validation in update
 
@@ -1214,7 +1121,7 @@ def _batch_update_and_insert_contexts(
                 detail="Some attachments could not be linked. Please retry.",
             )
 
-    # Batch add new contexts (KB and table)
+    # Batch add new contexts (KB and selected documents)
     if contexts_to_create:
         db.add_all(contexts_to_create)
 
@@ -1241,16 +1148,13 @@ def _batch_update_and_insert_contexts(
             for c in contexts_to_create
             if c.context_type == ContextType.KNOWLEDGE_BASE.value
         )
-        table_count = sum(
-            1 for c in contexts_to_create if c.context_type == ContextType.TABLE.value
-        )
         selected_docs_count = sum(
             1
             for c in contexts_to_create
             if c.context_type == ContextType.SELECTED_DOCUMENTS.value
         )
         logger.info(
-            f"Created {kb_count} knowledge base contexts, {table_count} table contexts, "
+            f"Created {kb_count} knowledge base contexts "
             f"and {selected_docs_count} selected_documents contexts for subtask {subtask_id}"
         )
 
@@ -1278,7 +1182,6 @@ async def prepare_contexts_for_chat(
     This function retrieves all contexts associated with a user subtask and:
     1. Processes attachment contexts - injects content into the message
     2. Processes knowledge base contexts - creates KnowledgeBaseTool for RAG
-    3. Processes table contexts - injects table info into system prompt
 
     This eliminates the need to pass separate attachment_ids and knowledge_base_ids
     through the call chain.
@@ -1298,10 +1201,8 @@ async def prepare_contexts_for_chat(
             into the prompt. Executor runtimes set this to False because they can
             parse/read downloaded files inside the runtime.
     Returns:
-        ChatContextsResult with processed message, table info, and KB results.
+        ChatContextsResult with processed message and KB results.
     """
-    from .tables import parse_table_url
-
     # Get all contexts for this subtask
     contexts = (
         contexts
@@ -1322,12 +1223,6 @@ async def prepare_contexts_for_chat(
         if c.context_type == ContextType.KNOWLEDGE_BASE.value
         and c.status == ContextStatus.READY.value
     ]
-    table_contexts = [
-        c
-        for c in contexts
-        if c.context_type == ContextType.TABLE.value
-        and c.status == ContextStatus.READY.value
-    ]
     selected_docs_contexts = [
         c
         for c in contexts
@@ -1338,7 +1233,7 @@ async def prepare_contexts_for_chat(
     logger.info(
         f"[prepare_contexts_for_chat] subtask={user_subtask_id}: "
         f"{len(attachment_contexts)} attachments, {len(kb_contexts)} knowledge bases, "
-        f"{len(table_contexts)} tables, {len(selected_docs_contexts)} selected_documents"
+        f"{len(selected_docs_contexts)} selected_documents"
     )
 
     # 1. Process attachment contexts - inject into message
@@ -1366,51 +1261,7 @@ async def prepare_contexts_for_chat(
     enhanced_system_prompt = kb_result.enhanced_system_prompt
     kb_meta_prompt = kb_result.kb_meta_prompt
 
-    # 3. Process table contexts - create DataTableTool and build dynamic prompt
-    parsed_tables = []
-    if table_contexts:
-        for table_ctx in table_contexts:
-            logger.info(
-                f"[prepare_contexts_for_chat] Processing table context: "
-                f"id={table_ctx.id}, name={table_ctx.name}, type_data={table_ctx.type_data}"
-            )
-            table_url = (
-                table_ctx.type_data.get("url", "") if table_ctx.type_data else ""
-            )
-
-            if table_url:
-                table_info = parse_table_url(table_url)
-                if table_info:
-                    # Add table name to the parsed info
-                    table_info["name"] = table_ctx.name
-                    parsed_tables.append(table_info)
-                    logger.info(
-                        f"[prepare_contexts_for_chat] Table parsed: name={table_ctx.name}, "
-                        f"baseId={table_info.get('baseId')}, "
-                        f"sheetIdOrName={table_info.get('sheetIdOrName')}"
-                    )
-                else:
-                    logger.warning(
-                        f"[prepare_contexts_for_chat] Failed to parse table URL: {table_url}"
-                    )
-            else:
-                logger.warning(
-                    f"[prepare_contexts_for_chat] Table context has no URL in type_data"
-                )
-
-        # Note: DataTableTool creation is handled by chat_shell service in HTTP mode.
-        # In non-HTTP mode (deprecated), the tool would be created here, but since
-        # we're standardizing on HTTP mode, we only return parsed_tables for chat_shell.
-        # chat_shell will create the DataTableTool when it receives table_contexts.
-        if parsed_tables:
-            table_prompt = build_table_prompt(parsed_tables)
-            enhanced_system_prompt = f"{enhanced_system_prompt}{table_prompt}"
-            logger.info(
-                f"[prepare_contexts_for_chat] Added {len(parsed_tables)} table(s) to system prompt. "
-                f"Table contexts will be passed to chat_shell for DataTableTool creation."
-            )
-
-    # 4. Process selected_documents contexts - direct injection or RAG fallback
+    # 3. Process selected_documents contexts - direct injection or RAG fallback
     logger.info(
         f"[prepare_contexts_for_chat] SELECTED_DOCS_CHECK: subtask={user_subtask_id}, "
         f"selected_docs_contexts_count={len(selected_docs_contexts)}, "
@@ -1467,10 +1318,6 @@ async def prepare_contexts_for_chat(
             process_selected_documents_contexts(**kwargs)
         )
 
-    # Derive flag from parsed_tables (not raw table_contexts) to stay consistent
-    # with the returned table payload — if parsing fails, the flag stays False.
-    has_table_context = len(parsed_tables) > 0
-
     merged_scopes_by_kb = {
         scope.knowledge_base_id: scope for scope in kb_result.knowledge_base_scopes
     }
@@ -1496,8 +1343,8 @@ async def prepare_contexts_for_chat(
     )
 
     # Rebuild KnowledgeBaseToolsResult with potentially mutated enhanced_system_prompt
-    # and extra_tools (table prompt and selected_documents processing may have modified
-    # them after kb_result was computed).
+    # and extra_tools (selected_documents processing may have modified them after
+    # kb_result was computed).
     final_kb = KnowledgeBaseToolsResult(
         extra_tools=extra_tools,
         enhanced_system_prompt=enhanced_system_prompt,
@@ -1512,8 +1359,6 @@ async def prepare_contexts_for_chat(
     )
     return ChatContextsResult(
         final_message=final_message,
-        has_table_context=has_table_context,
-        table_contexts=parsed_tables,
         kb=final_kb,
     )
 
@@ -2178,26 +2023,3 @@ def get_attachment_context_ids_from_subtask(
     """
     attachments = context_service.get_attachments_by_subtask(db, subtask_id)
     return [a.id for a in attachments]
-
-
-def get_table_context_ids_from_subtask(
-    db: Session,
-    subtask_id: int,
-) -> List[int]:
-    """
-    Get table context IDs from a subtask.
-
-    Args:
-        db: Database session
-        subtask_id: Subtask ID
-
-    Returns:
-        List of table context IDs
-    """
-    contexts = context_service.get_by_subtask(db, subtask_id)
-    return [
-        c.id
-        for c in contexts
-        if c.context_type == ContextType.TABLE.value
-        and c.status == ContextStatus.READY.value
-    ]

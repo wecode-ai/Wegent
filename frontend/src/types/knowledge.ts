@@ -14,7 +14,7 @@ export type MemberRole = BaseRole
 
 export type DocumentStatus = 'enabled' | 'disabled'
 
-export type DocumentSourceType = 'file' | 'text' | 'table' | 'web' | 'external'
+export type DocumentSourceType = 'file' | 'text' | 'web' | 'external'
 
 export type DocumentIndexStatus =
   | 'not_indexed'
@@ -584,26 +584,6 @@ export interface TeamKnowledgeGroup {
 export interface AccessibleKnowledgeResponse {
   personal: AccessibleKnowledgeBase[]
   team: TeamKnowledgeGroup[]
-}
-
-// Table URL Validation types
-export interface TableUrlValidationRequest {
-  url: string
-}
-
-export interface TableUrlValidationResponse {
-  valid: boolean
-  provider?: string
-  base_id?: string
-  sheet_id?: string
-  error_code?:
-    | 'INVALID_URL_FORMAT'
-    | 'UNSUPPORTED_PROVIDER'
-    | 'PARSE_FAILED'
-    | 'MISSING_DINGTALK_ID'
-    | 'TABLE_ACCESS_FAILED'
-    | 'TABLE_ACCESS_FAILED_LINKED_TABLE'
-  error_message?: string
 }
 
 // Document Summary types

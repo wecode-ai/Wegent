@@ -33,7 +33,6 @@ describe('DocumentFormatIcon', () => {
 
   it.each([
     ['web', 'lucide-globe', 'text-blue-600'],
-    ['table', 'lucide-table-2', 'text-primary'],
     ['external', 'lucide-file-spreadsheet', 'text-green-600'],
   ])('preserves %s semantics and the caller size', (sourceType, shape, color) => {
     const { container } = render(

@@ -1863,18 +1863,9 @@ class TestIndexingPolicy:
 
     def test_excel_documents_within_size_limit_are_allowed(self):
         """Test Excel extensions within 2MB size limit are allowed for RAG indexing."""
-        reason = get_rag_indexing_skip_reason("file", "xlsx")
+        reason = get_rag_indexing_skip_reason("xlsx")
 
         assert reason is None
-
-    def test_table_documents_are_skipped(self):
-        """Test table source types are excluded from RAG indexing."""
-        reason = get_rag_indexing_skip_reason("table", "txt")
-
-        assert (
-            reason
-            == "Table documents are queried in real-time and do not support RAG indexing"
-        )
 
 
 class TestListDocumentsCreatedBy:

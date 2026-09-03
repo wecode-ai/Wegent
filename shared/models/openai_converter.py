@@ -213,7 +213,6 @@ class OpenAIRequestConverter:
             "kb_tool_access_mode": normalize_kb_tool_access_mode(
                 request.kb_tool_access_mode
             ),
-            "table_contexts": request.table_contexts,
             "kb_meta_prompt": request.kb_meta_prompt,
             "task_data": request.task_data,
             "interactive_form_answer": request.interactive_form_answer,
@@ -386,7 +385,6 @@ class OpenAIRequestConverter:
             kb_tool_access_mode=normalize_kb_tool_access_mode(
                 metadata.get("kb_tool_access_mode")
             ),
-            table_contexts=metadata.get("table_contexts", []),
             kb_meta_prompt=metadata.get("kb_meta_prompt", "") or "",
             task_data=metadata.get("task_data"),
             interactive_form_answer=metadata.get("interactive_form_answer"),
