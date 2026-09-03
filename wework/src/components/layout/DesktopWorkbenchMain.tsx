@@ -1,5 +1,6 @@
 import {
   memo,
+  type MouseEvent as ReactMouseEvent,
   useCallback,
   useEffect,
   useEffectEvent,
@@ -289,6 +290,23 @@ const DOCKED_ENVIRONMENT_INFO_WIDTH = 320
 const MIN_CHAT_COLUMN_WIDTH_FOR_DOCKED_ENVIRONMENT_INFO = 680
 const COLLAPSED_RIGHT_TITLEBAR_ACTIONS_CLEARANCE = '5rem'
 const MACOS_COLLAPSED_SIDEBAR_CONTROL_ALIGNMENT_CLASS = 'pl-2'
+const CONVERSATION_COMPOSER_FOCUS_EXCLUSION_SELECTOR = [
+  'a',
+  'button',
+  'input',
+  'textarea',
+  'select',
+  'label',
+  'summary',
+  '[contenteditable]:not([contenteditable="false"])',
+  '[role="button"]',
+  '[role="link"]',
+  '[role="textbox"]',
+  '[role="menuitem"]',
+  '[role="menuitemradio"]',
+  '[role="option"]',
+  '[role="slider"]',
+].join(', ')
 
 interface SelectedAssistantPlan {
   blockId: string
@@ -3325,6 +3343,28 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     (selectedText: string) => openTemporaryChatTab(selectedText),
     [openTemporaryChatTab]
   )
+  const focusComposerFromConversationClick = useCallback(
+    (event: ReactMouseEvent<HTMLDivElement>) => {
+      if (
+        event.defaultPrevented ||
+        !paneActive ||
+        !paneVisible ||
+        !workbenchVisible ||
+        !(event.target instanceof Element) ||
+        event.target.closest(CONVERSATION_COMPOSER_FOCUS_EXCLUSION_SELECTOR)
+      ) {
+        return
+      }
+      const selection = window.getSelection()
+      if (selection && !selection.isCollapsed) return
+      const composer = event.currentTarget.querySelector<HTMLElement>(
+        '[data-testid="chat-message-input"][contenteditable="true"]'
+      )
+      if (!composer) return
+      requestWorkbenchComposerFocus(paneSession.scopeKey)
+    },
+    [paneActive, paneSession.scopeKey, paneVisible, workbenchVisible]
+  )
   const routeEmbeddedBrowserOpenRequest = useCallback(
     (request: EmbeddedBrowserOpenRequest) => {
       const states = browserStatesRef.current
@@ -4484,7 +4524,10 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
                   )}
                 </div>
               ) : hasConversation ? (
-                <div className="relative flex min-h-full min-w-0 shrink-0 flex-col">
+                <div
+                  className="relative flex min-h-full min-w-0 shrink-0 flex-col"
+                  onClick={focusComposerFromConversationClick}
+                >
                   <ScrollableMessageArea
                     messages={paneMessages}
                     loading={paneSession.transcriptLoading}

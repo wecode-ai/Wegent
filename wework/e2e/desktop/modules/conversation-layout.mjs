@@ -74,6 +74,12 @@ async function verifyShortConversationLayout({ composerSelector, control }) {
     text: FRESH_CHAT_COMPLETION_TEXT,
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
+  await control.command('click', `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="message-assistant"]`)
+  await waitForComposerFocus(
+    control,
+    DEFAULT_STEP_TIMEOUT_MS,
+    'Clicking the conversation surface did not restore keyboard focus to the composer'
+  )
 
   const scroller = await getSingleElementMetrics(
     control,
@@ -240,6 +246,25 @@ async function verifyShortConversationLayout({ composerSelector, control }) {
   )
   control.setScenario('fresh_chat')
   return shortConversationTaskRowTestId
+}
+
+async function waitForComposerFocus(control, timeoutMs, failureMessage) {
+  const focusStartedAt = Date.now()
+  let activeElementTestId = ''
+  while (Date.now() - focusStartedAt < timeoutMs) {
+    activeElementTestId = await control.command('getActiveElementTestId', 'body')
+    if (activeElementTestId === 'chat-message-input') return
+    await new Promise(resolvePromise => setTimeout(resolvePromise, 100))
+  }
+  const [focusSnapshot, workbenchSnapshot, composerDiagnostics] = await Promise.all([
+    control.command('getComposerFocusSnapshot', 'body'),
+    control.command('getWorkbenchDebugSnapshot', 'body'),
+    control.command('getComposerDiagnosticsSnapshot', 'body'),
+  ])
+  throw new Error(
+    `${failureMessage}; activeElementTestId=${activeElementTestId}; focus=${focusSnapshot}; ` +
+      `workbench=${workbenchSnapshot}; composerDiagnostics=${composerDiagnostics}`
+  )
 }
 
 async function verifyConversationRenameSpaceDoesNotDrag(control, taskRowTestId) {
@@ -1013,6 +1038,7 @@ export {
   waitForElementWidth,
   waitForElementTop,
   waitForProcessingBlock,
+  waitForComposerFocus,
   verifyViewImageProcessingBlock,
   distanceFromBottom,
   distanceFromTop,

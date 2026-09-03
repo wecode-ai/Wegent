@@ -2246,6 +2246,75 @@ describe('DesktopWorkbenchLayout', () => {
     expect(screen.queryByTestId('project-work-button')).not.toBeInTheDocument()
   })
 
+  test('focuses the composer from the conversation surface without stealing interactions', async () => {
+    const onlineDevice = {
+      id: 1,
+      device_id: 'device-1',
+      name: 'Runtime Device',
+      status: 'online' as const,
+      is_default: true,
+      device_type: 'cloud' as const,
+      bind_shell: 'claudecode',
+      executor_version: '1.8.5',
+    }
+    render(
+      <DesktopWorkbenchLayout
+        {...baseProps}
+        state={{
+          ...baseProps.state,
+          devices: [onlineDevice],
+          standaloneDeviceId: 'device-1',
+        }}
+        projectWork={{
+          ...baseProps.projectWork,
+          devices: [onlineDevice],
+          currentStandaloneDeviceId: 'device-1',
+        }}
+        projectChat={{
+          ...baseProps.projectChat,
+          scopeKey: 'standalone:device-1',
+        }}
+        messages={[
+          {
+            id: 'message-1',
+            role: 'assistant',
+            content: 'Selectable response',
+            status: 'done',
+            createdAt: '2026-05-29T00:00:00.000Z',
+          },
+        ]}
+      />
+    )
+
+    const composer = screen.getByTestId('chat-message-input')
+    composer.blur()
+
+    fireEvent.click(screen.getByTestId('desktop-chat-scroll-content'))
+
+    await waitFor(() => expect(composer).toHaveFocus())
+
+    composer.blur()
+    const hoverRegion = screen.getByTestId('message-hover-region')
+    fireEvent.pointerEnter(hoverRegion)
+    const copyButton = await screen.findByTestId('copy-message-button')
+
+    await userEvent.click(copyButton)
+
+    expect(composer).not.toHaveFocus()
+
+    const messageText = screen.getByText('Selectable response')
+    const selection = window.getSelection()
+    const range = document.createRange()
+    range.selectNodeContents(messageText)
+    selection?.removeAllRanges()
+    selection?.addRange(range)
+
+    fireEvent.click(messageText)
+
+    expect(composer).not.toHaveFocus()
+    selection?.removeAllRanges()
+  })
+
   test('renders subagent status below the top bar without shifting messages', () => {
     mockDesktopWorkbenchMainWidth(1024)
     render(
