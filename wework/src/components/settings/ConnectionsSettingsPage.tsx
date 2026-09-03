@@ -1364,10 +1364,24 @@ export function ConnectionsSettingsPage({
   const settingsContributions = useDshSlotEntries<WeworkDshSettingsPage>(
     WEWORK_DSH_SLOTS.settingsPage
   )
-  const visibleSettingsNavItems = settingsContributions.filter(
-    item =>
-      (!item.experimental || experimentalFeaturesEnabled) && (!item.desktopOnly || isDesktopRuntime)
-  )
+  const visibleSettingsNavItems = useMemo(() => {
+    const visible = settingsContributions.filter(
+      item =>
+        (!item.experimental || experimentalFeaturesEnabled) &&
+        (!item.desktopOnly || isDesktopRuntime)
+    )
+    const categoryOrder: string[] = []
+    const categoryItems = new Map<string, WeworkDshSettingsPage[]>()
+    for (const item of visible) {
+      const category = item.category ?? ''
+      if (!categoryItems.has(category)) {
+        categoryOrder.push(category)
+        categoryItems.set(category, [])
+      }
+      categoryItems.get(category)?.push(item)
+    }
+    return categoryOrder.flatMap(category => categoryItems.get(category) ?? [])
+  }, [experimentalFeaturesEnabled, isDesktopRuntime, settingsContributions])
   const shouldAutoOpenAddCloudDeviceDialog =
     autoOpenAddCloudDeviceDialog ||
     new URLSearchParams(window.location.search).get('addDevice') === '1'

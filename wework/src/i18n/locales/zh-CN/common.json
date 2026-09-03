@@ -509,7 +509,7 @@
     "execution_mode_current_workspace": "当前工作区",
     "execution_mode_git_worktree": "新工作树",
     "execution_mode_save_failed": "启动模式保存失败",
-    "git_plugin_unavailable": "请安装或启用 Wework Git 插件后再使用 Git 功能。",
+    "extension_unavailable": "请安装或启用所需扩展后再使用此功能。",
     "worktree_unavailable_no_project": "请先选择项目，再创建工作树。",
     "worktree_unavailable_project_ineligible": "当前项目不能使用工作树启动模式。",
     "worktree_unavailable_no_workspace": "请先选择代码工作区，再创建工作树。",

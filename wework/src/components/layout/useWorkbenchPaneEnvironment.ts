@@ -321,11 +321,6 @@ export function useWorkbenchPaneEnvironment({
     ? runtimeWorkspaceTarget
     : (projectRuntimeWorkspaceTarget ?? workspaceTarget)
   const activeWorkspaceTargetKey = workspaceTargetKey(activeWorkspaceTarget)
-  const environmentMatchesActiveWorkspace = Boolean(
-    activeWorkspaceTarget &&
-    environmentInfo.workspacePath === activeWorkspaceTarget.path &&
-    environmentInfo.deviceId === activeWorkspaceTarget.deviceId
-  )
   const workspaceProjectKey = workspaceProject ? String(workspaceProject.id) : ''
   const activeConversationProjectKey = activeConversationProject
     ? String(activeConversationProject.id)
@@ -338,17 +333,12 @@ export function useWorkbenchPaneEnvironment({
   const environmentContextRef = useRef({ workspaceProject, activeWorkspaceTarget })
   const hasEnvironmentProject = Boolean(workspaceProject)
   const environmentWorkspaceReady = !hasEnvironmentProject || Boolean(activeWorkspaceTarget)
-  const gitActionsAvailable =
-    environmentExtensionsAvailable &&
-    (!environmentMatchesActiveWorkspace || environmentInfo.isGitRepository !== false)
-  const requireGitActionsAvailable = useCallback(() => {
+  const contributionActionsAvailable = environmentExtensionsAvailable
+  const requireContributionActionsAvailable = useCallback(() => {
     if (!environmentExtensionsAvailable) {
-      throw new Error(t('workbench.git_plugin_unavailable'))
+      throw new Error(t('workbench.extension_unavailable'))
     }
-    if (!gitActionsAvailable) {
-      throw new Error(t('workbench.worktree_unavailable_not_git'))
-    }
-  }, [environmentExtensionsAvailable, gitActionsAvailable, t])
+  }, [environmentExtensionsAvailable, t])
 
   useEffect(() => {
     environmentContextRef.current = { workspaceProject, activeWorkspaceTarget }
@@ -450,7 +440,7 @@ export function useWorkbenchPaneEnvironment({
           loading: false,
           branchLoading: false,
         })
-        logLoad('git_plugin_unavailable')
+        logLoad('extension_unavailable')
         return
       }
 
@@ -632,7 +622,7 @@ export function useWorkbenchPaneEnvironment({
 
   const commitPaneEnvironmentChanges = useCallback(
     async (message: string) => {
-      requireGitActionsAvailable()
+      requireContributionActionsAvailable()
       if (!activeWorkspaceTarget) {
         throw new Error(workspaceTargetError ?? 'Workspace is not ready')
       }
@@ -642,7 +632,7 @@ export function useWorkbenchPaneEnvironment({
     [
       activeWorkspaceTarget,
       commitEnvironmentChanges,
-      requireGitActionsAvailable,
+      requireContributionActionsAvailable,
       workspaceProject,
       workspaceTargetError,
     ]
@@ -650,7 +640,7 @@ export function useWorkbenchPaneEnvironment({
 
   const commitAndPushPaneEnvironmentChanges = useCallback(
     async (message: string) => {
-      requireGitActionsAvailable()
+      requireContributionActionsAvailable()
       if (!activeWorkspaceTarget) {
         throw new Error(workspaceTargetError ?? 'Workspace is not ready')
       }
@@ -662,14 +652,14 @@ export function useWorkbenchPaneEnvironment({
       activeWorkspaceTarget,
       commitAndPushEnvironmentChanges,
       loadCurrentEnvironmentInfo,
-      requireGitActionsAvailable,
+      requireContributionActionsAvailable,
       workspaceProject,
       workspaceTargetError,
     ]
   )
 
   const pushPaneEnvironmentChanges = useCallback(async () => {
-    requireGitActionsAvailable()
+    requireContributionActionsAvailable()
     if (!activeWorkspaceTarget) {
       throw new Error(workspaceTargetError ?? 'Workspace is not ready')
     }
@@ -679,13 +669,13 @@ export function useWorkbenchPaneEnvironment({
     activeWorkspaceTarget,
     loadCurrentEnvironmentInfo,
     pushEnvironmentChanges,
-    requireGitActionsAvailable,
+    requireContributionActionsAvailable,
     workspaceProject,
     workspaceTargetError,
   ])
 
   const listPaneEnvironmentBranches = useCallback(() => {
-    requireGitActionsAvailable()
+    requireContributionActionsAvailable()
     const {
       workspaceProject: latestWorkspaceProject,
       activeWorkspaceTarget: latestActiveWorkspaceTarget,
@@ -694,11 +684,11 @@ export function useWorkbenchPaneEnvironment({
       return Promise.reject(new Error(workspaceTargetError ?? 'Workspace is not ready'))
     }
     return listEnvironmentBranches(latestWorkspaceProject, latestActiveWorkspaceTarget)
-  }, [listEnvironmentBranches, requireGitActionsAvailable, workspaceTargetError])
+  }, [listEnvironmentBranches, requireContributionActionsAvailable, workspaceTargetError])
 
   const checkoutPaneEnvironmentBranch = useCallback(
     async (branchName: string) => {
-      requireGitActionsAvailable()
+      requireContributionActionsAvailable()
       const {
         workspaceProject: latestWorkspaceProject,
         activeWorkspaceTarget: latestActiveWorkspaceTarget,
@@ -713,12 +703,12 @@ export function useWorkbenchPaneEnvironment({
       )
       setEnvironmentInfo(info => ({ ...info, branchName }))
     },
-    [checkoutEnvironmentBranch, requireGitActionsAvailable, workspaceTargetError]
+    [checkoutEnvironmentBranch, requireContributionActionsAvailable, workspaceTargetError]
   )
 
   const createPaneEnvironmentBranch = useCallback(
     async (branchName: string) => {
-      requireGitActionsAvailable()
+      requireContributionActionsAvailable()
       const {
         workspaceProject: latestWorkspaceProject,
         activeWorkspaceTarget: latestActiveWorkspaceTarget,
@@ -729,7 +719,7 @@ export function useWorkbenchPaneEnvironment({
       await createEnvironmentBranch(latestWorkspaceProject, branchName, latestActiveWorkspaceTarget)
       setEnvironmentInfo(info => ({ ...info, branchName }))
     },
-    [createEnvironmentBranch, requireGitActionsAvailable, workspaceTargetError]
+    [createEnvironmentBranch, requireContributionActionsAvailable, workspaceTargetError]
   )
   const sharedEnvironmentInfo = useMemo<EnvironmentInfo>(() => {
     if (!currentChangeRequestTarget || !sharedChangeRequestSnapshot) {
@@ -750,16 +740,18 @@ export function useWorkbenchPaneEnvironment({
       branchLoading: environmentInfo.branchLoading ?? environmentInfo.loading,
       onRefreshBranch: undefined,
       onListBranches:
-        activeWorkspaceTarget && gitActionsAvailable ? listPaneEnvironmentBranches : undefined,
-      onCheckoutBranch: gitActionsAvailable ? checkoutPaneEnvironmentBranch : undefined,
-      onCreateBranch: gitActionsAvailable ? createPaneEnvironmentBranch : undefined,
+        activeWorkspaceTarget && contributionActionsAvailable
+          ? listPaneEnvironmentBranches
+          : undefined,
+      onCheckoutBranch: contributionActionsAvailable ? checkoutPaneEnvironmentBranch : undefined,
+      onCreateBranch: contributionActionsAvailable ? createPaneEnvironmentBranch : undefined,
     },
     refreshEnvironmentInfo,
     commitEnvironmentChanges: commitPaneEnvironmentChanges,
     commitAndPushEnvironmentChanges: commitAndPushPaneEnvironmentChanges,
     pushEnvironmentChanges: pushPaneEnvironmentChanges,
     loadEnvironmentDiff:
-      activeWorkspaceTarget && gitActionsAvailable
+      activeWorkspaceTarget && contributionActionsAvailable
         ? (target, mode) => loadEnvironmentDiff(workspaceProject, target, mode)
         : undefined,
     listEnvironmentBranches: listPaneEnvironmentBranches,
