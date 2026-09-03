@@ -73,6 +73,7 @@ export interface PluginDevelopmentManagerOptions {
   args: string[]
   environment: NodeJS.ProcessEnv
   userDataDirectory: string
+  watch?: typeof watch
   onStateChanged?: (session: PluginDevelopmentSession) => void
   onProjectClassificationChanged?: (classification: PluginDevelopmentProjectClassification) => void
 }
@@ -128,6 +129,7 @@ export class PluginDevelopmentManager {
   private statePoll: NodeJS.Timeout | null = null
   private statePollGeneration = 0
   private classificationWatcher: FSWatcher | null = null
+  private classificationMarkerWatcher: FSWatcher | null = null
   private classificationRefresh: NodeJS.Timeout | null = null
   private observedProjectRoot: string | null = null
   private readonly classifications = new Map<
@@ -158,30 +160,34 @@ export class PluginDevelopmentManager {
     if (root === this.observedProjectRoot) return root ? this.classify(root) : null
     this.classificationWatcher?.close()
     this.classificationWatcher = null
+    this.classificationMarkerWatcher?.close()
+    this.classificationMarkerWatcher = null
+    if (this.classificationRefresh) {
+      clearTimeout(this.classificationRefresh)
+      this.classificationRefresh = null
+    }
     this.observedProjectRoot = root
     if (!root) return null
     const classification = await this.classify(root)
-    this.classificationWatcher = watch(root, { persistent: false }, (_event, filename) => {
-      const relativePath = String(filename ?? '')
-      if (
-        relativePath &&
-        relativePath !== 'package.json' &&
-        relativePath !== '.wework' &&
-        !relativePath.endsWith('.yml') &&
-        !relativePath.endsWith('.yaml') &&
-        !relativePath.startsWith(`.wework${process.platform === 'win32' ? '\\' : '/'}`)
-      ) {
-        return
+    this.classificationWatcher = (this.options.watch ?? watch)(
+      root,
+      { persistent: false },
+      (_event, filename) => {
+        const relativePath = String(filename ?? '')
+        if (
+          relativePath &&
+          relativePath !== 'package.json' &&
+          relativePath !== '.wework' &&
+          !relativePath.endsWith('.yml') &&
+          !relativePath.endsWith('.yaml') &&
+          !relativePath.startsWith(`.wework${process.platform === 'win32' ? '\\' : '/'}`)
+        ) {
+          return
+        }
+        this.scheduleClassificationRefresh(root)
       }
-      if (this.classificationRefresh) clearTimeout(this.classificationRefresh)
-      this.classificationRefresh = setTimeout(() => {
-        this.classifications.delete(root)
-        void this.classify(root).then(next => {
-          this.options.onProjectClassificationChanged?.(next)
-        })
-      }, 120)
-      this.classificationRefresh.unref()
-    })
+    )
+    this.watchClassificationMarkerDirectory(root)
     return classification
   }
 
@@ -521,6 +527,37 @@ export class PluginDevelopmentManager {
 
   private publish(): void {
     if (this.session) this.options.onStateChanged?.(this.session)
+  }
+
+  private watchClassificationMarkerDirectory(root: string): void {
+    this.classificationMarkerWatcher?.close()
+    this.classificationMarkerWatcher = null
+    try {
+      this.classificationMarkerWatcher = (this.options.watch ?? watch)(
+        join(root, '.wework'),
+        { persistent: false },
+        (_event, filename) => {
+          if (String(filename ?? '') === 'plugin-development.json') {
+            this.scheduleClassificationRefresh(root)
+          }
+        }
+      )
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
+    }
+  }
+
+  private scheduleClassificationRefresh(root: string): void {
+    if (this.classificationRefresh) clearTimeout(this.classificationRefresh)
+    this.classificationRefresh = setTimeout(() => {
+      this.classificationRefresh = null
+      this.classifications.delete(root)
+      void this.classify(root).then(next => {
+        this.watchClassificationMarkerDirectory(root)
+        this.options.onProjectClassificationChanged?.(next)
+      })
+    }, 120)
+    this.classificationRefresh.unref()
   }
 }
 

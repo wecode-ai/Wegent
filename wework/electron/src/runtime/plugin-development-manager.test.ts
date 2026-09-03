@@ -1,7 +1,8 @@
+import type { FSWatcher } from 'node:fs'
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { describe, expect, test } from 'vitest'
+import { describe, expect, test, vi } from 'vitest'
 import {
   PluginDevelopmentManager,
   pluginDevelopmentElectronArguments,
@@ -196,6 +197,51 @@ describe('PluginDevelopmentManager', () => {
         sourceRoot: root,
       })
     } finally {
+      await rm(parent, { recursive: true, force: true })
+    }
+  })
+
+  test('refreshes classification when only the marker file changes', async () => {
+    const parent = await mkdtemp(join(tmpdir(), 'wework-plugin-classification-watch-'))
+    const root = join(parent, 'example-plugin')
+    let resolveClassification:
+      | ((classification: { kind: 'standard' | 'wework-core-dsh-plugin' }) => void)
+      | null = null
+    const changed = new Promise<{ kind: 'standard' | 'wework-core-dsh-plugin' }>(resolve => {
+      resolveClassification = resolve
+    })
+    let notifyMarkerChanged: (() => void) | null = null
+    const watch = vi.fn((path, _options, listener) => {
+      if (path === join(root, '.wework')) {
+        notifyMarkerChanged = () => listener('change', 'plugin-development.json')
+      }
+      return { close: vi.fn() } as unknown as FSWatcher
+    })
+    const manager = new PluginDevelopmentManager({
+      command: process.execPath,
+      args: [],
+      environment: {},
+      userDataDirectory: parent,
+      watch: watch as typeof import('node:fs').watch,
+      onProjectClassificationChanged: classification => resolveClassification?.(classification),
+    })
+
+    try {
+      await manager.initialize(root)
+      await expect(manager.observe(root)).resolves.toMatchObject({
+        kind: 'wework-core-dsh-plugin',
+      })
+
+      await writeFile(
+        join(root, '.wework', 'plugin-development.json'),
+        JSON.stringify({ schemaVersion: 1, kind: 'standard' })
+      )
+      expect(notifyMarkerChanged).not.toBeNull()
+      notifyMarkerChanged?.()
+
+      await expect(changed).resolves.toMatchObject({ kind: 'standard' })
+    } finally {
+      await manager.observe(null)
       await rm(parent, { recursive: true, force: true })
     }
   })

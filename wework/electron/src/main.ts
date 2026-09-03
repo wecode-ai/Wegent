@@ -19,8 +19,7 @@ import {
 } from 'electron'
 import electronUpdater from 'electron-updater'
 import { execFile } from 'node:child_process'
-import { existsSync, watch, type FSWatcher } from 'node:fs'
-import { mkdir, writeFile } from 'node:fs/promises'
+import { existsSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import { release } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
@@ -98,6 +97,7 @@ import {
   PluginDevelopmentManager,
   pluginDevelopmentElectronArguments,
 } from './runtime/plugin-development-manager.js'
+import { PluginDevelopmentChildRuntime } from './runtime/plugin-development-child-runtime.js'
 import { SecureValueStore } from './host/secure-value-store.js'
 import { resolveDevelopmentDockIdentity } from './host/development-dock-identity.js'
 import { isEffectivePackagedApplication } from './host/application-packaging-mode.js'
@@ -187,11 +187,6 @@ let pendingSystemDrops: Array<{
 let runtimeError: string | null = null
 let runtimePhase: 'initializing' | 'ready' | 'failed' = 'initializing'
 let runtimeStartPromise: Promise<void> | null = null
-let pluginDevelopmentWatcher: FSWatcher | null = null
-let pluginDevelopmentReloadTimer: NodeJS.Timeout | null = null
-let pluginDevelopmentReloadPromise: Promise<void> = Promise.resolve()
-let pluginDevelopmentHmrGeneration = 0
-let pluginDevelopmentHmrUpdatedAt: string | null = null
 let computerUseStartupScheduled = false
 let electronNodeRuntimePromise: Promise<ElectronNodeRuntime> | null = null
 let quitting = false
@@ -206,6 +201,22 @@ let startupSplash: StartupSplash | null = null
 let startupRecovery: StartupRecoveryService | null = null
 let componentUpdates: DesktopComponentUpdateController | null = null
 let pluginDevelopment: PluginDevelopmentManager | null = null
+const pluginDevelopmentChildRuntime =
+  pluginDevelopmentInstance &&
+  process.env.WEWORK_PLUGIN_DEVELOPMENT_STATE_PATH?.trim() &&
+  process.env.WEWORK_PLUGIN_DEVELOPMENT_ROOT?.trim()
+    ? new PluginDevelopmentChildRuntime({
+        statePath: process.env.WEWORK_PLUGIN_DEVELOPMENT_STATE_PATH.trim(),
+        sourceRoot: process.env.WEWORK_PLUGIN_DEVELOPMENT_ROOT.trim(),
+        focus: reactivateMainWindow,
+        openDevTools: () =>
+          mainWindow?.webContents.openDevTools({ mode: 'detach', activate: true }),
+        restartCoreDsh: restartPrimaryCoreDsh,
+        requestStop: () => requestApplicationShutdown(() => app.quit()),
+        getCoreDshPid: () => desktopRuntime?.diagnostics().coreDshPid ?? null,
+        isShuttingDown: () => quitting || !desktopRuntime,
+      })
+    : null
 let trayManager: ElectronTrayManager<Electron.Menu | null, Tray> | null = null
 let trayNativeStatus: TrayNativeStatusController | null = null
 const desktopHostEvents = new DesktopHostEventBroker()
@@ -273,7 +284,7 @@ app.on('second-instance', (_event, _argv, _workingDirectory, additionalData) => 
       ? instanceData.pluginDevelopmentCommand
       : null
   if (pluginDevelopmentInstance && command) {
-    void handlePluginDevelopmentCommand(command)
+    void pluginDevelopmentChildRuntime?.handleCommand(command)
     return
   }
   if (keepE2EWindowInBackground) return
@@ -283,120 +294,6 @@ app.on('second-instance', (_event, _argv, _workingDirectory, additionalData) => 
   mainWindow.show()
   mainWindow.focus()
 })
-
-async function handlePluginDevelopmentCommand(command: string): Promise<void> {
-  if (command === 'focus') {
-    await reactivateMainWindow()
-    return
-  }
-  if (command === 'open-devtools') {
-    mainWindow?.webContents.openDevTools({ mode: 'detach', activate: true })
-    return
-  }
-  if (command === 'restart-core-dsh') {
-    try {
-      await restartPrimaryCoreDsh()
-      await writePluginDevelopmentState('ready')
-    } catch (reason) {
-      const error = reason instanceof Error ? reason : new Error(String(reason))
-      await writePluginDevelopmentState('error', error).catch(stateError => {
-        console.error('[plugin-development] Failed to persist restart error state', stateError)
-      })
-      throw error
-    }
-    return
-  }
-  if (command === 'stop') {
-    requestApplicationShutdown(() => app.quit())
-  }
-}
-
-async function writePluginDevelopmentState(
-  status: 'validating' | 'starting' | 'ready' | 'reloading' | 'error' | 'stopping' | 'stopped',
-  error: Error | null = null
-): Promise<void> {
-  const path = process.env.WEWORK_PLUGIN_DEVELOPMENT_STATE_PATH?.trim()
-  if (!pluginDevelopmentInstance || !path) return
-  const updatedAt = new Date().toISOString()
-  await mkdir(dirname(path), { recursive: true, mode: 0o700 })
-  await writeFile(
-    path,
-    `${JSON.stringify(
-      {
-        status,
-        coreDshPid: desktopRuntime?.diagnostics().coreDshPid ?? null,
-        hmrGeneration: pluginDevelopmentHmrGeneration,
-        updatedAt,
-        hmrUpdatedAt: pluginDevelopmentHmrUpdatedAt,
-        lastError: error
-          ? {
-              stage: 'core-dsh',
-              message: error.message,
-              timestamp: new Date().toISOString(),
-            }
-          : null,
-      },
-      null,
-      2
-    )}\n`,
-    { mode: 0o600 }
-  )
-}
-
-function isPluginDevelopmentSourceChange(filename: string | Buffer | null): boolean {
-  if (!filename) return true
-  const segments = filename.toString().split(/[\\/]/)
-  return !segments.some(segment => segment === '.git' || segment === 'node_modules')
-}
-
-function schedulePluginDevelopmentReload(): void {
-  if (pluginDevelopmentReloadTimer) clearTimeout(pluginDevelopmentReloadTimer)
-  pluginDevelopmentReloadTimer = setTimeout(() => {
-    pluginDevelopmentReloadTimer = null
-    pluginDevelopmentReloadPromise = pluginDevelopmentReloadPromise
-      .catch(() => undefined)
-      .then(async () => {
-        if (quitting || !desktopRuntime) return
-        await writePluginDevelopmentState('reloading')
-        try {
-          await restartPrimaryCoreDsh()
-          pluginDevelopmentHmrGeneration += 1
-          pluginDevelopmentHmrUpdatedAt = new Date().toISOString()
-          await writePluginDevelopmentState('ready')
-        } catch (error) {
-          const normalized = error instanceof Error ? error : new Error(String(error))
-          await writePluginDevelopmentState('error', normalized)
-          console.error('[plugin-development] hot reload failed', normalized)
-        }
-      })
-  }, 300)
-}
-
-function startPluginDevelopmentWatcher(): void {
-  if (!pluginDevelopmentInstance || pluginDevelopmentWatcher) return
-  const sourceRoot = process.env.WEWORK_PLUGIN_DEVELOPMENT_ROOT?.trim()
-  if (!sourceRoot) return
-  pluginDevelopmentWatcher = watch(
-    sourceRoot,
-    { persistent: false, recursive: true },
-    (_event, filename) => {
-      if (isPluginDevelopmentSourceChange(filename)) schedulePluginDevelopmentReload()
-    }
-  )
-  pluginDevelopmentWatcher.on('error', error => {
-    console.error('[plugin-development] source watcher failed', error)
-    void writePluginDevelopmentState('error', error)
-  })
-}
-
-function stopPluginDevelopmentWatcher(): void {
-  if (pluginDevelopmentReloadTimer) {
-    clearTimeout(pluginDevelopmentReloadTimer)
-    pluginDevelopmentReloadTimer = null
-  }
-  pluginDevelopmentWatcher?.close()
-  pluginDevelopmentWatcher = null
-}
 
 rendererHealth.on('change', () => {
   mainWindow?.webContents.send('runtime:changed')
@@ -1223,8 +1120,8 @@ function installIpc(): void {
 }
 
 async function shutdown(): Promise<void> {
-  stopPluginDevelopmentWatcher()
-  await writePluginDevelopmentState('stopping')
+  pluginDevelopmentChildRuntime?.stopWatcher()
+  await pluginDevelopmentChildRuntime?.writeState('stopping')
   await logRetention.stop()
   systemResume.stop()
   systemSleep.stop()
@@ -1260,7 +1157,7 @@ async function shutdown(): Promise<void> {
     development?.stop(),
     desktopRuntime?.stop(),
   ])
-  await writePluginDevelopmentState('stopped')
+  await pluginDevelopmentChildRuntime?.writeState('stopped')
 }
 
 function requestApplicationShutdown(exit: () => void): void {
@@ -1568,7 +1465,7 @@ function startDesktopRuntime(): Promise<void> {
   logStartupStep('desktop-runtime-start', 'started')
   runtimePhase = 'initializing'
   runtimeError = null
-  void writePluginDevelopmentState('starting')
+  void pluginDevelopmentChildRuntime?.writeState('starting')
   notifyRuntimeChanged()
   runtimeStartPromise = (async () => {
     await configureDesktopRuntime()
@@ -1581,8 +1478,8 @@ function startDesktopRuntime(): Promise<void> {
     await componentUpdates?.confirmStartup()
     logStartupStep('component-update-confirmation', 'completed')
     runtimePhase = 'ready'
-    startPluginDevelopmentWatcher()
-    await writePluginDevelopmentState('ready')
+    pluginDevelopmentChildRuntime?.startWatcher()
+    await pluginDevelopmentChildRuntime?.writeState('ready')
     logStartupStep('desktop-runtime-start', 'completed')
     if (!pluginDevelopmentInstance && shouldStageDesktopComponentUpdates(process.env)) {
       void componentUpdates
@@ -1604,7 +1501,7 @@ function startDesktopRuntime(): Promise<void> {
       }
       runtimePhase = 'failed'
       runtimeError = error instanceof Error ? error.message : String(error)
-      await writePluginDevelopmentState(
+      await pluginDevelopmentChildRuntime?.writeState(
         'error',
         error instanceof Error ? error : new Error(String(error))
       )
