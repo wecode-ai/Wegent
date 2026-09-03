@@ -1,5 +1,6 @@
 import { useTranslation } from '@/hooks/useTranslation'
 import { cn } from '@/lib/utils'
+import { ActivityShimmerText } from './ActivityShimmerText'
 
 const THINKING_PREVIEW_MAX_LENGTH = 96
 
@@ -21,7 +22,9 @@ export function AssistantThinkingIndicator({
       className={cn('inline-flex min-w-0 max-w-full items-center text-chat', className)}
       data-testid={testId}
     >
-      <span className="waiting-thinking-text min-w-0 truncate">{text}</span>
+      <ActivityShimmerText variant="thinking" className="min-w-0 truncate">
+        {text}
+      </ActivityShimmerText>
     </div>
   )
 }

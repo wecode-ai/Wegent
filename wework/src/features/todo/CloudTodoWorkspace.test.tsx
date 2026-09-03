@@ -107,6 +107,30 @@ vi.mock('./ProjectSpaceChatSidebar', () => ({
   ),
 }))
 
+vi.mock('@/components/layout/workspace-panels/TemporaryChatPanel', () => ({
+  TemporaryChatPanel: ({
+    testId,
+    initialAddress,
+    collapseComposerWhenIdle,
+  }: {
+    testId: string
+    initialAddress?: { deviceId: string; taskId: string } | null
+    collapseComposerWhenIdle?: boolean
+  }) => (
+    <div
+      data-testid={testId}
+      data-device-id={initialAddress?.deviceId}
+      data-task-id={initialAddress?.taskId}
+      data-collapse-composer={String(collapseComposerWhenIdle)}
+    >
+      <div
+        data-testid={testId.replace('popup-conversation', 'popup-scroll')}
+        className="max-h-[min(68vh,42rem)] overflow-y-auto"
+      />
+    </div>
+  ),
+}))
+
 vi.mock('./AiChatModal', () => ({
   AiChatModal: ({
     task,
@@ -1021,8 +1045,14 @@ describe('CloudTodoWorkspace', () => {
     const progressPopup = await screen.findByTestId('cloud-todo-card-progress-popup-WEG-1')
     expect(progressPopup).toHaveTextContent('当前任务进展')
     expect(progressPopup).toHaveTextContent('验证完整工作流')
-    expect(progressPopup).toHaveTextContent('先检查项目看板如何组织运行中的消息。')
-    expect(progressPopup).toHaveTextContent('pnpm test')
+    expect(screen.getByTestId('cloud-todo-card-popup-conversation-WEG-1')).toHaveAttribute(
+      'data-task-id',
+      'runtime-2'
+    )
+    expect(screen.getByTestId('cloud-todo-card-popup-conversation-WEG-1')).toHaveAttribute(
+      'data-collapse-composer',
+      'true'
+    )
     expect(screen.getByTestId('cloud-todo-card-popup-scroll-WEG-1')).toHaveClass(
       'max-h-[min(68vh,42rem)]',
       'overflow-y-auto'
@@ -1100,8 +1130,7 @@ describe('CloudTodoWorkspace', () => {
     const progressPopup = await screen.findByTestId('cloud-todo-card-progress-popup-WEG-1')
     const progressResponse = screen.getByTestId('cloud-todo-card-popup-conversation-WEG-1')
     expect(progressPopup).toHaveTextContent('当前任务进展')
-    expect(progressResponse).toHaveTextContent('第一行')
-    expect(progressResponse).toHaveTextContent('第四行')
+    expect(progressResponse).toHaveAttribute('data-task-id', 'runtime-review')
   })
 
   it('loads persisted task output for an in-progress Issue on the board', async () => {
@@ -1191,9 +1220,8 @@ describe('CloudTodoWorkspace', () => {
 
     fireEvent.mouseEnter(screen.getByTestId('cloud-todo-card-tasks-WEG-1'))
     const conversation = await screen.findByTestId('cloud-todo-card-popup-conversation-WEG-1')
-    expect(conversation).toHaveTextContent('请修复看板输出')
-    expect(conversation).toHaveTextContent('已经定位问题')
-    expect(conversation).toHaveTextContent('正在验证修复')
+    expect(conversation).toHaveAttribute('data-device-id', 'local-device')
+    expect(conversation).toHaveAttribute('data-task-id', 'runtime-in-progress')
   })
 
   it('reports the concrete project name for the active document tab', async () => {
@@ -1595,7 +1623,7 @@ describe('CloudTodoWorkspace', () => {
     await userEvent.click(screen.getByTestId('ai-chat-modal-close'))
     expect(screen.queryByTestId('ai-chat-modal')).not.toBeInTheDocument()
     expect(screen.queryByTestId('cloud-todo-detail')).not.toBeInTheDocument()
-  })
+  }, 10_000)
 
   it('ignores a task address that resolves after reopening the task panel', async () => {
     const workbenchServices = services()

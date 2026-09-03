@@ -173,7 +173,8 @@ export function PluginManagementWorkspace({
               getToken: () => cloudToken,
               redirectOnUnauthorized: false,
             }),
-      })
+      }),
+      resolvedCloudApiBaseUrl
     )
   }, [cloudToken, resolvedCloudApiBaseUrl])
 

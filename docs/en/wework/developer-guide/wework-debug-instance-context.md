@@ -31,11 +31,24 @@ These values are written only when the Terminal session is created. Existing Ter
 
 `wework/scripts/dev-mac-app.sh` reads the parent variables and generates debug instance variables:
 
-- `WEWORK_DEV_TITLE`: the short debug instance label. It uses `WEWORK_PARENT_TITLE` first, then the Git branch, then the worktree directory name.
+- `WEWORK_DEV_TITLE`: the short debug instance label. Task runtimes automatically use a truncated task title; ordinary local terminals use the project and Git branch; a detached HEAD without task context uses the worktree directory name.
 - `WEWORK_DEV_PORT`: the current Vite/ Electron dev server port.
 - `WEWORK_DEV_WORKTREE`: the current worktree root path.
 - `WEWORK_DEV_BRANCH`: the current Git branch, or empty when running on a detached HEAD.
-- `WEWORK_APP_IDENTIFIER`: the current Electron application identity. It defaults to a value derived from the worktree path and isolates the single-instance lock, application data, and macOS menu bar icon position. Override it only when an application identity must intentionally be reused.
+- `WEWORK_DEV_INSTANCE_LABEL`: the instance number extracted from the `runtime-<id>` worktree directory; regular checkouts use a stable hash.
+- `WEWORK_DEV_DOCK_TITLE`: the macOS Dock instance name, built from the automatically resolved short title and the first four instance characters.
+- `WEWORK_DEV_EXECUTABLE_NAME`: a filesystem-safe Dock title used as the macOS executable name; path separators are replaced.
+- `WEWORK_APP_IDENTIFIER`: the generated Electron application identity. It is derived from the current worktree path and isolates the single-instance lock, application data, and macOS menu bar icon position. The launcher intentionally ignores an identity inherited from its parent App; use `WEWORK_DEV_APP_IDENTIFIER` only when an identity must explicitly be reused.
+- `WEWORK_USER_DATA_DIR`: the generated Electron user data directory. The launcher intentionally ignores a directory inherited from its parent App; use `WEWORK_DEV_USER_DATA_DIR` for an explicit override.
+
+The macOS development launcher prepares a copy-on-write Electron App Bundle for
+each display name. Task shells use their injected title directly; terminals
+started from an existing runtime worktree can recover the title from the local
+runtime index. The launcher then updates the Bundle metadata and renames the
+main executable to `WEWORK_DEV_EXECUTABLE_NAME`, the filesystem-safe Dock title. The Dock hover label
+therefore shows a value such as `Fix subscriptions · 5275`, while the icon badge
+shows `5275`. The renamed development Bundle remains in source hot-reload mode
+instead of switching to packaged resources.
 
 The macOS tray derives a stable UUID v5 from `WEWORK_APP_IDENTIFIER` and passes
 it to Electron as the `Tray` GUID. Electron writes that GUID to the native

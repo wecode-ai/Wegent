@@ -305,12 +305,14 @@ export function WorkbenchProvider({
   const localPluginApi = useMemo(() => createLocalCodexPluginApi(), [])
   const cloudPluginApi = useMemo(() => {
     const runtime = getRuntimeConfig()
+    const apiBaseUrl = cloudConnection.apiBaseUrl || runtime.apiBaseUrl
     return createPluginApi(
       createHttpClient({
-        baseUrl: cloudConnection.apiBaseUrl || runtime.apiBaseUrl,
+        baseUrl: apiBaseUrl,
         getToken: () => cloudConnection.token,
         redirectOnUnauthorized: false,
-      })
+      }),
+      apiBaseUrl
     )
   }, [cloudConnection.apiBaseUrl, cloudConnection.token])
   const isOptionsLocked = Boolean(state.currentRuntimeTask)

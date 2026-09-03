@@ -152,6 +152,21 @@ Distinguish these cases when investigating streaming stalls:
 
 Streaming-buffer unit tests live in `wework/src/components/chat/useBufferedStreamingText.test.ts`. Changes to the reserve or advance rate must continue to cover Unicode boundaries, non-append updates, and immediate alignment when streaming ends.
 
+## Persistent Animation Rendering
+
+Status spinners and text shimmers are persistent animations: they can keep the Web Content process busy even when there is no input or streamed message. Implement these effects so that each frame changes only compositable `transform` or `opacity`. Do not animate paint-bound properties such as `background-position` or `mask-position`, and do not rotate a complex stroked SVG directly.
+
+A spinner should keep its SVG static inside a fixed-size HTML wrapper and animate the wrapper's `transform` with `will-change: transform`. A text shimmer should keep the base text normally rendered and use fixed highlight bands with staggered `opacity` animations to reproduce the left-to-right sweep. Both implementations must preserve `prefers-reduced-motion` behavior.
+
+Do not infer compositor behavior from CSS property names alone. `will-change` is only a hint, and apparently compositable properties such as `clip-path` can still cause per-frame main-thread work in the Electron version that ships with Wework. After changing a persistent animation, capture the old and new implementations for at least 10 seconds under the same Electron version, element count, and window state, and verify:
+
+- Pausing animations causes CPU usage to fall, establishing that the animation is causal.
+- The new implementation no longer emits per-frame `Paint` or `PaintImage` events.
+- `UpdateLayoutTree` and `Layerize` event counts and total durations no longer grow continuously with animation frames.
+- Direction, period, color, dimensions, and visibility states match the previous effect.
+
+If the replacement still produces continuous painting or layerization, revise the implementation again. Visual smoothness or an occasional reduction in average CPU is not sufficient evidence.
+
 ## Collected Data
 
 When enabled, the diagnostics module records:
