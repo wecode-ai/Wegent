@@ -28,13 +28,23 @@ describe('buildAiVerifyEnvironment', () => {
         WEGENT_EXECUTOR_APP_IPC_SOCKET: '/tmp/legacy.sock',
         WEGENT_EXECUTOR_BINARY: '/tmp/foreign-executor',
         WEGENT_EXECUTOR_SOURCE_DIR: '/tmp/foreign-source',
+        WEGENT_APP_IPC_ENDPOINT: '/tmp/foreign-app-ipc.sock',
+        WEGENT_APP_IPC_TOKEN: 'foreign-app-ipc-token',
+        WEGENT_TASK_ID: 'runtime-parent-task',
+        WEGENT_TASK_WORKSPACE: '/tmp/parent-workspace',
         ELECTRON_RUN_AS_NODE: '1',
+        WEWORK_APP_HOT_RELOAD: '1',
         WEWORK_COMPONENT_RESOURCES_ROOT: '/tmp/foreign-components',
+        WEWORK_DEV_DOCK_TITLE: 'Parent task · 1234',
+        WEWORK_DEV_INSTANCE_LABEL: '123456',
+        WEWORK_DEV_TITLE: 'Parent task',
+        WEWORK_DEV_WORKTREE: '/tmp/worktrees/runtime-123456/project',
         WEWORK_EXECUTOR_PATH: '/Applications/WeWork.app/Contents/Resources/bin/wegent-executor',
         WEWORK_EXECUTOR_SIDECAR: '/tmp/foreign-sidecar',
         WEWORK_HARNESS_RUNTIME_ROOT: '/tmp/foreign-harness-runtime',
         WEWORK_NODE_PATH: '/Applications/WeWork.app/Contents/MacOS/WeWork',
         WEWORK_NODE_RUNTIME_KIND: 'electron',
+        WEWORK_PARENT_TITLE: 'Parent task',
         WEWORK_RUNTIME_BIN: '/tmp/foreign-runtime/bin',
         WEWORK_SHARED_EXECUTOR_HOME: '/tmp/shared-home',
       },
@@ -72,15 +82,25 @@ describe('buildAiVerifyEnvironment', () => {
     expect(environment.WEGENT_EXECUTOR_APP_IPC_SOCKET).toBeUndefined()
     expect(environment.WEGENT_EXECUTOR_BINARY).toBeUndefined()
     expect(environment.WEGENT_EXECUTOR_SOURCE_DIR).toBeUndefined()
+    expect(environment.WEGENT_APP_IPC_ENDPOINT).toBeUndefined()
+    expect(environment.WEGENT_APP_IPC_TOKEN).toBeUndefined()
+    expect(environment.WEGENT_TASK_ID).toBeUndefined()
+    expect(environment.WEGENT_TASK_WORKSPACE).toBeUndefined()
     expect(environment.CODEX_BINARY_PATH).toBeUndefined()
     expect(environment.DWS_BINARY_PATH).toBeUndefined()
     expect(environment.ELECTRON_RUN_AS_NODE).toBeUndefined()
+    expect(environment.WEWORK_APP_HOT_RELOAD).toBeUndefined()
     expect(environment.WEWORK_COMPONENT_RESOURCES_ROOT).toBeUndefined()
+    expect(environment.WEWORK_DEV_DOCK_TITLE).toBeUndefined()
+    expect(environment.WEWORK_DEV_INSTANCE_LABEL).toBeUndefined()
+    expect(environment.WEWORK_DEV_TITLE).toBeUndefined()
+    expect(environment.WEWORK_DEV_WORKTREE).toBeUndefined()
     expect(environment.WEWORK_EXECUTOR_PATH).toBeUndefined()
     expect(environment.WEWORK_EXECUTOR_SIDECAR).toBeUndefined()
     expect(environment.WEWORK_HARNESS_RUNTIME_ROOT).toBeUndefined()
     expect(environment.WEWORK_NODE_PATH).toBeUndefined()
     expect(environment.WEWORK_NODE_RUNTIME_KIND).toBeUndefined()
+    expect(environment.WEWORK_PARENT_TITLE).toBeUndefined()
     expect(environment.WEWORK_RUNTIME_BIN).toBeUndefined()
     expect(environment.WEWORK_SHARED_EXECUTOR_HOME).toBeUndefined()
     expect(environment.WEWORK_APP_CONFIG_DIR).toBe(path.join('/tmp/session', 'app-config'))

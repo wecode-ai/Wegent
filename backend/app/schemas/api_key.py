@@ -93,7 +93,7 @@ class ServiceKeyResponse(BaseModel):
 
 
 class ServiceKeyCreatedResponse(ServiceKeyResponse):
-    """Response schema when creating a service key (includes full key, shown only once)."""
+    """Creation response containing the full key, which is shown only once."""
 
     key: str  # Full key, only returned at creation time
 
@@ -102,6 +102,35 @@ class ServiceKeyListResponse(BaseModel):
     """Response schema for listing service keys."""
 
     items: List[ServiceKeyResponse]
+    total: int
+
+
+class PluginReleaseKeyCreate(BaseModel):
+    """Create a key for protected GitLab release jobs."""
+
+    name: str = Field(..., min_length=1, max_length=100)
+    description: Optional[str] = Field(default=None, max_length=500)
+    expiresAt: Optional[datetime] = None
+
+
+class PluginReleaseKeyResponse(BaseModel):
+    id: int
+    name: str
+    keyPrefix: str
+    description: Optional[str] = None
+    expiresAt: datetime
+    lastUsedAt: datetime
+    createdAt: datetime
+    isActive: bool
+    createdBy: Optional[str] = None
+
+
+class PluginReleaseKeyCreatedResponse(PluginReleaseKeyResponse):
+    key: str
+
+
+class PluginReleaseKeyListResponse(BaseModel):
+    items: List[PluginReleaseKeyResponse]
     total: int
 
 

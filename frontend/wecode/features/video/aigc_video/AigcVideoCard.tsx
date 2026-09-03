@@ -120,10 +120,10 @@ export default function AigcVideoCard({
       canOpenPanel &&
       !document.querySelector('[data-task-right-panel]')
     ) {
-      openPanel(false)
+      openPanel(opensTimeline)
     }
     previousStatusRef.current = card.card_status
-  }, [canOpenPanel, card.card_status, openPanel])
+  }, [canOpenPanel, card.card_status, openPanel, opensTimeline])
 
   const handleButton = async (button: AigcVideoButton) => {
     const buttonId = button.button_id || button.button_name

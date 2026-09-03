@@ -2041,9 +2041,13 @@ describe('ConnectionsSettingsPage', () => {
     await screen.findByTestId('connection-device-device-1')
     expect(screen.queryByTestId('connection-device-local-device')).not.toBeInTheDocument()
     await waitFor(() => expect(api.getMetrics).toHaveBeenCalledWith('device-1'))
-    expect(screen.getByTestId('connection-device-metric-cpu-device-1')).toHaveTextContent('42%')
-    expect(screen.getByTestId('connection-device-metric-memory-device-1')).toHaveTextContent('68%')
-    expect(screen.getByTestId('connection-device-metric-disk-device-1')).toHaveTextContent('57%')
+    await waitFor(() => {
+      expect(screen.getByTestId('connection-device-metric-cpu-device-1')).toHaveTextContent('42%')
+      expect(screen.getByTestId('connection-device-metric-memory-device-1')).toHaveTextContent(
+        '68%'
+      )
+      expect(screen.getByTestId('connection-device-metric-disk-device-1')).toHaveTextContent('57%')
+    })
     expect(screen.queryByTestId('connection-scale-wiki')).not.toBeInTheDocument()
     expect(screen.queryByTestId('connection-scale-wiki-link')).not.toBeInTheDocument()
   })

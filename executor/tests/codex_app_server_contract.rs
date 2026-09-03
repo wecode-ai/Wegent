@@ -482,6 +482,7 @@ async fn codex_app_server_receives_normalized_developer_path() {
     let _lock = env_lock().await;
     let _path = EnvGuard::set("PATH", "/usr/bin:/bin");
     let _extra_paths = EnvGuard::set("WEGENT_EXTRA_PATHS", "/custom/bin:/opt/homebrew/bin");
+    let _runtime_bin = EnvGuard::remove("WEWORK_RUNTIME_BIN");
     let log_path = std::env::temp_dir().join(format!(
         "wegent-executor-codex-path-rpc-{}.jsonl",
         std::process::id()
@@ -794,12 +795,14 @@ async fn codex_app_server_engine_does_not_timeout_running_turn() {
 
 async fn codex_app_server_idle_restart_preserves_in_flight_requests() {
     let _lock = env_lock().await;
-    let fake_codex = write_fake_codex_with_pending_request();
+    let request_marker = unique_dir("codex-pending-request'quoted").join("received");
+    let fake_codex = write_fake_codex_with_pending_request(&request_marker);
     let client = CodexAppServerClient::new(fake_codex.display().to_string());
     let request_client = client.clone();
     let pending_request =
         tokio::spawn(async move { request_client.request("plugin/list", json!({})).await });
 
+    wait_for_path(&request_marker, "pending app-server request should reach Codex").await;
     tokio::time::timeout(std::time::Duration::from_secs(2), async {
         loop {
             if matches!(client.restart_if_no_pending_requests().await, Err(1)) {
@@ -821,12 +824,14 @@ async fn codex_app_server_idle_restart_preserves_in_flight_requests() {
 
 async fn codex_app_server_proxy_restart_settles_in_flight_requests() {
     let _lock = env_lock().await;
-    let fake_codex = write_fake_codex_with_pending_request();
+    let request_marker = unique_dir("codex-proxy-pending-request").join("received");
+    let fake_codex = write_fake_codex_with_pending_request(&request_marker);
     let client = CodexAppServerClient::new(fake_codex.display().to_string());
     let request_client = client.clone();
     let pending_request =
         tokio::spawn(async move { request_client.request("plugin/list", json!({})).await });
 
+    wait_for_path(&request_marker, "pending app-server request should reach Codex").await;
     tokio::time::timeout(std::time::Duration::from_secs(2), async {
         loop {
             if matches!(client.restart_if_no_pending_requests().await, Err(1)) {
@@ -1277,15 +1282,13 @@ done
     path
 }
 
-fn write_fake_codex_with_pending_request() -> PathBuf {
+fn write_fake_codex_with_pending_request(request_marker: &Path) -> PathBuf {
     let path = std::env::temp_dir().join(format!(
         "fake-codex-pending-request-{}-{}",
         std::process::id(),
         unique_suffix()
     ));
-    fs::write(
-        &path,
-        r#"#!/bin/sh
+    let content = r#"#!/bin/sh
 while IFS= read -r line; do
   request_id=$(printf '%s' "$line" | sed -n 's/.*"id":\([0-9][0-9]*\).*/\1/p')
   case "$line" in
@@ -1295,13 +1298,14 @@ while IFS= read -r line; do
     *'"method":"initialized"'*)
       ;;
     *'"method":"plugin/list"'*)
+      touch __REQUEST_MARKER__
       sleep 30
       ;;
   esac
 done
-"#,
-    )
-    .unwrap();
+"#
+    .replace("__REQUEST_MARKER__", &shell_quote(request_marker));
+    fs::write(&path, content).unwrap();
     #[cfg(unix)]
     {
         let mut permissions = fs::metadata(&path).unwrap().permissions();
@@ -1309,6 +1313,10 @@ done
         fs::set_permissions(&path, permissions).unwrap();
     }
     path
+}
+
+fn shell_quote(path: &Path) -> String {
+    format!("'{}'", path.to_string_lossy().replace('\'', "'\\''"))
 }
 
 fn write_fake_codex_logging_start(log_path: &Path, env_keys: &[&str]) -> PathBuf {
@@ -1694,6 +1702,16 @@ fn read_json_lines(path: &Path) -> Vec<Value> {
         .collect::<Vec<_>>()
 }
 
+async fn wait_for_path(path: &Path, message: &str) {
+    tokio::time::timeout(std::time::Duration::from_secs(2), async {
+        while !path.exists() {
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect(message);
+}
+
 fn assert_config_arg(args: &[Value], expected: &str) {
     assert!(
         args.windows(2)
@@ -1736,6 +1754,12 @@ impl EnvGuard {
     fn set(key: &'static str, value: &str) -> Self {
         let previous = std::env::var(key).ok();
         std::env::set_var(key, value);
+        Self { key, previous }
+    }
+
+    fn remove(key: &'static str) -> Self {
+        let previous = std::env::var(key).ok();
+        std::env::remove_var(key);
         Self { key, previous }
     }
 }

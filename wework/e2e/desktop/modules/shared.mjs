@@ -890,6 +890,38 @@ function commandOutput(command, args, options = {}) {
   return result.stdout.trim()
 }
 
+async function commandOutputAsync(command, args, options = {}) {
+  return await new Promise((resolvePromise, reject) => {
+    const child = spawn(command, args, {
+      cwd: options.cwd,
+      env: options.env,
+      stdio: ['ignore', 'pipe', 'pipe'],
+    })
+    let stdout = ''
+    let stderr = ''
+    child.stdout.setEncoding('utf8')
+    child.stderr.setEncoding('utf8')
+    child.stdout.on('data', chunk => {
+      stdout += chunk
+    })
+    child.stderr.on('data', chunk => {
+      stderr += chunk
+    })
+    child.once('error', reject)
+    child.once('close', code => {
+      if (code === 0) {
+        resolvePromise(stdout.trim())
+        return
+      }
+      reject(
+        new Error(
+          `${command} ${args.join(' ')} exited with ${code ?? 'unknown status'}: ${stderr || stdout}`
+        )
+      )
+    })
+  })
+}
+
 async function stopDesktopAppProcess(app) {
   if (!app) return
   if (!app.launcher) {
@@ -1778,6 +1810,7 @@ export {
   isExecutable,
   pathExists,
   commandOutput,
+  commandOutputAsync,
   stopDesktopAppProcess,
   runChecked,
   reservePort,

@@ -271,7 +271,7 @@ export class SmartAppManager {
     releaseId: number
   }): Promise<SmartAppPreview> {
     const url = new URL(input.downloadUrl)
-    if (!isSecureDownloadUrl(url)) {
+    if (!isSecureTransferUrl(url)) {
       throw new Error('Smart app download must use HTTPS')
     }
     if (
@@ -495,7 +495,7 @@ export class SmartAppManager {
 
   async upload(archivePath: string, uploadUrl: string): Promise<void> {
     const url = new URL(uploadUrl)
-    if (url.protocol !== 'https:') throw new Error('Smart app upload must use HTTPS')
+    if (!isSecureTransferUrl(url)) throw new Error('Smart app upload must use HTTPS')
     const bytes = await readFile(resolve(archivePath))
     const response = await fetch(url, {
       method: 'PUT',
@@ -786,7 +786,7 @@ async function writeJson(path: string, value: unknown): Promise<void> {
   await writeFile(path, `${JSON.stringify(value, null, 2)}\n`, { mode: 0o600 })
 }
 
-function isSecureDownloadUrl(url: URL): boolean {
+function isSecureTransferUrl(url: URL): boolean {
   if (url.protocol === 'https:') return true
   if (url.protocol !== 'http:') return false
   return ['127.0.0.1', 'localhost', '[::1]'].includes(url.hostname)

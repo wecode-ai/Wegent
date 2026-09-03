@@ -24,6 +24,9 @@ export function installedPluginMarketplaceId(plugin: InstalledPlugin): string | 
 }
 
 export function marketplacePluginDistribution(plugin: PluginMarketplaceItem): PluginDistribution {
+  // User submissions remain personal creations even when a legacy release was
+  // made public before enterprise publication gained its own plugin identity.
+  if (plugin.accessRole === 'owner' && plugin.sourceProvider === 'user') return 'personal'
   if (plugin.visibility === 'personal') return 'personal'
   const marketplaceId = marketplaceItemMarketplaceId(plugin)
   if (marketplaceId && isPersonalMarketplaceId(marketplaceId)) return 'personal'

@@ -87,6 +87,7 @@ interface TemporaryChatPanelProps {
   allowInitialGoal?: boolean
   expanded?: boolean
   wideComposer?: boolean
+  collapseComposerWhenIdle?: boolean
   projectWork?: ProjectWorkControls
   showProjectWorkBar?: boolean
   projectWorkBarMiddleContext?: ReactNode
@@ -111,6 +112,7 @@ export function TemporaryChatPanel({
   allowInitialGoal = false,
   expanded = false,
   wideComposer = false,
+  collapseComposerWhenIdle = false,
   projectWork,
   showProjectWorkBar = false,
   projectWorkBarMiddleContext,
@@ -792,6 +794,7 @@ export function TemporaryChatPanel({
             error={error}
             placeholder={placeholder}
             variant="desktop"
+            collapseWhenIdle={collapseComposerWhenIdle}
             projectChat={sideChatProjectChat}
             projectWork={projectWork}
             showProjectWorkBar={showProjectWorkBar}
