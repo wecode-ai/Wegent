@@ -8,6 +8,7 @@ External tasks live only in the provider issue; Wegent keeps the run in the
 execution table and never creates a local task row.
 """
 
+import logging
 import uuid
 from unittest.mock import patch
 
@@ -164,8 +165,12 @@ def _active_execution(db: Session, item_id: str) -> LoopItemExecution | None:
 
 
 def test_external_board_page_is_filtered_and_detail_is_lazy(
-    test_db: Session, test_user: User, monkeypatch: pytest.MonkeyPatch
+    test_db: Session,
+    test_user: User,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
 ) -> None:
+    caplog.set_level(logging.INFO)
     project = _make_gitlab_project(test_db, test_user)
     issues = []
     for number in range(1, 81):
@@ -206,6 +211,14 @@ def test_external_board_page_is_filtered_and_detail_is_lazy(
     assert {item["id"] for item in first}.isdisjoint({item["id"] for item in second})
     assert all(item["description"] == "" for item in first)
     assert all(item["detail_loaded"] is False for item in first)
+    page_logs = [
+        record.getMessage()
+        for record in caplog.records
+        if record.getMessage().startswith("[External board page]")
+    ]
+    assert len(page_logs) == 2
+    assert "returned_ids=[1, 2" in page_logs[0]
+    assert "returned_ids=[51, 52" in page_logs[1]
 
 
 def test_external_issue_page_cache_reuses_provider_response(

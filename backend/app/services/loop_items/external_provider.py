@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import base64
 import hashlib
+import logging
 import re
 import tempfile
 import threading
@@ -45,6 +46,8 @@ from app.services.loop_items.assignment_notification import (
     notify_project_task_assignee,
 )
 from app.services.project_automation_domain import runnable_wegent_team
+
+logger = logging.getLogger(__name__)
 
 PRIORITY_PREFIX = "wegent:priority:"
 STATUS_PREFIX = "wegent:status:"
@@ -151,6 +154,23 @@ class ExternalLoopItemProvider:
             matched.append(issue)
         if next_cursor is None and len(batch) == ISSUE_PAGE_SIZE and page < 100:
             next_cursor = self._encode_page_cursor(page + 1, 0)
+
+        logger.info(
+            "[External board page] project_id=%s provider=%s status=%s "
+            "cursor=%s page=%s offset=%s batch_count=%s batch_first_id=%s "
+            "batch_last_id=%s returned_ids=%s next_cursor=%s",
+            project.id,
+            project.task_provider,
+            item_status,
+            cursor,
+            page,
+            offset,
+            len(batch),
+            self._number(batch[0]) if batch else None,
+            self._number(batch[-1]) if batch else None,
+            [self._number(issue) for issue in matched],
+            next_cursor,
+        )
 
         return (
             [
@@ -1619,6 +1639,14 @@ class ExternalLoopItemProvider:
         with self._issue_page_cache_lock:
             cached = self._issue_page_cache.get(cache_key)
             if cached is not None and cached[0] > now:
+                logger.info(
+                    "[External board page cache] project_id=%s status=%s page=%s "
+                    "cache_hit=true issue_count=%s",
+                    project.id,
+                    item_status,
+                    page,
+                    len(cached[1]),
+                )
                 return cached[1]
 
         repository = self._repository(project)
@@ -1635,6 +1663,16 @@ class ExternalLoopItemProvider:
         if item_status != "pending":
             params["labels"] = f"{STATUS_PREFIX}{item_status}"
         batch = self._request(project, "GET", path, params=params)
+        logger.info(
+            "[External board page cache] project_id=%s status=%s page=%s "
+            "cache_hit=false issue_count=%s first_id=%s last_id=%s",
+            project.id,
+            item_status,
+            page,
+            len(batch),
+            self._number(batch[0]) if batch else None,
+            self._number(batch[-1]) if batch else None,
+        )
         with self._issue_page_cache_lock:
             self._issue_page_cache = {
                 key: value

@@ -685,6 +685,7 @@ describe('CloudTodoWorkspace', () => {
   })
 
   it('loads Git-backed boards by column and fetches details only after opening a card', async () => {
+    const infoSpy = vi.spyOn(console, 'info').mockImplementation(() => {})
     const workbenchServices = services()
     const githubProject = {
       ...project,
@@ -703,7 +704,7 @@ describe('CloudTodoWorkspace', () => {
       items: [githubProject],
     })
     workbenchServices.deliveryApi!.listLoopItemsPage = vi.fn(async (_projectId, options) => ({
-      items: options.status === 'pending' ? (options.cursor ? [next] : [summary]) : [],
+      items: options.status === 'pending' ? (options.cursor ? [summary, next] : [summary]) : [],
       task_bindings: [],
       next_cursor: options.status === 'pending' && !options.cursor ? 'next-page' : null,
     }))
@@ -735,9 +736,19 @@ describe('CloudTodoWorkspace', () => {
 
     await userEvent.click(screen.getByTestId('cloud-todo-column-load-more-pending'))
     await screen.findByTestId(`cloud-todo-card-${next.id}`)
+    expect(screen.getAllByTestId(`cloud-todo-card-${summary.id}`)).toHaveLength(1)
     expect(workbenchServices.deliveryApi!.listLoopItemsPage).toHaveBeenLastCalledWith(
       String(project.id),
       expect.objectContaining({ status: 'pending', cursor: 'next-page', limit: 10 })
+    )
+    expect(infoSpy).toHaveBeenCalledWith(
+      '[Wework project board] column page merged',
+      expect.objectContaining({
+        status: 'pending',
+        cursor: 'next-page',
+        receivedIds: [summary.id, next.id],
+        duplicateIds: [summary.id],
+      })
     )
     fireEvent.click(screen.getByTestId(`cloud-todo-card-${summary.id}`))
     await waitFor(() => {

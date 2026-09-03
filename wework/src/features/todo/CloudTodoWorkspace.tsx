@@ -2668,6 +2668,15 @@ export function CloudTodoWorkspace({
             selectedProjectApi.listCloudProjectMembers(selectedProjectId),
             selectedProjectAgentApi?.list(selectedProjectId) ?? Promise.resolve([]),
           ])
+          console.info('[Wework project board] column pages loaded', {
+            projectSpace: selectedProjectKey,
+            parentId: boardParentId,
+            pages: pages.map((page, index) => ({
+              status: externalBoardStatuses[index],
+              itemIds: page.items.map(item => item.id),
+              nextCursor: page.next_cursor,
+            })),
+          })
           return {
             items: locateItems(
               pages.flatMap(page => page.items),
@@ -2885,9 +2894,30 @@ export function CloudTodoWorkspace({
         limit: externalBoardColumnPageSize,
       })
       const locatedItems = locateItems(page.items, selectedProject.project_store)
-      setItems(current =>
-        Array.from(new Map([...current, ...locatedItems].map(item => [item.id, item])).values())
-      )
+      setItems(current => {
+        const currentColumnItems = current.filter(
+          item => item.status === itemStatus && item.parent_id === boardParentId
+        )
+        const existingIds = new Set(current.map(item => item.id))
+        const receivedIds = locatedItems.map(item => item.id)
+        const duplicateIds = receivedIds.filter(id => existingIds.has(id))
+        const merged = Array.from(
+          new Map([...current, ...locatedItems].map(item => [item.id, item])).values()
+        )
+        console.info('[Wework project board] column page merged', {
+          projectSpace: selectedProjectKey,
+          parentId: boardParentId,
+          status: itemStatus,
+          cursor,
+          nextCursor: page.next_cursor,
+          existingTailIds: currentColumnItems.slice(-3).map(item => item.id),
+          receivedIds,
+          duplicateIds,
+          beforeCount: current.length,
+          afterCount: merged.length,
+        })
+        return merged
+      })
       setExternalPageCursors(current => ({
         ...current,
         [itemStatus]: page.next_cursor,
