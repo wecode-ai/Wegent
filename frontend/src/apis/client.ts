@@ -28,6 +28,7 @@ interface RequestOptions {
   redirectOnUnauthorized?: boolean
   signal?: AbortSignal
   cache?: RequestCache
+  headers?: HeadersInit
 }
 
 // HTTP Client with interceptors
@@ -166,11 +167,16 @@ class APIClient {
     return this.request<T>(endpoint, { method: 'GET' }, requestOptions)
   }
 
-  async post<T>(endpoint: string, data?: unknown): Promise<T> {
-    return this.request<T>(endpoint, {
-      method: 'POST',
-      body: data ? JSON.stringify(data) : undefined,
-    })
+  async post<T>(endpoint: string, data?: unknown, requestOptions?: RequestOptions): Promise<T> {
+    return this.request<T>(
+      endpoint,
+      {
+        method: 'POST',
+        headers: requestOptions?.headers,
+        body: data ? JSON.stringify(data) : undefined,
+      },
+      requestOptions
+    )
   }
 
   async postForm<T>(endpoint: string, data: FormData): Promise<T> {
@@ -180,25 +186,40 @@ class APIClient {
     })
   }
 
-  async put<T>(endpoint: string, data?: unknown): Promise<T> {
-    return this.request<T>(endpoint, {
-      method: 'PUT',
-      body: data ? JSON.stringify(data) : undefined,
-    })
+  async put<T>(endpoint: string, data?: unknown, requestOptions?: RequestOptions): Promise<T> {
+    return this.request<T>(
+      endpoint,
+      {
+        method: 'PUT',
+        headers: requestOptions?.headers,
+        body: data ? JSON.stringify(data) : undefined,
+      },
+      requestOptions
+    )
   }
 
-  async patch<T>(endpoint: string, data?: unknown): Promise<T> {
-    return this.request<T>(endpoint, {
-      method: 'PATCH',
-      body: data ? JSON.stringify(data) : undefined,
-    })
+  async patch<T>(endpoint: string, data?: unknown, requestOptions?: RequestOptions): Promise<T> {
+    return this.request<T>(
+      endpoint,
+      {
+        method: 'PATCH',
+        headers: requestOptions?.headers,
+        body: data ? JSON.stringify(data) : undefined,
+      },
+      requestOptions
+    )
   }
 
-  async delete<T>(endpoint: string, data?: unknown): Promise<T> {
-    return this.request<T>(endpoint, {
-      method: 'DELETE',
-      body: data ? JSON.stringify(data) : undefined,
-    })
+  async delete<T>(endpoint: string, data?: unknown, requestOptions?: RequestOptions): Promise<T> {
+    return this.request<T>(
+      endpoint,
+      {
+        method: 'DELETE',
+        headers: requestOptions?.headers,
+        body: data ? JSON.stringify(data) : undefined,
+      },
+      requestOptions
+    )
   }
 }
 

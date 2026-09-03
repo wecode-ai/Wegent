@@ -6,18 +6,30 @@
 
 import hashlib
 import secrets
+from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session
 
 from app.api.dependencies import get_db
+from app.core.config import settings
 from app.core.security import get_admin_user
-from app.models.api_key import KEY_TYPE_PERSONAL, KEY_TYPE_SERVICE, APIKey
+from app.models.api_key import (
+    KEY_TYPE_PERSONAL,
+    KEY_TYPE_PLUGIN_RELEASE,
+    KEY_TYPE_SERVICE,
+    NEVER_EXPIRES_AT,
+    APIKey,
+)
 from app.models.user import User
 from app.schemas.api_key import (
     AdminPersonalKeyListResponse,
     AdminPersonalKeyResponse,
+    PluginReleaseKeyCreate,
+    PluginReleaseKeyCreatedResponse,
+    PluginReleaseKeyListResponse,
+    PluginReleaseKeyResponse,
     ServiceKeyCreate,
     ServiceKeyCreatedResponse,
     ServiceKeyListResponse,
@@ -25,6 +37,114 @@ from app.schemas.api_key import (
 )
 
 router = APIRouter()
+
+
+def _plugin_release_key_response(
+    api_key: APIKey, *, created_by: str | None = None
+) -> PluginReleaseKeyResponse:
+    return PluginReleaseKeyResponse(
+        id=api_key.id,
+        name=api_key.name,
+        keyPrefix=api_key.key_prefix,
+        description=api_key.description,
+        expiresAt=api_key.expires_at,
+        lastUsedAt=api_key.last_used_at,
+        createdAt=api_key.created_at,
+        isActive=api_key.is_active,
+        createdBy=created_by,
+    )
+
+
+@router.get("/plugin-release-keys", response_model=PluginReleaseKeyListResponse)
+def list_plugin_release_keys(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_admin_user),
+) -> PluginReleaseKeyListResponse:
+    del current_user
+    rows = (
+        db.query(APIKey, User)
+        .outerjoin(User, APIKey.user_id == User.id)
+        .filter(APIKey.key_type == KEY_TYPE_PLUGIN_RELEASE)
+        .order_by(APIKey.created_at.desc())
+        .all()
+    )
+    items = [
+        _plugin_release_key_response(
+            api_key, created_by=creator.user_name if creator else None
+        )
+        for api_key, creator in rows
+    ]
+    return PluginReleaseKeyListResponse(items=items, total=len(items))
+
+
+@router.post(
+    "/plugin-release-keys",
+    response_model=PluginReleaseKeyCreatedResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+def create_plugin_release_key(
+    request: PluginReleaseKeyCreate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_admin_user),
+) -> PluginReleaseKeyCreatedResponse:
+    now = datetime.now(timezone.utc).replace(tzinfo=None)
+    expires_at = NEVER_EXPIRES_AT
+    if request.expiresAt is not None:
+        expires_at = request.expiresAt
+        if expires_at.tzinfo is not None:
+            expires_at = expires_at.astimezone(timezone.utc).replace(tzinfo=None)
+        if expires_at <= now:
+            raise HTTPException(
+                status_code=422, detail="expiresAt must be in the future"
+            )
+        if expires_at > now + timedelta(
+            days=settings.WEWORK_PLUGIN_RELEASE_KEY_MAX_DAYS
+        ):
+            raise HTTPException(
+                status_code=422,
+                detail="Plugin release key lifetime exceeds the configured maximum",
+            )
+    random_part = secrets.token_urlsafe(32)
+    raw_key = f"wg-{random_part}"
+    api_key = APIKey(
+        user_id=current_user.id,
+        key_hash=hashlib.sha256(raw_key.encode("utf-8")).hexdigest(),
+        key_prefix=f"wg-{random_part[:8]}...",
+        name=request.name,
+        key_type=KEY_TYPE_PLUGIN_RELEASE,
+        description=request.description or "",
+        expires_at=expires_at,
+    )
+    db.add(api_key)
+    db.commit()
+    db.refresh(api_key)
+    response = _plugin_release_key_response(api_key, created_by=current_user.user_name)
+    return PluginReleaseKeyCreatedResponse(**response.model_dump(), key=raw_key)
+
+
+@router.post(
+    "/plugin-release-keys/{key_id}/toggle-status",
+    response_model=PluginReleaseKeyResponse,
+)
+def toggle_plugin_release_key_status(
+    key_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_admin_user),
+) -> PluginReleaseKeyResponse:
+    record = (
+        db.query(APIKey)
+        .filter(
+            APIKey.id == key_id,
+            APIKey.key_type == KEY_TYPE_PLUGIN_RELEASE,
+        )
+        .first()
+    )
+    if not record:
+        raise HTTPException(status_code=404, detail="Plugin release key not found")
+    record.is_active = not record.is_active
+    db.commit()
+    db.refresh(record)
+    return _plugin_release_key_response(record, created_by=current_user.user_name)
 
 
 # ==================== Service Key Management Endpoints ====================

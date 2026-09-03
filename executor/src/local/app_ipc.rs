@@ -26,7 +26,8 @@ use crate::{
     local::bundled_plugins::{initialize_bundled_plugin_marketplace, BundledPluginMarketplace},
     local::codex_home::{
         codex_home_migration_status, import_external_content, initialize_codex_home,
-        CodexHomeInitializeRequest, ExternalContentImportRequest,
+        read_codex_local_config, update_codex_local_config, CodexHomeInitializeRequest,
+        CodexLocalConfigUpdateRequest, ExternalContentImportRequest,
     },
     local::command::{CommandHandler, CommandRequest, CommandResult, DeviceCommandHandler},
     local::git_commands::{
@@ -39,12 +40,20 @@ use crate::{
         PrepareLocalHarnessLaunchRequest,
     },
     local::local_skills::list_local_skills,
+    local::plugin_catalog::{
+        list_wegent_store_plugins, read_plugin_manifest, save_plugin_example,
+        ReadPluginManifestRequest, SavePluginExampleRequest,
+    },
     local::plugin_import::{
-        delete_personal_plugin, finalize_plugin_import, import_plugin_package, link_plugin_release,
-        preview_plugin_import, read_plugin_cloud_links, rollback_plugin_import,
-        unlink_plugin_release, DeletePersonalPluginRequest, ImportPluginPackageRequest,
-        LinkPluginReleaseRequest, PluginImportMutationRequest, PreviewPluginImportRequest,
-        ReadPluginCloudLinksRequest, UnlinkPluginReleaseRequest,
+        cleanup_personal_plugin_package, delete_personal_plugin, ensure_personal_plugin,
+        finalize_plugin_import, import_personal_plugin_copy, import_plugin_package,
+        link_plugin_release, list_personal_plugins, package_personal_plugin, preview_plugin_import,
+        read_plugin_cloud_links, rollback_personal_plugin_copy, rollback_plugin_import,
+        unlink_plugin_release, CleanupPersonalPluginPackageRequest, DeletePersonalPluginRequest,
+        EnsurePersonalPluginRequest, ImportPersonalPluginCopyRequest, ImportPluginPackageRequest,
+        LinkPluginReleaseRequest, ListPersonalPluginsRequest, PackagePersonalPluginRequest,
+        PluginImportMutationRequest, PreviewPluginImportRequest, ReadPluginCloudLinksRequest,
+        RollbackPersonalPluginCopyRequest, UnlinkPluginReleaseRequest,
     },
     local::turn_file_changes_commands::turn_file_changes as turn_file_changes_command,
     local::workspace_files::{
@@ -103,6 +112,8 @@ const APP_IPC_RENDERER_METHODS: &[&str] = &[
     "executions.*",
     "executor.backend.configure",
     "executor.backend.status",
+    "executor.codex_home.config.read",
+    "executor.codex_home.config.update",
     "executor.codex_home.import_external_content",
     "executor.codex_home.initialize",
     "executor.codex_home.status",
@@ -118,6 +129,15 @@ const APP_IPC_RENDERER_METHODS: &[&str] = &[
     "executor.plugins.links.list",
     "executor.plugins.links.unlink",
     "executor.plugins.personal.delete",
+    "executor.plugins.personal.ensure",
+    "executor.plugins.personal.import_copy",
+    "executor.plugins.personal.list",
+    "executor.plugins.personal.package",
+    "executor.plugins.personal.package.cleanup",
+    "executor.plugins.personal.rollback_copy",
+    "executor.plugins.store.list",
+    "executor.plugins.manifest.read",
+    "executor.plugins.example.save",
     "external_attachments.*",
     "external_projects.*",
     "external_todos.*",
@@ -474,6 +494,24 @@ impl AppIpcServer {
             .map_err(|error| AppIpcError::new("serialization_failed", error.to_string()));
         }
 
+        if method == "executor.codex_home.config.read" {
+            return serde_json::to_value(
+                read_codex_local_config()
+                    .map_err(|error| AppIpcError::new("codex_home_config_read_failed", error))?,
+            )
+            .map_err(|error| AppIpcError::new("serialization_failed", error.to_string()));
+        }
+
+        if method == "executor.codex_home.config.update" {
+            let request = serde_json::from_value::<CodexLocalConfigUpdateRequest>(params)
+                .map_err(|error| AppIpcError::new("bad_request", error.to_string()))?;
+            return serde_json::to_value(
+                update_codex_local_config(request)
+                    .map_err(|error| AppIpcError::new("codex_home_config_update_failed", error))?,
+            )
+            .map_err(|error| AppIpcError::new("serialization_failed", error.to_string()));
+        }
+
         if method == "executor.codex_home.initialize" {
             let request = serde_json::from_value::<CodexHomeInitializeRequest>(params)
                 .map_err(|error| AppIpcError::new("bad_request", error.to_string()))?;
@@ -588,6 +626,87 @@ impl AppIpcServer {
             return Ok(Value::Null);
         }
 
+        if method == "executor.plugins.personal.import_copy" {
+            let request = serde_json::from_value::<ImportPersonalPluginCopyRequest>(params)
+                .map_err(|error| AppIpcError::new("bad_request", error.to_string()))?;
+            let imported = import_personal_plugin_copy(request)
+                .await
+                .map_err(|error| AppIpcError::new("plugin_personal_copy_import_failed", error))?;
+            return serde_json::to_value(imported)
+                .map_err(|error| AppIpcError::new("serialization_failed", error.to_string()));
+        }
+
+        if method == "executor.plugins.personal.rollback_copy" {
+            let request = serde_json::from_value::<RollbackPersonalPluginCopyRequest>(params)
+                .map_err(|error| AppIpcError::new("bad_request", error.to_string()))?;
+            tokio::task::spawn_blocking(move || rollback_personal_plugin_copy(request))
+                .await
+                .map_err(|error| {
+                    AppIpcError::new(
+                        "plugin_personal_copy_rollback_task_failed",
+                        error.to_string(),
+                    )
+                })?
+                .map_err(|error| AppIpcError::new("plugin_personal_copy_rollback_failed", error))?;
+            return Ok(Value::Null);
+        }
+
+        if method == "executor.plugins.personal.list" {
+            let request = serde_json::from_value::<ListPersonalPluginsRequest>(params)
+                .map_err(|error| AppIpcError::new("bad_request", error.to_string()))?;
+            let plugins = tokio::task::spawn_blocking(move || list_personal_plugins(request))
+                .await
+                .map_err(|error| {
+                    AppIpcError::new("plugin_personal_list_task_failed", error.to_string())
+                })?
+                .map_err(|error| AppIpcError::new("plugin_personal_list_failed", error))?;
+            return serde_json::to_value(plugins)
+                .map_err(|error| AppIpcError::new("serialization_failed", error.to_string()));
+        }
+
+        if method == "executor.plugins.personal.ensure" {
+            let request = serde_json::from_value::<EnsurePersonalPluginRequest>(params)
+                .map_err(|error| AppIpcError::new("bad_request", error.to_string()))?;
+            let ensured = tokio::task::spawn_blocking(move || ensure_personal_plugin(request))
+                .await
+                .map_err(|error| {
+                    AppIpcError::new("plugin_personal_ensure_task_failed", error.to_string())
+                })?
+                .map_err(|error| AppIpcError::new("plugin_personal_ensure_failed", error))?;
+            return serde_json::to_value(ensured)
+                .map_err(|error| AppIpcError::new("serialization_failed", error.to_string()));
+        }
+
+        if method == "executor.plugins.personal.package" {
+            let request = serde_json::from_value::<PackagePersonalPluginRequest>(params)
+                .map_err(|error| AppIpcError::new("bad_request", error.to_string()))?;
+            let package = tokio::task::spawn_blocking(move || package_personal_plugin(request))
+                .await
+                .map_err(|error| {
+                    AppIpcError::new("plugin_personal_package_task_failed", error.to_string())
+                })?
+                .map_err(|error| AppIpcError::new("plugin_personal_package_failed", error))?;
+            return serde_json::to_value(package)
+                .map_err(|error| AppIpcError::new("serialization_failed", error.to_string()));
+        }
+
+        if method == "executor.plugins.personal.package.cleanup" {
+            let request = serde_json::from_value::<CleanupPersonalPluginPackageRequest>(params)
+                .map_err(|error| AppIpcError::new("bad_request", error.to_string()))?;
+            tokio::task::spawn_blocking(move || cleanup_personal_plugin_package(request))
+                .await
+                .map_err(|error| {
+                    AppIpcError::new(
+                        "plugin_personal_package_cleanup_task_failed",
+                        error.to_string(),
+                    )
+                })?
+                .map_err(|error| {
+                    AppIpcError::new("plugin_personal_package_cleanup_failed", error)
+                })?;
+            return Ok(Value::Null);
+        }
+
         if method == "executor.plugins.personal.delete" {
             let request = serde_json::from_value::<DeletePersonalPluginRequest>(params)
                 .map_err(|error| AppIpcError::new("bad_request", error.to_string()))?;
@@ -596,6 +715,41 @@ impl AppIpcServer {
                 .map_err(|error| AppIpcError::new("plugin_delete_task_failed", error.to_string()))?
                 .map_err(|error| AppIpcError::new("plugin_delete_failed", error))?;
             return Ok(Value::Null);
+        }
+
+        if method == "executor.plugins.store.list" {
+            let listed = tokio::task::spawn_blocking(list_wegent_store_plugins)
+                .await
+                .map_err(|error| {
+                    AppIpcError::new("plugin_store_list_task_failed", error.to_string())
+                })?
+                .map_err(|error| AppIpcError::new("plugin_store_list_failed", error))?;
+            return serde_json::to_value(listed)
+                .map_err(|error| AppIpcError::new("serialization_failed", error.to_string()));
+        }
+
+        if method == "executor.plugins.manifest.read" {
+            let request = serde_json::from_value::<ReadPluginManifestRequest>(params)
+                .map_err(|error| AppIpcError::new("bad_request", error.to_string()))?;
+            let manifest = tokio::task::spawn_blocking(move || read_plugin_manifest(request))
+                .await
+                .map_err(|error| {
+                    AppIpcError::new("plugin_manifest_read_task_failed", error.to_string())
+                })?
+                .map_err(|error| AppIpcError::new("plugin_manifest_read_failed", error))?;
+            return Ok(manifest);
+        }
+
+        if method == "executor.plugins.example.save" {
+            let request = serde_json::from_value::<SavePluginExampleRequest>(params)
+                .map_err(|error| AppIpcError::new("bad_request", error.to_string()))?;
+            let saved = tokio::task::spawn_blocking(move || save_plugin_example(request))
+                .await
+                .map_err(|error| {
+                    AppIpcError::new("plugin_example_save_task_failed", error.to_string())
+                })?
+                .map_err(|error| AppIpcError::new("plugin_example_save_failed", error))?;
+            return Ok(Value::String(saved));
         }
 
         if method == "executor.backend.configure" {
