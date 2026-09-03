@@ -49,7 +49,7 @@ import {
 } from '@/features/workbench/runtimeThinking'
 import { useTranslation } from '@/hooks/useTranslation'
 import { cn } from '@/lib/utils'
-import type { RuntimeTaskAddress } from '@/types/api'
+import type { ModelSelectionConfig, RuntimeTaskAddress } from '@/types/api'
 import type { ProcessingBlock, WorkbenchMessage } from '@/types/workbench'
 import type { ChangeRequestMonitor } from '@/features/workbench/changeRequestMonitor'
 import { useTaskChangeRequest } from '@/features/workbench/changeRequestMonitor'
@@ -293,6 +293,7 @@ export interface CloudTodoBoardTaskBinding {
   device_id: string
   task_id: string
   task_title: string | null
+  workflow_node_id?: string | null
   running: boolean
   changeRequestTarget?: TaskChangeRequestTarget | null
   finalResponsePreview?: string | null
@@ -300,6 +301,7 @@ export interface CloudTodoBoardTaskBinding {
   conversationMessages?: WorkbenchMessage[]
   conversationHasMoreBefore?: boolean
   conversationBeforeCursor?: string | null
+  modelSelection?: ModelSelectionConfig | null
 }
 
 interface CloudTodoBoardCardProps {
@@ -807,23 +809,17 @@ function RuntimeTaskProgressSummary({
   onContinueChangeRequestRepair?: () => Promise<void>
   onSendMessage?: (message: string) => Promise<boolean>
 }) {
-  const activityAddress = useMemo<RuntimeTaskAddress | null>(
-    () =>
-      active
-        ? {
-            deviceId: binding.device_id,
-            taskId: binding.task_id,
-          }
-        : null,
-    [active, binding.device_id, binding.task_id]
-  )
   const taskAddress = useMemo<RuntimeTaskAddress>(
     () => ({
       deviceId: binding.device_id,
       taskId: binding.task_id,
+      ...(binding.modelSelection
+        ? { runtimeHandle: { modelSelection: binding.modelSelection } }
+        : {}),
     }),
-    [binding.device_id, binding.task_id]
+    [binding.device_id, binding.modelSelection, binding.task_id]
   )
+  const activityAddress = active ? taskAddress : null
   const activity = useRuntimeTaskActivity(activityAddress)
   const liveMessage = useRuntimeTaskLatestAssistantMessage(taskAddress)
   const cachedFinalResponse = useRuntimeTaskFinalResponse(
@@ -1032,6 +1028,7 @@ function useRuntimeTaskComposerContext(address: RuntimeTaskAddress): {
 
     const scopeKey = getRuntimeTaskChatScopeKey(address)
     const controls = workbench.projectChat
+    const taskModelSelection = controls.resolveRuntimeTaskModelSelection(address)
     const attachmentState = controls.attachmentStateByScope[scopeKey] ?? {
       attachments: [],
       uploadingFiles: new Map(),
@@ -1051,9 +1048,9 @@ function useRuntimeTaskComposerContext(address: RuntimeTaskAddress): {
         scopeKey,
         models: controls.models,
         skills: controls.skills,
-        selectedModel: controls.selectedModel,
-        activeModel: controls.activeModel,
-        selectedModelOptions: controls.selectedModelOptions,
+        selectedModel: taskModelSelection.selectedModel,
+        activeModel: taskModelSelection.activeModel,
+        selectedModelOptions: taskModelSelection.selectedModelOptions,
         isModelSelectionReady: controls.isModelSelectionReady,
         trialTemplates: controls.trialTemplates,
         trialPluginName: controls.trialPluginName,
@@ -1067,11 +1064,14 @@ function useRuntimeTaskComposerContext(address: RuntimeTaskAddress): {
         errors: attachmentState.errors,
         contextUsage: controls.contextUsage,
         isOptionsLocked: controls.isOptionsLocked,
-        setSelectedModel: controls.setSelectedModel,
-        setSelectedModelAndOptions: controls.setSelectedModelAndOptions,
-        setSelectedModelOption: controls.setSelectedModelOption,
-        getSelectedModel: controls.getSelectedModel,
-        getSelectedModelOptions: controls.getSelectedModelOptions,
+        setSelectedModel: model => controls.setRuntimeTaskSelectedModel(address, model),
+        setSelectedModelAndOptions: (model, options) =>
+          controls.setRuntimeTaskSelectedModelAndOptions(address, model, options),
+        setSelectedModelOption: (optionId, value) =>
+          controls.setRuntimeTaskSelectedModelOption(address, optionId, value),
+        getSelectedModel: () => controls.resolveRuntimeTaskModelSelection(address).selectedModel,
+        getSelectedModelOptions: () =>
+          controls.resolveRuntimeTaskModelSelection(address).selectedModelOptions,
         onBlockedModelSelect: controls.onBlockedModelSelect,
         toggleSkill: controls.toggleSkill,
         handleFileSelect: files => controls.handleFileSelectForScope(scopeKey, files),

@@ -20,7 +20,7 @@ import {
   applyRuntimeConversationAction,
   clearRuntimeConversationCacheForTests,
 } from '@/features/workbench/runtimeConversationCache'
-import type { User } from '@/types/api'
+import type { UnifiedModel, User } from '@/types/api'
 import { CloudTodoWorkspace } from './CloudTodoWorkspace'
 import {
   isSelfManagedWorkItem,
@@ -1044,6 +1044,163 @@ describe('CloudTodoWorkspace', () => {
       'runtime-2'
     )
   })
+
+  it('continues a board popup task with its task-scoped model', async () => {
+    const deepseekModel: UnifiedModel = {
+      name: 'deepseek-v4-flash-vision-exp',
+      displayName: 'DeepSeek V4 Flash Vision',
+      type: 'public',
+      provider: 'cloud',
+      runtime: { family: 'openai.openai-responses' },
+    }
+    const gptModel: UnifiedModel = {
+      name: 'gpt-5.6-sol',
+      displayName: 'GPT 5.6 Sol',
+      type: 'public',
+      provider: 'cloud',
+      runtime: { family: 'openai.openai-responses' },
+    }
+    const address = { deviceId: 'local-device', taskId: 'runtime-gpt' }
+    const taskItem = {
+      ...item,
+      execution_config: {
+        agent_id: null,
+        runtime_profile_id: null,
+        execution_device_id: address.deviceId,
+        model: gptModel.name,
+        model_type: gptModel.type,
+        model_options: { reasoning: 'high' },
+        workspace_binding: { type: 'standalone' as const },
+      },
+    }
+    const runtimeWork = {
+      projects: [
+        {
+          project: { id: project.id, name: project.name },
+          deviceWorkspaces: [
+            {
+              deviceId: address.deviceId,
+              available: true,
+              workspacePath: '/tmp/wegent',
+              tasks: [
+                {
+                  taskId: address.taskId,
+                  workspacePath: '/tmp/wegent',
+                  title: 'GPT automation task',
+                  runtime: 'codex' as const,
+                  running: false,
+                },
+              ],
+            },
+          ],
+        },
+      ],
+      chats: [],
+      totalTasks: 1,
+    }
+    const workbenchServices = services()
+    workbenchServices.deliveryApi!.listLoopItems = vi.fn(async () => ({ items: [taskItem] }))
+    workbenchServices.deliveryApi!.listTaskBindings = vi.fn(async () => [
+      {
+        id: 68,
+        loop_item_id: item.id,
+        task_user_id: 1,
+        device_id: address.deviceId,
+        task_id: address.taskId,
+        task_title: 'GPT automation task',
+        backend_task_id: null,
+        linked_at: '2026-09-03T08:00:00Z',
+      },
+    ])
+    const sendRuntimePaneMessage = vi.fn(async () => true)
+    const resolveRuntimeTaskModelSelection = vi.fn(() => ({
+      taskSelection: {
+        modelName: gptModel.name,
+        modelType: gptModel.type,
+        options: { reasoning: 'high' },
+      },
+      selectedModel: null,
+      activeModel: null,
+      selectedModelOptions: { reasoning: 'high' },
+    }))
+    const workbench = {
+      state: { devices: [], runtimeWork },
+      projectChat: {
+        models: [deepseekModel, gptModel],
+        skills: [],
+        selectedModel: deepseekModel,
+        activeModel: null,
+        selectedModelOptions: {},
+        isModelSelectionReady: true,
+        selectedSkills: [],
+        attachmentStateByScope: {},
+        isOptionsLocked: false,
+        resolveRuntimeTaskModelSelection,
+        setRuntimeTaskSelectedModel: vi.fn(),
+        setRuntimeTaskSelectedModelAndOptions: vi.fn(),
+        setRuntimeTaskSelectedModelOption: vi.fn(),
+        onBlockedModelSelect: vi.fn(),
+        toggleSkill: vi.fn(),
+        handleFileSelectForScope: vi.fn(async () => undefined),
+        removeAttachmentForScope: vi.fn(async () => undefined),
+        resetAttachmentsForScope: vi.fn(),
+        listLocalSkills: vi.fn(async () => []),
+        listLocalApps: vi.fn(async () => []),
+      },
+      sendRuntimePaneMessage,
+      loadRuntimeTranscriptForPane: vi.fn(async () => ({
+        messages: [],
+        turns: [],
+        hasMoreBefore: false,
+        beforeCursor: null,
+      })),
+      loadTurnFileChangesDiff: vi.fn(),
+      revertTurnFileChanges: vi.fn(),
+    } as unknown as WorkbenchContextValue
+
+    render(
+      <WorkbenchContext.Provider value={workbench}>
+        <CloudTodoWorkspace
+          user={{ id: 1, user_name: 'local', email: 'local@example.com' } as User}
+          localProjects={[]}
+          runtimeWork={runtimeWork}
+          services={workbenchServices}
+        />
+      </WorkbenchContext.Provider>
+    )
+
+    await userEvent.click((await screen.findAllByText('Wegent V4'))[0])
+    fireEvent.mouseEnter(await screen.findByTestId('cloud-todo-card-WEG-1'))
+    await userEvent.type(
+      await screen.findByTestId('cloud-todo-card-popup-input-WEG-1-68'),
+      '继续处理{enter}'
+    )
+
+    await waitFor(() =>
+      expect(sendRuntimePaneMessage).toHaveBeenCalledWith(
+        expect.objectContaining({
+          address: expect.objectContaining(address),
+          message: '继续处理',
+          modelId: gptModel.name,
+          modelType: gptModel.type,
+          modelOptions: expect.objectContaining({ reasoning: 'high' }),
+        }),
+        expect.any(Object)
+      )
+    )
+    expect(resolveRuntimeTaskModelSelection).toHaveBeenCalledWith(
+      expect.objectContaining({
+        ...address,
+        runtimeHandle: expect.objectContaining({
+          modelSelection: {
+            modelName: gptModel.name,
+            modelType: gptModel.type,
+            options: { reasoning: 'high' },
+          },
+        }),
+      })
+    )
+  }, 10_000)
 
   it('shows the cached final assistant response on an in-review task card', async () => {
     const reviewItem = { ...item, status: 'in_review' as const }
@@ -3477,7 +3634,7 @@ describe('CloudTodoWorkspace', () => {
       })
     )
     expect(screen.queryByTestId('automation-selection-options')).not.toBeInTheDocument()
-  })
+  }, 10_000)
 
   it('creates a queued task and starts it without opening a task composer', async () => {
     const workbenchServices = services()
@@ -4631,14 +4788,14 @@ describe('CloudTodoWorkspace', () => {
       />
     )
 
-    await userEvent.click((await screen.findAllByText('Wegent V4'))[0])
-    await userEvent.click(screen.getByRole('button', { name: '文件' }))
+    fireEvent.click((await screen.findAllByText('Wegent V4'))[0])
+    fireEvent.click(screen.getByRole('button', { name: '文件' }))
     expect(
       screen.getByTestId('cloud-project-header').querySelector('.electron-titlebar-drag-region')
     ).toBeInTheDocument()
-    await userEvent.click(await screen.findByTestId('cloud-folder-add'))
-    await userEvent.type(screen.getByTestId('cloud-folder-name'), 'docs')
-    await userEvent.click(screen.getByTestId('cloud-folder-create-confirm'))
+    fireEvent.click(await screen.findByTestId('cloud-folder-add'))
+    fireEvent.change(screen.getByTestId('cloud-folder-name'), { target: { value: 'docs' } })
+    fireEvent.click(screen.getByTestId('cloud-folder-create-confirm'))
 
     await waitFor(() =>
       expect(workbenchServices.deliveryApi?.createCloudFolder).toHaveBeenCalledWith(11, 'docs')

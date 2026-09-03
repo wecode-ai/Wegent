@@ -50,6 +50,7 @@ import type {
   CloudProjectMember,
   DeliveryFulfillment,
   PullRequestAutoRepairStatus,
+  WorkflowExecutionConfig,
 } from '@/api/deliveries'
 import type { TaskChangeRequestSnapshot } from '@/api/changeRequests'
 import { isDefaultWorkItemProject } from '@/api/deliveries'
@@ -116,7 +117,10 @@ import {
   runtimeTranscriptTurnsToConversationTurns,
 } from '@/features/workbench/runtimePaneMessages'
 import type { RuntimeTaskLifecycleStoreSnapshot } from '@/features/workbench/runtimeTaskLifecycle'
-import { hydrateRuntimeTaskAddress } from '@/features/workbench/workbenchRuntimeHelpers'
+import {
+  findRuntimeTask,
+  hydrateRuntimeTaskAddress,
+} from '@/features/workbench/workbenchRuntimeHelpers'
 import { AITableView } from '@/features/todo/AITableView'
 import {
   AutomationSelectionDialog,
@@ -125,6 +129,7 @@ import {
 import type {
   CloneGitRepositoryInput,
   CreatedRuntimeProject,
+  ModelSelectionConfig,
   ProjectWithTasks,
   RuntimeProjectSpaceRef,
   RuntimeTaskAddress,
@@ -137,7 +142,10 @@ import type { WorkbenchMessage } from '@/types/workbench'
 import { CloudTodoModal as Modal } from './CloudTodoModal'
 import { CloudMyWorkView } from './CloudMyWorkView'
 import { stopLocalRobotQueueExecution } from './localRobotQueueDispatcher'
-import { itemNeedsExecutionConfiguration } from './workflowExecutionConfig'
+import {
+  effectiveWorkflowNodeExecutionConfig,
+  itemNeedsExecutionConfiguration,
+} from './workflowExecutionConfig'
 import {
   CloudTodoBoardCard,
   CloudTodoCardContent,
@@ -453,6 +461,53 @@ type BoardReadResult = {
   task_bindings?: LoopItemTaskBinding[]
   members?: CloudProjectMember[]
   agents?: ProjectChatAgent[]
+}
+
+function modelSelectionFromExecutionConfig(
+  config: WorkflowExecutionConfig | null | undefined
+): ModelSelectionConfig | null {
+  if (!config?.model) return null
+  return {
+    modelName: config.model,
+    modelType: config.model_type,
+    options: { ...config.model_options },
+  }
+}
+
+function boardTaskModelSelection(
+  item: CloudLoopItem,
+  binding: CloudTodoBoardTaskBinding,
+  runtimeWork: RuntimeWorkListResponse | null | undefined
+): ModelSelectionConfig | null {
+  const runtimeSelection = findRuntimeTask(runtimeWork, {
+    deviceId: binding.device_id,
+    taskId: binding.task_id,
+  })?.modelSelection
+  if (runtimeSelection) return runtimeSelection
+
+  const workflowNode = item.workflow?.nodes.find(
+    node =>
+      node.id === binding.workflow_node_id ||
+      String(node.task_binding_id ?? '') === String(binding.id) ||
+      node.task_ids?.includes(binding.task_id)
+  )
+  if (item.workflow && workflowNode) {
+    return modelSelectionFromExecutionConfig(
+      effectiveWorkflowNodeExecutionConfig(item.workflow, workflowNode)
+    )
+  }
+  return modelSelectionFromExecutionConfig(item.execution_config)
+}
+
+function withBoardTaskModelSelection(
+  item: CloudLoopItem,
+  binding: CloudTodoBoardTaskBinding,
+  runtimeWork: RuntimeWorkListResponse | null | undefined
+): CloudTodoBoardTaskBinding {
+  return {
+    ...binding,
+    modelSelection: boardTaskModelSelection(item, binding, runtimeWork),
+  }
 }
 
 function ProjectChangeRequestAutoRepairObserver({
@@ -1648,6 +1703,7 @@ export function CloudTodoWorkspace({
               device_id: binding.device_id,
               task_id: binding.task_id,
               task_title: binding.task_title,
+              workflow_node_id: binding.workflow_node_id,
               running: runtimeTaskRunningByAddress.get(addressKey) ?? false,
               changeRequestTarget: runtimeTask
                 ? runtimeTaskChangeRequestTarget(runtimeTask.workspace, runtimeTask.task)
@@ -1692,10 +1748,19 @@ export function CloudTodoWorkspace({
   ): Promise<void> {
     const changeRequest = snapshot.changeRequest
     if (!changeRequest || !workbench || !selectedProject) return
-    const address = hydrateRuntimeTaskAddress(runtimeWork, {
+    const hydratedAddress = hydrateRuntimeTaskAddress(runtimeWork, {
       deviceId: binding.device_id,
       taskId: binding.task_id,
     })
+    const address = binding.modelSelection
+      ? {
+          ...hydratedAddress,
+          runtimeHandle: {
+            ...(hydratedAddress.runtimeHandle ?? {}),
+            modelSelection: binding.modelSelection,
+          },
+        }
+      : hydratedAddress
     const prompt = buildChangeRequestRepairPrompt(
       changeRequest,
       binding.task_title || binding.task_id,
@@ -1720,21 +1785,40 @@ export function CloudTodoWorkspace({
     message: string
   ): Promise<boolean> {
     if (!workbench || !selectedProject) return false
-    const address = hydrateRuntimeTaskAddress(runtimeWork, {
+    const hydratedAddress = hydrateRuntimeTaskAddress(runtimeWork, {
       deviceId: binding.device_id,
       taskId: binding.task_id,
     })
+    const address = binding.modelSelection
+      ? {
+          ...hydratedAddress,
+          runtimeHandle: {
+            ...(hydratedAddress.runtimeHandle ?? {}),
+            modelSelection: binding.modelSelection,
+          },
+        }
+      : hydratedAddress
     const scopeKey = getRuntimeTaskChatScopeKey(address)
     const projectChat = workbench.projectChat
     const attachmentState = projectChat.attachmentStateByScope[scopeKey]
     if (attachmentState?.uploadingFiles.size) return false
 
+    const taskModelSelection = projectChat.resolveRuntimeTaskModelSelection(address)
     const selectedModel =
-      projectChat.getSelectedModel?.() ??
-      projectChat.selectedModel ??
-      resolveAutomaticModel(projectChat.models)
-    const selectedModelOptions =
-      projectChat.getSelectedModelOptions?.() ?? projectChat.selectedModelOptions
+      taskModelSelection.selectedModel ??
+      (taskModelSelection.taskSelection?.modelName
+        ? null
+        : resolveAutomaticModel(projectChat.models))
+    const selectedModelOptions = taskModelSelection.selectedModelOptions
+    const selectedModelFields = selectedModelExecutionFields(selectedModel, selectedModelOptions)
+    const taskModelFields =
+      !selectedModel && taskModelSelection.taskSelection?.modelName
+        ? {
+            ...selectedModelFields,
+            modelId: taskModelSelection.taskSelection.modelName,
+            modelType: taskModelSelection.taskSelection.modelType,
+          }
+        : selectedModelFields
     const selectedAttachments = attachmentState?.attachments ?? []
     const attachmentIds = remoteAttachmentIds(selectedAttachments)
     const attachments = localRuntimeAttachments(selectedAttachments)
@@ -1743,7 +1827,7 @@ export function CloudTodoWorkspace({
       {
         address,
         message,
-        ...selectedModelExecutionFields(selectedModel, selectedModelOptions),
+        ...taskModelFields,
         ...(attachmentIds.length > 0 ? { attachmentIds } : {}),
         ...(attachments.length > 0 ? { attachments } : {}),
         source: { source: 'manual' },
@@ -4788,7 +4872,13 @@ export function CloudTodoWorkspace({
                                       processingStatus={isProcessingStatus(item.status)}
                                       taskBindings={
                                         itemTaskBindingsProjectKey === selectedProjectKey
-                                          ? (boardTaskBindings[item.id] ?? [])
+                                          ? (boardTaskBindings[item.id] ?? []).map(binding =>
+                                              withBoardTaskModelSelection(
+                                                item,
+                                                binding,
+                                                runtimeWork
+                                              )
+                                            )
                                           : []
                                       }
                                       onClick={() => {

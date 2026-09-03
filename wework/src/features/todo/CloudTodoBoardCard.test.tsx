@@ -8,6 +8,7 @@ import { WorkbenchContext } from '@/features/workbench/workbenchContexts'
 import type { WorkbenchContextValue } from '@/features/workbench/workbenchContextTypes'
 import { projectRuntimeConversationTurns } from '@/features/workbench/runtimeConversationTurns'
 import type { RuntimeConversationTurn } from '@/types/workbench'
+import type { UnifiedModel } from '@/types/api'
 import { CloudTodoBoardCard } from './CloudTodoBoardCard'
 
 const changeRequestMonitorMocks = vi.hoisted(() => ({
@@ -488,6 +489,96 @@ describe('CloudTodoBoardCard', () => {
     expect(onSendMessage).toHaveBeenCalledWith(
       expect.objectContaining({ id: 86, task_id: 'task-86' }),
       '继续检查 hover 交互'
+    )
+  })
+
+  it('uses the bound runtime task model in the popup composer', async () => {
+    const deepseekModel: UnifiedModel = {
+      name: 'deepseek-v4-flash-vision-exp',
+      displayName: 'DeepSeek V4 Flash Vision',
+      type: 'public',
+      provider: 'cloud',
+      runtime: { family: 'openai.openai-responses' },
+    }
+    const gptModel: UnifiedModel = {
+      name: 'gpt-5.6-sol',
+      displayName: 'GPT 5.6 Sol',
+      type: 'public',
+      provider: 'cloud',
+      runtime: { family: 'openai.openai-responses' },
+    }
+    const resolveRuntimeTaskModelSelection = vi.fn(() => ({
+      selectedModel: gptModel,
+      activeModel: gptModel,
+      selectedModelOptions: { reasoning: 'high' },
+    }))
+    const workbench = {
+      state: { devices: [], runtimeWork: null },
+      projectChat: {
+        models: [deepseekModel, gptModel],
+        skills: [],
+        selectedModel: deepseekModel,
+        activeModel: null,
+        selectedModelOptions: {},
+        isModelSelectionReady: true,
+        selectedSkills: [],
+        attachmentStateByScope: {},
+        isOptionsLocked: false,
+        resolveRuntimeTaskModelSelection,
+        setRuntimeTaskSelectedModel: vi.fn(),
+        setRuntimeTaskSelectedModelAndOptions: vi.fn(),
+        setRuntimeTaskSelectedModelOption: vi.fn(),
+        onBlockedModelSelect: vi.fn(),
+        toggleSkill: vi.fn(),
+        handleFileSelectForScope: vi.fn(async () => undefined),
+        removeAttachmentForScope: vi.fn(async () => undefined),
+        listLocalSkills: vi.fn(async () => []),
+        listLocalApps: vi.fn(async () => []),
+      },
+      loadRuntimeTranscriptForPane: vi.fn(async () => ({
+        messages: [],
+        turns: [],
+        hasMoreBefore: false,
+        beforeCursor: null,
+      })),
+      loadTurnFileChangesDiff: vi.fn(),
+      revertTurnFileChanges: vi.fn(),
+    } as unknown as WorkbenchContextValue
+
+    render(
+      <WorkbenchContext.Provider value={workbench}>
+        <CloudTodoBoardCard
+          item={item}
+          taskBindings={[
+            {
+              id: 85,
+              device_id: 'local',
+              task_id: 'task-85',
+              task_title: 'Fix the board popup model',
+              running: false,
+              finalResponsePreview: '已完成',
+              conversationLoaded: true,
+            },
+          ]}
+          onClick={vi.fn()}
+          onArchive={vi.fn()}
+          onSendMessage={vi.fn(async () => true)}
+          display={{
+            showAssignee: false,
+            showPriority: false,
+            showTags: false,
+            showDate: false,
+          }}
+        />
+      </WorkbenchContext.Provider>
+    )
+
+    fireEvent.mouseEnter(screen.getByTestId('cloud-todo-card-WEG-85'))
+    const popup = await screen.findByTestId('cloud-todo-card-progress-popup-WEG-85')
+    expect(within(popup).getByTestId('model-selector-button')).toHaveTextContent('GPT 5.6 Sol')
+    expect(within(popup).getByTestId('model-selector-button')).not.toHaveTextContent('DeepSeek')
+    expect(resolveRuntimeTaskModelSelection).toHaveBeenCalledWith(
+      expect.objectContaining({ deviceId: 'local', taskId: 'task-85' })
     )
   })
 
