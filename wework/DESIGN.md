@@ -282,6 +282,8 @@ embedded may change spacing and composition, but it must not select a
 light-only or dark-only color recipe. Apply this rule to nested surfaces as
 well as their containers: dialogs, directory pickers, menus, inputs, list rows,
 tooltips, footers, and action groups must all inherit the active theme.
+Surfaces rendered through a portal must explicitly set their semantic
+foreground color instead of relying on an ancestor outside the portal target.
 
 Literal white, black, or neutral fills are allowed only when color is part of
 the content contract rather than application chrome. Examples include a QR

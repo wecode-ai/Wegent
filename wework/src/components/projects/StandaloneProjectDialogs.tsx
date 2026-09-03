@@ -14,6 +14,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { useEscapeKey } from '@/hooks/useEscapeKey'
 import { useTranslation } from '@/hooks/useTranslation'
+import { WEWORK_DSH_SLOTS } from '@/features/dsh-runtime/dshUiSlots'
+import { useDshSlotAvailable } from '@/features/dsh-runtime/useDshSlotAvailable'
 import { hasEmbeddedHttpGitCredentials } from '@/lib/git-url'
 import { isImeEnterEvent } from '@/lib/ime'
 import { openNativeProjectDirectoryPickers } from '@/lib/native-directory-picker'
@@ -392,6 +394,9 @@ export function StandaloneFolderProjectDialog({
   onRefreshDevices?: () => Promise<void>
 }) {
   const { t } = useTranslation('common')
+  const workspaceMenuExtensionsAvailable = useDshSlotAvailable(
+    WEWORK_DSH_SLOTS.workspaceMenuSection
+  )
   const [startupCommand, setStartupCommand] = useState<DockerRemoteDeviceCommandResponse | null>(
     null
   )
@@ -506,7 +511,15 @@ export function StandaloneFolderProjectDialog({
                 '还没有可用云端设备。先在云主机或另一台电脑上运行下面的连接脚本。'
               )
             : t('workbench.cloud_work_desc', '选择这台云端设备要处理的项目目录。')
-          : t('workbench.add_remote_project_desc', '选择已连接的远程主机，并选择此项目的文件夹。')
+          : workspaceMenuExtensionsAvailable
+            ? t(
+                'workbench.add_remote_project_desc',
+                '选择远程主机，然后打开目录、新建项目或克隆 Git 仓库。'
+              )
+            : t(
+                'workbench.add_remote_project_desc_without_git',
+                '选择远程主机，然后打开目录或新建项目。'
+              )
       : t('workbench.use_existing_folder_desc', '选择本地设备上的一个文件夹。')
   const startupCommandLoading = showStartupCommand && !startupCommand && !startupCommandError
   const startupCommands = useMemo(
@@ -1072,15 +1085,19 @@ export function StandaloneFolderProjectDialog({
                     '选择父目录并创建新的项目文件夹。'
                   ),
                 },
-                {
-                  source: 'git',
-                  icon: GitBranch,
-                  title: t('workbench.remote_project_source_git', '从 Git 仓库克隆'),
-                  description: t(
-                    'workbench.remote_project_source_git_desc',
-                    '输入仓库地址，在当前设备上克隆并打开。'
-                  ),
-                },
+                ...(workspaceMenuExtensionsAvailable
+                  ? [
+                      {
+                        source: 'git' as const,
+                        icon: GitBranch,
+                        title: t('workbench.remote_project_source_git', '从 Git 仓库克隆'),
+                        description: t(
+                          'workbench.remote_project_source_git_desc',
+                          '输入仓库地址，在当前设备上克隆并打开。'
+                        ),
+                      },
+                    ]
+                  : []),
               ] as const
             ).map(option => {
               const Icon = option.icon

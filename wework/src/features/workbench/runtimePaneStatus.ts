@@ -7,7 +7,7 @@ export type RuntimePaneSendPhase = 'idle' | 'submitting' | 'awaiting_assistant'
 
 export interface RuntimePaneStatus {
   sendPhase: RuntimePaneSendPhase
-  workspaceCreationKind?: 'worktree'
+  workspaceCreationKind?: string
   activeAssistantMessage: WorkbenchMessage | null
   taskExecution: {
     known: boolean

@@ -12,30 +12,13 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 
+use crate::local::native_git::LOCAL_GIT_ENV_KEYS;
 use flate2::{write::GzEncoder, Compression};
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 
 const ARTIFACT_VERSION: u64 = 1;
 static TEMP_PATH_SEQUENCE: AtomicU64 = AtomicU64::new(0);
-
-const LOCAL_GIT_ENV_VARS: &[&str] = &[
-    "GIT_ALTERNATE_OBJECT_DIRECTORIES",
-    "GIT_CONFIG",
-    "GIT_CONFIG_PARAMETERS",
-    "GIT_CONFIG_COUNT",
-    "GIT_OBJECT_DIRECTORY",
-    "GIT_DIR",
-    "GIT_WORK_TREE",
-    "GIT_IMPLICIT_WORK_TREE",
-    "GIT_GRAFT_FILE",
-    "GIT_INDEX_FILE",
-    "GIT_NO_REPLACE_OBJECTS",
-    "GIT_REPLACE_REF_BASE",
-    "GIT_PREFIX",
-    "GIT_SHALLOW_FILE",
-    "GIT_COMMON_DIR",
-];
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct GitTreeSnapshot {
@@ -857,7 +840,7 @@ fn git_output_vec(
 }
 
 fn clear_local_git_env(command: &mut Command) {
-    for key in LOCAL_GIT_ENV_VARS {
+    for key in LOCAL_GIT_ENV_KEYS {
         command.env_remove(key);
     }
 }

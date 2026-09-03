@@ -140,14 +140,6 @@ window.__ModuleLoader__.load({
         ...integrations,
       },
       {
-        id: 'git-hosting',
-        path: '/settings/git-hosting',
-        icon: 'git-pull-request',
-        labelKey: 'settings_nav_git_hosting',
-        label: '代码托管',
-        ...coding,
-      },
-      {
         id: 'execution-environments',
         path: '/settings/execution-environments',
         icon: 'cpu',
@@ -162,14 +154,6 @@ window.__ModuleLoader__.load({
         labelKey: 'settings_nav_harnesses',
         label: '编码工具',
         experimental: true,
-        ...coding,
-      },
-      {
-        id: 'worktrees',
-        path: '/settings/worktrees',
-        icon: 'folder-git-2',
-        labelKey: 'settings_nav_worktrees',
-        label: '工作树',
         ...coding,
       },
       {

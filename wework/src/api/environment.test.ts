@@ -1710,7 +1710,7 @@ describe('loadProjectEnvironment', () => {
     })
   })
 
-  test('adds untracked file count to diff additions', async () => {
+  test('keeps shortstat line counts without counting untracked files as lines', async () => {
     const executeCommand = vi.fn((_: string, data: { command_key: string; args?: string[] }) => {
       if (data.command_key === 'git_branch') {
         return Promise.resolve({
@@ -1770,8 +1770,8 @@ describe('loadProjectEnvironment', () => {
       }
     )
 
-    // 5 tracked insertions + 2 untracked files = +7
-    expect(info.additions).toBe('+7')
+    // 5 tracked insertions; untracked files are files, not lines.
+    expect(info.additions).toBe('+5')
     expect(info.deletions).toBe('-2')
     expect(info.branchName).toBe('main')
   })
@@ -1846,6 +1846,76 @@ describe('loadProjectEnvironment', () => {
       timeout_seconds: 10,
       max_output_bytes: 4096,
     })
+  })
+
+  test('keeps an empty shortstat for a committed repo with only untracked files', async () => {
+    const executeCommand = vi.fn((_: string, data: { command_key: string }) => {
+      if (data.command_key === 'git_branch') {
+        return Promise.resolve({ success: true, stdout: 'main\n', stderr: '' })
+      }
+      if (data.command_key === 'git_branch_diff_shortstat') {
+        return Promise.resolve({ success: true, stdout: '', stderr: '' })
+      }
+      if (data.command_key === 'git_status_porcelain') {
+        return Promise.resolve({ success: true, stdout: '?? output.txt\n', stderr: '' })
+      }
+      return Promise.resolve({ success: false, stdout: '', stderr: 'unknown command' })
+    })
+
+    const info = await loadProjectEnvironment(
+      { executeCommand },
+      {
+        id: 1,
+        name: 'Wegent',
+        config: {
+          mode: 'workspace',
+          execution: { targetType: 'local', deviceId: 'device-123' },
+          workspace: { source: 'local_path', localPath: '/workspace/Wegent' },
+        },
+      }
+    )
+
+    // Untracked files are not lines; an empty shortstat on a committed repo
+    // must stay +0 instead of falling back to the porcelain file count.
+    expect(info.additions).toBe('+0')
+    expect(info.deletions).toBe('-0')
+  })
+
+  test('does not count porcelain files when shortstat fails on a committed repo', async () => {
+    const executeCommand = vi.fn((_: string, data: { command_key: string }) => {
+      if (data.command_key === 'git_branch') {
+        return Promise.resolve({ success: true, stdout: 'main\n', stderr: '' })
+      }
+      if (data.command_key === 'git_branch_diff_shortstat') {
+        return Promise.resolve({
+          success: false,
+          stdout: '',
+          stderr: 'fatal: repository error',
+        })
+      }
+      if (data.command_key === 'git_status_porcelain') {
+        return Promise.resolve({ success: true, stdout: ' M tracked.txt\n', stderr: '' })
+      }
+      return Promise.resolve({ success: false, stdout: '', stderr: 'unknown command' })
+    })
+
+    const info = await loadProjectEnvironment(
+      { executeCommand },
+      {
+        id: 1,
+        name: 'Wegent',
+        config: {
+          mode: 'workspace',
+          execution: { targetType: 'local', deviceId: 'device-123' },
+          workspace: { source: 'local_path', localPath: '/workspace/Wegent' },
+        },
+      }
+    )
+
+    // Porcelain entries with tracked modifications prove a commit baseline
+    // exists, so the shortstat failure must not be replaced by file counts.
+    expect(info.additions).toBe('+0')
+    expect(info.deletions).toBe('-0')
   })
 
   test('shows zero diff when repo is clean and has no untracked files', async () => {

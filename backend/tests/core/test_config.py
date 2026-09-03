@@ -86,6 +86,15 @@ class TestSettings:
 
         assert s.WECODE_INTERNAL_EXTENSIONS_ENABLED is False
 
+    def test_scheduled_tasks_switch_defaults_to_enabled_and_reads_environment(
+        self, monkeypatch
+    ):
+        assert build_settings().SCHEDULED_TASKS_ENABLED is True
+
+        monkeypatch.setenv("SCHEDULED_TASKS_ENABLED", "false")
+
+        assert build_settings_from_env().SCHEDULED_TASKS_ENABLED is False
+
     def test_plugin_publication_active_request_limit_must_be_positive(self):
         """Prevent capacity configuration from disabling publication globally."""
         with pytest.raises(

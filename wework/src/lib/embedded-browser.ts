@@ -6,6 +6,8 @@ import type { BrowserAnnotationState } from '@/types/browser-annotation'
 type UnlistenFn = () => void
 
 export const DEFAULT_EMBEDDED_BROWSER_LABEL = 'workspace-browser'
+const EMBEDDED_BROWSER_RELABEL_WAIT_INTERVAL_MS = 50
+const EMBEDDED_BROWSER_RELABEL_WAIT_TIMEOUT_MS = 6_000
 const transferredBrowserLabels = new Set<string>()
 const embeddedBrowserOpenRequestHandlers = new Set<(request: EmbeddedBrowserOpenRequest) => void>()
 let embeddedBrowserOpenRequestSequence = 0
@@ -496,6 +498,49 @@ export async function relabelEmbeddedBrowser(
   await invokeDesktopHost<void>('browser.relabel', { fromLabel, toLabel })
 }
 
+export async function migrateEmbeddedBrowserLabel(
+  fromLabel: string,
+  toLabel: string,
+  options: { waitForSource: boolean; signal?: AbortSignal }
+): Promise<void> {
+  const deadline = Date.now() + EMBEDDED_BROWSER_RELABEL_WAIT_TIMEOUT_MS
+  while (!options.signal?.aborted) {
+    try {
+      await relabelEmbeddedBrowser(fromLabel, toLabel)
+      return
+    } catch (error) {
+      if (!isEmbeddedBrowserUnavailableError(error, fromLabel)) throw error
+      if (!options.waitForSource) return
+      if (Date.now() >= deadline) throw error
+      await new Promise(resolve => setTimeout(resolve, EMBEDDED_BROWSER_RELABEL_WAIT_INTERVAL_MS))
+    }
+  }
+}
+
+export async function migrateEmbeddedBrowserLabelSequence<
+  T extends {
+    fromLabel: string
+    toLabel: string
+    waitForSource: boolean
+  },
+>(
+  mappings: readonly T[],
+  options: {
+    onMigrated: (mapping: T) => void
+    signal?: AbortSignal
+  }
+): Promise<void> {
+  for (const mapping of mappings) {
+    if (mapping.fromLabel === mapping.toLabel) continue
+    await migrateEmbeddedBrowserLabel(mapping.fromLabel, mapping.toLabel, {
+      waitForSource: mapping.waitForSource,
+      signal: options.signal,
+    })
+    if (options.signal?.aborted) return
+    options.onMigrated(mapping)
+  }
+}
+
 export async function setEmbeddedBrowserActiveTab(
   baseLabel: string,
   activeTabLabel: string
@@ -520,6 +565,10 @@ export async function closeEmbeddedBrowsers(labels: string[]): Promise<void> {
 
 export async function clearEmbeddedBrowserData(kinds?: EmbeddedBrowserDataKind[]): Promise<number> {
   return invokeDesktopHost<number>('browser.clearData', { dataKinds: kinds ?? null })
+}
+
+function isEmbeddedBrowserUnavailableError(error: unknown, label: string): boolean {
+  return error instanceof Error && error.message === `Embedded browser is unavailable: ${label}`
 }
 
 export function requestEmbeddedBrowserOpen(
