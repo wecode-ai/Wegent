@@ -1,3 +1,4 @@
+import type { ChildProcessWithoutNullStreams } from 'node:child_process'
 import { join } from 'node:path'
 import type { HostPipeServer } from '../host/host-pipe.js'
 import { RuntimeSupervisor } from './runtime-supervisor.js'
@@ -19,6 +20,7 @@ export interface DshRuntimeOptions {
 
 export class DshRuntime {
   private readonly process: RuntimeSupervisor | null
+  private child: ChildProcessWithoutNullStreams | null = null
 
   constructor(private readonly options: DshRuntimeOptions) {
     this.process = options.command
@@ -41,7 +43,10 @@ export class DshRuntime {
         })
       : null
     if (this.process && options.hostPipe) {
-      this.process.on('spawn', child => options.hostPipe?.attach(child))
+      this.process.on('spawn', child => {
+        this.child = child
+        options.hostPipe?.attach(child)
+      })
     }
   }
 
@@ -72,7 +77,7 @@ export class DshRuntime {
   }
 
   stop(): Promise<void> {
-    this.options.hostPipe?.stop()
+    if (this.child) this.options.hostPipe?.detachChild(this.child)
     return this.process?.stop() ?? Promise.resolve()
   }
 }
