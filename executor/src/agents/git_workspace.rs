@@ -4,21 +4,39 @@
 
 use std::{
     env, fs,
-    path::{Path, PathBuf},
+    path::{Component, Path, PathBuf},
     process::Stdio,
+    time::Duration,
 };
 
+#[cfg(unix)]
+use std::os::unix::process::CommandExt;
+
 use serde_json::Value;
-use tokio::process::Command;
+use tokio::{
+    io::{AsyncRead, AsyncReadExt},
+    process::{Child, Command},
+    task::JoinHandle,
+    time::timeout,
+};
 
 use crate::{
     agents::git_auth::{
         configure_repo_proxy, request_git_domain, task_git_auth_environment, user_git_email,
-        user_git_login,
+        user_git_login, uses_device_local_git_credentials,
     },
     logging::{log_executor_event, task_fields},
     protocol::ExecutionRequest,
 };
+
+const DEFAULT_GIT_CLONE_TIMEOUT_SECONDS: u64 = 600;
+const MAX_GIT_CLONE_TIMEOUT_SECONDS: u64 = 3_600;
+const DEFAULT_GIT_HTTP_LOW_SPEED_LIMIT: u64 = 1_024;
+const MAX_GIT_HTTP_LOW_SPEED_LIMIT: u64 = 10 * 1_024 * 1_024;
+const DEFAULT_GIT_HTTP_LOW_SPEED_TIME_SECONDS: u64 = 60;
+const MAX_GIT_HTTP_LOW_SPEED_TIME_SECONDS: u64 = 3_600;
+const GIT_REPOSITORY_VALIDATION_TIMEOUT_SECONDS: u64 = 10;
+const GIT_CLONE_TERMINATION_GRACE_SECONDS: u64 = 1;
 
 pub async fn prepare_git_workspace(
     mut request: ExecutionRequest,
@@ -47,6 +65,7 @@ pub async fn prepare_git_workspace(
 
     match classify_project_path(&project_path) {
         ProjectPathState::GitRepository => {
+            validate_existing_git_repository(&project_path).await?;
             fields.push(("reason", "existing_git_repository".to_owned()));
             log_executor_event("git workspace clone skipped", &fields);
             setup_git_config(&request, &project_path).await;
@@ -186,7 +205,12 @@ async fn clone_repo(
     }
 
     let auth_environment = task_git_auth_environment(request)?;
-    if !auth_environment.contains_key("GIT_ASKPASS") && requires_credentials_for_clone(git_url) {
+    if missing_required_task_git_credentials(
+        request,
+        git_url,
+        auth_environment.contains_key("GIT_ASKPASS"),
+        &protected_git_credential_domains(),
+    ) {
         let mut failed_fields = task_fields(&request.task_id, &request.subtask_id);
         failed_fields.push(("path", project_path.display().to_string()));
         failed_fields.push(("git_url", mask_url_credentials(git_url)));
@@ -209,7 +233,21 @@ async fn clone_repo(
     }
     command.arg(git_url).arg(project_path);
     command.envs(auth_environment);
-    command.stdout(Stdio::piped()).stderr(Stdio::piped());
+    command
+        .env("GIT_TERMINAL_PROMPT", "0")
+        .env(
+            "GIT_HTTP_LOW_SPEED_LIMIT",
+            git_http_low_speed_limit().to_string(),
+        )
+        .env(
+            "GIT_HTTP_LOW_SPEED_TIME",
+            git_http_low_speed_time_seconds().to_string(),
+        )
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .kill_on_drop(true);
+    #[cfg(unix)]
+    command.as_std_mut().process_group(0);
 
     let mut fields = task_fields(&request.task_id, &request.subtask_id);
     fields.push(("path", project_path.display().to_string()));
@@ -217,37 +255,240 @@ async fn clone_repo(
     if let Some(branch) = branch.as_deref() {
         fields.push(("branch", branch.to_owned()));
     }
+    let timeout_seconds = git_clone_timeout_seconds();
+    fields.push(("timeout_seconds", timeout_seconds.to_string()));
     log_executor_event("git clone started", &fields);
 
-    let output = command
-        .output()
-        .await
+    let mut child = command
+        .spawn()
         .map_err(|error| format!("failed to start git clone: {error}"))?;
-    if output.status.success() {
+    let process_group_id = child.id();
+    let stdout = spawn_output_reader(child.stdout.take());
+    let stderr = spawn_output_reader(child.stderr.take());
+    let status = match timeout(Duration::from_secs(timeout_seconds), child.wait()).await {
+        Ok(result) => result.map_err(|error| format!("failed to wait for git clone: {error}"))?,
+        Err(_) => {
+            terminate_git_clone(&mut child, process_group_id).await;
+            let stdout = collect_output(stdout).await;
+            let stderr = collect_output(stderr).await;
+            let mut timeout_fields = fields;
+            push_git_clone_failure_fields(&mut timeout_fields, None, &stdout, &stderr);
+            log_executor_event("git clone timed out", &timeout_fields);
+            let cleanup_error = cleanup_incomplete_clone(project_path).err();
+            return Err(git_clone_timeout_error(
+                project_path,
+                timeout_seconds,
+                cleanup_error.as_deref(),
+            ));
+        }
+    };
+    let stdout = collect_output(stdout).await;
+    let stderr = collect_output(stderr).await;
+    if status.success() {
         log_executor_event("git clone finished", &fields);
         return Ok(());
     }
 
-    let stderr = String::from_utf8_lossy(&output.stderr).trim().to_owned();
-    let stdout = String::from_utf8_lossy(&output.stdout).trim().to_owned();
-    let detail = if !stderr.is_empty() { stderr } else { stdout };
+    let stderr_detail = stderr.trim();
+    let stdout_detail = stdout.trim();
+    let detail = if !stderr_detail.is_empty() {
+        stderr_detail.to_owned()
+    } else if !stdout_detail.is_empty() {
+        stdout_detail.to_owned()
+    } else {
+        format!("git exited with status {status}")
+    };
     let mut failed_fields = fields;
-    push_git_clone_failure_fields(
-        &mut failed_fields,
-        output.status.code(),
-        &String::from_utf8_lossy(&output.stdout),
-        &String::from_utf8_lossy(&output.stderr),
-    );
+    push_git_clone_failure_fields(&mut failed_fields, status.code(), &stdout, &stderr);
     log_executor_event("git clone failed", &failed_fields);
+    let cleanup_error = cleanup_incomplete_clone(project_path).err();
+    let cleanup_detail = cleanup_error
+        .as_deref()
+        .map(|error| format!("; failed to clean incomplete workspace: {error}"))
+        .unwrap_or_default();
     Err(format!(
-        "git clone failed for {}: {}",
+        "git clone failed for {}: {}{}",
         project_path.display(),
-        detail
+        detail,
+        cleanup_detail,
     ))
 }
 
-fn requires_credentials_for_clone(git_url: &str) -> bool {
-    requires_credentials_for_clone_with_domains(git_url, &protected_git_credential_domains())
+async fn validate_existing_git_repository(project_path: &Path) -> Result<(), String> {
+    let mut command = Command::new("git");
+    crate::process::hide_windows_console(&mut command);
+    command
+        .arg("-C")
+        .arg(project_path)
+        .args(["rev-parse", "--verify", "HEAD^{commit}"])
+        .env("GIT_TERMINAL_PROMPT", "0")
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .kill_on_drop(true);
+    #[cfg(unix)]
+    command.as_std_mut().process_group(0);
+
+    let result = timeout(
+        Duration::from_secs(GIT_REPOSITORY_VALIDATION_TIMEOUT_SECONDS),
+        command.status(),
+    )
+    .await
+    .map_err(|_| {
+        format!(
+            "timed out validating existing git repository: {}",
+            project_path.display()
+        )
+    })?
+    .map_err(|error| {
+        format!(
+            "failed to validate existing git repository {}: {error}",
+            project_path.display()
+        )
+    })?;
+    if result.success() {
+        Ok(())
+    } else {
+        Err(format!(
+            "git workspace contains an incomplete or invalid repository: {}",
+            project_path.display()
+        ))
+    }
+}
+
+fn spawn_output_reader<R>(stream: Option<R>) -> Option<JoinHandle<Vec<u8>>>
+where
+    R: AsyncRead + Unpin + Send + 'static,
+{
+    stream.map(|mut stream| {
+        tokio::spawn(async move {
+            let mut output = Vec::new();
+            let _ = stream.read_to_end(&mut output).await;
+            output
+        })
+    })
+}
+
+async fn collect_output(reader: Option<JoinHandle<Vec<u8>>>) -> String {
+    let bytes = match reader {
+        Some(reader) => reader.await.unwrap_or_default(),
+        None => Vec::new(),
+    };
+    String::from_utf8_lossy(&bytes).into_owned()
+}
+
+async fn terminate_git_clone(child: &mut Child, process_group_id: Option<u32>) {
+    #[cfg(unix)]
+    {
+        if let Some(process_group_id) = process_group_id {
+            unsafe {
+                let _ = libc::kill(-(process_group_id as libc::pid_t), libc::SIGTERM);
+            }
+            let wait_result = timeout(
+                Duration::from_secs(GIT_CLONE_TERMINATION_GRACE_SECONDS),
+                child.wait(),
+            )
+            .await;
+            unsafe {
+                // The clone owns its process group, so this also stops transports
+                // and credential helpers that outlive the top-level Git process.
+                let _ = libc::kill(-(process_group_id as libc::pid_t), libc::SIGKILL);
+            }
+            if wait_result.is_err() {
+                let _ = child.wait().await;
+            }
+            return;
+        }
+    }
+
+    let _ = child.start_kill();
+    let _ = child.wait().await;
+}
+
+fn cleanup_incomplete_clone(project_path: &Path) -> Result<(), String> {
+    if project_path == workspace_root()
+        || project_path.parent().is_none()
+        || project_path.file_name().is_none()
+        || project_path
+            .components()
+            .any(|component| matches!(component, Component::ParentDir | Component::CurDir))
+    {
+        return Err(format!(
+            "refusing to remove unsafe git workspace path {}",
+            project_path.display()
+        ));
+    }
+    let metadata = match fs::symlink_metadata(project_path) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(error) => return Err(error.to_string()),
+    };
+    if metadata.file_type().is_symlink() || metadata.is_file() {
+        fs::remove_file(project_path).map_err(|error| error.to_string())
+    } else {
+        fs::remove_dir_all(project_path).map_err(|error| error.to_string())
+    }
+}
+
+fn git_clone_timeout_error(
+    project_path: &Path,
+    timeout_seconds: u64,
+    cleanup_error: Option<&str>,
+) -> String {
+    let cleanup_detail = cleanup_error
+        .map(|error| format!("; failed to clean incomplete workspace: {error}"))
+        .unwrap_or_default();
+    format!(
+        "git clone timed out after {timeout_seconds}s for {}; check repository reachability and proxy configuration{}",
+        project_path.display(),
+        cleanup_detail,
+    )
+}
+
+fn git_clone_timeout_seconds() -> u64 {
+    bounded_env_u64(
+        "WEGENT_GIT_CLONE_TIMEOUT_SECONDS",
+        DEFAULT_GIT_CLONE_TIMEOUT_SECONDS,
+        1,
+        MAX_GIT_CLONE_TIMEOUT_SECONDS,
+    )
+}
+
+fn git_http_low_speed_limit() -> u64 {
+    bounded_env_u64(
+        "WEGENT_GIT_HTTP_LOW_SPEED_LIMIT",
+        DEFAULT_GIT_HTTP_LOW_SPEED_LIMIT,
+        1,
+        MAX_GIT_HTTP_LOW_SPEED_LIMIT,
+    )
+}
+
+fn git_http_low_speed_time_seconds() -> u64 {
+    bounded_env_u64(
+        "WEGENT_GIT_HTTP_LOW_SPEED_TIME_SECONDS",
+        DEFAULT_GIT_HTTP_LOW_SPEED_TIME_SECONDS,
+        1,
+        MAX_GIT_HTTP_LOW_SPEED_TIME_SECONDS,
+    )
+}
+
+fn bounded_env_u64(key: &str, default: u64, minimum: u64, maximum: u64) -> u64 {
+    env::var(key)
+        .ok()
+        .and_then(|value| value.trim().parse::<u64>().ok())
+        .unwrap_or(default)
+        .clamp(minimum, maximum)
+}
+
+fn missing_required_task_git_credentials(
+    request: &ExecutionRequest,
+    git_url: &str,
+    has_task_credentials: bool,
+    protected_domains: &[String],
+) -> bool {
+    !has_task_credentials
+        && requires_credentials_for_clone_with_domains(git_url, protected_domains)
+        && !uses_device_local_git_credentials(request)
 }
 
 fn git_url_contains_credentials(git_url: &str) -> bool {
@@ -454,6 +695,39 @@ mod tests {
         assert!(!requires_credentials_for_clone_with_domains(
             "git@github.com:wecode-ai/wegent.git",
             &protected_domains
+        ));
+    }
+
+    #[test]
+    fn device_local_transport_allows_configured_git_credential_helper() {
+        let protected_domains = vec!["github.com".to_owned()];
+        let server_request = ExecutionRequest::default();
+        let device_request = ExecutionRequest {
+            extra: serde_json::Map::from_iter([(
+                "git_auth_transport".to_owned(),
+                json!("device_local"),
+            )]),
+            ..ExecutionRequest::default()
+        };
+        let git_url = "https://github.com/wecode-ai/wegent.git";
+
+        assert!(missing_required_task_git_credentials(
+            &server_request,
+            git_url,
+            false,
+            &protected_domains,
+        ));
+        assert!(!missing_required_task_git_credentials(
+            &device_request,
+            git_url,
+            false,
+            &protected_domains,
+        ));
+        assert!(!missing_required_task_git_credentials(
+            &server_request,
+            git_url,
+            true,
+            &protected_domains,
         ));
     }
 

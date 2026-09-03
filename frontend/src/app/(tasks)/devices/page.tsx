@@ -34,6 +34,9 @@ import {
   EditDeviceAliasDialog,
 } from '@/features/devices/components'
 import { useDeviceHandlers } from '@/features/devices/hooks'
+import { useAdvancedDeviceMode } from '@/features/devices/hooks/useAdvancedDeviceMode'
+import { isOpenClawDevice } from '@/features/devices/utils/device-status'
+import { filterDevicesByAdvancedMode } from '@/features/devices/utils/device-visibility'
 
 // Helper function to sort devices by priority
 function sortDevices(devices: DeviceInfo[]): DeviceInfo[] {
@@ -72,9 +75,15 @@ export default function DevicesPage() {
 
   // Device action handlers (consolidated in custom hook)
   const handlers = useDeviceHandlers()
+  const { showAdvancedDevices, setShowAdvancedDevices } = useAdvancedDeviceMode()
 
   // Sort and group devices
   const sortedDevices = useMemo(() => sortDevices(devices), [devices])
+  const visibleDevices = useMemo(
+    () => filterDevicesByAdvancedMode(sortedDevices, showAdvancedDevices),
+    [showAdvancedDevices, sortedDevices]
+  )
+  const hasAdvancedDevices = useMemo(() => sortedDevices.some(isOpenClawDevice), [sortedDevices])
 
   // Mobile sidebar state
   const [isMobileSidebarOpen, setIsMobileSidebarOpen] = useState(false)
@@ -161,6 +170,9 @@ export default function DevicesPage() {
               hasDevices={sortedDevices.length > 0}
               onRefresh={refreshDevices}
               onAddDevice={() => setShowSetupGuide(true)}
+              hasAdvancedDevices={hasAdvancedDevices}
+              showAdvancedDevices={showAdvancedDevices}
+              onShowAdvancedDevicesChange={setShowAdvancedDevices}
             />
 
             {/* Error message */}
@@ -195,7 +207,7 @@ export default function DevicesPage() {
                 <DeviceSection
                   title={t('local_devices_section')}
                   icon={Monitor}
-                  devices={sortedDevices}
+                  devices={visibleDevices}
                   type="local"
                   emptyMessage={t('no_local_devices')}
                 >
@@ -217,7 +229,7 @@ export default function DevicesPage() {
                 <DeviceSection
                   title={t('remote_devices_section')}
                   icon={Server}
-                  devices={sortedDevices}
+                  devices={visibleDevices}
                   type="remote"
                   emptyMessage={t('no_remote_devices')}
                 >
@@ -240,7 +252,7 @@ export default function DevicesPage() {
                 <DeviceSection
                   title={t('cloud_devices_section')}
                   icon={Cloud}
-                  devices={sortedDevices}
+                  devices={visibleDevices}
                   type="cloud"
                   emptyMessage={t('cloud_devices_coming_soon')}
                 >

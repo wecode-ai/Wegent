@@ -73,23 +73,17 @@ export function resolveComposerWorktreeAvailability({
   project,
   workspace,
   device,
-  isGitProject,
   availability,
 }: {
   project: ProjectWithTasks | null | undefined
   workspace: RuntimeDeviceWorkspace | null | undefined
   device: DeviceInfo | undefined
-  isGitProject?: boolean
   availability?: ProjectWorktreeAvailability
 }): ProjectWorktreeAvailability {
   if (availability) return availability
   const deviceId = workspace?.deviceId?.trim() || null
   const sourcePath = workspace?.workspacePath?.trim() || null
   if (!project) return { available: false, reason: 'no_project', deviceId, sourcePath }
-  if (isGitProject === false) {
-    return { available: false, reason: 'not_git', deviceId, sourcePath }
-  }
-
   if (!workspace) {
     return {
       available: false,

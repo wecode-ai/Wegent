@@ -34,7 +34,7 @@ function setup(
   platform: NodeJS.Platform = 'darwin',
   applyIcon?: TrayManagerDependencies['applyIcon']
 ) {
-  const guid = 'b626b80b-4514-5b9d-861c-25d34fdcf250'
+  const guid = 'b3dce801-ead2-5b83-bc0a-7be0b543c833'
   const listeners = new Map<'click' | 'double-click', () => void>()
   const tray: TrayAdapter = {
     on: vi.fn((event, listener) => {

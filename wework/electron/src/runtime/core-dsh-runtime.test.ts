@@ -115,8 +115,10 @@ describe('core DSH runtime', () => {
     ).toMatchObject({
       dependencies: {
         '@wegent/dsh-app-wework': expect.stringContaining('wework-app'),
+        '@wegent/dsh-browser-runtime': expect.stringContaining('wework-browser-runtime'),
         '@wegent/dsh-electron-host': expect.stringContaining('wework-electron-host'),
         '@wegent/dsh-executor-runtime': expect.stringContaining('wework-executor-runtime'),
+        '@wegent/dsh-secure-storage': expect.stringContaining('wework-secure-storage'),
         '@wegent/dsh-terminal-runtime': expect.stringContaining('wework-terminal-runtime'),
         '@wegent/dsh-ui-core-apps': expect.stringContaining('wework-ui-core-apps'),
         '@wegent/dsh-ui-core-settings': expect.stringContaining('wework-ui-core-settings'),
@@ -124,12 +126,15 @@ describe('core DSH runtime', () => {
         '@wegent/dsh-ui-applications': expect.stringContaining('wework-ui-applications'),
         '@wegent/dsh-ui-automations': expect.stringContaining('wework-ui-automations'),
         '@wegent/dsh-ui-cloud-work': expect.stringContaining('wework-ui-cloud-work'),
+        '@wegent/dsh-ui-git': expect.stringContaining('wework-ui-git'),
       },
       dsh: {
         profile: {
           bundles: [
             '@deepseek-ai/dsh-base',
             '@wegent/dsh-electron-host',
+            '@wegent/dsh-browser-runtime',
+            '@wegent/dsh-secure-storage',
             '@wegent/dsh-terminal-runtime',
             '@wegent/dsh-app-wework',
             '@deepseek-ai/dsh-web-app',
@@ -140,6 +145,7 @@ describe('core DSH runtime', () => {
             '@wegent/dsh-ui-applications',
             '@wegent/dsh-ui-automations',
             '@wegent/dsh-ui-cloud-work',
+            '@wegent/dsh-ui-git',
           ],
         },
       },
@@ -195,6 +201,9 @@ describe('core DSH runtime', () => {
     ).resolves.toBe('{}')
     await expect(
       readFile(join(profileModules, 'dsh-ui-cloud-work', 'package.json'), 'utf8')
+    ).resolves.toBe('{}')
+    await expect(
+      readFile(join(profileModules, 'dsh-ui-git', 'package.json'), 'utf8')
     ).resolves.toBe('{}')
     await root.remove()
   })
@@ -478,12 +487,16 @@ describe('core DSH runtime', () => {
     expect(Object.keys(manifest.dependencies)).toEqual([
       '@wegent/dsh-app-wework',
       '@wegent/dsh-electron-host',
+      '@wegent/dsh-browser-runtime',
+      '@wegent/dsh-secure-storage',
       '@wegent/dsh-executor-runtime',
       '@wegent/dsh-terminal-runtime',
     ])
     expect(manifest.dsh.profile.bundles).toEqual([
       '@deepseek-ai/dsh-base',
       '@wegent/dsh-electron-host',
+      '@wegent/dsh-browser-runtime',
+      '@wegent/dsh-secure-storage',
       '@wegent/dsh-terminal-runtime',
       '@wegent/dsh-app-wework',
       '@deepseek-ai/dsh-web-app',
@@ -728,6 +741,8 @@ async function writeRuntime(
     [
       ['@wegent/dsh-app-wework', 'wework-app'],
       ['@wegent/dsh-electron-host', 'wework-electron-host'],
+      ['@wegent/dsh-browser-runtime', 'wework-browser-runtime'],
+      ['@wegent/dsh-secure-storage', 'wework-secure-storage'],
       ['@wegent/dsh-executor-runtime', 'wework-executor-runtime'],
       ['@wegent/dsh-terminal-runtime', 'wework-terminal-runtime'],
       ['@wegent/dsh-ui-core-apps', 'wework-ui-core-apps'],
@@ -736,6 +751,7 @@ async function writeRuntime(
       ['@wegent/dsh-ui-applications', 'wework-ui-applications'],
       ['@wegent/dsh-ui-automations', 'wework-ui-automations'],
       ['@wegent/dsh-ui-cloud-work', 'wework-ui-cloud-work'],
+      ['@wegent/dsh-ui-git', 'wework-ui-git'],
     ].map(([packageName, directory]) => [packageName, join(pluginsRoot, directory)])
   )
   await mkdir(join(packageRoot, 'lib'), { recursive: true })

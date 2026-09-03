@@ -7,12 +7,14 @@
 import React, { useState } from 'react'
 import { useTranslation } from '@/hooks/useTranslation'
 import { Button } from '@/components/ui/button'
-import { KeyRound, Key, ShieldCheck } from 'lucide-react'
+import { KeyRound, Key, ShieldCheck, AppWindow, PackageCheck } from 'lucide-react'
 import ServiceKeyList from './ServiceKeyList'
+import PluginReleaseKeyList from './PluginReleaseKeyList'
 import PersonalKeyList from './PersonalKeyList'
 import OutboundTokenIssuerList from './OutboundTokenIssuerList'
+import OAuthClientManagement from '@/features/settings/components/OAuthClientManagement'
 
-type KeyType = 'service' | 'personal' | 'outbound'
+type KeyType = 'service' | 'plugin-release' | 'personal' | 'outbound' | 'oauth'
 
 const ApiKeyManagement: React.FC = () => {
   const { t } = useTranslation('admin')
@@ -27,7 +29,7 @@ const ApiKeyManagement: React.FC = () => {
         </div>
       </div>
 
-      <div className="flex gap-2 p-1 bg-muted rounded-lg w-fit">
+      <div className="flex w-full flex-wrap gap-2 rounded-lg bg-muted p-1 sm:w-fit">
         <Button
           variant={activeKeyType === 'service' ? 'default' : 'ghost'}
           size="sm"
@@ -36,6 +38,16 @@ const ApiKeyManagement: React.FC = () => {
         >
           <KeyRound className="w-4 h-4" />
           {t('api_keys.service_keys')}
+        </Button>
+        <Button
+          variant={activeKeyType === 'plugin-release' ? 'default' : 'ghost'}
+          size="sm"
+          onClick={() => setActiveKeyType('plugin-release')}
+          className="gap-2"
+          data-testid="plugin-release-keys-tab-button"
+        >
+          <PackageCheck className="w-4 h-4" />
+          {t('api_keys.plugin_release_keys')}
         </Button>
         <Button
           variant={activeKeyType === 'personal' ? 'default' : 'ghost'}
@@ -56,12 +68,24 @@ const ApiKeyManagement: React.FC = () => {
           <ShieldCheck className="w-4 h-4" />
           {t('api_keys.outbound_tokens')}
         </Button>
+        <Button
+          variant={activeKeyType === 'oauth' ? 'default' : 'ghost'}
+          size="sm"
+          onClick={() => setActiveKeyType('oauth')}
+          className="gap-2"
+          data-testid="oauth-clients-tab-button"
+        >
+          <AppWindow className="w-4 h-4" />
+          {t('api_keys.oauth_clients')}
+        </Button>
       </div>
 
       <div className="mt-4">
         {activeKeyType === 'service' && <ServiceKeyList showHeader={false} />}
+        {activeKeyType === 'plugin-release' && <PluginReleaseKeyList showHeader={false} />}
         {activeKeyType === 'personal' && <PersonalKeyList showHeader={false} />}
         {activeKeyType === 'outbound' && <OutboundTokenIssuerList showHeader={false} />}
+        {activeKeyType === 'oauth' && <OAuthClientManagement mode="admin" />}
       </div>
     </div>
   )

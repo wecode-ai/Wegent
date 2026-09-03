@@ -34,6 +34,10 @@ from app.services.device.command_service import (
     DeviceCommandError,
     local_device_command_service,
 )
+from app.services.device.remote_control_policy import (
+    REMOTE_CONTROL_DISABLED_MESSAGE,
+    remote_control_is_enabled,
+)
 from app.services.device.runtime_route import (
     RuntimeRouteError,
     runtime_route_resolver,
@@ -209,6 +213,7 @@ class WeworkRuntimeNamespace(socketio.AsyncNamespace):
             return ipc_error(data, "unauthorized", "Not authenticated")
 
         request_id = request_id_from(data)
+        set_request_context(request_id)
         method = string_field(data, "method")
         device_id = string_field(data, "device_id") or string_field(data, "deviceId")
         params = data.get("params")
@@ -480,6 +485,13 @@ async def relay_ipc_request(
                 retryable=exc.retryable,
                 details=exc.details,
             ) from exc
+        if not remote_control_is_enabled(route.device_type):
+            raise RuntimeRpcError(
+                REMOTE_CONTROL_DISABLED_MESSAGE,
+                code="remote_control_disabled",
+                retryable=False,
+                details={"deviceId": route.logical_device_id},
+            )
         return await local_device_command_service.execute_command(
             user_id=user_id,
             device_id=route.runtime_device_id,

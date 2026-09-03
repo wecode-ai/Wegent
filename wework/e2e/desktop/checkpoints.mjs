@@ -5,6 +5,7 @@ export const DESKTOP_CHECKPOINTS = [
   'cloud-space-mention',
   'priority-filter',
   'telemetry-consent',
+  'external-content-import',
   'automation-lifecycle',
   'project-automation',
   'project-assignment-notification',
@@ -18,6 +19,7 @@ export const DESKTOP_CHECKPOINTS = [
   'permission-modes',
   'computer-use',
   'task-status-sync',
+  'task-board-association',
   'core-task-flow',
   'task-attachments',
   'cloud-git-worktree',
@@ -45,6 +47,7 @@ export const DESKTOP_CHECKPOINTS = [
   'goal-lifecycle',
   'supervisor-lifecycle',
   'resilience',
+  'environment-panel-scroll',
   'conversation-state',
   'temporary-chat',
   'workspace-attachments',
@@ -57,6 +60,10 @@ export const DESKTOP_CHECKPOINTS = [
   'browser-multi-tabs',
   'embedded-browser',
   'browser-toolbar-actions',
+  'browser-annotation',
+  'browser-annotation-core',
+  'browser-annotation-anchors',
+  'browser-annotation-design',
 ]
 
 export const PLUGIN_SEGMENTS = [

@@ -305,12 +305,14 @@ export function WorkbenchProvider({
   const localPluginApi = useMemo(() => createLocalCodexPluginApi(), [])
   const cloudPluginApi = useMemo(() => {
     const runtime = getRuntimeConfig()
+    const apiBaseUrl = cloudConnection.apiBaseUrl || runtime.apiBaseUrl
     return createPluginApi(
       createHttpClient({
-        baseUrl: cloudConnection.apiBaseUrl || runtime.apiBaseUrl,
+        baseUrl: apiBaseUrl,
         getToken: () => cloudConnection.token,
         redirectOnUnauthorized: false,
-      })
+      }),
+      apiBaseUrl
     )
   }, [cloudConnection.apiBaseUrl, cloudConnection.token])
   const isOptionsLocked = Boolean(state.currentRuntimeTask)
@@ -2115,7 +2117,6 @@ export function WorkbenchProvider({
     runtimeMessaging.createEphemeralRuntimeTask
   )
   const stableCreateProjectRuntimeTask = useStableEvent(runtimeMessaging.createProjectRuntimeTask)
-  const stableRetryFailedMessage = useStableEvent(runtimeMessaging.retryFailedMessage)
   const stablePauseCurrentResponse = useStableEvent(runtimeMessaging.pauseCurrentResponse)
   const stableLoadTurnFileChangesDiff = useStableEvent(runtimeMessaging.loadTurnFileChangesDiff)
   const stableRevertTurnFileChanges = useStableEvent(runtimeMessaging.revertTurnFileChanges)
@@ -2165,7 +2166,9 @@ export function WorkbenchProvider({
         // (regression vs fix/wework stop-blocking-send-on-plugin-prep).
         let currentComposerDeviceId: string | null = null
         const composerPluginSources = {
-          listCodexApps: () => localPluginApi.listApps(),
+          // Retain inaccessible Codex apps while merging installed plugins so an
+          // unlinked connector cannot be reintroduced as an accessible skill-only app.
+          listCodexApps: () => localPluginApi.listApps({ includeInaccessible: true }),
           readLocalInstalledPlugins: async () => {
             currentComposerDeviceId =
               peekLocalCodexPluginsReadState({ mergeAllMarketplaces: true })?.deviceId ||
@@ -2761,7 +2764,6 @@ export function WorkbenchProvider({
     createTemporaryRuntimeTask: runtimeMessaging.createTemporaryRuntimeTask,
     createEphemeralRuntimeTask: runtimeMessaging.createEphemeralRuntimeTask,
     createProjectRuntimeTask: runtimeMessaging.createProjectRuntimeTask,
-    retryFailedMessage: runtimeMessaging.retryFailedMessage,
     pauseCurrentResponse: runtimeMessaging.pauseCurrentResponse,
     loadTurnFileChangesDiff: runtimeMessaging.loadTurnFileChangesDiff,
     revertTurnFileChanges: runtimeMessaging.revertTurnFileChanges,
@@ -2852,7 +2854,6 @@ export function WorkbenchProvider({
       createTemporaryRuntimeTask: stableCreateTemporaryRuntimeTask,
       createEphemeralRuntimeTask: stableCreateEphemeralRuntimeTask,
       createProjectRuntimeTask: stableCreateProjectRuntimeTask,
-      retryFailedMessage: stableRetryFailedMessage,
       pauseCurrentResponse: stablePauseCurrentResponse,
       loadTurnFileChangesDiff: stableLoadTurnFileChangesDiff,
       revertTurnFileChanges: stableRevertTurnFileChanges,
@@ -2916,7 +2917,6 @@ export function WorkbenchProvider({
       stableReorderRuntimeProjectTasks,
       stableReorderQueuedRuntimeTask,
       stableRenameRuntimeTask,
-      stableRetryFailedMessage,
       stableRevertTurnFileChanges,
       stableSearchRuntimeWork,
       stableSelectProject,
@@ -2959,8 +2959,6 @@ export function WorkbenchProvider({
             <CoreDshModelSync
               enabled={syncCoreDshModels}
               models={conversationModels}
-              selectedModel={modelSelection.selectedModel}
-              selectedModelOptions={modelSelection.selectedModelOptions}
               services={resolvedServices}
             />
             {children}

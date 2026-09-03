@@ -51,6 +51,7 @@ import {
   streamingTextEvents,
   telemetryEvents,
 } from './response-protocol.mjs'
+import { tmpdir } from 'node:os'
 
 import {
   ANTHROPIC_EMPTY_COMPLETION_TEXT,
@@ -124,6 +125,9 @@ import {
   GUIDANCE_SCROLL_PROMPT,
   GUIDANCE_SCROLL_RESPONSE,
   LATER_TOOL_BLOCK_ID,
+  LOCAL_MARKDOWN_IMAGE_ALT,
+  LOCAL_MARKDOWN_IMAGE_FILENAME,
+  LOCAL_MARKDOWN_IMAGE_PROMPT,
   LOCAL_MODEL_CASES,
   LOCAL_MODEL_SWITCH_COMPLETE,
   LOCAL_MODEL_SWITCH_FOLLOW_UP_PROMPT,
@@ -193,6 +197,7 @@ import {
   REQUEST_USER_INPUT_PROMPT,
   REQUEST_USER_INPUT_QUESTION,
   RETRY_COMPLETION_TEXT,
+  RETRY_CONTINUATION_PROMPT,
   RETRY_FAILURE_TEXT,
   RETRY_PROMPT,
   RUNNING_FORK_COMPLETION_TEXT,
@@ -248,6 +253,7 @@ const ELECTRON_OBSERVATION_ACTIONS = new Set([
   'activeElement',
   'getAttribute',
   'getElementCount',
+  'getTerminalText',
   'getText',
   'metrics',
   'snapshot',
@@ -270,6 +276,33 @@ function findNestedString(value, predicate) {
     if (match) return match
   }
   return null
+}
+
+function requestContainsSkillLocator(body, skillPath, skillName) {
+  const requestText = JSON.stringify(body)
+  if (requestText.includes(skillPath)) return true
+
+  const normalizedSkillPath = skillPath.replaceAll('\\', '/')
+  const relativeSkillPath = `${skillName}/SKILL.md`
+  const skillRoot = normalizedSkillPath.slice(0, -relativeSkillPath.length).replace(/\/$/u, '')
+  const catalog = findNestedString(
+    body,
+    value => value.includes('### Skill roots') && value.includes(relativeSkillPath)
+  )
+  if (!catalog) return false
+
+  for (const line of catalog.split(/\r?\n/u)) {
+    const rootMatch = line.match(/^- `([^`]+)` = `([^`]+)`$/u)
+    if (!rootMatch) continue
+    const [, alias, root] = rootMatch
+    if (
+      root.replaceAll('\\', '/') === skillRoot &&
+      catalog.includes(`(file: ${alias}/${relativeSkillPath})`)
+    ) {
+      return true
+    }
+  }
+  return false
 }
 
 function toolOutputText(request, callId) {
@@ -309,18 +342,17 @@ function pluginWorkspacePublishCommand(body) {
 }
 
 function publishedPluginWorkspaceResult(body) {
+  const completedStatus = /"status":"(?:published|pending_review)"/u
   const output = findNestedString(
     body,
-    value =>
-      value.includes(PLUGIN_WORKSPACE_RESULT_MARKER) && value.includes('"status":"published"')
+    value => value.includes(PLUGIN_WORKSPACE_RESULT_MARKER) && completedStatus.test(value)
   )
   if (!output) return null
   const line = output
     .split(/\r?\n/u)
     .find(
       candidate =>
-        candidate.includes(PLUGIN_WORKSPACE_RESULT_MARKER) &&
-        candidate.includes('"status":"published"')
+        candidate.includes(PLUGIN_WORKSPACE_RESULT_MARKER) && completedStatus.test(candidate)
     )
   if (!line) return null
   return line.slice(line.indexOf(PLUGIN_WORKSPACE_RESULT_MARKER))
@@ -518,6 +550,9 @@ class DesktopE2EServer {
     })
     this.toolBlockGenericRelease = new Promise(resolvePromise => {
       this.releaseToolBlockGeneric = resolvePromise
+    })
+    this.cloudInitialRelease = new Promise(resolvePromise => {
+      this.releaseCloudInitial = resolvePromise
     })
     this.cloudFollowUpRelease = new Promise(resolvePromise => {
       this.releaseCloudFollowUp = resolvePromise
@@ -745,6 +780,7 @@ class DesktopE2EServer {
         'vision_sidecar',
         'multimodal_vision',
         'view_image',
+        'local_markdown_image',
         'tool_block_order',
         'official_plugin',
         'automation',
@@ -943,6 +979,10 @@ class DesktopE2EServer {
 
   markGoalRestartResumeRequested() {
     this.goalRestartResumeRequested = true
+  }
+
+  releaseCloudInitialResponse() {
+    this.releaseCloudInitial()
   }
 
   releaseCloudFollowUpResponse() {
@@ -2032,6 +2072,21 @@ class DesktopE2EServer {
       return
     }
 
+    if (this.scenario === 'local_markdown_image') {
+      this.recordScenarioRequest('local_markdown_image', modelRequest)
+      assert.ok(
+        JSON.stringify(body).includes(LOCAL_MARKDOWN_IMAGE_PROMPT),
+        'The real Codex request did not contain the local Markdown image prompt'
+      )
+      const imageUrl = pathToFileURL(join(tmpdir(), LOCAL_MARKDOWN_IMAGE_FILENAME)).href
+      this.writeSse(response, [
+        responseCreated(responseId),
+        assistantMessage(`![${LOCAL_MARKDOWN_IMAGE_ALT}](${imageUrl})`),
+        responseCompleted(responseId),
+      ])
+      return
+    }
+
     if (this.scenario === 'tool_block_order') {
       this.recordScenarioRequest('tool_block_order', modelRequest)
       const requestNumber = this.scenarioRequests.get('tool_block_order').length
@@ -2510,12 +2565,30 @@ class DesktopE2EServer {
         true,
         'The real cloud executor did not expose the authenticated Wework user identity'
       )
+      const stream = streamingTextEvents(responseId, CLOUD_COMPLETION_TEXT)
+      this.cloudModelStage = 'streaming'
+      response.writeHead(200, {
+        'Access-Control-Allow-Origin': '*',
+        'Cache-Control': 'no-cache',
+        Connection: 'keep-alive',
+        'Content-Type': 'text/event-stream; charset=utf-8',
+      })
+      response.write(
+        createSse([
+          ...stream.start,
+          {
+            type: 'response.output_text.delta',
+            item_id: stream.itemId,
+            output_index: 0,
+            content_index: 0,
+            delta: CLOUD_COMPLETION_TEXT,
+            offset: 0,
+          },
+        ])
+      )
+      await this.cloudInitialRelease
       this.cloudModelStage = 'complete'
-      this.writeSse(response, [
-        responseCreated(responseId),
-        assistantMessage(CLOUD_COMPLETION_TEXT),
-        responseCompleted(responseId),
-      ])
+      response.end(createSse(stream.finish))
       return
     }
 
@@ -2525,20 +2598,28 @@ class DesktopE2EServer {
         JSON.stringify(body).includes(CLOUD_FOLLOW_UP_PROMPT),
         'The real cloud Codex request did not contain the follow-up prompt'
       )
+      const stream = streamingTextEvents(responseId, CLOUD_FOLLOW_UP_COMPLETION_TEXT)
       response.writeHead(200, {
         'Access-Control-Allow-Origin': '*',
         'Cache-Control': 'no-cache',
         Connection: 'keep-alive',
         'Content-Type': 'text/event-stream; charset=utf-8',
       })
-      response.write(createSse([responseCreated(responseId)]))
-      await this.cloudFollowUpRelease
-      response.end(
+      response.write(
         createSse([
-          assistantMessage(CLOUD_FOLLOW_UP_COMPLETION_TEXT),
-          responseCompleted(responseId),
+          ...stream.start,
+          {
+            type: 'response.output_text.delta',
+            item_id: stream.itemId,
+            output_index: 0,
+            content_index: 0,
+            delta: CLOUD_FOLLOW_UP_COMPLETION_TEXT,
+            offset: 0,
+          },
         ])
       )
+      await this.cloudFollowUpRelease
+      response.end(createSse(stream.finish))
       return
     }
 
@@ -3131,7 +3212,7 @@ class DesktopE2EServer {
         assert.ok(
           requestText.includes(OFFICIAL_PLUGIN_NAME) &&
             requestText.includes(OFFICIAL_PLUGIN_SKILL_NAME) &&
-            requestText.includes(skillPath),
+            requestContainsSkillLocator(body, skillPath, OFFICIAL_PLUGIN_SKILL_NAME),
           'The real Codex request did not inject the selected official plugin skill'
         )
         const shell = selectShellToolCommand(
@@ -3702,18 +3783,28 @@ class DesktopE2EServer {
 
     if (this.scenario === 'retry') {
       this.recordScenarioRequest('retry', modelRequest)
-      assert.ok(
-        JSON.stringify(body).includes(RETRY_PROMPT),
-        'The real Codex request did not contain the retry prompt'
-      )
       const retryRequests = this.scenarioRequests.get('retry') ?? []
       if (retryRequests.length === 1) {
+        assert.ok(
+          latestModelInputText(body).includes(RETRY_PROMPT),
+          'The initial Codex request did not contain the retry scenario prompt'
+        )
         this.writeSse(response, [
           responseCreated(responseId),
           responseFailed(responseId, RETRY_FAILURE_TEXT),
         ])
         return
       }
+      const continuationInput = latestModelInputText(body)
+      assert.ok(
+        continuationInput.includes(RETRY_CONTINUATION_PROMPT),
+        'The retry action did not continue the existing Codex conversation'
+      )
+      assert.equal(
+        continuationInput.includes(RETRY_PROMPT),
+        false,
+        'The retry action replayed the original user prompt'
+      )
       await this.retryCompletionRelease
       this.writeSse(response, [
         responseCreated(responseId),

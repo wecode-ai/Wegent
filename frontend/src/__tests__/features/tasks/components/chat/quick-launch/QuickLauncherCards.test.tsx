@@ -9,6 +9,12 @@ import { QuickLauncherCards } from '@/features/tasks/components/chat/quick-launc
 import type { QuickLauncher } from '@/features/tasks/components/chat/quick-launch/types'
 import type { Team } from '@/types/api'
 
+let mockIsMobile = false
+
+jest.mock('@/features/layout/hooks/useMediaQuery', () => ({
+  useIsMobile: () => mockIsMobile,
+}))
+
 jest.mock('@/hooks/useTranslation', () => ({
   useTranslation: (namespace?: string) => ({
     t: (key: string) => {
@@ -17,6 +23,7 @@ jest.mock('@/hooks/useTranslation', () => ({
       }
 
       const translations: Record<string, string> = {
+        'quick_launch.quick_start': 'Quick start',
         'quick_launch.system_functions': 'Recommended features',
         'quick_launch.favorite_agents': 'My favorites',
       }
@@ -52,6 +59,49 @@ const makeLauncher = (overrides: Partial<QuickLauncher>): QuickLauncher => ({
 })
 
 describe('QuickLauncherCards', () => {
+  beforeEach(() => {
+    mockIsMobile = false
+  })
+
+  test('collapses mobile launchers into one compact quick-start row', () => {
+    mockIsMobile = true
+
+    render(
+      <QuickLauncherCards
+        systemLaunchers={[
+          makeLauncher({ key: 'system:create_ppt', title: 'Create PPT' }),
+          makeLauncher({ key: 'system:create_skill', title: 'Create Skill' }),
+        ]}
+        favoriteLaunchers={[
+          makeLauncher({
+            type: 'favorite_agent',
+            key: 'agent:2',
+            team: makeTeam({ id: 2 }),
+            title: 'Writing Agent',
+          }),
+        ]}
+        onSelectLauncher={jest.fn()}
+        renderMoreButton={() => (
+          <button type="button" data-testid="quick-launch-more-card">
+            More
+          </button>
+        )}
+      />
+    )
+
+    expect(screen.getByTestId('quick-launch-cards')).toHaveTextContent('Quick start')
+    expect(screen.getByTestId('quick-launch-mobile-row')).toHaveClass('pr-3', 'scroll-pr-3')
+    expect(
+      screen.getByTestId('mobile-quick-launcher-system_function-system-create_ppt')
+    ).toHaveClass('snap-start')
+    expect(
+      screen.queryByTestId('mobile-quick-launcher-favorite_agent-agent-2')
+    ).not.toBeInTheDocument()
+    expect(screen.getByTestId('quick-launch-more-card')).toBeInTheDocument()
+    expect(screen.queryByTestId('quick-launch-system-row')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('quick-launch-favorites-row')).not.toBeInTheDocument()
+  })
+
   test('renders quick launch row titles from the chat namespace', () => {
     render(
       <QuickLauncherCards

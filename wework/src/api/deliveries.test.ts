@@ -72,6 +72,23 @@ describe('createDeliveryApi queue and assignment routes', () => {
     expect(client.get).toHaveBeenCalledWith('/v1/cloud-projects/123/board-snapshot')
   })
 
+  it('loads one external board column page without requesting issue details', async () => {
+    const client = {
+      get: vi.fn(async () => ({ items: [], task_bindings: [], next_cursor: null })),
+    } as unknown as HttpClient
+    const api = createDeliveryApi(client)
+
+    await api.listLoopItemsPage(123, {
+      status: 'in_progress',
+      parentId: 'GH-7',
+      cursor: 'next-page',
+    })
+
+    expect(client.get).toHaveBeenCalledWith(
+      '/v1/cloud-projects/123/loop-item-pages?status=in_progress&limit=10&parent_id=GH-7&cursor=next-page'
+    )
+  })
+
   it('lists robot executions through the cloud executions route', async () => {
     const client = {
       get: vi.fn(async () => ({
@@ -283,6 +300,31 @@ describe('createDeliveryApi task tracking', () => {
 
     expect(post).toHaveBeenCalledTimes(3)
     expect(post.mock.calls.filter(([endpoint]) => endpoint.endsWith('/loop-items'))).toHaveLength(1)
+  })
+
+  test('creates a new board item when moving a task from another project', async () => {
+    const get = vi.fn().mockResolvedValue({
+      project: { id: 'project-old' },
+      loop_item_id: 'OLD-1',
+    })
+    const movedItem = { ...trackedItem, id: 'NEW-1', cloud_project_id: 'project-new' }
+    const post = vi.fn().mockResolvedValueOnce(movedItem).mockResolvedValueOnce(undefined)
+    const api = createDeliveryApi(clientWith({ get, post }))
+    const task = { deviceId: 'local-device', taskId: 'runtime-1' }
+
+    await expect(
+      api.trackProjectTask('project-new', task, 'Runtime task', 'Move this task')
+    ).resolves.toEqual({ item: movedItem })
+
+    expect(post).toHaveBeenNthCalledWith(1, '/v1/cloud-projects/project-new/loop-items', {
+      title: 'Runtime task',
+      description: 'Move this task',
+      status: 'pending',
+    })
+    expect(post).toHaveBeenNthCalledWith(2, '/v1/loop-items/NEW-1/tasks', {
+      ...task,
+      taskTitle: 'Runtime task',
+    })
   })
 
   test('updates tracking status through the existing loop item endpoint', async () => {

@@ -15,7 +15,7 @@ export type RuntimeTaskTurnOutcome = 'succeeded' | 'failed' | 'cancelled' | null
 export interface RuntimeTaskLifecycleState {
   address: RuntimeTaskAddress
   task: RuntimeTaskSummary | null
-  workspaceCreationKind?: 'worktree'
+  workspaceCreationKind?: string
   executionPhase: RuntimeTaskExecutionPhase
   turnPhase: RuntimeTaskTurnPhase
   turnOutcome: RuntimeTaskTurnOutcome
@@ -43,7 +43,7 @@ export interface RuntimeTaskLifecycleSnapshot {
   key: string
   address: RuntimeTaskAddress
   task: RuntimeTaskSummary | null
-  workspaceCreationKind?: 'worktree'
+  workspaceCreationKind?: string
   execution: {
     phase: RuntimeTaskExecutionPhase
     known: boolean
@@ -67,7 +67,7 @@ export type RuntimeTaskLifecycleEvent =
       address: RuntimeTaskAddress
       task: RuntimeTaskSummary
     }
-  | { type: 'send_requested'; workspaceCreationKind?: 'worktree' }
+  | { type: 'send_requested'; workspaceCreationKind?: string }
   | { type: 'send_accepted' }
   | { type: 'send_rejected' }
   | { type: 'send_blocked_by_active_turn' }

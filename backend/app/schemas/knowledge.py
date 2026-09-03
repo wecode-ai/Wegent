@@ -634,6 +634,30 @@ class CodeWikiPageTree(BaseModel):
     """The navigation for one code wiki."""
 
     pages: List[CodeWikiPageNode]
+    # Lets a reader tell whether its tree belongs to the version reported by the
+    # independently-polled run status. Zero means that no generation is published.
+    published_generation_id: int = 0
+
+
+class CodeWikiRunProgress(BaseModel):
+    """A derived stage for a run currently in progress."""
+
+    stage: Literal[
+        "generating",
+        "planning",
+        "plan_review",
+        "revising_plan",
+        "writing",
+        "qa_review",
+        "repairing",
+        "recheck",
+        "publishing",
+        "finishing",
+    ]
+    current_step: int = Field(0, ge=0)
+    total_steps: int = Field(0, ge=0)
+    pages_written: int = Field(0, ge=0)
+    pages_total: int = Field(0, ge=0)
 
 
 class CodeWikiRunStatus(BaseModel):
@@ -664,6 +688,7 @@ class CodeWikiRunStatus(BaseModel):
             "that rather than reporting the wiki as busy."
         ),
     )
+    progress: Optional[CodeWikiRunProgress] = None
     last_published_at: Optional[str] = None
     last_published_commit: str = ""
 

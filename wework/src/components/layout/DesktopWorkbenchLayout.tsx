@@ -427,7 +427,6 @@ export function DesktopWorkbenchLayout({
   const openRuntimeTaskOutsideHarness = useCallback(
     async (address: RuntimeTaskAddress) => {
       setActiveLocalHarnessSessionId(null)
-      requestWorkbenchComposerFocus(getRuntimeTaskChatScopeKey(address))
       activateSplitPane(
         getWorkbenchPaneKey({
           currentRuntimeTask: address,
@@ -437,6 +436,7 @@ export function DesktopWorkbenchLayout({
       if (!(currentPath === '/' && isSameRuntimeTask(state.currentRuntimeTask, address))) {
         await onOpenRuntimeTask(address)
       }
+      requestWorkbenchComposerFocus(getRuntimeTaskChatScopeKey(address))
     },
     [activateSplitPane, currentPath, onOpenRuntimeTask, state.currentRuntimeTask]
   )
@@ -1099,6 +1099,7 @@ export function DesktopWorkbenchLayout({
                 runtimeWork={state.runtimeWork}
                 runtimeTaskLifecycle={runtimeTaskLifecycle}
                 services={services}
+                startupActive={routeActive && todoOpen}
                 onCreateLocalCodeProject={onCreateLocalRuntimeProject}
                 onGetDeviceHomeDirectory={onGetDeviceHomeDirectory}
                 onListDeviceDirectories={onListDeviceDirectories}

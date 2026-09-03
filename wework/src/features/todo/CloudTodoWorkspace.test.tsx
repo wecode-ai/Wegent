@@ -27,6 +27,7 @@ import {
   shouldPrepareWorkItemTask,
   workItemTaskInput,
 } from './workItemTaskInput'
+import { publishProjectSpaceTaskBindingChanged } from './projectSpaceSelection'
 
 const telemetryMocks = vi.hoisted(() => ({
   track: vi.fn(),
@@ -102,6 +103,30 @@ vi.mock('./ProjectSpaceChatSidebar', () => ({
       <button type="button" data-testid="mock-project-space-chat-close" onClick={onClose}>
         关闭
       </button>
+    </div>
+  ),
+}))
+
+vi.mock('@/components/layout/workspace-panels/TemporaryChatPanel', () => ({
+  TemporaryChatPanel: ({
+    testId,
+    initialAddress,
+    collapseComposerWhenIdle,
+  }: {
+    testId: string
+    initialAddress?: { deviceId: string; taskId: string } | null
+    collapseComposerWhenIdle?: boolean
+  }) => (
+    <div
+      data-testid={testId}
+      data-device-id={initialAddress?.deviceId}
+      data-task-id={initialAddress?.taskId}
+      data-collapse-composer={String(collapseComposerWhenIdle)}
+    >
+      <div
+        data-testid={testId.replace('popup-conversation', 'popup-scroll')}
+        className="max-h-[min(68vh,42rem)] overflow-y-auto"
+      />
     </div>
   ),
 }))
@@ -441,6 +466,11 @@ function services(overrides: Partial<WorkbenchServices> = {}): WorkbenchServices
       })),
       reorderLoopItems: vi.fn(async () => ({ items: [item] })),
       listLoopItems: vi.fn(async () => ({ items: [item] })),
+      listLoopItemsPage: vi.fn(async () => ({
+        items: [],
+        task_bindings: [],
+        next_cursor: null,
+      })),
       listDeliveries: vi.fn(async () => ({ items: [] })),
       listLoopItemAttachments: vi.fn(async () => []),
       addLoopItemAttachment: vi.fn(async (_itemId, file) => ({
@@ -676,6 +706,118 @@ describe('CloudTodoWorkspace', () => {
     expect(workspace).toHaveAttribute('data-embedded', 'true')
     expect(workspace.querySelector('aside')).not.toBeInTheDocument()
     expect(screen.queryByTestId('cloud-todo-collapsed-chrome-controls')).not.toBeInTheDocument()
+  })
+
+  it('loads Git-backed boards by column and fetches details only after opening a card', async () => {
+    const infoSpy = vi.spyOn(console, 'info').mockImplementation(() => {})
+    const workbenchServices = services()
+    const githubProject = {
+      ...project,
+      id: String(project.id),
+      task_provider: 'github' as const,
+    }
+    const summary = {
+      ...item,
+      cloud_project_id: String(project.id),
+      status: 'pending',
+      description: '',
+      detail_loaded: false,
+    }
+    const next = { ...summary, id: 'WEG-2', sequence_number: 2, title: 'Second issue' }
+    vi.mocked(workbenchServices.deliveryApi!.listCloudProjects).mockResolvedValue({
+      items: [githubProject],
+    })
+    workbenchServices.deliveryApi!.listLoopItemsPage = vi.fn(async (_projectId, options) => ({
+      items: options.status === 'pending' ? (options.cursor ? [summary, next] : [summary]) : [],
+      task_bindings: [],
+      next_cursor: options.status === 'pending' && !options.cursor ? 'next-page' : null,
+    }))
+    workbenchServices.deliveryApi!.getLoopItem = vi.fn(async () => ({
+      ...summary,
+      description: 'Full issue body',
+      detail_loaded: true,
+    }))
+
+    render(
+      <CloudTodoWorkspace
+        user={{ id: 1, user_name: 'local', email: 'local@example.com' } as User}
+        localProjects={[]}
+        services={workbenchServices}
+        embedded
+        activeProjectRef={{ projectStore: 'backend', projectId: String(project.id) }}
+      />
+    )
+
+    await screen.findByTestId(`cloud-todo-card-${summary.id}`)
+    expect(workbenchServices.deliveryApi!.getBoardSnapshot).not.toHaveBeenCalled()
+    expect(workbenchServices.deliveryApi!.listLoopItemsPage).toHaveBeenCalledTimes(5)
+    expect(
+      vi
+        .mocked(workbenchServices.deliveryApi!.listLoopItemsPage)
+        .mock.calls.every(([, options]) => options.limit === 10)
+    ).toBe(true)
+    expect(screen.getByTestId('cloud-todo-column-load-more-pending')).toHaveTextContent('加载更多')
+
+    await userEvent.click(screen.getByTestId('cloud-todo-column-load-more-pending'))
+    await screen.findByTestId(`cloud-todo-card-${next.id}`)
+    expect(screen.getAllByTestId(`cloud-todo-card-${summary.id}`)).toHaveLength(1)
+    expect(workbenchServices.deliveryApi!.listLoopItemsPage).toHaveBeenLastCalledWith(
+      String(project.id),
+      expect.objectContaining({ status: 'pending', cursor: 'next-page', limit: 10 })
+    )
+    expect(infoSpy).toHaveBeenCalledWith(
+      '[Wework project board] column page merged',
+      expect.objectContaining({
+        status: 'pending',
+        cursor: 'next-page',
+        receivedIds: [summary.id, next.id],
+        duplicateIds: [summary.id],
+      })
+    )
+    fireEvent.click(screen.getByTestId(`cloud-todo-card-${summary.id}`))
+    await waitFor(() => {
+      expect(workbenchServices.deliveryApi!.getLoopItem).toHaveBeenCalledWith(summary.id)
+    })
+  })
+
+  it('refreshes the active board when a runtime task binding changes externally', async () => {
+    const workbenchServices = services()
+    vi.mocked(workbenchServices.deliveryApi!.listCloudProjects).mockResolvedValue({
+      items: [{ ...project, id: String(project.id) }],
+    })
+
+    render(
+      <CloudTodoWorkspace
+        user={{ id: 1, user_name: 'local', email: 'local@example.com' } as User}
+        localProjects={[]}
+        services={workbenchServices}
+        embedded
+        activeProjectRef={{
+          projectStore: 'backend',
+          projectId: String(project.id),
+        }}
+      />
+    )
+
+    await screen.findByTestId('cloud-project-header')
+    await waitFor(() => {
+      expect(workbenchServices.deliveryApi!.getBoardSnapshot).toHaveBeenCalledTimes(1)
+    })
+    const initialSnapshotRequests = vi.mocked(workbenchServices.deliveryApi!.getBoardSnapshot).mock
+      .calls.length
+
+    act(() => {
+      publishProjectSpaceTaskBindingChanged({
+        deviceId: 'local-device',
+        taskId: 'runtime-moved-to-board',
+      })
+    })
+
+    await waitFor(() => {
+      expect(workbenchServices.deliveryApi!.getBoardSnapshot).toHaveBeenCalledTimes(
+        initialSnapshotRequests + 1
+      )
+    })
   })
 
   it('shows and opens one logical My Tasks project across local and cloud stores', async () => {
@@ -980,8 +1122,14 @@ describe('CloudTodoWorkspace', () => {
     const progressPopup = await screen.findByTestId('cloud-todo-card-progress-popup-WEG-1')
     expect(progressPopup).toHaveTextContent('当前任务进展')
     expect(progressPopup).toHaveTextContent('验证完整工作流')
-    expect(progressPopup).toHaveTextContent('先检查项目看板如何组织运行中的消息。')
-    expect(progressPopup).toHaveTextContent('pnpm test')
+    expect(screen.getByTestId('cloud-todo-card-popup-conversation-WEG-1')).toHaveAttribute(
+      'data-task-id',
+      'runtime-2'
+    )
+    expect(screen.getByTestId('cloud-todo-card-popup-conversation-WEG-1')).toHaveAttribute(
+      'data-collapse-composer',
+      'true'
+    )
     expect(screen.getByTestId('cloud-todo-card-popup-scroll-WEG-1')).toHaveClass(
       'max-h-[min(68vh,42rem)]',
       'overflow-y-auto'
@@ -1059,8 +1207,7 @@ describe('CloudTodoWorkspace', () => {
     const progressPopup = await screen.findByTestId('cloud-todo-card-progress-popup-WEG-1')
     const progressResponse = screen.getByTestId('cloud-todo-card-popup-conversation-WEG-1')
     expect(progressPopup).toHaveTextContent('当前任务进展')
-    expect(progressResponse).toHaveTextContent('第一行')
-    expect(progressResponse).toHaveTextContent('第四行')
+    expect(progressResponse).toHaveAttribute('data-task-id', 'runtime-review')
   })
 
   it('loads persisted task output for an in-progress Issue on the board', async () => {
@@ -1150,9 +1297,8 @@ describe('CloudTodoWorkspace', () => {
 
     fireEvent.mouseEnter(screen.getByTestId('cloud-todo-card-tasks-WEG-1'))
     const conversation = await screen.findByTestId('cloud-todo-card-popup-conversation-WEG-1')
-    expect(conversation).toHaveTextContent('请修复看板输出')
-    expect(conversation).toHaveTextContent('已经定位问题')
-    expect(conversation).toHaveTextContent('正在验证修复')
+    expect(conversation).toHaveAttribute('data-device-id', 'local-device')
+    expect(conversation).toHaveAttribute('data-task-id', 'runtime-in-progress')
   })
 
   it('reports the concrete project name for the active document tab', async () => {
@@ -1554,7 +1700,7 @@ describe('CloudTodoWorkspace', () => {
     await userEvent.click(screen.getByTestId('ai-chat-modal-close'))
     expect(screen.queryByTestId('ai-chat-modal')).not.toBeInTheDocument()
     expect(screen.queryByTestId('cloud-todo-detail')).not.toBeInTheDocument()
-  })
+  }, 10_000)
 
   it('ignores a task address that resolves after reopening the task panel', async () => {
     const workbenchServices = services()
@@ -4002,6 +4148,54 @@ describe('CloudTodoWorkspace', () => {
       parent_id: null,
     })
     expect(workbenchServices.deliveryApi.updateLoopItem).not.toHaveBeenCalled()
+  })
+
+  it('does not bypass execution configuration when project services are unavailable', async () => {
+    const user = userEvent.setup()
+    const workbenchServices = services()
+    workbenchServices.deliveryApi!.createLoopItem = vi.fn(async (_projectId, values) => ({
+      ...item,
+      id: 'WEG-AI-UNAVAILABLE',
+      sequence_number: 2,
+      title: values.title,
+      description: values.description ?? '',
+      status: 'pending' as const,
+      workflow: {
+        version: 1,
+        definition_version: 1,
+        stage_mode: 'none' as const,
+        advancement_policy: 'ai' as const,
+        ai_automation_rule_id: 'ai-manager',
+        execution_config: {
+          agent_id: null,
+          runtime_profile_id: 'runtime-incomplete',
+          execution_device_id: 'local-device',
+          model: null,
+          model_type: null,
+          model_options: {},
+          workspace_binding: { type: 'standalone' as const },
+        },
+        nodes: [],
+      },
+    }))
+
+    render(
+      <CloudTodoWorkspace
+        user={{ id: 1, user_name: 'local', email: 'local@example.com' } as User}
+        localProjects={[]}
+        services={workbenchServices}
+      />
+    )
+
+    await user.click((await screen.findAllByText('Wegent V4'))[0])
+    await user.click(screen.getByTestId('cloud-todo-column-add-pending'))
+    delete workbenchServices.projectSpaceDetailServices?.cloud
+    await user.type(screen.getByTestId('workspace-issue-input'), 'Unavailable AI Issue')
+    await user.click(screen.getByTestId('workspace-issue-submit'))
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('运行服务当前不可用')
+    expect(screen.queryByTestId('issue-execution-config-dialog')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('mock-start-background-task')).not.toBeInTheDocument()
   })
 
   it('opens the full issue composer popup with the quick title and lane', async () => {

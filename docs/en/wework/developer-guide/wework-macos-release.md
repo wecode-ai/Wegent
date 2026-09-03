@@ -169,6 +169,14 @@ Electron, and sets `ELECTRON_RUN_AS_NODE=1`. Core DSH and Codex skills therefore
 use Electron's version-bound Node for both explicit `node script.ts` commands
 and `#!/usr/bin/env node` entry points.
 
+The entry point also preloads a standard-stream guard. After the consumer of a
+stdio MCP or another Node child process closes, diagnostic writes to a broken
+`stderr` must not surface as an Electron main-process error dialog. A broken
+protocol `stdout` means the caller has gone away, so the child exits normally.
+The guard handles only `EPIPE`; other stream errors still fail and expose their
+root cause. A configured external Node executable keeps native Node error
+handling and does not load this Electron-specific guard.
+
 ## Bundled sidecars and resources
 
 Prepare Codex and DWS before packaging:
@@ -184,6 +192,14 @@ with SHA-512. Prepared desktop resources live under `wework/resources/`.
 `wework/electron/scripts/prepare-package-assets.mjs` copies sidecars, plugins,
 icons, and runtime descriptors into the application resources. Do not maintain
 a second desktop resource tree or manifest.
+
+The current pin is Codex `0.152.1`. Codex `0.152` disables
+`tools.update_plan.enabled` by default, while Wework consumes the corresponding
+plan events to render plan blocks, so the Executor must enable the tool
+explicitly when launching Codex. Desktop E2E verifies the lockfile binary by
+default; only the dedicated `WEWORK_E2E_CODEX_BIN` may override it. It must not
+inherit the generic `CODEX_BIN`, which could otherwise select an older binary
+from an installed application instead of the repository version under test.
 
 Desktop distributions must also include the project and bundled-sidecar
 licenses and attribution notices:
@@ -201,6 +217,28 @@ binary. Packaging changes must inspect the real packaged application and
 confirm that these files exist and match their repository sources. Inspecting
 only an intermediate resource directory does not prove that the distribution
 is complete.
+
+## Development hot reload
+
+`pnpm --dir wework run dev:mac` continuously builds the original Wework
+application through `wework/scripts/dev-wework-app-watch.mjs`. The watcher
+clears `dsh/app-wework/web` once at startup and must not clear it again for
+incremental builds. A running renderer may still request hashed assets from the
+previous generation, and deleting them while the next generation is being
+written can leave the window blank.
+
+Each build publishes `.wework-build-id` only after Vite finishes the bundle,
+the build result is closed, and file-viewer metadata is normalized. Core DSH
+uses this marker as the published build ID, so the page reloads only after the
+marker changes instead of treating an intermediate `index.html` write as a
+loadable generation.
+
+In development hot-reload mode, static resources under `/wework/app/` must use
+`Cache-Control: no-store`. In addition to hashed assets, this tree contains
+fixed-name `plugins/*.js` bundles. Serving those files with the production
+immutable cache can mix an old plugin bundle with a new main bundle after
+reload, creating duplicate instances of modules such as React contexts.
+Formal builds continue to use `public, max-age=31536000, immutable`.
 
 ## Local verification
 

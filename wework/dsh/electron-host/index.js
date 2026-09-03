@@ -5,7 +5,7 @@ export const name = 'wework-electron-host'
 export const inject = ['webServer']
 
 const BASE_PATH = '/wework/electron-host/v1'
-const MAX_REQUEST_BODY_BYTES = 1024 * 1024
+const MAX_REQUEST_BODY_BYTES = 64 * 1024 * 1024
 
 export async function apply(ctx) {
   const client = ElectronHostClient.fromEnvironment(process.env, {

@@ -58,6 +58,20 @@ def test_the_agent_is_told_to_do_the_work_itself(system_prompt: str):
     assert "repository is genuinely too large" in system_prompt
 
 
+def test_the_writer_recovers_the_durable_reviewer_verdict(system_prompt: str) -> None:
+    normalized_prompt = " ".join(system_prompt.split())
+
+    assert "REVIEW_CONTRACT.md" in normalized_prompt
+    assert "persist it with review-open" in normalized_prompt
+    assert "review-status" in system_prompt
+    assert "query review-status exactly once" in normalized_prompt
+    assert "follow nextAction" in normalized_prompt
+    assert "remaining ready state" in normalized_prompt
+    assert "Do not sleep, poll" in normalized_prompt
+    assert "never submits a Reviewer verdict" in normalized_prompt
+    assert "Only the Coordinator may open a Plan amendment" in normalized_prompt
+
+
 def test_how_much_to_read_is_bounded(system_prompt: str):
     assert "Do not read every file" in system_prompt
 
@@ -187,3 +201,97 @@ def test_the_agent_must_finish_and_handle_feedback(system_prompt: str):
 
     assert "completion checklist" in system_prompt
     assert "act on publish refusal or diagram feedback" in normalized_prompt
+
+
+def test_full_rebuilds_use_the_bounded_reviewer_loop(system_prompt: str) -> None:
+    assert "exact Reviewer agent" in system_prompt
+    assert "delegate synchronously" in system_prompt
+    assert "reviewPolicy=plan_only" in system_prompt
+    assert "without opening QA or Recheck" in system_prompt
+
+
+def test_page_authorship_delegation_is_limited_to_passed_work_packages(
+    system_prompt: str,
+) -> None:
+    normalized_prompt = " ".join(system_prompt.split())
+
+    assert "After Plan passes" in normalized_prompt
+    assert (
+        "exact Section Writer agent type named by the run prompt" in normalized_prompt
+    )
+    assert "passing only its generation ID and Work Package ID" in normalized_prompt
+    assert "Never delegate other page authorship" in normalized_prompt
+    assert "never delegate page authorship or the overall plan" not in normalized_prompt
+
+
+def test_reviewer_reads_the_persisted_contract_and_handoff() -> None:
+    resources = list(yaml.safe_load_all(RESOURCES.read_text()))
+    reviewer_ghost = next(
+        document
+        for document in resources
+        if document
+        and document.get("kind") == "Ghost"
+        and document.get("metadata", {}).get("name") == "code-wiki-reviewer-ghost"
+    )
+    prompt = " ".join(reviewer_ghost["spec"]["systemPrompt"].split())
+
+    assert "REVIEW_CONTRACT.md completely" in prompt
+    assert "require state=ready" in prompt
+    assert "persisted handoff is your authoritative input" in prompt
+    assert "contract-formatted findings file" in prompt
+    assert "complete state JSON" in prompt
+
+
+def test_default_code_wiki_team_uses_coordinate_writer_and_reviewer() -> None:
+    resources = list(yaml.safe_load_all(RESOURCES.read_text()))
+    team = next(
+        document
+        for document in resources
+        if document
+        and document.get("kind") == "Team"
+        and document.get("metadata", {}).get("name") == "code-wiki-team"
+    )
+    reviewer = next(
+        document
+        for document in resources
+        if document
+        and document.get("kind") == "Bot"
+        and document.get("metadata", {}).get("name") == "code-wiki-reviewer"
+    )
+    section_writer = next(
+        document
+        for document in resources
+        if document
+        and document.get("kind") == "Bot"
+        and document.get("metadata", {}).get("name") == "code-wiki-section-writer"
+    )
+
+    assert reviewer["spec"]["ghostRef"]["name"] == "code-wiki-reviewer-ghost"
+    assert section_writer["spec"]["ghostRef"]["name"] == (
+        "code-wiki-section-writer-ghost"
+    )
+    assert team["spec"]["collaborationModel"] == "coordinate"
+    assert team["spec"]["workflow"]["mode"] == "coordinate"
+    assert [member["role"] for member in team["spec"]["members"]] == [
+        "leader",
+        "reviewer",
+        "writer",
+    ]
+
+
+def test_section_writer_has_a_bounded_persisted_assignment() -> None:
+    resources = list(yaml.safe_load_all(RESOURCES.read_text()))
+    ghost = next(
+        document
+        for document in resources
+        if document
+        and document.get("kind") == "Ghost"
+        and document.get("metadata", {}).get("name") == "code-wiki-section-writer-ghost"
+    )
+    prompt = " ".join(ghost["spec"]["systemPrompt"].split())
+
+    assert ghost["spec"]["skills"] == ["wiki_submit"]
+    assert "generation ID and Work Package ID" in prompt
+    assert "state=passed" in prompt
+    assert "only at the package's assigned paths" in prompt
+    assert "do not complete or fail" in prompt

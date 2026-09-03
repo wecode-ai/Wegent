@@ -40,6 +40,34 @@ vi.mock('@/lib/embedded-browser', () => ({
 }))
 
 describe('MessageList', () => {
+  test('renders complete user and assistant message regions with medium weight', () => {
+    render(
+      <MessageList
+        messages={[
+          {
+            id: 'user-message',
+            role: 'user',
+            content: '请调整会话字体',
+            status: 'done',
+            createdAt: '2026-09-03T08:00:00Z',
+          },
+          {
+            id: 'assistant-message',
+            role: 'assistant',
+            content: '会话字体已调整',
+            status: 'done',
+            createdAt: '2026-09-03T08:00:01Z',
+          },
+        ]}
+      />
+    )
+
+    expect(screen.getByTestId('message-user')).toHaveClass('font-medium')
+    expect(screen.getByTestId('message-assistant')).toHaveClass('font-medium')
+    expect(screen.getByTestId('user-message-content')).not.toHaveClass('font-medium')
+    expect(screen.getByTestId('assistant-message-content')).not.toHaveClass('font-medium')
+  })
+
   test('renders a generated Codex inline visualization from the changed workspace file', async () => {
     runtimeMock.electron = true
     desktopHostMock.invoke.mockResolvedValueOnce('<div>折线图</div>')
@@ -1396,7 +1424,7 @@ describe('MessageList', () => {
     ).toBeInTheDocument()
   })
 
-  test('shows thinking after partial streaming assistant content becomes visible', () => {
+  test('hides generic thinking after streaming assistant content becomes visible', () => {
     render(
       <MessageList
         messages={[
@@ -1413,7 +1441,7 @@ describe('MessageList', () => {
 
     const content = screen.getByTestId('message-assistant').querySelector('p')
     expect(content).toHaveTextContent('我已经完成前面的检查，继续等最后结果。')
-    expect(screen.getByTestId('thinking-indicator')).toHaveTextContent('正在思考')
+    expect(screen.queryByTestId('thinking-indicator')).not.toBeInTheDocument()
   })
 
   test('shows only the running block after partial content', () => {
@@ -1443,7 +1471,19 @@ describe('MessageList', () => {
     )
 
     expect(screen.getByText('我先把硬编码中文改成 chat 命名空间翻译。')).toBeInTheDocument()
-    expect(screen.getByText('正在搜索代码')).toHaveClass('tool-activity-shimmer')
+    const shimmer = screen.getByText('正在搜索代码')
+    expect(shimmer).toHaveClass('tool-activity-shimmer')
+    const shimmerBands = shimmer.querySelectorAll('.activity-shimmer-band')
+    expect(shimmerBands).toHaveLength(6)
+    expect(Array.from(shimmerBands, band => band.getAttribute('data-grapheme'))).toEqual([
+      '正',
+      '在',
+      '搜',
+      '索',
+      '代',
+      '码',
+    ])
+    expect(shimmer.querySelector('[data-text]')).not.toBeInTheDocument()
     expect(screen.queryByTestId('thinking-indicator')).not.toBeInTheDocument()
   })
 
@@ -2030,9 +2070,8 @@ describe('MessageList', () => {
       />
     )
 
-    const indicator = screen.getByTestId('thinking-indicator')
-    expect(indicator).toHaveTextContent('正在思考')
-    expect(indicator).not.toHaveTextContent('检查运行日志并定位事件边界')
+    expect(screen.queryByTestId('thinking-indicator')).not.toBeInTheDocument()
+    expect(screen.queryByText('检查运行日志并定位事件边界')).not.toBeInTheDocument()
   })
 
   test('keeps the latest reasoning summary on the thinking row after a tool completes', () => {
@@ -2180,7 +2219,10 @@ describe('MessageList', () => {
       assistantContent.compareDocumentPosition(processContent) & Node.DOCUMENT_POSITION_FOLLOWING
     ).toBe(Node.DOCUMENT_POSITION_FOLLOWING)
     expect(processContent).toHaveClass('text-chat')
+    expect(processContent).toHaveClass('text-text-primary')
+    expect(processContent).not.toHaveClass('text-text-secondary')
     expect(processContent).not.toHaveClass('text-sm')
+    expect(processContent.closest('[data-testid="message-assistant"]')).toHaveClass('font-medium')
   })
 
   test('does not restore hidden failed content from runtime display order', () => {
@@ -3882,16 +3924,56 @@ describe('MessageList', () => {
     expect(fetchAttachmentBlob).toHaveBeenCalledWith(43)
   })
 
-  test('renders assistant markdown local image paths as file URLs', async () => {
+  test.each([
+    {
+      source: '/tmp/result.png',
+      title: 'Absolute path result',
+    },
+    {
+      source: 'file:///tmp/result.png',
+      title: 'File URL result',
+    },
+  ])(
+    'renders a titled assistant markdown local image from $source through an Electron blob preview',
+    async ({ source, title }) => {
+      runtimeMock.electron = true
+      URL.createObjectURL = vi.fn(() => 'blob:assistant-local-image')
+      URL.revokeObjectURL = vi.fn()
+
+      render(
+        <MessageList
+          messages={[
+            {
+              id: 'assistant-local-image',
+              role: 'assistant',
+              content: `生成结果：\n\n![local result](${source} "${title}")`,
+              status: 'done',
+              createdAt: '2026-05-25T15:08:00.000+08:00',
+            },
+          ]}
+        />
+      )
+
+      expect(await screen.findByTestId('assistant-markdown-image')).toHaveAttribute(
+        'src',
+        'blob:assistant-local-image'
+      )
+      expect(screen.getByTestId('assistant-markdown-image')).toHaveAttribute('alt', 'local result')
+      expect(electronLocalFileMock.read).toHaveBeenCalledWith('/tmp/result.png')
+    }
+  )
+
+  test('renders an error when an assistant markdown local image cannot be read', async () => {
     runtimeMock.electron = true
+    electronLocalFileMock.read.mockRejectedValueOnce(new Error('file unavailable'))
 
     render(
       <MessageList
         messages={[
           {
-            id: 'assistant-local-image',
+            id: 'assistant-missing-local-image',
             role: 'assistant',
-            content: '生成结果：\n\n![local result](/Users/yunpeng7/Pictures/result.png)',
+            content: '生成结果：\n\n![temporary result](/tmp/result.png)',
             status: 'done',
             createdAt: '2026-05-25T15:08:00.000+08:00',
           },
@@ -3899,11 +3981,11 @@ describe('MessageList', () => {
       />
     )
 
-    expect(await screen.findByTestId('assistant-markdown-image')).toHaveAttribute(
-      'src',
-      'file:///Users/yunpeng7/Pictures/result.png'
+    expect(await screen.findByTestId('assistant-markdown-image-error')).toHaveTextContent(
+      'temporary result'
     )
-    expect(screen.getByTestId('assistant-markdown-image')).toHaveAttribute('alt', 'local result')
+    expect(electronLocalFileMock.read).toHaveBeenCalledWith('/tmp/result.png')
+    expect(screen.queryByTestId('assistant-markdown-image')).not.toBeInTheDocument()
   })
 
   test('opens an enlarged preview from a user message image attachment', async () => {
@@ -4791,7 +4873,7 @@ describe('MessageList', () => {
 
     expect(screen.queryByTestId('message-hover-time')).not.toBeInTheDocument()
     expect(screen.queryByTestId('copy-message-button')).not.toBeInTheDocument()
-    expect(screen.getByTestId('thinking-indicator')).toHaveTextContent('正在思考')
+    expect(screen.queryByTestId('thinking-indicator')).not.toBeInTheDocument()
   })
 
   test('renders only thinking before the first streamed response arrives', () => {
@@ -4816,7 +4898,7 @@ describe('MessageList', () => {
     expect(screen.getByText('正在思考')).toHaveClass('waiting-thinking-text')
   })
 
-  test('shows trailing thinking once final text starts streaming', () => {
+  test('hides generic thinking once final text starts streaming', () => {
     render(
       <MessageList
         messages={[
@@ -4833,7 +4915,7 @@ describe('MessageList', () => {
 
     const status = screen.getByText('1 秒')
 
-    expect(screen.getByTestId('thinking-indicator')).toHaveTextContent('正在思考')
+    expect(screen.queryByTestId('thinking-indicator')).not.toBeInTheDocument()
     expect(screen.queryByRole('button', { name: /已处理/ })).not.toBeInTheDocument()
     expect(status.parentElement).toHaveAttribute('data-testid', 'processing-summary-header')
     expect(status.parentElement).not.toHaveClass('border-b')
@@ -5026,7 +5108,7 @@ describe('MessageList', () => {
     expect(screen.getByTestId('thinking-indicator')).toHaveTextContent('正在思考')
   })
 
-  test('collapses tool rows and shows trailing thinking once final text is visible', () => {
+  test('collapses tool rows without trailing generic thinking once final text is visible', () => {
     const runningBlock: ProcessingBlock = {
       id: 'call-1',
       subtaskId: 1,
@@ -5052,7 +5134,7 @@ describe('MessageList', () => {
       />
     )
 
-    expect(screen.getByTestId('thinking-indicator')).toHaveTextContent('正在思考')
+    expect(screen.queryByTestId('thinking-indicator')).not.toBeInTheDocument()
     expect(screen.queryByTestId('tool-block-thinking')).not.toBeInTheDocument()
     expect(screen.queryByTestId('processing-live-preview')).not.toBeInTheDocument()
     expect(screen.getByTestId('final-processing-toggle')).toHaveAttribute('aria-expanded', 'false')

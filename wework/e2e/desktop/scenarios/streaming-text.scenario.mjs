@@ -12,16 +12,21 @@ const LEGACY_CONVERSATION_PROMPT = 'WEWORK_DESKTOP_E2E_LEGACY_CONVERSATION_INITI
 const LEGACY_CONVERSATION_COMPLETION = 'WEWORK_DESKTOP_E2E_LEGACY_CONVERSATION_COMPLETE'
 const LEGACY_TRANSCRIPT_ITEM_ID = 'wework-desktop-e2e-legacy-assistant-text'
 const LONG_CODE_PROMPT = 'WEWORK_DESKTOP_E2E_LONG_CODE_TERMINAL_BURST'
+const LONG_CODE_STREAM_MARKER = 'WEWORK_DESKTOP_E2E_LONG_CODE_LINE_055'
 const LONG_CODE_MARKER = 'WEWORK_DESKTOP_E2E_LONG_CODE_LINE_110'
 const LONG_CODE_COMPLETION = [
   'The completed response contains one long SQL block and a windowed Markdown tail.',
   '',
   '```sql',
-  ...Array.from(
-    { length: 110 },
-    (_, index) =>
-      `SELECT ${index + 1} AS value_${index + 1}${index === 109 ? `, '${LONG_CODE_MARKER}' AS marker` : ''};`
-  ),
+  ...Array.from({ length: 110 }, (_, index) => {
+    const line = index + 1
+    return `SELECT ${line} AS value_${line}, 'customer_${String(line).padStart(
+      3,
+      '0'
+    )}' AS customer_name, JSON_OBJECT('id', ${line}, 'status', 'active', 'description', 'streaming long code row ${line}') AS payload${
+      index === 54 ? `, '${LONG_CODE_STREAM_MARKER}' AS stream_marker` : ''
+    }${index === 109 ? `, '${LONG_CODE_MARKER}' AS marker` : ''} FROM generated_records WHERE record_id = ${line};`
+  }),
   '```',
   '',
   ...Array.from(
@@ -37,6 +42,9 @@ const LONG_CODE_REASONING = Array.from(
 const VISUALIZATION_PROMPT = 'WEWORK_DESKTOP_E2E_ABSOLUTE_VISUALIZATION'
 const VISUALIZATION_TITLE = 'Absolute visualization E2E'
 const VISUALIZATION_MARKER = 'WEWORK_DESKTOP_E2E_VISUALIZATION_VISIBLE'
+const WINDOWS_LINK_PROMPT = 'WEWORK_DESKTOP_E2E_WINDOWS_DRIVE_LINK'
+const WINDOWS_LINK_LABEL = 'wegent'
+const WINDOWS_LINK_COMPLETION = '[wegent](C:/projects/example-app/wegent)'
 const PHASE_FLIP_PROMPT = 'WEWORK_DESKTOP_E2E_PROCESS_TO_FALLBACK_FINAL'
 const PHASE_FLIP_TEXT = 'WEWORK_DESKTOP_E2E_FALLBACK_FINAL_FROM_PROCESS'
 const TIMER_PROMPT = 'WEWORK_DESKTOP_E2E_RUNNING_TIMER_PERSISTS'
@@ -64,6 +72,8 @@ const SCROLLER_SELECTOR = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="desktop-wo
 const SCROLL_TO_BOTTOM_BUTTON_SELECTOR = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="scroll-to-bottom-button"]`
 const COMPOSER_CARD_SELECTOR = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="desktop-floating-composer-card"]`
 const ASSISTANT_CONTENT_SELECTOR = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="assistant-message-content"]`
+const ASSISTANT_MESSAGE_SELECTOR = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="message-assistant"]`
+const ASSISTANT_MARKDOWN_LINK_SELECTOR = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="assistant-markdown-link"]`
 const THINKING_INDICATOR_SELECTOR = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="thinking-indicator"]`
 const TOOL_THINKING_INDICATOR_SELECTOR = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="tool-thinking-indicator"]`
 const USER_MESSAGE_SELECTOR = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="message-user"]`
@@ -72,6 +82,8 @@ const USER_MESSAGE_SELECTOR_MARKED = `${ACTIVE_WORKBENCH_SELECTOR} [data-e2e-anc
 const PROCESSING_SUMMARY_SELECTOR = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="processing-summary-header"]`
 const PROCESS_TEXT_SELECTOR = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="process-text-block"]`
 const LONG_CODE_SCROLL_SELECTOR = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="markdown-code-scroll-container"]`
+const LONG_CODE_E2E_ID = 'streaming-text-long-code'
+const LONG_CODE_MARKED_SELECTOR = `${ACTIVE_WORKBENCH_SELECTOR} [data-e2e-anchor-id="${LONG_CODE_E2E_ID}"]`
 const VIEWPORT_ANCHOR_TEXT = `${VIEWPORT_MARKER}: this paragraph must remain fixed after the user scrolls upward.`
 const VIEWPORT_ANCHOR_E2E_ID = 'streaming-text-viewport-anchor'
 const VIEWPORT_ANCHOR_SCOPE_SELECTOR = `${PROCESS_TEXT_SELECTOR} [data-scroll-anchor]`
@@ -373,6 +385,10 @@ function requestContainsVisualizationPrompt(body) {
   return JSON.stringify(body.input ?? []).includes(VISUALIZATION_PROMPT)
 }
 
+function requestContainsWindowsLinkPrompt(body) {
+  return JSON.stringify(body.input ?? []).includes(WINDOWS_LINK_PROMPT)
+}
+
 function requestContainsTimerPrompt(body) {
   return JSON.stringify(body.input ?? []).includes(TIMER_PROMPT)
 }
@@ -459,7 +475,17 @@ async function getSingleElementMetrics(control, selector, description) {
 }
 
 function distanceFromBottom(metrics) {
+  if (metrics.scrollOrigin === 'bottom') {
+    return Math.max(0, -metrics.scrollTop)
+  }
   return Math.max(0, metrics.scrollHeight - metrics.clientHeight - metrics.scrollTop)
+}
+
+function distanceFromTop(metrics) {
+  if (metrics.scrollOrigin === 'bottom') {
+    return Math.max(0, metrics.scrollHeight - metrics.clientHeight + metrics.scrollTop)
+  }
+  return Math.max(0, metrics.scrollTop)
 }
 
 function assertElementFullyVisible(elementMetrics, scrollerMetrics, description) {
@@ -545,6 +571,7 @@ async function waitForBottom(control, description, timeoutMs) {
 
 async function assertScrollPositionRemainsStable(control, initialMetrics, description, timeoutMs) {
   const startedAt = Date.now()
+  const initialDistanceFromTop = distanceFromTop(initialMetrics)
   while (Date.now() - startedAt < timeoutMs) {
     const metrics = await getSingleElementMetrics(control, SCROLLER_SELECTOR, description)
     assert.ok(
@@ -552,8 +579,8 @@ async function assertScrollPositionRemainsStable(control, initialMetrics, descri
       `${description} returned to the bottom after the user scrolled upward`
     )
     assert.ok(
-      Math.abs(metrics.scrollTop - initialMetrics.scrollTop) <= 8,
-      `${description} jumped from ${initialMetrics.scrollTop}px to ${metrics.scrollTop}px`
+      Math.abs(distanceFromTop(metrics) - initialDistanceFromTop) <= 8,
+      `${description} jumped from ${initialDistanceFromTop}px to ${distanceFromTop(metrics)}px from the content top`
     )
     await new Promise(resolve => setTimeout(resolve, 100))
   }
@@ -732,6 +759,7 @@ export function createDesktopScenario({
   let toolRegressionStage = 'initial'
   let timerStage = 'initial'
   let releaseAppend
+  let releaseLongCodeStream
   let releasePhaseFlipCompletion
   let releaseResponse
   let releaseScrollButtonAppend
@@ -747,6 +775,9 @@ export function createDesktopScenario({
   let targetRequest
   const appendRelease = new Promise(resolve => {
     releaseAppend = resolve
+  })
+  const longCodeStreamRelease = new Promise(resolve => {
+    releaseLongCodeStream = resolve
   })
   const phaseFlipCompletionRelease = new Promise(resolve => {
     releasePhaseFlipCompletion = resolve
@@ -792,21 +823,74 @@ export function createDesktopScenario({
     await control.command('fill', COMPOSER_SELECTOR, { value: LONG_CODE_PROMPT })
     await control.command('press', COMPOSER_SELECTOR, { key: 'Enter' })
     await control.command('waitFor', ASSISTANT_CONTENT_SELECTOR, {
-      text: LONG_CODE_MARKER,
-      stableMs: 750,
+      text: LONG_CODE_STREAM_MARKER,
+      stableMs: 250,
       timeoutMs: uiTimeoutMs,
     })
-    assert.equal(
-      await control.command('getAttribute', LONG_CODE_SCROLL_SELECTOR, {
-        value: 'data-syntax-highlighted',
-      }),
-      'false',
-      'The long completed code block enabled expensive syntax highlighting'
+    await control.command('markElementWithText', `${LONG_CODE_SCROLL_SELECTOR} code`, {
+      text: LONG_CODE_STREAM_MARKER,
+      value: LONG_CODE_E2E_ID,
+      timeoutMs: uiTimeoutMs,
+    })
+    const streamingClass = await control.command('getAttribute', LONG_CODE_SCROLL_SELECTOR, {
+      value: 'class',
+    })
+    assert.match(
+      streamingClass,
+      /\bscrollbar-none\b/,
+      'The native horizontal scrollbar remained visible while long code streamed'
     )
     assert.equal(
-      Number(await control.command('getElementCount', `${LONG_CODE_SCROLL_SELECTOR} .token`)),
+      Number(await control.command('getElementCount', THINKING_INDICATOR_SELECTOR)),
       0,
-      'The long completed code block rendered syntax token nodes'
+      'The generic thinking indicator remained after long-code output became visible'
+    )
+
+    releaseLongCodeStream()
+    await control.command('waitFor', ASSISTANT_CONTENT_SELECTOR, {
+      text: LONG_CODE_MARKER,
+      stableMs: 500,
+      timeoutMs: uiTimeoutMs,
+    })
+    await waitForRuntimePaneReadyToSend(control, uiTimeoutMs)
+    assert.equal(
+      Number(await control.command('getElementCount', LONG_CODE_MARKED_SELECTOR)),
+      1,
+      'The long code DOM was replaced while more lines streamed'
+    )
+
+    let syntaxHighlighted = 'false'
+    const highlightDeadline = Date.now() + uiTimeoutMs
+    while (Date.now() < highlightDeadline) {
+      syntaxHighlighted = await control.command('getAttribute', LONG_CODE_SCROLL_SELECTOR, {
+        value: 'data-syntax-highlighted',
+      })
+      if (syntaxHighlighted === 'true') break
+      await new Promise(resolve => setTimeout(resolve, 50))
+    }
+    assert.equal(
+      syntaxHighlighted,
+      'true',
+      'The completed long code block did not receive syntax highlighting'
+    )
+    assert.ok(
+      Number(
+        await control.command('getElementCount', `${LONG_CODE_SCROLL_SELECTOR} .hljs-keyword`)
+      ) > 0,
+      'The completed long code block did not render highlighted keyword nodes'
+    )
+    const completedClass = await control.command('getAttribute', LONG_CODE_SCROLL_SELECTOR, {
+      value: 'class',
+    })
+    assert.doesNotMatch(
+      completedClass,
+      /\bscrollbar-none\b/,
+      'The completed long code block kept its horizontal scrollbar hidden'
+    )
+    assert.match(
+      completedClass,
+      /\bscrollbar-soft\b/,
+      'The completed long code block did not restore its horizontal scrollbar'
     )
     await waitForBottom(control, 'The terminal-burst long-code conversation', uiTimeoutMs)
     const rapidScrollSamples = JSON.parse(
@@ -823,6 +907,23 @@ export function createDesktopScenario({
       `Rapid scrolling exposed an empty Markdown viewport: ${JSON.stringify(rapidScrollSamples)}`
     )
     await capture(control, 'streaming-text-00-long-code-terminal-burst.png')
+  }
+
+  const verifyWindowsDriveLinkRendering = async control => {
+    await control.command('click', '[data-testid="new-chat-button"]')
+    await control.command('waitFor', COMPOSER_SELECTOR, { timeoutMs: uiTimeoutMs })
+    await control.command('fill', COMPOSER_SELECTOR, { value: WINDOWS_LINK_PROMPT })
+    await control.command('press', COMPOSER_SELECTOR, { key: 'Enter' })
+    await control.command('waitFor', ASSISTANT_MARKDOWN_LINK_SELECTOR, {
+      text: WINDOWS_LINK_LABEL,
+      timeoutMs: uiTimeoutMs,
+    })
+    const snapshot = JSON.parse(await control.command('snapshot', ACTIVE_WORKBENCH_SELECTOR))
+    assert.ok(
+      !snapshot.text.includes('[blocked]'),
+      'The Windows drive-letter markdown link was rendered as blocked text'
+    )
+    await capture(control, 'streaming-text-00-windows-drive-link.png')
   }
 
   const verifyStoppedTurnOrder = async control => {
@@ -844,7 +945,7 @@ export function createDesktopScenario({
     await control.command('waitFor', '[data-testid="pause-response-button"]', {
       timeoutMs: uiTimeoutMs,
     })
-    await control.command('waitFor', PROCESS_TEXT_SELECTOR, {
+    await control.command('waitFor', ASSISTANT_MESSAGE_SELECTOR, {
       text: ORDER_STOP_PARTIAL,
       stableMs: 500,
       timeoutMs: uiTimeoutMs,
@@ -899,15 +1000,40 @@ export function createDesktopScenario({
       const latestInput = latestModelInputText(body)
       const followUpNumber = orderFollowUpNumber(body)
       if (latestInput.includes(LONG_CODE_PROMPT)) {
-        response.writeHead(200, { 'Content-Type': 'text/event-stream; charset=utf-8' })
-        response.end(
+        const stream = streamingEvents(responseId, LONG_CODE_COMPLETION, 'final_answer')
+        response.writeHead(200, {
+          'Cache-Control': 'no-cache',
+          Connection: 'keep-alive',
+          'Content-Type': 'text/event-stream; charset=utf-8',
+        })
+        response.flushHeaders()
+        response.write(
           sse([
-            responseCreated(responseId),
+            ...stream.start.slice(0, 1),
             ...reasoningEvents('wework-long-code-reasoning', LONG_CODE_REASONING, 4),
-            assistantMessage(LONG_CODE_COMPLETION, 'final_answer'),
-            responseCompleted(responseId),
+            ...stream.start.slice(1),
           ])
         )
+        let offset = 0
+        let streamedText = ''
+        let streamHeld = false
+        const codeEnd = LONG_CODE_COMPLETION.indexOf('\n```\n\n')
+        assert.ok(codeEnd >= 0, 'The long-code fixture is missing its closing fence')
+        const streamedCode = LONG_CODE_COMPLETION.slice(0, codeEnd + '\n```'.length)
+        const windowedTail = LONG_CODE_COMPLETION.slice(streamedCode.length)
+        for (const chunk of streamedCode.match(/[\s\S]{1,48}/g) ?? []) {
+          response.write(sse(textDeltaEvents(stream.itemId, chunk, offset)))
+          response.flush?.()
+          offset += [...chunk].length
+          streamedText += chunk
+          if (!streamHeld && streamedText.includes(LONG_CODE_STREAM_MARKER)) {
+            streamHeld = true
+            await longCodeStreamRelease
+          }
+          await new Promise(resolve => setTimeout(resolve, 16))
+        }
+        response.write(sse(textDeltaEvents(stream.itemId, windowedTail, offset)))
+        response.end(sse(stream.finish))
         return true
       }
       if (followUpNumber !== null) {
@@ -984,7 +1110,7 @@ export function createDesktopScenario({
         targetRequest = body
         resolveRequest()
         await startRelease
-        const stream = streamingEvents(responseId)
+        const stream = streamingEvents(responseId, COMPLETION_TEXT, null)
         response.writeHead(200, {
           'Cache-Control': 'no-cache',
           Connection: 'keep-alive',
@@ -1076,6 +1202,18 @@ export function createDesktopScenario({
           sse([
             responseCreated(responseId),
             assistantMessage(contentReference),
+            responseCompleted(responseId),
+          ])
+        )
+        return true
+      }
+
+      if (requestContainsWindowsLinkPrompt(body)) {
+        response.writeHead(200, { 'Content-Type': 'text/event-stream; charset=utf-8' })
+        response.end(
+          sse([
+            responseCreated(responseId),
+            assistantMessage(WINDOWS_LINK_COMPLETION),
             responseCompleted(responseId),
           ])
         )
@@ -1175,6 +1313,7 @@ export function createDesktopScenario({
       }
 
       await verifyLongCodeTerminalBurst(control)
+      await verifyWindowsDriveLinkRendering(control)
 
       await control.command('click', '[data-testid="new-chat-button"]')
       await control.command('waitFor', COMPOSER_SELECTOR, { timeoutMs: uiTimeoutMs })
@@ -1209,7 +1348,7 @@ export function createDesktopScenario({
       })
       await control.command('fill', COMPOSER_SELECTOR, { value: PHASE_FLIP_PROMPT })
       await control.command('press', COMPOSER_SELECTOR, { key: 'Enter' })
-      await control.command('waitFor', PROCESS_TEXT_SELECTOR, {
+      await control.command('waitFor', ASSISTANT_CONTENT_SELECTOR, {
         text: PHASE_FLIP_TEXT,
         timeoutMs: uiTimeoutMs,
       })
@@ -1229,7 +1368,7 @@ export function createDesktopScenario({
       assert.equal(
         streamingPhaseFlipSnapshot.text.split(PHASE_FLIP_TEXT).length - 1,
         1,
-        'Provisional assistant text was rendered as final content before the turn completed'
+        'Streaming final text was rendered more than once before the turn completed'
       )
       releasePhaseFlipCompletion()
       await control.command(
@@ -1639,8 +1778,9 @@ export function createDesktopScenario({
         'The streaming conversation after pending bottom restores had time to run'
       )
       assert.ok(
-        Math.abs(stableUserScrollPosition.scrollTop - userScrollPosition.scrollTop) <= 8,
-        `The streaming conversation jumped from ${userScrollPosition.scrollTop}px to ${stableUserScrollPosition.scrollTop}px after the user scrolled upward`
+        Math.abs(distanceFromTop(stableUserScrollPosition) - distanceFromTop(userScrollPosition)) <=
+          8,
+        `The streaming conversation jumped from ${distanceFromTop(userScrollPosition)}px to ${distanceFromTop(stableUserScrollPosition)}px from the content top after the user scrolled upward`
       )
       await assertComposerDocked(
         control,
@@ -1714,14 +1854,14 @@ export function createDesktopScenario({
       const anchorTops = stabilitySamples.frames.map(sample => sample.anchorTop)
       const anchorRange = Math.max(...anchorTops) - Math.min(...anchorTops)
       const effectiveScrollEvents = stabilitySamples.scrollEvents.filter(
-        sample => Math.abs(sample.scrollTop - scrollerBeforeAppend.scrollTop) >= 0.5
+        sample => Math.abs(distanceFromTop(sample) - distanceFromTop(scrollerBeforeAppend)) >= 0.5
       )
       const scrollDirections = effectiveScrollEvents
         .slice(1)
         .map((sample, index) =>
-          Math.abs(sample.scrollTop - effectiveScrollEvents[index].scrollTop) < 0.5
+          Math.abs(distanceFromTop(sample) - distanceFromTop(effectiveScrollEvents[index])) < 0.5
             ? 0
-            : Math.sign(sample.scrollTop - effectiveScrollEvents[index].scrollTop)
+            : Math.sign(distanceFromTop(sample) - distanceFromTop(effectiveScrollEvents[index]))
         )
         .filter(direction => direction !== 0)
       const directionReversals = scrollDirections.filter(
@@ -1751,8 +1891,8 @@ export function createDesktopScenario({
         `The user-selected streaming text moved from ${anchorBeforeAppend.top}px to ${anchorAfterAppend.top}px while later content arrived`
       )
       assert.ok(
-        Math.abs(scrollerAfterAppend.scrollTop - scrollerBeforeAppend.scrollTop) <= 8,
-        `The paused streaming scroller moved from ${scrollerBeforeAppend.scrollTop}px to ${scrollerAfterAppend.scrollTop}px`
+        Math.abs(distanceFromTop(scrollerAfterAppend) - distanceFromTop(scrollerBeforeAppend)) <= 8,
+        `The paused streaming scroller moved from ${distanceFromTop(scrollerBeforeAppend)}px to ${distanceFromTop(scrollerAfterAppend)}px from the content top`
       )
       await assertComposerDocked(
         control,

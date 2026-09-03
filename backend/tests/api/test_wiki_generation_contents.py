@@ -21,6 +21,9 @@ from app.services.knowledge.code_wiki.publish_gate import PUBLISH_GATE_EXT_KEY
 from app.services.knowledge.code_wiki.publisher import PUBLISHED_GENERATION_KEY
 
 WRITE_URL = "/api/internal/wiki/generations/contents"
+REVIEW_URL = "/api/internal/wiki/generations/review"
+REVIEW_OPEN_URL = "/api/internal/wiki/generations/review/open"
+REVIEW_STATE_URL = "/api/internal/wiki/generations/{generation_id}/review"
 
 
 @pytest.fixture
@@ -91,6 +94,32 @@ def _payload(generation_id: int) -> dict:
     }
 
 
+def _review_payload(generation_id: int) -> dict:
+    return {
+        "generation_id": generation_id,
+        "phase": "plan",
+        "status": "passed",
+        "paths": ["index"],
+        "focus_paths": ["index"],
+        "summary": "Plan covers the entry points",
+    }
+
+
+def _review_open_payload(generation_id: int) -> dict:
+    return {
+        "generation_id": generation_id,
+        "phase": "plan",
+        "paths": ["index"],
+        "summary": "Proposed wiki plan",
+        "handoff": "# Plan\n\n- index: repository entry point",
+        "writing_plan": {
+            "mode": "coordinator",
+            "coordinator_paths": ["index"],
+            "work_packages": [],
+        },
+    }
+
+
 def _other_user(db: Session) -> User:
     user = User(
         user_name="writer-other",
@@ -132,6 +161,220 @@ def test_writer_accepts_only_the_generation_execution_user(
         .count()
         == 1
     )
+
+
+def test_writer_records_quality_review_for_a_required_full_rebuild(
+    wiki_writer_client: TestClient, test_db: Session, test_user: User
+):
+    _, generation = _create_generation(
+        test_db,
+        test_user,
+        ext={
+            "qualityReview": {
+                "required": True,
+                "policy": "plan_only",
+                "handoffs": [],
+                "checkpoints": [],
+            }
+        },
+    )
+
+    opened = wiki_writer_client.post(
+        REVIEW_OPEN_URL,
+        json=_review_open_payload(generation.id),
+        headers=_headers(test_user),
+    )
+    assert opened.status_code == 200, opened.text
+    assert opened.json()["state"] == "ready"
+    assert opened.json()["nextAction"] == "review_handoff_and_submit_verdict"
+
+    response = wiki_writer_client.post(
+        REVIEW_URL,
+        json=_review_payload(generation.id),
+        headers=_headers(test_user),
+    )
+
+    assert response.status_code == 200, response.text
+    assert response.json()["state"] == "passed"
+    assert response.json()["reviewPolicy"] == "plan_only"
+    assert response.json()["nextAction"] == "write_pages_then_complete"
+    assert response.json()["handoff"]["writingPlan"]["mode"] == "coordinator"
+    test_db.refresh(generation)
+    checkpoint = generation.ext["qualityReview"]["checkpoints"][0]
+    assert checkpoint["status"] == "passed"
+    assert checkpoint["focusPaths"] == ["index"]
+    assert checkpoint["attempt"] == 1
+    assert checkpoint["fingerprint"]
+
+
+def test_writer_exposes_a_passed_plan_amendment_as_the_effective_plan(
+    wiki_writer_client: TestClient, test_db: Session, test_user: User
+):
+    _, generation = _create_generation(
+        test_db,
+        test_user,
+        ext={
+            "qualityReview": {
+                "required": True,
+                "policy": "plan_only",
+                "handoffs": [],
+                "checkpoints": [],
+            }
+        },
+    )
+    headers = _headers(test_user)
+    assert (
+        wiki_writer_client.post(
+            REVIEW_OPEN_URL,
+            json=_review_open_payload(generation.id),
+            headers=headers,
+        ).status_code
+        == 200
+    )
+    assert (
+        wiki_writer_client.post(
+            REVIEW_URL,
+            json=_review_payload(generation.id),
+            headers=headers,
+        ).status_code
+        == 200
+    )
+
+    amendment_open = {
+        "generation_id": generation.id,
+        "phase": "plan_amendment",
+        "paths": ["index", "architecture/runtime"],
+        "summary": "Add the missing runtime lifecycle page",
+        "handoff": "# Plan amendment\n\nAdd runtime lifecycle coverage.",
+        "writing_plan": {
+            "mode": "coordinator",
+            "coordinator_paths": ["index", "architecture/runtime"],
+            "work_packages": [],
+        },
+    }
+    opened = wiki_writer_client.post(
+        REVIEW_OPEN_URL, json=amendment_open, headers=headers
+    )
+    assert opened.status_code == 200, opened.text
+    assert opened.json()["state"] == "ready"
+
+    verdict = wiki_writer_client.post(
+        REVIEW_URL,
+        json={
+            "generation_id": generation.id,
+            "phase": "plan_amendment",
+            "status": "passed",
+            "paths": ["index", "architecture/runtime"],
+            "focus_paths": ["architecture/runtime"],
+            "summary": "The added page has distinct source-backed scope",
+        },
+        headers=headers,
+    )
+    assert verdict.status_code == 200, verdict.text
+
+    state = wiki_writer_client.get(
+        REVIEW_STATE_URL.format(generation_id=generation.id),
+        params={"phase": "plan"},
+        headers=headers,
+    )
+    assert state.status_code == 200, state.text
+    assert state.json()["effectivePlan"] == {
+        "phase": "plan_amendment",
+        "paths": ["architecture/runtime", "index"],
+        "focusPaths": ["architecture/runtime", "index"],
+        "writingPlan": {
+            "mode": "coordinator",
+            "coordinatorPaths": ["architecture/runtime", "index"],
+            "workPackages": [],
+        },
+    }
+
+
+def test_writer_reads_persisted_review_state(
+    wiki_writer_client: TestClient, test_db: Session, test_user: User
+):
+    _, generation = _create_generation(
+        test_db,
+        test_user,
+        ext={
+            "qualityReview": {
+                "required": True,
+                "policy": "plan_only",
+                "handoffs": [],
+                "checkpoints": [
+                    {
+                        "phase": "plan",
+                        "status": "passed",
+                        "paths": ["index"],
+                        "summary": "plan is covered",
+                        "findings": "",
+                        "fingerprint": "fingerprint",
+                        "attempt": 1,
+                    }
+                ],
+            }
+        },
+    )
+
+    response = wiki_writer_client.get(
+        REVIEW_STATE_URL.format(generation_id=generation.id),
+        params={"phase": "plan"},
+        headers=_headers(test_user),
+    )
+
+    assert response.status_code == 200, response.text
+    assert response.json()["generationId"] == generation.id
+    assert response.json()["state"] == "passed"
+    assert response.json()["reviewPolicy"] == "plan_only"
+    assert response.json()["nextAction"] == "write_pages_then_complete"
+    assert response.json()["review"]["summary"] == "plan is covered"
+    assert response.json()["writing"] == {
+        "plannedPaths": ["index"],
+        "writtenPaths": [],
+        "missingPaths": ["index"],
+        "unexpectedPaths": [],
+    }
+
+
+def test_writer_reports_a_terminal_generation_to_the_reviewer(
+    wiki_writer_client: TestClient, test_db: Session, test_user: User
+):
+    _, generation = _create_generation(
+        test_db,
+        test_user,
+        status=WikiGenerationStatus.FAILED,
+        ext={"failureCode": FailureCode.TASK_ENDED_WITHOUT_REPORT},
+    )
+
+    response = wiki_writer_client.post(
+        REVIEW_URL,
+        json=_review_payload(generation.id),
+        headers=_headers(test_user),
+    )
+
+    assert response.status_code == 409
+    assert response.json()["detail"] == {
+        "code": "generation_not_writable",
+        "message": "Generation is not in a writable state",
+        "generationStatus": "FAILED",
+        "failureCode": FailureCode.TASK_ENDED_WITHOUT_REPORT,
+        "retryable": False,
+        "nextAction": "start_new_generation",
+    }
+
+
+def test_writer_refuses_quality_review_when_the_run_does_not_require_it(
+    wiki_writer_client: TestClient, test_db: Session, test_user: User
+):
+    _, generation = _create_generation(test_db, test_user)
+
+    response = wiki_writer_client.post(
+        REVIEW_URL,
+        json=_review_payload(generation.id),
+        headers=_headers(test_user),
+    )
+
+    assert response.status_code == 409
 
 
 def test_writer_rejects_the_removed_fixed_token(

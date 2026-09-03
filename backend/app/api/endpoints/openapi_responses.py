@@ -100,6 +100,48 @@ async def _iter_callback_events(pubsub_obj: Any, cancel_event: Any):
             return
 
 
+def _build_result_block_streaming_chunks(
+    result: Any,
+    known_blocks: Dict[str, Dict[str, Any]],
+) -> list[Any]:
+    """Convert result blocks carried by chunk/done events into streaming chunks."""
+    from app.services.openapi.streaming import StreamingChunk
+
+    if not isinstance(result, dict):
+        return []
+    blocks = result.get("blocks")
+    if not isinstance(blocks, list):
+        return []
+
+    chunks: list[StreamingChunk] = []
+    for block in blocks:
+        if not isinstance(block, dict) or not block.get("id"):
+            continue
+        block_id = str(block["id"])
+        if block_id not in known_blocks:
+            known_blocks[block_id] = dict(block)
+            chunks.append(
+                StreamingChunk(
+                    type="block_created",
+                    data={"block": block},
+                )
+            )
+            continue
+
+        updates = {key: value for key, value in block.items() if key != "id"}
+        known_blocks[block_id].update(updates)
+        chunks.append(
+            StreamingChunk(
+                type="block_updated",
+                data={
+                    "block_id": block_id,
+                    "updates": updates,
+                },
+            )
+        )
+    return chunks
+
+
 def _normalize_auto_delete_executor_header(value: Optional[str]) -> Optional[str]:
     """Normalize auto-delete header values to task label strings."""
     if value is None:
@@ -199,6 +241,89 @@ def _exception_message(exc: HTTPException) -> str:
     if isinstance(exc.detail, str):
         return exc.detail
     return json.dumps(exc.detail, ensure_ascii=False)
+
+
+def _model_category_from_kind(model: Any) -> str:
+    """Return the normalized model category stored in a Model CRD."""
+    model_json = model.json if model and isinstance(model.json, dict) else {}
+    spec = model_json.get("spec") if isinstance(model_json, dict) else {}
+    if not isinstance(spec, dict):
+        return "llm"
+    model_type = spec.get("modelType") or "llm"
+    return str(getattr(model_type, "value", model_type)).strip().lower()
+
+
+def _generation_options(request_body: ResponseCreateInput) -> Any:
+    wegent_options = getattr(request_body, "wegent_options", None)
+    return getattr(wegent_options, "generation", None)
+
+
+def _generation_options_dict(
+    request_body: ResponseCreateInput,
+) -> Optional[Dict[str, Any]]:
+    generation_options = _generation_options(request_body)
+    if generation_options is None:
+        return None
+    return generation_options.model_dump(exclude_none=True)
+
+
+def _execution_model_type(execution_request: Any) -> str:
+    """Return the normalized model type from an execution request."""
+    model_config = getattr(execution_request, "model_config", {}) or {}
+    return str(model_config.get("modelType") or "").lower()
+
+
+def _validate_generation_options_model(
+    request_body: ResponseCreateInput,
+    execution_request: Any,
+) -> None:
+    """Reject OpenAPI generation options for non-generation execution models."""
+    if _generation_options(request_body) is None:
+        return
+    if _execution_model_type(execution_request) not in {"image", "video"}:
+        raise ValueError(
+            "Generation options are only supported for image or video models"
+        )
+
+
+def _should_run_in_background(
+    *,
+    requested_background: bool,
+    execution_request: Any,
+) -> bool:
+    """Video generation is always asynchronous."""
+    return requested_background or _execution_model_type(execution_request) == "video"
+
+
+async def _reject_video_streaming(
+    *,
+    request_body: ResponseCreateInput,
+    execution_request: Any,
+    subtask_id: int,
+    task_id: int,
+) -> None:
+    """Reject video streaming while preserving callback streaming for executors."""
+    if (
+        not request_body.stream
+        or request_body.background
+        or _execution_model_type(execution_request) != "video"
+    ):
+        return
+
+    error_message = (
+        "Streaming is not supported for video generation. "
+        "Use stream=false and poll GET /api/v1/responses/{id}."
+    )
+    await _persist_terminal_failure(
+        subtask_id=subtask_id,
+        task_id=task_id,
+        error_message=error_message,
+        error_code="streaming_not_supported",
+    )
+    raise HTTPException(
+        status_code=status.HTTP_400_BAD_REQUEST,
+        detail=error_message,
+    )
 
 
 async def _persist_terminal_failure(
@@ -370,6 +495,7 @@ async def create_response(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail=f"Model '{model_namespace}/{model_name}' not found",
             )
+        model_info["model_type"] = _model_category_from_kind(model)
     else:
         # If model_id is not provided, verify that all team's bots have valid modelRef
         # Parse team JSON to Team CRD object
@@ -382,7 +508,7 @@ async def create_response(
             )
 
         # Validate all members' bots have valid modelRef
-        for member in team_crd.spec.members:
+        for member_index, member in enumerate(team_crd.spec.members):
             bot_ref = member.botRef
             bot_name = bot_ref.name
             bot_namespace = bot_ref.namespace
@@ -418,6 +544,16 @@ async def create_response(
                     status_code=status.HTTP_400_BAD_REQUEST,
                     detail=f"Bot '{bot_namespace}/{bot_name}' does not have a valid model configured. Please specify model_id in the request or configure modelRef for the bot.",
                 )
+            if member_index == 0:
+                default_model = kindReader.get_by_name_and_namespace(
+                    db,
+                    current_user.id,
+                    KindType.MODEL,
+                    model_ref.namespace,
+                    model_ref.name,
+                )
+                if default_model:
+                    model_info["model_type"] = _model_category_from_kind(default_model)
 
     # Use unified trigger architecture for all shell types
     # ExecutionRouter will automatically select communication mode based on shell_type
@@ -495,6 +631,7 @@ async def _create_non_streaming_response_unified(
         task_id,
         api_key_name,
         auto_delete_executor,
+        generation_params=_generation_options_dict(request_body),
     )
 
     response_id = f"resp_{setup.task_id}"
@@ -516,8 +653,9 @@ async def _create_non_streaming_response_unified(
     enable_tools = enable_chat_bot or bool(current_kb_refs) or bool(inherited_kb_refs)
 
     # Link attachments to user subtask if provided
+    linked_attachment_ids = None
     if request_body.attachment_ids:
-        link_contexts_to_subtask(
+        linked_attachment_ids = link_contexts_to_subtask(
             db=db,
             subtask_id=setup.user_subtask.id,
             user_id=user.id,
@@ -549,7 +687,10 @@ async def _create_non_streaming_response_unified(
             preload_skills=preload_skills,
             knowledge_base_refs=current_kb_refs,
             reasoning_config=reasoning_config,
+            generation_params=_generation_options(request_body),
+            attachment_ids=linked_attachment_ids,
         )
+        _validate_generation_options_model(request_body, execution_request)
     except ExternalRefValidationError as e:
         logger.warning("Failed to build execution request: %s", e)
         await _persist_terminal_failure(
@@ -569,6 +710,17 @@ async def _create_non_streaming_response_unified(
             error_message=_exception_message(e),
         )
         raise
+    except ValueError as e:
+        logger.warning("Invalid execution request: %s", e)
+        await _persist_terminal_failure(
+            subtask_id=assistant_subtask_id,
+            task_id=task_kind_id,
+            error_message=str(e),
+        )
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(e),
+        ) from e
     except Exception as e:
         logger.error(f"Failed to build execution request: {e}")
         await _persist_terminal_failure(
@@ -588,6 +740,17 @@ async def _create_non_streaming_response_unified(
         except Exception:
             pass
         db.close()
+
+    try:
+        await _reject_video_streaming(
+            request_body=request_body,
+            execution_request=execution_request,
+            subtask_id=assistant_subtask_id,
+            task_id=task_kind_id,
+        )
+    except HTTPException:
+        _close_db()
+        raise
 
     # Helper: execute and collect content using SSEResultEmitter
     async def _execute_and_collect() -> tuple[str, Optional[Any]]:
@@ -626,6 +789,10 @@ async def _create_non_streaming_response_unified(
 
     # Check if SSE mode is supported
     supports_sse = execution_dispatcher.supports_streaming(execution_request)
+    background = _should_run_in_background(
+        requested_background=background,
+        execution_request=execution_request,
+    )
 
     # Non-SSE mode: dispatch and return queued response
     if not supports_sse:
@@ -781,8 +948,7 @@ async def _create_streaming_response_unified(
 ) -> StreamingResponse:
     """Create streaming response using unified trigger architecture.
 
-    Uses build_execution_request + dispatch_sse_stream for streaming.
-    Raises NotImplementedError if the shell type doesn't support streaming.
+    Uses direct SSE for Chat shells and callback streaming for executor shells.
     """
     from app.services.chat.storage import session_manager
     from app.services.chat.trigger.unified import build_execution_request
@@ -802,6 +968,7 @@ async def _create_streaming_response_unified(
         task_id,
         api_key_name,
         auto_delete_executor,
+        generation_params=_generation_options_dict(request_body),
     )
 
     # Add trace events for session setup
@@ -839,8 +1006,9 @@ async def _create_streaming_response_unified(
     enable_tools = enable_chat_bot or bool(current_kb_refs) or bool(inherited_kb_refs)
 
     # Link attachments to user subtask if provided
+    linked_attachment_ids = None
     if request_body.attachment_ids:
-        link_contexts_to_subtask(
+        linked_attachment_ids = link_contexts_to_subtask(
             db=db,
             subtask_id=setup.user_subtask.id,
             user_id=user.id,
@@ -872,7 +1040,10 @@ async def _create_streaming_response_unified(
             preload_skills=preload_skills,
             knowledge_base_refs=current_kb_refs,
             reasoning_config=reasoning_config,
+            generation_params=_generation_options(request_body),
+            attachment_ids=linked_attachment_ids,
         )
+        _validate_generation_options_model(request_body, execution_request)
     except ExternalRefValidationError as e:
         logger.warning("Failed to build execution request: %s", e)
         await _persist_terminal_failure(
@@ -892,6 +1063,17 @@ async def _create_streaming_response_unified(
             error_message=_exception_message(e),
         )
         raise
+    except ValueError as e:
+        logger.warning("Invalid execution request: %s", e)
+        await _persist_terminal_failure(
+            subtask_id=assistant_subtask_id,
+            task_id=task_kind_id,
+            error_message=str(e),
+        )
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(e),
+        ) from e
     except Exception as e:
         logger.error(f"Failed to build execution request: {e}")
         await _persist_terminal_failure(
@@ -911,24 +1093,12 @@ async def _create_streaming_response_unified(
             pass
         db.close()
 
-    if not execution_dispatcher.supports_streaming(execution_request):
-        error_message = "Streaming is only supported for Chat Shell type teams"
-        await _persist_terminal_failure(
-            subtask_id=assistant_subtask_id,
-            task_id=task_kind_id,
-            error_message=error_message,
-            error_code="streaming_not_supported",
-        )
-        logger.warning(
-            "[OPENAPI] Streaming rejected for non-SSE task: "
-            "task_id=%d, subtask_id=%d",
-            task_kind_id,
-            assistant_subtask_id,
-        )
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=error_message,
-        )
+    await _reject_video_streaming(
+        request_body=request_body,
+        execution_request=execution_request,
+        subtask_id=assistant_subtask_id,
+        task_id=task_kind_id,
+    )
 
     @trace_async_generator(
         span_name="openapi.raw_chat_stream",
@@ -949,6 +1119,7 @@ async def _create_streaming_response_unified(
         accumulated_content = ""
         accumulated_reasoning = ""
         tool_states: Dict[str, Dict[str, Any]] = {}
+        response_blocks: Dict[str, Dict[str, Any]] = {}
         next_output_index = 0
         reasoning_output_started = False
         message_output_started = False
@@ -1059,6 +1230,11 @@ async def _create_streaming_response_unified(
                         break
 
                     if event.type == EventType.CHUNK.value:
+                        for block_chunk in _build_result_block_streaming_chunks(
+                            event.result,
+                            response_blocks,
+                        ):
+                            yield block_chunk
                         content = event.content or ""
                         if content:
                             if not message_output_started:
@@ -1078,6 +1254,9 @@ async def _create_streaming_response_unified(
                     elif event.type == EventType.BLOCK_CREATED.value:
                         block = event.data.get("block") if event.data else None
                         if isinstance(block, dict):
+                            block_id = str(block.get("id") or "")
+                            if block_id:
+                                response_blocks[block_id] = dict(block)
                             yield StreamingChunk(
                                 type="block_created",
                                 data={"block": block},
@@ -1086,10 +1265,13 @@ async def _create_streaming_response_unified(
                         block_id = event.data.get("block_id") if event.data else None
                         updates = event.data.get("updates") if event.data else None
                         if block_id and isinstance(updates, dict):
+                            block_id = str(block_id)
+                            if block_id in response_blocks:
+                                response_blocks[block_id].update(updates)
                             yield StreamingChunk(
                                 type="block_updated",
                                 data={
-                                    "block_id": str(block_id),
+                                    "block_id": block_id,
                                     "updates": updates,
                                 },
                             )
@@ -1262,6 +1444,11 @@ async def _create_streaming_response_unified(
                                 },
                             )
                     if event.type == EventType.DONE.value:
+                        for block_chunk in _build_result_block_streaming_chunks(
+                            event.result,
+                            response_blocks,
+                        ):
+                            yield block_chunk
                         logger.info(
                             f"[OPENAPI] Stream completed for subtask {assistant_subtask_id}"
                         )

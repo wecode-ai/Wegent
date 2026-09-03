@@ -18,6 +18,8 @@ import {
   type LocalExecutorLog,
   type LocalExecutorStatus,
 } from '@/desktop/localExecutor'
+import { invokeDesktopHost } from '@/api/dsh/desktopHost'
+import { getDesktopWindowLabel, isElectronRuntime } from '@/lib/runtime-environment'
 
 function getLocalExecutorLogDisplayPath(): string {
   return getPlatform() === 'win'
@@ -82,14 +84,30 @@ async function resolveLocalRuntimeState(
   fallbackError: string,
   errorText: LocalRuntimeErrorText
 ): Promise<LocalRuntimeState> {
+  const startedAt = performance.now()
+  console.info('[startup][renderer]', {
+    step: 'local-executor-initialize',
+    status: 'started',
+  })
   try {
     const status = await ensureLocalExecutorAvailable()
     const statusError = localRuntimeError(status, errorText)
     if (statusError) {
       throw new Error(statusError)
     }
+    console.info('[startup][renderer]', {
+      step: 'local-executor-initialize',
+      status: 'completed',
+      elapsedMs: Math.round(performance.now() - startedAt),
+    })
     return { phase: 'ready', error: null }
   } catch (error) {
+    console.info('[startup][renderer]', {
+      step: 'local-executor-initialize',
+      status: 'failed',
+      elapsedMs: Math.round(performance.now() - startedAt),
+      errorType: error instanceof Error ? error.name : typeof error,
+    })
     return {
       phase: 'failed',
       error: errorMessage(error, fallbackError),
@@ -268,6 +286,15 @@ export function LocalRuntimeInitializer({
       console.error('[Wework] Failed to apply cloud connection to local executor:', error)
     })
   }, [enabled, state.phase])
+
+  useEffect(() => {
+    if (state.phase !== 'failed' || !isElectronRuntime() || getDesktopWindowLabel() !== 'main') {
+      return
+    }
+    void invokeDesktopHost<void>('renderer.startupFailed').catch(error => {
+      console.error('[Wework] Failed to report the local runtime startup error', error)
+    })
+  }, [state.phase])
 
   const handleCopyDebugInfo = useCallback(async () => {
     setCopyDebugState('copying')

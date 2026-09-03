@@ -1,16 +1,11 @@
 import { removeToken } from './auth'
 import { redirectToLogin } from '@/features/auth/redirect'
+import { createRequestId } from '@/lib/request-id'
 
 const SLOW_HTTP_REQUEST_MS = 5000
-let requestSequence = 0
 
 function nowMs(): number {
   return typeof performance !== 'undefined' ? performance.now() : Date.now()
-}
-
-function createRequestId(): string {
-  requestSequence += 1
-  return `wework-${Date.now().toString(36)}-${requestSequence.toString(36)}`
 }
 
 function transportName(): 'fetch' {
@@ -53,7 +48,7 @@ function requestLogFields(
   fields: Record<string, unknown> = {}
 ): Record<string, unknown> {
   return {
-    requestId: context.requestId,
+    request_id: context.requestId,
     method: context.method,
     baseUrl: context.baseUrl,
     endpoint: context.endpoint,
@@ -95,15 +90,16 @@ export interface HttpClientOptions {
 export interface HttpRequestOptions {
   redirectOnUnauthorized?: boolean
   signal?: AbortSignal
+  headers?: HeadersInit
 }
 
 export interface HttpClient {
   get<T>(endpoint: string, options?: HttpRequestOptions): Promise<T>
   getBlob(endpoint: string): Promise<Blob>
-  post<T>(endpoint: string, data?: unknown): Promise<T>
-  put<T>(endpoint: string, data?: unknown): Promise<T>
-  patch<T>(endpoint: string, data?: unknown): Promise<T>
-  delete<T>(endpoint: string, data?: unknown): Promise<T>
+  post<T>(endpoint: string, data?: unknown, options?: HttpRequestOptions): Promise<T>
+  put<T>(endpoint: string, data?: unknown, options?: HttpRequestOptions): Promise<T>
+  patch<T>(endpoint: string, data?: unknown, options?: HttpRequestOptions): Promise<T>
+  delete<T>(endpoint: string, data?: unknown, options?: HttpRequestOptions): Promise<T>
 }
 
 function defaultGetToken(): string | null {
@@ -166,7 +162,7 @@ export function createHttpClient(options: HttpClientOptions): HttpClient {
     const isFormData = init.body instanceof FormData
     const method = init.method ?? 'GET'
     const startedAt = nowMs()
-    const requestId = createRequestId()
+    const requestId = createRequestId('wework-http')
     const logContext = {
       requestId,
       method,
@@ -180,6 +176,10 @@ export function createHttpClient(options: HttpClientOptions): HttpClient {
         requestLogFields(logContext, { phase: 'waiting_for_response' })
       )
     }, SLOW_HTTP_REQUEST_MS)
+    console.debug(
+      `[Wework] HTTP ${method} ${endpoint} started.`,
+      requestLogFields(logContext, { phase: 'request_started' })
+    )
     let response: Response
     try {
       response = await httpFetch()(requestUrl(options.baseUrl, endpoint), {
@@ -195,6 +195,7 @@ export function createHttpClient(options: HttpClientOptions): HttpClient {
               : {}),
           ...(token ? { Authorization: `Bearer ${token}` } : {}),
           ...init.headers,
+          'X-Request-ID': requestId,
         },
       })
     } catch (error) {
@@ -211,13 +212,21 @@ export function createHttpClient(options: HttpClientOptions): HttpClient {
     window.clearTimeout(slowTimer)
     const elapsedMs = Math.round(nowMs() - startedAt)
     const backendRequestId = response.headers?.get?.('X-Request-ID') || null
+    console.debug(
+      `[Wework] HTTP ${method} ${endpoint} completed in ${elapsedMs}ms.`,
+      requestLogFields(logContext, {
+        phase: 'response_received',
+        status: response.status,
+        backend_request_id: backendRequestId,
+      })
+    )
     if (elapsedMs >= SLOW_HTTP_REQUEST_MS) {
       console.warn(
         `[Wework] HTTP ${method} ${endpoint} completed slowly in ${elapsedMs}ms.`,
         requestLogFields(logContext, {
           phase: 'response_received',
           status: response.status,
-          backendRequestId,
+          backend_request_id: backendRequestId,
           serverTiming: response.headers?.get?.('Server-Timing') || null,
         })
       )
@@ -236,7 +245,7 @@ export function createHttpClient(options: HttpClientOptions): HttpClient {
       requestLogFields(diagnostics.logContext, {
         phase: 'http_error',
         status: response.status,
-        backendRequestId: diagnostics.backendRequestId,
+        backend_request_id: diagnostics.backendRequestId,
         error: errorDetails(error),
       })
     )
@@ -283,7 +292,11 @@ export function createHttpClient(options: HttpClientOptions): HttpClient {
       }
     }
 
-    const nextRequest = request<T>(endpoint, { method: 'GET' }, requestOptions).finally(() => {
+    const nextRequest = request<T>(
+      endpoint,
+      { method: 'GET', headers: requestOptions.headers },
+      requestOptions
+    ).finally(() => {
       if (!requestOptions.signal) {
         inFlightGetRequests.delete(cacheKey)
       }
@@ -318,28 +331,48 @@ export function createHttpClient(options: HttpClientOptions): HttpClient {
   return {
     get,
     getBlob,
-    post: (endpoint, data) =>
-      request(endpoint, {
-        method: 'POST',
-        body:
-          data === undefined ? undefined : data instanceof FormData ? data : JSON.stringify(data),
-      }),
-    put: (endpoint, data) =>
-      request(endpoint, {
-        method: 'PUT',
-        body:
-          data === undefined ? undefined : data instanceof FormData ? data : JSON.stringify(data),
-      }),
-    patch: (endpoint, data) =>
-      request(endpoint, {
-        method: 'PATCH',
-        body:
-          data === undefined ? undefined : data instanceof FormData ? data : JSON.stringify(data),
-      }),
-    delete: (endpoint, data) =>
-      request(endpoint, {
-        method: 'DELETE',
-        body: data === undefined ? undefined : JSON.stringify(data),
-      }),
+    post: (endpoint, data, requestOptions = {}) =>
+      request(
+        endpoint,
+        {
+          method: 'POST',
+          headers: requestOptions.headers,
+          body:
+            data === undefined ? undefined : data instanceof FormData ? data : JSON.stringify(data),
+        },
+        requestOptions
+      ),
+    put: (endpoint, data, requestOptions = {}) =>
+      request(
+        endpoint,
+        {
+          method: 'PUT',
+          headers: requestOptions.headers,
+          body:
+            data === undefined ? undefined : data instanceof FormData ? data : JSON.stringify(data),
+        },
+        requestOptions
+      ),
+    patch: (endpoint, data, requestOptions = {}) =>
+      request(
+        endpoint,
+        {
+          method: 'PATCH',
+          headers: requestOptions.headers,
+          body:
+            data === undefined ? undefined : data instanceof FormData ? data : JSON.stringify(data),
+        },
+        requestOptions
+      ),
+    delete: (endpoint, data, requestOptions = {}) =>
+      request(
+        endpoint,
+        {
+          method: 'DELETE',
+          headers: requestOptions.headers,
+          body: data === undefined ? undefined : JSON.stringify(data),
+        },
+        requestOptions
+      ),
   }
 }

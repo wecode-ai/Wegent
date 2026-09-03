@@ -44,6 +44,29 @@ export function formatUTCDate(dateStr: string | null | undefined, fallback: stri
 }
 
 /**
+ * Format a backend UTC datetime in the fixed UTC+8 product timezone.
+ *
+ * This is intentionally independent of the browser or operating-system timezone.
+ */
+export function formatUTC8DateTime(
+  dateStr: string | null | undefined,
+  fallback: string = '-'
+): string {
+  const date = parseUTCDate(dateStr)
+  if (!date || Number.isNaN(date.getTime())) return fallback
+
+  const utc8Date = new Date(date.getTime() + 8 * 60 * 60 * 1000)
+  const year = utc8Date.getUTCFullYear()
+  const month = String(utc8Date.getUTCMonth() + 1).padStart(2, '0')
+  const day = String(utc8Date.getUTCDate()).padStart(2, '0')
+  const hours = String(utc8Date.getUTCHours()).padStart(2, '0')
+  const minutes = String(utc8Date.getUTCMinutes()).padStart(2, '0')
+  const seconds = String(utc8Date.getUTCSeconds()).padStart(2, '0')
+
+  return `${year}-${month}-${day} ${hours}:${minutes}:${seconds}`
+}
+
+/**
  * Compare two semantic version strings.
  * Returns true if version >= targetVersion.
  * Supports versions like "1.6.5", "1.6.5-beta", etc.

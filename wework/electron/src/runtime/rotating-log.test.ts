@@ -29,4 +29,18 @@ describe('RotatingLog', () => {
     const current = await readFile(path, 'utf8')
     expect(current).toContain('[supervisor]')
   })
+
+  test('truncates oversized entries before writing them', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'wework-rotating-log-entry-'))
+    const path = join(directory, 'runtime.log')
+    const log = new RotatingLog({ path, maxBytes: 1024, maxEntryBytes: 100 })
+
+    await log.write('stdout', `token=secret-token ${'界'.repeat(100)}`)
+    await log.flush()
+
+    const content = await readFile(path, 'utf8')
+    expect(Buffer.byteLength(content)).toBeLessThanOrEqual(100)
+    expect(content).toContain('token=[REDACTED]')
+    expect(content).toContain('… [truncated]')
+  })
 })

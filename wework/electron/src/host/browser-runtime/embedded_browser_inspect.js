@@ -148,7 +148,7 @@
       title: safeRead(() => doc.title, ''),
       accessible: true,
     })
-    const root = doc.body || doc.documentElement
+    const root = doc.documentElement || doc.body
     if (!root) return
     walkElement(root, doc, context)
   }
@@ -514,7 +514,7 @@
     for (const [x, y, center] of samples) {
       const localX = x - context.offsetX
       const localY = y - context.offsetY
-      const hit = doc.elementFromPoint(localX, localY)
+      const hit = deepestElementFromPoint(doc, localX, localY)
       if (!topElementSummary && hit) topElementSummary = summarizeElement(hit)
       if (isHitAccepted(element, hit)) {
         hitCount++
@@ -527,6 +527,16 @@
       centerHit,
       topElementSummary,
     }
+  }
+
+  function deepestElementFromPoint(doc, x, y) {
+    let element = doc.elementFromPoint(x, y)
+    while (element?.shadowRoot) {
+      const nested = element.shadowRoot.elementFromPoint(x, y)
+      if (!nested || nested === element) break
+      element = nested
+    }
+    return element
   }
 
   function isHitAccepted(element, hit) {

@@ -16,6 +16,8 @@ from app.db.base import Base
 # Key type constants
 KEY_TYPE_PERSONAL = "personal"
 KEY_TYPE_SERVICE = "service"
+KEY_TYPE_PLUGIN_RELEASE = "plugin_release"
+NEVER_EXPIRES_AT = datetime(9999, 12, 31, 23, 59, 59)
 
 
 class APIKey(Base):
@@ -32,10 +34,10 @@ class APIKey(Base):
     name = Column(String(100), nullable=False)  # User-defined name
     key_type = Column(
         String(20), nullable=False, default=KEY_TYPE_PERSONAL, index=True
-    )  # Key type: personal or service
+    )  # Key type: personal, service, or plugin release
     description = Column(String(500), nullable=False, default="")  # Key description
     expires_at = Column(
-        DateTime, nullable=False, default=datetime(9999, 12, 31, 23, 59, 59)
+        DateTime, nullable=False, default=NEVER_EXPIRES_AT
     )  # Default: never expires (far future date)
     last_used_at = Column(
         DateTime, nullable=False, default=func.now()

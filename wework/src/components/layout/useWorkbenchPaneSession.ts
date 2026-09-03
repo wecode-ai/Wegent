@@ -171,6 +171,8 @@ interface PendingRuntimeGoalState {
 const runtimePaneGoalSeeds = new Map<string, PendingRuntimeGoalState>()
 const DEFAULT_RUNTIME_TRANSCRIPT_PAGE_SIZE = 50
 const MAX_CACHED_RUNTIME_PANE_GOALS = 3
+export const RUNTIME_RETRY_CONTINUATION_PROMPT =
+  'Continue the unfinished work from the previous turn. Use the existing conversation context and do not repeat work that is already complete.'
 const EMPTY_ATTACHMENT_STATE = {
   attachments: [],
   uploadingFiles: new Map(),
@@ -196,7 +198,6 @@ export function useWorkbenchPaneSession({
     editLastUserMessage,
     cancelRuntimePaneTask,
     sendCurrentInput,
-    retryFailedMessage: retryRuntimeFailedMessage,
     refreshWorkLists,
   } = useWorkbenchPaneContext()
   const lifecycleStore = useRuntimeTaskLifecycleStore()
@@ -363,8 +364,6 @@ export function useWorkbenchPaneSession({
   } | null>(null)
   const messageActionFrameRef = useRef<number | null>(null)
   const retryInFlightRef = useRef(false)
-  const lastSubmittedRetryMessageRef = useRef<WorkbenchMessage | null>(null)
-  const retrySourceBySubtaskIdRef = useRef(new Map<string, WorkbenchMessage>())
   const currentRuntimeTaskLoadTarget = useMemo(
     () => (currentRuntimeTask ? runtimeTaskLoadTargetFromAddress(currentRuntimeTask) : null),
     [currentRuntimeTask]
@@ -568,18 +567,11 @@ export function useWorkbenchPaneSession({
       setThreadGoal(metadata.goal)
     }
     syncConversationState()
-    return subscribeRuntimeConversation(address, action => {
+    return subscribeRuntimeConversation(address, () => {
       syncConversationState()
       setQueuedMessagesState(
         getRuntimeConversationQueuedMessagesByKey(runtimeConversationKey(address))
       )
-      if (!action) return
-      if (action.type === 'assistant_error' && action.subtaskId) {
-        const retrySource = lastSubmittedRetryMessageRef.current
-        if (retrySource) {
-          retrySourceBySubtaskIdRef.current.set(action.subtaskId, retrySource)
-        }
-      }
     })
   }, [runtimeTaskLoadTarget])
 
@@ -589,8 +581,6 @@ export function useWorkbenchPaneSession({
 
   useEffect(() => {
     setAnsweredRequestUserInputIds(new Set())
-    lastSubmittedRetryMessageRef.current = null
-    retrySourceBySubtaskIdRef.current.clear()
   }, [runtimeTaskLoadTarget?.key])
 
   useEffect(() => {
@@ -627,7 +617,11 @@ export function useWorkbenchPaneSession({
       .then(response => {
         if (!cancelled) {
           const loadedGoal = response.accepted ? response.goal : null
-          const resolvedGoal = loadedGoal ?? seededGoal?.goal ?? null
+          const resolvedGoal = resolveHydratedRuntimeGoal(
+            runtimeTaskLoadTarget.address,
+            loadedGoal,
+            seededGoal?.goal ?? null
+          )
           if (import.meta.env.VITE_WEWORK_RUNTIME_DEBUG === '1') {
             console.info('[Wework] Runtime goal hydration resolved', {
               address: runtimeAddressDebug(runtimeTaskLoadTarget.address),
@@ -1082,18 +1076,17 @@ export function useWorkbenchPaneSession({
     ): Promise<boolean> => {
       if (!currentRuntimeTask) return false
 
-      const retryMessage = createRuntimeUserMessage(message.content, message.attachments, {
+      const userMessage = createRuntimeUserMessage(message.content, message.attachments, {
         id: message.id,
         createdAt: message.createdAt,
         runtimeGoalRequest: message.runtimeGoalRequest,
         codeComments: message.codeComments,
       })
-      lastSubmittedRetryMessageRef.current = retryMessage
       const appendedLocalMessage = options.appendLocalMessage !== false
       if (appendedLocalMessage) {
         const visibleMessage =
           message.displayContent === undefined
-            ? retryMessage
+            ? userMessage
             : createRuntimeUserMessage(message.displayContent, message.attachments, {
                 id: message.id,
                 createdAt: message.createdAt,
@@ -1141,7 +1134,7 @@ export function useWorkbenchPaneSession({
         if (!appendedLocalMessage) {
           const visibleMessage =
             message.displayContent === undefined
-              ? retryMessage
+              ? userMessage
               : createRuntimeUserMessage(message.displayContent, message.attachments, {
                   id: message.id,
                   createdAt: message.createdAt,
@@ -1271,44 +1264,32 @@ export function useWorkbenchPaneSession({
       setError(null)
       try {
         const currentMessages = messagesRef.current
-        const failedMessageIndex = currentMessages.findIndex(
-          currentMessage => currentMessage.id === message.id
+        const failedMessage = currentMessages.find(
+          currentMessage =>
+            currentMessage.id === message.id &&
+            currentMessage.role === 'assistant' &&
+            currentMessage.status === 'failed'
         )
-        const associatedRetrySource = message.subtaskId
-          ? retrySourceBySubtaskIdRef.current.get(message.subtaskId)
-          : undefined
-        const retrySource = associatedRetrySource ?? lastSubmittedRetryMessageRef.current
-        const failedCreatedAt = Date.parse(message.createdAt)
-        const retrySourceCreatedAt = retrySource ? Date.parse(retrySource.createdAt) : Number.NaN
-        const retrySourcePredatesFailure =
-          Number.isNaN(failedCreatedAt) ||
-          Number.isNaN(retrySourceCreatedAt) ||
-          retrySourceCreatedAt <= failedCreatedAt
-        const retryUserMessageOverride =
-          associatedRetrySource ??
-          (failedMessageIndex >= 0 && retrySourcePredatesFailure ? retrySource : null)
+        if (!failedMessage) {
+          setError('未找到可重试的失败消息')
+          return false
+        }
+
+        const continuationMessage: RuntimePaneQueuedMessage = {
+          id: `runtime-retry-continuation-${Date.now()}`,
+          content: RUNTIME_RETRY_CONTINUATION_PROMPT,
+          displayContent: i18n.t('workbench.retry_continue_message', '继续'),
+          status: 'queued',
+          createdAt: new Date().toISOString(),
+          ...getRuntimeModelFields(),
+        }
         debugRuntimePaneMessageFlow('retry-failed-message', {
           address: runtimeAddressDebug(currentRuntimeTask),
           failedMessageId: message.id,
-          failedMessageIndex,
-          retrySource: textMetrics(retrySource?.content),
-          associatedRetrySource: Boolean(associatedRetrySource),
-          retrySourcePredatesFailure,
-          usingRetrySourceOverride: Boolean(retryUserMessageOverride),
+          failedTurnId: failedMessage.turnId ?? failedMessage.subtaskId ?? null,
+          continuationMessageId: continuationMessage.id,
         })
-        const sent = await retryRuntimeFailedMessage(
-          message.id,
-          currentMessages,
-          retryUserMessageOverride ?? undefined
-        )
-        if (sent) {
-          setMessages(
-            removeRuntimeConversationTurn(currentRuntimeTask, {
-              turnId: message.turnId ?? message.subtaskId,
-            })
-          )
-        }
-        return sent
+        return await sendRuntimeMessage(continuationMessage)
       } catch (error) {
         console.error('[Wework] Runtime failed message retry failed', {
           address: runtimeAddressDebug(currentRuntimeTask),
@@ -1321,7 +1302,7 @@ export function useWorkbenchPaneSession({
         retryInFlightRef.current = false
       }
     },
-    [currentRuntimeTask, retryRuntimeFailedMessage, setError]
+    [currentRuntimeTask, getRuntimeModelFields, sendRuntimeMessage, setError]
   )
 
   const sendRequestUserInputResponse = useCallback(
@@ -3093,6 +3074,27 @@ function getRuntimePaneGoalSeed(address: RuntimeTaskAddress): PendingRuntimeGoal
 
 function clearRuntimePaneGoalSeed(address: RuntimeTaskAddress) {
   runtimePaneGoalSeeds.delete(runtimeTranscriptPaneIdentityKey(address))
+}
+
+function resolveHydratedRuntimeGoal(
+  address: RuntimeTaskAddress,
+  loadedGoal: RuntimeGoal | null,
+  seededGoal: RuntimeGoal | null
+): RuntimeGoal | null {
+  if (loadedGoal) return loadedGoal
+
+  const hasQueuedGoal = getRuntimeConversationQueuedMessagesByKey(
+    runtimeConversationKey(address)
+  ).some(
+    message =>
+      Boolean(message.initialGoal) && (message.status === 'queued' || message.status === 'sending')
+  )
+  if (hasQueuedGoal) {
+    const optimisticGoal = getRuntimeConversationMetadata(address).goal
+    if (optimisticGoal) return optimisticGoal
+  }
+
+  return seededGoal
 }
 
 function runtimeAddressDebug(address: RuntimeTaskAddress): Record<string, unknown> {

@@ -28,6 +28,7 @@ function createDevice(overrides: Partial<DeviceInfo>): DeviceInfo {
     executor_version: null,
     latest_version: null,
     update_available: false,
+    bind_shell: 'claudecode',
     ...overrides,
   }
 }
@@ -87,6 +88,7 @@ jest.mock('@/components/ui/tooltip', () => ({
 
 describe('DeviceSelectorTab', () => {
   beforeEach(() => {
+    localStorage.clear()
     mockSetSelectedDeviceId.mockClear()
     mockUpdatePreferences.mockClear()
     mockSelectedDeviceId = null
@@ -155,6 +157,47 @@ describe('DeviceSelectorTab', () => {
     expect(screen.queryByText('no_devices_available')).not.toBeInTheDocument()
   })
 
+  it('hides OpenClaw devices until advanced mode is enabled', async () => {
+    mockDevices = [
+      createDevice({ device_id: 'executor-device', name: 'Executor Device' }),
+      createDevice({
+        id: 2,
+        device_id: 'openclaw-device',
+        name: 'OpenClaw Device',
+        bind_shell: 'openclaw',
+      }),
+    ]
+
+    const { unmount } = render(<DeviceSelectorTab />)
+
+    expect(screen.getByTestId('device-card-executor-device')).toBeInTheDocument()
+    expect(screen.queryByTestId('device-card-openclaw-device')).not.toBeInTheDocument()
+    expect(screen.getByText('1/1')).toBeInTheDocument()
+
+    unmount()
+    localStorage.setItem('wegent_show_advanced_devices', 'true')
+    render(<DeviceSelectorTab />)
+
+    await waitFor(() =>
+      expect(screen.getByTestId('device-card-openclaw-device')).toBeInTheDocument()
+    )
+    expect(screen.getByText('2/2')).toBeInTheDocument()
+  })
+
+  it('keeps an existing OpenClaw task target visible in read-only mode', () => {
+    mockDevices = [
+      createDevice({
+        device_id: 'openclaw-device',
+        name: 'OpenClaw Device',
+        bind_shell: 'openclaw',
+      }),
+    ]
+
+    render(<DeviceSelectorTab taskId={42} taskType="task" taskDeviceId="openclaw-device" />)
+
+    expect(screen.getByText('local_device_prefixOpenClaw Device')).toBeInTheDocument()
+  })
+
   it('initializes a new task from the exact account default without fallback', async () => {
     mockDefaultExecutionTarget = 'offline-default'
     mockDevices = [
@@ -166,6 +209,16 @@ describe('DeviceSelectorTab', () => {
 
     await waitFor(() => expect(mockSetSelectedDeviceId).toHaveBeenCalledWith('offline-default'))
     expect(mockSetSelectedDeviceId).not.toHaveBeenCalledWith('other-online')
+  })
+
+  it('falls back to cloud when the account default is not exposed to Wegent', async () => {
+    mockDefaultExecutionTarget = 'app-device'
+    mockDevices = [createDevice({ device_id: 'available-device' })]
+
+    render(<DeviceSelectorTab />)
+
+    await waitFor(() => expect(mockSetSelectedDeviceId).toHaveBeenCalledWith(null))
+    expect(mockSetSelectedDeviceId).not.toHaveBeenCalledWith('app-device')
   })
 
   it('renders an existing task target read-only without changing draft selection', () => {

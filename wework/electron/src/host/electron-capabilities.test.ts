@@ -118,24 +118,26 @@ function createWebContents(input: {
 
 describe('captureWebContentsDataUrl', () => {
   test('uses Electron native capturePage for the visible composed surface', async () => {
-    const { contents, debuggerSession } = createWebContents({
+    const { capturePage, contents, debuggerSession } = createWebContents({
       captureDataUrl: 'data:image/png;base64,native-capture',
     })
+    const rect = { x: 10, y: 20, width: 30, height: 40 }
 
-    await expect(captureWebContentsDataUrl(contents)).resolves.toBe(
+    await expect(captureWebContentsDataUrl(contents, { rect })).resolves.toBe(
       'data:image/png;base64,native-capture'
     )
+    expect(capturePage).toHaveBeenCalledWith(rect)
     expect(debuggerSession.attach).not.toHaveBeenCalled()
     expect(debuggerSession.sendCommand).not.toHaveBeenCalled()
   })
 
-  test('can use debugger-only view capture without blocking on Electron capturePage', async () => {
+  test('can prefer debugger view capture without blocking on Electron capturePage', async () => {
     const { capturePage, contents, debuggerSession } = createWebContents({
       captureDataUrl: 'data:image/png;base64,native-capture',
       debuggerData: 'debugger-capture',
     })
 
-    await expect(captureWebContentsDataUrl(contents, { debuggerOnly: true })).resolves.toBe(
+    await expect(captureWebContentsDataUrl(contents, { preferDebugger: true })).resolves.toBe(
       'data:image/png;base64,debugger-capture'
     )
     expect(debuggerSession.attach).toHaveBeenCalledOnce()
@@ -148,35 +150,41 @@ describe('captureWebContentsDataUrl', () => {
     expect(capturePage).not.toHaveBeenCalled()
   })
 
-  test('times out debugger-only capture and detaches the session', async () => {
+  test('falls back to native capture when preferred debugger capture times out', async () => {
     vi.useFakeTimers()
     try {
-      const { contents, debuggerSession } = createWebContents({
+      const { capturePage, contents, debuggerSession } = createWebContents({
+        captureDataUrl: 'data:image/png;base64,native-after-debugger-timeout',
         debuggerPending: true,
       })
 
-      const capture = expect(
-        captureWebContentsDataUrl(contents, { debuggerOnly: true })
-      ).rejects.toThrow(
-        'CDP Page.captureScreenshot failed: CDP Page.captureScreenshot timed out after 10000ms'
-      )
+      const capture = captureWebContentsDataUrl(contents, { preferDebugger: true })
       await vi.advanceTimersByTimeAsync(10_000)
-      await capture
+
+      await expect(capture).resolves.toBe('data:image/png;base64,native-after-debugger-timeout')
       expect(debuggerSession.detach).toHaveBeenCalledOnce()
+      expect(capturePage).toHaveBeenCalledOnce()
     } finally {
       vi.useRealTimers()
     }
   })
 
   test('reports both capture failures', async () => {
-    const { contents } = createWebContents({
+    const { contents, debuggerSession } = createWebContents({
       captureError: new Error('UnknownVizError'),
       debuggerError: new Error('DebuggerCaptureError'),
     })
+    const rect = { x: 10, y: 20, width: 30, height: 40 }
 
-    await expect(captureWebContentsDataUrl(contents)).rejects.toThrow(
+    await expect(captureWebContentsDataUrl(contents, { rect })).rejects.toThrow(
       'Electron capturePage failed: UnknownVizError; CDP Page.captureScreenshot failed: DebuggerCaptureError'
     )
+    expect(debuggerSession.sendCommand).toHaveBeenCalledWith('Page.captureScreenshot', {
+      captureBeyondViewport: false,
+      format: 'png',
+      fromSurface: true,
+      clip: { ...rect, scale: 1 },
+    })
   })
 
   test('falls back to the debugger when Electron native capture hangs', async () => {

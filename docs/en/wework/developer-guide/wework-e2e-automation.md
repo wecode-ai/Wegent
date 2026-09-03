@@ -126,8 +126,9 @@ The checkpoints are `remote-device-onboarding`, `workspace-tabs`,
 `telemetry-consent`, `automation-lifecycle`, `project-automation`,
 `project-assignment-notification`, `offline-local-project-space`,
 `core-dsh-plugin-management`, `plugin-auto-update`, `plugin-workspace-publication`,
-`project-ai-settings`, `model-routing`, `permission-modes`, `core-task-flow`,
-`task-attachments`, `cloud-git-worktree`, `cloud-worktree-capability`,
+`project-ai-settings`, `model-routing`, `permission-modes`, `computer-use`,
+`task-status-sync`, `task-board-association`, `core-task-flow`, `task-attachments`,
+`cloud-git-worktree`, `cloud-worktree-capability`,
 `cloud-worktree-create`, `cloud-worktree-queued-cancel`, `cloud-worktree-tools`,
 `cloud-worktree-archive-restore`, `cloud-worktree-device-restart`,
 `context-compaction`, `runtime-task-queue`, `runtime-terminal-convergence`,
@@ -190,8 +191,14 @@ the pipeline tail. Merge queue validates
 the final commit that enters `main`, so Tests, Lint, Platform E2E, and Wework E2E
 do not repeat the same validation after the merge through a `push main` trigger. The
 mapping lives in `.github/scripts/classify-wework-desktop-e2e.sh` and must be updated when new
-feature coverage is registered. Segment commands are also useful for focused
-local iteration:
+feature coverage is registered. When adding a `DESKTOP_CHECKPOINTS` entry, also
+add it to a Core, Cloud, or formal-release catalog, assign it to a shard, map
+the relevant source paths to the smallest applicable coverage, and update both
+the matrix expectations and focused classifier assertions in
+`.github/scripts/test-classify-ci-changes.sh`. The classifier rejects a
+checkpoint that exists only in the runner without CI catalog coverage, preventing
+locally runnable coverage that GitHub CI never invokes. Segment commands are also
+useful for focused local iteration:
 
 ```bash
 pnpm --filter wework e2e:desktop -- --segment automation-lifecycle
@@ -274,7 +281,19 @@ already-built real binaries. A supplied application must be built with the
 desktop E2E Vite environment variables. The lifecycle scenarios share one
 application launch to control CI duration. Test artifacts, captured model
 requests, and failure diagnostics are stored in
-`wework/test-results/desktop-e2e/`.
+`wework/test-results/desktop-e2e/`. Each scenario retains logs, screenshots,
+requests, and UI state while removing copied application bundles, Executor
+homes, extracted runtimes, and rebuildable Electron caches. The runner also
+compacts inactive result directories left by interrupted runs so repeated local
+execution does not continuously consume disk space.
+
+The local runner writes complete stdout and stderr from the prerequisite
+Electron and Executor build to
+`wework/test-results/desktop-e2e/desktop-build-<pid>.log`. The terminal shows
+only the build stage, a liveness message every 30 seconds, elapsed time, and the
+log path so package installation, compilation, and signing output do not bury
+checkpoint results. On build failure, the terminal also prints a bounded tail
+of the log. Test output remains live after the scenario starts.
 
 `ai:verify:electron:build` shares immutable Harness Runtime archives across worktrees. The default archive cache is `~/Library/Caches/wegent/harness-runtime` on macOS, `${XDG_CACHE_HOME:-~/.cache}/wegent/harness-runtime` on Linux, and `%LOCALAPPDATA%\wegent/harness-runtime` on Windows. Materialized development runtimes remain under `wework/node_modules/.cache/harness-runtime-dev` in the current worktree so mutable state is not shared across source trees. Set `WEWORK_HARNESS_RUNTIME_ASSET_CACHE_ROOT` to override the archive cache. If a build only sets the legacy `WEWORK_HARNESS_RUNTIME_CACHE_ROOT`, that value is translated into an archive-only cache override and does not move the current worktree's materialized runtime.
 

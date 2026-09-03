@@ -35,6 +35,7 @@ import type { TaskChangeRequestSnapshot } from '@/api/changeRequests'
 import * as changeRequestMonitor from '@/features/workbench/changeRequestMonitor'
 import { WEWORK_DSH_SLOTS } from '@/features/dsh-runtime/dshUiSlots'
 import { preloadDefaultDshUiTestModules } from '@/test/setup'
+import { installGitUiTestContributions } from '../../../dsh/ui-git/test-support'
 
 const experimentalFeatures = vi.hoisted(() => ({ enabled: true }))
 
@@ -208,6 +209,7 @@ await preloadDefaultDshUiTestModules()
 describe('DesktopSidebar', () => {
   beforeEach(async () => {
     await preloadDefaultDshUiTestModules()
+    await installGitUiTestContributions()
     experimentalFeatures.enabled = true
     window.history.replaceState({}, '', '/')
     localStorage.clear()
@@ -216,7 +218,7 @@ describe('DesktopSidebar', () => {
     Element.prototype.scrollIntoView = vi.fn()
     vi.mocked(openLocalWorkspace).mockReset()
     clearRuntimeConversationCacheForTests()
-  })
+  }, 60_000)
 
   afterEach(() => {
     clearRuntimeConversationCacheForTests()
@@ -3404,7 +3406,10 @@ describe('DesktopSidebar', () => {
     const runningStatus = screen.getByTestId('runtime-local-task-running-codex-running')
     expect(runningStatus).toHaveAttribute('aria-label', '运行中')
     expect(runningStatus).not.toHaveTextContent('运行中')
-    expect(runningStatus.querySelector('svg')).not.toBeNull()
+    const spinnerLayer = runningStatus.querySelector('.animate-spin')
+    expect(spinnerLayer).toBeInstanceOf(HTMLSpanElement)
+    expect(spinnerLayer).toHaveClass('will-change-transform')
+    expect(spinnerLayer?.querySelector('svg')).not.toHaveClass('animate-spin')
     expect(screen.queryByTestId('runtime-local-task-running-codex-idle')).not.toBeInTheDocument()
   })
 
@@ -3795,6 +3800,10 @@ describe('DesktopSidebar', () => {
       expect(taskRow).toHaveClass('hidden')
       expect(screen.getByTestId('runtime-local-task-archive-toast-codex-1')).toHaveTextContent(
         '撤销'
+      )
+      expect(screen.getByTestId('runtime-local-task-archive-toast-codex-1')).toHaveClass(
+        'electron-titlebar-interactive-region',
+        'pointer-events-auto'
       )
 
       await user.click(screen.getByTestId('runtime-local-task-archive-undo-codex-1'))
@@ -4836,7 +4845,9 @@ describe('DesktopSidebar', () => {
 
     await user.click(screen.getByTestId('sidebar-global-im-notification-button'))
     expect(screen.getByTestId('sidebar-global-im-notification-on-icon')).toBeInTheDocument()
-    await user.click(screen.getByTestId('sidebar-global-im-notification-settings-button'))
+    const settingsButton = screen.getByTestId('sidebar-global-im-notification-settings-button')
+    expect(settingsButton).toHaveClass('shrink-0', 'whitespace-nowrap')
+    await user.click(settingsButton)
 
     expect(onOpenGlobalImNotificationSettings).toHaveBeenCalledTimes(1)
     expect(onToggleGlobalImNotification).not.toHaveBeenCalled()

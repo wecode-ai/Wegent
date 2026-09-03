@@ -536,7 +536,7 @@ function makeRule() {
     version: 1,
     name: '未命名自动化',
     description: '',
-    enabled: false,
+    enabled: true,
     updatedAt: '尚未保存',
     trigger: {
       type: 'event',

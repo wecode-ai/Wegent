@@ -803,12 +803,99 @@ async def test_list_runtime_work_keeps_empty_executor_workspaces(
         "Hello project"
     ]
     workspace = response.projects[0].device_workspaces[0]
+    assert workspace.device_id == "remote-ssh-discovered:10.201.3.200"
+    assert workspace.device_name == "remote-ssh-discovered:10.201.3.200"
+    assert workspace.device_status == "unavailable"
     assert workspace.workspace_path == "/Users/crystal/Documents/hello-0"
     assert workspace.label == "Hello project"
     assert workspace.workspace_source == "remote"
     assert workspace.remote_host_id == "remote-ssh-discovered:10.201.3.200"
+    assert workspace.available is False
     assert workspace.tasks == []
     assert workspace.mapped is True
+
+
+@pytest.mark.parametrize(
+    "device_ids",
+    [
+        ("app-device", "cloud-device"),
+        ("cloud-device", "app-device"),
+    ],
+)
+@pytest.mark.asyncio
+async def test_list_runtime_work_prefers_owner_device_over_remote_projection(
+    test_db,
+    test_user,
+    monkeypatch,
+    device_ids,
+):
+    from app.services import runtime_work_service
+
+    devices_by_id = {
+        "app-device": {
+            "device_id": "app-device",
+            "name": "Local App",
+            "status": "online",
+            "device_type": "app",
+        },
+        "cloud-device": {
+            "device_id": "cloud-device",
+            "name": "Cloud Device",
+            "status": "online",
+            "device_type": "cloud",
+        },
+    }
+    monkeypatch.setattr(
+        runtime_work_service.device_service,
+        "get_all_devices",
+        AsyncMock(return_value=[devices_by_id[device_id] for device_id in device_ids]),
+    )
+
+    async def rpc_side_effect(**kwargs):
+        if kwargs["device_id"] == "app-device":
+            return {
+                "workspaces": [
+                    {
+                        "workspacePath": "/workspace/Wegent",
+                        "label": "Projected from app",
+                        "workspaceSource": "remote",
+                        "remoteHostId": "cloud-device",
+                        "tasks": [],
+                    }
+                ]
+            }
+        return {
+            "workspaces": [
+                {
+                    "workspacePath": "/workspace/Wegent",
+                    "label": "Authoritative cloud workspace",
+                    "workspaceSource": "local",
+                    "tasks": [],
+                }
+            ]
+        }
+
+    monkeypatch.setattr(
+        runtime_work_service.runtime_rpc_service,
+        "call",
+        AsyncMock(side_effect=rpc_side_effect),
+    )
+
+    response = await runtime_work_service.list_runtime_work(
+        db=test_db,
+        user_id=test_user.id,
+    )
+
+    assert len(response.projects) == 1
+    project = response.projects[0]
+    assert project.project.name == "Authoritative cloud workspace"
+    workspace = project.device_workspaces[0]
+    assert workspace.device_id == "cloud-device"
+    assert workspace.device_name == "Cloud Device"
+    assert workspace.device_status == "online"
+    assert workspace.workspace_source == "local"
+    assert workspace.remote_host_id is None
+    assert workspace.available is True
 
 
 @pytest.mark.asyncio
