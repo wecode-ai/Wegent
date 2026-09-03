@@ -10,6 +10,8 @@ import base64
 import hashlib
 import re
 import tempfile
+import threading
+import time
 from datetime import datetime, timezone
 from typing import Any, BinaryIO
 from urllib.parse import quote
@@ -49,6 +51,15 @@ STATUS_PREFIX = "wegent:status:"
 CREATOR_PREFIX = "wegent:creator:"
 ASSIGNEE_PREFIX = "wegent:assignee:"
 PARENT_MARKER = "Wegent-Parent:"
+EXTERNAL_BOARD_STATUSES = {
+    "inbox",
+    "pending",
+    "in_progress",
+    "in_review",
+    "completed",
+}
+ISSUE_PAGE_SIZE = 100
+ISSUE_PAGE_CACHE_SECONDS = 30
 GITLAB_PROVIDER_UPLOAD_PATTERN = re.compile(
     r"(?P<image>!)?\[(?P<name>[^\]]+)\]\((?P<url>[^)]*/uploads/[^)]+)\)"
 )
@@ -62,6 +73,12 @@ LEGACY_WEGENT_ATTACHMENT_PATTERN = re.compile(
 
 
 class ExternalLoopItemProvider:
+    def __init__(self) -> None:
+        self._issue_page_cache: dict[
+            tuple[int, int, str, int], tuple[float, list[dict[str, Any]]]
+        ] = {}
+        self._issue_page_cache_lock = threading.Lock()
+
     def is_external_item(self, db: Session, item_id: str) -> bool:
         return self._find_project(db, item_id) is not None
 
@@ -85,7 +102,90 @@ class ExternalLoopItemProvider:
             issues = [
                 issue for issue in issues if assignee_label in self._labels(issue)
             ]
-        return [self._response(db, project, issue, access, user_id) for issue in issues]
+        return [
+            self._response(
+                db,
+                project,
+                issue,
+                access,
+                user_id,
+                include_description=False,
+            )
+            for issue in issues
+        ]
+
+    def list_page(
+        self,
+        db: Session,
+        project_id: int,
+        user_id: int,
+        *,
+        item_status: str,
+        parent_id: str | None,
+        cursor: str | None,
+        limit: int,
+    ) -> tuple[list[dict[str, object]], str | None]:
+        access = require_cloud_project_role(
+            db, project_id, user_id, BaseRole.RestrictedAnalyst
+        )
+        project = access.project
+        self._require_external(project)
+        if item_status not in EXTERNAL_BOARD_STATUSES:
+            raise HTTPException(
+                status.HTTP_422_UNPROCESSABLE_ENTITY, "Unsupported board status"
+            )
+
+        page, offset = self._decode_page_cursor(cursor)
+        matched: list[dict[str, Any]] = []
+        next_cursor: str | None = None
+        batch = self._list_issue_page(project, item_status, page)
+        for index in range(offset, len(batch)):
+            issue = batch[index]
+            if not self._issue_matches_page(
+                project, issue, item_status=item_status, parent_id=parent_id
+            ):
+                continue
+            if len(matched) == limit:
+                next_cursor = self._encode_page_cursor(page, index)
+                break
+            matched.append(issue)
+        if next_cursor is None and len(batch) == ISSUE_PAGE_SIZE and page < 100:
+            next_cursor = self._encode_page_cursor(page + 1, 0)
+
+        return (
+            [
+                self._response(
+                    db,
+                    project,
+                    issue,
+                    access,
+                    user_id,
+                    include_description=False,
+                )
+                for issue in matched
+            ],
+            next_cursor,
+        )
+
+    def _issue_matches_page(
+        self,
+        project: CloudProject,
+        issue: dict[str, Any],
+        *,
+        item_status: str,
+        parent_id: str | None,
+    ) -> bool:
+        if str(issue.get("state") or "") == "closed":
+            return False
+        if project.task_provider == "github" and "pull_request" in issue:
+            return False
+        if (
+            self._status(self._labels(issue), str(issue.get("state") or ""))
+            != item_status
+        ):
+            return False
+        description = str(issue.get(self._body_key(project)) or "")
+        return self._parent_id(project, description) == parent_id
 
     def get(self, db: Session, item_id: str, user_id: int) -> dict[str, object]:
         project, number = self._resolve_project(db, item_id)
@@ -133,10 +233,7 @@ class ExternalLoopItemProvider:
             self._with_parent(values.description, values.parent_id),
             labels,
         )
-        if values.status == "completed":
-            issue = self._update_issue(
-                project, self._number(issue), {"state": "closed"}
-            )
+        self._invalidate_issue_page_cache(project.id)
         item_id = f"{project.project_key}-{self._number(issue)}"
         if values.assignee_agent_id:
             agent = db.get(ProjectChatAgent, values.assignee_agent_id)
@@ -548,10 +645,10 @@ class ExternalLoopItemProvider:
                 assignee=assignee_label,
             )
         if "status" in dumped:
-            payload["state"] = (
-                "closed" if values.status == "completed" else self._open_state(project)
-            )
+            payload["state"] = self._open_state(project)
         issue = current if not payload else self._update_issue(project, number, payload)
+        if payload:
+            self._invalidate_issue_page_cache(project.id)
         if assignee_change:
             self._apply_assignee_executions(
                 db,
@@ -562,6 +659,20 @@ class ExternalLoopItemProvider:
                 priority=str(current_response["priority"]),
             )
         return self._response(db, project, issue, access, user_id)
+
+    def archive(self, db: Session, item_id: str, user_id: int) -> None:
+        """Remove an external issue from the board by closing it upstream."""
+
+        project, number = self._resolve_project(db, item_id)
+        access = require_cloud_project_role(
+            db, project.id, user_id, BaseRole.RestrictedAnalyst
+        )
+        issue = self._get_issue(project, number)
+        response = self._base_response(db, project, issue, access, user_id)
+        if not response["can_edit"]:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "TODO not found")
+        self._update_issue(project, number, {"state": "closed"})
+        self._invalidate_issue_page_cache(project.id)
 
     def _assignee_label_for_values(
         self,
@@ -1169,10 +1280,19 @@ class ExternalLoopItemProvider:
         issue: dict[str, Any],
         access: CloudProjectAccess,
         user_id: int,
+        *,
+        include_description: bool = True,
     ) -> dict[str, object]:
         """Provider view merged with the active Wegent-side execution run."""
 
-        values = self._base_response(db, project, issue, access, user_id)
+        values = self._base_response(
+            db,
+            project,
+            issue,
+            access,
+            user_id,
+            include_description=include_description,
+        )
         return self._with_execution_state(db, values, user_id)
 
     @staticmethod
@@ -1192,6 +1312,8 @@ class ExternalLoopItemProvider:
         issue: dict[str, Any],
         access: CloudProjectAccess,
         user_id: int,
+        *,
+        include_description: bool = True,
     ) -> dict[str, object]:
         labels = self._labels(issue)
         creator_id = self._creator_id(labels)
@@ -1249,7 +1371,7 @@ class ExternalLoopItemProvider:
             "sequence_number": number,
             "parent_id": parent_id,
             "title": str(issue.get("title") or ""),
-            "description": description if can_view else "",
+            "description": description if can_view and include_description else "",
             "status": item_status,
             "assignee_user_id": assignee_user_id,
             "assignee_name": assignee_name,
@@ -1265,6 +1387,7 @@ class ExternalLoopItemProvider:
             "created_by_user_name": creator_name,
             "can_view_detail": can_view,
             "can_edit": can_edit,
+            "detail_loaded": include_description,
             "current_delivery_id": None,
             "version": self._derived_version(updated_at),
             "created_at": created_at,
@@ -1473,14 +1596,90 @@ class ExternalLoopItemProvider:
                 project,
                 "GET",
                 path,
-                params={"state": "all", "per_page": 100, "page": page},
+                params={
+                    "state": self._open_state(project),
+                    "per_page": ISSUE_PAGE_SIZE,
+                    "page": page,
+                },
             )
+            batch_size = len(batch)
+            batch = [issue for issue in batch if issue.get("state") != "closed"]
             if project.task_provider == "github":
                 batch = [issue for issue in batch if "pull_request" not in issue]
             results.extend(batch)
-            if len(batch) < 100:
+            if batch_size < ISSUE_PAGE_SIZE:
                 break
         return results
+
+    def _list_issue_page(
+        self, project: CloudProject, item_status: str, page: int
+    ) -> list[dict[str, Any]]:
+        cache_key = (project.id, project.version, item_status, page)
+        now = time.monotonic()
+        with self._issue_page_cache_lock:
+            cached = self._issue_page_cache.get(cache_key)
+            if cached is not None and cached[0] > now:
+                return cached[1]
+
+        repository = self._repository(project)
+        path = (
+            f"/repos/{repository}/issues"
+            if project.task_provider == "github"
+            else f"/projects/{quote(repository, safe='')}/issues"
+        )
+        params: dict[str, object] = {
+            "state": self._open_state(project),
+            "per_page": ISSUE_PAGE_SIZE,
+            "page": page,
+        }
+        if item_status != "pending":
+            params["labels"] = f"{STATUS_PREFIX}{item_status}"
+        batch = self._request(project, "GET", path, params=params)
+        with self._issue_page_cache_lock:
+            self._issue_page_cache = {
+                key: value
+                for key, value in self._issue_page_cache.items()
+                if value[0] > now
+            }
+            self._issue_page_cache[cache_key] = (
+                now + ISSUE_PAGE_CACHE_SECONDS,
+                batch,
+            )
+        return batch
+
+    def _invalidate_issue_page_cache(self, project_id: int) -> None:
+        with self._issue_page_cache_lock:
+            self._issue_page_cache = {
+                key: value
+                for key, value in self._issue_page_cache.items()
+                if key[0] != project_id
+            }
+
+    @staticmethod
+    def _encode_page_cursor(page: int, offset: int) -> str:
+        raw = f"{page}:{offset}".encode()
+        return base64.urlsafe_b64encode(raw).decode().rstrip("=")
+
+    @staticmethod
+    def _decode_page_cursor(cursor: str | None) -> tuple[int, int]:
+        if not cursor:
+            return 1, 0
+        try:
+            decoded = base64.urlsafe_b64decode(
+                cursor + "=" * (-len(cursor) % 4)
+            ).decode()
+            page_text, offset_text = decoded.split(":", 1)
+            page = int(page_text)
+            offset = int(offset_text)
+        except (UnicodeError, ValueError) as exc:
+            raise HTTPException(
+                status.HTTP_422_UNPROCESSABLE_ENTITY, "Invalid page cursor"
+            ) from exc
+        if page < 1 or page > 100 or offset < 0 or offset >= ISSUE_PAGE_SIZE:
+            raise HTTPException(
+                status.HTTP_422_UNPROCESSABLE_ENTITY, "Invalid page cursor"
+            )
+        return page, offset
 
     def _get_issue(self, project: CloudProject, number: int) -> dict[str, Any]:
         repository = self._repository(project)
@@ -1659,8 +1858,6 @@ class ExternalLoopItemProvider:
 
     @staticmethod
     def _status(labels: list[str], provider_state: str) -> str:
-        if provider_state in {"closed"}:
-            return "completed"
         value = next(
             (
                 label.removeprefix(STATUS_PREFIX)

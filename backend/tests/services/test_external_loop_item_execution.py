@@ -163,6 +163,108 @@ def _active_execution(db: Session, item_id: str) -> LoopItemExecution | None:
     )
 
 
+def test_external_board_page_is_filtered_and_detail_is_lazy(
+    test_db: Session, test_user: User, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    project = _make_gitlab_project(test_db, test_user)
+    issues = []
+    for number in range(1, 81):
+        issue = _issue(number)
+        issue["labels"] = [
+            "wegent:status:pending" if number <= 60 else "wegent:status:in_progress"
+        ]
+        issues.append(issue)
+    monkeypatch.setattr(
+        external_loop_item_provider,
+        "_list_issue_page",
+        lambda _project, _status, _page: issues,
+    )
+
+    first, cursor = external_loop_item_provider.list_page(
+        test_db,
+        project.id,
+        test_user.id,
+        item_status="pending",
+        parent_id=None,
+        cursor=None,
+        limit=50,
+    )
+    second, final_cursor = external_loop_item_provider.list_page(
+        test_db,
+        project.id,
+        test_user.id,
+        item_status="pending",
+        parent_id=None,
+        cursor=cursor,
+        limit=50,
+    )
+
+    assert len(first) == 50
+    assert cursor is not None
+    assert len(second) == 10
+    assert final_cursor is None
+    assert {item["id"] for item in first}.isdisjoint({item["id"] for item in second})
+    assert all(item["description"] == "" for item in first)
+    assert all(item["detail_loaded"] is False for item in first)
+
+
+def test_external_issue_page_cache_reuses_provider_response(
+    test_db: Session, test_user: User, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    project = _make_gitlab_project(test_db, test_user)
+    calls = 0
+
+    def request(*_args, **_kwargs):
+        nonlocal calls
+        calls += 1
+        return [_issue()]
+
+    external_loop_item_provider._invalidate_issue_page_cache(project.id)
+    monkeypatch.setattr(
+        external_loop_item_provider, "_repository", lambda _project: "repo"
+    )
+    monkeypatch.setattr(external_loop_item_provider, "_request", request)
+
+    external_loop_item_provider._list_issue_page(project, "pending", 1)
+    external_loop_item_provider._list_issue_page(project, "pending", 1)
+
+    assert calls == 1
+
+
+def test_completed_external_issue_stays_open_and_archive_closes_it(
+    test_db: Session, test_user: User, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    project = _make_gitlab_project(test_db, test_user)
+    issue = _issue()
+    writes: list[dict[str, object]] = []
+
+    monkeypatch.setattr(
+        external_loop_item_provider, "_get_issue", lambda _project, _number: issue
+    )
+
+    def update_issue(_project, _number, payload):
+        writes.append(dict(payload))
+        if "labels" in payload:
+            issue["labels"] = list(payload["labels"])
+        issue["state"] = payload.get("state", issue["state"])
+        return dict(issue)
+
+    monkeypatch.setattr(external_loop_item_provider, "_update_issue", update_issue)
+
+    updated = external_loop_item_provider.update(
+        test_db,
+        _item_id(project),
+        test_user.id,
+        LoopItemUpdate(version=1, status="completed"),
+    )
+    external_loop_item_provider.archive(test_db, _item_id(project), test_user.id)
+
+    assert updated["status"] == "completed"
+    assert writes[0]["state"] == "opened"
+    assert "wegent:status:completed" in writes[0]["labels"]
+    assert writes[1] == {"state": "closed"}
+
+
 def test_assign_robot_on_gitlab_creates_index_row_and_execution(
     test_db: Session, test_user: User, monkeypatch: pytest.MonkeyPatch
 ) -> None:
