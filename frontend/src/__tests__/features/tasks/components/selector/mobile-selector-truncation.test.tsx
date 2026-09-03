@@ -161,6 +161,30 @@ describe('mobile selector truncation', () => {
     expect(label).toHaveClass('min-w-0')
   })
 
+  it('clears the selected agent from a subtle trailing action', () => {
+    const onClear = jest.fn()
+
+    render(
+      <MobileTeamSelector
+        selectedTeam={selectedTeam}
+        teams={[selectedTeam]}
+        onTeamSelect={jest.fn()}
+        onClear={onClear}
+        showClearButton
+        disabled={false}
+      />
+    )
+
+    const trigger = screen.getByTestId('mobile-team-selector-trigger')
+    const clearButton = screen.getByTestId('mobile-team-selector-clear')
+
+    expect(trigger).toHaveClass('pr-11')
+    expect(clearButton).toHaveClass('absolute', 'h-11', 'w-11')
+
+    fireEvent.click(clearButton)
+    expect(onClear).toHaveBeenCalledTimes(1)
+  })
+
   it('filters the mobile selector by the requested model category', () => {
     render(
       <MobileModelSelector

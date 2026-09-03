@@ -40,6 +40,34 @@ vi.mock('@/lib/embedded-browser', () => ({
 }))
 
 describe('MessageList', () => {
+  test('renders complete user and assistant message regions with medium weight', () => {
+    render(
+      <MessageList
+        messages={[
+          {
+            id: 'user-message',
+            role: 'user',
+            content: '请调整会话字体',
+            status: 'done',
+            createdAt: '2026-09-03T08:00:00Z',
+          },
+          {
+            id: 'assistant-message',
+            role: 'assistant',
+            content: '会话字体已调整',
+            status: 'done',
+            createdAt: '2026-09-03T08:00:01Z',
+          },
+        ]}
+      />
+    )
+
+    expect(screen.getByTestId('message-user')).toHaveClass('font-medium')
+    expect(screen.getByTestId('message-assistant')).toHaveClass('font-medium')
+    expect(screen.getByTestId('user-message-content')).not.toHaveClass('font-medium')
+    expect(screen.getByTestId('assistant-message-content')).not.toHaveClass('font-medium')
+  })
+
   test('renders a generated Codex inline visualization from the changed workspace file', async () => {
     runtimeMock.electron = true
     desktopHostMock.invoke.mockResolvedValueOnce('<div>折线图</div>')
@@ -1443,7 +1471,19 @@ describe('MessageList', () => {
     )
 
     expect(screen.getByText('我先把硬编码中文改成 chat 命名空间翻译。')).toBeInTheDocument()
-    expect(screen.getByText('正在搜索代码')).toHaveClass('tool-activity-shimmer')
+    const shimmer = screen.getByText('正在搜索代码')
+    expect(shimmer).toHaveClass('tool-activity-shimmer')
+    const shimmerBands = shimmer.querySelectorAll('.activity-shimmer-band')
+    expect(shimmerBands).toHaveLength(6)
+    expect(Array.from(shimmerBands, band => band.getAttribute('data-grapheme'))).toEqual([
+      '正',
+      '在',
+      '搜',
+      '索',
+      '代',
+      '码',
+    ])
+    expect(shimmer.querySelector('[data-text]')).not.toBeInTheDocument()
     expect(screen.queryByTestId('thinking-indicator')).not.toBeInTheDocument()
   })
 
@@ -2179,7 +2219,10 @@ describe('MessageList', () => {
       assistantContent.compareDocumentPosition(processContent) & Node.DOCUMENT_POSITION_FOLLOWING
     ).toBe(Node.DOCUMENT_POSITION_FOLLOWING)
     expect(processContent).toHaveClass('text-chat')
+    expect(processContent).toHaveClass('text-text-primary')
+    expect(processContent).not.toHaveClass('text-text-secondary')
     expect(processContent).not.toHaveClass('text-sm')
+    expect(processContent.closest('[data-testid="message-assistant"]')).toHaveClass('font-medium')
   })
 
   test('does not restore hidden failed content from runtime display order', () => {

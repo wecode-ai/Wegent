@@ -94,6 +94,8 @@ Wework 在请求进入跨进程或跨服务边界时生成 request ID，并在�
 
 Unix executor 在创建异步运行时和启动 Agent 子进程之前，通过运行当前用户的交互式登录 shell 读取完整环境。shell 优先使用系统用户数据库中的登录 shell，并依次回退到 `$SHELL`、`zsh`、`bash` 和 `sh`。采集过程有固定超时；失败时 executor 保留父进程环境，并继续补充 Homebrew、`/usr/local` 等标准开发目录。最终环境由 executor 统一传递给 Codex、Claude Code、插件、技能、Hooks、PTY 和设备命令，因此 Wework 本地 sidecar、独立本地设备以及 Linux 云端或远程设备使用同一套 PATH 解析逻辑。
 
+Windows 没有可采集的登录 shell，executor 改为在启动时合并注册表中的机器与当前用户 PATH。这样即使桌面应用早于 PATH 修改启动，设备命令仍能看到新开 pwsh 可解析的工具。Git diff 与代码托管 CLI 状态等设备命令直接原生调用 git、`gh` 或 `glab`，不再依赖 Windows PATH 上不保证存在的 `bash` 或 `python3`。
+
 Wework 使用独立 Codex Home 隔离本地运行时配置。首次初始化时，用户可以把原生 Codex Home 中的配置、插件、技能和插件市场复制到该目录。初始化完成后，Wework 默认在 `[features]` 中写入 `apps = true`，使迁移后的插件 Apps 能力立即可用；用户之后在设置中明确关闭 Apps 时，后续普通启动不会覆盖该选择。
 
 Wework 的本地可用状态以真实 Codex app-server 完成 `initialize` 为边界，而不是以 executor stdio 通道建立为边界。 Electron 启动 executor 后，先把当前本地代理配置写入运行时，再通过 `runtime.codex.ensure_started` 启动并初始化共享 Codex app-server；只有该调用成功后，renderer 才继续进入可交互工作台。Codex 初始化路径不得同步等待插件市场刷新、Git 拉取、更新检查或其他外部网络请求；这些后台请求即使因断网或代理无响应而挂起，也不能延迟 `initialize` 响应。启动 E2E 必须使用真实 Codex 和阻塞网络代理验证这一约束，同时确认初始化期间不会发送 Agent 模型请求。
@@ -389,7 +391,7 @@ Plugin 上报必须包含其内部 Skill 列表。Executor 会扫描每个 Plugi
 
 项目任务使用本地 executor 执行时，任务级 `CLAUDE_CONFIG_DIR` 会同时暴露全局 `skills` 和 `plugins` 目录，并从本机 `~/.claude/settings.json` 继承 `enabledPlugins`、`extraKnownMarketplaces` 等非敏感插件配置，使 Claude Code 能加载全局 Skill 以及 Plugin 内部提供的 Skill。模型、Token 等敏感配置仍通过运行时环境变量注入，不会从全局 settings 写入任务目录。
 
-Claude Code、Agno 运行时和 Codex 任务 shell 都会收到一组任务身份环境变量。`WEGENT_TASK_ID` 标识当前 Task，`AUTH_TOKEN` 提供本轮任务访问 Backend API 的 bearer token，`WEGENT_RUNTIME_AUTH_TOKEN` 提供本地 Skill 访问 Wegent runtime API 的 bearer token，`WEGENT_SKILL_IDENTITY_TOKEN` 和 `WEGENT_SKILL_USER_NAME` 用于任务内 Skill 操作的身份校验与展示。Claude Code 和 Agno 通过子进程环境注入；Codex 通过 thread 级 `shell_environment_policy.set.*` 注入，身份值不会进入共享 app-server 进程环境，避免跨任务泄漏。Wework 连接云端后会通过 `POST /api/users/me/wegent-runtime-token` 获取 runtime token，并按响应的 `expires_in` 提前刷新；断开云端时会移除本地 Codex 配置中的 `WEGENT_RUNTIME_AUTH_TOKEN`。executor 不向这些子运行时注入 `WEGENT_SUBTASK_ID`。
+Claude Code、Agno 运行时和 Codex 任务 shell 都会收到一组任务身份环境变量。`WEGENT_TASK_ID` 标识当前 Task，`WEWORK_PARENT_TITLE` 提供当前任务标题，`AUTH_TOKEN` 提供本轮任务访问 Backend API 的 bearer token，`WEGENT_RUNTIME_AUTH_TOKEN` 提供本地 Skill 访问 Wegent runtime API 的 bearer token，`WEGENT_SKILL_IDENTITY_TOKEN` 和 `WEGENT_SKILL_USER_NAME` 用于任务内 Skill 操作的身份校验与展示。Claude Code 和 Agno 通过子进程环境注入；Codex 通过 thread 级 `shell_environment_policy.set.*` 注入，身份值不会进入共享 app-server 进程环境，避免跨任务泄漏。Wework 连接云端后会通过 `POST /api/users/me/wegent-runtime-token` 获取 runtime token，并按响应的 `expires_in` 提前刷新；断开云端时会移除本地 Codex 配置中的 `WEGENT_RUNTIME_AUTH_TOKEN`。executor 不向这些子运行时注入 `WEGENT_SUBTASK_ID`。
 
 项目模式下访问 Claude 或 Codex 模型 API 时，executor 会在直接启动的运行时上下文中加入 `wecode-project: <project_id>` 请求头，并补齐 `wecode-action: wegent`、`wecode-source: wegent-local`、`wecode-executor: <runtime>` 来源标识，其中 Claude Code 使用 `claudecode`，Codex 使用 `codex`。Claude Code 本地模式会先合并 executor 启动进程环境和运行时环境里已有的 `ANTHROPIC_CUSTOM_HEADERS`，再追加 project 标识，并同时写入 `ANTHROPIC_CUSTOM_HEADERS` 与 `DEFAULT_HEADERS`/`default_headers` 环境变量，保证直接 Claude Code 子进程和下游模型网关读取到一致的 header 集合；Codex 在 Wegent 管理 provider 配置时写入 provider 的 `http_headers`，使用个人 Codex 配置且显式指定 provider 时也会对该 provider 注入同一 project 请求头。
 

@@ -285,16 +285,18 @@ export function keepRicherMarketplacePluginDetail(
 
 export function createDefaultPluginApi(apiBaseUrl?: string, token?: string | null) {
   const runtime = getRuntimeConfig()
+  const resolvedApiBaseUrl = apiBaseUrl || runtime.apiBaseUrl
   return createPluginApi(
     createHttpClient({
-      baseUrl: apiBaseUrl || runtime.apiBaseUrl,
+      baseUrl: resolvedApiBaseUrl,
       ...(token === undefined
         ? {}
         : {
             getToken: () => token,
             redirectOnUnauthorized: false,
           }),
-    })
+    }),
+    resolvedApiBaseUrl
   )
 }
 

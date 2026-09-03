@@ -24,11 +24,7 @@ import { useWorkbench } from '@/features/workbench/useWorkbench'
 import { useIsMobile } from '@/hooks/useIsMobile'
 import { useTranslation } from '@/hooks/useTranslation'
 import { managedMarketplaceName } from '@/features/plugins/pluginMarketplaceIdentity'
-import {
-  notifyLocalPluginSkillsChanged,
-  queuePluginInputTrial,
-  queuePluginTrial,
-} from '@/features/plugins/pluginTrial'
+import { notifyLocalPluginSkillsChanged, queuePluginTrial } from '@/features/plugins/pluginTrial'
 import { getPreferredStandaloneDeviceId } from '@/lib/device-selection'
 import { buildRuntimeTaskRoute, navigateTo } from '@/lib/navigation'
 import { isElectronRuntime } from '@/lib/runtime-environment'
@@ -148,8 +144,7 @@ function applicationPluginReferenceName(plugin: InstalledPlugin, fallback: strin
 }
 
 function isPluginInstalledOnDevice(plugin: InstalledPlugin, deviceId: string): boolean {
-  const accountInstalled =
-    plugin.spec.installState === 'installed' || plugin.spec.installState === 'update_available'
+  const accountInstalled = plugin.spec.installState === 'installed'
   if (!accountInstalled || !plugin.spec.enabled) return false
   return (
     plugin.status.devices?.some(
@@ -295,7 +290,7 @@ export function SitesPage({ onNavigate, search = window.location.search }: Sites
   ])
   const pluginApi = useMemo(() => {
     if (!isLocalFirst) {
-      return createPluginApi(createHttpClient({ baseUrl: apiBaseUrl }))
+      return createPluginApi(createHttpClient({ baseUrl: apiBaseUrl }), apiBaseUrl)
     }
     if (!cloudConnection.isConnected || !cloudConnection.apiBaseUrl || !cloudConnection.token) {
       return null
@@ -307,7 +302,8 @@ export function SitesPage({ onNavigate, search = window.location.search }: Sites
         baseUrl: cloudConnection.apiBaseUrl,
         getToken: () => token,
         redirectOnUnauthorized: false,
-      })
+      }),
+      cloudConnection.apiBaseUrl
     )
   }, [
     apiBaseUrl,
@@ -505,9 +501,14 @@ export function SitesPage({ onNavigate, search = window.location.search }: Sites
         )
         return
       }
-      const queued = queuePluginInputTrial(prepared.plugin, input, {
+      const queued = queuePluginTrial(prepared.plugin, {
         openInNewChat: true,
-        prompt: `${site.name} ${suffix}`,
+        reference: {
+          pluginName: prepared.pluginName,
+          marketplaceName: prepared.marketplaceName,
+          displayName: applicationPluginReferenceName(prepared.plugin, prepared.pluginName),
+        },
+        prompt: input,
       })
       if (!queued) {
         throw new Error('The installed application plugin cannot be referenced in chat')

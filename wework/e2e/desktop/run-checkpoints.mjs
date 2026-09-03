@@ -5,6 +5,10 @@ import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 import { DESKTOP_CHECKPOINTS } from './checkpoints.mjs'
+import {
+  compactInactiveDesktopE2EResults,
+  resolveDesktopE2EResultRoot,
+} from './result-retention.mjs'
 import { prepareDesktopE2EBuild } from '../../scripts/lib/desktop-e2e-build.mjs'
 import { runCommandToLog } from '../../scripts/lib/command-log.mjs'
 
@@ -45,6 +49,7 @@ const CHECKPOINT_SCENARIO_MODULES = {
   'project-assignment-notification': './scenarios/project-assignment-notification.scenario.mjs',
   'offline-local-project-space': './scenarios/offline-local-project-space.scenario.mjs',
   'cloud-context-resilience': './scenarios/cloud-context-resilience.scenario.mjs',
+  'plugin-development': './scenarios/plugin-development.scenario.mjs',
   'task-attachments': './scenarios/task-attachments.scenario.mjs',
   'external-content-import': './scenarios/external-content-import.scenario.mjs',
 }
@@ -57,6 +62,7 @@ const SCENARIO_ONLY_CHECKPOINTS = new Set([
   'harness-apps',
   'offline-local-project-space',
   'cloud-context-resilience',
+  'plugin-development',
   'task-attachments',
   'project-assignment-notification',
   'runtime-task-queue',
@@ -81,6 +87,7 @@ const SCENARIO_ONLY_CHECKPOINTS = new Set([
   'external-content-import',
 ])
 const CLOUD_ONLY_CHECKPOINTS = new Set([
+  'plugin-workspace-publication',
   'cloud-git-worktree',
   'cloud-worktree-capability',
   'cloud-worktree-create',
@@ -253,7 +260,7 @@ async function readFailureSummary(result) {
 
 function checkpointScenarioEnv(env, checkpoint) {
   const nextEnv = { ...env }
-  if (checkpoint === 'native-window-chrome') {
+  if (checkpoint === 'native-window-chrome' || checkpoint === 'browser-multi-tabs') {
     nextEnv.WEWORK_E2E_BACKGROUND_WINDOW = '0'
   }
   const module = CHECKPOINT_SCENARIO_MODULES[checkpoint]
@@ -505,6 +512,13 @@ async function runCheckpoints(checkpoints) {
 
 async function runAllCheckpoints() {
   await runCheckpoints(DEFAULT_DESKTOP_CHECKPOINTS)
+}
+
+const previousResults = await compactInactiveDesktopE2EResults(
+  resolveDesktopE2EResultRoot(weworkDir)
+)
+if (previousResults.compacted > 0) {
+  console.log(`[desktop-e2e] compacted ${previousResults.compacted} previous result directories`)
 }
 
 if (requestedArgs.length > 0) {

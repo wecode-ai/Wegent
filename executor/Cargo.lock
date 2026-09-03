@@ -2283,9 +2283,9 @@ dependencies = [
 
 [[package]]
 name = "tf-rust-engineio"
-version = "0.8.1"
+version = "0.9.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "86c6ddbc7f08807da7c7604e452943de6c248406e0d73258e30c506b5fc79323"
+checksum = "02b670261d22c158113726ce231e056a06975b1e37cbeb1db0144a89cb24d4a7"
 dependencies = [
  "adler32",
  "async-stream",
@@ -2307,9 +2307,9 @@ dependencies = [
 
 [[package]]
 name = "tf-rust-socketio"
-version = "0.8.1"
+version = "0.9.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "dc40a5f3adf357af456b0046fce9ebcd584e6a7eac08186d0661429496b9b339"
+checksum = "a0ea53b568f32be34b573db31e16afad8b2613b2d3134ebdec505776fde5b59e"
 dependencies = [
  "adler32",
  "async-stream",

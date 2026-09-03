@@ -634,6 +634,9 @@ class CodeWikiPageTree(BaseModel):
     """The navigation for one code wiki."""
 
     pages: List[CodeWikiPageNode]
+    # Lets a reader tell whether its tree belongs to the version reported by the
+    # independently-polled run status. Zero means that no generation is published.
+    published_generation_id: int = 0
 
 
 class CodeWikiRunProgress(BaseModel):

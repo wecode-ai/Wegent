@@ -157,6 +157,12 @@ Codex 下载包按 `wework/codex-binaries.lock.json` 固定并校验 SHA-512。�
 `wework/electron/scripts/prepare-package-assets.mjs` 会把 sidecar、插件、图标和运行时
 描述复制到应用资源目录。不要重新建立第二份桌面资源目录或资源清单。
 
+当前固定版本为 Codex `0.152.1`。Codex `0.152` 开始默认关闭
+`tools.update_plan.enabled`，但 Wework 会消费对应的计划事件并渲染计划块，因此
+Executor 启动 Codex 时必须显式启用该工具。桌面 E2E 默认验证锁文件中的二进制；
+只有专用的 `WEWORK_E2E_CODEX_BIN` 可以覆盖它，不能继承通用 `CODEX_BIN`，否则
+本机已安装应用中的旧版本可能绕过待验证的仓库版本。
+
 桌面发行物还必须携带项目及 bundled sidecar 的许可证和归属信息：
 
 - 应用资源根目录的 `LICENSE` 是 Wegent 的 Apache-2.0 许可证；
@@ -179,6 +185,11 @@ renderer 可能仍在请求上一代哈希资源，提前删除会在新产物�
 每次构建只有在 Vite 完成 bundle、关闭构建结果并规范化文件查看器元数据后，才能
 写入 `.wework-build-id`。Core DSH 使用这个标记作为已发布构建 ID，页面只在标记
 变化后刷新，不能把 `index.html` 的中间写入状态当成可加载版本。
+
+自动刷新只在带有 Wework Electron preload 能力的桌面 renderer 中启用。直接在
+系统默认浏览器访问 Core DSH 地址时不得启动热更新轮询。桌面 renderer 发现新的
+已发布构建后，必须先记录该构建 ID，再尝试刷新；如果新页面加载失败并且旧页面仍然
+存活，同一个构建不得重复触发刷新。后续构建发布新的 ID 后仍应正常刷新。
 
 开发热更新模式下，`/wework/app/` 下的静态资源必须返回
 `Cache-Control: no-store`。除哈希资源外，该目录还包含固定文件名的

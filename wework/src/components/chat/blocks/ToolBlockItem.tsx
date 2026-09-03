@@ -10,6 +10,7 @@ import { track } from '@/telemetry/client'
 import type { TurnFileChangeItem, TurnFileChangesSummary } from '@/types/api'
 import type { ProcessingBlock, ToolBlock } from '@/types/workbench'
 import type { WorkspaceFileOpenOptions } from '@/types/workspace-files'
+import { ActivityShimmerText } from '../ActivityShimmerText'
 import { AssistantMarkdown } from '../AssistantMarkdown'
 import { AssistantPlanCard, type AssistantPlanOpenRequest } from '../AssistantPlanCard'
 import { localMarkdownImagePath, resolveDirectMarkdownImageSrc } from '../assistantMarkdownLinks'
@@ -151,9 +152,9 @@ export function ToolBlockItem({
         data-testid="runtime-reconnecting-status"
         role="status"
       >
-        <span className="tool-activity-shimmer">
+        <ActivityShimmerText variant="tool">
           {t('tool_activity.reconnecting', '连接中断，正在重连…')}
-        </span>
+        </ActivityShimmerText>
       </div>
     )
   }
@@ -180,9 +181,13 @@ export function ToolBlockItem({
   const labelContent = (
     <>
       {icon}
-      <span className={`min-w-0 truncate ${isRunning || shimmer ? 'tool-activity-shimmer' : ''}`}>
-        {label}
-      </span>
+      {isRunning || shimmer ? (
+        <ActivityShimmerText variant="tool" className="min-w-0 truncate">
+          {label}
+        </ActivityShimmerText>
+      ) : (
+        <span className="min-w-0 truncate">{label}</span>
+      )}
       {isRunning && <span className="animate-pulse text-xs will-change-opacity">...</span>}
     </>
   )
@@ -322,11 +327,13 @@ function ProcessFileChangesBlockItem({
                 className="group relative z-10 flex min-h-8 w-full max-w-full items-center gap-1.5 text-text-secondary disabled:cursor-default"
               >
                 <FileDiff className="h-4 w-4 shrink-0" strokeWidth={1.7} />
-                <span
-                  className={`min-w-0 truncate ${isRunning || shimmer ? 'tool-activity-shimmer' : ''}`}
-                >
-                  {fileChangeRowLabel(file, t, isRunning)}
-                </span>
+                {isRunning || shimmer ? (
+                  <ActivityShimmerText variant="tool" className="min-w-0 truncate">
+                    {fileChangeRowLabel(file, t, isRunning)}
+                  </ActivityShimmerText>
+                ) : (
+                  <span className="min-w-0 truncate">{fileChangeRowLabel(file, t, isRunning)}</span>
+                )}
                 {!file.binary ? (
                   <FileChangeLineStats file={file} isRunning={isRunning} streamId={block.id} />
                 ) : null}
@@ -945,7 +952,7 @@ function ProcessTextBlockItem({
 
   return (
     <div
-      className="min-w-0 overflow-x-hidden text-chat text-text-secondary"
+      className="min-w-0 overflow-x-hidden text-chat text-text-primary"
       data-processing-block-id={block.id}
       data-message-selectable-text
       role={isRunning ? 'status' : undefined}

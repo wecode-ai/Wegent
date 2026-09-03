@@ -158,6 +158,7 @@ def test_cloud_runtime_matching_pins_first_runtime_instance(
 ):
     logical_device_id = "cloud-unpinned-device"
     runtime_device_id = "cloud-unpinned-route"
+    sandbox_id = "sandbox-unpinned-runtime"
     device = Kind(
         user_id=test_user.id,
         kind="Device",
@@ -176,7 +177,7 @@ def test_cloud_runtime_matching_pins_first_runtime_instance(
                 "deviceType": DeviceType.CLOUD.value,
                 "runtimeInstanceId": None,
                 "cloudConfig": {
-                    "sandboxId": logical_device_id,
+                    "sandboxId": sandbox_id,
                     "deviceId": runtime_device_id,
                 },
             },
@@ -211,6 +212,72 @@ def test_cloud_runtime_matching_pins_first_runtime_instance(
     )
     assert matched == (logical_device_id, False, None)
     assert persisted.json["spec"]["runtimeInstanceId"] == "runtime-instance-first"
+
+
+@pytest.mark.asyncio
+async def test_legacy_cloud_runtime_matching_returns_migrated_canonical_id(
+    test_db,
+    test_user,
+    monkeypatch,
+):
+    sandbox_id = "sandbox-legacy-runtime"
+    runtime_device_id = "cloud-migrated-route"
+    device = Kind(
+        user_id=test_user.id,
+        kind="Device",
+        name=sandbox_id,
+        namespace="default",
+        is_active=True,
+        json={
+            "apiVersion": "agent.wecode.io/v1",
+            "kind": "Device",
+            "metadata": {"name": sandbox_id, "namespace": "default"},
+            "spec": {
+                "deviceType": DeviceType.CLOUD.value,
+                "cloudConfig": {"sandboxId": sandbox_id},
+            },
+        },
+    )
+    test_db.add(device)
+    test_db.commit()
+
+    @contextmanager
+    def test_db_session():
+        try:
+            yield test_db
+        finally:
+            test_db.commit()
+
+    async def run_inline(func, *args):
+        return func(*args)
+
+    monkeypatch.setattr(device_namespace, "get_db_session", test_db_session)
+    monkeypatch.setattr(device_namespace, "run_sync_in_executor", run_inline)
+
+    matched = await DeviceNamespace()._match_cloud_device(
+        user_id=test_user.id,
+        client_ip="198.51.100.32",
+        executor_device_id=runtime_device_id,
+        runtime_instance_id="runtime-instance-migrated",
+    )
+
+    test_db.expire_all()
+    persisted = (
+        test_db.query(Kind)
+        .filter(
+            Kind.user_id == test_user.id,
+            Kind.kind == "Device",
+            Kind.namespace == "default",
+        )
+        .one()
+    )
+    assert matched == runtime_device_id
+    assert persisted.name == runtime_device_id
+    assert persisted.json["spec"]["deviceId"] == runtime_device_id
+    assert persisted.json["spec"]["cloudConfig"] == {
+        "sandboxId": sandbox_id,
+        "deviceId": runtime_device_id,
+    }
 
 
 @pytest.mark.asyncio

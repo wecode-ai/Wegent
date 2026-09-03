@@ -4,12 +4,14 @@ export interface DesktopE2ERuntimeConfig {
   codexHomeInitialization?: boolean
   controlToken?: string
   controlUrl?: string
+  disabled?: boolean
   localModelsCatalogReady?: boolean
   modelServerUrl?: string
   posthogHost?: string
   posthogKey?: string
   seedLocalModels?: boolean
   transcriptPageSize?: number
+  windowLabel?: string
   worktreeCreationDelayMs?: number
 }
 
