@@ -162,11 +162,11 @@ fn windows_registry_paths() -> Result<(Option<String>, Option<String>), String> 
     // with a deadline, mirroring the bounded Unix shell capture. A registry
     // PATH can exceed the pipe buffer, so a naive wait-then-read would
     // deadlock, and an unbounded wait would hang executor startup.
-    let stdout_pipe = child
+    let mut stdout_pipe = child
         .stdout
         .take()
         .ok_or_else(|| "PowerShell stdout pipe is unavailable".to_owned())?;
-    let stderr_pipe = child
+    let mut stderr_pipe = child
         .stderr
         .take()
         .ok_or_else(|| "PowerShell stderr pipe is unavailable".to_owned())?;
