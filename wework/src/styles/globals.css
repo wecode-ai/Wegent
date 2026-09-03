@@ -820,6 +820,10 @@ button:disabled {
     background: currentcolor;
     vertical-align: text-bottom;
     pointer-events: none;
+    opacity: 0;
+  }
+
+  .composer-prosemirror-editor[data-composer-focus-visible] .composer-empty-caret {
     animation: local-skill-caret-blink 1s step-end infinite;
   }
 

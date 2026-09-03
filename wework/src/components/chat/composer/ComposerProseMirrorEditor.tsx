@@ -19,6 +19,7 @@ import { keymap } from 'prosemirror-keymap'
 import { Slice, type Node as ProseMirrorNode } from 'prosemirror-model'
 import { AllSelection, EditorState, Plugin, TextSelection } from 'prosemirror-state'
 import { Decoration, DecorationSet, EditorView } from 'prosemirror-view'
+import { isMainWindowFocused, subscribeMainWindowFocus } from '@/desktop/windowFocus'
 import type { PluginReference } from '@/features/plugins/pluginNavigation'
 import { isElectronRuntime } from '@/lib/runtime-environment'
 import { ComposerMentionNodeView } from './ComposerMentionNodeView'
@@ -313,15 +314,24 @@ export const ComposerProseMirrorEditor = forwardRef<
           return false
         },
         focus() {
+          view.dom.toggleAttribute('data-composer-focus-visible', isMainWindowFocused())
           callbacksRef.current.onFocus()
           return false
         },
         blur() {
+          view.dom.removeAttribute('data-composer-focus-visible')
           callbacksRef.current.onBlur?.()
           return false
         },
       },
     })
+    const unsubscribeWindowFocus = subscribeMainWindowFocus(focused => {
+      view.dom.toggleAttribute('data-composer-focus-visible', focused && view.hasFocus())
+    })
+    view.dom.toggleAttribute(
+      'data-composer-focus-visible',
+      isMainWindowFocused() && view.hasFocus()
+    )
 
     const handleKeyDownCapture = (event: KeyboardEvent) => {
       const diagnosticKey = diagnosticKeyboardKey(event.key)
@@ -435,6 +445,7 @@ export const ComposerProseMirrorEditor = forwardRef<
       view.dom.removeEventListener('keydown', handleKeyDownCapture, true)
       view.dom.removeEventListener('beforeinput', handleBeforeInputCapture, true)
       view.dom.removeEventListener('copy', handleCopyCapture, true)
+      unsubscribeWindowFocus()
       view.destroy()
     }
   }, [])

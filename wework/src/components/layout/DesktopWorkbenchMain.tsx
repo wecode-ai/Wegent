@@ -158,8 +158,12 @@ import {
   listLocalHarnessModelOptions,
   type LocalHarnessModelOption,
 } from '@/features/local-harness/localHarnessModels'
+import { getRuntimeTaskChatScopeKey } from '@/features/workbench/workbenchProviderHelpers'
 import { getWeworkDevInstanceInfo } from '@/lib/wework-dev-instance'
-import { WORKBENCH_NEW_CHAT_FOCUS_EVENT } from '@/lib/workbenchComposerFocus'
+import {
+  requestWorkbenchComposerFocus,
+  WORKBENCH_NEW_CHAT_FOCUS_EVENT,
+} from '@/lib/workbenchComposerFocus'
 import {
   DEFAULT_EMBEDDED_BROWSER_LABEL,
   closeEmbeddedBrowser,
@@ -1200,6 +1204,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
         onRuntimeTaskCreated: address => {
           onRuntimeTaskCreated(sourcePaneKey, address)
           cloudSubmission.onRuntimeTaskCreated(address)
+          requestWorkbenchComposerFocus(getRuntimeTaskChatScopeKey(address))
         },
         onRuntimeTaskReady: () => {
           if (supervisorConfig) {
