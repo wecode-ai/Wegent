@@ -11,6 +11,7 @@
       "supportsTablet": true,
       "icon": "./assets/icon.png",
       "bundleIdentifier": "com.wecode.wegent",
+      "buildNumber": "2",
       "appleTeamId": "27XH7KRW54"
     },
     "android": {

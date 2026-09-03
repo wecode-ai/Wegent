@@ -8,6 +8,12 @@ import {
   jwtExpiry,
   type WegentUser,
 } from './authClient'
+import {
+  clearAuthSession,
+  loadAuthSession,
+  saveAuthSession,
+  type CachedAuthSession,
+} from './authSessionStore'
 import { DeviceCredentialService } from './deviceCredentials'
 import {
   checkBackendHealth,
@@ -58,9 +64,17 @@ export function useWegentAuth(): WegentAuthState {
     ): Promise<boolean> => {
       const currentUser = await fetchCurrentUser(config, token)
       if (activeGeneration.current !== generation) return false
+      const session: CachedAuthSession = {
+        backend: config,
+        accessToken: token,
+        accessTokenExpiresAt: explicitExpiry ?? jwtExpiry(token),
+        user: currentUser,
+      }
+      await saveAuthSession(session)
+      if (activeGeneration.current !== generation) return false
       setBackend(config)
       setAccessToken(token)
-      setAccessTokenExpiresAt(explicitExpiry ?? jwtExpiry(token))
+      setAccessTokenExpiresAt(session.accessTokenExpiresAt)
       setUser(currentUser)
       setError(null)
       setStatus('authenticated')
@@ -83,32 +97,51 @@ export function useWegentAuth(): WegentAuthState {
       )
     } catch (cause) {
       if (activeGeneration.current !== generation) return false
-      setAccessToken(null)
-      setAccessTokenExpiresAt(null)
-      setUser(null)
-      setStatus('unauthenticated')
       setError(messageFrom(cause))
+      if (!accessToken || !user) {
+        setAccessToken(null)
+        setAccessTokenExpiresAt(null)
+        setUser(null)
+        setStatus('unauthenticated')
+      }
       return false
     }
-  }, [applyToken, backend])
+  }, [accessToken, applyToken, backend, user])
 
   useEffect(() => {
     const generation = activeGeneration.current
     void (async () => {
+      let cachedSession: CachedAuthSession | null = null
       try {
-        const backendUrl = (await loadBackendAddress()) ?? configuredBackendUrl()
+        const [storedBackendUrl, storedSession] = await Promise.all([
+          loadBackendAddress(),
+          loadAuthSession(),
+        ])
+        const backendUrl =
+          storedBackendUrl ?? configuredBackendUrl() ?? storedSession?.backend.backendUrl
         if (activeGeneration.current !== generation) return
         setBackendInput(backendUrl ?? '')
         if (!backendUrl) {
           setStatus('unauthenticated')
           return
         }
+        cachedSession =
+          storedSession?.backend.backendUrl === backendUrl.replace(/\/+$/, '')
+            ? storedSession
+            : null
+        if (cachedSession) {
+          setBackend(cachedSession.backend)
+          setAccessToken(cachedSession.accessToken)
+          setAccessTokenExpiresAt(cachedSession.accessTokenExpiresAt)
+          setUser(cachedSession.user)
+          setStatus('authenticated')
+        }
         const config = await resolveBackendConfig(backendUrl)
         await checkBackendHealth(config)
         if (activeGeneration.current !== generation) return
         setBackend(config)
         if (!(await credentials.hasRefreshCredential(config.apiBaseUrl))) {
-          setStatus('unauthenticated')
+          if (!cachedSession) setStatus('unauthenticated')
           return
         }
         const result = await credentials.refreshAccessToken(config.apiBaseUrl)
@@ -121,8 +154,8 @@ export function useWegentAuth(): WegentAuthState {
         )
       } catch (cause) {
         if (activeGeneration.current !== generation) return
-        setStatus('error')
         setError(messageFrom(cause))
+        if (!cachedSession) setStatus('error')
       }
     })()
   }, [applyToken])
@@ -200,7 +233,7 @@ export function useWegentAuth(): WegentAuthState {
   const logout = useCallback(async (): Promise<void> => {
     activeGeneration.current += 1
     WebBrowser.dismissBrowser()
-    await credentials.clear()
+    await Promise.all([credentials.clear(), clearAuthSession()])
     setAccessToken(null)
     setAccessTokenExpiresAt(null)
     setUser(null)
