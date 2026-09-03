@@ -151,6 +151,9 @@ pub(crate) fn append_unique_transcript_messages(
         if let Some(existing) = target.iter_mut().find(|existing| {
             message_id.is_some() && existing.get("id").and_then(Value::as_str) == message_id
         }) {
+            if same_user_client_message_id(existing, &message) {
+                preserve_local_user_message_metadata(&mut message, existing);
+            }
             *existing = message;
         } else if let Some(existing) = target
             .iter_mut()
@@ -406,6 +409,33 @@ mod tests {
 
         assert_eq!(messages.len(), 1);
         assert_eq!(messages[0]["id"], "provider-user");
+        assert_eq!(messages[0]["content"], "Provider prompt");
+        assert_eq!(messages[0]["turnId"], "turn-1");
+        assert_eq!(messages[0]["attachments"][0]["id"], "attachment-1");
+    }
+
+    #[test]
+    fn appending_transcript_messages_preserves_metadata_for_same_user_id() {
+        let mut messages = vec![json!({
+            "id": "user-1",
+            "clientUserMessageId": "client-user-1",
+            "role": "user",
+            "content": "Visible prompt",
+            "attachments": [{"id": "attachment-1"}],
+        })];
+
+        append_unique_transcript_messages(
+            &mut messages,
+            vec![json!({
+                "id": "user-1",
+                "clientUserMessageId": "client-user-1",
+                "role": "user",
+                "content": "Provider prompt",
+                "turnId": "turn-1",
+            })],
+        );
+
+        assert_eq!(messages.len(), 1);
         assert_eq!(messages[0]["content"], "Provider prompt");
         assert_eq!(messages[0]["turnId"], "turn-1");
         assert_eq!(messages[0]["attachments"][0]["id"], "attachment-1");
