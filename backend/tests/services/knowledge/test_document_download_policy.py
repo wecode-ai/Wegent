@@ -6,11 +6,14 @@
 
 from datetime import datetime
 
+import pytest
 from sqlalchemy.orm import Session
 
 from app.models.kind import Kind
 from app.services.knowledge.document_download_policy import (
-    resolve_document_download_decision,
+    DocumentDownloadDisabledError,
+    is_original_download_allowed,
+    require_document_download_allowed,
 )
 
 
@@ -39,10 +42,9 @@ def test_configuration_disables_original_download_for_personal_kb(
 ) -> None:
     knowledge_base = _knowledge_base(namespace="default", allow_document_download=False)
 
-    decision = resolve_document_download_decision(test_db, knowledge_base)
-
-    assert decision.original_download_allowed is False
-    assert decision.protected_by_configuration is True
+    assert is_original_download_allowed(test_db, knowledge_base) is False
+    with pytest.raises(DocumentDownloadDisabledError):
+        require_document_download_allowed(test_db, knowledge_base)
 
 
 def test_missing_configuration_allows_original_download_in_open_source(
@@ -50,7 +52,5 @@ def test_missing_configuration_allows_original_download_in_open_source(
 ) -> None:
     knowledge_base = _knowledge_base(namespace="company", allow_document_download=None)
 
-    decision = resolve_document_download_decision(test_db, knowledge_base)
-
-    assert decision.original_download_allowed is True
-    assert decision.protected_by_configuration is False
+    assert is_original_download_allowed(test_db, knowledge_base) is True
+    require_document_download_allowed(test_db, knowledge_base)

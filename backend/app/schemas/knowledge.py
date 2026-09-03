@@ -1015,7 +1015,6 @@ class DocumentProtectionResponse(BaseModel):
     """Effective document-export capability for a knowledge-base reader."""
 
     original_download_allowed: bool
-    copy_allowed: bool
     watermark_text: Optional[str] = None
 
 

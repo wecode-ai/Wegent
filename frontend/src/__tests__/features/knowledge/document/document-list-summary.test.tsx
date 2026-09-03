@@ -276,12 +276,10 @@ describe('DocumentList summary header', () => {
     mockDocuments = [createDocument()]
     let resolveProtectedKnowledgeBase: (value: {
       original_download_allowed: boolean
-      copy_allowed: boolean
       watermark_text: string | null
     }) => void
     const protectedKnowledgeBase = new Promise<{
       original_download_allowed: boolean
-      copy_allowed: boolean
       watermark_text: string | null
     }>(resolve => {
       resolveProtectedKnowledgeBase = resolve
@@ -289,7 +287,6 @@ describe('DocumentList summary header', () => {
     mockGetDocumentProtection
       .mockResolvedValueOnce({
         original_download_allowed: true,
-        copy_allowed: true,
         watermark_text: null,
       })
       .mockReturnValueOnce(protectedKnowledgeBase)
@@ -314,7 +311,6 @@ describe('DocumentList summary header', () => {
     await act(async () => {
       resolveProtectedKnowledgeBase!({
         original_download_allowed: true,
-        copy_allowed: true,
         watermark_text: null,
       })
     })

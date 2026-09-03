@@ -82,7 +82,7 @@ from app.services.knowledge import (
     knowledge_base_qa_service,
 )
 from app.services.knowledge.document_download_policy import (
-    resolve_document_download_decision,
+    is_original_download_allowed,
 )
 from app.services.knowledge.external_document_import import (
     ExternalDocumentImportError,
@@ -539,14 +539,11 @@ def get_document_protection(
             detail="Knowledge base not found",
         )
 
-    decision = resolve_document_download_decision(db, knowledge_base)
+    download_allowed = is_original_download_allowed(db, knowledge_base)
     response.headers["Cache-Control"] = "private, no-store"
     return DocumentProtectionResponse(
-        original_download_allowed=decision.original_download_allowed,
-        copy_allowed=decision.original_download_allowed,
-        watermark_text=(
-            None if decision.original_download_allowed else current_user.user_name
-        ),
+        original_download_allowed=download_allowed,
+        watermark_text=None if download_allowed else current_user.user_name,
     )
 
 
