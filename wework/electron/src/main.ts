@@ -19,10 +19,11 @@ import {
 } from 'electron'
 import electronUpdater from 'electron-updater'
 import { execFile } from 'node:child_process'
+import { createHash } from 'node:crypto'
 import { existsSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import { release } from 'node:os'
-import { dirname, join, resolve } from 'node:path'
+import { delimiter, dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { promisify } from 'node:util'
 import {
@@ -44,6 +45,7 @@ import {
   EmbeddedBrowserManager,
 } from './host/embedded-browser-manager.js'
 import { EmbeddedBrowserBridge } from './host/embedded-browser-bridge.js'
+import { WeworkDesktopControlBridge } from './host/wework-desktop-control-bridge.js'
 import { ComputerUseService } from './host/computer-use-service.js'
 import { restoreComputerUseAfterStartup } from './host/computer-use-startup.js'
 import { materializeBundledRuntimes } from './runtime/bundled-runtime-materializer.js'
@@ -98,6 +100,11 @@ import {
   pluginDevelopmentElectronArguments,
 } from './runtime/plugin-development-manager.js'
 import { PluginDevelopmentChildRuntime } from './runtime/plugin-development-child-runtime.js'
+import { canReplaceWeworkCli, installWeworkCli } from './runtime/wework-cli-installer.js'
+import {
+  parseLocalWorkspaceOpenRequest,
+  type LocalWorkspaceOpenRequest,
+} from './runtime/local-workspace-cli.js'
 import { SecureValueStore } from './host/secure-value-store.js'
 import { resolveDevelopmentDockIdentity } from './host/development-dock-identity.js'
 import { isEffectivePackagedApplication } from './host/application-packaging-mode.js'
@@ -131,6 +138,7 @@ const pluginDevelopmentCommand = commandLineValue(
   process.argv,
   '--wework-plugin-development-command'
 )
+const startupWorkspaceOpenRequest = parseLocalWorkspaceOpenRequest(process.argv)
 
 if (developmentDockIdentity) process.title = developmentDockIdentity.displayName
 
@@ -168,6 +176,7 @@ let desktopRuntime: DesktopRuntime | null = null
 let smartApps: SmartAppManager | null = null
 let embeddedBrowser: EmbeddedBrowserManager | null = null
 let embeddedBrowserBridge: EmbeddedBrowserBridge | null = null
+let desktopControlBridge: WeworkDesktopControlBridge | null = null
 let browserAnnotations: BrowserAnnotationController | null = null
 let computerUse: ComputerUseService | null = null
 let workbenchPlugins: WorkbenchPluginManager | null = null
@@ -220,6 +229,9 @@ const pluginDevelopmentChildRuntime =
 let trayManager: ElectronTrayManager<Electron.Menu | null, Tray> | null = null
 let trayNativeStatus: TrayNativeStatusController | null = null
 const desktopHostEvents = new DesktopHostEventBroker()
+const pendingWorkspaceOpenRequests: LocalWorkspaceOpenRequest[] = startupWorkspaceOpenRequest
+  ? [startupWorkspaceOpenRequest]
+  : []
 const pendingEmbeddedBrowserAttachments = new Map<
   number,
   Array<{ label: string; partition: string }>
@@ -257,6 +269,7 @@ const appUpdates = new AppUpdateService({
 const systemResume = new SystemResumeBridge(powerMonitor, () => webContents.getAllWebContents())
 const hasSingleInstanceLock = app.requestSingleInstanceLock({
   pluginDevelopmentCommand,
+  workspaceOpenRequest: startupWorkspaceOpenRequest,
 })
 
 if (keepE2EWindowInBackground) {
@@ -283,10 +296,12 @@ app.on('second-instance', (_event, _argv, _workingDirectory, additionalData) => 
     typeof instanceData.pluginDevelopmentCommand === 'string'
       ? instanceData.pluginDevelopmentCommand
       : null
+  const workspaceOpenRequest = normalizedWorkspaceOpenRequest(instanceData.workspaceOpenRequest)
   if (pluginDevelopmentInstance && command) {
     void pluginDevelopmentChildRuntime?.handleCommand(command)
     return
   }
+  if (workspaceOpenRequest) queueWorkspaceOpenRequest(workspaceOpenRequest)
   if (keepE2EWindowInBackground) return
   if (focusStartupSplashIfActive()) return
   if (!mainWindow) return
@@ -294,6 +309,24 @@ app.on('second-instance', (_event, _argv, _workingDirectory, additionalData) => 
   mainWindow.show()
   mainWindow.focus()
 })
+
+function normalizedWorkspaceOpenRequest(value: unknown): LocalWorkspaceOpenRequest | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null
+  const record = value as Record<string, unknown>
+  const path = typeof record.path === 'string' ? record.path.trim() : ''
+  if (!path) return null
+  const label = typeof record.label === 'string' ? record.label.trim() : ''
+  return { path, ...(label ? { label } : {}) }
+}
+
+function queueWorkspaceOpenRequest(request: LocalWorkspaceOpenRequest): void {
+  pendingWorkspaceOpenRequests.push(request)
+  desktopHostEvents.publish('wework-open-local-workspace-requested', {})
+}
+
+function takePendingWorkspaceOpenRequests(): LocalWorkspaceOpenRequest[] {
+  return pendingWorkspaceOpenRequests.splice(0)
+}
 
 rendererHealth.on('change', () => {
   mainWindow?.webContents.send('runtime:changed')
@@ -1146,12 +1179,15 @@ async function shutdown(): Promise<void> {
   browserAnnotations = null
   const browserBridge = embeddedBrowserBridge
   embeddedBrowserBridge = null
+  const controlBridge = desktopControlBridge
+  desktopControlBridge = null
   const computerUseService = computerUse
   computerUse = null
   const development = pluginDevelopment
   pluginDevelopment = null
   await Promise.allSettled([
     browserBridge?.stop(),
+    controlBridge?.stop(),
     computerUseService?.stop(),
     plugins?.shutdown(),
     development?.stop(),
@@ -1233,6 +1269,18 @@ async function configureDesktopRuntime(): Promise<void> {
     environment.WEGENT_EXECUTOR_HOME?.trim() || join(app.getPath('home'), '.wework')
   )
   environment.WEWORK_EMBEDDED_BROWSER_BRIDGE_RUNTIME_FILE = await embeddedBrowserBridge.start()
+  desktopControlBridge = new WeworkDesktopControlBridge({
+    instanceId: desktopControlInstanceId(),
+    instanceKind: pluginDevelopmentInstance ? 'core-dsh-plugin-development' : 'main',
+    displayName:
+      process.env.WEWORK_PLUGIN_DEVELOPMENT_TITLE?.trim() ||
+      developmentDockIdentity?.displayName ||
+      'Wework',
+    projectRoot: process.env.WEWORK_PLUGIN_DEVELOPMENT_ROOT?.trim() || null,
+    registryDirectory: desktopControlRegistryDirectory(),
+    window: () => mainWindow,
+  })
+  await desktopControlBridge.start()
   computerUse = new ComputerUseService(
     environment.WEGENT_EXECUTOR_HOME?.trim() || join(app.getPath('home'), '.wework')
   )
@@ -1312,6 +1360,7 @@ async function configureDesktopRuntime(): Promise<void> {
             }),
           plugins: workbenchPlugins,
           secureStorage,
+          takePendingWorkspaceOpenRequests,
           updatePreferences: updateDesktopPreferences,
         },
         {
@@ -1647,6 +1696,36 @@ async function desktopEnvironment(): Promise<NodeJS.ProcessEnv> {
         ])
       : developmentRuntimeRoot
   const nodeRuntime = await electronNodeRuntime()
+  const cliBin = join(app.getPath('userData'), 'runtime', 'wework-cli-bin')
+  await installWeworkCli(
+    cliBin,
+    resolve(packageRoot, 'dist', 'cli', 'wework-cli.mjs'),
+    process.platform,
+    {
+      appCommand: weworkCliAppCommand(),
+      nodeCommand: [nodeRuntime.status.path],
+    }
+  )
+  if (packagedApplication && !pluginDevelopmentInstance && process.platform === 'darwin') {
+    const userCliBin = join(app.getPath('home'), '.local', 'bin')
+    const userCliPath = join(userCliBin, 'wework')
+    if (await canReplaceWeworkCli(userCliPath)) {
+      await installWeworkCli(
+        userCliBin,
+        resolve(packageRoot, 'dist', 'cli', 'wework-cli.mjs'),
+        process.platform,
+        {
+          appCommand: weworkCliAppCommand(),
+          nodeCommand: [nodeRuntime.status.path],
+        }
+      )
+    } else {
+      console.warn(`Wework CLI install path is not managed by Wework: ${userCliPath}`)
+    }
+  }
+  nodeRuntime.environment.PATH = [cliBin, nodeRuntime.environment.PATH?.trim()]
+    .filter(Boolean)
+    .join(delimiter)
   return applyBrandRuntimeEnvironment(
     {
       ...nodeRuntime.environment,
@@ -1677,6 +1756,26 @@ async function desktopEnvironment(): Promise<NodeJS.ProcessEnv> {
     packageMetadata,
     app.getPath('home')
   )
+}
+
+function weworkCliAppCommand(): string[] {
+  return packagedApplication ? [process.execPath] : [process.execPath, packageRoot]
+}
+
+function desktopControlRegistryDirectory(): string {
+  return (
+    process.env.WEWORK_DESKTOP_CONTROL_REGISTRY_DIR?.trim() ||
+    join(app.getPath('home'), '.wework', 'runtime', 'desktop-instances')
+  )
+}
+
+function desktopControlInstanceId(): string {
+  const developmentId = process.env.WEWORK_DEV_INSTANCE_LABEL?.trim()
+  if (pluginDevelopmentInstance && developmentId) {
+    return `plugin-development-${developmentId}`
+  }
+  const identity = createHash('sha256').update(app.getPath('userData')).digest('hex').slice(0, 12)
+  return `main-${identity}`
 }
 
 function electronNodeRuntime(): Promise<ElectronNodeRuntime> {

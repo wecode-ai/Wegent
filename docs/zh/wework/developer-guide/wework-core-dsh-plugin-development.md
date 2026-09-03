@@ -56,6 +56,30 @@ profile 的最后一层重新启用 DeepSeek Harness 官方 HMR，并且只监�
 - **删除隔离数据**：停止实例并删除账号状态、缓存、profile、Executor 数据和日志；
   不删除插件源码。
 
+## 使用 Wework CLI 操作实例
+
+Wework 会把通用 `wework` CLI 加入自身 Agent 的运行环境。该 CLI 可以操作主实例和
+所有隔离实例；插件开发没有单独的自动化入口。Agent 在插件项目目录中使用
+`--project .` 时，Wework 会自动选择为该项目注册的调试实例：
+
+```bash
+wework desktop instances
+wework desktop status --project .
+wework desktop inspect --project . --interactive true
+wework desktop click --project . --selector '[data-testid="example-action"]'
+wework desktop fill --project . --selector '[data-testid="example-input"]' --value 'value'
+wework desktop press --project . --selector '[data-testid="example-input"]' --key Enter
+wework desktop wait --project . --selector '[data-testid="example-result"]' --text 'ready'
+wework desktop screenshot --project . --output test-results/plugin-debug.png
+```
+
+先使用 `inspect` 获取当前界面结构，再使用稳定的 `data-testid` 定位操作目标。每次
+`click`、`fill` 或 `press` 后都应通过 `wait` 或再次 `inspect` 验证结果。多个实例
+匹配时，先运行 `wework desktop instances`，再通过 `--instance` 明确指定目标。
+
+CLI 只暴露结构化检查和用户级交互，不提供任意 JavaScript 执行。实例发现、回环地址
+和认证信息由 Wework 管理，Skill 和插件源码不需要包含机器路径、端口或令牌。
+
 ## 包含关系
 
 Wework 插件是外层交付单元，可以通过自身 `package.json` 的

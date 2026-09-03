@@ -153,6 +153,7 @@ export const HOST_CAPABILITIES = [
   'workspace.listOpeners',
   'workspace.open',
   'workspace.pickOpener',
+  'workspace.takePendingOpenRequests',
   'window.close',
   'window.cancelCloseToTray',
   'window.closeToTray',

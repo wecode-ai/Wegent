@@ -73,6 +73,7 @@ export interface ElectronDesktopServices {
   cleanupStaleTemporaryImages: () => Promise<void>
   coreDshPlugins: () => CoreDshPluginService | null
   pluginDevelopment: () => PluginDevelopmentService | null
+  takePendingWorkspaceOpenRequests?: () => Array<{ path: string; label?: string }>
   updatePreferences?: (patch: Record<string, unknown>) => Promise<Record<string, unknown>>
 }
 
@@ -650,6 +651,10 @@ export function createElectronCapabilityRouter(
     shell.showItemInFolder(stringParam(params, 'path'))
   )
   router.register('workspace.listOpeners', () => listLocalWorkspaceOpeners(app.getPath('userData')))
+  router.register(
+    'workspace.takePendingOpenRequests',
+    () => desktopServices.takePendingWorkspaceOpenRequests?.() ?? []
+  )
   router.register('workspace.open', async params => {
     const opener = stringParam(params, 'opener')
     const path = stringParam(params, 'path')

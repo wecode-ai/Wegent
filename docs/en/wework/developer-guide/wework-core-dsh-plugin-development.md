@@ -73,6 +73,35 @@ bundle patch. React renders, chat updates, and tab changes do not scan disk.
   caches, the profile, Executor data, and logs. It does not delete plugin
   source files.
 
+## Control instances with the Wework CLI
+
+Wework adds its general `wework` CLI to the environment of Wework-managed
+agents. The CLI controls both the main instance and isolated instances; plugin
+development does not have a separate automation entry point. From a plugin
+project, `--project .` selects the debugging instance registered for that
+project:
+
+```bash
+wework desktop instances
+wework desktop status --project .
+wework desktop inspect --project . --interactive true
+wework desktop click --project . --selector '[data-testid="example-action"]'
+wework desktop fill --project . --selector '[data-testid="example-input"]' --value 'value'
+wework desktop press --project . --selector '[data-testid="example-input"]' --key Enter
+wework desktop wait --project . --selector '[data-testid="example-result"]' --text 'ready'
+wework desktop screenshot --project . --output test-results/plugin-debug.png
+```
+
+Run `inspect` before choosing a target and prefer stable `data-testid`
+selectors. Verify each `click`, `fill`, or `press` with `wait` or another
+`inspect`. If multiple instances match, run `wework desktop instances` and
+select one explicitly with `--instance`.
+
+The CLI exposes structured inspection and user-level interaction, not
+arbitrary JavaScript execution. Wework manages instance discovery, loopback
+addresses, and authentication, so Skills and plugin source do not contain
+machine paths, ports, or tokens.
+
 ## Containment model
 
 The Wework plugin is the outer delivery unit. Its own `package.json` may use

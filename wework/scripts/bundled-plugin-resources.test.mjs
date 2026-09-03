@@ -38,12 +38,31 @@ describe('bundled plugin resources', () => {
     })
     await json(join(weworkRoot, 'dsh/developer/codex-plugin/.codex-plugin/plugin.json'), {
       name: 'developer',
-      version: '0.1.0',
+      version: '0.1.1',
       skills: './skills/',
     })
     await file(
       join(weworkRoot, 'dsh/developer/codex-plugin/skills/develop/SKILL.md'),
-      '---\nname: develop\ndescription: Develop a Wework plugin.\n---\n'
+      [
+        '---',
+        'name: develop',
+        'description: Develop a Wework plugin.',
+        '---',
+        '[Catalog](references/extension-points.md)',
+        '[Demo](assets/ui-extension-demo)',
+        '',
+      ].join('\n')
+    )
+    await file(
+      join(weworkRoot, 'dsh/developer/codex-plugin/skills/develop/references/extension-points.md'),
+      '# Extension points\n'
+    )
+    await file(
+      join(
+        weworkRoot,
+        'dsh/developer/codex-plugin/skills/develop/assets/ui-extension-demo/client.js'
+      ),
+      "export const demo = 'usable'\n"
     )
 
     await materializeBundledPluginResources(weworkRoot, destination)
@@ -53,13 +72,31 @@ describe('bundled plugin resources', () => {
         join(destination, 'wework-personal/plugins/developer/.codex-plugin/plugin.json'),
         'utf8'
       ).then(JSON.parse)
-    ).resolves.toMatchObject({ name: 'developer' })
+    ).resolves.toMatchObject({ name: 'developer', version: '0.1.1' })
     await expect(
       readFile(
         join(destination, 'wework-personal/plugins/developer/skills/develop/SKILL.md'),
         'utf8'
       )
     ).resolves.toContain('Develop a Wework plugin.')
+    await expect(
+      readFile(
+        join(
+          destination,
+          'wework-personal/plugins/developer/skills/develop/references/extension-points.md'
+        ),
+        'utf8'
+      )
+    ).resolves.toContain('Extension points')
+    await expect(
+      readFile(
+        join(
+          destination,
+          'wework-personal/plugins/developer/skills/develop/assets/ui-extension-demo/client.js'
+        ),
+        'utf8'
+      )
+    ).resolves.toContain("demo = 'usable'")
   })
 })
 

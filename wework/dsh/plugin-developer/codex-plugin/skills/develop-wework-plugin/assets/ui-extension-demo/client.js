@@ -11,6 +11,15 @@ window.__ModuleLoader__.load({
       surface: 'rgb(var(--color-background))',
     }
 
+    function workspaceTabPath(path, id, title) {
+      const separator = path.includes('?') ? '&' : '?'
+      const params = new URLSearchParams({
+        workspaceTab: id,
+        workspaceTabTitle: title,
+      })
+      return `${path}${separator}${params}`
+    }
+
     function DemoPanel({ children, testId, title }) {
       return createElement(
         'section',
@@ -318,7 +327,7 @@ window.__ModuleLoader__.load({
           id: 'dsh-extension-demo.navigation',
           label: 'DSH Demo',
           order: 90,
-          path: '/dsh-extension-demo',
+          path: workspaceTabPath('/dsh-extension-demo', 'auxiliary-dsh-extension-demo', 'DSH Demo'),
           testId: 'dsh-extension-demo-navigation',
         },
       },

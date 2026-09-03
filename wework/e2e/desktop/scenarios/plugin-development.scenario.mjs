@@ -1,8 +1,27 @@
 import assert from 'node:assert/strict'
+import { execFile } from 'node:child_process'
 import { access, mkdir, readFile, writeFile } from 'node:fs/promises'
-import { join } from 'node:path'
+import { dirname, join, resolve } from 'node:path'
+import { fileURLToPath } from 'node:url'
+import { promisify } from 'node:util'
 
 const STATUS = '[data-testid="wework-plugin-development-sidebar-status"]'
+const execFileAsync = promisify(execFile)
+const weworkCliPath = resolve(
+  dirname(fileURLToPath(import.meta.url)),
+  '../../../electron/src/cli/wework-cli.mjs'
+)
+
+async function runWeworkCli(args, projectRoot, registryDirectory) {
+  const { stdout } = await execFileAsync(process.execPath, [weworkCliPath, 'desktop', ...args], {
+    cwd: projectRoot,
+    env: {
+      ...process.env,
+      WEWORK_DESKTOP_CONTROL_REGISTRY_DIR: registryDirectory,
+    },
+  })
+  return stdout.trim()
+}
 
 async function waitForStatus(control, expected, timeoutMs) {
   await control.commandForWindow('main', 'waitFor', STATUS, {
@@ -35,12 +54,14 @@ export async function createDesktopScenario({
   workbenchReadyTimeoutMs,
 }) {
   const pluginRoot = join(resultDir, 'plugin-development-project')
+  const controlRegistry = join(resultDir, 'desktop-control-instances')
   await mkdir(pluginRoot, { recursive: true })
 
   return {
     appEnvironment: {
       WEWORK_E2E_OPEN_DIALOG_PATH: pluginRoot,
       WEWORK_PLUGIN_DEVELOPMENT_E2E: '1',
+      WEWORK_DESKTOP_CONTROL_REGISTRY_DIR: controlRegistry,
     },
 
     async verify(control) {
@@ -121,9 +142,7 @@ export async function createDesktopScenario({
         'The initial development prompt activated the plugin from the wrong marketplace'
       )
       assert.equal(
-        Number(
-          await control.command('getElementCount', '[data-testid^="composer-skill-chip-"]')
-        ),
+        Number(await control.command('getElementCount', '[data-testid^="composer-skill-chip-"]')),
         0,
         'The initial development prompt activated a Skill instead of only activating the plugin'
       )
@@ -143,6 +162,30 @@ export async function createDesktopScenario({
         visible: true,
       })
       await captureScreenshot(control, 'plugin-development-02-debug-opened.png', 'body')
+      control.setScenario('plugin_development')
+      await control.command('clickWhenEnabled', '[data-testid="send-message-button"]', {
+        timeoutMs: workbenchReadyTimeoutMs,
+        visible: true,
+      })
+      await control.command('waitFor', '[data-testid="message-user"]', {
+        text: '开发这个 Wework 插件',
+        timeoutMs: workbenchReadyTimeoutMs,
+        visible: true,
+      })
+      await control.command('waitFor', '[data-testid="wework-plugin-development-sidebar"]', {
+        timeoutMs: uiTimeoutMs,
+        visible: true,
+      })
+      await control.command('waitFor', '[data-testid="wework-plugin-development-debug-target"]', {
+        text: 'Wework 调试实例（运行端）',
+        timeoutMs: uiTimeoutMs,
+        visible: true,
+      })
+      await captureScreenshot(
+        control,
+        'plugin-development-03-message-sent-panel-retained.png',
+        'body'
+      )
 
       await control.command(
         'clickWhenEnabled',
@@ -168,7 +211,7 @@ export async function createDesktopScenario({
         'cache',
         'wework-personal',
         'wework-plugin-developer',
-        '0.1.0',
+        '0.1.4',
         '.codex-plugin',
         'plugin.json'
       )
@@ -179,6 +222,16 @@ export async function createDesktopScenario({
       assert.equal(installedDeveloperManifest.name, 'wework-plugin-developer')
       assert.equal(installedDeveloperManifest.wework, undefined)
       assert.equal(installedDeveloperManifest.dsh, undefined)
+      const instances = JSON.parse(await runWeworkCli(['instances'], pluginRoot, controlRegistry))
+      assert.ok(
+        instances.some(
+          instance =>
+            instance.instanceId === `plugin-development-${isolatedInstanceId}` &&
+            instance.projectRoot === pluginRoot &&
+            instance.token === undefined
+        ),
+        'The general Wework CLI did not discover the isolated plugin development instance'
+      )
       control.activateWindow('main')
       await waitForStatus(control, '运行中 · HMR 0', workbenchReadyTimeoutMs)
       const focusSnapshot = JSON.parse(await control.command('getWindowFocusSnapshot', 'body'))
@@ -233,9 +286,10 @@ export async function createDesktopScenario({
         '    apply() {},',
         [
           '    apply() {',
-          "      const marker = document.createElement('div')",
+          "      const marker = document.createElement('button')",
           "      marker.dataset.testid = 'plugin-development-hmr-behavior'",
           "      marker.textContent = 'Plugin HMR behavior loaded'",
+          "      marker.addEventListener('click', () => { marker.textContent = 'Plugin controlled by Wework CLI' })",
           "      marker.style.cssText = 'position:fixed;right:24px;bottom:24px;z-index:2147483647;padding:12px 16px;border-radius:10px;background:#111827;color:#fff;font:600 14px system-ui;box-shadow:0 10px 30px rgba(0,0,0,.3)'",
           '      document.body.appendChild(marker)',
           '    },',
@@ -257,6 +311,67 @@ export async function createDesktopScenario({
       )
       control.activateWindow(isolatedWindowLabel)
       await captureScreenshot(control, 'plugin-development-06-hmr-behavior.png', 'body')
+      const cliInspect = JSON.parse(
+        await runWeworkCli(
+          ['inspect', '--project', pluginRoot, '--interactive', 'true'],
+          pluginRoot,
+          controlRegistry
+        )
+      )
+      assert.equal(
+        cliInspect.kind,
+        'browser.inspect',
+        'The general Wework CLI returned an unexpected inspect payload'
+      )
+      assert.match(
+        cliInspect.inspectId,
+        /^wk-inspect-/,
+        'The general Wework CLI did not register inspect targets for the child UI'
+      )
+      assert.ok(
+        cliInspect.nodes.some(
+          node =>
+            node.name === 'Plugin HMR behavior loaded' &&
+            node.role === 'button' &&
+            node.actionable === true
+        ),
+        'The general Wework CLI did not inspect the HMR control in the child UI'
+      )
+      await runWeworkCli(
+        [
+          'click',
+          '--project',
+          pluginRoot,
+          '--selector',
+          '[data-testid="plugin-development-hmr-behavior"]',
+        ],
+        pluginRoot,
+        controlRegistry
+      )
+      await runWeworkCli(
+        [
+          'wait',
+          '--project',
+          pluginRoot,
+          '--selector',
+          '[data-testid="plugin-development-hmr-behavior"]',
+          '--text',
+          'Plugin controlled by Wework CLI',
+        ],
+        pluginRoot,
+        controlRegistry
+      )
+      await runWeworkCli(
+        [
+          'screenshot',
+          '--project',
+          pluginRoot,
+          '--output',
+          join(resultDir, 'plugin-development-07-cli-controlled-instance.png'),
+        ],
+        pluginRoot,
+        controlRegistry
+      )
       control.activateWindow('main')
       await control.command('click', '[data-testid="wework-plugin-development-filter-hmr"]', {
         visible: true,
@@ -266,7 +381,7 @@ export async function createDesktopScenario({
         timeoutMs: uiTimeoutMs,
         visible: true,
       })
-      await captureScreenshot(control, 'plugin-development-07-hmr-applied.png', 'body')
+      await captureScreenshot(control, 'plugin-development-08-hmr-applied.png', 'body')
 
       await control.command('click', '[data-testid="wework-plugin-development-sidebar-more"]', {
         visible: true,
@@ -281,7 +396,7 @@ export async function createDesktopScenario({
         timeoutMs: uiTimeoutMs,
         visible: true,
       })
-      await captureScreenshot(control, 'plugin-development-08-stop-confirmation.png', 'body')
+      await captureScreenshot(control, 'plugin-development-09-stop-confirmation.png', 'body')
       await control.command(
         'clickWhenEnabled',
         '[data-testid="wework-plugin-development-sidebar-stop"]',
@@ -291,7 +406,7 @@ export async function createDesktopScenario({
         }
       )
       await waitForStatus(control, '未运行 · HMR 1', workbenchReadyTimeoutMs)
-      await captureScreenshot(control, 'plugin-development-09-debug-stopped-after-hmr.png', 'body')
+      await captureScreenshot(control, 'plugin-development-10-debug-stopped-after-hmr.png', 'body')
     },
   }
 }

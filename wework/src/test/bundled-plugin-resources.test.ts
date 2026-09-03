@@ -142,7 +142,7 @@ describe('bundled plugin resources', () => {
     }
     const weworkManifest = JSON.parse(
       readFileSync(resolve(weworkDirectory, weworkPluginDeveloperDirectory, 'package.json'), 'utf8')
-    ) as { wework?: { codexPlugin?: string } }
+    ) as { version?: string; wework?: { codexPlugin?: string } }
     const codexPluginRoot = resolve(
       weworkDirectory,
       weworkPluginDeveloperDirectory,
@@ -153,7 +153,9 @@ describe('bundled plugin resources', () => {
     ) as Record<string, unknown>
 
     expect(weworkManifest.wework?.codexPlugin).toBe('./codex-plugin')
+    expect(weworkManifest.version).toBe('0.1.4')
     expect(codexManifest.name).toBe('wework-plugin-developer')
+    expect(codexManifest.version).toBe('0.1.4')
     expect(Object.keys(codexManifest)).toEqual([
       'name',
       'version',
@@ -166,6 +168,28 @@ describe('bundled plugin resources', () => {
       marketplace.plugins.find(plugin => plugin.name === 'wework-plugin-developer')?.policy
         ?.installation
     ).toBe('INSTALLED_BY_DEFAULT')
+    const claudeMarketplace = JSON.parse(
+      readFileSync(
+        resolve(
+          resourcesDirectory,
+          'bundled-plugins/wework-personal/.claude-plugin/marketplace.json'
+        ),
+        'utf8'
+      )
+    ) as { plugins: Array<{ name: string; version?: string }> }
+    expect(
+      claudeMarketplace.plugins.find(plugin => plugin.name === 'wework-plugin-developer')?.version
+    ).toBe(codexManifest.version)
+    const skillRoot = resolve(codexPluginRoot, 'skills/develop-wework-plugin')
+    expect(readFileSync(resolve(skillRoot, 'SKILL.md'), 'utf8')).toContain(
+      'Never edit files inside an installed plugin cache'
+    )
+    expect(readFileSync(resolve(skillRoot, 'SKILL.md'), 'utf8')).toContain(
+      'wework desktop inspect --project .'
+    )
+    expect(existsSync(resolve(codexPluginRoot, '.mcp.json'))).toBe(false)
+    expect(existsSync(resolve(skillRoot, 'references/extension-points.md'))).toBe(true)
+    expect(existsSync(resolve(skillRoot, 'assets/ui-extension-demo/client.js'))).toBe(true)
     expect(
       existsSync(
         resolve(

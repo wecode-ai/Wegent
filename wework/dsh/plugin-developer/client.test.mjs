@@ -3,7 +3,28 @@ import { readFile } from 'node:fs/promises'
 import test from 'node:test'
 import vm from 'node:vm'
 
-const pluginRoot = new URL('./codex-plugin/skills/develop-wework-plugin/', import.meta.url)
+const codexPluginRoot = new URL('./codex-plugin/', import.meta.url)
+const pluginRoot = new URL('skills/develop-wework-plugin/', codexPluginRoot)
+
+test('publishes a cache-invalidating official Codex plugin version', async () => {
+  const outerManifest = JSON.parse(
+    await readFile(new URL('./package.json', import.meta.url), 'utf8')
+  )
+  const codexManifest = JSON.parse(
+    await readFile(new URL('.codex-plugin/plugin.json', codexPluginRoot), 'utf8')
+  )
+
+  assert.equal(outerManifest.version, '0.1.4')
+  assert.equal(codexManifest.version, '0.1.4')
+  assert.deepEqual(Object.keys(codexManifest), [
+    'name',
+    'version',
+    'description',
+    'author',
+    'skills',
+    'interface',
+  ])
+})
 
 test('registers translated plugin development actions through the Wework service', async () => {
   const source = await readFile(new URL('./client.js', import.meta.url), 'utf8')
@@ -82,6 +103,9 @@ test('registers translated plugin development actions through the Wework service
   assert.match(debugMarkup, /Core DSH/)
   assert.match(debugMarkup, /Wework debug instance/)
   assert.match(debugMarkup, /wework-plugin-development-sidebar-start/)
+  assert.match(debugMarkup, /grid grid-cols-2 bg-background/)
+  assert.match(debugMarkup, /col-span-2 flex min-w-0 items-center/)
+  assert.match(debugMarkup, /whitespace-nowrap bg-text-primary/)
   assert.doesNotMatch(debugMarkup, /wework-plugin-development-diagnostics-toggle/)
 })
 
@@ -100,8 +124,26 @@ test('documents and demonstrates every extension point declared by the Wework ho
   assert.ok(extensionPoints.length > 0, 'The Wework host does not declare any extension points')
   assert.match(skill, /references\/extension-points\.md/)
   assert.match(skill, /assets\/ui-extension-demo/)
+  assert.match(skill, /Never edit files inside an installed plugin cache/)
+  assert.match(skill, /official `\.codex-plugin\/plugin\.json` format/)
+  assert.match(skill, /wework desktop inspect --project \./)
+  assert.match(skill, /required\s+control surface/)
+  assert.match(skill, /Do not bypass\s+the CLI/)
+  assert.match(skill, /It does not create a tab/)
+  assert.match(catalog, /replaces that tab's whole surface/)
+  assert.match(skill, /Open a route in its own workspace tab/)
+  assert.match(skill, /Omitting `workspaceTab` intentionally replaces the active/)
+  assert.match(catalog, /Workspace-tab navigation protocol/)
+  assert.match(catalog, /If the ID does not exist, Wework creates a tab/)
+  assert.match(demo, /workspaceTabPath/)
+  assert.match(demo, /auxiliary-dsh-extension-demo/)
 
   for (const extensionPoint of extensionPoints) {
+    assert.match(
+      skill,
+      new RegExp(`\\\`${extensionPoint.replaceAll('.', '\\.')}\\\``),
+      `The primary Skill does not name ${extensionPoint}`
+    )
     assert.match(
       catalog,
       new RegExp(`\\\`${extensionPoint.replaceAll('.', '\\.')}\\\``),

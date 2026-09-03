@@ -385,7 +385,6 @@ window.__ModuleLoader__.load({
       ]
       const filteredEvents =
         eventFilter === 'all' ? events : events.filter(event => event.type === eventFilter)
-      const stableRunning = status === 'ready'
       return createElement(
         'aside',
         {
@@ -524,12 +523,13 @@ window.__ModuleLoader__.load({
             createElement(
               'div',
               {
-                className: 'grid grid-cols-3 divide-x divide-border/60 bg-background',
+                className: 'grid grid-cols-2 bg-background',
               },
               targetCell(
                 t('workbench.plugin_development_current_project', 'Current project'),
                 displayName,
-                compactPath(sourceRoot)
+                compactPath(sourceRoot),
+                'border-r border-border/60'
               ),
               targetCell(
                 'Core DSH',
@@ -542,23 +542,30 @@ window.__ModuleLoader__.load({
               ),
               createElement(
                 'div',
-                { className: 'min-w-0 px-3 py-3' },
+                {
+                  className:
+                    'col-span-2 flex min-w-0 items-center justify-between gap-3 border-t border-border/60 px-3 py-3',
+                },
                 createElement(
-                  'p',
-                  { className: 'text-xs text-text-tertiary' },
-                  t('workbench.plugin_development_debug_instance', 'Wework debug instance')
-                ),
-                createElement(
-                  'p',
-                  { className: 'mt-1 truncate text-sm font-medium' },
-                  running
-                    ? statusView.label
-                    : t('workbench.plugin_development_not_started', 'Not started')
-                ),
-                createElement(
-                  'p',
-                  { className: 'mt-1 truncate font-mono text-xs text-text-tertiary' },
-                  `${t('workbench.plugin_development_instance_id', 'Instance ID')} ${compactIdentifier(currentSession?.id)}`
+                  'div',
+                  { className: 'min-w-0' },
+                  createElement(
+                    'p',
+                    { className: 'text-xs text-text-tertiary' },
+                    t('workbench.plugin_development_debug_instance', 'Wework debug instance')
+                  ),
+                  createElement(
+                    'p',
+                    { className: 'mt-1 truncate text-sm font-medium' },
+                    running
+                      ? statusView.label
+                      : t('workbench.plugin_development_not_started', 'Not started')
+                  ),
+                  createElement(
+                    'p',
+                    { className: 'mt-1 truncate font-mono text-xs text-text-tertiary' },
+                    `${t('workbench.plugin_development_instance_id', 'Instance ID')} ${compactIdentifier(currentSession?.id)}`
+                  )
                 ),
                 actionButton({
                   children:
@@ -568,7 +575,7 @@ window.__ModuleLoader__.load({
                         ? t('workbench.plugin_development_open_instance', 'Open debug instance')
                         : t('workbench.plugin_development_start', 'Start debug instance'),
                   className:
-                    'mt-3 w-full justify-center bg-text-primary text-background hover:bg-text-primary/80',
+                    'shrink-0 justify-center whitespace-nowrap bg-text-primary text-background hover:bg-text-primary/80',
                   disabled: !sourceRoot || Boolean(busy),
                   onClick: () =>
                     running
@@ -584,7 +591,7 @@ window.__ModuleLoader__.load({
           createElement(
             'div',
             {
-              className: `mt-3 grid gap-3 ${stableRunning ? 'grid-cols-4' : 'grid-cols-2'}`,
+              className: 'mt-3 grid grid-cols-2 gap-3',
               'data-testid': 'wework-plugin-development-lifecycle',
             },
             lifecycleStep(
