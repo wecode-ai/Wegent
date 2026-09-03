@@ -1,5 +1,5 @@
 import type { KeyboardEvent, ReactNode } from 'react'
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { createHttpClient } from '@/api/http'
 import { createLocalCodexPluginApi } from '@/api/local/codexPlugins'
 import { createPluginApi } from '@/api/plugins'
@@ -17,14 +17,10 @@ import {
 import { useTranslation } from '@/hooks/useTranslation'
 import { getErrorMessage } from '@/lib/error-message'
 import { navigateTo } from '@/lib/navigation'
+import { WEWORK_PERSONAL_MARKETPLACE_ID } from '@/features/plugins/builtinPlugins'
 import { INTERNAL_DEVICE_MARKETPLACE_ID } from '@/features/plugins/marketplaceIdentity'
 import { buildPluginDetailRoute } from '@/features/plugins/pluginNavigation'
-import type {
-  InstalledPlugin,
-  PluginAccessResponse,
-  PluginAccessUpdateRequest,
-  PluginMarketplaceItem,
-} from '@/types/api'
+import type { InstalledPlugin, PluginMarketplaceItem } from '@/types/api'
 import { InstalledPluginRow, type InstalledPluginItem } from './PluginManagementRows'
 import {
   installedPluginSourceLabel,
@@ -33,16 +29,9 @@ import {
 } from './installedPluginMerge'
 import { pluginUninstallWarningDetails, uninstallPluginIdentities } from './pluginUninstall'
 import { humanizeMarketplaceUninstallError } from './marketplaceInstallError'
-import { withPublishedPluginCloudLink } from './publishedPluginIdentity'
 import { PluginDetailView } from './PluginDetailView'
 import { PluginOperationNotice, type PluginOperationNoticeState } from './PluginOperationNotice'
-import { PluginPublishDialog, type PluginPublishRequest } from './PluginPublishDialog'
-import { PluginShareDialog } from './PluginShareDialog'
-import {
-  canRecoverShareAfterVersionConflict,
-  resolvePluginOwnerActions,
-  type PluginOwnerHeaderAction,
-} from './pluginOwnerActions'
+import { resolvePluginOwnerActions } from './pluginOwnerActions'
 import {
   findPackableCreatedPlugin,
   isPackableCreatedPlugin,
@@ -60,11 +49,6 @@ import { pluginDetailReadyToTry } from './pluginDetailReadyToTry'
 import { getRuntimeConfig } from '@/config/runtime'
 import { isElectronRuntime } from '@/lib/runtime-environment'
 import { CoreDshPluginManagementSection } from './CoreDshPluginManagementSection'
-
-interface PluginShareState {
-  plugin: PluginMarketplaceItem
-  access: PluginAccessResponse
-}
 
 function toInstalledPluginItem(item: InstalledPlugin): InstalledPluginItem {
   const labels = item.metadata['labels']
@@ -137,9 +121,6 @@ export function PluginManagementWorkspace({
     () => getPluginMarketplaceCache(marketplaceCacheKeyValue)?.deviceId ?? ''
   )
   const [selectedPluginId, setSelectedPluginId] = useState<string | number | null>(null)
-  const [pluginShareState, setPluginShareState] = useState<PluginShareState | null>(null)
-  const [pluginShareSaving, setPluginShareSaving] = useState(false)
-  const [, setPluginSharePreparing] = useState(false)
   const [pendingUninstall, setPendingUninstall] = useState<{
     id: string | number
     name: string
@@ -149,17 +130,6 @@ export function PluginManagementWorkspace({
   )
   const [pluginOperationNotice, setPluginOperationNotice] =
     useState<PluginOperationNoticeState | null>(null)
-  const [pluginShareError, setPluginShareError] = useState<string | null>(null)
-  const [canPublish, setCanPublish] = useState(
-    () => getPluginMarketplaceCache(marketplaceCacheKeyValue)?.canPublish ?? false
-  )
-  const [canSharePersonalPlugins, setCanSharePersonalPlugins] = useState(
-    () => getPluginMarketplaceCache(marketplaceCacheKeyValue)?.canSharePersonalPlugins ?? true
-  )
-  const [pluginPublishTarget, setPluginPublishTarget] = useState<InstalledPluginItem | null>(null)
-  const [pluginPublishError, setPluginPublishError] = useState<string | null>(null)
-  const [pluginPublishShareRecovery, setPluginPublishShareRecovery] = useState(false)
-  const [isPublishingPlugin, setIsPublishingPlugin] = useState(false)
   const [activeTab, setActiveTab] = useState<PluginManagementTab>('codex')
   const showCoreDshTab = isElectronRuntime()
   const localPluginApi = useMemo(() => createLocalCodexPluginApi(), [])
@@ -173,7 +143,8 @@ export function PluginManagementWorkspace({
               getToken: () => cloudToken,
               redirectOnUnauthorized: false,
             }),
-      })
+      }),
+      resolvedCloudApiBaseUrl
     )
   }, [cloudToken, resolvedCloudApiBaseUrl])
 
@@ -204,23 +175,16 @@ export function PluginManagementWorkspace({
     const marketplacePromise = cloudPluginApi
       .listMarketplacePlugins({ deviceId: deviceIdHint })
       .catch(() => ({ items: [] as PluginMarketplaceItem[] }))
-    const capabilitiesPromise = cloudPluginApi
-      .getCapabilities()
-      .catch(() => ({ canPublish: false, canSharePersonalPlugins: true }))
 
     const applySnapshot = (
       localState: Awaited<ReturnType<typeof localPluginApi.readState>> | null,
       cloudInstalled: InstalledPlugin[],
-      marketplace: PluginMarketplaceItem[],
-      capabilities: { canPublish: boolean; canSharePersonalPlugins?: boolean }
+      marketplace: PluginMarketplaceItem[]
     ) => {
       const deviceId = localState?.deviceId || deviceIdHint || ''
       if (localState?.deviceId) {
         setCurrentDeviceId(localState.deviceId)
       }
-      setCanPublish(Boolean(capabilities.canPublish))
-      setCanSharePersonalPlugins(Boolean(capabilities.canSharePersonalPlugins ?? true))
-
       const nextInstalled = mergeInstalledPlugins(
         cloudInstalled,
         localState?.installedPlugins ?? [],
@@ -242,61 +206,51 @@ export function PluginManagementWorkspace({
         marketplaces: previousCache?.marketplaces ?? [],
         selectedMarketplaceKey: previousCache?.selectedMarketplaceKey ?? '',
         deviceId,
-        canPublish: Boolean(capabilities.canPublish),
-        canSharePersonalPlugins: Boolean(capabilities.canSharePersonalPlugins ?? true),
         fetchedAt: Date.now(),
       })
     }
 
-    void Promise.allSettled([
-      localPromise,
-      cloudInstalledPromise,
-      marketplacePromise,
-      capabilitiesPromise,
-    ]).then(([localResult, cloudInstalledResult, marketplaceResult, capabilitiesResult]) => {
-      if (!current) return
-      setIsLoadingPlugins(false)
+    void Promise.allSettled([localPromise, cloudInstalledPromise, marketplacePromise]).then(
+      ([localResult, cloudInstalledResult, marketplaceResult]) => {
+        if (!current) return
+        setIsLoadingPlugins(false)
 
-      const localState = localResult.status === 'fulfilled' ? localResult.value : null
-      const cloudInstalledResultValue =
-        cloudInstalledResult.status === 'fulfilled'
-          ? cloudInstalledResult.value
-          : { ok: false as const, value: { items: [] as InstalledPlugin[] } }
-      const cloudInstalled = cloudInstalledResultValue.value.items
-      const marketplace =
-        marketplaceResult.status === 'fulfilled' ? marketplaceResult.value.items : []
-      const capabilities =
-        capabilitiesResult.status === 'fulfilled'
-          ? capabilitiesResult.value
-          : { canPublish: false, canSharePersonalPlugins: true }
-
-      if (localResult.status === 'rejected' && !cloudInstalledResultValue.ok) {
-        if (!hasCachedList) {
-          setInstalledPlugins([])
-          setMarketplaceItems([])
+        const localState = localResult.status === 'fulfilled' ? localResult.value : null
+        const cloudInstalledResultValue =
+          cloudInstalledResult.status === 'fulfilled'
+            ? cloudInstalledResult.value
+            : { ok: false as const, value: { items: [] as InstalledPlugin[] } }
+        const cloudInstalled = cloudInstalledResultValue.value.items
+        const marketplace =
+          marketplaceResult.status === 'fulfilled' ? marketplaceResult.value.items : []
+        if (localResult.status === 'rejected' && !cloudInstalledResultValue.ok) {
+          if (!hasCachedList) {
+            setInstalledPlugins([])
+            setMarketplaceItems([])
+          }
+          return
         }
-        return
-      }
 
-      applySnapshot(localState, cloudInstalled, marketplace, capabilities)
+        applySnapshot(localState, cloudInstalled, marketplace)
 
-      const resolvedDeviceId = localState?.deviceId || ''
-      if (resolvedDeviceId && resolvedDeviceId !== deviceIdHint) {
-        void Promise.all([
-          cloudPluginApi
-            .listInstalledPlugins(resolvedDeviceId)
-            .catch(() => ({ items: [] as InstalledPlugin[] })),
-          cloudPluginApi
-            .listMarketplacePlugins({ deviceId: resolvedDeviceId })
-            .catch(() => ({ items: [] as PluginMarketplaceItem[] })),
-        ])
-          .then(([deviceInstalled, deviceMarketplace]) => {
-            if (!current) return
-            applySnapshot(localState, deviceInstalled.items, deviceMarketplace.items, capabilities)
-          })
-          .catch(() => undefined)
+        const resolvedDeviceId = localState?.deviceId || ''
+        if (resolvedDeviceId && resolvedDeviceId !== deviceIdHint) {
+          void Promise.all([
+            cloudPluginApi
+              .listInstalledPlugins(resolvedDeviceId)
+              .catch(() => ({ items: [] as InstalledPlugin[] })),
+            cloudPluginApi
+              .listMarketplacePlugins({ deviceId: resolvedDeviceId })
+              .catch(() => ({ items: [] as PluginMarketplaceItem[] })),
+          ])
+            .then(([deviceInstalled, deviceMarketplace]) => {
+              if (!current) return
+              applySnapshot(localState, deviceInstalled.items, deviceMarketplace.items)
+            })
+            .catch(() => undefined)
+        }
       }
-    })
+    )
 
     return () => {
       current = false
@@ -551,236 +505,47 @@ export function PluginManagementWorkspace({
     setSelectedPluginId(plugin.id)
   }
 
-  const listingTypeForPlugin = (plugin: InstalledPluginItem): 'plugin' | 'skill' => {
-    const components = plugin.raw.spec.components
-    const isSingleSkill =
-      components.skills.length === 1 &&
-      components.commands.length === 0 &&
-      components.agents.length === 0 &&
-      components.mcps.length === 0 &&
-      components.hooks.length === 0
-    return isSingleSkill ? 'skill' : 'plugin'
-  }
-
-  const manageInstalledPluginAccess = async (plugin: InstalledPluginItem) => {
-    setPluginShareError(null)
-    try {
-      const owned = findOwnedMarketplacePlugin(plugin)
-      if (!owned || owned.visibility !== 'personal') {
-        throw new Error(
-          t(
-            'workbench.plugins_share_manage_hint',
-            '仅用于管理个人插件的可见成员；扩大到组织或全部请使用「发布」。'
-          )
-        )
-      }
-      if (owned.latestReleaseId) {
-        await localPluginApi.linkPersonalPluginRelease(
-          plugin.raw,
-          Number(owned.id),
-          owned.latestReleaseId
-        )
-      }
-      const access = await cloudPluginApi.getMarketplacePluginAccess(owned.id)
-      setPluginShareState({ plugin: owned, access })
-    } catch (error) {
-      setPluginShareError(error instanceof Error ? error.message : 'Failed to prepare sharing')
-    }
-  }
-
-  const publishInstalledPlugin = async (
-    plugin: InstalledPluginItem,
-    request: PluginPublishRequest
-  ) => {
-    setIsPublishingPlugin(true)
-    setPluginPublishError(null)
-    setPluginPublishShareRecovery(false)
-    try {
-      const file = await localPluginApi.packageCreatedPlugin(plugin.raw)
-      const completed = await cloudPluginApi.publishSubmission(file, {
-        slug: createdPluginSlug(plugin),
-        displayName: plugin.name,
-        version: plugin.version || '0.1.0',
-        listingType: listingTypeForPlugin(plugin),
-        visibility: request.visibility,
-        targets: request.targets,
-        allowCopy: request.allowCopy,
-      })
-      const cloudPluginId = completed.plugin ? Number(completed.plugin.id) : null
-      const cloudReleaseId = completed.plugin?.latestReleaseId ?? null
-      setInstalledPlugins(previous =>
-        previous.map(candidate => {
-          if (String(candidate.id) !== String(plugin.id)) return candidate
-          const updated: InstalledPlugin = {
-            ...candidate.raw,
-            spec: {
-              ...candidate.raw.spec,
-              sourcePayload: {
-                ...(cloudPluginId === null
-                  ? (candidate.raw.spec.sourcePayload ?? {})
-                  : withPublishedPluginCloudLink(
-                      candidate.raw.spec.sourcePayload,
-                      cloudPluginId,
-                      cloudReleaseId
-                    )),
-                submissionId: completed.submission.id,
-                submissionStatus: completed.submission.status,
-                submissionReviewNote: completed.submission.reviewNote ?? '',
-              },
-            },
-          }
-          return toInstalledPluginItem(updated)
-        })
-      )
-      if (cloudPluginId !== null) {
-        await localPluginApi.linkPersonalPluginRelease(plugin.raw, cloudPluginId, cloudReleaseId)
-      }
-      if (completed.plugin?.latestReleaseId) {
-        setMarketplaceItems(previous => [
-          completed.plugin!,
-          ...previous.filter(item => item.id !== completed.plugin!.id),
-        ])
-      }
-      setPluginPublishTarget(null)
+  const openOwnerPublicationDetail = (plugin: InstalledPluginItem) => {
+    const owned = findOwnedMarketplacePlugin(plugin)
+    const target =
+      findPackableCreatedPlugin(installedPlugins, [
+        plugin.raw.spec.source.pluginKey,
+        createdPluginSlug(plugin),
+        plugin.name,
+        owned?.name,
+        owned?.displayName,
+      ]) ?? (isPackableCreatedPlugin(plugin) ? plugin : null)
+    const pluginName = target ? createdPluginSlug(target) : owned?.name
+    if (!pluginName || (owned && owned.visibility !== 'personal')) {
       setPluginOperationNotice({
-        id: `publish-${completed.submission.id}`,
-        kind: 'success',
-        message:
-          completed.submission.status === 'pending'
-            ? t('workbench.plugins_publish_pending_notice', '已提交审核，通过后将出现在插件市场。')
-            : t('workbench.plugins_publish_approved_notice', '发布成功。'),
+        id: `publish-missing-${plugin.id}`,
+        kind: 'error',
+        message: t(
+          'workbench.plugins_publish_source_missing',
+          '本地插件源文件不完整或未写入个人市场，请用「继续编辑」重新生成后再发布。'
+        ),
       })
-    } catch (error) {
-      const message = getErrorMessage(error, 'Failed to publish plugin')
-      const versionExists = /version already exists/i.test(message)
-      const ownedListing = findOwnedMarketplacePlugin(plugin)
-      setPluginPublishError(
-        versionExists
-          ? t(
-              'workbench.plugins_version_exists_hint',
-              '该版本已存在，请先在插件清单中提升 version 后再发布。'
-            )
-          : /missing \.codex-plugin\/plugin\.json/i.test(message)
-            ? t(
-                'workbench.plugins_publish_source_missing',
-                '本地插件源文件不完整或未写入个人市场，请用「继续编辑」重新生成后再发布。'
-              )
-            : message
-      )
-      setPluginPublishShareRecovery(
-        versionExists && canRecoverShareAfterVersionConflict(ownedListing ?? null)
-      )
-    } finally {
-      setIsPublishingPlugin(false)
+      return
     }
-  }
-
-  const recoverPublishToShare = () => {
-    const target = pluginPublishTarget
-    if (!target) return
-    setPluginPublishTarget(null)
-    setPluginPublishError(null)
-    setPluginPublishShareRecovery(false)
-    void manageInstalledPluginAccess(target)
+    navigateTo(
+      buildPluginDetailRoute({
+        pluginName,
+        marketplaceName: WEWORK_PERSONAL_MARKETPLACE_ID,
+      })
+    )
   }
 
   const copyMarketplacePlugin = async (plugin: PluginMarketplaceItem) => {
-    setPluginSharePreparing(true)
-    try {
-      const descriptor = await cloudPluginApi.copyMarketplacePlugin(plugin.id)
-      const installed = await localPluginApi.importMarketplaceCopy(descriptor)
-      const item = toInstalledPluginItem(installed)
-      setInstalledPlugins(previous => [
-        item,
-        ...previous.filter(candidate => String(candidate.id) !== String(item.id)),
-      ])
-      notifyLocalPluginSkillsChanged()
-      setSelectedPluginId(item.id)
-    } finally {
-      setPluginSharePreparing(false)
-    }
+    const descriptor = await cloudPluginApi.copyMarketplacePlugin(plugin.id)
+    const installed = await localPluginApi.importMarketplaceCopy(descriptor)
+    const item = toInstalledPluginItem(installed)
+    setInstalledPlugins(previous => [
+      item,
+      ...previous.filter(candidate => String(candidate.id) !== String(item.id)),
+    ])
+    notifyLocalPluginSkillsChanged()
+    setSelectedPluginId(item.id)
   }
-
-  const savePluginShare = async (request: PluginAccessUpdateRequest) => {
-    if (!pluginShareState) return
-    setPluginShareSaving(true)
-    setPluginShareError(null)
-    try {
-      const access = await cloudPluginApi.updateMarketplacePluginAccess(
-        pluginShareState.plugin.id,
-        request
-      )
-      setMarketplaceItems(previous =>
-        previous.map(item =>
-          item.id === pluginShareState.plugin.id
-            ? {
-                ...item,
-                allowCopy: access.allowCopy,
-                grantUserCount: access.targets.filter(target => target.entityType === 'user')
-                  .length,
-                grantNamespaceCount: access.targets.filter(
-                  target => target.entityType === 'namespace'
-                ).length,
-              }
-            : item
-        )
-      )
-      setPluginShareState(null)
-    } catch (error) {
-      setPluginShareError(error instanceof Error ? error.message : 'Failed to save plugin access')
-    } finally {
-      setPluginShareSaving(false)
-    }
-  }
-
-  const searchPluginShareUsers = useCallback(
-    (value: string) =>
-      cloudPluginApi.searchPluginShareUsers(value).then(response => response.users),
-    [cloudPluginApi]
-  )
-  const searchPluginShareGroups = useCallback(
-    (value: string) =>
-      cloudPluginApi.searchPluginShareGroups(value).then(response => response.items),
-    [cloudPluginApi]
-  )
-
-  const pluginShareDialog = pluginShareState ? (
-    <PluginShareDialog
-      pluginName={pluginShareState.plugin.displayName || pluginShareState.plugin.name}
-      access={pluginShareState.access}
-      saving={pluginShareSaving}
-      error={pluginShareError}
-      onClose={() => setPluginShareState(null)}
-      onSave={request => void savePluginShare(request)}
-      searchUsers={searchPluginShareUsers}
-      searchGroups={searchPluginShareGroups}
-    />
-  ) : null
-
-  const pluginPublishDialog = pluginPublishTarget ? (
-    <PluginPublishDialog
-      pluginName={pluginPublishTarget.name}
-      canPublish={canPublish}
-      canSharePersonal={canSharePersonalPlugins}
-      publishing={isPublishingPlugin}
-      error={pluginPublishError}
-      shareRecoveryLabel={
-        pluginPublishShareRecovery
-          ? t('workbench.plugins_version_exists_go_share', '去分享成员')
-          : null
-      }
-      onShareRecovery={pluginPublishShareRecovery ? recoverPublishToShare : undefined}
-      onClose={() => {
-        if (isPublishingPlugin) return
-        setPluginPublishTarget(null)
-        setPluginPublishError(null)
-        setPluginPublishShareRecovery(false)
-      }}
-      onPublish={request => void publishInstalledPlugin(pluginPublishTarget, request)}
-      searchUsers={searchPluginShareUsers}
-      searchGroups={searchPluginShareGroups}
-    />
-  ) : null
 
   const pluginOperationNoticeOverlay = pluginOperationNotice ? (
     <PluginOperationNotice
@@ -805,8 +570,6 @@ export function PluginManagementWorkspace({
     const ownerActions = resolvePluginOwnerActions({
       isLocalCreated: Boolean(packableCreated),
       ownedListing: ownedMarketplace ?? null,
-      canPublish,
-      canSharePersonalPlugins,
     })
     const continueEditingKey = resolveContinueEditingPluginKey({
       packableCreated,
@@ -829,39 +592,7 @@ export function PluginManagementWorkspace({
       typeof selectedPlugin.raw.spec.sourcePayload?.submissionReviewNote === 'string'
         ? selectedPlugin.raw.spec.sourcePayload.submissionReviewNote
         : null
-    const ownerHeaderActionLabel = (action: PluginOwnerHeaderAction): string | undefined => {
-      if (!action) return undefined
-      if (isPublishingPlugin) return t('workbench.plugins_publishing', '发布中…')
-      if (action === 'publishNewVersion') {
-        return t('workbench.plugins_publish_new_version', '发布新版本')
-      }
-      return t('workbench.plugins_publish_to_marketplace', '发布')
-    }
-    const openOwnerShare = () => void manageInstalledPluginAccess(selectedPlugin)
-    const openOwnerPublish = () => {
-      const target =
-        findPackableCreatedPlugin(installedPlugins, [
-          selectedPlugin.raw.spec.source.pluginKey,
-          createdPluginSlug(selectedPlugin),
-          selectedPlugin.name,
-          ownedMarketplace?.name,
-          ownedMarketplace?.displayName,
-        ]) ?? (isPackableCreatedPlugin(selectedPlugin) ? selectedPlugin : null)
-      if (!target) {
-        setPluginOperationNotice({
-          id: `publish-missing-${selectedPlugin.id}`,
-          kind: 'error',
-          message: t(
-            'workbench.plugins_publish_source_missing',
-            '本地插件源文件不完整或未写入个人市场，请用「继续编辑」重新生成后再发布。'
-          ),
-        })
-        return
-      }
-      setPluginPublishError(null)
-      setPluginPublishShareRecovery(false)
-      setPluginPublishTarget(target)
-    }
+    const openOwnerShare = () => openOwnerPublicationDetail(selectedPlugin)
     return (
       <>
         <PluginDetailView
@@ -875,18 +606,12 @@ export function PluginManagementWorkspace({
           }
           primaryActionDisabled={isUninstalling}
           showUninstall={!isUninstalling}
-          secondaryActionLabel={ownerHeaderActionLabel(ownerActions.headerAction)}
-          secondaryActionDisabled={isPublishingPlugin || submissionStatus === 'pending'}
-          onSecondaryAction={ownerActions.headerAction ? openOwnerPublish : undefined}
           accessRole={ownedMarketplace?.accessRole}
           pluginVisibility={ownedMarketplace?.visibility ?? null}
           shareGrantUserCount={ownedMarketplace?.grantUserCount ?? 0}
           shareGrantNamespaceCount={ownedMarketplace?.grantNamespaceCount ?? 0}
           manageAccessLabel={t('workbench.plugins_manage_access', '管理权限')}
           onManageAccess={ownerActions.canManageAccess ? openOwnerShare : undefined}
-          menuPublishLabel={t('workbench.plugins_publish_new_version', '发布新版本')}
-          menuPublishDisabled={isPublishingPlugin || submissionStatus === 'pending'}
-          onMenuPublish={ownerActions.showPublishNewVersionInMenu ? openOwnerPublish : undefined}
           submissionStatus={submissionStatus}
           submissionReviewNote={submissionReviewNote}
           onBack={() => setSelectedPluginId(null)}
@@ -902,8 +627,6 @@ export function PluginManagementWorkspace({
           }
           onUninstall={() => requestUninstallPlugin(selectedPlugin.id, selectedPlugin.name)}
         />
-        {pluginShareDialog}
-        {pluginPublishDialog}
         {pluginOperationNoticeOverlay}
         {pendingUninstall && (
           <UninstallPluginDialog
@@ -1056,14 +779,7 @@ export function PluginManagementWorkspace({
                   const ownerActions = resolvePluginOwnerActions({
                     isLocalCreated: Boolean(packableCreated),
                     ownedListing: ownedMarketplace ?? null,
-                    canPublish,
-                    canSharePersonalPlugins,
                   })
-                  const publishLabel =
-                    ownerActions.headerAction === 'publishNewVersion' ||
-                    ownerActions.showPublishNewVersionInMenu
-                      ? t('workbench.plugins_publish_new_version', '发布新版本')
-                      : t('workbench.plugins_publish_to_marketplace', '发布')
                   return (
                     <div
                       key={plugin.id}
@@ -1075,37 +791,14 @@ export function PluginManagementWorkspace({
                         onOpen={() => openInstalledPluginDetail(plugin)}
                         onTry={() => tryPluginInChat(plugin.raw)}
                         onPublish={
-                          ownerActions.canOpenPublishDialog
-                            ? () => {
-                                const target =
-                                  findPackableCreatedPlugin(installedPlugins, [
-                                    plugin.raw.spec.source.pluginKey,
-                                    createdPluginSlug(plugin),
-                                    plugin.name,
-                                    ownedMarketplace?.name,
-                                    ownedMarketplace?.displayName,
-                                  ]) ?? (isPackableCreatedPlugin(plugin) ? plugin : null)
-                                if (!target) {
-                                  setPluginOperationNotice({
-                                    id: `publish-missing-${plugin.id}`,
-                                    kind: 'error',
-                                    message: t(
-                                      'workbench.plugins_publish_source_missing',
-                                      '本地插件源文件不完整或未写入个人市场，请用「继续编辑」重新生成后再发布。'
-                                    ),
-                                  })
-                                  return
-                                }
-                                setPluginPublishError(null)
-                                setPluginPublishShareRecovery(false)
-                                setPluginPublishTarget(target)
-                              }
+                          ownerActions.showShareAction
+                            ? () => openOwnerPublicationDetail(plugin)
                             : undefined
                         }
-                        publishLabel={publishLabel}
+                        publishLabel={t('workbench.plugins_publish_to_marketplace', '发布')}
                         onShare={
                           ownerActions.canManageAccess
-                            ? () => void manageInstalledPluginAccess(plugin)
+                            ? () => openOwnerPublicationDetail(plugin)
                             : undefined
                         }
                         shareLabel={t('workbench.plugins_manage_access', '管理权限')}
@@ -1149,8 +842,6 @@ export function PluginManagementWorkspace({
           </div>
         ) : null}
       </div>
-      {pluginShareDialog}
-      {pluginPublishDialog}
       {pluginOperationNoticeOverlay}
       {pendingUninstall && (
         <UninstallPluginDialog

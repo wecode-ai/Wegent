@@ -16,8 +16,6 @@ export interface PluginMarketplaceCacheSnapshot {
   }>
   selectedMarketplaceKey: string
   deviceId: string
-  canPublish: boolean
-  canSharePersonalPlugins: boolean
   fetchedAt: number
   /**
    * True when durable storage had to drop inlined data-URL logos to fit quota.
@@ -257,8 +255,6 @@ function snapshotPersistSignature(next: PluginMarketplaceCacheSnapshot): string 
     next.cacheKey,
     next.deviceId,
     next.selectedMarketplaceKey,
-    next.canPublish ? '1' : '0',
-    next.canSharePersonalPlugins ? '1' : '0',
     next.marketplaces.map(entry => `${entry.key}:${entry.id}:${entry.path ?? ''}`).join(','),
     marketplaceItemsSignature(next.marketplaceItems),
     installedPluginsSignature(next.installedPlugins),

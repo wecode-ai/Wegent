@@ -90,15 +90,16 @@ export interface HttpClientOptions {
 export interface HttpRequestOptions {
   redirectOnUnauthorized?: boolean
   signal?: AbortSignal
+  headers?: HeadersInit
 }
 
 export interface HttpClient {
   get<T>(endpoint: string, options?: HttpRequestOptions): Promise<T>
   getBlob(endpoint: string): Promise<Blob>
-  post<T>(endpoint: string, data?: unknown): Promise<T>
-  put<T>(endpoint: string, data?: unknown): Promise<T>
-  patch<T>(endpoint: string, data?: unknown): Promise<T>
-  delete<T>(endpoint: string, data?: unknown): Promise<T>
+  post<T>(endpoint: string, data?: unknown, options?: HttpRequestOptions): Promise<T>
+  put<T>(endpoint: string, data?: unknown, options?: HttpRequestOptions): Promise<T>
+  patch<T>(endpoint: string, data?: unknown, options?: HttpRequestOptions): Promise<T>
+  delete<T>(endpoint: string, data?: unknown, options?: HttpRequestOptions): Promise<T>
 }
 
 function defaultGetToken(): string | null {
@@ -291,7 +292,11 @@ export function createHttpClient(options: HttpClientOptions): HttpClient {
       }
     }
 
-    const nextRequest = request<T>(endpoint, { method: 'GET' }, requestOptions).finally(() => {
+    const nextRequest = request<T>(
+      endpoint,
+      { method: 'GET', headers: requestOptions.headers },
+      requestOptions
+    ).finally(() => {
       if (!requestOptions.signal) {
         inFlightGetRequests.delete(cacheKey)
       }
@@ -326,28 +331,48 @@ export function createHttpClient(options: HttpClientOptions): HttpClient {
   return {
     get,
     getBlob,
-    post: (endpoint, data) =>
-      request(endpoint, {
-        method: 'POST',
-        body:
-          data === undefined ? undefined : data instanceof FormData ? data : JSON.stringify(data),
-      }),
-    put: (endpoint, data) =>
-      request(endpoint, {
-        method: 'PUT',
-        body:
-          data === undefined ? undefined : data instanceof FormData ? data : JSON.stringify(data),
-      }),
-    patch: (endpoint, data) =>
-      request(endpoint, {
-        method: 'PATCH',
-        body:
-          data === undefined ? undefined : data instanceof FormData ? data : JSON.stringify(data),
-      }),
-    delete: (endpoint, data) =>
-      request(endpoint, {
-        method: 'DELETE',
-        body: data === undefined ? undefined : JSON.stringify(data),
-      }),
+    post: (endpoint, data, requestOptions = {}) =>
+      request(
+        endpoint,
+        {
+          method: 'POST',
+          headers: requestOptions.headers,
+          body:
+            data === undefined ? undefined : data instanceof FormData ? data : JSON.stringify(data),
+        },
+        requestOptions
+      ),
+    put: (endpoint, data, requestOptions = {}) =>
+      request(
+        endpoint,
+        {
+          method: 'PUT',
+          headers: requestOptions.headers,
+          body:
+            data === undefined ? undefined : data instanceof FormData ? data : JSON.stringify(data),
+        },
+        requestOptions
+      ),
+    patch: (endpoint, data, requestOptions = {}) =>
+      request(
+        endpoint,
+        {
+          method: 'PATCH',
+          headers: requestOptions.headers,
+          body:
+            data === undefined ? undefined : data instanceof FormData ? data : JSON.stringify(data),
+        },
+        requestOptions
+      ),
+    delete: (endpoint, data, requestOptions = {}) =>
+      request(
+        endpoint,
+        {
+          method: 'DELETE',
+          headers: requestOptions.headers,
+          body: data === undefined ? undefined : JSON.stringify(data),
+        },
+        requestOptions
+      ),
   }
 }

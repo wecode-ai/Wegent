@@ -104,7 +104,7 @@ export function mergeMarketplaceCatalog(
   const merged = new Map<string, PluginMarketplaceItem>()
   const cloudNames = new Set<string>()
   const cloudKeysByCatalogId = new Map<string, string>()
-  const ownedCloudKeysByName = new Map<string, string>()
+  const ownedPersonalCloudKeysByName = new Map<string, string>()
   for (const item of cloudItems) {
     const localInstall = localPublishedInstalls.get(String(item.id))
     const cloudInstall = localInstall ? undefined : cloudManagedInstalls.get(String(item.id))
@@ -144,7 +144,12 @@ export function mergeMarketplaceCatalog(
     const normalizedName = item.name.toLowerCase()
     cloudNames.add(normalizedName)
     cloudKeysByCatalogId.set(String(item.id), cloudKey)
-    if (item.accessRole === 'owner') ownedCloudKeysByName.set(normalizedName, cloudKey)
+    if (
+      item.accessRole === 'owner' &&
+      (item.visibility === 'personal' || item.sourceProvider === 'user')
+    ) {
+      ownedPersonalCloudKeysByName.set(normalizedName, cloudKey)
+    }
   }
   for (const item of localItems) {
     const marketplaceId = marketplaceItemMarketplaceId(item)
@@ -168,7 +173,7 @@ export function mergeMarketplaceCatalog(
           })
         }
       }
-      const ownedCloudKey = ownedCloudKeysByName.get(normalizedName)
+      const ownedCloudKey = ownedPersonalCloudKeysByName.get(normalizedName)
       const marketplacePath = item.manifest?.marketplacePath
       if (
         ownedCloudKey &&
@@ -181,6 +186,11 @@ export function mergeMarketplaceCatalog(
         if (cloudItem) {
           merged.set(ownedCloudKey, {
             ...cloudItem,
+            // The owned personal card represents the editable local source. The
+            // cloud row can still describe an older shared/published release, so
+            // keep the card aligned with the version that detail and publication
+            // flows will actually package.
+            version: item.version || cloudItem.version,
             localPersonalSource: {
               marketplacePath: marketplacePath.trim(),
               pluginName: item.name,

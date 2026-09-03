@@ -42,6 +42,9 @@ from app.schemas.smart_app import (
     SmartAppSubmissionItem,
 )
 from app.services.marketplace_artifact_storage import marketplace_artifact_storage
+from app.services.marketplace_submission_upload import (
+    build_marketplace_submission_upload_url,
+)
 from app.services.marketplace_tag_service import marketplace_tag_service
 from app.services.smart_app_download_link import build_smart_app_download_url
 from app.services.smart_app_package_parser import (
@@ -221,8 +224,10 @@ class SmartAppMarketplaceService:
             db.add(submission)
             db.commit()
             db.refresh(submission)
-            upload_url, expires_at = marketplace_artifact_storage.presign_upload(
-                package_key
+            upload_url, expires_at = build_marketplace_submission_upload_url(
+                kind="smart_app",
+                submission_id=submission.id,
+                user_id=user_id,
             )
             return SmartAppSubmissionInitResponse(
                 submissionId=submission.id,
@@ -239,10 +244,35 @@ class SmartAppMarketplaceService:
                     pass
             raise
 
+    def upload_submission_package(
+        self,
+        db: Session,
+        *,
+        submission_id: int,
+        user_id: int,
+        package: bytes,
+    ) -> None:
+        submission = self._owned_submission(db, submission_id, user_id, for_update=True)
+        try:
+            if submission.status != "uploading":
+                raise HTTPException(
+                    status_code=409, detail="Submission is not uploading"
+                )
+            self._verify_uploaded_package(submission, package)
+            marketplace_artifact_storage.put(
+                submission.staging_storage_key,
+                package,
+                content_type="application/zip",
+            )
+            db.commit()
+        except Exception:
+            db.rollback()
+            raise
+
     def complete_submission(
         self, db: Session, *, submission_id: int, user_id: int
     ) -> SmartAppSubmissionCompleteResponse:
-        submission = self._owned_submission(db, submission_id, user_id)
+        submission = self._owned_submission(db, submission_id, user_id, for_update=True)
         if submission.status != "uploading":
             raise HTTPException(status_code=409, detail="Submission is not uploading")
         submission.status = "scanning"
@@ -295,7 +325,7 @@ class SmartAppMarketplaceService:
     def cancel_submission(
         self, db: Session, *, submission_id: int, user_id: int
     ) -> SmartAppSubmissionItem:
-        submission = self._owned_submission(db, submission_id, user_id)
+        submission = self._owned_submission(db, submission_id, user_id, for_update=True)
         if submission.status not in {"uploading", "scanning"}:
             raise HTTPException(
                 status_code=409, detail="Submission cannot be cancelled"
@@ -888,9 +918,19 @@ class SmartAppMarketplaceService:
             )
 
     def _owned_submission(
-        self, db: Session, submission_id: int, user_id: int
+        self,
+        db: Session,
+        submission_id: int,
+        user_id: int,
+        *,
+        for_update: bool = False,
     ) -> SmartAppSubmission:
-        submission = db.get(SmartAppSubmission, submission_id)
+        query = db.query(SmartAppSubmission).filter(
+            SmartAppSubmission.id == submission_id
+        )
+        if for_update:
+            query = query.with_for_update()
+        submission = query.first()
         if not submission or submission.owner_user_id != user_id:
             raise HTTPException(
                 status_code=404, detail="Smart app submission not found"

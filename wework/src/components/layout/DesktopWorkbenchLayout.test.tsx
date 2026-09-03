@@ -2210,7 +2210,7 @@ describe('DesktopWorkbenchLayout', () => {
       )
     )
     expect(await screen.findByTestId('transient-notice')).toHaveTextContent('已发送到私聊')
-    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
   })
 
   test('keeps IM actions available while experimental features are disabled', () => {
@@ -2788,7 +2788,7 @@ describe('DesktopWorkbenchLayout', () => {
         ['session-2']
       )
     )
-    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
 
     await act(async () => {
       firstRequest.resolve({

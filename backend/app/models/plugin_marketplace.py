@@ -66,6 +66,13 @@ class Plugin(Base):
         autoincrement=True,
         comment="Plugin primary key",
     )
+    catalog_namespace = Column(
+        String(100),
+        nullable=False,
+        default="enterprise",
+        server_default="enterprise",
+        comment="Server-owned catalog namespace for stable plugin identity",
+    )
     slug = Column(
         String(100),
         nullable=False,
@@ -128,6 +135,13 @@ class Plugin(Base):
         default=0,
         server_default="0",
         comment="Owner user ID; 0 means platform-owned / unset",
+    )
+    origin_plugin_id = Column(
+        big_integer_id_type(),
+        nullable=False,
+        default=0,
+        server_default="0",
+        comment="Source personal plugin ID; 0 means no linked origin",
     )
     category = Column(
         String(50),
@@ -205,7 +219,11 @@ class Plugin(Base):
     )
 
     __table_args__ = (
-        UniqueConstraint("slug", name="uniq_plugins_slug"),
+        UniqueConstraint(
+            "catalog_namespace",
+            "slug",
+            name="uniq_plugins_catalog_namespace_slug",
+        ),
         Index(
             "idx_plugins_discovery",
             "status",
@@ -219,6 +237,7 @@ class Plugin(Base):
             "status",
         ),
         Index("idx_plugins_source", "source_provider", "source_type"),
+        Index("idx_plugins_origin", "origin_plugin_id"),
         {
             "comment": "Marketplace plugin catalog identities",
             "mysql_charset": "utf8mb4",
@@ -319,6 +338,20 @@ class PluginRelease(Base):
         server_default="0",
         comment="Creator user ID; 0 means system / unset",
     )
+    publication_revision_id = Column(
+        big_integer_id_type(),
+        nullable=False,
+        default=0,
+        server_default="0",
+        comment="Publication revision that produced this release; 0 means none",
+    )
+    source_commit_sha = Column(
+        String(64),
+        nullable=False,
+        default="",
+        server_default="",
+        comment="Protected source commit SHA; empty means not GitLab-published",
+    )
     created_at = Column(
         _DATETIME,
         nullable=False,
@@ -337,6 +370,7 @@ class PluginRelease(Base):
         UniqueConstraint("plugin_id", "version", name="uniq_plugin_release_version"),
         Index("idx_plugin_releases_status", "plugin_id", "status", "published_at"),
         Index("idx_plugin_releases_sha256", "sha256"),
+        Index("idx_plugin_releases_publication", "publication_revision_id"),
         {
             "comment": "Immutable marketplace plugin release packages",
             "mysql_charset": "utf8mb4",
@@ -671,6 +705,8 @@ def prevent_published_release_mutation(mapper, connection, target) -> None:
         "size_bytes",
         "scan_report_json",
         "created_by_user_id",
+        "publication_revision_id",
+        "source_commit_sha",
         "published_at",
     )
     changed = [

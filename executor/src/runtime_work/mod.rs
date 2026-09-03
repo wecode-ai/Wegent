@@ -25,6 +25,7 @@ mod worktrees;
 
 pub use handler::RuntimeWorkRpcHandler;
 pub(crate) use notification_mapping::codex_stream_debug_enabled;
+pub(crate) use util::runtime_task_title;
 
 pub(crate) fn runtime_features() -> serde_json::Value {
     serde_json::json!({

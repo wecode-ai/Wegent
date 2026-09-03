@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useMemo, useState } from 'react'
 import { createDefaultPluginApi } from './workspace/marketplaceWorkspaceHelpers'
 import { PluginCreatorResultCard } from './PluginCreatorResultCard'
 import { PluginPublishDialog, type PluginPublishRequest } from './PluginPublishDialog'
@@ -6,6 +6,7 @@ import { latestPluginWorkspaceResult, pluginWorkspaceManifestPath } from './plug
 import type { RuntimeAdditionalContext } from '@/types/api'
 import type { WorkbenchMessage } from '@/types/workbench'
 import { useTranslation } from '@/hooks/useTranslation'
+import { useOptionalCloudConnection } from '@/features/cloud-connection/useCloudConnection'
 
 interface PluginWorkspaceConversationResultProps {
   taskId?: string | null
@@ -35,33 +36,14 @@ export function PluginWorkspaceConversationResult({
 }: PluginWorkspaceConversationResultProps) {
   const { t } = useTranslation('common')
   const result = useMemo(() => latestPluginWorkspaceResult(messages, taskId), [messages, taskId])
-  const hasResult = Boolean(result)
   const [dialogOpen, setDialogOpen] = useState(false)
   const [publishing, setPublishing] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  const [capabilities, setCapabilities] = useState({
-    canPublish: false,
-    canSharePersonalPlugins: true,
-  })
-  const pluginApi = useMemo(() => createDefaultPluginApi(), [])
-
-  useEffect(() => {
-    if (!hasResult) return undefined
-    let active = true
-    void pluginApi
-      .getCapabilities()
-      .then(value => {
-        if (!active) return
-        setCapabilities({
-          canPublish: Boolean(value.canPublish),
-          canSharePersonalPlugins: Boolean(value.canSharePersonalPlugins ?? true),
-        })
-      })
-      .catch(() => undefined)
-    return () => {
-      active = false
-    }
-  }, [hasResult, pluginApi])
+  const cloudConnection = useOptionalCloudConnection()
+  const pluginApi = useMemo(
+    () => createDefaultPluginApi(cloudConnection.apiBaseUrl, cloudConnection.token),
+    [cloudConnection.apiBaseUrl, cloudConnection.token]
+  )
 
   const searchUsers = useCallback(
     async (query: string) => (await pluginApi.searchPluginShareUsers(query)).users,
@@ -143,14 +125,12 @@ export function PluginWorkspaceConversationResult({
             }
           )
         }}
-        onShare={!published && !waiting ? () => setDialogOpen(true) : undefined}
         onPublish={!published && !waiting ? () => setDialogOpen(true) : undefined}
       />
       {dialogOpen ? (
         <PluginPublishDialog
           pluginName={result.displayName || result.name}
-          canPublish={capabilities.canPublish}
-          canSharePersonal={capabilities.canSharePersonalPlugins}
+          pluginVersion={result.version}
           publishing={publishing}
           error={error}
           onClose={() => {

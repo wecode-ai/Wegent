@@ -15,7 +15,6 @@ const guardedFiles = [
   'components/common/ActionMenu.tsx',
   'components/layout/DesktopAppSwitcher.tsx',
   'components/layout/workspace-panels/FileWorkspacePanel.tsx',
-  'components/plugins/PluginCatalogSections.tsx',
   'components/projects/DeviceFolderPicker.tsx',
   'components/projects/ProjectCreateDialog.tsx',
   'features/todo/TodoCreateDialog.tsx',

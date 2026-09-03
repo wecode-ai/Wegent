@@ -8,6 +8,9 @@ use std::{
 };
 
 use serde::{Deserialize, Serialize};
+use toml_edit::{table, value, DocumentMut};
+
+use crate::agents::replace_config;
 
 const EXECUTOR_HOME_ENV: &str = "WEGENT_EXECUTOR_HOME";
 const CODEX_HOME_ENV: &str = "WEGENT_CODEX_HOME";
@@ -46,6 +49,25 @@ pub struct ExternalContentImportResult {
     imported_entries: Vec<String>,
 }
 
+#[derive(Clone, Debug, Default, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CodexLocalConfigPatch {
+    remote_apps_enabled: Option<bool>,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+pub struct CodexLocalConfigUpdateRequest {
+    pub patch: CodexLocalConfigPatch,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CodexLocalConfig {
+    codex_home: String,
+    config_path: String,
+    remote_apps_enabled: bool,
+}
+
 fn default_remote_apps_enabled() -> bool {
     true
 }
@@ -73,6 +95,21 @@ pub fn import_external_content(
     let home = dirs::home_dir().ok_or_else(|| "Unable to resolve home directory".to_owned())?;
     let destination = wework_codex_home_path()?;
     import_external_content_from_paths(&request.source, &home, &destination)
+}
+
+pub fn read_codex_local_config() -> Result<CodexLocalConfig, String> {
+    let codex_home = wework_codex_home_path()?;
+    read_codex_local_config_from_path(&codex_home)
+}
+
+pub fn update_codex_local_config(
+    request: CodexLocalConfigUpdateRequest,
+) -> Result<CodexLocalConfig, String> {
+    let codex_home = wework_codex_home_path()?;
+    if let Some(enabled) = request.patch.remote_apps_enabled {
+        write_remote_apps_enabled(&codex_home, enabled)?;
+    }
+    read_codex_local_config_from_path(&codex_home)
 }
 
 fn codex_home_migration_status_from_paths(
@@ -135,58 +172,66 @@ fn native_codex_home_path() -> Result<PathBuf, String> {
         .ok_or_else(|| "Unable to resolve native Codex home".to_owned())
 }
 
+fn read_codex_local_config_from_path(codex_home: &Path) -> Result<CodexLocalConfig, String> {
+    let config_path = codex_home.join("config.toml");
+    let content = read_optional_config(&config_path)?;
+    Ok(CodexLocalConfig {
+        codex_home: codex_home.display().to_string(),
+        config_path: config_path.display().to_string(),
+        remote_apps_enabled: read_remote_apps_enabled(&content).map_err(|error| {
+            format!(
+                "Failed to parse Codex config {}: {error}",
+                config_path.display()
+            )
+        })?,
+    })
+}
+
+fn read_remote_apps_enabled(content: &str) -> Result<bool, String> {
+    let config = content
+        .parse::<DocumentMut>()
+        .map_err(|error| error.to_string())?;
+    Ok(config
+        .get("features")
+        .and_then(|features| features.get("apps"))
+        .and_then(|apps| apps.as_bool())
+        .unwrap_or_else(default_remote_apps_enabled))
+}
+
 fn write_remote_apps_enabled(codex_home: &Path, enabled: bool) -> Result<(), String> {
     fs::create_dir_all(codex_home)
         .map_err(|error| format!("Failed to create {}: {error}", codex_home.display()))?;
     let config_path = codex_home.join("config.toml");
-    let content = fs::read_to_string(&config_path).unwrap_or_default();
-    fs::write(&config_path, set_remote_apps_enabled(&content, enabled))
-        .map_err(|error| format!("Failed to write {}: {error}", config_path.display()))
+    let content = read_optional_config(&config_path)?;
+    let updated = set_remote_apps_enabled(&content, enabled).map_err(|error| {
+        format!(
+            "Failed to parse Codex config {}: {error}",
+            config_path.display()
+        )
+    })?;
+    replace_config(&config_path, updated)
 }
 
-fn set_remote_apps_enabled(content: &str, enabled: bool) -> String {
-    let apps_line = format!("apps = {enabled}");
-    let mut lines = content.lines().map(str::to_owned).collect::<Vec<_>>();
-    let mut features_start = None;
-    let mut features_end = lines.len();
-
-    for (index, line) in lines.iter().enumerate() {
-        let trimmed = line.trim();
-        if trimmed.starts_with('[') && trimmed.ends_with(']') {
-            if features_start.is_some() {
-                features_end = index;
-                break;
-            }
-            if trimmed == "[features]" {
-                features_start = Some(index);
-            }
-        }
+fn read_optional_config(config_path: &Path) -> Result<String, String> {
+    match fs::read_to_string(config_path) {
+        Ok(content) => Ok(content),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(String::new()),
+        Err(error) => Err(format!("Failed to read {}: {error}", config_path.display())),
     }
+}
 
-    if let Some(start) = features_start {
-        for line in lines.iter_mut().take(features_end).skip(start + 1) {
-            let trimmed = line.trim_start();
-            let Some(rest) = trimmed.strip_prefix("apps") else {
-                continue;
-            };
-            if rest.trim_start().starts_with('=') {
-                let indentation = line.len() - trimmed.len();
-                *line = format!("{}{}", " ".repeat(indentation), apps_line);
-                return format!("{}\n", lines.join("\n"));
-            }
-        }
-        lines.insert(start + 1, apps_line);
-        return format!("{}\n", lines.join("\n"));
+fn set_remote_apps_enabled(content: &str, enabled: bool) -> Result<String, String> {
+    let mut config = content
+        .parse::<DocumentMut>()
+        .map_err(|error| error.to_string())?;
+    if !config.contains_key("features") {
+        config["features"] = table();
     }
-
-    let mut next = content.trim_end().to_owned();
-    if !next.is_empty() {
-        next.push_str("\n\n");
-    }
-    next.push_str("[features]\n");
-    next.push_str(&apps_line);
-    next.push('\n');
-    next
+    let features = config["features"]
+        .as_table_like_mut()
+        .ok_or_else(|| "features must be a table".to_owned())?;
+    features.insert("apps", value(enabled));
+    Ok(config.to_string())
 }
 
 fn copy_initialization_files(source: &Path, destination: &Path) -> Result<(), String> {
@@ -364,6 +409,110 @@ mod tests {
             fs::read_to_string(wework_home.join("skills/example/SKILL.md")).unwrap(),
             "example"
         );
+    }
+
+    #[test]
+    fn reads_and_updates_remote_apps_config() {
+        let root = tempfile::tempdir().unwrap();
+        let codex_home = root.path().join("codex");
+        fs::create_dir_all(&codex_home).unwrap();
+        assert!(read_remote_apps_enabled("").unwrap());
+        assert!(read_remote_apps_enabled("model = \"gpt-5\"\n").unwrap());
+        fs::write(
+            codex_home.join("config.toml"),
+            "model = \"gpt-5\"\n\n[features]\napps = true # enabled\n",
+        )
+        .unwrap();
+
+        let current = read_codex_local_config_from_path(&codex_home).unwrap();
+        assert!(current.remote_apps_enabled);
+
+        write_remote_apps_enabled(&codex_home, false).unwrap();
+
+        let updated = read_codex_local_config_from_path(&codex_home).unwrap();
+        assert!(!updated.remote_apps_enabled);
+        assert!(fs::read_to_string(codex_home.join("config.toml"))
+            .unwrap()
+            .contains("model = \"gpt-5\""));
+    }
+
+    #[test]
+    fn updates_remote_apps_in_inline_features_table() {
+        let root = tempfile::tempdir().unwrap();
+        let codex_home = root.path().join("codex");
+        fs::create_dir_all(&codex_home).unwrap();
+        fs::write(
+            codex_home.join("config.toml"),
+            "model = \"gpt-5\"\nfeatures = { apps = false, shell_snapshot = true }\n",
+        )
+        .unwrap();
+
+        write_remote_apps_enabled(&codex_home, true).unwrap();
+
+        let content = fs::read_to_string(codex_home.join("config.toml")).unwrap();
+        let config = content.parse::<DocumentMut>().unwrap();
+        assert!(content.contains("features = {"));
+        assert!(!content.contains("[features]"));
+        assert_eq!(config["features"]["apps"].as_bool(), Some(true));
+        assert_eq!(config["features"]["shell_snapshot"].as_bool(), Some(true));
+    }
+
+    #[test]
+    fn rejects_invalid_codex_config_without_overwriting_it() {
+        let root = tempfile::tempdir().unwrap();
+        let codex_home = root.path().join("codex");
+        fs::create_dir_all(&codex_home).unwrap();
+        let config_path = codex_home.join("config.toml");
+        let invalid_config = "[features\napps = true\n";
+        fs::write(&config_path, invalid_config).unwrap();
+
+        let error = write_remote_apps_enabled(&codex_home, false).unwrap_err();
+
+        assert!(error.contains("Failed to parse Codex config"));
+        assert_eq!(fs::read_to_string(config_path).unwrap(), invalid_config);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn preserves_codex_config_permissions_when_updating() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let root = tempfile::tempdir().unwrap();
+        let codex_home = root.path().join("codex");
+        fs::create_dir_all(&codex_home).unwrap();
+        let config_path = codex_home.join("config.toml");
+        fs::write(&config_path, "[features]\napps = false\n").unwrap();
+        fs::set_permissions(&config_path, fs::Permissions::from_mode(0o640)).unwrap();
+
+        write_remote_apps_enabled(&codex_home, true).unwrap();
+
+        let mode = fs::metadata(config_path).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode, 0o640);
+    }
+
+    #[test]
+    fn returns_invalid_codex_config_read_errors() {
+        let root = tempfile::tempdir().unwrap();
+        let codex_home = root.path().join("codex");
+        fs::create_dir_all(&codex_home).unwrap();
+        fs::write(codex_home.join("config.toml"), "[features\napps = true\n").unwrap();
+
+        let error = read_codex_local_config_from_path(&codex_home).unwrap_err();
+
+        assert!(error.contains("Failed to parse Codex config"));
+        assert!(error.contains("config.toml"));
+    }
+
+    #[test]
+    fn returns_non_missing_config_read_errors() {
+        let root = tempfile::tempdir().unwrap();
+        let codex_home = root.path().join("codex");
+        fs::create_dir_all(codex_home.join("config.toml")).unwrap();
+
+        let error = read_codex_local_config_from_path(&codex_home).unwrap_err();
+
+        assert!(error.contains("Failed to read"));
+        assert!(error.contains("config.toml"));
     }
 
     #[test]

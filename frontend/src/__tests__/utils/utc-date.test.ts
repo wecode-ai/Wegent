@@ -2,7 +2,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-import { parseUTCDate, formatUTCDate } from '@/lib/utils'
+import { formatUTC8DateTime, formatUTCDate, parseUTCDate } from '@/lib/utils'
 
 describe('UTC date utilities', () => {
   describe('parseUTCDate', () => {
@@ -168,6 +168,18 @@ describe('UTC date utilities', () => {
       expect(cstMidnight).not.toBeNull()
       // CST midnight is 8 hours behind UTC midnight (same day)
       expect(utcMidnight!.getTime() - cstMidnight!.getTime()).toBe(8 * 60 * 60 * 1000)
+    })
+  })
+
+  describe('formatUTC8DateTime', () => {
+    it('uses a fixed UTC+8 timezone and second precision', () => {
+      expect(formatUTC8DateTime('2026-09-01T04:00:00.585928')).toBe('2026-09-01 12:00:00')
+      expect(formatUTC8DateTime('2026-09-01T12:00:00+08:00')).toBe('2026-09-01 12:00:00')
+    })
+
+    it('returns the requested fallback for invalid input', () => {
+      expect(formatUTC8DateTime(undefined)).toBe('-')
+      expect(formatUTC8DateTime('invalid', '--')).toBe('--')
     })
   })
 })

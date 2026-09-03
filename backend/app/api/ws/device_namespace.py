@@ -363,8 +363,9 @@ def _match_cloud_device_sync(
     Synchronous helper to match cloud device by device_id.
 
     Returns:
-        Tuple of (sandbox_id, needs_migration, device_data) if matched, None otherwise.
-        - sandbox_id: The matched sandbox ID
+        Tuple of (logical_device_id, needs_migration, device_data) if matched,
+        None otherwise.
+        - logical_device_id: The canonical Device CRD name exposed to clients
         - needs_migration: True if legacy device needs migration
         - device_data: Dict with device info for migration (device_id, etc.)
     """
@@ -425,10 +426,11 @@ def _match_cloud_device_sync(
                         db.commit()
                     logger.info(
                         f"[Device WS] Cloud device matched by device_id: "
+                        f"logical_device_id={device.name}, "
                         f"sandbox_id={sandbox_id}, "
                         f"device_id={executor_device_id}"
                     )
-                    return (sandbox_id, False, None)
+                    return (device.name, False, None)
                 else:
                     # Device ID mismatch - skip this device
                     logger.debug(
@@ -452,9 +454,9 @@ def _match_cloud_device_sync(
                         f"new_device_id={executor_device_id}"
                     )
                     return (
-                        sandbox_id,
+                        device.name,
                         True,
-                        {"device_id": device.id},
+                        {"device_id": device.id, "sandbox_id": sandbox_id},
                     )
 
     return None
@@ -477,7 +479,7 @@ def _update_cloud_device_id_sync(
         sandbox_id: Sandbox ID
 
     Returns:
-        Sandbox ID
+        Canonical Device CRD name after migration
     """
     import copy
 
@@ -502,7 +504,7 @@ def _update_cloud_device_id_sync(
             logger.error(
                 f"[Device WS] Device not found for migration: id={device_db_id}"
             )
-            return sandbox_id
+            return executor_device_id
 
         device_json = copy.deepcopy(device.json)
         validate_persistent_runtime_instance_id(
@@ -530,7 +532,7 @@ def _update_cloud_device_id_sync(
             f"sandbox_id={sandbox_id}"
         )
 
-    return sandbox_id
+    return executor_device_id
 
 
 def _verify_api_key_sync(token: str) -> Optional[tuple[int, str]]:
@@ -1475,7 +1477,7 @@ class DeviceNamespace(socketio.AsyncNamespace):
             executor_device_id: Device ID from executor (should match server-generated)
 
         Returns:
-            Cloud device ID (sandbox_id) if matched, None otherwise
+            Canonical Device CRD name if matched, None otherwise
         """
         try:
             # Run database query in executor to avoid blocking event loop
@@ -1490,20 +1492,20 @@ class DeviceNamespace(socketio.AsyncNamespace):
             if result is None:
                 return None
 
-            sandbox_id, needs_migration, device_data = result
+            logical_device_id, needs_migration, device_data = result
 
             # If legacy device needs migration, do it in executor
             if needs_migration and device_data:
-                await run_sync_in_executor(
+                logical_device_id = await run_sync_in_executor(
                     _update_cloud_device_id_sync,
                     user_id,
                     device_data["device_id"],
                     executor_device_id,
-                    sandbox_id,
+                    device_data["sandbox_id"],
                     runtime_instance_id,
                 )
 
-            return sandbox_id
+            return logical_device_id
 
         except RuntimeInstanceMismatchError:
             raise
@@ -1780,10 +1782,10 @@ class DeviceNamespace(socketio.AsyncNamespace):
             app_device_id=str(payload.app_device_id or "").strip(),
         )
         is_cloud_device = False
-        cloud_device_id: Optional[str] = None
+        logical_device_id: Optional[str] = None
         if payload.device_type == DeviceType.CLOUD:
             try:
-                cloud_device_id = await self._match_cloud_device(
+                logical_device_id = await self._match_cloud_device(
                     user_id,
                     client_ip or "",
                     payload.device_id,
@@ -1797,11 +1799,11 @@ class DeviceNamespace(socketio.AsyncNamespace):
                     payload.device_id,
                 )
                 return {"error": f"Registration failed: {exc}"}
-            if cloud_device_id:
+            if logical_device_id:
                 is_cloud_device = True
                 logger.info(
                     f"[Device WS] Matched cloud device: executor_device_id={payload.device_id}, "
-                    f"cloud_device_id={cloud_device_id}"
+                    f"logical_device_id={logical_device_id}"
                 )
 
         # Database operation: skip if cloud device already updated in IP matching
@@ -1842,7 +1844,7 @@ class DeviceNamespace(socketio.AsyncNamespace):
         # Update the Socket.IO session before marking the device online. If the
         # connection disappeared, the online socket would be stale immediately.
         session["device_id"] = payload.device_id
-        session["logical_device_id"] = cloud_device_id or payload.device_id
+        session["logical_device_id"] = logical_device_id or payload.device_id
         session["device_name"] = effective_device_name
         session["runtime_transfer_host"] = runtime_transfer_host
         session["runtime_instance_id"] = payload.runtime_instance_id

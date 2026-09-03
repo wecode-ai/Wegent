@@ -6,12 +6,12 @@ import {
   Check,
   ExternalLink,
   Hash,
-  LoaderCircle,
   Monitor,
   RotateCcw,
   Square,
   X,
 } from 'lucide-react'
+import { CompositedSpinner } from '@/components/common/CompositedSpinner'
 import { useTranslation } from '@/hooks/useTranslation'
 import { cn } from '@/lib/utils'
 import { ScrollableMessageArea } from '@/components/chat/ScrollableMessageArea'
@@ -134,7 +134,7 @@ export function RuntimeTaskExecutionOverlay({
     }[displayStatus]
     return (
       <>
-        <LoaderCircle className="h-3 w-3 animate-spin" />
+        <CompositedSpinner className="h-3 w-3" />
         {t(labelKey)}
       </>
     )
@@ -259,7 +259,7 @@ export function RuntimeTaskExecutionOverlay({
               className="inline-flex h-8 items-center gap-2 rounded-lg px-3 text-sm font-medium text-red-600 hover:bg-red-500/10 disabled:opacity-50"
             >
               {stopping ? (
-                <LoaderCircle className="h-3.5 w-3.5 animate-spin" />
+                <CompositedSpinner className="h-3.5 w-3.5" />
               ) : (
                 <Square className="h-3.5 w-3.5" />
               )}

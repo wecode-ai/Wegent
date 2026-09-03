@@ -1563,6 +1563,83 @@ async fn running_codex_transcript_uses_live_cache_without_provider_read() {
 }
 
 #[tokio::test]
+async fn running_codex_transcript_deduplicates_cached_and_live_user_aliases() {
+    let (handler, root) = isolated_runtime_work_handler("running-user-alias");
+    let mut link = RuntimeTaskLink::new_pending(
+        "task-1".to_owned(),
+        "/tmp/project".to_owned(),
+        "Task".to_owned(),
+    );
+    link.thread_id = Some("thread-1".to_owned());
+    set_runtime_handle_messages(
+        &mut link.runtime_handle,
+        vec![json!({
+            "id": "cached-user",
+            "clientUserMessageId": "client-user-1",
+            "role": "user",
+            "content": "Create the verification file",
+            "createdAt": 1_780_000_000_000_i64,
+        })],
+    );
+    append_runtime_handle_user_message_presentation(
+        &mut link.runtime_handle,
+        json!({
+            "clientUserMessageId": "client-user-1",
+            "content": "Create the verification file",
+            "createdAt": 1_780_000_000_000_i64,
+            "ensureVisible": true,
+        }),
+    );
+    handler.upsert_local_task(link);
+    start_test_execution(&handler, "task-1");
+    handler.record_runtime_turn_id("task-1", "subtask-1", "turn-1", Some("client-user-1"));
+    handler.begin_active_codex_transcript("task-1", "thread-1", "turn-1");
+    handler.record_active_codex_transcript_item(
+        "task-1",
+        "turn-1",
+        &json!({
+            "method": "item/started",
+            "params": {
+                "turnId": "turn-1",
+                "item": {
+                    "id": "provider-user",
+                    "clientId": "client-user-1",
+                    "type": "userMessage",
+                    "content": [{
+                        "type": "inputText",
+                        "text": "Create the verification file"
+                    }]
+                }
+            }
+        }),
+    );
+
+    let transcript = handler
+        .handle_runtime_rpc(json!({
+            "method": "runtime.tasks.transcript",
+            "payload": {
+                "taskId": "task-1",
+                "workspacePath": "/tmp/project"
+            }
+        }))
+        .await
+        .expect("running transcript should merge the cached and provider user aliases");
+
+    let user_messages = transcript["messages"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|message| message["role"] == "user")
+        .collect::<Vec<_>>();
+    assert_eq!(user_messages.len(), 1);
+    assert_eq!(user_messages[0]["id"], "provider-user");
+    assert_eq!(user_messages[0]["clientUserMessageId"], "client-user-1");
+    assert_eq!(user_messages[0]["turnId"], "turn-1");
+    assert_eq!(transcript["turns"][0]["items"].as_array().unwrap().len(), 1);
+    let _ = fs::remove_dir_all(root);
+}
+
+#[tokio::test]
 async fn running_codex_transcript_binds_same_second_presentations_to_provider_turns() {
     const PROVIDER_SECOND: i64 = 1_780_000_000;
     const PRESENTATION_MS: i64 = PROVIDER_SECOND * 1_000 + 900;

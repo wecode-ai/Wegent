@@ -1426,7 +1426,7 @@ describe('TaskActivityView', () => {
     await screen.findByTestId('cloud-task-activity-review-actions-WEG-1')
     expect(screen.queryByTestId('cloud-task-activity-continue-WEG-1')).not.toBeInTheDocument()
 
-    await user.click(screen.getByTestId('cloud-task-activity-rerun-WEG-1'))
+    await user.click(await screen.findByTestId('cloud-task-activity-rerun-WEG-1'))
     await waitFor(() =>
       expect(client.startAgentResponse).toHaveBeenCalledWith(
         expect.objectContaining({
