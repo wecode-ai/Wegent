@@ -218,6 +218,35 @@ When editing a channel:
 - Leave sensitive fields **empty** to keep existing values
 - Enter new values to update credentials
 
+### Model Selection and Fallback
+
+The channel **default model** is an optional admin-level override. For every
+incoming message, the effective model is chosen in this priority order:
+
+1. An **explicit model choice** made by the user in the conversation
+2. The channel **default model**
+3. The model bound to the Bot itself (modelRef / bound model)
+
+When the user has no explicit choice, the channel default model is applied as
+a hard override on the task. As a result, upgrading the Bot's own bound model
+later does not affect tasks already overridden by the channel default.
+
+To keep stale channel configuration from pinning a conversation to an
+outdated or decommissioned model, Wegent applies the following fallbacks:
+
+- When the channel default model is decommissioned or can no longer be
+  resolved, the task falls back to the Bot's own bound model instead of
+  failing.
+- Conversation continuations re-resolve the current model: after the channel
+  default model is cleared or changed, the next message in an existing
+  conversation automatically follows the latest configuration instead of
+  reusing the stale override marker.
+
+If you want IM conversations to use the Bot's own model, clear the channel
+**default model** (choose "Use the Agent/runtime default model") in the admin
+console, or set it to the model bound to the Bot. New conversations pick this
+up immediately; existing conversations follow on their next message.
+
 ### Weibo DM Configuration
 
 When creating a Weibo DM channel:
