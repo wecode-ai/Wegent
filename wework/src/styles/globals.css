@@ -73,6 +73,7 @@ body[data-wework-panel-resizing] [data-testid='workspace-browser-frame'] {
   --font-code: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', monospace;
   --font-size-ui: 14px;
   --font-size-code: 12px;
+  --font-weight-ui: 445;
   --text-xs: 12px;
   --text-2xs: 10px;
   --text-sm: 13px;
@@ -473,39 +474,39 @@ body[data-wework-panel-resizing] [data-testid='workspace-browser-frame'] {
 
 [data-theme='dark'] {
   color-scheme: dark;
-  --color-bg-base: 17 19 22;
-  --color-bg-surface: 28 31 36;
-  --color-bg-hover: 45 212 191 / 0.12;
+  --color-bg-base: 24 24 24;
+  --color-bg-surface: 33 33 33;
+  --color-bg-hover: 255 255 255 / 0.07;
   --color-focus: 51 156 255;
   --color-success: 64 201 119;
   --color-destructive: 248 113 113;
-  --color-text-primary: 241 245 249;
-  --color-text-secondary: 203 213 225;
-  --color-text-muted: 148 163 184;
-  --color-primary: 45 212 191;
-  --color-primary-contrast: 11 18 20;
-  --color-border: 55 61 70;
-  --color-muted: 38 42 48;
-  --color-titlebar: 28 31 36;
-  --color-sidebar: 40 40 40 / 0.92;
+  --color-text-primary: 255 255 255;
+  --color-text-secondary: 179 179 179;
+  --color-text-muted: 128 128 128;
+  --color-primary: 37 99 235;
+  --color-primary-contrast: 255 255 255;
+  --color-border: 43 43 43;
+  --color-muted: 48 48 48;
+  --color-titlebar: 33 33 33;
+  --color-sidebar: 33 33 33 / 0.92;
   --color-sidebar-active: 255 255 255 / 0.1;
   --color-sidebar-hover: 255 255 255 / 0.06;
   --color-sidebar-marked: 82 64 24;
   --color-sidebar-marked-hover: 105 83 31;
   --color-sidebar-marked-accent: 245 180 52;
-  --color-sidebar-text-primary: 221 222 223;
-  --color-sidebar-text-secondary: 188 189 191;
-  --color-sidebar-text-muted: 143 145 148;
-  --color-mobile-drawer: 24 39 58;
-  --color-popover: 28 31 36;
-  --color-code-bg: 15 23 42;
+  --color-sidebar-text-primary: 242 242 242;
+  --color-sidebar-text-secondary: 179 179 179;
+  --color-sidebar-text-muted: 128 128 128;
+  --color-mobile-drawer: 33 33 33;
+  --color-popover: 40 40 40;
+  --color-code-bg: 33 33 33;
   --color-reasoning-standard: 59 130 246;
   --color-reasoning-ultra-start: 59 130 246;
   --color-reasoning-ultra-end: 192 132 252;
   --color-reasoning-ultra-text: 192 132 252;
   --color-reasoning-contrast: 255 255 255;
   --plugin-source-official-bg: 247 247 248;
-  --plugin-source-official-fg: 17 19 22;
+  --plugin-source-official-fg: 24 24 24;
   --plugin-source-official-accent: 190 202 217;
   --plugin-source-public-bg: 198 194 229;
   --plugin-source-public-fg: 31 32 38;
@@ -516,8 +517,8 @@ body[data-wework-panel-resizing] [data-testid='workspace-browser-frame'] {
   --plugin-source-personal-bg: 184 195 209;
   --plugin-source-personal-fg: 31 35 42;
   --plugin-source-personal-accent: 184 204 230;
-  --plugin-source-external-bg: 28 31 36;
-  --plugin-source-external-fg: 241 245 249;
+  --plugin-source-external-bg: 40 40 40;
+  --plugin-source-external-fg: 255 255 255;
   --plugin-source-external-border: 116 124 136;
   --plugin-source-external-accent: 202 208 219;
 }
@@ -600,7 +601,7 @@ body[data-wework-panel-resizing] [data-testid='workspace-browser-frame'] {
 
 [data-theme='dark'][data-sidebar-translucent='false'],
 [data-theme='dark'] [data-sidebar-translucent='false'] {
-  --color-sidebar: 40 40 40;
+  --color-sidebar: 33 33 33;
 }
 
 * {
@@ -619,7 +620,7 @@ body,
 body {
   font-family: var(--font-ui);
   font-size: var(--text-base);
-  font-weight: 400;
+  font-weight: var(--font-weight-ui);
   line-height: 1.5;
   background-color: rgb(var(--color-bg-base));
   color: rgb(var(--color-text-primary));

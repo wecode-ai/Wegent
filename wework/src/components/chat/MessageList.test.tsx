@@ -40,7 +40,7 @@ vi.mock('@/lib/embedded-browser', () => ({
 }))
 
 describe('MessageList', () => {
-  test('renders complete user and assistant message regions with medium weight', () => {
+  test('lets complete user and assistant message regions inherit the UI weight', () => {
     render(
       <MessageList
         messages={[
@@ -62,8 +62,8 @@ describe('MessageList', () => {
       />
     )
 
-    expect(screen.getByTestId('message-user')).toHaveClass('font-medium')
-    expect(screen.getByTestId('message-assistant')).toHaveClass('font-medium')
+    expect(screen.getByTestId('message-user')).not.toHaveClass('font-medium')
+    expect(screen.getByTestId('message-assistant')).not.toHaveClass('font-medium')
     expect(screen.getByTestId('user-message-content')).not.toHaveClass('font-medium')
     expect(screen.getByTestId('assistant-message-content')).not.toHaveClass('font-medium')
   })
@@ -2215,7 +2215,9 @@ describe('MessageList', () => {
     expect(processContent).toHaveClass('text-text-primary')
     expect(processContent).not.toHaveClass('text-text-secondary')
     expect(processContent).not.toHaveClass('text-sm')
-    expect(processContent.closest('[data-testid="message-assistant"]')).toHaveClass('font-medium')
+    expect(processContent.closest('[data-testid="message-assistant"]')).not.toHaveClass(
+      'font-medium'
+    )
   })
 
   test('does not restore hidden failed content from runtime display order', () => {
