@@ -2517,6 +2517,16 @@ class KnowledgeOrchestrator:
 
         assert_user_content_is_mutable(getattr(document, "origin", "user"))
 
+        # Documents whose source type is no longer supported (legacy rows from
+        # removed ingestion paths) cannot be reindexed.
+        from app.schemas.knowledge import DocumentSourceType
+
+        known_source_types = {source_type.value for source_type in DocumentSourceType}
+        if document.source_type not in known_source_types:
+            raise ValueError(
+                f"Unsupported document source type: {document.source_type}"
+            )
+
         skip_reason = get_rag_indexing_skip_reason(
             document.file_extension, document.file_size
         )
