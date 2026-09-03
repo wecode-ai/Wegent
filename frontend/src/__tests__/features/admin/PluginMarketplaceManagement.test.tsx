@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import '@testing-library/jest-dom'
-import { fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 
 import { adminApis, type AdminMarketplacePlugin } from '@/apis/admin'
 import PluginMarketplaceManagement from '@/features/admin/components/PluginMarketplaceManagement'
@@ -121,5 +121,66 @@ describe('PluginMarketplaceManagement', () => {
         expect.objectContaining({ scoreOrder: 'asc' })
       )
     )
+  })
+
+  it('ignores a stale list response after a newer search completes', async () => {
+    render(<PluginMarketplaceManagement />)
+    await screen.findByTestId('plugin-management-row-11')
+
+    let resolveSlow: (value: {
+      items: AdminMarketplacePlugin[]
+      total: number
+      page: number
+      limit: number
+    }) => void = () => undefined
+    const slowResponse = new Promise<{
+      items: AdminMarketplacePlugin[]
+      total: number
+      page: number
+      limit: number
+    }>(resolve => {
+      resolveSlow = resolve
+    })
+    mockedAdminApis.getMarketplacePlugins.mockImplementation(async (_page, _limit, filters) => {
+      if (filters?.search === 'slow') return slowResponse
+      if (filters?.search === 'fast') {
+        return {
+          items: [{ ...plugins[1], id: 33, display_name: 'Fast result' }],
+          total: 1,
+          page: 1,
+          limit: 20,
+        }
+      }
+      return { items: plugins, total: plugins.length, page: 1, limit: 20 }
+    })
+
+    fireEvent.change(screen.getByTestId('plugin-management-search'), {
+      target: { value: 'slow' },
+    })
+    await waitFor(() => expect(mockedAdminApis.getMarketplacePlugins).toHaveBeenCalledTimes(2))
+    fireEvent.change(screen.getByTestId('plugin-management-search'), {
+      target: { value: 'fast' },
+    })
+    await waitFor(() =>
+      expect(mockedAdminApis.getMarketplacePlugins).toHaveBeenLastCalledWith(
+        1,
+        20,
+        expect.objectContaining({ search: 'fast' })
+      )
+    )
+    expect((await screen.findAllByText('Fast result')).length).toBeGreaterThan(0)
+
+    await act(async () => {
+      resolveSlow({
+        items: [{ ...plugins[0], id: 44, display_name: 'Stale result' }],
+        total: 1,
+        page: 1,
+        limit: 20,
+      })
+      await slowResponse
+    })
+
+    expect(screen.getAllByText('Fast result').length).toBeGreaterThan(0)
+    expect(screen.queryByText('Stale result')).not.toBeInTheDocument()
   })
 })

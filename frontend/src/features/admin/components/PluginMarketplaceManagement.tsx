@@ -4,7 +4,7 @@
 
 'use client'
 
-import { Fragment, useCallback, useEffect, useMemo, useState } from 'react'
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   ArrowDown,
   ArrowUp,
@@ -275,6 +275,7 @@ export default function PluginMarketplaceManagement() {
   const [loadFailed, setLoadFailed] = useState(false)
   const [saving, setSaving] = useState(false)
   const [refreshVersion, setRefreshVersion] = useState(0)
+  const loadRequestRef = useRef(0)
   const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE))
   const selectedPlugin = useMemo(
     () => items.find(item => item.id === selectedId) ?? items[0] ?? null,
@@ -300,6 +301,7 @@ export default function PluginMarketplaceManagement() {
   }, [search])
 
   const loadPlugins = useCallback(async () => {
+    const requestId = ++loadRequestRef.current
     setLoading(true)
     setLoadFailed(false)
     try {
@@ -309,17 +311,25 @@ export default function PluginMarketplaceManagement() {
         listingStatus,
         scoreOrder,
       })
-      setItems(response.items)
-      setTotal(response.total)
-      setSelectedId(current =>
-        response.items.some(item => item.id === current) ? current : (response.items[0]?.id ?? null)
-      )
+      if (requestId === loadRequestRef.current) {
+        setItems(response.items)
+        setTotal(response.total)
+        setSelectedId(current =>
+          response.items.some(item => item.id === current)
+            ? current
+            : (response.items[0]?.id ?? null)
+        )
+      }
     } catch {
-      setItems([])
-      setTotal(0)
-      setLoadFailed(true)
+      if (requestId === loadRequestRef.current) {
+        setItems([])
+        setTotal(0)
+        setLoadFailed(true)
+      }
     } finally {
-      setLoading(false)
+      if (requestId === loadRequestRef.current) {
+        setLoading(false)
+      }
     }
   }, [appliedSearch, listingStatus, page, scoreOrder, source])
 
@@ -608,7 +618,7 @@ export default function PluginMarketplaceManagement() {
                   type="button"
                   variant="ghost"
                   size="icon"
-                  className="h-9 w-9"
+                  className="h-11 w-11 md:h-9 md:w-9"
                   disabled={page <= 1 || loading}
                   onClick={() => setPage(current => current - 1)}
                   aria-label={t('marketplace_management.previous')}
@@ -621,7 +631,7 @@ export default function PluginMarketplaceManagement() {
                   type="button"
                   variant="ghost"
                   size="icon"
-                  className="h-9 w-9"
+                  className="h-11 w-11 md:h-9 md:w-9"
                   disabled={page >= totalPages || loading}
                   onClick={() => setPage(current => current + 1)}
                   aria-label={t('marketplace_management.next')}
