@@ -206,8 +206,8 @@ export default function PluginPublicationReviewQueue() {
   const replaceUrlParams = useCallback(
     (changes: Record<string, string | null>) => {
       const params = new URLSearchParams(latestParamsRef.current)
-      params.set('tab', 'wework-plugin-publications')
-      params.delete('view')
+      params.set('tab', 'wework-marketplace')
+      params.set('view', 'plugin-publications')
       Object.entries(changes).forEach(([key, value]) => {
         if (value === null || value === '') params.delete(key)
         else params.set(key, value)

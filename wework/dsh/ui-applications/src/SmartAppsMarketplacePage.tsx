@@ -240,6 +240,10 @@ export function SmartAppsMarketplacePage({
   const [loading, setLoading] = useState(true)
   const [busy, setBusy] = useState<string | null>(null)
   const [exportNotice, setExportNotice] = useState<string | null>(null)
+  const [accessNotice, setAccessNotice] = useState<{
+    message: string
+    showMarketplace: boolean
+  } | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [selected, setSelected] = useState<SmartAppMarketplaceItem | null>(null)
   const [pendingInstall, setPendingInstall] = useState<PendingInstall | null>(null)
@@ -263,6 +267,14 @@ export function SmartAppsMarketplacePage({
   useLayoutEffect(() => {
     activeModeRef.current = mode
   }, [mode])
+
+  const navigateFromSmartApps = useCallback(
+    (path: string) => {
+      setAccessNotice(null)
+      onNavigate(path)
+    },
+    [onNavigate]
+  )
 
   const refresh = useCallback(async () => {
     if (activeModeRef.current !== mode) return
@@ -787,7 +799,7 @@ export function SmartAppsMarketplacePage({
         label: t('workbench.smart_apps_manage_in_my', '在我的工作台中管理'),
         icon: Boxes,
         testId: `smart-app-manage-local-${installation.id}`,
-        onSelect: () => onNavigate('/sites?app_type=smart_app&view=owned'),
+        onSelect: () => navigateFromSmartApps('/sites?app_type=smart_app&view=owned'),
       })
     } else if (item?.accessRole === 'owner') {
       actions.push({
@@ -913,7 +925,7 @@ export function SmartAppsMarketplacePage({
         leading={
           <SmartAppsSectionNav
             active={mode === 'owned' ? 'owned' : 'marketplace'}
-            onNavigate={onNavigate}
+            onNavigate={navigateFromSmartApps}
           />
         }
         searchLabel={t('workbench.smart_apps_search', '搜索工作台')}
@@ -1039,6 +1051,30 @@ export function SmartAppsMarketplacePage({
         </p>
       ) : null}
 
+      {mode === 'owned' && accessNotice ? (
+        <div
+          role="status"
+          data-testid="smart-app-access-success"
+          className="mt-4 flex items-center justify-between gap-3 rounded-lg bg-success/10 p-3 text-sm text-success"
+        >
+          <span className="flex min-w-0 items-center gap-2">
+            <CheckCircle2 className="h-4 w-4 shrink-0" aria-hidden="true" />
+            {accessNotice.message}
+          </span>
+          {accessNotice.showMarketplace ? (
+            <Button
+              size="sm"
+              variant="outline"
+              className="shrink-0 border-success/30 bg-background text-text-primary shadow-sm hover:bg-success/10"
+              data-testid="smart-app-access-view-marketplace"
+              onClick={() => navigateFromSmartApps('/sites?app_type=smart_app')}
+            >
+              {t('workbench.smart_apps_view_marketplace', '去市场查看')}
+            </Button>
+          ) : null}
+        </div>
+      ) : null}
+
       {!api && mode === 'marketplace' ? (
         <EmptyState
           icon={<Box className="h-6 w-6" />}
@@ -1051,7 +1087,7 @@ export function SmartAppsMarketplacePage({
             <Button
               size="sm"
               variant="outline"
-              onClick={() => onNavigate('/sites?app_type=smart_app&view=owned')}
+              onClick={() => navigateFromSmartApps('/sites?app_type=smart_app&view=owned')}
             >
               <PackageCheck className="h-4 w-4" />
               {t('workbench.smart_apps_view_my', '查看我的工作台')}
@@ -1294,9 +1330,11 @@ export function SmartAppsMarketplacePage({
                   sourceLabel={
                     item.sourceType === 'official'
                       ? t('workbench.smart_apps_official', '官方')
-                      : item.accessRole === 'public'
-                        ? t('workbench.smart_apps_public_for_everyone', '全员应用')
-                        : t('workbench.smart_apps_shared_with_me', '分享给我')
+                      : item.accessRole === 'owner'
+                        ? t('workbench.smart_apps_published_by_me', '我发布的')
+                        : item.accessRole === 'public'
+                          ? t('workbench.smart_apps_public_for_everyone', '全员应用')
+                          : t('workbench.smart_apps_shared_with_me', '分享给我')
                   }
                   description={item.summary}
                   tags={item.tags}
@@ -1421,7 +1459,6 @@ export function SmartAppsMarketplacePage({
           modelOptions={modelOptions}
           preview={pendingInstall.preview}
           onCancel={() => setPendingInstall(null)}
-          onChooseAnother={() => setPendingInstall(null)}
           onInstall={() => void install()}
           onModelChange={setModelKey}
         />
@@ -1448,8 +1485,24 @@ export function SmartAppsMarketplacePage({
           api={api}
           item={shareItem}
           onClose={() => setShareItem(null)}
-          onSaved={() => {
+          onSaved={savedAccess => {
             setShareItem(null)
+            setExportNotice(null)
+            setAccessNotice({
+              message:
+                savedAccess.scope === 'public'
+                  ? savedAccess.isListed
+                    ? t(
+                        'workbench.smart_apps_listed_success',
+                        'v{{version}} 已上架到智能应用市场。'
+                      ).replace('{{version}}', savedAccess.version)
+                    : t(
+                        'workbench.smart_apps_public_unlisted_success',
+                        '已发布给全员，但当前已被管理员下架。'
+                      )
+                  : t('workbench.smart_apps_access_saved', '分享范围已保存。'),
+              showMarketplace: savedAccess.scope === 'public' && savedAccess.isListed,
+            })
             void refresh()
           }}
         />
@@ -1988,7 +2041,7 @@ function SmartAppShareDialog({
   api: SmartAppsApi
   item: SmartAppMarketplaceItem
   onClose: () => void
-  onSaved: () => void
+  onSaved: (access: SmartAppAccess) => void
 }) {
   const { t } = useTranslation('common')
   const [access, setAccess] = useState<SmartAppAccess | null>(null)
@@ -2019,8 +2072,11 @@ function SmartAppShareDialog({
     }
     setSaving(true)
     try {
-      await api.updateAccess(item.id, { scope, targets: scope === 'restricted' ? targets : [] })
-      onSaved()
+      const savedAccess = await api.updateAccess(item.id, {
+        scope,
+        targets: scope === 'restricted' ? targets : [],
+      })
+      onSaved(savedAccess)
     } catch (value) {
       setError(
         getErrorMessage(value, t('workbench.smart_apps_access_save_failed', '分享范围保存失败'))
@@ -2086,9 +2142,9 @@ function SmartAppShareDialog({
               <p className="mt-4 text-sm text-text-secondary">
                 {scope === 'public'
                   ? t(
-                      'workbench.smart_apps_public_hint',
-                      '保存后立即上架到智能应用市场，所有成员均可查看和安装。'
-                    )
+                      'workbench.smart_apps_share_public_hint',
+                      '将当前已发布版本 v{{version}} 上架到智能应用市场，所有成员均可查看和安装。本地后续修改不会自动同步，需发布新版本。'
+                    ).replace('{{version}}', item.version)
                   : t(
                       'workbench.smart_apps_revoke_hint',
                       '取消分享后，接收者不能继续下载或更新；已安装到本地的副本仍可离线运行。'

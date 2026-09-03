@@ -48,7 +48,7 @@ export type AdminTabId =
   | 'templates'
   | 'api-keys'
   | 'marketplace'
-  | 'wework-plugin-publications'
+  | 'wework-marketplace'
   | 'system-config'
   | 'im-channels'
   | 'connector-apps'
@@ -88,8 +88,8 @@ export function AdminTabNav({ activeTab, onTabChange }: AdminTabNavProps) {
     { id: 'api-keys', label: t('admin:tabs.api_keys'), icon: KeyRound },
     { id: 'marketplace', label: t('admin:tabs.marketplace'), icon: Store },
     {
-      id: 'wework-plugin-publications',
-      label: t('admin:tabs.wework_plugin_publications'),
+      id: 'wework-marketplace',
+      label: t('admin:tabs.wework_marketplace'),
       icon: ClipboardCheck,
     },
     { id: 'system-config', label: t('admin:tabs.system_config'), icon: Settings },

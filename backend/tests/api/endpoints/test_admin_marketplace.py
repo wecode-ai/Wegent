@@ -2,13 +2,80 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
+import io
+import json
+import zipfile
+
 from app.models.kind import Kind
 from app.models.marketplace_resource import MarketplaceResource
-from app.models.smart_app_marketplace import SmartApp
+from app.models.smart_app_marketplace import SmartApp, SmartAppRelease
+from app.services.marketplace_artifact_storage import marketplace_artifact_storage
 
 
 def _headers(token: str) -> dict[str, str]:
     return {"Authorization": f"Bearer {token}"}
+
+
+def _official_smart_app_package(
+    version: str = "1.0.0", *, include_marketplace_metadata: bool = True
+) -> bytes:
+    output = io.BytesIO()
+    with zipfile.ZipFile(output, "w") as archive:
+        archive.writestr(
+            "plugin-manifest.json",
+            json.dumps(
+                {
+                    "name": "admin-official-app",
+                    "displayName": "Admin Official App",
+                    "version": version,
+                    "type": "deepseek-harness-plugin-bundle",
+                    "description": "Imported by an administrator",
+                    "entry": {"installPackage": "bundle", "profile": "official"},
+                    "requirements": {"dsh": "0.1.0", "node": ">=22"},
+                }
+            ),
+        )
+        archive.writestr("bundle/package.json", "{}")
+        archive.writestr("bundle/cordis.patch.yml", "plugins: []")
+        if include_marketplace_metadata:
+            archive.writestr("icon.png", b"png-image")
+            archive.writestr(
+                "smart-app-marketplace.json",
+                json.dumps(
+                    {
+                        "summary": "Official import",
+                        "descriptionMd": "# Official import",
+                        "tags": ["data_analysis"],
+                        "icon": "icon.png",
+                        "releaseNotes": "Initial version",
+                    }
+                ),
+            )
+    return output.getvalue()
+
+
+def _mock_smart_app_storage(monkeypatch) -> dict[str, bytes]:
+    values: dict[str, bytes] = {}
+    monkeypatch.setattr(
+        marketplace_artifact_storage,
+        "put",
+        lambda key, value, *, content_type: values.__setitem__(key, value),
+    )
+    monkeypatch.setattr(
+        marketplace_artifact_storage,
+        "put_immutable",
+        lambda key, value, *, content_type: values.setdefault(key, value) == value,
+    )
+    monkeypatch.setattr(marketplace_artifact_storage, "get", lambda key: values[key])
+    monkeypatch.setattr(
+        marketplace_artifact_storage, "delete", lambda key: values.pop(key, None)
+    )
+    monkeypatch.setattr(
+        marketplace_artifact_storage,
+        "presign_download",
+        lambda key: (f"https://assets.example/{key}", None),
+    )
+    return values
 
 
 def _resource(
@@ -208,18 +275,195 @@ def test_system_recommendation_score_changes_keep_listing_public(
     assert detail.json()["id"] == agent.id
 
 
+def test_admin_imports_official_smart_app_directly(
+    test_client,
+    test_db,
+    test_admin_token,
+    test_token,
+    monkeypatch,
+):
+    _mock_smart_app_storage(monkeypatch)
+    package = _official_smart_app_package()
+
+    forbidden = test_client.post(
+        "/api/admin/marketplace-smart-apps/import",
+        files={"package": ("official.zip", package, "application/zip")},
+        headers=_headers(test_token),
+    )
+    imported = test_client.post(
+        "/api/admin/marketplace-smart-apps/import",
+        files={"package": ("official.zip", package, "application/zip")},
+        headers=_headers(test_admin_token),
+    )
+
+    assert forbidden.status_code == 403
+    assert imported.status_code == 200
+    assert imported.json()["display_name"] == "Admin Official App"
+    assert imported.json()["is_system"] is True
+    assert imported.json()["is_listed"] is True
+    app = test_db.get(SmartApp, imported.json()["id"])
+    assert app.owner_user_id == 0
+    assert app.source_type == "official"
+    assert app.visibility == "public"
+    assert app.status == "published"
+
+    app.featured_rank = 90
+    test_db.commit()
+    updated = test_client.post(
+        "/api/admin/marketplace-smart-apps/import",
+        files={
+            "package": (
+                "official.zip",
+                _official_smart_app_package("1.1.0"),
+                "application/zip",
+            )
+        },
+        headers=_headers(test_admin_token),
+    )
+
+    assert updated.status_code == 200
+    assert updated.json()["featured_rank"] == 90
+
+
+def test_admin_imports_plain_wework_package_then_completes_marketplace_metadata(
+    test_client,
+    test_db,
+    test_admin_token,
+    monkeypatch,
+):
+    _mock_smart_app_storage(monkeypatch)
+    package = _official_smart_app_package(include_marketplace_metadata=False)
+
+    imported = test_client.post(
+        "/api/admin/marketplace-smart-apps/import",
+        files={"package": ("plain.zip", package, "application/zip")},
+        headers=_headers(test_admin_token),
+    )
+
+    assert imported.status_code == 200
+    assert imported.json()["summary"] == "Imported by an administrator"
+    assert imported.json()["icon_url"] == ""
+    assert imported.json()["tags"] == []
+    assert imported.json()["needs_metadata"] is True
+
+    completed = test_client.put(
+        f"/api/admin/marketplace-smart-apps/{imported.json()['id']}/metadata",
+        data={
+            "summary": "Spreadsheet dashboard",
+            "description_md": "# Spreadsheet dashboard",
+            "tags": json.dumps(["data_analysis"]),
+        },
+        files={"icon": ("icon.png", b"png-image", "image/png")},
+        headers=_headers(test_admin_token),
+    )
+
+    assert completed.status_code == 200
+    assert completed.json()["summary"] == "Spreadsheet dashboard"
+    assert completed.json()["tags"] == ["data_analysis"]
+    assert completed.json()["icon_url"]
+    assert completed.json()["needs_metadata"] is False
+
+    next_version = test_client.post(
+        "/api/admin/marketplace-smart-apps/import",
+        files={
+            "package": (
+                "plain-1.1.0.zip",
+                _official_smart_app_package(
+                    "1.1.0", include_marketplace_metadata=False
+                ),
+                "application/zip",
+            )
+        },
+        headers=_headers(test_admin_token),
+    )
+
+    assert next_version.status_code == 200
+    app = test_db.get(SmartApp, imported.json()["id"])
+    release = test_db.get(SmartAppRelease, app.latest_release_id)
+    assert release.version == "1.1.0"
+    assert next_version.json()["summary"] == "Spreadsheet dashboard"
+    assert next_version.json()["description_md"] == "# Spreadsheet dashboard"
+    assert next_version.json()["tags"] == ["data_analysis"]
+    assert next_version.json()["icon_url"] == completed.json()["icon_url"]
+    assert next_version.json()["needs_metadata"] is False
+
+
+def test_admin_permanently_deletes_only_official_marketplace_smart_apps(
+    test_client,
+    test_db,
+    test_admin_token,
+    test_token,
+    test_user,
+    monkeypatch,
+):
+    stored_artifacts = _mock_smart_app_storage(monkeypatch)
+    imported = test_client.post(
+        "/api/admin/marketplace-smart-apps/import",
+        files={
+            "package": (
+                "official.zip",
+                _official_smart_app_package(),
+                "application/zip",
+            )
+        },
+        headers=_headers(test_admin_token),
+    )
+    app_id = imported.json()["id"]
+    release_id = test_db.get(SmartApp, app_id).latest_release_id
+    user_app = SmartApp(
+        owner_user_id=test_user.id,
+        name="user-marketplace-app",
+        display_name="User Marketplace App",
+        summary="User-owned app",
+        source_type="user",
+        visibility="public",
+        status="published",
+    )
+    test_db.add(user_app)
+    test_db.commit()
+
+    forbidden = test_client.delete(
+        f"/api/admin/marketplace-smart-apps/{app_id}",
+        headers=_headers(test_token),
+    )
+    user_owned = test_client.delete(
+        f"/api/admin/marketplace-smart-apps/{user_app.id}",
+        headers=_headers(test_admin_token),
+    )
+    deleted = test_client.delete(
+        f"/api/admin/marketplace-smart-apps/{app_id}",
+        headers=_headers(test_admin_token),
+    )
+
+    assert forbidden.status_code == 403
+    assert user_owned.status_code == 404
+    assert deleted.status_code == 204
+    assert test_db.get(SmartApp, app_id) is None
+    assert test_db.get(SmartAppRelease, release_id) is None
+    assert test_db.get(SmartApp, user_app.id) is not None
+    assert stored_artifacts == {}
+
+
 def test_admin_prioritizes_only_public_marketplace_smart_apps(
     test_client,
     test_db,
     test_admin_token,
     test_token,
     test_user,
+    monkeypatch,
 ):
+    monkeypatch.setattr(
+        marketplace_artifact_storage,
+        "presign_download",
+        lambda key: (f"https://assets.example/{key}", None),
+    )
     official = SmartApp(
         owner_user_id=0,
         name="official-smart-app",
         display_name="Official Smart App",
         summary="Official",
+        description_md="Classifies spreadsheet rows for demonstrations.",
+        icon_storage_key="smart-apps/assets/official/icon.png",
         source_type="official",
         visibility="public",
         status="published",
@@ -233,7 +477,8 @@ def test_admin_prioritizes_only_public_marketplace_smart_apps(
         source_type="user",
         visibility="public",
         status="published",
-        featured_rank=20,
+        featured_rank=0,
+        is_listed=False,
     )
     restricted = SmartApp(
         owner_user_id=test_user.id,
@@ -251,6 +496,18 @@ def test_admin_prioritizes_only_public_marketplace_smart_apps(
         "/api/admin/marketplace-smart-apps",
         headers=_headers(test_admin_token),
     )
+    searched = test_client.get(
+        "/api/admin/marketplace-smart-apps?search=spreadsheet",
+        headers=_headers(test_admin_token),
+    )
+    listed_only = test_client.get(
+        "/api/admin/marketplace-smart-apps?listing_status=listed",
+        headers=_headers(test_admin_token),
+    )
+    user_only = test_client.get(
+        "/api/admin/marketplace-smart-apps?source=user",
+        headers=_headers(test_admin_token),
+    )
     forbidden = test_client.put(
         f"/api/admin/marketplace-smart-apps/{official.id}",
         json={"featured_rank": 90},
@@ -258,7 +515,7 @@ def test_admin_prioritizes_only_public_marketplace_smart_apps(
     )
     updated = test_client.put(
         f"/api/admin/marketplace-smart-apps/{official.id}",
-        json={"featured_rank": 90},
+        json={"featured_rank": 90, "is_listed": False},
         headers=_headers(test_admin_token),
     )
     relisted = test_client.get(
@@ -272,12 +529,28 @@ def test_admin_prioritizes_only_public_marketplace_smart_apps(
 
     assert listed.status_code == 200
     assert [item["id"] for item in listed.json()["items"]] == [
-        public_user_app.id,
         official.id,
+        public_user_app.id,
     ]
+    official_item = next(
+        item for item in listed.json()["items"] if item["id"] == official.id
+    )
+    assert official_item["description_md"] == (
+        "Classifies spreadsheet rows for demonstrations."
+    )
+    assert official_item["icon_url"] == (
+        "https://assets.example/smart-apps/assets/official/icon.png"
+    )
+    assert searched.status_code == 200
+    assert [item["id"] for item in searched.json()["items"]] == [official.id]
+    assert listed_only.status_code == 200
+    assert [item["id"] for item in listed_only.json()["items"]] == [official.id]
+    assert user_only.status_code == 200
+    assert [item["id"] for item in user_only.json()["items"]] == [public_user_app.id]
     assert forbidden.status_code == 403
     assert updated.status_code == 200
     assert updated.json()["featured_rank"] == 90
+    assert updated.json()["is_listed"] is False
     assert [item["id"] for item in relisted.json()["items"]] == [
         official.id,
         public_user_app.id,
@@ -285,4 +558,5 @@ def test_admin_prioritizes_only_public_marketplace_smart_apps(
     assert second_page.status_code == 200
     assert second_page.json()["total"] == 2
     assert [item["id"] for item in second_page.json()["items"]] == [public_user_app.id]
+    assert second_page.json()["items"][0]["is_listed"] is False
     assert restricted.id not in {item["id"] for item in relisted.json()["items"]}

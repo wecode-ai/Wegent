@@ -59,6 +59,9 @@ export interface SmartAppAccess {
   smartAppId: number
   scope: 'private' | 'restricted' | 'public'
   targets: SmartAppAccessTarget[]
+  isListed: boolean
+  latestReleaseId: number
+  version: string
 }
 
 interface SmartAppSubmissionMetadataBase {
@@ -181,7 +184,7 @@ export function createSmartAppsApi(client: HttpClient, apiBaseUrl = '') {
     getAccess(id: number) {
       return client.get<SmartAppAccess>(`/smart-apps/${id}/access`)
     },
-    updateAccess(id: number, access: Omit<SmartAppAccess, 'smartAppId'>) {
+    updateAccess(id: number, access: Pick<SmartAppAccess, 'scope' | 'targets'>) {
       return client.put<SmartAppAccess>(`/smart-apps/${id}/access`, access)
     },
     initSubmission,

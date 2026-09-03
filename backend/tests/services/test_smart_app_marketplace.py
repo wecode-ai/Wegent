@@ -199,6 +199,12 @@ def test_user_publication_is_visible_only_to_owner_and_recipient(
 
     assert completed.item is not None
     assert completed.item.accessRole == "owner"
+    assert (
+        smart_app_marketplace_service.list_marketplace(
+            test_db, user_id=test_user.id
+        ).items
+        == []
+    )
     recipient_items = smart_app_marketplace_service.list_marketplace(
         test_db, user_id=recipient.id
     ).items
@@ -243,12 +249,43 @@ def test_public_app_is_immediately_visible_and_keeps_scope_for_new_versions(
     assert [(item.id, item.accessRole) for item in public_items] == [
         (completed.item.id, "public")
     ]
+    owner_items = smart_app_marketplace_service.list_marketplace(
+        test_db, user_id=test_user.id, source="public"
+    ).items
+    assert [(item.id, item.accessRole) for item in owner_items] == [
+        (completed.item.id, "owner")
+    ]
     assert (
         smart_app_marketplace_service.list_marketplace(
             test_db, user_id=unrelated_user.id, source="shared"
         ).items
         == []
     )
+
+    public_app = test_db.get(SmartApp, completed.item.id)
+    assert public_app is not None
+    public_app.is_listed = False
+    test_db.commit()
+    assert (
+        smart_app_marketplace_service.list_marketplace(
+            test_db, user_id=unrelated_user.id, source="public"
+        ).items
+        == []
+    )
+    assert [
+        item.id
+        for item in smart_app_marketplace_service.list_owned(
+            test_db, user_id=test_user.id
+        ).items
+    ] == [completed.item.id]
+    hidden_access = smart_app_marketplace_service.get_access(
+        test_db, smart_app_id=completed.item.id, user_id=test_user.id
+    )
+    assert hidden_access.isListed is False
+    assert hidden_access.latestReleaseId == completed.item.latestReleaseId
+    assert hidden_access.version == "1.0.0"
+    public_app.is_listed = True
+    test_db.commit()
 
     official_package = _package(name="official-unpinned")
     _mock_storage(monkeypatch)
@@ -262,10 +299,24 @@ def test_public_app_is_immediately_visible_and_keeps_scope_for_new_versions(
         icon_content_type="image/png",
         screenshots=[],
     )
-    public_app = test_db.get(SmartApp, completed.item.id)
-    assert public_app is not None
+    official_app.updated_at = datetime(2025, 1, 1)
+    public_app.updated_at = datetime(2026, 1, 1)
+    public_app.featured_rank = 0
+    test_db.commit()
+    equally_ranked_items = smart_app_marketplace_service.list_marketplace(
+        test_db, user_id=unrelated_user.id
+    ).items
+    assert [item.id for item in equally_ranked_items[:2]] == [
+        official_app.id,
+        completed.item.id,
+    ]
+
     public_app.featured_rank = 50
     test_db.commit()
+    filtered_public_items = smart_app_marketplace_service.list_marketplace(
+        test_db, user_id=test_user.id, source="public"
+    ).items
+    assert [item.id for item in filtered_public_items] == [completed.item.id]
     assert (
         smart_app_marketplace_service.list_marketplace(
             test_db, user_id=unrelated_user.id

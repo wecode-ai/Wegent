@@ -33,6 +33,9 @@ class SmartAppAccessResponse(BaseModel):
     smartAppId: int
     scope: Literal["private", "restricted", "public"]
     targets: list[SmartAppAccessTarget] = Field(default_factory=list)
+    isListed: bool
+    latestReleaseId: int
+    version: str
 
 
 class SmartAppReleaseItem(BaseModel):
