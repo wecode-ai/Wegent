@@ -7,6 +7,12 @@
 
 - `wework.action`
 - `wework.app`
+- `wework.task.status`
+- `wework.environment.section`
+- `wework.board.card.status`
+- `wework.workspace.menu.section`
+- `wework.project.work.section`
+- `wework.project.create.section`
 - `wework.route`
 - `wework.sidebar.navigation`
 - `wework.settings.page`

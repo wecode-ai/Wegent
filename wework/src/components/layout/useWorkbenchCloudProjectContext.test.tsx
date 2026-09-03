@@ -12,6 +12,7 @@ import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
 import type { RuntimeTaskAddress } from '@/types/api'
 import { WorkspaceTabsContext } from '@/features/workspace-tabs/workspaceTabsContextValue'
 import type { WorkspaceTabsContextValue } from '@/features/workspace-tabs/workspaceTabsContextValue'
+import { defaultProjectSpaceContentRoute } from '@/features/todo/projectSpaceRoute'
 import {
   cloudItemAsLocalWorkItem,
   useWorkbenchCloudProjectContext,
@@ -938,9 +939,28 @@ describe('useWorkbenchCloudProjectContext', () => {
     expect(result.current.closeDeliveryDialog).toBe(closeDeliveryDialog)
   })
 
-  test('reuses the existing project board tab when opening a bound work item', async () => {
-    const cloudProject = project('space-local', 'local')
-    cloudProject.name = '我的任务'
+  test.each([
+    {
+      description: 'resolved project board tab',
+      boardTabId: 'board-existing',
+      boardRoute: '/todo?projectStore=local&projectId=space-local',
+      cloudProject: { ...project('space-local', 'local'), name: '我的任务' },
+      fixed: false,
+    },
+    {
+      description: 'unresolved fixed default project board tab',
+      boardTabId: 'fixed-board',
+      boardRoute: defaultProjectSpaceContentRoute(),
+      cloudProject: {
+        ...project(DEFAULT_WORK_ITEM_PROJECT_ID, 'local'),
+        project_key: DEFAULT_WORK_ITEM_PROJECT_KEY,
+        name: '我的任务',
+        metadata: { system_kind: 'default_work_items' },
+      },
+      fixed: true,
+    },
+  ])('reuses the $description when opening a bound work item', async setup => {
+    const { boardRoute, boardTabId, cloudProject, fixed } = setup
     const item = loopItem(cloudProject.id)
     const currentRuntimeTask = {
       deviceId: 'local-device',
@@ -969,10 +989,11 @@ describe('useWorkbenchCloudProjectContext', () => {
       contentRoute: '/?deviceId=local-device&taskId=runtime-1',
     }
     const boardTab = {
-      id: 'board-existing',
+      id: boardTabId,
       kind: 'board' as const,
-      title: '工作项',
-      contentRoute: `/todo?projectStore=${cloudProject.project_store}&projectId=${cloudProject.id}`,
+      title: fixed ? '工作空间' : '工作项',
+      contentRoute: boardRoute,
+      fixed,
     }
     const openTab = vi.fn()
     const workspaceTabs = {

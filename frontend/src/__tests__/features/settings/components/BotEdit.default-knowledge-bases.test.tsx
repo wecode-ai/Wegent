@@ -745,4 +745,63 @@ describe('BotEdit default knowledge bases', () => {
       )
     })
   })
+
+  test('preserves an existing model binding when the model is hidden from selection', async () => {
+    mockedGetUnifiedModels.mockResolvedValue({
+      data: [{ name: 'replacement-model', type: 'public', namespace: 'default' }],
+    })
+
+    await renderBotEdit({
+      agent_config: {
+        bind_model: 'hidden-model',
+        bind_model_type: 'public',
+        bind_model_namespace: 'default',
+      },
+    })
+
+    expect(await screen.findByText('hidden-model')).toBeInTheDocument()
+
+    fireEvent.click(screen.getByTestId('save-button'))
+
+    await waitFor(() => {
+      expect(mockedUpdateBot).toHaveBeenCalledWith(
+        7,
+        expect.objectContaining({
+          agent_config: expect.objectContaining({
+            bind_model: 'hidden-model',
+            bind_model_type: 'public',
+          }),
+        })
+      )
+    })
+  })
+
+  test('does not replace a saved model namespace with a same-name model', async () => {
+    mockedGetUnifiedModels.mockResolvedValue({
+      data: [{ name: 'shared-name', type: 'public', namespace: 'default' }],
+    })
+
+    await renderBotEdit({
+      agent_config: {
+        bind_model: 'shared-name',
+        bind_model_type: 'public',
+        bind_model_namespace: 'archived',
+      },
+    })
+
+    fireEvent.click(screen.getByTestId('save-button'))
+
+    await waitFor(() => {
+      expect(mockedUpdateBot).toHaveBeenCalledWith(
+        7,
+        expect.objectContaining({
+          agent_config: expect.objectContaining({
+            bind_model: 'shared-name',
+            bind_model_type: 'public',
+            bind_model_namespace: 'archived',
+          }),
+        })
+      )
+    })
+  })
 })

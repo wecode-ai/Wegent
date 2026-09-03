@@ -35,6 +35,7 @@ import type { TaskChangeRequestSnapshot } from '@/api/changeRequests'
 import * as changeRequestMonitor from '@/features/workbench/changeRequestMonitor'
 import { WEWORK_DSH_SLOTS } from '@/features/dsh-runtime/dshUiSlots'
 import { preloadDefaultDshUiTestModules } from '@/test/setup'
+import { installGitUiTestContributions } from '../../../dsh/ui-git/test-support'
 
 const experimentalFeatures = vi.hoisted(() => ({ enabled: true }))
 
@@ -208,6 +209,7 @@ await preloadDefaultDshUiTestModules()
 describe('DesktopSidebar', () => {
   beforeEach(async () => {
     await preloadDefaultDshUiTestModules()
+    await installGitUiTestContributions()
     experimentalFeatures.enabled = true
     window.history.replaceState({}, '', '/')
     localStorage.clear()
@@ -3404,7 +3406,10 @@ describe('DesktopSidebar', () => {
     const runningStatus = screen.getByTestId('runtime-local-task-running-codex-running')
     expect(runningStatus).toHaveAttribute('aria-label', '运行中')
     expect(runningStatus).not.toHaveTextContent('运行中')
-    expect(runningStatus.querySelector('svg')).not.toBeNull()
+    const spinnerLayer = runningStatus.querySelector('.animate-spin')
+    expect(spinnerLayer).toBeInstanceOf(HTMLSpanElement)
+    expect(spinnerLayer).toHaveClass('will-change-transform')
+    expect(spinnerLayer?.querySelector('svg')).not.toHaveClass('animate-spin')
     expect(screen.queryByTestId('runtime-local-task-running-codex-idle')).not.toBeInTheDocument()
   })
 

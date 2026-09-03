@@ -90,7 +90,7 @@ export interface HttpClientOptions {
 export interface HttpRequestOptions {
   redirectOnUnauthorized?: boolean
   signal?: AbortSignal
-  headers?: Record<string, string>
+  headers?: HeadersInit
 }
 
 export interface HttpClient {
@@ -257,17 +257,10 @@ export function createHttpClient(options: HttpClientOptions): HttpClient {
     init: RequestInit,
     requestOptions: HttpRequestOptions = {}
   ): Promise<T> {
-    const diagnostics = await fetchWithDiagnostics(
-      endpoint,
-      {
-        ...init,
-        headers: { ...init.headers, ...requestOptions.headers },
-      },
-      {
-        token: getToken(),
-        signal: requestOptions.signal,
-      }
-    )
+    const diagnostics = await fetchWithDiagnostics(endpoint, init, {
+      token: getToken(),
+      signal: requestOptions.signal,
+    })
     const { response } = diagnostics
 
     if (!response.ok) {
@@ -299,7 +292,11 @@ export function createHttpClient(options: HttpClientOptions): HttpClient {
       }
     }
 
-    const nextRequest = request<T>(endpoint, { method: 'GET' }, requestOptions).finally(() => {
+    const nextRequest = request<T>(
+      endpoint,
+      { method: 'GET', headers: requestOptions.headers },
+      requestOptions
+    ).finally(() => {
       if (!requestOptions.signal) {
         inFlightGetRequests.delete(cacheKey)
       }
@@ -334,41 +331,45 @@ export function createHttpClient(options: HttpClientOptions): HttpClient {
   return {
     get,
     getBlob,
-    post: (endpoint, data, requestOptions) =>
+    post: (endpoint, data, requestOptions = {}) =>
       request(
         endpoint,
         {
           method: 'POST',
+          headers: requestOptions.headers,
           body:
             data === undefined ? undefined : data instanceof FormData ? data : JSON.stringify(data),
         },
         requestOptions
       ),
-    put: (endpoint, data, requestOptions) =>
+    put: (endpoint, data, requestOptions = {}) =>
       request(
         endpoint,
         {
           method: 'PUT',
+          headers: requestOptions.headers,
           body:
             data === undefined ? undefined : data instanceof FormData ? data : JSON.stringify(data),
         },
         requestOptions
       ),
-    patch: (endpoint, data, requestOptions) =>
+    patch: (endpoint, data, requestOptions = {}) =>
       request(
         endpoint,
         {
           method: 'PATCH',
+          headers: requestOptions.headers,
           body:
             data === undefined ? undefined : data instanceof FormData ? data : JSON.stringify(data),
         },
         requestOptions
       ),
-    delete: (endpoint, data, requestOptions) =>
+    delete: (endpoint, data, requestOptions = {}) =>
       request(
         endpoint,
         {
           method: 'DELETE',
+          headers: requestOptions.headers,
           body: data === undefined ? undefined : JSON.stringify(data),
         },
         requestOptions

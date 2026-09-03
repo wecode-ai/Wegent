@@ -1,6 +1,10 @@
 import * as matchers from '@testing-library/jest-dom/matchers'
 import { beforeEach, expect } from 'vitest'
-import { WEWORK_DSH_SLOTS, type WeworkDshSlotEntry } from '@/features/dsh-runtime/dshUiSlots'
+import {
+  WEWORK_DSH_SLOTS,
+  type WeworkDshSlotEntry,
+  type WeworkDshSlotName,
+} from '@/features/dsh-runtime/dshUiSlots'
 import { clearDshUiModuleCache, importDshUiModule } from '@/features/dsh-runtime/dshUiModules'
 
 expect.extend(matchers)
@@ -192,14 +196,6 @@ const testSettings = [
   ],
   ['browser', '/settings/browser', 'app-window', 'settings_nav_browser', '浏览器', 'integrations'],
   [
-    'git-hosting',
-    '/settings/git-hosting',
-    'git-pull-request',
-    'settings_nav_git_hosting',
-    '代码托管',
-    'coding',
-  ],
-  [
     'execution-environments',
     '/settings/execution-environments',
     'cpu',
@@ -208,14 +204,6 @@ const testSettings = [
     'coding',
   ],
   ['harnesses', '/settings/harnesses', 'code-2', 'settings_nav_harnesses', '编码工具', 'coding'],
-  [
-    'worktrees',
-    '/settings/worktrees',
-    'folder-git-2',
-    'settings_nav_worktrees',
-    '工作树',
-    'coding',
-  ],
   ['hooks', '/settings/hooks', 'webhook', 'settings_nav_hooks', 'Hooks', 'coding'],
   [
     'archived-conversations',
@@ -243,12 +231,19 @@ function installDefaultDshUiTestRuntime() {
   const entries = new Map<string, readonly WeworkDshSlotEntry[]>([
     [WEWORK_DSH_SLOTS.action, testActions],
     [WEWORK_DSH_SLOTS.app, testApps],
+    [WEWORK_DSH_SLOTS.boardCardStatus, []],
+    [WEWORK_DSH_SLOTS.environmentSection, []],
+    [WEWORK_DSH_SLOTS.projectCreateSection, []],
+    [WEWORK_DSH_SLOTS.projectWorkSection, []],
+    [WEWORK_DSH_SLOTS.runtimeProfileWorkspacePolicy, []],
     [WEWORK_DSH_SLOTS.settingsPage, testSettings],
     [WEWORK_DSH_SLOTS.route, []],
     [WEWORK_DSH_SLOTS.sidebarNavigation, testSidebarNavigation],
     [WEWORK_DSH_SLOTS.shellAfter, []],
     [WEWORK_DSH_SLOTS.shellBefore, []],
     [WEWORK_DSH_SLOTS.shellOverlay, []],
+    [WEWORK_DSH_SLOTS.taskStatus, []],
+    [WEWORK_DSH_SLOTS.workspaceMenuSection, []],
     [WEWORK_DSH_SLOTS.workspaceSidebarTab, []],
     [WEWORK_DSH_SLOTS.workspaceTab, []],
   ])
@@ -273,9 +268,26 @@ function installDefaultDshUiTestModules() {
   }
 }
 
-export async function preloadDefaultDshUiTestModules() {
+export async function preloadDefaultDshUiTestModules(moduleNames?: readonly string[]) {
   installDefaultDshUiTestModules()
   const modules = window.__WEWORK_DSH_UI_MODULES__ ?? {}
+  await Promise.all((moduleNames ?? Object.keys(modules)).map(module => importDshUiModule(module)))
+}
+
+export async function installDshUiTestContributions(
+  entries: Partial<Record<WeworkDshSlotName, readonly WeworkDshSlotEntry[]>>,
+  modules: Record<string, unknown | (() => Promise<unknown>)>
+) {
+  const runtime = window.__WEWORK_DSH_UI__
+  if (!runtime) throw new Error('The default DSH UI test runtime is not installed')
+  window.__WEWORK_DSH_UI__ = {
+    ...runtime,
+    getEntries: slotName => entries[slotName] ?? runtime.getEntries(slotName),
+  }
+  window.__WEWORK_DSH_UI_MODULES__ = {
+    ...(window.__WEWORK_DSH_UI_MODULES__ ?? {}),
+    ...modules,
+  }
   await Promise.all(Object.keys(modules).map(module => importDshUiModule(module)))
 }
 

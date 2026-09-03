@@ -305,12 +305,14 @@ export function WorkbenchProvider({
   const localPluginApi = useMemo(() => createLocalCodexPluginApi(), [])
   const cloudPluginApi = useMemo(() => {
     const runtime = getRuntimeConfig()
+    const apiBaseUrl = cloudConnection.apiBaseUrl || runtime.apiBaseUrl
     return createPluginApi(
       createHttpClient({
-        baseUrl: cloudConnection.apiBaseUrl || runtime.apiBaseUrl,
+        baseUrl: apiBaseUrl,
         getToken: () => cloudConnection.token,
         redirectOnUnauthorized: false,
-      })
+      }),
+      apiBaseUrl
     )
   }, [cloudConnection.apiBaseUrl, cloudConnection.token])
   const isOptionsLocked = Boolean(state.currentRuntimeTask)
@@ -2164,7 +2166,9 @@ export function WorkbenchProvider({
         // (regression vs fix/wework stop-blocking-send-on-plugin-prep).
         let currentComposerDeviceId: string | null = null
         const composerPluginSources = {
-          listCodexApps: () => localPluginApi.listApps(),
+          // Retain inaccessible Codex apps while merging installed plugins so an
+          // unlinked connector cannot be reintroduced as an accessible skill-only app.
+          listCodexApps: () => localPluginApi.listApps({ includeInaccessible: true }),
           readLocalInstalledPlugins: async () => {
             currentComposerDeviceId =
               peekLocalCodexPluginsReadState({ mergeAllMarketplaces: true })?.deviceId ||
