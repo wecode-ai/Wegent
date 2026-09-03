@@ -340,26 +340,37 @@ async def lifespan(app: FastAPI):
     task_run_metric_hooks.register()
     logger.info("✓ Task run metric transaction hooks registered")
 
-    # Start background jobs
-    logger.info("Starting background jobs...")
-    start_background_jobs(app)
-    logger.info("✓ Background jobs started")
+    # Start background jobs. When periodic tasks run on a dedicated machine
+    # (SCHEDULED_TASKS_ENABLED=false), skip them here so this process does not
+    # compete for the same DB/Redis cleanup and cache-refresh work.
+    if settings.SCHEDULED_TASKS_ENABLED:
+        logger.info("Starting background jobs...")
+        start_background_jobs(app)
+        logger.info("✓ Background jobs started")
+    else:
+        logger.info(
+            "SCHEDULED_TASKS_ENABLED=false, skipping background jobs "
+            "(periodic tasks run on a dedicated deployment)"
+        )
 
     # Start scheduler backend (for Flow scheduling)
     # The scheduler backend is selected based on SCHEDULER_BACKEND config:
     # - "celery" (default): Uses Celery Beat with embedded/standalone mode
     # - "apscheduler": Uses APScheduler (lightweight, no Redis required)
     # - "xxljob": Uses XXL-JOB distributed scheduler
-    logger.info(f"Starting scheduler backend: {settings.SCHEDULER_BACKEND}...")
-    from app.core.scheduler import start_scheduler
+    if settings.SCHEDULED_TASKS_ENABLED:
+        logger.info(f"Starting scheduler backend: {settings.SCHEDULER_BACKEND}...")
+        from app.core.scheduler import start_scheduler
 
-    scheduler = start_scheduler()
-    if scheduler:
-        logger.info(f"✓ Scheduler backend '{scheduler.backend_type}' started")
+        scheduler = start_scheduler()
+        if scheduler:
+            logger.info(f"✓ Scheduler backend '{scheduler.backend_type}' started")
+        else:
+            logger.warning(
+                "Failed to start scheduler backend. Flow scheduling may not work."
+            )
     else:
-        logger.warning(
-            "Failed to start scheduler backend. Flow scheduling may not work."
-        )
+        logger.info("SCHEDULED_TASKS_ENABLED=false, skipping scheduler backend startup")
 
     # Initialize Socket.IO WebSocket emitter
     # Note: Chat namespace is already registered in create_socketio_asgi_app()
@@ -444,11 +455,14 @@ async def lifespan(app: FastAPI):
     logger.info("✓ PendingRequestRegistry initialized")
 
     # Start device heartbeat monitor for local device support
-    logger.info("Starting device heartbeat monitor...")
-    from app.services.device_monitor import start_device_monitor
+    if settings.SCHEDULED_TASKS_ENABLED:
+        logger.info("Starting device heartbeat monitor...")
+        from app.services.device_monitor import start_device_monitor
 
-    start_device_monitor()
-    logger.info("✓ Device heartbeat monitor started")
+        start_device_monitor()
+        logger.info("✓ Device heartbeat monitor started")
+    else:
+        logger.info("SCHEDULED_TASKS_ENABLED=false, skipping device heartbeat monitor")
 
     # Initialize IM Channel Manager and start enabled channels
     # This enables DingTalk, Feishu, WeChat bot integrations

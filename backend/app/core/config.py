@@ -415,6 +415,13 @@ class Settings(BaseSettings):
             return _normalize_rag_runtime_mode_value(raw, label="global")
         raise ValueError(f"Unsupported RAG_RUNTIME_MODE value: {v!r}")
 
+    # Master switch for all scheduled/periodic tasks started by this Backend
+    # process (background jobs, scheduler backend, Celery Beat schedule, device
+    # heartbeat monitor). Set False when periodic tasks run on a dedicated
+    # machine (e.g. a standalone Celery worker + beat deployment sharing the
+    # same MySQL/Redis) so this process does not compete for the same queues.
+    SCHEDULED_TASKS_ENABLED: bool = True
+
     # Scheduler backend configuration
     # Supported backends: "celery" (default), "apscheduler", "xxljob"
     SCHEDULER_BACKEND: str = "celery"
