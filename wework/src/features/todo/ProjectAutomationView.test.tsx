@@ -554,11 +554,18 @@ describe('ProjectAutomationView', () => {
       data: [
         {
           name: 'deepseek-v4-flash-vision-exp',
-          displayName: 'DeepSeek V4 Flash Vision',
+          displayName: 'deepseek-v4-flash-vision-exp',
           type: 'public',
           namespace: 'default',
           resourceUserId: 0,
           isActive: true,
+          config: {
+            ui: {
+              family: 'deepseek',
+              modelLabel: 'DeepSeek V4 Flash Vision',
+              region: 'public',
+            },
+          },
         },
       ],
     })
@@ -570,7 +577,7 @@ describe('ProjectAutomationView', () => {
     fireEvent.click(
       await screen.findByTestId('execution-node-environment-step-1-option-cloud-device')
     )
-    await screen.findByRole('option', { name: 'DeepSeek V4 Flash Vision' })
+    await screen.findByRole('option', { name: '公网:DeepSeek V4 Flash Vision' })
     fireEvent.change(screen.getByTestId('execution-node-model-step-1'), {
       target: { value: 'deepseek-v4-flash-vision-exp' },
     })
