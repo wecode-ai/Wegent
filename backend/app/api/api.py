@@ -37,6 +37,7 @@ from app.api.endpoints import (
     oidc,
     openapi_responses,
     pet,
+    plugin_publications,
     project_automations,
     project_incoming_hooks,
     projects,
@@ -106,6 +107,7 @@ from app.api.endpoints.internal import (
 )
 from app.api.endpoints.internal import (
     object_storage_router,
+    plugin_publications_router,
     rag_content_router,
 )
 from app.api.endpoints.internal import robot_queue as internal_robot_queue
@@ -348,6 +350,7 @@ api_router.include_router(
 )
 api_router.include_router(installed_mcps.router, prefix="/mcps", tags=["mcps"])
 api_router.include_router(installed_plugins.router, prefix="/plugins", tags=["plugins"])
+api_router.include_router(plugin_publications.router, prefix="/plugins")
 api_router.include_router(smart_apps.router, prefix="/smart-apps", tags=["smart-apps"])
 api_router.include_router(
     local_executor.router, prefix="/local-executor", tags=["local-executor"]
@@ -402,6 +405,11 @@ api_router.include_router(
     object_storage_router,
     prefix="/internal",
     tags=["internal-object-storage"],
+)
+api_router.include_router(
+    plugin_publications_router,
+    prefix="/internal",
+    tags=["internal-plugin-publications"],
 )
 api_router.include_router(
     workspace_archives_router,

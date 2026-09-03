@@ -1273,7 +1273,7 @@ describe('MobileWorkbenchLayout', () => {
       )
     )
     expect(await screen.findByTestId('transient-notice')).toHaveTextContent('已发送到私聊')
-    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
   })
 
   test('hides continue-in-im action without a mobile runtime task', () => {
@@ -1388,7 +1388,7 @@ describe('MobileWorkbenchLayout', () => {
         ['session-2']
       )
     )
-    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
 
     await act(async () => {
       firstRequest.resolve({

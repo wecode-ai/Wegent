@@ -54,7 +54,7 @@ Renderer 通过白名单 Electron capability 调用列举、安装、更新、�
 
 `wegent-sites` 和 `weibo-miniapp-h5-develop-agent` 由独立插件仓库维护。构建 Backend 镜像前，`pnpm prepare:builtin-plugins` 会按插件配置将外部插件复制到忽略提交的 `backend/init_data/plugins/<plugin-name>` 目录；标准 `build_image.sh` 和 `build_image_mac.sh` 会自动执行该步骤。正式镜像工作流分别从配置的归档地址下载插件，校验固定 SHA-256 后执行同一 staging。下载、校验或 staging 失败会终止镜像构建。Backend 随后以系统所有者 `user_id=0` 将已 staging 的插件幂等发布为组织范围、推荐的 Wegent 云端市场条目。
 
-内置应用插件的身份以 Backend 内置插件注册表为准。当前注册表只包含 `wegent-sites` 和 `weibo-miniapp-h5-develop-agent`，二者都使用 `visibility=workspace`，因此规范市场名是 `wegent`。`public` 仍是普通插件的合法可见性；只有在内置插件安装路径中，系统所有者 `user_id=0` 下的这两个内置插件市场行仍保存为 `visibility=public` 时，才会被视为历史遗留行并在安装前规范化为 `workspace`。这样可以避免同一个内置插件在旧数据中以 `plugin://...@wework`、在当前应用创建流程中以 `plugin://...@wegent` 出现两套身份。
+内置应用插件的身份以 Backend 内置插件注册表为准。当前注册表只包含 `wegent-sites` 和 `weibo-miniapp-h5-develop-agent`，二者都使用 `visibility=workspace`，因此规范市场名是 `wegent`。`public` 在数据模型中仍然合法，但只保留给系统/官方公开目录；普通用户的企业投稿不能选择它。只有在内置插件安装路径中，系统所有者 `user_id=0` 下的这两个内置插件市场行仍保存为 `visibility=public` 时，才会被视为历史遗留行并在安装前规范化为 `workspace`。这样可以避免同一个内置插件在旧数据中以 `plugin://...@wework`、在当前应用创建流程中以 `plugin://...@wegent` 出现两套身份。
 
 应用页通过 `GET /api/sites` 读取列表。站点和小程序共用该接口，并分别传入 `app_type=web` 和 `app_type=miniapp`；省略参数时默认返回站点，兼容已有调用。响应中的 `app_type` 是区分两类应用字段的判别值。页面还会调用 `GET /api/sites/app-types` 获取当前 Backend 启用的类型、展示顺序和 `create`、`publish`、`edit`、`delete`、`open_experience` 等能力；Wework 只显示本地已有 Definition 且服务端已启用的类型，并按能力隐藏不支持的操作。
 
