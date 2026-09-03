@@ -292,6 +292,10 @@ async fn append_untracked_diffs(
             run_git(&diff_args, cwd, env, timeout, max_output_bytes).await
         {
             combined.extend_from_slice(&diff_stdout);
+            if combined.len() >= max_output_bytes {
+                combined.truncate(max_output_bytes);
+                break;
+            }
         }
     }
     combined
