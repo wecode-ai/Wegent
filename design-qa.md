@@ -1,4 +1,4 @@
-# Applications layout design QA
++# Applications layout design QA
 
 ## Comparison target
 
@@ -148,5 +148,42 @@ Applications result: passed
 - Local implementation and documentation are complete on `feature/wework-plugin-publication`; no commit, push, merge request, remote pipeline, deployment, or production publication was performed.
 - There is no application-level publication switch to turn on after deployment. Protected GitLab branches/environments, macOS and Windows runners, CI variables and TLS connectivity, release-key provisioning, historical token rotation, and a migration/rollback drill must therefore be completed before the coordinated production deployment.
 - Native Windows compatibility remains a release gate; a portable macOS-hosted check cannot substitute for a real Windows runner.
+
+final result: passed
+
+# Product Design QA
+
+## Scope
+
+- Selected reference: `docs/assets/product-design/wework-plugin-management-option-2.png`
+- First plugin-management render: `docs/assets/product-design/wework-plugin-management-implementation-iteration-1.png`
+- Rendered plugin management: `docs/assets/product-design/wework-plugin-management-implementation-final.png`
+- Original publication review reference: `/var/folders/v7/cdzm7jt91951hnc_97lch7h40000gn/T/codex-clipboard-425fd8fc-f76f-4aeb-a29c-22d58f798724.png`
+- Rendered publication review: `docs/assets/product-design/wework-plugin-review-implementation-final.png`
+- Browser viewport: 1280 × 720 CSS pixels
+- Browser: Codex in-app browser
+
+## Comparison record
+
+The selected reference and rendered plugin-management screenshot were opened in one comparison input. The implementation preserves the selected direction's three-tab navigation, grouped official and enterprise plugin list, selected-row treatment, filters, recommendation-score ordering, status tags, and persistent detail editor. At the narrower QA viewport, the redundant source and updated-time columns are hidden while the source grouping remains visible.
+
+The original and redesigned publication-review screenshots were also opened in one comparison input. The redesign keeps the existing filters while replacing the sparse card-and-empty-area layout with a compact review table, clear status and risk tags, waiting time, GitLab state, row affordances, total count, and pagination.
+
+## Findings and fixes
+
+- P2: the first 1280 px render exposed a horizontal scrollbar in the plugin list. Fixed by hiding the source and updated-time columns below 1536 px; measured table `scrollWidth` now equals `clientWidth` (718 px).
+- P0/P1: none found.
+- Console: no errors; only development informational messages were present.
+
+## Interaction verification
+
+- Switched between plugin review and plugin management tabs.
+- Changed a plugin description and recommendation score.
+- Changed listing state from listed to unlisted and saved successfully.
+- Confirmed the saved toast, disabled clean-state save button, and updated form state.
+- Toggled recommendation-score ordering.
+- Verified filter, refresh, pagination, and row controls expose accessible labels/test IDs.
+
+## Result
 
 final result: passed

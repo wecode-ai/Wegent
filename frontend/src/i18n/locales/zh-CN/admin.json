@@ -96,11 +96,65 @@
     "pagination": "第 {{page}} / {{totalPages}} 页",
     "wework": {
       "title": "WeWork 市场管理",
-      "description": "统一管理 WeWork 插件发布审核和智能应用市场内容",
+      "description": "统一管理 WeWork 插件发布审核、插件市场和智能应用市场内容",
       "plugin_tab": "插件审核",
+      "plugin_management_tab": "插件管理",
       "smart_app_tab": "智能应用",
       "smart_app_title": "智能应用市场管理",
       "smart_app_description": "管理发布给全员的智能应用、上下架状态及推荐分"
+    },
+    "plugins": {
+      "title": "插件市场管理",
+      "description": "管理 WeWork 官方和企业内部插件的市场描述、推荐排序与上下架状态。",
+      "total": "共 {{count}} 个插件",
+      "load_failed": "加载插件市场失败",
+      "empty": "暂无符合条件的插件",
+      "empty_description": "调整筛选条件，或等待插件完成首次发布。",
+      "saved": "插件市场设置已保存",
+      "save_failed": "插件市场设置保存失败",
+      "sources": {
+        "wework-official": "WeWork 官方",
+        "enterprise": "企业内部"
+      },
+      "statuses": {
+        "listed": "已上架",
+        "unlisted": "已下架"
+      },
+      "filters": {
+        "search": "搜索插件名称或标识",
+        "all_sources": "全部来源",
+        "all_statuses": "全部状态"
+      },
+      "columns": {
+        "plugin": "插件",
+        "source": "来源",
+        "score": "推荐分",
+        "status": "市场状态",
+        "updated_at": "更新时间"
+      },
+      "detail": {
+        "select_prompt": "选择一个插件后，可在这里编辑市场信息。",
+        "source": "来源",
+        "description": "市场描述",
+        "score": "推荐分",
+        "score_hint": "分值越高，插件在市场中的排序越靠前，范围 0–100。",
+        "score_invalid": "请输入 0–100 之间的整数。",
+        "listing": "市场上架",
+        "listed_hint": "上架后插件将对有市场访问权限的用户可见。",
+        "unlisted_hint": "下架后插件仅管理员可见，可随时重新上架。",
+        "version": "当前版本",
+        "author": "作者",
+        "created_at": "创建时间",
+        "updated_at": "更新时间",
+        "unsaved": "有未保存的更改"
+      },
+      "actions": {
+        "save": "保存更改",
+        "cancel": "取消",
+        "refresh": "刷新插件列表",
+        "retry": "重新加载",
+        "reset_filters": "重置筛选"
+      }
     },
     "plugin_publications": {
       "title": "WeWork 插件发布审核",
@@ -118,6 +172,13 @@
       },
       "queue": {
         "total": "共 {{count}} 个申请",
+        "columns": {
+          "plugin": "插件与版本",
+          "submitter": "提交人",
+          "review": "审核状态",
+          "submitted": "提交时间",
+          "gitlab": "GitLab"
+        },
         "stage": "阶段：{{stage}}",
         "findings": "阻断 {{blockers}} · 警告 {{warnings}}",
         "submitted_at": "提交于 {{time}}",
