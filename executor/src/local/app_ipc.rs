@@ -29,7 +29,10 @@ use crate::{
         CodexHomeInitializeRequest, ExternalContentImportRequest,
     },
     local::command::{CommandHandler, CommandRequest, CommandResult, DeviceCommandHandler},
-    local::git_commands::{branch_diff, branch_diff_shortstat, hosting_cli_status, workspace_diff},
+    local::git_commands::{
+        branch_diff, branch_diff_shortstat, hosting_cli_status, push_current_branch,
+        workspace_diff, worktree_add, worktree_remove,
+    },
     local::git_commit_message::generate_commit_message,
     local::harnesses::{
         list_local_harnesses, prepare_local_harness_launch, ListLocalHarnessesRequest,
@@ -43,6 +46,7 @@ use crate::{
         LinkPluginReleaseRequest, PluginImportMutationRequest, PreviewPluginImportRequest,
         ReadPluginCloudLinksRequest, UnlinkPluginReleaseRequest,
     },
+    local::turn_file_changes_commands::turn_file_changes as turn_file_changes_command,
     local::workspace_files::{
         execute_workspace_file_command_with_input, is_workspace_file_command, WORKSPACE_ROOTS_ENV,
     },
@@ -130,12 +134,6 @@ enum LocalEndpointRole {
     Client,
     Owner,
 }
-const GIT_PUSH_SCRIPT: &str = r#"branch=$(git branch --show-current)
-if [ -z "$branch" ]; then
-  echo "Cannot push detached HEAD" >&2
-  exit 64
-fi
-exec git push -u origin "$branch""#;
 const RUNTIME_AUTH_STATUS_SCRIPT: &str = r#"
 import hashlib
 import json
@@ -178,106 +176,6 @@ if target.exists() and target.is_file():
         result["error"] = str(exc)
 
 print(json.dumps(result, ensure_ascii=False))
-"#;
-const TURN_FILE_CHANGES_SCRIPT: &str = r#"
-import gzip
-import hashlib
-import json
-import os
-import re
-import subprocess
-import sys
-import tempfile
-from pathlib import Path
-
-MAX_PATCH_BYTES = 20 * 1024 * 1024
-ARTIFACT_PATTERN = re.compile(r"turn-file-changes/([A-Za-z0-9_-]+)/([A-Za-z0-9_-]+)")
-
-
-def finish(payload, code=0):
-    print(json.dumps(payload, ensure_ascii=False))
-    sys.exit(code)
-
-
-def fail(message, code=64, status=None):
-    payload = {"success": False, "error": message}
-    if status:
-        payload["status"] = status
-    finish(payload, code)
-
-
-if len(sys.argv) != 3:
-    fail("mode and artifact id are required")
-
-mode = sys.argv[1]
-artifact_id = sys.argv[2]
-if mode not in {"review", "revert"}:
-    fail("invalid mode")
-
-match = ARTIFACT_PATTERN.fullmatch(artifact_id)
-if not match:
-    fail("invalid artifact id")
-
-task_id = match.group(1)
-subtask_id = match.group(2)
-executor_home = Path(os.environ.get("WEGENT_EXECUTOR_HOME", "~/.wegent-executor")).expanduser()
-artifact_root = (executor_home / "artifacts").resolve()
-artifact_dir = (artifact_root / artifact_id).resolve()
-if artifact_root not in artifact_dir.parents:
-    fail("invalid artifact id")
-
-metadata_path = artifact_dir / "metadata.json"
-patch_path = artifact_dir / "changes.patch.gz"
-if not metadata_path.is_file() or not patch_path.is_file():
-    finish({"success": False, "status": "artifact_missing", "error": "turn file changes artifact is missing"})
-
-try:
-    metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
-except (OSError, json.JSONDecodeError) as exc:
-    fail(f"invalid artifact metadata: {exc}", code=65)
-
-if not isinstance(metadata, dict):
-    fail("invalid artifact metadata", code=65)
-if str(metadata.get("task_id")) != task_id or str(metadata.get("subtask_id")) != subtask_id:
-    fail("artifact metadata id mismatch", code=65)
-
-workspace = Path.cwd().resolve()
-try:
-    metadata_workspace = Path(str(metadata["workspace_path"])).resolve()
-except (KeyError, OSError):
-    fail("invalid artifact workspace", code=65)
-if metadata_workspace != workspace:
-    fail("artifact workspace mismatch", code=65)
-
-try:
-    with gzip.open(patch_path, "rb") as patch_file:
-        patch = patch_file.read(MAX_PATCH_BYTES + 1)
-except (OSError, gzip.BadGzipFile) as exc:
-    fail(f"failed to read artifact patch: {exc}", code=65)
-if len(patch) > MAX_PATCH_BYTES:
-    fail("artifact patch exceeds size limit", code=65)
-if hashlib.sha256(patch).hexdigest() != metadata.get("checksum"):
-    fail("artifact patch checksum mismatch", code=65)
-
-if mode == "review":
-    finish({"success": True, "diff": patch.decode("utf-8", errors="replace")})
-
-temp_path = None
-try:
-    with tempfile.NamedTemporaryFile(prefix="wegent-validated-turn-", suffix=".patch", delete=False) as temp_file:
-        temp_file.write(patch)
-        temp_path = Path(temp_file.name)
-
-    check = subprocess.run(["git", "apply", "--reverse", "--check", "--binary", str(temp_path)], cwd=workspace, capture_output=True, text=True)
-    if check.returncode != 0:
-        finish({"success": False, "status": "conflicted", "error": "patch does not apply"})
-    apply_result = subprocess.run(["git", "apply", "--reverse", "--binary", str(temp_path)], cwd=workspace, capture_output=True, text=True)
-    if apply_result.returncode != 0:
-        finish({"success": False, "status": "conflicted", "error": "patch does not apply"})
-    finish({"success": True, "status": "reverted"})
-finally:
-    if temp_path is not None:
-        temp_path.unlink(missing_ok=True)
 "#;
 
 type BoxFuture<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
@@ -1432,6 +1330,7 @@ impl AppIpcServer {
             DEFAULT_MAX_OUTPUT_BYTES as f64,
         )
         .round() as usize;
+        let native_args = string_list(params.get("args")).unwrap_or_default();
         let native_result = match command_key {
             "git_diff" => Some(
                 workspace_diff(
@@ -1465,6 +1364,39 @@ impl AppIpcServer {
             }
             "git_gitlab_cli_status" => {
                 Some(hosting_cli_status("glab", &native_env, native_timeout).await)
+            }
+            "git_push" => Some(
+                push_current_branch(
+                    native_path.clone(),
+                    &native_env,
+                    native_timeout,
+                    native_max_output,
+                )
+                .await,
+            ),
+            "git_worktree_add" => Some(
+                worktree_add(&native_args, &native_env, native_timeout, native_max_output).await,
+            ),
+            "git_worktree_remove" => Some(
+                worktree_remove(&native_args, &native_env, native_timeout, native_max_output).await,
+            ),
+            "turn_file_changes_review" | "turn_file_changes_revert" => {
+                let artifact_id = native_args.first().map(String::as_str).unwrap_or_default();
+                let mode = if command_key == "turn_file_changes_review" {
+                    "review"
+                } else {
+                    "revert"
+                };
+                Some(
+                    turn_file_changes_command(
+                        mode,
+                        artifact_id,
+                        native_path.as_deref(),
+                        &native_env,
+                        native_max_output,
+                    )
+                    .await,
+                )
             }
             _ => None,
         };
@@ -3176,48 +3108,8 @@ fn local_app_command(command_key: &str) -> Option<LocalAppCommandDefinition> {
             ],
             None,
         )),
-        "git_worktree_add" => Some(command_definition(
-            "sh -c <git_worktree_add>",
-            &[
-                "sh",
-                "-c",
-                concat!(
-                    "source=$1; target=$2; ref=$3; ",
-                    "mkdir -p \"$(dirname \"$target\")\"; ",
-                    "if git -C \"$target\" rev-parse --is-inside-work-tree ",
-                    ">/dev/null 2>&1; then ",
-                    "if [ -n \"$ref\" ]; then ",
-                    "git -C \"$target\" checkout --force --detach \"$ref\"; fi; ",
-                    "exit 0; ",
-                    "else ",
-                    "if [ -e \"$target\" ]; then ",
-                    "echo \"target exists and is not a Git worktree\" >&2; exit 64; fi; ",
-                    "if [ -n \"$ref\" ]; then ",
-                    "git -C \"$source\" worktree add --detach \"$target\" \"$ref\"; ",
-                    "else git -C \"$source\" worktree add --detach \"$target\"; fi; ",
-                    "fi"
-                ),
-                "--",
-            ],
-            None,
-        )),
-        "git_worktree_remove" => Some(command_definition(
-            "sh -c 'git -C \"$1\" worktree remove --force \"$2\"' --",
-            &[
-                "sh",
-                "-c",
-                "git -C \"$1\" worktree remove --force \"$2\"",
-                "--",
-            ],
-            None,
-        )),
         "git_add_all" => Some(command_definition("git add --all", &["git", "add", "--all"], None)),
         "git_commit" => Some(command_definition("git commit", &["git", "commit"], None)),
-        "git_push" => Some(command_definition(
-            "sh -c <git_push>",
-            &["sh", "-c", GIT_PUSH_SCRIPT],
-            None,
-        )),
         "browser_relay_restart" => Some(command_definition(
             "sh -lc <browser_relay_restart>",
             &[
@@ -3235,16 +3127,6 @@ fn local_app_command(command_key: &str) -> Option<LocalAppCommandDefinition> {
                 "payload=${1:?browser tool payload is required}; exec \"$HOME/.wegent-executor/bin/browser-tool\" \"$payload\"",
                 "--",
             ],
-            Some(PostProcessor::Json),
-        )),
-        "turn_file_changes_review" => Some(command_definition(
-            "python3 -c <turn_file_changes> review",
-            &["python3", "-c", TURN_FILE_CHANGES_SCRIPT, "review"],
-            Some(PostProcessor::Json),
-        )),
-        "turn_file_changes_revert" => Some(command_definition(
-            "python3 -c <turn_file_changes> revert",
-            &["python3", "-c", TURN_FILE_CHANGES_SCRIPT, "revert"],
             Some(PostProcessor::Json),
         )),
         _ => None,
@@ -3802,6 +3684,11 @@ mod tests {
             "git_branch_diff_shortstat",
             "git_github_cli_status",
             "git_gitlab_cli_status",
+            "git_push",
+            "git_worktree_add",
+            "git_worktree_remove",
+            "turn_file_changes_review",
+            "turn_file_changes_revert",
         ] {
             assert!(
                 local_app_command(command_key).is_none(),

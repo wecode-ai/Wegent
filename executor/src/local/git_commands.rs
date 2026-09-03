@@ -21,17 +21,13 @@ use tokio::{process::Command, time};
 
 use crate::{
     local::command::{build_env, CommandResult},
+    local::native_git::run_git_capture,
     process::hide_windows_console,
 };
 
 const GIT_CALL_TIMEOUT: Duration = Duration::from_secs(30);
 const MAX_DIFF_OUTPUT_BYTES: usize = 5 * 1024 * 1024;
 
-/// Run `git` with the executor environment and return its output.
-///
-/// `argv` excludes the program name. Spawn failures (for example git itself
-/// being absent from PATH) surface as a non-success `CommandResult` whose
-/// error is the OS message, mirroring `CommandHandler::execute`.
 async fn run_git(
     args: &[String],
     cwd: Option<&Path>,
@@ -39,76 +35,10 @@ async fn run_git(
     timeout: Duration,
     max_output_bytes: usize,
 ) -> Result<(Vec<u8>, String, bool), (String, bool)> {
-    let mut command = Command::new("git");
-    hide_windows_console(&mut command);
-    command.args(args);
-    command.env_clear();
-    command.envs(sanitized_git_env(env));
-    if let Some(cwd) = cwd {
-        command.current_dir(cwd);
-    }
-    command.stdin(Stdio::null());
-    command.stdout(Stdio::piped());
-    command.stderr(Stdio::piped());
-    command.kill_on_drop(true);
-
-    let child = command
-        .spawn()
-        .map_err(|error| (error.to_string(), false))?;
-    let output = time::timeout(timeout, child.wait_with_output())
+    let capture = run_git_capture(args, cwd, env, timeout, max_output_bytes)
         .await
-        .map_err(|_| {
-            (
-                format!("Git command timed out after {}s", timeout.as_secs()),
-                true,
-            )
-        })?;
-    let output = output.map_err(|error| (error.to_string(), false))?;
-    let success = output.status.success();
-    let stdout = truncate_bytes(&output.stdout, max_output_bytes);
-    let stderr = String::from_utf8_lossy(&output.stderr).into_owned();
-    Ok((stdout, stderr, success))
-}
-
-/// Drop environment variables that would redirect git away from the workspace
-/// directory passed as `cwd`. Device commands operate on an explicit
-/// workspace, so an ambient `GIT_DIR` or similar variable from the parent
-/// process must not make them read another repository.
-fn sanitized_git_env(env: &HashMap<String, String>) -> HashMap<String, String> {
-    // Keep in sync with the local git environment list used by the native
-    // turn-file-changes runner (`services::turn_file_changes`).
-    const LOCAL_GIT_ENV_KEYS: &[&str] = &[
-        "GIT_ALTERNATE_OBJECT_DIRECTORIES",
-        "GIT_CONFIG",
-        "GIT_CONFIG_PARAMETERS",
-        "GIT_CONFIG_COUNT",
-        "GIT_OBJECT_DIRECTORY",
-        "GIT_DIR",
-        "GIT_WORK_TREE",
-        "GIT_IMPLICIT_WORK_TREE",
-        "GIT_GRAFT_FILE",
-        "GIT_INDEX_FILE",
-        "GIT_NO_REPLACE_OBJECTS",
-        "GIT_REPLACE_REF_BASE",
-        "GIT_PREFIX",
-        "GIT_SHALLOW_FILE",
-        "GIT_COMMON_DIR",
-        "GIT_NAMESPACE",
-        "GIT_CEILING_DIRECTORIES",
-        "GIT_DISCOVERY_ACROSS_FILESYSTEM",
-    ];
-    env.iter()
-        .filter(|(key, _)| !LOCAL_GIT_ENV_KEYS.contains(&key.as_str()))
-        .map(|(key, value)| (key.clone(), value.clone()))
-        .collect()
-}
-
-fn truncate_bytes(bytes: &[u8], max_bytes: usize) -> Vec<u8> {
-    if bytes.len() <= max_bytes {
-        bytes.to_vec()
-    } else {
-        bytes[..max_bytes].to_vec()
-    }
+        .map_err(|error| (error.message, error.timed_out))?;
+    Ok((capture.stdout, capture.stderr, capture.success))
 }
 
 fn stdout_text(stdout: &[u8]) -> String {
@@ -506,6 +436,183 @@ pub async fn branch_diff_shortstat(
     .await;
 
     result.unwrap_or_else(|error| error)
+}
+
+/// Push the current branch to origin, replacing the previous `sh` script.
+pub async fn push_current_branch(
+    cwd: Option<String>,
+    env: &HashMap<String, String>,
+    timeout_seconds: f64,
+    max_output_bytes: usize,
+) -> CommandResult {
+    let started_at = Instant::now();
+    let cwd_path = cwd.as_deref().map(Path::new);
+    if let Some(error) = cwd_error(cwd_path) {
+        return error;
+    }
+    let process_env = build_env(env);
+    let call_timeout = GIT_CALL_TIMEOUT.min(Duration::from_secs_f64(timeout_seconds.max(1.0)));
+    let max_output_bytes = max_output_bytes.clamp(1, MAX_DIFF_OUTPUT_BYTES);
+
+    let result = run_diff_with_timeout(timeout_seconds, async {
+        let branch_args = owned_args(&["branch", "--show-current"]);
+        let (branch_stdout, _, success) =
+            run_git(&branch_args, cwd_path, &process_env, call_timeout, 4096)
+                .await
+                .unwrap_or_else(|(message, _)| (Vec::new(), message, false));
+        let Some(branch) = trim_empty(stdout_text(&branch_stdout)).filter(|_| success) else {
+            return CommandResult {
+                success: false,
+                exit_code: Some(64),
+                stdout: Value::String(String::new()),
+                stderr: "Cannot push detached HEAD".to_owned(),
+                duration: started_at.elapsed().as_secs_f64(),
+                timed_out: false,
+                stdout_truncated: false,
+                stderr_truncated: false,
+                error: Some("Cannot push detached HEAD".to_owned()),
+            };
+        };
+        let push_args = owned_args(&["push", "-u", "origin", &branch]);
+        let (stdout, stderr, success) = run_git(
+            &push_args,
+            cwd_path,
+            &process_env,
+            call_timeout,
+            max_output_bytes,
+        )
+        .await
+        .unwrap_or_else(|(message, _)| (Vec::new(), message, false));
+        build_result(started_at, success, stdout, stderr, None)
+    })
+    .await;
+
+    result.unwrap_or_else(|error| error)
+}
+
+/// Add a git worktree, replacing the previous `sh` script. `args` carries
+/// `source`, `target` and an optional branch ref.
+pub async fn worktree_add(
+    args: &[String],
+    env: &HashMap<String, String>,
+    timeout_seconds: f64,
+    max_output_bytes: usize,
+) -> CommandResult {
+    let started_at = Instant::now();
+    if args.len() < 2 {
+        return CommandResult::error(
+            "source and target worktree paths are required".to_owned(),
+            0.0,
+            false,
+        );
+    }
+    let source = &args[0];
+    let target = &args[1];
+    let branch = args.get(2).filter(|value| !value.trim().is_empty());
+    let process_env = build_env(env);
+    let call_timeout = GIT_CALL_TIMEOUT.min(Duration::from_secs_f64(timeout_seconds.max(1.0)));
+    let max_output_bytes = max_output_bytes.clamp(1, MAX_DIFF_OUTPUT_BYTES);
+    let target_path = Path::new(target);
+
+    let result = run_diff_with_timeout(timeout_seconds, async {
+        if let Some(parent) = target_path.parent() {
+            if let Err(error) = std::fs::create_dir_all(parent) {
+                return CommandResult::error(
+                    format!("Failed to create worktree parent directory: {error}"),
+                    0.0,
+                    false,
+                );
+            }
+        }
+        let probe_args = owned_args(&["-C", target, "rev-parse", "--is-inside-work-tree"]);
+        let (probe_stdout, _, probe_success) =
+            run_git(&probe_args, None, &process_env, call_timeout, 4096)
+                .await
+                .unwrap_or_else(|(message, _)| (Vec::new(), message, false));
+        let already_worktree = probe_success && stdout_text(&probe_stdout).trim() == "true";
+        if already_worktree {
+            if let Some(branch) = branch {
+                let checkout_args =
+                    owned_args(&["-C", target, "checkout", "--force", "--detach", branch]);
+                let (stdout, stderr, success) = run_git(
+                    &checkout_args,
+                    None,
+                    &process_env,
+                    call_timeout,
+                    max_output_bytes,
+                )
+                .await
+                .unwrap_or_else(|(message, _)| (Vec::new(), message, false));
+                return build_result(started_at, success, stdout, stderr, None);
+            }
+            return build_result(started_at, true, Vec::new(), String::new(), None);
+        }
+        if target_path.exists() {
+            return CommandResult {
+                success: false,
+                exit_code: Some(64),
+                stdout: Value::String(String::new()),
+                stderr: "target exists and is not a Git worktree".to_owned(),
+                duration: started_at.elapsed().as_secs_f64(),
+                timed_out: false,
+                stdout_truncated: false,
+                stderr_truncated: false,
+                error: Some("target exists and is not a Git worktree".to_owned()),
+            };
+        }
+        let mut add_args = vec![
+            "-C".to_owned(),
+            source.clone(),
+            "worktree".to_owned(),
+            "add".to_owned(),
+            "--detach".to_owned(),
+            target.clone(),
+        ];
+        if let Some(branch) = branch {
+            add_args.push(branch.clone());
+        }
+        let (stdout, stderr, success) = run_git(
+            &add_args,
+            None,
+            &process_env,
+            call_timeout,
+            max_output_bytes,
+        )
+        .await
+        .unwrap_or_else(|(message, _)| (Vec::new(), message, false));
+        build_result(started_at, success, stdout, stderr, None)
+    })
+    .await;
+
+    result.unwrap_or_else(|error| error)
+}
+
+/// Remove a git worktree, replacing the previous `sh` script. The target is
+/// passed as the last arg (callers historically repeated the path twice).
+pub async fn worktree_remove(
+    args: &[String],
+    env: &HashMap<String, String>,
+    timeout_seconds: f64,
+    max_output_bytes: usize,
+) -> CommandResult {
+    let started_at = Instant::now();
+    let target = args
+        .last()
+        .map(String::as_str)
+        .unwrap_or_default()
+        .to_owned();
+    if target.is_empty() {
+        return CommandResult::error("target worktree path is required".to_owned(), 0.0, false);
+    }
+    let process_env = build_env(env);
+    let call_timeout = GIT_CALL_TIMEOUT.min(Duration::from_secs_f64(timeout_seconds.max(1.0)));
+    let max_output_bytes = max_output_bytes.clamp(1, MAX_DIFF_OUTPUT_BYTES);
+    let args = owned_args(&["-C", &target, "worktree", "remove", "--force", &target]);
+    let (stdout, stderr, success) =
+        run_git(&args, None, &process_env, call_timeout, max_output_bytes)
+            .await
+            .unwrap_or_else(|(message, _)| (Vec::new(), message, false));
+    build_result(started_at, success, stdout, stderr, None)
 }
 
 /// Locate `gh` or `glab` using the executor PATH with Windows PATHEXT
