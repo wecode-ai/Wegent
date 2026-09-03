@@ -151,11 +151,11 @@ export function coreDshDeepLinkLocation(value) {
 
 export function injectDevelopmentReload(html, environment, buildId) {
   if (environment.WEWORK_APP_HOT_RELOAD !== '1') return html
-  const script = `<script>(()=>{const current=${escapeJsonForHtml(
+  const script = `<script>(()=>{if(!window.weworkElectronFiles)return;let current=${escapeJsonForHtml(
     buildId
   )};let checking=false;setInterval(async()=>{if(checking)return;checking=true;try{const response=await fetch(${JSON.stringify(
     `${APP_BASE_PATH}/`
-  )},{method:'HEAD',cache:'no-store'});const next=response.headers.get('x-wework-app-build-id');if(next&&next!==current)window.location.reload()}catch{}finally{checking=false}},500)})()</script>`
+  )},{method:'HEAD',cache:'no-store'});const next=response.headers.get('x-wework-app-build-id');if(next&&next!==current){current=next;window.location.reload()}}catch{}finally{checking=false}},500)})()</script>`
   return html.includes('</head>') ? html.replace('</head>', `${script}</head>`) : `${script}${html}`
 }
 
