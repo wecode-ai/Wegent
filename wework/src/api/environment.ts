@@ -577,6 +577,14 @@ export function parseGitShortStat(value: string): Pick<EnvironmentInfo, 'additio
   }
 }
 
+function porcelainHasTrackedChanges(lines: string[]): boolean {
+  // Porcelain entries that modify, delete, rename or copy tracked files
+  // (index or worktree column) imply a commit baseline exists. Untracked
+  // (`??`) and staged additions (`A `) alone also appear in a repository that
+  // has no commit yet, so they cannot distinguish the two cases by themselves.
+  return lines.some(line => /[MDRC]/.test(line.slice(0, 1)) || /[MDRC]/.test(line.slice(1, 2)))
+}
+
 export function parseGitRemote(remoteUrl: string): GitRemoteParts | null {
   const trimmed = remoteUrl.trim().replace(/\.git$/, '')
   if (!trimmed) {
@@ -750,14 +758,16 @@ async function loadBranchDiffShortStat(
   api: DeviceCommandApi,
   deviceId: string,
   path: string
-): Promise<string> {
+): Promise<string | null> {
   // Compare the current branch with its merge base to the primary branch.
   // This includes committed branch changes as well as tracked worktree changes.
   try {
     return await runGitCommand(api, deviceId, 'git_branch_diff_shortstat', path)
   } catch {
-    // HEAD may not exist (no commits yet).
-    return ''
+    // No diff base could be resolved, most commonly because HEAD does not
+    // exist yet (a repository without commits). Callers use this to decide
+    // whether the pending porcelain file count is a valid substitute.
+    return null
   }
 }
 
@@ -908,14 +918,18 @@ async function loadProjectEnvironmentUncached(
       porcelainPromise,
       changeRequestPromise,
     ])
-    const diff = parseGitShortStat(shortStat)
+    const diff = parseGitShortStat(shortStat ?? '')
     const porcelainLines = porcelain.split('\n').filter(line => line.trim().length > 0)
 
     // git diff --shortstat counts changed lines of tracked files, which is the
     // same basis code hosting uses, so untracked files never inflate the line
-    // counts. When no shortstat exists (a repository without any commit) the
-    // pending file count is the closest indicator available.
-    if (!shortStat && porcelainLines.length > 0) {
+    // counts. Only a repository without any commit baseline falls back to the
+    // pending file count; a committed repository keeps the (empty) shortstat.
+    if (
+      shortStat === null &&
+      porcelainLines.length > 0 &&
+      !porcelainHasTrackedChanges(porcelainLines)
+    ) {
       diff.additions = `+${porcelainLines.length}`
     }
 
