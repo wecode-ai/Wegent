@@ -5,6 +5,7 @@
 import io
 import json
 import zipfile
+from pathlib import Path
 
 import pytest
 
@@ -86,7 +87,9 @@ def test_uploaded_official_package_reads_embedded_marketplace_assets(tmp_path):
     assert uploaded.has_marketplace_metadata is True
 
 
-def test_uploaded_official_package_rejects_oversized_marketplace_asset(tmp_path):
+def test_uploaded_official_package_rejects_oversized_marketplace_asset(
+    tmp_path: Path,
+) -> None:
     built = official_smart_app_publisher.build_package(_source(tmp_path))
     oversized_package = tmp_path / "oversized.zip"
     with zipfile.ZipFile(
@@ -118,8 +121,8 @@ def test_uploaded_official_package_rejects_oversized_marketplace_asset(tmp_path)
     ],
 )
 def test_official_package_rejects_invalid_marketplace_text(
-    tmp_path, field, value, message
-):
+    tmp_path: Path, field: str, value: object, message: str
+) -> None:
     source = _source(tmp_path)
     metadata_path = source / "smart-app-marketplace.json"
     metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
