@@ -6,10 +6,11 @@ from unittest.mock import ANY, Mock
 
 from fastapi.testclient import TestClient
 
-from app.api.endpoints import installed_plugins, smart_apps
+from app.api.endpoints import installed_plugins, plugin_publications, smart_apps
 from app.core.config import settings
 from app.services.marketplace_submission_upload import (
     build_marketplace_submission_upload_url,
+    build_plugin_publication_upload_url,
 )
 
 
@@ -67,6 +68,48 @@ def test_plugin_submission_upload_streams_through_backend(
         submission_id=11,
         package=b"plugin",
     )
+
+
+def test_plugin_publication_upload_streams_through_backend(
+    test_client: TestClient, monkeypatch
+) -> None:
+    upload = Mock()
+    monkeypatch.setattr(
+        plugin_publications.plugin_publication_service,
+        "upload_revision_package",
+        upload,
+    )
+    upload_url, _ = build_plugin_publication_upload_url(
+        request_id=13, revision=2, user_id=5
+    )
+
+    response = test_client.put(
+        upload_url,
+        content=b"plugin",
+        headers={"Content-Type": "application/zip"},
+    )
+
+    assert response.status_code == 204
+    upload.assert_called_once_with(
+        ANY,
+        user_id=5,
+        request_id=13,
+        revision_number=2,
+        package=b"plugin",
+    )
+
+
+def test_plugin_publication_upload_rejects_another_revision(
+    test_client: TestClient,
+) -> None:
+    upload_url, _ = build_plugin_publication_upload_url(
+        request_id=13, revision=2, user_id=5
+    )
+    stale_url = upload_url.replace("/revisions/2/", "/revisions/3/")
+
+    response = test_client.put(stale_url, content=b"plugin")
+
+    assert response.status_code == 403
 
 
 def test_submission_upload_rejects_a_token_for_another_resource(

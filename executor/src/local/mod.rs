@@ -13,6 +13,7 @@ pub mod git_commands;
 pub mod git_commit_message;
 pub mod harnesses;
 pub mod local_skills;
+pub mod plugin_catalog;
 pub mod plugin_import;
 pub mod pty;
 pub mod session;
