@@ -45,7 +45,7 @@ import UnifiedAddButton from '@/components/common/UnifiedAddButton'
 const isJsonObject = (value: unknown): value is Record<string, unknown> =>
   typeof value === 'object' && value !== null && !Array.isArray(value)
 
-export const parsePublicModelConfig = (value: string): Record<string, unknown> | null => {
+const parsePublicModelConfig = (value: string): Record<string, unknown> | null => {
   try {
     const parsed: unknown = JSON.parse(value)
     if (!isJsonObject(parsed)) {
@@ -58,25 +58,6 @@ export const parsePublicModelConfig = (value: string): Record<string, unknown> |
   } catch {
     return null
   }
-}
-
-export const getPublicModelVisibilityFromConfig = (value: string): boolean | undefined => {
-  const parsed = parsePublicModelConfig(value)
-  if (!parsed || !isJsonObject(parsed.spec)) {
-    return undefined
-  }
-  const isVisible = parsed.spec.isVisible
-  return typeof isVisible === 'boolean' ? isVisible : undefined
-}
-
-export const setPublicModelVisibilityInConfig = (value: string, isVisible: boolean): string => {
-  const config = parsePublicModelConfig(value)
-  if (!config) {
-    return value
-  }
-  const spec = isJsonObject(config.spec) ? { ...config.spec } : {}
-  spec.isVisible = isVisible
-  return JSON.stringify({ ...config, spec }, null, 2)
 }
 
 const PublicModelList: React.FC = () => {
@@ -194,59 +175,13 @@ const PublicModelList: React.FC = () => {
 
     if (formData.is_wework_available) {
       spec.isWeworkAvailable = true
-    } else {
+    } else if (spec.isWeworkAvailable !== false) {
       delete spec.isWeworkAvailable
     }
     spec.isVisible = formData.is_visible
 
     nextConfig.spec = spec
     return nextConfig
-  }
-
-  const handleConfigChange = (value: string) => {
-    const config = validateConfig(value)
-    const configVisibility = getPublicModelVisibilityFromConfig(value)
-    setFormData(current => ({
-      ...current,
-      config: value,
-      ...(config
-        ? {
-            modelGroup: getSpecValue(config, 'modelGroup'),
-            modelSubGroup: getSpecValue(config, 'modelSubGroup'),
-          }
-        : {}),
-      ...(configVisibility === undefined ? {} : { is_visible: configVisibility }),
-    }))
-  }
-
-  const handleGroupChange = (key: 'modelGroup' | 'modelSubGroup', value: string) => {
-    const config = validateConfig(formData.config)
-    if (!config) return
-
-    const spec = isJsonObject(config.spec) ? { ...config.spec } : {}
-    const trimmedValue = value.trim()
-    if (trimmedValue) {
-      spec[key] = trimmedValue
-    } else {
-      delete spec[key]
-    }
-
-    setFormData(current => ({
-      ...current,
-      [key]: value,
-      config: JSON.stringify({ ...config, spec }, null, 2),
-    }))
-  }
-
-  const handleVisibilityChange = (isVisible: boolean) => {
-    if (!validateConfig(formData.config)) {
-      return
-    }
-    setFormData(current => ({
-      ...current,
-      is_visible: isVisible,
-      config: setPublicModelVisibilityInConfig(current.config, isVisible),
-    }))
   }
 
   const handleCreateModel = async () => {
@@ -376,6 +311,21 @@ const PublicModelList: React.FC = () => {
     })
     setConfigError('')
     setSelectedModel(null)
+  }
+
+  const openCreateDialog = () => {
+    resetForm()
+    setIsCreateDialogOpen(true)
+  }
+
+  const handleCreateDialogOpenChange = (open: boolean) => {
+    setIsCreateDialogOpen(open)
+    if (!open) resetForm()
+  }
+
+  const handleEditDialogOpenChange = (open: boolean) => {
+    setIsEditDialogOpen(open)
+    if (!open) resetForm()
   }
 
   const openEditDialog = (model: AdminPublicModel) => {
@@ -531,7 +481,7 @@ const PublicModelList: React.FC = () => {
         {!loading && (
           <div className="border-t border-border pt-3 mt-3 bg-base">
             <div className="flex justify-center">
-              <UnifiedAddButton onClick={() => setIsCreateDialogOpen(true)}>
+              <UnifiedAddButton onClick={openCreateDialog}>
                 {t('admin:public_models.create_model')}
               </UnifiedAddButton>
             </div>
@@ -540,7 +490,7 @@ const PublicModelList: React.FC = () => {
       </div>
 
       {/* Create Model Dialog */}
-      <Dialog open={isCreateDialogOpen} onOpenChange={setIsCreateDialogOpen}>
+      <Dialog open={isCreateDialogOpen} onOpenChange={handleCreateDialogOpenChange}>
         <DialogContent className="max-w-2xl">
           <DialogHeader>
             <DialogTitle>{t('admin:public_models.create_model')}</DialogTitle>
@@ -572,7 +522,7 @@ const PublicModelList: React.FC = () => {
                   id="model-group"
                   data-testid="public-model-group-input"
                   value={formData.modelGroup}
-                  onChange={e => handleGroupChange('modelGroup', e.target.value)}
+                  onChange={e => setFormData({ ...formData, modelGroup: e.target.value })}
                   placeholder={t('admin:public_models.form.model_group_placeholder')}
                 />
               </div>
@@ -584,7 +534,7 @@ const PublicModelList: React.FC = () => {
                   id="model-sub-group"
                   data-testid="public-model-sub-group-input"
                   value={formData.modelSubGroup}
-                  onChange={e => handleGroupChange('modelSubGroup', e.target.value)}
+                  onChange={e => setFormData({ ...formData, modelSubGroup: e.target.value })}
                   placeholder={t('admin:public_models.form.model_sub_group_placeholder')}
                 />
               </div>
@@ -594,7 +544,10 @@ const PublicModelList: React.FC = () => {
               <Textarea
                 id="config"
                 value={formData.config}
-                onChange={e => handleConfigChange(e.target.value)}
+                onChange={e => {
+                  setFormData({ ...formData, config: e.target.value })
+                  validateConfig(e.target.value)
+                }}
                 placeholder={t('admin:public_models.form.config_placeholder')}
                 className={`font-mono text-sm min-h-[200px] ${configError ? 'border-error' : ''}`}
               />
@@ -612,7 +565,7 @@ const PublicModelList: React.FC = () => {
                   id="create-is-visible"
                   data-testid="public-model-create-visible-switch"
                   checked={formData.is_visible}
-                  onCheckedChange={handleVisibilityChange}
+                  onCheckedChange={checked => setFormData({ ...formData, is_visible: checked })}
                 />
               </div>
             </div>
@@ -638,7 +591,7 @@ const PublicModelList: React.FC = () => {
             </div>
           </div>
           <DialogFooter>
-            <Button variant="outline" onClick={() => setIsCreateDialogOpen(false)}>
+            <Button variant="outline" onClick={() => handleCreateDialogOpenChange(false)}>
               {t('admin:common.cancel')}
             </Button>
             <Button variant="primary" onClick={handleCreateModel} disabled={saving}>
@@ -650,7 +603,7 @@ const PublicModelList: React.FC = () => {
       </Dialog>
 
       {/* Edit Model Dialog */}
-      <Dialog open={isEditDialogOpen} onOpenChange={setIsEditDialogOpen}>
+      <Dialog open={isEditDialogOpen} onOpenChange={handleEditDialogOpenChange}>
         <DialogContent className="max-w-2xl">
           <DialogHeader>
             <DialogTitle>{t('admin:public_models.edit_model')}</DialogTitle>
@@ -683,7 +636,7 @@ const PublicModelList: React.FC = () => {
                   id="edit-model-group"
                   data-testid="edit-public-model-group-input"
                   value={formData.modelGroup}
-                  onChange={e => handleGroupChange('modelGroup', e.target.value)}
+                  onChange={e => setFormData({ ...formData, modelGroup: e.target.value })}
                   placeholder={t('admin:public_models.form.model_group_placeholder')}
                 />
               </div>
@@ -695,7 +648,7 @@ const PublicModelList: React.FC = () => {
                   id="edit-model-sub-group"
                   data-testid="edit-public-model-sub-group-input"
                   value={formData.modelSubGroup}
-                  onChange={e => handleGroupChange('modelSubGroup', e.target.value)}
+                  onChange={e => setFormData({ ...formData, modelSubGroup: e.target.value })}
                   placeholder={t('admin:public_models.form.model_sub_group_placeholder')}
                 />
               </div>
@@ -705,7 +658,10 @@ const PublicModelList: React.FC = () => {
               <Textarea
                 id="edit-config"
                 value={formData.config}
-                onChange={e => handleConfigChange(e.target.value)}
+                onChange={e => {
+                  setFormData({ ...formData, config: e.target.value })
+                  validateConfig(e.target.value)
+                }}
                 placeholder={t('admin:public_models.form.config_placeholder')}
                 className={`font-mono text-sm min-h-[200px] ${configError ? 'border-error' : ''}`}
               />
@@ -738,7 +694,7 @@ const PublicModelList: React.FC = () => {
                   id="edit-is-visible"
                   data-testid="public-model-edit-visible-switch"
                   checked={formData.is_visible}
-                  onCheckedChange={handleVisibilityChange}
+                  onCheckedChange={checked => setFormData({ ...formData, is_visible: checked })}
                 />
               </div>
             </div>
@@ -779,7 +735,7 @@ const PublicModelList: React.FC = () => {
             </div>
           </div>
           <DialogFooter>
-            <Button variant="outline" onClick={() => setIsEditDialogOpen(false)}>
+            <Button variant="outline" onClick={() => handleEditDialogOpenChange(false)}>
               {t('admin:common.cancel')}
             </Button>
             <Button variant="primary" onClick={handleUpdateModel} disabled={saving}>
