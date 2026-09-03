@@ -714,6 +714,28 @@ async fn run_plugin_command(
 }
 
 fn plugin_command(program: &Path, rest: &[String]) -> Result<Command, AppIpcError> {
+    let search_paths = env::var_os("PATH")
+        .map(|value| env::split_paths(&value).collect::<Vec<_>>())
+        .unwrap_or_default();
+    let system_root = env::var_os("SystemRoot")
+        .or_else(|| env::var_os("WINDIR"))
+        .map(PathBuf::from);
+    plugin_command_for_platform(
+        program,
+        rest,
+        cfg!(windows),
+        &search_paths,
+        system_root.as_deref(),
+    )
+}
+
+fn plugin_command_for_platform(
+    program: &Path,
+    rest: &[String],
+    windows: bool,
+    search_paths: &[PathBuf],
+    system_root: Option<&Path>,
+) -> Result<Command, AppIpcError> {
     if looks_like_shell_script(program) {
         let mut cmd = Command::new("sh");
         cmd.arg(program);
@@ -726,11 +748,12 @@ fn plugin_command(program: &Path, rest: &[String]) -> Result<Command, AppIpcErro
         .and_then(|ext| ext.to_str())
         .is_some_and(|ext| ext.eq_ignore_ascii_case("ps1"))
     {
-        Ok(powershell_command(
-            program,
-            rest,
-            &resolve_powershell_program()?,
-        ))
+        let powershell_program = if windows {
+            resolve_windows_powershell_program(search_paths, system_root)?
+        } else {
+            PathBuf::from("pwsh")
+        };
+        Ok(powershell_command(program, rest, &powershell_program))
     } else {
         let mut cmd = Command::new(program);
         for arg in rest {
@@ -754,20 +777,6 @@ fn powershell_command(program: &Path, rest: &[String], powershell_program: &Path
         cmd.arg(arg);
     }
     cmd
-}
-
-fn resolve_powershell_program() -> Result<PathBuf, AppIpcError> {
-    if !cfg!(windows) {
-        return Ok(PathBuf::from("pwsh"));
-    }
-
-    let search_paths = env::var_os("PATH")
-        .map(|value| env::split_paths(&value).collect::<Vec<_>>())
-        .unwrap_or_default();
-    let system_root = env::var_os("SystemRoot")
-        .or_else(|| env::var_os("WINDIR"))
-        .map(PathBuf::from);
-    resolve_windows_powershell_program(&search_paths, system_root.as_deref())
 }
 
 fn resolve_windows_powershell_program(
@@ -1118,6 +1127,92 @@ mod tests {
         assert_eq!(error.code, "local_auth_powershell_missing");
         assert!(error.message.contains("PowerShell 7"));
         assert!(error.message.contains("PowerShell 5.1"));
+    }
+
+    #[cfg(windows)]
+    #[tokio::test]
+    async fn windows_system_powershell_runs_local_auth_lifecycle_without_pwsh() {
+        let temp = tempfile::tempdir().unwrap();
+        let plugin_root = temp.path().join("plugin");
+        let scripts = plugin_root.join("scripts");
+        let executor_home = temp.path().join("executor-home");
+        fs::create_dir_all(&scripts).unwrap();
+        fs::create_dir_all(&executor_home).unwrap();
+        fs::write(scripts.join("local-auth.sh"), "#!/bin/sh\n").unwrap();
+        fs::write(
+            scripts.join("local-auth.ps1"),
+            r#"param([string]$Action = 'health')
+$marker = Join-Path $env:WEGENT_EXECUTOR_HOME 'windows-powershell-51-auth'
+switch ($Action) {
+  'health' {
+    if (Test-Path -LiteralPath $marker -PathType Leaf) {
+      Write-Output '{"status":"ok"}'
+    } else {
+      Write-Output '{"status":"need_login"}'
+    }
+  }
+  'login' {
+    Set-Content -LiteralPath $marker -Value 'ready'
+    Write-Output '{"status":"ok"}'
+  }
+  'logout' {
+    Remove-Item -LiteralPath $marker -Force -ErrorAction SilentlyContinue
+    Write-Output '{"status":"ok"}'
+  }
+}
+"#,
+        )
+        .unwrap();
+
+        let system_root = env::var_os("SystemRoot")
+            .or_else(|| env::var_os("WINDIR"))
+            .map(PathBuf::from)
+            .unwrap_or_else(|| PathBuf::from(r"C:\Windows"));
+        let program =
+            resolve_program_for_platform(&plugin_root, "scripts/local-auth.sh", true).unwrap();
+
+        for (action, expected_status) in [
+            ("health", "need_login"),
+            ("login", "ok"),
+            ("health", "ok"),
+            ("logout", "ok"),
+        ] {
+            let mut command = plugin_command_for_platform(
+                &program,
+                &[action.to_owned()],
+                true,
+                &[],
+                Some(&system_root),
+            )
+            .unwrap();
+            assert_eq!(
+                command.as_std().get_program(),
+                system_root
+                    .join("System32")
+                    .join("WindowsPowerShell")
+                    .join("v1.0")
+                    .join("powershell.exe")
+            );
+            let output = command
+                .current_dir(&plugin_root)
+                .env("WEGENT_EXECUTOR_HOME", &executor_home)
+                .stdin(Stdio::null())
+                .stdout(Stdio::piped())
+                .stderr(Stdio::piped())
+                .output()
+                .await
+                .unwrap();
+            assert!(
+                output.status.success(),
+                "Windows PowerShell local-auth {action} failed: {}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+            let result: Value = serde_json::from_slice(&output.stdout).unwrap();
+            assert_eq!(
+                result.get("status").and_then(Value::as_str),
+                Some(expected_status)
+            );
+        }
     }
 
     #[test]
