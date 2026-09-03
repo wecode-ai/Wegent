@@ -841,7 +841,7 @@ export function createDeliveryApi(client: HttpClient) {
     ): Promise<LoopItemPage> {
       const query = new URLSearchParams({
         status: options.status,
-        limit: String(options.limit ?? 50),
+        limit: String(options.limit ?? 10),
       })
       if (options.parentId) query.set('parent_id', options.parentId)
       if (options.cursor) query.set('cursor', options.cursor)

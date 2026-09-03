@@ -484,7 +484,7 @@ def list_loop_item_page(
     item_status: str = Query(alias="status", max_length=32),
     parent_id: str | None = Query(default=None, max_length=64),
     cursor: str | None = Query(default=None, max_length=64),
-    limit: int = Query(default=50, ge=1, le=100),
+    limit: int = Query(default=10, ge=1, le=100),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> LoopItemPageResponse:

@@ -862,7 +862,7 @@ export function createLocalDeliveryApi(
     ) {
       const response = await api.listLoopItems(projectId)
       const offset = Number(options.cursor ?? 0)
-      const limit = options.limit ?? 50
+      const limit = options.limit ?? 10
       const matching = response.items.filter(
         item => item.status === options.status && item.parent_id === options.parentId
       )

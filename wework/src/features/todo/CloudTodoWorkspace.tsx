@@ -340,6 +340,7 @@ const nativeBoardStatusColors: Record<
   completed: 'green',
 }
 const externalBoardStatuses = ['inbox', 'pending', 'in_progress', 'in_review', 'completed'] as const
+const externalBoardColumnPageSize = 10
 
 function aitableCellLabels(value: unknown): string[] {
   if (value === null || value === undefined || value === '') return []
@@ -2660,6 +2661,7 @@ export function CloudTodoWorkspace({
                 selectedProjectApi.listLoopItemsPage(selectedProjectId, {
                   status,
                   parentId: boardParentId,
+                  limit: externalBoardColumnPageSize,
                 })
               )
             ),
@@ -2880,6 +2882,7 @@ export function CloudTodoWorkspace({
         status: itemStatus,
         parentId: boardParentId,
         cursor,
+        limit: externalBoardColumnPageSize,
       })
       const locatedItems = locateItems(page.items, selectedProject.project_store)
       setItems(current =>

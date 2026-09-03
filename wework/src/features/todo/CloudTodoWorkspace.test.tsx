@@ -726,9 +726,19 @@ describe('CloudTodoWorkspace', () => {
     await screen.findByTestId(`cloud-todo-card-${summary.id}`)
     expect(workbenchServices.deliveryApi!.getBoardSnapshot).not.toHaveBeenCalled()
     expect(workbenchServices.deliveryApi!.listLoopItemsPage).toHaveBeenCalledTimes(5)
+    expect(
+      vi
+        .mocked(workbenchServices.deliveryApi!.listLoopItemsPage)
+        .mock.calls.every(([, options]) => options.limit === 10)
+    ).toBe(true)
+    expect(screen.getByTestId('cloud-todo-column-load-more-pending')).toHaveTextContent('加载更多')
 
     await userEvent.click(screen.getByTestId('cloud-todo-column-load-more-pending'))
     await screen.findByTestId(`cloud-todo-card-${next.id}`)
+    expect(workbenchServices.deliveryApi!.listLoopItemsPage).toHaveBeenLastCalledWith(
+      String(project.id),
+      expect.objectContaining({ status: 'pending', cursor: 'next-page', limit: 10 })
+    )
     fireEvent.click(screen.getByTestId(`cloud-todo-card-${summary.id}`))
     await waitFor(() => {
       expect(workbenchServices.deliveryApi!.getLoopItem).toHaveBeenCalledWith(summary.id)

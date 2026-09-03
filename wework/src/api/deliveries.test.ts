@@ -82,11 +82,10 @@ describe('createDeliveryApi queue and assignment routes', () => {
       status: 'in_progress',
       parentId: 'GH-7',
       cursor: 'next-page',
-      limit: 25,
     })
 
     expect(client.get).toHaveBeenCalledWith(
-      '/v1/cloud-projects/123/loop-item-pages?status=in_progress&limit=25&parent_id=GH-7&cursor=next-page'
+      '/v1/cloud-projects/123/loop-item-pages?status=in_progress&limit=10&parent_id=GH-7&cursor=next-page'
     )
   })
 
