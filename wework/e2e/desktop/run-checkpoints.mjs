@@ -85,6 +85,7 @@ const SCENARIO_ONLY_CHECKPOINTS = new Set([
   'external-content-import',
 ])
 const CLOUD_ONLY_CHECKPOINTS = new Set([
+  'plugin-workspace-publication',
   'cloud-git-worktree',
   'cloud-worktree-capability',
   'cloud-worktree-create',

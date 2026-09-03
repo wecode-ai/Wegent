@@ -376,6 +376,7 @@ interface CloudConnectionProviderProps {
 
 export function CloudConnectionProvider({ children }: CloudConnectionProviderProps) {
   const [snapshot, setSnapshot] = useState<CloudConnectionSnapshot>(() => snapshotFromStored())
+  const [desktopRestoreSettled, setDesktopRestoreSettled] = useState(false)
   const initialRefreshStartedRef = useRef(false)
   const desktopRestoreStartedRef = useRef(false)
   const refreshPromiseRef = useRef<Promise<User | null> | null>(null)
@@ -385,7 +386,6 @@ export function CloudConnectionProvider({ children }: CloudConnectionProviderPro
   useEffect(() => {
     if (desktopRestoreStartedRef.current) return
     desktopRestoreStartedRef.current = true
-    if (snapshot.status !== 'disconnected') return
     const restoreGeneration = refreshGenerationRef.current
     void getAppPreferences()
       .then(preferences => {
@@ -397,8 +397,7 @@ export function CloudConnectionProvider({ children }: CloudConnectionProviderPro
         setSnapshot(current => {
           if (
             disconnectRequestedRef.current ||
-            refreshGenerationRef.current !== restoreGeneration ||
-            current.status !== 'disconnected'
+            refreshGenerationRef.current !== restoreGeneration
           ) {
             return current
           }
@@ -409,7 +408,10 @@ export function CloudConnectionProvider({ children }: CloudConnectionProviderPro
       .catch(error => {
         console.error('[CloudConnection] Failed to restore desktop cloud connection', error)
       })
-  }, [snapshot.status])
+      .finally(() => {
+        setDesktopRestoreSettled(true)
+      })
+  }, [])
 
   const applyConnectedSnapshot = useCallback(
     (nextSnapshot: CloudConnectionSnapshot, connectionGeneration: number) => {
@@ -428,7 +430,7 @@ export function CloudConnectionProvider({ children }: CloudConnectionProviderPro
   )
 
   useEffect(() => {
-    if (snapshot.status !== 'connected' || !snapshot.backendUrl) return
+    if (!desktopRestoreSettled || snapshot.status !== 'connected' || !snapshot.backendUrl) return
     const configGeneration = refreshGenerationRef.current
     const backendUrl = snapshot.backendUrl
     const config = resolveCloudRuntimeConfig(backendUrl, snapshot.socketBaseUrlOverride)
@@ -455,7 +457,7 @@ export function CloudConnectionProvider({ children }: CloudConnectionProviderPro
       .catch(error => {
         console.error('[CloudConnection] Failed to resolve cloud configuration', error)
       })
-  }, [snapshot.backendUrl, snapshot.socketBaseUrlOverride, snapshot.status])
+  }, [desktopRestoreSettled, snapshot.backendUrl, snapshot.socketBaseUrlOverride, snapshot.status])
 
   const connectWithAuthorization = useCallback(
     async (
@@ -661,6 +663,7 @@ export function CloudConnectionProvider({ children }: CloudConnectionProviderPro
 
   useEffect(() => {
     if (
+      !desktopRestoreSettled ||
       initialRefreshStartedRef.current ||
       !snapshot.apiBaseUrl ||
       (snapshot.status !== 'restoring' &&
@@ -670,7 +673,13 @@ export function CloudConnectionProvider({ children }: CloudConnectionProviderPro
     }
     initialRefreshStartedRef.current = true
     void refreshUser()
-  }, [refreshUser, snapshot.apiBaseUrl, snapshot.credentialMode, snapshot.status])
+  }, [
+    desktopRestoreSettled,
+    refreshUser,
+    snapshot.apiBaseUrl,
+    snapshot.credentialMode,
+    snapshot.status,
+  ])
 
   useEffect(() => {
     if (snapshot.status !== 'connected' || !snapshot.tokenExpiresAt) return
