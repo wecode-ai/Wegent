@@ -30,6 +30,7 @@ from app.api.ws.context_decorators import auto_task_context
 from app.api.ws.decorators import trace_websocket_event
 from app.api.ws.events import (
     ChatCancelPayload,
+    ChatDonePayload,
     ChatErrorPayload,
     ChatGuideAck,
     ChatGuidePayload,
@@ -85,7 +86,14 @@ from app.services.chat.trigger import (
     persist_completed_result,
     trigger_ai_response_unified,
 )
+from app.services.chat.trigger.lifecycle import finalize_prompt_protection_block
 from app.services.chat.wework_task_defaults import apply_wework_task_defaults
+from app.services.prompt_protection import (
+    BLOCKED_ERROR_CODE,
+    BLOCKED_MESSAGE,
+    PromptProtectionBlocked,
+    PromptProtectionEntrypoint,
+)
 from app.services.task_fork_history import task_fork_history_resolver
 from app.utils.client_payload_sanitizer import sanitize_client_payload
 from app.utils.prompt_utils import extract_display_prompt
@@ -188,6 +196,101 @@ async def _finalize_failed_ai_trigger(
         result=final_result,
         error=error_message,
     )
+
+
+async def _finalize_blocked_ai_trigger(
+    *,
+    task_id: int,
+    assistant_subtask_id: int,
+) -> Dict[str, Any]:
+    """Finish a blocked turn, falling back to a terminal failure."""
+    try:
+        return await finalize_prompt_protection_block(
+            task_id=task_id,
+            subtask_id=assistant_subtask_id,
+        )
+    except Exception as exc:
+        logger.error(
+            "[WS] Failed to finalize prompt-protection block: "
+            "task_id=%s, subtask_id=%s, error_type=%s",
+            task_id,
+            assistant_subtask_id,
+            type(exc).__name__,
+        )
+        try:
+            await _finalize_failed_ai_trigger(
+                task_id=task_id,
+                assistant_subtask_id=assistant_subtask_id,
+                error_message=BLOCKED_MESSAGE,
+                error_code=BLOCKED_ERROR_CODE,
+            )
+        except Exception as fallback_exc:
+            logger.error(
+                "[WS] Failed to persist prompt-protection fallback: "
+                "task_id=%s, subtask_id=%s, error_type=%s",
+                task_id,
+                assistant_subtask_id,
+                type(fallback_exc).__name__,
+            )
+        raise
+
+
+async def _handle_prompt_protection_block(
+    *,
+    namespace: Any,
+    task_id: int,
+    assistant_subtask: Subtask,
+    blocked: PromptProtectionBlocked,
+    task_room: str,
+) -> None:
+    """Persist a blocked turn before sending best-effort notifications."""
+    try:
+        final_result = await _finalize_blocked_ai_trigger(
+            task_id=task_id,
+            assistant_subtask_id=assistant_subtask.id,
+        )
+    except Exception:
+        return
+    try:
+        await namespace.emit(
+            ServerEvents.CHAT_START,
+            {
+                "task_id": task_id,
+                "subtask_id": assistant_subtask.id,
+                "bot_name": blocked.bot_name,
+                "shell_type": "Chat",
+                "message_id": assistant_subtask.message_id,
+            },
+            room=task_room,
+        )
+        await namespace.emit(
+            ServerEvents.CHAT_DONE,
+            ChatDonePayload(
+                subtask_id=assistant_subtask.id,
+                offset=len(BLOCKED_MESSAGE),
+                result=sanitize_client_payload(final_result),
+                message_id=assistant_subtask.message_id,
+                task_id=task_id,
+            ).model_dump(),
+            room=task_room,
+        )
+    except Exception as exc:
+        logger.error(
+            "[WS] Failed to emit prompt-protection block: "
+            "task_id=%s, subtask_id=%s, error_type=%s",
+            task_id,
+            assistant_subtask.id,
+            type(exc).__name__,
+        )
+
+
+def _web_prompt_protection_entrypoint(
+    device_id: Optional[str],
+) -> Optional[PromptProtectionEntrypoint]:
+    """Protect Web execution while leaving Device Chat unchanged."""
+    if device_id is not None:
+        return None
+    return PromptProtectionEntrypoint.WEB_USER_MESSAGE
 
 
 class ChatNamespace(socketio.AsyncNamespace):
@@ -1112,6 +1215,17 @@ class ChatNamespace(socketio.AsyncNamespace):
                             user_subtask_id=user_subtask_id_for_context,  # Pass user subtask ID for unified context processing
                             auth_token=auth_token,  # Pass original JWT token from WebSocket session
                             previous_bot_id=previous_bot_id,  # Pipeline mode: previous stage's bot_id for session management
+                            prompt_protection_entrypoint=(
+                                _web_prompt_protection_entrypoint(device_id)
+                            ),
+                        )
+                    except PromptProtectionBlocked as blocked:
+                        await _handle_prompt_protection_block(
+                            namespace=self,
+                            task_id=task.id,
+                            assistant_subtask=assistant_subtask,
+                            blocked=blocked,
+                            task_room=task_room,
                         )
                     except Exception as e:
                         logger.exception(
@@ -1553,6 +1667,15 @@ class ChatNamespace(socketio.AsyncNamespace):
                 namespace=self,
                 **dispatch_args_or_error,
             )
+        except PromptProtectionBlocked as blocked:
+            await _handle_prompt_protection_block(
+                namespace=self,
+                task_id=payload.task_id,
+                assistant_subtask=dispatch_args_or_error["assistant_subtask"],
+                blocked=blocked,
+                task_room=dispatch_args_or_error["task_room"],
+            )
+            return {"success": True}
         except Exception as e:
             from sqlalchemy.exc import SQLAlchemyError
 
@@ -1949,6 +2072,7 @@ def _prepare_chat_retry_dispatch(
         is_group_chat=False,
     )
 
+    device_id = get_device_id(task)
     dispatch_args = {
         "task": task,
         "assistant_subtask": failed_ai_subtask,
@@ -1957,7 +2081,8 @@ def _prepare_chat_retry_dispatch(
         "message": user_message,
         "payload": retry_payload,
         "task_room": f"task:{payload.task_id}",
-        "device_id": get_device_id(task),
+        "device_id": device_id,
+        "prompt_protection_entrypoint": _web_prompt_protection_entrypoint(device_id),
         "user_subtask_id": user_subtask.id,
     }
 

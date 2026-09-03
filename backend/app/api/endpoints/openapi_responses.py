@@ -14,6 +14,7 @@ This module uses the unified trigger architecture:
 
 import json
 import logging
+from collections.abc import AsyncIterator
 from datetime import datetime
 from typing import Any, Dict, Optional
 
@@ -40,6 +41,7 @@ from app.services.adapters.task_kinds import task_kinds_service
 from app.services.chat.preprocessing.contexts import link_contexts_to_subtask
 from app.services.chat.trigger.lifecycle import (
     collect_completed_result,
+    finalize_prompt_protection_block,
     persist_completed_result,
 )
 from app.services.openapi.helpers import (
@@ -51,6 +53,12 @@ from app.services.openapi.helpers import (
 from app.services.openapi.output_builder import (
     build_response_output,
     extract_pending_user_input_state,
+)
+from app.services.prompt_protection import (
+    BLOCKED_ERROR_CODE,
+    BLOCKED_MESSAGE,
+    PromptProtectionBlocked,
+    PromptProtectionEntrypoint,
 )
 from app.services.rag.sources import ExternalRefValidationError
 from app.services.readers.kinds import KindType, kindReader
@@ -168,6 +176,10 @@ def _task_to_response_object(
     """Convert task dictionary to ResponseObject."""
     task_id = task_dict.get("id")
     wegent_status = task_dict.get("status", "PENDING")
+    task_result = task_dict.get("result")
+    policy_blocked = (
+        isinstance(task_result, dict) and task_result.get("policy_blocked") is True
+    )
     created_at = task_dict.get("created_at")
 
     # Convert datetime to unix timestamp
@@ -177,7 +189,7 @@ def _task_to_response_object(
         created_at_unix = int(datetime.now().timestamp())
 
     output = []
-    if subtasks:
+    if subtasks and not policy_blocked:
         output = build_response_output(subtasks)
     pending_user_input, pending_user_input_payload = extract_pending_user_input_state(
         _latest_assistant_subtask(subtasks or [])
@@ -185,14 +197,18 @@ def _task_to_response_object(
 
     # Build error if failed
     error = None
+    response_status = wegent_status_to_openai_status(wegent_status)
     error_message = task_dict.get("error_message")
-    if wegent_status == "FAILED" and error_message:
+    if policy_blocked:
+        response_status = "failed"
+        error = ResponseError(code=BLOCKED_ERROR_CODE, message=BLOCKED_MESSAGE)
+    elif wegent_status == "FAILED" and error_message:
         error = ResponseError(code="task_failed", message=error_message)
 
     return ResponseObject(
         id=f"resp_{task_id}",
         created_at=created_at_unix,
-        status=wegent_status_to_openai_status(wegent_status),
+        status=response_status,
         error=error,
         model=model_string,
         output=output,
@@ -346,6 +362,47 @@ async def _persist_terminal_failure(
         status="FAILED",
         result=result,
         error=error_message,
+    )
+
+
+def _prompt_protection_failed_response(
+    *,
+    response_id: str,
+    created_at: int,
+    model: str,
+    previous_response_id: Optional[str],
+) -> ResponseObject:
+    """Build the public Responses failure without exposing gate details."""
+    return ResponseObject(
+        id=response_id,
+        created_at=created_at,
+        status="failed",
+        error=ResponseError(code=BLOCKED_ERROR_CODE, message=BLOCKED_MESSAGE),
+        model=model,
+        output=[],
+        previous_response_id=previous_response_id,
+    )
+
+
+def _prompt_protection_failed_stream(response: ResponseObject) -> StreamingResponse:
+    """Return one stable response.failed event without starting execution."""
+
+    async def generate() -> AsyncIterator[str]:
+        payload = {
+            "response": response.model_dump(),
+            "sequence_number": 0,
+            "type": "response.failed",
+        }
+        yield f"data: {json.dumps(payload, ensure_ascii=False)}\n\n"
+
+    return StreamingResponse(
+        generate(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
     )
 
 
@@ -614,7 +671,10 @@ async def _create_non_streaming_response_unified(
 
     from app.db.session import SessionLocal
     from app.services.chat.storage import session_manager
-    from app.services.chat.trigger.unified import build_execution_request
+    from app.services.chat.trigger.unified import (
+        build_execution_request,
+        enforce_prompt_protection,
+    )
     from app.services.execution import execution_dispatcher
     from app.services.execution.emitters import SSEResultEmitter
     from app.services.openapi.chat_session import setup_chat_session
@@ -641,6 +701,13 @@ async def _create_non_streaming_response_unified(
     enable_chat_bot = tool_settings.get("enable_chat_bot", False)
     preload_skills = tool_settings.get("preload_skills", [])
     user_id = user.id
+
+    def _close_db():
+        try:
+            db.rollback()
+        except Exception:
+            pass
+        db.close()
 
     current_kb_refs = _get_current_knowledge_base_refs(tool_settings)
     inherited_kb_refs = _get_inherited_knowledge_base_refs(
@@ -733,13 +800,43 @@ async def _create_non_streaming_response_unified(
             detail=f"Failed to build execution request: {str(e)}",
         )
 
-    # Helper: close db session
-    def _close_db():
-        try:
-            db.rollback()
-        except Exception:
-            pass
-        db.close()
+    try:
+        await enforce_prompt_protection(
+            request=execution_request,
+            task=setup.task,
+            assistant_subtask=setup.assistant_subtask,
+            team=team,
+            user=user,
+            message=input_text,
+            entrypoint=PromptProtectionEntrypoint.OPENAPI_RESPONSES,
+        )
+    except PromptProtectionBlocked:
+        _close_db()
+        await finalize_prompt_protection_block(
+            subtask_id=assistant_subtask_id,
+            task_id=task_kind_id,
+        )
+        return _prompt_protection_failed_response(
+            response_id=response_id,
+            created_at=created_at,
+            model=request_body.model,
+            previous_response_id=request_body.previous_response_id,
+        )
+    except Exception as exc:
+        logger.error(
+            "Prompt protection failed unexpectedly: error_type=%s",
+            type(exc).__name__,
+        )
+        _close_db()
+        await _persist_terminal_failure(
+            subtask_id=assistant_subtask_id,
+            task_id=task_kind_id,
+            error_message="Prompt protection failed",
+        )
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Prompt protection failed",
+        ) from exc
 
     try:
         await _reject_video_streaming(
@@ -951,7 +1048,10 @@ async def _create_streaming_response_unified(
     Uses direct SSE for Chat shells and callback streaming for executor shells.
     """
     from app.services.chat.storage import session_manager
-    from app.services.chat.trigger.unified import build_execution_request
+    from app.services.chat.trigger.unified import (
+        build_execution_request,
+        enforce_prompt_protection,
+    )
     from app.services.execution import execution_dispatcher
     from app.services.openapi.chat_session import setup_chat_session
     from app.services.openapi.streaming import streaming_service
@@ -1026,6 +1126,7 @@ async def _create_streaming_response_unified(
         reasoning_config = request_body.reasoning.model_dump()
 
     # Build execution request using unified builder
+    blocked_response: Optional[ResponseObject] = None
     try:
         execution_request = await build_execution_request(
             task=setup.task,
@@ -1044,6 +1145,27 @@ async def _create_streaming_response_unified(
             attachment_ids=linked_attachment_ids,
         )
         _validate_generation_options_model(request_body, execution_request)
+        try:
+            await enforce_prompt_protection(
+                request=execution_request,
+                task=setup.task,
+                assistant_subtask=setup.assistant_subtask,
+                team=team,
+                user=user,
+                message=input_text,
+                entrypoint=PromptProtectionEntrypoint.OPENAPI_RESPONSES,
+            )
+        except PromptProtectionBlocked:
+            await finalize_prompt_protection_block(
+                subtask_id=assistant_subtask_id,
+                task_id=task_kind_id,
+            )
+            blocked_response = _prompt_protection_failed_response(
+                response_id=response_id,
+                created_at=created_at,
+                model=request_body.model,
+                previous_response_id=request_body.previous_response_id,
+            )
     except ExternalRefValidationError as e:
         logger.warning("Failed to build execution request: %s", e)
         await _persist_terminal_failure(
@@ -1092,6 +1214,9 @@ async def _create_streaming_response_unified(
         except Exception:
             pass
         db.close()
+
+    if blocked_response is not None:
+        return _prompt_protection_failed_stream(blocked_response)
 
     await _reject_video_streaming(
         request_body=request_body,

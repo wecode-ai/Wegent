@@ -246,6 +246,70 @@ def test_pipeline_auto_advance_does_not_create_next_stage_subtask_in_db() -> Non
     assert result.auto_advance.advance_info == advance_info
 
 
+def test_policy_blocked_turn_bypasses_collaboration_transitions() -> None:
+    """A policy refusal completes without applying collaboration transitions."""
+    from app.services.chat.storage.db import DatabaseHandler
+
+    db = MagicMock()
+    task = SimpleNamespace(id=1385, user_id=7, json={})
+    blocked_result = {"value": "", "policy_blocked": True}
+    completed_subtask = SimpleNamespace(
+        id=2001,
+        status=SubtaskStatus.COMPLETED,
+        result=blocked_result,
+        error_message="",
+    )
+    task_status = SimpleNamespace(
+        status="PENDING",
+        progress=0,
+        result=None,
+        updatedAt=None,
+        completedAt=None,
+    )
+    task_crd = MagicMock()
+    task_crd.status = task_status
+    task_crd.model_dump.return_value = {"status": {"status": "COMPLETED"}}
+    strategy = MagicMock()
+    strategy.get_task_status_on_subtask_complete.return_value = (
+        "PENDING_CONFIRMATION",
+        100,
+    )
+    strategy.get_auto_advance_info.return_value = {"next_stage_index": 1}
+
+    with (
+        patch(
+            "app.services.chat.storage.db._db_session",
+            return_value=_mock_db_session(db),
+        ),
+        patch(
+            "app.services.chat.storage.db.task_stores.task_store.get_task_by_states",
+            return_value=task,
+        ),
+        patch(
+            "app.services.chat.storage.db.task_stores.subtask_store.list_assistant_by_task",
+            return_value=[completed_subtask],
+        ),
+        patch("app.schemas.kind.Task.model_validate", return_value=task_crd),
+        patch(
+            "app.services.adapters.collaboration_strategy."
+            "CollaborationStrategyFactory.get_strategy_for_task",
+            return_value=strategy,
+        ),
+        patch("app.services.chat.storage.db.task_stores.task_store.update_json"),
+    ):
+        result = DatabaseHandler()._update_task_status_sync(
+            task_id=1385,
+            changed_subtask_id=2001,
+        )
+
+    assert task_status.status == "COMPLETED"
+    assert task_status.progress == 100
+    assert task_status.result == blocked_result
+    assert result.auto_advance is None
+    strategy.get_task_status_on_subtask_complete.assert_not_called()
+    strategy.get_auto_advance_info.assert_not_called()
+
+
 def test_create_assistant_subtask_inherits_deleted_executor_state_for_recovery(
     test_db: Session,
     test_user: User,

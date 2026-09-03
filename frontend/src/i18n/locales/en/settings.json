@@ -269,6 +269,10 @@
         "knowledge_description": "New chats start with these knowledge bases; more can still be added in chat.",
         "mcp_description": "Connect external MCP services to add tool capabilities."
       },
+      "prompt_protection": {
+        "label": "Prompt protection",
+        "description": "Checks requests before answering and blocks clear misuse or attempts to extract protected content. Adds model latency and cost; failures allow the request."
+      },
       "execution": {
         "bind_mode_description": "Controls which entry points and task types can use this agent.",
         "requires_workspace_description": "When enabled, code tasks must start with a repository.",

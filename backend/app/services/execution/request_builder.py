@@ -1293,6 +1293,23 @@ class TaskRequestBuilder:
 
         return get_bot_system_prompt(self.db, bot, team.user_id, team_member_prompt)
 
+    def get_base_system_prompt_for_subtask(
+        self,
+        subtask: Subtask,
+        team: Kind,
+    ) -> str:
+        """Return the current Bot stage prompt before runtime enhancements."""
+        team_crd = Team.model_validate(team.json)
+        bot = self._get_bot_for_subtask(subtask, team, team_crd)
+        if not bot:
+            raise ValueError(f"No bot found for team {team.name}")
+        return self._get_base_system_prompt(
+            bot=bot,
+            team=team,
+            team_crd=team_crd,
+            team_member_prompt=None,
+        )
+
     @staticmethod
     def _team_member_matches_bot(member: TeamMember, bot: Kind) -> bool:
         return (

@@ -59,7 +59,7 @@ LLM_PROXY_STREAM_HEADERS = {
 }
 
 
-def _resolve_upstream_target(
+def resolve_upstream_target(
     model_name: str,
     model_config: dict[str, Any],
 ) -> tuple[str, dict[str, str]]:
@@ -138,7 +138,7 @@ def _resolve_upstream_target(
     )
 
 
-def _join_upstream_url(base_url: str, endpoint_path: str) -> str:
+def join_upstream_url(base_url: str, endpoint_path: str) -> str:
     """Append an endpoint path without duplicating existing path segments."""
     parsed = urlsplit(base_url.strip())
     base_segments = [segment for segment in parsed.path.split("/") if segment]
@@ -204,7 +204,7 @@ def _extract_custom_upstream_headers(request: Request) -> dict[str, str]:
     return custom_headers
 
 
-def _merge_headers_case_insensitive(
+def merge_headers_case_insensitive(
     *header_sources: dict[str, str],
 ) -> dict[str, str]:
     merged: dict[str, str] = {}
@@ -378,8 +378,8 @@ async def proxy_llm_responses(
 
     body_json["model"] = provider_model_id
     body_bytes = json.dumps(body_json).encode("utf-8")
-    upstream_path, auth_headers = _resolve_upstream_target(model_name, model_config)
-    upstream_url = _join_upstream_url(provider_base_url, upstream_path)
+    upstream_path, auth_headers = resolve_upstream_target(model_name, model_config)
+    upstream_url = join_upstream_url(provider_base_url, upstream_path)
 
     configured_headers = (
         {str(key): str(value) for key, value in default_headers.items()}
@@ -387,7 +387,7 @@ async def proxy_llm_responses(
         else {}
     )
     custom_headers = _extract_custom_upstream_headers(request)
-    provider_headers = _merge_headers_case_insensitive(
+    provider_headers = merge_headers_case_insensitive(
         configured_headers,
         custom_headers,
     )
@@ -398,7 +398,7 @@ async def proxy_llm_responses(
     accept = request.headers.get("accept")
     if accept:
         protocol_headers["Accept"] = accept
-    provider_headers = _merge_headers_case_insensitive(
+    provider_headers = merge_headers_case_insensitive(
         provider_headers,
         protocol_headers,
     )

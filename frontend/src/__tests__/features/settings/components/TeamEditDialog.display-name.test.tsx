@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import '@testing-library/jest-dom'
-import { fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 
 import type { Bot, Team } from '@/types/api'
 import { updateTeam } from '@/features/settings/services/teams'
@@ -11,6 +11,7 @@ import TeamEditDialog from '@/features/settings/components/TeamEditDialog'
 
 const mockRefreshTeams = jest.fn()
 const mockTeamModeEditor = jest.fn((_props: Record<string, unknown>) => null)
+const mockSimpleTeamEditForm = jest.fn((_props: Record<string, unknown>) => null)
 
 jest.mock('@/hooks/useTranslation', () => ({
   useTranslation: () => ({
@@ -27,6 +28,11 @@ jest.mock('@/hooks/useTranslation', () => ({
         'common:team.description_placeholder': 'Description',
         'common:team.bind_mode': 'Bind mode',
         'common:teams.edit_title': 'Edit agent',
+        'settings:team.simple.advanced_toggle': 'Advanced mode',
+        'settings:team.simple.advanced_toggle_description': 'Configure more options',
+        'settings:team.simple.prompt_protection.label': 'Prompt protection',
+        'settings:team.simple.prompt_protection.description':
+          'Best-effort extra model call; not a security boundary.',
         'team.bind_mode_chat': 'Chat',
         'team.bind_mode_code': 'Code',
         'team.bind_mode_task': 'Task',
@@ -76,6 +82,17 @@ jest.mock('@/apis/shells', () => {
   }
 })
 
+jest.mock('@/apis/resourceLibrary', () => ({
+  resourceLibraryApi: {
+    getAgentBindings: jest.fn().mockResolvedValue({ group_names: [] }),
+    getPublication: jest.fn().mockResolvedValue({ tags: [], example_conversations: [] }),
+    syncAgentBindings: jest.fn().mockResolvedValue(undefined),
+    updatePublication: jest.fn().mockResolvedValue(undefined),
+    createListing: jest.fn().mockResolvedValue(undefined),
+    archiveListing: jest.fn().mockResolvedValue(undefined),
+  },
+}))
+
 jest.mock('@/components/ui/dialog', () => ({
   Dialog: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
   DialogContent: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
@@ -118,17 +135,17 @@ jest.mock('@/features/settings/components/team-edit/TeamModeChangeDialog', () =>
 
 jest.mock('@/features/settings/components/team-edit/SimpleTeamEditForm', () => ({
   __esModule: true,
-  default: () => null,
+  default: (props: Record<string, unknown>) => mockSimpleTeamEditForm(props),
 }))
 
 const mockedUpdateTeam = updateTeam as jest.MockedFunction<typeof updateTeam>
 
-const makeBot = (): Bot => ({
+const makeBot = (shellType = 'ClaudeCode'): Bot => ({
   id: 10,
   name: 'bot',
   namespace: 'default',
-  shell_name: 'ClaudeCode',
-  shell_type: 'ClaudeCode',
+  shell_name: shellType,
+  shell_type: shellType,
   agent_config: {},
   system_prompt: '',
   mcp_servers: {},
@@ -157,6 +174,7 @@ describe('TeamEditDialog display name', () => {
     jest.clearAllMocks()
     mockRefreshTeams.mockResolvedValue(undefined)
     mockTeamModeEditor.mockImplementation(() => null)
+    mockSimpleTeamEditForm.mockImplementation(() => null)
   })
 
   it('edits and saves the team display name', async () => {
@@ -258,5 +276,152 @@ describe('TeamEditDialog display name', () => {
         })
       )
     })
+  })
+
+  it('loads prompt protection state into the simple Team editor', async () => {
+    const team = makeTeam()
+    team.workflow = { mode: 'solo' }
+    team.prompt_protection_enabled = true
+
+    render(
+      <TeamEditDialog
+        open
+        onClose={jest.fn()}
+        teams={[team]}
+        setTeams={jest.fn()}
+        editingTeamId={team.id}
+        bots={[makeBot()]}
+        setBots={jest.fn()}
+        toast={jest.fn()}
+      />
+    )
+
+    await waitFor(() => {
+      expect(mockSimpleTeamEditForm).toHaveBeenLastCalledWith(
+        expect.objectContaining({
+          promptProtectionEnabled: true,
+        })
+      )
+    })
+  })
+
+  it('loads, toggles, and saves Team-level prompt protection in the advanced editor', async () => {
+    const team = makeTeam()
+    team.workflow = { mode: 'coordinate' }
+    team.prompt_protection_enabled = true
+    mockedUpdateTeam.mockResolvedValue({ ...team, prompt_protection_enabled: false })
+
+    render(
+      <TeamEditDialog
+        open
+        onClose={jest.fn()}
+        teams={[team]}
+        setTeams={jest.fn()}
+        editingTeamId={team.id}
+        bots={[makeBot('Chat')]}
+        setBots={jest.fn()}
+        toast={jest.fn()}
+      />
+    )
+
+    const toggle = await screen.findByTestId('advanced-prompt-protection-enabled-switch')
+    expect(toggle).toBeChecked()
+    const hitTarget = toggle.parentElement
+    expect(hitTarget?.tagName).toBe('LABEL')
+    expect(hitTarget).toHaveClass('min-h-11', 'min-w-11')
+    expect(screen.getByText('Prompt protection')).toBeInTheDocument()
+
+    fireEvent.click(hitTarget!)
+    expect(toggle).not.toBeChecked()
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }))
+
+    await waitFor(() => {
+      expect(mockedUpdateTeam).toHaveBeenCalledWith(
+        team.id,
+        expect.objectContaining({
+          prompt_protection_enabled: false,
+        })
+      )
+    })
+  })
+
+  it('keeps prompt protection state when switching between simple and advanced editors', async () => {
+    const team = makeTeam()
+    team.workflow = { mode: 'solo' }
+    team.prompt_protection_enabled = false
+
+    render(
+      <TeamEditDialog
+        open
+        onClose={jest.fn()}
+        teams={[team]}
+        setTeams={jest.fn()}
+        editingTeamId={team.id}
+        bots={[makeBot('Chat')]}
+        setBots={jest.fn()}
+        toast={jest.fn()}
+      />
+    )
+
+    await waitFor(() => {
+      expect(mockSimpleTeamEditForm).toHaveBeenLastCalledWith(
+        expect.objectContaining({ promptProtectionEnabled: false })
+      )
+    })
+    const simpleProps = mockSimpleTeamEditForm.mock.lastCall?.[0] as {
+      setPromptProtectionEnabled: (enabled: boolean) => void
+    }
+    act(() => simpleProps.setPromptProtectionEnabled(true))
+
+    fireEvent.click(screen.getByTestId('advanced-mode-switch'))
+    expect(await screen.findByTestId('advanced-prompt-protection-enabled-switch')).toBeChecked()
+
+    fireEvent.click(screen.getByTestId('advanced-mode-switch'))
+    await waitFor(() => {
+      expect(mockSimpleTeamEditForm).toHaveBeenLastCalledWith(
+        expect.objectContaining({ promptProtectionEnabled: true })
+      )
+    })
+  })
+
+  it('hides prompt protection in the advanced editor for non-Chat leaders', async () => {
+    const team = makeTeam()
+    team.workflow = { mode: 'coordinate' }
+
+    render(
+      <TeamEditDialog
+        open
+        onClose={jest.fn()}
+        teams={[team]}
+        setTeams={jest.fn()}
+        editingTeamId={team.id}
+        bots={[makeBot()]}
+        setBots={jest.fn()}
+        toast={jest.fn()}
+      />
+    )
+
+    await screen.findByRole('button', { name: 'Save' })
+    expect(screen.queryByTestId('advanced-prompt-protection-setting')).not.toBeInTheDocument()
+  })
+
+  it('hides prompt protection in the advanced editor for pipeline teams', async () => {
+    const team = makeTeam()
+
+    render(
+      <TeamEditDialog
+        open
+        onClose={jest.fn()}
+        teams={[team]}
+        setTeams={jest.fn()}
+        editingTeamId={team.id}
+        bots={[makeBot('Chat')]}
+        setBots={jest.fn()}
+        toast={jest.fn()}
+      />
+    )
+
+    await screen.findByRole('button', { name: 'Save' })
+    expect(screen.queryByTestId('advanced-prompt-protection-setting')).not.toBeInTheDocument()
   })
 })

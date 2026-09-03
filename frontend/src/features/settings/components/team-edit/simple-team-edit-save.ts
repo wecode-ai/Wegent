@@ -30,6 +30,7 @@ export interface SimpleTeamFormValue {
   name: string
   displayName: string
   description: string
+  promptProtectionEnabled: boolean
   bindMode: TaskType[]
   quickPhrases: string[]
   inputPlaceholder?: TeamInputPlaceholder
@@ -101,6 +102,7 @@ export function buildSimpleTeamRequest(
     name: form.name.trim(),
     displayName: trimmedDisplayName || undefined,
     description: trimmedDescription || undefined,
+    prompt_protection_enabled: form.promptProtectionEnabled,
     workflow: {
       mode: 'solo',
       leader_bot_id: botId,

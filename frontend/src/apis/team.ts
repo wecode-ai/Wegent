@@ -11,6 +11,7 @@ export interface CreateTeamRequest {
   name: string
   displayName?: string | null
   description?: string
+  prompt_protection_enabled?: boolean
   bots?: TeamBot[]
   workflow?: Record<string, unknown>
   bind_mode?: TaskType[]

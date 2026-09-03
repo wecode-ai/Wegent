@@ -42,6 +42,7 @@ const teamForm: SimpleTeamFormValue = {
   name: 'support-agent',
   displayName: 'Support Agent',
   description: 'Answers customer questions',
+  promptProtectionEnabled: true,
   bindMode: ['chat'] as TaskType[],
   quickPhrases: ['  Create a support FAQ  ', '', 'Draft a customer reply'],
   inputPlaceholder: {
@@ -132,6 +133,7 @@ describe('simple team edit save helpers', () => {
       name: 'support-agent',
       displayName: 'Support Agent',
       description: 'Answers customer questions',
+      prompt_protection_enabled: true,
       workflow: {
         mode: 'solo',
         leader_bot_id: 42,

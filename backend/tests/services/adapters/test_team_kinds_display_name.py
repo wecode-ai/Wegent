@@ -3,6 +3,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 from datetime import datetime
+from types import SimpleNamespace
 
 import pytest
 from fastapi import HTTPException
@@ -11,22 +12,33 @@ from app.models.kind import Kind
 from app.models.namespace import Namespace
 from app.models.resource_member import MemberStatus, ResourceMember
 from app.models.task import TaskResource
-from app.schemas.team import TeamUpdate
+from app.schemas.team import TeamCreate, TeamUpdate
+from app.services.adapters import team_kinds as team_kinds_module
 from app.services.adapters.team_kinds import team_kinds_service
 
 
-def _create_team_kind(db, user_id: int, namespace: str = "default") -> Kind:
+def _create_team_kind(
+    db,
+    user_id: int,
+    namespace: str = "default",
+    team_name: str = "dev-team",
+    members: list[dict] | None = None,
+    collaboration_model: str = "pipeline",
+) -> Kind:
     team = Kind(
         user_id=user_id,
         kind="Team",
-        name="dev-team",
+        name=team_name,
         namespace=namespace,
         is_active=True,
         json={
             "apiVersion": "agent.wecode.io/v1",
             "kind": "Team",
-            "metadata": {"name": "dev-team", "namespace": namespace},
-            "spec": {"members": [], "collaborationModel": "pipeline"},
+            "metadata": {"name": team_name, "namespace": namespace},
+            "spec": {
+                "members": members or [],
+                "collaborationModel": collaboration_model,
+            },
             "status": {"state": "Available"},
         },
     )
@@ -116,6 +128,130 @@ def test_update_team_persists_quick_phrases_in_spec(test_db, test_user):
         "帮我创建一个 xxx 的 PPT",
         "把这份大纲整理成 PPT",
     ]
+
+
+def test_prompt_protection_defaults_off_and_round_trips_on_update(test_db, test_user):
+    team = _create_team_kind(
+        test_db,
+        test_user.id,
+        collaboration_model="coordinate",
+    )
+
+    initial = team_kinds_service.get_by_id_and_user(
+        test_db,
+        team_id=team.id,
+        user_id=test_user.id,
+    )
+    assert initial["prompt_protection_enabled"] is False
+
+    updated = team_kinds_service.update_with_user(
+        test_db,
+        team_id=team.id,
+        obj_in=TeamUpdate(prompt_protection_enabled=True),
+        user_id=test_user.id,
+    )
+
+    test_db.refresh(team)
+    assert updated["prompt_protection_enabled"] is True
+    assert team.json["spec"]["promptProtectionEnabled"] is True
+
+
+def test_team_create_schema_defaults_prompt_protection_off():
+    team = TeamCreate(name="support", bots=[])
+
+    assert team.prompt_protection_enabled is False
+    assert team.model_dump()["prompt_protection_enabled"] is False
+
+
+def test_prompt_protection_is_isolated_per_team_when_members_are_reused(
+    test_db, test_user
+):
+    shared_members = [
+        {
+            "botRef": {"name": "shared-bot", "namespace": "default"},
+            "role": "leader",
+        }
+    ]
+    protected_team = _create_team_kind(
+        test_db,
+        test_user.id,
+        team_name="protected-team",
+        members=shared_members,
+        collaboration_model="coordinate",
+    )
+    unprotected_team = _create_team_kind(
+        test_db,
+        test_user.id,
+        team_name="unprotected-team",
+        members=shared_members,
+        collaboration_model="coordinate",
+    )
+
+    team_kinds_service.update_with_user(
+        test_db,
+        team_id=protected_team.id,
+        obj_in=TeamUpdate(prompt_protection_enabled=True),
+        user_id=test_user.id,
+    )
+
+    protected = team_kinds_service.get_by_id_and_user(
+        test_db, team_id=protected_team.id, user_id=test_user.id
+    )
+    unprotected = team_kinds_service.get_by_id_and_user(
+        test_db, team_id=unprotected_team.id, user_id=test_user.id
+    )
+    assert protected["prompt_protection_enabled"] is True
+    assert unprotected["prompt_protection_enabled"] is False
+
+
+def test_team_bot_detail_includes_selected_shell_name(monkeypatch):
+    bot = SimpleNamespace(
+        id=7,
+        user_id=1,
+        name="support-bot",
+        is_active=True,
+        created_at=datetime.now(),
+        updated_at=datetime.now(),
+        json={
+            "apiVersion": "agent.wecode.io/v1",
+            "kind": "Bot",
+            "metadata": {"name": "support-bot", "namespace": "default"},
+            "spec": {
+                "ghostRef": {"name": "support-ghost", "namespace": "default"},
+                "shellRef": {"name": "Chat", "namespace": "default"},
+            },
+        },
+    )
+    ghost = SimpleNamespace(
+        json={
+            "apiVersion": "agent.wecode.io/v1",
+            "kind": "Ghost",
+            "metadata": {"name": "support-ghost", "namespace": "default"},
+            "spec": {"systemPrompt": "Support users"},
+        }
+    )
+    shell = SimpleNamespace(
+        json={
+            "apiVersion": "agent.wecode.io/v1",
+            "kind": "Shell",
+            "metadata": {"name": "Chat", "namespace": "default"},
+            "spec": {"shellType": "Chat"},
+        }
+    )
+    resources = iter((ghost, shell))
+    monkeypatch.setattr(
+        team_kinds_module.kindReader,
+        "get_by_name_and_namespace",
+        lambda *args: next(resources),
+    )
+
+    result = team_kinds_service._convert_bot_to_dict(
+        bot,
+        db=SimpleNamespace(),
+        user_id=1,
+    )
+
+    assert result["shell_name"] == "Chat"
 
 
 def test_update_team_persists_video_workflow_mode_spec(test_db, test_user):

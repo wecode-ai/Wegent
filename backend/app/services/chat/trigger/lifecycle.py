@@ -31,6 +31,7 @@ from app.services.chat.storage.task_manager import (
     get_task_with_access_check,
 )
 from app.services.chat.task_device_resolution import ensure_task_device_id
+from app.services.prompt_protection import BLOCKED_ERROR_CODE, BLOCKED_MESSAGE
 from app.services.readers.kinds import KindType, kindReader
 from app.services.task_fork_history import task_fork_history_resolver
 from app.services.task_status import mark_task_pending_payload
@@ -644,6 +645,33 @@ async def persist_completed_result(
         )
 
 
+async def finalize_prompt_protection_block(
+    *,
+    subtask_id: int,
+    task_id: int,
+) -> Dict[str, Any]:
+    """Complete a policy-blocked assistant turn while keeping its Task reusable."""
+    result = await collect_completed_result(
+        subtask_id,
+        status="COMPLETED",
+        result={
+            "value": BLOCKED_MESSAGE,
+            "policy_blocked": True,
+            "error_type": BLOCKED_ERROR_CODE,
+            "error_message": BLOCKED_MESSAGE,
+        },
+    )
+    if result is None:
+        raise RuntimeError("Prompt-protection completion produced no result")
+    await persist_completed_result(
+        subtask_id=subtask_id,
+        task_id=task_id,
+        status="COMPLETED",
+        result=result,
+    )
+    return result
+
+
 async def _persist_standalone_workspace_path(
     task_id: int,
     result: Optional[Dict[str, Any]],
@@ -682,5 +710,6 @@ __all__ = [
     "ExecutionSessionSetup",
     "prepare_execution_session",
     "collect_completed_result",
+    "finalize_prompt_protection_block",
     "persist_completed_result",
 ]

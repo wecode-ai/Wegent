@@ -14,12 +14,14 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from fastapi import HTTPException
 from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session
 
 from app.api.endpoints.openapi_responses import (
     _build_result_block_streaming_chunks,
     _create_non_streaming_response_unified,
+    _create_streaming_response_unified,
     _filter_current_assistant_turn,
     _iter_callback_events,
     _task_to_response_object,
@@ -31,6 +33,7 @@ from app.models.share_link import ResourceType
 from app.models.subtask import SenderType, Subtask, SubtaskRole, SubtaskStatus
 from app.models.task import TaskResource
 from app.models.user import User
+from app.services.prompt_protection import PromptProtectionBlocked
 
 
 @pytest.mark.asyncio
@@ -534,6 +537,483 @@ class TestOpenAPIResponsesCreate:
         )
 
         assert response.status_code == 401
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("background", "supports_streaming"),
+        [(False, True), (True, True), (False, False)],
+        ids=["sync", "background", "queued"],
+    )
+    async def test_prompt_protection_blocks_non_streaming_before_any_dispatch(
+        self,
+        test_user: User,
+        test_team: Kind,
+        background: bool,
+        supports_streaming: bool,
+    ):
+        from app.schemas.openapi_response import ResponseCreateInput
+
+        db = MagicMock()
+        setup = SimpleNamespace(
+            task=SimpleNamespace(id=101, json={"metadata": {"labels": {}}}),
+            task_id=101,
+            user_subtask=SimpleNamespace(id=321),
+            assistant_subtask=SimpleNamespace(id=654),
+        )
+        execution_request = SimpleNamespace(
+            task_id=101,
+            subtask_id=654,
+            bot=[{"shell_type": "Chat"}],
+            model_config={"model_id": "selected-model"},
+        )
+        blocked = PromptProtectionBlocked(
+            bot_name="test-bot",
+        )
+
+        with (
+            patch(
+                "app.services.openapi.chat_session.setup_chat_session",
+                return_value=setup,
+            ),
+            patch(
+                "app.services.chat.trigger.unified.build_execution_request",
+                new=AsyncMock(return_value=execution_request),
+            ),
+            patch(
+                "app.services.chat.trigger.unified.enforce_prompt_protection",
+                new=AsyncMock(side_effect=blocked),
+            ) as mock_enforce,
+            patch(
+                "app.api.endpoints.openapi_responses._get_inherited_knowledge_base_refs",
+                return_value=[],
+            ),
+            patch(
+                "app.services.execution.execution_dispatcher.supports_streaming",
+                return_value=supports_streaming,
+            ) as mock_supports_streaming,
+            patch(
+                "app.services.execution.execution_dispatcher.dispatch",
+                new=AsyncMock(),
+            ) as mock_dispatch,
+            patch(
+                "app.api.endpoints.openapi_responses.finalize_prompt_protection_block",
+                new=AsyncMock(),
+            ) as mock_finalize,
+        ):
+            response = await _create_non_streaming_response_unified(
+                db=db,
+                user=test_user,
+                team=test_team,
+                model_info={"namespace": "default", "team_name": "test-team"},
+                request_body=ResponseCreateInput(
+                    model="default#test-team",
+                    input="current user text",
+                    background=background,
+                ),
+                input_text="current user text",
+                tool_settings={},
+                background=background,
+            )
+
+        assert response.status == "failed"
+        assert response.error.code == "PROMPT_PROTECTION_BLOCKED"
+        assert response.error.message == "该请求无法处理，请调整问题后再试。"
+        assert response.output == []
+        assert "system_prompt_extraction" not in response.model_dump_json()
+        mock_enforce.assert_awaited_once()
+        assert mock_enforce.await_args.kwargs["message"] == "current user text"
+        mock_finalize.assert_awaited_once_with(subtask_id=654, task_id=101)
+        mock_supports_streaming.assert_not_called()
+        mock_dispatch.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_prompt_protection_unexpected_error_finalizes_non_streaming_turn(
+        self,
+        test_user: User,
+        test_team: Kind,
+    ) -> None:
+        from app.schemas.openapi_response import ResponseCreateInput
+
+        db = MagicMock()
+        setup = SimpleNamespace(
+            task=SimpleNamespace(id=101, json={"metadata": {"labels": {}}}),
+            task_id=101,
+            user_subtask=SimpleNamespace(id=321),
+            assistant_subtask=SimpleNamespace(id=654),
+        )
+        execution_request = SimpleNamespace(
+            task_id=101,
+            subtask_id=654,
+            bot=[{"shell_type": "Chat"}],
+            model_config={"model_id": "selected-model"},
+        )
+
+        with (
+            patch(
+                "app.services.openapi.chat_session.setup_chat_session",
+                return_value=setup,
+            ),
+            patch(
+                "app.services.chat.trigger.unified.build_execution_request",
+                new=AsyncMock(return_value=execution_request),
+            ),
+            patch(
+                "app.services.chat.trigger.unified.enforce_prompt_protection",
+                new=AsyncMock(side_effect=RuntimeError("unexpected guard error")),
+            ),
+            patch(
+                "app.api.endpoints.openapi_responses._get_inherited_knowledge_base_refs",
+                return_value=[],
+            ),
+            patch(
+                "app.api.endpoints.openapi_responses._persist_terminal_failure",
+                new=AsyncMock(),
+            ) as persist_failure,
+            patch(
+                "app.services.execution.execution_dispatcher.dispatch",
+                new=AsyncMock(),
+            ) as dispatch,
+        ):
+            with pytest.raises(HTTPException) as exc_info:
+                await _create_non_streaming_response_unified(
+                    db=db,
+                    user=test_user,
+                    team=test_team,
+                    model_info={"namespace": "default", "team_name": "test-team"},
+                    request_body=ResponseCreateInput(
+                        model="default#test-team",
+                        input="current user text",
+                    ),
+                    input_text="current user text",
+                    tool_settings={},
+                    background=False,
+                )
+
+        assert exc_info.value.status_code == 500
+        assert exc_info.value.detail == "Prompt protection failed"
+        persist_failure.assert_awaited_once_with(
+            subtask_id=654,
+            task_id=101,
+            error_message="Prompt protection failed",
+        )
+        db.close.assert_called_once()
+        dispatch.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_prompt_protection_streams_only_response_failed_before_registration(
+        self,
+        test_user: User,
+        test_team: Kind,
+    ):
+        from app.schemas.openapi_response import ResponseCreateInput
+
+        db = MagicMock()
+        setup = SimpleNamespace(
+            task=SimpleNamespace(id=101, json={"metadata": {"labels": {}}}),
+            task_id=101,
+            user_subtask=SimpleNamespace(id=321),
+            assistant_subtask=SimpleNamespace(id=654),
+        )
+        execution_request = SimpleNamespace(
+            task_id=101,
+            subtask_id=654,
+            bot=[{"shell_type": "Chat"}],
+            model_config={"model_id": "selected-model"},
+        )
+        blocked = PromptProtectionBlocked(
+            bot_name="test-bot",
+        )
+
+        with (
+            patch(
+                "app.services.openapi.chat_session.setup_chat_session",
+                return_value=setup,
+            ),
+            patch(
+                "app.services.chat.trigger.unified.build_execution_request",
+                new=AsyncMock(return_value=execution_request),
+            ),
+            patch(
+                "app.services.chat.trigger.unified.enforce_prompt_protection",
+                new=AsyncMock(side_effect=blocked),
+            ),
+            patch(
+                "app.api.endpoints.openapi_responses._get_inherited_knowledge_base_refs",
+                return_value=[],
+            ),
+            patch(
+                "app.services.execution.execution_dispatcher.supports_streaming"
+            ) as mock_supports_streaming,
+            patch(
+                "app.services.execution.execution_dispatcher.dispatch",
+                new=AsyncMock(),
+            ) as mock_dispatch,
+            patch(
+                "app.services.chat.storage.session_manager.register_stream",
+                new=AsyncMock(),
+            ) as mock_register_stream,
+            patch(
+                "app.api.endpoints.openapi_responses.finalize_prompt_protection_block",
+                new=AsyncMock(),
+            ) as mock_finalize,
+        ):
+            response = await _create_streaming_response_unified(
+                db=db,
+                user=test_user,
+                team=test_team,
+                model_info={"namespace": "default", "team_name": "test-team"},
+                request_body=ResponseCreateInput(
+                    model="default#test-team",
+                    input="current user text",
+                    stream=True,
+                ),
+                input_text="current user text",
+                tool_settings={},
+            )
+            chunks = [chunk async for chunk in response.body_iterator]
+
+        body = "".join(
+            chunk.decode() if isinstance(chunk, bytes) else chunk for chunk in chunks
+        )
+        events = [
+            json.loads(line.removeprefix("data: "))
+            for line in body.splitlines()
+            if line.startswith("data: ")
+        ]
+        assert len(events) == 1
+        assert events[0]["type"] == "response.failed"
+        assert events[0]["sequence_number"] == 0
+        assert events[0]["response"]["status"] == "failed"
+        assert events[0]["response"]["error"] == {
+            "code": "PROMPT_PROTECTION_BLOCKED",
+            "message": "该请求无法处理，请调整问题后再试。",
+        }
+        assert "purpose_violation" not in body
+        assert "system_prompt_extraction" not in body
+        mock_finalize.assert_awaited_once_with(subtask_id=654, task_id=101)
+        mock_supports_streaming.assert_not_called()
+        mock_register_stream.assert_not_awaited()
+        mock_dispatch.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("background", "supports_streaming", "shell_type", "expected_status"),
+        [
+            (False, True, "Chat", "completed"),
+            (True, True, "Chat", "in_progress"),
+        ],
+        ids=["sync", "background"],
+    )
+    async def test_prompt_protection_allows_non_streaming_protocol_paths(
+        self,
+        test_user: User,
+        test_team: Kind,
+        background: bool,
+        supports_streaming: bool,
+        shell_type: str,
+        expected_status: str,
+    ):
+        from app.schemas.openapi_response import ResponseCreateInput
+
+        db = MagicMock()
+        setup = SimpleNamespace(
+            task=SimpleNamespace(id=101, json={"metadata": {"labels": {}}}),
+            task_id=101,
+            user_subtask=SimpleNamespace(id=321),
+            assistant_subtask=SimpleNamespace(id=654),
+        )
+        execution_request = SimpleNamespace(
+            task_id=101,
+            subtask_id=654,
+            bot=[{"shell_type": shell_type}],
+            model_config={"model_id": "selected-model"},
+        )
+        emitter = MagicMock()
+        emitter.collect = AsyncMock(return_value=("allowed response", None))
+        events = []
+        dispatch_started = asyncio.Event()
+
+        async def allow_gate(**kwargs):
+            events.append("gate")
+
+        async def dispatch(*args, **kwargs):
+            events.append("dispatch")
+            dispatch_started.set()
+
+        with (
+            patch(
+                "app.services.openapi.chat_session.setup_chat_session",
+                return_value=setup,
+            ),
+            patch(
+                "app.services.chat.trigger.unified.build_execution_request",
+                new=AsyncMock(return_value=execution_request),
+            ),
+            patch(
+                "app.services.chat.trigger.unified.enforce_prompt_protection",
+                new=AsyncMock(side_effect=allow_gate),
+            ) as mock_enforce,
+            patch(
+                "app.api.endpoints.openapi_responses._get_inherited_knowledge_base_refs",
+                return_value=[],
+            ),
+            patch(
+                "app.services.execution.execution_dispatcher.supports_streaming",
+                return_value=supports_streaming,
+            ),
+            patch(
+                "app.services.execution.execution_dispatcher.dispatch",
+                new=AsyncMock(side_effect=dispatch),
+            ) as mock_dispatch,
+            patch(
+                "app.services.execution.emitters.SSEResultEmitter",
+                return_value=emitter,
+            ),
+            patch(
+                "app.db.session.SessionLocal",
+                return_value=MagicMock(),
+            ),
+            patch(
+                "app.api.endpoints.openapi_responses.subtask_store.list_by_task_for_user_ordered",
+                return_value=[],
+            ),
+        ):
+            response = await _create_non_streaming_response_unified(
+                db=db,
+                user=test_user,
+                team=test_team,
+                model_info={"namespace": "default", "team_name": "test-team"},
+                request_body=ResponseCreateInput(
+                    model="default#test-team",
+                    input="allowed user text",
+                    background=background,
+                ),
+                input_text="allowed user text",
+                tool_settings={},
+                background=background,
+            )
+            await asyncio.wait_for(dispatch_started.wait(), timeout=1)
+            await asyncio.sleep(0)
+
+        assert response.status == expected_status
+        mock_enforce.assert_awaited_once()
+        mock_dispatch.assert_awaited_once()
+        assert events == ["gate", "dispatch"]
+
+    @pytest.mark.asyncio
+    async def test_prompt_protection_allows_stream_registration_and_dispatch(
+        self,
+        test_user: User,
+        test_team: Kind,
+    ):
+        from app.schemas.openapi_response import ResponseCreateInput
+        from shared.models import EventType, ExecutionEvent
+
+        db = MagicMock()
+        setup = SimpleNamespace(
+            task=SimpleNamespace(id=101, json={"metadata": {"labels": {}}}),
+            task_id=101,
+            user_subtask=SimpleNamespace(id=321),
+            assistant_subtask=SimpleNamespace(id=654),
+        )
+        execution_request = SimpleNamespace(
+            task_id=101,
+            subtask_id=654,
+            bot=[{"shell_type": "Chat"}],
+            model_config={"model_id": "selected-model"},
+        )
+        events = []
+
+        async def allow_gate(**kwargs):
+            events.append("gate")
+
+        async def register_stream(subtask_id):
+            events.append("register")
+            return asyncio.Event()
+
+        async def dispatch(*args, **kwargs):
+            events.append("dispatch")
+
+        async def execution_events():
+            yield ExecutionEvent(
+                type=EventType.DONE.value,
+                task_id=101,
+                subtask_id=654,
+            )
+
+        emitter = MagicMock()
+        emitter.stream = execution_events
+
+        with (
+            patch(
+                "app.services.openapi.chat_session.setup_chat_session",
+                return_value=setup,
+            ),
+            patch(
+                "app.services.chat.trigger.unified.build_execution_request",
+                new=AsyncMock(return_value=execution_request),
+            ),
+            patch(
+                "app.services.chat.trigger.unified.enforce_prompt_protection",
+                new=AsyncMock(side_effect=allow_gate),
+            ) as mock_enforce,
+            patch(
+                "app.api.endpoints.openapi_responses._get_inherited_knowledge_base_refs",
+                return_value=[],
+            ),
+            patch(
+                "app.services.execution.execution_dispatcher.supports_streaming",
+                return_value=True,
+            ),
+            patch(
+                "app.services.execution.execution_dispatcher.dispatch",
+                new=AsyncMock(side_effect=dispatch),
+            ) as mock_dispatch,
+            patch(
+                "app.services.execution.emitters.SSEResultEmitter",
+                return_value=emitter,
+            ),
+            patch(
+                "app.services.chat.storage.session_manager.register_stream",
+                new=AsyncMock(side_effect=register_stream),
+            ) as mock_register_stream,
+            patch(
+                "app.services.chat.storage.session_manager.is_cancelled",
+                new=AsyncMock(return_value=False),
+            ),
+            patch(
+                "app.services.chat.storage.session_manager.unregister_stream",
+                new=AsyncMock(),
+            ),
+            patch(
+                "app.services.chat.storage.session_manager.delete_streaming_content",
+                new=AsyncMock(),
+            ),
+        ):
+            response = await _create_streaming_response_unified(
+                db=db,
+                user=test_user,
+                team=test_team,
+                model_info={"namespace": "default", "team_name": "test-team"},
+                request_body=ResponseCreateInput(
+                    model="default#test-team",
+                    input="allowed user text",
+                    stream=True,
+                ),
+                input_text="allowed user text",
+                tool_settings={},
+            )
+            chunks = [
+                chunk.decode() if isinstance(chunk, bytes) else chunk
+                async for chunk in response.body_iterator
+            ]
+            body = "".join(chunks)
+
+        assert "response.completed" in body
+        mock_enforce.assert_awaited_once()
+        mock_register_stream.assert_awaited_once_with(654)
+        mock_dispatch.assert_awaited_once()
+        assert events == ["gate", "register", "dispatch"]
 
     @patch("app.api.endpoints.openapi_responses._create_non_streaming_response_unified")
     def test_create_response_sync_success(
@@ -1439,6 +1919,39 @@ class TestOpenAPIResponsesGet:
         assert len(data["output"]) == 1
         assert data["output"][0]["type"] == "message"
         assert data["output"][0]["role"] == "assistant"
+
+    def test_get_response_keeps_policy_blocked_response_failed(
+        self,
+        test_client: TestClient,
+        test_api_key,
+        test_db: Session,
+        test_task: TaskResource,
+        test_subtasks: list,
+    ) -> None:
+        test_task.json = {
+            **test_task.json,
+            "status": {
+                **test_task.json["status"],
+                "status": "COMPLETED",
+                "result": {"value": "", "policy_blocked": True},
+            },
+        }
+        test_db.commit()
+
+        response = test_client.get(
+            f"/api/v1/responses/resp_{test_task.id}",
+            headers={"X-API-Key": test_api_key[0]},
+        )
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["id"] == f"resp_{test_task.id}"
+        assert data["status"] == "failed"
+        assert data["error"] == {
+            "code": "PROMPT_PROTECTION_BLOCKED",
+            "message": "该请求无法处理，请调整问题后再试。",
+        }
+        assert data["output"] == []
 
     def test_task_to_response_object_omits_pending_user_input_from_subtasks(
         self,

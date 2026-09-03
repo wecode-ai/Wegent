@@ -50,6 +50,7 @@ class TeamBase(QuickPhraseMixin):
     name: str
     displayName: Optional[str] = None  # Human-readable display name
     description: Optional[str] = None  # Team description
+    prompt_protection_enabled: bool = False
     bots: List[BotInfo]
     workflow: Optional[dict[str, Any]] = None
     bind_mode: Optional[List[str]] = None  # ['chat', 'code'] or empty list for none
@@ -77,6 +78,7 @@ class TeamUpdate(QuickPhraseMixin):
     name: Optional[str] = None
     displayName: Optional[str] = None  # Human-readable display name
     description: Optional[str] = None  # Team description
+    prompt_protection_enabled: Optional[bool] = None
     bots: Optional[List[BotInfo]] = None
     workflow: Optional[dict[str, Any]] = None
     bind_mode: Optional[List[str]] = None  # ['chat', 'code'] or empty list for none
@@ -121,6 +123,7 @@ class TeamDetail(BaseModel):
     name: str
     displayName: Optional[str] = None  # Human-readable display name
     description: Optional[str] = None  # Team description
+    prompt_protection_enabled: bool = False
     bots: List[BotDetailInfo]
     workflow: Optional[dict[str, Any]] = None
     quick_phrases: List[str] = []

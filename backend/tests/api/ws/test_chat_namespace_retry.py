@@ -22,6 +22,10 @@ sys.modules.setdefault("app.services.chat.config", chat_config_module)
 import app.stores.tasks as task_stores
 from app.api.ws import chat_namespace
 from app.api.ws.chat_namespace import ChatNamespace
+from app.services.prompt_protection import (
+    PromptProtectionBlocked,
+    PromptProtectionEntrypoint,
+)
 
 
 def test_retry_restores_image_generation_size() -> None:
@@ -173,6 +177,67 @@ async def test_chat_retry_default_model_clears_stale_override_labels_without_nam
     assert db.commit.called
     assert mock_trigger.await_count == 1
     assert mock_trigger.await_args.kwargs["payload"].force_override_bot_model is None
+    assert (
+        mock_trigger.await_args.kwargs["prompt_protection_entrypoint"]
+        is PromptProtectionEntrypoint.WEB_USER_MESSAGE
+    )
+
+
+@pytest.mark.asyncio
+async def test_chat_retry_preserves_prompt_protection_block() -> None:
+    namespace = ChatNamespace()
+    namespace.get_session = AsyncMock(return_value={"user_id": 1})
+    namespace._check_token_expiry = AsyncMock(return_value=False)
+
+    db = _RetryDbMock(user=SimpleNamespace(id=1))
+    assistant_subtask = SimpleNamespace(id=42, message_id=7)
+    dispatch_args = {
+        "task": SimpleNamespace(id=100),
+        "assistant_subtask": assistant_subtask,
+        "task_room": "task:100",
+        "prompt_protection_entrypoint": (PromptProtectionEntrypoint.WEB_USER_MESSAGE),
+    }
+    blocked = PromptProtectionBlocked(
+        bot_name="support",
+    )
+
+    with (
+        patch("app.api.ws.chat_namespace.SessionLocal", return_value=db),
+        patch(
+            "app.api.ws.chat_namespace.can_access_task", AsyncMock(return_value=True)
+        ),
+        patch(
+            "app.api.ws.chat_namespace._prepare_chat_retry_dispatch",
+            return_value=dispatch_args,
+        ),
+        patch(
+            "app.api.ws.chat_namespace.trigger_ai_response_unified",
+            AsyncMock(side_effect=blocked),
+        ),
+        patch(
+            "app.api.ws.chat_namespace._handle_prompt_protection_block",
+            AsyncMock(),
+        ) as handle_block,
+    ):
+        result = await namespace.on_chat_retry(
+            "sid-123",
+            {
+                "task_id": 100,
+                "subtask_id": 42,
+                "force_override_bot_model": None,
+                "force_override_bot_model_type": None,
+                "use_model_override": False,
+            },
+        )
+
+    assert result == {"success": True}
+    handle_block.assert_awaited_once_with(
+        namespace=namespace,
+        task_id=100,
+        assistant_subtask=assistant_subtask,
+        blocked=blocked,
+        task_room="task:100",
+    )
 
 
 @pytest.mark.asyncio

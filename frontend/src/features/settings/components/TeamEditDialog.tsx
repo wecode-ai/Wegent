@@ -391,6 +391,7 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
     namespace?: string
   }>({ name: '' })
   const [simplePrompt, setSimplePrompt] = useState('')
+  const [promptProtectionEnabled, setPromptProtectionEnabled] = useState(false)
   const [simpleSelectedSkills, setSimpleSelectedSkills] = useState<string[]>([])
   const [simpleSelectedSkillRefs, setSimpleSelectedSkillRefs] = useState<
     Record<string, SkillRefMeta>
@@ -518,6 +519,7 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
       setName(formTeam.name)
       setDisplayName(formTeam.displayName || '')
       setDescription(formTeam.description || '')
+      setPromptProtectionEnabled(formTeam.prompt_protection_enabled ?? false)
       setQuickPhrases(formTeam.quick_phrases || [])
       setInputPlaceholder(formTeam.inputPlaceholder || {})
       setIcon(formTeam.icon || null)
@@ -590,6 +592,7 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
       setName('')
       setDisplayName('')
       setDescription('')
+      setPromptProtectionEnabled(false)
       setQuickPhrases([])
       setIcon(null)
       setMode('solo')
@@ -891,6 +894,12 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
     return map
   }, [shells])
 
+  const advancedPromptProtectionSupported = useMemo(() => {
+    if (mode === 'pipeline' || leaderBotId === null) return false
+    const leader = filteredBots.find((bot: Bot) => bot.id === leaderBotId)
+    return getActualShellType(leader?.shell_type || '', shellMap) === 'Chat'
+  }, [filteredBots, leaderBotId, mode, shellMap])
+
   // Leader change handler
   const onLeaderChange = (botId: number) => {
     // If new Leader is in selected members, remove it first
@@ -1039,6 +1048,7 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
           name,
           displayName,
           description,
+          promptProtectionEnabled,
           quickPhrases,
           inputPlaceholder,
           bindMode,
@@ -1200,6 +1210,7 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
                     name: name.trim(),
                     displayName: displayNamePayload,
                     description: description.trim() || undefined,
+                    prompt_protection_enabled: promptProtectionEnabled,
                     workflow,
                     bind_mode: bindMode,
                     bots: botsData,
@@ -1220,6 +1231,7 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
                   name: name.trim(),
                   displayName: displayNamePayload,
                   description: description.trim() || undefined,
+                  prompt_protection_enabled: promptProtectionEnabled,
                   workflow,
                   bind_mode: bindMode,
                   bots: botsData,
@@ -1312,6 +1324,7 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
                 name: name.trim(),
                 displayName: displayNamePayload,
                 description: description.trim() || undefined,
+                prompt_protection_enabled: promptProtectionEnabled,
                 workflow,
                 bind_mode: bindMode,
                 bots: botsData,
@@ -1332,6 +1345,7 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
               name: name.trim(),
               displayName: displayNamePayload,
               description: description.trim() || undefined,
+              prompt_protection_enabled: promptProtectionEnabled,
               workflow,
               bind_mode: bindMode,
               bots: botsData,
@@ -1476,6 +1490,8 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
                   setDisplayName={setDisplayName}
                   description={description}
                   setDescription={setDescription}
+                  promptProtectionEnabled={promptProtectionEnabled}
+                  setPromptProtectionEnabled={setPromptProtectionEnabled}
                   quickPhrases={quickPhrases}
                   onQuickPhrasesChange={setQuickPhrases}
                   inputPlaceholder={inputPlaceholder}
@@ -1561,6 +1577,35 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
                   requiresWorkspace={requiresWorkspace}
                   setRequiresWorkspace={setRequiresWorkspace}
                 />
+                {advancedPromptProtectionSupported && (
+                  <div
+                    className="flex items-start justify-between gap-4 rounded-lg border border-border bg-surface p-4"
+                    data-testid="advanced-prompt-protection-setting"
+                  >
+                    <label
+                      htmlFor="advanced-prompt-protection-enabled"
+                      className="min-h-11 flex-1 cursor-pointer space-y-1"
+                    >
+                      <span className="block text-sm font-medium text-text-primary">
+                        {t('settings:team.simple.prompt_protection.label')}
+                      </span>
+                      <span className="block text-xs leading-5 text-text-secondary">
+                        {t('settings:team.simple.prompt_protection.description')}
+                      </span>
+                    </label>
+                    <label
+                      htmlFor="advanced-prompt-protection-enabled"
+                      className="flex min-h-11 min-w-11 cursor-pointer items-center justify-center"
+                    >
+                      <Switch
+                        id="advanced-prompt-protection-enabled"
+                        checked={promptProtectionEnabled}
+                        onCheckedChange={setPromptProtectionEnabled}
+                        data-testid="advanced-prompt-protection-enabled-switch"
+                      />
+                    </label>
+                  </div>
+                )}
                 {isEditing && technicalNameUnlocked && (
                   <div
                     className="rounded-md border border-yellow-300 bg-yellow-50 p-3 text-sm text-yellow-900"

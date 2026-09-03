@@ -251,22 +251,32 @@ class DatabaseHandler:
                         )
 
                 if task_crd.status:
-                    # Use collaboration strategy to determine task status
-                    strategy: CollaborationStrategy = (
-                        CollaborationStrategyFactory.get_strategy_for_task(db, task_id)
-                    )
-                    self._apply_status_update(
-                        db, task_id, task_crd.status, last_subtask, strategy
-                    )
+                    status_subtask = changed_subtask or last_subtask
+                    if self._is_policy_blocked(status_subtask):
+                        self._apply_policy_blocked_status(
+                            task_crd.status,
+                            status_subtask,
+                        )
+                        strategy = None
+                    else:
+                        strategy = CollaborationStrategyFactory.get_strategy_for_task(
+                            db, task_id
+                        )
+                        self._apply_status_update(
+                            db, task_id, task_crd.status, last_subtask, strategy
+                        )
                     task_crd.status.updatedAt = datetime.now()
 
                     # Check if pipeline should auto-advance to next stage
-                    advance_subtask = changed_subtask or last_subtask
-                    advance_info = strategy.get_auto_advance_info(
-                        db,
-                        task_id,
-                        advance_subtask.id,
-                        advance_subtask.status.value,
+                    advance_info = (
+                        strategy.get_auto_advance_info(
+                            db,
+                            task_id,
+                            status_subtask.id,
+                            status_subtask.status.value,
+                        )
+                        if strategy is not None
+                        else None
                     )
                     if advance_info:
                         task_crd.status.status = "PENDING"
@@ -274,7 +284,7 @@ class DatabaseHandler:
                         update_result.auto_advance = PipelineAutoAdvanceIntent(
                             task_id=task.id,
                             user_id=task.user_id,
-                            completed_subtask_id=advance_subtask.id,
+                            completed_subtask_id=status_subtask.id,
                             advance_info=advance_info,
                         )
 
@@ -287,6 +297,22 @@ class DatabaseHandler:
             return TaskStatusUpdateResult()
 
         return update_result
+
+    @staticmethod
+    def _is_policy_blocked(subtask: Subtask) -> bool:
+        result = getattr(subtask, "result", None)
+        return isinstance(result, dict) and result.get("policy_blocked") is True
+
+    @staticmethod
+    def _apply_policy_blocked_status(
+        status_obj: TaskStatus,
+        subtask: Subtask,
+    ) -> None:
+        """Complete the Task without applying collaboration-stage transitions."""
+        status_obj.status = "COMPLETED"
+        status_obj.progress = 100
+        status_obj.result = subtask.result
+        status_obj.completedAt = datetime.now()
 
     def _apply_status_update(
         self,

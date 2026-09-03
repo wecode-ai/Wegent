@@ -240,7 +240,11 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
             collaboration_model = obj_in.workflow["mode"]
 
         # Build spec with bind_mode and description if provided
-        spec = {"members": members, "collaborationModel": collaboration_model}
+        spec = {
+            "members": members,
+            "collaborationModel": collaboration_model,
+            "promptProtectionEnabled": obj_in.prompt_protection_enabled,
+        }
 
         # Handle bind_mode - get from obj_in directly (not from workflow)
         bind_mode = getattr(obj_in, "bind_mode", None)
@@ -1450,6 +1454,11 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
         if "description" in update_data:
             team_crd.spec.description = update_data["description"]
 
+        if "prompt_protection_enabled" in update_data:
+            team_crd.spec.promptProtectionEnabled = update_data[
+                "prompt_protection_enabled"
+            ]
+
         # Handle icon update
         if "icon" in update_data:
             team_crd.spec.icon = update_data["icon"]
@@ -1969,6 +1978,7 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
 
         # Get description from spec
         description = team_crd.spec.description
+        prompt_protection_enabled = team_crd.spec.promptProtectionEnabled
 
         # Get icon from spec
         icon = team_crd.spec.icon
@@ -1998,6 +2008,7 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
             "displayName": team_crd.metadata.displayName,
             "namespace": team.namespace,  # Add namespace field
             "description": description,
+            "prompt_protection_enabled": prompt_protection_enabled,
             "bots": bots,
             "workflow": workflow,
             "bind_mode": bind_mode,
@@ -2187,6 +2198,7 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
 
         # Get description from spec
         description = team_crd.spec.description
+        prompt_protection_enabled = team_crd.spec.promptProtectionEnabled
 
         # Get icon from spec
         icon = team_crd.spec.icon
@@ -2210,6 +2222,7 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
             "displayName": team_crd.metadata.displayName,
             "namespace": team.namespace,
             "description": description,
+            "prompt_protection_enabled": prompt_protection_enabled,
             "bots": bots,
             "workflow": workflow,
             "bind_mode": bind_mode,
@@ -2474,6 +2487,7 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
             "id": bot.id,
             "user_id": bot.user_id,
             "name": bot.name,
+            "shell_name": bot_crd.spec.shellRef.name,
             "shell_type": shell_type,
             "agent_config": agent_config,
             "system_prompt": system_prompt,
@@ -2963,6 +2977,7 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
             icon=icon,
             requires_workspace=requires_workspace,
             quick_phrases=quick_phrases,
+            prompt_protection_enabled=bool(spec.get("promptProtectionEnabled", False)),
         )
 
         return self.create_with_user(
