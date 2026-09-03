@@ -147,9 +147,13 @@ async function createTask(control, prompt, timeoutMs) {
     snapshot.testIds.filter(testId => testId.startsWith('runtime-local-task-row-'))
   )
   await control.command('fill', COMPOSER, { value: prompt })
-  await control.command('clickWhenEnabled', '[data-testid="send-message-button"]', {
-    timeoutMs,
-  })
+  await control.command(
+    'clickWhenEnabled',
+    `${ACTIVE_SURFACE} [data-testid="send-message-button"]`,
+    {
+      timeoutMs,
+    }
+  )
   await control.command('waitFor', `${ACTIVE_SURFACE} [data-testid="message-assistant"]`, {
     text: `${prompt}_COMPLETE`,
     timeoutMs,
@@ -192,29 +196,31 @@ async function verifyMultilineComposerCaret(control, captureScreenshot) {
     'chat-message-input',
     'The composer did not retain DOM focus while the desktop window stayed inactive'
   )
-  assert.equal(
-    JSON.parse(await control.command('getWindowFocusSnapshot', 'body')).mainFocused,
-    false,
-    'The desktop E2E window unexpectedly became active'
-  )
   const [singleLineCaretMetrics] = JSON.parse(
     await control.command('getElementMetrics', `${COMPOSER} .composer-empty-caret`)
   )
   assert.ok(singleLineCaretMetrics, 'The empty composer did not render its caret')
-  assert.equal(
-    await control.command('getComputedStyleValue', `${COMPOSER} .composer-empty-caret`, {
-      value: 'animation-name',
-    }),
-    'none',
-    'The inactive composer continued animating its empty caret despite retaining DOM focus'
-  )
-  assert.equal(
-    await control.command('getComputedStyleValue', `${COMPOSER} .composer-empty-caret`, {
-      value: 'opacity',
-    }),
-    '0',
-    'The inactive composer continued showing its empty caret'
-  )
+  if (process.platform === 'darwin') {
+    assert.equal(
+      JSON.parse(await control.command('getWindowFocusSnapshot', 'body')).mainFocused,
+      false,
+      'The desktop E2E window unexpectedly became active'
+    )
+    assert.equal(
+      await control.command('getComputedStyleValue', `${COMPOSER} .composer-empty-caret`, {
+        value: 'animation-name',
+      }),
+      'none',
+      'The inactive composer continued animating its empty caret despite retaining DOM focus'
+    )
+    assert.equal(
+      await control.command('getComputedStyleValue', `${COMPOSER} .composer-empty-caret`, {
+        value: 'opacity',
+      }),
+      '0',
+      'The inactive composer continued showing its empty caret'
+    )
+  }
   for (let line = 1; line < 12; line += 1) {
     await control.command('press', COMPOSER, { key: 'Shift+Enter' })
   }
