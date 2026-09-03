@@ -47,6 +47,8 @@ An explicit Anthropic Messages configuration is never overridden. Operators must
 
 When a task runs on a cloud or remote device, the model selector also shows local models configured on the current desktop. On first use or after a configuration change, Wework asks for confirmation, synchronizes the custom Codex model catalog to the target Executor, restarts its Codex app-server while the device is idle, verifies that the model was loaded, and only then sends the task. Built-in Codex models and cloud Model CRDs continue to work directly with either local or cloud execution.
 
+Generic cloud models can reuse the Wework GPT 5.6 compatibility catalog as a capability baseline while cloud model metadata overrides the context window. Compatibility entries must not impose a fixed `max_context_window` on the cloud model; the field remains unset so the runtime uses the cloud-provided window configuration. Official Codex GPT 5.6 catalog entries retain their explicit maximum window.
+
 ### Model Rate-Limit Retries
 
 When the upstream has not started a response stream and the model service returns HTTP `429 Too Many Requests`, the executor Codex compatibility proxy automatically resends the same model request. It retries at most five times, waiting 1, 5, 10, 30, and 60 seconds between attempts.
