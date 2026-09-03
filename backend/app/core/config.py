@@ -415,6 +415,12 @@ class Settings(BaseSettings):
             return _normalize_rag_runtime_mode_value(raw, label="global")
         raise ValueError(f"Unsupported RAG_RUNTIME_MODE value: {v!r}")
 
+    # Master switch for scheduled work started by this Backend process.
+    # Disable it for traffic-verification environments that share production
+    # resources but must not run maintenance, scheduling, or queue-consuming
+    # workers. Scheduled work can run on a dedicated deployment instead.
+    SCHEDULED_TASKS_ENABLED: bool = True
+
     # Scheduler backend configuration
     # Supported backends: "celery" (default), "apscheduler", "xxljob"
     SCHEDULER_BACKEND: str = "celery"
