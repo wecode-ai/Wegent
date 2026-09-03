@@ -856,12 +856,38 @@ async function verifyWorkspaceIssueCreation(control) {
   )
 }
 
-async function verifyDefaultTaskBoardAssociation(control, projectRowSelector) {
+async function verifyDefaultTaskBoardAssociation(control) {
   await ensureExperimentalFeaturesDisabled(control)
   try {
+    await control.command('click', '[data-testid="workspace-tab-select-fixed-task"]')
+    await control.command('navigate', 'body', { value: '/' })
+    await reloadMainWindow(
+      control,
+      'The Wework WebView did not reconnect before the first project-space navigation'
+    )
+    await control.command(
+      'waitFor',
+      '[data-testid="workspace-tab-select-fixed-task"][aria-selected="true"]',
+      { timeoutMs: WORKBENCH_READY_TIMEOUT_MS }
+    )
+    const startupTabs = JSON.parse(
+      await control.command('snapshot', '[data-testid="workspace-tab-strip"]')
+    )
+    assert.deepEqual(
+      workspaceTabIds(startupTabs, 'board'),
+      ['workspace-tab-fixed-board'],
+      'The fresh task workspace did not start with one unresolved fixed project-space tab'
+    )
+    await control.command('markElementWithText', '[data-testid^="project-row-"]', {
+      text: 'workspace',
+      value: 'default-association-project',
+      timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+    })
+    const refreshedProjectRowSelector = '[data-e2e-anchor-id="default-association-project"]'
+    await control.command('hover', refreshedProjectRowSelector, { visible: true })
     await control.command(
       'click',
-      `${projectRowSelector} [data-testid="project-new-conversation-button"]`
+      `${refreshedProjectRowSelector} [data-testid="project-new-conversation-button"]`
     )
     await control.command('waitFor', '[data-testid="project-work-button"]', {
       text: 'workspace',
@@ -910,13 +936,18 @@ async function verifyTrackedTaskBoardRunningStatus(
     '[data-tab-kind="board"][aria-selected="true"]',
     { value: 'data-testid' }
   )
-  const activeBoardTabPrefix = 'workspace-tab-select-board-'
-  assert.ok(
-    activeBoardTabTestId?.startsWith(activeBoardTabPrefix),
-    'The running work-item board tab identity was unavailable'
+  assert.equal(
+    activeBoardTabTestId,
+    'workspace-tab-select-fixed-board',
+    'The first work-item navigation did not reuse the unresolved fixed project-space tab'
   )
-  const activeBoardTabSuffix = activeBoardTabTestId.slice(activeBoardTabPrefix.length)
-  const activeBoardContentSelector = `[data-testid="workspace-tab-content-board-${activeBoardTabSuffix}"]`
+  const boardTabs = workspaceTabIds(JSON.parse(await control.command('snapshot', 'body')), 'board')
+  assert.deepEqual(
+    boardTabs,
+    ['workspace-tab-fixed-board'],
+    'The first work-item navigation created a duplicate project-space tab'
+  )
+  const activeBoardContentSelector = '[data-testid="workspace-tab-content-fixed-board"]'
   const runningColumnSelector = `${activeBoardContentSelector} [data-testid="cloud-todo-column-in_progress"]`
   const reviewColumnSelector = `${activeBoardContentSelector} [data-testid="cloud-todo-column-in_review"]`
   await control.command('waitFor', runningColumnSelector, {
@@ -1019,13 +1050,12 @@ async function verifyTrackedTaskSettledStatus(control) {
     '[data-tab-kind="board"][aria-selected="true"]',
     { value: 'data-testid' }
   )
-  const activeBoardTabPrefix = 'workspace-tab-select-board-'
-  assert.ok(
-    activeBoardTabTestId?.startsWith(activeBoardTabPrefix),
-    'The settled work-item board tab identity was unavailable'
+  assert.equal(
+    activeBoardTabTestId,
+    'workspace-tab-select-fixed-board',
+    'The settled work-item navigation did not reuse the fixed project-space tab'
   )
-  const activeBoardTabSuffix = activeBoardTabTestId.slice(activeBoardTabPrefix.length)
-  const activeBoardContentSelector = `[data-testid="workspace-tab-content-board-${activeBoardTabSuffix}"]`
+  const activeBoardContentSelector = '[data-testid="workspace-tab-content-fixed-board"]'
   const runningColumnSelector = `${activeBoardContentSelector} [data-testid="cloud-todo-column-in_progress"]`
   const reviewColumnSelector = `${activeBoardContentSelector} [data-testid="cloud-todo-column-in_review"]`
   await control.command('scrollIntoView', reviewColumnSelector)
