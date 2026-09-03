@@ -264,6 +264,10 @@ export async function createDesktopScenario({
         visible: true,
       })
       await control.command(
+        'scrollIntoView',
+        '[data-testid="wework-plugin-development-diagnostics-toggle"]'
+      )
+      await control.command(
         'click',
         '[data-testid="wework-plugin-development-diagnostics-toggle"]',
         { visible: true }
