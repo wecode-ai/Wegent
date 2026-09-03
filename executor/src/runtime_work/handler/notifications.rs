@@ -211,39 +211,36 @@ impl RuntimeWorkRpcHandler {
     }
 
     pub(super) async fn ensure_notification_router(&self) {
-        if self
-            .notification_router
-            .lock()
-            .expect("notification router lock should not be poisoned")
-            .as_ref()
-            .is_some_and(|task| !task.is_finished())
-        {
-            return;
-        }
-
-        let notification_rx = match self.codex_app_server.subscribe_notifications().await {
-            Ok(receiver) => receiver,
-            Err(error) => {
-                log_executor_event(
-                    "runtime work notification router subscribe failed",
-                    &[("error", error)],
-                );
-                return;
-            }
-        };
+        let (process_generation, notification_rx) =
+            match self.codex_app_server.subscribe_notifications().await {
+                Ok(subscription) => subscription,
+                Err(error) => {
+                    log_executor_event(
+                        "runtime work notification router subscribe failed",
+                        &[("error", error)],
+                    );
+                    return;
+                }
+            };
 
         let mut router = self
             .notification_router
             .lock()
             .expect("notification router lock should not be poisoned");
-        if router.as_ref().is_some_and(|task| !task.is_finished()) {
-            return;
+        if let Some(current) = router.as_ref() {
+            if current.process_generation == process_generation && !current.task.is_finished() {
+                return;
+            }
+            current.task.abort();
         }
 
         let handler = self.clone();
-        *router = Some(tokio::spawn(async move {
-            handler.run_notification_router(notification_rx).await;
-        }));
+        *router = Some(RuntimeNotificationRouter {
+            process_generation,
+            task: tokio::spawn(async move {
+                handler.run_notification_router(notification_rx).await;
+            }),
+        });
     }
 
     pub(super) async fn run_notification_router(

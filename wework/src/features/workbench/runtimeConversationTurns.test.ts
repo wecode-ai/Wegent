@@ -2204,6 +2204,76 @@ describe('runtimeConversationTurns', () => {
     )
   })
 
+  test('bounds live assistant text while retaining original length metadata', () => {
+    const turns = reduceRuntimeConversationTurns(
+      [{ id: 'turn-1', items: [], status: 'streaming' }],
+      {
+        type: 'assistant_chunk',
+        subtaskId: 'turn-1',
+        itemId: 'assistant-1',
+        content: `${'x'.repeat(210_000)}tail`,
+      }
+    )
+
+    const message = projectRuntimeConversationTurns(turns)[0]
+    expect(message.content).toHaveLength(200_000)
+    expect(message.content.endsWith('tail')).toBe(true)
+    expect(message).toMatchObject({
+      contentTruncated: true,
+      contentOriginalChars: 210_004,
+      contentLoadRef: {
+        subtaskId: 'turn-1',
+        kind: 'message_content',
+      },
+    })
+  })
+
+  test('bounds live reasoning and tool output with shared reducer limits', () => {
+    let turns = reduceRuntimeConversationTurns([{ id: 'turn-1', items: [], status: 'streaming' }], {
+      type: 'assistant_chunk',
+      subtaskId: 'turn-1',
+      content: '',
+      reasoningChunk: `${'r'.repeat(130_000)}tail`,
+    })
+    turns = reduceRuntimeConversationTurns(turns, {
+      type: 'block_created',
+      subtaskId: 'turn-1',
+      block: {
+        id: 'tool-1',
+        subtaskId: 'turn-1',
+        type: 'tool',
+        toolName: 'exec_command',
+        status: 'streaming',
+        createdAt: 1,
+      },
+    })
+    turns = reduceRuntimeConversationTurns(turns, {
+      type: 'block_updated',
+      subtaskId: 'turn-1',
+      blockId: 'tool-1',
+      updates: {
+        toolOutputDelta: `${'o'.repeat(70_000)}tail`,
+        status: 'streaming',
+      },
+    })
+
+    const blocks = projectRuntimeConversationTurns(turns)[0].blocks ?? []
+    const reasoning = blocks.find(block => block.type === 'thinking')
+    const tool = blocks.find(block => block.type === 'tool')
+    expect(reasoning).toMatchObject({
+      type: 'thinking',
+      contentTruncated: true,
+      contentOriginalChars: 130_004,
+    })
+    expect(reasoning?.type === 'thinking' ? reasoning.content.length : 0).toBe(120_000)
+    expect(tool).toMatchObject({
+      type: 'tool',
+      toolOutputTruncated: true,
+      toolOutputOriginalChars: 70_004,
+    })
+    expect(tool?.type === 'tool' ? String(tool.toolOutput).length : 0).toBe(64 * 1024)
+  })
+
   test('atomically moves final text reclassified as commentary into a process block', () => {
     let turns = reduceRuntimeConversationTurns([{ id: 'turn-1', items: [], status: 'streaming' }], {
       type: 'assistant_chunk',
@@ -2488,6 +2558,37 @@ describe('runtimeConversationTurns', () => {
         streamTextOffset: 3,
       }),
     ])
+    const item = turns[0].items[0]
+    expect(item?.type === 'assistant_text' ? item.contentOriginalChars : 0).toBeUndefined()
+  })
+
+  test('counts streamed assistant and reasoning emoji as Unicode code points', () => {
+    let turns = reduceRuntimeConversationTurns([{ id: 'turn-1', items: [], status: 'streaming' }], {
+      type: 'assistant_chunk',
+      subtaskId: 'turn-1',
+      itemId: 'message-1',
+      content: `${'😀'.repeat(200_001)}tail`,
+      reasoningChunk: `${'😎'.repeat(120_001)}tail`,
+    })
+    turns = reduceRuntimeConversationTurns(turns, {
+      type: 'assistant_chunk',
+      subtaskId: 'turn-1',
+      itemId: 'message-1',
+      content: '🚀',
+      reasoningChunk: '🧠',
+    })
+
+    const message = projectRuntimeConversationTurns(turns)[0]
+    const reasoning = message.blocks?.find(block => block.type === 'thinking')
+    expect(message).toMatchObject({
+      contentTruncated: true,
+      contentOriginalChars: 200_006,
+    })
+    expect(reasoning).toMatchObject({
+      type: 'thinking',
+      contentTruncated: true,
+      contentOriginalChars: 120_006,
+    })
   })
 
   test('replaces a streamed item with the completed snapshot by exact item id', () => {
@@ -2515,6 +2616,32 @@ describe('runtimeConversationTurns', () => {
         streamTextOffset: undefined,
       }),
     ])
+  })
+
+  test('clears live truncation metadata when a snapshot replaces streamed text', () => {
+    let turns = reduceRuntimeConversationTurns([{ id: 'turn-1', items: [], status: 'streaming' }], {
+      type: 'assistant_chunk',
+      subtaskId: 'turn-1',
+      itemId: 'message-1',
+      content: 'x'.repeat(210_000),
+    })
+
+    turns = reduceRuntimeConversationTurns(turns, {
+      type: 'assistant_chunk',
+      subtaskId: 'turn-1',
+      itemId: 'message-1',
+      content: 'Complete answer',
+      contentMode: 'snapshot',
+    })
+
+    const item = turns[0].items[0]
+    expect(item).toMatchObject({
+      id: 'message-1',
+      type: 'assistant_text',
+      content: 'Complete answer',
+    })
+    expect(item?.type === 'assistant_text' ? item.contentTruncated : true).toBeUndefined()
+    expect(item?.type === 'assistant_text' ? item.contentOriginalChars : 0).toBeUndefined()
   })
 
   test('reconciles a synthetic terminal message with its canonical transcript item', () => {

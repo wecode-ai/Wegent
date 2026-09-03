@@ -27,6 +27,7 @@ import {
   createAppliedRuntimeGuidanceMessage,
   createOptimisticRuntimeGuidanceMessage,
 } from './runtimeGuidanceMessages'
+import { appendBufferedRuntimePaneMessageAction } from './runtimePaneMessageBuffer'
 import { updateRuntimeGoalContinuation } from '@/lib/runtime-goal'
 import { getLatestRuntimeLiveActivity, runtimeLiveActivitySnapshot } from './runtimeThinking'
 
@@ -50,6 +51,14 @@ const interruptedGuidanceIdsByConversation = new Map<string, Set<string>>()
 const scrollSnapshotsByConversation = new Map<string, ConversationScrollSnapshot>()
 const virtualMeasurementsByConversation = new Map<string, VirtualItem[]>()
 const pendingStreamingNotifications = new Map<string, () => void>()
+const pendingStreamingActions = new Map<
+  string,
+  {
+    address: RuntimeTaskAddress
+    actions: RuntimePaneMessageAction[]
+    cancel: () => void
+  }
+>()
 
 export interface ConversationScrollSnapshot {
   distanceFromBottomPx: number
@@ -317,6 +326,52 @@ export function applyRuntimeConversationAction(
   cacheRuntimeConversationTurns(key, nextTurns)
   publishRuntimeConversationAction(key, action)
   return projectRuntimeConversationTurns(nextTurns)
+}
+
+export function enqueueRuntimeConversationAction(
+  address: RuntimeTaskAddress,
+  action: RuntimePaneMessageAction
+): void {
+  const key = runtimeConversationKey(address)
+  if (!isStreamingConversationAction(action)) {
+    flushPendingStreamingActions(key)
+    applyRuntimeConversationAction(address, action)
+    return
+  }
+
+  touchEntry(turnsByConversation, key)
+  const pending = pendingStreamingActions.get(key)
+  if (pending) {
+    appendBufferedRuntimePaneMessageAction(pending.actions, action)
+    return
+  }
+
+  const actions: RuntimePaneMessageAction[] = []
+  appendBufferedRuntimePaneMessageAction(actions, action)
+  const flush = () => {
+    const queued = pendingStreamingActions.get(key)
+    if (!queued) return
+    pendingStreamingActions.delete(key)
+    queued.actions.forEach(queuedAction =>
+      applyRuntimeConversationAction(queued.address, queuedAction)
+    )
+  }
+  if (typeof requestAnimationFrame === 'function') {
+    const frame = requestAnimationFrame(flush)
+    pendingStreamingActions.set(key, {
+      address,
+      actions,
+      cancel: () => cancelAnimationFrame(frame),
+    })
+    return
+  }
+
+  const timer = globalThis.setTimeout(flush, 16)
+  pendingStreamingActions.set(key, {
+    address,
+    actions,
+    cancel: () => globalThis.clearTimeout(timer),
+  })
 }
 
 export function appendAcceptedRuntimeConversationMessage(
@@ -840,8 +895,9 @@ function shortRuntimeAgentId(agentId: string): string {
 
 export function evictRuntimeConversation(address: RuntimeTaskAddress) {
   const key = runtimeConversationKey(address)
+  cancelPendingStreamingActions(key)
   cancelPendingStreamingNotification(key)
-  turnsByConversation.delete(key)
+  evictCachedRuntimeConversationTurns(key)
   metadataByConversation.delete(key)
   hydrationByConversation.delete(key)
   queuedMessagesByConversation.delete(key)
@@ -860,6 +916,8 @@ export function getRuntimeConversationCacheStats() {
 }
 
 export function clearRuntimeConversationCacheForTests() {
+  pendingStreamingActions.forEach(pending => pending.cancel())
+  pendingStreamingActions.clear()
   pendingStreamingNotifications.forEach(cancel => cancel())
   pendingStreamingNotifications.clear()
   turnsByConversation.clear()
@@ -911,6 +969,21 @@ function cancelPendingStreamingNotification(key: string): void {
   cancel()
 }
 
+function flushPendingStreamingActions(key: string): void {
+  const pending = pendingStreamingActions.get(key)
+  if (!pending) return
+  pendingStreamingActions.delete(key)
+  pending.cancel()
+  pending.actions.forEach(action => applyRuntimeConversationAction(pending.address, action))
+}
+
+function cancelPendingStreamingActions(key: string): void {
+  const pending = pendingStreamingActions.get(key)
+  if (!pending) return
+  pendingStreamingActions.delete(key)
+  pending.cancel()
+}
+
 function isStreamingConversationAction(action: RuntimePaneMessageAction): boolean {
   return action.type === 'assistant_chunk' || action.type === 'block_updated'
 }
@@ -935,7 +1008,13 @@ function touchEntry<T>(entries: Map<string, T>, key: string): T | undefined {
 }
 
 function cacheRuntimeConversationTurns(key: string, turns: RuntimeConversationTurn[]) {
-  cacheBoundedEntry(turnsByConversation, key, turns, cancelPendingStreamingNotification)
+  cacheBoundedEntry(turnsByConversation, key, turns, evictCachedRuntimeConversationTurns)
+}
+
+function evictCachedRuntimeConversationTurns(key: string): void {
+  cancelPendingStreamingActions(key)
+  cancelPendingStreamingNotification(key)
+  turnsByConversation.delete(key)
 }
 
 function cacheBoundedEntry<T>(

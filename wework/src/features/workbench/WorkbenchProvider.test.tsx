@@ -11642,7 +11642,9 @@ describe('WorkbenchProvider runtime tasks', () => {
       )
     )
     await waitFor(() => expect(getRuntimeTranscript).toHaveBeenCalledTimes(2))
-    expect(screen.getByTestId('follow-up-messages')).toHaveTextContent('retained stream output')
+    await waitFor(() =>
+      expect(screen.getByTestId('follow-up-messages')).toHaveTextContent('retained stream output')
+    )
   })
 
   test('keeps blank chat draft when selecting a project chat context', async () => {
@@ -15447,8 +15449,10 @@ describe('WorkbenchProvider runtime tasks', () => {
       await queuedSend.promise
     })
     await waitFor(() => expect(screen.getByTestId('queued-messages')).toBeEmptyDOMElement())
-    expect(screen.getByTestId('follow-up-messages')).toHaveTextContent(
-      'user:继续修|assistant:已经继续修了'
+    await waitFor(() =>
+      expect(screen.getByTestId('follow-up-messages')).toHaveTextContent(
+        'user:继续修|assistant:已经继续修了'
+      )
     )
   })
 

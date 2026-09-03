@@ -307,7 +307,7 @@ impl RuntimeWorkRpcHandler {
 
     pub(super) async fn read_codex_rate_limits(&self) -> Result<Value, AppIpcError> {
         self.codex_app_server
-            .request("account/rateLimits/read", Value::Null)
+            .request_transient("account/rateLimits/read", Value::Null)
             .await
             .map_err(|error| AppIpcError::new("codex_rate_limits_unavailable", error))
     }

@@ -12,6 +12,8 @@
 # Usage:
 #   git push                    (shows documentation work without running checks)
 #   AI_VERIFIED=1 git push      (runs checks after the AI updates documentation)
+#   AI_PUSH_BASE_REF=upstream/main AI_VERIFIED=1 git push
+#                               (compare a new fork branch with its target base)
 #   AI_PUSH_FULL_TESTS=1 git push  (also run full Python and Rust test suites)
 # =============================================================================
 
@@ -34,6 +36,12 @@ NC='\033[0m' # No Color
 # Git passes the remote name and URL to pre-push hooks. Husky forwards them from
 # frontend/.husky/pre-push so new-branch diffs can use the correct default branch.
 REMOTE_NAME="${1:-}"
+
+if [ -n "${AI_PUSH_BASE_REF:-}" ] &&
+    ! git rev-parse --verify --quiet "${AI_PUSH_BASE_REF}^{commit}" >/dev/null; then
+    echo "AI_PUSH_BASE_REF does not resolve to a commit: $AI_PUSH_BASE_REF" >&2
+    exit 1
+fi
 
 should_run_full_tests() {
     [ "${AI_PUSH_FULL_TESTS:-0}" = "1" ]
@@ -205,6 +213,11 @@ run_wework_unit_tests() {
 resolve_default_base() {
     local remote_name="${1:-}"
     local candidate=""
+
+    if [ -n "${AI_PUSH_BASE_REF:-}" ]; then
+        echo "$AI_PUSH_BASE_REF"
+        return 0
+    fi
 
     if [ -n "$remote_name" ]; then
         candidate=$(git symbolic-ref --quiet --short "refs/remotes/$remote_name/HEAD" 2>/dev/null || true)
@@ -574,7 +587,7 @@ if [ "$WEWORK_COUNT" -gt 0 ] 2>/dev/null; then
             fi
         fi
 
-        WEWORK_TEST_WORKERS="${WEWORK_PRE_PUSH_TEST_WORKERS:-4}"
+        WEWORK_TEST_WORKERS="${WEWORK_PRE_PUSH_TEST_WORKERS:-2}"
         run_wework_unit_tests &
         WEWORK_TEST_PID=$!
 

@@ -6162,11 +6162,13 @@ describe('DesktopWorkbenchLayout', () => {
   test('preserves the browser tab after closing and reopening the right workspace area', async () => {
     renderWorkspacePanelLayout()
 
-    await userEvent.click(screen.getByTestId('toggle-right-workspace-panel-button'))
-    await userEvent.click(screen.getByTestId('right-workspace-browser-option'))
-    await userEvent.type(screen.getByTestId('workspace-browser-url-input'), 'example.com{Enter}')
+    fireEvent.click(screen.getByTestId('toggle-right-workspace-panel-button'))
+    fireEvent.click(screen.getByTestId('right-workspace-browser-option'))
+    const urlInput = screen.getByTestId('workspace-browser-url-input')
+    fireEvent.change(urlInput, { target: { value: 'example.com' } })
+    fireEvent.submit(urlInput.closest('form')!)
 
-    await userEvent.click(screen.getByTestId('toggle-right-workspace-panel-button'))
+    fireEvent.click(screen.getByTestId('toggle-right-workspace-panel-button'))
 
     const rightPanelShell = screen.getByTestId('right-workspace-panel-shell')
     expect(rightPanelShell).toHaveAttribute('aria-hidden', 'true')
@@ -6179,7 +6181,7 @@ describe('DesktopWorkbenchLayout', () => {
       'http://example.com/'
     )
 
-    await userEvent.click(screen.getByTestId('toggle-right-workspace-panel-button'))
+    fireEvent.click(screen.getByTestId('toggle-right-workspace-panel-button'))
 
     expect(rightPanelShell).toHaveAttribute('aria-hidden', 'false')
     expect(screen.getByTestId('right-workspace-browser-tab-1')).toHaveAttribute(

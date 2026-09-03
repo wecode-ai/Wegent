@@ -12,6 +12,7 @@ import {
   cacheRuntimeConversationQueuePaused,
   clearRuntimeConversationCacheForTests,
   completeRuntimeConversationHydration,
+  enqueueRuntimeConversationAction,
   evictRuntimeConversation,
   getConversationScrollSnapshot,
   getConversationVirtualMeasurements,
@@ -201,6 +202,39 @@ describe('runtimeConversationCache', () => {
     unsubscribe()
   })
 
+  test('reduces canonical streaming bursts once per animation frame', () => {
+    const animationFrames = new Map<number, FrameRequestCallback>()
+    let nextFrameId = 1
+    vi.stubGlobal('requestAnimationFrame', (callback: FrameRequestCallback) => {
+      const frameId = nextFrameId++
+      animationFrames.set(frameId, callback)
+      return frameId
+    })
+    vi.stubGlobal('cancelAnimationFrame', (frameId: number) => {
+      animationFrames.delete(frameId)
+    })
+    applyRuntimeConversationAction(address, {
+      type: 'assistant_started',
+      taskId: address.taskId,
+      subtaskId: 'subtask-1',
+    })
+
+    for (let index = 0; index < 2_200; index += 1) {
+      enqueueRuntimeConversationAction(address, {
+        type: 'assistant_chunk',
+        subtaskId: 'subtask-1',
+        itemId: 'assistant-item-1',
+        content: 'x',
+        offset: index,
+      })
+    }
+
+    expect(animationFrames).toHaveLength(1)
+    expect(getRuntimeConversationMessages(address)[0].content).toBe('')
+    animationFrames.values().next().value?.(0)
+    expect(getRuntimeConversationMessages(address)[0].content).toBe('x'.repeat(2_200))
+  })
+
   test('cancels a pending streaming notification when bounded eviction removes its turn', () => {
     const animationFrames = new Map<number, FrameRequestCallback>()
     let nextFrameId = 1
@@ -248,6 +282,62 @@ describe('runtimeConversationCache', () => {
     expect(animationFrames.size).toBe(0)
     expect(listener).not.toHaveBeenCalled()
     unsubscribe()
+  })
+
+  test('keeps a conversation with buffered streaming actions in the LRU cache', () => {
+    const animationFrames = new Map<number, FrameRequestCallback>()
+    let nextFrameId = 1
+    vi.stubGlobal('requestAnimationFrame', (callback: FrameRequestCallback) => {
+      const frameId = nextFrameId++
+      animationFrames.set(frameId, callback)
+      return frameId
+    })
+    vi.stubGlobal('cancelAnimationFrame', (frameId: number) => {
+      animationFrames.delete(frameId)
+    })
+
+    applyRuntimeConversationAction(address, {
+      type: 'assistant_started',
+      taskId: address.taskId,
+      subtaskId: 'subtask-1',
+    })
+    for (let index = 0; index < 49; index += 1) {
+      applyRuntimeConversationAction(
+        { ...address, taskId: `other-task-${index}` },
+        {
+          type: 'user_added',
+          message: {
+            id: `other-user-${index}`,
+            role: 'user',
+            content: `other message ${index}`,
+            status: 'done',
+          },
+        }
+      )
+    }
+
+    enqueueRuntimeConversationAction(address, {
+      type: 'assistant_chunk',
+      subtaskId: 'subtask-1',
+      itemId: 'assistant-item-1',
+      content: 'retained update',
+    })
+    applyRuntimeConversationAction(
+      { ...address, taskId: 'newest-task' },
+      {
+        type: 'user_added',
+        message: {
+          id: 'newest-user',
+          role: 'user',
+          content: 'newest message',
+          status: 'done',
+        },
+      }
+    )
+
+    expect(animationFrames).toHaveLength(1)
+    animationFrames.values().next().value?.(0)
+    expect(getRuntimeConversationMessages(address)[0].content).toBe('retained update')
   })
 
   test('settles an accepted queued message when its runtime turn starts', () => {

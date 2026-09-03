@@ -36,13 +36,18 @@ function mergeAssistantChunks(
     previous.itemId !== next.itemId ||
     previous.contentMode === 'snapshot' ||
     next.contentMode === 'snapshot' ||
-    previous.reasoningChunk ||
-    next.reasoningChunk ||
     previous.blocks?.length ||
-    next.blocks?.length ||
-    !previous.content ||
-    !next.content
+    next.blocks?.length
   ) {
+    return null
+  }
+  if (previous.reasoningChunk && next.reasoningChunk && !previous.content && !next.content) {
+    return {
+      ...next,
+      reasoningChunk: previous.reasoningChunk + next.reasoningChunk,
+    }
+  }
+  if (previous.reasoningChunk || next.reasoningChunk || !previous.content || !next.content) {
     return null
   }
   if (
@@ -64,31 +69,53 @@ function mergeBlockUpdates(
   previous: Extract<RuntimePaneMessageAction, { type: 'block_updated' }>,
   next: Extract<RuntimePaneMessageAction, { type: 'block_updated' }>
 ): RuntimePaneMessageAction | null {
+  const previousDelta = streamingBlockDelta(previous.updates)
+  const nextDelta = streamingBlockDelta(next.updates)
   if (
     previous.messageId !== next.messageId ||
     previous.subtaskId !== next.subtaskId ||
     previous.blockId !== next.blockId ||
-    !isStreamingContentDeltaUpdate(previous.updates) ||
-    !isStreamingContentDeltaUpdate(next.updates)
+    !previousDelta ||
+    !nextDelta ||
+    previousDelta.kind !== nextDelta.kind
   ) {
     return null
+  }
+  if (previousDelta.kind === 'toolOutput' && nextDelta.kind === 'toolOutput') {
+    return {
+      ...next,
+      updates: {
+        ...next.updates,
+        toolOutputDelta: previousDelta.value + nextDelta.value,
+      },
+    }
   }
   return {
     ...next,
     updates: {
       ...next.updates,
-      contentDelta: previous.updates.contentDelta + next.updates.contentDelta,
+      contentDelta: previousDelta.value + nextDelta.value,
     },
   }
 }
 
-function isStreamingContentDeltaUpdate(
+function streamingBlockDelta(
   updates: Extract<RuntimePaneMessageAction, { type: 'block_updated' }>['updates']
-): updates is typeof updates & { contentDelta: string } {
+): { kind: 'content' | 'toolOutput'; value: string } | null {
   const keys = Object.keys(updates)
-  return (
+  if (
     typeof updates.contentDelta === 'string' &&
     (updates.status === undefined || updates.status === 'streaming') &&
     keys.every(key => key === 'contentDelta' || key === 'status')
-  )
+  ) {
+    return { kind: 'content', value: updates.contentDelta }
+  }
+  if (
+    typeof updates.toolOutputDelta === 'string' &&
+    (updates.status === undefined || updates.status === 'streaming') &&
+    keys.every(key => key === 'toolOutputDelta' || key === 'status')
+  ) {
+    return { kind: 'toolOutput', value: updates.toolOutputDelta }
+  }
+  return null
 }

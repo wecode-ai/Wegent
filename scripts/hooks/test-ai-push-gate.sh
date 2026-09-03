@@ -9,6 +9,8 @@ TMP_DIR="$(mktemp -d)"
 CALL_LOG="$TMP_DIR/calls.log"
 DEFAULT_TEST_OUT="$(mktemp "${TMP_DIR}/default-test.XXXXXX")"
 FULL_TEST_OUT="$(mktemp "${TMP_DIR}/full-test.XXXXXX")"
+BASE_OVERRIDE_TEST_OUT="$(mktemp "${TMP_DIR}/base-override-test.XXXXXX")"
+INVALID_BASE_TEST_OUT="$(mktemp "${TMP_DIR}/invalid-base-test.XXXXXX")"
 WEWORK_TEST_OUT="$(mktemp "${TMP_DIR}/wework-test.XXXXXX")"
 WEWORK_FULL_TEST_OUT="$(mktemp "${TMP_DIR}/wework-full-test.XXXXXX")"
 WEWORK_ELECTRON_TEST_OUT="$(mktemp "${TMP_DIR}/wework-electron-test.XXXXXX")"
@@ -90,6 +92,51 @@ fi
 if grep -q 'Running Quality Checks' "$TMP_DIR/unverified-test.out"; then
     echo "Expected an unverified push to stop before quality checks."
     cat "$TMP_DIR/unverified-test.out"
+    exit 1
+fi
+
+# A new branch pushed from a fork can target a parent repository whose main
+# branch is newer than the fork's default branch. The explicit base must scope
+# checks to the target branch instead of the stale fork default.
+BASE_OVERRIDE_BASE_SHA=$(git rev-parse HEAD)
+BASE_OVERRIDE_FIXTURE="$TMP_DIR/pre-push-base-override-fixture.ts"
+printf 'export const prePushBaseOverrideFixture = true\n' >"$BASE_OVERRIDE_FIXTURE"
+BASE_OVERRIDE_BLOB=$(git hash-object -w "$BASE_OVERRIDE_FIXTURE")
+BASE_OVERRIDE_INDEX="$TMP_DIR/base-override.index"
+GIT_INDEX_FILE="$BASE_OVERRIDE_INDEX" git read-tree "$BASE_OVERRIDE_BASE_SHA"
+GIT_INDEX_FILE="$BASE_OVERRIDE_INDEX" git update-index --add --cacheinfo \
+    100644 "$BASE_OVERRIDE_BLOB" wework/src/pre-push-base-override-fixture.ts
+BASE_OVERRIDE_TREE=$(GIT_INDEX_FILE="$BASE_OVERRIDE_INDEX" git write-tree)
+BASE_OVERRIDE_LOCAL_SHA=$(printf 'pre-push base override fixture\n' |
+    git commit-tree "$BASE_OVERRIDE_TREE" -p "$BASE_OVERRIDE_BASE_SHA")
+
+if AI_PUSH_BASE_REF="$BASE_OVERRIDE_BASE_SHA" \
+    PATH="$TMP_DIR/bin:$PATH" \
+    bash "$PROJECT_ROOT/scripts/hooks/ai-push-gate.sh" >"$BASE_OVERRIDE_TEST_OUT" 2>&1 <<EOF; then
+refs/heads/topic $BASE_OVERRIDE_LOCAL_SHA refs/heads/topic 0000000000000000000000000000000000000000
+EOF
+    echo "Expected an unverified new-branch push to be blocked."
+    exit 1
+fi
+
+if ! grep -q 'Total: *1 file(s)' "$BASE_OVERRIDE_TEST_OUT"; then
+    echo "Expected AI_PUSH_BASE_REF to scope a new branch to its target base."
+    cat "$BASE_OVERRIDE_TEST_OUT"
+    exit 1
+fi
+
+if AI_PUSH_BASE_REF=refs/heads/does-not-exist \
+    PATH="$TMP_DIR/bin:$PATH" \
+    bash "$PROJECT_ROOT/scripts/hooks/ai-push-gate.sh" >"$INVALID_BASE_TEST_OUT" 2>&1 <<EOF; then
+refs/heads/topic $BASE_OVERRIDE_LOCAL_SHA refs/heads/topic 0000000000000000000000000000000000000000
+EOF
+    echo "Expected an invalid AI_PUSH_BASE_REF to be rejected."
+    exit 1
+fi
+
+if ! grep -q 'AI_PUSH_BASE_REF does not resolve to a commit' "$INVALID_BASE_TEST_OUT"; then
+    echo "Expected an invalid AI_PUSH_BASE_REF error."
+    cat "$INVALID_BASE_TEST_OUT"
     exit 1
 fi
 
@@ -189,14 +236,14 @@ if grep -qE '^pnpm --filter wework test$' "$CALL_LOG"; then
     exit 1
 fi
 
-if ! grep -qE 'Running focused renderer unit tests with 4 workers' "$WEWORK_TEST_OUT"; then
-    echo "Expected focused Wework pre-push tests to use four workers by default."
+if ! grep -qE 'Running focused renderer unit tests with 2 workers' "$WEWORK_TEST_OUT"; then
+    echo "Expected focused Wework pre-push tests to use two workers by default."
     cat "$WEWORK_TEST_OUT"
     exit 1
 fi
 
 STATIC_CHECK_LINE=$(grep -n 'Running static checks and unit tests in parallel' "$WEWORK_TEST_OUT" | cut -d: -f1)
-UNIT_TEST_LINE=$(grep -n 'Running focused renderer unit tests with 4 workers' "$WEWORK_TEST_OUT" | cut -d: -f1)
+UNIT_TEST_LINE=$(grep -n 'Running focused renderer unit tests with 2 workers' "$WEWORK_TEST_OUT" | cut -d: -f1)
 if [ -z "$STATIC_CHECK_LINE" ] || [ -z "$UNIT_TEST_LINE" ] ||
     [ "$STATIC_CHECK_LINE" -ge "$UNIT_TEST_LINE" ]; then
     echo "Expected Wework static checks to be reported before unit tests."
@@ -234,8 +281,8 @@ if ! grep -qE '^pnpm --filter wework exec vitest run --dir src --pool=threads$' 
     exit 1
 fi
 
-if ! grep -qE 'Running full renderer unit tests with 4 workers' "$WEWORK_FULL_TEST_OUT"; then
-    echo "Expected full Wework renderer tests to use four workers by default."
+if ! grep -qE 'Running full renderer unit tests with 2 workers' "$WEWORK_FULL_TEST_OUT"; then
+    echo "Expected full Wework renderer tests to use two workers by default."
     cat "$WEWORK_FULL_TEST_OUT"
     exit 1
 fi

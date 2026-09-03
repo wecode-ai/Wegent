@@ -181,9 +181,11 @@ function browserOcclusionReducer(
 
 export interface WorkspaceBrowserPanelProps {
   active: boolean
+  backgroundActive?: boolean
   hideToolbar?: boolean
   label?: string
   browserTabId?: string
+  initialUrl?: string | null
   openRequest?: EmbeddedBrowserOpenRequest | null
   codeCommentCount?: number
   codeCommentContexts?: CodeCommentContext[]
@@ -199,6 +201,7 @@ export interface WorkspaceBrowserPanelProps {
   onFaviconChange?: (faviconUrl: string | null) => void
   onLoadingChange?: (isLoading: boolean) => void
   onTitleChange?: (title: string | null) => void
+  onUrlChange?: (url: string | null) => void
   onAgentActiveChange?: (agentActive: boolean) => void
 }
 
@@ -339,9 +342,11 @@ function observeElementIfPresent(observer: ResizeObserver, element: Element | nu
 
 export function WorkspaceBrowserTabPanel({
   active,
+  backgroundActive = false,
   hideToolbar = false,
   label = 'workspace-browser',
   browserTabId = label,
+  initialUrl = null,
   openRequest,
   codeCommentCount = 0,
   codeCommentContexts = [],
@@ -354,6 +359,7 @@ export function WorkspaceBrowserTabPanel({
   onFaviconChange,
   onLoadingChange,
   onTitleChange,
+  onUrlChange,
   onAgentActiveChange,
 }: WorkspaceBrowserPanelProps) {
   const { t } = useTranslation('common')
@@ -361,8 +367,10 @@ export function WorkspaceBrowserTabPanel({
   const browserPanelRef = useRef<HTMLDivElement | null>(null)
   const browserHostRef = useRef<HTMLDivElement | null>(null)
   const nativeBrowserOpenRef = useRef(false)
-  const nativeBrowserOpeningRef = useRef(false)
+  const nativeBrowserOpeningGenerationRef = useRef<number | null>(null)
+  const nativeBrowserLifecycleGenerationRef = useRef(0)
   const currentUrlRef = useRef<string | null>(null)
+  const persistedUrlRef = useRef<string | null>(initialUrl)
   const pendingNavigationUrlRef = useRef<string | null>(null)
   const activePageUrlRef = useRef<string | null>(null)
   const addressInputRef = useRef<HTMLInputElement | null>(null)
@@ -370,6 +378,8 @@ export function WorkspaceBrowserTabPanel({
   const annotationModeRef = useRef(false)
   const currentLabelRef = useRef(label)
   const activeRef = useRef(active)
+  const browserRuntimeActive = active || backgroundActive
+  const browserRuntimeActiveRef = useRef(browserRuntimeActive)
   const nativeLabelRef = useRef<string | null>(null)
   const adoptedDownloadOwnerLabelRef = useRef<string | null>(null)
   const trackedTerminalDownloadIdsRef = useRef(new Set<string>())
@@ -397,10 +407,10 @@ export function WorkspaceBrowserTabPanel({
   const occlusionSnapshotReadyRef = useRef(true)
   const occlusionSnapshotFallbackTimerRef = useRef<number | null>(null)
   const embeddedBrowserOccludedRef = useRef(false)
-  const [address, setAddress] = useState('')
-  const [currentUrl, setCurrentUrl] = useState<string | null>(null)
+  const [address, setAddress] = useState(initialUrl ?? '')
+  const [currentUrl, setCurrentUrl] = useState<string | null>(initialUrl)
   const [browserOpenAttempt, setBrowserOpenAttempt] = useState(0)
-  const [pageUrl, setPageUrl] = useState<string | null>(null)
+  const [pageUrl, setPageUrl] = useState<string | null>(initialUrl)
   const [status, setStatus] = useState<BrowserStatus>('idle')
   const [error, setError] = useState<string | null>(null)
   const [navigationError, setNavigationError] = useState<EmbeddedBrowserNavigationError | null>(
@@ -546,6 +556,15 @@ export function WorkspaceBrowserTabPanel({
     [onNativeLabelChange, reconcileDownloadSnapshot]
   )
 
+  const reportUrlChange = useCallback(
+    (url: string | null) => {
+      if (persistedUrlRef.current === url) return
+      persistedUrlRef.current = url
+      onUrlChange?.(url)
+    },
+    [onUrlChange]
+  )
+
   useLayoutEffect(() => {
     mountedRef.current = true
     return () => {
@@ -561,8 +580,10 @@ export function WorkspaceBrowserTabPanel({
   useLayoutEffect(() => {
     currentLabelRef.current = label
     activeRef.current = active
+    browserRuntimeActiveRef.current = browserRuntimeActive
+    nativeBrowserLifecycleGenerationRef.current += 1
     pageStateRequestGenerationRef.current += 1
-  }, [active, label])
+  }, [active, browserRuntimeActive, label])
 
   useEffect(() => {
     return subscribeEmbeddedBrowserDownloadEvents(download => {
@@ -733,6 +754,7 @@ export function WorkspaceBrowserTabPanel({
       setCurrentUrl(null)
       setPageUrl(null)
       setAddress('')
+      reportUrlChange(null)
       setStatus('ready')
       setError(null)
       setInvalidTlsCertificate(null)
@@ -767,7 +789,13 @@ export function WorkspaceBrowserTabPanel({
       disposed = true
       unlisten?.()
     }
-  }, [onDownloadActivityChange, onFaviconChange, onNativeLabelChange, onTitleChange])
+  }, [
+    onDownloadActivityChange,
+    onFaviconChange,
+    onNativeLabelChange,
+    onTitleChange,
+    reportUrlChange,
+  ])
 
   useEffect(() => {
     if (!active || !nativeLabelRef.current) return
@@ -780,6 +808,7 @@ export function WorkspaceBrowserTabPanel({
       if (pendingNavigationUrl && url && url !== pendingNavigationUrl) return
       activePageUrlRef.current = url
       setPageUrl(url)
+      reportUrlChange(url)
       if (url) {
         if (!addressEditingRef.current && document.activeElement !== addressInputRef.current) {
           setAddress(url)
@@ -792,7 +821,7 @@ export function WorkspaceBrowserTabPanel({
       onTitleChange?.(null)
       onFaviconChange?.(null)
     },
-    [onFaviconChange, onTitleChange]
+    [onFaviconChange, onTitleChange, reportUrlChange]
   )
 
   useEffect(() => {
@@ -1252,19 +1281,24 @@ export function WorkspaceBrowserTabPanel({
   }, [currentUrl])
 
   useEffect(() => {
-    if (!embeddedBrowserAvailable || !currentUrl) return
+    if (!browserRuntimeActive || !embeddedBrowserAvailable || !currentUrl) return
     if (nativeBrowserOpenRef.current) {
       schedulePostOpenBoundsSync(active)
       return
     }
-    if (nativeBrowserOpeningRef.current) return
+    if (nativeBrowserOpeningGenerationRef.current !== null) return
 
     const requestId = activeOpenRequestIdRef.current
     const openingLabel = label
     const openingUrl = currentUrl
     const nativeOpeningUrl = requestId ? 'about:blank' : openingUrl
-    const isAbandoned = () => !mountedRef.current || currentLabelRef.current !== openingLabel
-    nativeBrowserOpeningRef.current = true
+    const lifecycleGeneration = nativeBrowserLifecycleGenerationRef.current
+    const isAbandoned = () =>
+      !mountedRef.current ||
+      !browserRuntimeActiveRef.current ||
+      currentLabelRef.current !== openingLabel ||
+      nativeBrowserLifecycleGenerationRef.current !== lifecycleGeneration
+    nativeBrowserOpeningGenerationRef.current = lifecycleGeneration
 
     setStatus('loading')
     const revealHiddenBrowser = async (visible: boolean) => {
@@ -1293,6 +1327,14 @@ export function WorkspaceBrowserTabPanel({
       }
       await setEmbeddedBrowserBounds({ x: 0, y: 0, width: 1, height: 1 }, false, openingLabel, true)
     }
+    let retryAfterLifecycleChange = false
+    const scheduleLifecycleRetry = () => {
+      retryAfterLifecycleChange =
+        mountedRef.current &&
+        browserRuntimeActiveRef.current &&
+        !nativeBrowserOpenRef.current &&
+        Boolean(currentUrlRef.current)
+    }
     const recoverBrowserFromPageState = async () => {
       const recoveryDelays = [0, 120, 300, 600]
       for (const delay of recoveryDelays) {
@@ -1301,7 +1343,10 @@ export function WorkspaceBrowserTabPanel({
         }
         try {
           const pageState = await readEmbeddedBrowserPageState(openingLabel)
-          if (isAbandoned()) return true
+          if (isAbandoned()) {
+            scheduleLifecycleRetry()
+            return true
+          }
           adoptNativeLabel(pageState.nativeLabel, openingLabel)
           setInvalidTlsCertificate(pageState.invalidTlsCertificate ?? null)
           nativeBrowserOpenRef.current = true
@@ -1327,7 +1372,10 @@ export function WorkspaceBrowserTabPanel({
         const measuredBounds = active && host ? getElementBounds(host) : null
         const visible = measuredBounds !== null
         const bounds = measuredBounds ?? { x: 0, y: 0, width: 1, height: 1 }
-        if (isAbandoned()) return
+        if (isAbandoned()) {
+          scheduleLifecycleRetry()
+          return
+        }
 
         logBrowserOpenDiagnostic('host_ready', {
           active,
@@ -1359,7 +1407,8 @@ export function WorkspaceBrowserTabPanel({
               )
             : await openEmbeddedBrowser(nativeOpeningUrl, bounds, openingLabel, false, !active)
         if (isAbandoned()) {
-          await closeEmbeddedBrowser(openingLabel).catch(() => undefined)
+          await closeEmbeddedBrowser(openingLabel, pageState.nativeLabel).catch(() => undefined)
+          scheduleLifecycleRetry()
           logBrowserOpenDiagnostic('lifecycle_cancelled', {
             active,
             label: openingLabel,
@@ -1412,9 +1461,17 @@ export function WorkspaceBrowserTabPanel({
           if (await recoverBrowserFromPageState()) return
           setStatus('error')
           setError(t('workbench.browser_open_failed'))
+        } else {
+          scheduleLifecycleRetry()
         }
       } finally {
-        nativeBrowserOpeningRef.current = false
+        const releasedOpening = nativeBrowserOpeningGenerationRef.current === lifecycleGeneration
+        if (releasedOpening) {
+          nativeBrowserOpeningGenerationRef.current = null
+        }
+        if (releasedOpening && retryAfterLifecycleChange) {
+          setBrowserOpenAttempt(attempt => attempt + 1)
+        }
       }
     }
 
@@ -1423,6 +1480,7 @@ export function WorkspaceBrowserTabPanel({
     active,
     adoptNativeLabel,
     applyNativePageStatus,
+    browserRuntimeActive,
     browserOpenAttempt,
     currentUrl,
     embeddedBrowserAvailable,
@@ -1433,7 +1491,14 @@ export function WorkspaceBrowserTabPanel({
   ])
 
   useEffect(() => {
-    if (!active || !embeddedBrowserAvailable || nativeBrowserOpenRef.current || currentUrl) return
+    if (
+      !browserRuntimeActive ||
+      !embeddedBrowserAvailable ||
+      nativeBrowserOpenRef.current ||
+      currentUrl
+    ) {
+      return
+    }
 
     let disposed = false
 
@@ -1467,6 +1532,7 @@ export function WorkspaceBrowserTabPanel({
     active,
     adoptNativeLabel,
     applyNativePageStatus,
+    browserRuntimeActive,
     currentUrl,
     embeddedBrowserAvailable,
     label,
@@ -1478,15 +1544,71 @@ export function WorkspaceBrowserTabPanel({
   useEffect(() => {
     if (!embeddedBrowserAvailable) return
 
+    let annotationResetFrame: number | null = null
     if (!active) {
-      void hideEmbeddedBrowser().catch(error => {
-        console.error('Failed to hide embedded browser:', error)
+      if (annotationModeRef.current) {
+        void setEmbeddedBrowserAnnotationOriginalView(false, label).catch(error => {
+          console.error('Failed to reset embedded browser original view:', error)
+        })
+      }
+      annotationResetFrame = window.requestAnimationFrame(() => {
+        annotationModeRef.current = false
+        setOriginalViewHeld(false)
+        setAnnotationMode(false)
       })
-      return
+    }
+
+    if (!browserRuntimeActive) {
+      const expectedNativeLabel = nativeLabelRef.current ?? undefined
+      const ownsNativeBrowser =
+        nativeBrowserOpenRef.current ||
+        nativeBrowserOpeningGenerationRef.current !== null ||
+        expectedNativeLabel !== undefined
+      if (!ownsNativeBrowser) {
+        return () => {
+          if (annotationResetFrame !== null) {
+            window.cancelAnimationFrame(annotationResetFrame)
+          }
+        }
+      }
+
+      clearScheduledBoundsSync()
+      browserBoundsSyncGenerationRef.current += 1
+      nativeBrowserOpenRef.current = false
+      nativeBrowserOpeningGenerationRef.current = null
+      nativeLabelRef.current = null
+      adoptedDownloadOwnerLabelRef.current = null
+      activeDownloadIdsRef.current = new Set()
+      onNativeLabelChange?.(null)
+      onDownloadActivityChange?.(false)
+      setDownloads([])
+      setDownloadsOpen(false)
+      void closeEmbeddedBrowser(label, expectedNativeLabel).catch(error => {
+        console.error('Failed to suspend embedded browser:', error)
+      })
+      return () => {
+        if (annotationResetFrame !== null) {
+          window.cancelAnimationFrame(annotationResetFrame)
+        }
+      }
     }
 
     scheduleEmbeddedBrowserBoundsSync(active)
-  }, [active, embeddedBrowserAvailable, hideEmbeddedBrowser, scheduleEmbeddedBrowserBoundsSync])
+    return () => {
+      if (annotationResetFrame !== null) {
+        window.cancelAnimationFrame(annotationResetFrame)
+      }
+    }
+  }, [
+    active,
+    browserRuntimeActive,
+    clearScheduledBoundsSync,
+    embeddedBrowserAvailable,
+    label,
+    onDownloadActivityChange,
+    onNativeLabelChange,
+    scheduleEmbeddedBrowserBoundsSync,
+  ])
 
   useEffect(() => {
     if (!embeddedBrowserAvailable) return
@@ -1622,14 +1744,10 @@ export function WorkspaceBrowserTabPanel({
 
   useEffect(() => {
     return () => {
-      // Do NOT close the native embedded browser here. React StrictMode double-invokes
-      // effects in development (mount -> unmount -> remount), so this cleanup runs once
-      // for a "fake" unmount immediately before the real mount. Closing the native
-      // webview here tears down the very browser the remounted panel is about to open,
-      // which resets the panel back to the empty start page (blank address bar).
-      // The native browser lifecycle is owned by the explicit close-tab action
-      // (closeRightPanelTab -> closeEmbeddedBrowsers), not by component unmount.
-      // Here we only clear local references so a remount re-adopts the existing browser.
+      // React StrictMode double-invokes this cleanup in development. Inactive panels
+      // suspend through the active-state effect, explicit tab closure is handled by
+      // the workspace owner, and Electron webview unmount destroys its WebContents.
+      // This cleanup only invalidates renderer-local ownership.
       nativeBrowserOpenRef.current = false
       if (consumeEmbeddedBrowserLabelTransfer(label)) return
       nativeLabelRef.current = null
@@ -2921,7 +3039,7 @@ export function WorkspaceBrowserTabPanel({
             )}
             aria-label={t('workbench.browser')}
           >
-            {electronRuntime ? (
+            {electronRuntime && browserRuntimeActive ? (
               <ElectronEmbeddedBrowserView
                 active={active}
                 cursor={agentCursor}
