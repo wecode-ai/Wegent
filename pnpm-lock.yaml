@@ -7,7 +7,9 @@ settings:
 packageExtensionsChecksum: sha256-7xSR3ISjHMO1s2SGAymiUIjUjIMF2cWdsXI0XROK3UY=
 
 patchedDependencies:
-  '@file-viewer/renderer-drawing@2.1.26': f4d00a3f3f86eacb4f5fbd6447a7e743af72865c6a01fa193ee9337984b1bf68
+  '@file-viewer/renderer-drawing@2.1.26':
+    hash: f4d00a3f3f86eacb4f5fbd6447a7e743af72865c6a01fa193ee9337984b1bf68
+    path: patches/@file-viewer__renderer-drawing@2.1.26.patch
 
 importers:
 
