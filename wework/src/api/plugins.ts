@@ -24,6 +24,7 @@ import type {
 } from '@/types/api'
 import { sha256Hex } from './fileHash'
 import type { HttpClient } from './http'
+import { resolveApiUrl } from './resolveApiUrl'
 
 export interface PluginShareUserSearchItem {
   id: number
@@ -98,10 +99,22 @@ async function uploadPublicationSnapshot(
   }
 }
 
-export function createPluginApi(client: HttpClient) {
+export function createPluginApi(client: HttpClient, apiBaseUrl = '') {
   const deviceQuery = (deviceId?: string) => {
     const normalized = deviceId?.trim()
     return normalized ? `?device_id=${encodeURIComponent(normalized)}` : ''
+  }
+  const initSubmission = async (
+    data: PluginSubmissionInitRequest
+  ): Promise<PluginSubmissionInitResponse> => {
+    const initialized = await client.post<PluginSubmissionInitResponse>(
+      '/plugins/submissions/init',
+      data
+    )
+    return {
+      ...initialized,
+      uploadUrl: resolveApiUrl(initialized.uploadUrl, apiBaseUrl),
+    }
   }
 
   return {
@@ -202,6 +215,10 @@ export function createPluginApi(client: HttpClient) {
     getPublicationRequest(id: number, revision?: number): Promise<PluginPublicationRequestItem> {
       const suffix = revision === undefined ? '' : '?revision=' + encodeURIComponent(revision)
       return client.get('/plugins/publication-requests/' + id + suffix)
+    },
+    initSubmission,
+    completeSubmission(id: number): Promise<PluginSubmissionCompleteResponse> {
+      return client.post(`/plugins/submissions/${id}/complete`)
     },
     withdrawPublicationRequest(
       id: number,
@@ -308,15 +325,12 @@ export function createPluginApi(client: HttpClient) {
       >
     ): Promise<PluginSubmissionCompleteResponse> {
       const sha256 = await sha256Hex(file)
-      const initialized = await client.post<PluginSubmissionInitResponse>(
-        '/plugins/submissions/init',
-        {
-          ...metadata,
-          filename: file.name,
-          sha256,
-          sizeBytes: file.size,
-        }
-      )
+      const initialized = await initSubmission({
+        ...metadata,
+        filename: file.name,
+        sha256,
+        sizeBytes: file.size,
+      })
       try {
         const uploadTransport = globalThis.fetch.bind(globalThis)
         const upload = await uploadTransport(initialized.uploadUrl, {

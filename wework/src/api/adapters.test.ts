@@ -449,6 +449,33 @@ describe('REST adapters', () => {
     }
   })
 
+  test('resolves plugin submission uploads against the connected Backend', async () => {
+    const client = mockClient()
+    vi.mocked(client.post).mockResolvedValueOnce({
+      submissionId: 17,
+      pluginId: 4,
+      releaseId: 8,
+      uploadUrl: '/api/plugins/submissions/17/artifact?token=ticket',
+      expiresAt: '2026-09-02T12:00:00Z',
+    })
+
+    const initialized = await createPluginApi(
+      client,
+      'https://api.example.test/api'
+    ).initSubmission({
+      slug: 'example',
+      displayName: 'Example',
+      version: '1.0.0',
+      filename: 'example.zip',
+      sha256: '0'.repeat(64),
+      sizeBytes: 3,
+    })
+
+    expect(initialized.uploadUrl).toBe(
+      'https://api.example.test/api/plugins/submissions/17/artifact?token=ticket'
+    )
+  })
+
   test('ensures a built-in plugin through its stable key', async () => {
     const client = mockClient()
     vi.mocked(client.post).mockResolvedValueOnce({ plugin: {} })

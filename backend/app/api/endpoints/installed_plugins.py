@@ -13,15 +13,17 @@ from fastapi import (
     File,
     Form,
     HTTPException,
+    Query,
     Request,
     UploadFile,
     status,
 )
-from fastapi.responses import StreamingResponse
+from fastapi.responses import Response, StreamingResponse
 from jose import JWTError, jwt
 from sqlalchemy.orm import Session
 
 from app.api.dependencies import get_db
+from app.api.marketplace_upload import read_marketplace_package
 from app.core import security
 from app.core.config import settings
 from app.db.session import get_db_session
@@ -61,6 +63,10 @@ from app.services.device.capability_sync_service import (
     device_capability_sync_service,
 )
 from app.services.installed_plugin_service import installed_plugin_service
+from app.services.marketplace_submission_upload import (
+    InvalidMarketplaceSubmissionUploadToken,
+    verify_marketplace_submission_upload_token,
+)
 from app.services.plugin_device_installation_service import (
     plugin_device_installation_service,
 )
@@ -72,6 +78,7 @@ from app.services.plugin_marketplace_service import plugin_marketplace_service
 from app.services.plugin_package_parser import MAX_PLUGIN_PACKAGE_SIZE_BYTES
 from app.services.plugin_package_storage import PluginPackageStorageError
 from app.stores.tasks import subtask_store, task_store
+from shared.telemetry.decorators import trace_async
 
 router = APIRouter(tags=["plugins"])
 logger = logging.getLogger(__name__)
@@ -1003,6 +1010,47 @@ def init_plugin_submission(
         raise HTTPException(
             status_code=503, detail="Plugin package storage unavailable"
         ) from exc
+
+
+@router.put("/submissions/{submission_id}/artifact", status_code=204)
+@trace_async("upload_plugin_submission_artifact", "marketplace.api")
+async def upload_plugin_submission_artifact(
+    submission_id: int,
+    request: Request,
+    token: str = Query(..., description="Short-lived plugin upload token"),
+    db: Session = Depends(get_db),
+) -> Response:
+    """Upload a ticketed plugin package through the Backend origin."""
+    try:
+        claims = verify_marketplace_submission_upload_token(
+            token, expected_kind="plugin"
+        )
+    except InvalidMarketplaceSubmissionUploadToken as exc:
+        raise HTTPException(
+            status_code=403, detail="Invalid or expired plugin upload link"
+        ) from exc
+    if claims.submission_id != submission_id:
+        raise HTTPException(
+            status_code=403, detail="Invalid or expired plugin upload link"
+        )
+
+    package = await read_marketplace_package(
+        request,
+        max_bytes=MAX_PLUGIN_PACKAGE_SIZE_BYTES,
+        resource_name="Plugin",
+    )
+    try:
+        plugin_marketplace_service.upload_submission_package(
+            db,
+            user_id=claims.user_id,
+            submission_id=submission_id,
+            package=package,
+        )
+    except PluginPackageStorageError as exc:
+        raise HTTPException(
+            status_code=503, detail="Plugin package storage unavailable"
+        ) from exc
+    return Response(status_code=204)
 
 
 @router.post(
