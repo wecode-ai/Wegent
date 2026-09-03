@@ -433,6 +433,7 @@
     "plugin_development_filter_errors": "错误",
     "plugin_development_focus": "切换到调试实例",
     "plugin_development_has_errors": "需要处理",
+    "plugin_development_hmr_generation": "HMR 版本",
     "plugin_development_instance_id": "实例 ID",
     "plugin_development_just_now": "刚刚",
     "plugin_development_last_update": "最后更新",

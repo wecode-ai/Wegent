@@ -432,6 +432,7 @@
     "plugin_development_filter_errors": "Errors",
     "plugin_development_focus": "Focus debug instance",
     "plugin_development_has_errors": "Needs attention",
+    "plugin_development_hmr_generation": "HMR generation",
     "plugin_development_instance_id": "Instance ID",
     "plugin_development_just_now": "Just now",
     "plugin_development_last_update": "Last update",

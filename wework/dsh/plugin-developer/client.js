@@ -360,7 +360,10 @@ window.__ModuleLoader__.load({
               {
                 type: 'hmr',
                 label: t('workbench.plugin_development_event_hmr_accepted', 'HMR update accepted'),
-                detail: `Generation ${hmrGeneration}`,
+                detail: `${t(
+                  'workbench.plugin_development_hmr_generation',
+                  'HMR generation'
+                )} ${hmrGeneration}`,
                 timestamp: relativeTimestamp(currentSession.hmrUpdatedAt, t),
                 dotClassName: 'bg-success',
                 testId: 'wework-plugin-development-event-hmr',
@@ -656,7 +659,10 @@ window.__ModuleLoader__.load({
                   {
                     className: 'grid grid-cols-3 border-t border-border/60 bg-muted/20',
                   },
-                  targetCell('HMR Generation', String(hmrGeneration)),
+                  targetCell(
+                    t('workbench.plugin_development_hmr_generation', 'HMR generation'),
+                    String(hmrGeneration)
+                  ),
                   targetCell(
                     t('workbench.plugin_development_last_update', 'Last update'),
                     relativeTimestamp(currentSession?.hmrUpdatedAt || currentSession?.updatedAt, t)

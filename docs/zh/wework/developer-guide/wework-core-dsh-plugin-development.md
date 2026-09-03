@@ -64,9 +64,11 @@ Wework 插件是外层交付单元，可以通过自身 `package.json` 的
 不得写入 Wework 或 DSH 私有清单字段。
 
 “Wework 插件开发”的外层包位于 `wework/dsh/plugin-developer`，内嵌 Codex 插件位于
-`wework/dsh/plugin-developer/codex-plugin`。构建桌面资源时，Wework 把这个内嵌目录
-投影到个人 Codex 市场并默认注册；投影目录不是源码。创建入口和调试 Tab 由外层
-Wework 插件直接注册，不依赖 Codex 插件是否安装。
+`wework/dsh/plugin-developer/codex-plugin`。构建桌面资源时，Wework 使用内置插件资产
+而不是 `CODEX_HOME`，将其投影到 Wework 自有市场路径
+`<resourcesRoot>/bundled-plugins/wework-personal` 并默认注册；投影目录不是源码。
+运行时认证另行从原生 Codex home 准备：Windows 复制 `auth.json`，其他平台创建链接。
+创建入口和调试 Tab 由外层 Wework 插件直接注册，不依赖 Codex 插件是否安装。
 
 新建项目采用相同结构：
 

@@ -84,8 +84,11 @@ supported Codex content, but no Wework- or DSH-specific manifest fields.
 The outer **Wework Plugin Developer** package lives at
 `wework/dsh/plugin-developer`, and its nested Codex plugin lives at
 `wework/dsh/plugin-developer/codex-plugin`. Desktop resource preparation
-projects that directory into the personal Codex marketplace and registers it
-by default; the projected directory is not source. The outer Wework plugin
+projects bundled plugin assets, rather than `CODEX_HOME`, into the Wework-owned
+marketplace at `<resourcesRoot>/bundled-plugins/wework-personal` and registers
+the nested plugin by default; the projected directory is not source. Runtime
+authentication is prepared separately from the native Codex home: `auth.json`
+is copied on Windows and linked on other platforms. The outer Wework plugin
 directly registers the create action and debugging tab, so neither UI entry is
 gated by Codex plugin installation.
 

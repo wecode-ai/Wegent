@@ -171,6 +171,12 @@ describe('CoreDshPluginManager', () => {
     await expect(validateCoreDshDevelopmentPlugin(root.path)).rejects.toThrow(
       'outside the plugin directory'
     )
+    await writeJson(join(root.path, 'package.json'), {
+      name: 'dsh-development',
+      version: '0.1.0',
+      dsh: { bundle: { patch: '.' } },
+    })
+    await expect(validateCoreDshDevelopmentPlugin(root.path)).rejects.toThrow('not a file')
     await root.remove()
   })
 

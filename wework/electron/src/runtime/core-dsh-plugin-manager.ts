@@ -1,5 +1,5 @@
 import { spawn } from 'node:child_process'
-import { access, mkdir, readFile, rm, writeFile } from 'node:fs/promises'
+import { access, mkdir, readFile, rm, stat, writeFile } from 'node:fs/promises'
 import { isAbsolute, join, relative, resolve } from 'node:path'
 import { runtimeNodeArgs } from './electron-node-runtime.js'
 
@@ -512,7 +512,9 @@ async function readDevelopmentPlugin(sourceRoot: string): Promise<CoreDshDevelop
   if (relative(root, patchPath).startsWith('..') || isAbsolute(relative(root, patchPath))) {
     throw new Error(`${name} declares a dsh.bundle.patch outside the plugin directory`)
   }
-  await access(patchPath)
+  if (!(await stat(patchPath)).isFile()) {
+    throw new Error(`${name} declares a dsh.bundle.patch that is not a file`)
+  }
   await validateNestedCodexPlugin(root, manifest)
   return {
     name,
