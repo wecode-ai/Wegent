@@ -2246,7 +2246,7 @@ describe('DesktopWorkbenchLayout', () => {
     expect(screen.queryByTestId('project-work-button')).not.toBeInTheDocument()
   })
 
-  test('focuses the composer from the conversation surface without stealing interactions', async () => {
+  function renderFocusableConversation() {
     const onlineDevice = {
       id: 1,
       device_id: 'device-1',
@@ -2285,33 +2285,57 @@ describe('DesktopWorkbenchLayout', () => {
         ]}
       />
     )
+    return {
+      composer: screen.getByTestId('chat-message-input'),
+      hoverRegion: screen.getByTestId('message-hover-region'),
+      messageText: screen.getByText('Selectable response'),
+    }
+  }
 
-    const composer = screen.getByTestId('chat-message-input')
+  async function waitForComposerFocusRequest() {
+    await act(
+      () =>
+        new Promise<void>(resolvePromise => {
+          window.requestAnimationFrame(() => resolvePromise())
+        })
+    )
+  }
+
+  test('focuses the composer from a non-interactive conversation click', async () => {
+    const { composer } = renderFocusableConversation()
+
     composer.blur()
-
     fireEvent.click(screen.getByTestId('desktop-chat-scroll-content'))
 
     await waitFor(() => expect(composer).toHaveFocus())
+  })
+
+  test('does not focus the composer from a conversation action click', async () => {
+    const { composer, hoverRegion } = renderFocusableConversation()
 
     composer.blur()
-    const hoverRegion = screen.getByTestId('message-hover-region')
     fireEvent.pointerEnter(hoverRegion)
     const copyButton = await screen.findByTestId('copy-message-button')
-
     await userEvent.click(copyButton)
+    await waitForComposerFocusRequest()
 
     expect(composer).not.toHaveFocus()
+  })
 
-    const messageText = screen.getByText('Selectable response')
+  test('does not focus the composer while conversation text is selected', async () => {
+    const { composer, messageText } = renderFocusableConversation()
+
+    composer.blur()
     const selection = window.getSelection()
     const range = document.createRange()
     range.selectNodeContents(messageText)
     selection?.removeAllRanges()
     selection?.addRange(range)
-
     fireEvent.click(messageText)
+    await waitForComposerFocusRequest()
 
     expect(composer).not.toHaveFocus()
+    expect(selection?.toString()).toBe('Selectable response')
     selection?.removeAllRanges()
   })
 

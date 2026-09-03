@@ -306,6 +306,10 @@ const CONVERSATION_COMPOSER_FOCUS_EXCLUSION_SELECTOR = [
   '[role="menuitemradio"]',
   '[role="option"]',
   '[role="slider"]',
+  '[role="checkbox"]',
+  '[role="radio"]',
+  '[role="switch"]',
+  '[role="tab"]',
 ].join(', ')
 
 interface SelectedAssistantPlan {
