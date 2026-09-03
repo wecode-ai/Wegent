@@ -43,6 +43,25 @@ def build_attachment_media_content(attachments: list[Any]) -> list[dict[str, str
         if not media_id and media_type == "video":
             metadata = type_data.get("video_metadata") or {}
             media_id = metadata.get("media_id") if isinstance(metadata, dict) else None
+        if not media_id and media_type == "video" and type_data.get("fid"):
+            attachment_id = getattr(attachment, "id", None)
+            if isinstance(attachment_id, int):
+                file_id = f"wegent-attachment-{attachment_id}"
+                key = (media_type, file_id)
+                if key not in seen:
+                    seen.add(key)
+                    content.append(
+                        {
+                            "type": "input_video",
+                            "file_id": file_id,
+                            "video_url": build_public_attachment_download_url(
+                                attachment_id,
+                                LOCAL_IMAGE_URL_EXPIRES,
+                                settings.WEGENT_BACKEND_PUBLIC_URL,
+                            ),
+                        }
+                    )
+            continue
         if not media_id and media_type == "image":
             attachment_id = getattr(attachment, "id", None)
             if isinstance(attachment_id, int):
