@@ -524,12 +524,19 @@ pub async fn worktree_add(
                 );
             }
         }
-        let probe_args = owned_args(&["-C", target, "rev-parse", "--is-inside-work-tree"]);
+        let probe_args = owned_args(&["-C", target, "rev-parse", "--show-toplevel"]);
         let (probe_stdout, _, probe_success) =
             run_git(&probe_args, None, &process_env, call_timeout, 4096)
                 .await
                 .unwrap_or_else(|(message, _)| (Vec::new(), message, false));
-        let already_worktree = probe_success && stdout_text(&probe_stdout).trim() == "true";
+        // `--is-inside-work-tree` is true for any directory inside a repository,
+        // so compare the resolved repository top level with the target itself;
+        // only a real worktree root may be reused or force-checked-out.
+        let already_worktree = probe_success
+            && Path::new(stdout_text(&probe_stdout).trim())
+                .canonicalize()
+                .ok()
+                == target_path.canonicalize().ok();
         if already_worktree {
             if let Some(branch) = branch {
                 let checkout_args =
@@ -1011,6 +1018,54 @@ mod tests {
                 "main",
                 "master"
             ]
+        );
+    }
+
+    #[tokio::test]
+    async fn worktree_add_does_not_force_checkout_a_nested_repository_directory() {
+        let directory = tempfile::tempdir().expect("temporary directory should be created");
+        let repo = directory.path().join("repo");
+        std::fs::create_dir_all(&repo).expect("repo directory should be created");
+        let setup = |args: &[&str]| {
+            let output = StdCommand::new("git")
+                .args(args)
+                .current_dir(&repo)
+                .env_clear()
+                .envs(git_setup_env(&repo))
+                .output()
+                .expect("git setup should run");
+            assert!(
+                output.status.success(),
+                "git setup failed: {}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+        };
+        setup(&["init", "-q", "-b", "main"]);
+        setup(&["config", "user.email", "executor@test.local"]);
+        setup(&["config", "user.name", "Executor Test"]);
+        std::fs::write(repo.join("tracked.txt"), "one\n").expect("seed file should be written");
+        setup(&["add", "tracked.txt"]);
+        setup(&["commit", "-q", "-m", "seed"]);
+
+        // A nested directory inside the source repository is not a worktree
+        // root; the add must reject it instead of force-checking out the
+        // enclosing repository.
+        let nested = repo.join("nested");
+        std::fs::create_dir_all(&nested).expect("nested directory should be created");
+        std::fs::write(nested.join("untracked.txt"), "keep me\n")
+            .expect("nested content should be written");
+        let args = vec![repo.display().to_string(), nested.display().to_string()];
+        let result = worktree_add(&args, &empty_env(), 10.0, 1 << 20).await;
+        assert!(!result.success);
+        assert_eq!(
+            result.error.as_deref(),
+            Some("target exists and is not a Git worktree")
+        );
+        assert!(
+            std::fs::read_to_string(nested.join("untracked.txt"))
+                .map(|content| content == "keep me\n")
+                .unwrap_or(false),
+            "nested repository content must not be force-checked out"
         );
     }
 }
