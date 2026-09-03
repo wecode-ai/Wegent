@@ -1,23 +1,24 @@
 ---
 name: develop-wework-plugin
-description: Create, extend, and debug Wework Core DSH plugins and their bundled Codex Skills. Use when the user asks to develop a Wework plugin, add a Wework UI extension, create a Skill inside that plugin, or diagnose it in the isolated plugin-development instance.
+description: Create, extend, and debug Wework Core DSH plugins and their optional nested Codex plugins. Use when the user asks to develop a Wework plugin, add a Wework UI extension, create a Skill inside that plugin, or diagnose it in the isolated plugin-development instance.
 ---
 
 # Develop a Wework plugin
 
-Treat the current local project as one composite plugin when it contains both
-Core DSH code and Codex capabilities. Keep `.codex-plugin/plugin.json`,
-`skills/`, `package.json`, and `cordis.patch.yml` coherent.
+Treat the Wework package as the outer delivery unit. It may declare a nested
+Codex plugin through `wework.codexPlugin`; the Codex plugin must never own or
+gate the Wework plugin.
 
 ## Inspect before editing
 
-1. Read `.wework/plugin-development.json`, `.codex-plugin/plugin.json`,
-   `package.json`, and the declared `dsh.bundle.patch`.
-2. Read every declared host, browser, Skill, MCP, or sidecar entry that the
-   requested change affects.
-3. Reuse public Wework DSH slots and services. Do not import private Wework
+1. Read `.wework/plugin-development.json`, `package.json`, and the declared
+   `dsh.bundle.patch`.
+2. When `wework.codexPlugin` is present, read its `.codex-plugin/plugin.json`
+   and every affected Skill or MCP entry below that directory.
+3. Read every declared host, browser, or sidecar entry affected by the change.
+4. Reuse public Wework DSH slots and services. Do not import private Wework
    application modules from a user plugin.
-4. Remove duplicate loaders, watchers, compatibility paths, and generated
+5. Remove duplicate loaders, watchers, compatibility paths, and generated
    examples that no longer serve the plugin.
 
 ## Build the requested capability
@@ -25,8 +26,8 @@ Core DSH code and Codex capabilities. Keep `.codex-plugin/plugin.json`,
 - Register Wework UI through `ctx.wework.ui.register` and a documented slot.
 - Keep contribution ids stable and provide `data-testid` values for interactive
   controls.
-- When creating or changing a Skill, keep its description discriminating and
-  its instructions focused on decisions Codex would not reliably infer.
+- When creating or changing a Skill, keep it inside the declared nested Codex
+  plugin and keep its description discriminating.
 - Keep browser code and Node code in their declared entries; do not rely on
   accidental startup order.
 
@@ -47,7 +48,8 @@ instance.
 
 ## Verify
 
-- Validate both plugin manifests and the declared patch.
+- Validate the outer Wework package, its declared patch, and the nested Codex
+  plugin when present.
 - Run focused tests for the changed host, browser, and Skill behavior.
 - Exercise both Node and browser halves when both exist.
 - Verify one source edit through HMR.

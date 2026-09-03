@@ -13,7 +13,7 @@ Open **Plugins** to inspect installed plugins and manage their capabilities. Rev
 In the Wework desktop app, open **Plugins → Manage plugins** and switch between two management surfaces:
 
 - **Codex plugins** provide Skills, MCP servers, applications, and commands to AI. They are installed through Codex or Wegent plugin marketplaces and are used in tasks and conversations.
-- **Wework plugins** are DSH bundles that directly extend the local Wework desktop runtime. They are not regular Codex plugins and do not appear in the task plugin picker.
+- **Wework plugins** are DSH bundles that directly extend the local Wework desktop runtime. A Wework plugin is the outer delivery unit and may carry an official-format Codex plugin; only those nested Codex capabilities appear in conversations and the task plugin picker.
 
 From **Wework plugins**, install a plugin from an npm package, Git source, or absolute local directory. Wework shows a trust confirmation because the plugin and its installation scripts run with the current user's permissions. User-installed plugins can be updated, enabled, disabled, or uninstalled. Bundled Wework runtime plugins are displayed as read-only and cannot be changed or removed here.
 

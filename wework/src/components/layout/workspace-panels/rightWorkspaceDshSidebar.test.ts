@@ -93,22 +93,12 @@ describe('rightWorkspaceDshSidebar', () => {
       title: '插件调试',
       when: {
         projectKinds: ['wework-core-dsh-plugin'] as const,
-        codexPluginKeys: ['wework-plugin-developer'],
       },
     }
 
     expect(isWeworkWorkspaceSidebarTabAvailable(descriptor, 'standard')).toBe(false)
     expect(isWeworkWorkspaceSidebarTabAvailable(descriptor, 'unresolved')).toBe(false)
-    expect(
-      isWeworkWorkspaceSidebarTabAvailable(descriptor, 'wework-core-dsh-plugin', () => false)
-    ).toBe(false)
-    expect(
-      isWeworkWorkspaceSidebarTabAvailable(
-        descriptor,
-        'wework-core-dsh-plugin',
-        pluginKey => pluginKey === 'wework-plugin-developer'
-      )
-    ).toBe(true)
+    expect(isWeworkWorkspaceSidebarTabAvailable(descriptor, 'wework-core-dsh-plugin')).toBe(true)
     expect(shouldCloseUnavailableWeworkWorkspaceSidebarTab(descriptor, 'unresolved', false)).toBe(
       false
     )

@@ -14,6 +14,7 @@ const bundledPluginExampleManifests = [
 
 const bundledWeworkSpaceDirectory = 'bundled-plugins/wework-personal/plugins/wework-space'
 const bundledSmartAppBuilderDirectory = 'bundled-plugins/wework-personal/plugins/smart-app-builder'
+const weworkPluginDeveloperDirectory = 'dsh/plugin-developer'
 
 describe('bundled plugin resources', () => {
   test('explicitly packages hidden marketplace manifests', () => {
@@ -120,6 +121,59 @@ describe('bundled plugin resources', () => {
         resolve(resourcesDirectory, bundledSmartAppBuilderDirectory, 'scripts/smart-app-tool.mjs')
       )
     ).toBe(true)
+  })
+
+  test('owns the official Codex development plugin inside the Wework plugin package', () => {
+    const resourcesDirectory = resolve(process.cwd(), 'resources')
+    const weworkDirectory = resolve(process.cwd())
+    const marketplace = JSON.parse(
+      readFileSync(
+        resolve(
+          resourcesDirectory,
+          'bundled-plugins/wework-personal/.agents/plugins/marketplace.json'
+        ),
+        'utf8'
+      )
+    ) as {
+      plugins: Array<{
+        name: string
+        policy?: { installation?: string }
+      }>
+    }
+    const weworkManifest = JSON.parse(
+      readFileSync(resolve(weworkDirectory, weworkPluginDeveloperDirectory, 'package.json'), 'utf8')
+    ) as { wework?: { codexPlugin?: string } }
+    const codexPluginRoot = resolve(
+      weworkDirectory,
+      weworkPluginDeveloperDirectory,
+      weworkManifest.wework?.codexPlugin ?? ''
+    )
+    const codexManifest = JSON.parse(
+      readFileSync(resolve(codexPluginRoot, '.codex-plugin/plugin.json'), 'utf8')
+    ) as Record<string, unknown>
+
+    expect(weworkManifest.wework?.codexPlugin).toBe('./codex-plugin')
+    expect(codexManifest.name).toBe('wework-plugin-developer')
+    expect(Object.keys(codexManifest)).toEqual([
+      'name',
+      'version',
+      'description',
+      'author',
+      'skills',
+      'interface',
+    ])
+    expect(
+      marketplace.plugins.find(plugin => plugin.name === 'wework-plugin-developer')?.policy
+        ?.installation
+    ).toBe('INSTALLED_BY_DEFAULT')
+    expect(
+      existsSync(
+        resolve(
+          resourcesDirectory,
+          'bundled-plugins/wework-personal/plugins/wework-plugin-developer/.codex-plugin/plugin.json'
+        )
+      )
+    ).toBe(false)
   })
 
   test('packages Smart apps on Windows without evaluating path text', () => {

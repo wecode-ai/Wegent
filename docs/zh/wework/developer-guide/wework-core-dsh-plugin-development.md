@@ -4,8 +4,8 @@ sidebar_position: 8
 
 # 在隔离 Wework 实例中开发 Core DSH 插件
 
-安装官方市场中的“Wework 插件开发”后，Wework 使用两个完整的 Electron
-进程完成 Core DSH 插件开发：
+Wework 内置的“Wework 插件开发”是一个 Wework 插件。它可以携带一个符合 Codex
+官方格式的内嵌 Codex 插件，并使用两个完整的 Electron 进程完成 Core DSH 插件开发：
 
 - 主实例在 Wework 插件页提供创建入口，并在插件项目右侧提供“插件调试”Tab。
 - 开发实例加载正在开发的插件，拥有独立的应用标识、用户数据目录、账号状态、
@@ -17,8 +17,8 @@ sidebar_position: 8
 
 ## 启动开发实例
 
-1. 安装“Wework 插件开发”。这个复合插件同时包含 Core DSH UI 扩展和 Codex
-   Skill。
+1. 打开内置的“Wework 插件开发”。Wework 插件是外层交付单元；其内嵌 Codex
+   插件提供开发 Skill，并随外层插件默认注册。
 2. 在 **插件 → 管理 → Wework 插件** 点击 **创建新插件**，选择一个空目录。
 3. Wework 写入最小预制文件并把目录注册为本地项目。
 4. 打开该项目的右侧工作区，从新增菜单选择 **插件调试**。
@@ -56,11 +56,26 @@ profile 的最后一层重新启用 DeepSeek Harness 官方 HMR，并且只监�
 - **删除隔离数据**：停止实例并删除账号状态、缓存、profile、Executor 数据和日志；
   不删除插件源码。
 
-## 复合插件
+## 包含关系
 
-“Wework 插件开发”的 Codex 插件位于
-`wework/resources/bundled-plugins/wework-personal/plugins/wework-plugin-developer`。
-它的 `.codex-plugin/plugin.json` 和 `skills/` 指导 Codex 开发 Core DSH UI 与
-Skill。配套的内置 DSH 插件位于 `wework/dsh/plugin-developer`，注册创建入口和条件
-调试 Tab，并且只在 Codex 插件安装后开放这些入口。个人内置市场将 Codex 插件标记为
-可安装，而不是默认安装。
+Wework 插件是外层交付单元，可以通过自身 `package.json` 的
+`wework.codexPlugin` 声明一个内嵌 Codex 插件目录。内嵌目录必须保持 Codex 官方插件
+格式，只包含 `.codex-plugin/plugin.json`、`skills/`、MCP 等 Codex 官方支持的内容，
+不得写入 Wework 或 DSH 私有清单字段。
+
+“Wework 插件开发”的外层包位于 `wework/dsh/plugin-developer`，内嵌 Codex 插件位于
+`wework/dsh/plugin-developer/codex-plugin`。构建桌面资源时，Wework 把这个内嵌目录
+投影到个人 Codex 市场并默认注册；投影目录不是源码。创建入口和调试 Tab 由外层
+Wework 插件直接注册，不依赖 Codex 插件是否安装。
+
+新建项目采用相同结构：
+
+```text
+plugin-root/
+├── package.json
+├── cordis.patch.yml
+├── client.js
+└── codex-plugin/
+    ├── .codex-plugin/plugin.json
+    └── skills/
+```

@@ -66,4 +66,7 @@ test('registers translated plugin development actions through the Wework service
   })
   assert.match(JSON.stringify(rendered), /wework-plugin-developer-create-button/)
   assert.match(JSON.stringify(rendered), /Create plugin/)
+  const debugTab = contributions.find(item => item.slot === 'wework.workspace.sidebar.tab')
+  assert.deepEqual([...debugTab.descriptor.when.projectKinds], ['wework-core-dsh-plugin'])
+  assert.equal(debugTab.descriptor.when.codexPluginKeys, undefined)
 })

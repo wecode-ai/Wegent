@@ -61,6 +61,9 @@ interface PackageManifest {
   version?: string
   homepage?: string
   repository?: string | { url?: string }
+  wework?: {
+    codexPlugin?: string
+  }
   dsh?: {
     bundle?: {
       patch?: string
@@ -510,12 +513,29 @@ async function readDevelopmentPlugin(sourceRoot: string): Promise<CoreDshDevelop
     throw new Error(`${name} declares a dsh.bundle.patch outside the plugin directory`)
   }
   await access(patchPath)
+  await validateNestedCodexPlugin(root, manifest)
   return {
     name,
     displayName: manifest.displayName?.trim() || name,
     description: manifest.description?.trim() || '',
     version: manifest.version?.trim() || '',
     sourceRoot: root,
+  }
+}
+
+async function validateNestedCodexPlugin(root: string, manifest: PackageManifest): Promise<void> {
+  const declaredPath = manifest.wework?.codexPlugin?.trim()
+  if (!declaredPath) return
+  const codexPluginRoot = resolve(root, declaredPath)
+  const nestedPath = relative(root, codexPluginRoot)
+  if (nestedPath.startsWith('..') || isAbsolute(nestedPath)) {
+    throw new Error(`${manifest.name} declares wework.codexPlugin outside the plugin directory`)
+  }
+  const codexManifest = (await readRequiredJson(
+    join(codexPluginRoot, '.codex-plugin', 'plugin.json')
+  )) as { name?: unknown }
+  if (typeof codexManifest.name !== 'string' || !codexManifest.name.trim()) {
+    throw new Error(`${manifest.name} has an invalid nested Codex plugin manifest`)
   }
 }
 

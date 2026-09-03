@@ -191,24 +191,40 @@ export class PluginDevelopmentManager {
     const slug = pluginSlug(root)
     const packageName = `@wework/${slug}`
     await mkdir(join(root, '.wework'), { recursive: true, mode: 0o700 })
-    await mkdir(join(root, '.codex-plugin'), { recursive: true, mode: 0o700 })
-    await mkdir(join(root, 'skills', `develop-${slug}`), { recursive: true, mode: 0o700 })
+    await mkdir(join(root, 'codex-plugin', '.codex-plugin'), {
+      recursive: true,
+      mode: 0o700,
+    })
+    await mkdir(join(root, 'codex-plugin', 'skills', `develop-${slug}`), {
+      recursive: true,
+      mode: 0o700,
+    })
     await writeFiles(root, {
       '.wework/plugin-development.json': `${JSON.stringify(
         { schemaVersion: 1, kind: 'wework-core-dsh-plugin' },
         null,
         2
       )}\n`,
-      '.codex-plugin/plugin.json': `${JSON.stringify(
+      'codex-plugin/.codex-plugin/plugin.json': `${JSON.stringify(
         {
           name: slug,
           version: '0.1.0',
           description: `Develop ${slug} for Wework`,
+          author: {
+            name: 'Wework',
+          },
           skills: './skills/',
           interface: {
             displayName: slug,
-            shortDescription: 'Wework Core DSH plugin',
+            shortDescription: 'Develop a Wework Core DSH plugin',
+            longDescription: `Develop and debug the ${slug} Wework Core DSH plugin in an isolated Wework instance.`,
+            developerName: 'Wework',
             category: '开发工具',
+            capabilities: ['Read', 'Write', 'Shell', 'Wework UI'],
+            defaultPrompt: [
+              `Help me develop the ${slug} Wework Core DSH plugin.`,
+              `Check the ${slug} plugin structure, Skill, and debugging behavior.`,
+            ],
           },
         },
         null,
@@ -226,6 +242,9 @@ export class PluginDevelopmentManager {
             '.': './index.js',
             './client': './client.js',
             './package.json': './package.json',
+          },
+          wework: {
+            codexPlugin: './codex-plugin',
           },
           dsh: {
             bundle: { patch: './cordis.patch.yml' },
@@ -259,7 +278,7 @@ export class PluginDevelopmentManager {
         '})',
         '',
       ].join('\n'),
-      [`skills/develop-${slug}/SKILL.md`]: [
+      [`codex-plugin/skills/develop-${slug}/SKILL.md`]: [
         '---',
         `name: develop-${slug}`,
         `description: Develop and debug the ${slug} Wework Core DSH plugin.`,
@@ -267,7 +286,8 @@ export class PluginDevelopmentManager {
         '',
         `# Develop ${slug}`,
         '',
-        'Inspect the package manifest and Cordis patch before changing the plugin.',
+        'Treat this Wework package as the outer delivery unit.',
+        'Inspect the package manifest, Cordis patch, and declared nested Codex plugin before changing the plugin.',
         'Use public Wework DSH extension points and verify behavior in the isolated development instance.',
         '',
       ].join('\n'),

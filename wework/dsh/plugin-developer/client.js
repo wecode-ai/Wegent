@@ -264,7 +264,6 @@ window.__ModuleLoader__.load({
           order: 15,
           when: {
             projectKinds: ['wework-core-dsh-plugin'],
-            codexPluginKeys: ['wework-plugin-developer'],
           },
         },
         component: PluginDebugPanel,

@@ -4,8 +4,9 @@ sidebar_position: 8
 
 # Develop Core DSH plugins in an isolated Wework instance
 
-After installing **Wework Plugin Developer** from the official marketplace,
-Wework uses two complete Electron processes for Core DSH plugin development:
+The bundled **Wework Plugin Developer** is a Wework plugin. It may carry a
+nested Codex plugin in the official Codex format, and Wework uses two complete
+Electron processes for Core DSH plugin development:
 
 - The main instance contributes a create action to the Wework plugins page and
   a **Plugin debugging** tab to plugin projects.
@@ -20,8 +21,9 @@ and its Core DSH, Executor, and plugin child processes.
 
 ## Start a development instance
 
-1. Install **Wework Plugin Developer**. The composite package contains both a
-   Core DSH UI extension and a Codex Skill.
+1. Open the bundled **Wework Plugin Developer**. The Wework plugin is the outer
+   delivery unit; its nested Codex plugin supplies the development Skill and is
+   registered by default with the outer plugin.
 2. Open **Plugins → Manage → Wework plugins**, select **Create plugin**, and
    choose an empty directory.
 3. Wework writes the minimum preset and registers the directory as a local
@@ -71,13 +73,30 @@ bundle patch. React renders, chat updates, and tab changes do not scan disk.
   caches, the profile, Executor data, and logs. It does not delete plugin
   source files.
 
-## Composite plugin
+## Containment model
 
-The Codex part of **Wework Plugin Developer** lives under
-`wework/resources/bundled-plugins/wework-personal/plugins/wework-plugin-developer`.
-Its `.codex-plugin/plugin.json` and `skills/` guide Codex when developing Core
-DSH UI and Skills. The companion built-in DSH plugin lives under
-`wework/dsh/plugin-developer`; it contributes the create action and conditional
-debugging tab, and exposes them only after the Codex plugin is installed. The
-bundled personal marketplace marks the Codex plugin as available instead of
-installed by default.
+The Wework plugin is the outer delivery unit. Its own `package.json` may use
+`wework.codexPlugin` to declare a nested Codex plugin directory. That nested
+directory must remain an official Codex plugin: it may contain
+`.codex-plugin/plugin.json`, `skills/`, MCP configuration, and other officially
+supported Codex content, but no Wework- or DSH-specific manifest fields.
+
+The outer **Wework Plugin Developer** package lives at
+`wework/dsh/plugin-developer`, and its nested Codex plugin lives at
+`wework/dsh/plugin-developer/codex-plugin`. Desktop resource preparation
+projects that directory into the personal Codex marketplace and registers it
+by default; the projected directory is not source. The outer Wework plugin
+directly registers the create action and debugging tab, so neither UI entry is
+gated by Codex plugin installation.
+
+New projects use the same structure:
+
+```text
+plugin-root/
+├── package.json
+├── cordis.patch.yml
+├── client.js
+└── codex-plugin/
+    ├── .codex-plugin/plugin.json
+    └── skills/
+```

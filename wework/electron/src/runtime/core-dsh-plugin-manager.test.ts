@@ -174,6 +174,39 @@ describe('CoreDshPluginManager', () => {
     await root.remove()
   })
 
+  test('validates a declared Codex plugin as a nested official plugin directory', async () => {
+    const root = await temporaryDirectory('core-dsh-development-codex-plugin-')
+    await writeJson(join(root.path, 'package.json'), {
+      name: 'dsh-development',
+      version: '0.1.0',
+      wework: { codexPlugin: './codex-plugin' },
+      dsh: { bundle: { patch: './cordis.patch.yml' } },
+    })
+    await writeFile(join(root.path, 'cordis.patch.yml'), '[]\n')
+    await mkdir(join(root.path, 'codex-plugin', '.codex-plugin'), { recursive: true })
+    await writeJson(join(root.path, 'codex-plugin/.codex-plugin/plugin.json'), {
+      name: 'dsh-development',
+      version: '0.1.0',
+      skills: './skills/',
+    })
+
+    await expect(validateCoreDshDevelopmentPlugin(root.path)).resolves.toMatchObject({
+      name: 'dsh-development',
+      sourceRoot: root.path,
+    })
+
+    await writeJson(join(root.path, 'package.json'), {
+      name: 'dsh-development',
+      version: '0.1.0',
+      wework: { codexPlugin: '../codex-plugin' },
+      dsh: { bundle: { patch: './cordis.patch.yml' } },
+    })
+    await expect(validateCoreDshDevelopmentPlugin(root.path)).rejects.toThrow(
+      'wework.codexPlugin outside the plugin directory'
+    )
+    await root.remove()
+  })
+
   test('parses only the exact pnpm git build matcher', () => {
     expect(
       parseBlockedBuildMatcher(

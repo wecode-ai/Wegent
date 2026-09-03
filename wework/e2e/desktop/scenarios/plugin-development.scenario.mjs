@@ -2,9 +2,6 @@ import assert from 'node:assert/strict'
 import { access, mkdir, readFile, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 
-const PLUGIN_ID = 'wework-plugin-developer@wework-personal'
-const INSTALL_BUTTON = `[data-testid="plugin-marketplace-install-${PLUGIN_ID}"]`
-const ACTIONS_BUTTON = `[data-testid="plugin-marketplace-actions-${PLUGIN_ID}"]`
 const DEBUG_OPTION =
   '[data-testid="right-workspace-extension-option-wework-plugin-developer.debug"]'
 const STATUS = '[data-testid="wework-plugin-development-sidebar-status"]'
@@ -64,30 +61,9 @@ export async function createDesktopScenario({
         timeoutMs: workbenchReadyTimeoutMs,
       })
       await control.command('click', '[data-testid="plugins-button"]')
-      await control.command('waitFor', '[data-testid="plugins-search-input"]', {
+      await control.command('waitFor', '[data-testid="plugins-manage-button"]', {
         timeoutMs: workbenchReadyTimeoutMs,
       })
-      await control.command('fill', '[data-testid="plugins-search-input"]', {
-        value: 'Wework 插件开发',
-      })
-      await control.command('waitFor', INSTALL_BUTTON, {
-        timeoutMs: workbenchReadyTimeoutMs,
-      })
-      await captureScreenshot(control, 'plugin-development-01-marketplace.png', 'body')
-
-      await control.command('click', INSTALL_BUTTON)
-      await control.command('waitFor', '[data-testid="install-plugin-dialog-confirm"]', {
-        timeoutMs: uiTimeoutMs,
-      })
-      await captureScreenshot(control, 'plugin-development-02-install-confirmation.png', 'body')
-      await control.command('clickWhenEnabled', '[data-testid="install-plugin-dialog-confirm"]', {
-        timeoutMs: workbenchReadyTimeoutMs,
-      })
-      await control.command('waitFor', ACTIONS_BUTTON, {
-        timeoutMs: workbenchReadyTimeoutMs,
-      })
-      await captureScreenshot(control, 'plugin-development-03-installed.png', 'body')
-
       await control.command('click', '[data-testid="plugins-manage-button"]')
       await control.command('waitFor', '[data-testid="plugin-management-surface-core-dsh"]', {
         timeoutMs: workbenchReadyTimeoutMs,
@@ -96,7 +72,7 @@ export async function createDesktopScenario({
       await control.command('waitFor', '[data-testid="wework-plugin-developer-create-button"]', {
         timeoutMs: workbenchReadyTimeoutMs,
       })
-      await captureScreenshot(control, 'plugin-development-04-create-entry.png', 'body')
+      await captureScreenshot(control, 'plugin-development-01-create-entry.png', 'body')
 
       const readyCountBeforeStart = control.readyCount
       await control.command(
@@ -116,11 +92,22 @@ export async function createDesktopScenario({
       const marker = JSON.parse(await readFile(markerPath, 'utf8'))
       const manifest = JSON.parse(await readFile(join(pluginRoot, 'package.json'), 'utf8'))
       const codexManifest = JSON.parse(
-        await readFile(join(pluginRoot, '.codex-plugin', 'plugin.json'), 'utf8')
+        await readFile(join(pluginRoot, 'codex-plugin', '.codex-plugin', 'plugin.json'), 'utf8')
       )
       assert.deepEqual(marker, { schemaVersion: 1, kind: 'wework-core-dsh-plugin' })
       assert.equal(manifest.name, '@wework/plugin-development-project')
+      assert.deepEqual(manifest.wework, { codexPlugin: './codex-plugin' })
       assert.equal(codexManifest.name, 'plugin-development-project')
+      assert.deepEqual(Object.keys(codexManifest), [
+        'name',
+        'version',
+        'description',
+        'author',
+        'skills',
+        'interface',
+      ])
+      assert.equal(codexManifest.wework, undefined)
+      assert.equal(codexManifest.dsh, undefined)
 
       await waitForSnapshot(
         control,
@@ -133,13 +120,13 @@ export async function createDesktopScenario({
         timeoutMs: workbenchReadyTimeoutMs,
         visible: true,
       })
-      await captureScreenshot(control, 'plugin-development-05-debug-option.png', 'body')
+      await captureScreenshot(control, 'plugin-development-02-debug-option.png', 'body')
       await control.command('click', DEBUG_OPTION, { visible: true })
       await control.command('waitFor', '[data-testid="wework-plugin-development-sidebar"]', {
         timeoutMs: uiTimeoutMs,
         visible: true,
       })
-      await captureScreenshot(control, 'plugin-development-06-debug-stopped.png', 'body')
+      await captureScreenshot(control, 'plugin-development-03-debug-stopped.png', 'body')
 
       await control.command(
         'clickWhenEnabled',
@@ -152,6 +139,30 @@ export async function createDesktopScenario({
         `Unexpected plugin development window label: ${isolatedReady.windowLabel}`
       )
       const isolatedWindowLabel = isolatedReady.windowLabel
+      const isolatedInstanceId = isolatedWindowLabel.slice('plugin-development-'.length)
+      const installedDeveloperManifestPath = join(
+        resultDir,
+        'electron-user-data',
+        'plugin-development',
+        isolatedInstanceId,
+        'user-data',
+        'executor-home',
+        'codex',
+        'plugins',
+        'cache',
+        'wework-personal',
+        'wework-plugin-developer',
+        '0.1.0',
+        '.codex-plugin',
+        'plugin.json'
+      )
+      await waitForFile(installedDeveloperManifestPath, workbenchReadyTimeoutMs)
+      const installedDeveloperManifest = JSON.parse(
+        await readFile(installedDeveloperManifestPath, 'utf8')
+      )
+      assert.equal(installedDeveloperManifest.name, 'wework-plugin-developer')
+      assert.equal(installedDeveloperManifest.wework, undefined)
+      assert.equal(installedDeveloperManifest.dsh, undefined)
       control.activateWindow('main')
       await waitForStatus(control, 'ready · HMR 0', workbenchReadyTimeoutMs)
       const focusSnapshot = JSON.parse(await control.command('getWindowFocusSnapshot', 'body'))
@@ -161,7 +172,7 @@ export async function createDesktopScenario({
         'Starting plugin debugging did not focus the isolated Wework instance'
       )
       await control.command('focusMainWindow', 'body')
-      await captureScreenshot(control, 'plugin-development-07-debug-ready.png', 'body')
+      await captureScreenshot(control, 'plugin-development-04-debug-ready.png', 'body')
 
       const clientPath = join(pluginRoot, 'client.js')
       const client = await readFile(clientPath, 'utf8')
@@ -193,9 +204,9 @@ export async function createDesktopScenario({
         }
       )
       control.activateWindow(isolatedWindowLabel)
-      await captureScreenshot(control, 'plugin-development-08-hmr-behavior.png', 'body')
+      await captureScreenshot(control, 'plugin-development-05-hmr-behavior.png', 'body')
       control.activateWindow('main')
-      await captureScreenshot(control, 'plugin-development-09-hmr-applied.png', 'body')
+      await captureScreenshot(control, 'plugin-development-06-hmr-applied.png', 'body')
 
       await control.command(
         'clickWhenEnabled',
@@ -203,7 +214,7 @@ export async function createDesktopScenario({
         { timeoutMs: workbenchReadyTimeoutMs, visible: true }
       )
       await waitForStatus(control, 'stopped · HMR 1', workbenchReadyTimeoutMs)
-      await captureScreenshot(control, 'plugin-development-10-debug-stopped-after-hmr.png', 'body')
+      await captureScreenshot(control, 'plugin-development-07-debug-stopped-after-hmr.png', 'body')
     },
   }
 }

@@ -11,6 +11,9 @@
     "./client": "./client.js",
     "./package.json": "./package.json"
   },
+  "wework": {
+    "codexPlugin": "./codex-plugin"
+  },
   "dsh": {
     "bundle": {
       "patch": "./cordis.patch.yml"

@@ -165,6 +165,28 @@ describe('PluginDevelopmentManager', () => {
         kind: 'wework-core-dsh-plugin',
       })
       expect(await readFile(join(root, 'index.js'), 'utf8')).toContain('export function apply() {}')
+      const packageManifest = JSON.parse(await readFile(join(root, 'package.json'), 'utf8'))
+      const codexManifest = JSON.parse(
+        await readFile(join(root, 'codex-plugin/.codex-plugin/plugin.json'), 'utf8')
+      )
+      expect(packageManifest.wework).toEqual({ codexPlugin: './codex-plugin' })
+      expect(codexManifest.name).toBe('example-plugin')
+      expect(Object.keys(codexManifest)).toEqual([
+        'name',
+        'version',
+        'description',
+        'author',
+        'skills',
+        'interface',
+      ])
+      expect(codexManifest.author).toEqual({ name: 'Wework' })
+      expect(codexManifest.interface).toMatchObject({
+        developerName: 'Wework',
+        capabilities: ['Read', 'Write', 'Shell', 'Wework UI'],
+      })
+      expect(
+        await readFile(join(root, 'codex-plugin/skills/develop-example-plugin/SKILL.md'), 'utf8')
+      ).toContain('Treat this Wework package as the outer delivery unit.')
 
       const first = manager.classify(root)
       const second = manager.classify(root)
