@@ -855,7 +855,11 @@ class ModelAggregationService:
         elif model_type == ModelType.PUBLIC:
             # Get all public models and find by name
             public_models = public_model_service.get_models(
-                db=db, skip=0, limit=1000, current_user=current_user
+                db=db,
+                skip=0,
+                limit=1000,
+                current_user=current_user,
+                include_hidden=True,
             )
 
             for model_dict in public_models:
