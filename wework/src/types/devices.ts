@@ -1,4 +1,5 @@
 import type { DeviceSessionTransport, DeviceSessionType } from './device-sessions'
+import type { RuntimeFeatureSet } from './api'
 
 export interface DeviceInfo {
   id: number
@@ -30,6 +31,7 @@ export interface DeviceInfo {
     name?: string | null
     status: DeviceInfo['status']
   }>
+  runtime_features?: RuntimeFeatureSet | null
   cloud_config?: {
     sandboxId?: string
     imageId?: string

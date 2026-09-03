@@ -91,7 +91,7 @@ The operation is repeatable. Skills with the same directory name are not overwri
 
 ### Building a Device Image
 
-The repository provides `docker/device/Dockerfile` for cloud device or local device base images. It follows the official code-server `install.sh` flow to install a pinned standalone release under `/usr/local`. The image also installs the Claude Code and Codex CLIs, Node.js 22, Python, Git, and places the built `wegent-executor` at `/app/executor` and `~/.wecode/wegent-executor/bin/wegent-executor`.
+The repository provides `docker/device/Dockerfile` for cloud device or local device base images. The image is based on Ubuntu 26.04 by default and follows the official code-server `install.sh` flow to install a pinned standalone release under `/usr/local`. It also installs the Claude Code and Codex CLIs, Node.js 22, Python, Git, and places the built `wegent-executor` at `/app/executor` and `~/.wecode/wegent-executor/bin/wegent-executor`.
 
 The default system user inside the image is `wegent`, with `wegent` as its system password for terminal shell access. Following the local device installer, code-server starts with `auth: none` but listens only on `127.0.0.1:18080`. Remote IDE access must go through the device gateway's session-token validation; do not expose port 18080 outside the container or host.
 
@@ -118,6 +118,13 @@ docker run -d --platform linux/amd64 \
 ```
 
 `WEGENT_BACKEND_URL` is the HTTP API address used by the Executor. Port 17888 exposes the token-gated device session gateway; make sure the address generated from `client_origin` is reachable from the user's browser. You can customize public package and system mirrors through the Dockerfile build arguments without changing the Dockerfile.
+
+Interactive sessions can be disabled independently when the container starts. Both switches default to `true`:
+
+- `DEVICE_CODE_SERVER_ENABLED=false`: does not start code-server, makes the Executor reject code-server sessions, and keeps the Wework IDE action visible but disabled. code-server remains installed in the image so the same image can enable it later.
+- `DEVICE_TERMINAL_ENABLED=false`: makes the Executor reject Terminal sessions and keeps Wework terminal cards and menu items visible but disabled. This switch does not hide the entire bottom workspace.
+
+For example, add `-e DEVICE_CODE_SERVER_ENABLED=false` to `docker run` for a Terminal-only device. The Executor reports the effective capabilities during registration and heartbeat. Backend and Wework retain the legacy enabled behavior for older Executors that do not report these capability fields.
 
 ### Managed Cloud Device Persistence Contract
 

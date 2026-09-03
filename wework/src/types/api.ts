@@ -1070,8 +1070,14 @@ export interface RuntimeWorktreeCapability {
   persistentStorageVerified?: boolean
 }
 
+export interface RuntimeInteractiveSessionCapability {
+  codeServer?: boolean
+  terminal?: boolean
+}
+
 export interface RuntimeFeatureSet {
   schemaVersion: number
+  interactiveSessions?: RuntimeInteractiveSessionCapability | null
   worktrees?: RuntimeWorktreeCapability | null
 }
 

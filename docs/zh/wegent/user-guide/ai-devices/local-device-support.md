@@ -93,7 +93,7 @@ Wegent 会根据用户设置在执行请求中显式标记 Codex 是否使用个
 
 ### 构建设备镜像
 
-仓库提供 `docker/device/Dockerfile` 用于构建云设备或本地设备基础镜像。该镜像按照 code-server 官方 `install.sh` 流程，以固定版本的 standalone 模式安装到 `/usr/local`；同时安装 Claude Code 与 Codex CLI、Node.js 22、Python、Git，并把构建出的 `wegent-executor` 放到 `/app/executor` 和 `~/.wecode/wegent-executor/bin/wegent-executor`。
+仓库提供 `docker/device/Dockerfile` 用于构建云设备或本地设备基础镜像。该镜像默认基于 Ubuntu 26.04，按照 code-server 官方 `install.sh` 流程，以固定版本的 standalone 模式安装到 `/usr/local`；同时安装 Claude Code 与 Codex CLI、Node.js 22、Python、Git，并把构建出的 `wegent-executor` 放到 `/app/executor` 和 `~/.wecode/wegent-executor/bin/wegent-executor`。
 
 镜像内默认系统用户为 `wegent`，系统密码为 `wegent`，用于容器终端 shell 场景。code-server 按本地设备安装脚本的方式以 `auth: none` 启动，但只监听 `127.0.0.1:18080`；远程 IDE 访问必须经过带会话 token 校验的设备网关，不要把 18080 端口暴露到容器或主机外部。
 
@@ -120,6 +120,13 @@ docker run -d --platform linux/amd64 \
 ```
 
 `WEGENT_BACKEND_URL` 是 Executor 使用的 HTTP API 地址。17888 端口提供带 token 校验的设备会话网关；需要确保根据 `client_origin` 生成的地址能被用户浏览器访问。可以通过 Dockerfile 的构建参数选择公开的软件包和系统镜像源，无需修改 Dockerfile。
+
+交互会话功能可以在容器启动时独立关闭，两个开关默认均为 `true`：
+
+- `DEVICE_CODE_SERVER_ENABLED=false`：不启动 code-server，Executor 不接受 code-server 会话，Wework 中的 IDE 按钮保持可见但不可用。code-server 仍保留在镜像内，便于使用同一镜像重新开启。
+- `DEVICE_TERMINAL_ENABLED=false`：Executor 不接受 Terminal 会话，Wework 中的终端卡片和菜单项保持可见但不可用。该开关不会隐藏整个底部工作区。
+
+例如，在 `docker run` 中增加 `-e DEVICE_CODE_SERVER_ENABLED=false` 可以运行仅启用 Terminal 的设备。Executor 会在注册和心跳中上报实际能力；旧版 Executor 没有该能力字段时，Backend 和 Wework 保持原有可用行为。
 
 ### 托管云设备的持久化契约
 
