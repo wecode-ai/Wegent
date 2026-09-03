@@ -1,5 +1,8 @@
 import { invokeDesktopHost, subscribeDesktopHostEvents } from '@/api/dsh/desktopHost'
 
+const WEWORK_PLUGIN_DEVELOPER_NAME = 'wework-plugin-developer'
+const WEWORK_PLUGIN_DEVELOPER_MARKETPLACE = 'wework-personal'
+
 export type PluginDevelopmentStatus =
   | 'validating'
   | 'starting'
@@ -51,6 +54,11 @@ export interface InitializedPluginDevelopmentProject {
   version: string
   sourceRoot: string
   kind: 'wework-core-dsh-plugin'
+}
+
+export function pluginDevelopmentInitialInput(displayName: string, prompt: string): string {
+  const reference = `[$${displayName.trim()}](plugin://${WEWORK_PLUGIN_DEVELOPER_NAME}@${WEWORK_PLUGIN_DEVELOPER_MARKETPLACE})`
+  return `${reference} ${prompt}`
 }
 
 export function classifyPluginDevelopmentProject(

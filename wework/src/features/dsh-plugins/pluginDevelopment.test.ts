@@ -4,6 +4,7 @@ import {
   focusPluginDevelopment,
   openPluginDevelopmentDevTools,
   openPluginDevelopmentLogs,
+  pluginDevelopmentInitialInput,
   readPluginDevelopmentSessions,
   restartPluginDevelopmentCoreDsh,
   startPluginDevelopment,
@@ -67,5 +68,15 @@ describe('Core DSH plugin development desktop API', () => {
   test('keeps an unobserved project unresolved until host classification arrives', () => {
     expect(pluginDevelopmentProjectKind('/workspace/unobserved-plugin')).toBe('unresolved')
     expect(pluginDevelopmentProjectKind(null)).toBe('standard')
+  })
+
+  test('activates the plugin developer plugin in the initial composer input', () => {
+    const initialInput = pluginDevelopmentInitialInput('Wework 插件开发', '开发这个 Wework 插件：')
+
+    expect(initialInput).toBe(
+      '[$Wework 插件开发](plugin://wework-plugin-developer@wework-personal) 开发这个 Wework 插件：'
+    )
+    expect(initialInput).not.toContain('skill://')
+    expect(initialInput).not.toMatch(/(?:~\/|\/Users\/|[A-Za-z]:\\).*plugins[/\\]cache/)
   })
 })

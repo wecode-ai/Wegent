@@ -115,6 +115,34 @@ window.__ModuleLoader__.load({
       )
     }
 
+    function DemoProjectCreateSection() {
+      return createElement(
+        'div',
+        { 'data-testid': 'dsh-extension-demo-project-create-section' },
+        'Demo project creation controls'
+      )
+    }
+
+    function DemoProjectWorkSection() {
+      return createElement(
+        'div',
+        { 'data-testid': 'dsh-extension-demo-project-work-section' },
+        'Demo project controls'
+      )
+    }
+
+    function DemoPluginAction({ onCreate, t }) {
+      return createElement(
+        'button',
+        {
+          'data-testid': 'dsh-extension-demo-plugin-action',
+          onClick: onCreate,
+          type: 'button',
+        },
+        t('dsh_extension_demo.create', 'Create demo plugin')
+      )
+    }
+
     function DemoWorkspaceSidebar({ scope, tab, visible }) {
       return createElement(
         'aside',
@@ -236,6 +264,39 @@ window.__ModuleLoader__.load({
           label: 'Demo workspace menu',
         },
         component: DemoWorkspaceMenuSection,
+      },
+      {
+        slot: 'wework.plugins.action',
+        descriptor: {
+          id: 'dsh-extension-demo.create',
+          label: 'Create demo plugin',
+          order: 90,
+        },
+        component: DemoPluginAction,
+      },
+      {
+        slot: 'wework.project.create.section',
+        descriptor: {
+          id: 'dsh-extension-demo.project-create',
+          order: 90,
+        },
+        component: DemoProjectCreateSection,
+      },
+      {
+        slot: 'wework.project.work.section',
+        descriptor: {
+          id: 'dsh-extension-demo.project-work',
+          order: 90,
+        },
+        component: DemoProjectWorkSection,
+      },
+      {
+        slot: 'wework.runtime-profile.workspace-policy',
+        descriptor: {
+          id: 'dsh_extension_demo',
+          label: 'Demo workspace',
+          order: 90,
+        },
       },
       {
         slot: 'wework.route',

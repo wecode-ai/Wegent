@@ -100,9 +100,36 @@ export async function createDesktopScenario({
         timeoutMs: workbenchReadyTimeoutMs,
         visible: true,
       })
+      const developerPluginChip = '[data-testid="composer-plugin-chip-wework-plugin-developer"]'
+      await control.command('waitFor', developerPluginChip, {
+        text: 'Wework 插件开发',
+        timeoutMs: workbenchReadyTimeoutMs,
+        visible: true,
+      })
+      assert.equal(
+        await control.command('getAttribute', developerPluginChip, {
+          value: 'data-composer-plugin-name',
+        }),
+        'wework-plugin-developer',
+        'The initial development prompt did not activate the Wework plugin developer plugin'
+      )
+      assert.equal(
+        await control.command('getAttribute', developerPluginChip, {
+          value: 'data-composer-plugin-marketplace',
+        }),
+        'wework-personal',
+        'The initial development prompt activated the plugin from the wrong marketplace'
+      )
+      assert.equal(
+        Number(
+          await control.command('getElementCount', '[data-testid^="composer-skill-chip-"]')
+        ),
+        0,
+        'The initial development prompt activated a Skill instead of only activating the plugin'
+      )
       assert.equal(
         await control.command('getValue', '[data-testid="chat-message-input"]'),
-        '开发这个 Wework 插件：',
+        'Wework 插件开发 开发这个 Wework 插件：',
         'The plugin project conversation did not receive its initial development prompt'
       )
       await control.command('waitFor', '[data-testid="wework-plugin-development-debug-target"]', {

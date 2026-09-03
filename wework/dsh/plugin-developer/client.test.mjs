@@ -3,6 +3,8 @@ import { readFile } from 'node:fs/promises'
 import test from 'node:test'
 import vm from 'node:vm'
 
+const pluginRoot = new URL('./codex-plugin/skills/develop-wework-plugin/', import.meta.url)
+
 test('registers translated plugin development actions through the Wework service', async () => {
   const source = await readFile(new URL('./client.js', import.meta.url), 'utf8')
   let moduleRegistration
@@ -81,4 +83,55 @@ test('registers translated plugin development actions through the Wework service
   assert.match(debugMarkup, /Wework debug instance/)
   assert.match(debugMarkup, /wework-plugin-development-sidebar-start/)
   assert.doesNotMatch(debugMarkup, /wework-plugin-development-diagnostics-toggle/)
+})
+
+test('documents and demonstrates every extension point declared by the Wework host', async () => {
+  const hostSource = await readFile(new URL('../app-wework/client.js', import.meta.url), 'utf8')
+  const skill = await readFile(new URL('SKILL.md', pluginRoot), 'utf8')
+  const catalog = await readFile(new URL('references/extension-points.md', pluginRoot), 'utf8')
+  const demo = await readFile(new URL('assets/ui-extension-demo/client.js', pluginRoot), 'utf8')
+  const declarationBlock = hostSource.match(/const SLOT_DECLARATIONS = \{(?<body>[\s\S]*?)\n    \}/)
+    ?.groups?.body
+  assert.ok(declarationBlock, 'The Wework host slot declarations could not be read')
+
+  const extensionPoints = [...declarationBlock.matchAll(/'(wework\.[^']+)':/g)].map(
+    match => match[1]
+  )
+  assert.ok(extensionPoints.length > 0, 'The Wework host does not declare any extension points')
+  assert.match(skill, /references\/extension-points\.md/)
+  assert.match(skill, /assets\/ui-extension-demo/)
+
+  for (const extensionPoint of extensionPoints) {
+    assert.match(
+      catalog,
+      new RegExp(`\\\`${extensionPoint.replaceAll('.', '\\.')}\\\``),
+      `The plugin developer catalog does not document ${extensionPoint}`
+    )
+    assert.match(
+      demo,
+      new RegExp(`['"]${extensionPoint.replaceAll('.', '\\.')}['"]`),
+      `The plugin developer demo does not cover ${extensionPoint}`
+    )
+  }
+})
+
+test('keeps Skill resources independent from a machine plugin cache path', async () => {
+  const resources = await Promise.all(
+    [
+      'SKILL.md',
+      'references/extension-points.md',
+      'assets/ui-extension-demo/README.md',
+      'assets/ui-extension-demo/README.en.md',
+      'assets/ui-extension-demo/client.js',
+      'assets/ui-extension-demo/package.json',
+    ].map(path => readFile(new URL(path, pluginRoot), 'utf8'))
+  )
+  const contents = resources.join('\n')
+
+  assert.doesNotMatch(contents, /\/Users\/[^/\s]+/)
+  assert.doesNotMatch(contents, /[A-Za-z]:\\Users\\/)
+  assert.doesNotMatch(contents, /(?:~\/)?\.wework\/codex\/plugins\/cache/)
+  assert.doesNotMatch(contents, /plugins\/cache\/(?:wework|wework-personal)/)
+  assert.match(contents, /\[references\/extension-points\.md]\(references\/extension-points\.md\)/)
+  assert.match(contents, /\[assets\/ui-extension-demo]\(assets\/ui-extension-demo\)/)
 })

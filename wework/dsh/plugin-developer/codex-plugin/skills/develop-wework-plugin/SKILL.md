@@ -24,6 +24,13 @@ gate the Wework plugin.
 ## Build the requested capability
 
 - Register Wework UI through `ctx.wework.ui.register` and a documented slot.
+- Before choosing a UI slot, read
+  [references/extension-points.md](references/extension-points.md). It is the
+  public extension-point contract shipped with this plugin.
+- When implementing a contribution, inspect the runnable
+  [assets/ui-extension-demo](assets/ui-extension-demo) plugin. Copy it to a
+  writable project directory and remove every contribution the requested
+  plugin does not need.
 - Keep contribution ids stable and provide `data-testid` values for interactive
   controls.
 - When creating or changing a Skill, keep it inside the declared nested Codex

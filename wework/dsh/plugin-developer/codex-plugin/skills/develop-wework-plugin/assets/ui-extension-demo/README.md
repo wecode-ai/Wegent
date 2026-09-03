@@ -1,12 +1,14 @@
 # Wework DSH 扩展 Demo
 
-这是一个可直接安装的第三方 Core DSH 插件示例，覆盖 Wework 当前公开的全部 UI
-扩展点。它不是 Wework 内置插件，也不会随桌面安装包启用。
+这是“Wework 插件开发”Skill 携带的可运行 Core DSH 插件示例，覆盖 Wework
+当前公开的全部 UI 扩展点。模型可以复制该目录作为实现参考；桌面应用不会自动启用
+它。
 
-在 Wework 的“插件 → 管理 → Wework 插件”中输入该目录的绝对路径，或输入：
+先把该目录复制到可写的项目目录，再在 Wework 的“插件 → 管理 → Wework 插件”中
+输入复制后目录的绝对路径，例如：
 
 ```text
-file:/absolute/path/to/Wegent/wework/dsh/examples/ui-extension-demo
+file:/absolute/path/to/ui-extension-demo
 ```
 
 安装完成后重启 Core DSH。左侧会出现 `DSH Demo`，应用切换器、设置页、新建工作区

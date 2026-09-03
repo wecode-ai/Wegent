@@ -416,6 +416,7 @@
     "project_search_no_results": "No matching projects",
     "plugins": "Plugins",
     "plugin_development_create": "Create plugin",
+    "plugin_development_name": "Wework Plugin Development",
     "plugin_development_initial_prompt": "Develop this Wework plugin: ",
     "plugin_development_creating": "Creating…",
     "plugin_development_connected": "Connected",

@@ -17,7 +17,10 @@ import { navigateTo } from '@/lib/navigation'
 import { isElectronRuntime } from '@/lib/runtime-environment'
 import { track } from '@/telemetry/client'
 import { prefetchPluginsWorkspace } from '@/components/plugins/workspace/prefetchPluginsWorkspace'
-import { initializePluginDevelopmentProject } from '@/features/dsh-plugins/pluginDevelopment'
+import {
+  initializePluginDevelopmentProject,
+  pluginDevelopmentInitialInput,
+} from '@/features/dsh-plugins/pluginDevelopment'
 import { openNativeDirectoryPicker } from '@/lib/native-directory-picker'
 import { getPreferredStandaloneDeviceId } from '@/lib/device-selection'
 import { createPluginRouteRuntimeTaskOpener } from './plugin-route-navigation'
@@ -113,7 +116,10 @@ export function PluginManagementPage() {
       plugin.displayName,
       [plugin.sourceRoot],
       {
-        initialInput: t('workbench.plugin_development_initial_prompt', '开发这个 Wework 插件：'),
+        initialInput: pluginDevelopmentInitialInput(
+          t('workbench.plugin_development_name', 'Wework 插件开发'),
+          t('workbench.plugin_development_initial_prompt', '开发这个 Wework 插件：')
+        ),
         rightSidebarTab: { type: 'wework-plugin-developer.debug' },
       }
     )

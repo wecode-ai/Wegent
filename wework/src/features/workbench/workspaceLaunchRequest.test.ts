@@ -12,7 +12,8 @@ describe('workspaceLaunchRequest', () => {
 
   test('consumes a matching workspace launch once', () => {
     const options = {
-      initialInput: 'Develop this Wework plugin: ',
+      initialInput:
+        '[$Wework Plugin Development](plugin://wework-plugin-developer@wework-personal) Develop this Wework plugin: ',
       rightSidebarTab: { type: 'wework-plugin-developer.debug' },
     }
     queueWorkbenchWorkspaceLaunch('device-1', '/workspace/plugin/', options)
@@ -23,7 +24,8 @@ describe('workspaceLaunchRequest', () => {
 
   test('keeps the launch pending until its workspace becomes active', () => {
     queueWorkbenchWorkspaceLaunch('device-1', '/workspace/plugin', {
-      initialInput: 'Develop this Wework plugin: ',
+      initialInput:
+        '[$Wework Plugin Development](plugin://wework-plugin-developer@wework-personal) Develop this Wework plugin: ',
     })
 
     expect(consumeWorkbenchWorkspaceLaunch('device-2', '/workspace/plugin')).toBeNull()

@@ -692,13 +692,13 @@ wework_desktop_other_e2e=true
 wework_desktop_other_e2e_matrix={"include":[{"id":"plugins-core-dsh-ui-plugin-composition","name":"Plugins / core-dsh-ui-plugin-composition","command":"e2e:desktop:plugins","segment":"core-dsh-ui-plugin-composition"}]}' \
   "wework/dsh/ui-applications/client.js"
 
-assert_desktop_case "DSH extension Demo files select composition coverage" \
+assert_desktop_case "Wework plugin developer Demo selects development and composition coverage" \
   'wework_desktop_e2e=true
-wework_desktop_core_e2e=false
-wework_desktop_core_e2e_matrix={"include":[]}
+wework_desktop_core_e2e=true
+wework_desktop_core_e2e_matrix={"include":[{"id":"core-16","name":"Core / shard 16","segments":"plugin-development"}]}
 wework_desktop_other_e2e=true
 wework_desktop_other_e2e_matrix={"include":[{"id":"plugins-core-dsh-ui-plugin-composition","name":"Plugins / core-dsh-ui-plugin-composition","command":"e2e:desktop:plugins","segment":"core-dsh-ui-plugin-composition"}]}' \
-  "wework/dsh/examples/ui-extension-demo/client.js"
+  "wework/dsh/plugin-developer/codex-plugin/skills/develop-wework-plugin/assets/ui-extension-demo/client.js"
 
 assert_desktop_case "desktop sidebar selects all owned checkpoints" \
   'wework_desktop_e2e=true
