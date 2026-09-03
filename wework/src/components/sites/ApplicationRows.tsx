@@ -27,7 +27,9 @@ export interface ApplicationRowContext {
   onPublish: (site: Site) => void
   onContinueDevelopment: (site: Site) => void
   onEdit: (site: Site) => void
+  onConfigureEnvironment: (site: Site) => void
   onDelete: (site: Site) => void
+  onManageCollaborators: (site: Site) => void
 }
 
 function SiteThumbnail({ site }: { site: Site }) {
@@ -141,7 +143,9 @@ export function SiteApplicationRow({
         </button>
         {context.capabilities.has('publish') ||
         context.capabilities.has('edit') ||
-        context.capabilities.has('delete') ? (
+        context.capabilities.has('configure_environment') ||
+        context.capabilities.has('delete') ||
+        site.access_role === 'owner' ? (
           <SiteActionsMenu
             site={site}
             disabled={deleting || continuing}
@@ -150,10 +154,14 @@ export function SiteApplicationRow({
             publishLabel={publishLabel}
             publishIcon={PublishIcon}
             canEdit={context.capabilities.has('edit')}
+            canConfigureEnvironment={context.capabilities.has('configure_environment')}
             canDelete={context.capabilities.has('delete')}
+            canManageCollaborators={site.access_role === 'owner'}
             onPublish={context.onPublish}
             onEdit={context.onEdit}
+            onConfigureEnvironment={context.onConfigureEnvironment}
             onDelete={context.onDelete}
+            onManageCollaborators={context.onManageCollaborators}
           />
         ) : null}
       </div>
