@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { ApiError } from '@/api/http'
 import { WORKBENCH_AUTOMATIONS_CHANGED_EVENT } from '@/features/workbench/workbenchCloudDataEvents'
 import { selectedModelExecutionFields } from '@/features/workbench/runtimeModelSelection'
 import { createHybridWorkbenchServices } from './hybridServices'
@@ -6,7 +7,6 @@ import { createHybridWorkbenchServices } from './hybridServices'
 const mocks = vi.hoisted(() => {
   const localCreateRuntimeTask = vi.fn()
   const cloudCreateRuntimeTask = vi.fn()
-  const cloudCreateTeamRuntimeTask = vi.fn()
   const cloudGetExecutionProfile = vi.fn()
   const localListDevices = vi.fn()
   const cloudListDevices = vi.fn()
@@ -139,7 +139,6 @@ const mocks = vi.hoisted(() => {
       prepareRuntimeModel: vi.fn().mockResolvedValue(true),
       listRuntimeWork: cloudListRuntimeWork,
       createRuntimeTask: cloudCreateRuntimeTask,
-      createTeamRuntimeTask: cloudCreateTeamRuntimeTask,
       rollbackRuntimeTask: vi.fn(),
       compactRuntimeTask: vi.fn(),
       searchRuntimeWork: cloudSearchRuntimeWork,
@@ -170,7 +169,6 @@ const mocks = vi.hoisted(() => {
   return {
     localCreateRuntimeTask,
     cloudCreateRuntimeTask,
-    cloudCreateTeamRuntimeTask,
     localListDevices,
     cloudListDevices,
     localListRuntimeWork,
@@ -1388,7 +1386,7 @@ describe('createHybridWorkbenchServices', () => {
       taskId: 'cloud-task',
       workspacePath: '/tmp/cloud',
     })
-    mocks.cloudCreateTeamRuntimeTask.mockResolvedValueOnce({
+    mocks.cloudCreateRuntimeTask.mockResolvedValueOnce({
       accepted: true,
       deviceId: 'cloud-device',
       taskId: 'cloud-task',
@@ -1411,14 +1409,13 @@ describe('createHybridWorkbenchServices', () => {
     })
 
     expect(mocks.localCreateRuntimeTask).toHaveBeenCalledTimes(1)
-    expect(mocks.cloudCreateRuntimeTask).not.toHaveBeenCalled()
     expect(mocks.cloudRuntimeIpcRequest).not.toHaveBeenCalled()
-    expect(mocks.cloudCreateTeamRuntimeTask).toHaveBeenCalledWith(
+    expect(mocks.cloudCreateRuntimeTask).toHaveBeenCalledWith(
       expect.objectContaining({
+        schemaVersion: 3,
         deviceId: 'cloud-device',
         message: 'cloud',
-        teamId: 1,
-        wegentTeamId: undefined,
+        wegentTeamId: 1,
       })
     )
   })
@@ -1437,7 +1434,7 @@ describe('createHybridWorkbenchServices', () => {
       },
     ])
     const services = createServices()
-    mocks.cloudCreateTeamRuntimeTask.mockResolvedValueOnce({
+    mocks.cloudCreateRuntimeTask.mockResolvedValueOnce({
       accepted: true,
       deviceId: 'remote-device',
       taskId: 'remote-task',
@@ -1454,14 +1451,37 @@ describe('createHybridWorkbenchServices', () => {
 
     expect(mocks.localCreateRuntimeTask).not.toHaveBeenCalled()
     expect(mocks.cloudRuntimeIpcRequest).not.toHaveBeenCalled()
-    expect(mocks.cloudCreateTeamRuntimeTask).toHaveBeenCalledWith(
+    expect(mocks.cloudCreateRuntimeTask).toHaveBeenCalledWith(
       expect.objectContaining({
+        schemaVersion: 3,
         deviceId: 'remote-device',
         workspacePath: '/workspace/remote',
-        teamId: 1,
-        wegentTeamId: undefined,
+        wegentTeamId: 1,
       })
     )
+  })
+
+  it('reports an old Backend that rejects the Team create protocol', async () => {
+    const services = createServices()
+    mocks.cloudCreateRuntimeTask.mockRejectedValueOnce(
+      new ApiError('Input should be 1 or 2', 422, undefined, [
+        {
+          type: 'literal_error',
+          loc: ['body', 'schemaVersion'],
+          msg: 'Input should be 1 or 2',
+        },
+      ])
+    )
+
+    await expect(
+      services.runtimeWorkApi?.createRuntimeTask({
+        deviceId: 'cloud-device',
+        workspacePath: '/workspace/cloud',
+        wegentTeamId: 1,
+        runtime: 'codex',
+        message: 'remote',
+      })
+    ).rejects.toThrow('REMOTE_TEAM_BACKEND_UNSUPPORTED')
   })
 
   it('rejects unknown and offline task targets without creating a local task', async () => {

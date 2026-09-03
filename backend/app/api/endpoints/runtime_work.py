@@ -44,7 +44,6 @@ from app.schemas.runtime_work import (
     RuntimeTaskQueueReorderRequest,
     RuntimeTaskQueueReorderResponse,
     RuntimeTaskRenameRequest,
-    RuntimeTeamTaskCreateRequest,
     RuntimeTranscriptRequest,
     RuntimeTranscriptResponse,
     RuntimeWorkListResponse,
@@ -811,6 +810,7 @@ async def delete_archived_conversations_bulk_endpoint(
     response_model=RuntimeTaskCreateResponse,
     response_model_by_alias=True,
 )
+@trace_async("runtime_work.create", "runtime_work.api")
 async def create_runtime_task_endpoint(
     request: RuntimeTaskCreateRequest,
     db: Session = Depends(get_db),
@@ -822,27 +822,6 @@ async def create_runtime_task_endpoint(
         db=db,
         user_id=current_user.id,
         request=request,
-    )
-
-
-@router.post(
-    "/team/create",
-    response_model=RuntimeTaskCreateResponse,
-    response_model_by_alias=True,
-)
-@trace_async("runtime_work.team.create", "runtime_work.api")
-async def create_team_runtime_task_endpoint(
-    request: RuntimeTeamTaskCreateRequest,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
-) -> RuntimeTaskCreateResponse:
-    """Create a Team-backed runtime task through a remote device executor."""
-
-    return await runtime_work_service.create_runtime_task(
-        db=db,
-        user_id=current_user.id,
-        request=request,
-        team_id=request.team_id,
     )
 
 

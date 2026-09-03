@@ -2698,11 +2698,12 @@ def test_team_runtime_compilation_reuses_canonical_builder_without_task_rows(
         workspace_source="local_path",
     )
 
-    result = runtime_work_service._build_team_runtime_execution_request(
+    result = runtime_work_service._build_runtime_execution_request(
         db=test_db,
         user_id=test_user.id,
         request=RuntimeTaskCreateRequest(
-            schemaVersion=1,
+            schemaVersion=3,
+            wegentTeamId=42,
             deviceId="cloud-device-1",
             workspacePath="/srv/workspaces/Wegent",
             taskId="runtime-team-1",
@@ -2710,7 +2711,6 @@ def test_team_runtime_compilation_reuses_canonical_builder_without_task_rows(
             message="Review the implementation",
         ),
         target=target,
-        team_id=42,
     )
 
     assert result is execution_request
@@ -2729,6 +2729,39 @@ def test_team_runtime_compilation_reuses_canonical_builder_without_task_rows(
     assert execution_request.task_id == "runtime-team-1"
     assert execution_request.device_id == "cloud-device-1"
     assert test_db.query(TaskResource).count() == 0
+
+
+def test_team_create_v3_keeps_executor_wire_protocol_at_v2(
+    test_db,
+    test_user,
+) -> None:
+    from app.schemas.runtime_work import RuntimeTaskCreateRequest
+    from app.services import runtime_work_service
+
+    payload = runtime_work_service._runtime_task_create_payload(
+        db=test_db,
+        user_id=test_user.id,
+        request=RuntimeTaskCreateRequest(
+            schemaVersion=3,
+            wegentTeamId=42,
+            deviceId="cloud-device-1",
+            workspacePath="/srv/workspaces/Wegent",
+            runtime="codex",
+            message="Review the implementation",
+        ),
+        target=runtime_work_service.RuntimeTaskTarget(
+            device_id="cloud-device-1",
+            workspace_path="/srv/workspaces/Wegent",
+        ),
+        execution_request=SimpleNamespace(
+            team_id=42,
+            attachments=[],
+            to_dict=lambda: {"team_id": 42},
+        ),
+    )
+
+    assert payload["schemaVersion"] == 2
+    assert "wegentTeamId" not in payload
 
 
 def test_compile_rejects_project_bound_to_another_device(

@@ -1317,7 +1317,6 @@ async def create_runtime_task(
     db: Session,
     user_id: int,
     request: RuntimeTaskCreateRequest,
-    team_id: int | None = None,
 ) -> RuntimeTaskCreateResponse:
     """Create a LocalTask on the selected device executor without DB Task rows."""
 
@@ -1325,7 +1324,6 @@ async def create_runtime_task(
         db=db,
         user_id=user_id,
         request=request,
-        team_id=team_id,
     )
     return await _dispatch_compiled_runtime_task(
         user_id=user_id,
@@ -1375,7 +1373,6 @@ def compile_runtime_task_create(
     db: Session,
     user_id: int,
     request: RuntimeTaskCreateRequest,
-    team_id: int | None = None,
 ) -> CompiledRuntimeTaskCreate:
     """Compile the canonical create request without performing transport."""
 
@@ -1386,7 +1383,6 @@ def compile_runtime_task_create(
         user_id=user_id,
         request=request,
         target=target,
-        team_id=team_id,
     )
     return CompiledRuntimeTaskCreate(
         target=target,
@@ -1397,7 +1393,7 @@ def compile_runtime_task_create(
             target=target,
             execution_request=execution_request,
         ),
-        team_id=team_id,
+        team_id=request.wegent_team_id,
     )
 
 
@@ -1419,7 +1415,7 @@ def _runtime_task_create_payload(
     }
     if target.workspace_path:
         payload["workspacePath"] = target.workspace_path
-    if request.schema_version == 2:
+    if request.schema_version >= 2:
         payload["schemaVersion"] = 2
     optional_values = {
         "taskId": request.local_task_id,
@@ -3990,16 +3986,15 @@ def _build_runtime_execution_request(
     user_id: int,
     request: RuntimeTaskCreateRequest,
     target: RuntimeTaskTarget,
-    team_id: int | None = None,
 ):
     """Compile a Wework task intent without resolving Wegent CRDs."""
-    if team_id is not None:
+    if request.wegent_team_id is not None:
         return _build_team_runtime_execution_request(
             db=db,
             user_id=user_id,
             request=request,
             target=target,
-            team_id=team_id,
+            team_id=request.wegent_team_id,
         )
     return _build_direct_wework_runtime_execution_request(
         db=db,
@@ -4690,8 +4685,10 @@ def _build_runtime_send_execution_request(
         project=None,
         workspace_source="local_path",
     )
+    team_id = _runtime_address_team_id(address)
     request = RuntimeTaskCreateRequest(
-        schemaVersion=2,
+        schemaVersion=3 if team_id is not None else 2,
+        wegentTeamId=team_id,
         deviceId=address.device_id,
         workspacePath=address.workspace_path,
         runtime="codex",
@@ -4707,7 +4704,6 @@ def _build_runtime_send_execution_request(
         user_id=user_id,
         request=request,
         target=target,
-        team_id=_runtime_address_team_id(address),
     )
 
 

@@ -1332,7 +1332,7 @@ export interface RuntimeTaskExecutionConfig {
 }
 
 export interface RuntimeTaskCreateRequest {
-  schemaVersion?: 1 | 2
+  schemaVersion?: 1 | 2 | 3
   teamId?: number
   wegentTeamId?: number
   projectId?: number

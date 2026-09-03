@@ -14,7 +14,6 @@ from app.schemas.runtime_work import (
     RuntimeGuidanceRequest,
     RuntimeTaskAddress,
     RuntimeTaskCreateRequest,
-    RuntimeTeamTaskCreateRequest,
 )
 
 PROTOCOL_DIR = Path(__file__).resolve().parents[3] / "shared" / "protocol"
@@ -42,9 +41,7 @@ def test_runtime_task_create_v2_matches_cross_runtime_golden_contract() -> None:
         assert "modelConfig" not in serialized
 
 
-def test_runtime_team_task_create_requires_team_without_changing_legacy_request() -> (
-    None
-):
+def test_runtime_task_create_v3_adds_team_without_changing_legacy_request() -> None:
     legacy = RuntimeTaskCreateRequest(
         teamId=99,
         deviceId="device-1",
@@ -54,21 +51,27 @@ def test_runtime_team_task_create_requires_team_without_changing_legacy_request(
     )
     assert "teamId" not in legacy.model_dump(by_alias=True, exclude_none=True)
 
-    request = RuntimeTeamTaskCreateRequest(
-        teamId=7,
+    request = RuntimeTaskCreateRequest(
+        schemaVersion=3,
+        wegentTeamId=7,
         deviceId="device-1",
         workspacePath="/repo",
         runtime="codex",
         message="team request",
     )
-    assert request.team_id == 7
+    assert request.wegent_team_id == 7
 
-    with pytest.raises(ValidationError):
-        RuntimeTeamTaskCreateRequest(
+    with pytest.raises(
+        ValidationError,
+        match="wegentTeamId requires RuntimeTaskCreateRequest V3",
+    ):
+        RuntimeTaskCreateRequest(
+            schemaVersion=2,
+            wegentTeamId=7,
             deviceId="device-1",
             workspacePath="/repo",
             runtime="codex",
-            message="missing team",
+            message="old protocol",
         )
 
 

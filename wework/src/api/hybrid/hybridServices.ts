@@ -1135,23 +1135,16 @@ export function createHybridWorkbenchServices(
           deviceId: data.deviceId ?? null,
           elapsedMs: Date.now() - startedAt,
         })
+        const request =
+          data.wegentTeamId && route === 'cloud' ? { ...data, schemaVersion: 3 as const } : data
         let response
         try {
           response =
             data.wegentTeamId && route === 'cloud'
-              ? await cloudServices.runtimeWorkApi!.createTeamRuntimeTask({
-                  ...data,
-                  teamId: data.wegentTeamId,
-                  wegentTeamId: undefined,
-                })
-              : await api.createRuntimeTask(data)
+              ? await cloudServices.runtimeWorkApi!.createRuntimeTask(request)
+              : await api.createRuntimeTask(request)
         } catch (error) {
-          if (
-            data.wegentTeamId &&
-            route === 'cloud' &&
-            error instanceof ApiError &&
-            (error.status === 404 || error.status === 405)
-          ) {
+          if (data.wegentTeamId && route === 'cloud' && rejectsRuntimeTaskCreateV3(error)) {
             throw new Error(REMOTE_TEAM_BACKEND_UNSUPPORTED, {
               cause: error,
             })
@@ -1175,9 +1168,6 @@ export function createHybridWorkbenchServices(
         })
         throw error
       }
-    },
-    createTeamRuntimeTask(data: RuntimeTaskCreateRequest) {
-      return hybridRuntimeWorkApi.createRuntimeTask(data)
     },
     forkRuntimeTask(data: RuntimeTaskForkRequest) {
       return runtimeApiForDevice(data.target.deviceId).then(api => api.forkRuntimeTask(data))
@@ -1482,4 +1472,15 @@ function filterRuntimeChatStreamHandlers(
       : undefined,
     onProjectTaskAssigned: acceptsDevice(undefined) ? handlers.onProjectTaskAssigned : undefined,
   }
+}
+
+function rejectsRuntimeTaskCreateV3(error: unknown): boolean {
+  if (!(error instanceof ApiError) || error.status !== 422 || !Array.isArray(error.detail)) {
+    return false
+  }
+  return error.detail.some(item => {
+    if (!item || typeof item !== 'object' || !('loc' in item)) return false
+    const location = (item as { loc?: unknown }).loc
+    return Array.isArray(location) && location.includes('schemaVersion')
+  })
 }

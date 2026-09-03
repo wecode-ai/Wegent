@@ -187,7 +187,7 @@ def test_create_runtime_task_preserves_delivery_context(
     assert request.delivery_id == "12345678-1234-1234-1234-123456789abc"
 
 
-def test_create_team_runtime_task_uses_explicit_team_endpoint(
+def test_create_runtime_task_v3_accepts_team_on_canonical_endpoint(
     test_client,
     test_token,
     monkeypatch,
@@ -210,10 +210,11 @@ def test_create_team_runtime_task_uses_explicit_team_endpoint(
     )
 
     response = test_client.post(
-        "/api/runtime-work/team/create",
+        "/api/runtime-work/create",
         headers=_auth_headers(test_token),
         json={
-            "teamId": 42,
+            "schemaVersion": 3,
+            "wegentTeamId": 42,
             "deviceId": "cloud-device-1",
             "workspacePath": "/repo",
             "runtime": "codex",
@@ -222,22 +223,24 @@ def test_create_team_runtime_task_uses_explicit_team_endpoint(
     )
 
     assert response.status_code == 200
-    assert service_mock.await_args.kwargs["request"].team_id == 42
-    assert service_mock.await_args.kwargs["team_id"] == 42
+    assert service_mock.await_args.kwargs["request"].wegent_team_id == 42
+    assert "team_id" not in service_mock.await_args.kwargs
 
 
-def test_create_team_runtime_task_rejects_missing_team(
+def test_create_runtime_task_rejects_team_on_old_request_version(
     test_client,
     test_token,
 ) -> None:
     response = test_client.post(
-        "/api/runtime-work/team/create",
+        "/api/runtime-work/create",
         headers=_auth_headers(test_token),
         json={
+            "schemaVersion": 2,
+            "wegentTeamId": 42,
             "deviceId": "cloud-device-1",
             "workspacePath": "/repo",
             "runtime": "codex",
-            "message": "Missing Team",
+            "message": "Old request protocol",
         },
     )
 
