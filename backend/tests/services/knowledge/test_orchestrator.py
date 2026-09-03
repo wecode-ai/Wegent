@@ -1863,7 +1863,7 @@ class TestIndexingPolicy:
 
     def test_excel_documents_within_size_limit_are_allowed(self):
         """Test Excel extensions within 2MB size limit are allowed for RAG indexing."""
-        reason = get_rag_indexing_skip_reason("xlsx")
+        reason = get_rag_indexing_skip_reason("xlsx", 1 * 1024 * 1024)
 
         assert reason is None
 
