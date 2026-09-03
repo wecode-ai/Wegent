@@ -40,6 +40,34 @@ vi.mock('@/lib/embedded-browser', () => ({
 }))
 
 describe('MessageList', () => {
+  test('renders complete user and assistant message regions with medium weight', () => {
+    render(
+      <MessageList
+        messages={[
+          {
+            id: 'user-message',
+            role: 'user',
+            content: '请调整会话字体',
+            status: 'done',
+            createdAt: '2026-09-03T08:00:00Z',
+          },
+          {
+            id: 'assistant-message',
+            role: 'assistant',
+            content: '会话字体已调整',
+            status: 'done',
+            createdAt: '2026-09-03T08:00:01Z',
+          },
+        ]}
+      />
+    )
+
+    expect(screen.getByTestId('message-user')).toHaveClass('font-medium')
+    expect(screen.getByTestId('message-assistant')).toHaveClass('font-medium')
+    expect(screen.getByTestId('user-message-content')).not.toHaveClass('font-medium')
+    expect(screen.getByTestId('assistant-message-content')).not.toHaveClass('font-medium')
+  })
+
   test('renders a generated Codex inline visualization from the changed workspace file', async () => {
     runtimeMock.electron = true
     desktopHostMock.invoke.mockResolvedValueOnce('<div>折线图</div>')
@@ -2191,7 +2219,10 @@ describe('MessageList', () => {
       assistantContent.compareDocumentPosition(processContent) & Node.DOCUMENT_POSITION_FOLLOWING
     ).toBe(Node.DOCUMENT_POSITION_FOLLOWING)
     expect(processContent).toHaveClass('text-chat')
+    expect(processContent).toHaveClass('text-text-primary')
+    expect(processContent).not.toHaveClass('text-text-secondary')
     expect(processContent).not.toHaveClass('text-sm')
+    expect(processContent.closest('[data-testid="message-assistant"]')).toHaveClass('font-medium')
   })
 
   test('does not restore hidden failed content from runtime display order', () => {
