@@ -42,40 +42,41 @@ import {
 } from '@/apis/admin'
 import UnifiedAddButton from '@/components/common/UnifiedAddButton'
 
-export const getPublicModelVisibilityFromConfig = (value: string): boolean | undefined => {
+const isJsonObject = (value: unknown): value is Record<string, unknown> =>
+  typeof value === 'object' && value !== null && !Array.isArray(value)
+
+export const parsePublicModelConfig = (value: string): Record<string, unknown> | null => {
   try {
-    const parsed = JSON.parse(value)
-    if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
-      return undefined
+    const parsed: unknown = JSON.parse(value)
+    if (!isJsonObject(parsed)) {
+      return null
     }
-    const spec = (parsed as Record<string, unknown>).spec
-    if (typeof spec !== 'object' || spec === null || Array.isArray(spec)) {
-      return undefined
+    if ('spec' in parsed && !isJsonObject(parsed.spec)) {
+      return null
     }
-    const isVisible = (spec as Record<string, unknown>).isVisible
-    return typeof isVisible === 'boolean' ? isVisible : undefined
+    return parsed
   } catch {
-    return undefined
+    return null
   }
 }
 
+export const getPublicModelVisibilityFromConfig = (value: string): boolean | undefined => {
+  const parsed = parsePublicModelConfig(value)
+  if (!parsed || !isJsonObject(parsed.spec)) {
+    return undefined
+  }
+  const isVisible = parsed.spec.isVisible
+  return typeof isVisible === 'boolean' ? isVisible : undefined
+}
+
 export const setPublicModelVisibilityInConfig = (value: string, isVisible: boolean): string => {
-  try {
-    const parsed = JSON.parse(value)
-    if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
-      return value
-    }
-    const config = parsed as Record<string, unknown>
-    const currentSpec = config.spec
-    const spec =
-      typeof currentSpec === 'object' && currentSpec !== null && !Array.isArray(currentSpec)
-        ? { ...(currentSpec as Record<string, unknown>) }
-        : {}
-    spec.isVisible = isVisible
-    return JSON.stringify({ ...config, spec }, null, 2)
-  } catch {
+  const config = parsePublicModelConfig(value)
+  if (!config) {
     return value
   }
+  const spec = isJsonObject(config.spec) ? { ...config.spec } : {}
+  spec.isVisible = isVisible
+  return JSON.stringify({ ...config, spec }, null, 2)
 }
 
 const PublicModelList: React.FC = () => {
@@ -143,18 +144,13 @@ const PublicModelList: React.FC = () => {
       setConfigError(t('admin:public_models.errors.config_required'))
       return null
     }
-    try {
-      const parsed = JSON.parse(value)
-      if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
-        setConfigError(t('admin:public_models.errors.config_invalid_json'))
-        return null
-      }
-      setConfigError('')
-      return parsed as Record<string, unknown>
-    } catch {
+    const parsed = parsePublicModelConfig(value)
+    if (!parsed) {
       setConfigError(t('admin:public_models.errors.config_invalid_json'))
       return null
     }
+    setConfigError('')
+    return parsed
   }
 
   const getSpecValue = (json: Record<string, unknown>, key: 'modelGroup' | 'modelSubGroup') => {
@@ -218,6 +214,9 @@ const PublicModelList: React.FC = () => {
   }
 
   const handleVisibilityChange = (isVisible: boolean) => {
+    if (!validateConfig(formData.config)) {
+      return
+    }
     setFormData(current => ({
       ...current,
       is_visible: isVisible,

@@ -76,6 +76,13 @@ class AdminUserListResponse(BaseModel):
 
 
 # Public Model Management Schemas
+def _validate_public_model_json(value: Optional[dict]) -> Optional[dict]:
+    """Require an object-valued spec when a public model JSON defines one."""
+    if value is not None and "spec" in value and not isinstance(value["spec"], dict):
+        raise ValueError("Public model JSON spec must be an object")
+    return value
+
+
 class PublicModelCreate(BaseModel):
     """Public model creation model"""
 
@@ -83,6 +90,8 @@ class PublicModelCreate(BaseModel):
     namespace: str = Field(default="default", max_length=100)
     model_json: dict = Field(..., alias="json")
     is_visible: bool = True
+
+    _validate_model_json = field_validator("model_json")(_validate_public_model_json)
 
     class Config:
         populate_by_name = True
@@ -97,6 +106,8 @@ class PublicModelUpdate(BaseModel):
     is_active: Optional[bool] = None
     is_visible: Optional[bool] = None
     is_advanced: Optional[bool] = None
+
+    _validate_model_json = field_validator("model_json")(_validate_public_model_json)
 
     class Config:
         populate_by_name = True

@@ -35,6 +35,11 @@ def with_public_model_visibility(
     """Return a model CRD payload with an explicit selector visibility flag."""
     updated_json = dict(json_data) if isinstance(json_data, dict) else {}
     current_spec = updated_json.get("spec")
+    if "spec" in updated_json and not isinstance(current_spec, dict):
+        raise HTTPException(
+            status_code=422,
+            detail="Public model JSON spec must be an object",
+        )
     spec = dict(current_spec) if isinstance(current_spec, dict) else {}
     spec["isVisible"] = is_visible
     updated_json["spec"] = spec
@@ -405,6 +410,32 @@ class PublicModelService(BaseService[Kind, ModelCreate, ModelUpdate]):
             ModelAdapter.to_model_dict(model)
             for model in selected_models[skip : skip + limit]
         ]
+
+    def get_model_by_name(
+        self,
+        db: Session,
+        *,
+        name: str,
+        namespace: str = "default",
+        include_hidden: bool = False,
+    ) -> Optional[Dict[str, Any]]:
+        """Get an active public model directly by its complete resource identity."""
+        model = (
+            db.query(Kind)
+            .filter(
+                Kind.user_id == 0,
+                Kind.kind == "Model",
+                Kind.namespace == namespace,
+                Kind.name == name,
+                Kind.is_active == True,  # noqa: E712
+            )
+            .first()
+        )
+        if model is None:
+            return None
+        if not include_hidden and not is_public_model_visible(model.json):
+            return None
+        return ModelAdapter.to_model_dict(model)
 
     def count_active_models(self, db: Session, *, current_user: User) -> int:
         """

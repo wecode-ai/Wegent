@@ -775,4 +775,33 @@ describe('BotEdit default knowledge bases', () => {
       )
     })
   })
+
+  test('does not replace a saved model namespace with a same-name model', async () => {
+    mockedGetUnifiedModels.mockResolvedValue({
+      data: [{ name: 'shared-name', type: 'public', namespace: 'default' }],
+    })
+
+    await renderBotEdit({
+      agent_config: {
+        bind_model: 'shared-name',
+        bind_model_type: 'public',
+        bind_model_namespace: 'archived',
+      },
+    })
+
+    fireEvent.click(screen.getByTestId('save-button'))
+
+    await waitFor(() => {
+      expect(mockedUpdateBot).toHaveBeenCalledWith(
+        7,
+        expect.objectContaining({
+          agent_config: expect.objectContaining({
+            bind_model: 'shared-name',
+            bind_model_type: 'public',
+            bind_model_namespace: 'archived',
+          }),
+        })
+      )
+    })
+  })
 })

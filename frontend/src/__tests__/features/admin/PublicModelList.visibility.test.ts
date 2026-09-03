@@ -4,6 +4,7 @@
 
 import {
   getPublicModelVisibilityFromConfig,
+  parsePublicModelConfig,
   setPublicModelVisibilityInConfig,
 } from '@/features/admin/components/PublicModelList'
 
@@ -37,7 +38,18 @@ describe('PublicModelList visibility config synchronization', () => {
   test('leaves invalid JSON unchanged while editing', () => {
     const invalidJson = '{"spec":'
 
+    expect(parsePublicModelConfig(invalidJson)).toBeNull()
     expect(getPublicModelVisibilityFromConfig(invalidJson)).toBeUndefined()
     expect(setPublicModelVisibilityInConfig(invalidJson, false)).toBe(invalidJson)
   })
+
+  test.each(['null', '"invalid"', '[]', '42'])(
+    'rejects a non-object spec without replacing it: %s',
+    spec => {
+      const config = JSON.stringify({ kind: 'Model', spec: JSON.parse(spec) })
+
+      expect(parsePublicModelConfig(config)).toBeNull()
+      expect(setPublicModelVisibilityInConfig(config, false)).toBe(config)
+    }
+  )
 })

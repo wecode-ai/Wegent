@@ -3,6 +3,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 import pytest
+from pydantic import ValidationError
 from sqlalchemy.orm import Session
 
 from app.api.endpoints.admin.public_models import (
@@ -28,6 +29,14 @@ def _model_json(name: str) -> dict:
         },
         "status": {"state": "Available"},
     }
+
+
+def test_public_model_schema_rejects_non_object_spec() -> None:
+    with pytest.raises(ValidationError, match="spec must be an object"):
+        PublicModelCreate(
+            name="invalid-spec-public-model",
+            json={"kind": "Model", "spec": "invalid"},
+        )
 
 
 @pytest.mark.asyncio

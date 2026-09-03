@@ -2,6 +2,8 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
+from datetime import datetime
+
 from sqlalchemy.orm import Session
 
 from app.models.kind import Kind
@@ -92,3 +94,38 @@ def test_hidden_public_model_is_not_listed_but_remains_runtime_resolvable(
 
     assert aggregated_model is not None
     assert aggregated_model["name"] == "hidden-public-model"
+
+
+def test_hidden_public_model_outside_listing_limit_remains_resolvable(
+    test_db: Session,
+    test_user: User,
+) -> None:
+    hidden_model = _public_model("older-hidden-public-model", is_visible=False)
+    hidden_model.created_at = datetime(2025, 1, 1)
+    newer_models = [
+        _public_model(f"newer-public-model-{index}", is_visible=True)
+        for index in range(1000)
+    ]
+    for model in newer_models:
+        model.created_at = datetime(2026, 1, 1)
+    test_db.add_all([hidden_model, *newer_models])
+    test_db.commit()
+
+    capped_models = public_model_service.get_models(
+        db=test_db,
+        current_user=test_user,
+        skip=0,
+        limit=1000,
+        include_hidden=True,
+    )
+    assert hidden_model.name not in {model["name"] for model in capped_models}
+
+    aggregated_model = model_aggregation_service.get_model_by_name_and_type(
+        test_db,
+        test_user,
+        hidden_model.name,
+        ModelType.PUBLIC,
+    )
+
+    assert aggregated_model is not None
+    assert aggregated_model["name"] == hidden_model.name

@@ -530,10 +530,10 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
           const savedModelType = getModelTypeFromConfig(baseBot.agent_config)
           const savedModelNamespace = getModelNamespaceFromConfig(baseBot.agent_config)
           const foundModel = primaryModelData.find((m: UnifiedModel) => {
-            if (savedModelType) {
-              return m.name === savedModelName && m.type === savedModelType
-            }
-            return m.name === savedModelName
+            const typeMatches = !savedModelType || m.type === savedModelType
+            const namespaceMatches =
+              (m.namespace || 'default') === (savedModelNamespace || 'default')
+            return m.name === savedModelName && typeMatches && namespaceMatches
           })
           if (savedModelName) {
             setSelectedModel(savedModelName)
