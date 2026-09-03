@@ -164,7 +164,7 @@ export async function createDesktopScenario({
       assert.equal(installedDeveloperManifest.wework, undefined)
       assert.equal(installedDeveloperManifest.dsh, undefined)
       control.activateWindow('main')
-      await waitForStatus(control, 'ready · HMR 0', workbenchReadyTimeoutMs)
+      await waitForStatus(control, '运行中 · HMR 0', workbenchReadyTimeoutMs)
       const focusSnapshot = JSON.parse(await control.command('getWindowFocusSnapshot', 'body'))
       assert.equal(
         focusSnapshot.mainFocused,
@@ -191,7 +191,7 @@ export async function createDesktopScenario({
       )
       const readyCountBeforeHmr = control.readyCount
       await writeFile(clientPath, changedClient)
-      await waitForStatus(control, 'ready · HMR 1', workbenchReadyTimeoutMs)
+      await waitForStatus(control, '运行中 · HMR 1', workbenchReadyTimeoutMs)
       await control.awaitReadyAfter(readyCountBeforeHmr)
       await control.commandForWindow(
         isolatedWindowLabel,
@@ -213,7 +213,7 @@ export async function createDesktopScenario({
         '[data-testid="wework-plugin-development-sidebar-stop"]',
         { timeoutMs: workbenchReadyTimeoutMs, visible: true }
       )
-      await waitForStatus(control, 'stopped · HMR 1', workbenchReadyTimeoutMs)
+      await waitForStatus(control, '未运行 · HMR 1', workbenchReadyTimeoutMs)
       await captureScreenshot(control, 'plugin-development-07-debug-stopped-after-hmr.png', 'body')
     },
   }

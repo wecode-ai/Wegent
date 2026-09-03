@@ -61,6 +61,50 @@ window.__ModuleLoader__.load({
       )
     }
 
+    function compactPath(path) {
+      const parts = path.split(/[\\/]/).filter(Boolean)
+      return parts.length > 2 ? `…/${parts.slice(-2).join('/')}` : path
+    }
+
+    function statusPresentation(status, t) {
+      if (status === 'ready') {
+        return {
+          label: t('workbench.plugin_development_status_ready', 'Running'),
+          dotClassName: 'bg-success',
+        }
+      }
+      if (status === 'error') {
+        return {
+          label: t('workbench.plugin_development_status_error', 'Failed'),
+          dotClassName: 'bg-destructive',
+        }
+      }
+      if (['validating', 'starting', 'reloading', 'stopping'].includes(status)) {
+        return {
+          label: t('workbench.plugin_development_status_working', 'Working'),
+          dotClassName: 'bg-warning',
+        }
+      }
+      return {
+        label: t('workbench.plugin_development_status_stopped', 'Not running'),
+        dotClassName: 'bg-text-tertiary',
+      }
+    }
+
+    function actionButton({ children, className = '', disabled, onClick, testId }) {
+      return createElement(
+        'button',
+        {
+          type: 'button',
+          disabled,
+          'data-testid': testId,
+          className: `inline-flex h-9 items-center rounded-lg px-3 text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus/30 disabled:cursor-wait disabled:opacity-40 ${className}`,
+          onClick,
+        },
+        children
+      )
+    }
+
     function PluginDebugPanel({ scope, t, visible }) {
       const [session, setSession] = useState(null)
       const [error, setError] = useState('')
@@ -103,141 +147,157 @@ window.__ModuleLoader__.load({
       if (!visible) return null
       const currentSession = session
       const running = currentSession && !['stopped', 'error'].includes(currentSession.status)
+      const status = currentSession?.status || 'stopped'
+      const statusView = statusPresentation(status, t)
+      const displayName =
+        currentSession?.displayName || sourceRoot.split(/[\\/]/).filter(Boolean).at(-1) || ''
+      const statusText = `${statusView.label} · HMR ${currentSession?.hmrGeneration || 0}`
       return createElement(
         'aside',
         {
           'data-testid': 'wework-plugin-development-sidebar',
-          className: 'flex h-full min-h-0 flex-col gap-4 overflow-auto p-4 text-text-primary',
+          className: 'flex h-full min-h-0 flex-col overflow-auto p-5 text-text-primary',
         },
         createElement(
-          'header',
-          null,
-          createElement(
-            'h2',
-            { className: 'heading-section' },
-            t('workbench.plugin_development_debug', 'Plugin debugging')
-          ),
+          'section',
+          { className: 'w-full max-w-xl min-w-0' },
           createElement(
             'p',
-            { className: 'mt-1 break-all text-sm text-text-secondary' },
-            sourceRoot
+            { className: 'text-xs text-text-tertiary' },
+            t('workbench.plugin_development_project', 'Debug project')
+          ),
+          createElement('h2', { className: 'mt-1 truncate text-base font-medium' }, displayName),
+          createElement(
+            'p',
+            {
+              'aria-label': sourceRoot,
+              className: 'mt-1 truncate font-mono text-xs text-text-tertiary',
+            },
+            compactPath(sourceRoot)
           )
+        ),
+        createElement(
+          'div',
+          {
+            className:
+              'mt-5 flex w-full max-w-xl items-center justify-between gap-3 border-y border-border/60 py-3',
+          },
+          createElement(
+            'div',
+            { className: 'flex min-w-0 items-center gap-2' },
+            createElement('span', {
+              'aria-hidden': 'true',
+              className: `h-2 w-2 shrink-0 rounded-full ${statusView.dotClassName}`,
+            }),
+            createElement(
+              'span',
+              {
+                'data-testid': 'wework-plugin-development-sidebar-status',
+                className: 'truncate text-sm font-medium',
+              },
+              statusText
+            )
+          ),
+          busy
+            ? createElement(
+                'span',
+                { className: 'shrink-0 text-xs text-text-tertiary' },
+                t('workbench.plugin_development_updating', 'Updating…')
+              )
+            : null
         ),
         error
           ? createElement(
-              'pre',
+              'div',
               {
                 'data-testid': 'wework-plugin-development-sidebar-error',
                 className:
-                  'whitespace-pre-wrap rounded-lg border border-destructive/30 bg-destructive/5 p-3 text-xs text-destructive',
+                  'mt-4 w-full max-w-xl whitespace-pre-wrap rounded-lg bg-destructive/5 px-3 py-2 text-xs text-destructive',
               },
               error
             )
           : null,
-        currentSession
+        currentSession?.lastError
           ? createElement(
-              'div',
-              { className: 'rounded-xl border border-border/40 p-3' },
-              createElement('strong', { className: 'text-sm' }, currentSession.displayName),
-              createElement(
-                'p',
-                {
-                  'data-testid': 'wework-plugin-development-sidebar-status',
-                  className: 'mt-1 text-sm text-text-secondary',
-                },
-                `${t('workbench.plugin_development_status', 'Status')}: ${currentSession.status} · HMR ${currentSession.hmrGeneration}`
-              ),
-              currentSession.lastError
-                ? createElement(
-                    'pre',
-                    {
-                      'data-testid': 'wework-plugin-development-sidebar-last-error',
-                      className: 'mt-3 whitespace-pre-wrap text-xs text-destructive',
-                    },
-                    `${currentSession.lastError.stage}: ${currentSession.lastError.message}`
-                  )
-                : null
+              'pre',
+              {
+                'data-testid': 'wework-plugin-development-sidebar-last-error',
+                className:
+                  'mt-4 w-full max-w-xl whitespace-pre-wrap rounded-lg bg-destructive/5 px-3 py-2 text-xs text-destructive',
+              },
+              `${currentSession.lastError.stage}: ${currentSession.lastError.message}`
             )
           : null,
         createElement(
-          'div',
-          { className: 'flex flex-wrap gap-2' },
-          !running
-            ? createElement(
-                'button',
-                {
-                  type: 'button',
-                  disabled: !sourceRoot || Boolean(busy),
-                  'data-testid': 'wework-plugin-development-sidebar-start',
-                  className:
-                    'inline-flex min-h-9 items-center rounded-lg bg-text-primary px-3 text-sm text-background disabled:opacity-50',
-                  onClick: () => run('start', 'pluginDevelopment.start', { sourceRoot }),
-                },
-                busy === 'start'
-                  ? t('workbench.plugin_development_starting', 'Starting…')
-                  : t('workbench.plugin_development_start', 'Start debug instance')
-              )
-            : createElement(
-                'button',
-                {
-                  type: 'button',
-                  disabled: Boolean(busy),
-                  'data-testid': 'wework-plugin-development-sidebar-focus',
-                  className:
-                    'inline-flex min-h-9 items-center rounded-lg bg-text-primary px-3 text-sm text-background disabled:opacity-50',
-                  onClick: () => run('focus', 'pluginDevelopment.focus'),
-                },
-                t('workbench.plugin_development_focus', 'Focus debug instance')
-              ),
+          'section',
+          { className: 'mt-5 w-full max-w-xl' },
+          actionButton({
+            children:
+              busy === 'start'
+                ? t('workbench.plugin_development_starting', 'Starting…')
+                : running
+                  ? t('workbench.plugin_development_focus', 'Focus debug instance')
+                  : t('workbench.plugin_development_start', 'Start debug instance'),
+            className:
+              'w-full justify-center bg-text-primary text-background hover:bg-text-primary/80',
+            disabled: !sourceRoot || Boolean(busy),
+            onClick: () =>
+              running
+                ? run('focus', 'pluginDevelopment.focus')
+                : run('start', 'pluginDevelopment.start', { sourceRoot }),
+            testId: running
+              ? 'wework-plugin-development-sidebar-focus'
+              : 'wework-plugin-development-sidebar-start',
+          }),
           running
             ? createElement(
-                React.Fragment,
-                null,
+                'div',
+                { className: 'mt-5' },
                 createElement(
-                  'button',
-                  {
-                    type: 'button',
-                    disabled: Boolean(busy),
-                    'data-testid': 'wework-plugin-development-sidebar-restart',
-                    className: 'min-h-9 rounded-lg border border-border px-3 text-sm',
-                    onClick: () => run('restart', 'pluginDevelopment.restartCoreDsh'),
-                  },
-                  t('workbench.plugin_development_restart_core_dsh', 'Restart Core DSH')
+                  'p',
+                  { className: 'mb-2 text-xs text-text-tertiary' },
+                  t('workbench.plugin_development_tools', 'Debug tools')
                 ),
                 createElement(
-                  'button',
-                  {
-                    type: 'button',
-                    disabled: Boolean(busy),
-                    'data-testid': 'wework-plugin-development-sidebar-devtools',
-                    className: 'min-h-9 rounded-lg border border-border px-3 text-sm',
-                    onClick: () => run('devtools', 'pluginDevelopment.openDevTools'),
-                  },
-                  'DevTools'
-                ),
-                createElement(
-                  'button',
-                  {
-                    type: 'button',
-                    disabled: Boolean(busy),
-                    'data-testid': 'wework-plugin-development-sidebar-logs',
-                    className: 'min-h-9 rounded-lg border border-border px-3 text-sm',
-                    onClick: () => run('logs', 'pluginDevelopment.openLogDirectory'),
-                  },
-                  t('workbench.plugin_development_logs', 'Logs')
-                ),
-                createElement(
-                  'button',
-                  {
-                    type: 'button',
-                    disabled: Boolean(busy),
-                    'data-testid': 'wework-plugin-development-sidebar-stop',
+                  'div',
+                  { className: 'overflow-hidden rounded-xl bg-muted/50' },
+                  actionButton({
+                    children: t(
+                      'workbench.plugin_development_restart_core_dsh',
+                      'Restart Core DSH'
+                    ),
                     className:
-                      'min-h-9 rounded-lg border border-destructive/40 px-3 text-sm text-destructive',
-                    onClick: () => run('stop', 'pluginDevelopment.stop'),
-                  },
-                  t('workbench.plugin_development_stop', 'Stop')
-                )
+                      'w-full justify-start rounded-none px-3 text-text-secondary hover:bg-muted hover:text-text-primary',
+                    disabled: Boolean(busy),
+                    onClick: () => run('restart', 'pluginDevelopment.restartCoreDsh'),
+                    testId: 'wework-plugin-development-sidebar-restart',
+                  }),
+                  createElement('div', { className: 'mx-3 h-px bg-border/70' }),
+                  actionButton({
+                    children: 'DevTools',
+                    className:
+                      'w-full justify-start rounded-none px-3 text-text-secondary hover:bg-muted hover:text-text-primary',
+                    disabled: Boolean(busy),
+                    onClick: () => run('devtools', 'pluginDevelopment.openDevTools'),
+                    testId: 'wework-plugin-development-sidebar-devtools',
+                  }),
+                  createElement('div', { className: 'mx-3 h-px bg-border/70' }),
+                  actionButton({
+                    children: t('workbench.plugin_development_logs', 'Logs'),
+                    className:
+                      'w-full justify-start rounded-none px-3 text-text-secondary hover:bg-muted hover:text-text-primary',
+                    disabled: Boolean(busy),
+                    onClick: () => run('logs', 'pluginDevelopment.openLogDirectory'),
+                    testId: 'wework-plugin-development-sidebar-logs',
+                  })
+                ),
+                actionButton({
+                  children: t('workbench.plugin_development_stop', 'Stop'),
+                  className: 'mt-3 justify-start text-destructive hover:bg-destructive/5',
+                  disabled: Boolean(busy),
+                  onClick: () => run('stop', 'pluginDevelopment.stop'),
+                  testId: 'wework-plugin-development-sidebar-stop',
+                })
               )
             : null
         )
