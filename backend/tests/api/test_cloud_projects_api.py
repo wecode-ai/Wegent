@@ -33,6 +33,7 @@ from app.models.kind import Kind
 from app.models.loop_item_execution import LoopItemExecution
 from app.models.project import Project
 from app.models.user import User
+from app.services.auth import create_task_token
 from app.services.cloud_files import cloud_file_service
 from app.services.delivery import delivery_service
 from app.services.loop_items.external_provider import external_loop_item_provider
@@ -2141,10 +2142,16 @@ def test_ai_manager_assignment_endpoint_applies_tool_selected_member(
     )
     test_db.add_all([rule, run])
     test_db.commit()
+    task_token = create_task_token(
+        task_id=0,
+        subtask_id=0,
+        user_id=test_user.id,
+        user_name=test_user.user_name,
+    )
 
     assigned = test_client.post(
         f"/api/v1/cloud-projects/{project['id']}/automation-runs/{run.id}/assign",
-        headers=_auth(test_token),
+        headers=_auth(task_token),
         json={"assigneeType": "user", "assigneeId": str(test_user.id)},
     )
 
