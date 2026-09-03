@@ -1,14 +1,11 @@
-import { fireEvent, render, screen, within } from '@testing-library/react'
+import { fireEvent, render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { describe, expect, it, vi } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 import '@/i18n'
 import type { TaskChangeRequestSnapshot } from '@/api/changeRequests'
 import type { CloudLoopItem } from '@/api/deliveries'
-import { WorkbenchContext } from '@/features/workbench/workbenchContexts'
-import type { WorkbenchContextValue } from '@/features/workbench/workbenchContextTypes'
-import { projectRuntimeConversationTurns } from '@/features/workbench/runtimeConversationTurns'
-import type { RuntimeConversationTurn } from '@/types/workbench'
-import type { UnifiedModel } from '@/types/api'
+import { WEWORK_DSH_SLOTS } from '@/features/dsh-runtime/dshUiSlots'
+import { installDshUiTestContributions } from '@/test/setup'
 import { CloudTodoBoardCard } from './CloudTodoBoardCard'
 
 const changeRequestMonitorMocks = vi.hoisted(() => ({
@@ -22,6 +19,38 @@ vi.mock('@/features/workbench/changeRequestMonitor', async importOriginal => {
     useTaskChangeRequest: changeRequestMonitorMocks.useTaskChangeRequest,
   }
 })
+
+vi.mock('@/components/layout/workspace-panels/TemporaryChatPanel', () => ({
+  TemporaryChatPanel: ({
+    initialAddress,
+    testId,
+    sendEphemeral,
+    collapseComposerWhenIdle,
+    runtimeContext,
+  }: {
+    initialAddress: {
+      deviceId: string
+      taskId: string
+      runtimeHandle?: { modelSelection?: { modelName?: string } }
+    }
+    testId: string
+    sendEphemeral: boolean
+    collapseComposerWhenIdle: boolean
+    runtimeContext?: { cloudProjectId?: string }
+  }) => (
+    <section
+      data-testid={testId}
+      data-device-id={initialAddress.deviceId}
+      data-task-id={initialAddress.taskId}
+      data-send-ephemeral={String(sendEphemeral)}
+      data-collapse-composer={String(collapseComposerWhenIdle)}
+      data-cloud-project-id={runtimeContext?.cloudProjectId}
+      data-model-name={initialAddress.runtimeHandle?.modelSelection?.modelName}
+    >
+      Shared task conversation
+    </section>
+  ),
+}))
 
 const item = {
   id: 'WEG-85',
@@ -58,38 +87,24 @@ const snapshot: TaskChangeRequestSnapshot = {
   error: null,
 }
 
-function conversationTurn(
-  id: string,
-  userContent: string,
-  assistantContent: string,
-  createdAt: string
-): RuntimeConversationTurn {
-  return {
-    id,
-    status: 'done',
-    items: [
-      {
-        id: `${id}:user`,
-        type: 'user_message',
-        message: {
-          id: `${id}:user`,
-          role: 'user',
-          content: userContent,
-          status: 'done',
-          createdAt,
-        },
-      },
-      {
-        id: `${id}:assistant`,
-        type: 'assistant_text',
-        content: assistantContent,
-        createdAt,
-      },
-    ],
-  }
-}
-
 describe('CloudTodoBoardCard', () => {
+  beforeEach(async () => {
+    await installDshUiTestContributions(
+      {
+        [WEWORK_DSH_SLOTS.boardCardStatus]: [
+          {
+            id: 'git-change-request',
+            module: 'plugins/wework-ui-git-board-card-status.js',
+          },
+        ],
+      },
+      {
+        'plugins/wework-ui-git-board-card-status.js': () =>
+          import('../../../dsh/ui-git/src/board-card-status'),
+      }
+    )
+  })
+
   it('opens execution configuration from the blocking card action', async () => {
     changeRequestMonitorMocks.useTaskChangeRequest.mockReturnValue(null)
     const onClick = vi.fn()
@@ -267,7 +282,6 @@ describe('CloudTodoBoardCard', () => {
             task_title: 'Fix the board popup',
             running: false,
             changeRequestTarget: snapshot.target,
-            conversationLoaded: true,
           },
         ]}
         onClick={vi.fn()}
@@ -303,7 +317,6 @@ describe('CloudTodoBoardCard', () => {
             running: false,
             changeRequestTarget: snapshot.target,
             finalResponsePreview: '已完成布局修复',
-            conversationLoaded: true,
           },
         ]}
         onClick={vi.fn()}
@@ -343,7 +356,6 @@ describe('CloudTodoBoardCard', () => {
             task_title: 'Fix the board popup',
             running: false,
             finalResponsePreview: '已完成布局修复',
-            conversationLoaded: true,
           },
         ]}
         onClick={vi.fn()}
@@ -383,7 +395,7 @@ describe('CloudTodoBoardCard', () => {
     expect(screen.queryByTestId('cloud-todo-card-progress-popup-WEG-85')).not.toBeInTheDocument()
   })
 
-  it('highlights unread cards and keeps full final content in the hover preview', async () => {
+  it('highlights unread cards and mounts the shared task conversation in the hover preview', async () => {
     render(
       <CloudTodoBoardCard
         item={{ ...item, is_unread: true }}
@@ -396,7 +408,6 @@ describe('CloudTodoBoardCard', () => {
             running: false,
             finalResponsePreview:
               '第一行：完成布局\n第二行：保留工具层级\n第三行：展示完整回复\n第四行：展示验证结果\n第五行：展示提交状态\n第六行：等待确认',
-            conversationLoaded: true,
           },
         ]}
         onClick={vi.fn()}
@@ -420,15 +431,53 @@ describe('CloudTodoBoardCard', () => {
 
     fireEvent.mouseEnter(screen.getByTestId('cloud-todo-card-WEG-85'))
 
-    const fullResponse = await screen.findByTestId('cloud-todo-card-popup-conversation-WEG-85')
-    expect(fullResponse).toHaveTextContent('第一行：完成布局')
-    expect(fullResponse).toHaveTextContent('第六行：等待确认')
-    expect(fullResponse).toHaveClass('max-h-[min(68vh,42rem)]', 'overflow-hidden')
+    const conversation = await screen.findByTestId('cloud-todo-card-popup-conversation-WEG-85')
+    expect(conversation).toHaveAttribute('data-device-id', 'local')
+    expect(conversation).toHaveAttribute('data-task-id', 'task-85')
+    expect(conversation).toHaveAttribute('data-send-ephemeral', 'false')
+    expect(conversation).toHaveAttribute('data-collapse-composer', 'true')
+    expect(conversation).toHaveAttribute('data-cloud-project-id', String(item.cloud_project_id))
   })
 
-  it('keeps repeated task text out of the card and restores the full hover conversation', async () => {
-    const onSendMessage = vi.fn(async () => true)
+  it('forwards the bound task model to the shared hover conversation', async () => {
+    render(
+      <CloudTodoBoardCard
+        item={item}
+        taskBindings={[
+          {
+            id: 85,
+            device_id: 'local',
+            task_id: 'task-85',
+            task_title: 'Fix the board popup model',
+            running: false,
+            finalResponsePreview: '已完成',
+            modelSelection: {
+              modelName: 'gpt-5.6-sol',
+              modelType: 'public',
+              options: { reasoning: 'high' },
+            },
+          },
+        ]}
+        onClick={vi.fn()}
+        onArchive={vi.fn()}
+        display={{
+          showAssignee: false,
+          showPriority: false,
+          showTags: false,
+          showDate: false,
+        }}
+      />
+    )
 
+    fireEvent.mouseEnter(screen.getByTestId('cloud-todo-card-WEG-85'))
+
+    expect(await screen.findByTestId('cloud-todo-card-popup-conversation-WEG-85')).toHaveAttribute(
+      'data-model-name',
+      'gpt-5.6-sol'
+    )
+  })
+
+  it('keeps repeated task text out of the card and switches the shared hover conversation', async () => {
     render(
       <CloudTodoBoardCard
         item={{ ...item, description: 'This description must be hidden from the card' }}
@@ -458,7 +507,6 @@ describe('CloudTodoBoardCard', () => {
           showTags: false,
           showDate: false,
         }}
-        onSendMessage={onSendMessage}
       />
     )
 
@@ -478,249 +526,9 @@ describe('CloudTodoBoardCard', () => {
     fireEvent.mouseEnter(screen.getByTestId('cloud-todo-card-progress-task-WEG-85-86'))
     expect(screen.queryByText('Fix the board popup')).not.toBeInTheDocument()
     expect(screen.getByText('Verify the hover behavior')).toBeInTheDocument()
-
-    const input = screen.getByTestId('cloud-todo-card-popup-input-WEG-85-86')
-    const composer = screen.getByTestId('project-chat-composer-form')
-    expect(composer).toHaveAttribute('data-short-expanded', 'false')
-    fireEvent.click(input)
-    expect(composer).toHaveAttribute('data-short-expanded', 'true')
-
-    await userEvent.type(input, '继续检查 hover 交互{enter}')
-    expect(onSendMessage).toHaveBeenCalledWith(
-      expect.objectContaining({ id: 86, task_id: 'task-86' }),
-      '继续检查 hover 交互'
+    expect(screen.getByTestId('cloud-todo-card-popup-conversation-WEG-85')).toHaveAttribute(
+      'data-task-id',
+      'task-86'
     )
-  })
-
-  it('uses the bound runtime task model in the popup composer', async () => {
-    const deepseekModel: UnifiedModel = {
-      name: 'deepseek-v4-flash-vision-exp',
-      displayName: 'DeepSeek V4 Flash Vision',
-      type: 'public',
-      provider: 'cloud',
-      runtime: { family: 'openai.openai-responses' },
-    }
-    const gptModel: UnifiedModel = {
-      name: 'gpt-5.6-sol',
-      displayName: 'GPT 5.6 Sol',
-      type: 'public',
-      provider: 'cloud',
-      runtime: { family: 'openai.openai-responses' },
-    }
-    const resolveRuntimeTaskModelSelection = vi.fn(() => ({
-      selectedModel: gptModel,
-      activeModel: gptModel,
-      selectedModelOptions: { reasoning: 'high' },
-    }))
-    const workbench = {
-      state: { devices: [], runtimeWork: null },
-      projectChat: {
-        models: [deepseekModel, gptModel],
-        skills: [],
-        selectedModel: deepseekModel,
-        activeModel: null,
-        selectedModelOptions: {},
-        isModelSelectionReady: true,
-        selectedSkills: [],
-        attachmentStateByScope: {},
-        isOptionsLocked: false,
-        resolveRuntimeTaskModelSelection,
-        setRuntimeTaskSelectedModel: vi.fn(),
-        setRuntimeTaskSelectedModelAndOptions: vi.fn(),
-        setRuntimeTaskSelectedModelOption: vi.fn(),
-        onBlockedModelSelect: vi.fn(),
-        toggleSkill: vi.fn(),
-        handleFileSelectForScope: vi.fn(async () => undefined),
-        removeAttachmentForScope: vi.fn(async () => undefined),
-        listLocalSkills: vi.fn(async () => []),
-        listLocalApps: vi.fn(async () => []),
-      },
-      loadRuntimeTranscriptForPane: vi.fn(async () => ({
-        messages: [],
-        turns: [],
-        hasMoreBefore: false,
-        beforeCursor: null,
-      })),
-      loadTurnFileChangesDiff: vi.fn(),
-      revertTurnFileChanges: vi.fn(),
-    } as unknown as WorkbenchContextValue
-
-    render(
-      <WorkbenchContext.Provider value={workbench}>
-        <CloudTodoBoardCard
-          item={item}
-          taskBindings={[
-            {
-              id: 85,
-              device_id: 'local',
-              task_id: 'task-85',
-              task_title: 'Fix the board popup model',
-              running: false,
-              finalResponsePreview: '已完成',
-              conversationLoaded: true,
-            },
-          ]}
-          onClick={vi.fn()}
-          onArchive={vi.fn()}
-          onSendMessage={vi.fn(async () => true)}
-          display={{
-            showAssignee: false,
-            showPriority: false,
-            showTags: false,
-            showDate: false,
-          }}
-        />
-      </WorkbenchContext.Provider>
-    )
-
-    fireEvent.mouseEnter(screen.getByTestId('cloud-todo-card-WEG-85'))
-    const popup = await screen.findByTestId('cloud-todo-card-progress-popup-WEG-85')
-    expect(within(popup).getByTestId('model-selector-button')).toHaveTextContent('GPT 5.6 Sol')
-    expect(within(popup).getByTestId('model-selector-button')).not.toHaveTextContent('DeepSeek')
-    expect(resolveRuntimeTaskModelSelection).toHaveBeenCalledWith(
-      expect.objectContaining({ deviceId: 'local', taskId: 'task-85' })
-    )
-  })
-
-  it('shows the latest user and assistant round first, then loads older transcript pages', async () => {
-    const loadRuntimeTranscriptForPane = vi.fn(
-      async (
-        _address,
-        options
-      ): ReturnType<WorkbenchContextValue['loadRuntimeTranscriptForPane']> => ({
-        messages: [],
-        turns: options?.beforeCursor
-          ? [
-              conversationTurn(
-                'turn-oldest',
-                '最早一轮用户消息',
-                '最早一轮 AI 回复',
-                '2026-08-21T00:00:00Z'
-              ),
-            ]
-          : [],
-        hasMoreBefore: false,
-        beforeCursor: null,
-      })
-    )
-    const initialTurns = [
-      conversationTurn('turn-older', '上一轮用户消息', '上一轮 AI 回复', '2026-08-21T00:01:00Z'),
-      conversationTurn(
-        'turn-latest',
-        '最新一轮用户消息',
-        '最新一轮 AI 回复',
-        '2026-08-21T00:02:00Z'
-      ),
-    ]
-    const workbench = {
-      state: {
-        devices: [],
-        runtimeWork: null,
-      },
-      loadRuntimeTranscriptForPane,
-      loadTurnFileChangesDiff: vi.fn(),
-      revertTurnFileChanges: vi.fn(),
-    } as unknown as WorkbenchContextValue
-
-    render(
-      <WorkbenchContext.Provider value={workbench}>
-        <CloudTodoBoardCard
-          item={item}
-          taskBindings={[
-            {
-              id: 87,
-              device_id: 'local',
-              task_id: 'task-history',
-              task_title: 'Inspect paginated history',
-              running: false,
-              finalResponsePreview: '最新一轮 AI 回复',
-              conversationLoaded: true,
-              conversationMessages: projectRuntimeConversationTurns(initialTurns),
-              conversationHasMoreBefore: true,
-              conversationBeforeCursor: 'older-page',
-            },
-          ]}
-          onClick={vi.fn()}
-          onArchive={vi.fn()}
-          display={{
-            showAssignee: false,
-            showPriority: false,
-            showTags: false,
-            showDate: false,
-          }}
-        />
-      </WorkbenchContext.Provider>
-    )
-
-    fireEvent.mouseEnter(screen.getByTestId('cloud-todo-card-WEG-85'))
-    const popup = await screen.findByTestId('cloud-todo-card-progress-popup-WEG-85')
-    const popupQueries = within(popup)
-
-    expect(await popupQueries.findByText('最新一轮用户消息')).toBeInTheDocument()
-    expect(popupQueries.getByText('最新一轮 AI 回复')).toBeInTheDocument()
-    expect(popupQueries.queryByText('上一轮用户消息')).not.toBeInTheDocument()
-
-    await userEvent.click(popupQueries.getByTestId('load-older-runtime-transcript-button'))
-    expect(
-      popupQueries.queryByTestId('cloud-todo-card-progress-popup-WEG-85-close')
-    ).not.toBeInTheDocument()
-    expect((await popupQueries.findAllByText('上一轮用户消息')).length).toBeGreaterThan(0)
-    expect(popupQueries.getAllByText('上一轮 AI 回复').length).toBeGreaterThan(0)
-
-    await userEvent.click(popupQueries.getByTestId('load-older-runtime-transcript-button'))
-    expect((await popupQueries.findAllByText('最早一轮用户消息')).length).toBeGreaterThan(0)
-    expect(popupQueries.getAllByText('最早一轮 AI 回复').length).toBeGreaterThan(0)
-    expect(loadRuntimeTranscriptForPane).toHaveBeenCalledTimes(1)
-    expect(loadRuntimeTranscriptForPane).toHaveBeenLastCalledWith(
-      expect.objectContaining({ deviceId: 'local', taskId: 'task-history' }),
-      { limit: 50, beforeCursor: 'older-page' }
-    )
-  })
-
-  it('shows fallback conversation and the loading-older control before prefetch completes', async () => {
-    const loadRuntimeTranscriptForPane = vi.fn()
-    const workbench = {
-      state: {
-        devices: [],
-        runtimeWork: null,
-      },
-      loadRuntimeTranscriptForPane,
-      loadTurnFileChangesDiff: vi.fn(),
-      revertTurnFileChanges: vi.fn(),
-    } as unknown as WorkbenchContextValue
-
-    render(
-      <WorkbenchContext.Provider value={workbench}>
-        <CloudTodoBoardCard
-          item={{ ...item, description: '立即显示的用户消息' }}
-          taskBindings={[
-            {
-              id: 88,
-              device_id: 'local',
-              task_id: 'task-prefetching',
-              task_title: 'Prefetching conversation',
-              running: false,
-              finalResponsePreview: '立即显示的 AI 回复',
-              conversationLoaded: false,
-            },
-          ]}
-          onClick={vi.fn()}
-          onArchive={vi.fn()}
-          display={{
-            showAssignee: false,
-            showPriority: false,
-            showTags: false,
-            showDate: false,
-          }}
-        />
-      </WorkbenchContext.Provider>
-    )
-
-    fireEvent.mouseEnter(screen.getByTestId('cloud-todo-card-WEG-85'))
-    const popup = await screen.findByTestId('cloud-todo-card-progress-popup-WEG-85')
-    expect(popup).toHaveTextContent('立即显示的用户消息')
-    expect(popup).toHaveTextContent('立即显示的 AI 回复')
-    expect(within(popup).getByTestId('load-older-runtime-transcript-button')).toBeDisabled()
-    expect(loadRuntimeTranscriptForPane).not.toHaveBeenCalled()
   })
 })

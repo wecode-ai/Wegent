@@ -122,6 +122,28 @@ export default defineConfig({
           'dsh/ui-core-settings/src/settings-page.tsx'
         ),
         'wework-ui-core-apps': path.resolve(__dirname, 'dsh/ui-core-apps/src/app-surface.tsx'),
+        'wework-ui-git-board-card-status': path.resolve(
+          __dirname,
+          'dsh/ui-git/src/board-card-status.tsx'
+        ),
+        'wework-ui-git-environment-section': path.resolve(
+          __dirname,
+          'dsh/ui-git/src/environment-section.tsx'
+        ),
+        'wework-ui-git-project-create-section': path.resolve(
+          __dirname,
+          'dsh/ui-git/src/project-create-section.tsx'
+        ),
+        'wework-ui-git-project-work-section': path.resolve(
+          __dirname,
+          'dsh/ui-git/src/project-work-section.tsx'
+        ),
+        'wework-ui-git-settings': path.resolve(__dirname, 'dsh/ui-git/src/settings-page.tsx'),
+        'wework-ui-git-task-status': path.resolve(__dirname, 'dsh/ui-git/src/task-status.tsx'),
+        'wework-ui-git-workspace-menu-section': path.resolve(
+          __dirname,
+          'dsh/ui-git/src/workspace-menu-section.tsx'
+        ),
         'wework-ui-plugin-center-catalog': path.resolve(
           __dirname,
           'dsh/ui-plugin-center/src/catalog-route.tsx'

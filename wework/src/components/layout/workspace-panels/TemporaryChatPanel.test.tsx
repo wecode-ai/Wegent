@@ -3,7 +3,13 @@ import userEvent from '@testing-library/user-event'
 import { StrictMode } from 'react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-import type { Attachment, ModelSelectionConfig, RuntimeTaskAddress } from '@/types/api'
+import type {
+  Attachment,
+  ModelOptions,
+  ModelSelectionConfig,
+  RuntimeTaskAddress,
+  UnifiedModel,
+} from '@/types/api'
 import { TemporaryChatPanel } from './TemporaryChatPanel'
 
 const attachment: Attachment = {
@@ -56,18 +62,26 @@ vi.mock('@/components/layout/BufferedChatInput', () => ({
     onSubmit,
     disabled,
     error,
+    collapseWhenIdle,
     goalDraftActive,
     onSetGoal,
     onCancelGoalDraft,
+    projectChat,
   }: {
     onSubmit: (valueOverride?: string) => Promise<boolean>
     disabled?: boolean
     error?: string | null
+    collapseWhenIdle?: boolean
     goalDraftActive?: boolean
     onSetGoal?: () => void
     onCancelGoalDraft?: () => void
+    projectChat?: { selectedModel?: UnifiedModel | null }
   }) => (
-    <>
+    <div
+      data-testid="mock-composer"
+      data-collapse-when-idle={String(collapseWhenIdle)}
+      data-selected-model={projectChat?.selectedModel?.name}
+    >
       {onSetGoal ? (
         <button type="button" data-testid="set-goal-button" onClick={onSetGoal}>
           设置目标
@@ -87,7 +101,7 @@ vi.mock('@/components/layout/BufferedChatInput', () => ({
         发送
       </button>
       {error ? <span data-testid="mock-error">{error}</span> : null}
-    </>
+    </div>
   ),
 }))
 
@@ -99,6 +113,25 @@ vi.mock('@/features/workbench/useWorkbench', () => ({
       models: [],
       selectedModel: null,
       selectedModelOptions: undefined,
+      resolveRuntimeTaskModelSelection: () => {
+        const selection = mocks.activeModelSelection
+        const model = selection
+          ? {
+              name: selection.modelName,
+              displayName: selection.modelName,
+              type: selection.modelType,
+            }
+          : null
+        return {
+          taskSelection: selection,
+          selectedModel: model,
+          activeModel: model,
+          selectedModelOptions: selection?.options ?? {},
+        }
+      },
+      setRuntimeTaskSelectedModel: vi.fn(),
+      setRuntimeTaskSelectedModelAndOptions: vi.fn(),
+      setRuntimeTaskSelectedModelOption: vi.fn(),
     },
     createTemporaryRuntimeTask: vi.fn(),
     sendRuntimePaneMessage: mocks.sendRuntimePaneMessage,
@@ -123,11 +156,14 @@ vi.mock('@/features/workbench/useWorkbenchAttachments', () => ({
 }))
 
 vi.mock('@/features/workbench/runtimeModelSelection', () => ({
-  selectedModelExecutionFields: () => ({
-    modelId: 'gpt-5.6-sol',
-    modelType: 'runtime',
-    modelOptions: { reasoningEffort: 'high' },
-  }),
+  selectedModelExecutionFields: (model: UnifiedModel | null, options: ModelOptions | undefined) =>
+    model
+      ? {
+          modelId: model.name,
+          modelType: model.type,
+          modelOptions: options ?? {},
+        }
+      : {},
 }))
 
 vi.mock('@/features/workbench/runtimePaneStatus', () => ({
@@ -146,11 +182,6 @@ vi.mock('@/features/workbench/runtimeConversationCache', () => ({
   getRuntimeConversationMessages: () => [],
   removeRuntimeConversationTurn: () => [],
   subscribeRuntimeConversation: () => () => undefined,
-}))
-
-vi.mock('@/features/workbench/temporaryChatModelContext', () => ({
-  resolveTemporaryChatActiveModel: () => null,
-  resolveTemporaryChatModelSelection: () => mocks.activeModelSelection,
 }))
 
 vi.mock('@/features/workbench/runtimeTaskLifecycle', () => ({
@@ -184,6 +215,20 @@ describe('TemporaryChatPanel', () => {
     mocks.syncTranscript.mockReset()
     mocks.lifecycleSnapshot = null
     mocks.activeModelSelection = null
+  })
+
+  it('passes the collapsed idle state through to the shared composer', () => {
+    render(
+      <TemporaryChatPanel
+        currentProject={null}
+        source={address}
+        instanceId="collapsed-composer"
+        initialAddress={address}
+        collapseComposerWhenIdle
+      />
+    )
+
+    expect(screen.getByTestId('mock-composer')).toHaveAttribute('data-collapse-when-idle', 'true')
   })
 
   it('lets an idle transcript settle a stale running execution without an active turn', async () => {
@@ -349,6 +394,10 @@ describe('TemporaryChatPanel', () => {
       />
     )
 
+    expect(screen.getByTestId('mock-composer')).toHaveAttribute(
+      'data-selected-model',
+      'moonshot-kimi-k2.7-code-highspeed'
+    )
     await userEvent.click(screen.getByTestId('mock-send'))
 
     await waitFor(() => expect(mocks.sendRuntimePaneMessage).toHaveBeenCalledTimes(1))

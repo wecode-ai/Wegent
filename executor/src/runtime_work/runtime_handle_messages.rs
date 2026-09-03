@@ -146,14 +146,69 @@ pub(crate) fn append_unique_transcript_messages(
     target: &mut Vec<Value>,
     messages: impl IntoIterator<Item = Value>,
 ) {
-    for message in messages {
+    for mut message in messages {
         let message_id = message.get("id").and_then(Value::as_str);
         if let Some(existing) = target.iter_mut().find(|existing| {
             message_id.is_some() && existing.get("id").and_then(Value::as_str) == message_id
         }) {
+            if same_user_client_message_id(existing, &message) {
+                preserve_local_user_message_metadata(&mut message, existing);
+            }
+            *existing = message;
+        } else if let Some(existing) = target
+            .iter_mut()
+            .find(|existing| same_user_client_message_id(existing, &message))
+        {
+            preserve_local_user_message_metadata(&mut message, existing);
             *existing = message;
         } else {
             target.push(message);
+        }
+    }
+}
+
+fn same_user_client_message_id(left: &Value, right: &Value) -> bool {
+    let is_user = |message: &Value| {
+        message
+            .get("role")
+            .and_then(Value::as_str)
+            .is_some_and(|role| role.eq_ignore_ascii_case("user"))
+    };
+    if !is_user(left) || !is_user(right) {
+        return false;
+    }
+
+    user_client_message_id(left)
+        .zip(user_client_message_id(right))
+        .is_some_and(|(left, right)| left == right)
+}
+
+fn user_client_message_id(message: &Value) -> Option<&str> {
+    message
+        .get("clientUserMessageId")
+        .or_else(|| message.get("client_user_message_id"))
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+}
+
+fn preserve_local_user_message_metadata(target: &mut Value, source: &Value) {
+    let Some(target) = target.as_object_mut() else {
+        return;
+    };
+    let Some(source) = source.as_object() else {
+        return;
+    };
+    for key in [
+        "source",
+        "runtimeGoalRequest",
+        "runtime_goal_request",
+        "attachments",
+    ] {
+        if target.get(key).map(Value::is_null).unwrap_or(true) {
+            if let Some(value) = source.get(key) {
+                target.insert(key.to_owned(), value.clone());
+            }
         }
     }
 }
@@ -329,5 +384,60 @@ mod tests {
         assert_eq!(messages[0]["content"], "new");
         assert_eq!(messages[1]["content"], "keep");
         assert_eq!(messages[2]["content"], "append");
+    }
+
+    #[test]
+    fn appending_transcript_messages_replaces_user_aliases_by_client_id() {
+        let mut messages = vec![json!({
+            "id": "cached-user",
+            "clientUserMessageId": "client-user-1",
+            "role": "user",
+            "content": "Visible prompt",
+            "attachments": [{"id": "attachment-1"}],
+        })];
+
+        append_unique_transcript_messages(
+            &mut messages,
+            vec![json!({
+                "id": "provider-user",
+                "clientUserMessageId": "client-user-1",
+                "role": "user",
+                "content": "Provider prompt",
+                "turnId": "turn-1",
+            })],
+        );
+
+        assert_eq!(messages.len(), 1);
+        assert_eq!(messages[0]["id"], "provider-user");
+        assert_eq!(messages[0]["content"], "Provider prompt");
+        assert_eq!(messages[0]["turnId"], "turn-1");
+        assert_eq!(messages[0]["attachments"][0]["id"], "attachment-1");
+    }
+
+    #[test]
+    fn appending_transcript_messages_preserves_metadata_for_same_user_id() {
+        let mut messages = vec![json!({
+            "id": "user-1",
+            "clientUserMessageId": "client-user-1",
+            "role": "user",
+            "content": "Visible prompt",
+            "attachments": [{"id": "attachment-1"}],
+        })];
+
+        append_unique_transcript_messages(
+            &mut messages,
+            vec![json!({
+                "id": "user-1",
+                "clientUserMessageId": "client-user-1",
+                "role": "user",
+                "content": "Provider prompt",
+                "turnId": "turn-1",
+            })],
+        );
+
+        assert_eq!(messages.len(), 1);
+        assert_eq!(messages[0]["content"], "Provider prompt");
+        assert_eq!(messages[0]["turnId"], "turn-1");
+        assert_eq!(messages[0]["attachments"][0]["id"], "attachment-1");
     }
 }

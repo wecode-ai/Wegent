@@ -66,6 +66,11 @@ interface TurnVisibilityBounds {
   bottom: number
 }
 
+interface MeasuredScrollGeometry {
+  scrollHeight: number
+  clientHeight: number
+}
+
 export function MessageTurnNavigation({
   messages,
   turnNavigation,
@@ -88,6 +93,7 @@ export function MessageTurnNavigation({
   const navigationScrollTimersRef = useRef<number[]>([])
   const messagesRef = useRef(messages)
   const turnNavigationRef = useRef(turnNavigation)
+  const measuredScrollGeometryRef = useRef<MeasuredScrollGeometry | null>(null)
 
   const clearNavigationScrollTimers = useCallback(() => {
     navigationScrollTimersRef.current.forEach(timer => window.clearTimeout(timer))
@@ -195,6 +201,7 @@ export function MessageTurnNavigation({
       const userTurns = buildUserTurnsForNavigation(messagesRef.current, turnNavigationRef.current)
       if (!scroller || !content || userTurns.length < 2) {
         markersRef.current = []
+        measuredScrollGeometryRef.current = null
         setMarkers([])
         setActiveMarkerIds([])
         return
@@ -233,6 +240,10 @@ export function MessageTurnNavigation({
       })
 
       markersRef.current = nextMarkers
+      measuredScrollGeometryRef.current = {
+        scrollHeight: scroller.scrollHeight,
+        clientHeight: scroller.clientHeight,
+      }
       setMarkers(nextMarkers)
       updateActiveMarkers(nextMarkers, reason)
     },
@@ -288,7 +299,18 @@ export function MessageTurnNavigation({
 
     // Mounted anchors are recalculated by observers; raw scroll events reuse
     // their measured bounds to update which conversation turns intersect the viewport.
-    const handleScroll = () => updateActiveMarkers(markersRef.current, 'scroll')
+    const handleScroll = () => {
+      const measuredGeometry = measuredScrollGeometryRef.current
+      if (
+        measuredGeometry &&
+        (scroller.scrollHeight !== measuredGeometry.scrollHeight ||
+          scroller.clientHeight !== measuredGeometry.clientHeight)
+      ) {
+        scheduleCalculateMarkers('scroll-layout-changed')
+        return
+      }
+      updateActiveMarkers(markersRef.current, 'scroll')
+    }
     const handleResize = () => scheduleCalculateMarkers('window-resize')
     scroller.addEventListener('scroll', handleScroll, { passive: true })
     window.addEventListener('resize', handleResize)

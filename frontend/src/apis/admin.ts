@@ -91,6 +91,7 @@ export interface AdminPublicModel {
   display_name: string | null
   json: Record<string, unknown>
   is_active: boolean
+  is_visible: boolean
   is_advanced: boolean
   created_at: string
   updated_at: string
@@ -105,6 +106,7 @@ export interface AdminPublicModelCreate {
   name: string
   namespace?: string
   json: Record<string, unknown>
+  is_visible?: boolean
 }
 
 export interface AdminPublicModelUpdate {
@@ -112,6 +114,7 @@ export interface AdminPublicModelUpdate {
   namespace?: string
   json?: Record<string, unknown>
   is_active?: boolean
+  is_visible?: boolean
   is_advanced?: boolean
 }
 
@@ -290,6 +293,34 @@ export interface ServiceKeyCreateRequest {
 
 export interface ServiceKeyListResponse {
   items: ServiceKey[]
+  total: number
+}
+
+// Plugin Release Key Types
+export interface PluginReleaseKey {
+  id: number
+  name: string
+  keyPrefix: string
+  description: string | null
+  expiresAt: string
+  lastUsedAt: string
+  createdAt: string
+  isActive: boolean
+  createdBy: string | null
+}
+
+export interface PluginReleaseKeyCreated extends PluginReleaseKey {
+  key: string // Full key, only at creation
+}
+
+export interface PluginReleaseKeyCreateRequest {
+  name: string
+  description?: string
+  expiresAt?: string
+}
+
+export interface PluginReleaseKeyListResponse {
+  items: PluginReleaseKey[]
   total: number
 }
 
@@ -994,6 +1025,32 @@ export const adminApis = {
    */
   async deleteServiceKey(keyId: number): Promise<void> {
     return apiClient.delete(`/admin/service-keys/${keyId}`)
+  },
+
+  // ==================== Plugin Release Key Management ====================
+
+  /**
+   * Get all keys dedicated to protected plugin release jobs
+   */
+  async getPluginReleaseKeys(): Promise<PluginReleaseKeyListResponse> {
+    return apiClient.get('/admin/plugin-release-keys')
+  },
+
+  /**
+   * Create a plugin release key
+   * The full key is only returned at creation time
+   */
+  async createPluginReleaseKey(
+    data: PluginReleaseKeyCreateRequest
+  ): Promise<PluginReleaseKeyCreated> {
+    return apiClient.post('/admin/plugin-release-keys', data)
+  },
+
+  /**
+   * Toggle plugin release key active status
+   */
+  async togglePluginReleaseKeyStatus(keyId: number): Promise<PluginReleaseKey> {
+    return apiClient.post(`/admin/plugin-release-keys/${keyId}/toggle-status`)
   },
 
   // ==================== Personal Key Management (Admin) ====================

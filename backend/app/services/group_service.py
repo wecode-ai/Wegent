@@ -263,9 +263,10 @@ def search_groups(
     limit: int = 20,
     user_id: int | None = None,
     user_role: str | None = None,
+    include_organization: bool = False,
 ) -> tuple[list[GroupResponse], int]:
     """
-    Search groups by name or display_name with level='group' filter.
+    Search accessible groups by name or display_name.
 
     Args:
         db: Database session
@@ -274,12 +275,16 @@ def search_groups(
         limit: Maximum number of records to return
         user_id: Current user ID (optional — filters to user's groups if provided)
         user_role: Current user role (optional)
+        include_organization: Include accessible organization-level namespaces
     Returns:
         Tuple of (list of GroupResponse objects, total count)
     """
+    levels = [GroupLevel.group.value]
+    if include_organization:
+        levels.append(GroupLevel.organization.value)
     query = db.query(Namespace).filter(
         Namespace.is_active.is_(True),
-        Namespace.level == GroupLevel.group.value,
+        Namespace.level.in_(levels),
     )
 
     if q:
@@ -294,7 +299,19 @@ def search_groups(
     # Filter to groups where user is a member
     if user_id is not None:
         member_data = get_user_groups_with_roles(db, user_id)
-        group_names = [name for name, _ in member_data]
+        role_map = {name: role for name, role in member_data}
+        if include_organization and user_role == "admin":
+            organization_names = (
+                db.query(Namespace.name)
+                .filter(
+                    Namespace.level == GroupLevel.organization.value,
+                    Namespace.is_active.is_(True),
+                )
+                .all()
+            )
+            for (name,) in organization_names:
+                role_map[name] = GroupRole.Owner.value
+        group_names = list(role_map)
         if not group_names:
             return [], 0
         query = query.filter(Namespace.name.in_(group_names))
@@ -304,7 +321,8 @@ def search_groups(
 
     # Get member counts and user's role map
     member_counts = {}
-    role_map = {name: role for name, role in member_data} if user_id is not None else {}
+    if user_id is None:
+        role_map = {}
     for group in groups:
         member_counts[group.name] = get_group_member_count(db, group.name)
 

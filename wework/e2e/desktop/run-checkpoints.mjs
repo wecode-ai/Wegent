@@ -85,6 +85,7 @@ const SCENARIO_ONLY_CHECKPOINTS = new Set([
   'external-content-import',
 ])
 const CLOUD_ONLY_CHECKPOINTS = new Set([
+  'plugin-workspace-publication',
   'cloud-git-worktree',
   'cloud-worktree-capability',
   'cloud-worktree-create',
@@ -257,7 +258,7 @@ async function readFailureSummary(result) {
 
 function checkpointScenarioEnv(env, checkpoint) {
   const nextEnv = { ...env }
-  if (checkpoint === 'native-window-chrome') {
+  if (checkpoint === 'native-window-chrome' || checkpoint === 'browser-multi-tabs') {
     nextEnv.WEWORK_E2E_BACKGROUND_WINDOW = '0'
   }
   const module = CHECKPOINT_SCENARIO_MODULES[checkpoint]

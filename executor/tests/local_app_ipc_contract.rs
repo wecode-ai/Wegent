@@ -5,11 +5,13 @@
 use std::{
     fs,
     future::Future,
+    path::Path,
     pin::Pin,
     sync::{Arc, Mutex, MutexGuard, OnceLock},
 };
 
 use serde_json::{json, Value};
+use sha2::Digest;
 use wegent_executor::local::{
     app_ipc::{app_ipc_stdio_ready_log_line, AppIpcError, AppIpcServer, RuntimeWorkHandler},
     command::{CommandRequest, CommandResult, DeviceCommandHandler},
@@ -177,6 +179,324 @@ async fn app_ipc_initializes_the_bundled_plugin_marketplace() {
 }
 
 #[tokio::test]
+async fn app_ipc_lists_ensures_and_packages_personal_plugins() {
+    let _lock = env_lock().await;
+    let root = tempfile::tempdir().unwrap();
+    let executor_home = root.path().join("executor-home");
+    let source = root.path().join("source-marketplace");
+    let destination = executor_home.join("capabilities/bundled-marketplaces/wework-personal");
+    let source_plugin = source.join("plugins/example-plugin");
+    fs::create_dir_all(source_plugin.join(".codex-plugin")).unwrap();
+    fs::create_dir_all(source.join(".agents/plugins")).unwrap();
+    fs::write(
+        source_plugin.join(".codex-plugin/plugin.json"),
+        r#"{"name":"example-plugin","version":"1.2.3","description":"Personal plugin","interface":{"displayName":"Example Plugin","category":"development"}}"#,
+    )
+    .unwrap();
+    let mut state = 0x1234_5678_u32;
+    let incompressible = (0..11 * 1024 * 1024)
+        .map(|_| {
+            state ^= state << 13;
+            state ^= state >> 17;
+            state ^= state << 5;
+            state as u8
+        })
+        .collect::<Vec<_>>();
+    fs::write(source_plugin.join("payload.bin"), incompressible).unwrap();
+    fs::write(
+        source.join(".agents/plugins/marketplace.json"),
+        r#"{"name":"wework-personal","plugins":[{"name":"example-plugin","source":{"source":"local","path":"./plugins/example-plugin"}}]}"#,
+    )
+    .unwrap();
+    let _executor_home =
+        EnvGuard::set("WEGENT_EXECUTOR_HOME", &executor_home.display().to_string());
+    let server = AppIpcServer::new();
+
+    let ensured = server
+        .dispatch(
+            "executor.plugins.personal.ensure",
+            json!({
+                "sourceMarketplacePath": source.display().to_string(),
+                "destinationMarketplacePath": destination.display().to_string(),
+                "pluginName": "example-plugin"
+            }),
+        )
+        .await
+        .unwrap();
+    assert_eq!(ensured["pluginName"], "example-plugin");
+    assert_eq!(ensured["migrated"], true);
+    assert!(destination
+        .join("plugins/example-plugin/.codex-plugin/plugin.json")
+        .is_file());
+
+    let listed = server
+        .dispatch(
+            "executor.plugins.personal.list",
+            json!({"marketplacePath": destination.display().to_string()}),
+        )
+        .await
+        .unwrap();
+    assert_eq!(listed["marketplaceId"], "wework-personal");
+    assert_eq!(listed["plugins"][0]["name"], "example-plugin");
+    assert_eq!(listed["plugins"][0]["displayName"], "Example Plugin");
+
+    let package = server
+        .dispatch(
+            "executor.plugins.personal.package",
+            json!({
+                "marketplacePath": destination.display().to_string(),
+                "pluginName": "example-plugin"
+            }),
+        )
+        .await
+        .unwrap();
+    assert_eq!(package["name"], "example-plugin.zip");
+    assert!(package.get("bytes").is_none());
+    let package_path = package["path"].as_str().unwrap();
+    let package_size = package["size"].as_u64().unwrap();
+    assert!(package_size > 10 * 1024 * 1024);
+    assert_eq!(fs::metadata(package_path).unwrap().len(), package_size);
+    let package_bytes = fs::read(package_path).unwrap();
+    assert_eq!(
+        format!("{:x}", sha2::Sha256::digest(&package_bytes)),
+        package["sha256"].as_str().unwrap()
+    );
+    let cleanup_token = package["cleanupToken"].as_str().unwrap().to_owned();
+    server
+        .dispatch(
+            "executor.plugins.personal.package.cleanup",
+            json!({"cleanupToken": cleanup_token}),
+        )
+        .await
+        .unwrap();
+    assert!(!Path::new(package_path).exists());
+
+    let escaped_cleanup = server
+        .dispatch(
+            "executor.plugins.personal.package.cleanup",
+            json!({"cleanupToken": "../example-plugin"}),
+        )
+        .await
+        .unwrap_err();
+    assert_eq!(
+        escaped_cleanup.code,
+        "plugin_personal_package_cleanup_failed"
+    );
+
+    let escaped = server
+        .dispatch(
+            "executor.plugins.personal.ensure",
+            json!({
+                "sourceMarketplacePath": source.display().to_string(),
+                "destinationMarketplacePath": root.path().join("outside").display().to_string(),
+                "pluginName": "example-plugin"
+            }),
+        )
+        .await
+        .unwrap_err();
+    assert_eq!(escaped.code, "plugin_personal_ensure_failed");
+    assert!(escaped
+        .message
+        .contains("Personal marketplace path must be"));
+}
+
+#[tokio::test]
+async fn app_ipc_lists_store_reads_manifest_and_saves_plugin_example() {
+    let _lock = env_lock().await;
+    let root = tempfile::tempdir().unwrap();
+    let executor_home = root.path().join("executor-home");
+    let capabilities = executor_home.join("capabilities");
+    let store_plugin = capabilities.join("store/plugins/example@wegent");
+    fs::create_dir_all(store_plugin.join(".codex-plugin")).unwrap();
+    fs::write(
+        store_plugin.join(".codex-plugin/plugin.json"),
+        r#"{"name":"example","version":"1.2.3","description":"Example plugin","interface":{"displayName":"Example Plugin"},"connectors":[{"id":"oauth"}]}"#,
+    )
+    .unwrap();
+    fs::write(
+        capabilities.join("manifest.json"),
+        r#"{"plugins":{"example@wegent":{"name":"example","marketplace":"wegent","store_path":"store/plugins/example@wegent"}}}"#,
+    )
+    .unwrap();
+
+    let local_marketplace = root.path().join("local-marketplace");
+    let local_plugin = local_marketplace.join("plugins/example");
+    fs::create_dir_all(local_plugin.join(".codex-plugin")).unwrap();
+    fs::write(
+        local_plugin.join(".codex-plugin/plugin.json"),
+        r#"{"name":"example","version":"1.2.3","connectors":[{"id":"oauth"}]}"#,
+    )
+    .unwrap();
+
+    let bundled_root = root.path().join("bundled-plugins");
+    let bundled_marketplace = bundled_root.join("wework-personal");
+    let example_source = bundled_root.join("wework-plugin-example");
+    fs::create_dir_all(&bundled_marketplace).unwrap();
+    fs::create_dir_all(example_source.join(".codex-plugin")).unwrap();
+    fs::write(
+        example_source.join(".codex-plugin/plugin.json"),
+        r#"{"name":"wework-plugin-example","version":"0.1.0"}"#,
+    )
+    .unwrap();
+    fs::write(example_source.join("README.md"), "example").unwrap();
+    let destination = root.path().join("downloads/wework-plugin-example.zip");
+    fs::create_dir_all(destination.parent().unwrap()).unwrap();
+
+    let _executor_home =
+        EnvGuard::set("WEGENT_EXECUTOR_HOME", &executor_home.display().to_string());
+    let _bundled_marketplace = EnvGuard::set(
+        "WEGENT_BUNDLED_PLUGIN_MARKETPLACE_DIR",
+        &bundled_marketplace.display().to_string(),
+    );
+    let server = AppIpcServer::new();
+
+    let listed = server
+        .dispatch("executor.plugins.store.list", json!({}))
+        .await
+        .unwrap();
+    assert_eq!(listed["plugins"][0]["name"], "example");
+    assert_eq!(listed["plugins"][0]["packageId"], "example@wegent");
+
+    let manifest = server
+        .dispatch(
+            "executor.plugins.manifest.read",
+            json!({
+                "marketplacePath": local_marketplace.display().to_string(),
+                "pluginName": "example"
+            }),
+        )
+        .await
+        .unwrap();
+    assert_eq!(manifest["connectors"][0]["id"], "oauth");
+
+    let saved = server
+        .dispatch(
+            "executor.plugins.example.save",
+            json!({"destinationPath": destination.display().to_string()}),
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        saved,
+        destination.canonicalize().unwrap().display().to_string()
+    );
+    let bytes = fs::read(destination).unwrap();
+    let mut archive = zip::ZipArchive::new(std::io::Cursor::new(bytes)).unwrap();
+    assert!(archive.by_name(".codex-plugin/plugin.json").is_ok());
+}
+
+#[tokio::test]
+async fn app_ipc_imports_and_rolls_back_a_bounded_personal_plugin_copy() {
+    use sha2::{Digest, Sha256};
+    use std::io::Write as _;
+    use tokio::{
+        io::{AsyncReadExt, AsyncWriteExt},
+        net::TcpListener,
+    };
+    use zip::{write::FileOptions, ZipWriter};
+
+    let _lock = env_lock().await;
+    let root = tempfile::tempdir().unwrap();
+    let executor_home = root.path().join("executor-home");
+    let destination = executor_home.join("capabilities/bundled-marketplaces/wework-personal");
+    let cursor = std::io::Cursor::new(Vec::new());
+    let mut archive = ZipWriter::new(cursor);
+    archive
+        .start_file(".codex-plugin/plugin.json", FileOptions::default())
+        .unwrap();
+    archive
+        .write_all(
+            br#"{"name":"source-plugin","version":"2.0.0","interface":{"displayName":"Source Plugin"}}"#,
+        )
+        .unwrap();
+    archive
+        .start_file("skills/review/SKILL.md", FileOptions::default())
+        .unwrap();
+    archive.write_all(b"# Review\n").unwrap();
+    let package = archive.finish().unwrap().into_inner();
+    let sha256 = format!("{:x}", Sha256::digest(&package));
+
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let response_package = package.clone();
+    let download_task = tokio::spawn(async move {
+        let (mut stream, _) = listener.accept().await.unwrap();
+        let mut request = [0_u8; 4096];
+        let _ = stream.read(&mut request).await.unwrap();
+        let headers = format!(
+            "HTTP/1.1 200 OK\r\nContent-Type: application/zip\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+            response_package.len()
+        );
+        stream.write_all(headers.as_bytes()).await.unwrap();
+        stream.write_all(&response_package).await.unwrap();
+    });
+    let _executor_home =
+        EnvGuard::set("WEGENT_EXECUTOR_HOME", &executor_home.display().to_string());
+    let server = AppIpcServer::new();
+
+    let imported = server
+        .dispatch(
+            "executor.plugins.personal.import_copy",
+            json!({
+                "marketplacePath": destination.display().to_string(),
+                "downloadUrl": format!("http://{address}/source-plugin.zip?signature=test"),
+                "sha256": sha256,
+                "sourcePluginId": 41,
+                "sourceReleaseId": 52,
+                "sourcePluginName": "source-plugin",
+                "sourceDisplayName": "Source Plugin",
+                "version": "2.0.0",
+                "expiresAt": "2026-08-31T00:00:00Z"
+            }),
+        )
+        .await
+        .unwrap();
+    download_task.await.unwrap();
+
+    assert_eq!(imported["pluginName"], "source-plugin-copy");
+    assert_eq!(imported["version"], "0.1.0");
+    let plugin_manifest = destination.join("plugins/source-plugin-copy/.codex-plugin/plugin.json");
+    assert!(plugin_manifest.is_file());
+    let manifest: Value = serde_json::from_slice(&fs::read(plugin_manifest).unwrap()).unwrap();
+    assert_eq!(manifest["name"], "source-plugin-copy");
+    assert!(destination
+        .join(".agents/plugins/marketplace.json")
+        .is_file());
+
+    let escaped = server
+        .dispatch(
+            "executor.plugins.personal.import_copy",
+            json!({
+                "marketplacePath": root.path().join("outside").display().to_string(),
+                "downloadUrl": "file:///tmp/plugin.zip",
+                "sha256": "0".repeat(64),
+                "sourcePluginId": 41,
+                "sourceReleaseId": 52,
+                "sourcePluginName": "source-plugin",
+                "sourceDisplayName": "Source Plugin"
+            }),
+        )
+        .await
+        .unwrap_err();
+    assert_eq!(escaped.code, "plugin_personal_copy_import_failed");
+    assert!(escaped
+        .message
+        .contains("Personal marketplace path must be"));
+
+    server
+        .dispatch(
+            "executor.plugins.personal.rollback_copy",
+            json!({
+                "marketplacePath": destination.display().to_string(),
+                "pluginName": "source-plugin-copy"
+            }),
+        )
+        .await
+        .unwrap();
+    assert!(!destination.join("plugins/source-plugin-copy").exists());
+}
+
+#[tokio::test]
 async fn app_ipc_initializes_a_blank_codex_home() {
     let _lock = env_lock().await;
     let root = tempfile::tempdir().unwrap();
@@ -216,6 +536,49 @@ async fn app_ipc_initializes_a_blank_codex_home() {
     let config = fs::read_to_string(codex_home.join("config.toml")).unwrap();
     assert!(!config.contains("native marker"));
     assert!(config.contains("apps = true"));
+}
+
+#[tokio::test]
+async fn app_ipc_reads_and_updates_codex_local_config() {
+    let _lock = env_lock().await;
+    let root = tempfile::tempdir().unwrap();
+    let codex_home = root.path().join("codex");
+    fs::create_dir_all(&codex_home).unwrap();
+    fs::write(
+        codex_home.join("config.toml"),
+        "model = \"gpt-5\"\n\n[features]\napps = false\n",
+    )
+    .unwrap();
+    let _codex_home = EnvGuard::set("WEGENT_CODEX_HOME", &codex_home.display().to_string());
+    let server = AppIpcServer::new();
+
+    let current = server
+        .dispatch("executor.codex_home.config.read", json!({}))
+        .await
+        .unwrap();
+    assert_eq!(current["codexHome"], codex_home.display().to_string());
+    assert_eq!(
+        current["configPath"],
+        codex_home.join("config.toml").display().to_string()
+    );
+    assert_eq!(current["remoteAppsEnabled"], false);
+
+    let updated = server
+        .dispatch(
+            "executor.codex_home.config.update",
+            json!({"patch": {"remoteAppsEnabled": true}}),
+        )
+        .await
+        .unwrap();
+    assert_eq!(updated["remoteAppsEnabled"], true);
+    let current = server
+        .dispatch("executor.codex_home.config.read", json!({}))
+        .await
+        .unwrap();
+    assert_eq!(current["remoteAppsEnabled"], true);
+    let config = fs::read_to_string(codex_home.join("config.toml")).unwrap();
+    assert!(config.contains("model = \"gpt-5\""));
+    assert!(config.contains("[features]\napps = true"));
 }
 
 #[tokio::test]
@@ -1273,8 +1636,13 @@ async fn app_ipc_resolves_review_and_git_device_commands() {
 
     assert_eq!(git_response["ok"], true);
     assert_eq!(
-        seen_request.lock().unwrap().as_ref().unwrap().argv[0],
-        "bash"
+        seen_request
+            .lock()
+            .unwrap()
+            .as_ref()
+            .map(|request| request.argv[0].clone()),
+        None,
+        "git_diff must run through the native handler instead of a shell"
     );
 
     let worktree_response = server
@@ -1294,12 +1662,10 @@ async fn app_ipc_resolves_review_and_git_device_commands() {
         .unwrap();
 
     assert_eq!(worktree_response["ok"], true);
-    let request = seen_request.lock().unwrap().clone().unwrap();
-    assert_eq!(request.argv[0], "sh");
-    assert_eq!(request.argv[3], "--");
-    assert_eq!(request.argv[4], "/tmp/project");
-    assert_eq!(request.argv[5], "/tmp/worktrees/1/project");
-    assert_eq!(request.argv.len(), 6);
+    assert!(
+        seen_request.lock().unwrap().is_none(),
+        "git_worktree_add must run through the native handler instead of a shell"
+    );
 
     let selected_branch_worktree_response = server
         .handle_line(
@@ -1318,12 +1684,10 @@ async fn app_ipc_resolves_review_and_git_device_commands() {
         .unwrap();
 
     assert_eq!(selected_branch_worktree_response["ok"], true);
-    let request = seen_request.lock().unwrap().clone().unwrap();
-    assert_eq!(request.argv[0], "sh");
-    assert_eq!(request.argv[3], "--");
-    assert_eq!(request.argv[4], "/tmp/project");
-    assert_eq!(request.argv[5], "/tmp/worktrees/2/project");
-    assert_eq!(request.argv[6], "main");
+    assert!(
+        seen_request.lock().unwrap().is_none(),
+        "git_worktree_add with a branch must run through the native handler"
+    );
 
     let remove_worktree_response = server
         .handle_line(
@@ -1342,12 +1706,10 @@ async fn app_ipc_resolves_review_and_git_device_commands() {
         .unwrap();
 
     assert_eq!(remove_worktree_response["ok"], true);
-    let request = seen_request.lock().unwrap().clone().unwrap();
-    assert_eq!(request.argv[0], "sh");
-    assert_eq!(request.argv[3], "--");
-    assert_eq!(request.argv[4], "/tmp/worktrees/2/project");
-    assert_eq!(request.argv[5], "/tmp/worktrees/2/project");
-    assert_eq!(request.argv.len(), 6);
+    assert!(
+        seen_request.lock().unwrap().is_none(),
+        "git_worktree_remove must run through the native handler instead of a shell"
+    );
 
     let review_response = server
         .handle_line(
@@ -1367,11 +1729,10 @@ async fn app_ipc_resolves_review_and_git_device_commands() {
         .unwrap();
 
     assert_eq!(review_response["ok"], true);
-    let request = seen_request.lock().unwrap().clone().unwrap();
-    assert_eq!(request.argv[0], "python3");
-    assert_eq!(request.argv[3], "review");
-    assert_eq!(request.argv[4], "turn-file-changes/0/1");
-    let review_request = request;
+    assert!(
+        seen_request.lock().unwrap().is_none(),
+        "turn_file_changes_review must run through the native handler"
+    );
 
     let commit_message_response = server
         .handle_line(
@@ -1397,7 +1758,7 @@ async fn app_ipc_resolves_review_and_git_device_commands() {
     );
     assert_eq!(
         seen_request.lock().unwrap().as_ref(),
-        Some(&review_request),
+        None,
         "native commit message generation must not dispatch through the generic command handler"
     );
     let push_response = server
@@ -1417,12 +1778,9 @@ async fn app_ipc_resolves_review_and_git_device_commands() {
         .unwrap();
 
     assert_eq!(push_response["ok"], true);
-    let request = seen_request.lock().unwrap().clone().unwrap();
-    assert_eq!(request.argv[0], "sh");
-    assert!(!request.argv[2].contains("@{u}"));
     assert!(
-        request.argv[2].contains("exec git push -u origin \"$branch\""),
-        "push must publish the current branch under the same remote branch name"
+        seen_request.lock().unwrap().is_none(),
+        "git_push must run through the native handler instead of a shell"
     );
 }
 
@@ -1905,6 +2263,15 @@ async fn app_ipc_describes_the_versioned_desktop_protocol() {
         "executor.plugins.links.link",
         "executor.plugins.links.unlink",
         "executor.plugins.personal.delete",
+        "executor.plugins.personal.ensure",
+        "executor.plugins.personal.import_copy",
+        "executor.plugins.personal.list",
+        "executor.plugins.personal.package",
+        "executor.plugins.personal.package.cleanup",
+        "executor.plugins.personal.rollback_copy",
+        "executor.plugins.store.list",
+        "executor.plugins.manifest.read",
+        "executor.plugins.example.save",
     ] {
         assert!(description["renderer_methods"]
             .as_array()
@@ -1915,6 +2282,14 @@ async fn app_ipc_describes_the_versioned_desktop_protocol() {
         .as_array()
         .unwrap()
         .contains(&json!("executor.codex_home.status")));
+    assert!(description["renderer_methods"]
+        .as_array()
+        .unwrap()
+        .contains(&json!("executor.codex_home.config.read")));
+    assert!(description["renderer_methods"]
+        .as_array()
+        .unwrap()
+        .contains(&json!("executor.codex_home.config.update")));
     assert!(description["renderer_methods"]
         .as_array()
         .unwrap()

@@ -270,6 +270,45 @@ describe('ContextSelector organization grouping', () => {
     })
   })
 
+  it('clears the knowledge-base search before showing its documents', async () => {
+    mockListDocuments.mockResolvedValue({
+      items: [
+        {
+          id: 21,
+          name: 'Document.md',
+          folder_id: 0,
+        },
+      ],
+      has_more: false,
+    })
+
+    render(
+      <ContextSelector
+        open={true}
+        onOpenChange={jest.fn()}
+        selectedContexts={[]}
+        onSelect={jest.fn()}
+        onDeselect={jest.fn()}
+      >
+        <button>trigger</button>
+      </ContextSelector>
+    )
+
+    await waitFor(() => {
+      expect(screen.getByTestId('knowledge-picker-source-organization')).toBeInTheDocument()
+    })
+
+    fireEvent.click(screen.getByTestId('knowledge-picker-source-organization'))
+    const search = screen.getByTestId('context-selector-knowledge-search-input')
+    fireEvent.change(search, { target: { value: 'Org KB' } })
+    fireEvent.click(await screen.findByTestId('knowledge-picker-kb-1'))
+
+    await waitFor(() => {
+      expect(search).toHaveValue('')
+      expect(screen.getByTestId('knowledge-picker-document-node-document-21')).toBeInTheDocument()
+    })
+  })
+
   it('opens above the input toolbar to match adjacent toolbar popovers', async () => {
     render(
       <ContextSelector

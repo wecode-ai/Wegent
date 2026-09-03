@@ -26,22 +26,36 @@ use crate::{
     local::bundled_plugins::{initialize_bundled_plugin_marketplace, BundledPluginMarketplace},
     local::codex_home::{
         codex_home_migration_status, import_external_content, initialize_codex_home,
-        CodexHomeInitializeRequest, ExternalContentImportRequest,
+        read_codex_local_config, update_codex_local_config, CodexHomeInitializeRequest,
+        CodexLocalConfigUpdateRequest, ExternalContentImportRequest,
     },
     local::command::{CommandHandler, CommandRequest, CommandResult, DeviceCommandHandler},
+    local::git_commands::{
+        branch_diff, branch_diff_shortstat, hosting_cli_status, push_current_branch,
+        workspace_diff, worktree_add, worktree_remove,
+    },
     local::git_commit_message::generate_commit_message,
     local::harnesses::{
         list_local_harnesses, prepare_local_harness_launch, ListLocalHarnessesRequest,
         PrepareLocalHarnessLaunchRequest,
     },
     local::local_skills::list_local_skills,
-    local::plugin_import::{
-        delete_personal_plugin, finalize_plugin_import, import_plugin_package, link_plugin_release,
-        preview_plugin_import, read_plugin_cloud_links, rollback_plugin_import,
-        unlink_plugin_release, DeletePersonalPluginRequest, ImportPluginPackageRequest,
-        LinkPluginReleaseRequest, PluginImportMutationRequest, PreviewPluginImportRequest,
-        ReadPluginCloudLinksRequest, UnlinkPluginReleaseRequest,
+    local::plugin_catalog::{
+        list_wegent_store_plugins, read_plugin_manifest, save_plugin_example,
+        ReadPluginManifestRequest, SavePluginExampleRequest,
     },
+    local::plugin_import::{
+        cleanup_personal_plugin_package, delete_personal_plugin, ensure_personal_plugin,
+        finalize_plugin_import, import_personal_plugin_copy, import_plugin_package,
+        link_plugin_release, list_personal_plugins, package_personal_plugin, preview_plugin_import,
+        read_plugin_cloud_links, rollback_personal_plugin_copy, rollback_plugin_import,
+        unlink_plugin_release, CleanupPersonalPluginPackageRequest, DeletePersonalPluginRequest,
+        EnsurePersonalPluginRequest, ImportPersonalPluginCopyRequest, ImportPluginPackageRequest,
+        LinkPluginReleaseRequest, ListPersonalPluginsRequest, PackagePersonalPluginRequest,
+        PluginImportMutationRequest, PreviewPluginImportRequest, ReadPluginCloudLinksRequest,
+        RollbackPersonalPluginCopyRequest, UnlinkPluginReleaseRequest,
+    },
+    local::turn_file_changes_commands::turn_file_changes as turn_file_changes_command,
     local::workspace_files::{
         execute_workspace_file_command_with_input, is_workspace_file_command, WORKSPACE_ROOTS_ENV,
     },
@@ -98,6 +112,8 @@ const APP_IPC_RENDERER_METHODS: &[&str] = &[
     "executions.*",
     "executor.backend.configure",
     "executor.backend.status",
+    "executor.codex_home.config.read",
+    "executor.codex_home.config.update",
     "executor.codex_home.import_external_content",
     "executor.codex_home.initialize",
     "executor.codex_home.status",
@@ -113,6 +129,15 @@ const APP_IPC_RENDERER_METHODS: &[&str] = &[
     "executor.plugins.links.list",
     "executor.plugins.links.unlink",
     "executor.plugins.personal.delete",
+    "executor.plugins.personal.ensure",
+    "executor.plugins.personal.import_copy",
+    "executor.plugins.personal.list",
+    "executor.plugins.personal.package",
+    "executor.plugins.personal.package.cleanup",
+    "executor.plugins.personal.rollback_copy",
+    "executor.plugins.store.list",
+    "executor.plugins.manifest.read",
+    "executor.plugins.example.save",
     "external_attachments.*",
     "external_projects.*",
     "external_todos.*",
@@ -129,12 +154,6 @@ enum LocalEndpointRole {
     Client,
     Owner,
 }
-const GIT_PUSH_SCRIPT: &str = r#"branch=$(git branch --show-current)
-if [ -z "$branch" ]; then
-  echo "Cannot push detached HEAD" >&2
-  exit 64
-fi
-exec git push -u origin "$branch""#;
 const RUNTIME_AUTH_STATUS_SCRIPT: &str = r#"
 import hashlib
 import json
@@ -177,176 +196,6 @@ if target.exists() and target.is_file():
         result["error"] = str(exc)
 
 print(json.dumps(result, ensure_ascii=False))
-"#;
-const GIT_HOSTING_CLI_STATUS_SCRIPT: &str = r#"
-import json
-import re
-import shutil
-import subprocess
-import sys
-
-tool = sys.argv[1]
-timeout_seconds = float(sys.argv[2]) if len(sys.argv) > 2 else 10
-executable = shutil.which(tool)
-if not executable:
-    print(json.dumps({
-        "tool": tool,
-        "installed": False,
-        "authenticated": False,
-        "executablePath": None,
-        "version": None,
-        "detectionError": None,
-    }))
-    raise SystemExit(0)
-
-def run(*args):
-    return subprocess.run(
-        [executable, *args],
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        text=True,
-        timeout=timeout_seconds,
-        check=False,
-    )
-
-def is_authenticated(auth_result):
-    if auth_result.returncode == 0:
-        return True
-    if tool != "glab":
-        return False
-
-    output = "\n".join((auth_result.stdout, auth_result.stderr))
-    return re.search(r"(?m)^\s*[✓✔]\s+Logged in to\s+", output) is not None
-
-try:
-    version_result = run("--version")
-    version = next(
-        (line.strip() for line in version_result.stdout.splitlines() if line.strip()),
-        None,
-    )
-    auth_result = run("auth", "status")
-except subprocess.TimeoutExpired:
-    print(json.dumps({
-        "tool": tool,
-        "installed": True,
-        "authenticated": False,
-        "executablePath": executable,
-        "version": None,
-        "detectionError": "timeout",
-    }))
-    raise SystemExit(0)
-
-print(json.dumps({
-    "tool": tool,
-    "installed": True,
-    "authenticated": is_authenticated(auth_result),
-    "executablePath": executable,
-    "version": version,
-    "detectionError": None,
-}))
-"#;
-const GIT_BRANCH_DIFF_SHORTSTAT_SCRIPT: &str = r#"base=""; for candidate in "$(git symbolic-ref --quiet --short refs/remotes/upstream/HEAD 2>/dev/null)" upstream/main upstream/master "$(git symbolic-ref --quiet --short refs/remotes/origin/HEAD 2>/dev/null)" origin/main origin/master main master; do [ -n "$candidate" ] || continue; if git rev-parse --verify --quiet "$candidate^{commit}" >/dev/null; then base="$candidate"; break; fi; done; [ -n "$base" ] || { git diff --shortstat HEAD --; exit 0; }; merge_base=$(git merge-base "$base" HEAD 2>/dev/null || true); [ -n "$merge_base" ] || { git diff --shortstat HEAD --; exit 0; }; git diff --shortstat "$merge_base" --"#;
-const GIT_WORKSPACE_DIFF_SCRIPT: &str = r#"if git rev-parse --verify --quiet HEAD >/dev/null; then git diff --binary HEAD --; else git diff --binary --; fi; git ls-files --others --exclude-standard -z | while IFS= read -r -d "" file; do git diff --binary --no-index -- /dev/null "$file" || true; done"#;
-const GIT_BRANCH_DIFF_SCRIPT: &str = r#"base=""; for candidate in "$(git symbolic-ref --quiet --short refs/remotes/upstream/HEAD 2>/dev/null)" upstream/main upstream/master "$(git symbolic-ref --quiet --short refs/remotes/origin/HEAD 2>/dev/null)" origin/main origin/master main master; do [ -n "$candidate" ] || continue; if git rev-parse --verify --quiet "$candidate^{commit}" >/dev/null; then base="$candidate"; break; fi; done; if [ -n "$base" ]; then merge_base=$(git merge-base "$base" HEAD 2>/dev/null || true); fi; if [ -n "$merge_base" ]; then git diff --binary "$merge_base" --; elif git rev-parse --verify --quiet HEAD >/dev/null; then git diff --binary HEAD --; else git diff --binary --; fi; git ls-files --others --exclude-standard -z | while IFS= read -r -d "" file; do git diff --binary --no-index -- /dev/null "$file" || true; done"#;
-const TURN_FILE_CHANGES_SCRIPT: &str = r#"
-import gzip
-import hashlib
-import json
-import os
-import re
-import subprocess
-import sys
-import tempfile
-from pathlib import Path
-
-MAX_PATCH_BYTES = 20 * 1024 * 1024
-ARTIFACT_PATTERN = re.compile(r"turn-file-changes/([A-Za-z0-9_-]+)/([A-Za-z0-9_-]+)")
-
-
-def finish(payload, code=0):
-    print(json.dumps(payload, ensure_ascii=False))
-    sys.exit(code)
-
-
-def fail(message, code=64, status=None):
-    payload = {"success": False, "error": message}
-    if status:
-        payload["status"] = status
-    finish(payload, code)
-
-
-if len(sys.argv) != 3:
-    fail("mode and artifact id are required")
-
-mode = sys.argv[1]
-artifact_id = sys.argv[2]
-if mode not in {"review", "revert"}:
-    fail("invalid mode")
-
-match = ARTIFACT_PATTERN.fullmatch(artifact_id)
-if not match:
-    fail("invalid artifact id")
-
-task_id = match.group(1)
-subtask_id = match.group(2)
-executor_home = Path(os.environ.get("WEGENT_EXECUTOR_HOME", "~/.wegent-executor")).expanduser()
-artifact_root = (executor_home / "artifacts").resolve()
-artifact_dir = (artifact_root / artifact_id).resolve()
-if artifact_root not in artifact_dir.parents:
-    fail("invalid artifact id")
-
-metadata_path = artifact_dir / "metadata.json"
-patch_path = artifact_dir / "changes.patch.gz"
-if not metadata_path.is_file() or not patch_path.is_file():
-    finish({"success": False, "status": "artifact_missing", "error": "turn file changes artifact is missing"})
-
-try:
-    metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
-except (OSError, json.JSONDecodeError) as exc:
-    fail(f"invalid artifact metadata: {exc}", code=65)
-
-if not isinstance(metadata, dict):
-    fail("invalid artifact metadata", code=65)
-if str(metadata.get("task_id")) != task_id or str(metadata.get("subtask_id")) != subtask_id:
-    fail("artifact metadata id mismatch", code=65)
-
-workspace = Path.cwd().resolve()
-try:
-    metadata_workspace = Path(str(metadata["workspace_path"])).resolve()
-except (KeyError, OSError):
-    fail("invalid artifact workspace", code=65)
-if metadata_workspace != workspace:
-    fail("artifact workspace mismatch", code=65)
-
-try:
-    with gzip.open(patch_path, "rb") as patch_file:
-        patch = patch_file.read(MAX_PATCH_BYTES + 1)
-except (OSError, gzip.BadGzipFile) as exc:
-    fail(f"failed to read artifact patch: {exc}", code=65)
-if len(patch) > MAX_PATCH_BYTES:
-    fail("artifact patch exceeds size limit", code=65)
-if hashlib.sha256(patch).hexdigest() != metadata.get("checksum"):
-    fail("artifact patch checksum mismatch", code=65)
-
-if mode == "review":
-    finish({"success": True, "diff": patch.decode("utf-8", errors="replace")})
-
-temp_path = None
-try:
-    with tempfile.NamedTemporaryFile(prefix="wegent-validated-turn-", suffix=".patch", delete=False) as temp_file:
-        temp_file.write(patch)
-        temp_path = Path(temp_file.name)
-
-    check = subprocess.run(["git", "apply", "--reverse", "--check", "--binary", str(temp_path)], cwd=workspace, capture_output=True, text=True)
-    if check.returncode != 0:
-        finish({"success": False, "status": "conflicted", "error": "patch does not apply"})
-    apply_result = subprocess.run(["git", "apply", "--reverse", "--binary", str(temp_path)], cwd=workspace, capture_output=True, text=True)
-    if apply_result.returncode != 0:
-        finish({"success": False, "status": "conflicted", "error": "patch does not apply"})
-    finish({"success": True, "status": "reverted"})
-finally:
-    if temp_path is not None:
-        temp_path.unlink(missing_ok=True)
 "#;
 
 type BoxFuture<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
@@ -645,6 +494,24 @@ impl AppIpcServer {
             .map_err(|error| AppIpcError::new("serialization_failed", error.to_string()));
         }
 
+        if method == "executor.codex_home.config.read" {
+            return serde_json::to_value(
+                read_codex_local_config()
+                    .map_err(|error| AppIpcError::new("codex_home_config_read_failed", error))?,
+            )
+            .map_err(|error| AppIpcError::new("serialization_failed", error.to_string()));
+        }
+
+        if method == "executor.codex_home.config.update" {
+            let request = serde_json::from_value::<CodexLocalConfigUpdateRequest>(params)
+                .map_err(|error| AppIpcError::new("bad_request", error.to_string()))?;
+            return serde_json::to_value(
+                update_codex_local_config(request)
+                    .map_err(|error| AppIpcError::new("codex_home_config_update_failed", error))?,
+            )
+            .map_err(|error| AppIpcError::new("serialization_failed", error.to_string()));
+        }
+
         if method == "executor.codex_home.initialize" {
             let request = serde_json::from_value::<CodexHomeInitializeRequest>(params)
                 .map_err(|error| AppIpcError::new("bad_request", error.to_string()))?;
@@ -759,6 +626,87 @@ impl AppIpcServer {
             return Ok(Value::Null);
         }
 
+        if method == "executor.plugins.personal.import_copy" {
+            let request = serde_json::from_value::<ImportPersonalPluginCopyRequest>(params)
+                .map_err(|error| AppIpcError::new("bad_request", error.to_string()))?;
+            let imported = import_personal_plugin_copy(request)
+                .await
+                .map_err(|error| AppIpcError::new("plugin_personal_copy_import_failed", error))?;
+            return serde_json::to_value(imported)
+                .map_err(|error| AppIpcError::new("serialization_failed", error.to_string()));
+        }
+
+        if method == "executor.plugins.personal.rollback_copy" {
+            let request = serde_json::from_value::<RollbackPersonalPluginCopyRequest>(params)
+                .map_err(|error| AppIpcError::new("bad_request", error.to_string()))?;
+            tokio::task::spawn_blocking(move || rollback_personal_plugin_copy(request))
+                .await
+                .map_err(|error| {
+                    AppIpcError::new(
+                        "plugin_personal_copy_rollback_task_failed",
+                        error.to_string(),
+                    )
+                })?
+                .map_err(|error| AppIpcError::new("plugin_personal_copy_rollback_failed", error))?;
+            return Ok(Value::Null);
+        }
+
+        if method == "executor.plugins.personal.list" {
+            let request = serde_json::from_value::<ListPersonalPluginsRequest>(params)
+                .map_err(|error| AppIpcError::new("bad_request", error.to_string()))?;
+            let plugins = tokio::task::spawn_blocking(move || list_personal_plugins(request))
+                .await
+                .map_err(|error| {
+                    AppIpcError::new("plugin_personal_list_task_failed", error.to_string())
+                })?
+                .map_err(|error| AppIpcError::new("plugin_personal_list_failed", error))?;
+            return serde_json::to_value(plugins)
+                .map_err(|error| AppIpcError::new("serialization_failed", error.to_string()));
+        }
+
+        if method == "executor.plugins.personal.ensure" {
+            let request = serde_json::from_value::<EnsurePersonalPluginRequest>(params)
+                .map_err(|error| AppIpcError::new("bad_request", error.to_string()))?;
+            let ensured = tokio::task::spawn_blocking(move || ensure_personal_plugin(request))
+                .await
+                .map_err(|error| {
+                    AppIpcError::new("plugin_personal_ensure_task_failed", error.to_string())
+                })?
+                .map_err(|error| AppIpcError::new("plugin_personal_ensure_failed", error))?;
+            return serde_json::to_value(ensured)
+                .map_err(|error| AppIpcError::new("serialization_failed", error.to_string()));
+        }
+
+        if method == "executor.plugins.personal.package" {
+            let request = serde_json::from_value::<PackagePersonalPluginRequest>(params)
+                .map_err(|error| AppIpcError::new("bad_request", error.to_string()))?;
+            let package = tokio::task::spawn_blocking(move || package_personal_plugin(request))
+                .await
+                .map_err(|error| {
+                    AppIpcError::new("plugin_personal_package_task_failed", error.to_string())
+                })?
+                .map_err(|error| AppIpcError::new("plugin_personal_package_failed", error))?;
+            return serde_json::to_value(package)
+                .map_err(|error| AppIpcError::new("serialization_failed", error.to_string()));
+        }
+
+        if method == "executor.plugins.personal.package.cleanup" {
+            let request = serde_json::from_value::<CleanupPersonalPluginPackageRequest>(params)
+                .map_err(|error| AppIpcError::new("bad_request", error.to_string()))?;
+            tokio::task::spawn_blocking(move || cleanup_personal_plugin_package(request))
+                .await
+                .map_err(|error| {
+                    AppIpcError::new(
+                        "plugin_personal_package_cleanup_task_failed",
+                        error.to_string(),
+                    )
+                })?
+                .map_err(|error| {
+                    AppIpcError::new("plugin_personal_package_cleanup_failed", error)
+                })?;
+            return Ok(Value::Null);
+        }
+
         if method == "executor.plugins.personal.delete" {
             let request = serde_json::from_value::<DeletePersonalPluginRequest>(params)
                 .map_err(|error| AppIpcError::new("bad_request", error.to_string()))?;
@@ -767,6 +715,41 @@ impl AppIpcServer {
                 .map_err(|error| AppIpcError::new("plugin_delete_task_failed", error.to_string()))?
                 .map_err(|error| AppIpcError::new("plugin_delete_failed", error))?;
             return Ok(Value::Null);
+        }
+
+        if method == "executor.plugins.store.list" {
+            let listed = tokio::task::spawn_blocking(list_wegent_store_plugins)
+                .await
+                .map_err(|error| {
+                    AppIpcError::new("plugin_store_list_task_failed", error.to_string())
+                })?
+                .map_err(|error| AppIpcError::new("plugin_store_list_failed", error))?;
+            return serde_json::to_value(listed)
+                .map_err(|error| AppIpcError::new("serialization_failed", error.to_string()));
+        }
+
+        if method == "executor.plugins.manifest.read" {
+            let request = serde_json::from_value::<ReadPluginManifestRequest>(params)
+                .map_err(|error| AppIpcError::new("bad_request", error.to_string()))?;
+            let manifest = tokio::task::spawn_blocking(move || read_plugin_manifest(request))
+                .await
+                .map_err(|error| {
+                    AppIpcError::new("plugin_manifest_read_task_failed", error.to_string())
+                })?
+                .map_err(|error| AppIpcError::new("plugin_manifest_read_failed", error))?;
+            return Ok(manifest);
+        }
+
+        if method == "executor.plugins.example.save" {
+            let request = serde_json::from_value::<SavePluginExampleRequest>(params)
+                .map_err(|error| AppIpcError::new("bad_request", error.to_string()))?;
+            let saved = tokio::task::spawn_blocking(move || save_plugin_example(request))
+                .await
+                .map_err(|error| {
+                    AppIpcError::new("plugin_example_save_task_failed", error.to_string())
+                })?
+                .map_err(|error| AppIpcError::new("plugin_example_save_failed", error))?;
+            return Ok(Value::String(saved));
         }
 
         if method == "executor.backend.configure" {
@@ -1485,6 +1468,93 @@ impl AppIpcServer {
 
         if command_key == "ls_skills" {
             let result = list_local_skills().await;
+            return serde_json::to_value(result)
+                .map_err(|error| AppIpcError::new("internal_error", error.to_string()));
+        }
+
+        // Git queries that used to run through `bash` or `python3` run natively
+        // so they work on Windows machines where those interpreters are not on
+        // PATH (Git for Windows only adds `cmd\`, which has git but no bash).
+        let native_path = string_field(&params, "path").or_else(|| string_field(&params, "cwd"));
+        let native_env = string_env(params.get("env"))?;
+        let native_timeout =
+            positive_number(params.get("timeout_seconds"), DEFAULT_TIMEOUT_SECONDS);
+        let native_max_output = positive_number(
+            params.get("max_output_bytes"),
+            DEFAULT_MAX_OUTPUT_BYTES as f64,
+        )
+        .round() as usize;
+        let native_args = string_list(params.get("args")).unwrap_or_default();
+        let native_result = match command_key {
+            "git_diff" => Some(
+                workspace_diff(
+                    native_path.clone(),
+                    &native_env,
+                    native_timeout,
+                    native_max_output,
+                )
+                .await,
+            ),
+            "git_branch_diff" => Some(
+                branch_diff(
+                    native_path.clone(),
+                    &native_env,
+                    native_timeout,
+                    native_max_output,
+                )
+                .await,
+            ),
+            "git_branch_diff_shortstat" => Some(
+                branch_diff_shortstat(
+                    native_path.clone(),
+                    &native_env,
+                    native_timeout,
+                    native_max_output,
+                )
+                .await,
+            ),
+            "git_github_cli_status" => {
+                Some(hosting_cli_status("gh", &native_env, native_timeout).await)
+            }
+            "git_gitlab_cli_status" => {
+                Some(hosting_cli_status("glab", &native_env, native_timeout).await)
+            }
+            "git_push" => Some(
+                push_current_branch(
+                    native_path.clone(),
+                    &native_env,
+                    native_timeout,
+                    native_max_output,
+                )
+                .await,
+            ),
+            "git_worktree_add" => Some(
+                worktree_add(&native_args, &native_env, native_timeout, native_max_output).await,
+            ),
+            "git_worktree_remove" => Some(
+                worktree_remove(&native_args, &native_env, native_timeout, native_max_output).await,
+            ),
+            "turn_file_changes_review" | "turn_file_changes_revert" => {
+                let artifact_id = native_args.first().map(String::as_str).unwrap_or_default();
+                let mode = if command_key == "turn_file_changes_review" {
+                    "review"
+                } else {
+                    "revert"
+                };
+                Some(
+                    turn_file_changes_command(
+                        mode,
+                        artifact_id,
+                        native_path.as_deref(),
+                        &native_env,
+                        native_max_output,
+                    )
+                    .await,
+                )
+            }
+            _ => None,
+        };
+        if let Some(result) = native_result {
             return serde_json::to_value(result)
                 .map_err(|error| AppIpcError::new("internal_error", error.to_string()));
         }
@@ -3068,21 +3138,6 @@ fn local_app_command(command_key: &str) -> Option<LocalAppCommandDefinition> {
             &["git", "diff", "--shortstat"],
             None,
         )),
-        "git_diff" => Some(command_definition(
-            "bash -c <git_workspace_diff>",
-            &["bash", "-c", GIT_WORKSPACE_DIFF_SCRIPT],
-            None,
-        )),
-        "git_branch_diff" => Some(command_definition(
-            "bash -c <git_branch_diff>",
-            &["bash", "-c", GIT_BRANCH_DIFF_SCRIPT],
-            None,
-        )),
-        "git_branch_diff_shortstat" => Some(command_definition(
-            "bash -c <git_branch_diff_shortstat>",
-            &["bash", "-c", GIT_BRANCH_DIFF_SHORTSTAT_SCRIPT],
-            None,
-        )),
         "git_diff_unstaged" => Some(command_definition(
             "git diff --binary --",
             &["git", "diff", "--binary", "--"],
@@ -3107,16 +3162,6 @@ fn local_app_command(command_key: &str) -> Option<LocalAppCommandDefinition> {
             "git remote get-url origin",
             &["git", "remote", "get-url", "origin"],
             None,
-        )),
-        "git_github_cli_status" => Some(command_definition(
-            "python3 -c <git_hosting_cli_status> gh",
-            &["python3", "-c", GIT_HOSTING_CLI_STATUS_SCRIPT, "gh"],
-            Some(PostProcessor::Json),
-        )),
-        "git_gitlab_cli_status" => Some(command_definition(
-            "python3 -c <git_hosting_cli_status> glab",
-            &["python3", "-c", GIT_HOSTING_CLI_STATUS_SCRIPT, "glab"],
-            Some(PostProcessor::Json),
         )),
         "git_github_pull_requests" => Some(command_definition(
             "gh pr list --state all --head <branch>",
@@ -3217,48 +3262,8 @@ fn local_app_command(command_key: &str) -> Option<LocalAppCommandDefinition> {
             ],
             None,
         )),
-        "git_worktree_add" => Some(command_definition(
-            "sh -c <git_worktree_add>",
-            &[
-                "sh",
-                "-c",
-                concat!(
-                    "source=$1; target=$2; ref=$3; ",
-                    "mkdir -p \"$(dirname \"$target\")\"; ",
-                    "if git -C \"$target\" rev-parse --is-inside-work-tree ",
-                    ">/dev/null 2>&1; then ",
-                    "if [ -n \"$ref\" ]; then ",
-                    "git -C \"$target\" checkout --force --detach \"$ref\"; fi; ",
-                    "exit 0; ",
-                    "else ",
-                    "if [ -e \"$target\" ]; then ",
-                    "echo \"target exists and is not a Git worktree\" >&2; exit 64; fi; ",
-                    "if [ -n \"$ref\" ]; then ",
-                    "git -C \"$source\" worktree add --detach \"$target\" \"$ref\"; ",
-                    "else git -C \"$source\" worktree add --detach \"$target\"; fi; ",
-                    "fi"
-                ),
-                "--",
-            ],
-            None,
-        )),
-        "git_worktree_remove" => Some(command_definition(
-            "sh -c 'git -C \"$1\" worktree remove --force \"$2\"' --",
-            &[
-                "sh",
-                "-c",
-                "git -C \"$1\" worktree remove --force \"$2\"",
-                "--",
-            ],
-            None,
-        )),
         "git_add_all" => Some(command_definition("git add --all", &["git", "add", "--all"], None)),
         "git_commit" => Some(command_definition("git commit", &["git", "commit"], None)),
-        "git_push" => Some(command_definition(
-            "sh -c <git_push>",
-            &["sh", "-c", GIT_PUSH_SCRIPT],
-            None,
-        )),
         "browser_relay_restart" => Some(command_definition(
             "sh -lc <browser_relay_restart>",
             &[
@@ -3276,16 +3281,6 @@ fn local_app_command(command_key: &str) -> Option<LocalAppCommandDefinition> {
                 "payload=${1:?browser tool payload is required}; exec \"$HOME/.wegent-executor/bin/browser-tool\" \"$payload\"",
                 "--",
             ],
-            Some(PostProcessor::Json),
-        )),
-        "turn_file_changes_review" => Some(command_definition(
-            "python3 -c <turn_file_changes> review",
-            &["python3", "-c", TURN_FILE_CHANGES_SCRIPT, "review"],
-            Some(PostProcessor::Json),
-        )),
-        "turn_file_changes_revert" => Some(command_definition(
-            "python3 -c <turn_file_changes> revert",
-            &["python3", "-c", TURN_FILE_CHANGES_SCRIPT, "revert"],
             Some(PostProcessor::Json),
         )),
         _ => None,
@@ -3836,31 +3831,22 @@ mod tests {
     }
 
     #[test]
-    fn git_diff_commands_do_not_start_a_login_shell() {
-        for command_key in ["git_diff", "git_branch_diff", "git_branch_diff_shortstat"] {
-            let command = local_app_command(command_key).expect("command must be registered");
-
-            assert_eq!(command.argv.first(), Some(&"bash"));
-            assert_eq!(command.argv.get(1), Some(&"-c"));
-            assert!(!command.argv.contains(&"-l"));
-        }
-    }
-
-    #[test]
-    fn git_branch_diff_prefers_fork_parent_remote() {
-        for command_key in ["git_branch_diff", "git_branch_diff_shortstat"] {
-            let script = local_app_command(command_key)
-                .expect("command must be registered")
-                .argv[2];
-            let upstream = script
-                .find("upstream/HEAD")
-                .expect("upstream default branch should be considered");
-            let origin = script
-                .find("origin/HEAD")
-                .expect("origin default branch should be considered");
+    fn git_native_commands_are_not_registered_as_shell_commands() {
+        for command_key in [
+            "git_diff",
+            "git_branch_diff",
+            "git_branch_diff_shortstat",
+            "git_github_cli_status",
+            "git_gitlab_cli_status",
+            "git_push",
+            "git_worktree_add",
+            "git_worktree_remove",
+            "turn_file_changes_review",
+            "turn_file_changes_revert",
+        ] {
             assert!(
-                upstream < origin,
-                "fork parent remote should be checked before origin"
+                local_app_command(command_key).is_none(),
+                "{command_key} must run through the native handler, not the shell registry"
             );
         }
     }

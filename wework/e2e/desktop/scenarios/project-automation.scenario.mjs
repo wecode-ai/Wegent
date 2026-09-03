@@ -1117,9 +1117,10 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
       }
     )
     const moonshotProgressPopup = `[data-testid="cloud-todo-card-progress-popup-${moonshotOverrideIssue.id}"]`
-    const moonshotPopupModelSelector = `${moonshotProgressPopup} [data-testid="model-selector-button"]`
-    const moonshotPopupInput = `${moonshotProgressPopup} [data-testid="cloud-todo-card-popup-input-${moonshotOverrideIssue.id}-${moonshotIssueBinding.id}"]`
-    const moonshotPopupSend = `${moonshotProgressPopup} [data-testid="cloud-todo-card-popup-send-${moonshotOverrideIssue.id}-${moonshotIssueBinding.id}"]`
+    const moonshotPopupConversation = `${moonshotProgressPopup} [data-testid="cloud-todo-card-popup-conversation-${moonshotOverrideIssue.id}"]`
+    const moonshotPopupModelSelector = `${moonshotPopupConversation} [data-testid="model-selector-button"]`
+    const moonshotPopupInput = `${moonshotPopupConversation} [data-testid="chat-message-input"]`
+    const moonshotPopupSend = `${moonshotPopupConversation} [data-testid="send-message-button"]`
     await control.command('scrollIntoView', moonshotOverrideCard, { visible: true })
     await control.command('hover', moonshotOverrideCard, { visible: true })
     await control.command('waitFor', moonshotProgressPopup, {
@@ -1132,7 +1133,7 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
       () =>
         control.command(
           'getAttribute',
-          `${moonshotProgressPopup} [data-testid="project-chat-composer-form"]`,
+          `${moonshotPopupConversation} [data-testid="project-chat-composer-form"]`,
           { value: 'data-short-expanded' }
         ),
       value => value === 'true',

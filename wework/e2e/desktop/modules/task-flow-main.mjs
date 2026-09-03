@@ -1020,6 +1020,7 @@ async function main() {
       cloudEnvironment = new RealCloudEnvironment({
         claudeBinary: desktopScenario?.claudeBinary,
         codexBinary,
+        managedCloudIdentity: CLOUD_ONLY,
         modelServerUrl: control.url,
         scenarioConfigToml:
           SELECTED_DESKTOP_SEGMENT === 'rendering-extensions' ? toolDetailsMcpConfigToml() : '',
@@ -2260,7 +2261,7 @@ last_updated = "2026-07-30T00:00:00Z"`
       shouldRunDesktopCheckpoint('task-board-association')
     ) {
       phase = 'project-space-default-association-setup'
-      associatedTaskTabTestId = await verifyDefaultTaskBoardAssociation(control, projectRowSelector)
+      associatedTaskTabTestId = await verifyDefaultTaskBoardAssociation(control)
     }
 
     if (MIXED_TOOL_TURNS_ONLY) {

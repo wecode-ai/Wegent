@@ -200,6 +200,10 @@ describe('desktop resource migration', () => {
     expect(source).toContain('WEWORK_CODEX_TARGET: packageTargets.codexTarget')
     expect(source).toContain('WEWORK_DWS_TARGET: packageTargets.dwsTarget')
     expect(source).toContain("path: 'bundled-plugins'")
+    expect(source).toContain(
+      "cp(join(sharedResourcesRoot, 'bundled-plugins'), join(resourcesRoot, 'bundled-plugins')"
+    )
+    expect(source).not.toContain("join(sharedResourcesRoot, 'bundled-plugins', 'wework-personal')")
     expect(source).toContain('const weworkRuntimeVersion = `wework-${sourceSha.slice(0, 12)}`')
     expect(source).toContain('version: weworkRuntimeVersion')
     expect(source).toContain('sourceSha,')
