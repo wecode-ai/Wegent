@@ -13,6 +13,7 @@ import re
 import tempfile
 import threading
 import time
+from concurrent.futures import Future
 from datetime import datetime, timezone
 from typing import Any, BinaryIO
 from urllib.parse import quote
@@ -61,7 +62,7 @@ EXTERNAL_BOARD_STATUSES = {
     "in_review",
     "completed",
 }
-ISSUE_PAGE_SIZE = 100
+ISSUE_LIST_PAGE_SIZE = 100
 ISSUE_PAGE_CACHE_SECONDS = 30
 GITLAB_PROVIDER_UPLOAD_PATTERN = re.compile(
     r"(?P<image>!)?\[(?P<name>[^\]]+)\]\((?P<url>[^)]*/uploads/[^)]+)\)"
@@ -78,9 +79,19 @@ LEGACY_WEGENT_ATTACHMENT_PATTERN = re.compile(
 class ExternalLoopItemProvider:
     def __init__(self) -> None:
         self._issue_page_cache: dict[
-            tuple[int, int, str, int], tuple[float, list[dict[str, Any]]]
+            tuple[int, int, int, str, str | None, int, int],
+            tuple[float, list[dict[str, Any]]],
         ] = {}
+        self._issue_page_inflight: dict[
+            tuple[int, int, int, str, str | None, int, int],
+            Future[list[dict[str, Any]]],
+        ] = {}
+        self._issue_page_cache_generation: dict[int, int] = {}
         self._issue_page_cache_lock = threading.Lock()
+        self._http_client = httpx.Client(timeout=30)
+
+    def close(self) -> None:
+        self._http_client.close()
 
     def is_external_item(self, db: Session, item_id: str) -> bool:
         return self._find_project(db, item_id) is not None
@@ -138,33 +149,42 @@ class ExternalLoopItemProvider:
                 status.HTTP_422_UNPROCESSABLE_ENTITY, "Unsupported board status"
             )
 
-        page, offset = self._decode_page_cursor(cursor)
-        matched: list[dict[str, Any]] = []
-        next_cursor: str | None = None
-        batch = self._list_issue_page(project, item_status, page)
-        for index in range(offset, len(batch)):
-            issue = batch[index]
-            if not self._issue_matches_page(
-                project, issue, item_status=item_status, parent_id=parent_id
-            ):
-                continue
-            if len(matched) == limit:
-                next_cursor = self._encode_page_cursor(page, index)
-                break
-            matched.append(issue)
-        if next_cursor is None and len(batch) == ISSUE_PAGE_SIZE and page < 100:
-            next_cursor = self._encode_page_cursor(page + 1, 0)
+        page = self._decode_page_cursor(cursor)
+        batch = self._list_issue_page(
+            project,
+            item_status,
+            parent_id,
+            page,
+            limit,
+        )
+        matched = (
+            batch
+            if project.task_provider == "gitlab"
+            else [
+                issue
+                for issue in batch
+                if self._issue_matches_page(
+                    project,
+                    issue,
+                    item_status=item_status,
+                    parent_id=parent_id,
+                )
+            ]
+        )
+        next_cursor = (
+            self._encode_page_cursor(page + 1) if len(batch) == limit else None
+        )
 
         logger.info(
             "[External board page] project_id=%s provider=%s status=%s "
-            "cursor=%s page=%s offset=%s batch_count=%s batch_first_id=%s "
+            "cursor=%s page=%s limit=%s batch_count=%s batch_first_id=%s "
             "batch_last_id=%s returned_ids=%s next_cursor=%s",
             project.id,
             project.task_provider,
             item_status,
             cursor,
             page,
-            offset,
+            limit,
             len(batch),
             self._number(batch[0]) if batch else None,
             self._number(batch[-1]) if batch else None,
@@ -195,17 +215,13 @@ class ExternalLoopItemProvider:
         item_status: str,
         parent_id: str | None,
     ) -> bool:
-        if str(issue.get("state") or "") == "closed":
-            return False
-        if project.task_provider == "github" and "pull_request" in issue:
-            return False
-        if (
-            self._status(self._labels(issue), str(issue.get("state") or ""))
-            != item_status
-        ):
-            return False
+        labels = self._labels(issue)
         description = str(issue.get(self._body_key(project)) or "")
-        return self._parent_id(project, description) == parent_id
+        return (
+            self._status(labels, str(issue.get("state") or "")) == item_status
+            and self._parent_id(project, description) == parent_id
+            and "pull_request" not in issue
+        )
 
     def get(self, db: Session, item_id: str, user_id: int) -> dict[str, object]:
         project, number = self._resolve_project(db, item_id)
@@ -1570,14 +1586,13 @@ class ExternalLoopItemProvider:
             else {"PRIVATE-TOKEN": token}
         )
         try:
-            response = httpx.request(
+            response = self._http_client.request(
                 method,
                 f"{api_base}{path}",
                 headers=headers,
                 json=json,
                 params=params,
                 files=files,
-                timeout=30,
             )
             response.raise_for_status()
             return response.json() if response.content else {}
@@ -1618,7 +1633,7 @@ class ExternalLoopItemProvider:
                 path,
                 params={
                     "state": self._open_state(project),
-                    "per_page": ISSUE_PAGE_SIZE,
+                    "per_page": ISSUE_LIST_PAGE_SIZE,
                     "page": page,
                 },
             )
@@ -1627,16 +1642,30 @@ class ExternalLoopItemProvider:
             if project.task_provider == "github":
                 batch = [issue for issue in batch if "pull_request" not in issue]
             results.extend(batch)
-            if batch_size < ISSUE_PAGE_SIZE:
+            if batch_size < ISSUE_LIST_PAGE_SIZE:
                 break
         return results
 
     def _list_issue_page(
-        self, project: CloudProject, item_status: str, page: int
+        self,
+        project: CloudProject,
+        item_status: str,
+        parent_id: str | None,
+        page: int,
+        limit: int,
     ) -> list[dict[str, Any]]:
-        cache_key = (project.id, project.version, item_status, page)
         now = time.monotonic()
+        leader = False
         with self._issue_page_cache_lock:
+            cache_key = (
+                project.id,
+                project.version,
+                self._issue_page_cache_generation.get(project.id, 0),
+                item_status,
+                parent_id,
+                page,
+                limit,
+            )
             cached = self._issue_page_cache.get(cache_key)
             if cached is not None and cached[0] > now:
                 logger.info(
@@ -1648,20 +1677,74 @@ class ExternalLoopItemProvider:
                     len(cached[1]),
                 )
                 return cached[1]
+            future = self._issue_page_inflight.get(cache_key)
+            if future is None:
+                future = Future()
+                self._issue_page_inflight[cache_key] = future
+                leader = True
 
+        if not leader:
+            return future.result()
+
+        try:
+            batch = self._request_issue_page(
+                project,
+                item_status=item_status,
+                parent_id=parent_id,
+                page=page,
+                limit=limit,
+            )
+            with self._issue_page_cache_lock:
+                self._issue_page_cache = {
+                    key: value
+                    for key, value in self._issue_page_cache.items()
+                    if value[0] > now
+                }
+                self._issue_page_cache[cache_key] = (
+                    time.monotonic() + ISSUE_PAGE_CACHE_SECONDS,
+                    batch,
+                )
+            future.set_result(batch)
+            return batch
+        except Exception as exc:
+            future.set_exception(exc)
+            raise
+        finally:
+            with self._issue_page_cache_lock:
+                self._issue_page_inflight.pop(cache_key, None)
+
+    def _request_issue_page(
+        self,
+        project: CloudProject,
+        *,
+        item_status: str,
+        parent_id: str | None,
+        page: int,
+        limit: int,
+    ) -> list[dict[str, Any]]:
         repository = self._repository(project)
         path = (
             f"/repos/{repository}/issues"
             if project.task_provider == "github"
             else f"/projects/{quote(repository, safe='')}/issues"
         )
+        labels = [f"{STATUS_PREFIX}{item_status}"]
+        if project.task_provider == "github" and item_status == "pending":
+            labels = []
         params: dict[str, object] = {
             "state": self._open_state(project),
-            "per_page": ISSUE_PAGE_SIZE,
+            "per_page": limit,
             "page": page,
         }
-        if item_status != "pending":
-            params["labels"] = f"{STATUS_PREFIX}{item_status}"
+        if labels:
+            params["labels"] = ",".join(labels)
+        if project.task_provider == "gitlab":
+            if parent_id is None:
+                params["not[search]"] = PARENT_MARKER
+                params["not[in]"] = "description"
+            else:
+                params["search"] = f"{PARENT_MARKER} {parent_id}"
+                params["in"] = "description"
         batch = self._request(project, "GET", path, params=params)
         logger.info(
             "[External board page cache] project_id=%s status=%s page=%s "
@@ -1673,20 +1756,13 @@ class ExternalLoopItemProvider:
             self._number(batch[0]) if batch else None,
             self._number(batch[-1]) if batch else None,
         )
-        with self._issue_page_cache_lock:
-            self._issue_page_cache = {
-                key: value
-                for key, value in self._issue_page_cache.items()
-                if value[0] > now
-            }
-            self._issue_page_cache[cache_key] = (
-                now + ISSUE_PAGE_CACHE_SECONDS,
-                batch,
-            )
         return batch
 
     def _invalidate_issue_page_cache(self, project_id: int) -> None:
         with self._issue_page_cache_lock:
+            self._issue_page_cache_generation[project_id] = (
+                self._issue_page_cache_generation.get(project_id, 0) + 1
+            )
             self._issue_page_cache = {
                 key: value
                 for key, value in self._issue_page_cache.items()
@@ -1694,30 +1770,27 @@ class ExternalLoopItemProvider:
             }
 
     @staticmethod
-    def _encode_page_cursor(page: int, offset: int) -> str:
-        raw = f"{page}:{offset}".encode()
+    def _encode_page_cursor(page: int) -> str:
+        raw = str(page).encode()
         return base64.urlsafe_b64encode(raw).decode().rstrip("=")
 
     @staticmethod
-    def _decode_page_cursor(cursor: str | None) -> tuple[int, int]:
+    def _decode_page_cursor(cursor: str | None) -> int:
         if not cursor:
-            return 1, 0
+            return 1
         try:
-            decoded = base64.urlsafe_b64decode(
-                cursor + "=" * (-len(cursor) % 4)
-            ).decode()
-            page_text, offset_text = decoded.split(":", 1)
-            page = int(page_text)
-            offset = int(offset_text)
+            page = int(
+                base64.urlsafe_b64decode(cursor + "=" * (-len(cursor) % 4)).decode()
+            )
         except (UnicodeError, ValueError) as exc:
             raise HTTPException(
                 status.HTTP_422_UNPROCESSABLE_ENTITY, "Invalid page cursor"
             ) from exc
-        if page < 1 or page > 100 or offset < 0 or offset >= ISSUE_PAGE_SIZE:
+        if page < 1 or page > 100:
             raise HTTPException(
                 status.HTTP_422_UNPROCESSABLE_ENTITY, "Invalid page cursor"
             )
-        return page, offset
+        return page
 
     def _get_issue(self, project: CloudProject, number: int) -> dict[str, Any]:
         repository = self._repository(project)

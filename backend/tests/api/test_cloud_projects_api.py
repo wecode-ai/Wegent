@@ -35,6 +35,7 @@ from app.models.project import Project
 from app.models.user import User
 from app.services.cloud_files import cloud_file_service
 from app.services.delivery import delivery_service
+from app.services.loop_items.external_provider import external_loop_item_provider
 
 
 class FakeProviderResponse:
@@ -894,7 +895,9 @@ def test_backend_routes_cloud_github_issues_without_exposing_token(
             created_issue.update(kwargs["json"])
         return FakeProviderResponse(created_issue)
 
-    monkeypatch.setattr(httpx, "request", provider_request)
+    monkeypatch.setattr(
+        external_loop_item_provider._http_client, "request", provider_request
+    )
     project = test_client.post(
         "/api/v1/cloud-projects",
         headers=_auth(test_token),
@@ -992,7 +995,9 @@ def test_public_github_project_enforces_issue_ownership(
         number = int(url.rsplit("/", 1)[-1])
         return FakeProviderResponse(issues[number])
 
-    monkeypatch.setattr(httpx, "request", provider_request)
+    monkeypatch.setattr(
+        external_loop_item_provider._http_client, "request", provider_request
+    )
     project = test_client.post(
         "/api/v1/cloud-projects",
         headers=_auth(test_token),
@@ -1073,7 +1078,9 @@ def test_backend_routes_gitlab_updates_and_comments(
             )
         return FakeProviderResponse(issue)
 
-    monkeypatch.setattr(httpx, "request", provider_request)
+    monkeypatch.setattr(
+        external_loop_item_provider._http_client, "request", provider_request
+    )
     project = test_client.post(
         "/api/v1/cloud-projects",
         headers=_auth(test_token),
