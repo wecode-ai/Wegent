@@ -1,13 +1,15 @@
 import { execFile } from 'node:child_process'
 import { access, chmod, mkdir, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { join, resolve } from 'node:path'
+import { join } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { promisify } from 'node:util'
 import { afterEach, describe, expect, test } from 'vitest'
 import { installWeworkCli } from './wework-cli-installer.js'
 
 const directories: string[] = []
 const execFileAsync = promisify(execFile)
+const cliSourcePath = fileURLToPath(new URL('../cli/wework-cli.mjs', import.meta.url))
 
 afterEach(async () => {
   await Promise.all(directories.splice(0).map(path => rm(path, { recursive: true, force: true })))
@@ -18,9 +20,7 @@ describe('installWeworkCli', () => {
     const root = await mkdtemp(join(tmpdir(), 'wework-cli-'))
     directories.push(root)
     const runtimeBin = join(root, 'runtime', 'bin')
-    const source = resolve(process.cwd(), 'electron/src/cli/wework-cli.mjs')
-
-    await installWeworkCli(runtimeBin, source, 'darwin', {
+    await installWeworkCli(runtimeBin, cliSourcePath, 'darwin', {
       appCommand: ['/Applications/Wework.app/Contents/MacOS/Wework'],
       nodeCommand: ['/Applications/Wework.app/Contents/MacOS/Wework'],
     })
@@ -47,15 +47,10 @@ describe('installWeworkCli', () => {
     await writeFile(nodeCommand, `#!/bin/sh\nprintf '%s\\n' "$@" > '${nodeLog}'\n`)
     await Promise.all([chmod(appCommand, 0o700), chmod(nodeCommand, 0o700)])
 
-    await installWeworkCli(
-      runtimeBin,
-      resolve(process.cwd(), 'electron/src/cli/wework-cli.mjs'),
-      'darwin',
-      {
-        appCommand: [appCommand],
-        nodeCommand: [nodeCommand],
-      }
-    )
+    await installWeworkCli(runtimeBin, cliSourcePath, 'darwin', {
+      appCommand: [appCommand],
+      nodeCommand: [nodeCommand],
+    })
 
     const launcher = join(runtimeBin, 'wework')
     await execFileAsync(launcher, ['desktop', 'instances'])

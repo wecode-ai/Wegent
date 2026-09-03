@@ -1,5 +1,6 @@
 import type { UnlistenFn } from './disposeDesktopListener'
 import { invokeDesktopHost, subscribeDesktopHostEvents } from '@/api/dsh/desktopHost'
+import { isElectronRuntime } from '@/lib/runtime-environment'
 
 export const LOCAL_WORKSPACE_OPEN_REQUESTED_EVENT = 'wework-open-local-workspace-requested'
 export const TAKE_PENDING_LOCAL_WORKSPACE_OPEN_REQUESTS_COMMAND =
@@ -27,6 +28,8 @@ export function installLocalWorkspaceOpenListener(
   openLocalWorkspace: OpenLocalWorkspaceHandler,
   onError?: (message: string) => void
 ): Promise<UnlistenFn> | null {
+  if (!isElectronRuntime()) return null
+
   let drainPromise: Promise<void> | null = null
   let drainAgain = false
 
