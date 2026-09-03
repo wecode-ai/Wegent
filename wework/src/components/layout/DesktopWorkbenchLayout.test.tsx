@@ -17,6 +17,10 @@ import {
   applyRuntimeConversationAction,
   clearRuntimeConversationCacheForTests,
 } from '@/features/workbench/runtimeConversationCache'
+import {
+  resolveTemporaryChatActiveModel,
+  resolveTemporaryChatModelSelection,
+} from '@/features/workbench/temporaryChatModelContext'
 import type {
   WorkbenchContextValue,
   WorkbenchPaneContextValue,
@@ -1192,11 +1196,35 @@ describe('DesktopWorkbenchLayout', () => {
         projectWork.pendingProjectWorkspaceProjectId ??
         null,
     }
-    const projectChat = {
+    const projectChatBase = {
       ...baseProps.projectChat,
       isModelSelectionReady: true,
       onBlockedModelSelect: vi.fn(),
       ...props.projectChat,
+    }
+    const projectChat = {
+      ...projectChatBase,
+      resolveRuntimeTaskModelSelection:
+        projectChatBase.resolveRuntimeTaskModelSelection ??
+        ((address: RuntimeTaskAddress) => {
+          const taskSelection = resolveTemporaryChatModelSelection(runtimeWork, address)
+          const taskModel = resolveTemporaryChatActiveModel(
+            projectChatBase.models,
+            runtimeWork,
+            address
+          )
+          return {
+            taskSelection,
+            selectedModel: taskModel,
+            activeModel: taskModel,
+            selectedModelOptions: taskSelection?.options ?? {},
+          }
+        }),
+      setRuntimeTaskSelectedModel: projectChatBase.setRuntimeTaskSelectedModel ?? vi.fn(),
+      setRuntimeTaskSelectedModelAndOptions:
+        projectChatBase.setRuntimeTaskSelectedModelAndOptions ?? vi.fn(),
+      setRuntimeTaskSelectedModelOption:
+        projectChatBase.setRuntimeTaskSelectedModelOption ?? vi.fn(),
     }
     const lifecycleTaskRunning = props.lifecycleTaskRunning ?? Boolean(state.currentRuntimeTask)
     const workbenchValue = {

@@ -72,6 +72,7 @@ import type {
 import { useWorkbenchAttachments } from './useWorkbenchAttachments'
 import { useWorkbenchDeviceUpgrades } from './useWorkbenchDeviceUpgrades'
 import { useWorkbenchModels } from './useWorkbenchModels'
+import { useRuntimeTaskModelSelection } from './useRuntimeTaskModelSelection'
 import { useWorkbenchProjectActions } from './useWorkbenchProjectActions'
 import { useWorkbenchRuntimeMessaging } from './useWorkbenchRuntimeMessaging'
 import { useWorkbenchRuntimeTasks } from './useWorkbenchRuntimeTasks'
@@ -917,6 +918,16 @@ export function WorkbenchProvider({
         : null,
     [modelSelection.models, modelSelectionConfig, state.currentRuntimeTask]
   )
+  const {
+    resolveRuntimeTaskModelSelection,
+    setRuntimeTaskSelectedModel,
+    setRuntimeTaskSelectedModelAndOptions,
+    setRuntimeTaskSelectedModelOption,
+  } = useRuntimeTaskModelSelection({
+    userId: user.id,
+    runtimeWork: state.runtimeWork,
+    modelStore: modelSelection,
+  })
   const conversationModels = modelSelection.models
   const skillSelection = useWorkbenchSkills({
     api: resolvedServices.skillApi,
@@ -2521,6 +2532,10 @@ export function WorkbenchProvider({
       setSelectedModelOption: modelSelection.setSelectedModelOption,
       getSelectedModel: modelSelection.getSelectedModel,
       getSelectedModelOptions: modelSelection.getSelectedModelOptions,
+      resolveRuntimeTaskModelSelection,
+      setRuntimeTaskSelectedModel,
+      setRuntimeTaskSelectedModelAndOptions,
+      setRuntimeTaskSelectedModelOption,
       onBlockedModelSelect: handleBlockedModelSelect,
       setInput: setDraftInput,
       setInputForScope: setDraftInputForScope,
@@ -2581,6 +2596,10 @@ export function WorkbenchProvider({
       modelSelection.setSelectedModelOption,
       modelSelection.getSelectedModel,
       modelSelection.getSelectedModelOptions,
+      resolveRuntimeTaskModelSelection,
+      setRuntimeTaskSelectedModel,
+      setRuntimeTaskSelectedModelAndOptions,
+      setRuntimeTaskSelectedModelOption,
       setDraftInput,
       setDraftInputForScope,
       setComposerError,
@@ -2623,6 +2642,10 @@ export function WorkbenchProvider({
       setSelectedModelOption: modelSelection.setSelectedModelOption,
       getSelectedModel: modelSelection.getSelectedModel,
       getSelectedModelOptions: modelSelection.getSelectedModelOptions,
+      resolveRuntimeTaskModelSelection,
+      setRuntimeTaskSelectedModel,
+      setRuntimeTaskSelectedModelAndOptions,
+      setRuntimeTaskSelectedModelOption,
       onBlockedModelSelect: handleBlockedModelSelect,
       setInput: setDraftInput,
       setInputForScope: setDraftInputForScope,
@@ -2682,6 +2705,10 @@ export function WorkbenchProvider({
       modelSelection.setSelectedModelOption,
       modelSelection.getSelectedModel,
       modelSelection.getSelectedModelOptions,
+      resolveRuntimeTaskModelSelection,
+      setRuntimeTaskSelectedModel,
+      setRuntimeTaskSelectedModelAndOptions,
+      setRuntimeTaskSelectedModelOption,
       setDraftInput,
       setDraftInputForScope,
       setComposerError,
