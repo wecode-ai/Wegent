@@ -407,6 +407,8 @@
     "status": {
       "active": "启用",
       "inactive": "禁用",
+      "visible": "可见",
+      "hidden": "已下线",
       "advanced": "高级",
       "standard": "普通",
       "wework_available": "wework 可用",
@@ -431,6 +433,7 @@
       "model_sub_group_placeholder": "填写二级分组",
       "config": "模型配置",
       "config_placeholder": "请输入 JSON 格式的模型配置",
+      "is_visible": "用户可见",
       "is_advanced": "高级模型",
       "is_wework_available": "在wework中可用"
     },

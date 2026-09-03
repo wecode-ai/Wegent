@@ -4118,6 +4118,8 @@ def _build_direct_wework_runtime_execution_request(
 ) -> ExecutionRequest:
     """Build a direct Wework execution without resolving a Wegent Team."""
 
+    from app.services.auth import create_task_token
+
     user = _get_user(db, user_id)
     task_id = request.local_task_id or str(_runtime_execution_ids()[0])
     title = _runtime_task_title(request)
@@ -4163,6 +4165,12 @@ def _build_direct_wework_runtime_execution_request(
         mode="code",
         task_mode="code",
         attachments=[],
+        auth_token=create_task_token(
+            task_id=0,
+            subtask_id=0,
+            user_id=user.id,
+            user_name=user.user_name,
+        ),
         runtime_permission_profile=":danger-full-access",
     )
     _apply_runtime_task_target(execution_request, target)

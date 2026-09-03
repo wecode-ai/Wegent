@@ -33,8 +33,10 @@ from app.models.kind import Kind
 from app.models.loop_item_execution import LoopItemExecution
 from app.models.project import Project
 from app.models.user import User
+from app.services.auth import create_task_token
 from app.services.cloud_files import cloud_file_service
 from app.services.delivery import delivery_service
+from app.services.loop_items.external_provider import external_loop_item_provider
 
 
 class FakeProviderResponse:
@@ -881,16 +883,22 @@ def test_backend_routes_cloud_github_issues_without_exposing_token(
         "closed_at": None,
     }
     requests: list[tuple[str, str, object]] = []
+    provider_params: list[object] = []
 
     def provider_request(
         method: str, url: str, **kwargs: object
     ) -> FakeProviderResponse:
         requests.append((method, url, kwargs.get("json")))
-        if method == "GET":
+        provider_params.append(kwargs.get("params"))
+        if method == "GET" and url.endswith("/issues"):
             return FakeProviderResponse([created_issue])
+        if method == "PATCH" and isinstance(kwargs.get("json"), dict):
+            created_issue.update(kwargs["json"])
         return FakeProviderResponse(created_issue)
 
-    monkeypatch.setattr(httpx, "request", provider_request)
+    monkeypatch.setattr(
+        external_loop_item_provider._http_client, "request", provider_request
+    )
     project = test_client.post(
         "/api/v1/cloud-projects",
         headers=_auth(test_token),
@@ -909,15 +917,35 @@ def test_backend_routes_cloud_github_issues_without_exposing_token(
         f"/api/v1/cloud-projects/{project['id']}/loop-items",
         headers=_auth(test_token),
     )
+    paged = test_client.get(
+        f"/api/v1/cloud-projects/{project['id']}/loop-item-pages",
+        headers=_auth(test_token),
+        params={"status": "in_progress", "limit": 25},
+    )
     created = test_client.post(
         f"/api/v1/cloud-projects/{project['id']}/loop-items",
         headers=_auth(test_token),
         json={"title": "Backend issue", "status": "in_progress", "tags": ["bug"]},
     )
+    archived = test_client.delete(
+        "/api/v1/loop-items/CLOUDGH-7",
+        headers=_auth(test_token),
+    )
 
     assert listed.status_code == 200
     assert listed.json()["items"][0]["id"] == "CLOUDGH-7"
+    assert paged.status_code == 200
+    assert paged.json()["items"][0]["description"] == ""
+    assert paged.json()["items"][0]["detail_loaded"] is False
+    assert any(
+        isinstance(params, dict)
+        and params.get("state") == "open"
+        and params.get("labels") == "wegent:status:in_progress"
+        for params in provider_params
+    )
     assert created.status_code == 201
+    assert archived.status_code == 204
+    assert any(payload == {"state": "closed"} for _, _, payload in requests)
     assert any(method == "POST" for method, _, _ in requests)
     assert all("server-only-secret" not in str(payload) for _, _, payload in requests)
 
@@ -968,7 +996,9 @@ def test_public_github_project_enforces_issue_ownership(
         number = int(url.rsplit("/", 1)[-1])
         return FakeProviderResponse(issues[number])
 
-    monkeypatch.setattr(httpx, "request", provider_request)
+    monkeypatch.setattr(
+        external_loop_item_provider._http_client, "request", provider_request
+    )
     project = test_client.post(
         "/api/v1/cloud-projects",
         headers=_auth(test_token),
@@ -992,7 +1022,8 @@ def test_public_github_project_enforces_issue_ownership(
     by_id = {item["id"]: item for item in listed.json()["items"]}
     assert by_id["PUBLICGH-1"]["description"] == ""
     assert by_id["PUBLICGH-1"]["can_view_detail"] is False
-    assert by_id["PUBLICGH-2"]["description"] == "visitor details"
+    assert by_id["PUBLICGH-2"]["description"] == ""
+    assert by_id["PUBLICGH-2"]["detail_loaded"] is False
     assert by_id["PUBLICGH-2"]["created_by_user_name"] == visitor.user_name
     assert by_id["PUBLICGH-2"]["can_edit"] is True
 
@@ -1004,6 +1035,8 @@ def test_public_github_project_enforces_issue_ownership(
     )
     assert hidden.status_code == 404
     assert visible.status_code == 200
+    assert visible.json()["description"] == "visitor details"
+    assert visible.json()["detail_loaded"] is True
 
 
 def test_backend_routes_gitlab_updates_and_comments(
@@ -1046,7 +1079,9 @@ def test_backend_routes_gitlab_updates_and_comments(
             )
         return FakeProviderResponse(issue)
 
-    monkeypatch.setattr(httpx, "request", provider_request)
+    monkeypatch.setattr(
+        external_loop_item_provider._http_client, "request", provider_request
+    )
     project = test_client.post(
         "/api/v1/cloud-projects",
         headers=_auth(test_token),
@@ -2107,10 +2142,16 @@ def test_ai_manager_assignment_endpoint_applies_tool_selected_member(
     )
     test_db.add_all([rule, run])
     test_db.commit()
+    task_token = create_task_token(
+        task_id=0,
+        subtask_id=0,
+        user_id=test_user.id,
+        user_name=test_user.user_name,
+    )
 
     assigned = test_client.post(
         f"/api/v1/cloud-projects/{project['id']}/automation-runs/{run.id}/assign",
-        headers=_auth(test_token),
+        headers=_auth(task_token),
         json={"assigneeType": "user", "assigneeId": str(test_user.id)},
     )
 

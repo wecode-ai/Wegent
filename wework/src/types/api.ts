@@ -203,7 +203,7 @@ export interface CreatedRuntimeProject extends ProjectWithTasks {
   runtimeProjectKey: string
 }
 
-export type ProjectExecutionMode = 'current_workspace' | 'git_worktree'
+export type ProjectExecutionMode = string
 
 export interface ProjectListResponse {
   total?: number
@@ -1326,7 +1326,7 @@ export interface RuntimeTaskCancelResponse {
 
 export interface RuntimeTaskExecutionConfig {
   workspace?: {
-    source: 'git_worktree'
+    source: string
     branch?: string
   }
 }
@@ -1734,7 +1734,7 @@ export interface ChatSendPayload {
   additional_skills?: SkillRef[]
   execution?: {
     workspace?: {
-      source: 'git_worktree'
+      source: string
       branch?: string
     }
   }
