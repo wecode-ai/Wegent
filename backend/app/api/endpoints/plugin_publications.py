@@ -6,10 +6,12 @@
 
 from datetime import datetime
 
-from fastapi import APIRouter, Depends, Header, HTTPException, Query, status
+from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request, status
+from fastapi.responses import Response
 from sqlalchemy.orm import Session
 
 from app.api.dependencies import get_db
+from app.api.marketplace_upload import read_marketplace_package
 from app.core import security
 from app.models.user import User
 from app.schemas.plugin_publication import (
@@ -19,11 +21,17 @@ from app.schemas.plugin_publication import (
     PluginPublicationRevisionCreateRequest,
     PluginPublicationUploadResponse,
 )
+from app.services.marketplace_submission_upload import (
+    InvalidMarketplaceSubmissionUploadToken,
+    verify_plugin_publication_upload_token,
+)
+from app.services.plugin_package_parser import MAX_PLUGIN_PACKAGE_SIZE_BYTES
 from app.services.plugin_package_storage import PluginPackageStorageError
 from app.services.plugin_publication_idempotency import (
     plugin_publication_idempotency_service,
 )
 from app.services.plugin_publication_service import plugin_publication_service
+from shared.telemetry.decorators import trace_async
 
 router = APIRouter(tags=["plugin-publications"])
 
@@ -142,6 +150,50 @@ def create_plugin_publication_revision(
         raise HTTPException(
             status_code=503, detail="Plugin package storage unavailable"
         ) from exc
+
+
+@router.put(
+    "/publication-requests/{request_id}/revisions/{revision}/artifact",
+    status_code=204,
+)
+@trace_async("upload_plugin_publication_artifact", "marketplace.api")
+async def upload_plugin_publication_revision(
+    request_id: int,
+    revision: int,
+    request: Request,
+    token: str = Query(..., description="Short-lived publication upload token"),
+    db: Session = Depends(get_db),
+) -> Response:
+    """Upload a ticketed publication snapshot through the Backend origin."""
+    try:
+        claims = verify_plugin_publication_upload_token(token)
+    except InvalidMarketplaceSubmissionUploadToken as exc:
+        raise HTTPException(
+            status_code=403, detail="Invalid or expired publication upload link"
+        ) from exc
+    if claims.request_id != request_id or claims.revision != revision:
+        raise HTTPException(
+            status_code=403, detail="Invalid or expired publication upload link"
+        )
+
+    package = await read_marketplace_package(
+        request,
+        max_bytes=MAX_PLUGIN_PACKAGE_SIZE_BYTES,
+        resource_name="Plugin",
+    )
+    try:
+        plugin_publication_service.upload_revision_package(
+            db,
+            user_id=claims.user_id,
+            request_id=request_id,
+            revision_number=revision,
+            package=package,
+        )
+    except PluginPackageStorageError as exc:
+        raise HTTPException(
+            status_code=503, detail="Plugin package storage unavailable"
+        ) from exc
+    return Response(status_code=204)
 
 
 @router.post(

@@ -58,6 +58,9 @@ from app.schemas.plugin_publication import (
     ReconcilePluginPublicationRequest,
     ReturnPluginPublicationRequest,
 )
+from app.services.marketplace_submission_upload import (
+    build_plugin_publication_upload_url,
+)
 from app.services.plugin_marketplace_identity import (
     ENTERPRISE_CATALOG_NAMESPACE,
     personal_catalog_namespace,
@@ -521,6 +524,42 @@ class PluginPublicationService:
         if personal_release and personal_release.created:
             self.marketplace.notify_catalog_release(db, personal_release_id)
         return self.get_request(db, user_id=user_id, request_id=request.id)
+
+    def upload_revision_package(
+        self,
+        db: Session,
+        *,
+        user_id: int,
+        request_id: int,
+        revision_number: int,
+        package: bytes,
+    ) -> None:
+        """Store a ticketed publication snapshot through the Backend origin."""
+        _, revision = self._owned_current_revision(
+            db,
+            user_id=user_id,
+            request_id=request_id,
+            revision_number=revision_number,
+            for_update=True,
+        )
+        try:
+            if revision.status != "uploading":
+                raise HTTPException(
+                    status_code=409, detail="Publication revision is not uploading"
+                )
+            if len(package) != revision.size_bytes:
+                raise HTTPException(
+                    status_code=422, detail="Uploaded snapshot size mismatch"
+                )
+            if hashlib.sha256(package).hexdigest() != revision.snapshot_sha256:
+                raise HTTPException(
+                    status_code=422, detail="Uploaded snapshot checksum mismatch"
+                )
+            self.storage.put(revision.staging_storage_key, package)
+            db.commit()
+        except Exception:
+            db.rollback()
+            raise
 
     def list_requests(
         self,
@@ -1596,8 +1635,10 @@ class PluginPublicationService:
         revision: PluginPublicationRevision,
     ) -> PluginPublicationUploadResponse:
         try:
-            upload_url, expires_at = self.storage.presign_upload(
-                revision.staging_storage_key
+            upload_url, expires_at = build_plugin_publication_upload_url(
+                request_id=request.id,
+                revision=revision.revision,
+                user_id=request.submitter_user_id,
             )
             db.commit()
         except Exception:

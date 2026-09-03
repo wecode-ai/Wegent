@@ -141,14 +141,11 @@ class FakeStorage:
     def __init__(self) -> None:
         self.objects: dict[str, bytes] = {}
 
-    def presign_upload(self, object_key: str) -> tuple[str, datetime]:
-        return (
-            f"https://storage.invalid/{object_key}",
-            datetime.now() + timedelta(minutes=10),
-        )
-
     def get(self, object_key: str) -> bytes:
         return self.objects[object_key]
+
+    def put(self, object_key: str, package: bytes) -> None:
+        self.objects[object_key] = package
 
     def put_immutable(self, object_key: str, package: bytes) -> bool:
         existing = self.objects.get(object_key)
@@ -296,8 +293,13 @@ def _create_and_complete(
             riskDeclaration=risk_declaration or {},
         ),
     )
-    revision = db.get(PluginPublicationRevision, upload.revision.id)
-    storage.objects[revision.staging_storage_key] = package
+    service.upload_revision_package(
+        db,
+        user_id=user_id,
+        request_id=upload.requestId,
+        revision_number=1,
+        package=package,
+    )
     detail = service.complete_revision(
         db,
         user_id=user_id,
