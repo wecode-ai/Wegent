@@ -1636,8 +1636,13 @@ async fn app_ipc_resolves_review_and_git_device_commands() {
 
     assert_eq!(git_response["ok"], true);
     assert_eq!(
-        seen_request.lock().unwrap().as_ref().unwrap().argv[0],
-        "bash"
+        seen_request
+            .lock()
+            .unwrap()
+            .as_ref()
+            .map(|request| request.argv[0].clone()),
+        None,
+        "git_diff must run through the native handler instead of a shell"
     );
 
     let worktree_response = server
@@ -1657,12 +1662,10 @@ async fn app_ipc_resolves_review_and_git_device_commands() {
         .unwrap();
 
     assert_eq!(worktree_response["ok"], true);
-    let request = seen_request.lock().unwrap().clone().unwrap();
-    assert_eq!(request.argv[0], "sh");
-    assert_eq!(request.argv[3], "--");
-    assert_eq!(request.argv[4], "/tmp/project");
-    assert_eq!(request.argv[5], "/tmp/worktrees/1/project");
-    assert_eq!(request.argv.len(), 6);
+    assert!(
+        seen_request.lock().unwrap().is_none(),
+        "git_worktree_add must run through the native handler instead of a shell"
+    );
 
     let selected_branch_worktree_response = server
         .handle_line(
@@ -1681,12 +1684,10 @@ async fn app_ipc_resolves_review_and_git_device_commands() {
         .unwrap();
 
     assert_eq!(selected_branch_worktree_response["ok"], true);
-    let request = seen_request.lock().unwrap().clone().unwrap();
-    assert_eq!(request.argv[0], "sh");
-    assert_eq!(request.argv[3], "--");
-    assert_eq!(request.argv[4], "/tmp/project");
-    assert_eq!(request.argv[5], "/tmp/worktrees/2/project");
-    assert_eq!(request.argv[6], "main");
+    assert!(
+        seen_request.lock().unwrap().is_none(),
+        "git_worktree_add with a branch must run through the native handler"
+    );
 
     let remove_worktree_response = server
         .handle_line(
@@ -1705,12 +1706,10 @@ async fn app_ipc_resolves_review_and_git_device_commands() {
         .unwrap();
 
     assert_eq!(remove_worktree_response["ok"], true);
-    let request = seen_request.lock().unwrap().clone().unwrap();
-    assert_eq!(request.argv[0], "sh");
-    assert_eq!(request.argv[3], "--");
-    assert_eq!(request.argv[4], "/tmp/worktrees/2/project");
-    assert_eq!(request.argv[5], "/tmp/worktrees/2/project");
-    assert_eq!(request.argv.len(), 6);
+    assert!(
+        seen_request.lock().unwrap().is_none(),
+        "git_worktree_remove must run through the native handler instead of a shell"
+    );
 
     let review_response = server
         .handle_line(
@@ -1730,11 +1729,10 @@ async fn app_ipc_resolves_review_and_git_device_commands() {
         .unwrap();
 
     assert_eq!(review_response["ok"], true);
-    let request = seen_request.lock().unwrap().clone().unwrap();
-    assert_eq!(request.argv[0], "python3");
-    assert_eq!(request.argv[3], "review");
-    assert_eq!(request.argv[4], "turn-file-changes/0/1");
-    let review_request = request;
+    assert!(
+        seen_request.lock().unwrap().is_none(),
+        "turn_file_changes_review must run through the native handler"
+    );
 
     let commit_message_response = server
         .handle_line(
@@ -1760,7 +1758,7 @@ async fn app_ipc_resolves_review_and_git_device_commands() {
     );
     assert_eq!(
         seen_request.lock().unwrap().as_ref(),
-        Some(&review_request),
+        None,
         "native commit message generation must not dispatch through the generic command handler"
     );
     let push_response = server
@@ -1780,12 +1778,9 @@ async fn app_ipc_resolves_review_and_git_device_commands() {
         .unwrap();
 
     assert_eq!(push_response["ok"], true);
-    let request = seen_request.lock().unwrap().clone().unwrap();
-    assert_eq!(request.argv[0], "sh");
-    assert!(!request.argv[2].contains("@{u}"));
     assert!(
-        request.argv[2].contains("exec git push -u origin \"$branch\""),
-        "push must publish the current branch under the same remote branch name"
+        seen_request.lock().unwrap().is_none(),
+        "git_push must run through the native handler instead of a shell"
     );
 }
 

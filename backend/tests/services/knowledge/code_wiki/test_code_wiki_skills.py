@@ -92,4 +92,7 @@ def test_review_command_prints_complete_persisted_state() -> None:
 
     assert "console.log(JSON.stringify(result))" in script
     assert "console.log(JSON.stringify(result.review || result))" not in script
-    assert "--writing-plan-file is required for a plan or amendment review handoff" in script
+    assert (
+        "--writing-plan-file is required for a plan or amendment review handoff"
+        in script
+    )
