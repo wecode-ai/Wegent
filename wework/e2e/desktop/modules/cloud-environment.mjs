@@ -42,6 +42,7 @@ import {
 const REDIS_START_ATTEMPTS = 5
 const REDIS_READY_PATTERN = /Ready to accept connections/
 const REDIS_PORT_CONFLICT_PATTERN = /Address already in use|Failed listening on port/
+const MANAGED_CLOUD_SANDBOX_ID = 'wework-e2e-managed-cloud-sandbox'
 const CLOUD_PUBLIC_MODEL_OPTIONS = {
   weworkCloudModelNamespace: 'default',
   weworkCloudModelResourceUserId: '0',
@@ -220,12 +221,14 @@ class RealCloudEnvironment {
   constructor({
     claudeBinary,
     codexBinary,
+    managedCloudIdentity = false,
     modelServerUrl,
     scenarioConfigToml = '',
     workspacePath,
   }) {
     this.claudeBinary = claudeBinary
     this.codexBinary = codexBinary
+    this.managedCloudIdentity = managedCloudIdentity
     this.modelServerUrl = modelServerUrl
     this.scenarioConfigToml = scenarioConfigToml
     this.workspacePath = workspacePath
@@ -528,6 +531,33 @@ class RealCloudEnvironment {
       this.waitForDevice(CLOUD_DEVICE_ID, this.remoteExecutorLogPath),
       this.waitForDevice(REMOTE_DOCKER_DEVICE_ID, this.remoteDockerExecutorLogPath),
     ])
+    if (this.managedCloudIdentity) {
+      await this.configureManagedCloudIdentity()
+    }
+  }
+
+  async configureManagedCloudIdentity() {
+    await runChecked('sqlite3', [
+      this.databasePath,
+      [
+        'UPDATE kinds',
+        `SET json = json_set(json, '$.spec.cloudConfig.sandboxId', '${MANAGED_CLOUD_SANDBOX_ID}', '$.spec.cloudConfig.deviceId', '${CLOUD_DEVICE_ID}')`,
+        `WHERE kind = 'Device' AND name = '${CLOUD_DEVICE_ID}';`,
+      ].join(' '),
+    ])
+
+    const configured = await this.device(CLOUD_DEVICE_ID)
+    assert.equal(
+      configured?.cloud_config?.sandboxId,
+      MANAGED_CLOUD_SANDBOX_ID,
+      'The cloud E2E fixture did not create a distinct managed Sandbox identity'
+    )
+    assert.equal(
+      configured?.cloud_config?.deviceId,
+      CLOUD_DEVICE_ID,
+      'The cloud E2E fixture changed the Executor route identity'
+    )
+    await this.restartCloudExecutor()
   }
 
   async describePluginWorkspace(pluginRoot, taskWorkspace, taskId) {
