@@ -215,7 +215,7 @@ def _resolve_task_bound_team(
             Kind.name == team_ref.get("name"),
             Kind.namespace == team_ref.get("namespace", "default"),
             Kind.user_id == team_ref.get("user_id", existing_task.user_id),
-            Kind.is_active == True,
+            Kind.is_active.is_(True),
         )
         .first()
     )
