@@ -20,10 +20,12 @@ function deferred<T>(): Deferred<T> {
 class FakeCoreDsh implements CoreDshHandle {
   startCalls = 0
   stopCalls = 0
+  startHang: Deferred<void> | null = null
   stopHang: Deferred<void> | null = null
 
   async start(): Promise<void> {
     this.startCalls += 1
+    if (this.startHang) await this.startHang.promise
   }
 
   async stop(): Promise<void> {
@@ -56,10 +58,12 @@ vi.mock('./core-dsh-runtime.js', () => ({
 
 const created: FakeCoreDsh[] = []
 const hostPipe = new HostPipeServer(new HostCapabilityRouter())
+let nextStartHang: Deferred<void> | null = null
 
 function createCoreDsh(options: DshRuntimeOptions): CoreDshHandle {
   void options
   const fake = new FakeCoreDsh()
+  fake.startHang = nextStartHang
   created.push(fake)
   return fake
 }
@@ -85,6 +89,7 @@ describe('DesktopRuntime lifecycle generation', () => {
     created.length = 0
     prepareState.prepareCalls = 0
     prepareState.resolveLaunch = null
+    nextStartHang = null
   })
 
   afterEach(async () => {
@@ -111,6 +116,25 @@ describe('DesktopRuntime lifecycle generation', () => {
     expect(created).toHaveLength(1)
     expect(created[0]).toBe(previous)
     expect(runtime.state().coreDshUrl).toBeNull()
+  })
+
+  test('concurrent start calls share one startup operation', async () => {
+    const runtime = createRuntime(EXTERNAL_DSH)
+    nextStartHang = deferred()
+
+    const first = runtime.start()
+    await vi.waitFor(() => expect(created).toHaveLength(1))
+    const second = runtime.start()
+
+    expect(second).toBe(first)
+    expect(created).toHaveLength(1)
+    expect(created[0].startCalls).toBe(1)
+
+    nextStartHang.resolve()
+    await Promise.all([first, second])
+
+    expect(created).toHaveLength(1)
+    expect(runtime.state().ready).toBe(true)
   })
 
   test('concurrent restart calls share one replacement operation', async () => {

@@ -52,13 +52,24 @@ export class DesktopRuntime {
   private readonly workbench = new WorkbenchRuntimeManager()
   private started = false
   private lifecycleGeneration = 0
+  private startOperation: { generation: number; promise: Promise<void> } | null = null
   private restartOperation: { generation: number; promise: Promise<void> } | null = null
 
   constructor(private readonly options: DesktopRuntimeOptions) {}
 
-  async start(): Promise<void> {
-    if (this.started) return
+  start(): Promise<void> {
+    if (this.started) return Promise.resolve()
     const generation = this.lifecycleGeneration
+    const current = this.startOperation
+    if (current?.generation === generation) return current.promise
+    const promise = this.performStart(generation).finally(() => {
+      if (this.startOperation?.promise === promise) this.startOperation = null
+    })
+    this.startOperation = { generation, promise }
+    return promise
+  }
+
+  private async performStart(generation: number): Promise<void> {
     try {
       await this.startExecutor()
       if (this.lifecycleGeneration !== generation) return
