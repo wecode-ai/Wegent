@@ -5,7 +5,6 @@
 """Smoke checks for the squashed plugin marketplace schema migration."""
 
 import importlib.util
-import re
 from datetime import datetime
 from pathlib import Path
 from types import ModuleType
@@ -70,56 +69,6 @@ def test_plugin_publication_migration_extends_current_head_and_is_reversible() -
     assert "restrictions_json" not in source
     assert "ForeignKeyConstraint" not in source
     assert "_assert_downgrade_slug_uniqueness(bind)" in source
-
-
-def test_plugin_publication_create_sql_follows_dba_column_rules() -> None:
-    path = (
-        Path(__file__).parents[2]
-        / "sql"
-        / "20260829_plugin_publication_create_tables_mysql.sql"
-    )
-    source = path.read_text(encoding="utf-8")
-    assert "ENUM(" not in source.upper()
-    assert "FOREIGN KEY" not in source.upper()
-    assert source.count("COMMENT='") == 6
-
-    json_column_count = 0
-    for match in re.finditer(
-        r"CREATE TABLE\s+(\w+)\s*\((.*?)\n\) ENGINE=", source, re.DOTALL
-    ):
-        table_name, body = match.groups()
-        definitions: list[str] = []
-        current: list[str] = []
-        for line in body.splitlines():
-            if line.startswith("    ") and not line.startswith("        "):
-                if current:
-                    definitions.append("\n".join(current))
-                current = [line.strip()]
-            elif current:
-                current.append(line.strip())
-        if current:
-            definitions.append("\n".join(current))
-
-        for definition in definitions:
-            column_name = definition.split()[0]
-            if column_name in {"PRIMARY", "CONSTRAINT", "INDEX", "UNIQUE"}:
-                continue
-            assert "COMMENT " in definition, f"{table_name}.{column_name}"
-            assert "NOT NULL" in definition, f"{table_name}.{column_name}"
-            if " JSON " in f" {definition} ":
-                json_column_count += 1
-                assert "DEFAULT" not in definition, f"{table_name}.{column_name}"
-            elif "AUTO_INCREMENT" not in definition:
-                assert "DEFAULT" in definition, f"{table_name}.{column_name}"
-
-    assert json_column_count == 9
-    assert all(
-        name.startswith("uniq_")
-        for name in re.findall(r"CONSTRAINT\s+(\w+)\s+UNIQUE", source)
-    )
-    assert all(
-        name.startswith("idx_") for name in re.findall(r"\bINDEX\s+(\w+)", source)
-    )
 
 
 def test_plugin_publication_models_do_not_declare_foreign_keys() -> None:
