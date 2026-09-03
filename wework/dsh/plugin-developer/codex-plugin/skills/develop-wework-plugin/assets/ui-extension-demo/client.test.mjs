@@ -16,7 +16,7 @@ async function loadPlugin() {
       },
     },
   }
-  vm.runInNewContext(source, { window })
+  vm.runInNewContext(source, { URLSearchParams, window })
   assert.ok(handoff)
   return handoff.factory(id => {
     assert.equal(id, 'react')
@@ -69,6 +69,10 @@ test('registers every public Wework UI extension point through slot injection', 
     'wework.environment.section',
     'wework.board.card.status',
     'wework.workspace.menu.section',
+    'wework.plugins.action',
+    'wework.project.create.section',
+    'wework.project.work.section',
+    'wework.runtime-profile.workspace-policy',
     'wework.route',
     'wework.sidebar.navigation',
     'wework.settings.page',
@@ -87,6 +91,11 @@ test('registers every public Wework UI extension point through slot injection', 
       entry => !('path' in entry.options) && Object.isFrozen(entry.component.wework)
     )
   )
+  const navigation = registrations.find(entry => entry.options.name === 'wework.sidebar.navigation')
+  const navigationPath = new URL(navigation.component.wework.path, 'https://wework.invalid')
+  assert.equal(navigationPath.pathname, '/dsh-extension-demo')
+  assert.equal(navigationPath.searchParams.get('workspaceTab'), 'auxiliary-dsh-extension-demo')
+  assert.equal(navigationPath.searchParams.get('workspaceTabTitle'), 'DSH Demo')
 })
 
 test('renders the demo components without Wework-private React imports', async () => {
@@ -124,6 +133,13 @@ test('renders the demo components without Wework-private React imports', async (
       'dsh-extension-demo-environment-section',
     ],
     ['wework.board.card.status', { itemId: 'DEMO-1' }, 'dsh-extension-demo-board-card-status'],
+    [
+      'wework.plugins.action',
+      { onCreate() {}, t: (_key, fallback) => fallback },
+      'dsh-extension-demo-plugin-action',
+    ],
+    ['wework.project.create.section', {}, 'dsh-extension-demo-project-create-section'],
+    ['wework.project.work.section', {}, 'dsh-extension-demo-project-work-section'],
     ['wework.route', { search: '?demo=1' }, 'dsh-extension-demo-route'],
     ['wework.settings.page', {}, 'dsh-extension-demo-settings'],
     [

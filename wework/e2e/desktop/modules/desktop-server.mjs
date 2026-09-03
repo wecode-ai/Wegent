@@ -783,6 +783,7 @@ class DesktopE2EServer {
         'local_markdown_image',
         'tool_block_order',
         'official_plugin',
+        'plugin_development',
         'automation',
         'skill_mention_display',
         'connector_auth_unmatched_resume',
@@ -3447,6 +3448,25 @@ class DesktopE2EServer {
       this.writeSse(response, [
         responseCreated(responseId),
         assistantMessage(FRESH_CHAT_COMPLETION_TEXT),
+        responseCompleted(responseId),
+      ])
+      return
+    }
+
+    if (this.scenario === 'plugin_development') {
+      this.recordScenarioRequest('plugin_development', modelRequest)
+      const requestText = JSON.stringify(body)
+      assert.ok(
+        requestText.includes('开发这个 Wework 插件：'),
+        'The plugin development prompt was lost'
+      )
+      assert.ok(
+        requestText.includes('wework-plugin-developer:develop-wework-plugin'),
+        'The Wework plugin developer Skill was not available to Codex'
+      )
+      this.writeSse(response, [
+        responseCreated(responseId),
+        assistantMessage('Wework plugin development request accepted.'),
         responseCompleted(responseId),
       ])
       return

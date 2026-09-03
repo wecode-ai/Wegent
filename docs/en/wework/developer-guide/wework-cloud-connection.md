@@ -102,9 +102,17 @@ Users can run:
 wework
 wework .
 wework /path/to/project
+wework desktop instances
+wework desktop inspect --project .
 ```
 
 `wework` and `wework .` resolve the current directory to an absolute path and ask Wework to open it as a local workspace. Release builds forward the request to the existing window through the macOS app single-instance path; debug builds still allow multiple instances, so the CLI starts the current debug executable with `--open-workspace <path>`.
+
+`desktop` is an instance-control subcommand of the same `wework` CLI. Wework
+does not install or inject a second command with the same name. The
+Wework-managed agent environment and the macOS user-level entry use the same
+dispatch rules: `wework <path>` opens a workspace, while
+`wework desktop ...` controls a running instance.
 
 ## Model Identity and Execution Transport
 

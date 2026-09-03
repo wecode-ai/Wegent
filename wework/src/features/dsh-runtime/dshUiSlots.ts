@@ -1,6 +1,7 @@
 export const WEWORK_DSH_SLOTS = {
   action: 'wework.action',
   app: 'wework.app',
+  pluginsAction: 'wework.plugins.action',
   boardCardStatus: 'wework.board.card.status',
   environmentSection: 'wework.environment.section',
   projectCreateSection: 'wework.project.create.section',
