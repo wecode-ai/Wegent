@@ -8,7 +8,7 @@
 # it can be built directly from the repository root without reproducing the CI
 # build arguments.
 
-ARG DEVICE_BASE_IMAGE=ubuntu:26.04
+ARG DEVICE_BASE_IMAGE=registry.api.weibo.com/weibo_rd_if/ubuntu:26.04
 ARG DEVICE_IMAGE_PLATFORM=linux/amd64
 
 # ---------------------------------------------------------------------------

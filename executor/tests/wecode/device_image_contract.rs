@@ -37,7 +37,9 @@ fn internal_device_image_pipeline_keeps_policy_in_wecode() {
         .any(|argument| argument == "--use"));
     assert!(publish_script.contains("--builder \"$BUILDER_NAME\""));
     assert!(publish_script.contains("inspect \"$BUILDER_NAME\" --bootstrap"));
-    assert!(publish_script.contains("DEVICE_BASE_IMAGE=${DEVICE_BASE_IMAGE:-ubuntu:26.04}"));
+    assert!(publish_script.contains(
+        "DEVICE_BASE_IMAGE=${DEVICE_BASE_IMAGE:-registry.api.weibo.com/weibo_rd_if/ubuntu:26.04}"
+    ));
     assert!(publish_script.contains("https://rsproxy.cn/rustup-init.sh"));
     assert!(publish_script.contains("https://npmmirror.com/mirrors/node"));
     assert!(publish_script.contains("https://registry.npmmirror.com"));
@@ -83,7 +85,8 @@ fn internal_device_image_pipeline_keeps_policy_in_wecode() {
     assert!(publish_script.contains("executor_version_runtime_image"));
 
     let device_dockerfile = fs::read_to_string("../wecode/docker/device/Dockerfile").unwrap();
-    assert!(device_dockerfile.contains("ARG DEVICE_BASE_IMAGE=ubuntu:26.04"));
+    assert!(device_dockerfile
+        .contains("ARG DEVICE_BASE_IMAGE=registry.api.weibo.com/weibo_rd_if/ubuntu:26.04"));
     assert!(device_dockerfile.contains("/etc/apt/sources.list.d/ubuntu.sources"));
     assert!(device_dockerfile.contains("ENV DEVICE_CODE_SERVER_ENABLED=true"));
     assert!(device_dockerfile.contains("ENV DEVICE_TERMINAL_ENABLED=true"));

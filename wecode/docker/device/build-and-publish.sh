@@ -54,7 +54,7 @@ docker buildx build \
   --file docker/device/Dockerfile \
   --build-arg "APP_VERSION=${EXECUTOR_VERSION}" \
   --build-arg "VCS_REF=${CI_COMMIT_SHA}" \
-  --build-arg "DEVICE_BASE_IMAGE=${DEVICE_BASE_IMAGE:-ubuntu:26.04}" \
+  --build-arg "DEVICE_BASE_IMAGE=${DEVICE_BASE_IMAGE:-registry.api.weibo.com/weibo_rd_if/ubuntu:26.04}" \
   --build-arg "DEVICE_APT_MIRROR=${DEVICE_APT_MIRROR:-http://mirrors.cloud.aliyuncs.com/ubuntu}" \
   --build-arg "DEVICE_APT_PORTS_MIRROR=${DEVICE_APT_PORTS_MIRROR:-http://mirrors.cloud.aliyuncs.com/ubuntu-ports}" \
   --build-arg "RUSTUP_INIT_URL=${RUSTUP_INIT_URL:-https://rsproxy.cn/rustup-init.sh}" \
