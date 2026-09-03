@@ -3,14 +3,28 @@ import userEvent from '@testing-library/user-event'
 import { useState } from 'react'
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 import '@/i18n'
-import { preloadDefaultDshUiTestModules } from '@/test/setup'
+import { WEWORK_DSH_SLOTS } from '@/features/dsh-runtime/dshUiSlots'
+import { installDshUiTestContributions } from '@/test/setup'
 import { EnvironmentInfoPopover } from './EnvironmentInfoPopover'
 
 describe('EnvironmentInfoPopover', () => {
   const portalContainers: HTMLElement[] = []
 
   beforeEach(async () => {
-    await preloadDefaultDshUiTestModules(['plugins/wework-ui-git-environment-section.js'])
+    await installDshUiTestContributions(
+      {
+        [WEWORK_DSH_SLOTS.environmentSection]: [
+          {
+            id: 'git-change-request',
+            module: 'plugins/wework-ui-git-environment-section.js',
+          },
+        ],
+      },
+      {
+        'plugins/wework-ui-git-environment-section.js': () =>
+          import('../../../dsh/ui-git/src/environment-section'),
+      }
+    )
   })
 
   afterEach(() => {

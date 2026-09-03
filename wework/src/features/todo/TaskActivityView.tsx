@@ -550,8 +550,6 @@ export function TaskActivityView({
       pendingProjectWorkspaceProjectId: null,
       executionMode: 'current_workspace',
       executionModeLocked: true,
-      // The execution-mode control is meaningless for comment runs; hide it.
-      isGitProject: false,
       showProjectClearButton: selectedCommentProjectId !== '',
       onSelectProject: projectId => setSelectedCommentProjectId(projectId ?? ''),
       onSelectStandaloneDevice: () => setSelectedCommentProjectId(''),

@@ -192,7 +192,7 @@ export default function GitEnvironmentSection({
               <button
                 type="button"
                 data-testid="environment-commit-button"
-                disabled={!onCommitChanges}
+                disabled={!onCommitChanges && !onCommitAndPushChanges && !onPushChanges}
                 onClick={() => {
                   setCommitFormOpen(open => !open)
                   setCommitError(null)

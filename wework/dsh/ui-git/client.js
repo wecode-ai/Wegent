@@ -3,10 +3,33 @@ window.__ModuleLoader__.load({
   factory: () => ({
     inject: ['slots', 'wework'],
     apply(ctx) {
-      ctx.slots.inject('wework.source-control.provider', () =>
-        ctx.wework.ui.register(ctx, 'wework.source-control.provider', {
-          id: 'git',
-          workspaceModes: ['git_worktree'],
+      ctx.slots.inject('wework.workspace.menu.section', () =>
+        ctx.wework.ui.register(ctx, 'wework.workspace.menu.section', {
+          id: 'git-workspace-controls',
+          module: 'plugins/wework-ui-git-workspace-menu-section.js',
+          order: 50,
+        })
+      )
+      ctx.slots.inject('wework.project.create.section', () =>
+        ctx.wework.ui.register(ctx, 'wework.project.create.section', {
+          id: 'git-project-create',
+          module: 'plugins/wework-ui-git-project-create-section.js',
+          order: 50,
+        })
+      )
+      ctx.slots.inject('wework.project.work.section', () =>
+        ctx.wework.ui.register(ctx, 'wework.project.work.section', {
+          id: 'git-project-work',
+          module: 'plugins/wework-ui-git-project-work-section.js',
+          order: 50,
+        })
+      )
+      ctx.slots.inject('wework.runtime-profile.workspace-policy', () =>
+        ctx.wework.ui.register(ctx, 'wework.runtime-profile.workspace-policy', {
+          id: 'git_worktree',
+          label: '新工作树',
+          labelKey: 'runtime_profile_workspace_worktree',
+          order: 50,
         })
       )
       for (const contribution of [

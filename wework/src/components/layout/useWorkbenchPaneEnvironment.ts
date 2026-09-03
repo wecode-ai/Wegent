@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { ProjectWorkControls } from '@/components/chat/ChatInput'
 import { useAppPreferencesState } from '@/features/app-preferences/useAppPreferencesState'
-import { useSourceControlProviderInstalled } from '@/features/dsh-runtime/sourceControlProviders'
+import { WEWORK_DSH_SLOTS } from '@/features/dsh-runtime/dshUiSlots'
+import { useDshSlotAvailable } from '@/features/dsh-runtime/useDshSlotAvailable'
 import { useWorkbenchPaneContext } from '@/features/workbench/useWorkbench'
 import {
   getChangeRequestMonitor,
@@ -13,7 +14,6 @@ import type { TaskChangeRequestSnapshot } from '@/api/changeRequests'
 import type { EnvironmentDiffMode } from '@/api/environment'
 import type { EnvironmentInfo } from '@/types/environment'
 import type { WorkspaceTarget } from '@/types/workspace-files'
-import { isGitWorkspaceProject } from '@/lib/projectClassification'
 import { normalizeRuntimeWorkspacePath, runtimeProjectUiId } from '@/lib/runtime-project'
 import { isCloudDevice } from '@/lib/device-selection'
 import { isRemoteDevice } from '@/lib/device-capabilities'
@@ -123,10 +123,10 @@ export function useWorkbenchPaneEnvironment({
   } = useWorkbenchPaneContext()
   const runtimeWorkApi = services?.runtimeWorkApi
   const { t } = useTranslation('common')
-  const gitPluginInstalled = useSourceControlProviderInstalled('git')
+  const environmentExtensionsAvailable = useDshSlotAvailable(WEWORK_DSH_SLOTS.environmentSection)
   const preferences = useAppPreferencesState()
   const changeRequestStatusEnabled =
-    gitPluginInstalled && (preferences?.preferences.changeRequestStatusEnabled ?? true)
+    environmentExtensionsAvailable && (preferences?.preferences.changeRequestStatusEnabled ?? true)
   const [environmentInfo, setEnvironmentInfo] = useState<EnvironmentInfo>({
     additions: '',
     deletions: '',
@@ -215,7 +215,7 @@ export function useWorkbenchPaneEnvironment({
 
   useEffect(() => {
     if (
-      !gitPluginInstalled ||
+      !environmentExtensionsAvailable ||
       currentRuntimeTask ||
       !selectedWorkspaceProject ||
       !selectedProjectDeviceWorkspace ||
@@ -245,7 +245,7 @@ export function useWorkbenchPaneEnvironment({
     }
   }, [
     currentRuntimeTask,
-    gitPluginInstalled,
+    environmentExtensionsAvailable,
     projectWork.worktreeBranch,
     selectedProjectDeviceWorkspace,
     selectedWorkspaceProject,
@@ -326,11 +326,6 @@ export function useWorkbenchPaneEnvironment({
     environmentInfo.workspacePath === activeWorkspaceTarget.path &&
     environmentInfo.deviceId === activeWorkspaceTarget.deviceId
   )
-  const isGitProject =
-    gitPluginInstalled &&
-    (environmentMatchesActiveWorkspace
-      ? environmentInfo.isGitRepository !== false
-      : Boolean(workspaceProject && isGitWorkspaceProject(workspaceProject)))
   const workspaceProjectKey = workspaceProject ? String(workspaceProject.id) : ''
   const activeConversationProjectKey = activeConversationProject
     ? String(activeConversationProject.id)
@@ -344,16 +339,16 @@ export function useWorkbenchPaneEnvironment({
   const hasEnvironmentProject = Boolean(workspaceProject)
   const environmentWorkspaceReady = !hasEnvironmentProject || Boolean(activeWorkspaceTarget)
   const gitActionsAvailable =
-    gitPluginInstalled &&
+    environmentExtensionsAvailable &&
     (!environmentMatchesActiveWorkspace || environmentInfo.isGitRepository !== false)
   const requireGitActionsAvailable = useCallback(() => {
-    if (!gitPluginInstalled) {
+    if (!environmentExtensionsAvailable) {
       throw new Error(t('workbench.git_plugin_unavailable'))
     }
     if (!gitActionsAvailable) {
       throw new Error(t('workbench.worktree_unavailable_not_git'))
     }
-  }, [gitActionsAvailable, gitPluginInstalled, t])
+  }, [environmentExtensionsAvailable, gitActionsAvailable, t])
 
   useEffect(() => {
     environmentContextRef.current = { workspaceProject, activeWorkspaceTarget }
@@ -446,7 +441,7 @@ export function useWorkbenchPaneEnvironment({
         environmentWorkspaceReady,
       })
 
-      if (!gitPluginInstalled) {
+      if (!environmentExtensionsAvailable) {
         setEnvironmentInfo({
           additions: '',
           deletions: '',
@@ -590,7 +585,7 @@ export function useWorkbenchPaneEnvironment({
       changeRequestStatusEnabled,
       currentRuntimeTask,
       environmentWorkspaceReady,
-      gitPluginInstalled,
+      environmentExtensionsAvailable,
       loadEnvironmentInfo,
       workspaceRoots,
       workspaceTargetError,
@@ -751,7 +746,6 @@ export function useWorkbenchPaneEnvironment({
     projectWork: {
       ...projectWork,
       worktreeAvailability,
-      isGitProject,
       branchName: environmentInfo.branchName,
       branchLoading: environmentInfo.branchLoading ?? environmentInfo.loading,
       onRefreshBranch: undefined,

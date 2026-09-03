@@ -73,7 +73,8 @@ import type {
   ArchiveRuntimeTaskResult,
 } from '@/features/workbench/workbenchContextTypes'
 import { useAppPreferencesState } from '@/features/app-preferences/useAppPreferencesState'
-import { useSourceControlProviderInstalled } from '@/features/dsh-runtime/sourceControlProviders'
+import { WEWORK_DSH_SLOTS } from '@/features/dsh-runtime/dshUiSlots'
+import { useDshSlotAvailable } from '@/features/dsh-runtime/useDshSlotAvailable'
 import type {
   DeliveryApi,
   ProjectSpaceLocation,
@@ -1112,10 +1113,10 @@ export function CloudTodoWorkspace({
 }: CloudTodoWorkspaceProps) {
   const { t } = useTranslation('common')
   const workbench = useContext(WorkbenchContext)
-  const gitProviderInstalled = useSourceControlProviderInstalled('git')
+  const taskStatusExtensionsAvailable = useDshSlotAvailable(WEWORK_DSH_SLOTS.taskStatus)
   const preferences = useAppPreferencesState()
   const changeRequestStatusEnabled =
-    gitProviderInstalled && (preferences?.preferences.changeRequestStatusEnabled ?? true)
+    taskStatusExtensionsAvailable && (preferences?.preferences.changeRequestStatusEnabled ?? true)
   const changeRequestMonitor = useMemo(
     () =>
       changeRequestStatusEnabled && services.deviceApi

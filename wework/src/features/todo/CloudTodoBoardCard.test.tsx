@@ -7,7 +7,8 @@ import type { CloudLoopItem } from '@/api/deliveries'
 import { WorkbenchContext } from '@/features/workbench/workbenchContexts'
 import type { WorkbenchContextValue } from '@/features/workbench/workbenchContextTypes'
 import { projectRuntimeConversationTurns } from '@/features/workbench/runtimeConversationTurns'
-import { preloadDefaultDshUiTestModules } from '@/test/setup'
+import { WEWORK_DSH_SLOTS } from '@/features/dsh-runtime/dshUiSlots'
+import { installDshUiTestContributions } from '@/test/setup'
 import type { RuntimeConversationTurn } from '@/types/workbench'
 import { CloudTodoBoardCard } from './CloudTodoBoardCard'
 
@@ -91,7 +92,20 @@ function conversationTurn(
 
 describe('CloudTodoBoardCard', () => {
   beforeEach(async () => {
-    await preloadDefaultDshUiTestModules()
+    await installDshUiTestContributions(
+      {
+        [WEWORK_DSH_SLOTS.boardCardStatus]: [
+          {
+            id: 'git-change-request',
+            module: 'plugins/wework-ui-git-board-card-status.js',
+          },
+        ],
+      },
+      {
+        'plugins/wework-ui-git-board-card-status.js': () =>
+          import('../../../dsh/ui-git/src/board-card-status'),
+      }
+    )
   })
 
   it('opens execution configuration from the blocking card action', async () => {

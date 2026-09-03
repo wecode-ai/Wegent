@@ -8,35 +8,9 @@ import {
   resolveRuntimeTaskCreateWorkspacePath,
   runtimeExecutablePathForTarget,
   resolveTemporaryChatSource,
-  runtimeIntentForGitPlugin,
   runtimeThreadId,
   titleModelForGeneration,
 } from './useWorkbenchRuntimeMessaging'
-
-describe('runtimeIntentForGitPlugin', () => {
-  const worktreeIntent = {
-    projectId: 1,
-    message: 'Implement the change',
-    execution: {
-      workspace: {
-        source: 'git_worktree' as const,
-        branch: 'feature/example',
-      },
-    },
-  }
-
-  test('keeps Git worktree execution while the plugin is installed', () => {
-    expect(runtimeIntentForGitPlugin(worktreeIntent, true)).toBe(worktreeIntent)
-  })
-
-  test('removes stale Git worktree execution while the plugin is absent', () => {
-    expect(runtimeIntentForGitPlugin(worktreeIntent, false)).toEqual({
-      projectId: 1,
-      message: 'Implement the change',
-      execution: undefined,
-    })
-  })
-})
 
 describe('buildRuntimeTaskCreateHandle', () => {
   test('keeps board ownership in the optimistic runtime address', () => {
@@ -67,36 +41,36 @@ describe('resolveRuntimeTaskCreateWorkspacePath', () => {
     expect(
       resolveRuntimeTaskCreateWorkspacePath({
         sourcePath: '/workspace/project',
-        requestedWorktree: false,
+        requestedManagedWorkspace: false,
       })
     ).toBe('/workspace/project')
   })
 
-  test('requires the Executor planned path for a Worktree task', () => {
+  test('requires the Executor planned path for a managed workspace task', () => {
     expect(() =>
       resolveRuntimeTaskCreateWorkspacePath({
         sourcePath: '/workspace/project',
-        requestedWorktree: true,
+        requestedManagedWorkspace: true,
       })
     ).toThrow('did not return a planned workspace path')
   })
 
-  test('rejects a Worktree response that falls back to the base workspace', () => {
+  test('rejects a managed workspace response that falls back to the base workspace', () => {
     expect(() =>
       resolveRuntimeTaskCreateWorkspacePath({
         sourcePath: '/workspace/project/',
         responsePath: '/workspace/project',
-        requestedWorktree: true,
+        requestedManagedWorkspace: true,
       })
     ).toThrow('returned the base workspace path')
   })
 
-  test('accepts a distinct planned Worktree path', () => {
+  test('accepts a distinct planned managed workspace path', () => {
     expect(
       resolveRuntimeTaskCreateWorkspacePath({
         sourcePath: '/workspace/project',
         responsePath: '/executor/worktrees/task-1/project',
-        requestedWorktree: true,
+        requestedManagedWorkspace: true,
       })
     ).toBe('/executor/worktrees/task-1/project')
   })

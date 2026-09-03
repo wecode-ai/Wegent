@@ -107,6 +107,14 @@ window.__ModuleLoader__.load({
       )
     }
 
+    function DemoWorkspaceMenuSection() {
+      return createElement(
+        'div',
+        { 'data-testid': 'dsh-extension-demo-workspace-menu-section' },
+        'Demo workspace menu section'
+      )
+    }
+
     function DemoWorkspaceSidebar({ scope, tab, visible }) {
       return createElement(
         'aside',
@@ -222,11 +230,12 @@ window.__ModuleLoader__.load({
         component: DemoBoardCardStatus,
       },
       {
-        slot: 'wework.source-control.provider',
+        slot: 'wework.workspace.menu.section',
         descriptor: {
-          id: 'demo-source-control',
-          workspaceModes: ['demo_workspace'],
+          id: 'demo-workspace-menu',
+          label: 'Demo workspace menu',
         },
+        component: DemoWorkspaceMenuSection,
       },
       {
         slot: 'wework.route',

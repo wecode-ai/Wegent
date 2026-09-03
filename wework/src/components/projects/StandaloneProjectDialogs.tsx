@@ -14,7 +14,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { useEscapeKey } from '@/hooks/useEscapeKey'
 import { useTranslation } from '@/hooks/useTranslation'
-import { useSourceControlProviderInstalled } from '@/features/dsh-runtime/sourceControlProviders'
+import { WEWORK_DSH_SLOTS } from '@/features/dsh-runtime/dshUiSlots'
+import { useDshSlotAvailable } from '@/features/dsh-runtime/useDshSlotAvailable'
 import { hasEmbeddedHttpGitCredentials } from '@/lib/git-url'
 import { isImeEnterEvent } from '@/lib/ime'
 import { openNativeProjectDirectoryPickers } from '@/lib/native-directory-picker'
@@ -393,7 +394,9 @@ export function StandaloneFolderProjectDialog({
   onRefreshDevices?: () => Promise<void>
 }) {
   const { t } = useTranslation('common')
-  const gitPluginInstalled = useSourceControlProviderInstalled('git')
+  const workspaceMenuExtensionsAvailable = useDshSlotAvailable(
+    WEWORK_DSH_SLOTS.workspaceMenuSection
+  )
   const [startupCommand, setStartupCommand] = useState<DockerRemoteDeviceCommandResponse | null>(
     null
   )
@@ -508,7 +511,7 @@ export function StandaloneFolderProjectDialog({
                 '还没有可用云端设备。先在云主机或另一台电脑上运行下面的连接脚本。'
               )
             : t('workbench.cloud_work_desc', '选择这台云端设备要处理的项目目录。')
-          : gitPluginInstalled
+          : workspaceMenuExtensionsAvailable
             ? t(
                 'workbench.add_remote_project_desc',
                 '选择远程主机，然后打开目录、新建项目或克隆 Git 仓库。'
@@ -1082,7 +1085,7 @@ export function StandaloneFolderProjectDialog({
                     '选择父目录并创建新的项目文件夹。'
                   ),
                 },
-                ...(gitPluginInstalled
+                ...(workspaceMenuExtensionsAvailable
                   ? [
                       {
                         source: 'git' as const,

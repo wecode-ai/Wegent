@@ -2,9 +2,7 @@ import { useMemo, type ReactNode } from 'react'
 import type { ProjectWorkControls } from '@/components/chat/ChatInput'
 import { useWorkbenchPaneEnvironment } from '@/components/layout/useWorkbenchPaneEnvironment'
 import { useWorkbenchProjectWorkControls } from '@/components/layout/useWorkbenchProjectWorkControls'
-import { useSourceControlProviderInstalled } from '@/features/dsh-runtime/sourceControlProviders'
 import { useWorkbenchPaneContext } from '@/features/workbench/useWorkbench'
-import { findRuntimeTaskWorkspace } from '@/features/workbench/workbenchRuntimeHelpers'
 import { runtimeProjectUiId } from '@/lib/runtime-project'
 import type { ProjectExecutionMode, ProjectWithTasks, RuntimeTaskAddress } from '@/types/api'
 
@@ -33,7 +31,6 @@ export function ConnectedIssueProjectWork({
   inheritFromTask = null,
   children,
 }: ConnectedIssueProjectWorkProps) {
-  const gitPluginInstalled = useSourceControlProviderInstalled('git')
   const { state } = useWorkbenchPaneContext()
   const resolvedProject = useMemo<ProjectWithTasks>(() => {
     const stateProject = state.projects.find(candidate => candidate.id === project.id) ?? project
@@ -75,10 +72,6 @@ export function ConnectedIssueProjectWork({
     pane,
     projectWork: baseProjectWork,
   })
-  const inheritedWorkspace = useMemo(
-    () => findRuntimeTaskWorkspace(state.runtimeWork, inheritFromTask),
-    [inheritFromTask, state.runtimeWork]
-  )
   const connectedProjectWork = useMemo<ProjectWorkControls>(
     () => ({
       ...projectWork,
@@ -86,14 +79,8 @@ export function ConnectedIssueProjectWork({
       currentProjectId: resolvedProject.id,
       selectedDeviceWorkspaceId,
       pendingProjectWorkspaceProjectId: null,
-      executionMode: gitPluginInstalled
-        ? (executionMode ??
-          (inheritedWorkspace?.workspaceKind === 'worktree' || inheritedWorkspace?.worktreeId
-            ? 'git_worktree'
-            : projectWork.executionMode))
-        : 'current_workspace',
+      executionMode: executionMode ?? projectWork.executionMode,
       worktreeBranch: worktreeBranch ?? projectWork.worktreeBranch,
-      isGitProject: gitPluginInstalled && projectWork.isGitProject,
       showProjectClearButton: false,
       onSelectProject,
       onSelectProjectWorkspace,
@@ -101,10 +88,7 @@ export function ConnectedIssueProjectWork({
       onWorktreeBranchChange: onWorktreeBranchChange ?? projectWork.onWorktreeBranchChange,
     }),
     [
-      inheritedWorkspace?.workspaceKind,
-      inheritedWorkspace?.worktreeId,
       executionMode,
-      gitPluginInstalled,
       onSelectProject,
       onSelectProjectWorkspace,
       onExecutionModeChange,

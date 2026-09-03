@@ -130,8 +130,20 @@ export default defineConfig({
           __dirname,
           'dsh/ui-git/src/environment-section.tsx'
         ),
+        'wework-ui-git-project-create-section': path.resolve(
+          __dirname,
+          'dsh/ui-git/src/project-create-section.tsx'
+        ),
+        'wework-ui-git-project-work-section': path.resolve(
+          __dirname,
+          'dsh/ui-git/src/project-work-section.tsx'
+        ),
         'wework-ui-git-settings': path.resolve(__dirname, 'dsh/ui-git/src/settings-page.tsx'),
         'wework-ui-git-task-status': path.resolve(__dirname, 'dsh/ui-git/src/task-status.tsx'),
+        'wework-ui-git-workspace-menu-section': path.resolve(
+          __dirname,
+          'dsh/ui-git/src/workspace-menu-section.tsx'
+        ),
         'wework-ui-plugin-center-catalog': path.resolve(
           __dirname,
           'dsh/ui-plugin-center/src/catalog-route.tsx'

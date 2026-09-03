@@ -13,7 +13,6 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { CloudLoopItem, CloudProject } from '@/api/deliveries'
 import { WorkbenchHarnessSelector } from '@/components/layout/WorkbenchHarnessSelector'
 import { TemporaryChatPanel } from '@/components/layout/workspace-panels/TemporaryChatPanel'
-import { useSourceControlProviderInstalled } from '@/features/dsh-runtime/sourceControlProviders'
 import { useWorkbenchPaneContext } from '@/features/workbench/useWorkbench'
 import { useTranslation } from '@/hooks/useTranslation'
 import { resolveRuntimeTaskProjects } from '@/lib/runtime-project'
@@ -96,7 +95,6 @@ export function AiChatModal({
   prepareTask,
   embedded = false,
 }: AiChatModalProps) {
-  const gitPluginInstalled = useSourceControlProviderInstalled('git')
   const { t } = useTranslation('common')
   const { state } = useWorkbenchPaneContext()
   const runtimeTaskProjects = useMemo(
@@ -128,7 +126,7 @@ export function AiChatModal({
     initialTaskRequest?.deviceWorkspaceId ?? null
   )
   const [executionMode, setExecutionMode] = useState<ProjectExecutionMode>(
-    gitPluginInstalled && initialTaskRequest?.execution?.workspace?.source === 'git_worktree'
+    initialTaskRequest?.execution?.workspace?.source === 'git_worktree'
       ? 'git_worktree'
       : 'current_workspace'
   )
@@ -173,7 +171,7 @@ export function AiChatModal({
         ? {
             ...withoutRuntimeTaskWorkspaceBinding(initialTaskRequest),
             execution:
-              gitPluginInstalled && executionMode === 'git_worktree'
+              executionMode === 'git_worktree'
                 ? {
                     workspace: {
                       source: 'git_worktree' as const,
@@ -184,7 +182,7 @@ export function AiChatModal({
             ...runtimeContext,
           }
         : null,
-    [executionMode, gitPluginInstalled, initialTaskRequest, runtimeContext, worktreeBranch]
+    [executionMode, initialTaskRequest, runtimeContext, worktreeBranch]
   )
   const createConversation = useProjectRuntimeTaskComposer({
     project: selectedLocalProject,

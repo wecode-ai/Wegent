@@ -34,8 +34,6 @@ import type { WorkspaceTarget } from '@/types/workspace-files'
 import type { WorkbenchState } from '@/types/workbench'
 import { getParentPath } from '@/components/projects/device-folder-path'
 import { hasEmbeddedHttpGitCredentials } from '@/lib/git-url'
-import { useSourceControlProviderInstalled } from '@/features/dsh-runtime/sourceControlProviders'
-import { useTranslation } from '@/hooks/useTranslation'
 import type { ProjectMutationOptions, RefreshWorkLists } from './workbenchContextTypes'
 import type { WorkbenchAction } from './workbenchReducer'
 import { findProjectMetadataDeviceWorkspace, writeLastProjectId } from './workbenchRuntimeHelpers'
@@ -128,14 +126,7 @@ export function useWorkbenchProjectActions({
   clearRemoteProjectSyncRemoval,
   enqueueRemoteProjectStateMutation,
 }: UseWorkbenchProjectActionsOptions) {
-  const { t } = useTranslation('common')
-  const gitPluginInstalled = useSourceControlProviderInstalled('git')
   const runtimeTaskPinMutationTailsRef = useRef(new Map<string, Promise<void>>())
-  const requireGitPlugin = useCallback(() => {
-    if (!gitPluginInstalled) {
-      throw new Error(t('workbench.git_plugin_unavailable'))
-    }
-  }, [gitPluginInstalled, t])
 
   const createProject = useCallback(
     async (data: CreateProjectRequest, options: ProjectMutationOptions = {}) => {
@@ -192,7 +183,6 @@ export function useWorkbenchProjectActions({
 
   const createGitWorkspaceProject = useCallback(
     async (data: CreateGitWorkspaceProjectRequest) => {
-      requireGitPlugin()
       if (!services.projectApi.createGitWorkspaceProject) {
         throw new Error('Git workspace project creation is unavailable')
       }
@@ -207,7 +197,7 @@ export function useWorkbenchProjectActions({
       track('project_created', { kind: 'git' })
       return project
     },
-    [dispatch, refreshWorkLists, requireGitPlugin, services.projectApi, user.id]
+    [dispatch, refreshWorkLists, services.projectApi, user.id]
   )
 
   const prepareDeviceWorkspace = useCallback(
@@ -232,19 +222,13 @@ export function useWorkbenchProjectActions({
   )
 
   const listGitRepositories = useCallback(
-    () =>
-      gitPluginInstalled
-        ? (services.gitApi?.listRepositories() ?? Promise.resolve([]))
-        : Promise.resolve([]),
-    [gitPluginInstalled, services.gitApi]
+    () => services.gitApi?.listRepositories() ?? Promise.resolve([]),
+    [services.gitApi]
   )
 
   const listGitBranches = useCallback(
-    (repo: GitRepoInfo) =>
-      gitPluginInstalled
-        ? (services.gitApi?.listBranches(repo) ?? Promise.resolve([]))
-        : Promise.resolve([]),
-    [gitPluginInstalled, services.gitApi]
+    (repo: GitRepoInfo) => services.gitApi?.listBranches(repo) ?? Promise.resolve([]),
+    [services.gitApi]
   )
 
   const updateProjectName = useCallback(
@@ -609,7 +593,6 @@ export function useWorkbenchProjectActions({
 
   const cloneGitRepository = useCallback(
     async (deviceId: string, input: CloneGitRepositoryInput) => {
-      requireGitPlugin()
       const url = input.url.trim()
       const targetPath = input.targetPath.trim()
       const branch = input.branch?.trim()
@@ -654,7 +637,7 @@ export function useWorkbenchProjectActions({
         throw error
       }
     },
-    [executorClient, requireGitPlugin]
+    [executorClient]
   )
 
   const loadEnvironmentInfo = useCallback(
@@ -662,16 +645,8 @@ export function useWorkbenchProjectActions({
       project: ProjectWithTasks | null,
       workspaceTarget?: WorkspaceTarget | null,
       options?: EnvironmentInfoLoadOptions
-    ) =>
-      gitPluginInstalled
-        ? loadProjectEnvironment(executorClient.commands, project, workspaceTarget, options)
-        : Promise.resolve({
-            additions: '',
-            deletions: '',
-            executionTarget: 'local' as const,
-            isGitRepository: false,
-          }),
-    [executorClient, gitPluginInstalled]
+    ) => loadProjectEnvironment(executorClient.commands, project, workspaceTarget, options),
+    [executorClient]
   )
 
   const loadEnvironmentDiff = useCallback(
@@ -680,10 +655,9 @@ export function useWorkbenchProjectActions({
       workspaceTarget?: WorkspaceTarget | null,
       mode?: EnvironmentDiffMode
     ) => {
-      requireGitPlugin()
       return loadProjectEnvironmentDiff(executorClient.commands, project, workspaceTarget, mode)
     },
-    [executorClient, requireGitPlugin]
+    [executorClient]
   )
 
   const commitEnvironmentChanges = useCallback(
@@ -692,7 +666,6 @@ export function useWorkbenchProjectActions({
       message: string,
       workspaceTarget?: WorkspaceTarget | null
     ) => {
-      requireGitPlugin()
       try {
         const result = await commitProjectChanges(
           executorClient.commands,
@@ -707,7 +680,7 @@ export function useWorkbenchProjectActions({
         throw error
       }
     },
-    [executorClient, requireGitPlugin]
+    [executorClient]
   )
 
   const commitAndPushEnvironmentChanges = useCallback(
@@ -716,7 +689,6 @@ export function useWorkbenchProjectActions({
       message: string,
       workspaceTarget?: WorkspaceTarget | null
     ) => {
-      requireGitPlugin()
       try {
         const result = await commitAndPushProjectChanges(
           executorClient.commands,
@@ -731,12 +703,11 @@ export function useWorkbenchProjectActions({
         throw error
       }
     },
-    [executorClient, requireGitPlugin]
+    [executorClient]
   )
 
   const pushEnvironmentChanges = useCallback(
     async (project: ProjectWithTasks | null, workspaceTarget?: WorkspaceTarget | null) => {
-      requireGitPlugin()
       try {
         const result = await pushProjectChanges(executorClient.commands, project, workspaceTarget)
         track('feature_action_completed', { domain: 'git', action: 'push' })
@@ -746,15 +717,14 @@ export function useWorkbenchProjectActions({
         throw error
       }
     },
-    [executorClient, requireGitPlugin]
+    [executorClient]
   )
 
   const listEnvironmentBranches = useCallback(
     (project: ProjectWithTasks | null, workspaceTarget?: WorkspaceTarget | null) => {
-      requireGitPlugin()
       return listProjectBranches(executorClient.commands, project, workspaceTarget)
     },
-    [executorClient, requireGitPlugin]
+    [executorClient]
   )
 
   const checkoutEnvironmentBranch = useCallback(
@@ -763,7 +733,6 @@ export function useWorkbenchProjectActions({
       branchName: string,
       workspaceTarget?: WorkspaceTarget | null
     ) => {
-      requireGitPlugin()
       try {
         const result = await checkoutProjectBranch(
           executorClient.commands,
@@ -778,7 +747,7 @@ export function useWorkbenchProjectActions({
         throw error
       }
     },
-    [executorClient, requireGitPlugin]
+    [executorClient]
   )
 
   const createEnvironmentBranch = useCallback(
@@ -787,7 +756,6 @@ export function useWorkbenchProjectActions({
       branchName: string,
       workspaceTarget?: WorkspaceTarget | null
     ) => {
-      requireGitPlugin()
       try {
         const result = await createAndCheckoutProjectBranch(
           executorClient.commands,
@@ -802,7 +770,7 @@ export function useWorkbenchProjectActions({
         throw error
       }
     },
-    [executorClient, requireGitPlugin]
+    [executorClient]
   )
 
   return {
