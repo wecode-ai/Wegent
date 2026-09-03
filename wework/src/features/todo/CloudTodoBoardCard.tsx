@@ -23,6 +23,7 @@ import type { CloudLoopItem } from '@/api/deliveries'
 import type { TaskChangeRequestSnapshot, TaskChangeRequestTarget } from '@/api/changeRequests'
 import { DshContributionSlotSurface } from '@/features/dsh-runtime/DshContributionSlotSurface'
 import { WEWORK_DSH_SLOTS } from '@/features/dsh-runtime/dshUiSlots'
+import { ActivityShimmerText } from '@/components/chat/ActivityShimmerText'
 import { AssistantThinkingIndicator } from '@/components/chat/AssistantThinkingIndicator'
 import { ChatInput, type ProjectChatControls } from '@/components/chat/ChatInput'
 import { ScrollableMessageArea } from '@/components/chat/ScrollableMessageArea'
@@ -1168,9 +1169,13 @@ function RuntimeTaskToolActivity({
       data-testid={`cloud-todo-card-tool-${itemId}-${block.id}`}
       className="flex h-5 min-w-0 items-center"
     >
-      <span className={cn('min-w-0 truncate', running && 'waiting-thinking-text')}>
-        {runtimeToolActivityText(block, t)}
-      </span>
+      {running ? (
+        <ActivityShimmerText variant="thinking" className="min-w-0 truncate">
+          {runtimeToolActivityText(block, t)}
+        </ActivityShimmerText>
+      ) : (
+        <span className="min-w-0 truncate">{runtimeToolActivityText(block, t)}</span>
+      )}
     </div>
   )
 }

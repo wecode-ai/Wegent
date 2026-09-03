@@ -1,6 +1,7 @@
 import type { HttpClient } from './http'
 import type { PluginShareGroupSearchItem, PluginShareUserSearchItem } from './plugins'
 import { sha256Hex } from './fileHash'
+import { resolveApiUrl } from './resolveApiUrl'
 
 export interface SmartAppMarketplaceTag {
   id: string
@@ -100,21 +101,23 @@ export interface SmartAppSubmissionCompleteResponse {
   item: SmartAppMarketplaceItem | null
 }
 
-function resolveSmartAppDownloadUrl(downloadUrl: string, apiBaseUrl: string): string {
-  if (!apiBaseUrl.trim()) return downloadUrl
-  const baseUrl = new URL(apiBaseUrl, window.location.origin)
-  return new URL(downloadUrl, baseUrl).toString()
-}
-
 export function createSmartAppsApi(client: HttpClient, apiBaseUrl = '') {
-  const initSubmission = (
+  const initSubmission = async (
     packageInfo: SmartAppPreparedPackage,
     metadata: SmartAppSubmissionMetadata
-  ) =>
-    client.post<SmartAppSubmissionInitResponse>('/smart-apps/submissions/init', {
-      ...metadata,
-      ...packageInfo,
-    })
+  ) => {
+    const initialized = await client.post<SmartAppSubmissionInitResponse>(
+      '/smart-apps/submissions/init',
+      {
+        ...metadata,
+        ...packageInfo,
+      }
+    )
+    return {
+      ...initialized,
+      uploadUrl: resolveApiUrl(initialized.uploadUrl, apiBaseUrl),
+    }
+  }
   const completeSubmission = (id: number) =>
     client.post<SmartAppSubmissionCompleteResponse>(`/smart-apps/submissions/${id}/complete`)
   const cancelSubmission = (id: number) => client.post(`/smart-apps/submissions/${id}/cancel`)
@@ -158,7 +161,7 @@ export function createSmartAppsApi(client: HttpClient, apiBaseUrl = '') {
       )
       return {
         ...descriptor,
-        downloadUrl: resolveSmartAppDownloadUrl(descriptor.downloadUrl, apiBaseUrl),
+        downloadUrl: resolveApiUrl(descriptor.downloadUrl, apiBaseUrl),
       }
     },
     getAccess(id: number) {
