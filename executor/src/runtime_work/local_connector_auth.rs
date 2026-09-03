@@ -777,7 +777,13 @@ fn resolve_windows_powershell_program(
     if let Some(pwsh) = search_paths
         .iter()
         .map(|directory| directory.join("pwsh.exe"))
-        .find(|candidate| candidate.is_file())
+        .find_map(|candidate| {
+            if candidate.is_file() {
+                candidate.canonicalize().ok()
+            } else {
+                None
+            }
+        })
     {
         return Ok(pwsh);
     }
@@ -1065,7 +1071,24 @@ mod tests {
         assert_eq!(
             resolve_windows_powershell_program(std::slice::from_ref(&tools), Some(&system_root))
                 .unwrap(),
-            tools.join("pwsh.exe")
+            tools.join("pwsh.exe").canonicalize().unwrap()
+        );
+    }
+
+    #[test]
+    fn windows_powershell_makes_relative_path_entry_absolute() {
+        let current_dir = env::current_dir().unwrap();
+        let temp = tempfile::tempdir_in(&current_dir).unwrap();
+        let relative_temp = temp.path().strip_prefix(&current_dir).unwrap();
+        let tools = relative_temp.join("tools");
+        let pwsh = tools.join("pwsh.exe");
+        fs::create_dir_all(&tools).unwrap();
+        fs::write(&pwsh, "").unwrap();
+
+        assert!(tools.is_relative());
+        assert_eq!(
+            resolve_windows_powershell_program(&[tools], None).unwrap(),
+            pwsh.canonicalize().unwrap()
         );
     }
 
