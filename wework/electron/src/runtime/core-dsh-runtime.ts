@@ -21,6 +21,7 @@ const CORE_PLUGIN_PACKAGES = [
   ['@wegent/dsh-ui-automations', 'wework-ui-automations'],
   ['@wegent/dsh-ui-cloud-work', 'wework-ui-cloud-work'],
   ['@wegent/dsh-wework-plugin-developer', 'wework-plugin-developer'],
+  ['@wegent/dsh-ui-git', 'wework-ui-git'],
 ] as const
 type CorePluginPackage = (typeof CORE_PLUGIN_PACKAGES)[number][0]
 const CORE_UI_DEPENDENCIES = CORE_PLUGIN_PACKAGES.slice(6).map(([packageName]) => packageName)
@@ -43,6 +44,7 @@ const CORE_UI_BUNDLES = [
   '@wegent/dsh-ui-automations',
   '@wegent/dsh-ui-cloud-work',
   '@wegent/dsh-wework-plugin-developer',
+  '@wegent/dsh-ui-git',
 ] as const
 const CORE_BUNDLES = [...CORE_HOST_BUNDLES, ...CORE_UI_BUNDLES] as const
 

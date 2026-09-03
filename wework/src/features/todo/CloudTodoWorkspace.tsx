@@ -72,6 +72,9 @@ import type {
   ArchiveRuntimeTaskOptions,
   ArchiveRuntimeTaskResult,
 } from '@/features/workbench/workbenchContextTypes'
+import { useAppPreferencesState } from '@/features/app-preferences/useAppPreferencesState'
+import { WEWORK_DSH_SLOTS } from '@/features/dsh-runtime/dshUiSlots'
+import { useDshSlotAvailable } from '@/features/dsh-runtime/useDshSlotAvailable'
 import type {
   DeliveryApi,
   ProjectSpaceLocation,
@@ -1098,9 +1101,16 @@ export function CloudTodoWorkspace({
 }: CloudTodoWorkspaceProps) {
   const { t } = useTranslation('common')
   const workbench = useContext(WorkbenchContext)
+  const taskStatusExtensionsAvailable = useDshSlotAvailable(WEWORK_DSH_SLOTS.taskStatus)
+  const preferences = useAppPreferencesState()
+  const changeRequestStatusEnabled =
+    taskStatusExtensionsAvailable && (preferences?.preferences.changeRequestStatusEnabled ?? true)
   const changeRequestMonitor = useMemo(
-    () => (services.deviceApi ? getChangeRequestMonitor(services.deviceApi) : null),
-    [services.deviceApi]
+    () =>
+      changeRequestStatusEnabled && services.deviceApi
+        ? getChangeRequestMonitor(services.deviceApi)
+        : null,
+    [changeRequestStatusEnabled, services.deviceApi]
   )
   const projectSpaceApis = useMemo(() => {
     if (services.projectSpaceApis) return services.projectSpaceApis

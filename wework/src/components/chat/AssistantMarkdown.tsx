@@ -254,7 +254,7 @@ export const AssistantMarkdown = memo(function AssistantMarkdown({
 
   return (
     <div
-      className={`${variant === 'process' ? 'thinking-markdown text-text-secondary' : 'assistant-markdown'} min-w-0 max-w-full break-words`}
+      className={`${variant === 'process' ? 'thinking-markdown' : 'assistant-markdown'} min-w-0 max-w-full break-words`}
     >
       {contentParts.map((part, index) =>
         part.kind === 'visualization' ? (
