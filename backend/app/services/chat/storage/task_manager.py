@@ -26,6 +26,7 @@ from app.models.subtask import Subtask, SubtaskRole, SubtaskStatus
 from app.models.task import TaskResource
 from app.models.user import User
 from app.schemas.kind import Bot, Task, Team
+from app.services.chat.model_override import MODEL_OVERRIDE_SOURCE_LABEL
 from app.services.chat.task_default_knowledge_bases import (
     build_initial_task_knowledge_base_refs,
 )
@@ -58,6 +59,13 @@ class TaskCreationParams:
     force_override_bot_model_type: Optional[str] = (
         None  # Model type: 'public', 'user', 'group'
     )
+    # Source of the model override: user_selection / channel_default /
+    # device_default. Only set when force_override_bot_model is True.
+    model_override_source: Optional[str] = None
+    # IM channel flows: reconcile stale override labels on an existing task
+    # every message, so conversations follow the current channel/user model
+    # resolution instead of staying pinned to an outdated one.
+    reconcile_model_override: bool = False
     # Model selection options, such as reasoning or speed.
     model_options: Optional[Dict[str, Any]] = None
     is_group_chat: bool = False
@@ -349,6 +357,11 @@ def create_new_task(
                 **(
                     {"forceOverrideBotModelType": params.force_override_bot_model_type}
                     if params.force_override_bot_model_type
+                    else {}
+                ),
+                **(
+                    {MODEL_OVERRIDE_SOURCE_LABEL: params.model_override_source}
+                    if params.model_override_source
                     else {}
                 ),
                 **(

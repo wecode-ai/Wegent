@@ -21,6 +21,10 @@ from app.models.subtask import Subtask, SubtaskRole
 from app.models.task import TaskResource
 from app.models.user import User
 from app.schemas.kind import Team
+from app.services.chat.model_override import (
+    apply_model_override_labels,
+    clear_model_override_labels,
+)
 from app.services.chat.storage.task_manager import (
     TaskCreationParams,
     build_user_subtask_result,
@@ -207,6 +211,63 @@ def _build_pipeline_handoff_message(
     )
 
 
+def sync_existing_task_model_override_labels(
+    task_json: Dict[str, Any],
+    params: TaskCreationParams,
+) -> bool:
+    """Apply or clear model override labels on an existing task.
+
+    IM channel flows set ``reconcile_model_override`` so every continuation
+    re-resolves the effective model: a pinned override is dropped when the
+    channel/user no longer selects a model, letting the Bot's own model apply
+    again instead of the conversation staying stuck on an outdated choice.
+
+    Returns:
+        True when task_json was mutated.
+    """
+    metadata = task_json.setdefault("metadata", {})
+    if not isinstance(metadata, dict):
+        return False
+    labels = metadata.setdefault("labels", {})
+    if not isinstance(labels, dict):
+        return False
+
+    changed = False
+    if params.reconcile_model_override:
+        changed = clear_model_override_labels(labels)
+        if params.model_id:
+            apply_model_override_labels(
+                labels,
+                model_id=params.model_id,
+                force_override=params.force_override_bot_model,
+                model_type=params.force_override_bot_model_type,
+                source=params.model_override_source,
+                model_options=params.model_options,
+            )
+            changed = True
+    else:
+        if params.model_id:
+            labels["modelId"] = params.model_id
+            changed = True
+        if params.force_override_bot_model:
+            labels["forceOverrideBotModel"] = "true"
+            changed = True
+        if params.force_override_bot_model_type:
+            labels["forceOverrideBotModelType"] = params.force_override_bot_model_type
+            changed = True
+        if params.model_override_source:
+            labels["modelOverrideSource"] = params.model_override_source
+            changed = True
+        if params.model_options:
+            labels["modelOptions"] = json.dumps(params.model_options)
+            changed = True
+
+    if params.auto_delete_executor is not None:
+        labels["autoDeleteExecutor"] = params.auto_delete_executor
+        changed = True
+    return changed
+
+
 def prepare_execution_session(
     db: Session,
     user: User,
@@ -310,37 +371,19 @@ def prepare_execution_session(
             resolved_task_params.model_id
             or resolved_task_params.model_options
             or resolved_task_params.auto_delete_executor is not None
+            or resolved_task_params.reconcile_model_override
         ):
-            from app.schemas.kind import Task
-
-            task_crd = Task.model_validate(task.json)
-            if not task_crd.metadata.labels:
-                task_crd.metadata.labels = {}
-            if resolved_task_params.model_id:
-                task_crd.metadata.labels["modelId"] = resolved_task_params.model_id
-            if resolved_task_params.force_override_bot_model:
-                task_crd.metadata.labels["forceOverrideBotModel"] = "true"
-            if resolved_task_params.force_override_bot_model_type:
-                task_crd.metadata.labels["forceOverrideBotModelType"] = (
-                    resolved_task_params.force_override_bot_model_type
+            task_json = task.json or {}
+            if sync_existing_task_model_override_labels(
+                task_json, resolved_task_params
+            ):
+                task_stores.task_store.update_json(db, task=task, payload=task_json)
+                logger.info(
+                    "[prepare_execution_session] Updated metadata for existing task %s to modelId=%s autoDeleteExecutor=%s",
+                    task.id,
+                    resolved_task_params.model_id,
+                    resolved_task_params.auto_delete_executor,
                 )
-            if resolved_task_params.model_options:
-                task_crd.metadata.labels["modelOptions"] = json.dumps(
-                    resolved_task_params.model_options
-                )
-            if resolved_task_params.auto_delete_executor is not None:
-                task_crd.metadata.labels["autoDeleteExecutor"] = (
-                    resolved_task_params.auto_delete_executor
-                )
-            task_stores.task_store.update_json(
-                db, task=task, payload=task_crd.model_dump(mode="json")
-            )
-            logger.info(
-                "[prepare_execution_session] Updated metadata for existing task %s to modelId=%s autoDeleteExecutor=%s",
-                task.id,
-                resolved_task_params.model_id,
-                resolved_task_params.auto_delete_executor,
-            )
 
     if not task and prepared_task is not None:
         task = prepared_task

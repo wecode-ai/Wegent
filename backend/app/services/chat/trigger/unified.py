@@ -32,6 +32,7 @@ from app.services.chat.external_knowledge_refs import (
     extract_task_external_knowledge_refs,
     validate_external_knowledge_refs,
 )
+from app.services.chat.model_override import MODEL_OVERRIDE_SOURCE_CHANNEL_DEFAULT
 from app.services.context import context_service
 from app.services.execution.skill_generation import (
     enrich_skill_generation_context,
@@ -297,8 +298,18 @@ def _catalog_model_id_from_model_spec(
     )
 
 
-def _should_ignore_unavailable_task_model_override(payload: Any) -> bool:
-    """Return whether a caller can fall back when task model labels are stale."""
+def _should_ignore_unavailable_task_model_override(
+    payload: Any, labels: Dict[str, Any]
+) -> bool:
+    """Return whether a stale task model override may fall back to Bot default.
+
+    Channel default overrides are config-driven rather than user intent, so
+    they degrade to the Bot's own model when the configured model is gone.
+    Callers that opt in explicitly keep the same behavior for legacy tasks
+    created before the modelOverrideSource label existed.
+    """
+    if labels.get("modelOverrideSource") == MODEL_OVERRIDE_SOURCE_CHANNEL_DEFAULT:
+        return True
     return bool(
         payload is not None
         and getattr(payload, "ignore_unavailable_task_model_override", False)
@@ -953,7 +964,7 @@ async def build_execution_request(
         elif (
             force_override
             and override_model_name
-            and _should_ignore_unavailable_task_model_override(payload)
+            and _should_ignore_unavailable_task_model_override(payload, task_labels)
             and not _task_model_override_available(
                 db,
                 model_name=override_model_name,

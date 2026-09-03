@@ -68,6 +68,11 @@ from app.services.chat.access import (
 )
 from app.services.chat.config import get_team_first_bot_shell_type
 from app.services.chat.guidance_queue import guidance_queue
+from app.services.chat.model_override import (
+    MODEL_OVERRIDE_SOURCE_LABEL,
+    MODEL_OVERRIDE_SOURCE_USER_SELECTION,
+    clear_model_override_labels,
+)
 from app.services.chat.operations import (
     call_executor_cancel,
     extract_model_override_info,
@@ -1894,6 +1899,11 @@ def _prepare_chat_retry_dispatch(
         labels = task_json.setdefault("metadata", {}).setdefault("labels", {})
         labels["modelId"] = model_id
         labels["forceOverrideBotModel"] = "true"
+        if payload.use_model_override:
+            # The user explicitly chose this model for the retry; record it so
+            # a later channel-default reconciliation cannot treat it as stale
+            # config and the execution-time fallback stays disabled for it.
+            labels[MODEL_OVERRIDE_SOURCE_LABEL] = MODEL_OVERRIDE_SOURCE_USER_SELECTION
         if model_type:
             labels["forceOverrideBotModelType"] = model_type
         else:
@@ -1909,15 +1919,7 @@ def _prepare_chat_retry_dispatch(
         # "Default Model" retry: clear stale override labels so the bot default is used.
         task_json = task.json or {}
         labels = task_json.get("metadata", {}).get("labels", {})
-        changed = False
-        for key in (
-            "modelId",
-            "forceOverrideBotModel",
-            "forceOverrideBotModelType",
-        ):
-            if key in labels:
-                del labels[key]
-                changed = True
+        changed = clear_model_override_labels(labels)
         if changed:
             task_stores.task_store.update_json(db, task=task, payload=task_json)
             db.commit()

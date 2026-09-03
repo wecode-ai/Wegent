@@ -473,6 +473,7 @@ async def test_chat_retry_new_model_without_type_clears_stale_override_model_typ
     assert task.json["metadata"]["labels"] == {
         "modelId": "new-model",
         "forceOverrideBotModel": "true",
+        "modelOverrideSource": "user_selection",
     }
     mock_task_store.update_json.assert_called_once_with(
         db, task=task, payload=task.json

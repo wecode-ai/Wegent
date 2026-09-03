@@ -66,6 +66,11 @@ from app.services.channels.model_selection import (
     is_claude_provider,
     model_selection_manager,
 )
+from app.services.chat.model_override import (
+    MODEL_OVERRIDE_SOURCE_CHANNEL_DEFAULT,
+    MODEL_OVERRIDE_SOURCE_DEVICE_DEFAULT,
+    MODEL_OVERRIDE_SOURCE_USER_SELECTION,
+)
 from app.services.chat.wework_task_defaults import extract_task_device_id
 from app.services.im import task_continuation_service as im_task_continuation_service
 from app.services.im.session_service import im_session_service
@@ -597,31 +602,36 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
 
     async def _get_user_model_override(
         self, user_id: int
-    ) -> tuple[Optional[str], Optional[str]]:
+    ) -> tuple[Optional[str], Optional[str], Optional[str]]:
         """Get user's model selection for override.
 
-        Returns model name and type from user's selection in Redis,
-        or falls back to channel's default model.
+        Returns model name, type, and source from the user's selection in
+        Redis, or falls back to the channel's default model.
 
         Args:
             user_id: Wegent user ID
 
         Returns:
-            Tuple of (model_name, model_type) or (None, None) if no override
+            Tuple of (model_name, model_type, source) or (None, None, None)
+            if no override
         """
         model_selection = await model_selection_manager.get_selection(user_id)
         if model_selection:
-            return model_selection.model_name, model_selection.model_type
+            return (
+                model_selection.model_name,
+                model_selection.model_type,
+                MODEL_OVERRIDE_SOURCE_USER_SELECTION,
+            )
 
         # Fall back to channel's default model
         if self.default_model_name:
-            return self.default_model_name, None
+            return self.default_model_name, None, MODEL_OVERRIDE_SOURCE_CHANNEL_DEFAULT
 
-        return None, None
+        return None, None, None
 
     async def _get_device_mode_model_override(
         self, db: Session, user: User
-    ) -> tuple[Optional[str], Optional[str]]:
+    ) -> tuple[Optional[str], Optional[str], Optional[str]]:
         """Get model override for device mode.
 
         For device mode, if user hasn't selected a Claude model,
@@ -632,7 +642,8 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
             user: Wegent user
 
         Returns:
-            Tuple of (model_name, model_type) or (None, None) if no override
+            Tuple of (model_name, model_type, source) or (None, None, None)
+            if no override
         """
         from app.core.config import settings
         from app.services.model_aggregation_service import model_aggregation_service
@@ -655,7 +666,11 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
                 if model.get("name") == model_selection.model_name:
                     if is_claude_provider(model.get("provider")):
                         # User selected a Claude model, use it
-                        return model_selection.model_name, model_selection.model_type
+                        return (
+                            model_selection.model_name,
+                            model_selection.model_type,
+                            MODEL_OVERRIDE_SOURCE_USER_SELECTION,
+                        )
                     break  # Found the model but it's not Claude
 
         # User hasn't selected a Claude model, check if there's a default device model
@@ -671,13 +686,21 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
                         f"[{self._channel_type.value}Handler] Using default device model "
                         f"for user {user.id}: {default_model_name}"
                     )
-                    return model.get("name"), model.get("type", "public")
+                    return (
+                        model.get("name"),
+                        model.get("type", "public"),
+                        MODEL_OVERRIDE_SOURCE_DEVICE_DEFAULT,
+                    )
 
         # Fall back to user's selection (even if not Claude)
         if model_selection:
-            return model_selection.model_name, model_selection.model_type
+            return (
+                model_selection.model_name,
+                model_selection.model_type,
+                MODEL_OVERRIDE_SOURCE_USER_SELECTION,
+            )
 
-        return None, None
+        return None, None, None
 
     async def handle_message(self, raw_data: Any) -> bool:
         """Handle an incoming message.
@@ -1576,7 +1599,7 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
                 return
 
             # Get model for device mode (uses default Claude if user hasn't selected one)
-            override_model_name, _ = await self._get_device_mode_model_override(
+            override_model_name, _, _ = await self._get_device_mode_model_override(
                 db, user
             )
 
@@ -2003,7 +2026,7 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
         model_selection = await model_selection_manager.get_selection(user.id)
         if selection.device_type == DeviceType.LOCAL:
             # In device mode, use _get_device_mode_model_override to get the actual model
-            override_model_name, _ = await self._get_device_mode_model_override(
+            override_model_name, _, _ = await self._get_device_mode_model_override(
                 db, user
             )
             if override_model_name:
@@ -2672,7 +2695,9 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
         display_text = self._get_display_text(message_context)
 
         # Get user's model selection (type not needed for chat mode)
-        override_model_name, _ = await self._get_user_model_override(user.id)
+        override_model_name, _, override_source = await self._get_user_model_override(
+            user.id
+        )
 
         params = TaskCreationParams(
             message=display_text,
@@ -2685,6 +2710,8 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
             task_type="chat",
             model_id=override_model_name,
             force_override_bot_model=override_model_name is not None,
+            model_override_source=override_source,
+            reconcile_model_override=True,
             message_source=self._build_message_source_metadata(),
         )
 
@@ -2921,7 +2948,7 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
         display_text = self._get_display_text(message_context)
 
         # Get model for device mode (uses default Claude if user hasn't selected one)
-        override_model_name, override_model_type = (
+        override_model_name, override_model_type, override_source = (
             await self._get_device_mode_model_override(db, user)
         )
 
@@ -2937,6 +2964,8 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
             force_override_bot_model=override_model_name is not None,
             force_override_bot_model_type=override_model_type,
             model_id=override_model_name,
+            model_override_source=override_source,
+            reconcile_model_override=True,
             message_source=self._build_message_source_metadata(),
         )
 
@@ -3075,8 +3104,8 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
         display_text = self._get_display_text(message_context)
 
         # Get user's model selection
-        override_model_name, override_model_type = await self._get_user_model_override(
-            user.id
+        override_model_name, override_model_type, override_source = (
+            await self._get_user_model_override(user.id)
         )
 
         params = TaskCreationParams(
@@ -3091,6 +3120,8 @@ class BaseChannelHandler(ABC, Generic[TMessage, TCallbackInfo]):
             force_override_bot_model=override_model_name is not None,
             force_override_bot_model_type=override_model_type,
             model_id=override_model_name,
+            model_override_source=override_source,
+            reconcile_model_override=True,
             message_source=self._build_message_source_metadata(),
         )
 

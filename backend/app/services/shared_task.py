@@ -37,6 +37,7 @@ from app.schemas.shared_task import (
     TaskShareInfo,
     TaskShareResponse,
 )
+from app.services.chat.model_override import MODEL_OVERRIDE_SOURCE_LABEL
 from app.stores.tasks import subtask_store, task_store
 from shared.prompts.constants import parse_prompt_blocks
 
@@ -485,6 +486,11 @@ class SharedTaskService:
             and "forceOverrideBotModelType" in task_crd.metadata.labels
         ):
             del task_crd.metadata.labels["forceOverrideBotModelType"]
+        if (
+            task_crd.metadata.labels
+            and MODEL_OVERRIDE_SOURCE_LABEL in task_crd.metadata.labels
+        ):
+            del task_crd.metadata.labels[MODEL_OVERRIDE_SOURCE_LABEL]
 
         # Update model configuration in metadata labels if provided by user during import
         if model_id or should_force_override_model:
