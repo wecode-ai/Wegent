@@ -149,6 +149,36 @@ def test_attachment_media_content_uses_signed_url_for_local_image(
     assert verify_public_attachment_token(token)["attachment_id"] == 14
 
 
+def test_attachment_media_content_uses_signed_url_for_legacy_video(
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr(
+        "wecode.video.api.skill_context.settings.WEGENT_BACKEND_PUBLIC_URL",
+        "http://10.218.17.35:8500",
+    )
+    attachments = [
+        SimpleNamespace(
+            id=15,
+            type_data={
+                "mime_type": "video/mp4",
+                "storage_backend": "weibo",
+                "fid": 123456,
+            },
+        )
+    ]
+
+    content = build_attachment_media_content(attachments)
+
+    assert len(content) == 1
+    assert content[0]["type"] == "input_video"
+    assert content[0]["file_id"] == "wegent-attachment-15"
+    parsed = urlsplit(content[0]["video_url"])
+    assert parsed.netloc == "10.218.17.35:8500"
+    assert parsed.path == "/api/attachments/download/shared"
+    token = parse_qs(parsed.query)["token"][0]
+    assert verify_public_attachment_token(token)["attachment_id"] == 15
+
+
 def test_attachment_media_content_merges_without_duplicates() -> None:
     generation = {
         "model": "happyhorse-1-0",
