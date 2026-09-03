@@ -451,6 +451,38 @@ describe('ProjectWorkBar', () => {
     expect(onExecutionModeChange).toHaveBeenCalledWith('git_worktree')
   })
 
+  test('trusts runtime preflight when stored project metadata is stale', async () => {
+    const onExecutionModeChange = vi.fn()
+
+    render(
+      <ProjectWorkBar
+        projects={[nonGitProject]}
+        devices={[device]}
+        runtimeWork={runtimeWork}
+        currentProject={nonGitProject}
+        currentProjectId={nonGitProject.id}
+        currentStandaloneDeviceId={null}
+        selectedDeviceWorkspaceId={201}
+        executionMode="current_workspace"
+        worktreeAvailability={{
+          available: true,
+          reason: 'available',
+          deviceId: 'device-1',
+          sourcePath: '/workspace/notes',
+        }}
+        onSelectProject={vi.fn()}
+        onSelectStandaloneDevice={vi.fn()}
+        onSelectProjectWorkspace={vi.fn()}
+        onExecutionModeChange={onExecutionModeChange}
+      />
+    )
+
+    await userEvent.click(screen.getByTestId('execution-mode-button'))
+    await userEvent.click(screen.getByTestId('execution-mode-git-worktree-button'))
+
+    expect(onExecutionModeChange).toHaveBeenCalledWith('git_worktree')
+  })
+
   test('shows the shared availability reason without changing the selected mode', async () => {
     const onExecutionModeChange = vi.fn()
 

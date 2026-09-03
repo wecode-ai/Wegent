@@ -37,23 +37,14 @@ export default function GitProjectWorkSection({ context }: GitProjectWorkSection
   const { t } = useTranslation('common')
   const [modeMenuOpen, setModeMenuOpen] = useState(false)
   const project = context.project ?? context.currentProject
-  const configuredSource = project?.config?.workspace?.source
-  const reportedAvailability =
+  const worktreeAvailability =
     context.worktreeAvailability ??
     ({
       available: false,
-      reason: 'preflight_pending',
+      reason: project && !isGitWorkspaceProject(project) ? 'not_git' : 'preflight_pending',
       deviceId: null,
       sourcePath: null,
     } as const)
-  const worktreeAvailability =
-    configuredSource && configuredSource !== 'git'
-      ? {
-          ...reportedAvailability,
-          available: false,
-          reason: 'not_git' as const,
-        }
-      : reportedAvailability
   const projectIsRepository = Boolean(
     project && (isGitWorkspaceProject(project) || worktreeAvailability.reason !== 'not_git')
   )
