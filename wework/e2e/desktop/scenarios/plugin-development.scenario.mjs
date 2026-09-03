@@ -126,6 +126,16 @@ export async function createDesktopScenario({
         timeoutMs: uiTimeoutMs,
         visible: true,
       })
+      await control.command('waitFor', '[data-testid="wework-plugin-development-debug-target"]', {
+        text: 'Wework 调试实例（运行端）',
+        timeoutMs: uiTimeoutMs,
+        visible: true,
+      })
+      await control.command('waitFor', '[data-testid="wework-plugin-development-lifecycle"]', {
+        text: '项目已注册',
+        timeoutMs: uiTimeoutMs,
+        visible: true,
+      })
       await captureScreenshot(control, 'plugin-development-03-debug-stopped.png', 'body')
 
       await control.command(
@@ -172,7 +182,43 @@ export async function createDesktopScenario({
         'Starting plugin debugging did not focus the isolated Wework instance'
       )
       await control.command('focusMainWindow', 'body')
+      await control.command('waitFor', '[data-testid="wework-plugin-development-live-status"]', {
+        text: '实时状态',
+        timeoutMs: uiTimeoutMs,
+        visible: true,
+      })
+      await control.command('waitFor', '[data-testid="wework-plugin-development-activity"]', {
+        text: 'Core DSH 已连接',
+        timeoutMs: uiTimeoutMs,
+        visible: true,
+      })
       await captureScreenshot(control, 'plugin-development-04-debug-ready.png', 'body')
+      await control.command('click', '[data-testid="wework-plugin-development-filter-errors"]', {
+        visible: true,
+      })
+      await control.command('waitFor', '[data-testid="wework-plugin-development-events-empty"]', {
+        text: '暂无错误',
+        timeoutMs: uiTimeoutMs,
+        visible: true,
+      })
+      await control.command('click', '[data-testid="wework-plugin-development-filter-all"]', {
+        visible: true,
+      })
+      await control.command(
+        'click',
+        '[data-testid="wework-plugin-development-diagnostics-toggle"]',
+        { visible: true }
+      )
+      await control.command(
+        'waitFor',
+        '[data-testid="wework-plugin-development-sidebar-restart"]',
+        {
+          text: '重启 Core DSH',
+          timeoutMs: uiTimeoutMs,
+          visible: true,
+        }
+      )
+      await captureScreenshot(control, 'plugin-development-05-debug-diagnostics.png', 'body')
 
       const clientPath = join(pluginRoot, 'client.js')
       const client = await readFile(clientPath, 'utf8')
@@ -204,17 +250,42 @@ export async function createDesktopScenario({
         }
       )
       control.activateWindow(isolatedWindowLabel)
-      await captureScreenshot(control, 'plugin-development-05-hmr-behavior.png', 'body')
+      await captureScreenshot(control, 'plugin-development-06-hmr-behavior.png', 'body')
       control.activateWindow('main')
-      await captureScreenshot(control, 'plugin-development-06-hmr-applied.png', 'body')
+      await control.command('click', '[data-testid="wework-plugin-development-filter-hmr"]', {
+        visible: true,
+      })
+      await control.command('waitFor', '[data-testid="wework-plugin-development-event-hmr"]', {
+        text: 'HMR 更新已接受',
+        timeoutMs: uiTimeoutMs,
+        visible: true,
+      })
+      await captureScreenshot(control, 'plugin-development-07-hmr-applied.png', 'body')
 
+      await control.command('click', '[data-testid="wework-plugin-development-sidebar-more"]', {
+        visible: true,
+      })
+      await control.command(
+        'click',
+        '[data-testid="wework-plugin-development-sidebar-stop-request"]',
+        { visible: true }
+      )
+      await control.command('waitFor', '[data-testid="wework-plugin-development-sidebar-stop"]', {
+        text: '确认停止',
+        timeoutMs: uiTimeoutMs,
+        visible: true,
+      })
+      await captureScreenshot(control, 'plugin-development-08-stop-confirmation.png', 'body')
       await control.command(
         'clickWhenEnabled',
         '[data-testid="wework-plugin-development-sidebar-stop"]',
-        { timeoutMs: workbenchReadyTimeoutMs, visible: true }
+        {
+          timeoutMs: workbenchReadyTimeoutMs,
+          visible: true,
+        }
       )
       await waitForStatus(control, '未运行 · HMR 1', workbenchReadyTimeoutMs)
-      await captureScreenshot(control, 'plugin-development-07-debug-stopped-after-hmr.png', 'body')
+      await captureScreenshot(control, 'plugin-development-09-debug-stopped-after-hmr.png', 'body')
     },
   }
 }

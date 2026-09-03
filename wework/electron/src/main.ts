@@ -191,6 +191,7 @@ let pluginDevelopmentWatcher: FSWatcher | null = null
 let pluginDevelopmentReloadTimer: NodeJS.Timeout | null = null
 let pluginDevelopmentReloadPromise: Promise<void> = Promise.resolve()
 let pluginDevelopmentHmrGeneration = 0
+let pluginDevelopmentHmrUpdatedAt: string | null = null
 let computerUseStartupScheduled = false
 let electronNodeRuntimePromise: Promise<ElectronNodeRuntime> | null = null
 let quitting = false
@@ -316,6 +317,7 @@ async function writePluginDevelopmentState(
 ): Promise<void> {
   const path = process.env.WEWORK_PLUGIN_DEVELOPMENT_STATE_PATH?.trim()
   if (!pluginDevelopmentInstance || !path) return
+  const updatedAt = new Date().toISOString()
   await mkdir(dirname(path), { recursive: true, mode: 0o700 })
   await writeFile(
     path,
@@ -324,6 +326,8 @@ async function writePluginDevelopmentState(
         status,
         coreDshPid: desktopRuntime?.diagnostics().coreDshPid ?? null,
         hmrGeneration: pluginDevelopmentHmrGeneration,
+        updatedAt,
+        hmrUpdatedAt: pluginDevelopmentHmrUpdatedAt,
         lastError: error
           ? {
               stage: 'core-dsh',
@@ -357,6 +361,7 @@ function schedulePluginDevelopmentReload(): void {
         try {
           await restartPrimaryCoreDsh()
           pluginDevelopmentHmrGeneration += 1
+          pluginDevelopmentHmrUpdatedAt = new Date().toISOString()
           await writePluginDevelopmentState('ready')
         } catch (error) {
           const normalized = error instanceof Error ? error : new Error(String(error))

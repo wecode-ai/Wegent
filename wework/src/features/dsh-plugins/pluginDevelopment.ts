@@ -26,6 +26,9 @@ export interface PluginDevelopmentSession {
   electronPid: number | null
   coreDshPid: number | null
   hmrGeneration: number
+  startedAt: string
+  updatedAt: string
+  hmrUpdatedAt: string | null
   lastError: PluginDevelopmentError | null
   userDataDirectory: string
   logDirectory: string

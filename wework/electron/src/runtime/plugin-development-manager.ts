@@ -31,6 +31,9 @@ export interface PluginDevelopmentSession extends CoreDshDevelopmentPlugin {
   electronPid: number | null
   coreDshPid: number | null
   hmrGeneration: number
+  startedAt: string
+  updatedAt: string
+  hmrUpdatedAt: string | null
   lastError: PluginDevelopmentError | null
   userDataDirectory: string
   logDirectory: string
@@ -51,6 +54,8 @@ interface ChildState {
   status?: PluginDevelopmentStatus
   coreDshPid?: number | null
   hmrGeneration?: number
+  updatedAt?: string
+  hmrUpdatedAt?: string | null
   lastError?: PluginDevelopmentError | null
 }
 
@@ -348,6 +353,7 @@ export class PluginDevelopmentManager {
     child.stdout.on('data', value => void log.write('stdout', String(value)))
     child.stderr.on('data', value => void log.write('stderr', String(value)))
     this.child = child
+    const startedAt = new Date().toISOString()
     this.session = {
       ...plugin,
       id,
@@ -355,6 +361,9 @@ export class PluginDevelopmentManager {
       electronPid: child.pid ?? null,
       coreDshPid: null,
       hmrGeneration: 0,
+      startedAt,
+      updatedAt: startedAt,
+      hmrUpdatedAt: null,
       lastError: null,
       userDataDirectory,
       logDirectory,
@@ -496,6 +505,8 @@ export class PluginDevelopmentManager {
       status: state.status ?? this.session.status,
       coreDshPid: state.coreDshPid ?? null,
       hmrGeneration: state.hmrGeneration ?? this.session.hmrGeneration,
+      updatedAt: state.updatedAt ?? this.session.updatedAt,
+      hmrUpdatedAt: state.hmrUpdatedAt ?? this.session.hmrUpdatedAt,
       lastError: state.lastError ?? null,
     })
   }
