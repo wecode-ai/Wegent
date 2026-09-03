@@ -152,6 +152,21 @@ Wework 将 executor 高频到达的文本增量与 Markdown 展示节奏分离�
 
 流式文本缓冲的单元测试位于 `wework/src/components/chat/useBufferedStreamingText.test.ts`。修改缓冲水位或推进速率时，应同时验证 Unicode 字符边界、非追加更新和流结束立即对齐行为。
 
+## 常驻动画渲染
+
+状态旋转图标和文字扫光属于常驻动画：即使页面没有输入或流式消息，它们也可能持续驱动 Web Content 进程。实现这类效果时，应保持每帧只更新可合成的 `transform` 或 `opacity`，避免动画化 `background-position`、`mask-position` 等需要重新绘制的属性，也不要直接旋转带有复杂描边的 SVG。
+
+旋转图标应把静态 SVG 放在固定尺寸的 HTML 包装层中，由包装层执行 `transform` 动画并声明 `will-change: transform`。文字扫光应使用固定位置的高亮层，通过分段且错峰的 `opacity` 动画形成从左到右的扫光；基础文字始终正常渲染。两类实现都必须保留 `prefers-reduced-motion` 行为。
+
+不能仅凭 CSS 属性名称判断动画是否进入合成线程。`will-change` 只是提示，`clip-path` 等看似可合成的属性在实际 Electron 版本中仍可能每帧触发主线程工作。修改常驻动画后，应在同一 Electron 版本、相同元素数量和相同窗口状态下分别录制至少 10 秒的旧实现与新实现，并验证：
+
+- 暂停动画后 CPU 明显下降，以证明动画与占用存在因果关系。
+- 新实现不再随帧产生 `Paint` 或 `PaintImage`。
+- `UpdateLayoutTree` 和 `Layerize` 的事件数量与总耗时不再随动画帧持续增长。
+- 动画方向、周期、颜色、尺寸和可见状态与修改前一致。
+
+如果新实现仍持续产生绘制或图层化事件，应继续修改实现，而不是以视觉上流畅或平均 CPU 偶尔下降作为验收依据。
+
 ## 采集内容
 
 开启后，诊断模块会采集：

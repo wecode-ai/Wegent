@@ -7,11 +7,12 @@
 from typing import NoReturn
 from urllib.parse import quote
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
 from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 
 from app.api.dependencies import get_db
+from app.api.marketplace_upload import read_marketplace_package
 from app.core import security
 from app.models.user import User
 from app.schemas.smart_app import (
@@ -30,11 +31,17 @@ from app.services.marketplace_artifact_storage import (
     MarketplaceArtifactStorageError,
     marketplace_artifact_storage,
 )
+from app.services.marketplace_submission_upload import (
+    InvalidMarketplaceSubmissionUploadToken,
+    verify_marketplace_submission_upload_token,
+)
 from app.services.smart_app_download_link import (
     InvalidSmartAppDownloadToken,
     verify_smart_app_download_token,
 )
 from app.services.smart_app_marketplace_service import smart_app_marketplace_service
+from app.services.smart_app_package_parser import MAX_SMART_APP_PACKAGE_SIZE_BYTES
+from shared.telemetry.decorators import trace_async
 
 router = APIRouter(tags=["smart-apps"])
 
@@ -161,6 +168,45 @@ def init_submission(
         )
     except MarketplaceArtifactStorageError as exc:
         _raise_storage_unavailable(exc)
+
+
+@router.put("/submissions/{submission_id}/artifact", status_code=204)
+@trace_async("upload_smart_app_submission_artifact", "marketplace.api")
+async def upload_submission_artifact(
+    submission_id: int,
+    request: Request,
+    token: str = Query(..., description="Short-lived Smart app upload token"),
+    db: Session = Depends(get_db),
+) -> Response:
+    """Upload a ticketed Smart app package through the Backend origin."""
+    try:
+        claims = verify_marketplace_submission_upload_token(
+            token, expected_kind="smart_app"
+        )
+    except InvalidMarketplaceSubmissionUploadToken as exc:
+        raise HTTPException(
+            status_code=403, detail="Invalid or expired Smart app upload link"
+        ) from exc
+    if claims.submission_id != submission_id:
+        raise HTTPException(
+            status_code=403, detail="Invalid or expired Smart app upload link"
+        )
+
+    package = await read_marketplace_package(
+        request,
+        max_bytes=MAX_SMART_APP_PACKAGE_SIZE_BYTES,
+        resource_name="Smart app",
+    )
+    try:
+        smart_app_marketplace_service.upload_submission_package(
+            db,
+            submission_id=submission_id,
+            user_id=claims.user_id,
+            package=package,
+        )
+    except MarketplaceArtifactStorageError as exc:
+        _raise_storage_unavailable(exc)
+    return Response(status_code=204)
 
 
 @router.post(

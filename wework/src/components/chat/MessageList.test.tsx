@@ -1443,7 +1443,19 @@ describe('MessageList', () => {
     )
 
     expect(screen.getByText('我先把硬编码中文改成 chat 命名空间翻译。')).toBeInTheDocument()
-    expect(screen.getByText('正在搜索代码')).toHaveClass('tool-activity-shimmer')
+    const shimmer = screen.getByText('正在搜索代码')
+    expect(shimmer).toHaveClass('tool-activity-shimmer')
+    const shimmerBands = shimmer.querySelectorAll('.activity-shimmer-band')
+    expect(shimmerBands).toHaveLength(6)
+    expect(Array.from(shimmerBands, band => band.getAttribute('data-grapheme'))).toEqual([
+      '正',
+      '在',
+      '搜',
+      '索',
+      '代',
+      '码',
+    ])
+    expect(shimmer.querySelector('[data-text]')).not.toBeInTheDocument()
     expect(screen.queryByTestId('thinking-indicator')).not.toBeInTheDocument()
   })
 

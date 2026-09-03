@@ -45,6 +45,7 @@ import type {
 import { createPortal } from 'react-dom'
 import { ActionMenu } from '@/components/common/ActionMenu'
 import { ChangeRequestStatusIcon } from '@/components/common/ChangeRequestStatusIcon'
+import { CompositedSpinner } from '@/components/common/CompositedSpinner'
 import { TextInputDialog } from '@/components/common/TextInputDialog'
 import { ProjectFolderIcon } from '@/components/projects/ProjectFolderIcon'
 import { LocalProjectEditDialog } from '@/components/projects/LocalProjectEditDialog'
@@ -575,8 +576,6 @@ function ArchiveConversationsConfirmDialog({
 
 const SIDEBAR_ROW_METADATA_CLASS =
   'flex items-center gap-1 text-xs text-[rgb(var(--color-sidebar-text-muted))] group-hover/task:invisible'
-const SIDEBAR_RUNNING_SPINNER_CLASS =
-  'h-4 w-4 shrink-0 animate-spin text-[rgb(var(--color-sidebar-text-muted))]'
 const SIDEBAR_HEADER_ICON_BUTTON_CLASS =
   'text-[rgb(var(--color-sidebar-text-primary))] hover:bg-[rgb(var(--color-sidebar-hover))] hover:text-[rgb(var(--color-sidebar-text-primary))] active:bg-[rgb(var(--color-sidebar-active))]'
 
@@ -1906,7 +1905,10 @@ function RuntimeTaskRow({
                     aria-label={t('workbench.runtime_task_running')}
                     className="flex h-[30px] w-[30px] items-center justify-center"
                   >
-                    <Loader2 className={SIDEBAR_RUNNING_SPINNER_CLASS} aria-hidden="true" />
+                    <CompositedSpinner
+                      icon={Loader2}
+                      className="h-4 w-4 text-[rgb(var(--color-sidebar-text-muted))]"
+                    />
                   </span>
                 ) : priorityReason === 'waiting' ? (
                   <span

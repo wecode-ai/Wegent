@@ -74,11 +74,9 @@ await writeFile(
   `${JSON.stringify({ runtimes: packagedRuntimes }, null, 2)}\n`,
   { mode: 0o600 }
 )
-await cp(
-  join(sharedResourcesRoot, 'bundled-plugins', 'wework-personal'),
-  join(resourcesRoot, 'bundled-plugins', 'wework-personal'),
-  { recursive: true }
-)
+await cp(join(sharedResourcesRoot, 'bundled-plugins'), join(resourcesRoot, 'bundled-plugins'), {
+  recursive: true,
+})
 await cp(join(sharedResourcesRoot, 'bundled-hooks'), join(resourcesRoot, 'bundled-hooks'), {
   recursive: true,
 })

@@ -1,5 +1,7 @@
 import i18n from '@/i18n'
+import { sha256Hex } from '@/api/fileHash'
 import { getErrorMessage } from '@/lib/error-message'
+import { readElectronLocalFile } from '@/lib/electron-local-file'
 import { isDesktopRuntime, isElectronRuntime } from '@/lib/runtime-environment'
 import { LocalPluginUninstallCleanupError } from './pluginUninstallError'
 import {
@@ -37,6 +39,37 @@ import { preferWeworkPersonalInstalled } from '@/features/plugins/personalPlugin
 import { isWegentCloudMarketplace } from '@/features/plugins/pluginNavigation'
 import { slimPluginComponentsForCache } from '@/features/plugins/slimPluginComponents'
 import { mergeLocalInstalledWithStorePackages } from '@/components/plugins/installedPluginMerge'
+
+const MAX_PERSONAL_PLUGIN_PACKAGE_BYTES = 50 * 1024 * 1024
+
+interface LocalPluginPackageArtifact {
+  name: string
+  path: string
+  size: number
+  sha256: string
+  cleanupToken: string
+}
+
+function validateLocalPluginPackageArtifact(
+  value: LocalPluginPackageArtifact
+): LocalPluginPackageArtifact {
+  if (
+    typeof value.name !== 'string' ||
+    !value.name.trim() ||
+    typeof value.path !== 'string' ||
+    !value.path.trim() ||
+    !Number.isSafeInteger(value.size) ||
+    value.size <= 0 ||
+    value.size > MAX_PERSONAL_PLUGIN_PACKAGE_BYTES ||
+    typeof value.sha256 !== 'string' ||
+    !/^[a-f0-9]{64}$/.test(value.sha256) ||
+    typeof value.cleanupToken !== 'string' ||
+    !value.cleanupToken.trim()
+  ) {
+    throw new Error('Executor returned invalid personal plugin package metadata')
+  }
+  return value
+}
 
 export interface LocalCodexPluginsState {
   marketplaceItems: PluginMarketplaceItem[]
@@ -210,7 +243,10 @@ export interface LocalCodexPluginApi {
     shareInflight?: boolean
   }): Promise<InstalledPluginListResponse & { deviceId?: string }>
   listSkills(params?: { cwds?: string[]; forceReload?: boolean }): Promise<LocalDeviceSkill[]>
-  listApps(params?: { forceRefetch?: boolean }): Promise<LocalDeviceApp[]>
+  listApps(params?: {
+    forceRefetch?: boolean
+    includeInaccessible?: boolean
+  }): Promise<LocalDeviceApp[]>
   listAvailablePlugins(params?: {
     q?: string
     marketplaceId?: string
@@ -2784,21 +2820,42 @@ export function createLocalCodexPluginApi(): LocalCodexPluginApi {
         throw new Error('Packaging a local plugin requires the Wework desktop app')
       }
       const ensured = await this.ensureCreatedPluginInWeworkPersonal(plugin)
+      let artifact: LocalPluginPackageArtifact | null = null
       try {
-        const packaged = await requestLocalExecutor<{ name: string; bytes: number[] }>(
+        const response = await requestLocalExecutor<LocalPluginPackageArtifact>(
           'executor.plugins.personal.package',
-          {
-            marketplacePath: ensured.marketplacePath,
-            pluginName: ensured.pluginName,
-          }
+          { marketplacePath: ensured.marketplacePath, pluginName: ensured.pluginName }
         )
-        return new File([new Uint8Array(packaged.bytes)], packaged.name, {
+        artifact = response
+        const packaged = validateLocalPluginPackageArtifact(response)
+        const bytes = await readElectronLocalFile(packaged.path, {
+          expectedSize: packaged.size,
+          maxBytes: MAX_PERSONAL_PLUGIN_PACKAGE_BYTES,
+        })
+        if (bytes.byteLength !== packaged.size) {
+          throw new Error('Personal plugin package size did not match Executor metadata')
+        }
+        const sha256 = await sha256Hex(new Blob([bytes]))
+        if (sha256 !== packaged.sha256) {
+          throw new Error('Personal plugin package checksum did not match Executor metadata')
+        }
+        return new File([bytes], packaged.name, {
           type: 'application/zip',
         })
       } catch (error) {
         throw new Error(getErrorMessage(error, 'Failed to package local plugin'), {
           cause: error,
         })
+      } finally {
+        if (typeof artifact?.cleanupToken === 'string' && artifact.cleanupToken.trim()) {
+          try {
+            await requestLocalExecutor('executor.plugins.personal.package.cleanup', {
+              cleanupToken: artifact.cleanupToken,
+            })
+          } catch (cleanupError) {
+            console.warn('[Wework] Failed to clean up local plugin package artifact', cleanupError)
+          }
+        }
       }
     },
     async deletePersonalPlugin(pluginName, sourceMarketplacePath) {
@@ -3058,7 +3115,9 @@ export function createLocalCodexPluginApi(): LocalCodexPluginApi {
         apps.push(...response.data.map(toLocalDeviceApp))
         cursor = response.nextCursor
       } while (cursor)
-      return apps.filter(app => app.isEnabled !== false && app.isAccessible !== false)
+      return apps.filter(
+        app => app.isEnabled !== false && (params.includeInaccessible || app.isAccessible !== false)
+      )
     },
     async listAvailablePlugins(params = {}) {
       const state = await readState({

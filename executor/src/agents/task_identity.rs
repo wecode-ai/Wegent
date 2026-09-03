@@ -5,7 +5,7 @@
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 
-use crate::protocol::ExecutionRequest;
+use crate::{protocol::ExecutionRequest, runtime_work::runtime_task_title};
 
 pub(super) fn task_identity_env(request: &ExecutionRequest) -> BTreeMap<String, String> {
     let mut env = BTreeMap::new();
@@ -41,6 +41,9 @@ pub(super) fn task_identity_env(request: &ExecutionRequest) -> BTreeMap<String, 
             task_workspace.to_string_lossy().into_owned(),
         );
     }
+    if let Some(title) = runtime_task_title(request) {
+        env.insert("WEWORK_PARENT_TITLE".to_owned(), title);
+    }
     if let Some(auth_token) = non_empty(request.auth_token.as_deref()) {
         env.insert("AUTH_TOKEN".to_owned(), auth_token.to_owned());
     }
@@ -70,11 +73,15 @@ mod tests {
 
     #[test]
     fn uses_materialized_workspace_path_for_task_workspace() {
-        let request = ExecutionRequest {
+        let mut request = ExecutionRequest {
             task_id: "task-1".to_owned(),
             project_workspace_path: Some("/runtime/workspaces/task-1".to_owned()),
             ..ExecutionRequest::default()
         };
+        request.extra.insert(
+            "runtimeTaskTitle".to_owned(),
+            serde_json::json!("Identify local development instances"),
+        );
 
         let env = task_identity_env(&request);
 
@@ -82,6 +89,10 @@ mod tests {
         assert_eq!(
             env.get("WEGENT_TASK_WORKSPACE"),
             Some(&"/runtime/workspaces/task-1".to_owned())
+        );
+        assert_eq!(
+            env.get("WEWORK_PARENT_TITLE"),
+            Some(&"Identify local development instances".to_owned())
         );
     }
 }

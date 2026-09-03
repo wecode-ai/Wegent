@@ -1020,6 +1020,7 @@ async function main() {
       cloudEnvironment = new RealCloudEnvironment({
         claudeBinary: desktopScenario?.claudeBinary,
         codexBinary,
+        managedCloudIdentity: CLOUD_ONLY,
         modelServerUrl: control.url,
         scenarioConfigToml:
           SELECTED_DESKTOP_SEGMENT === 'rendering-extensions' ? toolDetailsMcpConfigToml() : '',

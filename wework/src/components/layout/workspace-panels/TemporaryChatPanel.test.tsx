@@ -56,6 +56,7 @@ vi.mock('@/components/layout/BufferedChatInput', () => ({
     onSubmit,
     disabled,
     error,
+    collapseWhenIdle,
     goalDraftActive,
     onSetGoal,
     onCancelGoalDraft,
@@ -63,11 +64,12 @@ vi.mock('@/components/layout/BufferedChatInput', () => ({
     onSubmit: (valueOverride?: string) => Promise<boolean>
     disabled?: boolean
     error?: string | null
+    collapseWhenIdle?: boolean
     goalDraftActive?: boolean
     onSetGoal?: () => void
     onCancelGoalDraft?: () => void
   }) => (
-    <>
+    <div data-testid="mock-composer" data-collapse-when-idle={String(collapseWhenIdle)}>
       {onSetGoal ? (
         <button type="button" data-testid="set-goal-button" onClick={onSetGoal}>
           设置目标
@@ -87,7 +89,7 @@ vi.mock('@/components/layout/BufferedChatInput', () => ({
         发送
       </button>
       {error ? <span data-testid="mock-error">{error}</span> : null}
-    </>
+    </div>
   ),
 }))
 
@@ -184,6 +186,20 @@ describe('TemporaryChatPanel', () => {
     mocks.syncTranscript.mockReset()
     mocks.lifecycleSnapshot = null
     mocks.activeModelSelection = null
+  })
+
+  it('passes the collapsed idle state through to the shared composer', () => {
+    render(
+      <TemporaryChatPanel
+        currentProject={null}
+        source={address}
+        instanceId="collapsed-composer"
+        initialAddress={address}
+        collapseComposerWhenIdle
+      />
+    )
+
+    expect(screen.getByTestId('mock-composer')).toHaveAttribute('data-collapse-when-idle', 'true')
   })
 
   it('lets an idle transcript settle a stale running execution without an active turn', async () => {

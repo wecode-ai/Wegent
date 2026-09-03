@@ -4,328 +4,475 @@ sidebar_position: 20
 
 # Wework 插件市场 V2 技术设计
 
-面向插件开发、开源迁移和本地联调，请先阅读 [插件市场开发指南](./wework-plugin-marketplace-dev.md)。本文侧重控制面架构、数据模型和运维约束。
+面向插件开发、开源迁移和本地联调，请先阅读[插件市场开发指南](./wework-plugin-marketplace-dev.md)。本文定义 Wework 插件分享、企业全员发布、GitLab 审核和市场 Release 的**实现与验收合同**。
 
-## 1. 决策与边界
+> 实现状态（2026-08-29）：当前实现已落地双范围交互、ACL 与发布状态加载、Request/Revision/Check/Event 领域、Web 审核队列、MR 物化、受限 Release API 及本地测试。**这不等于已获准或已部署生产**：旧 Token 吊销与轮换、HTTPS、protected master/environment、Code Owner 审批、project-locked 原生 Windows/macOS Runner 和新 Release 凭据均需在真实 GitLab/生产环境完成 P0 配置与验证。第 10 节记录已实现边界和上线门禁。
 
-插件市场采用“Wework 云端控制面 + 本地 Codex 运行面”。云端决定可见插件、可安装 Release、账号期望版本和审核状态；Codex App Server 决定当前设备是否真正安装成功。市场包统一进入私有对象存储，数据库只保存元数据和不可变 Release 引用。
+## 1. 冻结的产品与技术决策
 
-锁定规则：
+以下规则已冻结，变更必须同时更新本文、接口合同、交互稿和验收用例：
 
-- 普通用户只能浏览 Wework 云端市场，不能直接添加任意 GitHub 或 Codex Marketplace。
-- Codex 官方插件按管理员白名单选择性镜像，不做全量同步。
-- 市场展示最新已发布版本，历史 Release 保留；市场插件默认自动更新，用户可在插件详情中关闭。
-- 本地创建内容位于 `wework-personal`，不自动上传；只有“发布到市场”或所有者主动定向分享时才会上传并进入相同安全扫描。
-- Skill 是展示类型，安装单位始终是 Codex Plugin；单 Skill 插件包含一个 `SKILL.md`。
-- `kinds/InstalledPlugin` 是账号安装意图，`plugin_device_installations` 是设备执行结果，本机 Codex App Server 是运行事实源。
+1. 个人插件详情页只有一个分发入口：标题区使用紧凑的分享图标按钮「分享」，其后依次为「…」和主按钮「立即对话」。不再出现「发布」或「分享与发布」。
+2. 「分享」只包含两个用户意图：
+   - **指定成员或部门**：安全扫描通过后立即生效，无人工审核。
+   - **全员可见**：提交企业发布申请，完成管理员审核、GitLab 代码审核和发布门禁后才生效。
+3. “组织”不是第三种范围。组织根节点按一个部门 ACL 处理，选择根部门与选择其他部门走同一套 `resource_members` 授权逻辑。
+4. 普通用户的「全员可见」只映射企业内部目录 `visibility=workspace`。`visibility=public` 不向普通投稿人开放，仅保留给未来 Wework 官方公开插件。
+5. 任意已登录的个人插件所有者都可以提交企业全员发布申请，不使用用户白名单授予投稿资格。服务端仍执行所有权、活动申请数、包大小和安全策略校验。
+6. 全员发布使用三步右侧抽屉：**确认版本 → 权限与风险 → 确认提交**。提交后固化不可变 snapshot、revision 和 SHA256；继续编辑个人插件不会改变已提交内容。
+7. 用户侧统一展示五个阶段：**提交申请 → 自动检查 → 管理员审核 → 代码审核 → 发布**。
+8. Web 管理后台是人工审核入口。管理员可以退回或接受；“接受”只把当前 revision 物化为 GitLab 分支并创建 MR，绝不直接生成市场 Release。
+9. 非技术用户从 Wework 投稿，技术用户可直接提交 GitLab MR；两条路径从 MR 开始复用同一套检查、合并和发布流水线。
+10. 个人原件与企业版是两个独立 Plugin 身份。审核期间个人原件仍可编辑、立即对话、定向分享和安装；发布企业版不会改变、转移或删除个人原件。
+11. **受保护的 master Pipeline 是唯一自动发布触发者。** GitLab Webhook 只同步 MR/Pipeline 状态和触发丢失事件的对账，不直接发布。
+12. GitHub 上 Wework 官方公开插件的来源、审核和同步策略仍属 P1 待定，不阻塞本期企业内部发布，也不得由本期流程擅自推导。
 
-## 2. 数据归属
+## 2. 页面与交互合同
 
-| 数据                        | 位置                                               | 事实语义                            |
-| --------------------------- | -------------------------------------------------- | ----------------------------------- |
-| Plugin、Release、上游、投稿 | MySQL                                              | 云端控制面                          |
-| ZIP、图标、截图             | MinIO/S3 私有 Bucket                               | 不可变发布物                        |
-| 账号安装意图                | `kinds/InstalledPlugin`                            | 期望状态                            |
-| 人员/部门可见范围           | `resource_members` + `ResourceType.PLUGIN`         | 授权状态                            |
-| 设备安装结果                | `plugin_device_installations`                      | 每设备物化状态                      |
-| 本地创建插件                | Wework Codex Home / `wework-personal`              | 当前设备私有内容                    |
-| 本地安装注册表              | Codex App Server                                   | 当前设备运行事实                    |
-| 个人副本来源映射            | `wework-personal/.wegent/plugin-copy-sources.json` | 仅本机保存的来源与云端 Release 映射 |
-| Token、MCP 密钥             | 系统安全存储                                       | 永不进入插件包和日志                |
+### 2.1 插件详情页
 
-`skill_binaries` 不再接收 V2 Release。迁移工具把旧 Marketplace ZIP 搬到对象存储，并把旧安装记录改成 `pluginId/releaseId` 引用。
+改版不得破坏现有详情能力：
 
-### 自动更新与失败保护
+- 「立即对话」和「试试这些任务」；
+- 可用范围、插件信息和版本信息；
+- 自动更新设置；
+- 应用授权与退出登录；
+- 包含能力及各能力启停；
+- 个人所有者按权限看到的继续编辑、卸载和删除插件。
 
-自动更新只提升到状态为 `ready` 且安全扫描为 `passed` 的不可变 Release。Wework 打开插件市场时批量推进账号期望版本，并同步当前设备；更新失败不会覆盖 `actual_release_id`，设备继续使用已经确认安装的旧版本。
+标题区动作顺序固定为：
 
-`kinds/InstalledPlugin.spec.updatePolicy` 保存用户策略，`auto` 为默认值，`manual` 表示关闭自动更新。`plugin_device_installations.attempt_count` 按“设备 + 插件 + 目标 Release”记录连续失败次数：少于 3 次时，下次打开插件市场自动重试；达到 3 次后停止自动重试并提示手动更新。手动更新会清零计数并绕过本次熔断；发布新的目标 Release 也会重置计数。全量设备同步必须继续下发熔断前的 `actual_release_id`，不能因其他插件同步而绕过旧版本保护。
+```text
+[分享图标 分享]  […]  [立即对话]
+```
 
-## 3. ER 模型
+「分享」只对可管理该个人插件的所有者显示。插件接收者、企业版普通使用者和无管理权限用户不能看到投稿或范围管理操作。
+
+### 2.2 指定成员或部门
+
+选择「指定成员或部门」后打开成员/部门选择器：
+
+- 可同时选择成员和部门；
+- 组织根节点作为部门项出现，不新增“组织内可见”范围；
+- 首次分享需要生成个人云端 Release，复用上传、对象存储和安全扫描；
+- 已有个人云端 Release 时，后续范围变更通过 ACL 接口原子替换；
+- 扫描通过且 ACL 写入成功后立即生效，不进入 Web 管理后台；
+- 可选 `allowCopy`；切回仅自己时清空 ACL 并关闭复制。
+
+### 2.3 全员可见三步抽屉
+
+| 步骤          | 页面内容                                                                                           | 提交约束                                               |
+| ------------- | -------------------------------------------------------------------------------------------------- | ------------------------------------------------------ |
+| 1. 确认版本   | 插件名、个人来源、待提交版本、变更说明、当前源码时间                                               | 明确提示“本次提交形成独立快照，后续编辑不会更新该申请” |
+| 2. 权限与风险 | 外部网络及域名、系统命令/脚本、本地文件读写、凭据使用、应用授权、MCP/Hook/bin 等执行能力、测试说明 | 远端源码快照生成前先收集作者声明                       |
+| 3. 确认提交   | 待生成 revision、版本、完整声明摘要、发布范围、规范声明                                            | 二次确认后生成不可变快照，并在管理员审核前运行自动检查 |
+
+上传失败或自动检查尚未开始时可以取消本次 revision；提交进入审核后使用“撤回申请”。退回修改必须保留原 revision 和审核证据，用户修改个人插件后创建新的 revision 重投，不能覆盖旧 snapshot。
+
+### 2.4 进度与操作
+
+详情页的企业发布卡片展示五阶段进度和具体子状态：
+
+```text
+提交申请 → 自动检查 → 管理员审核 → 代码审核 → 发布
+```
+
+- 审核前：可撤回；个人插件仍可正常使用和分享。
+- 自动检查失败：展示稳定错误码、证据文件和修复建议。
+- 管理员退回：展示退回原因和待修改项，允许从新 snapshot 创建下一 revision。
+- 代码审核：展示 MR、Pipeline 和 Windows/macOS 检查状态；有权限时可跳转 GitLab。
+- 发布失败：企业旧版本继续可用，允许管理员/发布人员重试同一幂等发布；不得要求用户覆盖旧 revision。
+- 发布成功：个人原件继续位于「个人创建」，独立企业版出现在「企业内部」。
+
+删除个人原件时，尚未合并的申请必须在同一确认流程中先撤回；撤回或 MR 关闭失败时阻止删除。已经合并或发布后，删除只影响个人原件，不删除企业版、GitLab 记录、申请 revision 或历史 Release。
+
+### 2.5 Web 管理后台
+
+普通用户无需离开 Wework 完成分享和投稿。Web 只承载管理员审核，至少包含：
+
+- 列表：状态、风险、提交人、插件、时间筛选和分页；
+- 详情：不可变 revision、SHA256、权限声明、自动检查证据、变更历史和 GitLab 状态；
+- 「退回修改」：原因和待修改项必填；
+- 「接受并创建 MR」：无阻断检查、警告已逐项确认时可用；操作必须幂等；
+- GitLab 物化失败后的重试和状态对账入口；
+- 完整的操作人、时间和状态事件审计。
+
+后台不提供“直接发布”按钮，也不调用官方发布 CLI。
+
+## 3. 架构与流程边界
+
+插件市场继续采用“Wework 云端控制面 + 本地 Codex 运行面”。云端决定目录身份、可见范围、不可变 Release、账号期望版本和发布流程状态；Codex App Server 决定当前设备是否真正安装成功。市场包进入私有对象存储，数据库只保存元数据和不可变对象引用。
+
+```mermaid
+flowchart LR
+  A[个人插件] --> B{分享意图}
+  B -->|指定成员或部门| C[上传/扫描]
+  C --> D[个人 Release + 部门/成员 ACL]
+  B -->|全员可见| E[三步抽屉 + 不可变 revision]
+  E --> F[自动检查]
+  F --> G[Web 管理员审核]
+  G -->|退回| H[新 revision 重投]
+  G -->|接受| I[物化分支 + MR]
+  J[开发者直接 MR] --> K[共享 GitLab MR Pipeline]
+  I --> K
+  K --> L[代码审核 + Windows/macOS 门禁]
+  L --> M[合并 protected master]
+  M --> N[master Pipeline]
+  N -->|dedicated release token| O[Release API]
+  O --> P[独立企业 Plugin/Release]
+```
+
+四条边界必须分开：
+
+1. **个人定向分享**：云端扫描 + ACL，无人工审核，无 GitLab。
+2. **非技术用户企业投稿**：Wework snapshot → Web 初审 → 自动创建 MR。
+3. **开发者企业投稿**：直接创建 MR；从 MR 检查开始与非技术路径完全一致。
+4. **Wework 官方公开插件**：`public` 目录的 P1 独立流程，本期不实现。
+
+## 4. 数据归属与身份
+
+| 数据                                   | 位置                                               | 事实语义                   |
+| -------------------------------------- | -------------------------------------------------- | -------------------------- |
+| Plugin、Release、Publication Request   | MySQL                                              | 云端控制面和发布状态       |
+| Publication Revision、Check、Event     | MySQL                                              | 不可变投稿证据、检查和审计 |
+| GitLab project/MR/commit/pipeline 映射 | MySQL                                              | 代码审核与发布 provenance  |
+| ZIP、图标、截图、检查报告              | MinIO/S3 私有 Bucket                               | 内容寻址的不可变发布物     |
+| 账号安装意图                           | `kinds/InstalledPlugin`                            | 期望状态                   |
+| 人员/部门可见范围                      | `resource_members` + `ResourceType.PLUGIN`         | 个人分享授权状态           |
+| 设备安装结果                           | `plugin_device_installations`                      | 每设备物化状态             |
+| 本地创建插件                           | Wework Codex Home / `wework-personal`              | 当前设备私有内容           |
+| 本地安装注册表                         | Codex App Server                                   | 当前设备运行事实           |
+| 个人副本来源                           | `wework-personal/.wegent/plugin-copy-sources.json` | 仅本机来源映射             |
+| Token、MCP 密钥                        | 系统安全存储                                       | 永不进入插件包和日志       |
+
+### 4.1 目录命名空间
+
+`plugins` 的稳定唯一键从全局 `slug` 改为 `(catalog_namespace, slug)`：
+
+| `catalog_namespace`        | 所有者/可见性                          | 用途                     |
+| -------------------------- | -------------------------------------- | ------------------------ |
+| `personal/<owner_user_id>` | 个人所有者，`visibility=personal`      | 个人原件和定向分享       |
+| `enterprise`               | 系统目录所有者，`visibility=workspace` | 企业内部插件             |
+| `wework-official`          | 系统目录所有者，`visibility=public`    | 未来 Wework 官方公开插件 |
+
+`catalog_namespace` 由服务端生成，客户端不可任意传入。展示 slug 可以相同，因此 `personal/42:foo` 与 `enterprise:foo` 可以同时存在。企业 Plugin 通过 `origin_plugin_id` 和发布 revision 追溯个人来源，但不继承个人 ACL、所有权或可变状态。
+
+运行时市场映射保持：`personal -> wework-personal`、`workspace -> wegent`、`public -> wework`。该映射只用于受管安装记录；不能用展示名或 slug 跨命名空间合并身份。
+
+### 4.2 ER 模型
 
 ```mermaid
 erDiagram
   PLUGINS ||--o{ PLUGIN_RELEASES : versions
-  PLUGINS ||--o| PLUGIN_UPSTREAMS : mirrors
-  PLUGINS ||--o{ PLUGIN_SUBMISSIONS : receives
-  PLUGIN_RELEASES ||--o| PLUGIN_SUBMISSIONS : reviewed_as
+  PLUGINS ||--o{ PLUGIN_PUBLICATION_REQUESTS : source
+  PLUGIN_PUBLICATION_REQUESTS ||--o{ PLUGIN_PUBLICATION_REVISIONS : revises
+  PLUGIN_PUBLICATION_REVISIONS ||--o{ PLUGIN_PUBLICATION_CHECKS : checked_by
+  PLUGIN_PUBLICATION_REVISIONS ||--o{ PLUGIN_PUBLICATION_EVENTS : records
+  PLUGIN_PUBLICATION_REVISIONS ||--o| PLUGIN_RELEASES : publishes_as
   PLUGIN_RELEASES ||--o{ PLUGIN_DEVICE_INSTALLATIONS : desired_actual
   KINDS ||--o{ PLUGIN_DEVICE_INSTALLATIONS : materializes
 
   PLUGINS {
     bigint id PK
-    varchar slug UK
-    varchar listing_type
-    varchar source_type
-    varchar source_provider
+    varchar catalog_namespace
+    varchar slug
+    bigint owner_user_id
+    bigint origin_plugin_id FK
     varchar visibility
     varchar status
-    boolean allow_copy
     bigint latest_release_id
   }
   PLUGIN_RELEASES {
     bigint id PK
     bigint plugin_id FK
-    varchar version UK
+    varchar version
     varchar storage_key
     char sha256
-    bigint size_bytes
     varchar status
     varchar scan_status
+    bigint publication_revision_id FK
+    char source_commit_sha
   }
-  PLUGIN_UPSTREAMS {
-    bigint plugin_id FK
-    varchar remote_plugin_id
-    varchar upstream_url
-    boolean sync_enabled
-    varchar last_seen_version
-  }
-  PLUGIN_SUBMISSIONS {
-    bigint plugin_id FK
-    bigint release_id FK
+  PLUGIN_PUBLICATION_REQUESTS {
+    bigint id PK
+    bigint source_plugin_id FK
+    bigint target_plugin_id FK
     bigint submitter_user_id
-    varchar purpose
-    varchar status
-    bigint reviewer_user_id
+    bigint current_revision_id FK
+    varchar aggregate_status
   }
-  PLUGIN_DEVICE_INSTALLATIONS {
-    bigint installed_kind_id FK
-    varchar device_id UK
-    bigint desired_release_id
-    bigint actual_release_id
-    varchar state
+  PLUGIN_PUBLICATION_REVISIONS {
+    bigint id PK
+    bigint request_id FK
+    int revision
+    bigint source_release_id FK
+    varchar requested_version
+    char snapshot_sha256
+    varchar storage_key
+    json manifest_snapshot
+    json risk_declaration
+    varchar status
+  }
+  PLUGIN_PUBLICATION_CHECKS {
+    bigint id PK
+    bigint revision_id FK
+    varchar stage
+    varchar check_code
+    varchar severity
+    varchar status
+    json evidence
+  }
+  PLUGIN_PUBLICATION_EVENTS {
+    bigint id PK
+    bigint revision_id FK
+    varchar event_type
+    varchar actor_type
+    bigint actor_id
+    json payload
+    datetime created_at
   }
 ```
 
-### 表职责
+### 4.3 表职责和不可变约束
 
-| 表                            | 新增/复用 | 关键约束                                                                |
-| ----------------------------- | --------- | ----------------------------------------------------------------------- |
-| `plugins`                     | 新增      | `slug` 唯一；稳定产品身份                                               |
-| `plugin_releases`             | 新增      | `(plugin_id, version)` 唯一；进入 `ready` 后包、版本、Manifest 不可修改 |
-| `plugin_upstreams`            | 新增      | 每个 Plugin 最多一个选定上游；每 6 小时同步                             |
-| `plugin_submissions`          | 新增      | 一个 Release 只有一个投稿；拒绝后创建新版本                             |
-| `plugin_device_installations` | 新增      | `(installed_kind_id, device_id)` 唯一                                   |
-| `kinds/InstalledPlugin`       | 复用      | 保存账号期望版本，不保存 ZIP                                            |
-| `resource_members`            | 复用      | 新增 Plugin 资源类型                                                    |
-| `PluginMarketplaceItem` Kind  | 退役      | 迁移完成后不再读写                                                      |
+| 表                             | 关键约束                                                                                   |
+| ------------------------------ | ------------------------------------------------------------------------------------------ |
+| `plugins`                      | `(catalog_namespace, slug)` 唯一；个人和企业身份不得原地互转                               |
+| `plugin_releases`              | `(plugin_id, version)` 唯一；进入 `ready` 后包、版本、Manifest、SHA 和 provenance 不可修改 |
+| `plugin_publication_requests`  | 一个业务申请可包含多个 revision；保存源个人 Plugin 和最终企业 Plugin 的关系                |
+| `plugin_publication_revisions` | `(request_id, revision)` 唯一；提交后内容不可修改；退回后只能新增 revision                 |
+| `plugin_publication_checks`    | 使用稳定 `check_code`；保存级别、证据、执行环境和外部 job URL，不能只保存一段扫描 JSON     |
+| `plugin_publication_events`    | 追加写审计；记录用户、管理员、GitLab、Pipeline 和发布机器人动作                            |
+| `plugin_device_installations`  | `(installed_kind_id, device_id)` 唯一；区分账号期望状态和设备事实                          |
+| `resource_members`             | 只用于个人插件 ACL；成员与部门原子替换，组织根节点也是部门 principal                       |
 
-## 4. 来源与身份
+Revision 还必须保存提交说明、测试说明、风险声明、创建人和时间，以及 GitLab project、source branch、MR IID/URL、commit SHA、Pipeline ID/URL、artifact SHA256 和发布结果。可拆为关联表，但不能把全部工作流状态塞进可变的 `scan_report_json`。
 
-| 场景                       | `origin`  | `sourceProvider` | UI 标记                  |
-| -------------------------- | --------- | ---------------- | ------------------------ |
-| 本机创建                   | `created` | 本地             | 我创建的                 |
-| Wegent 自研 / 国内适配镜像 | `market`  | `wegent`         | Wegent 官方              |
-| 精选 Codex 镜像            | `market`  | `codex`          | Codex 官方 · Wework 镜像 |
-| 用户投稿审核通过           | `market`  | `user`           | 社区插件/作者            |
+## 5. 状态机
 
-> OpenAI 上游镜像（含 GitHub）同步时**纯透传**官方包，不再做 connectors /
-> 汉化 / 图标改写。品牌 `logo` / `logoDark` 以官方包为准。
+用户看到五个稳定阶段，后端保留可诊断的子状态：
 
-“我的已安装”以 `pluginId/releaseId` 合并云端意图和设备状态；本地创建项以 `localId` 标识。禁止用展示名关联，因为同名插件和改名都会造成误合并。
+| 用户阶段   | 典型后端状态                                                                                      | 允许动作                                    |
+| ---------- | ------------------------------------------------------------------------------------------------- | ------------------------------------------- |
+| 提交申请   | `uploading`、`submitted`                                                                          | 上传失败时取消；提交后可撤回                |
+| 自动检查   | `automatic_checking`、`automatic_check_failed`、`awaiting_admin`                                  | 查看证据；失败后修改并创建新 revision       |
+| 管理员审核 | `admin_review`、`changes_requested`、`admin_accepted`                                             | 管理员退回或接受；用户可撤回                |
+| 代码审核   | `materializing`、`draft_mr_open`、`ci_running`、`code_changes_requested`、`merge_ready`、`merged` | GitLab 评审和修复；合并后不可撤回已合并代码 |
+| 发布       | `publishing`、`published`、`publish_failed`                                                       | 幂等重试；失败时保留当前企业版              |
 
-插件运行时身份使用 `plugin://<plugin-name>@<marketplace-name>`。受管市场名由 visibility 统一推导：`personal -> wework-personal`、`workspace -> wegent`、`public -> wework`。前端生成试用 mention、Composer app metadata 和应用创建插件匹配时必须复用同一套映射，并且只在 `providerKey` 为 `wegent-market` 或 `wegent-marketplace` 的受管安装记录上应用该回退规则。普通 `public` 插件仍合法；只有系统所有者 `user_id=0` 的内置应用插件行若仍保存为旧的 `public`，才会在内置安装路径中规范化为当前注册表定义的 `workspace / wegent`。
+终止状态包括 `withdrawn` 和管理员明确关闭的 `closed`。状态转换必须写入事件表并进行乐观锁或条件更新；重复 Webhook、管理员重复点击和 Pipeline 重试不能创建多个 MR 或多个 Release。
 
-## 5. 核心流程
+检查至少覆盖：
 
-### 市场安装与更新
+- ZIP 路径穿越、重复路径、符号链接、加密成员、敏感文件、大小、SHA256 和 Manifest；
+- 外部网络域名、系统命令/脚本、本地文件读写、凭据、应用授权、MCP/Hook/bin 等风险；
+- Manifest/市场登记一致性、版本和目录结构；
+- 单元/集成测试；
+- 原生 Windows 兼容检查；
+- 原生 macOS 兼容检查。
+
+静态跨平台扫描不能冒充 Windows/macOS 原生执行。缺少相应 Runner 时状态必须是 `blocked` 或 `not_run`，不能显示通过。
+
+## 6. 核心流程
+
+### 6.1 定向分享与个人副本
+
+所有者首次选择「指定成员或部门」时，以 `purpose=restricted_share` 复用签名上传、对象存储和统一安全扫描。扫描通过后创建 `visibility=personal` 的云端 Plugin/Release，并原子写入 `resource_members`；该流程不创建 Publication Request，也不进入 GitLab。
+
+接收者只能发现、查看和安装获授权的个人插件。撤权后立即删除接收者对原插件的账号安装意图，在线设备卸载，离线设备等待重连同步。允许复制时，Electron 校验 SHA256、ZIP 路径和 Manifest，以唯一 slug、`0.1.0` 和“我的副本”名称原子导入 `wework-personal`。本地来源映射不写入插件包，撤销原件权限不会删除已复制的独立副本。
+
+### 6.2 非技术用户企业投稿
 
 ```mermaid
 sequenceDiagram
-  participant UI as Wework UI
+  participant U as Wework 用户
   participant API as Backend
-  participant DB as MySQL
-  participant S3 as MinIO/S3
-  participant EX as Executor
-  participant CX as Codex App Server
-  UI->>API: POST /plugins/marketplace/{id}/install
-  API->>DB: Upsert InstalledPlugin + device pending
-  API->>S3: 生成 10 分钟下载 URL
-  API->>EX: device:sync_capabilities
-  EX->>S3: 下载 ZIP
-  EX->>EX: SHA256 + Manifest 校验，原子暂存
-  EX->>CX: plugin/install
-  CX-->>EX: 实际结果 + auth policy
-  EX-->>API: 逐插件结果
-  API->>DB: actual_release_id/state/error
-  API-->>UI: 成功或 502 明确失败
+  participant A as Web 管理员
+  participant GL as GitLab
+  participant CI as GitLab Pipeline
+  participant R as Release API
+  U->>API: 三步抽屉提交 snapshot/revision
+  API->>API: 重新打包、SHA256、自动检查
+  A->>API: 退回或接受当前 revision
+  API->>GL: 接受后创建受控分支 + MR
+  API->>GL: 使用 MR 当前 SHA 登记 Pipeline 成功后自动合并
+  GL->>CI: MR Pipeline
+  CI->>CI: 风险、测试、Windows、macOS
+  CI->>GL: 全部门禁通过后由 GitLab 合并到 protected master
+  GL->>CI: 合并 protected master 后启动 master Pipeline
+  CI->>R: Bearer plugin_release token + artifact/provenance
+  R->>R: 再校验并幂等发布企业 Release
 ```
 
-新安装选择 `latest_release_id`。市场插件默认自动更新；只有 `updatePolicy=manual` 时才需要用户确认，失败保留旧版本。卸载先把设备行置为 `uninstalling`，只删除已确认设备的安装记录和物化入口，离线设备上线后补执行。正常卸载不直接清空 Codex 或 Claude `plugins/cache`，缓存目录只应由运行时复用或由独立垃圾回收删除未被安装记录引用的版本。
+GitLab 物化服务只把服务端已验证 snapshot 写入约定的 `plugins/<slug>/` 并更新受控清单；分支名、路径、commit message 等不能直接拼接未经校验的用户输入。创建 MR 必须使用 request/revision 幂等键，并写回 project、branch、MR IID 和 commit SHA。受控项目必须开启 `Pipelines must succeed`；Backend 创建或复用 MR 后，以当前 MR head SHA 调用 GitLab merge API 登记 `merge_when_pipeline_succeeds=true`。Webhook 只做状态同步和对账，不负责触发合并。
 
-Wework 调用目录、安装、更新和卸载接口时携带本机 Executor 的稳定 `device_id`。目录中的“已安装”只在该设备 `state=installed` 且 `actual_release_id` 等于账号期望 Release 时成立；账号已有安装意图但当前设备为 `pending/failed` 时仍显示可安装和具体设备错误。一次操作只因当前设备失败而返回 `502`，其他设备失败记录在 `plugin_device_installations` 并等待重连补同步。设备 WebSocket 重连完成后会再次回写逐插件结果，清除已完成的卸载或旧失败状态。
+### 6.3 开发者直接 GitLab 投稿
 
-### Plugin Creator 创建与发布
+开发者可以直接在企业插件仓库创建分支和 MR。MR 必须满足相同目录、Manifest、登记、风险、测试和 Windows/macOS 门禁。从 MR Pipeline 开始，它与 Wework 非技术投稿没有特权差异；若无 Publication Request，Pipeline 以仓库元数据创建发布 provenance 和只读审计映射。
 
-```mermaid
-flowchart LR
-  A[创建插件或 Skill] --> B{执行设备}
-  B -->|本机| C[wework-personal]
-  C --> D[Codex App Server 本地安装]
-  D --> E[我创建的]
-  B -->|云端| F[Task 工作区源码]
-  F --> G[对话结果卡]
-  E -->|显式发布| H[重新校验、打包与 SHA256]
-  G -->|显式分享或发布| H
-  H --> I[签名 URL 直传对象存储]
-  I --> J[服务端路径/大小/敏感文件扫描]
-  J --> K{发布范围}
-  K -->|人| L[扫描通过后生效]
-  K -->|组织或全部| M[人工审核]
-  M -->|通过| N[不可变 Release]
-  M -->|拒绝| O[修改后新版本重投]
-```
+### 6.4 GitLab 和发布
 
-创建阶段不会产生云端 Plugin、Release 或包。本机创建继续写入 `wework-personal`；云端 Plugin Creator 只把源码写入当前 Task 工作区，并在现有对话消息中保存结果标记。它不新增草稿表，也不会把未发布内容合并到插件中心。后续回到原对话点击“查看插件”“分享”或“发布”时，系统恢复同一个 Task 工作区并重新校验、打包；Task 被永久删除后，未发布源码也随之不可用。
+企业插件仓库 Pipeline 至少包含：
 
-发布入口统一为「人 / 组织 / 全部」三个范围：`visibility=personal` 对应定向分享（扫描通过后立即生效，`purpose=restricted_share`）；`workspace` / `public` 进入人工审核（`purpose=marketplace_publish`）。个人范围可在投稿时携带 `targets` 与 `allowCopy`，服务端在 init 阶段校验接收者，并在扫描通过后写入 `resource_members`。
+1. `validate`：每个 MR 只允许一个插件的一个版本，并校验 Manifest、目录、版本、市场清单和确定性打包；
+2. `security`：统一包扫描和权限/风险检查；
+3. `test`：插件测试和契约测试；
+4. `windows`：原生 Windows Runner；
+5. `macos`：原生 macOS Runner；
+6. `release`：仅 protected master、前序全部通过且使用受保护环境时运行。
 
-本机创建任务应写入受管市场 `wework-personal`。若本机 Plugin Creator 仍落到 Codex 默认 `personal`（`~/plugins` + `~/.agents`），列表刷新与发布打包前会把插件原子迁入 `wework-personal`、同步市场清单并优先以该市场为准，避免重复条目。云端创建必须限制在 `$WEGENT_TASK_WORKSPACE/plugins/<plugin-name>`，不得写入 `$HOME` 或个人 Marketplace。
+MR Pipeline 永远不能读取 Release Token，也不能发布。合并到受保护 master 后，master Pipeline 使用已审核 commit 构建确定性 artifact，调用内部 Release API。Backend 必须再次校验 artifact SHA、Manifest、SemVer、扫描结果和 provenance，不能因为 CI 已通过就盲目信任上传内容。
 
-Wework 的“发布到市场”不要求用户手工选择 ZIP。本机插件由 Electron 根据 Marketplace 和插件键定位、原生打包，云端插件由当前 Task 的 Executor 对工作区源码打包。两条路径都校验 `.codex-plugin/plugin.json`、符号链接、越界路径和 50 MB 压缩包上限，并复用现有投稿、对象存储、扫描、ACL 与审核接口；服务端扫描继续执行 200 MB 展开上限，单 Skill Plugin 自动以 `listing_type=skill` 投稿。
+同一 `catalog_namespace + slug + version + artifact_sha256` 重试返回已有 Release；同版本不同内容返回 `409`，禁止覆盖。新版本发布失败时，已有企业 `latest_release_id` 保持不变。
 
-### 定向分享与个人副本
+GitLab Webhook 使用独立的 Webhook Secret，只更新 MR/Pipeline/merge 状态并触发对账。Webhook 丢失时由周期任务按 project/MR/pipeline ID 拉取状态；它不持有 Release Token，也不调用发布服务。
 
-所有者首次按「人」发布或后续管理可见成员时，以 `purpose=restricted_share` 复用投稿上传、对象存储和安全扫描。扫描通过后自动生成 `visibility=personal` 的云端 Plugin/Release，不进入公共市场人工审核；授权保存失败时保持仅所有者可见。人员与部门授权原子替换 `resource_members`，切回“仅自己”会清空授权并关闭复制。
+### 6.5 发布服务复用
 
-接收者只能发现、查看和安装获授权的个人插件。所有者撤权后，服务立即删除接收者对原插件的账号安装意图，在线设备卸载，离线设备等待重连同步。允许复制时，接收者通过短期下载地址取得包；Electron 校验 SHA256、ZIP 路径和 Manifest 后，以唯一 slug、`0.1.0` 和“我的副本”名称原子导入 `wework-personal`。副本的来源映射只写本地注册表，不写入插件包，撤销原件权限不会删除已经复制的独立副本。
+当前实现把市场 Release 事务收敛到 `PluginMarketplaceService.publish_catalog_release`：
 
-### 精选 Codex 镜像
+- `OfficialPluginPublisher` 负责从本地目录构建确定性包，然后调用同一市场发布服务；
+- Publication Request 在 snapshot 完成时由统一检查服务校验 SHA、Manifest、SemVer、结构和风险；
+- CI Release API 对已构建 artifact 再验证后调用同一市场发布事务；
+- CLI 只是本地 dry-run/应急适配器；dry-run 不写数据库或对象存储。
 
-管理员录入 `marketplace_name + remote_plugin_id + upstream_url + license_info`。定时任务只检查 `sync_enabled=true` 的记录；发现 SemVer 新版本后下载、扫描并写入对象存储。开源镜像默认使用 `auto_after_scan`，扫描通过后单调提升 `latest_release_id`；高风险上游可改为 `review_required`，只生成待审核 Release，管理员批准后才提升 latest。上游返回旧版本时只更新检查信息，不回退 `latest_release_id`；扫描失败或上游删除时保留旧 Release，不影响现有用户。
+HTTP 接口不得启动 `publish_official_plugin.py` 子进程，也不得复制一套发布逻辑。
 
-### WeWork 官方插件发布
+### 6.6 市场安装与更新
 
-官方插件维护在
-[wecode-ai/wework-plugins](https://github.com/wecode-ai/wework-plugins)，并以
-`--visibility public` 发布到「Wework官方」Tab。
+安装、更新和设备同步合同保持不变：`kinds/InstalledPlugin` 表示账号期望版本，`plugin_device_installations` 表示设备实际结果，Codex App Server 是本机安装事实源。新安装取 `latest_release_id`；自动更新只推进到 `ready + scan passed` 的不可变 Release。失败不得覆盖 `actual_release_id`，连续失败三次后暂停自动重试，手动更新或新的目标 Release 重置计数。
 
-布局对齐 openai/plugins：每个插件位于 `plugins/<slug>/`，必须包含
-`.codex-plugin/plugin.json`、能力文件和测试；源码仓只用于开发与 CI，Backend
-和 Wework 运行时不得直接读取它。建议与 Wegent 同级检出（例如
-`wework-plugins-public`）。
+正常卸载只删除确认设备的运行入口和安装记录，不直接清空 Codex/Claude `plugins/cache`。离线设备在重连后补执行。当前设备安装失败必须返回明确错误，不能用其他设备成功掩盖。
 
-若部署方需要把已评审的本地源码树发布到组织目录，可使用
-`--visibility workspace`。共享文档中不要写入私有主机名或内网仓库路径。
+## 7. API 合同
 
-发布脚本会按路径排序、固定 ZIP 时间戳和权限，先执行统一安全扫描，再写入
-`source_type=native`、`source_provider=wework`、`owner_user_id=NULL` 的 Plugin
-和不可变 Release：
+### 7.1 保留并收敛
 
-```bash
-# 本地只构建、扫描并输出 SHA256，不连接 MySQL/S3
-uv run python scripts/publish_official_plugin.py \
-  ../wework-plugins-public/plugins/<plugin-slug> --dry-run
+| 方法            | 路径                                                                   | 当前用途                                         |
+| --------------- | ---------------------------------------------------------------------- | ------------------------------------------------ |
+| GET             | `/plugins/marketplace`、`/{id}`、`/{id}/releases`                      | 市场目录、详情和历史 Release                     |
+| POST/PUT/DELETE | `/plugins/marketplace/{id}/install`、`/plugins/installed/{id}`         | 安装、更新、启停和卸载                           |
+| GET/PUT         | `/plugins/marketplace/{id}/access`                                     | 个人所有者原子管理成员/部门 ACL 与 `allowCopy`   |
+| POST            | `/plugins/marketplace/{id}/copy`                                       | 授权接收者复制个人插件                           |
+| POST/GET        | `/plugins/submissions/init`、`/{id}/complete`、`/{id}`、`/{id}/cancel` | 迁移后仅用于个人定向分享的制品上传与扫描         |
+| GET/POST/PATCH  | `/admin/plugins/upstreams...`                                          | 暂时保留精选上游能力；不等同 Wework 官方公开流程 |
 
-# Wework官方 Tab（公开仓）
-uv run python scripts/publish_official_plugin.py \
-  ../wework-plugins-public/plugins/<plugin-slug> \
-  --visibility public \
-  --commit-sha "$CI_COMMIT_SHA" \
-  --build-url "$CI_JOB_URL" \
-  --publisher release-bot
-```
+### 7.2 企业发布申请
 
-同一 `slug + version + SHA256` 重试会返回已有 Release；同版本不同内容会返回冲突，禁止覆盖。发布审计保存在 `scan_report_json.provenance`，包括 commit SHA、构建地址、发布身份和可选的 `created_by_user_id`。
+| 方法 | 路径                                                               | 用途                                                |
+| ---- | ------------------------------------------------------------------ | --------------------------------------------------- |
+| POST | `/plugins/publication-requests`                                    | 所有者创建申请和 revision，返回需要时的签名上传信息 |
+| GET  | `/plugins/publication-requests`                                    | 查询本人申请和状态                                  |
+| GET  | `/plugins/publication-requests/{id}`                               | 查询 revision、检查、时间线和 GitLab/发布状态       |
+| POST | `/plugins/publication-requests/{id}/revisions`                     | 退回或失败后从新 snapshot 创建下一 revision         |
+| POST | `/plugins/publication-requests/{id}/revisions/{revision}/complete` | 固化上传、SHA256 和风险声明并启动自动检查           |
+| POST | `/plugins/publication-requests/{id}/withdraw`                      | 在合并前撤回申请；操作幂等                          |
+| GET  | `/admin/plugins/publication-requests`                              | 管理员分页、筛选和汇总                              |
+| GET  | `/admin/plugins/publication-requests/{id}`                         | 管理员查看完整证据和事件                            |
+| POST | `/admin/plugins/publication-requests/{id}/return`                  | 必填原因和修改项，退回当前 revision                 |
+| POST | `/admin/plugins/publication-requests/{id}/accept`                  | 幂等物化分支并创建 MR，不发布                 |
+| POST | `/admin/plugins/publication-requests/{id}/reconcile`               | 重试物化或主动对账 GitLab 状态                      |
 
-CI 凭据只从 Secret 注入。发布身份需要 MySQL 中 Plugin/Release 的写权限，以及 `plugins/{plugin_id}/{release_id}/` 的对象创建权限；安装服务账号只需读取 final 前缀。生产 Bucket 应开启版本控制或 Object Lock，并禁止覆盖 final key。`plugins/staging/` 应配置生命周期规则（建议 1–7 天自动删除）；投稿完成后服务也会尽力删除对应 staging 对象。
+### 7.3 内部接口
 
-回滚不修改旧 Release：修复代码并提升 SemVer 后重新发布。紧急下架应调整 Plugin 的目录状态或 `latest_release_id` 指针，并保留原对象和审计记录；恢复时仍只指向已扫描通过的 `ready` Release。发布中 S3 写入失败会回滚数据库；数据库提交失败会尽力删除本次新建对象。
+| 方法 | 路径                              | 认证与用途                                                          |
+| ---- | --------------------------------- | ------------------------------------------------------------------- |
+| POST | `/internal/plugins/releases`      | 仅 `plugin_release` machine key；protected master Pipeline 幂等发布 |
+| POST | `/internal/plugins/gitlab/events` | 独立 GitLab Webhook Secret；只同步状态和触发对账                    |
 
-## 6. API
+所有状态修改接口都需要幂等键和条件状态校验。普通用户接口不能接受 `visibility=public`；服务端必须固定企业申请目标为 `workspace`，不能依赖前端隐藏。
 
-| 方法   | 路径                                     | 用途                                           |
-| ------ | ---------------------------------------- | ---------------------------------------------- |
-| GET    | `/plugins/capabilities`                  | 分别返回当前用户是否可发布、是否可分享个人插件 |
-| GET    | `/plugins/marketplace`                   | 最新目录、来源、安装和更新状态                 |
-| GET    | `/plugins/marketplace/{id}`              | 插件详情                                       |
-| GET    | `/plugins/marketplace/{id}/releases`     | 历史 Release                                   |
-| POST   | `/plugins/marketplace/{id}/install`      | 安装最新或指定 Release                         |
-| PUT    | `/plugins/installed/{id}`                | 启停组件或升级 Release                         |
-| DELETE | `/plugins/installed/{id}`                | 账号级卸载并同步设备                           |
-| GET    | `/plugins/marketplace/{id}/access`       | 所有者读取个人插件授权                         |
-| PUT    | `/plugins/marketplace/{id}/access`       | 原子替换人员/部门授权和 `allowCopy`            |
-| POST   | `/plugins/marketplace/{id}/copy`         | 校验访问权和复制许可并返回短期下载信息         |
-| POST   | `/plugins/submissions/init`              | 创建投稿并取得签名上传 URL                     |
-| POST   | `/plugins/submissions/{id}/complete`     | 完成上传并触发扫描                             |
-| POST   | `/plugins/submissions/{id}/cancel`       | 取消未完成上传并释放版本号                     |
-| GET    | `/plugins/submissions/{id}`              | 查询投稿状态                                   |
-| GET    | `/admin/plugins/upstreams`               | 管理端查看精选镜像源和同步状态                 |
-| POST   | `/admin/plugins/upstreams`               | 录入精选 Codex 插件                            |
-| PATCH  | `/admin/plugins/upstreams/{id}`          | 切换扫描后自动发布或人工审核策略               |
-| POST   | `/admin/plugins/upstreams/{id}/sync`     | 立即镜像                                       |
-| GET    | `/admin/plugins/submissions`             | 管理端查看待审和历史投稿                       |
-| POST   | `/admin/plugins/submissions/{id}/review` | 审核投稿                                       |
+### 7.4 兼容和废弃边界
 
-旧 `/plugins/upload` 默认返回 `410`，只可通过显式迁移开关为管理员临时启用。
+当前新路径已禁止旧 `/plugins/submissions` 创建 `workspace/public` 投稿，并完成权限配置清理；历史处理入口只为迁移存量记录保留：
 
-## 7. 迁移与发布顺序
+- 已删除 `PLUGIN_PUBLISH_USER_IDS`、`PLUGIN_PUBLISH_ENABLED`、`PLUGIN_PUBLICATION_ENABLED`、白名单 `_can_publish/_ensure_publish_allowed`，以及不再承载真实决策的 `/plugins/capabilities` 接口、客户端缓存和旧 capability 响应字段；
+- 企业投稿没有应用级全局启停配置。若出现紧急事故，通过网关隔离或回滚服务止损，不能用人员白名单或把活动申请上限设为 `0` 变相关停；
+- 继续保持旧 `/plugins/submissions` 只接受 `restricted_share + personal`；
+- 废弃 `/admin/plugins/submissions/{id}/review` 的“批准即发布”语义和 `review_plugin_submission.py approve`；
+- `/plugins/upload` 保持 `410` 一个兼容观察期，确认无旧客户端调用后删除；
+- `/admin/plugins/{id}/visibility` 等无调用接口先审计部署日志和客户端版本，再删除；
+- 上游镜像接口暂时保留，直到 P1 官方公开插件方案确定。
 
-1. 执行 Alembic，验证 upgrade、downgrade、再 upgrade。
-2. 配置私有 `plugins` Bucket 和 10 分钟签名 URL。
-3. 先运行 `uv run python scripts/migrate_plugin_marketplace_v2.py` 做可重复迁移核对。
-4. 校验 Plugin/Release 数量、SHA256、对象可下载和安装引用。
-5. 再加 `--retire-legacy` 关闭旧 Kind 并清理旧市场包副本。
-6. 发布 Backend/Executor，再发布 Wework UI，避免新 UI 遇到旧 API。
-7. 发布入口保持 Feature Flag 和内部白名单，稳定后再扩大。
+## 8. 机器认证和安全边界
 
-迁移 `d4e5f6a7b8c9` 一次性创建插件市场控制面表，并包含 `plugins.allow_copy` 与 `plugin_submissions.purpose`。上线前必须验证升级、回滚一个版本和再次升级；Backend 应先于包含分享入口的 Wework 客户端发布。
+`Authorization: Bearer <release-token>` 是服务到服务凭据，不是新用户登录体系。实现复用现有 API Key 的随机生成、只存哈希、原文仅返回一次、到期、禁用、最后使用时间和审计能力，并使用专用 `key_type=plugin_release`：
 
-发布能力由 `PLUGIN_PUBLISH_ENABLED`、`PLUGIN_PUBLISH_USER_IDS` 和管理员角色共同决定。Wework 先读取 `/plugins/capabilities`，无权限时不渲染发布入口；后端投稿接口仍独立执行相同校验，不能依赖前端隐藏。
+- 只能访问 `/internal/plugins/releases`；普通 API 明确拒绝该 key type；
+- 不允许使用 `wegent-username` 等方式模拟用户；使用固定发布服务主体；
+- Release API 固定发布到 `catalog_namespace=enterprise`；GitLab project 与目标分支由服务端配置，并结合 GitLab 实时证明校验，不保存在 API Key 上；
+- 必须设置有效期，支持双 Key 轮换和立即吊销；
+- 仅保存在 GitLab protected + masked CI variable；只有 protected master release job 可读取；
+- 日志只记录 key ID/前缀和发布主体，不记录原文。
 
-## 8. 首批精选插件
+Webhook Secret 与 Release Token 是两套凭据。Webhook 接口还必须校验项目白名单、事件类型、目标 ref/commit，并防止重放；通过 Webhook 验证不代表获得发布权限。
 
-| 优先级 | 插件               | 价值                             | 导入前检查                                |
-| ------ | ------------------ | -------------------------------- | ----------------------------------------- |
-| P0     | GitLab Engineering | MR 审查、Issue、Pipeline/CI 诊断 | GitLab API/CLI 授权、许可证、企业域名配置 |
-| P0     | GitHub             | PR/Issue/CI 工作流               | 官方来源、OAuth/CLI 授权                  |
-| P0     | Gitee              | 国内代码托管协作                 | 官方 MCP、Token 最小权限                  |
-| P0     | Chrome DevTools    | 浏览器调试与性能分析             | 本机权限、命令执行风险                    |
-| P1     | 企业微信           | 消息、会议、日程、文档           | 自研包优先，敏感权限分级                  |
-| P1     | 腾讯文档           | 文档与表格协作                   | 官方授权和数据范围                        |
-| P1     | 飞书、钉钉         | 中国企业协作场景                 | 不重复搬运同能力，先做真实用户验证        |
+## 9. GitHub 官方公开插件（P1 待定）
 
-插件不是“从 Codex 全量搬运”。每个候选都必须先确认产品价值、许可证、维护责任、鉴权方式和安全扫描结果，再由管理员录入上游。
+以下问题尚未冻结：Wework 官方 GitHub 仓库是否作为唯一来源、内部镜像方式、外部贡献审核、许可证与签名、公开目录的升级/下架责任，以及 GitHub CI 与内网发布系统的信任关系。
 
-## 10. 实现完成度与验证记录（2026-07-29）
+因此本期规则是：
 
-### 本轮收口范围
+- 普通用户和企业管理员都不能通过企业投稿把插件发布为 `public`；
+- `wework-official` 命名空间和 `visibility=public` 只预留数据能力；
+- 现有官方发布 CLI 可作为已评审源码的运维工具，但不是 P1 产品方案；
+- 未形成独立 ADR、威胁模型和验收用例前，不启用 GitHub 自动同步或公开发布。
 
-- **后端控制面**：新增受限分享投稿目的、所有者授权读写、接收者可见性、复制许可和撤权卸载同步，并继续复用统一包扫描流程。
-- **Electron**：新增个人副本 SHA256、重复路径、ZIP 穿越、符号链接和 Manifest 校验；唯一命名、原子导入、App Server 安装失败回滚和本地来源映射。
-- **Wework**：市场按国内公开、企业内部、个人分享和 Codex 官方筛选；管理页使用单一已安装列表；详情统一展示最佳实践、授权和包含能力；创建、分享、复制及对话 Mention 复用真实插件状态。
+## 10. 当前实现与生产启用边界
 
-### 自动化验证（本地，2026-07-25）
+### 10.1 当前功能分支已实现
 
-| 套件                                                   | 结果                                                    |
-| ------------------------------------------------------ | ------------------------------------------------------- |
-| `backend/tests/services/test_plugin_marketplace_v2.py` | 40 passed                                               |
-| `wework` Vitest                                        | 224 files / 2217 passed                                 |
-| Electron `plugin_copy`                                 | 5 passed                                                |
-| Alembic upgrade → downgrade → upgrade                  | 通过（隔离数据库）                                      |
-| 隔离 `ai:verify` Electron 会话                         | 市场、详情、管理、斜杠菜单、模板预填和品牌 Mention 通过 |
+| 领域     | 当前分支实现                                                                                                                         |
+| -------- | ------------------------------------------------------------------------------------------------------------------------------------ |
+| Wework   | 个人详情双范围、三步申请抽屉、五阶段进度、完整 Request/Revision 历史，以及 ACL 与发布状态都加载完成后才允许提交的 ready gate         |
+| Backend  | `catalog_namespace`、个人/企业来源关联、Request/Revision/Check/Event、用户/管理员/内部 API、幂等 MR 物化与只同步状态的 Webhook |
+| Web      | 发布申请队列、筛选、revision 证据详情、退回修改、确认后接受并创建 MR、重试与对账                                               |
+| Release  | `plugin_release` 专用机器身份、Bearer-only 内部接口、受信 GitLab/master provenance 检查、幂等与企业旧版本保留                    |
+| 兼容边界 | 旧 `/plugins/submissions` 只允许 `restricted_share + personal`；旧管理员直接 review 和脚本仅用于处理历史记录，新企业申请不得调用     |
 
-### 环境阻塞项
+新 Alembic revision 已在当前分支添加命名空间、来源关联和发布领域表，并覆盖 upgrade → downgrade → upgrade 及冲突阻断验证。本地测试只证明代码和迁移实现，不能替代真实生产配置与端到端发布彩排。
 
-- 完整 `wework ai:verify`（云端目录、安装、失败重试、更新失败保留旧版、卸载重连、白名单发布）依赖在线 Backend、MySQL、S3/MinIO 与真实 Electron 桌面，未在纯 CI 沙箱中执行。
-- 插件图标/截图媒体链路（上传 API、UI、验收交互）按首期范围保留后续迭代。
-- 双真实账号的完整“分享 → 安装 → 复制 → 撤权”桌面 E2E 仍需要部署环境中的测试账号和对象存储。
+### 10.2 生产启用前的外部 P0
 
-### Code Review（缺陷优先）
+1. 立即在外部系统吊销并轮换曾出现在仓库历史中的旧发布 Token；只有当 Release API 使用 HTTPS 或已批准的等价加密传输时，才能注入新凭据。
+2. 在真实 GitLab 项目中配置并验证 protected `master`、protected environment、Code Owner 审批规则和受保护/脱敏变量。
+3. 配置 project-locked 的原生 Windows 与 macOS Runner；缺失、跳过或只做静态扫描均必须阻断合并。
+4. 通过受批准的密钥管理路径创建新 `plugin_release` 凭据，只注入 protected master release job，并验证 MR job 不可读。
+5. 在真实环境完成个人分享、新建/重投 revision、管理员退回/接受、MR、双平台 Runner、合并、发布、重放、失败与回滚的端到端彩排。
 
-本轮针对 V2 差异路径审查后，**无 P0/P1** 遗留；P2 仅保留上述环境与媒体能力阻塞项，不作为发布主链路缺陷。
+### 10.3 历史路径收口
 
-## 9. 验收清单
+- 新 Request API 不包含历史投稿开关或人员白名单；所有已登录的个人插件所有者均可创建申请。
+- 旧 `/plugins/submissions` 保留个人定向分享上传，服务端拒绝 `workspace/public` 用途。
+- 历史待审记录需清退或迁移；旧“批准即发布”接口和脚本不得被 Web 新审核页调用，待观察确认无历史流量后删除。
+- 迁移必须保持个人 ACL、已安装意图、设备实际状态、企业旧版本和对象存储引用；不得把个人 Plugin 原地改为企业 Plugin。
 
-- 新安装永远取最新 Release，旧安装显示“可更新”且不静默升级。
-- 在线设备成功、离线设备 `pending`、失败返回逐插件错误，更新失败保留旧版本。
-- 安装和卸载由 Codex App Server 执行；Executor 只负责受管包缓存、校验、事件转发和逐设备结果上报；普通卸载不承诺删除 `plugins/cache`。
-- `InstalledPlugin.status.devices` 与 App Server 当前设备结果一致，接口成功不得掩盖本机失败。
-- ZIP 穿越、重复路径、符号链接、加密成员、敏感文件、超大展开体积、SHA 错误和缺失 Manifest 均被拒绝。
-- 本地创建不触发云端上传；只有显式发布才产生 Submission。
-- 定向分享只有所有者可管理；无授权不可见、不可下载，撤权卸载原件但保留独立副本。
-- 个人副本导入失败不保留半成品，来源映射不写入上传包。
-- 审核前不可搜索，审核后可安装；Release 发布后不可修改。
-- 普通用户界面没有添加任意 Marketplace 的入口。
-- “我创建的”、Wegent 官方、Codex 镜像和社区来源稳定区分。
-- Backend 插件测试、Executor 合约测试、Wework 组件测试和真实 Electron 验证通过。
+## 11. 验收清单
+
+### 产品和权限
+
+- 详情页只出现统一「分享」入口和两个意图，标题区按钮顺序、既有任务/授权/能力/更新功能不回归。
+- 组织根节点按部门 ACL 生效；成员与部门授权可组合、可原子替换、撤权可同步卸载。
+- 任意已登录个人插件所有者可申请企业全员发布；普通用户无法构造 `public` 投稿。
+- 三步抽屉字段、校验、取消、撤回、退回重投和五阶段状态与交互稿一致。
+- 审核期间个人原件可继续编辑、对话和定向分享，提交 revision 的 SHA256 不变。
+- 企业发布后个人项和企业项同时存在，来源可追溯但权限、版本和生命周期独立。
+
+### 审核和 GitLab
+
+- Web 管理员退回必须填写原因；接受操作重复调用只得到同一个 MR，且不会产生 Release。
+- 非技术投稿与开发者 MR 从 MR Pipeline 开始执行同一套门禁。
+- 风险检查输出稳定 code、severity、证据和执行环境；声明与扫描不一致会阻断。
+- Windows 与 macOS 检查由对应原生 Runner 执行；未执行不得显示通过。
+- MR Pipeline 无 Release Token；只有 protected master release job 可以调用 Release API。
+- Webhook 重复、乱序或丢失不会重复发布，周期对账能恢复真实状态。
+
+### Release、安装和迁移
+
+- Release API 使用 `plugin_release` key，不能模拟用户或调用普通 API；轮换、禁用、过期和审计有效。
+- 同版本同 SHA 幂等，同版本不同 SHA 返回冲突；发布失败保留上一企业版本。
+- Backend 对 CI artifact 做独立校验，Release provenance 能追溯 revision/MR/pipeline/master commit/artifact SHA。
+- 发布后的 Release 不可修改；新安装取 latest，更新失败保留 `actual_release_id`，设备状态不虚报。
+- 新迁移可升级、回滚和再次升级；历史企业插件、个人 ACL、安装引用和对象可下载性均保持。
+- 旧 `/plugins/submissions` 只接受个人定向分享；新企业申请不受白名单授权，也不能进入旧“批准即发布”路径。
+- GitHub 官方公开插件保持关闭，直到独立 P1 方案评审通过。
