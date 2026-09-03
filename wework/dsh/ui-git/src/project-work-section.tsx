@@ -46,7 +46,7 @@ export default function GitProjectWorkSection({ context }: GitProjectWorkSection
       sourcePath: null,
     } as const)
   const projectIsRepository = Boolean(
-    project && (isGitWorkspaceProject(project) || worktreeAvailability.reason !== 'not_git')
+    project && (isGitWorkspaceProject(project) || context.worktreeAvailability?.available)
   )
   if (!project) return null
 

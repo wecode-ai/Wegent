@@ -24,7 +24,7 @@ describe('DSH host extension boundary', () => {
       resolve(process.cwd(), 'dsh/ui-git/src/project-work-section.tsx'),
       'utf8'
     )
-    expect(pluginSource).toMatch(/git/i)
+    expect(pluginSource).toMatch(/\bgit(?:\b|_)/i)
     expect(pluginSource).toMatch(/\bbranch\b/i)
     expect(pluginSource).toMatch(/\bworktree\b/i)
   })
