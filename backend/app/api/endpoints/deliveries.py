@@ -49,6 +49,7 @@ from app.schemas.delivery import (
     LoopItemCommentResponse,
     LoopItemCreate,
     LoopItemListResponse,
+    LoopItemPageResponse,
     LoopItemReorder,
     LoopItemResponse,
     LoopItemTaskBind,
@@ -472,6 +473,44 @@ def list_loop_items(
         execution_state=execution_state,
     )
     return LoopItemListResponse(items=items)
+
+
+@router.get(
+    "/cloud-projects/{project_id}/loop-item-pages",
+    response_model=LoopItemPageResponse,
+)
+def list_loop_item_page(
+    project_id: int,
+    item_status: str = Query(alias="status", max_length=32),
+    parent_id: str | None = Query(default=None, max_length=64),
+    cursor: str | None = Query(default=None, max_length=64),
+    limit: int = Query(default=10, ge=1, le=100),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> LoopItemPageResponse:
+    items, next_cursor = external_loop_item_provider.list_page(
+        db,
+        project_id,
+        current_user.id,
+        item_status=item_status,
+        parent_id=parent_id,
+        cursor=cursor,
+        limit=limit,
+    )
+    item_ids = [str(item["id"]) for item in items]
+    bindings = loop_item_service.list_project_task_bindings(
+        db,
+        project_id,
+        current_user.id,
+        item_ids=item_ids,
+    )
+    return LoopItemPageResponse(
+        items=[LoopItemResponse.model_validate(item) for item in items],
+        task_bindings=[
+            LoopItemTaskBindingResponse.model_validate(binding) for binding in bindings
+        ],
+        next_cursor=next_cursor,
+    )
 
 
 @router.post(
@@ -1159,10 +1198,8 @@ def archive_loop_item(
     current_user: User = Depends(get_current_user),
 ) -> None:
     if external_loop_item_provider.is_external_item(db, item_id):
-        raise HTTPException(
-            status.HTTP_409_CONFLICT,
-            "External provider tasks cannot be archived from Wegent",
-        )
+        external_loop_item_provider.archive(db, item_id, current_user.id)
+        return
     loop_item_service.delete(db, item_id, current_user.id)
 
 

@@ -8777,10 +8777,18 @@ describe('DesktopWorkbenchLayout', () => {
     )
 
     await user.click(await screen.findByText('first.ts'))
-    await waitFor(() => expect(getWorkspaceCodeViewText()).toContain('first'))
+    await waitFor(() =>
+      expect(screen.getByTestId('workspace-file-preview-code-view')).toHaveAttribute(
+        'data-file-path',
+        '/workspace/project/first.ts'
+      )
+    )
     await user.click(screen.getByText('second.ts'))
 
-    expect(getWorkspaceCodeViewText()).toContain('first')
+    expect(screen.getByTestId('workspace-file-preview-code-view')).toHaveAttribute(
+      'data-file-path',
+      '/workspace/project/first.ts'
+    )
     expect(screen.getByTestId('workspace-file-preview-loading-indicator')).toBeInTheDocument()
     expect(screen.queryByTestId('workspace-file-preview-progress')).not.toBeInTheDocument()
 
@@ -8796,7 +8804,12 @@ describe('DesktopWorkbenchLayout', () => {
       })
     })
 
-    await waitFor(() => expect(getWorkspaceCodeViewText()).toContain('second'))
+    await waitFor(() =>
+      expect(screen.getByTestId('workspace-file-preview-code-view')).toHaveAttribute(
+        'data-file-path',
+        '/workspace/project/second.ts'
+      )
+    )
     expect(screen.queryByTestId('workspace-file-preview-loading-indicator')).not.toBeInTheDocument()
   })
 
