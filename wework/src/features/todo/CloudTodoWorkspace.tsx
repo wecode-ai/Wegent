@@ -83,14 +83,12 @@ import type {
 import { useTranslation } from '@/hooks/useTranslation'
 import { copyTextToClipboard } from '@/lib/clipboard'
 import { runtimeTaskProjectUiId } from '@/lib/runtime-task-workspace-binding'
-import { localRuntimeAttachments, remoteAttachmentIds } from '@/lib/runtime-attachments'
 import { cn } from '@/lib/utils'
 import { track } from '@/telemetry/client'
 import { invokeDesktopHost } from '@/api/dsh/desktopHost'
 import { getDesktopWindowLabel, isElectronRuntime } from '@/lib/runtime-environment'
 import { runtimeConversationKey } from '@/features/workbench/runtimeConversationCache'
 import { WorkbenchContext } from '@/features/workbench/workbenchContexts'
-import { getRuntimeTaskChatScopeKey } from '@/features/workbench/workbenchProviderHelpers'
 import {
   getChangeRequestMonitor,
   runtimeTaskChangeRequestTarget,
@@ -108,16 +106,7 @@ import {
   isRuntimeTaskExecutionRunning,
   runtimeTaskTrackingExecutionStatus,
 } from '@/features/workbench/runtimeTaskLifecycle/projection'
-import {
-  resolveAutomaticModel,
-  selectedModelExecutionFields,
-} from '@/features/workbench/runtimeModelSelection'
 import { createRuntimeUserMessage } from '@/features/workbench/runtimeUserMessage'
-import { projectRuntimeConversationTurns } from '@/features/workbench/runtimeConversationTurns'
-import {
-  runtimeMessagesToWorkbenchMessages,
-  runtimeTranscriptTurnsToConversationTurns,
-} from '@/features/workbench/runtimePaneMessages'
 import type { RuntimeTaskLifecycleStoreSnapshot } from '@/features/workbench/runtimeTaskLifecycle'
 import { hydrateRuntimeTaskAddress } from '@/features/workbench/workbenchRuntimeHelpers'
 import { AITableView } from '@/features/todo/AITableView'
@@ -136,7 +125,6 @@ import type {
   RuntimeWorkListResponse,
   User as UserProfile,
 } from '@/types/api'
-import type { WorkbenchMessage } from '@/types/workbench'
 import { CloudTodoModal as Modal } from './CloudTodoModal'
 import { CloudMyWorkView } from './CloudMyWorkView'
 import { stopLocalRobotQueueExecution } from './localRobotQueueDispatcher'
@@ -1424,9 +1412,6 @@ export function CloudTodoWorkspace({
       {
         signature: string
         text: string | null
-        messages: WorkbenchMessage[]
-        hasMoreBefore: boolean
-        beforeCursor: string | null
       }
     >
   >({})
@@ -1663,12 +1648,6 @@ export function CloudTodoWorkspace({
                 ? runtimeTaskChangeRequestTarget(runtimeTask.workspace, runtimeTask.task)
                 : null,
               finalResponsePreview: preview?.text ?? null,
-              conversationMessages: preview?.messages ?? [],
-              conversationHasMoreBefore: preview?.hasMoreBefore ?? false,
-              conversationBeforeCursor: preview?.beforeCursor ?? null,
-              conversationLoaded:
-                addressKey in runtimeConversationPreviews ||
-                !services.runtimeWorkApi?.getRuntimeTranscript,
             }
           }),
         ])
@@ -1678,7 +1657,6 @@ export function CloudTodoWorkspace({
       runtimeConversationPreviews,
       runtimeTaskByAddress,
       runtimeTaskRunningByAddress,
-      services.runtimeWorkApi,
     ]
   )
   const localProjectIdForItem = useCallback(
@@ -1724,45 +1702,6 @@ export function CloudTodoWorkspace({
     if (!accepted) {
       throw new Error(t('workbench.change_request_continue_repair_failed', '无法继续任务'))
     }
-  }
-  async function sendBoardTaskMessage(
-    binding: CloudTodoBoardTaskBinding,
-    message: string
-  ): Promise<boolean> {
-    if (!workbench || !selectedProject) return false
-    const address = hydrateRuntimeTaskAddress(runtimeWork, {
-      deviceId: binding.device_id,
-      taskId: binding.task_id,
-    })
-    const scopeKey = getRuntimeTaskChatScopeKey(address)
-    const projectChat = workbench.projectChat
-    const attachmentState = projectChat.attachmentStateByScope[scopeKey]
-    if (attachmentState?.uploadingFiles.size) return false
-
-    const selectedModel =
-      projectChat.getSelectedModel?.() ??
-      projectChat.selectedModel ??
-      resolveAutomaticModel(projectChat.models)
-    const selectedModelOptions =
-      projectChat.getSelectedModelOptions?.() ?? projectChat.selectedModelOptions
-    const selectedAttachments = attachmentState?.attachments ?? []
-    const attachmentIds = remoteAttachmentIds(selectedAttachments)
-    const attachments = localRuntimeAttachments(selectedAttachments)
-    const optimisticUserMessage = createRuntimeUserMessage(message, selectedAttachments)
-    const accepted = await workbench.sendRuntimePaneMessage(
-      {
-        address,
-        message,
-        ...selectedModelExecutionFields(selectedModel, selectedModelOptions),
-        ...(attachmentIds.length > 0 ? { attachmentIds } : {}),
-        ...(attachments.length > 0 ? { attachments } : {}),
-        source: { source: 'manual' },
-        cloudProjectId: String(selectedProject.id),
-      },
-      { optimisticUserMessage }
-    )
-    if (accepted) projectChat.resetAttachmentsForScope(scopeKey)
-    return accepted
   }
   const projectForItem = (item: Pick<LocatedLoopItem, 'cloud_project_id' | 'project_store'>) => {
     if (item.project_store) {
@@ -2849,22 +2788,11 @@ export function CloudTodoWorkspace({
               return
             }
             const text = finalAssistantTranscriptText(transcript)
-            const transcriptTurns = runtimeTranscriptTurnsToConversationTurns(
-              transcript.turns ?? []
-            )
-            const projectedMessages = projectRuntimeConversationTurns(transcriptTurns)
-            const messages =
-              projectedMessages.length > 0
-                ? projectedMessages
-                : runtimeMessagesToWorkbenchMessages(transcript.messages ?? [])
             setRuntimeConversationPreviews(current => ({
               ...current,
               [addressKey]: {
                 signature,
                 text,
-                messages,
-                hasMoreBefore: Boolean(transcript.hasMoreBefore),
-                beforeCursor: transcript.beforeCursor ?? null,
               },
             }))
           })
@@ -2884,9 +2812,6 @@ export function CloudTodoWorkspace({
               [addressKey]: {
                 signature,
                 text: null,
-                messages: [],
-                hasMoreBefore: false,
-                beforeCursor: null,
               },
             }))
           })
@@ -4846,7 +4771,6 @@ export function CloudTodoWorkspace({
                                       onContinueChangeRequestRepair={
                                         workbench ? continueChangeRequestRepair : undefined
                                       }
-                                      onSendMessage={workbench ? sendBoardTaskMessage : undefined}
                                     />
                                   ))}
                                   {columnItems.length === 0 && emptyHint && (

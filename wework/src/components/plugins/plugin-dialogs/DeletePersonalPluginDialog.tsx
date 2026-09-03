@@ -6,6 +6,7 @@ interface DeletePersonalPluginDialogProps {
   pluginName: string
   installed: boolean
   published: boolean
+  publicationActive?: boolean
   impact: PluginDeleteImpactResponse | null
   deleting: boolean
   onCancel: () => void
@@ -16,6 +17,7 @@ export function DeletePersonalPluginDialog({
   pluginName,
   installed,
   published,
+  publicationActive = false,
   impact,
   deleting,
   onCancel,
@@ -61,30 +63,35 @@ export function DeletePersonalPluginDialog({
           {t('workbench.plugins_delete_plugin_title', '删除插件？')}
         </h2>
         <p className="mt-2 text-sm leading-5 text-text-secondary">
-          {published && !impact
-            ? t('workbench.plugins_delete_impact_loading', '正在检查插件的使用情况…')
-            : published && impact && requiresRevocation
-              ? t('workbench.plugins_delete_published_plugin_in_use_description', {
-                  name: pluginName,
-                  userCount: impact.affectedUserCount,
-                  deviceCount: impact.installedDeviceCount,
-                  sharedTargetCount: impact.sharedTargetCount,
-                  defaultValue: `「${pluginName}」当前有 ${impact.affectedUserCount} 位其他用户安装，涉及 ${impact.installedDeviceCount} 台设备，并分享给 ${impact.sharedTargetCount} 个对象。删除后将立即停止分享，在线设备会自动卸载，离线设备将在下次上线时清理。正在执行的任务不会被强制中断。`,
-                })
-              : published
-                ? t('workbench.plugins_delete_published_plugin_description', {
+          {publicationActive
+            ? t('workbench.plugins_delete_active_publication_description', {
+                name: pluginName,
+                defaultValue: `「${pluginName}」仍有进行中的企业全员发布申请。确认后会先撤回申请并关闭尚未合并的 MR；只有撤回成功才会继续删除个人插件。已发布的企业版本不受影响。`,
+              })
+            : published && !impact
+              ? t('workbench.plugins_delete_impact_loading', '正在检查插件的使用情况…')
+              : published && impact && requiresRevocation
+                ? t('workbench.plugins_delete_published_plugin_in_use_description', {
                     name: pluginName,
-                    defaultValue: `将删除云端插件「${pluginName}」及其分享关系，并清理本地插件。此操作无法撤销。`,
+                    userCount: impact.affectedUserCount,
+                    deviceCount: impact.installedDeviceCount,
+                    sharedTargetCount: impact.sharedTargetCount,
+                    defaultValue: `「${pluginName}」当前有 ${impact.affectedUserCount} 位其他用户安装，涉及 ${impact.installedDeviceCount} 台设备，并分享给 ${impact.sharedTargetCount} 个对象。删除后将立即停止分享，在线设备会自动卸载，离线设备将在下次上线时清理。正在执行的任务不会被强制中断。`,
                   })
-                : installed
-                  ? t('workbench.plugins_delete_plugin_installed_description', {
+                : published
+                  ? t('workbench.plugins_delete_published_plugin_description', {
                       name: pluginName,
-                      defaultValue: `将先卸载「${pluginName}」，再永久删除本地插件源码。此操作无法撤销。`,
+                      defaultValue: `将删除云端插件「${pluginName}」及其分享关系，并清理本地插件。此操作无法撤销。`,
                     })
-                  : t('workbench.plugins_delete_plugin_description', {
-                      name: pluginName,
-                      defaultValue: `将永久删除「${pluginName}」的本地插件源码。此操作无法撤销。`,
-                    })}
+                  : installed
+                    ? t('workbench.plugins_delete_plugin_installed_description', {
+                        name: pluginName,
+                        defaultValue: `将先卸载「${pluginName}」，再永久删除本地插件源码。此操作无法撤销。`,
+                      })
+                    : t('workbench.plugins_delete_plugin_description', {
+                        name: pluginName,
+                        defaultValue: `将永久删除「${pluginName}」的本地插件源码。此操作无法撤销。`,
+                      })}
         </p>
         <div className="mt-5 flex justify-end gap-2">
           <button
@@ -106,9 +113,11 @@ export function DeletePersonalPluginDialog({
           >
             {deleting
               ? t('workbench.plugins_deleting_plugin', '正在删除')
-              : published && requiresRevocation
-                ? t('workbench.plugins_revoke_and_delete', '停用并删除')
-                : t('workbench.plugins_delete_plugin', '删除插件')}
+              : publicationActive
+                ? t('workbench.plugins_withdraw_and_delete', '撤回申请并删除')
+                : published && requiresRevocation
+                  ? t('workbench.plugins_revoke_and_delete', '停用并删除')
+                  : t('workbench.plugins_delete_plugin', '删除插件')}
           </button>
         </div>
       </section>

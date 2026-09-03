@@ -1,8 +1,9 @@
-import { Search, X } from 'lucide-react'
-import { useEffect, useState } from 'react'
+import { X } from 'lucide-react'
+import { useState } from 'react'
 import type { PluginShareGroupSearchItem, PluginShareUserSearchItem } from '@/api/plugins'
 import { useTranslation } from '@/hooks/useTranslation'
 import type { PluginAccessResponse, PluginAccessTarget } from '@/types/api'
+import { PluginShareTargetSearch } from './PluginShareTargetSearch'
 
 interface PluginShareDialogProps {
   pluginName: string
@@ -33,33 +34,6 @@ export function PluginShareDialog({
   const [scope, setScope] = useState(access.scope)
   const [targets, setTargets] = useState(access.targets)
   const [allowCopy, setAllowCopy] = useState(access.allowCopy)
-  const [query, setQuery] = useState('')
-  const [users, setUsers] = useState<PluginShareUserSearchItem[]>([])
-  const [groups, setGroups] = useState<PluginShareGroupSearchItem[]>([])
-  const [searching, setSearching] = useState(false)
-
-  useEffect(() => {
-    const normalized = query.trim()
-    if (!normalized || scope !== 'restricted') {
-      return
-    }
-    let current = true
-    queueMicrotask(() => {
-      if (current) setSearching(true)
-    })
-    Promise.all([searchUsers(normalized), searchGroups(normalized)])
-      .then(([nextUsers, nextGroups]) => {
-        if (!current) return
-        setUsers(nextUsers)
-        setGroups(nextGroups)
-      })
-      .finally(() => {
-        if (current) setSearching(false)
-      })
-    return () => {
-      current = false
-    }
-  }, [query, scope, searchGroups, searchUsers])
 
   const addTarget = (target: PluginAccessTarget) => {
     setTargets(current =>
@@ -69,7 +43,6 @@ export function PluginShareDialog({
         ? current
         : [...current, target]
     )
-    setQuery('')
   }
 
   return (
@@ -111,7 +84,6 @@ export function PluginShareDialog({
             onClick={() => {
               setScope('private')
               setAllowCopy(false)
-              setQuery('')
             }}
           >
             {t('workbench.plugins_share_private', '仅自己')}
@@ -132,71 +104,11 @@ export function PluginShareDialog({
 
         {scope === 'restricted' && (
           <div className="mt-4">
-            <label className="relative block">
-              <span className="sr-only">
-                {t('workbench.plugins_share_search', '搜索成员或部门')}
-              </span>
-              <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-text-muted" />
-              <input
-                value={query}
-                data-testid="plugin-share-search"
-                className="h-11 w-full rounded-lg border border-border bg-background pl-9 pr-3 text-sm outline-none focus:border-focus/70 focus:ring-2 focus:ring-focus/15"
-                placeholder={t('workbench.plugins_share_search', '搜索成员或部门')}
-                onChange={event => setQuery(event.target.value)}
-              />
-            </label>
-            {query.trim() && (
-              <div
-                data-testid="plugin-share-search-results"
-                className="mt-2 max-h-48 overflow-y-auto rounded-xl border border-border/30 p-1"
-              >
-                {searching && (
-                  <p className="px-3 py-2 text-sm text-text-muted">
-                    {t('workbench.plugins_share_searching', '正在搜索…')}
-                  </p>
-                )}
-                {users.map(user => (
-                  <button
-                    key={`user-${user.id}`}
-                    type="button"
-                    data-testid={`plugin-share-user-${user.id}`}
-                    className="flex min-h-11 w-full items-center justify-between rounded-lg px-3 text-left hover:bg-surface"
-                    onClick={() =>
-                      addTarget({
-                        entityType: 'user',
-                        entityId: String(user.id),
-                        displayName: user.user_name,
-                      })
-                    }
-                  >
-                    <span className="text-sm font-medium">{user.user_name}</span>
-                    <span className="text-xs text-text-muted">
-                      {t('workbench.plugins_share_member', '成员')}
-                    </span>
-                  </button>
-                ))}
-                {groups.map(group => (
-                  <button
-                    key={`namespace-${group.id}`}
-                    type="button"
-                    data-testid={`plugin-share-namespace-${group.id}`}
-                    className="flex min-h-11 w-full items-center justify-between rounded-lg px-3 text-left hover:bg-surface"
-                    onClick={() =>
-                      addTarget({
-                        entityType: 'namespace',
-                        entityId: String(group.id),
-                        displayName: group.display_name || group.name,
-                      })
-                    }
-                  >
-                    <span className="text-sm font-medium">{group.display_name || group.name}</span>
-                    <span className="text-xs text-text-muted">
-                      {t('workbench.plugins_share_department', '部门')}
-                    </span>
-                  </button>
-                ))}
-              </div>
-            )}
+            <PluginShareTargetSearch
+              searchUsers={searchUsers}
+              searchGroups={searchGroups}
+              onSelect={addTarget}
+            />
 
             <div className="mt-3 flex flex-wrap gap-2" data-testid="plugin-share-targets">
               {targets.map(target => (
