@@ -15,6 +15,20 @@ export function mergeRuntimeConversationTurns(
   localTurns: RuntimeConversationTurn[],
   snapshotTurns: RuntimeConversationTurn[]
 ): RuntimeConversationTurn[] {
+  return orderRuntimeConversationTurns(mergeRuntimeConversationTurnSets(localTurns, snapshotTurns))
+}
+
+export function mergeRuntimeConversationTurnsBefore(
+  localTurns: RuntimeConversationTurn[],
+  snapshotTurns: RuntimeConversationTurn[]
+): RuntimeConversationTurn[] {
+  return mergeRuntimeConversationTurnSets(localTurns, snapshotTurns)
+}
+
+function mergeRuntimeConversationTurnSets(
+  localTurns: RuntimeConversationTurn[],
+  snapshotTurns: RuntimeConversationTurn[]
+): RuntimeConversationTurn[] {
   if (snapshotTurns.length === 0) return localTurns
   const localIndexByTurnId = new Map(
     localTurns.flatMap((turn, index) => (turn.id === null ? [] : [[turn.id, index] as const]))
@@ -63,7 +77,7 @@ export function mergeRuntimeConversationTurns(
       merged.push(turn)
     }
   })
-  return orderRuntimeConversationTurns(merged)
+  return merged
 }
 
 function uniqueSnapshotIndexByAssistantItemId(

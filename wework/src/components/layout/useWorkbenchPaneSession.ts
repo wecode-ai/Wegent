@@ -29,8 +29,10 @@ import {
   findRuntimeTask,
   getRuntimeTaskRouteKey,
 } from '@/features/workbench/workbenchRuntimeHelpers'
+import { runtimeHistoryV2Capability } from '@/features/workbench/runtimeHistoryProtocol'
 import { getRuntimeTaskChatScopeKey } from '@/features/workbench/workbenchProviderHelpers'
 import { persistAttachmentReferences } from '@/lib/attachments'
+import { findWorkbenchDevice } from '@/lib/workbench-device'
 import { localRuntimeAttachments, remoteAttachmentIds } from '@/lib/runtime-attachments'
 import {
   applyRequestUserInputResponseToBlock,
@@ -99,6 +101,7 @@ import {
   getRuntimeConversationTurnIds,
   markRuntimeConversationGuidanceInterrupted,
   optimisticallyInterruptRuntimeConversation,
+  prependRuntimeConversationSnapshot,
   removeOptimisticRuntimeConversationGuidance,
   removeRuntimeConversationTurn,
   reconcileRuntimeConversationSnapshot,
@@ -159,6 +162,7 @@ interface LoadedTranscriptRange {
 interface RuntimeTaskLoadTarget {
   key: string
   identityKey: string
+  protocolVersion: 1 | 2
   address: RuntimeTaskAddress
 }
 
@@ -358,19 +362,32 @@ export function useWorkbenchPaneSession({
   const pendingMessageActionsRef = useRef<RuntimePaneMessageAction[]>([])
   const rebuildingTranscriptRef = useRef(false)
   const rebuildingTranscriptIdentityRef = useRef<string | null>(null)
+  const displayedTranscriptProtocolRef = useRef<1 | 2 | null>(null)
   const goalTranscriptReconciliationRef = useRef<{
     key: string
     attempts: number
   } | null>(null)
   const messageActionFrameRef = useRef<number | null>(null)
   const retryInFlightRef = useRef(false)
+  const runtimeHistoryProtocolVersion: 1 | 2 = currentRuntimeTask
+    ? runtimeHistoryV2Capability(
+        findWorkbenchDevice(workbenchState.devices, currentRuntimeTask.deviceId)
+      )
+      ? 2
+      : 1
+    : 1
   const currentRuntimeTaskLoadTarget = useMemo(
-    () => (currentRuntimeTask ? runtimeTaskLoadTargetFromAddress(currentRuntimeTask) : null),
-    [currentRuntimeTask]
+    () =>
+      currentRuntimeTask
+        ? runtimeTaskLoadTargetFromAddress(currentRuntimeTask, runtimeHistoryProtocolVersion)
+        : null,
+    [currentRuntimeTask, runtimeHistoryProtocolVersion]
   )
   const [retainedRuntimeTaskLoadTarget, setRetainedRuntimeTaskLoadTarget] =
     useState<RuntimeTaskLoadTarget | null>(() =>
-      currentRuntimeTask ? runtimeTaskLoadTargetFromAddress(currentRuntimeTask) : null
+      currentRuntimeTask
+        ? runtimeTaskLoadTargetFromAddress(currentRuntimeTask, runtimeHistoryProtocolVersion)
+        : null
     )
   const runtimeTaskLoadTarget = retainedRuntimeTaskLoadTarget
   const [messages, setMessages] = useState<WorkbenchMessage[]>(() =>
@@ -683,13 +700,18 @@ export function useWorkbenchPaneSession({
     rebuildingTranscriptRef.current = true
     rebuildingTranscriptIdentityRef.current = runtimeTaskLoadTarget.identityKey
     const cachedSeededMessages = getRuntimeConversationMessages(address)
-    const seededMessages =
-      displayedTranscriptIdentityRef.current === runtimeTaskLoadTarget.identityKey
+    const protocolChanged =
+      displayedTranscriptProtocolRef.current !== null &&
+      displayedTranscriptProtocolRef.current !== runtimeTaskLoadTarget.protocolVersion
+    const seededMessages = protocolChanged
+      ? []
+      : displayedTranscriptIdentityRef.current === runtimeTaskLoadTarget.identityKey
         ? messagesRef.current.length > 0
           ? messagesRef.current
           : cachedSeededMessages
         : cachedSeededMessages
     displayedTranscriptIdentityRef.current = runtimeTaskLoadTarget.identityKey
+    displayedTranscriptProtocolRef.current = runtimeTaskLoadTarget.protocolVersion
     debugRuntimePaneMessageFlow('transcript-load-start', {
       address: runtimeAddressDebug(address),
       key: loadKey,
@@ -880,7 +902,7 @@ export function useWorkbenchPaneSession({
         limit: runtimeTranscriptPageSize,
         beforeCursor,
       })
-      const nextMessages = reconcileRuntimeConversationSnapshot(address, transcript.turns)
+      const nextMessages = prependRuntimeConversationSnapshot(address, transcript.turns)
       const nextRanges = mergeTranscriptRanges(
         loadedTranscriptRangesRef.current,
         transcriptRangeFromPage(transcript)
@@ -3002,10 +3024,14 @@ function isInterruptedGuidance(message: RuntimePaneQueuedMessage): boolean {
   return message.status === 'sending' && message.deliveryMode === 'guidance'
 }
 
-function runtimeTaskLoadTargetFromAddress(address: RuntimeTaskAddress): RuntimeTaskLoadTarget {
+function runtimeTaskLoadTargetFromAddress(
+  address: RuntimeTaskAddress,
+  protocolVersion: 1 | 2
+): RuntimeTaskLoadTarget {
   return {
-    key: runtimeTaskLoadAddressKey(address),
-    identityKey: runtimeTranscriptPaneIdentityKey(address),
+    key: `${runtimeTaskLoadAddressKey(address)}:history-v${protocolVersion}`,
+    identityKey: `${runtimeTranscriptPaneIdentityKey(address)}:history-v${protocolVersion}`,
+    protocolVersion,
     address,
   }
 }

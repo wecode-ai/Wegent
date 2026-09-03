@@ -7,6 +7,32 @@ function stream(state: ReturnType<typeof chatReducer>, event: RuntimeStreamEvent
 }
 
 describe('chatReducer', () => {
+  it('prepends an older transcript page without duplicating the cursor boundary', () => {
+    const latest = chatReducer([], {
+      type: 'replace',
+      messages: [
+        { id: 'user-2', role: 'user', content: 'second' },
+        { id: 'assistant-2', role: 'assistant', content: 'second answer' },
+      ],
+    })
+    const result = chatReducer(latest, {
+      type: 'prepend',
+      messages: [
+        { id: 'user-1', role: 'user', content: 'first' },
+        { id: 'assistant-1', role: 'assistant', content: 'first answer' },
+        { id: 'user-2', role: 'user', content: 'stale boundary' },
+      ],
+    })
+
+    expect(result.map(message => message.id)).toEqual([
+      'user-1',
+      'assistant-1',
+      'user-2',
+      'assistant-2',
+    ])
+    expect(result[2]?.content).toBe('second')
+  })
+
   it('hydrates canonical transcript identity, blocks, status, errors and timestamps', () => {
     const result = chatReducer([], {
       type: 'replace',

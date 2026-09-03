@@ -10,6 +10,8 @@
     "ios": "expo run:ios",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
+    "e2e:ios": "node e2e/run-checkpoints.mjs ios",
+    "e2e:android": "node e2e/run-checkpoints.mjs android",
     "build:android": "expo export --platform android --output-dir dist/android",
     "build:ios": "expo export --platform ios --output-dir dist/ios",
     "build": "pnpm run build:android && pnpm run build:ios"

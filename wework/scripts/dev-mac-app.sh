@@ -40,6 +40,7 @@ Environment:
   WEWORK_DEV_CACHE_ROOT            Shared immutable dev cache. Defaults to ~/Library/Caches/wegent.
   WEWORK_DEV_HARNESS_RUNTIME_ROOT  Harness runtime. Defaults to the worktree runtime.
   WEWORK_DEV_COMPONENT_RESOURCES   Component links. Defaults to the worktree dependency cache.
+  WEWORK_DEV_EXECUTOR_TARGET_ROOT  Executor build root. Defaults to a worktree-isolated cache.
   WEWORK_DEV_CODEX_BINARY          Codex binary. Defaults to the repository-locked binary.
   WEWORK_DEV_DWS_BINARY            DWS binary. Defaults to the repository-prepared binary.
   WEWORK_DRY_RUN=1                 Print the resolved launch configuration without starting.
@@ -149,6 +150,29 @@ prepare_dev_electron_app() {
   echo "$target_app"
 }
 
+configure_source_executor_target() {
+  local target_root="${WEWORK_DEV_EXECUTOR_TARGET_ROOT:-}"
+
+  unset CARGO_TARGET_DIR
+  unset WEGENT_CARGO_TARGET_DIR_AUTO
+
+  if [ -n "$target_root" ]; then
+    export CARGO_TARGET_DIR="${target_root%/}/$WEWORK_DEV_INSTANCE_ID"
+  elif [ "${WEGENT_DISABLE_SHARED_CARGO_TARGET:-0}" = "1" ]; then
+    export CARGO_TARGET_DIR="$PROJECT_DIR/executor/target"
+  else
+    target_root="$(wegent_cargo_cache_root)"
+    if [ -n "$target_root" ]; then
+      export CARGO_TARGET_DIR="${target_root%/}/executor-dev/$WEWORK_DEV_INSTANCE_ID"
+    else
+      export CARGO_TARGET_DIR="$PROJECT_DIR/executor/target"
+    fi
+  fi
+
+  mkdir -p "$CARGO_TARGET_DIR"
+  configure_wegent_sccache "$PROJECT_DIR" "$CARGO_TARGET_DIR"
+}
+
 resolve_macos_target() {
   case "$(uname -m)" in
     arm64)
@@ -239,7 +263,7 @@ if [ -n "${WEWORK_DEV_EXECUTOR_PATH:-}" ]; then
 else
   export WEWORK_EXECUTOR_PATH="$SCRIPT_DIR/dev-executor-sidecar.sh"
   MANAGED_SOURCE_EXECUTOR="true"
-  configure_wegent_cargo_target_dir "$PROJECT_DIR" "executor-dev"
+  configure_source_executor_target
   MANAGED_SOURCE_EXECUTOR_BINARY="$(
     cargo_target_binary_path "$PROJECT_DIR/executor" debug wegent-executor
   )"

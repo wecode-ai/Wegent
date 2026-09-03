@@ -203,6 +203,7 @@ export function ConversationListScreen(props: ConversationListScreenProps) {
             testID="drawer-actions-backdrop"
           >
             <Pressable
+              accessible={false}
               accessibilityViewIsModal
               onPress={event => event.stopPropagation()}
               style={[

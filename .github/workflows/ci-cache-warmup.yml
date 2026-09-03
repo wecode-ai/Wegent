@@ -12,6 +12,9 @@ on:
       - ".github/actions/**"
       - ".github/claude-code-cli/**"
       - ".github/scripts/classify-ci-cache-warmup.sh"
+      - ".github/scripts/build-wework-mobile-ios-app.sh"
+      - ".github/scripts/build-wework-mobile-ios-e2e-artifact.sh"
+      - ".github/scripts/create-wework-mobile-ios-simulator.sh"
       - ".github/scripts/resolve-executor-e2e-runtime.sh"
       - ".github/scripts/install-executor-rust-system-dependencies.sh"
       - ".github/scripts/lib/apt-packages.sh"
@@ -37,9 +40,11 @@ on:
       - "wegent-cli/requirements.txt"
       - "wework/package.json"
       - "wework/codex-binaries.lock.json"
+      - "wework/e2e/desktop/modules/desktop-build-flows.mjs"
       - "wework/electron/package.json"
       - "wework/electron/pnpm-lock.yaml"
       - "wework/resources/**"
+      - "wework-mobile/**"
   workflow_dispatch:
 
 permissions:
@@ -59,6 +64,7 @@ jobs:
       executor_rust: ${{ steps.classify.outputs.executor_rust }}
       node: ${{ steps.classify.outputs.node }}
       python: ${{ steps.classify.outputs.python }}
+      wework_mobile_ios: ${{ steps.classify.outputs.wework_mobile_ios }}
       wework_target: ${{ steps.classify.outputs.wework_target }}
 
     steps:
@@ -351,6 +357,131 @@ jobs:
             executor/target
             ~/Library/Caches/electron
           key: ${{ steps.wework-cargo-sources-cache.outputs.cache-primary-key }}
+
+  warm-wework-mobile-ios:
+    name: Warm Wework Mobile iOS Build Cache
+    needs: changes
+    if: needs.changes.outputs.wework_mobile_ios == 'true'
+    runs-on: macos-26
+    timeout-minutes: 45
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          persist-credentials: false
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@0e279bb959325dab635dd2c09392533439d90093
+
+      - name: Set up Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: "24"
+
+      - name: Resolve pnpm store path
+        id: mobile-pnpm-store
+        run: echo "path=$(pnpm store path --silent)" >> "$GITHUB_OUTPUT"
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8
+
+      - name: Set up sccache
+        uses: ./.github/actions/setup-sccache
+
+      - name: Restore Mobile pnpm store
+        id: mobile-pnpm-cache
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830
+        with:
+          path: ${{ steps.mobile-pnpm-store.outputs.path }}
+          key: ${{ runner.os }}-${{ runner.arch }}-wework-mobile-pnpm-store-v1-${{ hashFiles('wework-mobile/pnpm-lock.yaml') }}
+
+      - name: Restore Mobile iOS dependencies
+        id: mobile-ios-dependencies-cache
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            ~/Library/Caches/wegent/codex
+            ~/Library/Caches/CocoaPods
+            wework-mobile/ios/Pods
+          key: ${{ runner.os }}-${{ runner.arch }}-wework-mobile-ios-dependencies-v1-${{ hashFiles('executor/Cargo.lock', 'wework/codex-binaries.lock.json', 'wework-mobile/pnpm-lock.yaml', 'wework-mobile/ios/Podfile.lock') }}
+
+      - name: Restore Mobile Executor build products
+        id: mobile-executor-products-cache
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830
+        with:
+          path: executor/target
+          key: ${{ runner.os }}-${{ runner.arch }}-wework-mobile-executor-products-v1-${{ hashFiles('executor/Cargo.lock') }}-${{ hashFiles('executor/Cargo.toml', 'executor/src/**', 'shared/assets/**') }}
+          restore-keys: |
+            ${{ runner.os }}-${{ runner.arch }}-wework-mobile-executor-products-v1-${{ hashFiles('executor/Cargo.lock') }}-
+
+      - name: Restore Mobile Xcode build products
+        id: mobile-xcode-products-cache
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830
+        with:
+          path: wework-mobile/node_modules/.cache/ios-e2e-derived-data
+          key: ${{ runner.os }}-${{ runner.arch }}-wework-mobile-xcode-products-v1-${{ hashFiles('wework-mobile/pnpm-lock.yaml', 'wework-mobile/ios/Podfile.lock') }}-${{ hashFiles('wework-mobile/App.tsx', 'wework-mobile/index.ts', 'wework-mobile/app.json', 'wework-mobile/metro.config.js', 'wework-mobile/package.json', 'wework-mobile/pnpm-workspace.yaml', 'wework-mobile/src/**', 'wework-mobile/assets/**', 'wework-mobile/ios/Podfile', 'wework-mobile/ios/Podfile.properties.json', 'wework-mobile/ios/Wegent.xcodeproj/**', 'wework-mobile/ios/Wegent.xcworkspace/**', 'wework-mobile/ios/Wegent/**') }}
+          restore-keys: |
+            ${{ runner.os }}-${{ runner.arch }}-wework-mobile-xcode-products-v1-${{ hashFiles('wework-mobile/pnpm-lock.yaml', 'wework-mobile/ios/Podfile.lock') }}-
+
+      - name: Install Mobile dependencies
+        run: pnpm --dir wework-mobile install --frozen-lockfile
+
+      - name: Create iOS Simulator
+        if: steps.mobile-ios-dependencies-cache.outputs.cache-hit != 'true' || steps.mobile-executor-products-cache.outputs.cache-hit != 'true' || steps.mobile-xcode-products-cache.outputs.cache-hit != 'true'
+        run: .github/scripts/create-wework-mobile-ios-simulator.sh
+
+      - name: Build Mobile iOS cache
+        if: steps.mobile-ios-dependencies-cache.outputs.cache-hit != 'true' || steps.mobile-executor-products-cache.outputs.cache-hit != 'true' || steps.mobile-xcode-products-cache.outputs.cache-hit != 'true'
+        env:
+          EXPO_PUBLIC_BACKEND_URL: http://127.0.0.1:8000
+        run: |
+          .github/scripts/build-wework-mobile-ios-e2e-artifact.sh \
+            "$WEWORK_MOBILE_E2E_DEVICE" \
+            "$RUNNER_TEMP/wework-mobile-ios-warmup"
+
+      - name: Save Mobile pnpm store
+        if: steps.mobile-pnpm-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830
+        with:
+          path: ${{ steps.mobile-pnpm-store.outputs.path }}
+          key: ${{ steps.mobile-pnpm-cache.outputs.cache-primary-key }}
+
+      - name: Save Mobile iOS dependencies
+        if: steps.mobile-ios-dependencies-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            ~/Library/Caches/wegent/codex
+            ~/Library/Caches/CocoaPods
+            wework-mobile/ios/Pods
+          key: ${{ steps.mobile-ios-dependencies-cache.outputs.cache-primary-key }}
+
+      - name: Save Mobile Executor build products
+        if: steps.mobile-executor-products-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830
+        with:
+          path: executor/target
+          key: ${{ steps.mobile-executor-products-cache.outputs.cache-primary-key }}
+
+      - name: Save Mobile Xcode build products
+        if: steps.mobile-xcode-products-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830
+        with:
+          path: wework-mobile/node_modules/.cache/ios-e2e-derived-data
+          key: ${{ steps.mobile-xcode-products-cache.outputs.cache-primary-key }}
+
+      - name: Delete warmup Simulator
+        if: always()
+        run: |
+          if [[ -n "${WEWORK_MOBILE_E2E_DEVICE:-}" ]]; then
+            xcrun simctl shutdown "$WEWORK_MOBILE_E2E_DEVICE" || true
+            xcrun simctl delete "$WEWORK_MOBILE_E2E_DEVICE" || true
+          fi
 
   prepare-wework-desktop-image:
     name: Prepare Wework Desktop E2E Image

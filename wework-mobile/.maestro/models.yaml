@@ -1,0 +1,53 @@
+appId: com.wecode.wegent
+name: Mobile quick and advanced model controls
+tags:
+  - mobile-e2e
+---
+- runFlow: subflows/login.yaml
+- runFlow: subflows/open-project-chat.yaml
+- tapOn:
+    id: new-chat-input
+- inputText: model controls
+- tapOn:
+    id: new-chat-model
+- assertVisible:
+    id: quick-model-selector
+- assertVisible:
+    id: quick-reasoning-unavailable
+- tapOn:
+    id: quick-model-advanced
+- assertVisible:
+    id: advanced-model-sheet
+- tapOn:
+    id: advanced-model-row
+- tapOn:
+    id: model-option-user-${E2E_MODEL_ID}
+- tapOn:
+    id: advanced-reasoning-row
+- tapOn:
+    id: reasoning-option-high
+- tapOn:
+    id: advanced-speed-row
+- tapOn:
+    id: speed-option-fast
+- tapOn:
+    id: advanced-model-close
+- tapOn:
+    id: new-chat-input
+- tapOn:
+    id: new-chat-model
+- assertVisible:
+    id: quick-reasoning-slider
+- swipe:
+    from:
+      id: quick-reasoning-slider
+    direction: RIGHT
+    duration: 600
+- tapOn:
+    id: quick-model-advanced
+- assertVisible:
+    id: advanced-model-sheet
+- tapOn:
+    id: advanced-model-close
+- assertVisible:
+    id: new-chat-input

@@ -44,23 +44,54 @@ pub(crate) struct CodexTranscriptPage {
     pub after_cursor: Option<String>,
 }
 
+pub(crate) async fn load_codex_turn_metadata_page(
+    client: &CodexAppServerClient,
+    request: CodexTranscriptRequest<'_>,
+) -> Result<CodexTranscriptPage, String> {
+    let mut thread = read_thread_metadata(client, request.thread_id).await?;
+    let page = load_turn_metadata_page(
+        client,
+        request.thread_id,
+        request.cursor,
+        request.limit,
+        request.direction,
+    )
+    .await?;
+    let mut turns = page
+        .get("data")
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default();
+    for turn in &mut turns {
+        let item_count = turn
+            .get("itemCount")
+            .and_then(Value::as_u64)
+            .or_else(|| {
+                turn.get("items")
+                    .and_then(Value::as_array)
+                    .map(|items| items.len() as u64)
+            })
+            .unwrap_or_default();
+        turn["items"] = Value::Array(Vec::new());
+        turn["itemsView"] = Value::String("notLoaded".to_owned());
+        turn["itemCount"] = json!(item_count);
+    }
+    if request.direction == CodexTranscriptDirection::Descending {
+        turns.reverse();
+    }
+    thread["turns"] = Value::Array(turns);
+    Ok(CodexTranscriptPage {
+        thread,
+        before_cursor: page_cursor(&page, request.direction, true),
+        after_cursor: page_cursor(&page, request.direction, false),
+    })
+}
+
 pub(crate) async fn load_codex_transcript(
     client: &CodexAppServerClient,
     request: CodexTranscriptRequest<'_>,
 ) -> Result<CodexTranscriptPage, String> {
-    let metadata_response = client
-        .request(
-            "thread/read",
-            json!({"threadId": request.thread_id, "includeTurns": false}),
-        )
-        .await?;
-    let mut thread = metadata_response
-        .get("thread")
-        .cloned()
-        .ok_or_else(|| "thread/read returned a response without thread".to_owned())?;
-    if !thread.is_object() {
-        return Err("thread/read returned a non-object thread".to_owned());
-    }
+    let mut thread = read_thread_metadata(client, request.thread_id).await?;
     let paginated_history = thread_uses_paginated_history(&thread);
     let mut cursor = request.cursor.map(ToOwned::to_owned);
     let mut turns = Vec::new();
@@ -126,6 +157,56 @@ pub(crate) async fn load_codex_transcript(
             return Err("thread/turns/list returned a repeated cursor".to_owned());
         }
         cursor = Some(next_cursor);
+    }
+}
+
+async fn read_thread_metadata(
+    client: &CodexAppServerClient,
+    thread_id: &str,
+) -> Result<Value, String> {
+    let metadata_response = client
+        .request(
+            "thread/read",
+            json!({"threadId": thread_id, "includeTurns": false}),
+        )
+        .await?;
+    let thread = metadata_response
+        .get("thread")
+        .cloned()
+        .ok_or_else(|| "thread/read returned a response without thread".to_owned())?;
+    if !thread.is_object() {
+        return Err("thread/read returned a non-object thread".to_owned());
+    }
+    Ok(thread)
+}
+
+async fn load_turn_metadata_page(
+    client: &CodexAppServerClient,
+    thread_id: &str,
+    cursor: Option<&str>,
+    limit: usize,
+    direction: CodexTranscriptDirection,
+) -> Result<Value, String> {
+    client
+        .request(
+            "thread/turns/list",
+            json!({
+                "threadId": thread_id,
+                "cursor": cursor,
+                "limit": limit,
+                "sortDirection": direction.as_str(),
+                "itemsView": "notLoaded",
+            }),
+        )
+        .await
+}
+
+fn page_cursor(page: &Value, direction: CodexTranscriptDirection, before: bool) -> Option<String> {
+    match (direction, before) {
+        (CodexTranscriptDirection::Descending, true)
+        | (CodexTranscriptDirection::Ascending, false) => string_field(page, "nextCursor"),
+        (CodexTranscriptDirection::Descending, false)
+        | (CodexTranscriptDirection::Ascending, true) => string_field(page, "backwardsCursor"),
     }
 }
 

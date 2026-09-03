@@ -130,6 +130,23 @@ class RuntimeTranscriptRequest(RuntimeTaskAddress):
     include_full_content: bool = Field(default=False, alias="includeFullContent")
 
 
+class RuntimeHistoryTurnsRequest(RuntimeTaskAddress):
+    """Request a lightweight page of Runtime conversation turns."""
+
+    limit: Optional[int] = Field(default=None, ge=1, le=20)
+    before_cursor: Optional[str] = Field(default=None, alias="beforeCursor")
+    after_cursor: Optional[str] = Field(default=None, alias="afterCursor")
+    refresh: bool = False
+
+
+class RuntimeHistoryItemsRequest(RuntimeTaskAddress):
+    """Request one byte-bounded page of canonical items for a Runtime turn."""
+
+    turn_id: str = Field(..., alias="turnId", min_length=1)
+    cursor: Optional[str] = None
+    limit: Optional[int] = Field(default=None, ge=1, le=50)
+
+
 class RuntimeFileChangesRevertRequest(BaseModel):
     """Revert a device-local runtime file-change artifact."""
 
@@ -492,7 +509,13 @@ class RuntimeTranscriptResponse(BaseModel):
     workspace_path: str = Field(..., alias="workspacePath")
     runtime: RuntimeName
     title: Optional[str] = None
+    running: Optional[bool] = None
     messages: list[NormalizedRuntimeMessage] = Field(default_factory=list)
+    turns: list[dict[str, Any]] = Field(default_factory=list)
+    turn_navigation: list[dict[str, Any]] = Field(
+        default_factory=list,
+        alias="turnNavigation",
+    )
     context_usage: Optional[dict[str, Any]] = Field(default=None, alias="contextUsage")
     full_content: bool = Field(default=False, alias="fullContent")
     range_start: Optional[int] = Field(default=None, alias="rangeStart")
@@ -502,6 +525,43 @@ class RuntimeTranscriptResponse(BaseModel):
     has_more_after: bool = Field(default=False, alias="hasMoreAfter")
     after_cursor: Optional[str] = Field(default=None, alias="afterCursor")
     parse_error: Optional[str] = Field(default=None, alias="parseError")
+
+
+class RuntimeHistoryTurnsResponse(BaseModel):
+    """Lightweight Runtime turn page; item payloads are loaded separately."""
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    schema_version: int = Field(2, alias="schemaVersion")
+    local_task_id: str = Field(..., alias="taskId")
+    workspace_path: str = Field(..., alias="workspacePath")
+    runtime: RuntimeName
+    running: Optional[bool] = None
+    context_usage: Optional[dict[str, Any]] = Field(default=None, alias="contextUsage")
+    turns: list[dict[str, Any]] = Field(default_factory=list)
+    turn_navigation: list[dict[str, Any]] = Field(
+        default_factory=list,
+        alias="turnNavigation",
+    )
+    range_start: Optional[int] = Field(default=None, alias="rangeStart")
+    range_end: Optional[int] = Field(default=None, alias="rangeEnd")
+    has_more_before: bool = Field(default=False, alias="hasMoreBefore")
+    before_cursor: Optional[str] = Field(default=None, alias="beforeCursor")
+    has_more_after: bool = Field(default=False, alias="hasMoreAfter")
+    after_cursor: Optional[str] = Field(default=None, alias="afterCursor")
+
+
+class RuntimeHistoryItemsResponse(BaseModel):
+    """Byte-bounded canonical item page for one Runtime turn."""
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    schema_version: int = Field(2, alias="schemaVersion")
+    local_task_id: str = Field(..., alias="taskId")
+    turn_id: str = Field(..., alias="turnId")
+    items: list[dict[str, Any]] = Field(default_factory=list)
+    has_more: bool = Field(default=False, alias="hasMore")
+    next_cursor: Optional[str] = Field(default=None, alias="nextCursor")
 
 
 class RuntimeWorkSearchRequest(BaseModel):

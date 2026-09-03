@@ -2,6 +2,7 @@ import Ionicons from '@expo/vector-icons/Ionicons'
 import * as Clipboard from 'expo-clipboard'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import {
+  Alert,
   FlatList,
   type GestureResponderEvent,
   type LayoutChangeEvent,
@@ -32,8 +33,11 @@ interface MessageListProps {
   bottomInset: number
   conversationId: string
   entryRevision: number
+  hasMoreHistory: boolean
+  loadingOlderHistory: boolean
   messages: ChatMessage[]
   loading: boolean
+  onLoadOlderHistory: () => Promise<void>
   topInset: number
 }
 
@@ -46,8 +50,11 @@ export function MessageList({
   bottomInset,
   conversationId,
   entryRevision,
+  hasMoreHistory,
+  loadingOlderHistory,
   messages,
   loading,
+  onLoadOlderHistory,
   topInset,
 }: MessageListProps) {
   const listRef = useRef<FlatList<ChatMessage>>(null)
@@ -56,6 +63,7 @@ export function MessageList({
   const contentHeightRef = useRef(0)
   const viewportHeightRef = useRef(0)
   const scrollFrameRef = useRef<number | null>(null)
+  const olderLoadRequestedRef = useRef(false)
   const [menuSelection, setMenuSelection] = useState<MessageMenuSelection | null>(null)
   const scrollToLatest = useCallback(() => {
     if (!followsLatestRef.current || userDraggingRef.current) return
@@ -86,6 +94,10 @@ export function MessageList({
     scrollToLatest()
   }, [messages, scrollToLatest])
 
+  useEffect(() => {
+    if (!loadingOlderHistory) olderLoadRequestedRef.current = false
+  }, [loadingOlderHistory])
+
   useEffect(
     () => () => {
       if (scrollFrameRef.current !== null) cancelAnimationFrame(scrollFrameRef.current)
@@ -109,14 +121,26 @@ export function MessageList({
     [scrollToLatest]
   )
 
-  const handleScroll = useCallback((event: NativeSyntheticEvent<NativeScrollEvent>) => {
-    if (!userDraggingRef.current) return
-    followsLatestRef.current = reduceMessageListFollow(followsLatestRef.current, {
-      type: 'scroll-position-changed',
-      metrics: event.nativeEvent,
-      userInitiated: true,
-    })
-  }, [])
+  const handleScroll = useCallback(
+    (event: NativeSyntheticEvent<NativeScrollEvent>) => {
+      if (!userDraggingRef.current) return
+      followsLatestRef.current = reduceMessageListFollow(followsLatestRef.current, {
+        type: 'scroll-position-changed',
+        metrics: event.nativeEvent,
+        userInitiated: true,
+      })
+      if (
+        event.nativeEvent.contentOffset.y <= 96 &&
+        hasMoreHistory &&
+        !loadingOlderHistory &&
+        !olderLoadRequestedRef.current
+      ) {
+        olderLoadRequestedRef.current = true
+        void onLoadOlderHistory()
+      }
+    },
+    [hasMoreHistory, loadingOlderHistory, onLoadOlderHistory]
+  )
 
   const handleScrollBeginDrag = useCallback((event: NativeSyntheticEvent<NativeScrollEvent>) => {
     userDraggingRef.current = true
@@ -140,14 +164,20 @@ export function MessageList({
     })
   }, [])
 
-  const copySelectedMessage = useCallback(() => {
+  const copySelectedMessage = useCallback(async () => {
     if (!menuSelection) return
     const content = menuSelection.content
-    setMenuSelection(null)
-    void Clipboard.setStringAsync(content)
+    try {
+      await Clipboard.setStringAsync(content)
+      setMenuSelection(null)
+    } catch (cause) {
+      Alert.alert('无法复制消息', cause instanceof Error ? cause.message : String(cause))
+    }
   }, [menuSelection])
 
-  if (loading && messages.length === 0) return <ActivityIndicator style={styles.center} />
+  if (loading && messages.length === 0) {
+    return <ActivityIndicator style={styles.center} testID="message-list-loading" />
+  }
 
   return (
     <>
@@ -161,6 +191,11 @@ export function MessageList({
         keyboardDismissMode="interactive"
         keyboardShouldPersistTaps="handled"
         keyExtractor={message => message.id}
+        ListHeaderComponent={
+          loadingOlderHistory ? (
+            <ActivityIndicator style={styles.historyLoader} testID="history-loading" />
+          ) : null
+        }
         ListFooterComponent={messages.length > 0 ? <View style={{ height: bottomInset }} /> : null}
         ListEmptyComponent={
           <View style={styles.empty}>
@@ -180,6 +215,7 @@ export function MessageList({
         renderItem={({ item }) => <Message message={item} onLongPress={openMessageMenu} />}
         scrollEventThrottle={16}
         showsVerticalScrollIndicator={false}
+        maintainVisibleContentPosition={{ minIndexForVisible: 0 }}
         testID="message-list"
       />
       <MessageContextMenu
@@ -250,7 +286,11 @@ function Message({
       !message.content &&
       !thinkingPreview &&
       !displayRows.length ? (
-        <ActivityIndicator size={16} style={styles.streaming} />
+        <ActivityIndicator
+          size={16}
+          style={styles.streaming}
+          testID="assistant-streaming-indicator"
+        />
       ) : null}
       {message.error ? (
         <Text style={[styles.error, { color: theme.colors.error }]} variant="bodyMedium">
@@ -458,6 +498,7 @@ function compactCount(value: number): string {
 
 const styles = StyleSheet.create({
   center: { flex: 1 },
+  historyLoader: { marginVertical: 12 },
   content: {
     paddingHorizontal: 18,
   },

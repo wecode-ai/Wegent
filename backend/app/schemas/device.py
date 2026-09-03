@@ -100,6 +100,37 @@ class RuntimeTaskCreateFeatures(BaseModel):
     features: Dict[str, bool] = Field(default_factory=dict)
 
 
+class RuntimeHistoryFeatures(BaseModel):
+    """Runtime conversation-history protocol support and page budgets."""
+
+    model_config = ConfigDict(populate_by_name=True, extra="ignore")
+
+    schema_versions: List[int] = Field(
+        default_factory=list,
+        alias="schemaVersions",
+    )
+    default_turn_page_size: int = Field(
+        default=5,
+        ge=1,
+        alias="defaultTurnPageSize",
+    )
+    max_turn_page_size: int = Field(
+        default=20,
+        ge=1,
+        alias="maxTurnPageSize",
+    )
+    default_item_page_size: int = Field(
+        default=20,
+        ge=1,
+        alias="defaultItemPageSize",
+    )
+    max_page_bytes: int = Field(
+        default=393216,
+        ge=65536,
+        alias="maxPageBytes",
+    )
+
+
 class RuntimeFeatures(BaseModel):
     """Online features implemented by the currently connected Runtime."""
 
@@ -109,6 +140,11 @@ class RuntimeFeatures(BaseModel):
     runtime_task_create: Optional[RuntimeTaskCreateFeatures] = Field(
         default=None,
         alias="runtimeTaskCreate",
+    )
+    runtime_history: Optional[RuntimeHistoryFeatures] = Field(
+        default=None,
+        alias="runtimeHistory",
+        exclude_if=lambda value: value is None,
     )
     worktrees: Optional[RuntimeWorktreeFeatures] = None
 

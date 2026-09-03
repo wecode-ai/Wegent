@@ -1,3 +1,4 @@
+import type { RuntimeFeatureSet } from './api'
 import type { DeviceSessionTransport, DeviceSessionType } from './device-sessions'
 
 export interface DeviceInfo {
@@ -20,6 +21,7 @@ export interface DeviceInfo {
   client_ip?: string | null
   runtime_transfer_host?: string | null
   runtime_instance_id?: string | null
+  runtime_features?: RuntimeFeatureSet | null
   app_device_id?: string | null
   socket_device_id?: string | null
   runtime_routes?: Array<{

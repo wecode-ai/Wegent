@@ -114,6 +114,7 @@ mod claude_turns;
 mod codex_config;
 mod collection;
 mod fork_transfer;
+mod history;
 mod hooks;
 mod notifications;
 mod plugin_install;
@@ -140,8 +141,8 @@ use super::{
     codex_notifications::{codex_notification, is_root_codex_turn_event},
     codex_rollout::rollout_context_usage,
     codex_transcript_page::{
-        load_codex_transcript, CodexTranscriptDirection, CodexTranscriptPage,
-        CodexTranscriptRequest,
+        load_codex_transcript, load_codex_turn_metadata_page, CodexTranscriptDirection,
+        CodexTranscriptPage, CodexTranscriptRequest,
     },
     connectors::ConnectorRuntime,
     events::{emit_response_event, is_context_compaction_request, CodexNotificationEventMapper},
@@ -868,6 +869,8 @@ impl RuntimeWorkRpcHandler {
             "runtime.tasks.running_count" => Ok(self.running_task_count()),
             "runtime.tasks.search" => self.search_tasks(payload).await,
             "runtime.tasks.transcript" => self.transcript(payload).await,
+            "runtime.tasks.turns.list" => self.list_history_turns(payload).await,
+            "runtime.tasks.items.list" => self.list_history_turn_items(payload).await,
             "runtime.tasks.create" => self.create_task(payload).await,
             "runtime.text.generate" => self.generate_text(payload).await,
             "runtime.tasks.fork_at_turn" => self.fork_task_at_turn(payload).await,

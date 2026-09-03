@@ -49,6 +49,10 @@ from app.schemas.runtime_work import (
     RuntimeGlobalIMNotificationUpdateRequest,
     RuntimeGuidanceRequest,
     RuntimeGuidanceResponse,
+    RuntimeHistoryItemsRequest,
+    RuntimeHistoryItemsResponse,
+    RuntimeHistoryTurnsRequest,
+    RuntimeHistoryTurnsResponse,
     RuntimeIMNotificationPresenceResponse,
     RuntimeIMNotificationPresenceUpdateRequest,
     RuntimeIMNotificationSession,
@@ -487,6 +491,71 @@ async def get_runtime_transcript(
         result.get("beforeCursor"),
     )
     return RuntimeTranscriptResponse.model_validate(result)
+
+
+async def list_runtime_history_turns(
+    *,
+    db: Session,
+    user_id: int,
+    request: RuntimeHistoryTurnsRequest,
+) -> RuntimeHistoryTurnsResponse:
+    """Read a lightweight turn page from the owning Runtime."""
+
+    result = await _call_runtime_history_rpc(
+        db=db,
+        user_id=user_id,
+        address=request,
+        method="runtime.tasks.turns.list",
+        payload=request.model_dump(by_alias=True, exclude_none=True),
+    )
+    return RuntimeHistoryTurnsResponse.model_validate(result)
+
+
+async def list_runtime_history_items(
+    *,
+    db: Session,
+    user_id: int,
+    request: RuntimeHistoryItemsRequest,
+) -> RuntimeHistoryItemsResponse:
+    """Read one byte-bounded canonical item page from the owning Runtime."""
+
+    result = await _call_runtime_history_rpc(
+        db=db,
+        user_id=user_id,
+        address=request,
+        method="runtime.tasks.items.list",
+        payload=request.model_dump(by_alias=True, exclude_none=True),
+    )
+    return RuntimeHistoryItemsResponse.model_validate(result)
+
+
+async def _call_runtime_history_rpc(
+    *,
+    db: Session,
+    user_id: int,
+    address: RuntimeTaskAddress,
+    method: str,
+    payload: dict[str, Any],
+) -> dict[str, Any]:
+    normalized_address = _normalized_address(address)
+    _ensure_owned_device(db, user_id, normalized_address.device_id)
+    _touch_workspace_mapping(db, user_id, normalized_address)
+    payload.update(_runtime_task_address_payload(normalized_address))
+    try:
+        result = await runtime_rpc_service.call(
+            user_id=user_id,
+            device_id=normalized_address.device_id,
+            method=method,
+            payload=payload,
+            timeout_seconds=RUNTIME_TRANSCRIPT_TIMEOUT_SECONDS,
+        )
+    except RuntimeRpcError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=str(exc),
+        ) from exc
+    _raise_runtime_rpc_failure(result)
+    return result
 
 
 async def search_runtime_work(

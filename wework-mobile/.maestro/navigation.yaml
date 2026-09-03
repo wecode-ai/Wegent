@@ -1,0 +1,25 @@
+appId: com.wecode.wegent
+name: Mobile device scope and navigation
+tags:
+  - mobile-e2e
+---
+- runFlow: subflows/login.yaml
+- runFlow: subflows/ensure-project.yaml
+- extendedWaitUntil:
+    visible:
+      id: workspace-new-${E2E_DEVICE_ID}-${E2E_WORKSPACE_PATH}
+    timeout: 30000
+- tapOn:
+    id: device-option-${E2E_SECOND_DEVICE_ID}
+- assertNotVisible:
+    id: project-${E2E_PROJECT_NAME}
+- tapOn:
+    id: device-option-${E2E_DEVICE_ID}
+- assertVisible:
+    id: project-${E2E_PROJECT_NAME}
+- tapOn:
+    id: device-option-all
+- assertVisible: 仅显示在线设备
+- tapOn:
+    id: device-option-all
+- assertVisible: 显示全部设备

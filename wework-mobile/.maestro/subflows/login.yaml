@@ -1,0 +1,39 @@
+appId: com.wecode.wegent
+---
+- launchApp:
+    clearState: true
+- runFlow:
+    when:
+      visible:
+        id: conversation-list
+    commands:
+      - tapOn:
+          id: drawer-actions
+      - tapOn:
+          id: drawer-settings
+      - tapOn:
+          id: disconnect-backend
+- extendedWaitUntil:
+    visible:
+      id: authorization-card
+    timeout: 30000
+- tapOn:
+    id: authorization-server-change
+- tapOn:
+    id: backend-address
+- eraseText
+- setClipboard: ${E2E_BACKEND_URL}
+- pasteText
+- hideKeyboard
+- tapOn:
+    id: authorize-login
+- runScript: ../scripts/signal-authorization-complete.js
+- launchApp
+- extendedWaitUntil:
+    visible:
+      id: conversation-list
+    timeout: 120000
+- assertVisible:
+    id: device-option-${E2E_DEVICE_ID}
+- assertVisible:
+    id: device-option-${E2E_SECOND_DEVICE_ID}

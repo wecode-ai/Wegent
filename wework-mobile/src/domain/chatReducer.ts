@@ -14,6 +14,7 @@ export interface RuntimeStreamEvent {
 
 export type ChatAction =
   | { type: 'replace'; messages: RuntimeTranscriptMessage[] }
+  | { type: 'prepend'; messages: RuntimeTranscriptMessage[] }
   | { type: 'optimistic-user'; id: string; content: string; createdAt: number }
   | { type: 'stream'; event: RuntimeStreamEvent }
   | { type: 'fail'; id: string; error: string }
@@ -43,6 +44,13 @@ export function chatReducer(state: ChatMessage[], action: ChatAction): ChatMessa
           .filter(message => ['user', 'assistant', 'system'].includes(message.role))
           .map(toChatMessage)
       )
+    case 'prepend':
+      return uniqueMessages([
+        ...action.messages
+          .filter(message => ['user', 'assistant', 'system'].includes(message.role))
+          .map(toChatMessage),
+        ...state,
+      ])
     case 'optimistic-user':
       return upsertMessage(state, {
         id: action.id,

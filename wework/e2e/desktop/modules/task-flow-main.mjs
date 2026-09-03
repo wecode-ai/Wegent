@@ -1588,7 +1588,7 @@ last_updated = "2026-07-30T00:00:00Z"`
         restartDesktopApp,
         TURN_NAVIGATION_ONLY_TURN_COUNT
       )
-      await verifyTurnNavigationTracksVisibleTurnMessages(control, 2)
+      await verifyTurnNavigationTracksVisibleTurnMessages(control, 10)
       console.log(`Wework desktop turn-navigation E2E passed. Evidence: ${resultDir}`)
       return
     }

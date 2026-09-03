@@ -20,6 +20,7 @@ import {
   appendAcceptedRuntimeConversationUser,
   appendRuntimeConversationGuidance,
   mergeRuntimeConversationTurns,
+  mergeRuntimeConversationTurnsBefore,
   projectRuntimeConversationTurns,
   reduceRuntimeConversationTurns,
 } from './runtimeConversationTurns'
@@ -280,6 +281,18 @@ export function reconcileRuntimeConversationSnapshot(
   const key = runtimeConversationKey(address)
   const localTurns = turnsByConversation.get(key) ?? []
   const turns = mergeRuntimeConversationTurns(localTurns, snapshotTurns)
+  cacheRuntimeConversationTurns(key, turns)
+  notifyRuntimeConversation(key)
+  return projectRuntimeConversationTurns(turns)
+}
+
+export function prependRuntimeConversationSnapshot(
+  address: RuntimeTaskAddress,
+  snapshotTurns: RuntimeConversationTurn[]
+): WorkbenchMessage[] {
+  const key = runtimeConversationKey(address)
+  const localTurns = turnsByConversation.get(key) ?? []
+  const turns = mergeRuntimeConversationTurnsBefore(localTurns, snapshotTurns)
   cacheRuntimeConversationTurns(key, turns)
   notifyRuntimeConversation(key)
   return projectRuntimeConversationTurns(turns)

@@ -85,19 +85,17 @@ export function ComposerContextMenu({
   const menuHeight = Math.max(280, Math.min(MENU_PEEK_HEIGHT, anchor.y - 24, height * 0.72))
 
   const run = (action: () => void) => {
-    onDismiss()
     action()
+    onDismiss()
   }
 
   if (!visible) return null
 
   return (
     <Portal>
-      <Pressable onPress={onDismiss} style={styles.backdrop} testID="composer-menu-backdrop">
-        <Pressable
-          onPress={event => event.stopPropagation()}
-          style={[styles.positioner, { bottom, height: menuHeight, left, width: menuWidth }]}
-        >
+      <View style={styles.overlay}>
+        <Pressable onPress={onDismiss} style={styles.backdrop} testID="composer-menu-backdrop" />
+        <View style={[styles.positioner, { bottom, height: menuHeight, left, width: menuWidth }]}>
           <LiquidGlassSurface
             colorScheme={theme.dark ? 'dark' : 'light'}
             fallbackStyle={{
@@ -105,7 +103,7 @@ export function ComposerContextMenu({
               borderColor: theme.colors.outlineVariant,
             }}
             glassEffectStyle="regular"
-            isInteractive
+            isInteractive={false}
             style={styles.glassMenu}
             testID="composer-context-menu"
             tintColor={theme.dark ? '#262626' : '#f4f4f4'}
@@ -113,6 +111,7 @@ export function ComposerContextMenu({
             <ScrollView
               bounces={false}
               contentContainerStyle={styles.content}
+              keyboardShouldPersistTaps="handled"
               showsVerticalScrollIndicator={false}
             >
               <MenuAction
@@ -173,8 +172,8 @@ export function ComposerContextMenu({
               )}
             </ScrollView>
           </LiquidGlassSurface>
-        </Pressable>
-      </Pressable>
+        </View>
+      </View>
     </Portal>
   )
 }
@@ -247,6 +246,7 @@ function PluginAction({ app, onPress }: { app: RuntimeComposerApp; onPress: () =
 }
 
 const styles = StyleSheet.create({
+  overlay: { position: 'absolute', inset: 0 },
   backdrop: { position: 'absolute', inset: 0 },
   positioner: { position: 'absolute' },
   glassMenu: { flex: 1, borderRadius: 32, overflow: 'hidden' },

@@ -75,6 +75,7 @@ export function ProjectDialog(props: ProjectDialogProps) {
           testID="project-dialog-backdrop"
         >
           <Pressable
+            accessible={false}
             accessibilityViewIsModal
             onPress={event => event.stopPropagation()}
             style={styles.positioner}
@@ -208,7 +209,7 @@ export function ProjectDialog(props: ProjectDialogProps) {
                 </View>
 
                 {error ? (
-                  <View style={styles.errorRow}>
+                  <View style={styles.errorRow} testID="project-create-error">
                     <Ionicons color={theme.colors.error} name="alert-circle-outline" size={18} />
                     <Text
                       style={[styles.errorText, { color: theme.colors.error }]}

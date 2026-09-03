@@ -1,0 +1,99 @@
+appId: com.wecode.wegent
+name: Mobile search paged transcript history and copy
+tags:
+  - mobile-e2e
+---
+- runFlow: subflows/login.yaml
+- runFlow: subflows/open-project-chat.yaml
+- runFlow: subflows/select-runtime-model.yaml
+- runScript: scripts/signal-checkpoint-ready.js
+- tapOn:
+    id: new-chat-input
+- setClipboard: ${E2E_HISTORY_PROMPT_PREFIX}_1
+- pasteText
+- tapOn:
+    id: new-chat-send
+- extendedWaitUntil:
+    visible: '.*${E2E_HISTORY_COMPLETION_PREFIX}_1.*'
+    timeout: 120000
+- tapOn:
+    id: chat-input
+- setClipboard: ${E2E_HISTORY_PROMPT_PREFIX}_2
+- pasteText
+- tapOn:
+    id: chat-send
+- extendedWaitUntil:
+    visible: '.*${E2E_HISTORY_COMPLETION_PREFIX}_2.*'
+    timeout: 120000
+- tapOn:
+    id: chat-input
+- setClipboard: ${E2E_HISTORY_PROMPT_PREFIX}_3
+- pasteText
+- tapOn:
+    id: chat-send
+- extendedWaitUntil:
+    visible: '.*${E2E_HISTORY_COMPLETION_PREFIX}_3.*'
+    timeout: 120000
+- tapOn:
+    id: chat-input
+- setClipboard: ${E2E_HISTORY_PROMPT_PREFIX}_4
+- pasteText
+- tapOn:
+    id: chat-send
+- extendedWaitUntil:
+    visible: '.*${E2E_HISTORY_COMPLETION_PREFIX}_4.*'
+    timeout: 120000
+- tapOn:
+    id: chat-input
+- setClipboard: ${E2E_HISTORY_PROMPT_PREFIX}_5
+- pasteText
+- tapOn:
+    id: chat-send
+- extendedWaitUntil:
+    visible: '.*${E2E_HISTORY_COMPLETION_PREFIX}_5.*'
+    timeout: 120000
+- tapOn:
+    id: chat-input
+- setClipboard: ${E2E_HISTORY_PROMPT_PREFIX}_6
+- pasteText
+- tapOn:
+    id: chat-send
+- extendedWaitUntil:
+    visible: '.*${E2E_HISTORY_COMPLETION_PREFIX}_6.*'
+    timeout: 120000
+- stopApp
+- launchApp
+- extendedWaitUntil:
+    visible:
+      id: conversation-list
+    timeout: 30000
+- tapOn:
+    id: conversation-search
+- setClipboard: ${E2E_HISTORY_PROMPT_PREFIX}_1
+- pasteText
+- hideKeyboard
+- assertVisible: ${E2E_HISTORY_PROMPT_PREFIX}_1.*
+- tapOn:
+    id: conversation-.*
+- extendedWaitUntil:
+    visible: '.*${E2E_HISTORY_COMPLETION_PREFIX}_6.*'
+    timeout: 30000
+- scrollUntilVisible:
+    direction: UP
+    element:
+      id: message-assistant-.*
+      text: '.*${E2E_HISTORY_COMPLETION_PREFIX}_1.*'
+    speed: 100
+    timeout: 120000
+    visibilityPercentage: 10
+- longPressOn:
+    id: message-assistant-.*
+    text: '.*${E2E_HISTORY_COMPLETION_PREFIX}_1.*'
+- assertVisible:
+    id: message-context-menu
+- tapOn:
+    id: message-copy
+- extendedWaitUntil:
+    notVisible:
+      id: message-context-menu
+    timeout: 10000

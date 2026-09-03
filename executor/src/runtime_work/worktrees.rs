@@ -1308,6 +1308,11 @@ fn worktree_preflight(
             response.git_common_dir = Some(repository.git_common_dir.display().to_string());
             response.repo_root_fingerprint = Some(repository.repo_root_fingerprint);
 
+            if response.git_ref.is_none() {
+                response.git_ref = Some(current_git_ref(&repository.repo_root));
+                response.ref_valid = Some(false);
+            }
+
             let common_dir_writable =
                 probe_directory_writable(&repository.git_common_dir).map_err(|error| {
                     WorktreeValidationFailure::new(
@@ -1323,7 +1328,7 @@ fn worktree_preflight(
                 validation_error = Some(error);
             }
 
-            if let Some(git_ref) = git_ref.as_deref() {
+            if let Some(git_ref) = response.git_ref.as_deref() {
                 match git_ref_exists(&repository.repo_root, git_ref) {
                     Ok(true) => response.ref_valid = Some(true),
                     Ok(false) => {
@@ -1537,6 +1542,11 @@ fn git_ref_exists(repo_root: &Path, git_ref: &str) -> Result<bool, String> {
         .env_remove("GIT_WORK_TREE");
     let output = command.output().map_err(|error| error.to_string())?;
     Ok(output.status.success())
+}
+
+fn current_git_ref(repo_root: &Path) -> String {
+    git_output(repo_root, &["symbolic-ref", "--quiet", "HEAD"], None)
+        .unwrap_or_else(|_| "HEAD".to_owned())
 }
 
 fn probe_directory_writable(path: &Path) -> Result<(), String> {
@@ -2419,7 +2429,8 @@ mod tests {
             })
             .unwrap();
 
-        let preflight = manager.preflight(&source, Some("HEAD"));
+        let expected_ref = git_output(&source, &["symbolic-ref", "--quiet", "HEAD"], None).unwrap();
+        let preflight = manager.preflight(&source, None);
 
         assert!(preflight.supported);
         assert!(preflight.source_exists);
@@ -2427,6 +2438,7 @@ mod tests {
         assert!(preflight.git_repository);
         assert!(preflight.git_common_dir_valid);
         assert!(preflight.git_common_dir_writable);
+        assert_eq!(preflight.git_ref.as_deref(), Some(expected_ref.as_str()));
         assert_eq!(preflight.ref_valid, Some(true));
         assert!(preflight.writable);
         assert_eq!(preflight.error_code, None);

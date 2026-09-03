@@ -147,14 +147,17 @@ function RuntimeApplication({
                   devices={runtime.devices}
                   entryRevision={conversationEntryRevision}
                   gitRef={runtime.gitRef}
+                  hasMoreHistory={runtime.hasMoreHistory}
                   isNew={isNewConversation}
                   loading={runtime.loading}
+                  loadingOlderHistory={runtime.loadingOlderHistory}
                   messages={runtime.messages}
                   model={runtime.selectedModel}
                   modelOptions={runtime.selectedModelOptions}
                   permissionMode={runtime.permissionMode}
                   onBack={navigation.goBack}
                   onLoadApps={runtime.loadComposerApps}
+                  onLoadOlderHistory={runtime.loadOlderHistory}
                   onMore={() => setSettingsVisible(true)}
                   onNewConversation={() =>
                     runtime.startNewConversation(runtime.selectedWorkspace ?? undefined)
@@ -208,7 +211,11 @@ function RuntimeApplication({
       />
 
       <Portal>
-        <Dialog onDismiss={() => setSettingsVisible(false)} visible={settingsVisible}>
+        <Dialog
+          onDismiss={() => setSettingsVisible(false)}
+          testID="settings-dialog"
+          visible={settingsVisible}
+        >
           <Dialog.Title>连接设置</Dialog.Title>
           <Dialog.Content style={styles.settingsContent}>
             <Text variant="labelLarge">Backend</Text>
@@ -265,6 +272,7 @@ function RuntimeApplication({
         action={{ label: '重试', onPress: () => void runtime.refresh() }}
         duration={5000}
         onDismiss={runtime.clearError}
+        testID="runtime-error"
         visible={Boolean(runtime.error)}
       >
         {runtime.error}

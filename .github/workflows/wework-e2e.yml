@@ -30,6 +30,9 @@ defaults:
   run:
     shell: bash
 
+env:
+  MAESTRO_VERSION: 2.10.0
+
 jobs:
   changes:
     name: Detect Wework E2E Changes
@@ -49,6 +52,8 @@ jobs:
       wework_desktop_other_e2e: ${{ steps.classify.outputs.wework_desktop_other_e2e }}
       wework_desktop_other_e2e_matrix: ${{ steps.classify.outputs.wework_desktop_other_e2e_matrix }}
       wework_desktop_macos_inspector_e2e: ${{ steps.classify.outputs.wework_desktop_macos_inspector_e2e }}
+      wework_mobile_e2e: ${{ steps.classify.outputs.wework_mobile_e2e }}
+      wework_mobile_e2e_matrix: ${{ steps.classify.outputs.wework_mobile_e2e_matrix }}
 
     steps:
       - name: Checkout code
@@ -67,6 +72,7 @@ jobs:
           if [[ "$FORCE_ALL" == "true" ]]; then
             .github/scripts/classify-ci-changes.sh --all
             .github/scripts/classify-wework-desktop-e2e.sh --all
+            .github/scripts/classify-wework-mobile-e2e.sh --all
           else
             changed_files="$(mktemp)"
             git diff --name-only "$BASE_SHA...$HEAD_SHA" > "$changed_files"
@@ -78,6 +84,7 @@ jobs:
             else
               .github/scripts/classify-wework-desktop-e2e.sh < "$changed_files"
             fi
+            .github/scripts/classify-wework-mobile-e2e.sh < "$changed_files"
           fi
 
       - name: Resolve Wework E2E image
@@ -869,6 +876,254 @@ jobs:
           retention-days: 7
           compression-level: 0
 
+  wework-mobile-checks:
+    name: Wework Mobile Checks
+    needs:
+      - changes
+    if: needs.changes.outputs.wework_mobile_e2e == 'true' && (github.event_name != 'pull_request' || (github.event.pull_request.draft == false && (github.event.action != 'labeled' || github.event.label.name == 'ci:all')))
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          filter: blob:none
+          persist-credentials: false
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@0e279bb959325dab635dd2c09392533439d90093
+
+      - name: Set up Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: "24"
+
+      - name: Set up Java
+        uses: actions/setup-java@cf277c60eb25467037889841efdb72551f06f6c3
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Install Mobile dependencies
+        run: pnpm --dir wework-mobile install --frozen-lockfile
+
+      - name: Verify Mobile source and exports
+        run: |
+          pnpm --dir wework-mobile typecheck
+          pnpm --dir wework-mobile test
+          pnpm --dir wework-mobile build
+
+      - name: Verify Mobile checkpoint catalog and Maestro syntax
+        run: |
+          export MAESTRO_VERSION
+          curl -Ls https://get.maestro.mobile.dev | bash
+          while IFS= read -r flow; do
+            "$HOME/.maestro/bin/maestro" check-syntax "$flow"
+          done < <(find wework-mobile/.maestro -type f -name '*.yaml' -print | sort)
+          .github/scripts/classify-wework-mobile-e2e.sh --all >/dev/null
+
+  build-wework-mobile-ios-e2e:
+    name: Build Wework Mobile iOS E2E Artifact
+    needs:
+      - changes
+      - wework-mobile-checks
+    if: needs.changes.outputs.wework_mobile_e2e == 'true' && (github.event_name != 'pull_request' || (github.event.pull_request.draft == false && (github.event.action != 'labeled' || github.event.label.name == 'ci:all')))
+    runs-on: macos-26
+    timeout-minutes: 45
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          filter: blob:none
+          persist-credentials: false
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@0e279bb959325dab635dd2c09392533439d90093
+
+      - name: Set up Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: "24"
+
+      - name: Resolve pnpm store path
+        id: mobile-pnpm-store
+        run: echo "path=$(pnpm store path --silent)" >> "$GITHUB_OUTPUT"
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8
+
+      - name: Set up sccache
+        uses: ./.github/actions/setup-sccache
+
+      - name: Restore Mobile pnpm store
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830
+        with:
+          path: ${{ steps.mobile-pnpm-store.outputs.path }}
+          key: ${{ runner.os }}-${{ runner.arch }}-wework-mobile-pnpm-store-v1-${{ hashFiles('wework-mobile/pnpm-lock.yaml') }}
+
+      - name: Restore Mobile iOS dependencies
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            ~/Library/Caches/wegent/codex
+            ~/Library/Caches/CocoaPods
+            wework-mobile/ios/Pods
+          key: ${{ runner.os }}-${{ runner.arch }}-wework-mobile-ios-dependencies-v1-${{ hashFiles('executor/Cargo.lock', 'wework/codex-binaries.lock.json', 'wework-mobile/pnpm-lock.yaml', 'wework-mobile/ios/Podfile.lock') }}
+
+      - name: Restore Mobile Executor build products
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830
+        with:
+          path: executor/target
+          key: ${{ runner.os }}-${{ runner.arch }}-wework-mobile-executor-products-v1-${{ hashFiles('executor/Cargo.lock') }}-${{ hashFiles('executor/Cargo.toml', 'executor/src/**', 'shared/assets/**') }}
+          restore-keys: |
+            ${{ runner.os }}-${{ runner.arch }}-wework-mobile-executor-products-v1-${{ hashFiles('executor/Cargo.lock') }}-
+
+      - name: Restore Mobile Xcode build products
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830
+        with:
+          path: wework-mobile/node_modules/.cache/ios-e2e-derived-data
+          key: ${{ runner.os }}-${{ runner.arch }}-wework-mobile-xcode-products-v1-${{ hashFiles('wework-mobile/pnpm-lock.yaml', 'wework-mobile/ios/Podfile.lock') }}-${{ hashFiles('wework-mobile/App.tsx', 'wework-mobile/index.ts', 'wework-mobile/app.json', 'wework-mobile/metro.config.js', 'wework-mobile/package.json', 'wework-mobile/pnpm-workspace.yaml', 'wework-mobile/src/**', 'wework-mobile/assets/**', 'wework-mobile/ios/Podfile', 'wework-mobile/ios/Podfile.properties.json', 'wework-mobile/ios/Wegent.xcodeproj/**', 'wework-mobile/ios/Wegent.xcworkspace/**', 'wework-mobile/ios/Wegent/**') }}
+          restore-keys: |
+            ${{ runner.os }}-${{ runner.arch }}-wework-mobile-xcode-products-v1-${{ hashFiles('wework-mobile/pnpm-lock.yaml', 'wework-mobile/ios/Podfile.lock') }}-
+
+      - name: Install Mobile dependencies
+        run: pnpm --dir wework-mobile install --frozen-lockfile
+
+      - name: Create iOS Simulator
+        run: .github/scripts/create-wework-mobile-ios-simulator.sh
+
+      - name: Build iOS application and runtime artifact
+        env:
+          EXPO_PUBLIC_BACKEND_URL: http://127.0.0.1:8000
+        run: |
+          artifact="$GITHUB_WORKSPACE/.ci-artifacts/wework-mobile-ios-e2e"
+          .github/scripts/build-wework-mobile-ios-e2e-artifact.sh \
+            "$WEWORK_MOBILE_E2E_DEVICE" \
+            "$artifact"
+
+      - name: Upload Mobile iOS E2E build
+        uses: actions/upload-artifact@v4
+        with:
+          name: wework-mobile-ios-e2e-build
+          path: .ci-artifacts/wework-mobile-ios-e2e/
+          if-no-files-found: error
+          retention-days: 1
+          compression-level: 0
+
+      - name: Delete build Simulator
+        if: always()
+        run: |
+          if [[ -n "${WEWORK_MOBILE_E2E_DEVICE:-}" ]]; then
+            xcrun simctl shutdown "$WEWORK_MOBILE_E2E_DEVICE" || true
+            xcrun simctl delete "$WEWORK_MOBILE_E2E_DEVICE" || true
+          fi
+
+  wework-mobile-ios-e2e:
+    name: Wework Mobile iOS E2E (${{ matrix.id }})
+    needs:
+      - changes
+      - wework-mobile-checks
+      - build-wework-mobile-ios-e2e
+    if: needs.changes.outputs.wework_mobile_e2e == 'true' && (github.event_name != 'pull_request' || (github.event.pull_request.draft == false && (github.event.action != 'labeled' || github.event.label.name == 'ci:all')))
+    runs-on: macos-26
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      max-parallel: 3
+      matrix: ${{ fromJSON(needs.changes.outputs.wework_mobile_e2e_matrix) }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          filter: blob:none
+          persist-credentials: false
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@0e279bb959325dab635dd2c09392533439d90093
+
+      - name: Set up Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: "24"
+
+      - name: Set up Python and uv
+        uses: ./.github/actions/setup-python-uv-cache
+        with:
+          python-version: "3.12"
+
+      - name: Set up Java
+        uses: actions/setup-java@cf277c60eb25467037889841efdb72551f06f6c3
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Install Mobile runtime dependencies and Maestro
+        run: |
+          brew_packages=()
+          command -v redis-server >/dev/null || brew_packages+=(redis)
+          brew list --versions libmagic >/dev/null || brew_packages+=(libmagic)
+          ((${#brew_packages[@]} == 0)) || brew install "${brew_packages[@]}"
+          export MAESTRO_VERSION
+          curl -Ls https://get.maestro.mobile.dev | bash
+          echo "$HOME/.maestro/bin" >> "$GITHUB_PATH"
+
+      - name: Download Mobile iOS E2E build
+        uses: actions/download-artifact@v4
+        with:
+          name: wework-mobile-ios-e2e-build
+          path: .ci-artifacts/wework-mobile-ios-e2e
+
+      - name: Create iOS Simulator
+        run: .github/scripts/create-wework-mobile-ios-simulator.sh
+
+      - name: Install Mobile application
+        run: |
+          mkdir -p .ci-artifacts/wework-mobile-ios-app
+          ditto -x -k \
+            .ci-artifacts/wework-mobile-ios-e2e/Wegent.app.zip \
+            .ci-artifacts/wework-mobile-ios-app
+          xcrun simctl install \
+            "$WEWORK_MOBILE_E2E_DEVICE" \
+            .ci-artifacts/wework-mobile-ios-app/Wegent.app
+
+      - name: Run Mobile iOS checkpoint shard
+        env:
+          CI: true
+          WEWORK_E2E_CODEX_BIN: ${{ github.workspace }}/.ci-artifacts/wework-mobile-ios-e2e/codex
+          WEWORK_E2E_EXECUTOR_BIN: ${{ github.workspace }}/.ci-artifacts/wework-mobile-ios-e2e/wegent-executor
+          WEWORK_MOBILE_E2E_CHECKPOINTS: ${{ matrix.checkpoints }}
+        run: |
+          chmod +x "$WEWORK_E2E_CODEX_BIN" "$WEWORK_E2E_EXECUTOR_BIN"
+          pnpm --dir wework-mobile e2e:ios -- \
+            --checkpoints "$WEWORK_MOBILE_E2E_CHECKPOINTS" \
+            --reuse-app
+
+      - name: Upload Mobile iOS E2E diagnostics
+        if: always()
+        continue-on-error: true
+        uses: actions/upload-artifact@v4
+        with:
+          name: wework-mobile-ios-${{ matrix.id }}-e2e-diagnostics
+          path: |
+            wework-mobile/test-results/mobile-e2e/
+            ~/.maestro/tests/
+          if-no-files-found: ignore
+          retention-days: 7
+          compression-level: 0
+
+      - name: Delete test Simulator
+        if: always()
+        run: |
+          if [[ -n "${WEWORK_MOBILE_E2E_DEVICE:-}" ]]; then
+            xcrun simctl shutdown "$WEWORK_MOBILE_E2E_DEVICE" || true
+            xcrun simctl delete "$WEWORK_MOBILE_E2E_DEVICE" || true
+          fi
+
   wework-e2e-summary:
     name: Wework E2E Summary
     needs:
@@ -881,6 +1136,9 @@ jobs:
       - wework-desktop-windows-core-e2e
       - wework-desktop-e2e
       - wework-desktop-memory-e2e
+      - wework-mobile-checks
+      - build-wework-mobile-ios-e2e
+      - wework-mobile-ios-e2e
     if: always()
     runs-on: ubuntu-latest
 
@@ -893,6 +1151,7 @@ jobs:
           RUN_DESKTOP_CLOUD_E2E: ${{ needs.changes.outputs.wework_desktop_cloud_e2e == 'true' && (github.event_name != 'pull_request' || (github.event.pull_request.draft == false && (github.event.action != 'labeled' || github.event.label.name == 'ci:all'))) }}
           RUN_DESKTOP_OTHER_E2E: ${{ needs.changes.outputs.wework_desktop_other_e2e == 'true' && (github.event_name != 'pull_request' || (github.event.pull_request.draft == false && (github.event.action != 'labeled' || github.event.label.name == 'ci:all'))) }}
           RUN_MACOS_INSPECTOR_E2E: ${{ github.event_name != 'merge_group' && (github.event_name != 'pull_request' || (github.event.pull_request.draft == false && needs.changes.outputs.wework_desktop_macos_inspector_e2e == 'true' && (github.event.action != 'labeled' || github.event.label.name == 'ci:all'))) }}
+          RUN_MOBILE_E2E: ${{ needs.changes.outputs.wework_mobile_e2e == 'true' && (github.event_name != 'pull_request' || (github.event.pull_request.draft == false && (github.event.action != 'labeled' || github.event.label.name == 'ci:all'))) }}
           CHANGES_RESULT: ${{ needs.changes.result }}
           WEB_E2E_RESULT: ${{ needs.wework-e2e.result }}
           DESKTOP_CORE_BUILD_RESULT: ${{ needs.build-wework-desktop-core-e2e.result }}
@@ -902,6 +1161,9 @@ jobs:
           WINDOWS_DESKTOP_CORE_E2E_RESULT: ${{ needs.wework-desktop-windows-core-e2e.result }}
           DESKTOP_OTHER_E2E_RESULT: ${{ needs.wework-desktop-e2e.result }}
           MACOS_INSPECTOR_E2E_RESULT: ${{ needs.wework-desktop-memory-e2e.result }}
+          MOBILE_CHECKS_RESULT: ${{ needs.wework-mobile-checks.result }}
+          MOBILE_IOS_BUILD_RESULT: ${{ needs.build-wework-mobile-ios-e2e.result }}
+          MOBILE_IOS_E2E_RESULT: ${{ needs.wework-mobile-ios-e2e.result }}
         run: |
           if [[ "$CHANGES_RESULT" != "success" ]]; then
             echo "Wework E2E change detection completed with: $CHANGES_RESULT"
@@ -913,7 +1175,8 @@ jobs:
             "$RUN_WINDOWS_DESKTOP_CORE_E2E" != "true" && \
             "$RUN_DESKTOP_CLOUD_E2E" != "true" && \
             "$RUN_DESKTOP_OTHER_E2E" != "true" && \
-            "$RUN_MACOS_INSPECTOR_E2E" != "true" ]]; then
+            "$RUN_MACOS_INSPECTOR_E2E" != "true" && \
+            "$RUN_MOBILE_E2E" != "true" ]]; then
             echo "Wework E2E is not required for this event"
             exit 0
           fi
@@ -964,6 +1227,21 @@ jobs:
           if [[ "$RUN_MACOS_INSPECTOR_E2E" == "true" && \
             "$MACOS_INSPECTOR_E2E_RESULT" != "success" ]]; then
             echo "Wework desktop macOS Inspector E2E completed with: $MACOS_INSPECTOR_E2E_RESULT"
+            exit 1
+          fi
+
+          if [[ "$RUN_MOBILE_E2E" == "true" && "$MOBILE_CHECKS_RESULT" != "success" ]]; then
+            echo "Wework Mobile checks completed with: $MOBILE_CHECKS_RESULT"
+            exit 1
+          fi
+
+          if [[ "$RUN_MOBILE_E2E" == "true" && "$MOBILE_IOS_BUILD_RESULT" != "success" ]]; then
+            echo "Wework Mobile iOS build completed with: $MOBILE_IOS_BUILD_RESULT"
+            exit 1
+          fi
+
+          if [[ "$RUN_MOBILE_E2E" == "true" && "$MOBILE_IOS_E2E_RESULT" != "success" ]]; then
+            echo "Wework Mobile iOS E2E completed with: $MOBILE_IOS_E2E_RESULT"
             exit 1
           fi
 

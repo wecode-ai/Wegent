@@ -1,0 +1,20 @@
+appId: com.wecode.wegent
+---
+- tapOn:
+    id: new-chat-input
+- tapOn:
+    id: new-chat-model
+- assertVisible:
+    id: quick-model-selector
+- tapOn:
+    id: quick-model-advanced
+- assertVisible:
+    id: advanced-model-sheet
+- tapOn:
+    id: advanced-model-row
+- tapOn:
+    id: model-option-user-${E2E_MODEL_ID}
+- tapOn:
+    id: advanced-model-close
+- assertVisible:
+    id: new-chat-input

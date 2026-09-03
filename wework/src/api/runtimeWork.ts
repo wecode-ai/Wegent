@@ -54,6 +54,10 @@ import type {
   RuntimeTaskIMNotificationSubscriptionResponse,
   RuntimeTranscriptRequest,
   RuntimeTranscriptResponse,
+  RuntimeHistoryItemsRequest,
+  RuntimeHistoryItemsResponse,
+  RuntimeHistoryTurnsRequest,
+  RuntimeHistoryTurnsResponse,
   RuntimeWorkSearchRequest,
   RuntimeWorkSearchResponse,
   RuntimeWorkspaceSearchRequest,
@@ -134,6 +138,16 @@ export function createRuntimeWorkApi(client: HttpClient) {
     },
     getRuntimeTranscript(request: RuntimeTranscriptRequest): Promise<RuntimeTranscriptResponse> {
       return client.post('/runtime-work/transcript', request)
+    },
+    listRuntimeHistoryTurns(
+      request: RuntimeHistoryTurnsRequest
+    ): Promise<RuntimeHistoryTurnsResponse> {
+      return client.post('/runtime-work/history/turns', request)
+    },
+    listRuntimeHistoryItems(
+      request: RuntimeHistoryItemsRequest
+    ): Promise<RuntimeHistoryItemsResponse> {
+      return client.post('/runtime-work/history/items', request)
     },
     searchRuntimeWork(data: RuntimeWorkSearchRequest): Promise<RuntimeWorkSearchResponse> {
       return client.post('/runtime-work/search', data)

@@ -22,6 +22,10 @@ import type {
   RuntimeCompactRequest,
   RuntimeGuidanceRequest,
   RuntimeGuidanceResponse,
+  RuntimeHistoryItemsRequest,
+  RuntimeHistoryItemsResponse,
+  RuntimeHistoryTurnsRequest,
+  RuntimeHistoryTurnsResponse,
   RuntimeInterruptAndSendRequest,
   RuntimeModelPrepareRequest,
   RuntimeSendRequest,
@@ -105,6 +109,12 @@ export interface ExecutorRuntimeClient {
   prepareDeviceWorkspace: ReturnType<typeof createRuntimeWorkApi>['prepareDeviceWorkspace']
   deleteDeviceWorkspace: ReturnType<typeof createRuntimeWorkApi>['deleteDeviceWorkspace']
   getRuntimeTranscript: (data: RuntimeTranscriptRequest) => Promise<RuntimeTranscriptResponse>
+  listRuntimeHistoryTurns: (
+    data: RuntimeHistoryTurnsRequest
+  ) => Promise<RuntimeHistoryTurnsResponse>
+  listRuntimeHistoryItems: (
+    data: RuntimeHistoryItemsRequest
+  ) => Promise<RuntimeHistoryItemsResponse>
   searchRuntimeWork: (data: RuntimeWorkSearchRequest) => Promise<RuntimeWorkSearchResponse>
   searchRuntimeWorkspace: (
     data: RuntimeWorkspaceSearchRequest

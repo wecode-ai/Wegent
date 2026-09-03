@@ -9,10 +9,19 @@ This module provides Socket.IO namespace handlers for real-time
 communication features including chat streaming and task events.
 """
 
-from app.api.ws.chat_namespace import register_chat_namespace
+from typing import TYPE_CHECKING
+
 from app.api.ws.events import *  # noqa: F401,F403
 
-# Note: device_namespace is imported lazily where needed to avoid circular imports
-# Use: from app.api.ws.device_namespace import register_device_namespace
+if TYPE_CHECKING:
+    import socketio
+
+
+def register_chat_namespace(sio: "socketio.AsyncServer") -> None:
+    """Register chat handlers without importing the namespace during package init."""
+    from app.api.ws.chat_namespace import register_chat_namespace as register
+
+    register(sio)
+
 
 __all__ = ["register_chat_namespace"]
