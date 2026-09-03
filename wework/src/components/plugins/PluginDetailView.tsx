@@ -7,6 +7,7 @@ import {
   MessageCircle,
   MoreHorizontal,
   Plus,
+  Share2,
   Sparkles,
   TerminalSquare,
 } from 'lucide-react'
@@ -14,7 +15,7 @@ import { useEffect, useRef, useState } from 'react'
 import { useTranslation } from '@/hooks/useTranslation'
 import { DesktopTopBar } from '@/components/layout/DesktopTopBar'
 import { navigateTo } from '@/lib/navigation'
-import type { InstalledPlugin } from '@/types/api'
+import type { InstalledPlugin, PluginPublicationRequestItem } from '@/types/api'
 import type { InstalledPluginItem } from './PluginManagementRows'
 import { useOptionalAppearance } from '@/features/appearance'
 import type { ResolvedAppearanceMode } from '@/features/appearance/types'
@@ -22,6 +23,7 @@ import { resolvePreferredPluginLogo } from './plugin-assets'
 import { formatPluginVersion } from './plugin-display'
 import { PluginSourceAvatar } from './PluginSourceAvatar'
 import { SkillDetailDialog } from './plugin-dialogs/SkillDetailDialog'
+import { PluginPublicationProgressCard } from './PluginPublicationProgressCard'
 
 interface PluginDetailViewProps {
   plugin: InstalledPluginItem
@@ -39,9 +41,6 @@ interface PluginDetailViewProps {
   showUninstall?: boolean
   primaryActionDisabled?: boolean
   actionError?: string | null
-  secondaryActionLabel?: string
-  secondaryActionDisabled?: boolean
-  onSecondaryAction?: () => void
   tertiaryActionLabel?: string
   tertiaryActionDisabled?: boolean
   onTertiaryAction?: () => void
@@ -56,9 +55,16 @@ interface PluginDetailViewProps {
   shareGrantNamespaceCount?: number
   manageAccessLabel?: string
   onManageAccess?: () => void
-  menuPublishLabel?: string
-  onMenuPublish?: () => void
-  menuPublishDisabled?: boolean
+  shareActionLabel?: string
+  shareActionDisabled?: boolean
+  onShareAction?: () => void
+  publication?: PluginPublicationRequestItem | null
+  publicationWithdrawing?: boolean
+  onViewPublication?: () => void
+  onWithdrawPublication?: () => void
+  onCreatePublicationRevision?: () => void
+  publicationHistoryCount?: number
+  onViewPublicationHistory?: () => void
   submissionStatus?:
     | 'uploading'
     | 'scanning'
@@ -76,6 +82,8 @@ interface PluginDetailViewProps {
   deleteActionLabel?: string
   deleteActionDisabled?: boolean
   onDeleteAction?: () => void
+  originPersonalActionLabel?: string
+  onOpenOriginPersonalPlugin?: () => void
 }
 
 interface DetailComponentItem {
@@ -444,9 +452,6 @@ export function PluginDetailView({
   showUninstall = true,
   primaryActionDisabled = false,
   actionError,
-  secondaryActionLabel,
-  secondaryActionDisabled = false,
-  onSecondaryAction,
   tertiaryActionLabel,
   tertiaryActionDisabled = false,
   onTertiaryAction,
@@ -461,9 +466,16 @@ export function PluginDetailView({
   shareGrantNamespaceCount = 0,
   manageAccessLabel,
   onManageAccess,
-  menuPublishLabel,
-  onMenuPublish,
-  menuPublishDisabled = false,
+  shareActionLabel,
+  shareActionDisabled = false,
+  onShareAction,
+  publication = null,
+  publicationWithdrawing = false,
+  onCreatePublicationRevision,
+  publicationHistoryCount = 0,
+  onViewPublicationHistory,
+  onViewPublication,
+  onWithdrawPublication,
   submissionStatus = null,
   submissionReviewNote = null,
   isExternalSource = false,
@@ -474,6 +486,8 @@ export function PluginDetailView({
   deleteActionLabel,
   deleteActionDisabled = false,
   onDeleteAction,
+  originPersonalActionLabel,
+  onOpenOriginPersonalPlugin,
 }: PluginDetailViewProps) {
   const { t } = useTranslation('common')
   const appearanceMode = useOptionalAppearance()?.resolvedMode ?? 'light'
@@ -513,6 +527,18 @@ export function PluginDetailView({
       : plugin.sourceLabel
   const componentItems = buildComponentItems(raw)
   const componentStates = raw.spec.componentStates || {}
+  const headerMetadata = [
+    formatManifestValue(raw.spec.interface?.category) || plugin.sourceLabel,
+    formatManifestValue(raw.spec.interface?.developerName) ||
+      formatManifestValue(raw.spec.author) ||
+      plugin.sourceLabel,
+  ].filter(
+    (value, index, values) =>
+      value &&
+      values.findIndex(
+        candidate => candidate.trim().toLowerCase() === value.trim().toLowerCase()
+      ) === index
+  )
   const rows = [
     {
       label: t('workbench.plugin_detail_label_source', '来源'),
@@ -633,11 +659,7 @@ export function PluginDetailView({
     primaryActionIcon === 'install' ? Plus : primaryActionIcon === 'try' ? MessageCircle : null
   const showMenuCopy = Boolean(tertiaryActionLabel && onTertiaryAction)
   const showActionMenu =
-    showUninstall ||
-    Boolean(onEditAction) ||
-    Boolean(onMenuPublish) ||
-    showMenuCopy ||
-    Boolean(onDeleteAction)
+    showUninstall || Boolean(onEditAction) || showMenuCopy || Boolean(onDeleteAction)
 
   const actionMenu = showActionMenu ? (
     <div ref={actionMenuRef} className="relative">
@@ -667,20 +689,6 @@ export function PluginDetailView({
               }}
             >
               {editActionLabel || t('workbench.plugins_continue_editing', '继续编辑')}
-            </button>
-          )}
-          {onMenuPublish && (
-            <button
-              type="button"
-              disabled={menuPublishDisabled}
-              data-testid={`plugin-detail-menu-publish-${plugin.id}`}
-              className="flex h-8 w-full items-center rounded-lg px-3 text-left text-sm leading-[18px] text-text-primary transition-colors hover:bg-surface disabled:opacity-40"
-              onClick={() => {
-                setIsActionMenuOpen(false)
-                onMenuPublish()
-              }}
-            >
-              {menuPublishLabel || t('workbench.plugins_publish_new_version', '发布新版本')}
             </button>
           )}
           {showMenuCopy && (
@@ -743,16 +751,17 @@ export function PluginDetailView({
       {primaryActionLabel ?? t('workbench.plugins_try_in_chat', '立即对话')}
     </button>
   )
-  const secondaryActionButton =
-    secondaryActionLabel && onSecondaryAction ? (
+  const shareActionButton =
+    shareActionLabel && onShareAction ? (
       <button
         type="button"
-        disabled={secondaryActionDisabled}
-        data-testid={`plugin-detail-secondary-${plugin.id}`}
+        disabled={shareActionDisabled}
+        data-testid={'plugin-detail-share-' + plugin.id}
         className="plugin-detail-action-secondary"
-        onClick={onSecondaryAction}
+        onClick={onShareAction}
       >
-        {secondaryActionLabel}
+        <Share2 className="h-4 w-4" />
+        {shareActionLabel}
       </button>
     ) : null
 
@@ -857,10 +866,7 @@ export function PluginDetailView({
           <div className="min-w-0">
             <h1 className="heading-medium truncate text-text-primary">{plugin.name}</h1>
             <p className="mt-0.5 truncate text-sm leading-5 text-text-secondary">
-              {plugin.raw.spec.interface?.category || plugin.sourceLabel} ·{' '}
-              {plugin.raw.spec.interface?.developerName ||
-                plugin.raw.spec.author ||
-                plugin.sourceLabel}
+              {headerMetadata.join(' · ')}
               {version ? ` · v${version}` : ''}
             </p>
             {deviceSummary && (
@@ -899,7 +905,7 @@ export function PluginDetailView({
           </div>
 
           <div className="plugin-detail-actions" data-testid="plugin-detail-actions-bar">
-            {secondaryActionButton}
+            {shareActionButton}
             {actionMenu}
             {primaryActionButton}
           </div>
@@ -922,6 +928,18 @@ export function PluginDetailView({
         {guideTemplateSection}
 
         {accessScopeSection}
+
+        {publication && onViewPublication ? (
+          <PluginPublicationProgressCard
+            publication={publication}
+            withdrawing={publicationWithdrawing}
+            onView={onViewPublication}
+            onWithdraw={onWithdrawPublication}
+            onCreateRevision={onCreatePublicationRevision}
+            historyCount={publicationHistoryCount}
+            onViewHistory={onViewPublicationHistory}
+          />
+        ) : null}
 
         {autoUpdateSection}
 
@@ -1081,6 +1099,25 @@ export function PluginDetailView({
                 </dd>
               </div>
             ))}
+            {onOpenOriginPersonalPlugin ? (
+              <div className="grid gap-2 border-b border-border/25 py-3 text-sm leading-5 sm:grid-cols-[160px_minmax(0,1fr)]">
+                <dt className="font-medium text-text-muted">
+                  {t('workbench.plugin_detail_origin_personal', '个人原件')}
+                </dt>
+                <dd>
+                  <button
+                    type="button"
+                    data-testid="plugin-detail-open-origin-personal"
+                    className="inline-flex items-center gap-1 text-blue-600 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus/20"
+                    onClick={onOpenOriginPersonalPlugin}
+                  >
+                    {originPersonalActionLabel ||
+                      t('workbench.plugin_detail_view_origin_personal', '查看个人创建版本')}
+                    <ArrowRight className="h-3.5 w-3.5" />
+                  </button>
+                </dd>
+              </div>
+            ) : null}
           </dl>
         </section>
       </div>

@@ -29,7 +29,6 @@ jest.mock('@/hooks/useTranslation', () => ({
 }))
 
 const mockedAdminApis = adminApis as jest.Mocked<typeof adminApis>
-
 describe('MarketplaceManagement', () => {
   beforeEach(() => {
     jest.clearAllMocks()

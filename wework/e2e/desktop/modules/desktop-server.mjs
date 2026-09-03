@@ -253,6 +253,7 @@ const ELECTRON_OBSERVATION_ACTIONS = new Set([
   'activeElement',
   'getAttribute',
   'getElementCount',
+  'getTerminalText',
   'getText',
   'metrics',
   'snapshot',
@@ -341,18 +342,17 @@ function pluginWorkspacePublishCommand(body) {
 }
 
 function publishedPluginWorkspaceResult(body) {
+  const completedStatus = /"status":"(?:published|pending_review)"/u
   const output = findNestedString(
     body,
-    value =>
-      value.includes(PLUGIN_WORKSPACE_RESULT_MARKER) && value.includes('"status":"published"')
+    value => value.includes(PLUGIN_WORKSPACE_RESULT_MARKER) && completedStatus.test(value)
   )
   if (!output) return null
   const line = output
     .split(/\r?\n/u)
     .find(
       candidate =>
-        candidate.includes(PLUGIN_WORKSPACE_RESULT_MARKER) &&
-        candidate.includes('"status":"published"')
+        candidate.includes(PLUGIN_WORKSPACE_RESULT_MARKER) && completedStatus.test(candidate)
     )
   if (!line) return null
   return line.slice(line.indexOf(PLUGIN_WORKSPACE_RESULT_MARKER))

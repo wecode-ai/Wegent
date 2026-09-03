@@ -100,6 +100,37 @@ import {
   waitForWorkbenchTask,
 } from './workspace-flows.mjs'
 
+const REMOTE_TERMINAL_SIZE_MARKER = 'WEWORK_DESKTOP_E2E_REMOTE_TERMINAL_SIZE'
+const REMOTE_TERMINAL_SELECTOR = '[data-testid="remote-terminal"]'
+
+async function verifyRemoteTerminalUsesPanelWidth(control) {
+  await control.command('waitFor', `${REMOTE_TERMINAL_SELECTOR} .xterm-screen`, {
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+
+  const startedAt = Date.now()
+  let lastReportedSize = 'none'
+  let terminalText = ''
+  while (Date.now() - startedAt < DEFAULT_STEP_TIMEOUT_MS) {
+    await control.command('terminalInput', REMOTE_TERMINAL_SELECTOR, {
+      value: `stty size | sed 's/^/${REMOTE_TERMINAL_SIZE_MARKER}=/'\r`,
+    })
+    await new Promise(resolvePromise => setTimeout(resolvePromise, 200))
+    terminalText = await control.command('getTerminalText', REMOTE_TERMINAL_SELECTOR)
+    const sizes = Array.from(
+      terminalText.matchAll(/WEWORK_DESKTOP_E2E_REMOTE_TERMINAL_SIZE=(\d+)\s+(\d+)/gu)
+    )
+    const size = sizes.at(-1)
+    if (size) {
+      lastReportedSize = size[0]
+      if (Number(size[2]) > 80) return
+    }
+  }
+  throw new Error(
+    `The remote PTY did not reach the fitted panel width; last size: ${lastReportedSize}; terminal: ${terminalText.slice(-2000)}`
+  )
+}
+
 async function waitForSingleProjectByTitle(control, expectedTitle, message, timeoutMs) {
   const startedAt = Date.now()
   while (Date.now() - startedAt < timeoutMs) {
@@ -883,6 +914,7 @@ async function verifyCloudProjectFlow(
 
   await selectE2EModel(control, DEFAULT_MODEL_ID, DEFAULT_MODEL_LABEL)
   await openBottomWorkspaceTerminal(control, 'The new cloud task')
+  await verifyRemoteTerminalUsesPanelWidth(control)
   await captureVerificationScreenshot(control, 'cloud-04b-new-task-terminal-open.png')
   await control.command('click', '[data-testid="close-bottom-workspace-tab-button"]')
   await waitForSnapshot(

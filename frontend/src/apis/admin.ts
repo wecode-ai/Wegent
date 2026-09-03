@@ -293,6 +293,34 @@ export interface ServiceKeyListResponse {
   total: number
 }
 
+// Plugin Release Key Types
+export interface PluginReleaseKey {
+  id: number
+  name: string
+  keyPrefix: string
+  description: string | null
+  expiresAt: string
+  lastUsedAt: string
+  createdAt: string
+  isActive: boolean
+  createdBy: string | null
+}
+
+export interface PluginReleaseKeyCreated extends PluginReleaseKey {
+  key: string // Full key, only at creation
+}
+
+export interface PluginReleaseKeyCreateRequest {
+  name: string
+  description?: string
+  expiresAt?: string
+}
+
+export interface PluginReleaseKeyListResponse {
+  items: PluginReleaseKey[]
+  total: number
+}
+
 // Personal Key Types (Admin Management)
 export interface AdminPersonalKey {
   id: number
@@ -1011,6 +1039,32 @@ export const adminApis = {
    */
   async deleteServiceKey(keyId: number): Promise<void> {
     return apiClient.delete(`/admin/service-keys/${keyId}`)
+  },
+
+  // ==================== Plugin Release Key Management ====================
+
+  /**
+   * Get all keys dedicated to protected plugin release jobs
+   */
+  async getPluginReleaseKeys(): Promise<PluginReleaseKeyListResponse> {
+    return apiClient.get('/admin/plugin-release-keys')
+  },
+
+  /**
+   * Create a plugin release key
+   * The full key is only returned at creation time
+   */
+  async createPluginReleaseKey(
+    data: PluginReleaseKeyCreateRequest
+  ): Promise<PluginReleaseKeyCreated> {
+    return apiClient.post('/admin/plugin-release-keys', data)
+  },
+
+  /**
+   * Toggle plugin release key active status
+   */
+  async togglePluginReleaseKeyStatus(keyId: number): Promise<PluginReleaseKey> {
+    return apiClient.post(`/admin/plugin-release-keys/${keyId}/toggle-status`)
   },
 
   // ==================== Personal Key Management (Admin) ====================

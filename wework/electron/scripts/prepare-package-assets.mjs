@@ -69,11 +69,9 @@ await writeFile(
   `${JSON.stringify({ runtimes: packagedRuntimes }, null, 2)}\n`,
   { mode: 0o600 }
 )
-await cp(
-  join(sharedResourcesRoot, 'bundled-plugins', 'wework-personal'),
-  join(resourcesRoot, 'bundled-plugins', 'wework-personal'),
-  { recursive: true }
-)
+await cp(join(sharedResourcesRoot, 'bundled-plugins'), join(resourcesRoot, 'bundled-plugins'), {
+  recursive: true,
+})
 const corePluginsRoot = join(resourcesRoot, 'wework-core-plugins')
 await mkdir(corePluginsRoot, { recursive: true, mode: 0o700 })
 for (const directory of CORE_PLUGIN_DIRECTORIES) {

@@ -6,14 +6,16 @@ sidebar_position: 21
 
 For developers who need to build, migrate, or publish Wework plugins. See [Plugin Marketplace V2](./plugin-marketplace-v2.md) for architecture and operations, [Codex Plugin Runtime](./wework-codex-plugins.md) for local runtime details, and [Plugin Icon Guide](./wework-plugin-icons.md) for light/dark logos.
 
+> Implementation status (2026-08-29): the current feature branch implements the section 4 Wework two-scope interaction, Request/Revision history, Web review, MR materialization, and restricted Release API. New enterprise requests no longer use a people allowlist. Legacy Submission remains only for personal restricted-share upload and draining historical rows. **Production is not enabled**: revocation/rotation of the old token, HTTPS, protected master/environment, Code Owner approvals, project-locked native Windows/macOS Runners, and a new Release credential still require external P0 verification.
+
 ## 1. Mental model
 
 Wework has two related but separate layers:
 
-| Layer | Responsibility | Source of truth |
-| --- | --- | --- |
-| Local Codex runtime | Actual install, enablement, and skill / MCP / command use in chat | Local Executor + Codex App Server |
-| Wegent cloud marketplace V2 | Catalog, versions, visibility, review, and desired device state | MySQL metadata + private immutable S3 ZIPs |
+| Layer                       | Responsibility                                                    | Source of truth                            |
+| --------------------------- | ----------------------------------------------------------------- | ------------------------------------------ |
+| Local Codex runtime         | Actual install, enablement, and skill / MCP / command use in chat | Local Executor + Codex App Server          |
+| Wegent cloud marketplace V2 | Catalog, versions, visibility, review, and desired device state   | MySQL metadata + private immutable S3 ZIPs |
 
 Keep these rules in mind:
 
@@ -25,13 +27,35 @@ Keep these rules in mind:
 flowchart LR
   source[Plugin source directory] --> local[Local create or dry-run]
   local --> test[Local chat trial]
-  test --> publish[Submission or official publish]
-  publish --> mysql[(MySQL Plugin/Release)]
-  publish --> s3[(Immutable S3 ZIP)]
+  test --> share[Selected members or departments]
+  share --> scan[Automated scan]
+  scan --> acl[Personal-plugin access grants]
+  test --> apply[Request company-wide visibility]
+  apply --> snapshot[Immutable personal-version snapshot]
+  snapshot --> admin[Web administrator review]
+  admin --> mr[GitLab MR]
+  mr --> pipeline[Code review and Pipeline]
+  pipeline --> release[Restricted Release API]
+  release --> mysql[(MySQL Plugin/Release)]
+  release --> s3[(Immutable S3 ZIP)]
   mysql --> install[Marketplace install]
   s3 --> install
   install --> codex[Codex App Server]
 ```
+
+### Two sharing intents and two artifacts
+
+A personally created or imported plugin has one **Share** entry on its detail page. It contains only two intents:
+
+| Intent                          | User selection                                                                             | Activation rule                                                                                                      | Artifact ownership                                                   |
+| ------------------------------- | ------------------------------------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------- |
+| Selected members or departments | People and departments; the organization is selectable as the address-book root department | Grant access immediately after package scanning, with no human review                                                | Remains a personal plugin under My creations                         |
+| Everyone in the company         | The current company's entire membership                                                    | Submit an immutable version snapshot, then complete automated checks, administrator review, code review, and release | A separate enterprise version appears under Enterprise after release |
+
+The organization is not a third sharing scope. The regular user UI also does not expose `public`; in this phase,
+“Everyone in the company” maps to `visibility=workspace`. The personal source and enterprise version must have
+separate catalog identities. Review and release must not promote the personal plugin in place or clear its existing
+member and department grants.
 
 ## 2. Package layout
 
@@ -105,36 +129,33 @@ description: Review a merge request and summarize risks
 
 1. Open the desktop **Plugins** page.
 2. Use the create flow to generate a plugin under `wework-personal`.
-3. After install, try it from the detail page or marketplace row; the composer inserts a `plugin://...` mention.
+3. After install, choose **Chat now** or one of the trial tasks on the detail page; the composer inserts a `plugin://...` mention.
 4. Edit the local directory, refresh the marketplace/management views, and re-test in chat.
 
-Local creations **do not** upload automatically. Only an explicit “Publish to marketplace” action starts scanning and review.
+Local creations **do not** upload automatically. Only an explicit **Share** action submits the current version: sharing with members or departments only scans and grants access, while company-wide visibility starts a publication request.
 
-### Option B: Develop official plugins in wework-plugins
+### Option B: Develop in the enterprise plugin repository
 
-WeWork-maintained first-party plugins live in
-[github.com/wecode-ai/wework-plugins](https://github.com/wecode-ai/wework-plugins)
-and publish to the Wework official tab with `--visibility public`.
+The internal `wework-plugins` GitLab repository is the source of truth for plugins visible to everyone in an enterprise.
+Each plugin lives under `<checkout>/plugins/<slug>/` and is registered in
+`.agents/plugins/marketplace.json`. The repository exists for development, review, and CI only; Backend and Wework
+**do not** scan it at startup.
 
-Layout matches openai/plugins: after checkout each plugin is
-`<checkout>/plugins/<slug>/`, registered in `.agents/plugins/marketplace.json`.
-That repository is for development, review, and CI only. Backend and Wework
-**do not** scan it at startup. Check it out as a sibling of Wegent (for example
-`wework-plugins-public`).
-
-Use `--visibility workspace` only for a deployment-local reviewed source tree
-that should appear in the organization catalog. Keep private hostnames and
-internal repository paths out of shared documentation.
+Developers create a branch and submit a Merge Request directly. When a non-technical user requests company-wide
+visibility from Wework, an administrator accepts it in the Web review console. The system materializes that immutable
+snapshot on a controlled branch and creates a MR. Both entry paths share the same code review, compatibility
+checks, and release Pipeline from the MR onward.
 
 Build and scan locally:
 
 ```bash
 cd backend
 uv run python scripts/publish_official_plugin.py \
-  ../wework-plugins-public/plugins/<plugin-slug> --dry-run
+  ../wework-plugins/plugins/<plugin-slug> --dry-run
 ```
 
-Success prints `name`, `version`, and `sha256`. Fix scan failures before publishing.
+Success prints `name`, `version`, and `sha256`. A `--dry-run` only proves that local packaging and static scanning pass;
+it does not prove Windows or macOS compatibility, a passing remote Pipeline, or a successful online release.
 
 ### Local cloud-market integration
 
@@ -155,75 +176,104 @@ WEGENT_DISABLE_SCCACHE=1 \
 pnpm --filter wework dev:mac -- --executor-isolation
 ```
 
-## 4. Publishing paths
+## 4. Sharing and enterprise-wide publishing
 
-### Community submission
+### 4.1 Selected members or departments
 
-Best for personal or team-owned plugins.
+On a personal plugin's detail page, its owner chooses **Share → Selected members or departments** and selects people
+or departments from the address book. The organization itself appears as the root department; there is no separate
+“Organization visibility” option. The client packages the current version, computes SHA256, and uploads it for scanning.
+After the scan passes, the personal plugin's access grants take effect immediately. This path does not enter Web review
+or write source into the enterprise plugin repository.
 
-1. Finish local verification in Wework.
-2. Confirm publish permission via `PLUGIN_PUBLISH_ENABLED`, allowlist, or admin role.
-3. Use “Publish to marketplace” in the UI. The client packages the plugin, computes SHA256, and runs:
-   - `POST /plugins/submissions/init`
-   - Presigned PUT to `plugins/staging/...`
-   - `POST /plugins/submissions/{id}/complete`
-   - On upload or completion failure, `POST /plugins/submissions/{id}/cancel`
-4. After scanning passes, the release waits for human review before it becomes searchable.
+Adding or removing members and departments only changes grants; it does not create a new enterprise Release. The plugin
+remains under My creations, and its owner can keep editing, chatting, trying tasks, uninstalling, or deleting it.
 
-Cancelled, scan-rejected, or upload/scan-expired submissions do not reserve a version permanently. The client may call `init` again with the same `version`; an upload or scan that is still active returns `409` so concurrent submissions cannot overwrite each other.
+### 4.2 Non-technical users requesting company-wide visibility
 
-Cloud Plugin Creator does not upload a ZIP or create a separate draft record during creation. Source stays under `$WEGENT_TASK_WORKSPACE/plugins/<plugin-name>`, and `plugin-workspace describe` writes a result marker into the current Task conversation. When the user chooses Share or Publish on that result card, Wework sends a follow-up to the original Task. Its Executor runs `plugin-workspace publish`, revalidates and packages the current source, and then calls the submission APIs above. Workspace restoration and archival follow the existing Task lifecycle; unpublished content is not listed in the plugin center.
+Any signed-in personal-plugin owner may submit a request; a publishing allowlist is no longer used. Wework presents a
+three-step right-side drawer:
 
-### WeWork official plugins
+1. **Confirm version**: show the plugin, SemVer, update time, and the immutable version being submitted;
+2. **Permissions and risks**: declare network access, commands/scripts, local-file access, credentials, and test results;
+3. **Confirm submission**: review the company-wide scope, risk declarations, and version SHA256 before submitting.
 
-Best for company-maintained built-in capabilities. Identity fields:
+Submission freezes the version, manifest, ZIP, and SHA256 for that request; it does not freeze the personal source.
+During review, the owner can continue editing the personal plugin into a later version and keep sharing it with selected
+members or departments. Later edits never replace the submitted snapshot silently.
 
-- `source_type=native`
-- `source_provider=wework`
-- `owner_user_id=NULL`
+The user-facing progress has five fixed stages:
 
-Publish from the public first-party source repo:
+1. **Submit request**: create the request and persist its immutable snapshot;
+2. **Automated checks**: validate package structure, security, and declaration consistency;
+3. **Administrator review**: administrators review risks and return or accept only in the Web console;
+4. **Code review**: acceptance creates a GitLab MR for human review, risk checks, and Windows/macOS compatibility tests;
+5. **Release**: after the MR is merged into protected `master`, its Pipeline calls the restricted Release API.
 
-```bash
-cd backend
+Administrator acceptance **only creates a MR; it does not publish**. A returned request must identify the reason
+and risk items. The submitter reads the status in Wework, updates the personal source, and submits a new revision.
 
-# Empty DB / rebuild: seed Wework official tab (public repo plugins)
-uv run python scripts/seed_wework_public_plugins.py
+### 4.3 Developers submitting a GitLab MR directly
 
-# Wework official tab (public GitHub repo, single plugin)
-uv run python scripts/publish_official_plugin.py \
-  ../wework-plugins-public/plugins/<plugin-slug> \
-  --visibility public \
-  --commit-sha "$CI_COMMIT_SHA" \
-  --build-url "$CI_JOB_URL" \
-  --publisher release-bot
+Developers can add or update `plugins/<slug>/` directly in the internal `wework-plugins` repository, update the marketplace
+registry, and open an MR. MRs generated from non-technical submissions and developer-authored MRs use the same checks
+from this point onward. There must be no administrator-only direct-publish bypass around GitLab.
+
+One MR contains one version of one plugin. The MR Pipeline must include at least:
+
+- manifest, directory, and registry consistency checks;
+- the shared package scanner plus sensitive-file and high-risk-capability checks;
+- plugin-owned tests;
+- Windows and macOS compatibility tests. Checks that require a native environment must use the corresponding Runner;
+  an unavailable Runner blocks the merge rather than masquerading as a pass;
+- provenance containing build results, commit SHA, package SHA256, and audit links.
+
+### 4.4 Merge, release, and authentication
+
+`master` is protected. Only a post-merge protected master Pipeline may publish an enterprise version. Regular branches,
+MR jobs, the Wework client, and the Web admin console must not receive release credentials. The release job rebuilds and
+verifies the reviewed commit, then calls the internal Release API:
+
+```http
+Authorization: Bearer <release-token>
 ```
 
-`--visibility public` maps to the Wework official tab. Use
-`--visibility workspace` only when publishing a reviewed local source tree into
-the organization catalog.
+This is a service-to-service machine credential, not a user sign-in system or general administrator token. It reuses the
+existing API-key lifecycle with a dedicated `key_type=plugin_release`. The target is fixed to the enterprise catalog; the GitLab project and protected `master` ref are server configuration validated against live GitLab proof.
+It must support expiry, rotation, revocation, and auditing, and be stored as a GitLab masked and protected variable.
+GitLab webhooks use a separate signature or token only to synchronize MR, Pipeline, and release status; they cannot replace
+the Release Token to publish.
 
-Rules:
+The Release API and `OfficialPluginPublisher` both reuse the marketplace
+transaction in `PluginMarketplaceService.publish_catalog_release`. The former
+validates the protected-master artifact; the latter builds a deterministic
+package from a local directory. `publish_official_plugin.py` remains a local
+dry-run, emergency, and diagnostic adapter. The HTTP endpoint neither spawns the
+CLI as a subprocess nor duplicates another publication transaction.
 
-- Same `slug + version + SHA256` is idempotent.
-- Same version with different content is rejected; overwrite is forbidden.
-- Rollback means a higher SemVer or a catalog-pointer change; never mutate a published ZIP.
+Publishing rules:
 
-### Selected Codex / open-source upstream mirrors
+- The same `catalog + slug + version + SHA256` succeeds idempotently.
+- The same version with different content conflicts; a published ZIP is never overwritten.
+- A Release records its submission/revision when present, GitLab project, MR, commit, Pipeline, publisher, and build URL.
+- Success creates a separate `workspace` enterprise Plugin/Release. The personal source and its targeted grants remain intact.
 
-Best when an upstream plugin is already official or license-cleared and only needs enterprise distribution. Admins register:
+### 4.5 Withdrawal, deletion, and rollback
 
-- `marketplace_name`
-- `remote_plugin_id`
-- `upstream_url` (HTTPS)
-- `license_info`
-- `sync_policy` (`auto_after_scan` by default; `review_required` is optional)
+- Before an MR is merged, the submitter can withdraw a company-wide request from Wework. If a MR exists, the system closes or marks it cancelled as well.
+- Deleting a personal plugin with an unmerged request first withdraws that request, then uninstalls and removes personal source. It must not leave an orphaned pending MR.
+- After merge or once release has started, a personal user cannot withdraw the enterprise version. Deleting the personal source affects only that source; an administrator owns enterprise deactivation or rollback.
+- A failed Pipeline or release does not advance the enterprise catalog's `latest_release_id`; the existing version remains available.
+- Published ZIPs are immutable. Roll back through an audited catalog-pointer change to a previous Release, or fix forward with a higher SemVer; never replace content under the same version.
 
-Scheduled sync downloads, scans, adapts, and stores the ZIP. `auto_after_scan`
-monotonically advances `latest_release_id` after scanning; `review_required`
-creates a pending Release and advances latest only after administrator approval.
-Open-source mirrors default to `auto_after_scan`; higher-risk upstreams may opt
-into `review_required`. Upstream downgrades do not move latest backwards.
+### 4.6 Cloud Plugin Creator
+
+Cloud Plugin Creator does not upload a ZIP or create a separate draft record during creation. Source stays under
+`$WEGENT_TASK_WORKSPACE/plugins/<plugin-name>`, and `plugin-workspace describe` writes a result marker into the current
+Task conversation. When the user chooses **Share** on the result card or detail page, Wework sends a follow-up to the
+original Task. Its Executor runs `plugin-workspace publish`, revalidates and packages the current source, and then enters
+either selected-member/department sharing or a company-wide publication request. Workspace restoration and archival
+follow the existing Task lifecycle; unshared content is not listed in the cloud catalog.
 
 ## 5. Migrating an open-source plugin
 
@@ -250,13 +300,13 @@ Use this checklist when moving a GitHub, Codex, or Claude-ecosystem plugin into 
 
 ### 5.3 Capability mapping
 
-| Upstream capability | Wework landing | Notes |
-| --- | --- | --- |
-| Skill | `skills/*/SKILL.md` | Frontmatter needs `name` / `description` |
-| Slash command | `commands/` | Markdown command files |
-| MCP | Plugin MCP declarations | Store secrets locally; never hardcode them |
-| Hook / bin | `hooks/` / `bins/` | Executables appear in scan reports and need review |
-| App / Connector | Codex app mechanism | Remote Apps toggle is separate from local auth |
+| Upstream capability | Wework landing          | Notes                                              |
+| ------------------- | ----------------------- | -------------------------------------------------- |
+| Skill               | `skills/*/SKILL.md`     | Frontmatter needs `name` / `description`           |
+| Slash command       | `commands/`             | Markdown command files                             |
+| MCP                 | Plugin MCP declarations | Store secrets locally; never hardcode them         |
+| Hook / bin          | `hooks/` / `bins/`      | Executables appear in scan reports and need review |
+| App / Connector     | Codex app mechanism     | Remote Apps toggle is separate from local auth     |
 
 ### 5.4 Verify and ship
 
@@ -268,9 +318,9 @@ uv run python scripts/publish_official_plugin.py /path/to/plugin --dry-run
 # Install in the Wework Plugins page, then send a trial template in a new chat
 
 # 3. Choose a publish path
-# - Official ownership: publish_official_plugin.py
-# - Community ownership: Wework publish-to-marketplace
-# - Track upstream: admin upstreams + sync
+# - Non-technical maintainer: request company-wide visibility in Wework
+# - Developer maintainer: submit an MR in the internal wework-plugins repository
+# Both share code review, compatibility tests, and protected master Pipeline from the MR onward
 ```
 
 Acceptance criteria:
@@ -278,16 +328,22 @@ Acceptance criteria:
 - Scan passes: no path traversal, duplicate paths, symlinks, encrypted members, sensitive files, or oversized expansion.
 - Device state becomes `installed` with `actual_release_id` equal to the desired release.
 - Chat mentions activate the expected capability; failures are explicit rather than silent fallbacks.
+- The enterprise catalog version is traceable to its MR, commit, Pipeline, and immutable SHA256.
 
-## 6. GitHub plugin (OpenAI official)
+## 6. Boundary for official GitHub-hosted plugins
 
-The GitHub plugin comes from the OpenAI official marketplace entry (`openai/plugins`
-/ Codex official tab). Wework **does not** maintain a domestic-public mirror,
-no longer ships `configure_openai_github_mirror.py`, and no longer exposes a
-Wegent cloud GitHub OAuth “Third-party apps” settings entry.
+This phase implements only **enterprise-internal company-wide visibility**. The source, signing, synchronization,
+cross-enterprise `public` release, and emergency takedown model for Wework-maintained plugins hosted on GitHub remains
+a separate open decision. It must not be presented as completed by reusing this phase's `workspace` request, and it does
+not block development of the enterprise-internal path.
 
-Users install it from the OpenAI Official filter; authorization follows the
-OpenAI / Codex official connector path.
+The GitHub Connector already available through the OpenAI / Codex official marketplace continues to use its existing
+source and authorization path. It is not the same workflow as future Wework-maintained public plugins.
+
+Existing administrator-selected Codex or license-cleared open-source mirrors also remain separate. Administrators
+register the upstream URL, license, and synchronization policy; the system downloads, scans, and stores an immutable
+Release. This does not pass through a personal plugin's company-wide request and does not determine the final design for
+Wework-maintained public plugins.
 
 ## 7. Safety limits
 
@@ -304,7 +360,10 @@ Rejected content includes:
 Publishing rules:
 
 - Final S3 keys are immutable; staging needs lifecycle cleanup.
-- Community submissions require review; official publishes must retain provenance.
+- Sharing with selected members or departments requires package scanning. Company-wide visibility requires administrator review, GitLab code review, and a protected-branch Pipeline.
+- The administrator console can only return a request or create a MR; it cannot construct an enterprise Release directly.
+- Release credentials are visible only to protected master jobs and must never appear in logs, webhooks, or build artifacts.
+- Every enterprise release retains provenance.
 - Truly offline-critical capabilities belong in Executor / built-in hooks, not as marketplace plugins baked into the client installer.
 
 ## 8. FAQ
@@ -316,22 +375,39 @@ Runtime does not read the repo directory. Dry-run or publish a new version, or e
 Skills are lighter for users; the install unit remains a Plugin. Single-skill plugins use `listing_type=skill`.
 
 **Can we expose a raw GitHub URL to normal users?**  
-No. Regular users only see the cloud catalog. Open-source content must go through official publish, community review, or admin-selected upstream mirrors.
+No. Regular users only see the cloud catalog. Enterprise-internal content must enter the `wework-plugins` MR and Pipeline; Wework-maintained public GitHub plugins require a separate design.
+
+**Why is a plugin not installable company-wide immediately after administrator acceptance?**
+
+Acceptance means product and risk review passed and creates a MR. Code review, Windows/macOS compatibility tests, merge into protected master, and the release Pipeline still have to complete.
+
+**Can I keep editing and sharing my personal plugin during review?**
+
+Yes. The request binds an immutable snapshot. The personal source remains editable, usable in chat, and shareable with members or departments. Submit a new revision if the new content should enter the enterprise release.
+
+**Does deleting my personal plugin delete the enterprise version?**
+
+No. Before merge, deletion withdraws the request first. After enterprise release, the personal source and enterprise version are independent; only an administrator can deactivate or roll back the enterprise version.
 
 **What happens when an update fails?**  
 Desired account state may advance, but a failed device keeps the previous actual release and records the error. Updates are never silent.
 
 **Is the old `/plugins/upload` path still available?**  
-It returns `410` by default. Use submissions or the official publish CLI.
+It returns `410` by default. Use sharing requests or GitLab MRs; production release is limited to the protected master Pipeline calling the Release API.
 
-## 8. Related docs and code
+**Can legacy `/plugins/submissions` still publish an enterprise edition?**
 
-| Purpose | Location |
-| --- | --- |
+No. It accepts only `restricted_share + personal` and rejects `workspace/public` server-side. The historical review endpoint and script exist only to drain existing rows and must never be called by the new Web review flow.
+
+## 9. Related docs and code
+
+| Purpose                               | Location                                               |
+| ------------------------------------- | ------------------------------------------------------ |
 | Marketplace architecture and runbooks | [plugin-marketplace-v2.md](./plugin-marketplace-v2.md) |
-| Local Codex plugin runtime | [wework-codex-plugins.md](./wework-codex-plugins.md) |
-| End-user plugin guide | [../plugins-and-skills.md](../plugins-and-skills.md) |
-| Official publish CLI | `backend/scripts/publish_official_plugin.py` |
-| Shared package scanner | `backend/app/services/plugin_package_scanner.py` |
-| Marketplace control plane | `backend/app/services/plugin_marketplace_service.py` |
-| Wework marketplace UI | `wework/src/components/plugins/` |
+| Local Codex plugin runtime            | [wework-codex-plugins.md](./wework-codex-plugins.md)   |
+| End-user plugin guide                 | [../plugins-and-skills.md](../plugins-and-skills.md)   |
+| Local dry-run / emergency CLI         | `backend/scripts/publish_official_plugin.py`           |
+| Release service abstraction           | `backend/app/services/official_plugin_publisher.py`    |
+| Shared package scanner                | `backend/app/services/plugin_package_scanner.py`       |
+| Marketplace control plane             | `backend/app/services/plugin_marketplace_service.py`   |
+| Wework marketplace UI                 | `wework/src/components/plugins/`                       |

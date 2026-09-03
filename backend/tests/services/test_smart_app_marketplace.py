@@ -72,7 +72,7 @@ def _user(db, name: str) -> User:
     return user
 
 
-def _mock_storage(monkeypatch, package: bytes) -> dict[str, bytes]:
+def _mock_storage(monkeypatch) -> dict[str, bytes]:
     values: dict[str, bytes] = {}
 
     def put(key, value, *, content_type):
@@ -85,23 +85,33 @@ def _mock_storage(monkeypatch, package: bytes) -> dict[str, bytes]:
         values[key] = value
         return created
 
-    def presign_upload(key):
-        values[key] = package
-        return f"https://upload/{key}", datetime.now(timezone.utc)
-
     monkeypatch.setattr(marketplace_artifact_storage, "put", put)
     monkeypatch.setattr(marketplace_artifact_storage, "put_immutable", put_immutable)
     monkeypatch.setattr(marketplace_artifact_storage, "get", lambda key: values[key])
     monkeypatch.setattr(
         marketplace_artifact_storage, "delete", lambda key: values.pop(key, None)
     )
-    monkeypatch.setattr(marketplace_artifact_storage, "presign_upload", presign_upload)
     monkeypatch.setattr(
         marketplace_artifact_storage,
         "presign_download",
         lambda key: (f"https://download/{key}", datetime.now(timezone.utc)),
     )
     return values
+
+
+def _upload_submission(
+    db,
+    *,
+    submission_id: int,
+    user_id: int,
+    package: bytes,
+) -> None:
+    smart_app_marketplace_service.upload_submission_package(
+        db,
+        submission_id=submission_id,
+        user_id=user_id,
+        package=package,
+    )
 
 
 def _submission(
@@ -141,16 +151,47 @@ def _submission(
     )
 
 
+def test_submission_upload_uses_backend_ticket_and_stores_validated_package(
+    test_db, test_user, monkeypatch
+):
+    recipient = _user(test_db, "upload-recipient")
+    package = _package()
+    values = _mock_storage(monkeypatch)
+
+    initialized = smart_app_marketplace_service.init_submission(
+        test_db, user_id=test_user.id, request=_submission(package, recipient)
+    )
+    smart_app_marketplace_service.upload_submission_package(
+        test_db,
+        submission_id=initialized.submissionId,
+        user_id=test_user.id,
+        package=package,
+    )
+
+    upload_url = urlsplit(initialized.uploadUrl)
+    assert upload_url.path == (
+        f"/api/smart-apps/submissions/{initialized.submissionId}/artifact"
+    )
+    assert parse_qs(upload_url.query)["token"]
+    assert package in values.values()
+
+
 def test_user_publication_is_visible_only_to_owner_and_recipient(
     test_db, test_user, monkeypatch
 ):
     recipient = _user(test_db, "smart-recipient")
     stranger = _user(test_db, "smart-stranger")
     package = _package()
-    _mock_storage(monkeypatch, package)
+    _mock_storage(monkeypatch)
 
     initialized = smart_app_marketplace_service.init_submission(
         test_db, user_id=test_user.id, request=_submission(package, recipient)
+    )
+    _upload_submission(
+        test_db,
+        submission_id=initialized.submissionId,
+        user_id=test_user.id,
+        package=package,
     )
     completed = smart_app_marketplace_service.complete_submission(
         test_db, submission_id=initialized.submissionId, user_id=test_user.id
@@ -177,12 +218,18 @@ def test_public_app_is_immediately_visible_and_keeps_scope_for_new_versions(
 ):
     unrelated_user = _user(test_db, "public-smart-app-user")
     package = _package()
-    _mock_storage(monkeypatch, package)
+    _mock_storage(monkeypatch)
 
     initialized = smart_app_marketplace_service.init_submission(
         test_db,
         user_id=test_user.id,
         request=_submission(package, unrelated_user, scope="public"),
+    )
+    _upload_submission(
+        test_db,
+        submission_id=initialized.submissionId,
+        user_id=test_user.id,
+        package=package,
     )
     completed = smart_app_marketplace_service.complete_submission(
         test_db, submission_id=initialized.submissionId, user_id=test_user.id
@@ -204,7 +251,7 @@ def test_public_app_is_immediately_visible_and_keeps_scope_for_new_versions(
     )
 
     official_package = _package(name="official-unpinned")
-    _mock_storage(monkeypatch, official_package)
+    _mock_storage(monkeypatch)
     official_app, _, _ = smart_app_marketplace_service.publish_official_package(
         test_db,
         package=official_package,
@@ -229,7 +276,7 @@ def test_public_app_is_immediately_visible_and_keeps_scope_for_new_versions(
     )
 
     next_package = _package(version="1.1.0")
-    _mock_storage(monkeypatch, next_package)
+    _mock_storage(monkeypatch)
     next_request = _submission(
         next_package, unrelated_user, version="1.1.0", scope="public"
     )
@@ -237,6 +284,12 @@ def test_public_app_is_immediately_visible_and_keeps_scope_for_new_versions(
     next_request.scope = None
     next_version = smart_app_marketplace_service.init_submission(
         test_db, user_id=test_user.id, request=next_request
+    )
+    _upload_submission(
+        test_db,
+        submission_id=next_version.submissionId,
+        user_id=test_user.id,
+        package=next_package,
     )
     smart_app_marketplace_service.complete_submission(
         test_db, submission_id=next_version.submissionId, user_id=test_user.id
@@ -266,7 +319,7 @@ def test_publication_persists_versioned_extensions_and_preserves_unknown_app_fie
 ):
     recipient = _user(test_db, "extension-recipient")
     first_package = _package(version="1.0.0")
-    _mock_storage(monkeypatch, first_package)
+    _mock_storage(monkeypatch)
     first_request = _submission(
         first_package,
         recipient,
@@ -280,6 +333,12 @@ def test_publication_persists_versioned_extensions_and_preserves_unknown_app_fie
     )
     first = smart_app_marketplace_service.init_submission(
         test_db, user_id=test_user.id, request=first_request
+    )
+    _upload_submission(
+        test_db,
+        submission_id=first.submissionId,
+        user_id=test_user.id,
+        package=first_package,
     )
     published = smart_app_marketplace_service.complete_submission(
         test_db, submission_id=first.submissionId, user_id=test_user.id
@@ -299,7 +358,7 @@ def test_publication_persists_versioned_extensions_and_preserves_unknown_app_fie
     }
 
     second_package = _package(version="1.1.0")
-    _mock_storage(monkeypatch, second_package)
+    _mock_storage(monkeypatch)
     second_request = _submission(
         second_package,
         recipient,
@@ -310,6 +369,12 @@ def test_publication_persists_versioned_extensions_and_preserves_unknown_app_fie
     second_request.targets = []
     second = smart_app_marketplace_service.init_submission(
         test_db, user_id=test_user.id, request=second_request
+    )
+    _upload_submission(
+        test_db,
+        submission_id=second.submissionId,
+        user_id=test_user.id,
+        package=second_package,
     )
     updated = smart_app_marketplace_service.complete_submission(
         test_db, submission_id=second.submissionId, user_id=test_user.id
@@ -331,7 +396,7 @@ def test_publication_persists_versioned_extensions_and_preserves_unknown_app_fie
 def test_extensions_have_a_bounded_serialized_size(test_db, test_user, monkeypatch):
     recipient = _user(test_db, "large-extension-recipient")
     package = _package()
-    _mock_storage(monkeypatch, package)
+    _mock_storage(monkeypatch)
     request = _submission(
         package,
         recipient,
@@ -375,7 +440,7 @@ def test_department_grant_allows_member_download(test_db, test_user, monkeypatch
     )
     test_db.commit()
     package = _package()
-    _mock_storage(monkeypatch, package)
+    _mock_storage(monkeypatch)
     request = _submission(package, member)
     request.targets = [
         SmartAppAccessTarget(
@@ -386,6 +451,12 @@ def test_department_grant_allows_member_download(test_db, test_user, monkeypatch
     ]
     initialized = smart_app_marketplace_service.init_submission(
         test_db, user_id=test_user.id, request=request
+    )
+    _upload_submission(
+        test_db,
+        submission_id=initialized.submissionId,
+        user_id=test_user.id,
+        package=package,
     )
     smart_app_marketplace_service.complete_submission(
         test_db, submission_id=initialized.submissionId, user_id=test_user.id
@@ -411,9 +482,15 @@ def test_revocation_blocks_future_download_but_does_not_track_local_copy(
 ):
     recipient = _user(test_db, "revoked-recipient")
     package = _package()
-    _mock_storage(monkeypatch, package)
+    _mock_storage(monkeypatch)
     initialized = smart_app_marketplace_service.init_submission(
         test_db, user_id=test_user.id, request=_submission(package, recipient)
+    )
+    _upload_submission(
+        test_db,
+        submission_id=initialized.submissionId,
+        user_id=test_user.id,
+        package=package,
     )
     completed = smart_app_marketplace_service.complete_submission(
         test_db, submission_id=initialized.submissionId, user_id=test_user.id
@@ -458,18 +535,24 @@ def test_revocation_blocks_future_download_but_does_not_track_local_copy(
 def test_same_or_older_version_cannot_replace_release(test_db, test_user, monkeypatch):
     recipient = _user(test_db, "version-recipient")
     package = _package(version="2.0.0")
-    _mock_storage(monkeypatch, package)
+    _mock_storage(monkeypatch)
     initialized = smart_app_marketplace_service.init_submission(
         test_db,
         user_id=test_user.id,
         request=_submission(package, recipient, version="2.0.0"),
+    )
+    _upload_submission(
+        test_db,
+        submission_id=initialized.submissionId,
+        user_id=test_user.id,
+        package=package,
     )
     smart_app_marketplace_service.complete_submission(
         test_db, submission_id=initialized.submissionId, user_id=test_user.id
     )
 
     older = _package(version="1.0.0")
-    _mock_storage(monkeypatch, older)
+    _mock_storage(monkeypatch)
     with pytest.raises(HTTPException) as error:
         smart_app_marketplace_service.init_submission(
             test_db,
@@ -481,7 +564,7 @@ def test_same_or_older_version_cannot_replace_release(test_db, test_user, monkey
 
 def test_first_user_release_requires_a_recipient(test_db, test_user, monkeypatch):
     package = _package()
-    _mock_storage(monkeypatch, package)
+    _mock_storage(monkeypatch)
     request = _submission(package, test_user)
     request.targets = []
 
@@ -496,9 +579,15 @@ def test_first_user_release_requires_a_recipient(test_db, test_user, monkeypatch
 def test_new_version_preserves_existing_recipients(test_db, test_user, monkeypatch):
     recipient = _user(test_db, "preserved-recipient")
     first_package = _package(version="1.0.0")
-    _mock_storage(monkeypatch, first_package)
+    _mock_storage(monkeypatch)
     first = smart_app_marketplace_service.init_submission(
         test_db, user_id=test_user.id, request=_submission(first_package, recipient)
+    )
+    _upload_submission(
+        test_db,
+        submission_id=first.submissionId,
+        user_id=test_user.id,
+        package=first_package,
     )
     published = smart_app_marketplace_service.complete_submission(
         test_db, submission_id=first.submissionId, user_id=test_user.id
@@ -506,12 +595,18 @@ def test_new_version_preserves_existing_recipients(test_db, test_user, monkeypat
     assert published.item is not None
 
     second_package = _package(version="1.1.0")
-    _mock_storage(monkeypatch, second_package)
+    _mock_storage(monkeypatch)
     request = _submission(second_package, recipient, version="1.1.0")
     request.smartAppId = published.item.id
     request.targets = []
     second = smart_app_marketplace_service.init_submission(
         test_db, user_id=test_user.id, request=request
+    )
+    _upload_submission(
+        test_db,
+        submission_id=second.submissionId,
+        user_id=test_user.id,
+        package=second_package,
     )
     smart_app_marketplace_service.complete_submission(
         test_db, submission_id=second.submissionId, user_id=test_user.id
@@ -528,7 +623,7 @@ def test_new_version_preserves_existing_recipients(test_db, test_user, monkeypat
 def test_uploaded_package_hash_must_match_submission(test_db, test_user, monkeypatch):
     recipient = _user(test_db, "hash-recipient")
     package = _package()
-    values = _mock_storage(monkeypatch, package)
+    values = _mock_storage(monkeypatch)
     initialized = smart_app_marketplace_service.init_submission(
         test_db, user_id=test_user.id, request=_submission(package, recipient)
     )
@@ -550,7 +645,7 @@ def test_official_release_is_visible_to_every_authenticated_user(
 ):
     stranger = _user(test_db, "official-reader")
     package = _package(name="official-research")
-    _mock_storage(monkeypatch, package)
+    _mock_storage(monkeypatch)
 
     app, release, created = smart_app_marketplace_service.publish_official_package(
         test_db,
