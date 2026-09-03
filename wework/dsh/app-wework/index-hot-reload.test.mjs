@@ -3,6 +3,7 @@ import { mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test from 'node:test'
+import vm from 'node:vm'
 import { injectDevelopmentReload, weworkAssetCacheControl, weworkIndexInjection } from './index.js'
 
 test('injects reload polling only into the original development application', () => {
@@ -12,7 +13,49 @@ test('injects reload polling only into the original development application', ()
   const developmentHtml = injectDevelopmentReload(html, { WEWORK_APP_HOT_RELOAD: '1' }, 'build-1')
   assert.match(developmentHtml, /x-wework-app-build-id/)
   assert.match(developmentHtml, /"build-1"/)
+  assert.match(developmentHtml, /window\.weworkElectronFiles/)
   assert.match(developmentHtml, /window\.location\.reload/)
+})
+
+test('does not poll for application builds outside Electron', () => {
+  const intervals = []
+  runDevelopmentReloadScript({
+    buildId: 'build-1',
+    intervals,
+    window: { location: { reload: () => assert.fail('unexpected reload') } },
+  })
+
+  assert.deepEqual(intervals, [])
+})
+
+test('attempts to reload each completed build only once when loading fails', async () => {
+  const intervals = []
+  const responses = ['build-2', 'build-2', 'build-3', 'build-3']
+  let reloads = 0
+  runDevelopmentReloadScript({
+    buildId: 'build-1',
+    intervals,
+    window: {
+      location: {
+        reload: () => {
+          reloads += 1
+        },
+      },
+      weworkElectronFiles: {},
+    },
+    fetch: async () => ({
+      headers: { get: () => responses.shift() ?? null },
+    }),
+  })
+
+  assert.equal(intervals.length, 1)
+  await intervals[0]()
+  await intervals[0]()
+  assert.equal(reloads, 1)
+
+  await intervals[0]()
+  await intervals[0]()
+  assert.equal(reloads, 2)
 })
 
 test('disables application asset caching while development hot reload is active', () => {
@@ -52,3 +95,20 @@ test('reads the current application assets and build id for every page injection
     await rm(directory, { recursive: true, force: true })
   }
 })
+
+function runDevelopmentReloadScript({ buildId, fetch, intervals, window }) {
+  const html = injectDevelopmentReload(
+    '<html><head></head><body></body></html>',
+    { WEWORK_APP_HOT_RELOAD: '1' },
+    buildId
+  )
+  const script = html.match(/<script>(.*)<\/script>/s)?.[1]
+  assert.ok(script)
+  vm.runInNewContext(script, {
+    fetch,
+    setInterval: callback => {
+      intervals.push(callback)
+    },
+    window,
+  })
+}
