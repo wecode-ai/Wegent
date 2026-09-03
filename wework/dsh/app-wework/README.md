@@ -7,6 +7,14 @@
 
 - `wework.action`
 - `wework.app`
+- `wework.plugins.action`
+- `wework.task.status`
+- `wework.environment.section`
+- `wework.board.card.status`
+- `wework.workspace.menu.section`
+- `wework.project.work.section`
+- `wework.project.create.section`
+- `wework.runtime-profile.workspace-policy`
 - `wework.route`
 - `wework.sidebar.navigation`
 - `wework.settings.page`
@@ -48,5 +56,6 @@ desktop capability 调用这些能力。
 该包必须显式导出 `./package.json`。DSH client module registry 通过这个子路径读取
 `dsh.client` 声明；缺少导出会导致插件不进入 browser boot graph。
 
-可安装的第三方示例位于
-[`../examples/ui-extension-demo`](../examples/ui-extension-demo)，覆盖以上全部扩展点。
+“Wework 插件开发”Skill 携带的可安装示例位于
+[`../plugin-developer/codex-plugin/skills/develop-wework-plugin/assets/ui-extension-demo`](../plugin-developer/codex-plugin/skills/develop-wework-plugin/assets/ui-extension-demo)，
+覆盖以上全部扩展点。

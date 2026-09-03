@@ -654,7 +654,9 @@ export function useWorkbenchProjectActions({
       project: ProjectWithTasks | null,
       workspaceTarget?: WorkspaceTarget | null,
       mode?: EnvironmentDiffMode
-    ) => loadProjectEnvironmentDiff(executorClient.commands, project, workspaceTarget, mode),
+    ) => {
+      return loadProjectEnvironmentDiff(executorClient.commands, project, workspaceTarget, mode)
+    },
     [executorClient]
   )
 
@@ -719,8 +721,9 @@ export function useWorkbenchProjectActions({
   )
 
   const listEnvironmentBranches = useCallback(
-    (project: ProjectWithTasks | null, workspaceTarget?: WorkspaceTarget | null) =>
-      listProjectBranches(executorClient.commands, project, workspaceTarget),
+    (project: ProjectWithTasks | null, workspaceTarget?: WorkspaceTarget | null) => {
+      return listProjectBranches(executorClient.commands, project, workspaceTarget)
+    },
     [executorClient]
   )
 

@@ -17,6 +17,7 @@ import { focusTerminalUnlessComposerFocusRequested } from '@/lib/workbenchCompos
 import { defaultAppearance, useOptionalAppearance } from '@/features/appearance'
 import { createXtermWebLinksAddon } from './xtermLinks'
 import { installXtermInputFallback, type XtermInputFallbackController } from './xtermInputFallback'
+import { installXtermMacKeybindings } from './xtermMacKeybindings'
 import { installXtermSelectionGuard } from './xtermSelectionGuard'
 import { installXtermTextDrag } from './xtermTextDrag'
 import {
@@ -76,7 +77,7 @@ export function RemoteTerminal({
   const containerRef = useRef<HTMLDivElement | null>(null)
   const terminalRef = useRef<Terminal | null>(null)
   const fitAddonRef = useRef<FitAddon | null>(null)
-  const clientRef = useRef<RemoteTerminalClient | null>(null)
+  const attachedClientRef = useRef<RemoteTerminalClient | null>(null)
   const activeRef = useRef(active)
   const contextRef = useRef({ taskId, workspacePath, cwd, title })
   const onExitRef = useRef(onExit)
@@ -155,6 +156,7 @@ export function RemoteTerminal({
       }
     }
     currentResource?.dispose()
+    lastSizeRef.current = null
 
     const terminalAppearance = appearanceRef.current
     const terminal = new Terminal({
@@ -171,6 +173,7 @@ export function RemoteTerminal({
     const webLinksAddon = createXtermWebLinksAddon()
     const client = clientFactory(sessionId)
     let disposed = false
+    let attached = false
     let scheduleThemeSync: () => void = () => undefined
 
     const writeTerminalOutput = (data: string) => {
@@ -193,14 +196,15 @@ export function RemoteTerminal({
       noteData: () => undefined,
       dispose: () => undefined,
     }
-    const dataDisposable = terminal.onData(data => {
+    const writeTerminalInput = (data: string) => {
       inputFallback.noteData(data)
       void client.write(data).catch(error => {
         if (!disposed) {
           console.error('Failed to write to remote terminal:', error)
         }
       })
-    })
+    }
+    const dataDisposable = terminal.onData(writeTerminalInput)
     const unsubscribeOutput = client.onOutput(payload => {
       if (!disposed && payload.session_id === sessionId) {
         writeTerminalOutput(payload.data)
@@ -222,18 +226,11 @@ export function RemoteTerminal({
     const textDrag = installXtermTextDrag({ container, terminal })
     inputFallback = installXtermInputFallback({
       terminal,
-      writeData: data => {
-        inputFallback.noteData(data)
-        void client.write(data).catch(error => {
-          if (!disposed) {
-            console.error('Failed to write fallback input to remote terminal:', error)
-          }
-        })
-      },
+      writeData: writeTerminalInput,
     })
+    installXtermMacKeybindings({ terminal, writeData: writeTerminalInput })
     terminalRef.current = terminal
     fitAddonRef.current = fitAddon
-    clientRef.current = client
     applyTerminalTheme(terminal, container, getTerminalTheme(), showWorkbenchBackground)
     scheduleThemeSync = createTerminalThemeScheduler(terminal, container, showWorkbenchBackground)
     const unobserveTheme = observeTerminalTheme(theme => {
@@ -257,7 +254,7 @@ export function RemoteTerminal({
     }
 
     const syncTerminalSize = (onError: (error: unknown) => void) => {
-      if (!activeRef.current || terminal.rows <= 0 || terminal.cols <= 0) return
+      if (!attached || !activeRef.current || terminal.rows <= 0 || terminal.cols <= 0) return
 
       const lastSize = lastSizeRef.current
       if (lastSize?.rows === terminal.rows && lastSize.cols === terminal.cols) return
@@ -273,6 +270,9 @@ export function RemoteTerminal({
     void client
       .attach()
       .then(() => {
+        if (disposed) return
+        attached = true
+        attachedClientRef.current = client
         requestAnimationFrame(fitAndResize)
       })
       .catch(error => {
@@ -309,7 +309,7 @@ export function RemoteTerminal({
         if (resourceRef.current === resource) {
           terminalRef.current = null
           fitAddonRef.current = null
-          clientRef.current = null
+          attachedClientRef.current = null
           resourceRef.current = null
         }
       },
@@ -327,9 +327,9 @@ export function RemoteTerminal({
     const frame = requestAnimationFrame(() => {
       const terminal = terminalRef.current
       const fitAddon = fitAddonRef.current
-      const client = clientRef.current
+      const attachedClient = attachedClientRef.current
       const container = containerRef.current
-      if (!terminal || !fitAddon || !client || !container) return
+      if (!terminal || !fitAddon || !container) return
 
       try {
         applyTerminalTheme(terminal, container, getTerminalTheme(), showWorkbenchBackground)
@@ -349,13 +349,14 @@ export function RemoteTerminal({
         console.error('Failed to activate remote terminal:', error)
         return
       }
+      if (!attachedClient) return
       if (terminal.rows <= 0 || terminal.cols <= 0) return
 
       const lastSize = lastSizeRef.current
       if (lastSize?.rows === terminal.rows && lastSize.cols === terminal.cols) return
 
       lastSizeRef.current = { rows: terminal.rows, cols: terminal.cols }
-      void client.resize(terminal.rows, terminal.cols).catch(error => {
+      void attachedClient.resize(terminal.rows, terminal.cols).catch(error => {
         console.error('Failed to sync remote terminal size on activate:', error)
       })
     })

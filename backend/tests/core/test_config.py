@@ -78,6 +78,43 @@ class TestSettings:
         assert s.ACCESS_TOKEN_EXPIRE_MINUTES == 120
         assert s.ENABLE_API_DOCS is False
 
+    def test_scheduled_tasks_switch_defaults_to_enabled_and_reads_environment(
+        self, monkeypatch
+    ):
+        assert build_settings().SCHEDULED_TASKS_ENABLED is True
+
+        monkeypatch.setenv("SCHEDULED_TASKS_ENABLED", "false")
+
+        assert build_settings_from_env().SCHEDULED_TASKS_ENABLED is False
+
+    def test_plugin_publication_active_request_limit_must_be_positive(self):
+        """Prevent capacity configuration from disabling publication globally."""
+        with pytest.raises(
+            ValidationError,
+            match="WEWORK_PLUGIN_PUBLICATION_MAX_ACTIVE_REQUESTS must be at least 1",
+        ):
+            build_settings(WEWORK_PLUGIN_PUBLICATION_MAX_ACTIVE_REQUESTS=0)
+
+    def test_wework_plugin_publication_settings_load_from_environment(
+        self, monkeypatch
+    ):
+        """Keep the WeWork publication environment contract explicit."""
+        monkeypatch.setenv(
+            "WEWORK_PLUGIN_PUBLICATION_GITLAB_PROJECT_ID",
+            "37282",
+        )
+        monkeypatch.setenv(
+            "WEWORK_PLUGIN_PUBLICATION_GITLAB_WEBHOOK_SECRET",
+            "webhook-secret",
+        )
+        monkeypatch.setenv("WEWORK_PLUGIN_RELEASE_KEY_MAX_DAYS", "90")
+
+        s = build_settings_from_env()
+
+        assert s.WEWORK_PLUGIN_PUBLICATION_GITLAB_PROJECT_ID == "37282"
+        assert s.WEWORK_PLUGIN_PUBLICATION_GITLAB_WEBHOOK_SECRET == "webhook-secret"
+        assert s.WEWORK_PLUGIN_RELEASE_KEY_MAX_DAYS == 90
+
     def test_git_token_crypto_environment_uses_dotenv_without_overriding_process_env(
         self, monkeypatch, tmp_path
     ):

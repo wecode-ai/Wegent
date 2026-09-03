@@ -116,7 +116,6 @@ export interface ProjectWorkControls {
   executionMode: ProjectExecutionMode
   executionModeLocked?: boolean
   worktreeAvailability?: ProjectWorktreeAvailability
-  isGitProject?: boolean
   onSelectProject: (projectId: number | null) => void
   onSelectStandaloneDevice: (deviceId: string | null) => void
   onSelectProjectWorkspace?: (projectId: number, deviceWorkspaceId: number | null) => void

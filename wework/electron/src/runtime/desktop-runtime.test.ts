@@ -137,6 +137,32 @@ describe('DesktopRuntime lifecycle generation', () => {
     expect(runtime.state().ready).toBe(true)
   })
 
+  test('an old-generation start cannot clear a new-generation start', async () => {
+    const runtime = createRuntime(EXTERNAL_DSH)
+    const oldStartHang = deferred<void>()
+    nextStartHang = oldStartHang
+    const oldStart = runtime.start()
+    await vi.waitFor(() => expect(created).toHaveLength(1))
+
+    await runtime.stop()
+    const newStartHang = deferred<void>()
+    nextStartHang = newStartHang
+    const newStart = runtime.start()
+    await vi.waitFor(() => expect(created).toHaveLength(2))
+
+    oldStartHang.resolve()
+    await oldStart
+
+    const inflight = runtime.start()
+    expect(inflight).toBe(newStart)
+
+    newStartHang.resolve()
+    await Promise.all([newStart, inflight])
+
+    expect(created).toHaveLength(2)
+    expect(runtime.state().ready).toBe(true)
+  })
+
   test('concurrent restart calls share one replacement operation', async () => {
     const runtime = createRuntime(EXTERNAL_DSH)
     await runtime.start()

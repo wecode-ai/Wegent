@@ -851,6 +851,29 @@ export function createLocalDeliveryApi(
       }
       return { items }
     },
+    async listLoopItemsPage(
+      projectId: CloudProjectId,
+      options: {
+        status: CloudLoopItem['status']
+        parentId: string | null
+        cursor?: string | null
+        limit?: number
+      }
+    ) {
+      const response = await api.listLoopItems(projectId)
+      const offset = Number(options.cursor ?? 0)
+      const limit = options.limit ?? 10
+      const matching = response.items.filter(
+        item => item.status === options.status && item.parent_id === options.parentId
+      )
+      const items = matching.slice(offset, offset + limit)
+      const nextOffset = offset + items.length
+      return {
+        items,
+        task_bindings: [],
+        next_cursor: nextOffset < matching.length ? String(nextOffset) : null,
+      }
+    },
     async getBoardSnapshot(projectId: CloudProjectId): Promise<ProjectBoardSnapshot> {
       const records = await request<LocalLoopItemRecord[]>('todos.list', {
         project_id: projectId,

@@ -13,7 +13,7 @@ Open **Plugins** to inspect installed plugins and manage their capabilities. Rev
 In the Wework desktop app, open **Plugins → Manage plugins** and switch between two management surfaces:
 
 - **Codex plugins** provide Skills, MCP servers, applications, and commands to AI. They are installed through Codex or Wegent plugin marketplaces and are used in tasks and conversations.
-- **Wework plugins** are DSH bundles that directly extend the local Wework desktop runtime. They are not regular Codex plugins and do not appear in the task plugin picker.
+- **Wework plugins** are DSH bundles that directly extend the local Wework desktop runtime. A Wework plugin is the outer delivery unit and may carry an official-format Codex plugin; only those nested Codex capabilities appear in conversations and the task plugin picker.
 
 From **Wework plugins**, install a plugin from an npm package, Git source, or absolute local directory. Wework shows a trust confirmation because the plugin and its installation scripts run with the current user's permissions. User-installed plugins can be updated, enabled, disabled, or uninstalled. Bundled Wework runtime plugins are displayed as read-only and cannot be changed or removed here.
 
@@ -24,6 +24,58 @@ Wework validates the resulting DSH profile after each install, update, enable, d
 On the **Plugins** page, choose **Create → Import plugin** to import a standard ZIP package that follows the `wework-plugins` format. The ZIP root must contain `.codex-plugin/plugin.json`, and any Skills or MCP servers must be included in the same plugin package. Encrypted or password-protected ZIP files are not supported.
 
 If you do not have a package yet, choose **Download example plugin** in the import dialog and use it as the starting point for the manifest, Skills, and MCP configuration. After selecting a ZIP, Wework previews its name, version, and included capabilities. Packages with executable capabilities require an explicit trust confirmation before import and installation. When a package is invalid, the dialog identifies the missing file or unsupported ZIP type.
+
+## View, share, and request company-wide publishing
+
+> Implementation status (2026-08-29): the interaction below is implemented on the current feature branch and has local verification. Production publication is not enabled: HTTPS, GitLab protection rules, native Windows/macOS Runners, and a new Release credential remain external P0 gates. This section is therefore not a production-availability claim.
+
+The detail page for a personally created or imported plugin retains its complete usage and management surface. The header
+provides **Share**, **…**, and **Chat now**. The page shows its description, trial tasks, available scope, version
+information, automatic update settings, app authorizations, and included capabilities. Choosing a trial task puts the
+example into the composer without sending it automatically. A personal-plugin owner can also choose **Continue editing**,
+**Uninstall**, or **Delete plugin** from **…** when the current installation state and permissions allow it.
+
+**Share** contains only two choices:
+
+- **Selected members or departments**: select people and departments from the address book. The organization itself is
+  the root department; there is no separate “Organization visibility” option. The current version becomes available as
+  soon as its security scan passes, without administrator review, and remains under My creations.
+- **Everyone in the company**: request publication to the current company's entire membership. A right-side drawer leads
+  through **Confirm version → Permissions and risks → Confirm submission**. Submission does not make the plugin immediately
+  visible to everyone.
+
+The client loads the latest member/department ACL and the plugin's complete
+publication-request state together and allows editing/submission only after both
+are ready. If either load fails, it keeps the actionable dialog closed instead
+of letting stale cache overwrite recipients or start a duplicate request.
+
+A company-wide request binds the submitted version and content snapshot. During review, the personal source remains
+available for chat, editing, and sharing with selected members or departments. Later edits do not replace the snapshot
+under review. For example, a request may remain on v1.2.0 while the personal plugin advances to v1.3.0. To publish changed
+content, address the returned feedback and submit a new revision.
+
+The plugin detail page shows five stages:
+
+1. **Submit request**: save an immutable snapshot of the submitted version;
+2. **Automated checks**: inspect package structure, sensitive files, and risk declarations;
+3. **Administrator review**: an enterprise administrator returns or accepts the request in the Web admin console;
+4. **Code review**: acceptance creates a GitLab MR for risk, Windows, and macOS compatibility checks;
+5. **Release**: after merge into protected master, the Pipeline publishes the enterprise version.
+
+Administrator acceptance only starts code review; it does not mean the plugin is published. Regular users submit and
+track requests entirely in Wework; the Web surface is only for administrator review. After release, the personal source
+remains under My creations and a separate enterprise plugin appears under Enterprise. They may have different versions
+and do not overwrite each other.
+
+The progress view distinguishes completed, active, and pending stages. Failed automated checks list the issues to fix;
+an administrator return shows its reason and risk items and allows a new revision; code-review or release failure does
+not affect the existing enterprise version. A request can be withdrawn from the detail page before its MR is merged.
+After release begins, administrators own the enterprise version.
+
+The detail page retains every Request and Revision for the personal source. The
+owner can switch among submissions to inspect each revision's checks, evidence,
+events, and GitLab state; a newer request never hides the link to an earlier
+published enterprise edition.
 
 ## Install a Smart app
 
@@ -51,7 +103,18 @@ Choose a Wework model while installing from the marketplace. Apps imported from 
 
 You can delete a plugin that you created or imported from the **…** menu in its detail page. If the plugin is installed, Wework uninstalls it before deleting the local plugin source.
 
-For a plugin published to the cloud, Wework checks its usage before deletion. An unused plugin can be deleted immediately. If it still has users, grants, or device installations, the confirmation dialog shows the affected scope and changes the action to **Deactivate and delete**. The cloud then blocks sharing and new installations, revokes existing grants, and asks online devices to remove the plugin; offline devices remove it the next time they connect. Tasks that are already running are not forcibly interrupted. If usage changes while the dialog is open, refresh the impact and confirm again.
+If the plugin has a company-wide request that has not been merged into master, deletion first withdraws the request. The
+system also closes or marks any generated MR as cancelled before uninstalling and deleting the personal source.
+After merge or enterprise release, the personal user cannot withdraw that enterprise version. Deleting the personal
+source then affects only that source and its member/department shares; it does not delete the enterprise version under
+Enterprise. An administrator owns enterprise deactivation, removal, and rollback.
+
+For a personal plugin shared only with members or departments and not released as an enterprise version, Wework checks
+usage before deletion. An unused plugin can be deleted immediately. If it still has users, grants, or device installations,
+the confirmation dialog shows the affected scope and changes the action to **Deactivate and delete**. The cloud then blocks
+sharing and new installations, revokes existing grants, and asks online devices to remove the plugin; offline devices remove
+it the next time they connect. Tasks already running are not forcibly interrupted. If usage changes while the dialog is open,
+refresh the impact and confirm again.
 
 ## Use the built-in application plugins
 

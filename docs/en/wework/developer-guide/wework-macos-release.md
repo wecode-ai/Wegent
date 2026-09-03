@@ -193,6 +193,14 @@ with SHA-512. Prepared desktop resources live under `wework/resources/`.
 icons, and runtime descriptors into the application resources. Do not maintain
 a second desktop resource tree or manifest.
 
+The current pin is Codex `0.152.1`. Codex `0.152` disables
+`tools.update_plan.enabled` by default, while Wework consumes the corresponding
+plan events to render plan blocks, so the Executor must enable the tool
+explicitly when launching Codex. Desktop E2E verifies the lockfile binary by
+default; only the dedicated `WEWORK_E2E_CODEX_BIN` may override it. It must not
+inherit the generic `CODEX_BIN`, which could otherwise select an older binary
+from an installed application instead of the repository version under test.
+
 Desktop distributions must also include the project and bundled-sidecar
 licenses and attribution notices:
 
@@ -224,6 +232,14 @@ the build result is closed, and file-viewer metadata is normalized. Core DSH
 uses this marker as the published build ID, so the page reloads only after the
 marker changes instead of treating an intermediate `index.html` write as a
 loadable generation.
+
+Automatic reload is enabled only in desktop renderers that expose the Wework
+Electron preload capabilities. Opening the Core DSH URL directly in the system
+default browser must not start the hot-reload poller. When a desktop renderer
+observes a newly published build, it records that build ID before attempting a
+reload. If the new page fails to load and the old document remains alive, the
+same build must not trigger another reload. A later build with a new ID still
+reloads normally.
 
 In development hot-reload mode, static resources under `/wework/app/` must use
 `Cache-Control: no-store`. In addition to hashed assets, this tree contains

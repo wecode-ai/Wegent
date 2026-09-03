@@ -253,6 +253,7 @@ const ELECTRON_OBSERVATION_ACTIONS = new Set([
   'activeElement',
   'getAttribute',
   'getElementCount',
+  'getTerminalText',
   'getText',
   'metrics',
   'snapshot',
@@ -275,6 +276,33 @@ function findNestedString(value, predicate) {
     if (match) return match
   }
   return null
+}
+
+function requestContainsSkillLocator(body, skillPath, skillName) {
+  const requestText = JSON.stringify(body)
+  if (requestText.includes(skillPath)) return true
+
+  const normalizedSkillPath = skillPath.replaceAll('\\', '/')
+  const relativeSkillPath = `${skillName}/SKILL.md`
+  const skillRoot = normalizedSkillPath.slice(0, -relativeSkillPath.length).replace(/\/$/u, '')
+  const catalog = findNestedString(
+    body,
+    value => value.includes('### Skill roots') && value.includes(relativeSkillPath)
+  )
+  if (!catalog) return false
+
+  for (const line of catalog.split(/\r?\n/u)) {
+    const rootMatch = line.match(/^- `([^`]+)` = `([^`]+)`$/u)
+    if (!rootMatch) continue
+    const [, alias, root] = rootMatch
+    if (
+      root.replaceAll('\\', '/') === skillRoot &&
+      catalog.includes(`(file: ${alias}/${relativeSkillPath})`)
+    ) {
+      return true
+    }
+  }
+  return false
 }
 
 function toolOutputText(request, callId) {
@@ -314,18 +342,17 @@ function pluginWorkspacePublishCommand(body) {
 }
 
 function publishedPluginWorkspaceResult(body) {
+  const completedStatus = /"status":"(?:published|pending_review)"/u
   const output = findNestedString(
     body,
-    value =>
-      value.includes(PLUGIN_WORKSPACE_RESULT_MARKER) && value.includes('"status":"published"')
+    value => value.includes(PLUGIN_WORKSPACE_RESULT_MARKER) && completedStatus.test(value)
   )
   if (!output) return null
   const line = output
     .split(/\r?\n/u)
     .find(
       candidate =>
-        candidate.includes(PLUGIN_WORKSPACE_RESULT_MARKER) &&
-        candidate.includes('"status":"published"')
+        candidate.includes(PLUGIN_WORKSPACE_RESULT_MARKER) && completedStatus.test(candidate)
     )
   if (!line) return null
   return line.slice(line.indexOf(PLUGIN_WORKSPACE_RESULT_MARKER))
@@ -523,6 +550,9 @@ class DesktopE2EServer {
     })
     this.toolBlockGenericRelease = new Promise(resolvePromise => {
       this.releaseToolBlockGeneric = resolvePromise
+    })
+    this.cloudInitialRelease = new Promise(resolvePromise => {
+      this.releaseCloudInitial = resolvePromise
     })
     this.cloudFollowUpRelease = new Promise(resolvePromise => {
       this.releaseCloudFollowUp = resolvePromise
@@ -753,6 +783,7 @@ class DesktopE2EServer {
         'local_markdown_image',
         'tool_block_order',
         'official_plugin',
+        'plugin_development',
         'automation',
         'skill_mention_display',
         'connector_auth_unmatched_resume',
@@ -949,6 +980,10 @@ class DesktopE2EServer {
 
   markGoalRestartResumeRequested() {
     this.goalRestartResumeRequested = true
+  }
+
+  releaseCloudInitialResponse() {
+    this.releaseCloudInitial()
   }
 
   releaseCloudFollowUpResponse() {
@@ -2531,12 +2566,30 @@ class DesktopE2EServer {
         true,
         'The real cloud executor did not expose the authenticated Wework user identity'
       )
+      const stream = streamingTextEvents(responseId, CLOUD_COMPLETION_TEXT)
+      this.cloudModelStage = 'streaming'
+      response.writeHead(200, {
+        'Access-Control-Allow-Origin': '*',
+        'Cache-Control': 'no-cache',
+        Connection: 'keep-alive',
+        'Content-Type': 'text/event-stream; charset=utf-8',
+      })
+      response.write(
+        createSse([
+          ...stream.start,
+          {
+            type: 'response.output_text.delta',
+            item_id: stream.itemId,
+            output_index: 0,
+            content_index: 0,
+            delta: CLOUD_COMPLETION_TEXT,
+            offset: 0,
+          },
+        ])
+      )
+      await this.cloudInitialRelease
       this.cloudModelStage = 'complete'
-      this.writeSse(response, [
-        responseCreated(responseId),
-        assistantMessage(CLOUD_COMPLETION_TEXT),
-        responseCompleted(responseId),
-      ])
+      response.end(createSse(stream.finish))
       return
     }
 
@@ -3160,7 +3213,7 @@ class DesktopE2EServer {
         assert.ok(
           requestText.includes(OFFICIAL_PLUGIN_NAME) &&
             requestText.includes(OFFICIAL_PLUGIN_SKILL_NAME) &&
-            requestText.includes(skillPath),
+            requestContainsSkillLocator(body, skillPath, OFFICIAL_PLUGIN_SKILL_NAME),
           'The real Codex request did not inject the selected official plugin skill'
         )
         const shell = selectShellToolCommand(
@@ -3395,6 +3448,25 @@ class DesktopE2EServer {
       this.writeSse(response, [
         responseCreated(responseId),
         assistantMessage(FRESH_CHAT_COMPLETION_TEXT),
+        responseCompleted(responseId),
+      ])
+      return
+    }
+
+    if (this.scenario === 'plugin_development') {
+      this.recordScenarioRequest('plugin_development', modelRequest)
+      const requestText = JSON.stringify(body)
+      assert.ok(
+        requestText.includes('开发这个 Wework 插件：'),
+        'The plugin development prompt was lost'
+      )
+      assert.ok(
+        requestText.includes('wework-plugin-developer:develop-wework-plugin'),
+        'The Wework plugin developer Skill was not available to Codex'
+      )
+      this.writeSse(response, [
+        responseCreated(responseId),
+        assistantMessage('Wework plugin development request accepted.'),
         responseCompleted(responseId),
       ])
       return

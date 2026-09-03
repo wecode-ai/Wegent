@@ -19,7 +19,7 @@ import type {
 } from '@/types/api'
 import { getLocalExecutorStatus } from '@/desktop/localExecutor'
 import { isCurrentAppDevice } from '@/lib/app-device-registration'
-import { getDefaultModelOptions } from '@/lib/model-ui'
+import { getDefaultModelOptions, getModelDisplayLabel } from '@/lib/model-ui'
 import { useTranslation } from '@/hooks/useTranslation'
 import { AutomationRulesView } from './AutomationRulesView.jsx'
 import {
@@ -234,7 +234,7 @@ async function fetchExecutionCatalog(
       .filter(model => model.isActive !== false && !model.compatibilityDisabled)
       .map(model => ({
         name: model.name,
-        label: model.displayName || model.name,
+        label: getModelDisplayLabel(model),
         type: model.type,
         options: {
           ...getDefaultModelOptions(model),

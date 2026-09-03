@@ -30,6 +30,7 @@ import {
 } from '@/components/chat/ChatInput'
 import { ConversationQueuePanel } from '@/components/chat/ConversationQueuePanel'
 import { AssistantMarkdown } from '@/components/chat/AssistantMarkdown'
+import { CompositedSpinner } from '@/components/common/CompositedSpinner'
 import { Tooltip } from '@/components/ui/tooltip'
 import { DESKTOP_MESSAGE_LIST_CLASS } from '@/components/layout/desktopChatLayout'
 import { useWorkbenchPaneContext } from '@/features/workbench/useWorkbench'
@@ -549,8 +550,6 @@ export function TaskActivityView({
       pendingProjectWorkspaceProjectId: null,
       executionMode: 'current_workspace',
       executionModeLocked: true,
-      // The execution-mode control is meaningless for comment runs; hide it.
-      isGitProject: false,
       showProjectClearButton: selectedCommentProjectId !== '',
       onSelectProject: projectId => setSelectedCommentProjectId(projectId ?? ''),
       onSelectStandaloneDevice: () => setSelectedCommentProjectId(''),
@@ -1319,7 +1318,7 @@ export function TaskActivityView({
         >
           {loading ? (
             <div className="flex min-h-48 items-center justify-center text-sm text-text-muted">
-              <LoaderCircle className="mr-2 h-4 w-4 animate-spin" />
+              <CompositedSpinner className="mr-2 h-4 w-4" />
               {t('workbench.project_chat_loading')}
             </div>
           ) : threadMessages.length === 0 ? (
@@ -1677,7 +1676,11 @@ function TaskExecutionStatusControl({
           onClick={() => setOpen(current => !current)}
           className="task-detail-execution-status-trigger"
         >
-          <Icon className={cn('h-4 w-4', animated && 'animate-spin')} />
+          {animated ? (
+            <CompositedSpinner icon={Icon} className="h-4 w-4" />
+          ) : (
+            <Icon className="h-4 w-4" />
+          )}
         </button>
       </Tooltip>
       {open ? (
@@ -1689,7 +1692,11 @@ function TaskExecutionStatusControl({
         >
           <span className="task-detail-execution-status-popover-head">
             <span className="task-detail-execution-status-popover-title">
-              <Icon className={cn('h-4 w-4', animated && 'animate-spin')} />
+              {animated ? (
+                <CompositedSpinner icon={Icon} className="h-4 w-4" />
+              ) : (
+                <Icon className="h-4 w-4" />
+              )}
               {label}
             </span>
             <button
@@ -1809,7 +1816,7 @@ function ChatMessage({
       ) : null}
       {isAgent && !compact && message.status === 'streaming' ? (
         <span className="mt-1 inline-flex items-center gap-1 text-xs text-text-muted">
-          <LoaderCircle className="h-3 w-3 animate-spin" />
+          <CompositedSpinner className="h-3 w-3" />
           {t('workbench.project_chat_processing')}
         </span>
       ) : null}
@@ -2039,7 +2046,11 @@ function ExecutionStatusBadge({
   const animated = ['starting', 'running', 'cancelling'].includes(kind)
   const statusContent = (
     <>
-      <StatusIcon className={cn('h-3 w-3', animated && 'animate-spin')} />
+      {animated ? (
+        <CompositedSpinner icon={StatusIcon} className="h-3 w-3" />
+      ) : (
+        <StatusIcon className="h-3 w-3" />
+      )}
       {labels[kind]}
     </>
   )
@@ -2076,11 +2087,7 @@ function ExecutionStatusBadge({
             onStopExecution()
           }}
         >
-          {stopping ? (
-            <LoaderCircle className="h-3 w-3 animate-spin" />
-          ) : (
-            <Square className="h-3 w-3" />
-          )}
+          {stopping ? <CompositedSpinner className="h-3 w-3" /> : <Square className="h-3 w-3" />}
         </button>
       ) : null}
     </span>

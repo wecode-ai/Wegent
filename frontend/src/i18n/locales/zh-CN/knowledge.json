@@ -285,14 +285,6 @@
       "batchMovePartial": "批量移动完成：成功 {{success}} 个，失败 {{failed}} 个。失败文档仍保留选中状态，请查看高亮项后重试"
     },
     "document": {
-      "retrievalProfile": {
-        "fallbackReasons": {
-          "retriever_unavailable": "配置的检索默认 Profile 不可用，将使用自动默认配置。",
-          "embedding_model_unavailable": "配置的检索默认 Profile 不可用，将使用自动默认配置。",
-          "profile_incomplete": "配置的检索默认 Profile 不完整，将使用自动默认配置。",
-          "unavailable": "检索默认 Profile 不可用，将使用自动默认配置。"
-        }
-      },
       "title": "文档",
       "upload": "添加资料",
       "edit": "编辑文档",
@@ -1224,6 +1216,9 @@
       "generateFirst": "开始生成",
       "regenerateConfirmTitle": "重新生成这个 wiki？",
       "regenerateConfirmBody": "会重新阅读整个仓库并重写所有页面，通常需要几分钟到几十分钟。生成期间现有页面照常可读，新版本发布后才会替换。",
+      "cancelConfirmTitle": "终止本次生成？",
+      "cancelConfirmBody": "当前草稿会被丢弃，已发布的页面不会变化。",
+      "cancelRequested": "已受理终止请求",
       "emptyGenerating": "正在生成这个 wiki",
       "emptyGeneratingHint": "读完整个仓库通常需要几分钟到几十分钟，可以先去忙别的，稍后回来看看。",
       "emptyFailed": "上次生成没有完成",
@@ -1232,6 +1227,8 @@
     "progress": {
       "title": "生成中",
       "step": "阶段 {{current}}/{{total}}",
+      "cancel": "终止生成",
+      "cancelling": "正在终止…",
       "stepLabel": {
         "plan": "规划评审",
         "planPassed_one": "规划评审通过（{{count}} 个页面）",
@@ -1293,6 +1290,7 @@
       "failureDetailsDescription": "本次生成的完整错误信息。"
     },
     "failure": {
+      "cancelled_by_user": "生成已被终止",
       "task_ended_without_report": "执行任务已结束，但没有回报生成结果",
       "task_not_created": "无法创建执行任务",
       "worker_abandoned": "执行进程失联，该次运行已被回收",

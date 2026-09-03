@@ -1,5 +1,6 @@
 import { describe, expect, test, vi } from 'vitest'
 import type { WebContents } from 'electron'
+import { resolve } from 'node:path'
 import type { EmbeddedBrowserManager } from './embedded-browser-manager.js'
 import type {
   HostCapability,
@@ -9,10 +10,12 @@ import type {
 import {
   captureWebContentsDataUrl,
   cpuLoadRatioBetween,
+  e2eOpenDialogOverride,
   registerAppUpdateCapabilities,
   registerBrowserHistoryCapabilities,
   registerCoreDshPluginCapabilities,
   registerDesktopServiceCapabilities,
+  registerPluginDevelopmentCapabilities,
   registerRendererStorageCapabilities,
   showElectronNotification,
 } from './electron-capabilities.js'
@@ -28,6 +31,25 @@ describe('cpuLoadRatioBetween', () => {
       0.7
     )
     expect(cpuLoadRatioBetween({ idle: 100, total: 200 }, { idle: 100, total: 200 })).toBe(0)
+  })
+})
+
+describe('e2eOpenDialogOverride', () => {
+  test('returns the selected directory only for a controlled desktop E2E process', () => {
+    expect(
+      e2eOpenDialogOverride({
+        WEWORK_E2E_CONTROL_URL: 'http://127.0.0.1:1234',
+        WEWORK_E2E_OPEN_DIALOG_PATH: '/workspace/plugin',
+      })
+    ).toEqual({
+      canceled: false,
+      filePaths: [resolve('/workspace/plugin')],
+    })
+  })
+
+  test('does not bypass the native dialog without both E2E signals', () => {
+    expect(e2eOpenDialogOverride({ WEWORK_E2E_OPEN_DIALOG_PATH: '/workspace/plugin' })).toBeNull()
+    expect(e2eOpenDialogOverride({ WEWORK_E2E_CONTROL_URL: 'http://127.0.0.1:1234' })).toBeNull()
   })
 })
 
@@ -533,5 +555,56 @@ describe('registerCoreDshPluginCapabilities', () => {
     expect(coreDshPlugins.updateCoreDshPlugin).toHaveBeenCalledWith('dsh-example')
     expect(coreDshPlugins.setCoreDshPluginEnabled).toHaveBeenCalledWith('dsh-example', false)
     expect(coreDshPlugins.uninstallCoreDshPlugin).toHaveBeenCalledWith('dsh-example')
+  })
+})
+
+describe('registerPluginDevelopmentCapabilities', () => {
+  test('forwards isolated Wework lifecycle operations', async () => {
+    const handlers = new Map<HostCapability, HostCapabilityHandler>()
+    const router = {
+      register: vi.fn((capability: HostCapability, handler: HostCapabilityHandler) => {
+        handlers.set(capability, handler)
+      }),
+    } as unknown as HostCapabilityRouter
+    const pluginDevelopment = {
+      deleteData: vi.fn(async () => undefined),
+      focus: vi.fn(async () => undefined),
+      list: vi.fn(async () => []),
+      openDevTools: vi.fn(async () => undefined),
+      openLogDirectory: vi.fn(async () => undefined),
+      restartCoreDsh: vi.fn(async () => undefined),
+      start: vi.fn(async () => ({})),
+      stop: vi.fn(async () => undefined),
+      validate: vi.fn(async () => ({})),
+    }
+    const services = {
+      pluginDevelopment: () => pluginDevelopment,
+    }
+
+    registerPluginDevelopmentCapabilities(router, services)
+    await handlers.get('pluginDevelopment.list')?.({}, { principal: 'test' })
+    await handlers.get('pluginDevelopment.validate')?.(
+      { sourceRoot: '/workspace/plugin' },
+      { principal: 'test' }
+    )
+    await handlers.get('pluginDevelopment.start')?.(
+      { sourceRoot: '/workspace/plugin' },
+      { principal: 'test' }
+    )
+    await handlers.get('pluginDevelopment.focus')?.({}, { principal: 'test' })
+    await handlers.get('pluginDevelopment.restartCoreDsh')?.({}, { principal: 'test' })
+    await handlers.get('pluginDevelopment.openDevTools')?.({}, { principal: 'test' })
+    await handlers.get('pluginDevelopment.openLogDirectory')?.({}, { principal: 'test' })
+    await handlers.get('pluginDevelopment.stop')?.({}, { principal: 'test' })
+    await handlers.get('pluginDevelopment.deleteData')?.({}, { principal: 'test' })
+
+    expect(pluginDevelopment.validate).toHaveBeenCalledWith('/workspace/plugin')
+    expect(pluginDevelopment.start).toHaveBeenCalledWith('/workspace/plugin')
+    expect(pluginDevelopment.focus).toHaveBeenCalledOnce()
+    expect(pluginDevelopment.restartCoreDsh).toHaveBeenCalledOnce()
+    expect(pluginDevelopment.openDevTools).toHaveBeenCalledOnce()
+    expect(pluginDevelopment.openLogDirectory).toHaveBeenCalledOnce()
+    expect(pluginDevelopment.stop).toHaveBeenCalledOnce()
+    expect(pluginDevelopment.deleteData).toHaveBeenCalledOnce()
   })
 })

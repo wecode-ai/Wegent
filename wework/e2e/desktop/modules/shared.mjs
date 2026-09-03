@@ -23,6 +23,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url'
 
 import { DESKTOP_CHECKPOINTS, PLUGIN_SEGMENTS } from '../checkpoints.mjs'
 import { processIsAlive, stopProcess, stopProcessGroup } from '../process-lifecycle.mjs'
+import { resolveDesktopE2EResultRoot } from '../result-retention.mjs'
 import { loadDesktopScenario } from '../scenario-loader.mjs'
 import { waitForSnapshot } from './conversation-layout.mjs'
 import { sendPrompt } from './conversation-navigation.mjs'
@@ -524,9 +525,7 @@ const repoDir = resolve(weworkDir, '..')
 const toolDetailsMcpServerPath = join(weworkDir, 'e2e', 'utils', 'tool-details-mcp-server.mjs')
 const mcpElicitationServerPath = join(weworkDir, 'e2e', 'utils', 'mcp-elicitation-server.mjs')
 const runId = `${new Date().toISOString().replace(/[:.]/g, '-')}-${process.pid}`
-const resultRoot = process.env.WEWORK_E2E_RESULT_ROOT?.trim()
-  ? resolve(process.env.WEWORK_E2E_RESULT_ROOT.trim())
-  : join(weworkDir, 'test-results', 'desktop-e2e')
+const resultRoot = resolveDesktopE2EResultRoot(weworkDir)
 const resultDir = join(resultRoot, runId)
 
 const OFFICIAL_PLUGIN_REPOSITORY = 'https://github.com/openai/plugins.git'
@@ -889,6 +888,38 @@ function commandOutput(command, args, options = {}) {
     )
   }
   return result.stdout.trim()
+}
+
+async function commandOutputAsync(command, args, options = {}) {
+  return await new Promise((resolvePromise, reject) => {
+    const child = spawn(command, args, {
+      cwd: options.cwd,
+      env: options.env,
+      stdio: ['ignore', 'pipe', 'pipe'],
+    })
+    let stdout = ''
+    let stderr = ''
+    child.stdout.setEncoding('utf8')
+    child.stderr.setEncoding('utf8')
+    child.stdout.on('data', chunk => {
+      stdout += chunk
+    })
+    child.stderr.on('data', chunk => {
+      stderr += chunk
+    })
+    child.once('error', reject)
+    child.once('close', code => {
+      if (code === 0) {
+        resolvePromise(stdout.trim())
+        return
+      }
+      reject(
+        new Error(
+          `${command} ${args.join(' ')} exited with ${code ?? 'unknown status'}: ${stderr || stdout}`
+        )
+      )
+    })
+  })
 }
 
 async function stopDesktopAppProcess(app) {
@@ -1779,6 +1810,7 @@ export {
   isExecutable,
   pathExists,
   commandOutput,
+  commandOutputAsync,
   stopDesktopAppProcess,
   runChecked,
   reservePort,

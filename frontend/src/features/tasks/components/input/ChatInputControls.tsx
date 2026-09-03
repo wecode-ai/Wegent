@@ -62,6 +62,8 @@ export interface ChatInputControlsProps {
   /** Available teams for team selector */
   teams?: Team[]
   onTeamChange?: (team: Team) => void
+  onClearTeam?: () => void
+  showClearTeamButton?: boolean
   /** Callback to refresh teams list after creation */
   onTeamsRefresh?: () => Promise<void>
   selectedModel: Model | null
@@ -206,6 +208,8 @@ export function ChatInputControls({
   selectedTeam,
   teams = [],
   onTeamChange,
+  onClearTeam,
+  showClearTeamButton = false,
   onTeamsRefresh,
   selectedModel,
   setSelectedModel,
@@ -405,6 +409,8 @@ export function ChatInputControls({
         selectedTeam={selectedTeam}
         teams={teams}
         onTeamChange={onTeamChange}
+        onClearTeam={onClearTeam}
+        showClearTeamButton={showClearTeamButton}
         taskType={taskType}
         teamModeFilter={teamModeFilter}
         selectedModel={selectedModel}
@@ -461,6 +467,9 @@ export function ChatInputControls({
         selectedVideoModel={selectedVideoModel}
         onVideoModelChange={onVideoModelChange}
         isVideoModelsLoading={isVideoModelsLoading}
+        selectedImageModel={selectedImageModel}
+        onImageModelChange={onImageModelChange}
+        isImageModelsLoading={isImageModelsLoading}
         showVideoControlsInChat={showVideoControlsInChat}
         selectedResolution={selectedResolution}
         onResolutionChange={onResolutionChange}

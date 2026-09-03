@@ -325,6 +325,7 @@
     "active": "Active",
     "inactive": "Inactive",
     "select_team": "Select a team",
+    "clear_selection": "Remove current agent",
     "recently_used": "Recently used",
     "search_team": "Select a team",
     "no_bots": "No bots",

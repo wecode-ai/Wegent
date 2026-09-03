@@ -109,6 +109,52 @@ describe('loadComposerPluginApps', () => {
     expect(apps.map(app => app.id)).toEqual(['plugin:dingtalk'])
   })
 
+  test('does not make an inaccessible Codex connector selectable through its installed plugin', async () => {
+    const googleDrive: InstalledPlugin = {
+      ...dingtalk,
+      metadata: { ...dingtalk.metadata, name: 'google-drive' },
+      spec: {
+        ...dingtalk.spec,
+        source: {
+          ...dingtalk.spec.source,
+          pluginKey: 'google-drive',
+        },
+        displayName: 'Google Drive',
+        components: {
+          ...dingtalk.spec.components,
+          apps: [
+            {
+              name: 'Google Drive',
+              path: 'connector_5f3c8c41a1e54ad7a76272c89e2554fa',
+            },
+          ],
+        },
+      },
+    }
+
+    const apps = await loadComposerPluginApps({
+      listCodexApps: async () => [
+        {
+          id: 'connector_5f3c8c41a1e54ad7a76272c89e2554fa',
+          name: 'Google Drive',
+          isAccessible: false,
+          isEnabled: true,
+          source: 'codex-app',
+        },
+      ],
+      readLocalInstalledPlugins: async () => [googleDrive],
+      listCloudInstalledPlugins: async () => [],
+    })
+
+    expect(apps).toEqual([
+      expect.objectContaining({
+        id: 'connector_5f3c8c41a1e54ad7a76272c89e2554fa',
+        isAccessible: false,
+        source: 'codex-app',
+      }),
+    ])
+  })
+
   test('lists a globally disabled plugin when the current project installed it', async () => {
     const projectPlugin: InstalledPlugin = {
       ...dingtalk,

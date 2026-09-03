@@ -20,6 +20,7 @@ const testState = vi.hoisted(() => ({
     getSelection: ReturnType<typeof vi.fn>
     getSelectionPosition: ReturnType<typeof vi.fn>
     hasSelection: ReturnType<typeof vi.fn>
+    attachCustomKeyEventHandler: ReturnType<typeof vi.fn>
     onData: ReturnType<typeof vi.fn>
     onResize: ReturnType<typeof vi.fn>
     onScroll: ReturnType<typeof vi.fn>
@@ -85,6 +86,7 @@ vi.mock('@xterm/xterm', () => ({
       getSelection: vi.fn(() => ''),
       getSelectionPosition: vi.fn(() => undefined),
       hasSelection: vi.fn(() => false),
+      attachCustomKeyEventHandler: vi.fn(),
       onData: vi.fn((handler: (data: string) => void) => {
         dataHandlers.push(handler)
         return { dispose: vi.fn() }
@@ -272,9 +274,15 @@ describe('RemoteTerminal', () => {
     expect(client.resize).not.toHaveBeenCalled()
   })
 
-  test('does not resend unchanged terminal size when reactivated', async () => {
+  test('waits for attach before syncing terminal size and does not resend it', async () => {
+    let resolveAttach: (() => void) | null = null
     const client = createClient({
-      attach: vi.fn(() => new Promise(() => undefined)),
+      attach: vi.fn(
+        () =>
+          new Promise<void>(resolve => {
+            resolveAttach = resolve
+          })
+      ),
     })
     createRemoteTerminalClientMock.mockReturnValue(client)
 
@@ -282,9 +290,10 @@ describe('RemoteTerminal', () => {
       <RemoteTerminal sessionId="terminal-1" clientFactory={createRemoteTerminalClient} active />
     )
 
-    await waitFor(() => {
-      expect(client.resize).toHaveBeenCalledTimes(1)
-    })
+    expect(client.resize).not.toHaveBeenCalled()
+
+    resolveAttach?.()
+    await waitFor(() => expect(client.resize).toHaveBeenCalledWith(24, 80))
 
     rerender(
       <RemoteTerminal
@@ -381,10 +390,9 @@ describe('RemoteTerminal', () => {
     expect(terminal.refresh).toHaveBeenCalledWith(0, 23)
   })
 
-  test('catches rejected active terminal size syncs', async () => {
+  test('catches rejected post-attach terminal size syncs', async () => {
     const error = new Error('activate resize failed')
     const client = createClient({
-      attach: vi.fn(() => new Promise(() => undefined)),
       resize: vi.fn().mockRejectedValue(error),
     })
     createRemoteTerminalClientMock.mockReturnValue(client)
@@ -394,10 +402,7 @@ describe('RemoteTerminal', () => {
     )
 
     await waitFor(() => {
-      expect(consoleErrorSpy).toHaveBeenCalledWith(
-        'Failed to sync remote terminal size on activate:',
-        error
-      )
+      expect(consoleErrorSpy).toHaveBeenCalledWith('Failed to resize remote terminal:', error)
     })
     expect(requestAnimationFrameSpy).toHaveBeenCalled()
   })
