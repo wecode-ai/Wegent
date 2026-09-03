@@ -989,22 +989,6 @@ button:disabled {
     color: rgb(var(--color-text-muted));
   }
 
-  @keyframes activity-shimmer-band {
-    0%,
-    72%,
-    100% {
-      opacity: 0;
-    }
-
-    82% {
-      opacity: 1;
-    }
-
-    92% {
-      opacity: 0;
-    }
-  }
-
   .activity-shimmer-highlight {
     position: absolute;
     inset: 0;
@@ -1013,20 +997,58 @@ button:disabled {
     white-space: inherit;
   }
 
+  @keyframes activity-shimmer-sweep {
+    from {
+      transform: translateX(-2.5em);
+    }
+
+    to {
+      transform: translateX(var(--activity-shimmer-text-width));
+    }
+  }
+
+  @keyframes activity-shimmer-band {
+    from {
+      transform: translateX(2.5em);
+    }
+
+    to {
+      transform: translateX(var(--activity-shimmer-text-offset));
+    }
+  }
+
+  .activity-shimmer-sweep {
+    position: absolute;
+    inset-block: 0;
+    inset-inline-start: 0;
+    width: 2.5em;
+    overflow: hidden;
+    mask-image: linear-gradient(90deg, transparent, #000 28%, #000 72%, transparent);
+    -webkit-mask-image: linear-gradient(90deg, transparent, #000 28%, #000 72%, transparent);
+    animation: activity-shimmer-sweep 1.6s linear -0.8s infinite;
+    will-change: transform;
+  }
+
   .activity-shimmer-band {
-    animation: activity-shimmer-band 1.6s linear infinite;
-    animation-delay: var(--activity-shimmer-delay);
+    position: absolute;
+    inset-block: 0;
+    inset-inline-start: 0;
+    display: block;
+    width: var(--activity-shimmer-text-width);
+    overflow: hidden;
+    animation: activity-shimmer-band 1.6s linear -0.8s infinite;
     color: rgb(var(--color-text-secondary));
-    opacity: 0;
-    will-change: opacity;
+    text-overflow: ellipsis;
+    white-space: inherit;
+    will-change: transform;
+  }
+
+  .activity-shimmer-band::before {
+    content: attr(data-text);
   }
 
   .waiting-thinking-text .activity-shimmer-band {
     color: rgb(var(--color-text-primary));
-  }
-
-  .activity-shimmer-band::before {
-    content: attr(data-grapheme);
   }
 
   @media (prefers-reduced-motion: reduce) {
