@@ -6,6 +6,7 @@ import { AppIframe } from './AppIframe'
 const embeddedBrowserMocks = vi.hoisted(() => ({
   closeEmbeddedBrowser: vi.fn().mockResolvedValue(undefined),
   evalEmbeddedBrowserJson: vi.fn().mockResolvedValue(true),
+  listenEmbeddedBrowserCloseRequests: vi.fn(() => null),
   navigateEmbeddedBrowser: vi.fn().mockResolvedValue(undefined),
   openEmbeddedBrowser: vi.fn().mockResolvedValue({
     nativeLabel: 'embedded-browser-native-1',

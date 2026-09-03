@@ -85,6 +85,7 @@ import {
   type RightWorkspacePanelView,
   type RightWorkspaceTerminalTab,
 } from './workspace-panels/RightWorkspacePanel'
+import { retainElectronEmbeddedBrowserView } from './workspace-panels/electronEmbeddedBrowserHost'
 import {
   attachRightWorkspaceSidebarController,
   encodeRightWorkspaceExtensionTabId,
@@ -164,7 +165,7 @@ import {
   listenEmbeddedBrowserOpenRequests,
   listenEmbeddedBrowserPopupRequests,
   markEmbeddedBrowserLabelTransferred,
-  relabelEmbeddedBrowser,
+  migrateEmbeddedBrowserLabelSequence,
   setEmbeddedBrowserActiveTab,
   type EmbeddedBrowserOpenRequest,
 } from '@/lib/embedded-browser'
@@ -363,7 +364,9 @@ function consumeLatestBlankBrowserMigration(): PendingBlankBrowserMigration | nu
   const migration = latestBlankBrowserMigration
   latestBlankBrowserMigration = null
   Object.values(migration.browserStates).forEach(state => {
-    if (state?.label) markEmbeddedBrowserLabelTransferred(state.label)
+    if (!state?.label) return
+    retainElectronEmbeddedBrowserView(state.label)
+    markEmbeddedBrowserLabelTransferred(state.label)
   })
   return migration
 }
@@ -454,6 +457,7 @@ function normalizeRightWorkspaceBrowserState(
     label: state?.label ?? label,
     nativeLabel: state?.nativeLabel ?? null,
     browserSessionId: state?.browserSessionId ?? getRightWorkspaceBrowserLabelSuffix(tab),
+    url: state?.url ?? null,
     title: state?.title ?? null,
     faviconUrl: state?.faviconUrl ?? null,
     isLoading: state?.isLoading ?? false,
@@ -1367,6 +1371,17 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     initialWorkspaceState,
     defaultEmbeddedBrowserLabel,
   })
+  const browserTransferSourceLabels = useMemo(
+    () =>
+      Object.fromEntries(
+        Object.entries(initialBlankBrowserMigration?.browserStates ?? {})
+          .filter((entry): entry is [RightWorkspaceBrowserTab, RightWorkspaceBrowserState] =>
+            Boolean(entry[1]?.label)
+          )
+          .map(([tab, state]) => [tab, state.label])
+      ) as Partial<Record<RightWorkspaceBrowserTab, string>>,
+    [initialBlankBrowserMigration]
+  )
   const [rightPanelOpen, setRightPanelOpen] = useState(
     () =>
       initialBlankBrowserMigration?.rightPanelOpen ?? initialWorkspaceState?.rightPanelOpen ?? false
@@ -1480,6 +1495,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     ): RightWorkspaceBrowserState => ({
       label: browserLabelForRightWorkspaceTab(defaultEmbeddedBrowserLabel, tab),
       browserSessionId: getRightWorkspaceBrowserLabelSuffix(tab),
+      url: null,
       title: null,
       faviconUrl: null,
       isLoading: false,
@@ -2495,6 +2511,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     if (!initialBlankBrowserMigration || !currentRuntimeTask) return
 
     let disposed = false
+    const abortController = new AbortController()
     const mappings = Object.entries(initialBlankBrowserMigration.browserStates)
       .filter((entry): entry is [RightWorkspaceBrowserTab, RightWorkspaceBrowserState] =>
         Boolean(entry[1]?.label)
@@ -2503,34 +2520,29 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
         tab,
         fromLabel: state.label,
         toLabel: browserLabelForRightWorkspaceTab(defaultEmbeddedBrowserLabel, tab),
+        waitForSource: Boolean(state.nativeLabel || state.openRequest),
       }))
 
-    void mappings
-      .reduce(async (previous, { fromLabel, toLabel }) => {
-        await previous
-        if (fromLabel === toLabel) return
-        await relabelEmbeddedBrowser(fromLabel, toLabel)
-      }, Promise.resolve())
-      .then(() => {
+    void migrateEmbeddedBrowserLabelSequence(mappings, {
+      signal: abortController.signal,
+      onMigrated: ({ tab, toLabel }) => {
         if (disposed) return
         setBrowserStates(current => {
-          let changed = false
-          const next = { ...current }
-          mappings.forEach(({ tab, toLabel }) => {
-            const state = next[tab]
-            if (!state || state.label === toLabel) return
-            next[tab] = { ...state, label: toLabel }
-            changed = true
-          })
-          return changed ? next : current
+          const state = current[tab]
+          if (!state || state.label === toLabel) return current
+          return {
+            ...current,
+            [tab]: { ...state, label: toLabel },
+          }
         })
-      })
-      .catch(error => {
-        console.error('Failed to migrate embedded browser label:', error)
-      })
+      },
+    }).catch(error => {
+      console.error('Failed to migrate embedded browser label:', error)
+    })
 
     return () => {
       disposed = true
+      abortController.abort()
     }
   }, [currentRuntimeTask, defaultEmbeddedBrowserLabel, initialBlankBrowserMigration])
 
@@ -5099,6 +5111,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
                 ) : null
               }
               browserStates={browserStates}
+              browserTransferSourceLabels={browserTransferSourceLabels}
               onBrowserStateChange={updateBrowserState}
               onReloadSmartAppDevelopmentPreview={reloadSmartAppDevelopmentPreview}
               onAddSmartAppDevelopmentPlugin={addSmartAppDevelopmentPlugin}
