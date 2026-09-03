@@ -2,14 +2,12 @@ import { execFile } from 'node:child_process'
 import { access, chmod, mkdir, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { fileURLToPath } from 'node:url'
 import { promisify } from 'node:util'
 import { afterEach, describe, expect, test } from 'vitest'
 import { installWeworkCli } from './wework-cli-installer.js'
 
 const directories: string[] = []
 const execFileAsync = promisify(execFile)
-const cliSourcePath = fileURLToPath(new URL('../cli/wework-cli.mjs', import.meta.url))
 
 afterEach(async () => {
   await Promise.all(directories.splice(0).map(path => rm(path, { recursive: true, force: true })))
@@ -20,6 +18,9 @@ describe('installWeworkCli', () => {
     const root = await mkdtemp(join(tmpdir(), 'wework-cli-'))
     directories.push(root)
     const runtimeBin = join(root, 'runtime', 'bin')
+    const cliSourcePath = join(root, 'wework-cli-source.mjs')
+    await writeFile(cliSourcePath, '#!/usr/bin/env node\n')
+
     await installWeworkCli(runtimeBin, cliSourcePath, 'darwin', {
       appCommand: ['/Applications/Wework.app/Contents/MacOS/Wework'],
       nodeCommand: ['/Applications/Wework.app/Contents/MacOS/Wework'],
@@ -42,7 +43,9 @@ describe('installWeworkCli', () => {
     const nodeLog = join(root, 'node.log')
     const appCommand = join(root, 'app')
     const nodeCommand = join(root, 'node')
+    const cliSourcePath = join(root, 'wework-cli-source.mjs')
     await mkdir(workspace)
+    await writeFile(cliSourcePath, '#!/usr/bin/env node\n')
     await writeFile(appCommand, `#!/bin/sh\nprintf '%s\\n' "$@" > '${appLog}'\n`)
     await writeFile(nodeCommand, `#!/bin/sh\nprintf '%s\\n' "$@" > '${nodeLog}'\n`)
     await Promise.all([chmod(appCommand, 0o700), chmod(nodeCommand, 0o700)])
