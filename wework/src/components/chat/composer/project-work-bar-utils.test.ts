@@ -48,7 +48,6 @@ describe('resolveComposerWorktreeAvailability', () => {
         project,
         workspace: null,
         device: undefined,
-        isGitProject: true,
       })
     ).toEqual({
       available: false,
@@ -64,7 +63,6 @@ describe('resolveComposerWorktreeAvailability', () => {
         project,
         workspace,
         device,
-        isGitProject: true,
       })
     ).toEqual({
       available: false,
@@ -87,7 +85,6 @@ describe('resolveComposerWorktreeAvailability', () => {
         project,
         workspace,
         device,
-        isGitProject: true,
         availability,
       })
     ).toBe(availability)

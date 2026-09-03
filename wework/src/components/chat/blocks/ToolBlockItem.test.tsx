@@ -99,6 +99,8 @@ describe('ToolBlockItem', () => {
 
     expect(block).toHaveAccessibleName('正在处理')
     expect(block).toHaveTextContent('Let me explore the repository structure.')
+    expect(block).toHaveClass('text-text-primary')
+    expect(block).not.toHaveClass('text-text-secondary')
     expect(block.querySelector('svg')).not.toBeInTheDocument()
     expect(screen.queryByTestId('process-text-toggle-button')).not.toBeInTheDocument()
   })

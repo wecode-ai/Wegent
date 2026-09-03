@@ -65,6 +65,10 @@ test('registers every public Wework UI extension point through slot injection', 
   assert.deepEqual(injections, [
     'wework.action',
     'wework.app',
+    'wework.task.status',
+    'wework.environment.section',
+    'wework.board.card.status',
+    'wework.workspace.menu.section',
     'wework.route',
     'wework.sidebar.navigation',
     'wework.settings.page',
@@ -113,6 +117,13 @@ test('renders the demo components without Wework-private React imports', async (
 
   const cases = [
     ['wework.app', { visible: true }, 'dsh-extension-demo-app'],
+    ['wework.task.status', { task: { title: 'Demo task' } }, 'dsh-extension-demo-task-status'],
+    [
+      'wework.environment.section',
+      { info: { workspacePath: '/workspace' } },
+      'dsh-extension-demo-environment-section',
+    ],
+    ['wework.board.card.status', { itemId: 'DEMO-1' }, 'dsh-extension-demo-board-card-status'],
     ['wework.route', { search: '?demo=1' }, 'dsh-extension-demo-route'],
     ['wework.settings.page', {}, 'dsh-extension-demo-settings'],
     [

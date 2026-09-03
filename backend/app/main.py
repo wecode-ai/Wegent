@@ -340,26 +340,31 @@ async def lifespan(app: FastAPI):
     task_run_metric_hooks.register()
     logger.info("✓ Task run metric transaction hooks registered")
 
-    # Start background jobs
-    logger.info("Starting background jobs...")
-    start_background_jobs(app)
-    logger.info("✓ Background jobs started")
+    if settings.SCHEDULED_TASKS_ENABLED:
+        logger.info("Starting background jobs...")
+        start_background_jobs(app)
+        logger.info("✓ Background jobs started")
+    else:
+        logger.info("Scheduled tasks are disabled; skipping background jobs")
 
     # Start scheduler backend (for Flow scheduling)
     # The scheduler backend is selected based on SCHEDULER_BACKEND config:
     # - "celery" (default): Uses Celery Beat with embedded/standalone mode
     # - "apscheduler": Uses APScheduler (lightweight, no Redis required)
     # - "xxljob": Uses XXL-JOB distributed scheduler
-    logger.info(f"Starting scheduler backend: {settings.SCHEDULER_BACKEND}...")
-    from app.core.scheduler import start_scheduler
+    if settings.SCHEDULED_TASKS_ENABLED:
+        logger.info(f"Starting scheduler backend: {settings.SCHEDULER_BACKEND}...")
+        from app.core.scheduler import start_scheduler
 
-    scheduler = start_scheduler()
-    if scheduler:
-        logger.info(f"✓ Scheduler backend '{scheduler.backend_type}' started")
+        scheduler = start_scheduler()
+        if scheduler:
+            logger.info(f"✓ Scheduler backend '{scheduler.backend_type}' started")
+        else:
+            logger.warning(
+                "Failed to start scheduler backend. Flow scheduling may not work."
+            )
     else:
-        logger.warning(
-            "Failed to start scheduler backend. Flow scheduling may not work."
-        )
+        logger.info("Scheduled tasks are disabled; skipping scheduler backend")
 
     # Initialize Socket.IO WebSocket emitter
     # Note: Chat namespace is already registered in create_socketio_asgi_app()
@@ -443,12 +448,15 @@ async def lifespan(app: FastAPI):
     await get_pending_request_registry()
     logger.info("✓ PendingRequestRegistry initialized")
 
-    # Start device heartbeat monitor for local device support
-    logger.info("Starting device heartbeat monitor...")
-    from app.services.device_monitor import start_device_monitor
+    # Start device heartbeat monitor for local device support.
+    if settings.SCHEDULED_TASKS_ENABLED:
+        logger.info("Starting device heartbeat monitor...")
+        from app.services.device_monitor import start_device_monitor
 
-    start_device_monitor()
-    logger.info("✓ Device heartbeat monitor started")
+        start_device_monitor()
+        logger.info("✓ Device heartbeat monitor started")
+    else:
+        logger.info("Scheduled tasks are disabled; skipping device heartbeat monitor")
 
     # Initialize IM Channel Manager and start enabled channels
     # This enables DingTalk, Feishu, WeChat bot integrations
@@ -567,6 +575,12 @@ async def lifespan(app: FastAPI):
 
         await shutdown_pending_request_registry()
         logger.info("✓ PendingRequestRegistry shutdown completed")
+
+        from app.services.loop_items.external_provider import (
+            external_loop_item_provider,
+        )
+
+        external_loop_item_provider.close()
 
         # Step 7: Stop device heartbeat monitor
         from app.services.device_monitor import stop_device_monitor_async

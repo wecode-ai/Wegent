@@ -107,6 +107,14 @@ window.__ModuleLoader__.load({
       )
     }
 
+    function DemoWorkspaceMenuSection() {
+      return createElement(
+        'div',
+        { 'data-testid': 'dsh-extension-demo-workspace-menu-section' },
+        'Demo workspace menu section'
+      )
+    }
+
     function DemoWorkspaceSidebar({ scope, tab, visible }) {
       return createElement(
         'aside',
@@ -154,6 +162,30 @@ window.__ModuleLoader__.load({
       )
     }
 
+    function DemoTaskStatus({ task }) {
+      return createElement(
+        'span',
+        { 'data-testid': 'dsh-extension-demo-task-status', title: task?.title || '' },
+        '●'
+      )
+    }
+
+    function DemoEnvironmentSection({ info }) {
+      return createElement(
+        'div',
+        { 'data-testid': 'dsh-extension-demo-environment-section' },
+        info?.workspacePath || 'Demo environment'
+      )
+    }
+
+    function DemoBoardCardStatus({ itemId }) {
+      return createElement(
+        'span',
+        { 'data-testid': 'dsh-extension-demo-board-card-status' },
+        itemId || 'Demo card'
+      )
+    }
+
     const contributions = [
       {
         slot: 'wework.action',
@@ -172,6 +204,38 @@ window.__ModuleLoader__.load({
           order: 90,
         },
         component: DemoApp,
+      },
+      {
+        slot: 'wework.task.status',
+        descriptor: {
+          id: 'dsh-extension-demo.task-status',
+          order: 90,
+        },
+        component: DemoTaskStatus,
+      },
+      {
+        slot: 'wework.environment.section',
+        descriptor: {
+          id: 'dsh-extension-demo.environment-section',
+          order: 90,
+        },
+        component: DemoEnvironmentSection,
+      },
+      {
+        slot: 'wework.board.card.status',
+        descriptor: {
+          id: 'dsh-extension-demo.board-card-status',
+          order: 90,
+        },
+        component: DemoBoardCardStatus,
+      },
+      {
+        slot: 'wework.workspace.menu.section',
+        descriptor: {
+          id: 'demo-workspace-menu',
+          label: 'Demo workspace menu',
+        },
+        component: DemoWorkspaceMenuSection,
       },
       {
         slot: 'wework.route',

@@ -23,6 +23,7 @@ import { requestLocalExecutor } from '@/desktop/localExecutor'
 import { defaultAppPreferences } from '@/desktop/appPreferences'
 import { AppPreferencesContext } from '@/features/app-preferences/appPreferencesContext'
 import { preloadDefaultDshUiTestModules } from '@/test/setup'
+import { installGitUiTestContributions } from '../../../dsh/ui-git/test-support'
 import '@/i18n'
 import type { DeviceInfo } from '@/types/devices'
 
@@ -240,6 +241,7 @@ describe('ConnectionsSettingsPage', () => {
 
   beforeEach(async () => {
     await preloadDefaultDshUiTestModules()
+    await installGitUiTestContributions()
     experimentalFeatures.enabled = true
     vi.clearAllMocks()
     appPreferencesMocks.update.mockResolvedValue({
@@ -430,16 +432,16 @@ describe('ConnectionsSettingsPage', () => {
     expect(
       within(integrationsCategory.parentElement!).queryByTestId('settings-nav-worktrees')
     ).toBeNull()
-    expect(codingCategory.parentElement).toContainElement(gitHostingNav)
+    expect(screen.getAllByTestId('settings-category-coding')).toHaveLength(1)
     expect(within(codingCategory.parentElement!).queryByTestId('settings-nav-plugins')).toBeNull()
     expect(
       pluginsNav.compareDocumentPosition(codingCategory) & Node.DOCUMENT_POSITION_FOLLOWING
     ).toBeTruthy()
     expect(
-      gitHostingNav.compareDocumentPosition(harnessesNav) & Node.DOCUMENT_POSITION_FOLLOWING
+      harnessesNav.compareDocumentPosition(gitHostingNav) & Node.DOCUMENT_POSITION_FOLLOWING
     ).toBeTruthy()
     expect(
-      harnessesNav.compareDocumentPosition(worktreesNav) & Node.DOCUMENT_POSITION_FOLLOWING
+      gitHostingNav.compareDocumentPosition(worktreesNav) & Node.DOCUMENT_POSITION_FOLLOWING
     ).toBeTruthy()
     expect(
       worktreesNav.compareDocumentPosition(archivedCategory) & Node.DOCUMENT_POSITION_FOLLOWING

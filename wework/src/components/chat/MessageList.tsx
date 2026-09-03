@@ -587,7 +587,7 @@ export const MessageList = memo(function MessageList({
         const article = (
           <article
             className={cn(
-              'min-w-0',
+              'min-w-0 font-medium',
               !isDesktop &&
                 !disableContentVisibility &&
                 !isTextSelectionActive &&
@@ -660,7 +660,7 @@ export const MessageList = memo(function MessageList({
       })}
       {shouldShowWaitingIndicator && (
         <article
-          className="min-w-0"
+          className="min-w-0 font-medium"
           data-testid="message-assistant-waiting"
           style={
             virtualMessages

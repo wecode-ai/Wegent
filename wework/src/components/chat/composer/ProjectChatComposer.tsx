@@ -30,7 +30,6 @@ import {
   type ComposerTextareaHandle,
 } from './ComposerTextarea'
 import { ProjectWorkBar } from './ProjectWorkBar'
-import { resolveBranchNameGenerationSource } from '@/lib/branch-name'
 import { useAutoResizeTextarea } from './useAutoResizeTextarea'
 import { debugComposerEvent, textMetrics } from './composerDebug'
 import type { QuickPhrase } from '@/desktop/appPreferences'
@@ -349,29 +348,12 @@ export const ProjectChatComposer = forwardRef<ComposerTextareaHandle, ProjectCha
             currentStandaloneDeviceId={projectWork.currentStandaloneDeviceId}
             selectedDeviceWorkspaceId={projectWork.selectedDeviceWorkspaceId}
             pendingProjectWorkspaceProjectId={projectWork.pendingProjectWorkspaceProjectId}
-            executionMode={projectWork.executionMode}
-            executionModeLocked={projectWork.executionModeLocked}
-            worktreeAvailability={projectWork.worktreeAvailability}
-            isGitProject={projectWork.isGitProject}
+            extensionContext={projectWork}
             onSelectProject={projectWork.onSelectProject}
             onSelectStandaloneDevice={projectWork.onSelectStandaloneDevice}
             onSelectProjectWorkspace={projectWork.onSelectProjectWorkspace}
             onBindProjectWorkspace={projectWork.onBindProjectWorkspace}
-            onExecutionModeChange={projectWork.onExecutionModeChange}
             onCreateProjectMode={projectWork.onCreateProjectMode}
-            branchName={projectWork.branchName}
-            branchLoading={projectWork.branchLoading}
-            onRefreshBranch={projectWork.onRefreshBranch}
-            onListBranches={projectWork.onListBranches}
-            onCheckoutBranch={projectWork.onCheckoutBranch}
-            onCreateBranch={projectWork.onCreateBranch}
-            onGenerateBranchName={projectWork.onGenerateBranchName}
-            branchNameSource={resolveBranchNameGenerationSource(
-              value,
-              projectWork.branchNameSource
-            )}
-            worktreeBranch={projectWork.worktreeBranch}
-            onWorktreeBranchChange={projectWork.onWorktreeBranchChange}
             showClearButton={projectWork.showProjectClearButton}
             projectMenuOpenSignal={projectWork.projectMenuOpenSignal}
             projectMenuAnchorElement={projectWork.projectMenuAnchorElement}
@@ -553,17 +535,10 @@ export const ProjectChatComposer = forwardRef<ComposerTextareaHandle, ProjectCha
             projectWorkMenuContext={
               showWorkspaceMenu
                 ? {
-                    branchName: projectWork.worktreeBranch ?? projectWork.branchName,
                     currentProjectId: projectWork.currentProjectId,
-                    executionMode: projectWork.executionMode,
-                    executionModeLocked: projectWork.executionModeLocked,
-                    worktreeAvailability: projectWork.worktreeAvailability,
-                    isGitProject: projectWork.isGitProject,
+                    extensionContext: projectWork,
                     projectName: projectWork.currentProject?.name,
                     projects: workspaceMenuProjects,
-                    onCheckoutBranch: projectWork.onCheckoutBranch,
-                    onExecutionModeChange: projectWork.onExecutionModeChange,
-                    onListBranches: projectWork.onListBranches,
                     onSelectProject: projectWork.onSelectProject,
                   }
                 : undefined

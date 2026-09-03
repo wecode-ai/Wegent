@@ -130,6 +130,7 @@ export interface RightWorkspaceBrowserState {
   label: string
   nativeLabel?: string | null
   browserSessionId: string
+  url: string | null
   title: string | null
   faviconUrl: string | null
   isLoading: boolean
@@ -186,6 +187,7 @@ interface RightWorkspacePanelProps {
   extensionTabs?: Partial<Record<RightWorkspaceExtensionTab, RightWorkspaceExtensionTabState>>
   extensionScope: WeworkWorkspaceScope
   browserStates: Partial<Record<RightWorkspaceBrowserTab, RightWorkspaceBrowserState>>
+  browserTransferSourceLabels?: Partial<Record<RightWorkspaceBrowserTab, string>>
   onBrowserStateChange: (
     tab: RightWorkspaceBrowserTab,
     update: Partial<RightWorkspaceBrowserState>
@@ -233,6 +235,7 @@ interface RightWorkspaceBrowserPanelSlotProps {
   tab: RightWorkspaceBrowserTab
   active: boolean
   state: RightWorkspaceBrowserState
+  transferFromLabel?: string
   codeCommentCount: number
   codeCommentContexts: CodeCommentContext[]
   browserAnnotationCommand?: BrowserAnnotationCommand | null
@@ -252,6 +255,7 @@ function RightWorkspaceBrowserPanelSlot({
   tab,
   active,
   state,
+  transferFromLabel,
   codeCommentCount,
   codeCommentContexts,
   browserAnnotationCommand,
@@ -284,12 +288,19 @@ function RightWorkspaceBrowserPanelSlot({
     (nativeLabel: string | null) => onBrowserStateChange(tab, { nativeLabel }),
     [onBrowserStateChange, tab]
   )
+  const handleUrlChange = useCallback(
+    (url: string | null) => onBrowserStateChange(tab, { url }),
+    [onBrowserStateChange, tab]
+  )
 
   return (
     <WorkspaceBrowserPanel
       active={active}
       hideToolbar={Boolean(state.developmentPreview)}
       label={state.label}
+      transferFromLabel={transferFromLabel}
+      transferredNativeLabel={transferFromLabel ? state.nativeLabel : null}
+      transferredUrl={transferFromLabel ? state.url : null}
       browserTabId={tab}
       openRequest={state.openRequest}
       codeCommentCount={codeCommentCount}
@@ -304,6 +315,7 @@ function RightWorkspaceBrowserPanelSlot({
       onAgentActiveChange={handleAgentActiveChange}
       onTitleChange={handleTitleChange}
       onNativeLabelChange={handleNativeLabelChange}
+      onUrlChange={handleUrlChange}
     />
   )
 }
@@ -378,6 +390,7 @@ export const RightWorkspacePanel = memo(function RightWorkspacePanel({
   extensionTabs = {},
   extensionScope,
   browserStates,
+  browserTransferSourceLabels = {},
   onBrowserStateChange,
   onReloadSmartAppDevelopmentPreview,
   onAddSmartAppDevelopmentPlugin,
@@ -668,10 +681,9 @@ export const RightWorkspacePanel = memo(function RightWorkspacePanel({
           <PlanWorkspacePanel content={planContent ?? ''} />
         ) : !isRightWorkspaceChatTab(activeView) && activeView === 'work-item' ? (
           workItemPanel
-        ) : !isRightWorkspaceChatTab(activeView) && workspaceTargetError ? (
+        ) : activeView === 'files' && workspaceTargetError ? (
           <section
             data-testid="workspace-target-error"
-            hidden={activeView !== 'files'}
             className="flex min-h-0 flex-1 items-center justify-center px-6 text-center text-sm text-red-500"
           >
             {workspaceTargetError}
@@ -751,6 +763,7 @@ export const RightWorkspacePanel = memo(function RightWorkspacePanel({
               tab={tab}
               active={visible && activeView === tab}
               state={browserState}
+              transferFromLabel={browserTransferSourceLabels[tab]}
               codeCommentCount={codeCommentCount}
               codeCommentContexts={codeCommentContexts}
               browserAnnotationCommand={browserAnnotationCommand}

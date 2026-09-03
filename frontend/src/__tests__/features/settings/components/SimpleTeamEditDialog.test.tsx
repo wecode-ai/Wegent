@@ -451,6 +451,49 @@ describe('Simple TeamEditDialog', () => {
     })
   })
 
+  it('shows and preserves an existing model that is no longer visible', async () => {
+    const team = makeTeam()
+    const hiddenModelBot = makeBot({
+      agent_config: {
+        bind_model: 'retired-model',
+        bind_model_type: 'public',
+        bind_model_namespace: 'default',
+      },
+    })
+
+    render(
+      <TeamEditDialog
+        open
+        onClose={jest.fn()}
+        teams={[team]}
+        setTeams={jest.fn()}
+        editingTeamId={team.id}
+        bots={[hiddenModelBot]}
+        setBots={jest.fn()}
+        toast={jest.fn()}
+      />
+    )
+
+    await waitFor(() => {
+      expect(mockedGetUnifiedModels).toHaveBeenCalled()
+      expect(screen.getByTestId('simple-model-select')).toHaveTextContent('retired-model')
+    })
+
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }))
+
+    await waitFor(() => {
+      expect(mockedUpdateBot).toHaveBeenCalledWith(
+        hiddenModelBot.id,
+        expect.objectContaining({
+          agent_config: {
+            bind_model: 'retired-model',
+            bind_model_type: 'public',
+          },
+        })
+      )
+    })
+  })
+
   it.each([
     { mode: 'image', category: 'image' },
     { mode: 'video', category: 'video' },

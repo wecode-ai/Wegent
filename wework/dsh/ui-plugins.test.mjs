@@ -10,6 +10,7 @@ const packages = [
   'ui-applications',
   'ui-automations',
   'ui-cloud-work',
+  'ui-git',
 ]
 
 async function loadPlugin(packageName) {
@@ -93,7 +94,7 @@ test('core apps are contributed through wework.app', async () => {
 test('core settings are metadata-driven DSH pages', async () => {
   const { injections, registrations } = await registrationsOf('ui-core-settings')
   assert.deepEqual(injections, ['wework.settings.page'])
-  assert.equal(registrations.length, 20)
+  assert.equal(registrations.length, 18)
   assert.equal(registrations[0].component.wework.path, '/settings')
   assert.equal(registrations[0].component.wework.module, 'plugins/wework-ui-core-settings.js')
   assert.equal(registrations.at(-1).component.wework.module, 'plugins/wework-ui-core-settings.js')
@@ -137,4 +138,39 @@ test('first-party route packages own their routes and sidebar navigation', async
   assert.ok(routes.every(entry => typeof entry.component.wework.title === 'string'))
   assert.ok(routes.every(entry => !('component' in entry.component.wework)))
   assert.ok(registrations.every(entry => !('path' in entry.options)))
+})
+
+test('Git contributes UI only through generic positional extension points', async () => {
+  const { injections, registrations } = await registrationsOf('ui-git')
+  assert.deepEqual(injections, [
+    'wework.workspace.menu.section',
+    'wework.project.create.section',
+    'wework.project.work.section',
+    'wework.runtime-profile.workspace-policy',
+    'wework.task.status',
+    'wework.environment.section',
+    'wework.board.card.status',
+    'wework.settings.page',
+  ])
+  assert.equal(registrations.length, 9)
+  assert.deepEqual(
+    registrations.slice(0, 7).map(entry => entry.options.name),
+    [
+      'wework.workspace.menu.section',
+      'wework.project.create.section',
+      'wework.project.work.section',
+      'wework.runtime-profile.workspace-policy',
+      'wework.task.status',
+      'wework.environment.section',
+      'wework.board.card.status',
+    ]
+  )
+  assert.deepEqual(
+    registrations.slice(4, 7).map(entry => entry.options.name),
+    ['wework.task.status', 'wework.environment.section', 'wework.board.card.status']
+  )
+  assert.deepEqual(
+    registrations.slice(7).map(entry => entry.options.id),
+    ['git-hosting', 'worktrees']
+  )
 })

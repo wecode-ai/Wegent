@@ -200,7 +200,7 @@ export class RuntimeTaskLifecycleStore {
 
   sendRequested(
     address: RuntimeTaskAddress,
-    options: { workspaceCreationKind?: 'worktree' } = {}
+    options: { workspaceCreationKind?: string } = {}
   ): void {
     this.dispatch(address, {
       type: 'send_requested',

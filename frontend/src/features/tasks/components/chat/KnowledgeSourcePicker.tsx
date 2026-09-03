@@ -95,6 +95,7 @@ interface KnowledgeSourcePickerProps {
   externalSources: ExternalKnowledgeSource[]
   selectedContexts: ContextItem[]
   searchValue: string
+  onSearchValueChange: (value: string) => void
   loading: boolean
   error: string | null
   onRetry: () => void
@@ -568,6 +569,7 @@ export function KnowledgeSourcePicker({
   externalSources,
   selectedContexts,
   searchValue,
+  onSearchValueChange,
   loading,
   error,
   onRetry,
@@ -1188,6 +1190,7 @@ export function KnowledgeSourcePicker({
   )
 
   const selectInternalKb = (kb: KnowledgeBase) => {
+    onSearchValueChange('')
     openInternalKnowledgeBase(kb)
     if (!internalTreeByKb.has(kb.id)) {
       void loadInternalTree(kb)
@@ -1195,6 +1198,7 @@ export function KnowledgeSourcePicker({
   }
 
   const selectExternalKb = (source: ExternalKnowledgeSource, kb: ExternalKnowledgeBase) => {
+    onSearchValueChange('')
     openExternalKnowledgeBase(source, kb)
     const cacheKey = `${source.providerId}:${kb.knowledge_base_id}`
     if (!externalNodesByKb.has(cacheKey)) {
