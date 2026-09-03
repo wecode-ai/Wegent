@@ -37,7 +37,7 @@ import { SimpleConfigGroup, SimpleConfigRow } from './SimpleConfigLayout'
 import QuickPhraseEditor from './QuickPhraseEditor'
 import InputPlaceholderEditor from './InputPlaceholderEditor'
 import TeamBindModeCards from './TeamBindModeCards'
-import { parseModelSelectValue, toModelSelectValue } from './model-select-utils'
+import { parseModelSelectValue, resolveSelectedModel } from './model-select-utils'
 import type { SimpleExecutorMode } from './simple-team-edit-utils'
 
 interface SimpleTeamEditFormProps {
@@ -191,13 +191,9 @@ export default function SimpleTeamEditForm({
   const [skillManagementModalOpen, setSkillManagementModalOpen] = useState(false)
   const [promptFineTuneOpen, setPromptFineTuneOpen] = useState(false)
   const showRequiresWorkspace = bindMode.includes('code')
-  const modelSelectValue = toModelSelectValue(modelName, modelType, modelNamespace)
   const selectedModel = useMemo(
-    () =>
-      models.find(
-        model => toModelSelectValue(model.name, model.type, model.namespace) === modelSelectValue
-      ) ?? null,
-    [modelSelectValue, models]
+    () => resolveSelectedModel(models, modelName, modelType, modelNamespace),
+    [modelName, modelNamespace, modelType, models]
   )
   const cascadeLabels: ModelCascadeLabels = useMemo(
     () => ({

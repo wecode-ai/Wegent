@@ -1,9 +1,13 @@
 import assert from 'node:assert/strict'
-import { readFile } from 'node:fs/promises'
+import { readFile, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
+
+import { CHECKPOINT_TASK_PROMPT } from '../modules/shared.mjs'
 
 const ACTIVE_WORKBENCH_SELECTOR =
   '[data-testid="desktop-workbench-main"][data-active-workbench-pane="true"]'
+const ACTIVE_COMPOSER_SELECTOR =
+  ACTIVE_WORKBENCH_SELECTOR + ' [data-testid="chat-message-input"][contenteditable="true"]'
 const RIGHT_PANEL_TOGGLE_SELECTOR =
   '[data-workspace-tab-portal-owner]:not([hidden]) [data-testid="toggle-right-workspace-panel-button"]'
 const RIGHT_NEW_TAB_CHAT_OPTION_SELECTOR =
@@ -13,6 +17,7 @@ const RIGHT_NEW_TAB_TERMINAL_OPTION_SELECTOR =
 const ACTIVE_BROWSER_PANEL_SELECTOR =
   ACTIVE_WORKBENCH_SELECTOR +
   ' [data-testid="right-workspace-panel"] div:not(.hidden) > [data-testid="workspace-browser-panel"]'
+const ACTIVE_BROWSER_WEBVIEW_HOST_SELECTOR = '[data-testid="workspace-browser-electron-webview"]'
 const BROWSER_INPUT_SELECTOR =
   ACTIVE_BROWSER_PANEL_SELECTOR + ' [data-testid="workspace-browser-url-input"]'
 const FIRST_BROWSER_TAB_SELECTOR = '[data-testid="right-workspace-browser-tab-1"]'
@@ -20,12 +25,18 @@ const FIRST_BROWSER_LOADING_ICON_SELECTOR =
   FIRST_BROWSER_TAB_SELECTOR + ' [data-testid="right-workspace-browser-tab-1-loading-icon"]'
 const FIRST_BROWSER_TAB_CLOSE_SELECTOR =
   FIRST_BROWSER_TAB_SELECTOR + ' [data-testid="right-workspace-browser-tab-1-close-button"]'
+const SECOND_BROWSER_TAB_SELECTOR = '[data-testid="right-workspace-browser-tab-2"]'
+const SECOND_BROWSER_TAB_CLOSE_SELECTOR =
+  SECOND_BROWSER_TAB_SELECTOR + ' [data-testid="right-workspace-browser-tab-2-close-button"]'
 const BROWSER_RELOAD_SELECTOR =
   ACTIVE_BROWSER_PANEL_SELECTOR + ' [data-testid="workspace-browser-reload-button"]'
 const BROWSER_NAVIGATION_ERROR_SELECTOR =
   ACTIVE_BROWSER_PANEL_SELECTOR + ' [data-testid="workspace-browser-navigation-error"]'
 const RIGHT_WORKSPACE_NEW_TAB_SELECTOR = '[data-testid="right-workspace-new-tab-button"]'
 const RIGHT_WORKSPACE_TABBAR_SELECTOR = '[data-testid="right-workspace-tabbar"]'
+const WORKBENCH_BROWSER_LABEL_SELECTOR =
+  ACTIVE_WORKBENCH_SELECTOR +
+  ' [data-testid="desktop-workbench-content"][data-embedded-browser-label]'
 const FIXTURE_A_PATH = '/embedded-browser-multi-tabs-a'
 const FIXTURE_B_PATH = '/embedded-browser-multi-tabs-b'
 const NAVIGATION_FAILURE_PATH = '/embedded-browser-navigation-failure'
@@ -79,6 +90,7 @@ async function waitForBridgeIdentity(executorHome, timeoutMs) {
 }
 
 async function callBridge(identity, payload, label = BROWSER_LABEL) {
+  const requestTimeoutMs = Math.max(Number(payload.timeoutMs ?? 0), 15_000) + 2_000
   const response = await fetch(identity.baseUrl + '/browser', {
     method: 'POST',
     headers: {
@@ -86,6 +98,7 @@ async function callBridge(identity, payload, label = BROWSER_LABEL) {
       'content-type': 'application/json',
     },
     body: JSON.stringify({ label, ...payload }),
+    signal: AbortSignal.timeout(requestTimeoutMs),
   })
   const body = await response.json()
   assert.equal(response.ok, true, 'Bridge HTTP failed: ' + JSON.stringify(body))
@@ -128,7 +141,91 @@ async function waitForSnapshot(control, predicate, message, timeoutMs, selector 
   )
 }
 
-export function createDesktopScenario({ executorHome, uiTimeoutMs }) {
+async function waitForRuntimeTaskId(control, timeoutMs) {
+  const startedAt = Date.now()
+  while (Date.now() - startedAt < timeoutMs) {
+    const snapshot = JSON.parse(await control.command('getWorkbenchDebugSnapshot', 'body'))
+    const taskId = snapshot.workbench?.currentRuntimeTask?.taskId
+    if (taskId) return taskId
+    await new Promise(resolve => setTimeout(resolve, 100))
+  }
+  throw new Error('Timed out waiting for the browser-owning pane to become a local task')
+}
+
+async function waitForBrowserLabel(control, expected, timeoutMs) {
+  const startedAt = Date.now()
+  let actual = null
+  while (Date.now() - startedAt < timeoutMs) {
+    actual = await control.command('getAttribute', WORKBENCH_BROWSER_LABEL_SELECTOR, {
+      value: 'data-embedded-browser-label',
+    })
+    if (actual === expected) return actual
+    await new Promise(resolve => setTimeout(resolve, 100))
+  }
+  throw new Error(`Timed out waiting for browser label ${expected}; last label=${actual}`)
+}
+
+async function waitForElementMetricsSample(control, timeoutMs) {
+  const startedAt = Date.now()
+  let sample = null
+  while (Date.now() - startedAt < timeoutMs) {
+    sample = JSON.parse(await control.command('getElementMetricsSample', 'body'))
+    if (sample.done) return sample
+    await new Promise(resolve => setTimeout(resolve, 100))
+  }
+  throw new Error(
+    'Timed out waiting for browser element metrics sample' +
+      (sample ? '; frames=' + sample.frames.length : '')
+  )
+}
+
+async function waitForBridgeText(identity, label, text, timeoutMs, message) {
+  const startedAt = Date.now()
+  let lastInspectText = null
+  let lastPageState = null
+  while (Date.now() - startedAt < timeoutMs) {
+    const page = await callBridge(
+      identity,
+      {
+        action: 'inspect',
+        options: { includeTextBlocks: true, interactiveOnly: false, maxNodes: 40 },
+        timeoutMs: 5000,
+      },
+      label
+    ).catch(() => null)
+    if (page?.inspectText?.includes(text)) return page
+    lastInspectText = page?.inspectText ?? null
+    lastPageState = await callBridge(identity, { action: 'pageState' }, label).catch(() => null)
+    await new Promise(resolve => setTimeout(resolve, 100))
+  }
+  throw new Error(
+    `${message}; label=${label}; pageState=${JSON.stringify(lastPageState)}; ` +
+      `inspect=${JSON.stringify(lastInspectText?.slice(0, 240) ?? null)}`
+  )
+}
+
+function fixtureTextFromInspect(inspectText) {
+  if (inspectText.includes(FIXTURE_A_TEXT)) return FIXTURE_A_TEXT
+  if (inspectText.includes(FIXTURE_B_TEXT)) return FIXTURE_B_TEXT
+  throw new Error(`Expected a loaded browser fixture; inspect=${JSON.stringify(inspectText)}`)
+}
+
+async function captureMigrationScreenshot(captureScreenshot, control, resultDir) {
+  const screenshotPath = join(resultDir, 'embedded-browser-migration-page-retained.png')
+  await captureScreenshot(
+    control,
+    'embedded-browser-migration-page-retained.png',
+    ACTIVE_WORKBENCH_SELECTOR
+  )
+  const screenshotBytes = await readFile(screenshotPath)
+  assert.equal(
+    screenshotBytes.subarray(0, 8).toString('hex'),
+    '89504e470d0a1a0a',
+    'Migration screenshot is not a PNG file'
+  )
+}
+
+export function createDesktopScenario({ captureScreenshot, executorHome, resultDir, uiTimeoutMs }) {
   let fixtureAResponseGate = null
   let fixtureARequestStartCount = 0
   let fixtureAResponseCount = 0
@@ -189,7 +286,8 @@ export function createDesktopScenario({ executorHome, uiTimeoutMs }) {
         return true
       }
       if (url.pathname === NAVIGATION_FAILURE_PATH) {
-        request.socket.destroy()
+        response.writeHead(302, { location: NAVIGATION_FAILURE_PATH })
+        response.end()
         return true
       }
       return false
@@ -525,6 +623,170 @@ export function createDesktopScenario({ executorHome, uiTimeoutMs }) {
       assert.ok(
         popupTabText.inspectText.includes(FIXTURE_B_TEXT),
         'The popup browser tab did not retain the linked page state'
+      )
+      await control.command('hover', SECOND_BROWSER_TAB_SELECTOR)
+      await control.command('click', SECOND_BROWSER_TAB_CLOSE_SELECTOR)
+      await waitForSnapshot(
+        control,
+        snapshot =>
+          snapshot.testIds.filter(testId => /^right-workspace-browser-tab-\d+$/.test(testId))
+            .length === 1 && !snapshot.testIds.includes('right-workspace-browser-tab-2'),
+        'Closing the background browser tab did not leave one loaded page',
+        uiTimeoutMs,
+        RIGHT_WORKSPACE_TABBAR_SELECTOR
+      )
+      await waitForValue(
+        control,
+        BROWSER_INPUT_SELECTOR,
+        fixtureBUrl,
+        uiTimeoutMs,
+        'The loaded popup page was not preserved before task creation'
+      )
+      const activeTemporaryLabel = (
+        await callBridge(bridgeIdentity, { action: 'status' }, firstBrowserLabel)
+      ).label
+      assert.ok(
+        activeTemporaryLabel === firstBrowserLabel ||
+          activeTemporaryLabel.startsWith(firstBrowserLabel + '-'),
+        'The active browser tab was not scoped to the temporary conversation label'
+      )
+      const activeTemporaryText = await callBridge(
+        bridgeIdentity,
+        {
+          action: 'inspect',
+          options: { includeTextBlocks: true, interactiveOnly: false, maxNodes: 40 },
+          timeoutMs: 5000,
+        },
+        activeTemporaryLabel
+      )
+      const activeExpectedText = fixtureTextFromInspect(activeTemporaryText.inspectText)
+      const activeTemporaryPageState = await callBridge(
+        bridgeIdentity,
+        { action: 'pageState' },
+        activeTemporaryLabel
+      )
+      const attachmentRequestCountBeforeTask = (
+        (await readFile(join(resultDir, 'app.log'), 'utf8')).match(
+          /\[embedded-browser\] webview attachment requested/g
+        ) ?? []
+      ).length
+      control.setScenario('checkpoint_task')
+      await control.command('fill', ACTIVE_COMPOSER_SELECTOR, {
+        value: CHECKPOINT_TASK_PROMPT,
+      })
+      await control.command('startElementMetricsSampling', ACTIVE_BROWSER_WEBVIEW_HOST_SELECTOR, {
+        value: '2000',
+        visible: true,
+      })
+      await control.command('press', ACTIVE_COMPOSER_SELECTOR, { key: 'Enter' })
+      const taskId = await waitForRuntimeTaskId(control, uiTimeoutMs)
+      console.log(`[browser-multi-tabs] task created: ${taskId}`)
+      const expectedMigratedBaseLabel =
+        'workspace-browser-' + taskId.replace(/[^a-zA-Z0-9_-]/g, '-')
+      const migratedBaseLabel = await waitForBrowserLabel(
+        control,
+        expectedMigratedBaseLabel,
+        uiTimeoutMs
+      )
+      console.log(`[browser-multi-tabs] renderer label migrated: ${migratedBaseLabel}`)
+      const elementMetricsSample = await waitForElementMetricsSample(control, uiTimeoutMs)
+      await writeFile(
+        join(resultDir, 'embedded-browser-migration-element-metrics.json'),
+        JSON.stringify(elementMetricsSample, null, 2) + '\n',
+        'utf8'
+      )
+      const disconnectedFrames = elementMetricsSample.frames.filter(frame => !frame.connected)
+      assert.equal(
+        disconnectedFrames.length,
+        0,
+        `Creating the first task remounted the browser webview for ` +
+          `${disconnectedFrames.length} frames`
+      )
+      const sampledWidths = elementMetricsSample.frames.map(frame => frame.width)
+      const sampledLefts = elementMetricsSample.frames.map(frame => frame.left)
+      const minimumWidth = Math.min(...sampledWidths)
+      const maximumWidth = Math.max(...sampledWidths)
+      const minimumLeft = Math.min(...sampledLefts)
+      const maximumLeft = Math.max(...sampledLefts)
+      console.log(
+        '[browser-multi-tabs] migration webview bounds: ' +
+          `width=${minimumWidth}..${maximumWidth}, left=${minimumLeft}..${maximumLeft}`
+      )
+      assert.ok(
+        maximumWidth - minimumWidth <= 1,
+        `Creating the first task resized the browser webview: ${minimumWidth}..${maximumWidth}`
+      )
+      assert.ok(
+        maximumLeft - minimumLeft <= 1,
+        `Creating the first task shifted the browser webview: ${minimumLeft}..${maximumLeft}`
+      )
+      const hiddenFrames = elementMetricsSample.frames.filter(
+        frame => frame.visibility !== 'visible'
+      )
+      assert.equal(
+        hiddenFrames.length,
+        0,
+        `Creating the first task hid the browser webview for ${hiddenFrames.length} frames`
+      )
+      const activeSuffix = activeTemporaryLabel.slice(firstBrowserLabel.length)
+      const activeMigratedLabel = migratedBaseLabel + activeSuffix
+      await waitForBridgeActiveLabel(
+        bridgeIdentity,
+        firstBrowserLabel,
+        activeMigratedLabel,
+        uiTimeoutMs,
+        'The browser bridge did not preserve the temporary task route after migration'
+      )
+      console.log('[browser-multi-tabs] bridge label migration completed')
+      const migratedText = await waitForBridgeText(
+        bridgeIdentity,
+        activeMigratedLabel,
+        activeExpectedText,
+        uiTimeoutMs,
+        'The browser tool lost the loaded page after its temporary label migrated'
+      )
+      console.log('[browser-multi-tabs] migrated active page inspected')
+      assert.ok(migratedText.inspectText.includes(activeExpectedText))
+      const activeBeforeReload = await callBridge(
+        bridgeIdentity,
+        { action: 'pageState' },
+        activeMigratedLabel
+      )
+      assert.equal(activeBeforeReload.navigationError, null)
+      assert.equal(activeBeforeReload.url, activeTemporaryPageState.url)
+      await callBridge(bridgeIdentity, { action: 'reload' }, activeMigratedLabel)
+      await waitForBridgeText(
+        bridgeIdentity,
+        activeMigratedLabel,
+        activeExpectedText,
+        uiTimeoutMs,
+        'Reloading the migrated browser page left it blank'
+      )
+      const activeAfterReload = await callBridge(
+        bridgeIdentity,
+        { action: 'pageState' },
+        activeMigratedLabel
+      )
+      assert.equal(activeAfterReload.navigationError, null)
+      assert.equal(activeAfterReload.url, activeTemporaryPageState.url)
+      console.log('[browser-multi-tabs] migrated page reloaded')
+      await waitForSnapshot(
+        control,
+        snapshot => !snapshot.testIds.includes('workspace-browser-navigation-error'),
+        'The active migrated browser page showed an error after reload',
+        uiTimeoutMs,
+        ACTIVE_BROWSER_PANEL_SELECTOR
+      )
+      await captureMigrationScreenshot(captureScreenshot, control, resultDir)
+      console.log('[browser-multi-tabs] migration screenshot captured')
+      const appLog = await readFile(join(resultDir, 'app.log'), 'utf8')
+      const attachmentRequestCountAfterTask = (
+        appLog.match(/\[embedded-browser\] webview attachment requested/g) ?? []
+      ).length
+      assert.equal(
+        attachmentRequestCountAfterTask,
+        attachmentRequestCountBeforeTask,
+        'Creating the first task attached a second blank webview instead of transferring the loaded one'
       )
     },
   }

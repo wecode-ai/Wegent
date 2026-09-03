@@ -43,6 +43,42 @@ from app.core.logging import RequestIdFilter, _create_file_handler
 broker_url = settings.CELERY_BROKER_URL or settings.REDIS_URL
 result_backend = settings.CELERY_RESULT_BACKEND or settings.REDIS_URL
 
+
+def build_beat_schedule() -> dict:
+    """Return periodic Celery tasks enabled for this Backend process."""
+    if not settings.SCHEDULED_TASKS_ENABLED:
+        return {}
+
+    return {
+        "check-due-subscriptions": {
+            "task": "app.tasks.subscription_tasks.check_due_subscriptions",
+            "schedule": float(settings.FLOW_SCHEDULER_INTERVAL_SECONDS),
+        },
+        "scan-robot-queue": {
+            "task": "app.tasks.robot_queue_tasks.scan_robot_queue",
+            "schedule": float(settings.ROBOT_QUEUE_SCAN_INTERVAL_SECONDS),
+            "options": {
+                # A maintenance scan older than one interval has been replaced
+                # by a newer scan and must not delay execution tasks.
+                "expires": float(settings.ROBOT_QUEUE_SCAN_INTERVAL_SECONDS),
+                "priority": 0,
+            },
+        },
+        "check-due-project-automations": {
+            "task": "app.tasks.project_automation_tasks.check_due_project_automations",
+            "schedule": float(settings.FLOW_SCHEDULER_INTERVAL_SECONDS),
+        },
+        "scan-stale-index-tasks": {
+            "task": "app.tasks.knowledge_tasks.scan_stale_index_tasks",
+            "schedule": 5 * 60,  # every 5 minutes
+        },
+        "sync-plugin-upstreams": {
+            "task": "app.tasks.plugin_marketplace_tasks.sync_plugin_upstreams",
+            "schedule": 6 * 60 * 60,
+        },
+    }
+
+
 celery_app = Celery(
     "wegent",
     broker=broker_url,
@@ -92,35 +128,9 @@ celery_app.conf.update(
             "queue": settings.KNOWLEDGE_CONVERSION_QUEUE,
         },
     },
-    # Beat schedule for periodic tasks
-    beat_schedule={
-        "check-due-subscriptions": {
-            "task": "app.tasks.subscription_tasks.check_due_subscriptions",
-            "schedule": float(settings.FLOW_SCHEDULER_INTERVAL_SECONDS),
-        },
-        "scan-robot-queue": {
-            "task": "app.tasks.robot_queue_tasks.scan_robot_queue",
-            "schedule": float(settings.ROBOT_QUEUE_SCAN_INTERVAL_SECONDS),
-            "options": {
-                # A maintenance scan older than one interval has been replaced
-                # by a newer scan and must not delay execution tasks.
-                "expires": float(settings.ROBOT_QUEUE_SCAN_INTERVAL_SECONDS),
-                "priority": 0,
-            },
-        },
-        "check-due-project-automations": {
-            "task": "app.tasks.project_automation_tasks.check_due_project_automations",
-            "schedule": float(settings.FLOW_SCHEDULER_INTERVAL_SECONDS),
-        },
-        "scan-stale-index-tasks": {
-            "task": "app.tasks.knowledge_tasks.scan_stale_index_tasks",
-            "schedule": 5 * 60,  # every 5 minutes
-        },
-        "sync-plugin-upstreams": {
-            "task": "app.tasks.plugin_marketplace_tasks.sync_plugin_upstreams",
-            "schedule": 6 * 60 * 60,
-        },
-    },
+    # Keep this empty in verification environments even if Celery Beat is
+    # started independently from the Backend process.
+    beat_schedule=build_beat_schedule(),
     # Beat scheduler class - Use default PersistentScheduler (file-based)
     # Note: Only run ONE Celery Beat instance in production
     # Application-level distributed lock in check_due_subscriptions prevents duplicate execution

@@ -313,14 +313,16 @@ export function useWorkbenchModels({
     selectionReady,
   ])
 
-  const applySelectedModel = useCallback(
+  const applySelectedModelForScope = useCallback(
     (
+      targetScopeKey: string,
       model: UnifiedModel | null,
       resolveOptions: (
         model: UnifiedModel | null,
         currentModel: UnifiedModel | null,
         currentOptions: ModelOptions
-      ) => ModelOptions
+      ) => ModelOptions,
+      persist: boolean
     ) => {
       if (locked) {
         onSelectionBlocked?.('locked', model)
@@ -330,72 +332,115 @@ export function useWorkbenchModels({
         onSelectionBlocked?.(model.compatibilityDisabledReason ?? 'runtime_family_mismatch', model)
         return
       }
-      const currentSelection = selectedModelRef.current[scopeKey] ?? null
-      const currentOptions = selectedModelOptionsRef.current[scopeKey] ?? {}
+      const currentSelection = selectedModelRef.current[targetScopeKey] ?? null
+      const currentOptions = selectedModelOptionsRef.current[targetScopeKey] ?? {}
       const nextOptions = resolveOptions(model, currentSelection, currentOptions)
-      selectedModelRef.current[scopeKey] = model
-      selectedModelOptionsRef.current[scopeKey] = nextOptions
-      setSelectedModelByScope(current => ({ ...current, [scopeKey]: model }))
-      setSelectedModelOptionsByScope(current => ({ ...current, [scopeKey]: nextOptions }))
+      selectedModelRef.current[targetScopeKey] = model
+      selectedModelOptionsRef.current[targetScopeKey] = nextOptions
+      setSelectedModelByScope(current => ({ ...current, [targetScopeKey]: model }))
+      setSelectedModelOptionsByScope(current => ({ ...current, [targetScopeKey]: nextOptions }))
       setLocallySelectedReplacementByScope(current => ({
         ...current,
-        [scopeKey]: !persistSelection && Boolean(model),
+        [targetScopeKey]: !persist && Boolean(model),
       }))
-      if (model && persistSelection) {
+      if (model && persist) {
         onSelectionChange?.(toSelectionConfig(model, nextOptions))
       }
     },
-    [locked, onSelectionBlocked, onSelectionChange, persistSelection, scopeKey]
+    [locked, onSelectionBlocked, onSelectionChange]
+  )
+
+  const setSelectedModelForScope = useCallback(
+    (targetScopeKey: string, model: UnifiedModel | null, persist = false) => {
+      applySelectedModelForScope(
+        targetScopeKey,
+        model,
+        (nextModel, currentModel, currentOptions) => {
+          const currentFamily = currentModel ? inferModelFamily(currentModel) : null
+          const nextFamily = nextModel ? inferModelFamily(nextModel) : null
+          return currentFamily === nextFamily
+            ? normalizeModelOptions(nextModel, currentOptions)
+            : getDefaultModelOptions(nextModel)
+        },
+        persist
+      )
+    },
+    [applySelectedModelForScope]
   )
 
   const setSelectedModel = useCallback(
     (model: UnifiedModel | null) => {
-      applySelectedModel(model, (nextModel, currentModel, currentOptions) => {
-        const currentFamily = currentModel ? inferModelFamily(currentModel) : null
-        const nextFamily = nextModel ? inferModelFamily(nextModel) : null
-        return currentFamily === nextFamily
-          ? normalizeModelOptions(nextModel, currentOptions)
-          : getDefaultModelOptions(nextModel)
-      })
+      setSelectedModelForScope(scopeKey, model, persistSelection)
     },
-    [applySelectedModel]
+    [persistSelection, scopeKey, setSelectedModelForScope]
+  )
+
+  const setSelectedModelAndOptionsForScope = useCallback(
+    (targetScopeKey: string, model: UnifiedModel, options: ModelOptions, persist = false) => {
+      applySelectedModelForScope(
+        targetScopeKey,
+        model,
+        nextModel => normalizeModelOptions(nextModel, options),
+        persist
+      )
+    },
+    [applySelectedModelForScope]
   )
 
   const setSelectedModelAndOptions = useCallback(
     (model: UnifiedModel, options: ModelOptions) => {
-      applySelectedModel(model, nextModel => normalizeModelOptions(nextModel, options))
+      setSelectedModelAndOptionsForScope(scopeKey, model, options, persistSelection)
     },
-    [applySelectedModel]
+    [persistSelection, scopeKey, setSelectedModelAndOptionsForScope]
   )
 
-  const setSelectedModelOption = useCallback(
-    (optionId: string, value: string) => {
+  const setSelectedModelOptionForScope = useCallback(
+    (targetScopeKey: string, optionId: string, value: string, persist = false) => {
       if (locked) return
       const nextOptions = {
-        ...(selectedModelOptionsRef.current[scopeKey] ?? {}),
+        ...(selectedModelOptionsRef.current[targetScopeKey] ?? {}),
         [optionId]: value,
       }
-      const currentModel = selectedModelRef.current[scopeKey] ?? null
-      selectedModelOptionsRef.current[scopeKey] = nextOptions
-      setSelectedModelOptionsByScope(current => ({ ...current, [scopeKey]: nextOptions }))
-      if (!persistSelection) return
+      const currentModel = selectedModelRef.current[targetScopeKey] ?? null
+      selectedModelOptionsRef.current[targetScopeKey] = nextOptions
+      setSelectedModelOptionsByScope(current => ({ ...current, [targetScopeKey]: nextOptions }))
+      if (!persist) return
       if (currentModel) {
         onSelectionChange?.(toSelectionConfig(currentModel, nextOptions))
       } else {
         onSelectionChange?.(toDefaultModelSelectionConfig(nextOptions))
       }
     },
-    [locked, onSelectionChange, persistSelection, scopeKey]
+    [locked, onSelectionChange]
+  )
+
+  const setSelectedModelOption = useCallback(
+    (optionId: string, value: string) => {
+      setSelectedModelOptionForScope(scopeKey, optionId, value, persistSelection)
+    },
+    [persistSelection, scopeKey, setSelectedModelOptionForScope]
   )
 
   const setSelectionForScope = useCallback(
-    (targetScopeKey: string, model: UnifiedModel | null, options: ModelOptions = {}) => {
+    (
+      targetScopeKey: string,
+      model: UnifiedModel | null,
+      options: ModelOptions = {},
+      restoredSelectionConfig?: ModelSelectionConfig | null
+    ) => {
       const nextOptions = model ? normalizeModelOptions(model, options) : options
       selectedModelRef.current[targetScopeKey] = model
       selectedModelOptionsRef.current[targetScopeKey] = nextOptions
       setSelectedModelByScope(current => ({ ...current, [targetScopeKey]: model }))
       setSelectedModelOptionsByScope(current => ({ ...current, [targetScopeKey]: nextOptions }))
-      setRestoredSelectionKeyByScope(current => ({ ...current, [targetScopeKey]: selectionKey }))
+      const restoredSelectionKey =
+        restoredSelectionConfig === undefined
+          ? selectionKey
+          : getSelectionKey(restoredSelectionConfig)
+      setRestoredSelectionKeyByScope(current => ({
+        ...current,
+        [targetScopeKey]: restoredSelectionKey,
+      }))
     },
     [selectionKey]
   )
@@ -404,6 +449,11 @@ export function useWorkbenchModels({
   const getSelectedModelOptions = useCallback(
     () => selectedModelOptionsRef.current[scopeKey] ?? {},
     [scopeKey]
+  )
+  const hasSelectionForScope = useCallback(
+    (targetScopeKey: string) =>
+      Object.prototype.hasOwnProperty.call(selectedModelRef.current, targetScopeKey),
+    []
   )
 
   return {
@@ -415,9 +465,15 @@ export function useWorkbenchModels({
     setSelectedModel,
     setSelectedModelAndOptions,
     setSelectedModelOption,
+    setSelectedModelForScope,
+    setSelectedModelAndOptionsForScope,
+    setSelectedModelOptionForScope,
     setSelectionForScope,
     getSelectedModel,
     getSelectedModelOptions,
+    hasSelectionForScope,
+    selectedModelByScope,
+    selectedModelOptionsByScope,
     isLoading: enabled && isLoading,
     error: enabled ? error : null,
   }

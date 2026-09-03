@@ -457,6 +457,8 @@
     "status": {
       "active": "Active",
       "inactive": "Inactive",
+      "visible": "Visible",
+      "hidden": "Offline",
       "advanced": "Advanced",
       "standard": "Standard",
       "wework_available": "wework available",
@@ -481,6 +483,7 @@
       "model_sub_group_placeholder": "Enter secondary group",
       "config": "Model Configuration",
       "config_placeholder": "Enter model configuration as JSON",
+      "is_visible": "Visible to users",
       "is_advanced": "Advanced Model",
       "is_wework_available": "Available in wework"
     },

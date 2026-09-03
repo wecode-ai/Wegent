@@ -23,7 +23,10 @@ from sqlalchemy.orm import Session
 
 from app.api.dependencies import get_db
 from app.core.config import settings
-from app.core.security import get_current_user, get_current_user_flexible_for_executor
+from app.core.security import (
+    get_current_user,
+    get_current_user_jwt_apikey_tasktoken,
+)
 from app.models.delivery import (
     Delivery,
     LoopItem,
@@ -410,7 +413,7 @@ def get_workflow_stage_input_context(
     item_id: str,
     workflow_node_id: str,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(get_current_user_jwt_apikey_tasktoken),
 ) -> dict:
     external_loop_item_provider.ensure_shadow(db, item_id, current_user.id)
     item = loop_item_service.get(db, item_id, current_user.id)
@@ -462,7 +465,7 @@ def list_loop_items(
     assignee_id: str | None = Query(default=None),
     execution_state: str | None = Query(default=None),
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(get_current_user_jwt_apikey_tasktoken),
 ) -> LoopItemListResponse:
     _, items = project_board_snapshot_service.list_item_views(
         db,
@@ -522,9 +525,9 @@ async def create_loop_item(
     project_id: int,
     values: LoopItemCreate,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user_flexible_for_executor),
+    current_user: User = Depends(get_current_user_jwt_apikey_tasktoken),
 ) -> LoopItemResponse:
-    """Create a board task using a user JWT or personal API key."""
+    """Create a board task using a user JWT, personal API key, or task token."""
 
     project = cloud_project_service.get(db, project_id, current_user.id)
     event_payload = values.model_dump(
@@ -641,7 +644,7 @@ def reorder_loop_items(
     project_id: int,
     values: LoopItemReorder,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(get_current_user_jwt_apikey_tasktoken),
 ) -> LoopItemListResponse:
     project = cloud_project_service.get(db, project_id, current_user.id)
     if project.task_provider in {"github", "gitlab"}:
@@ -663,7 +666,7 @@ def reorder_loop_items(
 def get_loop_item(
     item_id: str,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(get_current_user_jwt_apikey_tasktoken),
 ) -> LoopItemResponse:
     if external_loop_item_provider.is_external_item(db, item_id):
         return LoopItemResponse.model_validate(
@@ -747,7 +750,7 @@ async def submit_loop_item_workflow_plan(
         include_in_schema=False,
     ),
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user_flexible_for_executor),
+    current_user: User = Depends(get_current_user_jwt_apikey_tasktoken),
 ) -> WorkflowPlanView:
     try:
         plan = (
@@ -955,7 +958,7 @@ async def report_loop_item_workflow_outcome(
     item_id: str,
     values: WorkflowTaskOutcomeSubmit,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user_flexible_for_executor),
+    current_user: User = Depends(get_current_user_jwt_apikey_tasktoken),
 ) -> WorkflowPlanView:
     try:
         plan = issue_workflow_planning_service.report_outcome(
@@ -987,7 +990,7 @@ async def update_loop_item(
     values: LoopItemUpdate,
     background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(get_current_user_jwt_apikey_tasktoken),
 ) -> LoopItemResponse:
     if external_loop_item_provider.is_external_item(db, item_id):
         response = external_loop_item_provider.update(
@@ -1212,7 +1215,7 @@ def add_loop_item_comment(
     item_id: str,
     values: LoopItemCommentCreate,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(get_current_user_jwt_apikey_tasktoken),
 ) -> LoopItemCommentResponse:
     return LoopItemCommentResponse.model_validate(
         external_loop_item_provider.add_comment(
@@ -1228,7 +1231,7 @@ def add_loop_item_comment(
 def list_loop_item_attachments(
     item_id: str,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(get_current_user_jwt_apikey_tasktoken),
 ) -> list[LoopItemAttachmentResponse]:
     attachments = loop_item_attachment_provider_router.list(
         db, item_id, current_user.id
@@ -1245,7 +1248,7 @@ def add_loop_item_attachment(
     item_id: str,
     file: UploadFile = File(...),
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(get_current_user_jwt_apikey_tasktoken),
 ) -> LoopItemAttachmentResponse:
     attachment = loop_item_attachment_provider_router.add(
         db,
@@ -1281,7 +1284,7 @@ def access_loop_item_attachment(
 def read_loop_item_attachment(
     attachment_id: str,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(get_current_user_jwt_apikey_tasktoken),
 ) -> Response:
     content, content_type, filename = loop_item_attachment_provider_router.content(
         db, attachment_id, current_user.id
@@ -1299,7 +1302,7 @@ def read_loop_item_attachment(
 def delete_loop_item_attachment(
     attachment_id: str,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(get_current_user_jwt_apikey_tasktoken),
 ) -> None:
     loop_item_attachment_provider_router.delete(db, attachment_id, current_user.id)
 
@@ -1311,7 +1314,7 @@ def delete_loop_item_attachment(
 def list_loop_item_tasks(
     item_id: str,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(get_current_user_jwt_apikey_tasktoken),
 ) -> list[LoopItemTaskBindingResponse]:
     external_loop_item_provider.ensure_shadow(db, item_id, current_user.id)
     bindings = loop_item_service.list_task_bindings(db, item_id, current_user.id)
@@ -1357,7 +1360,7 @@ def create_delivery(
     item_id: str,
     values: DeliveryCreate,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(get_current_user_jwt_apikey_tasktoken),
 ) -> DeliveryResponse:
     external_loop_item_provider.ensure_shadow(db, item_id, current_user.id)
     delivery = delivery_service.create_delivery(db, item_id, current_user.id, values)
@@ -1374,7 +1377,7 @@ def add_delivery_asset(
     file: UploadFile = File(...),
     relative_path: str = Form(...),
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(get_current_user_jwt_apikey_tasktoken),
 ) -> DeliveryAssetResponse:
     asset = delivery_service.add_asset(
         db,
@@ -1395,7 +1398,7 @@ def add_delivery_asset(
 def access_delivery_asset(
     asset_id: str,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(get_current_user_jwt_apikey_tasktoken),
 ) -> DeliveryAssetAccessResponse:
     return DeliveryAssetAccessResponse(
         url=delivery_service.access_asset_url(db, asset_id, current_user.id)
@@ -1422,7 +1425,7 @@ def read_delivery_asset(
 def discard_delivery_draft(
     delivery_id: str,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(get_current_user_jwt_apikey_tasktoken),
 ) -> None:
     delivery_service.discard_draft(db, delivery_id, current_user.id)
 
@@ -1432,7 +1435,7 @@ async def finalize_delivery(
     delivery_id: str,
     values: DeliveryFinalize | None = None,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(get_current_user_jwt_apikey_tasktoken),
 ) -> DeliveryResponse:
     draft = delivery_service.get_delivery(db, delivery_id, current_user.id)
     item = loop_item_service.get(db, draft.loop_item_id, current_user.id)
@@ -1463,7 +1466,7 @@ async def finalize_delivery(
 def list_deliveries(
     item_id: str,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(get_current_user_jwt_apikey_tasktoken),
 ) -> DeliveryListResponse:
     deliveries = delivery_service.list_deliveries(db, item_id, current_user.id)
     return DeliveryListResponse(
@@ -1475,7 +1478,7 @@ def list_deliveries(
 def get_delivery(
     delivery_id: str,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(get_current_user_jwt_apikey_tasktoken),
 ) -> DeliveryDetailResponse:
     delivery = delivery_service.get_delivery(db, delivery_id, current_user.id)
     response = _delivery_response(db, delivery)

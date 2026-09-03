@@ -91,6 +91,7 @@ export interface AdminPublicModel {
   display_name: string | null
   json: Record<string, unknown>
   is_active: boolean
+  is_visible: boolean
   is_advanced: boolean
   created_at: string
   updated_at: string
@@ -105,6 +106,7 @@ export interface AdminPublicModelCreate {
   name: string
   namespace?: string
   json: Record<string, unknown>
+  is_visible?: boolean
 }
 
 export interface AdminPublicModelUpdate {
@@ -112,6 +114,7 @@ export interface AdminPublicModelUpdate {
   namespace?: string
   json?: Record<string, unknown>
   is_active?: boolean
+  is_visible?: boolean
   is_advanced?: boolean
 }
 
