@@ -1628,6 +1628,97 @@ describe('DesktopWorkbenchLayout', () => {
     expect(screen.queryByTestId('desktop-workbench-content')).not.toBeInTheDocument()
   })
 
+  test('keeps a retained board bound to its own workspace tab route', async () => {
+    deliveryApiMock.available = true
+    const project = {
+      id: 'project-1',
+      public_id: 'public-project-1',
+      project_key: 'PROJECT-1',
+      name: 'Retained Project',
+      description: '',
+      project_store: 'backend',
+      task_provider: 'local',
+      provider_config: {},
+      created_by_user_id: 1,
+      status: 'active',
+      tags: [],
+      version: 1,
+      created_at: '2026-08-09T00:00:00Z',
+      updated_at: '2026-08-09T00:00:00Z',
+    }
+    deliveryApiMock.listCloudProjects.mockResolvedValue({ items: [project] })
+    const boardTab = {
+      id: 'board-project-1',
+      kind: 'board' as const,
+      title: project.name,
+      contentRoute: '/todo?projectStore=backend&projectId=project-1',
+      fixed: false,
+    }
+    const taskTab = {
+      id: 'fixed-task',
+      kind: 'task' as const,
+      title: '任务',
+      contentRoute: '/',
+      fixed: true,
+    }
+    const actions = {
+      openTab: vi.fn(),
+      selectTab: vi.fn(),
+      closeTab: vi.fn(),
+      closeOtherTabs: vi.fn(),
+      restoreClosedTab: vi.fn(),
+      moveTab: vi.fn(),
+      updateActiveTab: vi.fn(),
+    }
+    const workspaceTabs = (activeTab: typeof boardTab | typeof taskTab) => ({
+      tabs: [taskTab, boardTab],
+      activeTabId: activeTab.id,
+      activeTab,
+      ...actions,
+    })
+    const props = {
+      ...baseProps,
+      workspaceTabId: boardTab.id,
+      surfaceKind: 'board' as const,
+      state: {
+        ...baseProps.state,
+        user: {
+          id: 1,
+          user_name: 'local',
+          email: 'local@example.com',
+        },
+      },
+    }
+    const view = render(
+      <WorkspaceTabsContext.Provider value={workspaceTabs(boardTab)}>
+        <DesktopWorkbenchLayout {...props} />
+      </WorkspaceTabsContext.Provider>
+    )
+
+    expect(await screen.findByTestId('cloud-project-header')).toHaveTextContent(project.name)
+    await userEvent.click(screen.getByTestId('cloud-project-automation-view'))
+    expect(screen.getByTestId('cloud-project-automation-view')).toHaveClass('bg-background')
+
+    view.rerender(
+      <WorkspaceTabsContext.Provider value={workspaceTabs(taskTab)}>
+        <DesktopWorkbenchLayout {...props} routeActive={false} />
+      </WorkspaceTabsContext.Provider>
+    )
+
+    expect(screen.getByTestId('cloud-project-header')).toHaveTextContent(project.name)
+    expect(screen.getByTestId('cloud-project-automation-view')).toHaveClass('bg-background')
+    expect(actions.updateActiveTab).not.toHaveBeenCalled()
+
+    view.rerender(
+      <WorkspaceTabsContext.Provider value={workspaceTabs(boardTab)}>
+        <DesktopWorkbenchLayout {...props} />
+      </WorkspaceTabsContext.Provider>
+    )
+
+    expect(screen.getByTestId('cloud-project-header')).toHaveTextContent(project.name)
+    expect(screen.getByTestId('cloud-project-automation-view')).toHaveClass('bg-background')
+  })
+
   test('returns to the workspace after opening settings from its account menu', async () => {
     deliveryApiMock.available = true
     window.history.pushState({}, '', '/todo')
