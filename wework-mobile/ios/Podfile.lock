@@ -1980,6 +1980,28 @@ PODS:
     - React-utils (= 0.86.3)
     - ReactNativeDependencies
   - ReactNativeDependencies (0.86.3)
+  - ReactNativeEnrichedMarkdown (1.0.2):
+    - hermes-engine
+    - RCTRequired
+    - RCTTypeSafety
+    - React-Core
+    - React-Core-prebuilt
+    - React-debug
+    - React-Fabric
+    - React-featureflags
+    - React-graphics
+    - React-ImageManager
+    - React-jsi
+    - React-NativeModulesApple
+    - React-RCTFabric
+    - React-renderercss
+    - React-rendererdebug
+    - React-utils
+    - ReactCodegen
+    - ReactCommon/turbomodule/bridging
+    - ReactCommon/turbomodule/core
+    - ReactNativeDependencies
+    - Yoga
   - RNScreens (4.26.2):
     - hermes-engine
     - RCTRequired
@@ -2126,6 +2148,7 @@ DEPENDENCIES:
   - ReactCodegen (from `build/generated/ios/ReactCodegen`)
   - "ReactCommon/turbomodule/core (from `../node_modules/.pnpm/react-native@0.86.3_@babel+core@7.29.7_@types+react@19.2.18_react@19.2.3/node_modules/react-native/ReactCommon`)"
   - "ReactNativeDependencies (from `../node_modules/.pnpm/react-native@0.86.3_@babel+core@7.29.7_@types+react@19.2.18_react@19.2.3/node_modules/react-native/third-party-podspecs/ReactNativeDependencies.podspec`)"
+  - "ReactNativeEnrichedMarkdown (from `../node_modules/.pnpm/react-native-enriched-markdown@1.0.2_react-native@0.86.3_@babel+core@7.29.7_@types+reac_4830e9e0b1a3d9baf33b0e2fe0c8906c/node_modules/react-native-enriched-markdown`)"
   - "RNScreens (from `../node_modules/.pnpm/react-native-screens@4.26.2_react-native@0.86.3_@babel+core@7.29.7_@types+react@19.2.18_react@19.2.3__react@19.2.3/node_modules/react-native-screens`)"
   - "Yoga (from `../node_modules/.pnpm/react-native@0.86.3_@babel+core@7.29.7_@types+react@19.2.18_react@19.2.3/node_modules/react-native/ReactCommon/yoga`)"
 
@@ -2321,6 +2344,8 @@ EXTERNAL SOURCES:
     :path: "../node_modules/.pnpm/react-native@0.86.3_@babel+core@7.29.7_@types+react@19.2.18_react@19.2.3/node_modules/react-native/ReactCommon"
   ReactNativeDependencies:
     :podspec: "../node_modules/.pnpm/react-native@0.86.3_@babel+core@7.29.7_@types+react@19.2.18_react@19.2.3/node_modules/react-native/third-party-podspecs/ReactNativeDependencies.podspec"
+  ReactNativeEnrichedMarkdown:
+    :path: "../node_modules/.pnpm/react-native-enriched-markdown@1.0.2_react-native@0.86.3_@babel+core@7.29.7_@types+reac_4830e9e0b1a3d9baf33b0e2fe0c8906c/node_modules/react-native-enriched-markdown"
   RNScreens:
     :path: "../node_modules/.pnpm/react-native-screens@4.26.2_react-native@0.86.3_@babel+core@7.29.7_@types+react@19.2.18_react@19.2.3__react@19.2.3/node_modules/react-native-screens"
   Yoga:
@@ -2341,7 +2366,7 @@ SPEC CHECKSUMS:
   ExpoKeepAwake: c26f14275017370cc8a4b7b43a0e23361f2053a5
   ExpoLinearGradient: 903b3f5fe566c666ff78b2599add51d094483613
   ExpoLogBox: 80957303325cd4439137765c90a87d7f22aaf2ff
-  ExpoModulesCore: 6a62c9764da606de49c01ddc49a042b571954d18
+  ExpoModulesCore: dfb2dad6e3950673187429ac859cd882caf49fa1
   ExpoModulesJSI: 1529d4289b9a3647d8901a27b41f1af173598b45
   ExpoModulesWorklets: 57a11e6ae984c2680e7967b785ded96199caed8c
   ExpoSecureStore: cc7c4f560528e7a644b1342b0cc2790576e677e1
@@ -2422,6 +2447,7 @@ SPEC CHECKSUMS:
   ReactCodegen: 94e244d9dad16ba7e854e1f14bc24a2550fbe45f
   ReactCommon: 02f6a489d5eb4ab79d7deba5cd4434e0ba351a07
   ReactNativeDependencies: 6738e602b46fd24aa453cd58267ec3bb8bf29d27
+  ReactNativeEnrichedMarkdown: 24c39048b683a3637149e76dd60cd3db21981385
   RNScreens: 7118cd7715c226856125b5bece3c4d9abec90356
   Yoga: 18b74b3ade30bebc1904004dfaceae1dd02a330a
 
