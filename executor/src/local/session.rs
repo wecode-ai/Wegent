@@ -3,17 +3,61 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use std::{
-    collections::HashMap,
+    collections::{HashMap, VecDeque},
     env, fs,
     path::{Path, PathBuf},
-    sync::Arc,
+    sync::{
+        atomic::{AtomicU64, Ordering},
+        Arc,
+    },
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
+
+use tokio::sync::Notify;
 
 use crate::local::{command::build_env, pty::UnixPtyProcess};
 
 const DEFAULT_SESSION_TTL_SECONDS: u64 = 60 * 60;
 const SESSION_PROBE_QUERY_KEY: &str = "__wegent_probe";
+const TERMINAL_REPLAY_MAX_BYTES: usize = 512 * 1024;
+const TERMINAL_REPLAY_HIGH_WATERMARK_BYTES: usize = 384 * 1024;
+const TERMINAL_REPLAY_LOW_WATERMARK_BYTES: usize = 128 * 1024;
+const MAX_UTF8_PENDING_BYTES: usize = 3;
+
+static TERMINAL_OUTPUT_BATCHES_TOTAL: AtomicU64 = AtomicU64::new(0);
+static TERMINAL_OUTPUT_BYTES_TOTAL: AtomicU64 = AtomicU64::new(0);
+static TERMINAL_REPLAYED_BATCHES_TOTAL: AtomicU64 = AtomicU64::new(0);
+static TERMINAL_REPLAY_BYTES: AtomicU64 = AtomicU64::new(0);
+static TERMINAL_ACK_LAG_BYTES: AtomicU64 = AtomicU64::new(0);
+static TERMINAL_BACKPRESSURED_SESSIONS: AtomicU64 = AtomicU64::new(0);
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct TerminalMetricsSnapshot {
+    pub output_batches_total: u64,
+    pub output_bytes_total: u64,
+    pub replayed_batches_total: u64,
+    pub replay_bytes: u64,
+    pub ack_lag_bytes: u64,
+    pub backpressured_sessions: u64,
+}
+
+pub(crate) fn terminal_metrics_snapshot() -> TerminalMetricsSnapshot {
+    TerminalMetricsSnapshot {
+        output_batches_total: TERMINAL_OUTPUT_BATCHES_TOTAL.load(Ordering::Relaxed),
+        output_bytes_total: TERMINAL_OUTPUT_BYTES_TOTAL.load(Ordering::Relaxed),
+        replayed_batches_total: TERMINAL_REPLAYED_BATCHES_TOTAL.load(Ordering::Relaxed),
+        replay_bytes: TERMINAL_REPLAY_BYTES.load(Ordering::Relaxed),
+        ack_lag_bytes: TERMINAL_ACK_LAG_BYTES.load(Ordering::Relaxed),
+        backpressured_sessions: TERMINAL_BACKPRESSURED_SESSIONS.load(Ordering::Relaxed),
+    }
+}
+
+fn subtract_metric(metric: &AtomicU64, value: usize) {
+    let value = value as u64;
+    let _ = metric.fetch_update(Ordering::Relaxed, Ordering::Relaxed, |current| {
+        Some(current.saturating_sub(value))
+    });
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SessionType {
@@ -26,6 +70,10 @@ pub trait TerminalPty: Send {
     fn fd(&self) -> Option<i32>;
     fn write(&mut self, data: &[u8]) -> std::io::Result<usize>;
     fn read_available(&mut self, timeout: Duration) -> std::io::Result<Option<Vec<u8>>>;
+    fn set_event_notifier(&mut self, _notifier: Arc<Notify>) {}
+    fn output_closed(&self) -> bool {
+        true
+    }
     fn resize(&mut self, rows: u16, cols: u16) -> Result<(), String>;
     fn poll(&mut self) -> std::io::Result<Option<u32>>;
     fn terminate(&mut self, force: bool);
@@ -65,6 +113,14 @@ impl TerminalPty for UnixPtyProcess {
                 "PTY output polling is not supported on this platform",
             ))
         }
+    }
+
+    fn set_event_notifier(&mut self, notifier: Arc<Notify>) {
+        self.set_event_notifier(notifier);
+    }
+
+    fn output_closed(&self) -> bool {
+        self.output_closed()
     }
 
     fn resize(&mut self, rows: u16, cols: u16) -> Result<(), String> {
@@ -128,8 +184,100 @@ pub struct LocalSession {
     pub port: u16,
     pub terminal: Option<Box<dyn TerminalPty>>,
     pub terminal_attached: bool,
+    terminal_consumer_id: Option<String>,
+    terminal_next_sequence: u64,
+    terminal_acked_sequence: u64,
+    terminal_last_sent_sequence: u64,
+    terminal_highest_sent_sequence: u64,
+    terminal_replay: VecDeque<TerminalOutputRecord>,
+    terminal_replay_bytes: usize,
+    terminal_ack_lag_bytes: usize,
+    terminal_backpressured: bool,
+    terminal_utf8_decoder: TerminalUtf8Decoder,
+    terminal_exit: Option<TerminalExitRecord>,
     pub expires_at: u64,
     pub code_server_authenticated: bool,
+}
+
+#[derive(Debug, Default)]
+struct TerminalUtf8Decoder {
+    pending: [u8; MAX_UTF8_PENDING_BYTES],
+    pending_len: usize,
+}
+
+impl TerminalUtf8Decoder {
+    fn decode(&mut self, input: Vec<u8>) -> String {
+        if input.is_empty() {
+            return String::new();
+        }
+        let bytes = if self.pending_len == 0 {
+            input
+        } else {
+            let mut combined = Vec::with_capacity(self.pending_len + input.len());
+            combined.extend_from_slice(&self.pending[..self.pending_len]);
+            combined.extend_from_slice(&input);
+            self.pending_len = 0;
+            combined
+        };
+        match String::from_utf8(bytes) {
+            Ok(data) => data,
+            Err(error) => self.decode_lossy_prefix(&error.into_bytes()),
+        }
+    }
+
+    fn finish(&mut self) -> String {
+        if self.pending_len == 0 {
+            return String::new();
+        }
+        self.pending_len = 0;
+        "\u{fffd}".to_owned()
+    }
+
+    fn decode_lossy_prefix(&mut self, bytes: &[u8]) -> String {
+        let mut decoded = String::with_capacity(bytes.len());
+        let mut remaining = bytes;
+        while !remaining.is_empty() {
+            match std::str::from_utf8(remaining) {
+                Ok(valid) => {
+                    decoded.push_str(valid);
+                    break;
+                }
+                Err(error) => {
+                    let valid_up_to = error.valid_up_to();
+                    decoded.push_str(
+                        std::str::from_utf8(&remaining[..valid_up_to])
+                            .expect("UTF-8 validator reported an invalid valid prefix"),
+                    );
+                    match error.error_len() {
+                        Some(invalid_len) => {
+                            decoded.push('\u{fffd}');
+                            remaining = &remaining[valid_up_to + invalid_len..];
+                        }
+                        None => {
+                            let incomplete = &remaining[valid_up_to..];
+                            debug_assert!(incomplete.len() <= MAX_UTF8_PENDING_BYTES);
+                            self.pending[..incomplete.len()].copy_from_slice(incomplete);
+                            self.pending_len = incomplete.len();
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+        decoded
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct TerminalOutputRecord {
+    sequence: u64,
+    data: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct TerminalExitRecord {
+    exit_code: Option<u32>,
+    error: Option<String>,
 }
 
 impl LocalSession {
@@ -150,6 +298,17 @@ impl LocalSession {
             port,
             terminal: None,
             terminal_attached: false,
+            terminal_consumer_id: None,
+            terminal_next_sequence: 1,
+            terminal_acked_sequence: 0,
+            terminal_last_sent_sequence: 0,
+            terminal_highest_sent_sequence: 0,
+            terminal_replay: VecDeque::new(),
+            terminal_replay_bytes: 0,
+            terminal_ack_lag_bytes: 0,
+            terminal_backpressured: false,
+            terminal_utf8_decoder: TerminalUtf8Decoder::default(),
+            terminal_exit: None,
             expires_at,
             code_server_authenticated: false,
         }
@@ -172,8 +331,172 @@ impl LocalSession {
             port: 0,
             terminal: Some(terminal),
             terminal_attached: false,
+            terminal_consumer_id: None,
+            terminal_next_sequence: 1,
+            terminal_acked_sequence: 0,
+            terminal_last_sent_sequence: 0,
+            terminal_highest_sent_sequence: 0,
+            terminal_replay: VecDeque::new(),
+            terminal_replay_bytes: 0,
+            terminal_ack_lag_bytes: 0,
+            terminal_backpressured: false,
+            terminal_utf8_decoder: TerminalUtf8Decoder::default(),
+            terminal_exit: None,
             expires_at,
             code_server_authenticated: false,
+        }
+    }
+
+    fn attach_terminal(
+        &mut self,
+        consumer_id: &str,
+        last_acked_sequence: u64,
+    ) -> Result<(), String> {
+        let was_attached = self.terminal_attached;
+        let latest_sequence = self.terminal_next_sequence.saturating_sub(1);
+        if last_acked_sequence < self.terminal_acked_sequence {
+            return Err("Terminal replay history is no longer available".to_owned());
+        }
+        if last_acked_sequence > self.terminal_highest_sent_sequence
+            || last_acked_sequence > latest_sequence
+        {
+            return Err("last_acked_sequence exceeds sent terminal output".to_owned());
+        }
+        self.acknowledge_terminal_output(last_acked_sequence)?;
+        subtract_metric(&TERMINAL_ACK_LAG_BYTES, self.terminal_ack_lag_bytes);
+        self.terminal_ack_lag_bytes = 0;
+        self.terminal_last_sent_sequence = last_acked_sequence;
+        self.terminal_attached = true;
+        self.terminal_consumer_id = Some(consumer_id.to_owned());
+        if was_attached {
+            let replayed_batches = self
+                .terminal_replay
+                .iter()
+                .filter(|record| record.sequence > last_acked_sequence)
+                .count() as u64;
+            TERMINAL_REPLAYED_BATCHES_TOTAL.fetch_add(replayed_batches, Ordering::Relaxed);
+        }
+        Ok(())
+    }
+
+    fn acknowledge_terminal_output(&mut self, sequence: u64) -> Result<bool, String> {
+        if sequence <= self.terminal_acked_sequence {
+            return Ok(false);
+        }
+        if sequence > self.terminal_highest_sent_sequence {
+            return Err("Terminal output sequence has not been sent".to_owned());
+        }
+        let mut acknowledged_bytes = 0;
+        while self
+            .terminal_replay
+            .front()
+            .is_some_and(|record| record.sequence <= sequence)
+        {
+            if let Some(record) = self.terminal_replay.pop_front() {
+                acknowledged_bytes += record.data.len();
+                self.terminal_replay_bytes =
+                    self.terminal_replay_bytes.saturating_sub(record.data.len());
+            }
+        }
+        self.terminal_ack_lag_bytes = self
+            .terminal_ack_lag_bytes
+            .saturating_sub(acknowledged_bytes);
+        subtract_metric(&TERMINAL_REPLAY_BYTES, acknowledged_bytes);
+        subtract_metric(&TERMINAL_ACK_LAG_BYTES, acknowledged_bytes);
+        self.terminal_acked_sequence = sequence;
+        let resumed = self.terminal_backpressured
+            && self.terminal_replay_bytes <= TERMINAL_REPLAY_LOW_WATERMARK_BYTES;
+        if resumed {
+            self.terminal_backpressured = false;
+            subtract_metric(&TERMINAL_BACKPRESSURED_SESSIONS, 1);
+        }
+        Ok(resumed)
+    }
+
+    fn unsent_terminal_output(&self, limit: usize) -> Vec<TerminalEvent> {
+        self.terminal_replay
+            .iter()
+            .filter(|record| record.sequence > self.terminal_last_sent_sequence)
+            .take(limit)
+            .map(|record| TerminalEvent::Output {
+                session_id: self.session_id.clone(),
+                consumer_id: self
+                    .terminal_consumer_id
+                    .clone()
+                    .expect("attached terminal consumer"),
+                sequence: record.sequence,
+                data: record.data.clone(),
+            })
+            .collect()
+    }
+
+    fn record_terminal_output(&mut self, data: String) -> Result<TerminalEvent, String> {
+        if self.terminal_replay_bytes.saturating_add(data.len()) > TERMINAL_REPLAY_MAX_BYTES {
+            return Err("Terminal output exceeded the bounded replay capacity".to_owned());
+        }
+        let sequence = self.terminal_next_sequence;
+        self.terminal_next_sequence = self
+            .terminal_next_sequence
+            .checked_add(1)
+            .ok_or_else(|| "Terminal output sequence exhausted".to_owned())?;
+        self.terminal_replay_bytes += data.len();
+        TERMINAL_OUTPUT_BATCHES_TOTAL.fetch_add(1, Ordering::Relaxed);
+        TERMINAL_OUTPUT_BYTES_TOTAL.fetch_add(data.len() as u64, Ordering::Relaxed);
+        TERMINAL_REPLAY_BYTES.fetch_add(data.len() as u64, Ordering::Relaxed);
+        self.terminal_replay.push_back(TerminalOutputRecord {
+            sequence,
+            data: data.clone(),
+        });
+        if !self.terminal_backpressured
+            && self.terminal_replay_bytes >= TERMINAL_REPLAY_HIGH_WATERMARK_BYTES
+        {
+            self.terminal_backpressured = true;
+            TERMINAL_BACKPRESSURED_SESSIONS.fetch_add(1, Ordering::Relaxed);
+        }
+        Ok(TerminalEvent::Output {
+            session_id: self.session_id.clone(),
+            consumer_id: self
+                .terminal_consumer_id
+                .clone()
+                .expect("attached terminal consumer"),
+            sequence,
+            data,
+        })
+    }
+
+    fn begin_terminal_output_delivery(&mut self, sequence: u64) -> Result<(), String> {
+        let expected_sequence = self.terminal_last_sent_sequence.saturating_add(1);
+        let Some(record) = self
+            .terminal_replay
+            .iter()
+            .find(|record| record.sequence == sequence)
+        else {
+            return Err("Terminal output delivery sequence is out of order".to_owned());
+        };
+        if sequence != expected_sequence {
+            return Err("Terminal output delivery sequence is out of order".to_owned());
+        }
+        self.terminal_ack_lag_bytes += record.data.len();
+        TERMINAL_ACK_LAG_BYTES.fetch_add(record.data.len() as u64, Ordering::Relaxed);
+        self.terminal_last_sent_sequence = sequence;
+        self.terminal_highest_sent_sequence = self.terminal_highest_sent_sequence.max(sequence);
+        Ok(())
+    }
+
+    fn require_terminal_consumer(&self, consumer_id: &str) -> Result<(), String> {
+        if !self.terminal_attached || self.terminal_consumer_id.as_deref() != Some(consumer_id) {
+            return Err("Terminal consumer is no longer active".to_owned());
+        }
+        Ok(())
+    }
+}
+
+impl Drop for LocalSession {
+    fn drop(&mut self) {
+        subtract_metric(&TERMINAL_REPLAY_BYTES, self.terminal_replay_bytes);
+        subtract_metric(&TERMINAL_ACK_LAG_BYTES, self.terminal_ack_lag_bytes);
+        if self.terminal_backpressured {
+            subtract_metric(&TERMINAL_BACKPRESSURED_SESSIONS, 1);
         }
     }
 }
@@ -466,9 +789,12 @@ pub struct LocalSessionHandler {
     pub workspace_root: PathBuf,
     pub sessions: HashMap<String, LocalSession>,
     pty_manager: Arc<dyn SessionPtyManager>,
+    terminal_event_notifier: Arc<Notify>,
+    terminal_drain_offset: usize,
 }
 
 const MAX_TERMINAL_READS_PER_DRAIN: usize = 16;
+const MAX_TERMINAL_SESSIONS_PER_DRAIN: usize = 32;
 
 impl LocalSessionHandler {
     pub fn new(
@@ -487,6 +813,8 @@ impl LocalSessionHandler {
             workspace_root,
             sessions: HashMap::new(),
             pty_manager,
+            terminal_event_notifier: Arc::new(Notify::new()),
+            terminal_drain_offset: 0,
         }
     }
 
@@ -498,6 +826,10 @@ impl LocalSessionHandler {
         self.code_server_enabled = code_server_enabled;
         self.terminal_enabled = terminal_enabled;
         self
+    }
+
+    pub fn terminal_event_notifier(&self) -> Arc<Notify> {
+        Arc::clone(&self.terminal_event_notifier)
     }
 
     pub fn handle_start_session(&mut self, request: SessionStartRequest) -> SessionResult {
@@ -543,10 +875,18 @@ impl LocalSessionHandler {
         })
     }
 
-    pub fn handle_terminal_input(&mut self, session_id: &str, data: &str) -> SessionResult {
+    pub fn handle_terminal_input(
+        &mut self,
+        session_id: &str,
+        consumer_id: &str,
+        data: &str,
+    ) -> SessionResult {
         let Some(session) = self.terminal_session_mut(session_id) else {
             return SessionResult::error("Terminal session not found");
         };
+        if let Err(error) = session.require_terminal_consumer(consumer_id) {
+            return SessionResult::error(error);
+        }
         let Some(terminal) = session.terminal.as_mut() else {
             return SessionResult::error("Terminal session not found");
         };
@@ -556,23 +896,153 @@ impl LocalSessionHandler {
         SessionResult::success()
     }
 
-    pub fn handle_terminal_attach(&mut self, session_id: &str) -> SessionResult {
+    pub fn handle_terminal_attach(
+        &mut self,
+        session_id: &str,
+        consumer_id: &str,
+        last_acked_sequence: u64,
+    ) -> SessionResult {
+        let notifier = Arc::clone(&self.terminal_event_notifier);
         let Some(session) = self.terminal_session_mut(session_id) else {
             return SessionResult::error("Terminal session not found");
         };
-        session.terminal_attached = true;
+        if let Err(error) = session.attach_terminal(consumer_id, last_acked_sequence) {
+            return SessionResult::error(error);
+        }
+        if let Some(terminal) = session.terminal.as_mut() {
+            terminal.set_event_notifier(Arc::clone(&notifier));
+        }
+        notifier.notify_one();
         SessionResult::success()
+    }
+
+    pub fn handle_terminal_ack(
+        &mut self,
+        session_id: &str,
+        consumer_id: &str,
+        sequence: u64,
+    ) -> SessionResult {
+        let notifier = Arc::clone(&self.terminal_event_notifier);
+        let Some(session) = self.terminal_session_mut(session_id) else {
+            return SessionResult::error("Terminal session not found");
+        };
+        if let Err(error) = session.require_terminal_consumer(consumer_id) {
+            return SessionResult::error(error);
+        }
+        let had_replay = !session.terminal_replay.is_empty();
+        let resumed = match session.acknowledge_terminal_output(sequence) {
+            Ok(resumed) => resumed,
+            Err(error) => return SessionResult::error(error),
+        };
+        if resumed
+            || (had_replay && session.terminal_replay.is_empty() && session.terminal_exit.is_some())
+        {
+            notifier.notify_one();
+        }
+        SessionResult::success()
+    }
+
+    pub fn begin_terminal_output_delivery(
+        &mut self,
+        session_id: &str,
+        consumer_id: &str,
+        sequence: u64,
+    ) -> Result<bool, String> {
+        let Some(session) = self.terminal_session_mut(session_id) else {
+            return Ok(false);
+        };
+        if session.require_terminal_consumer(consumer_id).is_err() {
+            self.terminal_event_notifier.notify_one();
+            return Ok(false);
+        }
+        session.begin_terminal_output_delivery(sequence)?;
+        Ok(true)
+    }
+
+    pub fn retry_terminal_output_delivery(&mut self, session_id: &str, sequence: u64) -> bool {
+        let Some(session) = self.terminal_session_mut(session_id) else {
+            return false;
+        };
+        if session.terminal_acked_sequence >= sequence {
+            session.terminal_last_sent_sequence = session.terminal_acked_sequence;
+            return true;
+        }
+        let Some(record) = session
+            .terminal_replay
+            .iter()
+            .find(|record| record.sequence == sequence)
+        else {
+            return true;
+        };
+        session.terminal_last_sent_sequence = sequence.saturating_sub(1);
+        session.terminal_ack_lag_bytes = session
+            .terminal_ack_lag_bytes
+            .saturating_sub(record.data.len());
+        subtract_metric(&TERMINAL_ACK_LAG_BYTES, record.data.len());
+        true
+    }
+
+    pub fn complete_terminal_exit(
+        &mut self,
+        session_id: &str,
+        consumer_id: &str,
+    ) -> Result<(), String> {
+        let Some(session) = self.sessions.get(session_id) else {
+            return Ok(());
+        };
+        session.require_terminal_consumer(consumer_id)?;
+        if session.session_type != SessionType::Terminal
+            || session.terminal_exit.is_none()
+            || !session.terminal_replay.is_empty()
+        {
+            return Err("Terminal exit is not ready for completion".to_owned());
+        }
+        self.sessions.remove(session_id);
+        Ok(())
+    }
+
+    pub fn prepare_terminal_reconnect(&mut self) {
+        let mut should_notify = false;
+        for session in self.sessions.values_mut().filter(|session| {
+            session.session_type == SessionType::Terminal && session.terminal_attached
+        }) {
+            subtract_metric(&TERMINAL_ACK_LAG_BYTES, session.terminal_ack_lag_bytes);
+            session.terminal_ack_lag_bytes = 0;
+            session.terminal_last_sent_sequence = session.terminal_acked_sequence;
+            should_notify |= !session.terminal_replay.is_empty() || session.terminal_exit.is_some();
+        }
+        if should_notify {
+            self.terminal_event_notifier.notify_one();
+        }
+    }
+
+    pub fn reap_expired_sessions(&mut self) -> usize {
+        let now = epoch_seconds();
+        let expired = self
+            .sessions
+            .values()
+            .filter(|session| session.expires_at <= now)
+            .map(|session| session.session_id.clone())
+            .collect::<Vec<_>>();
+        for session_id in &expired {
+            let _ = self.close_terminal_session(session_id);
+        }
+        expired.len()
     }
 
     pub fn handle_terminal_resize(
         &mut self,
         session_id: &str,
+        consumer_id: &str,
         rows: u16,
         cols: u16,
     ) -> SessionResult {
         let Some(session) = self.terminal_session_mut(session_id) else {
             return SessionResult::error("Terminal session not found");
         };
+        if let Err(error) = session.require_terminal_consumer(consumer_id) {
+            return SessionResult::error(error);
+        }
         let Some(terminal) = session.terminal.as_mut() else {
             return SessionResult::error("Terminal session not found");
         };
@@ -582,7 +1052,17 @@ impl LocalSessionHandler {
         SessionResult::success()
     }
 
-    pub fn handle_terminal_close(&mut self, session_id: &str) -> SessionResult {
+    pub fn handle_terminal_close(&mut self, session_id: &str, consumer_id: &str) -> SessionResult {
+        let Some(session) = self.terminal_session_mut(session_id) else {
+            return SessionResult::success();
+        };
+        if let Err(error) = session.require_terminal_consumer(consumer_id) {
+            return SessionResult::error(error);
+        }
+        self.close_terminal_session(session_id)
+    }
+
+    fn close_terminal_session(&mut self, session_id: &str) -> SessionResult {
         let Some(mut session) = self.sessions.remove(session_id) else {
             return SessionResult::success();
         };
@@ -595,7 +1075,8 @@ impl LocalSessionHandler {
     }
 
     pub fn drain_terminal_events(&mut self) -> Vec<TerminalEvent> {
-        let session_ids = self
+        let notifier = Arc::clone(&self.terminal_event_notifier);
+        let mut session_ids = self
             .sessions
             .values()
             .filter(|session| {
@@ -603,23 +1084,61 @@ impl LocalSessionHandler {
             })
             .map(|session| session.session_id.clone())
             .collect::<Vec<_>>();
+        session_ids.sort();
+        if session_ids.len() > MAX_TERMINAL_SESSIONS_PER_DRAIN {
+            let session_count = session_ids.len();
+            let start = self.terminal_drain_offset % session_count;
+            session_ids.rotate_left(start);
+            session_ids.truncate(MAX_TERMINAL_SESSIONS_PER_DRAIN);
+            self.terminal_drain_offset = (start + MAX_TERMINAL_SESSIONS_PER_DRAIN) % session_count;
+            notifier.notify_one();
+        } else {
+            self.terminal_drain_offset = 0;
+        }
         let mut events = Vec::new();
-        let mut finished_session_ids = Vec::new();
 
         for session_id in session_ids {
             let Some(session) = self.sessions.get_mut(&session_id) else {
                 continue;
             };
-            let Some(terminal) = session.terminal.as_mut() else {
+            let mut session_events = session.unsent_terminal_output(MAX_TERMINAL_READS_PER_DRAIN);
+            let mut remaining_capacity =
+                MAX_TERMINAL_READS_PER_DRAIN.saturating_sub(session_events.len());
+            let unsent_count = session
+                .terminal_replay
+                .iter()
+                .filter(|record| record.sequence > session.terminal_last_sent_sequence)
+                .count();
+            if unsent_count > 0 {
+                if unsent_count > session_events.len() {
+                    notifier.notify_one();
+                }
+                events.extend(session_events);
                 continue;
-            };
-            let mut output = Vec::new();
-            let mut terminal_error = None;
+            }
 
-            for _ in 0..MAX_TERMINAL_READS_PER_DRAIN {
-                match terminal.read_available(Duration::ZERO) {
-                    Ok(Some(chunk)) if chunk.is_empty() => break,
-                    Ok(Some(chunk)) => output.extend_from_slice(&chunk),
+            let mut data = String::new();
+            let mut terminal_error = None;
+            let mut read_limit_reached = false;
+
+            while remaining_capacity > 0
+                && !session.terminal_backpressured
+                && session.terminal_replay_bytes.saturating_add(data.len())
+                    < TERMINAL_REPLAY_HIGH_WATERMARK_BYTES
+            {
+                let read_result = match session.terminal.as_mut() {
+                    Some(terminal) => terminal.read_available(Duration::ZERO),
+                    None => break,
+                };
+                match read_result {
+                    Ok(Some(chunk)) if chunk.is_empty() => {
+                        break;
+                    }
+                    Ok(Some(chunk)) => {
+                        data.push_str(&session.terminal_utf8_decoder.decode(chunk));
+                        remaining_capacity -= 1;
+                        read_limit_reached = remaining_capacity == 0;
+                    }
                     Ok(None) => break,
                     Err(error) => {
                         terminal_error = Some(format!("Failed to read terminal output: {error}"));
@@ -628,35 +1147,66 @@ impl LocalSessionHandler {
                 }
             }
 
-            if !output.is_empty() {
-                events.push(TerminalEvent::Output {
-                    session_id: session_id.clone(),
-                    data: String::from_utf8_lossy(&output).into_owned(),
-                });
+            if read_limit_reached && !session.terminal_backpressured {
+                notifier.notify_one();
             }
 
-            let exit_code = match terminal.poll() {
-                Ok(exit_code) => exit_code,
-                Err(error) => {
-                    terminal_error =
-                        Some(format!("Failed to poll terminal process status: {error}"));
-                    None
+            let mut exit_code = None;
+            if session.terminal_exit.is_none() {
+                let exit_result = session.terminal.as_mut().map(|terminal| {
+                    let output_closed = terminal.output_closed();
+                    (terminal.poll(), output_closed)
+                });
+                exit_code = match exit_result {
+                    Some((Ok(Some(exit_code)), true)) => Some(exit_code),
+                    Some((Ok(_), _)) | None => None,
+                    Some((Err(error), _)) => {
+                        terminal_error =
+                            Some(format!("Failed to poll terminal process status: {error}"));
+                        None
+                    }
+                };
+            }
+
+            let terminal_finished = exit_code.is_some() || terminal_error.is_some();
+            if terminal_finished {
+                data.push_str(&session.terminal_utf8_decoder.finish());
+            }
+            if !data.is_empty() {
+                match session.record_terminal_output(data) {
+                    Ok(event) => session_events.push(event),
+                    Err(error) => terminal_error = Some(error),
                 }
-            };
-            if exit_code.is_some() || terminal_error.is_some() {
-                events.push(TerminalEvent::Exit {
-                    session_id: session_id.clone(),
+            }
+
+            if session.terminal_exit.is_none() && (exit_code.is_some() || terminal_error.is_some())
+            {
+                if terminal_error.is_some() {
+                    if let Some(terminal) = session.terminal.as_mut() {
+                        terminal.terminate(false);
+                    }
+                }
+                if let Some(mut terminal) = session.terminal.take() {
+                    terminal.close();
+                }
+                session.terminal_exit = Some(TerminalExitRecord {
                     exit_code,
                     error: terminal_error,
                 });
-                finished_session_ids.push(session_id);
             }
-        }
 
-        for session_id in finished_session_ids {
-            if let Some(mut session) = self.sessions.remove(&session_id) {
-                if let Some(mut terminal) = session.terminal.take() {
-                    terminal.close();
+            events.extend(session_events);
+            if session.terminal_replay.is_empty() {
+                if let Some(exit) = &session.terminal_exit {
+                    events.push(TerminalEvent::Exit {
+                        session_id: session_id.clone(),
+                        consumer_id: session
+                            .terminal_consumer_id
+                            .clone()
+                            .expect("attached terminal consumer"),
+                        exit_code: exit.exit_code,
+                        error: exit.error.clone(),
+                    });
                 }
             }
         }
@@ -715,10 +1265,11 @@ impl LocalSessionHandler {
             rows: request.rows.unwrap_or(24).max(1),
             cols: request.cols.unwrap_or(80).max(1),
         };
-        let terminal = match self.pty_manager.spawn(spawn_request) {
+        let mut terminal = match self.pty_manager.spawn(spawn_request) {
             Ok(terminal) => terminal,
             Err(error) => return SessionResult::error(error),
         };
+        terminal.set_event_notifier(Arc::clone(&self.terminal_event_notifier));
         let expires_at =
             epoch_seconds() + request.ttl_seconds.unwrap_or(DEFAULT_SESSION_TTL_SECONDS);
         let session = LocalSession::terminal(
@@ -836,10 +1387,13 @@ impl LocalSessionHandler {
 pub enum TerminalEvent {
     Output {
         session_id: String,
+        consumer_id: String,
+        sequence: u64,
         data: String,
     },
     Exit {
         session_id: String,
+        consumer_id: String,
         exit_code: Option<u32>,
         error: Option<String>,
     },

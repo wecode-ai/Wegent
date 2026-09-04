@@ -101,6 +101,7 @@ async fn local_backend_registers_all_python_local_device_events() {
         "device:start_terminal_session",
         "device:start_code_server_session",
         "terminal:attach",
+        "terminal:ack",
         "terminal:input",
         "terminal:resize",
         "terminal:close",
@@ -403,29 +404,60 @@ async fn session_events_start_terminal_and_route_terminal_controls() {
     assert_eq!(ack["type"], "terminal");
     assert_eq!(ack["transport"], "socketio");
 
+    let invalid_attach = transport.handler("terminal:attach").unwrap()(json!({
+        "session_id": "terminal-1",
+        "consumer_id": "consumer-1",
+        "last_acked_sequence": "0"
+    }))
+    .await
+    .unwrap();
     let attach = transport.handler("terminal:attach").unwrap()(json!({
-        "session_id": "terminal-1"
+        "session_id": "terminal-1",
+        "consumer_id": "consumer-1",
+        "last_acked_sequence": 0
+    }))
+    .await
+    .unwrap();
+    let invalid_terminal_ack = transport.handler("terminal:ack").unwrap()(json!({
+        "session_id": "terminal-1",
+        "consumer_id": "consumer-1",
+        "sequence": "1"
     }))
     .await
     .unwrap();
     let input = transport.handler("terminal:input").unwrap()(json!({
         "session_id": "terminal-1",
+        "consumer_id": "consumer-1",
         "data": "pwd\r"
     }))
     .await
     .unwrap();
     let resize = transport.handler("terminal:resize").unwrap()(json!({
         "session_id": "terminal-1",
+        "consumer_id": "consumer-1",
         "rows": 24,
         "cols": 100
     }))
     .await
     .unwrap();
-    let close = transport.handler("terminal:close").unwrap()(json!({"session_id": "terminal-1"}))
-        .await
-        .unwrap();
+    let close = transport.handler("terminal:close").unwrap()(json!({
+        "session_id": "terminal-1",
+        "consumer_id": "consumer-1"
+    }))
+    .await
+    .unwrap();
 
+    assert_eq!(invalid_attach["success"], false);
+    assert_eq!(
+        invalid_attach["error"],
+        "last_acked_sequence must be a non-negative JSON integer"
+    );
     assert_eq!(attach["success"], true);
+    assert_eq!(invalid_terminal_ack["success"], false);
+    assert_eq!(
+        invalid_terminal_ack["error"],
+        "sequence must be a positive JSON integer"
+    );
     assert_eq!(input["success"], true);
     assert_eq!(resize["success"], true);
     assert_eq!(close["success"], true);
@@ -469,14 +501,15 @@ async fn connected_runner_relays_terminal_output_and_exit_events() {
     tokio::time::sleep(Duration::from_millis(75)).await;
     assert!(
         transport
-            .emits()
+            .calls()
             .iter()
             .all(|emit| emit.event != "terminal:output" && emit.event != "terminal:exit"),
         "PTY output must remain buffered until the browser attaches"
     );
 
     let attach = transport.handler("terminal:attach").unwrap()(json!({
-        "session_id": "terminal-relay"
+        "session_id": "terminal-relay",
+        "consumer_id": "consumer-1"
     }))
     .await
     .unwrap();
@@ -484,32 +517,129 @@ async fn connected_runner_relays_terminal_output_and_exit_events() {
 
     wait_until(|| {
         transport
-            .emits()
+            .calls()
             .iter()
-            .filter(|emit| emit.event == "terminal:output" || emit.event == "terminal:exit")
-            .count()
-            >= 2
+            .any(|emit| emit.event == "terminal:output")
+    })
+    .await;
+
+    let output = transport
+        .calls()
+        .into_iter()
+        .find(|emit| emit.event == "terminal:output")
+        .unwrap();
+    assert_eq!(
+        output.payload,
+        json!({
+            "session_id": "terminal-relay",
+            "consumer_id": "consumer-1",
+            "sequence": 1,
+            "data": "remote prompt$ ",
+        })
+    );
+    let terminal_ack = transport.handler("terminal:ack").unwrap()(json!({
+        "session_id": "terminal-relay",
+        "consumer_id": "consumer-1",
+        "sequence": 1
+    }))
+    .await
+    .unwrap();
+    assert_eq!(terminal_ack["success"], true, "{terminal_ack}");
+
+    wait_until(|| {
+        transport
+            .calls()
+            .iter()
+            .any(|emit| emit.event == "terminal:exit")
     })
     .await;
     runner_task.abort();
     let _ = runner_task.await;
 
-    let emits = transport
-        .emits()
+    let calls = transport
+        .calls()
         .into_iter()
         .filter(|emit| emit.event == "terminal:output" || emit.event == "terminal:exit")
         .collect::<Vec<_>>();
-    assert_eq!(emits[0].event, "terminal:output");
+    assert_eq!(calls[0].event, "terminal:output");
+    assert_eq!(calls[0].payload, output.payload);
+    assert_eq!(calls[1].event, "terminal:exit");
     assert_eq!(
-        emits[0].payload,
-        json!({"session_id": "terminal-relay", "data": "remote prompt$ "})
-    );
-    assert_eq!(emits[1].event, "terminal:exit");
-    assert_eq!(
-        emits[1].payload,
-        json!({"session_id": "terminal-relay", "exit_code": 0})
+        calls[1].payload,
+        json!({
+            "session_id": "terminal-relay",
+            "consumer_id": "consumer-1",
+            "exit_code": 0
+        })
     );
     assert!(terminal.lock().unwrap().closed);
+}
+
+#[tokio::test]
+async fn slow_terminal_delivery_does_not_pause_device_heartbeats() {
+    let transport = RecordingTransport::with_terminal_call_delay(Duration::from_millis(200));
+    let terminal = Arc::new(Mutex::new(RecordingTerminal {
+        output: VecDeque::from([b"slow delivery".to_vec()]),
+        ..RecordingTerminal::default()
+    }));
+    let mut config = local_backend_config();
+    config.heartbeat_interval = Duration::from_millis(20);
+    config.heartbeat_timeout = Duration::from_millis(10);
+    let runner = LocalBackendRunner::with_task_runner(
+        config,
+        transport.clone(),
+        RecordingTaskRunner::default(),
+    )
+    .with_session_handler(test_session_handler_with_terminal(terminal));
+    let runner_task = tokio::spawn(runner.run_forever());
+    wait_until(|| transport.handler("device:start_terminal_session").is_some()).await;
+
+    let started = transport.handler("device:start_terminal_session").unwrap()(json!({
+        "type": "terminal",
+        "session_id": "terminal-slow-delivery",
+        "project_id": 123,
+        "path": ".",
+        "access_token": "secret",
+        "rows": 24,
+        "cols": 80,
+        "create_if_missing": true
+    }))
+    .await
+    .unwrap();
+    assert_eq!(started["success"], true, "{started}");
+    let attached = transport.handler("terminal:attach").unwrap()(json!({
+        "session_id": "terminal-slow-delivery",
+        "consumer_id": "consumer-1"
+    }))
+    .await
+    .unwrap();
+    assert_eq!(attached["success"], true, "{attached}");
+    wait_until(|| {
+        transport
+            .calls()
+            .iter()
+            .any(|call| call.event == "terminal:output")
+    })
+    .await;
+
+    let heartbeats_before = transport
+        .emits()
+        .iter()
+        .filter(|emit| emit.event == "device:heartbeat")
+        .count();
+    tokio::time::sleep(Duration::from_millis(80)).await;
+    let heartbeats_after = transport
+        .emits()
+        .iter()
+        .filter(|emit| emit.event == "device:heartbeat")
+        .count();
+
+    runner_task.abort();
+    let _ = runner_task.await;
+    assert!(
+        heartbeats_after >= heartbeats_before + 2,
+        "heartbeats stalled during terminal delivery: before={heartbeats_before}, after={heartbeats_after}"
+    );
 }
 
 #[tokio::test]
@@ -995,12 +1125,20 @@ struct RecordingTransport {
     emits: Arc<Mutex<Vec<RecordedCall>>>,
     responses: Arc<Mutex<VecDeque<Value>>>,
     handlers: Arc<Mutex<Vec<(String, EventHandler)>>>,
+    terminal_call_delay: Duration,
 }
 
 impl RecordingTransport {
     fn with_responses(responses: Vec<Value>) -> Self {
         Self {
             responses: Arc::new(Mutex::new(responses.into())),
+            ..Self::default()
+        }
+    }
+
+    fn with_terminal_call_delay(delay: Duration) -> Self {
+        Self {
+            terminal_call_delay: delay,
             ..Self::default()
         }
     }
@@ -1046,6 +1184,9 @@ impl LocalBackendTransport for RecordingTransport {
                 event: event.to_owned(),
                 payload,
             });
+            if event == "terminal:output" || event == "terminal:exit" {
+                tokio::time::sleep(self.terminal_call_delay).await;
+            }
             Ok(self
                 .responses
                 .lock()

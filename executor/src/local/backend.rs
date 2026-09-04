@@ -4,7 +4,7 @@
 
 use std::{
     env,
-    future::Future,
+    future::{pending, Future},
     pin::Pin,
     sync::{
         atomic::{AtomicBool, Ordering},
@@ -13,9 +13,10 @@ use std::{
     time::Duration,
 };
 
+use futures_util::{stream, StreamExt, TryStreamExt};
 use serde_json::{json, Value};
 use tokio::{
-    sync::{broadcast, Mutex as AsyncMutex},
+    sync::{broadcast, Mutex as AsyncMutex, Notify},
     task::JoinHandle,
     time::{sleep, sleep_until, Instant},
 };
@@ -78,12 +79,15 @@ const DEVICE_SYNC_CAPABILITIES_EVENT: &str = "device:sync_capabilities";
 const DEVICE_START_TERMINAL_SESSION_EVENT: &str = "device:start_terminal_session";
 const DEVICE_START_CODE_SERVER_SESSION_EVENT: &str = "device:start_code_server_session";
 const TERMINAL_ATTACH_EVENT: &str = "terminal:attach";
+const TERMINAL_ACK_EVENT: &str = "terminal:ack";
 const TERMINAL_INPUT_EVENT: &str = "terminal:input";
 const TERMINAL_RESIZE_EVENT: &str = "terminal:resize";
 const TERMINAL_CLOSE_EVENT: &str = "terminal:close";
 const TERMINAL_OUTPUT_EVENT: &str = "terminal:output";
 const TERMINAL_EXIT_EVENT: &str = "terminal:exit";
-const TERMINAL_POLL_INTERVAL: Duration = Duration::from_millis(25);
+const TERMINAL_OUTPUT_BATCH_DELAY: Duration = Duration::from_millis(3);
+const TERMINAL_DELIVERY_TIMEOUT: Duration = Duration::from_secs(10);
+const TERMINAL_SESSION_DELIVERY_CONCURRENCY: usize = 8;
 const RUNTIME_RPC_EVENT: &str = "runtime:rpc";
 const RUNTIME_EVENT_EVENT: &str = "runtime:event";
 const RUNTIME_TASKS_AVAILABLE_EVENT: &str = "runtime.tasks.available";
@@ -548,6 +552,9 @@ where
             .on(TERMINAL_ATTACH_EVENT, self.terminal_attach_handler());
         self.client
             .transport
+            .on(TERMINAL_ACK_EVENT, self.terminal_ack_handler());
+        self.client
+            .transport
             .on(TERMINAL_INPUT_EVENT, self.terminal_input_handler());
         self.client
             .transport
@@ -890,6 +897,9 @@ where
                 let Some(session_id) = value_string(payload.get("session_id")) else {
                     return Some(json!({"success": false, "error": "session_id is required"}));
                 };
+                let Some(consumer_id) = value_string(payload.get("consumer_id")) else {
+                    return Some(json!({"success": false, "error": "consumer_id is required"}));
+                };
                 let Some(data) = payload
                     .get("data")
                     .and_then(Value::as_str)
@@ -900,7 +910,7 @@ where
                 let result = handler
                     .lock()
                     .expect("session handler lock")
-                    .handle_terminal_input(&session_id, &data);
+                    .handle_terminal_input(&session_id, &consumer_id, &data);
                 Some(session_result_payload(result))
             })
         })
@@ -919,10 +929,47 @@ where
                 let Some(session_id) = value_string(payload.get("session_id")) else {
                     return Some(json!({"success": false, "error": "session_id is required"}));
                 };
+                let Some(consumer_id) = value_string(payload.get("consumer_id")) else {
+                    return Some(json!({"success": false, "error": "consumer_id is required"}));
+                };
+                let last_acked_sequence = match optional_u64(payload.get("last_acked_sequence"), 0)
+                {
+                    Ok(sequence) => sequence,
+                    Err(error) => return Some(json!({"success": false, "error": error})),
+                };
                 let result = handler
                     .lock()
                     .expect("session handler lock")
-                    .handle_terminal_attach(&session_id);
+                    .handle_terminal_attach(&session_id, &consumer_id, last_acked_sequence);
+                Some(session_result_payload(result))
+            })
+        })
+    }
+
+    fn terminal_ack_handler(&self) -> EventHandler {
+        let session_handler = self.session_handler.clone();
+        Arc::new(move |payload| {
+            let session_handler = session_handler.clone();
+            Box::pin(async move {
+                let Some(handler) = session_handler else {
+                    return Some(
+                        json!({"success": false, "error": "Session handler is not available"}),
+                    );
+                };
+                let Some(session_id) = value_string(payload.get("session_id")) else {
+                    return Some(json!({"success": false, "error": "session_id is required"}));
+                };
+                let Some(consumer_id) = value_string(payload.get("consumer_id")) else {
+                    return Some(json!({"success": false, "error": "consumer_id is required"}));
+                };
+                let sequence = match positive_u64(payload.get("sequence")) {
+                    Ok(sequence) => sequence,
+                    Err(error) => return Some(json!({"success": false, "error": error})),
+                };
+                let result = handler
+                    .lock()
+                    .expect("session handler lock")
+                    .handle_terminal_ack(&session_id, &consumer_id, sequence);
                 Some(session_result_payload(result))
             })
         })
@@ -941,12 +988,15 @@ where
                 let Some(session_id) = value_string(payload.get("session_id")) else {
                     return Some(json!({"success": false, "error": "session_id is required"}));
                 };
+                let Some(consumer_id) = value_string(payload.get("consumer_id")) else {
+                    return Some(json!({"success": false, "error": "consumer_id is required"}));
+                };
                 let rows = value_u16(payload.get("rows")).unwrap_or(24);
                 let cols = value_u16(payload.get("cols")).unwrap_or(80);
                 let result = handler
                     .lock()
                     .expect("session handler lock")
-                    .handle_terminal_resize(&session_id, rows, cols);
+                    .handle_terminal_resize(&session_id, &consumer_id, rows, cols);
                 Some(session_result_payload(result))
             })
         })
@@ -965,10 +1015,13 @@ where
                 let Some(session_id) = value_string(payload.get("session_id")) else {
                     return Some(json!({"success": false, "error": "session_id is required"}));
                 };
+                let Some(consumer_id) = value_string(payload.get("consumer_id")) else {
+                    return Some(json!({"success": false, "error": "consumer_id is required"}));
+                };
                 let result = handler
                     .lock()
                     .expect("session handler lock")
-                    .handle_terminal_close(&session_id);
+                    .handle_terminal_close(&session_id, &consumer_id);
                 Some(session_result_payload(result))
             })
         })
@@ -1027,6 +1080,12 @@ where
                     let _ = self.client.disconnect().await;
                     return Err(error);
                 }
+                if let Some(handler) = &self.session_handler {
+                    handler
+                        .lock()
+                        .expect("session handler lock")
+                        .prepare_terminal_reconnect();
+                }
                 self.trigger_runtime_work_poll();
                 Ok(())
             }
@@ -1044,13 +1103,32 @@ where
     async fn heartbeat_until_reconnect(&self) {
         let mut consecutive_failures = 0_u32;
         let mut next_heartbeat_at = Instant::now() + self.client.config.heartbeat_interval;
+        let terminal_event_notifier = self.session_handler.as_ref().map(|handler| {
+            handler
+                .lock()
+                .expect("session handler lock")
+                .terminal_event_notifier()
+        });
+        let terminal_relay = self.relay_terminal_events_until_error(terminal_event_notifier);
+        tokio::pin!(terminal_relay);
         loop {
             tokio::select! {
-                _ = sleep_until(next_heartbeat_at) => {}
-                _ = sleep(TERMINAL_POLL_INTERVAL) => {
-                    self.forward_terminal_events().await;
-                    continue;
+                _ = sleep_until(next_heartbeat_at) => {},
+                result = &mut terminal_relay => {
+                    let error = result.expect_err("terminal relay only stops on error");
+                    write_executor_error_line(&format_executor_log(
+                        "terminal event relay paused until reconnect",
+                        &[("error", error)],
+                    ));
+                    let _ = self.client.disconnect().await;
+                    return;
                 }
+            }
+            if let Some(handler) = &self.session_handler {
+                handler
+                    .lock()
+                    .expect("session handler lock")
+                    .reap_expired_sessions();
             }
             let failure = match self.client.emit_liveness_heartbeat().await {
                 Ok(()) => {
@@ -1075,6 +1153,17 @@ where
         }
     }
 
+    async fn relay_terminal_events_until_error(
+        &self,
+        notifier: Option<Arc<Notify>>,
+    ) -> Result<(), String> {
+        loop {
+            wait_for_terminal_event(notifier.as_deref()).await;
+            sleep(TERMINAL_OUTPUT_BATCH_DELAY).await;
+            self.forward_terminal_events().await?;
+        }
+    }
+
     fn trigger_runtime_work_poll(&self) {
         let Some(handler) = self.runtime_work_handler.clone() else {
             return;
@@ -1086,32 +1175,82 @@ where
         ));
     }
 
-    async fn forward_terminal_events(&self) {
+    async fn forward_terminal_events(&self) -> Result<(), String> {
         let Some(handler) = &self.session_handler else {
-            return;
+            return Ok(());
         };
         let events = handler
             .lock()
             .expect("session handler lock")
             .drain_terminal_events();
-
+        let mut session_batches: Vec<Vec<TerminalEvent>> = Vec::new();
         for event in events {
-            let (event_name, payload, error) = match event {
-                TerminalEvent::Output { session_id, data } => (
+            let session_id = terminal_event_session_id(&event);
+            if session_batches
+                .last()
+                .and_then(|batch| batch.last())
+                .is_some_and(|last| terminal_event_session_id(last) == session_id)
+            {
+                session_batches
+                    .last_mut()
+                    .expect("checked terminal session batch")
+                    .push(event);
+            } else {
+                session_batches.push(vec![event]);
+            }
+        }
+
+        stream::iter(session_batches)
+            .map(|events| self.forward_terminal_session_events(handler, events))
+            .buffer_unordered(TERMINAL_SESSION_DELIVERY_CONCURRENCY)
+            .try_collect::<Vec<_>>()
+            .await?;
+        Ok(())
+    }
+
+    async fn forward_terminal_session_events(
+        &self,
+        handler: &Arc<Mutex<LocalSessionHandler>>,
+        events: Vec<TerminalEvent>,
+    ) -> Result<(), String> {
+        for event in events {
+            let (event_name, payload, error, delivery) = match event {
+                TerminalEvent::Output {
+                    session_id,
+                    consumer_id,
+                    sequence,
+                    data,
+                } => (
                     TERMINAL_OUTPUT_EVENT,
-                    json!({"session_id": session_id, "data": data}),
+                    json!({
+                        "session_id": session_id,
+                        "consumer_id": consumer_id,
+                        "sequence": sequence,
+                        "data": data,
+                    }),
                     None,
+                    Some((session_id, consumer_id, Some(sequence))),
                 ),
                 TerminalEvent::Exit {
                     session_id,
+                    consumer_id,
                     exit_code,
                     error,
                 } => {
-                    let mut payload = json!({"session_id": session_id, "exit_code": exit_code});
+                    let mut payload = json!({
+                        "session_id": session_id,
+                        "consumer_id": consumer_id,
+                        "exit_code": exit_code,
+                    });
                     if let Some(error) = &error {
                         payload["error"] = json!(error);
                     }
-                    (TERMINAL_EXIT_EVENT, payload, error)
+                    (
+                        TERMINAL_EXIT_EVENT,
+                        payload,
+                        error,
+                        Some((session_id, consumer_id, None)),
+                    )
                 }
             };
             if let Some(error) = error {
@@ -1120,14 +1259,73 @@ where
                     &[("error", error)],
                 ));
             }
-            if let Err(error) = self.client.emit_raw_event(event_name, payload).await {
-                write_executor_error_line(&format_executor_log(
-                    "terminal event relay failed",
-                    &[("event", event_name.to_owned()), ("error", error)],
-                ));
+            if let Some((session_id, consumer_id, Some(sequence))) = &delivery {
+                let started = handler
+                    .lock()
+                    .expect("session handler lock")
+                    .begin_terminal_output_delivery(session_id, consumer_id, *sequence)?;
+                if !started {
+                    continue;
+                }
+            }
+
+            if let Err(error) = self
+                .client
+                .call_raw_event(event_name, payload, TERMINAL_DELIVERY_TIMEOUT)
+                .await
+            {
+                if let Some((session_id, _, Some(sequence))) = &delivery {
+                    let should_reconnect = handler
+                        .lock()
+                        .expect("session handler lock")
+                        .retry_terminal_output_delivery(session_id, *sequence);
+                    if !should_reconnect {
+                        continue;
+                    }
+                }
+                return Err(format!("{event_name}: {error}"));
+            }
+
+            if let Some((session_id, consumer_id, None)) = delivery {
+                handler
+                    .lock()
+                    .expect("session handler lock")
+                    .complete_terminal_exit(&session_id, &consumer_id)?;
             }
         }
+        Ok(())
     }
+}
+
+fn terminal_event_session_id(event: &TerminalEvent) -> &str {
+    match event {
+        TerminalEvent::Output { session_id, .. } | TerminalEvent::Exit { session_id, .. } => {
+            session_id
+        }
+    }
+}
+
+async fn wait_for_terminal_event(notifier: Option<&Notify>) {
+    match notifier {
+        Some(notifier) => notifier.notified().await,
+        None => pending::<()>().await,
+    }
+}
+
+fn optional_u64(value: Option<&Value>, default: u64) -> Result<u64, &'static str> {
+    match value {
+        None | Some(Value::Null) => Ok(default),
+        Some(value) => value
+            .as_u64()
+            .ok_or("last_acked_sequence must be a non-negative JSON integer"),
+    }
+}
+
+fn positive_u64(value: Option<&Value>) -> Result<u64, &'static str> {
+    value
+        .and_then(Value::as_u64)
+        .filter(|sequence| *sequence > 0)
+        .ok_or("sequence must be a positive JSON integer")
 }
 
 async fn poll_available_runtime_work<T>(

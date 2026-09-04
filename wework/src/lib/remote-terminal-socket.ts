@@ -7,11 +7,14 @@ const ACK_TIMEOUT_MS = 10_000
 
 export interface RemoteTerminalOutputPayload {
   session_id: string
+  consumer_id: string
+  sequence: number
   data: string
 }
 
 export interface RemoteTerminalExitPayload {
   session_id: string
+  consumer_id: string
   exit_code?: number | null
 }
 
@@ -21,12 +24,15 @@ interface TerminalAck {
 }
 
 export interface RemoteTerminalClient {
-  attach: () => Promise<void>
+  attach: (lastAcknowledgedSequence?: number) => Promise<void>
+  ack: (sequence: number) => Promise<void>
   write: (data: string) => Promise<void>
   resize: (rows: number, cols: number) => Promise<void>
   close: () => Promise<void>
   onOutput: (handler: (payload: RemoteTerminalOutputPayload) => void) => () => void
   onExit: (handler: (payload: RemoteTerminalExitPayload) => void) => () => void
+  onDisconnect: (handler: () => void) => () => void
+  onReconnect: (handler: () => void) => () => void
   dispose: () => void
 }
 
@@ -55,25 +61,54 @@ export function createRemoteTerminalClient(
     authErrorEvent: 'auth_error',
     logger: console,
   })
+  const consumerId = crypto.randomUUID()
+  const terminalPayload = (payload: Record<string, unknown>) => ({
+    session_id: sessionId,
+    consumer_id: consumerId,
+    ...payload,
+  })
 
   return {
-    attach: () => emitWithAck(client, 'terminal:attach', { session_id: sessionId }),
+    attach: (lastAcknowledgedSequence = 0) =>
+      emitWithAck(
+        client,
+        'terminal:attach',
+        terminalPayload({
+          last_acked_sequence: lastAcknowledgedSequence,
+        })
+      ),
+    ack: (sequence: number) => emitWithAck(client, 'terminal:ack', terminalPayload({ sequence })),
     async write(data: string) {
-      await client.ensureConnected()
-      client.socket.emit('terminal:input', { session_id: sessionId, data })
+      if (!client.socket.connected) {
+        throw new Error('Terminal socket is disconnected')
+      }
+      client.socket.emit('terminal:input', terminalPayload({ data }))
     },
     async resize(rows: number, cols: number) {
       await client.ensureConnected()
-      client.socket.emit('terminal:resize', { session_id: sessionId, rows, cols })
+      client.socket.emit('terminal:resize', terminalPayload({ rows, cols }))
     },
-    close: () => emitWithAck(client, 'terminal:close', { session_id: sessionId }),
+    close: () => emitWithAck(client, 'terminal:close', terminalPayload({})),
     onOutput(handler: (payload: RemoteTerminalOutputPayload) => void) {
-      client.socket.on('terminal:output', handler)
-      return () => client.socket.off('terminal:output', handler)
+      const activeConsumerHandler = (payload: RemoteTerminalOutputPayload) => {
+        if (payload.consumer_id === consumerId) handler(payload)
+      }
+      client.socket.on('terminal:output', activeConsumerHandler)
+      return () => client.socket.off('terminal:output', activeConsumerHandler)
     },
     onExit(handler: (payload: RemoteTerminalExitPayload) => void) {
-      client.socket.on('terminal:exit', handler)
-      return () => client.socket.off('terminal:exit', handler)
+      const activeConsumerHandler = (payload: RemoteTerminalExitPayload) => {
+        if (payload.consumer_id === consumerId) handler(payload)
+      }
+      client.socket.on('terminal:exit', activeConsumerHandler)
+      return () => client.socket.off('terminal:exit', activeConsumerHandler)
+    },
+    onDisconnect(handler: () => void) {
+      client.socket.on('disconnect', handler)
+      return () => client.socket.off('disconnect', handler)
+    },
+    onReconnect(handler: () => void) {
+      return client.onReconnect(handler)
     },
     dispose() {
       client.dispose()
