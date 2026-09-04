@@ -1308,7 +1308,7 @@ def test_plugin_visibility_requires_an_approved_grant(test_db, test_user):
 
 def test_list_plugins_orders_by_recommendation_score_descending(test_db, test_user):
     plugins: list[Plugin] = []
-    for index, score in enumerate((90, 91, 90, 0)):
+    for index, score in enumerate((90, 91, 90, -5, 0)):
         plugin = Plugin(
             catalog_namespace="wework-official",
             slug=f"ranked-{index}",
@@ -1347,7 +1347,9 @@ def test_list_plugins_orders_by_recommendation_score_descending(test_db, test_us
         plugins[2].id,
         plugins[0].id,
         plugins[3].id,
+        plugins[4].id,
     ]
+    assert [item.featured for item in items[-2:]] == [True, False]
 
 
 def test_list_plugins_batches_grant_lookups_instead_of_per_plugin_queries(

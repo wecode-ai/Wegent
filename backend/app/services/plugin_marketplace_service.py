@@ -315,7 +315,11 @@ class PluginMarketplaceService:
                 Plugin.latest_release_id != 0,
                 Plugin.visibility.in_(["personal", "workspace", "public"]),
             )
-            .order_by(Plugin.featured_rank.desc(), Plugin.id.desc())
+            .order_by(
+                Plugin.featured_rank == 0,
+                Plugin.featured_rank.desc(),
+                Plugin.id.desc(),
+            )
             .all()
         )
         normalized_query = (query or "").strip().lower()
