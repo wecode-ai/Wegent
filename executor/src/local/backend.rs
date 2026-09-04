@@ -1417,7 +1417,6 @@ mod tests {
             reconnect_delay: Duration::from_secs(1),
             reconnect_delay_max: Duration::from_secs(30),
             configured_capabilities: Vec::new(),
-            runtime_auth_home: PathBuf::from("/tmp/auth"),
             local_workspace_root: PathBuf::from("/tmp/workspace"),
             update: UpdateConfig::default(),
         }

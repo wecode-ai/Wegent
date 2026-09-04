@@ -4,6 +4,7 @@ import {
   getElementMetrics,
   getSingleElementMetrics,
   verifyViewImageProcessingBlock,
+  waitForComposerFocus,
   waitForElementInsideScroller,
   waitForOverflowMetrics,
   waitForSnapshot,
@@ -971,25 +972,6 @@ async function verifyEnvironmentPanelScrollStability(control) {
   await captureVerificationScreenshot(control, 'environment-panel-scroll-03-downward.png')
 }
 
-export async function waitForComposerFocus(control, timeoutMs, failureMessage) {
-  const focusStartedAt = Date.now()
-  let activeElementTestId = ''
-  while (Date.now() - focusStartedAt < timeoutMs) {
-    activeElementTestId = await control.command('getActiveElementTestId', 'body')
-    if (activeElementTestId === 'chat-message-input') return
-    await new Promise(resolvePromise => setTimeout(resolvePromise, 100))
-  }
-  const [focusSnapshot, workbenchSnapshot, composerDiagnostics] = await Promise.all([
-    control.command('getComposerFocusSnapshot', 'body'),
-    control.command('getWorkbenchDebugSnapshot', 'body'),
-    control.command('getComposerDiagnosticsSnapshot', 'body'),
-  ])
-  throw new Error(
-    `${failureMessage}; activeElementTestId=${activeElementTestId}; focus=${focusSnapshot}; ` +
-      `workbench=${workbenchSnapshot}; composerDiagnostics=${composerDiagnostics}`
-  )
-}
-
 async function reopenCurrentTurnNavigationTask(
   control,
   composerSelector,
@@ -1531,5 +1513,6 @@ export {
   assertLatestScenarioRequestContains,
   verifyPausedQueueLifecycle,
   verifyLastUserMessageEdit,
+  waitForComposerFocus,
   waitForSuccessfulMatrixSubmission,
 }

@@ -166,7 +166,13 @@ def iso_mtime(path_stat):
     return datetime.fromtimestamp(path_stat.st_mtime, timezone.utc).isoformat()
 
 
-codex_home = Path(os.environ.get("CODEX_HOME") or (Path.home() / ".codex")).expanduser()
+configured_home = os.environ.get("WEGENT_CODEX_HOME", "").strip()
+if configured_home:
+    codex_home = Path(configured_home)
+else:
+    executor_home = os.environ.get("WEGENT_EXECUTOR_HOME", "").strip()
+    base = Path(executor_home) if executor_home else Path.home() / ".wegent-executor"
+    codex_home = base / "codex"
 target = codex_home / "auth.json"
 result = {
     "runtime": "codex",
@@ -2798,15 +2804,7 @@ async fn handle_builtin_device_command(
             ))
         }
         "runtime_auth_status" => {
-            let codex_home = env::var("CODEX_HOME")
-                .ok()
-                .filter(|value| !value.trim().is_empty())
-                .map(PathBuf::from)
-                .unwrap_or_else(|| {
-                    dirs::home_dir()
-                        .unwrap_or_else(|| PathBuf::from("."))
-                        .join(".codex")
-                });
+            let codex_home = crate::agents::wework_codex_home();
             let target = codex_home.join("auth.json");
             let mut result = json!({
                 "runtime": "codex",

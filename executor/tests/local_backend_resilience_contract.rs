@@ -410,8 +410,6 @@ fn local_backend_config() -> LocalBackendConfig {
         reconnect_delay: Duration::from_secs(1),
         reconnect_delay_max: Duration::from_secs(30),
         configured_capabilities: Vec::new(),
-        runtime_auth_home: std::env::temp_dir()
-            .join(format!("wegent-resilience-contract-{}", std::process::id())),
         local_workspace_root: std::env::temp_dir().join(format!(
             "wegent-resilience-workspace-{}",
             std::process::id()

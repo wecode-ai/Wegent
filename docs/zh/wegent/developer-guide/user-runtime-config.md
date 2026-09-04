@@ -24,7 +24,7 @@ sidebar_position: 26
     "runtime": "codex",
     "auth": {
       "format": "json",
-      "targetPath": "~/.codex/auth.json",
+      "targetPath": "auth.json",
       "encryptedValue": "...",
       "sha256": "...",
       "updatedAt": "..."
@@ -56,6 +56,8 @@ sidebar_position: 26
 ```
 
 资源仍按 Kind 规则用 `user_id + namespace + name` 定位。`UserRuntimeConfig` 的 `name` 是运行时标识，例如 `codex`；后续扩展 Claude 时新增 `claude` 资源即可。`UserProxyConfig` 的 `name` 固定为 `default`，表示当前用户的默认个人代理。
+
+`targetPath` 是相对于设备 Codex Home 的逻辑文件名，不是固定的用户主目录路径。Codex Home 优先使用 `WEGENT_CODEX_HOME`，否则使用 `$WEGENT_EXECUTOR_HOME/codex`；未设置 executor home 时回退到 `~/.wegent-executor/codex`。
 
 “是否启用个人配置”和“该运行时是否使用个人代理”不存放在 Kind 中，而是作为用户偏好存放在 `users.preferences`：
 
@@ -89,13 +91,13 @@ executor 启动 Codex SDK 时把代理 URL 注入为 `HTTP_PROXY`、`HTTPS_PROXY
 
 ## 设备心跳同步
 
-用户启用个人配置后，executor 会在设备心跳中上报本机是否存在 Codex auth 文件。后端发现某个在线设备缺少 `~/.codex/auth.json`，且用户偏好启用了 Codex 个人配置、系统已保存 auth 内容时，会在后台把 auth 下发到该设备。
+用户启用个人配置后，executor 会在设备心跳中上报其 Codex Home 中是否存在 `auth.json`。后端发现某个在线设备缺少该文件，且用户偏好启用了 Codex 个人配置、系统已保存 auth 内容时，会异步调度下发。
 
-下发链路复用 Local Device Command RPC：后端调用白名单命令 `sync_runtime_auth_file`，通过环境变量传递认证内容，避免把密文或明文放到命令行日志。会话启动时只注入是否启用个人配置的状态，不再负责解密或下发 auth 文件。
+心跳只负责上报状态，不执行文件读取或写入。下发链路复用独立的 Local Device Command RPC：后端调用白名单命令 `sync_runtime_auth_file`，通过环境变量传递认证内容，避免把密文或明文放到命令行日志。会话启动时只注入是否启用个人配置的状态，不再负责解密或下发 auth 文件。
 
 设备端写入规则：
 
-- 目标路径必须在当前用户 home 目录内。
+- 目标路径固定为 executor 解析出的 Codex Home 下的 `auth.json`，请求不能指定其他路径。
 - 目标文件已存在时返回 `skipped_existing`，不覆盖。
 - 目标文件不存在时创建父目录，并以 `0600` 权限写入。
 

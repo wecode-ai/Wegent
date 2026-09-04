@@ -250,6 +250,7 @@ export function ComposerToolbar({
                 type="submit"
                 data-composer-primary-action="true"
                 data-testid={sendButtonTestId}
+                onMouseDown={event => event.preventDefault()}
                 className="flex h-8 w-8 items-center justify-center rounded-l-full hover:bg-text-primary/90"
                 aria-label={t('workbench.send_after_turn', '当前回复结束后发送')}
               >
@@ -315,6 +316,7 @@ export function ComposerToolbar({
               data-composer-primary-action="true"
               data-testid={sendButtonTestId}
               disabled={!canSend}
+              onMouseDown={event => event.preventDefault()}
               className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-text-primary p-0 text-background disabled:cursor-not-allowed disabled:bg-text-muted/45"
               aria-label={t('workbench.send_message', '发送消息')}
             >

@@ -628,12 +628,17 @@ export function AutomationRulesView({
 
   useEffect(() => {
     setRules(backendRules)
-    setDraft(current => {
-      if (!current.persisted) return current
-      const refreshed = backendRules.find(rule => rule.id === current.id)
-      return refreshed ? cloneRule(refreshed) : current
-    })
   }, [backendRules])
+
+  useEffect(() => {
+    if (!draft.persisted || JSON.stringify(draft) !== savedSnapshot) return
+    const refreshed = backendRules.find(rule => rule.id === draft.id)
+    if (!refreshed) return
+    const refreshedSnapshot = JSON.stringify(refreshed)
+    if (refreshedSnapshot === savedSnapshot) return
+    setDraft(cloneRule(refreshed))
+    setSavedSnapshot(refreshedSnapshot)
+  }, [backendRules, draft, savedSnapshot])
 
   useEffect(() => {
     setRuns(backendRuns)

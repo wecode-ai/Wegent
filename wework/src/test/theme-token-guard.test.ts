@@ -100,6 +100,19 @@ describe('theme token guard', () => {
     expect(source).toContain("darkMode: 'class'")
   })
 
+  test('native select menus derive their popup colors from theme tokens', () => {
+    const globalsPath = resolve(process.cwd(), 'src/styles/globals.css')
+    const source = readFileSync(globalsPath, 'utf8')
+
+    expect(source).toContain('.wework-native-select optgroup {')
+    expect(source).toContain('.wework-native-select option {')
+    expect(source).toContain('.wework-native-select option:disabled {')
+    expect(source).toContain('background-color: rgb(var(--color-popover));')
+    expect(source).toContain('color: rgb(var(--color-text-primary));')
+    expect(source).toContain('color: rgb(var(--color-text-secondary));')
+    expect(source).toContain('color: rgb(var(--color-text-muted));')
+  })
+
   test('titlebar and window frame use the same opaque surface colors', () => {
     const globalsPath = resolve(process.cwd(), 'src/styles/globals.css')
     const source = readFileSync(globalsPath, 'utf8')

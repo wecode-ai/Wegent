@@ -21,7 +21,7 @@ function normalizeStatus(value: unknown): LocalRuntimeAuthStatus {
   const record = recordValue(value)
   return {
     runtime: 'codex',
-    targetPath: typeof record.target_path === 'string' ? record.target_path : '~/.codex/auth.json',
+    targetPath: typeof record.target_path === 'string' ? record.target_path : 'auth.json',
     exists: record.exists === true,
     updatedAt: typeof record.updated_at === 'string' ? record.updated_at : null,
     sha256: typeof record.sha256 === 'string' ? record.sha256 : null,

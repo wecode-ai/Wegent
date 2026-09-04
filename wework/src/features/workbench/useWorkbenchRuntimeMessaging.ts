@@ -2,6 +2,7 @@ import { useCallback } from 'react'
 import type { Dispatch } from 'react'
 import { ApiError } from '@/api/http'
 import type { ExecutorClient } from '@/api/executorAccess'
+import { REMOTE_TEAM_BACKEND_UNSUPPORTED } from '@/api/runtimeWork'
 import i18n from '@/i18n'
 import { appendCodeCommentContexts } from '@/lib/code-comment-context'
 import { getPreferredStandaloneDeviceId } from '@/lib/device-selection'
@@ -259,8 +260,11 @@ interface UseWorkbenchRuntimeMessagingOptions {
   refreshWorkLists: () => Promise<void>
 }
 
-function runtimeSendError(error: unknown, fallback: string): string {
+export function runtimeSendError(error: unknown, fallback: string): string {
   const message = error instanceof Error ? error.message : fallback
+  if (message === REMOTE_TEAM_BACKEND_UNSUPPORTED) {
+    return i18n.t('workbench.remote_team_backend_unsupported')
+  }
   return isRuntimeTaskBusyError(message)
     ? i18n.t('workbench.runtime_task_running_message')
     : message
@@ -932,6 +936,7 @@ export function useWorkbenchRuntimeMessaging({
         | 'runtimeExecutablePath'
         | 'runtimePermissionMode'
         | 'modelSelection'
+        | 'wegentTeamId'
       > & {
         collaborationMode?: 'default' | 'plan'
         deliveryId?: string
@@ -1177,6 +1182,7 @@ export function useWorkbenchRuntimeMessaging({
         ...(options?.runtimePermissionMode
           ? { runtimePermissionMode: options.runtimePermissionMode }
           : {}),
+        ...(options?.wegentTeamId ? { wegentTeamId: options.wegentTeamId } : {}),
         message: runtimeCreateMessage(intent),
         ...(clientUserMessageId ? { clientUserMessageId } : {}),
         title: buildRuntimeTaskTitle(displayMessage, intent.title),
@@ -1509,7 +1515,7 @@ export function useWorkbenchRuntimeMessaging({
           deviceId: optimisticAddress.deviceId,
           error: runtimeLaunchErrorName(error),
         })
-        const message = error instanceof Error ? error.message : '发送失败'
+        const message = runtimeSendError(error, '发送失败')
         if (rollbackPreparedRuntimeTask) {
           try {
             await rollbackPreparedRuntimeTask()
@@ -1709,6 +1715,7 @@ export function useWorkbenchRuntimeMessaging({
           ...(options?.runtimePermissionMode
             ? { runtimePermissionMode: options.runtimePermissionMode }
             : {}),
+          ...(options?.wegentTeamId ? { wegentTeamId: options.wegentTeamId } : {}),
           ...(options && Object.prototype.hasOwnProperty.call(options, 'modelSelection')
             ? { modelSelection: options.modelSelection }
             : {}),

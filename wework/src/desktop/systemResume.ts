@@ -2,6 +2,7 @@ declare global {
   interface Window {
     weworkElectronLifecycle?: {
       onSystemResume(listener: () => void): () => void
+      onWindowFocusChanged?(listener: (focused: boolean) => void): () => void
     }
   }
 }
