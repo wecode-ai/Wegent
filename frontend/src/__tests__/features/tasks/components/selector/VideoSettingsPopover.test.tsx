@@ -84,6 +84,31 @@ describe('VideoSettingsPopover', () => {
     expect(trigger).toHaveClass('min-h-14', 'w-full')
   })
 
+  it('renders settings inline without a nested trigger', () => {
+    const onRatioChange = jest.fn()
+
+    render(
+      <VideoSettingsPopover
+        selectedRatio="16:9"
+        onRatioChange={onRatioChange}
+        availableRatios={['16:9', '9:16']}
+        selectedDuration={5}
+        onDurationChange={jest.fn()}
+        availableDurations={[5, 10]}
+        selectedResolution="720p"
+        onResolutionChange={jest.fn()}
+        availableResolutions={['720p', '1080p']}
+        inline
+      />
+    )
+
+    expect(screen.getByTestId('video-settings-inline')).toBeInTheDocument()
+    expect(screen.queryByTestId('video-settings-trigger')).not.toBeInTheDocument()
+
+    fireEvent.click(screen.getByTestId('video-ratio-option-9:16'))
+    expect(onRatioChange).toHaveBeenCalledWith('9:16')
+  })
+
   it('hides the settings trigger when every video parameter is hidden', () => {
     render(
       <VideoSettingsPopover

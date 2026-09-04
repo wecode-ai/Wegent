@@ -757,6 +757,7 @@
     "reference_image": "Reference Image (Optional)",
     "no_models": "No video models available",
     "settings_title": "Video settings",
+    "generation_mode_section": "Video mode",
     "ratio_section": "Aspect ratio",
     "duration_section": "Duration",
     "duration_auto": "Auto",

@@ -42,6 +42,7 @@ export interface VideoSettingsPopoverProps {
   hiddenVideoParams?: string[]
   triggerVariant?: 'default' | 'menu-item'
   iconOnly?: boolean
+  inline?: boolean
 }
 
 // Aspect ratio icon dimensions for visual representation
@@ -84,6 +85,7 @@ export function VideoSettingsPopover({
   hiddenVideoParams = [],
   triggerVariant = 'default',
   iconOnly = false,
+  inline = false,
 }: VideoSettingsPopoverProps) {
   const { t } = useTranslation('chat')
   const [isOpen, setIsOpen] = useState(false)
@@ -115,6 +117,101 @@ export function VideoSettingsPopover({
   const displayedResolutions = resolutionOptions?.length
     ? resolutionOptions
     : availableResolutions.map(value => ({ label: value.toUpperCase(), value }))
+
+  const settingsContent = (
+    <div className="space-y-4">
+      <div hidden={!showRatio}>
+        <h4 className="mb-2 text-sm font-medium text-text-primary">{t('video.ratio_section')}</h4>
+        <div className="flex flex-wrap gap-2">
+          {displayedRatios.map(option => (
+            <button
+              key={option.value}
+              type="button"
+              data-testid={`video-ratio-option-${option.value}`}
+              onClick={() => onRatioChange(option.value)}
+              disabled={disabled}
+              className={cn(
+                'flex min-w-[52px] flex-col items-center gap-1 rounded-lg border px-3 py-2 transition-colors',
+                selectedRatio === option.value
+                  ? 'border-primary bg-primary/5 text-primary'
+                  : 'border-border bg-surface text-text-secondary hover:bg-hover',
+                'disabled:cursor-not-allowed disabled:opacity-50'
+              )}
+            >
+              <RatioIcon ratio={option.value} selected={selectedRatio === option.value} />
+              <span className="text-xs">{option.label}</span>
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {showVideoDuration && (
+        <div>
+          <h4 className="mb-2 text-sm font-medium text-text-primary">
+            {t('video.duration_section')}
+          </h4>
+          <div className="flex gap-2">
+            {availableDurations.map(duration => (
+              <button
+                key={duration}
+                type="button"
+                data-testid={`video-duration-option-${duration}`}
+                onClick={() => onDurationChange(duration)}
+                disabled={disabled}
+                className={cn(
+                  'flex-1 rounded-lg border py-2 text-sm transition-colors',
+                  selectedDuration === duration
+                    ? 'border-primary bg-primary/5 text-primary'
+                    : 'border-border bg-surface text-text-secondary hover:bg-hover',
+                  'disabled:cursor-not-allowed disabled:opacity-50'
+                )}
+              >
+                {formatVideoDuration(duration, autoDurationLabel)}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+
+      <div hidden={!showResolution}>
+        <h4 className="mb-2 text-sm font-medium text-text-primary">
+          {t('video.resolution_section')}
+        </h4>
+        <div className="flex gap-2">
+          {displayedResolutions.map(option => {
+            const value = option.value ?? option.label
+            return (
+              <button
+                key={value}
+                type="button"
+                data-testid={`video-resolution-option-${value}`}
+                onClick={() => onResolutionChange(value)}
+                disabled={disabled}
+                title={'tooltip' in option ? option.tooltip : undefined}
+                className={cn(
+                  'flex-1 rounded-lg border py-2 text-sm transition-colors',
+                  selectedResolution === value
+                    ? 'border-primary bg-primary/5 text-primary'
+                    : 'border-border bg-surface text-text-secondary hover:bg-hover',
+                  'disabled:cursor-not-allowed disabled:opacity-50'
+                )}
+              >
+                {option.label}
+              </button>
+            )
+          })}
+        </div>
+      </div>
+    </div>
+  )
+
+  if (inline) {
+    return (
+      <div className="p-4" data-testid="video-settings-inline">
+        {settingsContent}
+      </div>
+    )
+  }
 
   return (
     <Popover open={isOpen} onOpenChange={setIsOpen}>
@@ -161,89 +258,7 @@ export function VideoSettingsPopover({
         align="start"
         sideOffset={4}
       >
-        <div className="space-y-4">
-          {/* Aspect Ratio Section */}
-          <div hidden={!showRatio}>
-            <h4 className="text-sm font-medium text-text-primary mb-2">
-              {t('video.ratio_section')}
-            </h4>
-            <div className="flex flex-wrap gap-2">
-              {displayedRatios.map(option => (
-                <button
-                  key={option.value}
-                  type="button"
-                  data-testid={`video-ratio-option-${option.value}`}
-                  onClick={() => onRatioChange(option.value)}
-                  className={cn(
-                    'flex flex-col items-center gap-1 px-3 py-2 rounded-lg',
-                    'border transition-colors min-w-[52px]',
-                    selectedRatio === option.value
-                      ? 'border-primary bg-primary/5 text-primary'
-                      : 'border-border bg-surface hover:bg-hover text-text-secondary'
-                  )}
-                >
-                  <RatioIcon ratio={option.value} selected={selectedRatio === option.value} />
-                  <span className="text-xs">{option.label}</span>
-                </button>
-              ))}
-            </div>
-          </div>
-
-          {showVideoDuration && (
-            <div>
-              <h4 className="text-sm font-medium text-text-primary mb-2">
-                {t('video.duration_section')}
-              </h4>
-              <div className="flex gap-2">
-                {availableDurations.map(duration => (
-                  <button
-                    key={duration}
-                    type="button"
-                    data-testid={`video-duration-option-${duration}`}
-                    onClick={() => onDurationChange(duration)}
-                    className={cn(
-                      'flex-1 py-2 rounded-lg border transition-colors text-sm',
-                      selectedDuration === duration
-                        ? 'border-primary bg-primary/5 text-primary'
-                        : 'border-border bg-surface hover:bg-hover text-text-secondary'
-                    )}
-                  >
-                    {formatVideoDuration(duration, autoDurationLabel)}
-                  </button>
-                ))}
-              </div>
-            </div>
-          )}
-
-          {/* Resolution Section */}
-          <div hidden={!showResolution}>
-            <h4 className="text-sm font-medium text-text-primary mb-2">
-              {t('video.resolution_section')}
-            </h4>
-            <div className="flex gap-2">
-              {displayedResolutions.map(option => {
-                const value = option.value ?? option.label
-                return (
-                  <button
-                    key={value}
-                    type="button"
-                    data-testid={`video-resolution-option-${value}`}
-                    onClick={() => onResolutionChange(value)}
-                    title={'tooltip' in option ? option.tooltip : undefined}
-                    className={cn(
-                      'flex-1 py-2 rounded-lg border transition-colors text-sm',
-                      selectedResolution === value
-                        ? 'border-primary bg-primary/5 text-primary'
-                        : 'border-border bg-surface hover:bg-hover text-text-secondary'
-                    )}
-                  >
-                    {option.label}
-                  </button>
-                )
-              })}
-            </div>
-          </div>
-        </div>
+        {settingsContent}
       </PopoverContent>
     </Popover>
   )
