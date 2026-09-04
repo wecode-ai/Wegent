@@ -461,6 +461,16 @@ async def create_response(
         model_info["team_name"],
     )
     if not team:
+        logger.warning(
+            "[OPENAPI] Team resolution failed: caller_user_id=%s, "
+            "caller_username=%s, team_namespace=%s, team_name=%s, "
+            "api_key_name=%s",
+            current_user.id,
+            current_user.user_name,
+            model_info["namespace"],
+            model_info["team_name"],
+            api_key_name,
+        )
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Team '{model_info['namespace']}#{model_info['team_name']}' not found or not accessible",
