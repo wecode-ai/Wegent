@@ -45,7 +45,12 @@ impl RuntimeWorkRpcHandler {
             return;
         };
         let completed_at = now_ms();
+        let workspace_path = self
+            .local_task_link(local_task_id)
+            .map(|link| link.workspace_path)
+            .unwrap_or_default();
         let thread = json!({
+            "cwd": workspace_path,
             "turns": [{
                 "id": active.turn_id,
                 "items": active.items,
@@ -100,14 +105,20 @@ impl RuntimeWorkRpcHandler {
                     .and_then(|link| link.thread_id)
             })
             .unwrap_or_default();
+        let workspace_path = self
+            .local_task_link(local_task_id)
+            .map(|link| link.workspace_path)
+            .unwrap_or_default();
         let completed_at = timestamp_ms_field(&turn, "completedAt").unwrap_or_else(now_ms);
-        let messages = transcript_messages(&json!({"turns": [turn]}), &self.device_id)
-            .into_iter()
-            .filter(|message| {
-                string_field(message, "role")
-                    .is_some_and(|role| role.eq_ignore_ascii_case("assistant"))
-            })
-            .collect::<Vec<_>>();
+        let messages = transcript_messages(
+            &json!({"cwd": workspace_path, "turns": [turn]}),
+            &self.device_id,
+        )
+        .into_iter()
+        .filter(|message| {
+            string_field(message, "role").is_some_and(|role| role.eq_ignore_ascii_case("assistant"))
+        })
+        .collect::<Vec<_>>();
         if !messages.is_empty() {
             self.store.update_task(local_task_id, |link| {
                 append_completed_transcript_messages(
@@ -205,7 +216,11 @@ impl RuntimeWorkRpcHandler {
     }
 
     pub(super) fn active_codex_transcript_messages(&self, local_task_id: &str) -> Vec<Value> {
-        let mut thread = json!({"turns": []});
+        let workspace_path = self
+            .local_task_link(local_task_id)
+            .map(|link| link.workspace_path)
+            .unwrap_or_default();
+        let mut thread = json!({"cwd": workspace_path, "turns": []});
         self.merge_active_codex_transcript(local_task_id, &mut thread);
         transcript_messages(&thread, &self.device_id)
     }

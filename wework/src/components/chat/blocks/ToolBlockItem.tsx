@@ -1,6 +1,15 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import type { CSSProperties } from 'react'
-import { ChevronDown, Clock3, Copy, CopyCheck, FileDiff, Search, Wrench } from 'lucide-react'
+import {
+  ChevronDown,
+  Clock3,
+  Copy,
+  CopyCheck,
+  FileDiff,
+  Image as ImageIcon,
+  Search,
+  Wrench,
+} from 'lucide-react'
 import { useTranslation } from '@/hooks/useTranslation'
 import { readElectronLocalFile } from '@/lib/electron-local-file'
 import { terminalOutputToText } from '@/lib/terminal-text'
@@ -28,6 +37,7 @@ import {
   isFileCreateToolName,
   isFileEditToolName,
   isGuidanceToolName,
+  isImageGenerationToolName,
   isImageViewToolName,
   isFileReadToolName,
   isNodeReplToolName,
@@ -173,6 +183,9 @@ export function ToolBlockItem({
     searchError: t('tool_activity.search_error'),
     imageView: filename => t('tool_activity.image_view', { filename }),
     imageViewFallback: t('tool_activity.image_view_fallback'),
+    imageGenerationRunning: t('tool_activity.image_generation_running'),
+    imageGenerationDone: t('tool_activity.image_generation_done'),
+    imageGenerationError: t('tool_activity.image_generation_error'),
     javascriptRunning: t('tool_activity.javascript_running'),
     javascriptDone: t('tool_activity.javascript_done'),
     javascriptError: t('tool_activity.javascript_error'),
@@ -986,6 +999,9 @@ type GenericToolLabels = {
   searchError: string
   imageView: (filename: string) => string
   imageViewFallback: string
+  imageGenerationRunning: string
+  imageGenerationDone: string
+  imageGenerationError: string
   javascriptRunning: string
   javascriptDone: string
   javascriptError: string
@@ -1055,6 +1071,18 @@ function getBlockLabel(
     return {
       icon: <FileIcon />,
       label: path ? genericLabels.imageView(basename(path)) : genericLabels.imageViewFallback,
+    }
+  }
+  if (isImageGenerationToolName(name)) {
+    const label =
+      block.status === 'error'
+        ? genericLabels.imageGenerationError
+        : block.status === 'done'
+          ? genericLabels.imageGenerationDone
+          : genericLabels.imageGenerationRunning
+    return {
+      icon: <ImageIcon className="h-4 w-4" strokeWidth={1.7} />,
+      label,
     }
   }
   if (isGuidanceToolName(name)) {
@@ -1256,7 +1284,7 @@ function renderBlockDetail(
 
 function hasBlockDetail(block: ToolBlock): boolean {
   const name = block.toolName.toLowerCase()
-  if (isGuidanceToolName(name)) return false
+  if (isGuidanceToolName(name) || isImageGenerationToolName(name)) return false
   if (
     isCommandToolName(name) ||
     isFileCreateToolName(name) ||
