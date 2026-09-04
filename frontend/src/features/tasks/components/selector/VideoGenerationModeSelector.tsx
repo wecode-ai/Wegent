@@ -9,6 +9,7 @@ import { useState } from 'react'
 
 import type { VideoGenerationMode } from '@/apis/models'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
+import { useTranslation } from '@/hooks/useTranslation'
 import { cn } from '@/lib/utils'
 
 interface VideoGenerationModeSelectorProps {
@@ -18,6 +19,7 @@ interface VideoGenerationModeSelectorProps {
   disabled?: boolean
   triggerVariant?: 'default' | 'menu-item'
   popoverSide?: 'top' | 'right' | 'bottom' | 'left'
+  inline?: boolean
 }
 
 export default function VideoGenerationModeSelector({
@@ -27,12 +29,48 @@ export default function VideoGenerationModeSelector({
   disabled = false,
   triggerVariant = 'default',
   popoverSide,
+  inline = false,
 }: VideoGenerationModeSelectorProps) {
+  const { t } = useTranslation('chat')
   const [open, setOpen] = useState(false)
   const selectedMode = modes.find(mode => mode.id === value) ?? modes[0]
 
   if (!selectedMode || modes.length <= 1) {
     return null
+  }
+
+  if (inline) {
+    return (
+      <div className="p-4" data-testid="video-generation-mode-options">
+        <h4 className="mb-2 text-sm font-medium text-text-primary">
+          {t('video.generation_mode_section')}
+        </h4>
+        <div className="grid grid-cols-2 gap-2">
+          {modes.map(mode => {
+            const isSelected = mode.id === selectedMode.id
+            return (
+              <button
+                key={mode.id}
+                type="button"
+                disabled={disabled}
+                aria-pressed={isSelected}
+                className={cn(
+                  'min-h-11 rounded-lg border px-3 py-2 text-sm transition-colors',
+                  isSelected
+                    ? 'border-primary bg-primary/5 text-primary'
+                    : 'border-border bg-surface text-text-secondary hover:bg-hover',
+                  'disabled:cursor-not-allowed disabled:opacity-50'
+                )}
+                onClick={() => onChange(mode.id)}
+                data-testid={`video-generation-mode-${mode.id}`}
+              >
+                {mode.label}
+              </button>
+            )
+          })}
+        </div>
+      </div>
+    )
   }
 
   return (

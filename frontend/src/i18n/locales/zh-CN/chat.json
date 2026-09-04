@@ -757,6 +757,7 @@
     "reference_image": "参考图片（可选）",
     "no_models": "暂无可用的视频模型",
     "settings_title": "视频设置",
+    "generation_mode_section": "视频模式",
     "ratio_section": "比例",
     "duration_section": "时长",
     "duration_auto": "智能时长",
