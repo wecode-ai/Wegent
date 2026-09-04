@@ -61,8 +61,7 @@ import type {
   RuntimeTaskCancelResponse,
   RuntimeTaskCreateRequest,
   RuntimeTaskCreateResponse,
-  TeamExecutionBot,
-  TeamExecutionProfile,
+  RuntimeTaskMaterializeResponse,
   RuntimeTaskForkRequest,
   RuntimeTaskForkResponse,
   RuntimeTaskQueueReorderRequest,
@@ -379,7 +378,9 @@ interface LocalAppServicesDeps {
   readWorkspaceTextFile?: typeof readLocalWorkspaceTextFile
   readWorkspaceFileChunk?: typeof readLocalWorkspaceFileChunk
   listWorkspaceEntries?: typeof listLocalWorkspaceEntries
-  resolveTeamExecutionProfile?: (teamId: number) => Promise<TeamExecutionProfile>
+  materializeRuntimeTask?: (
+    request: RuntimeTaskCreateRequest
+  ) => Promise<RuntimeTaskMaterializeResponse>
 }
 
 interface CatalogReconciliationTracker {
@@ -533,7 +534,9 @@ interface RuntimeWorkIpcOptions {
     sync: () => Promise<void>
   }) => Promise<boolean>
   resolveDeviceName?: (deviceId: string) => string | undefined
-  resolveTeamExecutionProfile?: (teamId: number) => Promise<TeamExecutionProfile>
+  materializeRuntimeTask?: (
+    request: RuntimeTaskCreateRequest
+  ) => Promise<RuntimeTaskMaterializeResponse>
 }
 
 interface AutomationIpcOptions extends RuntimeWorkIpcOptions {
@@ -1374,30 +1377,6 @@ interface BuildLocalRuntimeExecutionRequestInput {
   ephemeral?: boolean
   requireLocalCodexCatalog: boolean
   user: User
-  teamExecutionProfile?: TeamExecutionProfile
-}
-
-function teamBotSystemPrompt(member?: TeamExecutionBot): string {
-  if (!member) return ''
-  return [member.bot.system_prompt?.trim(), member.bot_prompt?.trim()].filter(Boolean).join('\n\n')
-}
-
-function teamBotConfig(member: TeamExecutionBot): Record<string, unknown> {
-  return {
-    id: member.bot.id,
-    name: member.bot.name,
-    shell_type: member.bot.shell_type,
-    agent_config: member.bot.agent_config,
-    system_prompt: teamBotSystemPrompt(member),
-    mcp_servers: Object.entries(member.bot.mcp_servers ?? {}).map(([name, config]) => ({
-      name,
-      ...config,
-    })),
-    skills: member.bot.skills ?? [],
-    skill_refs: member.bot.skill_refs ?? {},
-    role: member.role?.trim() || 'worker',
-    base_image: null,
-  }
 }
 
 function messageWithApplicationContext(
@@ -1437,14 +1416,6 @@ function buildLocalRuntimeExecutionRequest(
     input.newSession ? baseSeed : `${baseSeed}:${input.turnSeed}`
   )
   const taskId = input.taskId || derivedTaskId
-  const teamProfile = input.teamExecutionProfile
-  const runnableTeamMembers = teamProfile?.bots.filter(member => member.bot.is_active) ?? []
-  if (teamProfile && runnableTeamMembers.length === 0) {
-    throw new Error('Selected Wegent Team has no runnable Bots')
-  }
-  const activeTeamMembers = runnableTeamMembers
-  const teamBots = activeTeamMembers.map(teamBotConfig)
-  const primaryTeamBot = activeTeamMembers[0]
   // The backend resolves gateway routing for cloud/public models in the claim
   // payload; when present that config is authoritative and must not be
   // rebuilt from the catalog entry (which would fall back to the local Codex
@@ -1453,7 +1424,6 @@ function buildLocalRuntimeExecutionRequest(
     input.runtime.trim().toLowerCase()
   )
   const baseModelConfig =
-    primaryTeamBot?.bot.agent_config ??
     input.modelConfig ??
     (claudeRuntime && !input.modelId
       ? {}
@@ -1472,20 +1442,12 @@ function buildLocalRuntimeExecutionRequest(
   )
   const reasoning = runtimeReasoning(input.modelOptions)
   const collaborationMode = runtimeCollaborationMode(input.modelOptions)
-  const teamSkillNames = activeTeamMembers.flatMap(member => member.bot.skills ?? [])
   const skillNames = Array.from(
-    new Set([
-      ...teamSkillNames,
-      ...(input.additionalSkills ?? []).map(skillName).filter(isNonEmptyString),
-    ])
+    new Set([...(input.additionalSkills ?? []).map(skillName).filter(isNonEmptyString)])
   )
   const requiredSkillNames = input.additionalContext?.dingtalkAITableProject ? ['dws'] : []
   const deployedSkillNames = Array.from(new Set([...skillNames, ...requiredSkillNames]))
-  const preloadSkills = [
-    ...(primaryTeamBot?.bot.preload_skills ?? []),
-    ...(input.additionalSkills ?? []),
-    ...requiredSkillNames,
-  ]
+  const preloadSkills = [...(input.additionalSkills ?? []), ...requiredSkillNames]
   const workspaceProject = input.workspacePath
     ? {
         source: input.workspaceSource,
@@ -1497,9 +1459,9 @@ function buildLocalRuntimeExecutionRequest(
   return {
     task_id: taskId,
     subtask_id: subtaskId,
-    team_id: teamProfile?.id ?? WEWORK_EXECUTION_IDENTITY.id,
-    team_name: teamProfile?.name ?? WEWORK_EXECUTION_IDENTITY.name,
-    team_namespace: teamProfile?.namespace ?? 'default',
+    team_id: WEWORK_EXECUTION_IDENTITY.id,
+    team_name: WEWORK_EXECUTION_IDENTITY.name,
+    team_namespace: 'default',
     task_title: input.title,
     subtask_title: `${input.title} - Assistant`,
     user: {
@@ -1516,19 +1478,14 @@ function buildLocalRuntimeExecutionRequest(
           auth_token: input.cloudModelGateway.apiKey,
         }
       : {}),
-    bot:
-      teamBots.length > 0
-        ? teamBots
-        : (input.bot ?? [{ id: 0, shell_type: claudeRuntime ? 'ClaudeCode' : 'Codex' }]),
+    bot: input.bot ?? [{ id: 0, shell_type: claudeRuntime ? 'ClaudeCode' : 'Codex' }],
     ...(input.runtimeExecutablePath
       ? { runtime_executable_path: input.runtimeExecutablePath }
       : {}),
     ...(input.runtimePermissionMode ? { claude_permission_mode: input.runtimePermissionMode } : {}),
     mcp_servers: [],
     model_config: modelConfig,
-    system_prompt: [teamBotSystemPrompt(primaryTeamBot), input.projectInstructions?.trim()]
-      .filter(Boolean)
-      .join('\n\n'),
+    system_prompt: input.projectInstructions?.trim() ?? '',
     project_plugin_ids: (input.projectPlugins ?? []).map(plugin => plugin.id),
     prompt: messageWithApplicationContext(
       input.message,
@@ -1563,7 +1520,7 @@ function buildLocalRuntimeExecutionRequest(
     ...(input.clientUserMessageId ? { client_user_message_id: input.clientUserMessageId } : {}),
     ephemeral: Boolean(input.ephemeral),
     is_group_chat: false,
-    collaboration_model: teamProfile?.collaborationMode ?? 'single',
+    collaboration_model: 'single',
     ...(collaborationMode ? { collaborationMode } : {}),
     mode: 'code',
     task_mode: 'code',
@@ -1771,7 +1728,7 @@ async function createLocalRuntimeTaskPayload(
   runtimeProxyUrl: string | undefined,
   user: User,
   requireLocalCodexCatalog: boolean,
-  teamExecutionProfile?: TeamExecutionProfile
+  materializeRuntimeTask?: RuntimeWorkIpcOptions['materializeRuntimeTask']
 ): Promise<Record<string, unknown>> {
   const runtimeWorkspace = await prepareLocalRuntimeWorkspace(data, requestWithLocalDevice)
   const execution = runtimeWorkspace ? executionWithWorkspace(data, runtimeWorkspace) : null
@@ -1782,17 +1739,16 @@ async function createLocalRuntimeTaskPayload(
     ...(data.modelOptions ? { modelOptions: normalizeModelOptionAliases(data.modelOptions) } : {}),
   }
   if (execution) normalizedData.execution = execution
+  const materialized = normalizedData.wegentTeamId
+    ? await materializeTeamRuntimeTask(normalizedData, materializeRuntimeTask)
+    : null
   const collaborationMode = runtimeCollaborationMode(normalizedData.modelOptions)
   const turnSeed = createRuntimeTurnSeed()
-  const payload = { ...normalizedData } as Record<string, unknown>
-  delete payload.teamId
+  const payload = {
+    ...(materialized?.payload ?? normalizedData),
+  } as Record<string, unknown>
   delete payload.wegentTeamId
-  if (teamExecutionProfile) {
-    delete payload.modelId
-    delete payload.modelType
-    delete payload.modelOptions
-    delete payload.modelSelection
-  }
+  delete payload.newSession
   const initialSupervisor = normalizedData.initialSupervisor
   if (initialSupervisor?.modelSelection?.modelType === 'runtime') {
     payload.initialSupervisor = {
@@ -1842,65 +1798,73 @@ async function createLocalRuntimeTaskPayload(
 
   return {
     ...payload,
-    ...(teamExecutionProfile
-      ? {
-          runtimeHandle: {
-            wegentTeam: { id: teamExecutionProfile.id },
-          },
-        }
-      : {}),
+    ...(materialized?.runtimeHandle ? { runtimeHandle: materialized.runtimeHandle } : {}),
     ...(collaborationMode ? { collaborationMode } : {}),
     ...(friendlyTitleExecutionRequest ? { friendlyTitleExecutionRequest } : {}),
     title: runtimeTaskTitle(normalizedData),
-    executionRequest: buildLocalRuntimeExecutionRequest({
-      taskId: normalizedData.taskId,
-      runtime: normalizedData.runtime,
-      runtimeExecutablePath: normalizedData.runtimeExecutablePath,
-      runtimePermissionMode: normalizedData.runtimePermissionMode,
-      title: runtimeTaskTitle(normalizedData),
-      message: normalizedData.message,
-      bot: normalizedData.bot,
-      turnSeed,
-      modelId: normalizedData.modelId,
-      modelType: normalizedData.modelType,
-      modelOptions: normalizedData.modelOptions,
-      modelConfig: normalizedData.modelConfig,
-      cloudModelGateway,
-      runtimeProxyUrl,
-      additionalSkills: normalizedData.additionalSkills,
-      additionalContext: normalizedData.additionalContext,
-      attachments: normalizedData.attachments,
-      localDeviceId,
-      workspacePath: runtimeWorkspace?.workspacePath,
-      standaloneChatWorkspace: normalizedData.standaloneChatWorkspace,
-      runtimeProjectKey: normalizedData.runtimeProjectKey,
-      runtimeProjectName: normalizedData.runtimeProjectName,
-      runtimeWorkspaceRoots: normalizedData.runtimeWorkspaceRoots,
-      projectInstructions: normalizedData.projectInstructions,
-      projectPlugins: normalizedData.projectPlugins,
-      cloudProjectId: normalizedData.cloudProjectId,
-      origin: normalizedData.origin,
-      workspaceSource: runtimeWorkspace?.workspaceSource ?? 'local_path',
-      branch: runtimeWorkspace?.branch,
-      newSession: true,
-      clientUserMessageId: normalizedData.clientUserMessageId,
-      ephemeral: normalizedData.ephemeral,
-      requireLocalCodexCatalog,
-      user,
-      teamExecutionProfile,
-    }),
+    executionRequest:
+      materialized?.payload.executionRequest ??
+      buildLocalRuntimeExecutionRequest({
+        taskId: normalizedData.taskId,
+        runtime: normalizedData.runtime,
+        runtimeExecutablePath: normalizedData.runtimeExecutablePath,
+        runtimePermissionMode: normalizedData.runtimePermissionMode,
+        title: runtimeTaskTitle(normalizedData),
+        message: normalizedData.message,
+        bot: normalizedData.bot,
+        turnSeed,
+        modelId: normalizedData.modelId,
+        modelType: normalizedData.modelType,
+        modelOptions: normalizedData.modelOptions,
+        modelConfig: normalizedData.modelConfig,
+        cloudModelGateway,
+        runtimeProxyUrl,
+        additionalSkills: normalizedData.additionalSkills,
+        additionalContext: normalizedData.additionalContext,
+        attachments: normalizedData.attachments,
+        localDeviceId,
+        workspacePath: runtimeWorkspace?.workspacePath,
+        standaloneChatWorkspace: normalizedData.standaloneChatWorkspace,
+        runtimeProjectKey: normalizedData.runtimeProjectKey,
+        runtimeProjectName: normalizedData.runtimeProjectName,
+        runtimeWorkspaceRoots: normalizedData.runtimeWorkspaceRoots,
+        projectInstructions: normalizedData.projectInstructions,
+        projectPlugins: normalizedData.projectPlugins,
+        cloudProjectId: normalizedData.cloudProjectId,
+        origin: normalizedData.origin,
+        workspaceSource: runtimeWorkspace?.workspaceSource ?? 'local_path',
+        branch: runtimeWorkspace?.branch,
+        newSession: true,
+        clientUserMessageId: normalizedData.clientUserMessageId,
+        ephemeral: normalizedData.ephemeral,
+        requireLocalCodexCatalog,
+        user,
+      }),
   } as unknown as Record<string, unknown>
 }
 
-function createLocalRuntimeSendPayload(
+async function materializeTeamRuntimeTask(
+  request: RuntimeTaskCreateRequest,
+  materializeRuntimeTask?: RuntimeWorkIpcOptions['materializeRuntimeTask']
+): Promise<RuntimeTaskMaterializeResponse> {
+  if (!materializeRuntimeTask) {
+    throw new Error('Wegent Team execution requires a cloud connection')
+  }
+  return materializeRuntimeTask({
+    ...request,
+    schemaVersion: 3,
+  })
+}
+
+async function createLocalRuntimeSendPayload(
   data: RuntimeSendRequest,
   localDeviceId: string,
   cloudModelGateway: CloudModelGateway | undefined,
   runtimeProxyUrl: string | undefined,
   user: User,
   requireLocalCodexCatalog: boolean,
-  teamExecutionProfile?: TeamExecutionProfile
-): Record<string, unknown> {
+  materializeRuntimeTask?: RuntimeWorkIpcOptions['materializeRuntimeTask']
+): Promise<Record<string, unknown>> {
   const turnSeed = createRuntimeTurnSeed()
   const normalizedData: RuntimeSendRequest = {
     ...data,
@@ -1928,6 +1892,38 @@ function createLocalRuntimeSendPayload(
     stringValue(normalizedAddress.runtime) ??
     stringValue(recordValue(normalizedAddress.runtimeHandle).runtime) ??
     'codex'
+  const teamBinding = recordValue(recordValue(normalizedAddress.runtimeHandle).wegentTeam)
+  const wegentTeamId =
+    typeof teamBinding.id === 'number' && teamBinding.id > 0 ? teamBinding.id : null
+  const materializedExecutionRequest =
+    wegentTeamId &&
+    !normalizedData.requestUserInputResponse &&
+    !normalizedData.request_user_input_response
+      ? (
+          await materializeTeamRuntimeTask(
+            {
+              schemaVersion: 3,
+              wegentTeamId,
+              newSession: false,
+              deviceId: localDeviceId,
+              workspacePath: workspacePath ?? undefined,
+              taskId,
+              runtime: runtime === 'claude_code' ? 'claude_code' : 'codex',
+              message: normalizedData.message,
+              modelId: normalizedData.modelId,
+              modelType: normalizedData.modelType,
+              modelOptions: normalizedData.modelOptions,
+              attachments: normalizedData.attachments,
+              additionalContext: normalizedData.additionalContext,
+              cloudProjectId: normalizedData.cloudProjectId,
+              origin: normalizedData.origin,
+              clientUserMessageId: normalizedData.clientUserMessageId,
+              ephemeral: normalizedData.ephemeral,
+            },
+            materializeRuntimeTask
+          )
+        ).payload.executionRequest
+      : null
   if (normalizedData.requestUserInputResponse || normalizedData.request_user_input_response) {
     const payload = { ...normalizedData } as Record<string, unknown>
     delete payload.modelId
@@ -1960,7 +1956,6 @@ function createLocalRuntimeSendPayload(
         ephemeral: data.ephemeral,
         requireLocalCodexCatalog,
         user,
-        teamExecutionProfile,
       }),
     } as unknown as Record<string, unknown>
   }
@@ -1982,31 +1977,32 @@ function createLocalRuntimeSendPayload(
         }
       : {}),
     ...(collaborationMode ? { collaborationMode } : {}),
-    executionRequest: buildLocalRuntimeExecutionRequest({
-      taskId,
-      runtime,
-      title: taskId,
-      message: normalizedData.message,
-      turnSeed,
-      modelId: normalizedData.modelId,
-      modelType: normalizedData.modelType,
-      modelOptions: normalizedData.modelOptions,
-      cloudModelGateway,
-      runtimeProxyUrl,
-      attachments: normalizedData.attachments,
-      additionalContext: normalizedData.additionalContext,
-      cloudProjectId: normalizedData.cloudProjectId,
-      origin: normalizedData.origin,
-      localDeviceId,
-      workspacePath,
-      workspaceSource: 'local_path',
-      newSession: false,
-      clientUserMessageId: normalizedData.clientUserMessageId,
-      ephemeral: data.ephemeral,
-      requireLocalCodexCatalog,
-      user,
-      teamExecutionProfile,
-    }),
+    executionRequest:
+      materializedExecutionRequest ??
+      buildLocalRuntimeExecutionRequest({
+        taskId,
+        runtime,
+        title: taskId,
+        message: normalizedData.message,
+        turnSeed,
+        modelId: normalizedData.modelId,
+        modelType: normalizedData.modelType,
+        modelOptions: normalizedData.modelOptions,
+        cloudModelGateway,
+        runtimeProxyUrl,
+        attachments: normalizedData.attachments,
+        additionalContext: normalizedData.additionalContext,
+        cloudProjectId: normalizedData.cloudProjectId,
+        origin: normalizedData.origin,
+        localDeviceId,
+        workspacePath,
+        workspaceSource: 'local_path',
+        newSession: false,
+        clientUserMessageId: normalizedData.clientUserMessageId,
+        ephemeral: data.ephemeral,
+        requireLocalCodexCatalog,
+        user,
+      }),
   } as unknown as Record<string, unknown>
 }
 
@@ -2337,25 +2333,6 @@ export function createRuntimeWorkApiFromIpc(
   const syncedModelCatalogKeys = new Set<string>()
   const modelCatalogSyncInFlight = new Map<string, Promise<boolean>>()
   const modelCatalogSyncQueues = new Map<string, Promise<void>>()
-  const teamExecutionProfiles = new Map<number, TeamExecutionProfile>()
-  const resolveTeamExecutionProfile = async (teamId: number): Promise<TeamExecutionProfile> => {
-    const cached = teamExecutionProfiles.get(teamId)
-    if (cached) return cached
-    if (!options.resolveTeamExecutionProfile) {
-      throw new Error('Wegent Team execution profile is unavailable')
-    }
-    const profile = await options.resolveTeamExecutionProfile(teamId)
-    teamExecutionProfiles.set(teamId, profile)
-    return profile
-  }
-  const resolveBoundTeamExecutionProfile = async (
-    address: RuntimeTaskAddress
-  ): Promise<TeamExecutionProfile | undefined> => {
-    const binding = recordValue(recordValue(address.runtimeHandle).wegentTeam)
-    const teamId = typeof binding.id === 'number' && binding.id > 0 ? binding.id : null
-    if (!teamId) return undefined
-    return resolveTeamExecutionProfile(teamId)
-  }
   const normalizeRequest = async <T extends object>(
     data: T
   ): Promise<T & Record<string, unknown>> =>
@@ -2689,15 +2666,14 @@ export function createRuntimeWorkApiFromIpc(
       if (!(await prepareRuntimeModel({ deviceId: localDeviceId, modelId: data.modelId }))) {
         throw modelCatalogSyncCancelled()
       }
-      const teamExecutionProfile = await resolveBoundTeamExecutionProfile(data.address)
-      const payload = createLocalRuntimeSendPayload(
+      const payload = await createLocalRuntimeSendPayload(
         data,
         localDeviceId,
         options.cloudModelGateway,
         options.getRuntimeProxyUrl?.(),
         user,
         requireLocalCodexCatalog,
-        teamExecutionProfile
+        options.materializeRuntimeTask
       )
       logLocalIssueRuntimeContext('send-payload-built', data, payload)
       if (!payload.executionRequest) {
@@ -2720,15 +2696,14 @@ export function createRuntimeWorkApiFromIpc(
       if (!(await prepareRuntimeModel({ deviceId: localDeviceId, modelId: data.modelId }))) {
         throw modelCatalogSyncCancelled()
       }
-      const teamExecutionProfile = await resolveBoundTeamExecutionProfile(data.address)
-      const payload = createLocalRuntimeSendPayload(
+      const payload = await createLocalRuntimeSendPayload(
         data,
         localDeviceId,
         options.cloudModelGateway,
         options.getRuntimeProxyUrl?.(),
         user,
         requireLocalCodexCatalog,
-        teamExecutionProfile
+        options.materializeRuntimeTask
       )
       if (!payload.executionRequest) {
         console.warn('[Wework] Local runtime rollback payload missing executionRequest', {
@@ -2785,15 +2760,14 @@ export function createRuntimeWorkApiFromIpc(
       if (!(await prepareRuntimeModel({ deviceId: localDeviceId, modelId: data.modelId }))) {
         throw modelCatalogSyncCancelled()
       }
-      const teamExecutionProfile = await resolveBoundTeamExecutionProfile(data.address)
-      const payload = createLocalRuntimeSendPayload(
+      const payload = await createLocalRuntimeSendPayload(
         data,
         localDeviceId,
         options.cloudModelGateway,
         options.getRuntimeProxyUrl?.(),
         user,
         requireLocalCodexCatalog,
-        teamExecutionProfile
+        options.materializeRuntimeTask
       )
       if (!payload.executionRequest) {
         console.warn('[Wework] Local runtime interrupt payload missing executionRequest', {
@@ -3071,9 +3045,6 @@ export function createRuntimeWorkApiFromIpc(
         supervisorModelId: supervisorModelId ?? null,
         elapsedMs: Date.now() - startedAt,
       })
-      const teamExecutionProfile = resolvedData.wegentTeamId
-        ? await resolveTeamExecutionProfile(resolvedData.wegentTeamId)
-        : undefined
       const payload = await createLocalRuntimeTaskPayload(
         resolvedData,
         localDeviceId,
@@ -3082,7 +3053,7 @@ export function createRuntimeWorkApiFromIpc(
         options.getRuntimeProxyUrl?.(),
         user,
         requireLocalCodexCatalog,
-        teamExecutionProfile
+        options.materializeRuntimeTask
       )
       logRuntimeTaskCreateStage('local-payload-built', {
         taskId: resolvedData.taskId ?? null,
@@ -3301,13 +3272,14 @@ export function createAutomationApiFromIpc(
       requireLocalCodexCatalog
     )
     const continuationPayload = continuationRequest
-      ? createLocalRuntimeSendPayload(
+      ? await createLocalRuntimeSendPayload(
           continuationRequest,
           localDeviceId,
           options.cloudModelGateway,
           options.getRuntimeProxyUrl?.(),
           user,
-          requireLocalCodexCatalog
+          requireLocalCodexCatalog,
+          options.materializeRuntimeTask
         )
       : null
     return {
@@ -3604,7 +3576,7 @@ export function createLocalAppServices(deps: LocalAppServicesDeps = {}): Workben
       cloudModelGateway: deps.cloudModelGateway,
       getRuntimeProxyUrl: getLocalProxyUrl,
       user: deps.user,
-      resolveTeamExecutionProfile: deps.resolveTeamExecutionProfile,
+      materializeRuntimeTask: deps.materializeRuntimeTask,
     }
   ) as unknown as NonNullable<WorkbenchServices['runtimeWorkApi']>
   const automationApi = createAutomationApiFromIpc(
@@ -3631,9 +3603,6 @@ export function createLocalAppServices(deps: LocalAppServicesDeps = {}): Workben
   const dwsApi = createDwsApi(request)
   const teamApi = {
     listTeams: async () => [],
-    getExecutionProfile: async () => {
-      throw new Error('Wegent Team execution requires a cloud connection')
-    },
   }
   const modelApi = {
     listModels: async () => {

@@ -1,18 +1,9 @@
-import type { Team, TeamExecutionBot, TeamExecutionProfile } from '@/types/api'
+import type { Team } from '@/types/api'
 import type { HttpClient, HttpRequestOptions } from './http'
 
 interface TeamListResponse {
   total: number
   items: Team[]
-}
-
-interface TeamDetailResponse {
-  id: number
-  name: string
-  namespace?: string | null
-  bots: TeamExecutionBot[]
-  workflow?: { mode?: string } | null
-  updated_at: string
 }
 
 export function createTeamApi(client: HttpClient) {
@@ -23,20 +14,7 @@ export function createTeamApi(client: HttpClient) {
     return response.items
   }
 
-  async function getExecutionProfile(teamId: number): Promise<TeamExecutionProfile> {
-    const detail = await client.get<TeamDetailResponse>(`/teams/${teamId}`)
-    return {
-      id: detail.id,
-      name: detail.name,
-      namespace: detail.namespace?.trim() || 'default',
-      updatedAt: detail.updated_at,
-      collaborationMode: detail.workflow?.mode?.trim() || 'solo',
-      bots: detail.bots,
-    }
-  }
-
   return {
     listTeams,
-    getExecutionProfile,
   }
 }

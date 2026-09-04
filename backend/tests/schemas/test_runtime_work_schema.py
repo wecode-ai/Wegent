@@ -14,6 +14,7 @@ from app.schemas.runtime_work import (
     RuntimeGuidanceRequest,
     RuntimeTaskAddress,
     RuntimeTaskCreateRequest,
+    RuntimeTaskMaterializeRequest,
 )
 
 PROTOCOL_DIR = Path(__file__).resolve().parents[3] / "shared" / "protocol"
@@ -43,13 +44,13 @@ def test_runtime_task_create_v2_matches_cross_runtime_golden_contract() -> None:
 
 def test_runtime_task_create_v3_adds_team_without_changing_legacy_request() -> None:
     legacy = RuntimeTaskCreateRequest(
-        teamId=99,
         deviceId="device-1",
         workspacePath="/repo",
         runtime="codex",
         message="legacy request",
     )
     assert "teamId" not in legacy.model_dump(by_alias=True, exclude_none=True)
+    assert "newSession" not in legacy.model_dump(by_alias=True, exclude_none=True)
 
     request = RuntimeTaskCreateRequest(
         schemaVersion=3,
@@ -73,6 +74,21 @@ def test_runtime_task_create_v3_adds_team_without_changing_legacy_request() -> N
             runtime="codex",
             message="old protocol",
         )
+
+
+def test_runtime_task_materialize_request_controls_session_boundary() -> None:
+    request = RuntimeTaskMaterializeRequest(
+        schemaVersion=3,
+        wegentTeamId=7,
+        deviceId="device-1",
+        workspacePath="/repo",
+        runtime="codex",
+        message="continue",
+        newSession=False,
+    )
+
+    assert request.new_session is False
+    assert request.model_dump(by_alias=True)["newSession"] is False
 
 
 def test_runtime_task_address_accepts_additive_team_binding() -> None:

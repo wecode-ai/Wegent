@@ -44,6 +44,7 @@ import type {
   RuntimeTaskCancelResponse,
   RuntimeTaskCreateRequest,
   RuntimeTaskCreateResponse,
+  RuntimeTaskMaterializeResponse,
   RuntimeTaskForkRequest,
   RuntimeTaskForkResponse,
   RuntimeTaskQueueReorderRequest,
@@ -361,6 +362,11 @@ export function createRuntimeWorkApi(client: HttpClient) {
     },
     createRuntimeTask(data: RuntimeTaskCreateRequest): Promise<RuntimeTaskCreateResponse> {
       return client.post('/runtime-work/create', data)
+    },
+    materializeRuntimeTask(
+      data: RuntimeTaskCreateRequest
+    ): Promise<RuntimeTaskMaterializeResponse> {
+      return client.post('/runtime-work/materialize', data)
     },
     forkRuntimeTask(data: RuntimeTaskForkRequest): Promise<RuntimeTaskForkResponse> {
       return client.post('/runtime-work/fork', data)

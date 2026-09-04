@@ -356,11 +356,14 @@ export function createHybridWorkbenchServices(
   const localServices = createLocalAppServices({
     cloudModelGateway,
     user: options.user,
-    resolveTeamExecutionProfile: async teamId => {
+    materializeRuntimeTask: async request => {
       try {
-        return await cloudServices.teamApi.getExecutionProfile(teamId)
-      } catch {
-        throw new Error(`Wegent Team ${teamId} is unavailable`)
+        return await cloudServices.runtimeWorkApi!.materializeRuntimeTask(request)
+      } catch (error) {
+        if (isUnsupportedRuntimeMaterialization(error)) {
+          throw new Error(REMOTE_TEAM_BACKEND_UNSUPPORTED, { cause: error })
+        }
+        throw error
       }
     },
   })
@@ -830,6 +833,9 @@ export function createHybridWorkbenchServices(
   }
 
   const hybridRuntimeWorkApi: NonNullable<WorkbenchServices['runtimeWorkApi']> = {
+    materializeRuntimeTask(data) {
+      return cloudServices.runtimeWorkApi!.materializeRuntimeTask(data)
+    },
     prepareRuntimeModel(data) {
       return runtimeApiForDevice(data.deviceId).then(api => api.prepareRuntimeModel(data))
     },
@@ -1387,7 +1393,6 @@ export function createHybridWorkbenchServices(
     teamApi: {
       // Wegent Teams are exposed only for explicitly selected Wegent execution.
       listTeams: cloudServices.teamApi.listTeams,
-      getExecutionProfile: cloudServices.teamApi.getExecutionProfile,
     },
     skillApi: localServices.skillApi,
     projectApi: {
@@ -1483,4 +1488,11 @@ function rejectsRuntimeTaskCreateV3(error: unknown): boolean {
     const location = (item as { loc?: unknown }).loc
     return Array.isArray(location) && location.includes('schemaVersion')
   })
+}
+
+function isUnsupportedRuntimeMaterialization(error: unknown): boolean {
+  return (
+    error instanceof ApiError &&
+    (error.status === 404 || error.status === 405 || rejectsRuntimeTaskCreateV3(error))
+  )
 }

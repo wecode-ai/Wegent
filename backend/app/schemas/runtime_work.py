@@ -1002,6 +1002,12 @@ class RuntimeTaskCreateRequest(BaseModel):
         return self
 
 
+class RuntimeTaskMaterializeRequest(RuntimeTaskCreateRequest):
+    """Team intent compiled for direct local Executor dispatch."""
+
+    new_session: bool = Field(default=True, alias="newSession")
+
+
 class RuntimeTaskCreatePayload(BaseModel):
     """Executor-facing wire payload after Backend materialization."""
 
@@ -1086,6 +1092,18 @@ class RuntimeTaskCreatePayload(BaseModel):
     additional_context: Optional[dict[str, dict[str, Any]]] = Field(
         default=None,
         alias="additionalContext",
+    )
+
+
+class RuntimeTaskMaterializeResponse(BaseModel):
+    """Executor payload compiled by Backend without dispatching it."""
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    payload: RuntimeTaskCreatePayload
+    runtime_handle: Optional[dict[str, Any]] = Field(
+        default=None,
+        alias="runtimeHandle",
     )
 
 

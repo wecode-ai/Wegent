@@ -2673,7 +2673,10 @@ def test_team_runtime_compilation_reuses_canonical_builder_without_task_rows(
     test_user,
     monkeypatch,
 ):
-    from app.schemas.runtime_work import RuntimeTaskCreateRequest
+    from app.schemas.runtime_work import (
+        RuntimeTaskCreateRequest,
+        RuntimeTaskMaterializeRequest,
+    )
     from app.services import execution, project_automation_domain, runtime_work_service
 
     team = SimpleNamespace(
@@ -2730,6 +2733,25 @@ def test_team_runtime_compilation_reuses_canonical_builder_without_task_rows(
     assert execution_request.device_id == "cloud-device-1"
     assert test_db.query(TaskResource).count() == 0
 
+    builder.reset_mock()
+    runtime_work_service._build_runtime_execution_request(
+        db=test_db,
+        user_id=test_user.id,
+        request=RuntimeTaskMaterializeRequest(
+            schemaVersion=3,
+            wegentTeamId=42,
+            newSession=False,
+            deviceId="local-device-1",
+            workspacePath="/srv/workspaces/Wegent",
+            taskId="runtime-team-1",
+            runtime="codex",
+            message="Continue the review",
+        ),
+        target=target,
+    )
+
+    assert builder.build.call_args.kwargs["new_session"] is False
+
 
 def test_team_create_v3_keeps_executor_wire_protocol_at_v2(
     test_db,
@@ -2762,6 +2784,27 @@ def test_team_create_v3_keeps_executor_wire_protocol_at_v2(
 
     assert payload["schemaVersion"] == 2
     assert "wegentTeamId" not in payload
+
+
+def test_materialize_runtime_task_requires_team_intent(
+    test_db,
+    test_user,
+) -> None:
+    from app.schemas.runtime_work import RuntimeTaskMaterializeRequest
+    from app.services import runtime_work_service
+
+    with pytest.raises(HTTPException, match="wegentTeamId is required"):
+        runtime_work_service.materialize_runtime_task_create(
+            db=test_db,
+            user_id=test_user.id,
+            request=RuntimeTaskMaterializeRequest(
+                schemaVersion=2,
+                deviceId="local-device-1",
+                workspacePath="/srv/workspaces/Wegent",
+                runtime="codex",
+                message="Run the default assistant",
+            ),
+        )
 
 
 def test_compile_rejects_project_bound_to_another_device(

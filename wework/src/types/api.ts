@@ -44,36 +44,6 @@ export interface Team {
   agent_type?: string | null
 }
 
-export interface TeamExecutionBot {
-  bot: {
-    id: number
-    user_id: number
-    name: string
-    namespace?: string | null
-    shell_name: string
-    shell_type: string
-    agent_config: Record<string, unknown>
-    system_prompt?: string | null
-    mcp_servers?: Record<string, Record<string, unknown>> | null
-    skills?: string[] | null
-    skill_refs?: Record<string, Record<string, unknown>> | null
-    preload_skills?: string[] | null
-    preload_skill_refs?: Record<string, Record<string, unknown>> | null
-    is_active: boolean
-  }
-  bot_prompt?: string | null
-  role?: string | null
-}
-
-export interface TeamExecutionProfile {
-  id: number
-  name: string
-  namespace: string
-  updatedAt: string
-  collaborationMode: string
-  bots: TeamExecutionBot[]
-}
-
 export interface ProjectExecutionConfig {
   targetType: 'local' | 'cloud' | 'remote'
   deviceId?: string
@@ -1333,8 +1303,8 @@ export interface RuntimeTaskExecutionConfig {
 
 export interface RuntimeTaskCreateRequest {
   schemaVersion?: 1 | 2 | 3
-  teamId?: number
   wegentTeamId?: number
+  newSession?: boolean
   projectId?: number
   deviceWorkspaceId?: number
   deviceId?: string
@@ -1378,6 +1348,11 @@ export interface RuntimeTaskCreateRequest {
     [key: string]: unknown
   }
   additionalContext?: RuntimeAdditionalContext
+}
+
+export interface RuntimeTaskMaterializeResponse {
+  payload: Record<string, unknown>
+  runtimeHandle?: Record<string, unknown> | null
 }
 
 export interface RuntimeTaskCreateResponse {

@@ -1374,10 +1374,48 @@ def compile_runtime_task_create(
     user_id: int,
     request: RuntimeTaskCreateRequest,
 ) -> CompiledRuntimeTaskCreate:
-    """Compile the canonical create request without performing transport."""
+    """Compile a create request for a Backend-owned Executor target."""
 
     target = _resolve_runtime_task_target(db, user_id, request)
     _ensure_owned_device(db, user_id, target.device_id)
+    return _compile_runtime_task_create(
+        db=db,
+        user_id=user_id,
+        request=request,
+        target=target,
+    )
+
+
+def materialize_runtime_task_create(
+    *,
+    db: Session,
+    user_id: int,
+    request: RuntimeTaskCreateRequest,
+) -> CompiledRuntimeTaskCreate:
+    """Compile the canonical Executor payload without choosing its transport."""
+
+    if request.wegent_team_id is None:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="wegentTeamId is required for runtime materialization",
+        )
+    return _compile_runtime_task_create(
+        db=db,
+        user_id=user_id,
+        request=request,
+        target=_resolve_runtime_task_target(db, user_id, request),
+    )
+
+
+def _compile_runtime_task_create(
+    *,
+    db: Session,
+    user_id: int,
+    request: RuntimeTaskCreateRequest,
+    target: RuntimeTaskTarget,
+) -> CompiledRuntimeTaskCreate:
+    """Compile one already resolved runtime target."""
+
     execution_request = _build_runtime_execution_request(
         db=db,
         user_id=user_id,
@@ -4049,7 +4087,7 @@ def _build_team_runtime_execution_request(
         user=user,
         team=team,
         message=message,
-        new_session=True,
+        new_session=getattr(request, "new_session", True),
         preload_skills=list(request.additional_skills),
         attachments=_runtime_create_attachment_payloads(db, user_id, request),
     )

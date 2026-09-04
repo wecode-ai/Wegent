@@ -7,7 +7,7 @@ import { createHybridWorkbenchServices } from './hybridServices'
 const mocks = vi.hoisted(() => {
   const localCreateRuntimeTask = vi.fn()
   const cloudCreateRuntimeTask = vi.fn()
-  const cloudGetExecutionProfile = vi.fn()
+  const cloudMaterializeRuntimeTask = vi.fn()
   const localListDevices = vi.fn()
   const cloudListDevices = vi.fn()
   const localListRuntimeWork = vi.fn()
@@ -68,7 +68,6 @@ const mocks = vi.hoisted(() => {
   const localServices = {
     teamApi: {
       listTeams: vi.fn().mockResolvedValue([]),
-      getExecutionProfile: vi.fn(),
     },
     modelApi: { listModels: localListModels },
     skillApi: {
@@ -89,6 +88,7 @@ const mocks = vi.hoisted(() => {
       readWorkspaceTextFile: vi.fn(),
     },
     runtimeWorkApi: {
+      materializeRuntimeTask: vi.fn(),
       prepareRuntimeModel: vi.fn().mockResolvedValue(true),
       listRuntimeWork: localListRuntimeWork,
       createRuntimeTask: localCreateRuntimeTask,
@@ -128,7 +128,6 @@ const mocks = vi.hoisted(() => {
   const cloudServices = {
     teamApi: {
       listTeams: cloudListTeams,
-      getExecutionProfile: cloudGetExecutionProfile,
     },
     modelApi: { listModels: cloudListModels },
     skillApi: {},
@@ -136,6 +135,7 @@ const mocks = vi.hoisted(() => {
     taskApi: { getTurnFileChangesDiff: vi.fn() },
     deviceApi: cloudDeviceApi,
     runtimeWorkApi: {
+      materializeRuntimeTask: cloudMaterializeRuntimeTask,
       prepareRuntimeModel: vi.fn().mockResolvedValue(true),
       listRuntimeWork: cloudListRuntimeWork,
       createRuntimeTask: cloudCreateRuntimeTask,
@@ -181,7 +181,7 @@ const mocks = vi.hoisted(() => {
     localListSkills,
     localGetTeamSkills,
     cloudListTeams,
-    cloudGetExecutionProfile,
+    cloudMaterializeRuntimeTask,
     localSearchRuntimeWork,
     localGetWorktreeCapabilities,
     localPreflightWorktree,
@@ -786,23 +786,30 @@ describe('createHybridWorkbenchServices', () => {
     expect(mocks.cloudListTeams).toHaveBeenCalledTimes(1)
   })
 
-  it('restores a bound Team directly by id without depending on the first list page', async () => {
-    const profile = {
-      id: 108,
-      name: 'restored-team',
-      namespace: 'default',
-      updatedAt: '2026-09-02T00:00:00Z',
-      collaborationMode: 'pipeline',
-      bots: [],
+  it('delegates local Team materialization to the canonical Backend compiler', async () => {
+    const response = {
+      payload: {
+        schemaVersion: 2,
+        runtime: 'codex',
+        message: 'continue',
+        title: 'continue',
+        executionRequest: { team_id: 108 },
+      },
+      runtimeHandle: { wegentTeam: { id: 108 } },
     }
-    mocks.cloudGetExecutionProfile.mockResolvedValue(profile)
+    mocks.cloudMaterializeRuntimeTask.mockResolvedValue(response)
     createServices()
     const options = mocks.captureLocalAppOptions.mock.calls.at(-1)?.[0] as {
-      resolveTeamExecutionProfile: (teamId: number) => Promise<typeof profile>
+      materializeRuntimeTask: (request: {
+        wegentTeamId: number
+        runtime: 'codex'
+        message: string
+      }) => Promise<typeof response>
     }
+    const request = { wegentTeamId: 108, runtime: 'codex' as const, message: 'continue' }
 
-    await expect(options.resolveTeamExecutionProfile(108)).resolves.toEqual(profile)
-    expect(mocks.cloudGetExecutionProfile).toHaveBeenCalledWith(108)
+    await expect(options.materializeRuntimeTask(request)).resolves.toEqual(response)
+    expect(mocks.cloudMaterializeRuntimeTask).toHaveBeenCalledWith(request)
     expect(mocks.cloudListTeams).not.toHaveBeenCalled()
   })
 

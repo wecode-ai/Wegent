@@ -197,51 +197,35 @@ describe('createLocalAppServices', () => {
   })
 
   test('materializes a selected Team locally without extending the Executor protocol', async () => {
-    const teamExecutionProfile = {
-      id: 7,
-      name: 'review-team',
-      namespace: 'engineering',
-      updatedAt: '2026-09-02T10:00:00Z',
-      collaborationMode: 'pipeline',
-      bots: [
-        {
-          bot_prompt: 'Review the implementation.',
-          role: 'leader',
-          bot: {
-            id: 11,
-            user_id: 9,
-            name: 'reviewer',
-            namespace: 'engineering',
-            shell_name: 'Codex',
-            shell_type: 'Codex',
-            agent_config: { model_id: 'team-model', api_format: 'responses' },
-            system_prompt: 'You are a reviewer.',
-            mcp_servers: { source: { type: 'stdio', command: 'source-mcp' } },
-            skills: ['review'],
-            preload_skills: ['review'],
-            is_active: true,
-          },
+    const materializeRuntimeTask = vi.fn().mockImplementation(async input => ({
+      payload: {
+        schemaVersion: 2,
+        runtime: input.runtime,
+        message: input.message,
+        title: input.title ?? input.taskId,
+        taskId: input.taskId,
+        workspacePath: input.workspacePath,
+        executionRequest: {
+          task_id: input.taskId,
+          team_id: 7,
+          team_name: 'review-team',
+          team_namespace: 'engineering',
+          collaboration_model: 'pipeline',
+          model_config: { model_id: 'team-model', api_format: 'responses' },
+          system_prompt: 'You are a reviewer.\n\nReview the implementation.',
+          prompt: input.message,
+          skill_names: ['review', 'implementation'],
+          skill_configs: [{ name: 'review' }, { name: 'implementation' }],
+          preload_skills: ['review'],
+          bot: [
+            { id: 11, name: 'reviewer' },
+            { id: 12, name: 'implementer' },
+          ],
+          new_session: input.newSession,
         },
-        {
-          bot_prompt: 'Implement the approved changes.',
-          role: 'worker',
-          bot: {
-            id: 12,
-            user_id: 9,
-            name: 'implementer',
-            namespace: 'engineering',
-            shell_name: 'Codex',
-            shell_type: 'Codex',
-            agent_config: { model_id: 'team-model', api_format: 'responses' },
-            system_prompt: 'You are an implementer.',
-            mcp_servers: {},
-            skills: ['implementation'],
-            preload_skills: ['implementation'],
-            is_active: true,
-          },
-        },
-      ],
-    }
+      },
+      runtimeHandle: { wegentTeam: { id: 7 } },
+    }))
     const request = vi.fn().mockImplementation(async (method: string) => {
       if (method === 'runtime.tasks.create') {
         return {
@@ -254,13 +238,12 @@ describe('createLocalAppServices', () => {
       }
       return { accepted: true }
     })
-    const resolveTeamExecutionProfile = vi.fn().mockResolvedValue(teamExecutionProfile)
     const services = createLocalAppServices({
       ensure: vi.fn().mockResolvedValue({ running: true, ready: true, deviceId: 'device-uuid' }),
       request,
       subscribe: vi.fn(),
       user: AUTHENTICATED_CLOUD_USER,
-      resolveTeamExecutionProfile,
+      materializeRuntimeTask,
     })
 
     const createResponse = await services.runtimeWorkApi?.createRuntimeTask({
@@ -274,11 +257,15 @@ describe('createLocalAppServices', () => {
     })
 
     const payload = request.mock.calls.find(([method]) => method === 'runtime.tasks.create')?.[1]
-    expect(payload).not.toHaveProperty('teamId')
     expect(payload).not.toHaveProperty('wegentTeamId')
-    expect(payload).not.toHaveProperty('teamExecutionProfile')
-    expect(resolveTeamExecutionProfile).toHaveBeenCalledOnce()
-    expect(resolveTeamExecutionProfile).toHaveBeenCalledWith(7)
+    expect(materializeRuntimeTask).toHaveBeenCalledWith(
+      expect.objectContaining({
+        schemaVersion: 3,
+        wegentTeamId: 7,
+        deviceId: 'device-uuid',
+        workspacePath: '/Users/me/project',
+      })
+    )
     expect(payload.runtimeHandle).toEqual({ wegentTeam: { id: 7 } })
     expect(createResponse?.runtimeHandle).toEqual({ wegentTeam: { id: 7 } })
     expect(payload.executionRequest).toMatchObject({
@@ -290,19 +277,10 @@ describe('createLocalAppServices', () => {
       system_prompt: 'You are a reviewer.\n\nReview the implementation.',
       skill_names: ['review', 'implementation'],
       preload_skills: ['review'],
+      skill_configs: [{ name: 'review' }, { name: 'implementation' }],
       bot: [
-        expect.objectContaining({
-          id: 11,
-          name: 'reviewer',
-          shell_type: 'Codex',
-          role: 'leader',
-          mcp_servers: [{ name: 'source', type: 'stdio', command: 'source-mcp' }],
-        }),
-        expect.objectContaining({
-          id: 12,
-          name: 'implementer',
-          role: 'worker',
-        }),
+        expect.objectContaining({ id: 11, name: 'reviewer' }),
+        expect.objectContaining({ id: 12, name: 'implementer' }),
       ],
     })
 
@@ -322,15 +300,16 @@ describe('createLocalAppServices', () => {
       team_name: 'review-team',
       model_config: { model_id: 'team-model', api_format: 'responses' },
       prompt: 'Continue the review',
+      new_session: false,
     })
 
-    const resolveRestartedTeamExecutionProfile = vi.fn().mockResolvedValue(teamExecutionProfile)
+    const restartedMaterializeRuntimeTask = vi.fn(materializeRuntimeTask)
     const restartedServices = createLocalAppServices({
       ensure: vi.fn().mockResolvedValue({ running: true, ready: true, deviceId: 'device-uuid' }),
       request,
       subscribe: vi.fn(),
       user: AUTHENTICATED_CLOUD_USER,
-      resolveTeamExecutionProfile: resolveRestartedTeamExecutionProfile,
+      materializeRuntimeTask: restartedMaterializeRuntimeTask,
     })
 
     await restartedServices.runtimeWorkApi?.interruptAndSendRuntimeMessage({
@@ -343,8 +322,13 @@ describe('createLocalAppServices', () => {
       message: 'Stop and re-check the implementation',
     })
 
-    expect(resolveRestartedTeamExecutionProfile).toHaveBeenCalledOnce()
-    expect(resolveRestartedTeamExecutionProfile).toHaveBeenCalledWith(7)
+    expect(restartedMaterializeRuntimeTask).toHaveBeenCalledWith(
+      expect.objectContaining({
+        wegentTeamId: 7,
+        newSession: false,
+        taskId: 'team-task',
+      })
+    )
     const interruptPayload = request.mock.calls.find(
       ([method]) => method === 'runtime.tasks.interrupt_and_send'
     )?.[1]
@@ -353,6 +337,7 @@ describe('createLocalAppServices', () => {
       team_name: 'review-team',
       model_config: { model_id: 'team-model', api_format: 'responses' },
       prompt: 'Stop and re-check the implementation',
+      new_session: false,
     })
   })
 

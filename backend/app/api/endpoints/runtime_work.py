@@ -41,6 +41,8 @@ from app.schemas.runtime_work import (
     RuntimeTaskForkResponse,
     RuntimeTaskIMNotificationSubscriptionRequest,
     RuntimeTaskIMNotificationSubscriptionResponse,
+    RuntimeTaskMaterializeRequest,
+    RuntimeTaskMaterializeResponse,
     RuntimeTaskQueueReorderRequest,
     RuntimeTaskQueueReorderResponse,
     RuntimeTaskRenameRequest,
@@ -822,6 +824,30 @@ async def create_runtime_task_endpoint(
         db=db,
         user_id=current_user.id,
         request=request,
+    )
+
+
+@router.post(
+    "/materialize",
+    response_model=RuntimeTaskMaterializeResponse,
+    response_model_by_alias=True,
+)
+@trace_async("runtime_work.materialize", "runtime_work.api")
+async def materialize_runtime_task_endpoint(
+    request: RuntimeTaskMaterializeRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Compile a Team task for direct dispatch by a local runtime."""
+
+    compiled = runtime_work_service.materialize_runtime_task_create(
+        db=db,
+        user_id=current_user.id,
+        request=request,
+    )
+    return RuntimeTaskMaterializeResponse(
+        payload=compiled.payload,
+        runtimeHandle={"wegentTeam": {"id": compiled.team_id}},
     )
 
 
