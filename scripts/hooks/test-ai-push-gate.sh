@@ -175,6 +175,20 @@ if ! grep -qE '^pnpm --filter wework typecheck$' "$CALL_LOG"; then
     exit 1
 fi
 
+if ! grep -qE '^pnpm --filter wework exec eslint src/features/workbench/WorkbenchProvider.test.tsx src/features/workbench/runtimeModelSelection.test.ts src/features/workbench/runtimeModelSelection.ts$' "$CALL_LOG"; then
+    echo "Expected Wework changes to lint only changed TypeScript files."
+    echo "Calls:"
+    cat "$CALL_LOG"
+    exit 1
+fi
+
+if grep -qE '^pnpm --filter wework lint$' "$CALL_LOG"; then
+    echo "Expected ordinary Wework changes to avoid the full lint suite."
+    echo "Calls:"
+    cat "$CALL_LOG"
+    exit 1
+fi
+
 if ! grep -qE '^pnpm --filter wework exec vitest run --pool=threads src/features/workbench/WorkbenchProvider.test.tsx src/features/workbench/runtimeModelSelection.test.ts$' "$CALL_LOG"; then
     echo "Expected renderer source changes to run changed and sibling test files."
     echo "Calls:"
@@ -322,6 +336,13 @@ EOF
 
 if ! grep -qE '^pnpm --filter wework exec vitest run --pool=threads src/api/changeRequests.test.ts$' "$CALL_LOG"; then
     echo "Expected merge-like Wework changes to run only the related renderer test."
+    echo "Calls:"
+    cat "$CALL_LOG"
+    exit 1
+fi
+
+if ! grep -qE '^pnpm --filter wework lint$' "$CALL_LOG"; then
+    echo "Expected Wework package metadata changes to run the full lint suite."
     echo "Calls:"
     cat "$CALL_LOG"
     exit 1
