@@ -790,12 +790,12 @@ button:disabled {
   .composer-mention-node,
   .composer-link-node {
     display: inline-flex;
-    align-items: baseline;
+    align-items: center;
     max-width: 100%;
     font-size: inherit;
     font-weight: inherit;
     line-height: inherit;
-    vertical-align: baseline;
+    vertical-align: -0.08em;
     white-space: nowrap;
     user-select: text;
     -webkit-user-select: text;
@@ -837,7 +837,6 @@ button:disabled {
     display: inline-block;
     flex: none;
     order: -1;
-    align-self: center;
     width: 1em;
     height: 1em;
     margin-right: 0.25em;
