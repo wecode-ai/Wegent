@@ -47,6 +47,12 @@ from app.services.knowledge.code_wiki.generation import (
     record_failure_reason,
     start_generation,
 )
+from app.services.knowledge.code_wiki.generation_strategy import (
+    GENERATION_STRATEGY_EXT_KEY,
+    GENERATION_STRATEGY_SPEC_KEY,
+    ResolvedGenerationStrategy,
+    strategy_for_run,
+)
 from app.services.knowledge.code_wiki.prompts import WikiRunContext, build_prompt
 from app.services.knowledge.code_wiki.publisher import (
     PublishResult,
@@ -83,6 +89,8 @@ class StartedRun:
     reason: str
     mode: str = ""
     task_id: int = 0
+    strategy_id: str = ""
+    strategy_revision: int = 0
 
     @property
     def started(self) -> bool:
@@ -143,6 +151,7 @@ def start_run(
     changed_paths: Optional[Sequence[ChangedPath]] = None,
     total_source_files: Optional[int] = None,
     force_full: bool = False,
+    strategy_id: Optional[str] = None,
 ) -> StartedRun:
     """Start a run for ``knowledge_base`` and hand its instructions to a task.
 
@@ -166,8 +175,19 @@ def start_run(
         GenerationInFlight: Propagated from the version store.
         GenerationWikiNotFound: If the wiki is deleted before the run starts.
     """
+    if strategy_id and not force_full:
+        raise CodeWikiRunError("strategy_id requires force_full=true")
     source = source_of(knowledge_base)
-    team, task_user = _resolve_execution_context(db, knowledge_base, user)
+    stored_strategy = ((knowledge_base.json or {}).get("spec") or {}).get(
+        GENERATION_STRATEGY_SPEC_KEY
+    )
+    try:
+        strategy = strategy_for_run(stored_strategy, strategy_id)
+    except ValueError as error:
+        raise CodeWikiRunError(str(error)) from error
+    team, task_user = _resolve_execution_context(
+        db, knowledge_base, user, strategy=strategy
+    )
 
     previous_commit = published_commit(db, knowledge_base)
     # Read on every run, including the first.
@@ -218,14 +238,25 @@ def start_run(
     )
     if not started.started:
         return StartedRun(
-            generation=None, reason=started.decision.reason, mode=started.decision.mode
+            generation=None,
+            reason=started.decision.reason,
+            mode=started.decision.mode,
+            strategy_id=strategy.strategy_id,
+            strategy_revision=strategy.revision,
         )
 
     generation = started.generation
+    generation.ext = {
+        **(generation.ext or {}),
+        GENERATION_STRATEGY_EXT_KEY: strategy.snapshot(),
+    }
     full = RunMode(started.decision.mode) is RunMode.FULL
     reviewer_agent_type = ""
     section_writer_agent_type = ""
-    if full and _uses_coordinate_quality_loop(team):
+    collaboration_model = str(
+        ((team.json or {}).get("spec") or {}).get("collaborationModel", "")
+    )
+    if full and strategy.requires_plan_review(collaboration_model=collaboration_model):
         reviewer_agent_type = _reviewer_agent_type(db, team)
         section_writer_agent_type = _optional_member_agent_type(db, team, "writer")
         require_quality_review(generation, policy=PLAN_ONLY_REVIEW_POLICY)
@@ -277,6 +308,8 @@ def start_run(
         reason=started.decision.reason,
         mode=started.decision.mode,
         task_id=task_id,
+        strategy_id=strategy.strategy_id,
+        strategy_revision=strategy.revision,
     )
 
 
@@ -353,7 +386,11 @@ def _knowledge_base_of(db: Session, generation: WikiGeneration) -> Optional[Kind
 
 
 def _resolve_execution_context(
-    db: Session, knowledge_base: Kind, user: User
+    db: Session,
+    knowledge_base: Kind,
+    user: User,
+    *,
+    strategy: ResolvedGenerationStrategy,
 ) -> tuple[Kind, User]:
     """Find the team that runs code wikis, and the user it runs as.
 
@@ -383,31 +420,23 @@ def _resolve_execution_context(
         raise CodeWikiRunError(
             f"Code wiki {knowledge_base.id} has no active owner to execute its generation"
         )
-    team_name = wiki_settings.CODE_WIKI_TEAM_NAME
-    if not team_name:
-        raise CodeWikiRunError(
-            "WIKI_CODE_WIKI_TEAM_NAME is not configured, so there is no team to run "
-            "the wiki agent"
-        )
+    team_name = strategy.team_ref.name
+    team_namespace = strategy.team_ref.namespace
 
     team = team_kinds_service.get_team_by_name_and_namespace(
         db=db,
         team_name=team_name,
-        team_namespace="default",
+        team_namespace=team_namespace,
         user_id=task_user.id,
     )
     if not team:
         raise CodeWikiRunError(
-            f"Code wiki team '{team_name}' was not found for user {task_user.id}. "
-            "Check WIKI_CODE_WIKI_TEAM_NAME and that the default resources are loaded."
+            f"Code wiki team '{team_namespace}/{team_name}' was not found for user "
+            f"{task_user.id}. Check WIKI_CODE_WIKI_GENERATION_POLICY and that the "
+            "configured resources are loaded; legacy deployments should also check "
+            "WIKI_CODE_WIKI_TEAM_NAME."
         )
     return team, task_user
-
-
-def _uses_coordinate_quality_loop(team: Kind) -> bool:
-    """Whether this Team has opted its full rebuilds into reviewer evidence."""
-    spec = (team.json or {}).get("spec", {})
-    return spec.get("collaborationModel") == "coordinate"
 
 
 def _reviewer_agent_type(db: Session, team: Kind) -> str:

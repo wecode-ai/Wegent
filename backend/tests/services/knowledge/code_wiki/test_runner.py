@@ -296,7 +296,8 @@ def test_a_full_rebuild_is_marked_as_requiring_quality_evidence(
     test_db.flush()
     tasks.team.json = {
         "spec": {
-            "collaborationModel": "coordinate",
+            # The strategy, not collaborationModel, selects the Code Wiki protocol.
+            "collaborationModel": "solo",
             "members": [
                 {
                     "role": "reviewer",
@@ -315,6 +316,11 @@ def test_a_full_rebuild_is_marked_as_requiring_quality_evidence(
             ],
         }
     }
+    _set_spec(
+        test_db,
+        knowledge_base,
+        generationStrategy="coordinator_reviewed",
+    )
     started = start_run(
         test_db, knowledge_base=knowledge_base, user=test_user, head_commit=HEAD
     )
@@ -328,6 +334,37 @@ def test_a_full_rebuild_is_marked_as_requiring_quality_evidence(
     assert "`plan_only` review policy" in tasks.prompt
     assert f"`code-wiki-reviewer-{reviewer.id}`" in tasks.prompt
     assert f"`code-wiki-section-writer-{section_writer.id}`" in tasks.prompt
+
+
+def test_a_generation_snapshots_the_resolved_strategy(
+    test_db: Session, knowledge_base: Kind, test_user: User, tasks: FakeTasks
+) -> None:
+    started = start_run(
+        test_db, knowledge_base=knowledge_base, user=test_user, head_commit=HEAD
+    )
+
+    assert started.strategy_id == "legacy"
+    assert started.strategy_revision == 1
+    assert started.generation.ext["generationStrategy"] == {
+        "id": "legacy",
+        "revision": 1,
+        "teamRef": {"name": "code-wiki-team", "namespace": "default"},
+    }
+
+
+def test_a_strategy_override_requires_a_forced_full_rebuild(
+    test_db: Session, knowledge_base: Kind, test_user: User, tasks: FakeTasks
+) -> None:
+    with pytest.raises(CodeWikiRunError, match="force_full"):
+        start_run(
+            test_db,
+            knowledge_base=knowledge_base,
+            user=test_user,
+            head_commit=HEAD,
+            strategy_id="coordinator_reviewed",
+        )
+
+    assert tasks.created == []
 
 
 def test_the_prompt_carries_the_generation_the_agent_must_write_into(

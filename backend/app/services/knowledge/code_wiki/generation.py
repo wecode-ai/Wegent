@@ -34,6 +34,9 @@ from app.models.wiki import (
     WikiGenerationStatus,
     WikiGenerationType,
 )
+from app.services.knowledge.code_wiki.generation_strategy import (
+    GENERATION_STRATEGY_EXT_KEY,
+)
 from app.services.knowledge.code_wiki.projection import ProjectionSideEffects
 from app.services.knowledge.code_wiki.publish_gate import PublishPolicy
 from app.services.knowledge.code_wiki.publisher import (
@@ -640,6 +643,8 @@ class RunRecord:
     #: What became of the task that ran the agent, as the task itself records it.
     #: Empty when there was no task, or it is gone.
     task_status: str = ""
+    strategy_id: str = "legacy"
+    strategy_revision: int = 0
 
 
 # Enough to cover the run that broke the wiki without turning this into an audit log.
@@ -691,6 +696,17 @@ def run_history(
             published=bool(published) and row.id == published,
             task_id=int(row.task_id or 0),
             task_status=task_states.get(int(row.task_id or 0), ""),
+            strategy_id=str(
+                ((row.ext or {}).get(GENERATION_STRATEGY_EXT_KEY) or {}).get(
+                    "id", "legacy"
+                )
+            ),
+            strategy_revision=int(
+                ((row.ext or {}).get(GENERATION_STRATEGY_EXT_KEY) or {}).get(
+                    "revision", 0
+                )
+                or 0
+            ),
         )
         for row in rows
     ]

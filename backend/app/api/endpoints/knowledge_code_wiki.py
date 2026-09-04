@@ -285,6 +285,7 @@ def create_code_wiki(
             namespace=data.namespace or CODE_WIKI_NAMESPACE,
             language=data.language,
             show_generation_task=data.show_generation_task,
+            generation_strategy=data.generation_strategy,
             # A code wiki is an ordinary knowledge base with a repository attached,
             # so every one of these applies to it. Listing only the ones it "needs"
             # is what silently dropped the summary settings and left the retrieval
@@ -546,6 +547,8 @@ def get_code_wiki_history(
                 published=record.published,
                 task_id=record.task_id,
                 task_status=record.task_status,
+                strategy_id=record.strategy_id,
+                strategy_revision=record.strategy_revision,
             )
             for record in run_history(db, knowledge_base)
         ]
@@ -641,6 +644,7 @@ def start_code_wiki_run(
                 ]
             ),
             force_full=data.force_full,
+            strategy_id=data.strategy_id,
         )
     except GenerationWikiNotFound as e:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e)) from e
@@ -666,4 +670,6 @@ def start_code_wiki_run(
         reason=started.reason,
         generation_id=started.generation.id if started.generation else 0,
         task_id=started.task_id,
+        strategy_id=started.strategy_id,
+        strategy_revision=started.strategy_revision,
     )

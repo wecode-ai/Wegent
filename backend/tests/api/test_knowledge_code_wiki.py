@@ -227,6 +227,8 @@ def test_a_run_can_be_triggered_without_waiting_for_a_schedule(
         start.return_value.reason = "first run for this repository"
         start.return_value.generation.id = 7
         start.return_value.task_id = 42
+        start.return_value.strategy_id = "coordinator_reviewed"
+        start.return_value.strategy_revision = 1
 
         response = test_client.post(
             _run_url(kb_id), json={"head_commit": "abc1234"}, headers=auth_headers
@@ -253,6 +255,8 @@ def test_a_run_that_was_not_needed_is_a_success_not_a_failure(
         start.return_value.reason = "repository unchanged since last run"
         start.return_value.generation = None
         start.return_value.task_id = 0
+        start.return_value.strategy_id = "coordinator_reviewed"
+        start.return_value.strategy_revision = 1
 
         response = test_client.post(_run_url(kb_id), json={}, headers=auth_headers)
 
@@ -534,6 +538,8 @@ def test_a_kb_maintainer_can_regenerate_without_repository_write_access(
             reason="first run",
             generation=SimpleNamespace(id=7),
             task_id=42,
+            strategy_id="coordinator_reviewed",
+            strategy_revision=1,
         )
         response = test_client.post(
             _run_url(kb_id), json={}, headers=_headers_for(maintainer)
@@ -560,6 +566,8 @@ def test_manual_regeneration_requests_a_full_rebuild(
             reason="full rebuild explicitly requested",
             generation=SimpleNamespace(id=7),
             task_id=42,
+            strategy_id="coordinator_reviewed",
+            strategy_revision=1,
         )
         response = test_client.post(
             _run_url(kb_id),
@@ -1459,7 +1467,13 @@ def test_an_existing_wiki_can_still_regenerate_when_the_rollout_is_off(
 
     with patch("app.api.endpoints.knowledge_code_wiki.start_run") as start:
         start.return_value = SimpleNamespace(
-            started=False, mode="skip", reason="unchanged", generation=None, task_id=0
+            started=False,
+            mode="skip",
+            reason="unchanged",
+            generation=None,
+            task_id=0,
+            strategy_id="coordinator_reviewed",
+            strategy_revision=1,
         )
         response = test_client.post(
             f"/api/knowledge-bases/{kb_id}/code-wiki/generations",
@@ -1586,6 +1600,8 @@ def test_a_code_wiki_and_its_registry_row_are_created_together(
 
     rows = test_db.query(WikiProject).filter(WikiProject.kind_id == result.id).all()
     assert len(rows) == 1
+    wiki = test_db.get(Kind, result.id)
+    assert wiki.json["spec"]["generationStrategy"] == "legacy"
     # Compared against the resolved source rather than the URL that was typed: how a
     # URL is normalised is settled elsewhere, and restating it here would make this
     # test fail for a reason that has nothing to do with what it is asserting.
@@ -1763,6 +1779,27 @@ def test_code_wiki_model_update_reaches_the_stored_spec(
 
     test_db.refresh(wiki)
     assert wiki.json["spec"]["executionModelRef"] is None
+
+
+def test_code_wiki_strategy_update_reaches_the_stored_spec(
+    test_db: Session,
+    test_user: User,
+) -> None:
+    from app.services.knowledge.orchestrator import knowledge_orchestrator
+
+    wiki = _stored_code_wiki(test_db, test_user, "strategy-wiki")
+
+    result = knowledge_orchestrator.update_knowledge_base(
+        db=test_db,
+        user=test_user,
+        knowledge_base_id=wiki.id,
+        generation_strategy="coordinator_reviewed",
+        generation_strategy_is_set=True,
+    )
+
+    test_db.refresh(wiki)
+    assert wiki.json["spec"]["generationStrategy"] == "coordinator_reviewed"
+    assert result.generation_strategy == "coordinator_reviewed"
 
 
 def test_deleting_a_code_wiki_with_user_documents_stays_refused(
