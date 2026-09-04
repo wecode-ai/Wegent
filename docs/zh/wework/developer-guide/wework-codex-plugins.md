@@ -56,9 +56,11 @@ Renderer 通过白名单 Electron capability 调用列举、安装、更新、�
 
 内置应用插件的身份以 Backend 内置插件注册表为准。当前注册表只包含 `wegent-sites` 和 `weibo-miniapp-h5-develop-agent`，二者都使用 `visibility=workspace`，因此规范市场名是 `wegent`。`public` 在数据模型中仍然合法，但只保留给系统/官方公开目录；普通用户的企业投稿不能选择它。只有在内置插件安装路径中，系统所有者 `user_id=0` 下的这两个内置插件市场行仍保存为 `visibility=public` 时，才会被视为历史遗留行并在安装前规范化为 `workspace`。这样可以避免同一个内置插件在旧数据中以 `plugin://...@wework`、在当前应用创建流程中以 `plugin://...@wegent` 出现两套身份。
 
-应用页通过 `GET /api/sites` 读取列表。站点和小程序共用该接口，并分别传入 `app_type=web` 和 `app_type=miniapp`；省略参数时默认返回站点，兼容已有调用。响应中的 `app_type` 是区分两类应用字段的判别值。页面还会调用 `GET /api/sites/app-types` 获取当前 Backend 启用的类型、展示顺序和 `create`、`publish`、`edit`、`delete`、`open_experience` 等能力；Wework 只显示本地已有 Definition 且服务端已启用的类型，并按能力隐藏不支持的操作。
+应用页通过 `GET /api/sites` 读取列表。站点和小程序共用该接口，并分别传入 `app_type=web` 和 `app_type=miniapp`；省略参数时默认返回站点，兼容已有调用。Platform 会按可信用户身份返回用户拥有或参与协作的项目，响应中的 `owner_username` 和 `access_role` 分别标识所有者及当前用户的 `owner` / `collaborator` 角色，`app_type` 是区分两类应用字段的判别值。页面还会调用 `GET /api/sites/app-types` 获取当前 Backend 启用的类型、展示顺序和 `create`、`publish`、`edit`、`delete`、`open_experience`、`configure_environment` 等能力；Wework 只显示本地已有 Definition 且服务端已启用的类型，并按能力隐藏不支持的操作。
 
 连接 Wegent 云端时，Wework 会调用 `POST /api/users/me/wegent-runtime-token` 获取本地应用 Skill 访问 Backend runtime API 的 token，并把它作为 `WEGENT_RUNTIME_AUTH_TOKEN` 写入本机 Codex shell 环境配置；该 token 会按响应中的 `expires_in` 提前刷新。`AUTH_TOKEN` 仍表示单次任务的原有 bearer token，`WEGENT_AUTH_TOKEN` 仍保留给 executor 设备连接使用，三者不能混用。
+
+站点管理接口由 Backend 继续作为认证代理，不允许 Wework 直连 Platform。协作者管理使用 `GET/POST /api/sites/{siteid}/collaborators` 和 `DELETE /api/sites/{siteid}/collaborators/{subject}`；只有 owner 在界面中看到管理入口，新增请求必须携带 `Idempotency-Key`。环境配置使用 `GET/PATCH /api/sites/{siteid}/environment-variables`，同时保留单变量的 `PUT/DELETE /api/sites/{siteid}/environment-variables/{key}`；写操作携带幂等键和可选的 `expected_revision_id`，冲突时要求客户端重新加载。Backend 向 Platform 转发认证用户的 `X-Wegent-Username`，并对环境配置响应设置 `Cache-Control: no-store`。环境配置的入站和出站 HTTP body 都不得进入请求日志或遥测，Secret 响应只包含“已配置”元数据，不能返回值。
 
 新增应用类型时，在 Backend 增加响应模型和 `ApplicationTypeHandler`，注册到 `APPLICATION_TYPE_HANDLERS`；在 Wework 的 `applicationTypeDefinitions.tsx` 增加对应 Definition，只声明图标、文案、列和行渲染。创建插件身份由 `GET /api/sites/app-types` 的 `create.plugin_name` 和 `create.marketplace_name` 下发，Wework 会缓存最近一次成功的 app-types descriptor，并在云端短暂不可用时复用缓存。读取缓存时必须先验证 `items` 中每个 descriptor 都是对象，且可选的 `create.plugin_name`、`create.marketplace_name` 在存在时是字符串；缓存不满足契约时返回空缓存并回到服务端发现或默认 Definition。若使用新的内置插件，同时在 Backend 内置插件注册表和 `builtin-plugin-staging.mjs` 增加插件定义。列表工作区和创建流程不应再增加按类型分支。服务端可独立调整类型顺序、开关、能力和创建插件，但未知类型会被旧版客户端安全忽略。
 

@@ -10,7 +10,6 @@ import type {
   RuntimeTaskCancelResponse,
   RuntimeTaskAddress,
   RuntimeWorktreePreflightResponse,
-  RuntimeWorkListResponse,
   RuntimeWorkspaceOpenResponse,
   ModelSelectionConfig,
   UnifiedModelListResponse,
@@ -59,10 +58,6 @@ export class RuntimeApi {
 
   listDevices(): Promise<DeviceListResponse> {
     return this.request('/devices')
-  }
-
-  listWork(): Promise<RuntimeWorkListResponse> {
-    return this.request('/runtime-work')
   }
 
   listModels(): Promise<UnifiedModelListResponse> {

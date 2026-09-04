@@ -57,6 +57,7 @@ import type {
   UnifiedSkill,
   User,
 } from '@/types/api'
+import type { WorkbenchWorkspaceLaunchOptions } from './workspaceLaunchRequest'
 import type { DeviceUpgradeState } from '@/types/device-events'
 import type { DockerRemoteDeviceCommandResponse } from '@/types/devices'
 import type { EnvironmentInfo } from '@/types/environment'
@@ -183,6 +184,13 @@ export interface RuntimePaneGuidanceResult {
   error?: string | null
 }
 
+export interface RuntimeTaskModelSelectionControls {
+  taskSelection: ModelSelectionConfig | null
+  selectedModel: UnifiedModel | null
+  activeModel: UnifiedModel | null
+  selectedModelOptions: ModelOptions
+}
+
 export interface WorkbenchContextValue {
   services: WorkbenchServices
   workspaceTabId?: string
@@ -222,6 +230,20 @@ export interface WorkbenchContextValue {
     setSelectedModelOption: (optionId: string, value: string) => void
     getSelectedModel?: () => UnifiedModel | null
     getSelectedModelOptions?: () => ModelOptions
+    resolveRuntimeTaskModelSelection: (
+      address: RuntimeTaskAddress
+    ) => RuntimeTaskModelSelectionControls
+    setRuntimeTaskSelectedModel: (address: RuntimeTaskAddress, model: UnifiedModel | null) => void
+    setRuntimeTaskSelectedModelAndOptions: (
+      address: RuntimeTaskAddress,
+      model: UnifiedModel,
+      options: ModelOptions
+    ) => void
+    setRuntimeTaskSelectedModelOption: (
+      address: RuntimeTaskAddress,
+      optionId: string,
+      value: string
+    ) => void
     onBlockedModelSelect: (model: UnifiedModel, message?: string) => void
     setInput: (value: string) => void
     setInputForScope: (scopeKey: string, value: string) => void
@@ -254,7 +276,8 @@ export interface WorkbenchContextValue {
     deviceId: string,
     workspacePath: string,
     label?: string,
-    projectRoots?: string[]
+    projectRoots?: string[],
+    launchOptions?: WorkbenchWorkspaceLaunchOptions
   ) => Promise<void>
   startNewChat: () => void
   startNewSkillChat: (

@@ -86,6 +86,7 @@ test('registers Wework as the DSH root application', async () => {
     JSON.stringify({
       'wework.action': { kind: 'list', scope: 'root' },
       'wework.app': { kind: 'list', scope: 'root' },
+      'wework.plugins.action': { kind: 'list', scope: 'root' },
       'wework.board.card.status': { kind: 'list', scope: 'root' },
       'wework.environment.section': { kind: 'list', scope: 'root' },
       'wework.project.create.section': { kind: 'list', scope: 'root' },

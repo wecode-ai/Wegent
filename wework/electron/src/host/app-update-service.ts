@@ -52,7 +52,11 @@ export class AppUpdateService {
 
     this.updater.allowPrerelease = channel === 'beta'
     this.updater.channel = channel === 'beta' ? 'beta' : 'latest'
-    this.updater.setFeedURL({ provider: 'generic', url: this.updateBaseUrl })
+    this.updater.setFeedURL({
+      provider: 'generic',
+      url: this.updateBaseUrl,
+      useMultipleRangeRequest: false,
+    })
     this.pendingVersion = null
     this.downloadedVersion = null
     this.downloadPromise = null

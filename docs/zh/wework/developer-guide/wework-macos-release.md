@@ -186,6 +186,11 @@ renderer 可能仍在请求上一代哈希资源，提前删除会在新产物�
 写入 `.wework-build-id`。Core DSH 使用这个标记作为已发布构建 ID，页面只在标记
 变化后刷新，不能把 `index.html` 的中间写入状态当成可加载版本。
 
+自动刷新只在带有 Wework Electron preload 能力的桌面 renderer 中启用。直接在
+系统默认浏览器访问 Core DSH 地址时不得启动热更新轮询。桌面 renderer 发现新的
+已发布构建后，必须先记录该构建 ID，再尝试刷新；如果新页面加载失败并且旧页面仍然
+存活，同一个构建不得重复触发刷新。后续构建发布新的 ID 后仍应正常刷新。
+
 开发热更新模式下，`/wework/app/` 下的静态资源必须返回
 `Cache-Control: no-store`。除哈希资源外，该目录还包含固定文件名的
 `plugins/*.js`；如果这些文件使用生产环境的长期 immutable 缓存，刷新后会把旧插件

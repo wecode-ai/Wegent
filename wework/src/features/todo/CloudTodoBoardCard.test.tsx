@@ -28,7 +28,11 @@ vi.mock('@/components/layout/workspace-panels/TemporaryChatPanel', () => ({
     collapseComposerWhenIdle,
     runtimeContext,
   }: {
-    initialAddress: { deviceId: string; taskId: string }
+    initialAddress: {
+      deviceId: string
+      taskId: string
+      runtimeHandle?: { modelSelection?: { modelName?: string } }
+    }
     testId: string
     sendEphemeral: boolean
     collapseComposerWhenIdle: boolean
@@ -41,6 +45,7 @@ vi.mock('@/components/layout/workspace-panels/TemporaryChatPanel', () => ({
       data-send-ephemeral={String(sendEphemeral)}
       data-collapse-composer={String(collapseComposerWhenIdle)}
       data-cloud-project-id={runtimeContext?.cloudProjectId}
+      data-model-name={initialAddress.runtimeHandle?.modelSelection?.modelName}
     >
       Shared task conversation
     </section>
@@ -432,6 +437,44 @@ describe('CloudTodoBoardCard', () => {
     expect(conversation).toHaveAttribute('data-send-ephemeral', 'false')
     expect(conversation).toHaveAttribute('data-collapse-composer', 'true')
     expect(conversation).toHaveAttribute('data-cloud-project-id', String(item.cloud_project_id))
+  })
+
+  it('forwards the bound task model to the shared hover conversation', async () => {
+    render(
+      <CloudTodoBoardCard
+        item={item}
+        taskBindings={[
+          {
+            id: 85,
+            device_id: 'local',
+            task_id: 'task-85',
+            task_title: 'Fix the board popup model',
+            running: false,
+            finalResponsePreview: '已完成',
+            modelSelection: {
+              modelName: 'gpt-5.6-sol',
+              modelType: 'public',
+              options: { reasoning: 'high' },
+            },
+          },
+        ]}
+        onClick={vi.fn()}
+        onArchive={vi.fn()}
+        display={{
+          showAssignee: false,
+          showPriority: false,
+          showTags: false,
+          showDate: false,
+        }}
+      />
+    )
+
+    fireEvent.mouseEnter(screen.getByTestId('cloud-todo-card-WEG-85'))
+
+    expect(await screen.findByTestId('cloud-todo-card-popup-conversation-WEG-85')).toHaveAttribute(
+      'data-model-name',
+      'gpt-5.6-sol'
+    )
   })
 
   it('keeps repeated task text out of the card and switches the shared hover conversation', async () => {
