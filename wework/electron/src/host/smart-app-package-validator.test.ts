@@ -1,13 +1,15 @@
 import { ZipArchive } from 'archiver'
 import { createWriteStream } from 'node:fs'
-import { mkdir, mkdtemp, realpath, rm, symlink, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, realpath, rm, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, test } from 'vitest'
 import type { WorkbenchAppManifest } from '../runtime/workbench-dsh-runtime.js'
 import {
+  copySmartAppDeliveryFiles,
   extractSmartAppArchive,
   findSmartAppManifestRoot,
+  listSmartAppDeliveryFiles,
   validateSmartAppManifest,
   validateSmartAppPackageDirectory,
 } from './smart-app-package-validator.js'
@@ -78,6 +80,36 @@ describe('Smart App package validator', () => {
       })
     }
   )
+
+  test('keeps development-only and sensitive files out of delivery archives', async () => {
+    const root = await packageDirectory()
+    await mkdir(join(root, '.git'))
+    await mkdir(join(root, 'node_modules', 'dependency'), { recursive: true })
+    await mkdir(join(root, 'test-results'))
+    await writeFile(join(root, '.env.local'), 'TOKEN=secret\n')
+    await writeFile(join(root, 'private.pem'), 'secret\n')
+    await writeFile(join(root, 'smart-app.verify.json'), '{"schemaVersion":1}\n')
+    await writeFile(join(root, '.git', 'index'), 'git state')
+    await writeFile(join(root, 'node_modules', 'dependency', 'index.js'), 'cache')
+    await writeFile(join(root, 'test-results', 'report.json'), '{}\n')
+
+    await expect(
+      validateSmartAppPackageDirectory(root, { developmentSource: true })
+    ).resolves.toMatchObject({ manifest: { name: 'fixture-app' } })
+    await expect(listSmartAppDeliveryFiles(root)).resolves.toEqual([
+      'app/package.json',
+      'plugin-manifest.json',
+    ])
+    const destination = `${root}-delivery`
+    roots.push(destination)
+    await copySmartAppDeliveryFiles(root, destination)
+    await expect(readFile(join(destination, 'app', 'package.json'), 'utf8')).resolves.toContain(
+      'fixture-plugin'
+    )
+    await expect(readFile(join(destination, '.env.local'), 'utf8')).rejects.toMatchObject({
+      code: 'ENOENT',
+    })
+  })
 
   test('rejects symbolic links and directories over the extracted size limit', async () => {
     const root = await packageDirectory()

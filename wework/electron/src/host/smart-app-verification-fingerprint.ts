@@ -84,6 +84,8 @@ function ignoreDirectory(name: string, purpose: SmartAppFingerprintPurpose): boo
 
 function ignoreFile(name: string, purpose: SmartAppFingerprintPurpose): boolean {
   if (/\.zip$/i.test(name)) return true
+  if (/^\.env(?:\.|$)/i.test(name) || /\.(?:key|pem)$/i.test(name)) return true
+  if (purpose === 'deliverable' && name === 'smart-app.verify.json') return true
   return purpose === 'verification-input' && /\.(?:md|mdx)$/i.test(name)
 }
 

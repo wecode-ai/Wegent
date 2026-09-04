@@ -270,6 +270,7 @@ describe('SmartAppManager', () => {
     const manifest = JSON.parse(await readFile(manifestPath, 'utf8')) as WorkbenchAppManifest
     manifest.version = '0.2.0'
     await writeFile(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`)
+    await writeFile(join(created.packagePath, '.env.local'), 'TOKEN=development-only\n')
 
     await expect(manager.list()).resolves.toContainEqual(
       expect.objectContaining({
@@ -307,6 +308,13 @@ describe('SmartAppManager', () => {
     const verificationService = {
       verify: vi.fn().mockResolvedValue(report),
       inspect: vi.fn().mockResolvedValue(report),
+      pack: vi.fn().mockResolvedValue({
+        archivePath: '/verified.zip',
+        sha256: 'verified-sha',
+        sizeBytes: 42,
+        manifest: validManifest(),
+        report,
+      }),
     }
     const manager = createManager(root, verificationService)
     const linked = await manager.createDirectory({
@@ -322,6 +330,16 @@ describe('SmartAppManager', () => {
     expect(verificationService.verify).toHaveBeenCalledWith(linked.packagePath)
     expect(verificationService.inspect).toHaveBeenCalledWith(linked.packagePath)
 
+    await expect(manager.export(linked.id)).resolves.toMatchObject({
+      archivePath: '/verified.zip',
+      sha256: 'verified-sha',
+      sizeBytes: 42,
+    })
+    expect(verificationService.pack).toHaveBeenCalledWith(
+      linked.packagePath,
+      expect.stringMatching(/verified-app-0\.1\.0\.zip$/)
+    )
+
     const archivePath = await createSmartAppArchive(root, validManifest())
     const preview = await manager.preview(archivePath)
     const managed = await manager.install({
@@ -331,6 +349,10 @@ describe('SmartAppManager', () => {
     await expect(manager.verify(managed.id)).rejects.toThrow(
       'Smart app verification is only available for linked projects'
     )
+    await expect(manager.export(managed.id)).resolves.toMatchObject({
+      manifest: { name: 'fixture-app' },
+    })
+    expect(verificationService.pack).toHaveBeenCalledTimes(1)
   })
 })
 
@@ -339,6 +361,16 @@ function createManager(
   verificationService?: {
     verify(path: string): Promise<SmartAppVerificationReport>
     inspect(path: string): Promise<SmartAppVerificationReport | null>
+    pack(
+      path: string,
+      output: string
+    ): Promise<{
+      archivePath: string
+      sha256: string
+      sizeBytes: number
+      manifest: WorkbenchAppManifest
+      report: SmartAppVerificationReport
+    }>
   }
 ): SmartAppManager {
   return new SmartAppManager({

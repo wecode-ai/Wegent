@@ -13,6 +13,7 @@ import {
 import { DshRuntime, type DshRuntimeOptions } from '../runtime/dsh-runtime.js'
 import type { CommandRunner } from '../runtime/core-dsh-runtime.js'
 import { runSmartAppRuntimeProbe } from './smart-app-project-script-runner.js'
+import { copySmartAppDeliveryFiles } from './smart-app-package-validator.js'
 import {
   verifySmartAppPage,
   type SmartAppVerificationViewResult,
@@ -65,6 +66,7 @@ export interface SmartAppRuntimeVerifierDependencies {
     script: string
     baseUrl: string
   }) => Promise<{ issues: SmartAppVerificationIssue[] }>
+  copyProject: (projectRoot: string, destination: string) => Promise<void>
   reservePort: () => Promise<number>
 }
 
@@ -74,6 +76,7 @@ const DEFAULT_DEPENDENCIES: SmartAppRuntimeVerifierDependencies = {
   runCommand: runRuntimeCommand,
   verifyPage: verifySmartAppPage,
   runProbe: runSmartAppRuntimeProbe,
+  copyProject: copySmartAppDeliveryFiles,
   reservePort,
 }
 
@@ -89,13 +92,15 @@ export async function verifySmartAppRuntime(
     await mkdir(home, { recursive: true, mode: 0o700 })
     const installationId = 'verification'
     await createIsolatedCredentials(temporaryRoot, installationId)
+    const isolatedProject = join(temporaryRoot, 'project')
+    await dependencies.copyProject(options.projectRoot, isolatedProject)
     const environment = isolatedVerificationEnvironment(options.environment, home)
     const port = await dependencies.reservePort()
     const launch = await dependencies.prepareLaunch({
       runtimeRoot: options.runtimeRoot,
       dataDirectory: temporaryRoot,
       installationId,
-      packagePath: options.projectRoot,
+      packagePath: isolatedProject,
       manifest: options.manifest,
       environment,
       port,
@@ -146,7 +151,7 @@ export async function verifySmartAppRuntime(
         }
       }
       return dependencies.runProbe({
-        projectRoot: options.projectRoot,
+        projectRoot: isolatedProject,
         runtimeRoot: options.runtimeRoot,
         environment,
         script,

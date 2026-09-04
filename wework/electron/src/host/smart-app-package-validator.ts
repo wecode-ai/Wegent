@@ -1,4 +1,6 @@
+import { ZipArchive } from 'archiver'
 import { createHash } from 'node:crypto'
+import { createWriteStream } from 'node:fs'
 import { cp } from 'node:fs/promises'
 import { mkdir, readFile, readdir, realpath, rm, stat } from 'node:fs/promises'
 import { basename, dirname, isAbsolute, join, normalize, relative, resolve, sep } from 'node:path'
@@ -13,6 +15,7 @@ export const MAX_SMART_APP_EXTRACTED_BYTES = 250 * 1024 * 1024
 export interface SmartAppPackageValidationOptions {
   maxArchiveBytes?: number
   maxExtractedBytes?: number
+  developmentSource?: boolean
 }
 
 export interface ValidatedSmartAppPackage {
@@ -52,7 +55,7 @@ export async function validateSmartAppPackageDirectory(
   const manifest = await readManifestFile(join(path, 'plugin-manifest.json'))
   validateSmartAppManifest(manifest)
   await validateDeclaredPaths(path, manifest)
-  const files = await packageFiles(path)
+  const files = await packageFiles(path, options.developmentSource === true)
   const maxBytes = options.maxExtractedBytes ?? MAX_SMART_APP_EXTRACTED_BYTES
   const hash = createHash('sha256')
   let totalBytes = 0
@@ -152,6 +155,45 @@ export async function copySmartAppDirectorySafe(
     const destinationEntry = join(destinationPath, entry.name)
     if (entry.isDirectory()) await copySmartAppDirectorySafe(sourceEntry, destinationEntry)
     else if (entry.isFile()) await cp(sourceEntry, destinationEntry)
+  }
+}
+
+export async function listSmartAppDeliveryFiles(directoryPath: string): Promise<string[]> {
+  const root = await requiredSmartAppDirectory(directoryPath, 'Smart app project')
+  const files: string[] = []
+  await walkPackage(root, path => files.push(relative(root, path).split(sep).join('/')), true, true)
+  return files.sort()
+}
+
+export async function archiveSmartAppDelivery(
+  directoryPath: string,
+  destinationPath: string
+): Promise<void> {
+  const root = await requiredSmartAppDirectory(directoryPath, 'Smart app project')
+  const files = await listSmartAppDeliveryFiles(root)
+  await new Promise<void>((resolvePromise, reject) => {
+    const output = createWriteStream(destinationPath, { mode: 0o600 })
+    const archive = new ZipArchive({ zlib: { level: 9 } })
+    output.once('close', resolvePromise)
+    output.once('error', reject)
+    archive.once('error', reject)
+    archive.pipe(output)
+    for (const file of files) archive.file(join(root, file), { name: file })
+    void archive.finalize()
+  })
+}
+
+export async function copySmartAppDeliveryFiles(
+  directoryPath: string,
+  destinationPath: string
+): Promise<void> {
+  const root = await requiredSmartAppDirectory(directoryPath, 'Smart app project')
+  const files = await listSmartAppDeliveryFiles(root)
+  await mkdir(destinationPath, { recursive: true, mode: 0o700 })
+  for (const file of files) {
+    const destination = join(destinationPath, file)
+    await mkdir(dirname(destination), { recursive: true, mode: 0o700 })
+    await cp(join(root, file), destination)
   }
 }
 
@@ -269,28 +311,45 @@ async function validateDeclaredPaths(root: string, manifest: WorkbenchAppManifes
   }
 }
 
-async function packageFiles(root: string): Promise<string[]> {
+async function packageFiles(root: string, developmentSource = false): Promise<string[]> {
   const files: string[] = []
-  await walkPackage(root, path => files.push(path))
+  await walkPackage(root, path => files.push(path), developmentSource, false)
   return files.sort()
 }
 
-async function walkPackage(root: string, visit: (path: string) => void): Promise<void> {
+async function walkPackage(
+  root: string,
+  visit: (path: string) => void,
+  developmentSource = false,
+  delivery = false
+): Promise<void> {
   for (const entry of await readdir(root, { withFileTypes: true })) {
     const path = join(root, entry.name)
     if (entry.isSymbolicLink()) throw symlinkError(path)
-    if (entry.isDirectory()) await walkPackage(path, visit)
-    else if (entry.isFile()) {
+    if (entry.isDirectory()) {
+      if (developmentSource && isOperationalDirectory(entry.name)) continue
+      await walkPackage(path, visit, developmentSource, delivery)
+    } else if (entry.isFile()) {
       if (isSensitiveFilename(entry.name)) {
+        if (developmentSource) continue
         throw validationError(
           'SA-PACKAGE-SENSITIVE-FILE',
           `Smart app package contains a sensitive file: ${entry.name}`,
           path
         )
       }
+      if (delivery && isDevelopmentOnlyFile(entry.name)) continue
       visit(path)
     }
   }
+}
+
+function isOperationalDirectory(name: string): boolean {
+  return name === '.git' || name === 'node_modules' || name === 'test-results'
+}
+
+function isDevelopmentOnlyFile(name: string): boolean {
+  return name === 'smart-app.verify.json' || /\.zip$/i.test(name)
 }
 
 function isSensitiveFilename(filename: string): boolean {

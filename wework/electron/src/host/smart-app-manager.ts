@@ -24,7 +24,7 @@ import {
   SMART_APP_TEMPLATES,
   type SmartAppTemplate,
 } from './smart-app-scaffold.js'
-import { SmartAppVerifier } from './smart-app-verifier.js'
+import { SmartAppVerifier, type SmartAppPackResult } from './smart-app-verifier.js'
 import type { SmartAppVerificationReport } from './smart-app-verification-types.js'
 
 export interface SmartAppInstallation {
@@ -82,6 +82,7 @@ export interface SmartAppManagerOptions {
 export interface SmartAppVerificationService {
   verify(projectRoot: string): Promise<SmartAppVerificationReport>
   inspect(projectRoot: string): Promise<SmartAppVerificationReport | null>
+  pack(projectRoot: string, archivePath: string): Promise<SmartAppPackResult>
 }
 
 export class SmartAppManager {
@@ -269,7 +270,7 @@ export class SmartAppManager {
           await copySmartAppDirectorySafe(localDirectory, copiedDirectory)
         }
         await writeJson(manifestPath, manifest)
-        const refreshed = await validateSmartAppPackageDirectory(packageRoot)
+        const refreshed = await validateLinkedSmartAppDirectory(packageRoot)
         installation.manifest = refreshed.manifest
         installation.sha256 = refreshed.sha256
         installation.error = null
@@ -494,6 +495,15 @@ export class SmartAppManager {
       directory,
       `${safeName(installation.manifest.name)}-${installation.manifest.version}.zip`
     )
+    if (installation.source === 'linked') {
+      const packed = await this.verificationService.pack(installation.packagePath, archivePath)
+      return {
+        archivePath: packed.archivePath,
+        sha256: packed.sha256,
+        sizeBytes: packed.sizeBytes,
+        manifest: packed.manifest,
+      }
+    }
     await archiveDirectory(installation.packagePath, archivePath)
     const metadata = await stat(archivePath)
     return {
@@ -585,7 +595,7 @@ export class SmartAppManager {
   }
 
   private async registerLinkedDirectory(directoryPath: string): Promise<SmartAppInstallation> {
-    const validated = await validateSmartAppPackageDirectory(directoryPath)
+    const validated = await validateLinkedSmartAppDirectory(directoryPath)
     const installations = await this.readRegistry()
     if (installations.some(item => item.id === validated.manifest.name)) {
       throw new Error(`A Smart app named ${validated.manifest.name} is already registered`)
@@ -621,7 +631,7 @@ export class SmartAppManager {
 
 async function refreshLinkedInstallation(installation: SmartAppInstallation): Promise<boolean> {
   try {
-    const validated = await validateSmartAppPackageDirectory(installation.packagePath)
+    const validated = await validateLinkedSmartAppDirectory(installation.packagePath)
     if (validated.manifest.name !== installation.id) {
       return setInstallationFailure(
         installation,
@@ -644,6 +654,10 @@ async function refreshLinkedInstallation(installation: SmartAppInstallation): Pr
       error instanceof Error ? error.message : String(error)
     )
   }
+}
+
+function validateLinkedSmartAppDirectory(directoryPath: string) {
+  return validateSmartAppPackageDirectory(directoryPath, { developmentSource: true })
 }
 
 function setInstallationFailure(installation: SmartAppInstallation, error: string): boolean {

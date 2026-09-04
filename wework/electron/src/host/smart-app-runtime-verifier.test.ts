@@ -1,4 +1,6 @@
-import { readFile, stat } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { describe, expect, test, vi } from 'vitest'
 import type { WorkbenchDshLaunch } from '../runtime/workbench-dsh-runtime.js'
 import {
@@ -6,6 +8,7 @@ import {
   type SmartAppRuntimeVerifierDependencies,
 } from './smart-app-runtime-verifier.js'
 import type { SmartAppVerificationContract } from './smart-app-verification-types.js'
+import { copySmartAppDeliveryFiles } from './smart-app-package-validator.js'
 
 describe('verifySmartAppRuntime', () => {
   test('uses unique temporary homes and ports, preflights, starts, probes, and cleans up', async () => {
@@ -104,6 +107,37 @@ describe('verifySmartAppRuntime', () => {
 
     expect(credentials).toBe('version: "1"\n')
     expect(credentialsMode).toBe(0o600)
+  })
+
+  test('copies only delivery-safe files into the isolated runtime', async () => {
+    const source = await mkdtemp(join(tmpdir(), 'wework-smart-app-runtime-source-'))
+    await mkdir(join(source, 'package'))
+    await writeFile(join(source, 'plugin-manifest.json'), '{}\n')
+    await writeFile(join(source, 'package', 'index.js'), 'export {}\n')
+    await writeFile(join(source, 'smart-app.verify.json'), '{}\n')
+    await writeFile(join(source, '.env.local'), 'TOKEN=secret\n')
+    let copiedProject = ''
+    let copiedSecret = true
+    let copiedContract = true
+    const dependencies = fixtureDependencies({
+      copyProject: copySmartAppDeliveryFiles,
+      prepareLaunch: async options => {
+        copiedProject = options.packagePath
+        copiedSecret = await exists(join(copiedProject, '.env.local'))
+        copiedContract = await exists(join(copiedProject, 'smart-app.verify.json'))
+        return launch(options.dataDirectory, options.port)
+      },
+    })
+
+    try {
+      await verifySmartAppRuntime(options({ projectRoot: source }), dependencies)
+      expect(copiedProject).not.toBe(source)
+      expect(copiedSecret).toBe(false)
+      expect(copiedContract).toBe(false)
+      await expect(readFile(join(source, '.env.local'), 'utf8')).resolves.toContain('secret')
+    } finally {
+      await rm(source, { recursive: true, force: true })
+    }
   })
 
   test.each(['start', 'page', 'probe'] as const)(
@@ -238,8 +272,18 @@ function fixtureDependencies(
     runCommand: vi.fn().mockResolvedValue(undefined),
     verifyPage: vi.fn().mockResolvedValue({ issues: [] }),
     runProbe: vi.fn().mockResolvedValue({ issues: [] }),
+    copyProject: vi.fn().mockResolvedValue(undefined),
     reservePort: vi.fn().mockResolvedValueOnce(41001).mockResolvedValueOnce(41002),
     ...overrides,
+  }
+}
+
+async function exists(path: string): Promise<boolean> {
+  try {
+    await stat(path)
+    return true
+  } catch {
+    return false
   }
 }
 

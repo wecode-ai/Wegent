@@ -75,6 +75,30 @@ describe('fingerprintSmartAppDirectory', () => {
     await expect(fingerprintSmartAppDirectory(root, 'deliverable')).resolves.not.toBe(before)
   })
 
+  test('excludes development contracts from the deliverable fingerprint', async () => {
+    const root = await completeFixture()
+    const before = await fingerprintSmartAppDirectory(root, 'deliverable')
+
+    await writeFiles(root, [['smart-app.verify.json', '{"schemaVersion":2}\n']])
+
+    await expect(fingerprintSmartAppDirectory(root, 'deliverable')).resolves.toBe(before)
+  })
+
+  test.each<SmartAppFingerprintPurpose>(['verification-input', 'deliverable'])(
+    'does not read sensitive files for %s fingerprints',
+    async purpose => {
+      const root = await completeFixture()
+      const before = await fingerprintSmartAppDirectory(root, purpose)
+      await writeFiles(root, [
+        ['.env.local', 'TOKEN=secret\n'],
+        ['private.pem', 'secret\n'],
+        ['signing.key', 'secret\n'],
+      ])
+
+      await expect(fingerprintSmartAppDirectory(root, purpose)).resolves.toBe(before)
+    }
+  )
+
   test.each<SmartAppFingerprintPurpose>(['verification-input', 'deliverable'])(
     'rejects symbolic links for %s',
     async purpose => {
