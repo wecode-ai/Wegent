@@ -193,6 +193,52 @@ def test_existing_task_uses_bound_team(monkeypatch: MonkeyPatch) -> None:
     assert error is None
 
 
+def test_existing_task_corrects_inactive_client_team(
+    monkeypatch: MonkeyPatch,
+) -> None:
+    existing_task = _task(
+        {
+            "name": "creator-php-workflow",
+            "namespace": "default",
+            "user_id": 2838,
+        }
+    )
+    bound_team = SimpleNamespace(id=267213, name="creator-php-workflow")
+    monkeypatch.setattr(
+        task_stores.task_store,
+        "get_regular_active_task",
+        Mock(return_value=existing_task),
+    )
+    monkeypatch.setattr(
+        chat_namespace,
+        "_resolve_task_bound_team",
+        Mock(return_value=bound_team),
+    )
+
+    task, result, error = _resolve_existing_task_team(Mock(), existing_task.id, None)
+
+    assert task is existing_task
+    assert result is bound_team
+    assert error is None
+
+
+def test_legacy_task_without_team_ref_and_client_team_errors(
+    monkeypatch: MonkeyPatch,
+) -> None:
+    existing_task = _task(None)
+    monkeypatch.setattr(
+        task_stores.task_store,
+        "get_regular_active_task",
+        Mock(return_value=existing_task),
+    )
+
+    task, result, error = _resolve_existing_task_team(Mock(), existing_task.id, None)
+
+    assert task is None
+    assert result is None
+    assert error == {"error": "Team not found for id=None"}
+
+
 def test_bound_team_same_as_client_returns_team(monkeypatch: MonkeyPatch) -> None:
     existing_task = _task(
         {
