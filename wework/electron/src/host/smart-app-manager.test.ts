@@ -8,6 +8,7 @@ import { join } from 'node:path'
 import { afterEach, describe, expect, test, vi } from 'vitest'
 import { SmartAppManager } from './smart-app-manager.js'
 import type { WorkbenchAppManifest } from '../runtime/workbench-dsh-runtime.js'
+import type { SmartAppVerificationReport } from './smart-app-verification-types.js'
 
 const roots: string[] = []
 
@@ -296,9 +297,50 @@ describe('SmartAppManager', () => {
     ).rejects.toThrow('Smart app template is invalid')
     await expect(stat(join(parent, 'invalid-template'))).rejects.toMatchObject({ code: 'ENOENT' })
   })
+
+  test('exposes verification only for linked development projects', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'wework-smart-app-verification-manager-'))
+    roots.push(root)
+    const parent = join(root, 'projects')
+    await mkdir(parent)
+    const report = verificationReport()
+    const verificationService = {
+      verify: vi.fn().mockResolvedValue(report),
+      inspect: vi.fn().mockResolvedValue(report),
+    }
+    const manager = createManager(root, verificationService)
+    const linked = await manager.createDirectory({
+      parentPath: parent,
+      name: 'verified-app',
+      displayName: 'Verified App',
+      description: 'Verification fixture',
+      template: 'web',
+    })
+
+    await expect(manager.verify(linked.id)).resolves.toBe(report)
+    await expect(manager.inspectVerification(linked.id)).resolves.toBe(report)
+    expect(verificationService.verify).toHaveBeenCalledWith(linked.packagePath)
+    expect(verificationService.inspect).toHaveBeenCalledWith(linked.packagePath)
+
+    const archivePath = await createSmartAppArchive(root, validManifest())
+    const preview = await manager.preview(archivePath)
+    const managed = await manager.install({
+      archivePath,
+      expectedSha256: preview.sha256,
+    })
+    await expect(manager.verify(managed.id)).rejects.toThrow(
+      'Smart app verification is only available for linked projects'
+    )
+  })
 })
 
-function createManager(root: string): SmartAppManager {
+function createManager(
+  root: string,
+  verificationService?: {
+    verify(path: string): Promise<SmartAppVerificationReport>
+    inspect(path: string): Promise<SmartAppVerificationReport | null>
+  }
+): SmartAppManager {
   return new SmartAppManager({
     dataDirectory: join(root, 'data'),
     downloadsDirectory: join(root, 'downloads'),
@@ -310,7 +352,22 @@ function createManager(root: string): SmartAppManager {
       close: vi.fn(),
       runningTabIds: () => new Set(),
     }),
+    verificationService,
   })
+}
+
+function verificationReport(): SmartAppVerificationReport {
+  return {
+    schemaVersion: 1,
+    status: 'passed',
+    projectRoot: '/project',
+    inputFingerprint: 'input',
+    deliverableFingerprint: 'deliverable',
+    startedAt: '2026-09-04T00:00:00.000Z',
+    finishedAt: '2026-09-04T00:00:01.000Z',
+    stages: [],
+    issues: [],
+  }
 }
 
 function validManifest(): WorkbenchAppManifest {

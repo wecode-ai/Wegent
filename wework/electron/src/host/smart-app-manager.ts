@@ -24,6 +24,8 @@ import {
   SMART_APP_TEMPLATES,
   type SmartAppTemplate,
 } from './smart-app-scaffold.js'
+import { SmartAppVerifier } from './smart-app-verifier.js'
+import type { SmartAppVerificationReport } from './smart-app-verification-types.js'
 
 export interface SmartAppInstallation {
   id: string
@@ -74,14 +76,28 @@ export interface SmartAppManagerOptions {
   environment: NodeJS.ProcessEnv
   runtimeHost: () => SmartAppRuntimeHost | null
   ensureWorkbenchRuntime?: () => Promise<void>
+  verificationService?: SmartAppVerificationService
+}
+
+export interface SmartAppVerificationService {
+  verify(projectRoot: string): Promise<SmartAppVerificationReport>
+  inspect(projectRoot: string): Promise<SmartAppVerificationReport | null>
 }
 
 export class SmartAppManager {
   private readonly proxyTokens = new Map<string, string>()
   private readonly contextTokens = new Map<string, string>()
+  private readonly verificationService: SmartAppVerificationService
   private operation = Promise.resolve()
 
-  constructor(private readonly options: SmartAppManagerOptions) {}
+  constructor(private readonly options: SmartAppManagerOptions) {
+    this.verificationService =
+      options.verificationService ??
+      new SmartAppVerifier({
+        runtimeRoot: options.runtimeRoot,
+        environment: options.environment,
+      })
+  }
 
   async list(): Promise<SmartAppInstallation[]> {
     return this.serial(async () => {
@@ -497,6 +513,16 @@ export class SmartAppManager {
     return { ...exported, destinationPath }
   }
 
+  async verify(installationId: string): Promise<SmartAppVerificationReport> {
+    const installation = requiredLinkedInstallation(await this.readRegistry(), installationId)
+    return this.verificationService.verify(installation.packagePath)
+  }
+
+  async inspectVerification(installationId: string): Promise<SmartAppVerificationReport | null> {
+    const installation = requiredLinkedInstallation(await this.readRegistry(), installationId)
+    return this.verificationService.inspect(installation.packagePath)
+  }
+
   async upload(archivePath: string, uploadUrl: string): Promise<void> {
     const url = new URL(uploadUrl)
     if (!isSecureTransferUrl(url)) throw new Error('Smart app upload must use HTTPS')
@@ -710,6 +736,17 @@ function requiredInstallation(
 ): SmartAppInstallation {
   const installation = installations.find(item => item.id === installationId)
   if (!installation) throw new Error('Smart app installation is missing')
+  return installation
+}
+
+function requiredLinkedInstallation(
+  installations: SmartAppInstallation[],
+  installationId: string
+): SmartAppInstallation {
+  const installation = requiredInstallation(installations, installationId)
+  if (installation.source !== 'linked') {
+    throw new Error('Smart app verification is only available for linked projects')
+  }
   return installation
 }
 
