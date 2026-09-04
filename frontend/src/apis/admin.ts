@@ -463,6 +463,42 @@ export interface AdminMarketplaceResourceListResponse {
   limit: number
 }
 
+export type AdminMarketplacePluginSource = 'wework-official' | 'enterprise'
+
+export interface AdminMarketplacePlugin {
+  id: number
+  catalog_namespace: AdminMarketplacePluginSource
+  name: string
+  display_name: string
+  description: string
+  version: string | null
+  author: string | null
+  featured_rank: number
+  is_listed: boolean
+  created_at: string
+  updated_at: string
+}
+
+export interface AdminMarketplacePluginFilters {
+  search?: string
+  listingStatus?: 'all' | 'listed' | 'unlisted'
+  source?: 'all' | AdminMarketplacePluginSource
+  scoreOrder?: 'asc' | 'desc'
+}
+
+export interface AdminMarketplacePluginUpdate {
+  description?: string
+  featured_rank?: number
+  is_listed?: boolean
+}
+
+export interface AdminMarketplacePluginListResponse {
+  items: AdminMarketplacePlugin[]
+  total: number
+  page: number
+  limit: number
+}
+
 export interface AdminMarketplaceSmartApp {
   id: number
   name: string
@@ -1263,6 +1299,28 @@ export const adminApis = {
     update: AdminMarketplaceResourceUpdate
   ): Promise<AdminMarketplaceResource> {
     return apiClient.put(`/admin/marketplace-resources/${resourceId}`, update)
+  },
+
+  async getMarketplacePlugins(
+    page: number = 1,
+    limit: number = 50,
+    filters: AdminMarketplacePluginFilters = {}
+  ): Promise<AdminMarketplacePluginListResponse> {
+    const query = new URLSearchParams({ page: String(page), limit: String(limit) })
+    if (filters.search) query.set('search', filters.search)
+    if (filters.listingStatus && filters.listingStatus !== 'all') {
+      query.set('listing_status', filters.listingStatus)
+    }
+    if (filters.source && filters.source !== 'all') query.set('source', filters.source)
+    if (filters.scoreOrder) query.set('score_order', filters.scoreOrder)
+    return apiClient.get(`/admin/marketplace-plugins?${query.toString()}`)
+  },
+
+  async updateMarketplacePlugin(
+    pluginId: number,
+    update: AdminMarketplacePluginUpdate
+  ): Promise<AdminMarketplacePlugin> {
+    return apiClient.put(`/admin/marketplace-plugins/${pluginId}`, update)
   },
 
   async getMarketplaceSmartApps(

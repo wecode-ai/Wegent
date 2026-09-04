@@ -1306,6 +1306,52 @@ def test_plugin_visibility_requires_an_approved_grant(test_db, test_user):
     ] == [plugin.id]
 
 
+def test_list_plugins_orders_by_recommendation_score_descending(test_db, test_user):
+    plugins: list[Plugin] = []
+    for index, score in enumerate((90, 91, 90, -5, 0)):
+        plugin = Plugin(
+            catalog_namespace="wework-official",
+            slug=f"ranked-{index}",
+            name=f"ranked-{index}",
+            display_name=f"Ranked {index}",
+            keywords_json=[],
+            interface_json={},
+            visibility="public",
+            status="published",
+            featured_rank=score,
+        )
+        test_db.add(plugin)
+        test_db.flush()
+        release = PluginRelease(
+            plugin_id=plugin.id,
+            version="1.0.0",
+            manifest_json={"name": plugin.name, "version": "1.0.0"},
+            interface_json={},
+            storage_key=f"plugins/{plugin.slug}.zip",
+            sha256=f"{index + 1:064d}",
+            size_bytes=10,
+            status="ready",
+            scan_status="passed",
+            scan_report_json={},
+        )
+        test_db.add(release)
+        test_db.flush()
+        plugin.latest_release_id = release.id
+        plugins.append(plugin)
+    test_db.commit()
+
+    items = PluginMarketplaceService().list_plugins(test_db, user_id=test_user.id).items
+
+    assert [item.id for item in items] == [
+        plugins[1].id,
+        plugins[2].id,
+        plugins[0].id,
+        plugins[3].id,
+        plugins[4].id,
+    ]
+    assert [item.featured for item in items[-2:]] == [True, False]
+
+
 def test_list_plugins_batches_grant_lookups_instead_of_per_plugin_queries(
     test_db: Session, test_user: User
 ) -> None:
