@@ -13,6 +13,7 @@ from app.services.auth.rag_download_token import (
     verify_rag_download_token,
 )
 from app.services.auth.skill_identity_token import (
+    MCP_IDENTITY_RUNTIME_TYPE,
     SkillIdentityTokenInfo,
     create_skill_identity_token,
     verify_skill_identity_token,
@@ -40,4 +41,5 @@ __all__ = [
     "SkillIdentityTokenInfo",
     "create_skill_identity_token",
     "verify_skill_identity_token",
+    "MCP_IDENTITY_RUNTIME_TYPE",
 ]

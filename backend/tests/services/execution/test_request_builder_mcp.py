@@ -12,6 +12,7 @@ filtering work correctly when preparing MCP servers for Claude Code executor.
 from types import SimpleNamespace
 from unittest.mock import patch
 
+from app.services.auth import verify_skill_identity_token
 from app.services.execution.request_builder import TaskRequestBuilder
 from shared.models.execution import ExecutionRequest
 from shared.models.openai_converter import OpenAIRequestConverter
@@ -393,6 +394,60 @@ class TestBuildMcpServers:
         servers = {server["name"]: server for server in result}
         assert servers["seconds-server"]["timeoutSeconds"] == 900
         assert servers["native-server"]["timeout"] == 900000
+
+    @patch(
+        "app.services.execution.request_builder.kindReader.get_by_name_and_namespace"
+    )
+    @patch("app.services.execution.request_builder.settings.CHAT_MCP_SERVERS", "{}")
+    def test_inject_wegent_token_adds_identity_authorization(self, mock_get_kind):
+        builder = TaskRequestBuilder.__new__(TaskRequestBuilder)
+        builder.db = SimpleNamespace()
+        mock_get_kind.return_value = _ghost_kind_with_mcp(
+            {
+                "business-server": {
+                    "type": "streamable-http",
+                    "url": "http://business.example.com/mcp",
+                    "inject_wegent_token": True,
+                },
+                "plain-server": {
+                    "type": "streamable-http",
+                    "url": "http://plain.example.com/mcp",
+                },
+                "stdio-server": {
+                    "type": "stdio",
+                    "command": "npx",
+                    "args": ["-y", "some-server"],
+                    "inject_wegent_token": True,
+                },
+            }
+        )
+
+        result = builder._build_mcp_servers(
+            _bot_kind_with_ghost(user_id=1),
+            SimpleNamespace(user_id=1, name="user-agent"),
+            user=SimpleNamespace(id=7, user_name="alice"),
+        )
+
+        servers = {server["name"]: server for server in result}
+
+        business = servers["business-server"]
+        assert "inject_wegent_token" not in business
+        authorization = business["auth"]["Authorization"]
+        assert authorization.startswith("Bearer ")
+        token_info = verify_skill_identity_token(authorization.removeprefix("Bearer "))
+        assert token_info is not None
+        assert token_info.user_id == 7
+        assert token_info.user_name == "alice"
+        assert token_info.runtime_type == "mcp"
+        assert token_info.runtime_name == "business-server"
+
+        plain = servers["plain-server"]
+        assert "auth" not in plain
+        assert "inject_wegent_token" not in plain
+
+        stdio = servers["stdio-server"]
+        assert "auth" not in stdio
+        assert "inject_wegent_token" not in stdio
 
 
 def test_board_task_auto_injects_mcp_for_chat_and_code_shell_contracts(test_db, mocker):
