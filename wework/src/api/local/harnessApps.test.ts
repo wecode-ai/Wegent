@@ -44,4 +44,24 @@ describe('harnessAppsApi', () => {
       installationId: 'research-desk',
     })
   })
+
+  test('passes the selected capability template when creating a Smart App', async () => {
+    mocks.desktopInvoke.mockResolvedValue({})
+
+    await harnessAppsApi.createDirectory({
+      parentPath: '/tmp',
+      name: 'contract-app',
+      displayName: 'Contract App',
+      description: 'Generic app',
+      template: 'web-host-remote',
+    })
+
+    expect(mocks.desktopInvoke).toHaveBeenCalledWith('smartApps.createDirectory', {
+      parentPath: '/tmp',
+      name: 'contract-app',
+      displayName: 'Contract App',
+      description: 'Generic app',
+      template: 'web-host-remote',
+    })
+  })
 })

@@ -19,6 +19,11 @@ import {
   requiredSmartAppDirectory,
   validateSmartAppPackageDirectory,
 } from './smart-app-package-validator.js'
+import {
+  scaffoldSmartApp,
+  SMART_APP_TEMPLATES,
+  type SmartAppTemplate,
+} from './smart-app-scaffold.js'
 
 export interface SmartAppInstallation {
   id: string
@@ -141,10 +146,12 @@ export class SmartAppManager {
     name: string
     displayName: string
     description: string
+    template: string
   }): Promise<SmartAppInstallation> {
     return this.serial(async () => {
       const name = validEditableName(input.name)
       const displayName = requiredText(input.displayName)
+      const template = validSmartAppTemplate(input.template)
       const parent = await requiredSmartAppDirectory(input.parentPath, 'Smart app parent')
       const target = join(parent, name)
       await mkdir(target).catch(error => {
@@ -154,13 +161,14 @@ export class SmartAppManager {
         throw error
       })
       try {
-        await scaffoldWebSmartApp(
-          target,
+        await scaffoldSmartApp({
+          path: target,
           name,
           displayName,
-          input.description.trim(),
-          WORKBENCH_DSH_VERSION
-        )
+          description: input.description.trim(),
+          dshVersion: WORKBENCH_DSH_VERSION,
+          template,
+        })
         return await this.registerLinkedDirectory(target)
       } catch (error) {
         await rm(target, { recursive: true, force: true })
@@ -620,62 +628,6 @@ function setInstallationFailure(installation: SmartAppInstallation, error: strin
   return changed
 }
 
-async function scaffoldWebSmartApp(
-  path: string,
-  name: string,
-  displayName: string,
-  description: string,
-  dshVersion: string
-): Promise<void> {
-  const bundle = join(path, 'packages', 'bundle', name)
-  await mkdir(join(bundle, 'src'), { recursive: true, mode: 0o700 })
-  const manifest: WorkbenchAppManifest = {
-    name,
-    displayName,
-    version: '0.1.0',
-    type: 'deepseek-harness-plugin-bundle',
-    description,
-    packages: [
-      {
-        name: `@wework-smart-app/${name}`,
-        role: 'profile-bundle',
-        path: `packages/bundle/${name}`,
-      },
-    ],
-    entry: {
-      installPackage: `packages/bundle/${name}`,
-      profile: 'web',
-    },
-    requirements: {
-      dsh: dshVersion,
-      node: '>=22',
-    },
-    plugins: [],
-  }
-  await writeJson(join(path, 'plugin-manifest.json'), manifest)
-  await writeJson(join(bundle, 'package.json'), {
-    name: `@wework-smart-app/${name}`,
-    version: '0.1.0',
-    private: true,
-    type: 'module',
-    files: ['cordis.patch.yml', 'src'],
-    dsh: { bundle: { patch: './cordis.patch.yml' } },
-  })
-  await writeFile(join(bundle, 'cordis.patch.yml'), '[]\n')
-  await writeFile(
-    join(bundle, 'src', 'index.ts'),
-    "export const smartApp = { preset: 'web' as const }\n"
-  )
-  await writeFile(
-    join(path, 'PLUGIN.md'),
-    `# ${displayName}\n\n${description}\n\nThis Smart app uses the DeepSeek Harness Web preset.\n`
-  )
-  await writeFile(
-    join(path, 'INSTALL.zh-CN.md'),
-    '# 安装\n\n可在 Wework 中直接关联此目录运行，或导出 ZIP 后安装。\n'
-  )
-}
-
 async function localPluginDescriptor(
   source: string,
   packageRoot: string
@@ -716,6 +668,11 @@ function validEditableName(value: string): string {
     throw new Error('Smart app name must use lowercase letters, numbers, and hyphens')
   }
   return name
+}
+
+function validSmartAppTemplate(value: string): SmartAppTemplate {
+  if (SMART_APP_TEMPLATES.includes(value as SmartAppTemplate)) return value as SmartAppTemplate
+  throw new Error('Smart app template is invalid')
 }
 
 async function writeJson(path: string, value: unknown): Promise<void> {

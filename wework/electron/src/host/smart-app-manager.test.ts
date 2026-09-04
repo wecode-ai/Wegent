@@ -1,7 +1,7 @@
 import { ZipArchive } from 'archiver'
 import { createHash } from 'node:crypto'
 import { createReadStream, createWriteStream } from 'node:fs'
-import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises'
 import { createServer } from 'node:http'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -192,6 +192,7 @@ describe('SmartAppManager', () => {
       name: 'created-app',
       displayName: 'Created App',
       description: 'Editable app',
+      template: 'web',
     })
     expect(created).toMatchObject({
       id: 'created-app',
@@ -262,6 +263,7 @@ describe('SmartAppManager', () => {
       name: 'refresh-app',
       displayName: 'Refresh App',
       description: 'Refresh fixture',
+      template: 'web',
     })
     const manifestPath = join(created.packagePath, 'plugin-manifest.json')
     const manifest = JSON.parse(await readFile(manifestPath, 'utf8')) as WorkbenchAppManifest
@@ -275,6 +277,24 @@ describe('SmartAppManager', () => {
         state: 'installed',
       })
     )
+  })
+
+  test('rejects unknown scaffold templates before creating a destination', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'wework-smart-app-template-'))
+    roots.push(root)
+    const parent = join(root, 'projects')
+    await mkdir(parent)
+
+    await expect(
+      createManager(root).createDirectory({
+        parentPath: parent,
+        name: 'invalid-template',
+        displayName: 'Invalid Template',
+        description: 'Invalid fixture',
+        template: 'browser-with-everything',
+      })
+    ).rejects.toThrow('Smart app template is invalid')
+    await expect(stat(join(parent, 'invalid-template'))).rejects.toMatchObject({ code: 'ENOENT' })
   })
 })
 

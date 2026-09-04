@@ -690,6 +690,7 @@ export function createElectronCapabilityRouter(
       name: stringParam(params, 'name'),
       displayName: stringParam(params, 'displayName'),
       description: stringParam(params, 'description'),
+      template: stringParam(params, 'template'),
     })
   )
   router.register('smartApps.linkDirectory', params =>

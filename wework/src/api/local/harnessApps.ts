@@ -66,12 +66,15 @@ export interface HarnessAppSavedExport extends HarnessAppExport {
   destinationPath: string
 }
 
+export type SmartAppTemplate = 'web' | 'host' | 'web-host' | 'web-host-remote'
+
 export const harnessAppsApi = {
   createDirectory(input: {
     parentPath: string
     name: string
     displayName: string
     description: string
+    template: SmartAppTemplate
   }) {
     return invokeDesktopHost<HarnessAppInstallation>('smartApps.createDirectory', input)
   },
