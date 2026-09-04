@@ -187,6 +187,120 @@ def test_create_runtime_task_preserves_delivery_context(
     assert request.delivery_id == "12345678-1234-1234-1234-123456789abc"
 
 
+def test_create_runtime_task_v3_accepts_team_on_canonical_endpoint(
+    test_client,
+    test_token,
+    monkeypatch,
+) -> None:
+    from app.api.endpoints import runtime_work
+
+    service_mock = AsyncMock(
+        return_value={
+            "accepted": True,
+            "deviceId": "cloud-device-1",
+            "taskId": "task-1",
+            "workspacePath": "/repo",
+            "runtime": "codex",
+        }
+    )
+    monkeypatch.setattr(
+        runtime_work.runtime_work_service,
+        "create_runtime_task",
+        service_mock,
+    )
+
+    response = test_client.post(
+        "/api/runtime-work/create",
+        headers=_auth_headers(test_token),
+        json={
+            "schemaVersion": 3,
+            "wegentTeamId": 42,
+            "deviceId": "cloud-device-1",
+            "workspacePath": "/repo",
+            "runtime": "codex",
+            "message": "Run through the selected Team",
+        },
+    )
+
+    assert response.status_code == 200
+    assert service_mock.await_args.kwargs["request"].wegent_team_id == 42
+    assert "team_id" not in service_mock.await_args.kwargs
+
+
+def test_create_runtime_task_rejects_team_on_old_request_version(
+    test_client,
+    test_token,
+) -> None:
+    response = test_client.post(
+        "/api/runtime-work/create",
+        headers=_auth_headers(test_token),
+        json={
+            "schemaVersion": 2,
+            "wegentTeamId": 42,
+            "deviceId": "cloud-device-1",
+            "workspacePath": "/repo",
+            "runtime": "codex",
+            "message": "Old request protocol",
+        },
+    )
+
+    assert response.status_code == 422
+
+
+def test_materialize_runtime_task_returns_v2_executor_payload(
+    test_client,
+    test_token,
+    monkeypatch,
+) -> None:
+    from app.api.endpoints import runtime_work
+
+    service_mock = MagicMock(
+        return_value=MagicMock(
+            team_id=42,
+            payload={
+                "schemaVersion": 2,
+                "runtime": "codex",
+                "message": "Continue with the Team",
+                "title": "Continue",
+                "workspacePath": "/repo",
+                "taskId": "task-1",
+                "executionRequest": {
+                    "task_id": "task-1",
+                    "team_id": 42,
+                    "new_session": False,
+                },
+            },
+        )
+    )
+    monkeypatch.setattr(
+        runtime_work.runtime_work_service,
+        "materialize_runtime_task_create",
+        service_mock,
+    )
+
+    response = test_client.post(
+        "/api/runtime-work/materialize",
+        headers=_auth_headers(test_token),
+        json={
+            "schemaVersion": 3,
+            "wegentTeamId": 42,
+            "newSession": False,
+            "deviceId": "local-device-1",
+            "workspacePath": "/repo",
+            "taskId": "task-1",
+            "runtime": "codex",
+            "message": "Continue with the Team",
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json()["payload"]["schemaVersion"] == 2
+    assert response.json()["runtimeHandle"] == {"wegentTeam": {"id": 42}}
+    request = service_mock.call_args.kwargs["request"]
+    assert request.wegent_team_id == 42
+    assert request.new_session is False
+
+
 def test_upsert_device_workspace_endpoint_returns_mapping(
     test_client,
     test_token,
