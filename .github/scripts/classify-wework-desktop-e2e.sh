@@ -32,6 +32,7 @@ core_segments=(
   running-conversation-history
   codex-notification-isolation
   executor-stream-recovery
+  transcript-sync
   context-compaction
   split-workbench
   release-package-startup
@@ -136,7 +137,7 @@ core_shards=(
   rendering-extensions
   runtime-task-queue,release-package-startup,component-update,native-window-startup,renderer-storage,external-content-import
   local-harness,running-conversation-history,native-window-chrome
-  codex-notification-isolation,core-dsh-plugin-management,plugin-development,executor-stream-recovery
+  codex-notification-isolation,core-dsh-plugin-management,plugin-development,executor-stream-recovery,transcript-sync
   model-routing,computer-use
 )
 
@@ -652,6 +653,13 @@ classify_wework_path() {
       ;;
     wework/e2e/desktop/scenarios/executor-stream-recovery.scenario.mjs)
       select_target "core:executor-stream-recovery"
+      return
+      ;;
+    wework/dsh/transcript-sync/* | \
+      wework/dsh/executor-runtime/session-projector* | \
+      wework/electron/src/host/wework-sync-request* | \
+      wework/e2e/desktop/scenarios/transcript-sync.scenario.mjs)
+      select_target "core:transcript-sync"
       return
       ;;
 
