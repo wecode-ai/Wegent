@@ -14,6 +14,7 @@ import {
   Package,
   RefreshCw,
   Search,
+  X,
 } from 'lucide-react'
 
 import {
@@ -22,9 +23,18 @@ import {
   type AdminMarketplacePluginSource,
 } from '@/apis/admin'
 import { Button } from '@/components/ui/button'
+import {
+  Drawer,
+  DrawerClose,
+  DrawerContent,
+  DrawerDescription,
+  DrawerHeader,
+  DrawerTitle,
+} from '@/components/ui/drawer'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group'
+import { ScrollArea } from '@/components/ui/scroll-area'
 import {
   Select,
   SelectContent,
@@ -52,9 +62,10 @@ type ListingFilter = 'all' | 'listed' | 'unlisted'
 type SourceFilter = 'all' | AdminMarketplacePluginSource
 type ScoreOrder = 'asc' | 'desc'
 
-interface PluginDetailsPanelProps {
+interface PluginEditDrawerProps {
   plugin: AdminMarketplacePlugin | null
   saving: boolean
+  onOpenChange: (open: boolean) => void
   onSave: (update: {
     description: string
     featured_rank: number
@@ -71,7 +82,7 @@ function PluginMark({ plugin }: { plugin: AdminMarketplacePlugin }) {
   )
 }
 
-function PluginDetailsPanel({ plugin, saving, onSave }: PluginDetailsPanelProps) {
+function PluginEditDrawer({ plugin, saving, onOpenChange, onSave }: PluginEditDrawerProps) {
   const { t } = useTranslation('admin')
   const [description, setDescription] = useState('')
   const [score, setScore] = useState('0')
@@ -83,179 +94,207 @@ function PluginDetailsPanel({ plugin, saving, onSave }: PluginDetailsPanelProps)
     setIsListed(plugin?.is_listed ?? false)
   }, [plugin])
 
-  if (!plugin) {
-    return (
-      <div className="flex min-h-80 items-center justify-center px-6 text-center text-sm text-text-muted">
-        {t('marketplace_management.plugins.detail.select_prompt')}
-      </div>
-    )
-  }
-
   const parsedScore = Number(score)
   const scoreValid = Number.isInteger(parsedScore) && parsedScore >= 0 && parsedScore <= 100
-  const dirty =
-    description !== plugin.description ||
-    parsedScore !== plugin.featured_rank ||
-    isListed !== plugin.is_listed
+  const dirty = Boolean(
+    plugin &&
+    (description !== plugin.description ||
+      parsedScore !== plugin.featured_rank ||
+      isListed !== plugin.is_listed)
+  )
 
   const reset = () => {
+    if (!plugin) return
     setDescription(plugin.description)
     setScore(String(plugin.featured_rank))
     setIsListed(plugin.is_listed)
   }
 
   return (
-    <div className="flex h-full min-h-[34rem] flex-col" data-testid="plugin-management-detail">
-      <div className="flex items-start gap-3 border-b border-border px-5 py-5">
-        <PluginMark plugin={plugin} />
-        <div className="min-w-0 flex-1">
-          <h3 className="truncate text-lg font-semibold text-text-primary">
-            {plugin.display_name}
-          </h3>
-          <p className="mt-0.5 truncate font-mono text-xs text-text-muted">{plugin.name}</p>
-        </div>
-      </div>
+    <Drawer direction="right" open={plugin !== null} onOpenChange={onOpenChange}>
+      <DrawerContent
+        className="ml-auto h-screen w-full max-w-[640px] rounded-none bg-base"
+        showHandle={false}
+        data-testid="plugin-management-detail-drawer"
+      >
+        <DrawerHeader className="flex-row items-start justify-between gap-4 border-b border-border px-5 py-4 text-left">
+          <div className="min-w-0">
+            <DrawerTitle className="truncate">{plugin?.display_name ?? ''}</DrawerTitle>
+            <DrawerDescription className="mt-1 truncate font-mono">
+              {plugin?.name ?? ''}
+            </DrawerDescription>
+          </div>
+          <DrawerClose asChild>
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon"
+              className="h-11 w-11 shrink-0"
+              aria-label={t('marketplace_management.plugins.actions.close')}
+              data-testid="plugin-management-detail-close"
+            >
+              <X className="h-5 w-5" aria-hidden />
+            </Button>
+          </DrawerClose>
+        </DrawerHeader>
 
-      <div className="flex-1 space-y-5 px-5 py-5">
-        <div className="flex flex-wrap items-center gap-2">
-          <span className="text-sm text-text-muted">
-            {t('marketplace_management.plugins.detail.source')}
-          </span>
-          <Tag variant={plugin.catalog_namespace === 'wework-official' ? 'info' : 'default'}>
-            {t(`marketplace_management.plugins.sources.${plugin.catalog_namespace}`)}
-          </Tag>
-          <Tag variant={isListed ? 'success' : 'warning'}>
-            {t(
-              isListed
-                ? 'marketplace_management.plugins.statuses.listed'
-                : 'marketplace_management.plugins.statuses.unlisted'
-            )}
-          </Tag>
-        </div>
+        {plugin ? (
+          <>
+            <ScrollArea className="min-h-0 flex-1">
+              <div className="space-y-5 px-5 py-5" data-testid="plugin-management-detail">
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="text-sm text-text-muted">
+                    {t('marketplace_management.plugins.detail.source')}
+                  </span>
+                  <Tag
+                    variant={plugin.catalog_namespace === 'wework-official' ? 'info' : 'default'}
+                  >
+                    {t(`marketplace_management.plugins.sources.${plugin.catalog_namespace}`)}
+                  </Tag>
+                  <Tag variant={isListed ? 'success' : 'warning'}>
+                    {t(
+                      isListed
+                        ? 'marketplace_management.plugins.statuses.listed'
+                        : 'marketplace_management.plugins.statuses.unlisted'
+                    )}
+                  </Tag>
+                </div>
 
-        <div className="space-y-2">
-          <Label htmlFor="plugin-marketplace-description">
-            {t('marketplace_management.plugins.detail.description')}
-          </Label>
-          <Textarea
-            id="plugin-marketplace-description"
-            value={description}
-            maxLength={500}
-            rows={5}
-            onChange={event => setDescription(event.target.value)}
-            data-testid="plugin-management-description"
-          />
-          <div className="text-right text-xs text-text-muted">{description.length}/500</div>
-        </div>
+                <div className="space-y-2">
+                  <Label htmlFor="plugin-marketplace-description">
+                    {t('marketplace_management.plugins.detail.description')}
+                  </Label>
+                  <Textarea
+                    id="plugin-marketplace-description"
+                    value={description}
+                    maxLength={500}
+                    rows={5}
+                    onChange={event => setDescription(event.target.value)}
+                    data-testid="plugin-management-description"
+                  />
+                  <div className="text-right text-xs text-text-muted">{description.length}/500</div>
+                </div>
 
-        <div className="space-y-2">
-          <Label htmlFor="plugin-marketplace-score">
-            {t('marketplace_management.plugins.detail.score')}
-          </Label>
-          <Input
-            id="plugin-marketplace-score"
-            type="number"
-            min={0}
-            max={100}
-            step={1}
-            value={score}
-            onChange={event => setScore(event.target.value)}
-            aria-invalid={!scoreValid}
-            data-testid="plugin-management-score"
-          />
-          <p className={cn('text-xs', scoreValid ? 'text-text-muted' : 'text-error')}>
-            {t(
-              scoreValid
-                ? 'marketplace_management.plugins.detail.score_hint'
-                : 'marketplace_management.plugins.detail.score_invalid'
-            )}
-          </p>
-        </div>
+                <div className="space-y-2">
+                  <Label htmlFor="plugin-marketplace-score">
+                    {t('marketplace_management.plugins.detail.score')}
+                  </Label>
+                  <Input
+                    id="plugin-marketplace-score"
+                    type="number"
+                    min={0}
+                    max={100}
+                    step={1}
+                    value={score}
+                    onChange={event => setScore(event.target.value)}
+                    aria-invalid={!scoreValid}
+                    data-testid="plugin-management-score"
+                  />
+                  <p className={cn('text-xs', scoreValid ? 'text-text-muted' : 'text-error')}>
+                    {t(
+                      scoreValid
+                        ? 'marketplace_management.plugins.detail.score_hint'
+                        : 'marketplace_management.plugins.detail.score_invalid'
+                    )}
+                  </p>
+                </div>
 
-        <div className="space-y-2">
-          <Label>{t('marketplace_management.plugins.detail.listing')}</Label>
-          <RadioGroup
-            value={isListed ? 'listed' : 'unlisted'}
-            onValueChange={value => setIsListed(value === 'listed')}
-            className="gap-3 rounded-lg bg-surface px-4 py-3"
-            data-testid="plugin-management-listing"
-          >
-            <div className="flex items-start gap-2.5">
-              <RadioGroupItem
-                id="plugin-marketplace-listing-listed"
-                value="listed"
-                data-testid="plugin-management-listing-listed"
-              />
-              <div className="min-w-0">
-                <Label htmlFor="plugin-marketplace-listing-listed">
-                  {t('marketplace_management.plugins.statuses.listed')}
-                </Label>
-                <p className="mt-0.5 text-xs text-text-muted">
-                  {t('marketplace_management.plugins.detail.listed_hint')}
-                </p>
+                <div className="space-y-2">
+                  <Label>{t('marketplace_management.plugins.detail.listing')}</Label>
+                  <RadioGroup
+                    value={isListed ? 'listed' : 'unlisted'}
+                    onValueChange={value => setIsListed(value === 'listed')}
+                    className="gap-3 rounded-lg bg-surface px-4 py-3"
+                    data-testid="plugin-management-listing"
+                  >
+                    <div className="flex items-start gap-2.5">
+                      <RadioGroupItem
+                        id="plugin-marketplace-listing-listed"
+                        value="listed"
+                        data-testid="plugin-management-listing-listed"
+                      />
+                      <div className="min-w-0">
+                        <Label htmlFor="plugin-marketplace-listing-listed">
+                          {t('marketplace_management.plugins.statuses.listed')}
+                        </Label>
+                        <p className="mt-0.5 text-xs text-text-muted">
+                          {t('marketplace_management.plugins.detail.listed_hint')}
+                        </p>
+                      </div>
+                    </div>
+                    <div className="flex items-start gap-2.5">
+                      <RadioGroupItem
+                        id="plugin-marketplace-listing-unlisted"
+                        value="unlisted"
+                        data-testid="plugin-management-listing-unlisted"
+                      />
+                      <div className="min-w-0">
+                        <Label htmlFor="plugin-marketplace-listing-unlisted">
+                          {t('marketplace_management.plugins.statuses.unlisted')}
+                        </Label>
+                        <p className="mt-0.5 text-xs text-text-muted">
+                          {t('marketplace_management.plugins.detail.unlisted_hint')}
+                        </p>
+                      </div>
+                    </div>
+                  </RadioGroup>
+                </div>
+
+                <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-2 border-t border-border pt-4 text-xs">
+                  <dt className="text-text-muted">
+                    {t('marketplace_management.plugins.detail.version')}
+                  </dt>
+                  <dd className="text-text-secondary">
+                    {plugin.version ? `v${plugin.version}` : '-'}
+                  </dd>
+                  <dt className="text-text-muted">
+                    {t('marketplace_management.plugins.detail.author')}
+                  </dt>
+                  <dd className="text-text-secondary">{plugin.author || '-'}</dd>
+                  <dt className="text-text-muted">
+                    {t('marketplace_management.plugins.detail.created_at')}
+                  </dt>
+                  <dd className="text-text-secondary">{formatUTC8DateTime(plugin.created_at)}</dd>
+                  <dt className="text-text-muted">
+                    {t('marketplace_management.plugins.detail.updated_at')}
+                  </dt>
+                  <dd className="text-text-secondary">{formatUTC8DateTime(plugin.updated_at)}</dd>
+                </dl>
               </div>
-            </div>
-            <div className="flex items-start gap-2.5">
-              <RadioGroupItem
-                id="plugin-marketplace-listing-unlisted"
-                value="unlisted"
-                data-testid="plugin-management-listing-unlisted"
-              />
-              <div className="min-w-0">
-                <Label htmlFor="plugin-marketplace-listing-unlisted">
-                  {t('marketplace_management.plugins.statuses.unlisted')}
-                </Label>
-                <p className="mt-0.5 text-xs text-text-muted">
-                  {t('marketplace_management.plugins.detail.unlisted_hint')}
-                </p>
-              </div>
-            </div>
-          </RadioGroup>
-        </div>
+            </ScrollArea>
 
-        <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-2 border-t border-border pt-4 text-xs">
-          <dt className="text-text-muted">{t('marketplace_management.plugins.detail.version')}</dt>
-          <dd className="text-text-secondary">{plugin.version ? `v${plugin.version}` : '-'}</dd>
-          <dt className="text-text-muted">{t('marketplace_management.plugins.detail.author')}</dt>
-          <dd className="text-text-secondary">{plugin.author || '-'}</dd>
-          <dt className="text-text-muted">
-            {t('marketplace_management.plugins.detail.created_at')}
-          </dt>
-          <dd className="text-text-secondary">{formatUTC8DateTime(plugin.created_at)}</dd>
-          <dt className="text-text-muted">
-            {t('marketplace_management.plugins.detail.updated_at')}
-          </dt>
-          <dd className="text-text-secondary">{formatUTC8DateTime(plugin.updated_at)}</dd>
-        </dl>
-      </div>
-
-      <div className="flex items-center justify-end gap-2 border-t border-border px-5 py-4">
-        {dirty ? (
-          <span className="mr-auto text-xs text-warning">
-            {t('marketplace_management.plugins.detail.unsaved')}
-          </span>
+            <div className="flex items-center justify-end gap-2 border-t border-border px-5 py-4">
+              {dirty ? (
+                <span className="mr-auto text-xs text-warning">
+                  {t('marketplace_management.plugins.detail.unsaved')}
+                </span>
+              ) : null}
+              <Button
+                type="button"
+                variant="outline"
+                onClick={reset}
+                disabled={!dirty || saving}
+                data-testid="plugin-management-cancel"
+              >
+                {t('marketplace_management.plugins.actions.cancel')}
+              </Button>
+              <Button
+                type="button"
+                variant="primary"
+                disabled={!dirty || !scoreValid || saving}
+                onClick={() =>
+                  onSave({ description, featured_rank: parsedScore, is_listed: isListed })
+                }
+                data-testid="plugin-management-save"
+              >
+                {saving ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden /> : null}
+                {t('marketplace_management.plugins.actions.save')}
+              </Button>
+            </div>
+          </>
         ) : null}
-        <Button
-          type="button"
-          variant="outline"
-          onClick={reset}
-          disabled={!dirty || saving}
-          data-testid="plugin-management-cancel"
-        >
-          {t('marketplace_management.plugins.actions.cancel')}
-        </Button>
-        <Button
-          type="button"
-          variant="primary"
-          disabled={!dirty || !scoreValid || saving}
-          onClick={() => onSave({ description, featured_rank: parsedScore, is_listed: isListed })}
-          data-testid="plugin-management-save"
-        >
-          {saving ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden /> : null}
-          {t('marketplace_management.plugins.actions.save')}
-        </Button>
-      </div>
-    </div>
+      </DrawerContent>
+    </Drawer>
   )
 }
 
@@ -278,7 +317,7 @@ export default function PluginMarketplaceManagement() {
   const loadRequestRef = useRef(0)
   const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE))
   const selectedPlugin = useMemo(
-    () => items.find(item => item.id === selectedId) ?? items[0] ?? null,
+    () => items.find(item => item.id === selectedId) ?? null,
     [items, selectedId]
   )
   const pluginGroups = useMemo(
@@ -315,9 +354,7 @@ export default function PluginMarketplaceManagement() {
         setItems(response.items)
         setTotal(response.total)
         setSelectedId(current =>
-          response.items.some(item => item.id === current)
-            ? current
-            : (response.items[0]?.id ?? null)
+          response.items.some(item => item.id === current) ? current : null
         )
       }
     } catch {
@@ -380,8 +417,8 @@ export default function PluginMarketplaceManagement() {
   return (
     <div data-testid="plugin-marketplace-management">
       <div className="overflow-hidden rounded-xl border border-border bg-base">
-        <div className="grid min-h-[42rem] xl:grid-cols-[minmax(0,3fr)_minmax(22rem,2fr)]">
-          <section className="min-w-0 xl:border-r xl:border-border">
+        <div className="min-h-[42rem]">
+          <section className="min-w-0">
             <div className="grid gap-2 border-b border-border p-3 sm:grid-cols-2 lg:grid-cols-[minmax(14rem,1fr)_10rem_10rem_auto]">
               <div className="relative min-w-0 sm:col-span-2 lg:col-span-1">
                 <Search
@@ -642,12 +679,17 @@ export default function PluginMarketplaceManagement() {
               </div>
             </div>
           </section>
-
-          <aside className="min-w-0 border-t border-border bg-base xl:border-t-0">
-            <PluginDetailsPanel plugin={selectedPlugin} saving={saving} onSave={handleSave} />
-          </aside>
         </div>
       </div>
+
+      <PluginEditDrawer
+        plugin={selectedPlugin}
+        saving={saving}
+        onOpenChange={open => {
+          if (!open) setSelectedId(null)
+        }}
+        onSave={handleSave}
+      />
     </div>
   )
 }

@@ -83,6 +83,10 @@ describe('PluginMarketplaceManagement', () => {
       listingStatus: 'all',
       scoreOrder: 'desc',
     })
+    expect(screen.queryByTestId('plugin-management-description')).not.toBeInTheDocument()
+
+    fireEvent.click(screen.getByTestId('plugin-management-row-11'))
+    expect(screen.getByTestId('plugin-management-detail-drawer')).toBeInTheDocument()
 
     fireEvent.change(screen.getByTestId('plugin-management-description'), {
       target: { value: 'Updated product design description' },
@@ -100,6 +104,15 @@ describe('PluginMarketplaceManagement', () => {
         is_listed: false,
       })
     )
+
+    fireEvent.click(screen.getByTestId('plugin-management-detail-close'))
+    await waitFor(() =>
+      expect(screen.getByTestId('plugin-management-detail-drawer')).toHaveAttribute(
+        'data-state',
+        'closed'
+      )
+    )
+    expect(screen.queryByTestId('plugin-management-description')).not.toBeInTheDocument()
   })
 
   it('switches selection and requests ascending recommendation-score order', async () => {
@@ -108,6 +121,7 @@ describe('PluginMarketplaceManagement', () => {
     await screen.findByTestId('plugin-management-row-11')
     fireEvent.click(screen.getByTestId('plugin-management-row-22'))
 
+    expect(screen.getByTestId('plugin-management-detail-drawer')).toBeInTheDocument()
     expect(screen.getByTestId('plugin-management-description')).toHaveValue(
       'Search and send company email'
     )

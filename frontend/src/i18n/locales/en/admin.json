@@ -133,7 +133,6 @@
         "updated_at": "Updated"
       },
       "detail": {
-        "select_prompt": "Select a plugin to edit its marketplace information.",
         "source": "Source",
         "description": "Marketplace description",
         "score": "Recommendation score",
@@ -151,6 +150,7 @@
       "actions": {
         "save": "Save changes",
         "cancel": "Cancel",
+        "close": "Close plugin editor",
         "refresh": "Refresh plugin list",
         "retry": "Try again",
         "reset_filters": "Reset filters"

@@ -133,7 +133,6 @@
         "updated_at": "更新时间"
       },
       "detail": {
-        "select_prompt": "选择一个插件后，可在这里编辑市场信息。",
         "source": "来源",
         "description": "市场描述",
         "score": "推荐分",
@@ -151,6 +150,7 @@
       "actions": {
         "save": "保存更改",
         "cancel": "取消",
+        "close": "关闭插件编辑",
         "refresh": "刷新插件列表",
         "retry": "重新加载",
         "reset_filters": "重置筛选"
