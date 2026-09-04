@@ -608,7 +608,11 @@ export function SmartAppsMarketplacePage({
     if (!copyInstallation) return
     setCreating(true)
     try {
-      const installation = await harnessAppsApi.copyToDirectory(copyInstallation.id, input)
+      const installation = await harnessAppsApi.copyToDirectory(copyInstallation.id, {
+        parentPath: input.parentPath,
+        name: input.name,
+        displayName: input.displayName,
+      })
       notifyHarnessAppInstallationsChanged({
         type: 'installed',
         installationId: installation.id,

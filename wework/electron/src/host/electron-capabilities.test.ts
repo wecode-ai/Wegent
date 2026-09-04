@@ -33,6 +33,13 @@ describe('cpuLoadRatioBetween', () => {
   })
 })
 
+describe('Smart App verification capabilities', () => {
+  test('grants only the named inspect and verify operations', () => {
+    expect(HOST_CAPABILITIES).toContain('smartApps.inspectVerification')
+    expect(HOST_CAPABILITIES).toContain('smartApps.verify')
+  })
+})
+
 describe('e2eOpenDialogOverride', () => {
   test('returns the selected directory only for a controlled desktop E2E process', () => {
     expect(

@@ -70,4 +70,63 @@ describe('WeworkDesktopControlBridge', () => {
     await bridge.stop()
     await expect(readdir(registryDirectory)).resolves.toEqual([])
   })
+
+  test('exposes only fixed Smart App verification actions', async () => {
+    const registryDirectory = await mkdtemp(join(tmpdir(), 'wework-control-smart-app-'))
+    directories.push(registryDirectory)
+    const inspectProject = vi.fn().mockResolvedValue({ status: 'passed' })
+    const verifyProject = vi.fn().mockResolvedValue({ status: 'passed' })
+    const packProject = vi.fn().mockResolvedValue({ archivePath: '/workspace/app.zip' })
+    const bridge = new WeworkDesktopControlBridge({
+      instanceId: 'main',
+      instanceKind: 'main',
+      displayName: 'Wework',
+      projectRoot: null,
+      registryDirectory,
+      window: () => null,
+      smartApps: () => ({ inspectProject, verifyProject, packProject }),
+    })
+    await bridge.start()
+    const [filename] = await readdir(registryDirectory)
+    const record = JSON.parse(await readFile(join(registryDirectory, filename), 'utf8'))
+    const headers = {
+      Authorization: `Bearer ${record.token}`,
+      'content-type': 'application/json',
+    }
+
+    const inspect = await fetch(`http://${record.address}/smart-app`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ action: 'inspect', projectRoot: '/workspace/app' }),
+    }).then(response => response.json())
+    expect(inspect).toEqual({ ok: true, data: { status: 'passed' } })
+    expect(inspectProject).toHaveBeenCalledWith('/workspace/app')
+
+    const packed = await fetch(`http://${record.address}/smart-app`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({
+        action: 'pack',
+        projectRoot: '/workspace/app',
+        outputPath: '/workspace/app.zip',
+      }),
+    }).then(response => response.json())
+    expect(packed).toEqual({ ok: true, data: { archivePath: '/workspace/app.zip' } })
+    expect(packProject).toHaveBeenCalledWith('/workspace/app', '/workspace/app.zip')
+
+    const arbitrary = await fetch(`http://${record.address}/smart-app`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({
+        action: 'run',
+        projectRoot: '/workspace/app',
+        command: 'node',
+        argv: ['malicious.js'],
+      }),
+    }).then(response => response.json())
+    expect(arbitrary).toMatchObject({ ok: false, error: expect.stringContaining('request') })
+    expect(verifyProject).not.toHaveBeenCalled()
+
+    await bridge.stop()
+  })
 })
