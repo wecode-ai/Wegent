@@ -4706,6 +4706,7 @@ describe('DesktopWorkbenchLayout', () => {
     await userEvent.click(screen.getByTestId('project-create-remote-option'))
 
     const select = screen.getByTestId('standalone-remote-device-select')
+    expect(select).toHaveClass('wework-native-select')
     expect(select).toHaveTextContent('云设备')
     expect(select).toHaveTextContent('远程 Docker 设备')
     expect(select).toHaveTextContent('Cloud Device')
