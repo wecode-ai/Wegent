@@ -4,7 +4,7 @@ import { waitForWorkbenchDebugState } from '../modules/workspace-flows.mjs'
 
 const ACTIVE_SURFACE = '[data-workspace-tab-content][aria-hidden="false"]'
 const COMPOSER = '[data-testid="desktop-empty-composer-frame"] [data-testid="chat-message-input"]'
-const FIRST_PROMPT = 'SPLIT LEFT TASK'
+const FIRST_PROMPT = 'SPLIT LEFT TASK: investigate online Connector authentication'
 const SECOND_PROMPT = 'SPLIT RIGHT TASK'
 const THIRD_PROMPT = 'SPLIT OUTSIDE TASK'
 const PANE_SELECTOR = '[data-testid^="workbench-pane-"][data-focused]'
