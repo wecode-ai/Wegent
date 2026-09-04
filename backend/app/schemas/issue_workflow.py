@@ -606,6 +606,7 @@ class WorkflowNodeInstance(WorkflowNodeDefinition):
     task_ids: list[str] = Field(default_factory=list, max_length=100)
     task_statuses: dict[str, str] = Field(default_factory=dict)
     delivery_ids: list[str] = Field(default_factory=list, max_length=100)
+    trigger_event: dict[str, Any] | None = None
     decision_history: list["WorkflowNodeDecision"] = Field(
         default_factory=list, max_length=100
     )

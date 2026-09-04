@@ -149,3 +149,41 @@ def test_inherit_resolves_predecessor_outside_loop(test_db):
     assert with_runtime[-1]["stage_id"] == "stepA"
     assert with_runtime[-1]["runtime_tasks"][0]["task_id"] == "runtime-task-A"
     assert with_runtime[-1]["runtime_tasks"][0]["device_id"] == "desktop-1"
+
+
+def test_trigger_event_is_compiled_into_stage_instruction(test_db):
+    item = _item(test_db)
+    workflow = dict(item.metadata_json["workflow"])
+    nodes = [dict(node) for node in workflow["nodes"]]
+    fix = next(node for node in nodes if node["id"] == "fix")
+    fix["trigger_event"] = {
+        "source": "gitlab",
+        "event_type": "change_request.comment_created",
+        "event_id": "event-1",
+        "subject_id": str(item.id),
+        "payload": {
+            "subject": {
+                "provider": "gitlab",
+                "url": "https://gitlab.example/acme/app/-/merge_requests/7",
+                "repository": "acme/app",
+                "number": 7,
+            }
+        },
+    }
+    workflow["nodes"] = nodes
+    item.metadata_json = {**item.metadata_json, "workflow": workflow}
+    test_db.commit()
+    item = test_db.get(LoopItem, item.id)
+
+    snapshot = WorkflowStageContextResolver().resolve(
+        test_db,
+        item=item,
+        target_node_id="fix",
+    )
+
+    assert snapshot["trigger_event"]["payload"]["subject"]["number"] == 7
+    instruction = snapshot["compiled_task_instruction"]
+    assert "Provider：gitlab" in instruction
+    assert "MR/PR：7" in instruction
+    assert "https://gitlab.example/acme/app/-/merge_requests/7" in instruction
+    assert "glab" in instruction

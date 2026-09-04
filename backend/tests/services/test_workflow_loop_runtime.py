@@ -590,13 +590,13 @@ def test_route_event_matches_platform_specific_condition(test_db):
         {
             "source_type": "github",
             "event_type": "change_request.merged",
-            "handler_node_ids": ["fix1"],
+            "handler_node_ids": ["le"],
             "collection_mode": None,
         },
         {
             "source_type": "gitlab",
             "event_type": "change_request.merged",
-            "handler_node_ids": ["le"],
+            "handler_node_ids": ["fix1"],
             "collection_mode": None,
         },
     ]
@@ -611,13 +611,13 @@ def test_route_event_matches_platform_specific_condition(test_db):
         {
             "source_type": "github",
             "event_type": "change_request.merged",
-            "handler_node_ids": ["fix1"],
+            "handler_node_ids": ["le"],
             "collection_mode": None,
         },
         {
             "source_type": "gitlab",
             "event_type": "change_request.merged",
-            "handler_node_ids": ["le"],
+            "handler_node_ids": ["fix1"],
             "collection_mode": None,
         },
     ]
@@ -647,7 +647,10 @@ def test_route_event_matches_platform_specific_condition(test_db):
     assert routed is item
     by_id = {node["id"]: node for node in routed.metadata_json["workflow"]["nodes"]}
     assert by_id["br"]["active_condition"] == "gitlab:change_request.merged"
-    assert by_id["le"]["status"] == "completed"
+    assert by_id["fix1"]["trigger_event"]["source"] == "gitlab"
+    assert by_id["fix1"]["trigger_event"]["event_type"] == "change_request.merged"
+    assert by_id["fix1"]["trigger_event"]["payload"]["subject"]["number"] == 7
+    assert by_id["le"]["status"] == "blocked"
     assert by_id["fix1"].get("automation_run_id") is None
 
 

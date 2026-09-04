@@ -101,6 +101,45 @@ def _deliverable_requirement_line(requirement: dict[str, Any]) -> str:
     return "\n".join(details)
 
 
+def _trigger_event_section(trigger_event: dict[str, Any]) -> str:
+    provider = str(trigger_event.get("source") or "")
+    event_type = str(trigger_event.get("event_type") or "")
+    payload = trigger_event.get("payload")
+    payload = payload if isinstance(payload, dict) else {}
+    subject = payload.get("subject")
+    subject = subject if isinstance(subject, dict) else {}
+    repository = subject.get("repository") or payload.get("repository")
+    repository = repository if isinstance(repository, dict) else {}
+    repository_name = (
+        repository.get("full_name")
+        or repository.get("path_with_namespace")
+        or repository.get("name")
+        or ""
+    )
+    number = subject.get("number") or subject.get("iid")
+    subject_url = subject.get("url") or subject.get("web_url") or ""
+    lines = [
+        "## 分支触发事件",
+        "",
+        f"- Provider：{provider}",
+        f"- 事件类型：{event_type}",
+        f"- Event ID：{trigger_event.get('event_id') or ''}",
+        f"- Subject ID：{trigger_event.get('subject_id') or ''}",
+    ]
+    if repository_name:
+        lines.append(f"- 仓库：{repository_name}")
+    if number:
+        lines.append(f"- MR/PR：{number}")
+    if subject_url:
+        lines.append(f"- MR/PR 链接：{subject_url}")
+    if provider == "github":
+        lines.append("- 建议命令：如需查看 PR、评论或 CI，请使用 gh。")
+    elif provider == "gitlab":
+        lines.append("- 建议命令：如需查看 MR、评论或 pipeline，请使用 glab。")
+    lines.extend(["", "### 原始事件 Payload", "", _json_block(payload)])
+    return "\n".join(lines)
+
+
 def workflow_stage_task_instruction(stage_input: dict[str, Any]) -> str:
     """Compile the concrete task instruction shared by every stage launcher."""
 
@@ -127,6 +166,9 @@ def workflow_stage_task_instruction(stage_input: dict[str, Any]) -> str:
     prompt = str(target.get("prompt") or "").strip()
     if prompt:
         sections.append(f"## 当前节点任务\n\n{prompt}")
+    trigger_event = stage_input.get("trigger_event")
+    if isinstance(trigger_event, dict):
+        sections.append(_trigger_event_section(trigger_event))
     dependencies = stage_input.get("dependencies")
     normalized_dependencies = (
         [value for value in dependencies if isinstance(value, dict)]
@@ -287,6 +329,7 @@ class WorkflowStageContextResolver:
                 "workspace_policy": str(target.get("workspace_policy") or "composer"),
             },
             "dependencies": dependencies,
+            "trigger_event": target.get("trigger_event"),
         }
         encoded = json.dumps(
             snapshot,

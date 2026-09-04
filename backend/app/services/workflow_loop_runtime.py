@@ -104,12 +104,43 @@ def _start_reaction(branch: dict, event: Mapping[str, Any]) -> None:
     branch["active_condition"] = _condition_key(
         event.get("source"), event["event_type"]
     )
-    branch["last_event"] = {
-        "source": event.get("source") or "github",
-        "event_type": event["event_type"],
-        "event_id": event.get("event_id") or "",
-        "subject_id": event.get("subject_id") or "",
+    branch["last_event"] = _event_snapshot(event)
+
+
+def _event_snapshot(event: Mapping[str, Any]) -> dict[str, Any]:
+    if isinstance(event, ProjectAutomationEvent):
+        payload = event.payload
+        source = event.source
+        event_type = event.event_type
+        event_id = event.event_id
+        subject_id = event.subject_id
+    else:
+        payload = event.get("payload")
+        source = event.get("source")
+        event_type = event.get("event_type")
+        event_id = event.get("event_id")
+        subject_id = event.get("subject_id")
+    return {
+        "source": source or "github",
+        "event_type": event_type,
+        "event_id": event_id or "",
+        "subject_id": subject_id or "",
+        "payload": dict(payload) if isinstance(payload, Mapping) else {},
     }
+
+
+def _release_handlers(branch: dict, nodes: list[dict], handler_ids: set[str]) -> None:
+    """Release direct handlers with the event that matched their condition."""
+
+    snapshot = branch.get("last_event")
+    snapshot = dict(snapshot) if isinstance(snapshot, dict) else None
+    for node in nodes:
+        if node.get("id") not in handler_ids or node.get("node_type") != "task":
+            continue
+        if node.get("status") in COMPLETED:
+            node.pop("trigger_event", None)
+        elif snapshot is not None and node.get("status") == "blocked":
+            node["trigger_event"] = snapshot
 
 
 def _consume_pending(branch: dict) -> None:
@@ -184,6 +215,7 @@ def advance_root_branches(nodes: list[dict]) -> None:
                 handler_deps.discard(branch.get("id"))
                 if handler_deps <= completed:
                     handler["status"] = "ready"
+            _release_handlers(branch, nodes, handler_ids)
             if not all(handler.get("status") in COMPLETED for handler in handlers):
                 break
             completed.update(handler.get("id") for handler in handlers)
@@ -295,6 +327,7 @@ def _advance_loop(
                     branch["active_condition"] = None
                 else:
                     handler_ids = set(condition.get("handler_node_ids") or [])
+                    _release_handlers(branch, nodes, handler_ids)
                     for node in body:
                         if (
                             node.get("id") in handler_ids
@@ -355,6 +388,7 @@ def _reset_iteration(loop: dict, nodes: list[dict]) -> None:
         node["task_ids"] = []
         node["automation_run_id"] = None
         node["execution_id"] = None
+        node.pop("trigger_event", None)
 
 
 def _workflow_nodes(item: LoopItem) -> list[dict] | None:
@@ -485,29 +519,14 @@ def route_event_to_workflow_loop(
             isinstance(entry, dict) and entry.get("event_id") == event_id
             for entry in pending
         ):
-            pending.append(
-                {
-                    "source": event.source,
-                    "event_type": event.event_type,
-                    "event_id": event_id,
-                    "subject_id": event.subject_id,
-                }
-            )
+            pending.append(_event_snapshot(event))
             branch["pending_events"] = pending
             _save_workflow(item, nodes, workflow)
             db.commit()
             db.refresh(item)
         return item
 
-    _start_reaction(
-        branch,
-        {
-            "source": event.source,
-            "event_type": event.event_type,
-            "event_id": event.event_id,
-            "subject_id": event.subject_id,
-        },
-    )
+    _start_reaction(branch, _event_snapshot(event))
     advance_loops(nodes)
     advance_root_branches(nodes)
     if _workflow_terminal(nodes):
@@ -710,15 +729,7 @@ def catch_up_branch_events(
                 continue
             if not _subject_matches_item(db, item, event):
                 continue
-            _apply_condition_event(
-                branch,
-                {
-                    "source": event.source,
-                    "event_type": event.event_type,
-                    "event_id": event.event_id or "",
-                    "subject_id": event.subject_id,
-                },
-            )
+            _apply_condition_event(branch, _event_snapshot(event))
 
 
 def scan_loop_timeouts(db: Session) -> int:
