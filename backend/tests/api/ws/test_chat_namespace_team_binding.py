@@ -9,6 +9,7 @@ from types import ModuleType, SimpleNamespace
 from unittest.mock import Mock
 
 import pytest
+from pytest import MonkeyPatch
 
 chat_shell_module = ModuleType("chat_shell")
 chat_shell_models_module = ModuleType("chat_shell.models")
@@ -87,7 +88,7 @@ def test_team_ref_without_name_keeps_client_team() -> None:
     assert result is client_team
 
 
-def test_legacy_team_ref_without_owner_uses_reader(monkeypatch) -> None:
+def test_legacy_team_ref_without_owner_uses_reader(monkeypatch: MonkeyPatch) -> None:
     task = _task(
         {
             "name": "creator-php-workflow",
@@ -112,7 +113,7 @@ def test_legacy_team_ref_without_owner_uses_reader(monkeypatch) -> None:
     assert args[4] == "creator-php-workflow"
 
 
-def test_legacy_team_ref_missing_team_raises(monkeypatch) -> None:
+def test_legacy_team_ref_missing_team_raises(monkeypatch: MonkeyPatch) -> None:
     task = _task(
         {
             "name": "creator-php-workflow",
