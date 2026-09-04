@@ -19,6 +19,24 @@ body[data-wework-panel-resizing] [data-testid='workspace-browser-frame'] {
   pointer-events: none !important;
 }
 
+.wework-native-select {
+  color-scheme: inherit;
+}
+
+.wework-native-select optgroup {
+  background-color: rgb(var(--color-popover));
+  color: rgb(var(--color-text-secondary));
+}
+
+.wework-native-select option {
+  background-color: rgb(var(--color-popover));
+  color: rgb(var(--color-text-primary));
+}
+
+.wework-native-select option:disabled {
+  color: rgb(var(--color-text-muted));
+}
+
 :root {
   color-scheme: light;
   --color-bg-base: 255 255 255;
