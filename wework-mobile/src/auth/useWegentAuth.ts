@@ -50,14 +50,21 @@ export function useWegentAuth(): WegentAuthState {
   const activeGeneration = useRef(0)
 
   const applyToken = useCallback(
-    async (config: BackendConfig, token: string, explicitExpiry?: number): Promise<void> => {
+    async (
+      config: BackendConfig,
+      token: string,
+      generation: number,
+      explicitExpiry?: number
+    ): Promise<boolean> => {
       const currentUser = await fetchCurrentUser(config, token)
+      if (activeGeneration.current !== generation) return false
       setBackend(config)
       setAccessToken(token)
       setAccessTokenExpiresAt(explicitExpiry ?? jwtExpiry(token))
       setUser(currentUser)
       setError(null)
       setStatus('authenticated')
+      return true
     },
     []
   )
@@ -68,12 +75,12 @@ export function useWegentAuth(): WegentAuthState {
     try {
       const result = await credentials.refreshAccessToken(backend.apiBaseUrl)
       if (activeGeneration.current !== generation) return false
-      await applyToken(
+      return await applyToken(
         backend,
         result.accessToken,
+        generation,
         result.expiresIn > 0 ? Date.now() + result.expiresIn * 1000 : undefined
       )
-      return true
     } catch (cause) {
       if (activeGeneration.current !== generation) return false
       setAccessToken(null)
@@ -109,6 +116,7 @@ export function useWegentAuth(): WegentAuthState {
         await applyToken(
           config,
           result.accessToken,
+          generation,
           result.expiresIn > 0 ? Date.now() + result.expiresIn * 1000 : undefined
         )
       } catch (cause) {
@@ -137,13 +145,17 @@ export function useWegentAuth(): WegentAuthState {
       const requestedBackend = backendInput.trim()
       if (!requestedBackend) throw new Error('请输入 Backend 地址')
       const config = await resolveBackendConfig(requestedBackend)
+      if (activeGeneration.current !== generation) return
       await checkBackendHealth(config)
       if (activeGeneration.current !== generation) return
       await saveBackendAddress(config.backendUrl)
+      if (activeGeneration.current !== generation) return
       setBackendInput(config.backendUrl)
       setBackend(config)
       const publicKey = await credentials.publicKey()
+      if (activeGeneration.current !== generation) return
       const session = await createAuthorizationSession(config, publicKey)
+      if (activeGeneration.current !== generation) return
       void WebBrowser.openBrowserAsync(session.authorize_url, {
         presentationStyle: WebBrowser.WebBrowserPresentationStyle.FORM_SHEET,
         controlsColor: '#181818',
@@ -153,17 +165,21 @@ export function useWegentAuth(): WegentAuthState {
       while (Date.now() < session.expires_at * 1000) {
         await delay(pollDelay)
         if (activeGeneration.current !== generation) return
-        const result = await credentials.claimAuthorization({
-          apiBaseUrl: config.apiBaseUrl,
-          sessionId: session.session_id,
-          pollToken: session.poll_token,
-        })
+        const result = await credentials.claimAuthorization(
+          {
+            apiBaseUrl: config.apiBaseUrl,
+            sessionId: session.session_id,
+            pollToken: session.poll_token,
+          },
+          () => activeGeneration.current === generation
+        )
         if (result.status === 'pending') continue
         if (result.status === 'declined') throw new Error('授权已取消')
         if (result.status === 'failed') throw new Error(result.error || '授权失败')
         if (!result.accessToken) throw new Error('授权没有返回 access token')
+        if (activeGeneration.current !== generation) return
         WebBrowser.dismissBrowser()
-        await applyToken(config, result.accessToken)
+        await applyToken(config, result.accessToken, generation)
         return
       }
       throw new Error('授权已超时，请重新登录')

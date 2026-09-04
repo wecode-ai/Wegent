@@ -17,6 +17,10 @@ import {
   applyRuntimeConversationAction,
   clearRuntimeConversationCacheForTests,
 } from '@/features/workbench/runtimeConversationCache'
+import {
+  resolveTemporaryChatActiveModel,
+  resolveTemporaryChatModelSelection,
+} from '@/features/workbench/temporaryChatModelContext'
 import type {
   WorkbenchContextValue,
   WorkbenchPaneContextValue,
@@ -47,6 +51,7 @@ import { configuredWorkspacePath, executionDeviceId } from '@/lib/project-worksp
 import { setActiveKeybindings } from '@/lib/keybindings'
 import { queueSmartAppDevelopmentPreview } from '@/features/harness-apps/smartAppDevelopmentPreview'
 import { preloadDefaultDshUiTestModules } from '@/test/setup'
+import { navigateTo } from '@/lib/navigation'
 import { installGitUiTestContributions } from '../../../dsh/ui-git/test-support'
 import type { ProjectWithTasks, RuntimeTaskAddress, RuntimeWorkListResponse } from '@/types/api'
 import type { EnvironmentInfo } from '@/types/environment'
@@ -1191,11 +1196,35 @@ describe('DesktopWorkbenchLayout', () => {
         projectWork.pendingProjectWorkspaceProjectId ??
         null,
     }
-    const projectChat = {
+    const projectChatBase = {
       ...baseProps.projectChat,
       isModelSelectionReady: true,
       onBlockedModelSelect: vi.fn(),
       ...props.projectChat,
+    }
+    const projectChat = {
+      ...projectChatBase,
+      resolveRuntimeTaskModelSelection:
+        projectChatBase.resolveRuntimeTaskModelSelection ??
+        ((address: RuntimeTaskAddress) => {
+          const taskSelection = resolveTemporaryChatModelSelection(runtimeWork, address)
+          const taskModel = resolveTemporaryChatActiveModel(
+            projectChatBase.models,
+            runtimeWork,
+            address
+          )
+          return {
+            taskSelection,
+            selectedModel: taskModel,
+            activeModel: taskModel,
+            selectedModelOptions: taskSelection?.options ?? {},
+          }
+        }),
+      setRuntimeTaskSelectedModel: projectChatBase.setRuntimeTaskSelectedModel ?? vi.fn(),
+      setRuntimeTaskSelectedModelAndOptions:
+        projectChatBase.setRuntimeTaskSelectedModelAndOptions ?? vi.fn(),
+      setRuntimeTaskSelectedModelOption:
+        projectChatBase.setRuntimeTaskSelectedModelOption ?? vi.fn(),
     }
     const lifecycleTaskRunning = props.lifecycleTaskRunning ?? Boolean(state.currentRuntimeTask)
     const workbenchValue = {
@@ -1620,6 +1649,171 @@ describe('DesktopWorkbenchLayout', () => {
     await userEvent.click(await screen.findByTestId('settings-button'))
     await userEvent.click(screen.getByTestId('settings-menu-button'))
     expect(window.location.pathname).toBe('/settings')
+
+    await userEvent.click(screen.getByTestId('settings-back-button'))
+
+    expect(window.location.pathname).toBe('/todo')
+    expect(screen.getByTestId('cloud-todo-workspace')).toBeVisible()
+  })
+
+  test('returns to the exact previous workspace route after opening settings', async () => {
+    deliveryApiMock.available = true
+    window.history.pushState({}, '', '/todo?projectId=project-1')
+
+    render(
+      <DesktopWorkbenchLayout
+        {...baseProps}
+        state={{
+          ...baseProps.state,
+          user: {
+            id: 1,
+            user_name: 'local',
+            email: 'local@example.com',
+          },
+        }}
+      />
+    )
+
+    await userEvent.click(await screen.findByTestId('settings-button'))
+    await userEvent.click(screen.getByTestId('settings-menu-button'))
+    expect(window.location.pathname).toBe('/settings')
+
+    await userEvent.click(screen.getByTestId('settings-back-button'))
+
+    expect(window.location.pathname).toBe('/todo')
+    expect(window.location.search).toContain('projectId=project-1')
+    expect(screen.getByTestId('cloud-todo-workspace')).toBeVisible()
+  })
+
+  test('returns to the previous page after opening settings through direct navigation', async () => {
+    deliveryApiMock.available = true
+    window.history.pushState({}, '', '/todo')
+
+    render(
+      <DesktopWorkbenchLayout
+        {...baseProps}
+        state={{
+          ...baseProps.state,
+          user: {
+            id: 1,
+            user_name: 'local',
+            email: 'local@example.com',
+          },
+        }}
+      />
+    )
+
+    act(() => navigateTo('/settings'))
+    expect(window.location.pathname).toBe('/settings')
+
+    await userEvent.click(screen.getByTestId('settings-back-button'))
+
+    expect(window.location.pathname).toBe('/todo')
+    expect(screen.getByTestId('cloud-todo-workspace')).toBeVisible()
+  })
+
+  test('returns to the active workspace tab when the URL is out of sync', async () => {
+    deliveryApiMock.available = true
+    const boardTab = {
+      id: 'board-existing',
+      kind: 'board' as const,
+      title: '工作空间',
+      contentRoute: '/todo',
+      fixed: true,
+    }
+    const workspaceTabs = {
+      tabs: [boardTab],
+      activeTabId: boardTab.id,
+      activeTab: boardTab,
+      openTab: vi.fn(),
+      selectTab: vi.fn(),
+      closeTab: vi.fn(),
+      closeOtherTabs: vi.fn(),
+      restoreClosedTab: vi.fn(),
+      moveTab: vi.fn(),
+      updateActiveTab: vi.fn(),
+    } as unknown as WorkspaceTabsContextValue
+    window.history.pushState({}, '', '/')
+
+    render(
+      <WorkspaceTabsContext.Provider value={workspaceTabs}>
+        <DesktopWorkbenchLayout
+          {...baseProps}
+          surfaceKind="board"
+          state={{
+            ...baseProps.state,
+            user: {
+              id: 1,
+              user_name: 'local',
+              email: 'local@example.com',
+            },
+          }}
+        />
+      </WorkspaceTabsContext.Provider>
+    )
+
+    await userEvent.click(await screen.findByTestId('settings-button'))
+    await userEvent.click(screen.getByTestId('settings-menu-button'))
+    expect(window.location.pathname).toBe('/settings')
+
+    await userEvent.click(screen.getByTestId('settings-back-button'))
+
+    expect(window.location.pathname).toBe('/todo')
+    expect(screen.getByTestId('cloud-todo-workspace')).toBeVisible()
+  })
+
+  test('keeps the settings return path when the layout remounts at the settings route', async () => {
+    deliveryApiMock.available = true
+    const boardTab = {
+      id: 'board-existing',
+      kind: 'board' as const,
+      title: '工作空间',
+      contentRoute: '/todo',
+      fixed: true,
+    }
+    const workspaceTabs = {
+      tabs: [boardTab],
+      activeTabId: boardTab.id,
+      activeTab: boardTab,
+      openTab: vi.fn(),
+      selectTab: vi.fn(),
+      closeTab: vi.fn(),
+      closeOtherTabs: vi.fn(),
+      restoreClosedTab: vi.fn(),
+      moveTab: vi.fn(),
+      updateActiveTab: vi.fn(),
+    } as unknown as WorkspaceTabsContextValue
+    window.sessionStorage.clear()
+    window.history.pushState({}, '', '/')
+
+    const renderLayout = () =>
+      render(
+        <WorkspaceTabsContext.Provider value={workspaceTabs}>
+          <DesktopWorkbenchLayout
+            {...baseProps}
+            surfaceKind="board"
+            state={{
+              ...baseProps.state,
+              user: {
+                id: 1,
+                user_name: 'local',
+                email: 'local@example.com',
+              },
+            }}
+          />
+        </WorkspaceTabsContext.Provider>
+      )
+
+    const first = renderLayout()
+    await userEvent.click(await screen.findByTestId('settings-button'))
+    await userEvent.click(screen.getByTestId('settings-menu-button'))
+    expect(window.location.pathname).toBe('/settings')
+
+    // The workspace tab mutation remounts the layout at the settings route.
+    first.unmount()
+    window.history.pushState({}, '', '/settings')
+    renderLayout()
+    expect(screen.getByTestId('wework-settings-page')).toBeInTheDocument()
 
     await userEvent.click(screen.getByTestId('settings-back-button'))
 
@@ -6684,6 +6878,112 @@ describe('DesktopWorkbenchLayout', () => {
         )
       )
       expect(screen.queryByTestId('dsh-inspector-panel')).not.toBeInTheDocument()
+    } finally {
+      delete window.__WEWORK_DSH_UI__
+    }
+  })
+
+  test('uses the side conversation width for a right workspace extension tab', async () => {
+    const tabs = [{ id: 'test:inspector', title: 'DSH Inspector', order: 5 }]
+    const entries = tabs.map(tab => ({ ...tab, label: tab.title }))
+    window.__WEWORK_DSH_UI__ = {
+      getEntries: slot => (slot === 'wework.workspace.sidebar.tab' ? entries : []),
+      subscribe: () => () => undefined,
+      attach: (_slot, _id, container) => {
+        const panel = document.createElement('section')
+        panel.dataset.testid = 'dsh-inspector-panel'
+        container.append(panel)
+        return {
+          update() {},
+          dispose() {
+            panel.remove()
+          },
+        }
+      },
+    }
+
+    try {
+      renderWorkspacePanelLayout({ mainWidth: 1000 })
+      await userEvent.click(screen.getByTestId('toggle-right-workspace-panel-button'))
+      await userEvent.click(screen.getByTestId('right-workspace-extension-option-test:inspector'))
+
+      const contentFrame = screen.getByTestId('desktop-workbench-content').parentElement
+      expect(contentFrame).not.toBeNull()
+      await waitFor(() => {
+        expect(contentFrame).toHaveStyle({ width: '580px' })
+        expect(screen.getByTestId('right-workspace-panel-shell')).toHaveStyle({
+          width: 'calc(100% - 580px)',
+        })
+      })
+    } finally {
+      delete window.__WEWORK_DSH_UI__
+    }
+  })
+
+  test('keeps the active right workspace panel when the blank composer creates its first task', async () => {
+    const tabs = [{ id: 'test:inspector', title: 'DSH Inspector', order: 5 }]
+    const entries = tabs.map(tab => ({ ...tab, label: tab.title }))
+    window.__WEWORK_DSH_UI__ = {
+      getEntries: slot => (slot === 'wework.workspace.sidebar.tab' ? entries : []),
+      subscribe: () => () => undefined,
+      attach: (_slot, _id, container, props) => {
+        const panel = document.createElement('section')
+        panel.dataset.testid = 'dsh-inspector-panel'
+        panel.dataset.visible = String(props.visible)
+        container.append(panel)
+        return {
+          update(nextProps) {
+            panel.dataset.visible = String(nextProps.visible)
+          },
+          dispose() {
+            panel.remove()
+          },
+        }
+      },
+    }
+
+    try {
+      const { propsForTask, taskA } = createLocalRuntimeTaskPanelFixture()
+      const taskProps = propsForTask(taskA)
+      const onSend = vi.fn(
+        async (
+          _value?: string,
+          options?: {
+            onRuntimeTaskCreated?: (address: RuntimeTaskAddress) => void
+          }
+        ) => {
+          options?.onRuntimeTaskCreated?.(taskA)
+          return true
+        }
+      )
+      const blankProps = {
+        ...taskProps,
+        onSend,
+        state: {
+          ...taskProps.state,
+          currentRuntimeTask: null,
+          input: 'Start plugin work',
+        },
+      }
+      const { rerender } = render(<DesktopWorkbenchLayout {...blankProps} />)
+
+      await userEvent.click(screen.getByTestId('toggle-right-workspace-panel-button'))
+      await userEvent.click(screen.getByTestId('right-workspace-extension-option-test:inspector'))
+      expect(screen.getByTestId('dsh-inspector-panel')).toHaveAttribute('data-visible', 'true')
+
+      await userEvent.click(screen.getByTestId('send-message-button'))
+      expect(onSend).toHaveBeenCalledOnce()
+      rerender(<DesktopWorkbenchLayout {...taskProps} />)
+
+      expect(screen.getByTestId('right-workspace-panel-shell')).toHaveAttribute(
+        'aria-hidden',
+        'false'
+      )
+      expect(screen.getByTestId('right-workspace-extension-tab-test%3Ainspector')).toHaveAttribute(
+        'aria-selected',
+        'true'
+      )
+      expect(screen.getByTestId('dsh-inspector-panel')).toHaveAttribute('data-visible', 'true')
     } finally {
       delete window.__WEWORK_DSH_UI__
     }

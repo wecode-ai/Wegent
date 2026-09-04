@@ -105,6 +105,7 @@ export class ProviderNativeKnowledgePage {
   async sendMessage(message: string): Promise<void> {
     const input = this.page.getByTestId('message-input')
     await expect(input).toBeVisible()
+    await expect(input).toHaveAttribute('contenteditable', 'true')
     await input.click()
     await input.pressSequentially(message)
     const sendButton = this.page.getByTestId('send-button')
