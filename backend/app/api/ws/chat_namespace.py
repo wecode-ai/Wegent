@@ -802,7 +802,7 @@ class ChatNamespace(socketio.AsyncNamespace):
                             bound_team.id,
                             team.id,
                         )
-                    team = bound_team
+                        team = bound_team
 
             # Handle pipeline mode
             team_crd = Team.model_validate(team.json)
