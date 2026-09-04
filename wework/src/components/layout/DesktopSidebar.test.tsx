@@ -3313,6 +3313,143 @@ describe('DesktopSidebar', () => {
     expect(onArchiveRuntimeTask).not.toHaveBeenCalled()
   })
 
+  test('shows offline device projects and tasks by default and persists hiding them', async () => {
+    const user = userEvent.setup()
+    const runtimeWork = {
+      projects: [
+        {
+          project: { id: 7, key: 'project:7', name: 'Online project' },
+          deviceWorkspaces: [
+            {
+              deviceId: 'local-device',
+              deviceName: 'Local Mac',
+              deviceStatus: 'online' as const,
+              available: true,
+              workspacePath: '/repo/online',
+              tasks: [
+                {
+                  taskId: 'online-project-task',
+                  workspacePath: '/repo/online',
+                  title: 'Online project task',
+                  runtime: 'codex',
+                },
+              ],
+            },
+          ],
+        },
+        {
+          project: { id: 8, key: 'project:8', name: 'Offline project' },
+          deviceWorkspaces: [
+            {
+              deviceId: 'remote-device',
+              deviceName: 'Remote Host',
+              deviceStatus: 'offline' as const,
+              available: false,
+              workspacePath: '/repo/offline',
+              tasks: [
+                {
+                  taskId: 'offline-project-task',
+                  workspacePath: '/repo/offline',
+                  title: 'Offline project task',
+                  runtime: 'codex',
+                },
+              ],
+            },
+          ],
+        },
+      ],
+      chats: [
+        {
+          deviceId: 'local-device',
+          deviceName: 'Local Mac',
+          deviceStatus: 'online' as const,
+          available: true,
+          workspacePath: '/chats/online',
+          workspaceKind: 'chat',
+          tasks: [
+            {
+              taskId: 'online-chat-task',
+              workspacePath: '/chats/online',
+              workspaceKind: 'chat',
+              title: 'Online chat task',
+              runtime: 'codex',
+            },
+          ],
+        },
+        {
+          deviceId: 'remote-device',
+          deviceName: 'Remote Host',
+          deviceStatus: 'offline' as const,
+          available: false,
+          workspacePath: '/chats/offline',
+          workspaceKind: 'chat',
+          tasks: [
+            {
+              taskId: 'offline-chat-task',
+              workspacePath: '/chats/offline',
+              workspaceKind: 'chat',
+              title: 'Offline chat task',
+              runtime: 'codex',
+            },
+          ],
+        },
+      ],
+      totalTasks: 4,
+    }
+    const props = {
+      devices: [
+        localDevice(),
+        localDevice({
+          id: 2,
+          device_id: 'remote-device',
+          name: 'Remote Host',
+          status: 'offline' as const,
+          is_default: false,
+          device_type: 'remote',
+        }),
+      ],
+      runtimeWork,
+      onArchiveProjectsConversations: vi.fn().mockResolvedValue(undefined),
+    }
+
+    const view = renderSidebar(props)
+
+    expect(screen.getByTestId('project-row-7')).toBeInTheDocument()
+    expect(screen.getByTestId('project-row-8')).toBeInTheDocument()
+    expect(screen.getByTestId('runtime-local-task-row-online-chat-task')).toBeInTheDocument()
+    expect(screen.getByTestId('runtime-local-task-row-offline-chat-task')).toBeInTheDocument()
+
+    const offlineProjectToggle = screen
+      .getByTestId('project-row-8')
+      .querySelector<HTMLButtonElement>('[data-testid="project-item-button"]')
+    expect(offlineProjectToggle).not.toBeNull()
+    await user.click(offlineProjectToggle!)
+    expect(screen.getByTestId('runtime-local-task-row-offline-project-task')).toBeInTheDocument()
+
+    await user.click(screen.getByTestId('projects-section-menu'))
+    const visibilityItem = screen.getByTestId('projects-section-show-offline-device-items')
+    expect(visibilityItem).toHaveAttribute('role', 'menuitemcheckbox')
+    expect(visibilityItem).toHaveAttribute('aria-checked', 'true')
+    await user.click(visibilityItem)
+
+    expect(screen.getByTestId('project-row-7')).toBeInTheDocument()
+    expect(screen.queryByTestId('project-row-8')).not.toBeInTheDocument()
+    expect(screen.getByTestId('runtime-local-task-row-online-chat-task')).toBeInTheDocument()
+    expect(screen.queryByTestId('runtime-local-task-row-offline-chat-task')).not.toBeInTheDocument()
+    expect(localStorage.getItem('wework.desktop.sidebar.showOfflineDeviceItems.1')).toBe('false')
+
+    view.unmount()
+    renderSidebar(props)
+
+    expect(screen.queryByTestId('project-row-8')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('runtime-local-task-row-offline-chat-task')).not.toBeInTheDocument()
+    await user.click(screen.getByTestId('projects-section-menu'))
+    expect(screen.getByTestId('projects-section-show-offline-device-items')).toHaveAttribute(
+      'aria-checked',
+      'false'
+    )
+  })
+
   test('shows an available remote project IP with green status', () => {
     renderSidebar({
       devices: [
