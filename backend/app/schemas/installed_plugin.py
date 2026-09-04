@@ -458,7 +458,7 @@ class PluginSubmissionCompleteResponse(BaseModel):
 
 
 class PluginAccessTarget(BaseModel):
-    entityType: Literal["user", "namespace"]
+    entityType: Literal["user", "namespace", "org_department"]
     entityId: str = Field(..., min_length=1, max_length=100)
     displayName: str = ""
 
@@ -515,7 +515,7 @@ class PluginSubmissionReviewRequest(BaseModel):
 
 
 class PluginVisibilityGrantRequest(BaseModel):
-    entityType: Literal["user", "namespace"]
+    entityType: Literal["user", "namespace", "org_department"]
     entityId: str = Field(..., min_length=1, max_length=100)
 
 

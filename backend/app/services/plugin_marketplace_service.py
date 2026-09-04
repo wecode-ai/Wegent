@@ -65,6 +65,11 @@ from app.schemas.installed_plugin import (
     PluginUpstreamItem,
     PluginUpstreamListResponse,
 )
+from app.services.marketplace_access_target_service import (
+    ORG_DEPARTMENT_ENTITY_TYPE,
+    get_org_department_resource_ids,
+    normalize_org_department_target,
+)
 from app.services.marketplace_submission_upload import (
     build_marketplace_submission_upload_url,
 )
@@ -119,11 +124,12 @@ class PublishedRelease:
 
 @dataclass(frozen=True)
 class _UserPluginAccessContext:
-    """Preloaded namespace membership used by marketplace list access checks."""
+    """Preloaded membership used by marketplace list access checks."""
 
     namespace_ids: set[str]
     namespace_names: list[str]
     namespace_names_by_id: dict[str, str]
+    org_department_plugin_ids: set[int]
 
 
 class PluginMarketplaceService:
@@ -2142,7 +2148,8 @@ class PluginMarketplaceService:
             allowCopy=bool(plugin.allow_copy),
             grantUserCount=sum(grant.entity_type == "user" for grant in grants),
             grantNamespaceCount=sum(
-                grant.entity_type == "namespace" for grant in grants
+                grant.entity_type in {"namespace", ORG_DEPARTMENT_ENTITY_TYPE}
+                for grant in grants
             ),
             latestReleaseId=release.id,
             listingType=plugin.listing_type,
@@ -2382,7 +2389,10 @@ class PluginMarketplaceService:
         granted_namespace_ids = {
             grant.entity_id for grant in grants if grant.entity_type == "namespace"
         }
-        if not granted_namespace_ids:
+        has_org_department_grant = any(
+            grant.entity_type == ORG_DEPARTMENT_ENTITY_TYPE for grant in grants
+        )
+        if not granted_namespace_ids and not has_org_department_grant:
             return False
 
         if access_context is None:
@@ -2392,6 +2402,10 @@ class PluginMarketplaceService:
                 grants_by_plugin_id={plugin.id: grants},
             )
         if access_context is None:
+            return False
+        if plugin.id in access_context.org_department_plugin_ids:
+            return True
+        if not granted_namespace_ids:
             return False
         if access_context.namespace_ids & granted_namespace_ids:
             return True
@@ -2458,10 +2472,25 @@ class PluginMarketplaceService:
                 )
                 .all()
             }
+        has_org_department_grants = any(
+            grant.entity_type == ORG_DEPARTMENT_ENTITY_TYPE
+            for grants in grants_by_plugin_id.values()
+            for grant in grants
+        )
+        org_department_plugin_ids = (
+            get_org_department_resource_ids(
+                db,
+                user_id=user_id,
+                resource_type=ResourceType.PLUGIN.value,
+            )
+            if has_org_department_grants
+            else set()
+        )
         return _UserPluginAccessContext(
             namespace_ids={str(row.id) for row in user_namespaces},
             namespace_names=[row.name for row in user_namespaces],
             namespace_names_by_id=namespace_names_by_id,
+            org_department_plugin_ids=org_department_plugin_ids,
         )
 
     def get_plugin_access(
@@ -2820,6 +2849,21 @@ class PluginMarketplaceService:
                         entityType="user",
                         entityId=str(user.id),
                         displayName=user.user_name,
+                    )
+                )
+                continue
+            if target.entityType == ORG_DEPARTMENT_ENTITY_TYPE:
+                entity_id, display_name = normalize_org_department_target(
+                    db,
+                    entity_id=target.entityId,
+                    display_name=target.displayName,
+                    invalid_detail="Invalid plugin share department",
+                )
+                normalized.append(
+                    PluginAccessTarget(
+                        entityType=ORG_DEPARTMENT_ENTITY_TYPE,
+                        entityId=entity_id,
+                        displayName=display_name,
                     )
                 )
                 continue

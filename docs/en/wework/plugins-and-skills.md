@@ -44,6 +44,8 @@ example into the composer without sending it automatically. A personal-plugin ow
   through **Confirm version → Permissions and risks → Confirm submission**. Submission does not make the plugin immediately
   visible to everyone.
 
+In the internal Wework build, department search reads the company ERP organization tree directly and persists selections as `org_department` grants. Smart app **Publish** uses the same department source and authorization rule. The open-source build continues to use Wegent organizations/groups as its department source. Upgrades do not rewrite existing Wegent organization grants, which remain valid. If ERP search or membership checks fail, Wework fails closed instead of broadening visibility; search or access resumes after ERP recovers.
+
 The client loads the latest member/department ACL and the plugin's complete
 publication-request state together and allows editing/submission only after both
 are ready. If either load fails, it keeps the actionable dialog closed instead

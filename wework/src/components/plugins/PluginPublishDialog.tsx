@@ -17,7 +17,7 @@ import {
   type KeyboardEvent as ReactKeyboardEvent,
   type SetStateAction,
 } from 'react'
-import type { PluginShareGroupSearchItem, PluginShareUserSearchItem } from '@/api/plugins'
+import type { PluginShareDepartmentSearchItem, PluginShareUserSearchItem } from '@/api/plugins'
 import { Button } from '@/components/ui/button'
 import { useTranslation } from '@/hooks/useTranslation'
 import { cn } from '@/lib/utils'
@@ -73,7 +73,7 @@ interface PluginPublishDialogProps {
   onClose: () => void
   onPublish: (request: PluginPublishRequest) => void
   searchUsers: (query: string) => Promise<PluginShareUserSearchItem[]>
-  searchGroups: (query: string) => Promise<PluginShareGroupSearchItem[]>
+  searchDepartments: (query: string) => Promise<PluginShareDepartmentSearchItem[]>
 }
 
 type Screen = 'intent' | 'restricted' | 'enterprise'
@@ -365,7 +365,7 @@ export function PluginPublishDialog({
   onClose,
   onPublish,
   searchUsers,
-  searchGroups,
+  searchDepartments,
 }: PluginPublishDialogProps) {
   const { t } = useTranslation('common')
   const [screen, setScreen] = useState<Screen>('intent')
@@ -989,7 +989,7 @@ export function PluginPublishDialog({
           <div className="mt-5">
             <PluginShareTargetSearch
               searchUsers={searchUsers}
-              searchGroups={searchGroups}
+              searchDepartments={searchDepartments}
               onSelect={addTarget}
             />
 

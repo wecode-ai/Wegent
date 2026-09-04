@@ -241,6 +241,8 @@ export default defineConfig({
       'e2e/**',
       'scripts/electron-e2e-launch-arguments.test.mjs',
       'scripts/harness-runtime-metadata.test.mjs',
+      'electron/release/**',
+      'electron/resources/**',
       'test-results/**',
     ],
     coverage: {

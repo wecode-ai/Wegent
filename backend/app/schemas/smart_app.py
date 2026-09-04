@@ -11,7 +11,7 @@ from pydantic import BaseModel, Field, model_validator
 
 
 class SmartAppAccessTarget(BaseModel):
-    entityType: Literal["user", "namespace"]
+    entityType: Literal["user", "namespace", "org_department"]
     entityId: str = Field(min_length=1, max_length=100)
     displayName: str = ""
 

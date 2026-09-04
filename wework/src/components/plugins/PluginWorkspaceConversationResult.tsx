@@ -49,8 +49,8 @@ export function PluginWorkspaceConversationResult({
     async (query: string) => (await pluginApi.searchPluginShareUsers(query)).users,
     [pluginApi]
   )
-  const searchGroups = useCallback(
-    async (query: string) => (await pluginApi.searchPluginShareGroups(query)).items,
+  const searchDepartments = useCallback(
+    (query: string) => pluginApi.searchPluginShareDepartments(query),
     [pluginApi]
   )
 
@@ -138,7 +138,7 @@ export function PluginWorkspaceConversationResult({
           }}
           onPublish={request => void submit(request)}
           searchUsers={searchUsers}
-          searchGroups={searchGroups}
+          searchDepartments={searchDepartments}
         />
       ) : null}
     </div>

@@ -1,6 +1,6 @@
 import { X } from 'lucide-react'
 import { useState } from 'react'
-import type { PluginShareGroupSearchItem, PluginShareUserSearchItem } from '@/api/plugins'
+import type { PluginShareDepartmentSearchItem, PluginShareUserSearchItem } from '@/api/plugins'
 import { useTranslation } from '@/hooks/useTranslation'
 import type { PluginAccessResponse, PluginAccessTarget } from '@/types/api'
 import { PluginShareTargetSearch } from './PluginShareTargetSearch'
@@ -17,7 +17,7 @@ interface PluginShareDialogProps {
     allowCopy: boolean
   }) => void
   searchUsers: (query: string) => Promise<PluginShareUserSearchItem[]>
-  searchGroups: (query: string) => Promise<PluginShareGroupSearchItem[]>
+  searchDepartments: (query: string) => Promise<PluginShareDepartmentSearchItem[]>
 }
 
 export function PluginShareDialog({
@@ -28,7 +28,7 @@ export function PluginShareDialog({
   onClose,
   onSave,
   searchUsers,
-  searchGroups,
+  searchDepartments,
 }: PluginShareDialogProps) {
   const { t } = useTranslation('common')
   const [scope, setScope] = useState(access.scope)
@@ -106,7 +106,7 @@ export function PluginShareDialog({
           <div className="mt-4">
             <PluginShareTargetSearch
               searchUsers={searchUsers}
-              searchGroups={searchGroups}
+              searchDepartments={searchDepartments}
               onSelect={addTarget}
             />
 

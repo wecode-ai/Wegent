@@ -2610,7 +2610,7 @@ export interface PluginPublicationInitResponse {
 }
 
 export interface PluginAccessTarget {
-  entityType: 'user' | 'namespace'
+  entityType: 'user' | 'namespace' | 'org_department'
   entityId: string
   displayName: string
 }
