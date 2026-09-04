@@ -22,6 +22,7 @@ from app.services.delivery.storage import DeliveryObjectNotFoundError
 from app.services.workflow_deliverables import delivery_fulfillments
 
 DEFAULT_DEPENDENCY_CONTEXT = ["final_result", "deliveries"]
+COMPLETED_NODE_STATUSES = {"completed", "forced_completed"}
 logger = logging.getLogger(__name__)
 
 
@@ -237,6 +238,39 @@ class WorkflowStageContextResolver:
                 value["activity"] = self._activity(messages)
             dependencies.append(value)
 
+        # Workspace "inherit" needs a concrete predecessor Runtime task. Direct
+        # DAG dependencies are control nodes (for example a loop branch) that
+        # never ran, so search outward through the workflow for the most recent
+        # executed task and inherit its workspace instead.
+        has_runtime_task = any(
+            isinstance(dependency.get("runtime_tasks"), list)
+            and dependency.get("runtime_tasks")
+            for dependency in dependencies
+        )
+        if (
+            str(target.get("workspace_policy") or "composer") == "inherit"
+            and not has_runtime_task
+        ):
+            fallback = self._latest_executed_binding(db, item, nodes)
+            if fallback is not None:
+                dependencies.append(
+                    {
+                        "stage_id": str(fallback["node_id"]),
+                        "stage_name": str(fallback["node_name"] or fallback["node_id"]),
+                        "selected_sources": [],
+                        "runtime_tasks": [
+                            {
+                                "device_id": self._workspace_device_id(
+                                    db, fallback["binding"]
+                                ),
+                                "task_id": fallback["binding"].task_id,
+                                "task_title": fallback["binding"].task_title
+                                or fallback["binding"].task_id,
+                            }
+                        ],
+                    }
+                )
+
         snapshot = {
             "version": 1,
             "issue": {
@@ -264,28 +298,60 @@ class WorkflowStageContextResolver:
         return compiled_workflow_stage_input(snapshot)
 
     @staticmethod
+    def _latest_executed_binding(
+        db: Session,
+        item: LoopItem,
+        nodes: dict[str, dict[str, Any]],
+    ) -> dict[str, Any] | None:
+        """Return the newest completed task binding outside the target node."""
+
+        bindings = (
+            db.query(LoopItemTaskBinding)
+            .filter(
+                LoopItemTaskBinding.loop_item_id == item.id,
+                loop_datetime_is_unset(LoopItemTaskBinding.unlinked_at),
+                LoopItemTaskBinding.device_id.isnot(None),
+                LoopItemTaskBinding.task_id.isnot(None),
+            )
+            .order_by(LoopItemTaskBinding.linked_at.desc())
+            .all()
+        )
+        for binding in bindings:
+            node_id = str(binding.workflow_node_id or "")
+            node = nodes.get(node_id)
+            if node is None or node.get("node_type") != "task":
+                continue
+            if node.get("status") not in COMPLETED_NODE_STATUSES:
+                continue
+            return {
+                "binding": binding,
+                "node_id": node_id,
+                "node_name": str(node.get("name") or ""),
+            }
+        return None
+
+    @staticmethod
     def _workspace_device_id(
         db: Session,
         binding: LoopItemTaskBinding,
     ) -> str:
-        metadata = (
-            binding.metadata_json if isinstance(binding.metadata_json, dict) else {}
-        )
-        persisted = metadata.get("workspace_device_id")
-        if isinstance(persisted, str) and persisted:
-            return persisted
+        # The workspace of a predecessor task lives on the device that actually
+        # owns its Runtime task. Logical queue devices such as "local-device"
+        # must not be used here or the executor rejects the inherited workspace
+        # as belonging to another device.
+        if binding.device_id:
+            return binding.device_id
         execution = (
             db.query(LoopItemExecution)
             .filter(
-                LoopItemExecution.runtime_device_id == binding.device_id,
                 LoopItemExecution.runtime_task_id == binding.task_id,
             )
             .order_by(LoopItemExecution.id.desc())
             .first()
         )
-        if execution is not None and execution.execution_device_id:
-            return execution.execution_device_id
-        return binding.device_id
+        if execution is not None and execution.runtime_device_id:
+            return execution.runtime_device_id
+        return ""
 
     @staticmethod
     def freeze_binding(

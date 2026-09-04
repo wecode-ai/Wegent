@@ -242,6 +242,24 @@ def rotate_incoming_hook(
 
 
 @router.get(
+    "/{project_id}/incoming-hooks/{hook_id}/webhook-token",
+)
+def get_incoming_hook_webhook_token(
+    project_id: str,
+    hook_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> dict[str, str]:
+    token = project_incoming_hook_service.reveal_webhook_token(
+        db,
+        project_id,
+        hook_id,
+        current_user.id,
+    )
+    return {"webhook_token": token}
+
+
+@router.get(
     "/{project_id}/incoming-hooks/{hook_id}/events",
     response_model=list[ProjectIncomingEventView],
 )

@@ -164,6 +164,12 @@ export function startLocalRobotQueueDispatcher(services: WorkbenchServices): () 
       return
     }
     if (!execution) return
+    // The App pulls by its own registration id (the local executor's reported
+    // device id), which the Runtime API routes on. The backend resolves that
+    // id to the canonical logical device for the execution binding, so the two
+    // may differ while naming the same device; the claimed execution is
+    // validated by the backend during claim, so keep the raw id for the whole
+    // dispatch (heartbeat / start / runtime-create all run on this executor).
     const deviceId = claimDeviceId ?? nonEmptyString(execution.execution_device_id)
     if (!deviceId) {
       throw new Error('Claimed local execution has no execution device')
@@ -192,10 +198,6 @@ export function startLocalRobotQueueDispatcher(services: WorkbenchServices): () 
       if (!cloudProjectId || cloudProjectId !== execution.cloud_project_id) {
         throw new Error('Transient runtime payload does not match the claimed project')
       }
-      if (execution.execution_device_id !== deviceId) {
-        throw new Error('Execution device does not match the claiming device')
-      }
-
       const title = typeof runtimePayload.title === 'string' ? runtimePayload.title : null
       const origin = recordValue(runtimePayload.origin)
       const additionalContext = recordValue(runtimePayload.additionalContext)

@@ -649,8 +649,10 @@ class DeviceService:
             ).strip()
             == device_id
         ]
-        if len(app_matches) == 1:
-            return app_matches[0]
+        if app_matches:
+            from app.services.device.identity import preferred_device
+
+            return preferred_device(app_matches)
         runtime_matches = [
             device
             for device in devices

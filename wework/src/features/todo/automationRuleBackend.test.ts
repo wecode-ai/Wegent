@@ -156,6 +156,7 @@ describe('automationRuleBackend', () => {
         eventConfig: {
           source_type: 'github',
           collection_mode: 'poll',
+          poll_interval_seconds: 420,
           subscription_id: 'subscription-1',
           execution_target: 'continue_binding',
           target_branches: ['main', 'release'],
@@ -170,7 +171,7 @@ describe('automationRuleBackend', () => {
       collectionMode: 'poll',
       event: 'change_request.checks_failed',
       subscriptionId: 'subscription-1',
-      executionTarget: 'continue_binding',
+      pollIntervalSeconds: 420,
       targetBranches: ['main', 'release'],
       repositories: ['acme/app'],
     })
@@ -180,8 +181,9 @@ describe('automationRuleBackend', () => {
     expect(input.eventConfig).toMatchObject({
       source_type: 'github',
       collection_mode: 'poll',
+      poll_interval_seconds: 420,
       subscription_id: 'subscription-1',
-      execution_target: 'continue_binding',
+      execution_target: 'create_issue',
       target_branches: ['main', 'release'],
       repositories: ['acme/app'],
     })
@@ -566,9 +568,20 @@ describe('automationRuleBackend', () => {
               x: 260,
               y: 0,
               dependencies: ['ls'],
+              eventWait: {
+                sourceType: 'gitlab',
+                collectionMode: 'poll',
+                pollIntervalSeconds: 180,
+              },
               branchConditions: [
-                { eventType: 'change_request.checks_failed', handlerNodeIds: ['fix1'] },
-                { eventType: 'change_request.merged', handlerNodeIds: ['le'] },
+                {
+                  eventType: 'change_request.checks_failed',
+                  handlerNodeIds: ['fix1'],
+                },
+                {
+                  eventType: 'change_request.merged',
+                  handlerNodeIds: ['le'],
+                },
               ],
             },
             {
@@ -615,9 +628,21 @@ describe('automationRuleBackend', () => {
     expect(bodyIds).toEqual(new Set(['ls', 'br', 'fix1', 'le']))
     const branch = definition.nodes.find(node => node.node_type === 'branch')
     expect(branch?.branch_conditions).toEqual([
-      { event_type: 'change_request.checks_failed', handler_node_ids: ['fix1'] },
-      { event_type: 'change_request.merged', handler_node_ids: ['le'] },
+      {
+        event_type: 'change_request.checks_failed',
+        handler_node_ids: ['fix1'],
+      },
+      {
+        event_type: 'change_request.merged',
+        handler_node_ids: ['le'],
+      },
     ])
+    expect(branch?.event_wait).toEqual({
+      subject_source: 'upstream_pull_request',
+      source_type: 'gitlab',
+      collection_mode: 'poll',
+      poll_interval_seconds: 180,
+    })
     const fix = definition.nodes.find(node => node.id === 'fix1')
     expect(fix).toMatchObject({ loop_id: 'loop1', depends_on: ['br'], execution_mode: 'robot' })
     const start = definition.nodes.find(node => node.id === 'ls')

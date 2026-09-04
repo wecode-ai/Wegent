@@ -222,9 +222,15 @@ const recipes: Record<string, string> = {
     'flex items-start gap-3 rounded-xl bg-muted/45 p-4 text-text-secondary [&>div]:grid [&>div]:flex-1 [&>div]:gap-1 [&_strong]:text-sm [&_strong]:font-medium [&_strong]:text-text-primary [&_span]:text-xs [&_span]:text-text-muted',
   'panel-field':
     'relative grid gap-2 [&>span]:flex [&>span]:items-center [&>span]:gap-2 [&>span]:text-sm [&>span]:font-medium [&>span]:text-text-secondary [&_select]:h-10 [&_select]:w-full [&_select]:rounded-lg [&_select]:border [&_select]:border-transparent [&_select]:bg-muted/60 [&_select]:px-3 [&_select]:text-sm [&_select]:text-text-primary [&_select]:outline-none [&_select]:transition-colors [&_input]:h-10 [&_input]:w-full [&_input]:rounded-lg [&_input]:border [&_input]:border-transparent [&_input]:bg-muted/60 [&_input]:px-3 [&_input]:text-sm [&_input]:text-text-primary [&_input]:outline-none [&_input]:transition-colors [&_input::placeholder]:text-text-muted [&_textarea]:min-h-28 [&_textarea]:w-full [&_textarea]:resize-y [&_textarea]:rounded-lg [&_textarea]:border [&_textarea]:border-transparent [&_textarea]:bg-muted/60 [&_textarea]:p-3 [&_textarea]:text-sm [&_textarea]:text-text-primary [&_textarea]:outline-none [&_textarea]:transition-colors [&_textarea::placeholder]:text-text-muted [&_select:hover]:bg-muted [&_input:hover]:bg-muted [&_textarea:hover]:bg-muted [&_select:focus]:border-focus/60 [&_select:focus]:bg-background [&_input:focus]:border-focus/60 [&_input:focus]:bg-background [&_textarea:focus]:border-focus/60 [&_textarea:focus]:bg-background',
+  'panel-field-hint': 'text-xs text-text-muted',
+  'poll-interval-control':
+    'grid h-10 grid-cols-[minmax(0,1fr)_auto] items-center rounded-lg bg-muted/60 transition-colors focus-within:bg-background focus-within:ring-1 focus-within:ring-focus/60 [&_input]:h-full [&_input]:min-w-0 [&_input]:border-0 [&_input]:bg-transparent [&_input]:pr-1 [&_input]:ring-0 [&_input:focus]:bg-transparent [&>span]:pr-3 [&>span]:text-sm [&>span]:text-text-muted',
   'cascade-index':
     'grid size-5 shrink-0 place-items-center rounded-md bg-focus/10 text-xs not-italic text-focus',
   'schedule-settings': 'grid gap-4 border-t border-border pt-4',
+  'event-source-settings': 'grid gap-4 rounded-xl border border-border/70 bg-muted/20 p-4',
+  'event-source-heading':
+    'flex items-start justify-between gap-3 border-b border-border/60 pb-3 [&>div]:grid [&>div]:gap-0.5 [&_strong]:text-sm [&_strong]:font-medium [&_span]:text-xs [&_span]:text-text-muted [&>small]:rounded-md [&>small]:bg-background [&>small]:px-2 [&>small]:py-1 [&>small]:text-xs [&>small]:text-text-secondary [&>small]:shadow-sm',
   'start-mode-section': 'border-t border-border pt-4',
   'cascade-heading':
     'mb-3 flex items-start gap-2 [&>div]:grid [&>div]:gap-0.5 [&_strong]:text-xs [&_strong]:font-medium [&_span]:text-xs [&_span]:text-text-muted',

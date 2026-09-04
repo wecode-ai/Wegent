@@ -22,11 +22,11 @@ interface SubscriptionDraft {
   credentialRef: string
 }
 
-function emptyDraft(): SubscriptionDraft {
+function emptyDraft(pollIntervalSeconds = 300): SubscriptionDraft {
   return {
     name: '',
     resourceUrl: '',
-    pollIntervalSeconds: 300,
+    pollIntervalSeconds,
     credentialRef: '',
   }
 }
@@ -41,6 +41,18 @@ function subscriptionResourceLabel(subscription: ProjectIncomingHook): string {
   )
 }
 
+function subscriptionResourceKey(resource: ProjectIncomingHook['resource']): string {
+  return [
+    resource.instanceUrl?.trim().toLowerCase() ?? '',
+    resource.externalId?.trim().toLowerCase() ?? '',
+    resource.path
+      ?.trim()
+      .replace(/^\/+|\/+$/g, '')
+      .toLowerCase() ?? '',
+    resource.url?.trim().replace(/\/+$/g, '').toLowerCase() ?? '',
+  ].join('|')
+}
+
 export function EventSubscriptionManager({
   api,
   projectId,
@@ -48,6 +60,10 @@ export function EventSubscriptionManager({
   collectionMode,
   sourceLabel,
   cascadeIndex = 2,
+  testIdPrefix = 'automation',
+  managedSubscription,
+  pollIntervalSeconds: configuredPollIntervalSeconds = 300,
+  showPollIntervalField = true,
   value,
   onChange,
 }: {
@@ -57,12 +73,25 @@ export function EventSubscriptionManager({
   collectionMode: ProjectEventCollectionMode
   sourceLabel: (sourceType: ProjectEventSourceType) => string
   cascadeIndex?: number
+  testIdPrefix?: string
+  managedSubscription?: {
+    name: string
+    resource: ProjectIncomingHook['resource']
+    credentialRef: string | null
+    pollIntervalSeconds: number | null
+  }
+  pollIntervalSeconds?: number
+  showPollIntervalField?: boolean
   value: string | null
   onChange: (subscriptionId: string | null) => void
 }) {
   const { t } = useTranslation('common')
+  const testId = (defaultId: string, scopedSuffix: string) =>
+    testIdPrefix === 'automation' ? defaultId : `${testIdPrefix}-${scopedSuffix}`
   const [subscriptions, setSubscriptions] = useState<ProjectIncomingHook[]>([])
-  const [draft, setDraft] = useState<SubscriptionDraft>(emptyDraft)
+  const [draft, setDraft] = useState<SubscriptionDraft>(() =>
+    emptyDraft(configuredPollIntervalSeconds)
+  )
   const [editorOpen, setEditorOpen] = useState(false)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -72,34 +101,57 @@ export function EventSubscriptionManager({
     Record<string, ProjectIncomingEvent[]>
   >({})
   const [expandedSubscriptionId, setExpandedSubscriptionId] = useState<string | null>(null)
-  const selectionLockRef = useRef(false)
   const valueRef = useRef(value)
   const onChangeRef = useRef(onChange)
+  const managedSubscriptionRef = useRef(managedSubscription)
+  const managedResourceKey = managedSubscription
+    ? subscriptionResourceKey(managedSubscription.resource)
+    : ''
+  const managedPollIntervalSeconds = managedSubscription?.pollIntervalSeconds ?? null
 
   const selectedSubscription = subscriptions.find(item => item.id === value) ?? null
+  const managedTargetSubscription =
+    selectedSubscription ?? (managedSubscription ? subscriptions[0] : null)
 
   const load = useCallback(async () => {
     if (!api || !projectId) return
     try {
       const list = await api.list(projectId)
+      const managed = managedSubscriptionRef.current
       const scoped = list.filter(
-        item => item.sourceType === sourceType && item.collectionMode === collectionMode
+        item =>
+          item.sourceType === sourceType &&
+          item.collectionMode === collectionMode &&
+          (!managed || subscriptionResourceKey(item.resource) === managedResourceKey)
       )
       setSubscriptions(scoped)
       const current = valueRef.current
-      const selected = scoped.find(item => item.id === current)
-      if (!selected && scoped.length > 0 && !selectionLockRef.current) {
-        selectionLockRef.current = true
-        onChangeRef.current(scoped[0].id)
+      const configured = scoped.find(
+        item =>
+          item.status === 'active' &&
+          (collectionMode !== 'poll' || item.pollIntervalSeconds === managedPollIntervalSeconds)
+      )
+      const next = managed ? (configured?.id ?? null) : (scoped[0]?.id ?? null)
+      if (!scoped.some(item => item.id === current) || (managed && current !== next)) {
+        onChangeRef.current(next)
       }
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : t('todo.event_subscription_load_failed'))
     }
-  }, [api, projectId, sourceType, collectionMode, t])
+  }, [
+    api,
+    projectId,
+    sourceType,
+    collectionMode,
+    managedResourceKey,
+    managedPollIntervalSeconds,
+    t,
+  ])
 
   useEffect(() => {
     valueRef.current = value
     onChangeRef.current = onChange
+    managedSubscriptionRef.current = managedSubscription
   })
 
   useEffect(() => {
@@ -110,32 +162,34 @@ export function EventSubscriptionManager({
 
   async function createSubscription() {
     const needsCredential = collectionMode === 'poll' || collectionMode === 'hybrid'
-    if (
-      !api ||
-      !projectId ||
-      busy ||
-      !draft.resourceUrl.trim() ||
-      (needsCredential && !draft.credentialRef.trim())
-    ) {
+    const name = managedSubscription?.name ?? draft.name.trim()
+    const resourceUrl = managedSubscription?.resource.url ?? draft.resourceUrl.trim()
+    const credentialRef = managedSubscription?.credentialRef ?? (draft.credentialRef.trim() || null)
+    const effectivePollIntervalSeconds =
+      managedSubscription?.pollIntervalSeconds ??
+      (showPollIntervalField ? draft.pollIntervalSeconds : configuredPollIntervalSeconds)
+    if (!api || !projectId || busy || !resourceUrl || (needsCredential && !credentialRef)) {
       return
     }
     setBusy(true)
     setError(null)
     try {
-      const subscription = await api.create(projectId, {
-        name: draft.name.trim() || `${sourceLabel(sourceType)} subscription`,
-        sourceType,
-        collectionMode,
-        resource: {
-          url: draft.resourceUrl.trim(),
-        },
-        pollIntervalSeconds:
-          collectionMode === 'poll' || collectionMode === 'hybrid'
-            ? draft.pollIntervalSeconds
-            : null,
-        credentialRef: draft.credentialRef.trim() || null,
-      })
-      selectionLockRef.current = true
+      const subscription =
+        managedSubscription && managedTargetSubscription
+          ? await api.update(projectId, managedTargetSubscription.id, {
+              version: managedTargetSubscription.version,
+              status: 'active',
+              pollIntervalSeconds: needsCredential ? effectivePollIntervalSeconds : null,
+              credentialRef,
+            })
+          : await api.create(projectId, {
+              name: name || `${sourceLabel(sourceType)} subscription`,
+              sourceType,
+              collectionMode,
+              resource: managedSubscription?.resource ?? { url: resourceUrl },
+              pollIntervalSeconds: needsCredential ? effectivePollIntervalSeconds : null,
+              credentialRef,
+            })
       if (subscription.webhookSecret) {
         setRevealedSecrets(current => ({
           ...current,
@@ -145,7 +199,7 @@ export function EventSubscriptionManager({
       await load()
       onChangeRef.current(subscription.id)
       setEditorOpen(false)
-      setDraft(emptyDraft())
+      setDraft(emptyDraft(configuredPollIntervalSeconds))
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : t('todo.event_subscription_create_failed'))
     } finally {
@@ -248,45 +302,58 @@ export function EventSubscriptionManager({
           {t('todo.automation_event_subscription')}
         </span>
         <div className="flex items-center gap-2">
-          <select
-            data-testid="automation-event-subscription"
-            value={value ?? ''}
-            disabled={busy || subscriptions.length === 0}
-            onChange={event => onChange(event.target.value)}
-            className="flex-1"
-          >
-            {subscriptions.length === 0 ? (
-              <option value="">{t('todo.automation_event_subscription_none')}</option>
-            ) : (
-              subscriptions.map(subscription => (
-                <option key={subscription.id} value={subscription.id}>
-                  {subscription.name}
-                </option>
-              ))
-            )}
-          </select>
+          {managedSubscription ? (
+            <div
+              className="min-w-0 flex-1 truncate rounded-lg border border-border bg-background px-3 py-2 text-sm"
+              data-testid={testId('automation-event-subscription', 'event-subscription')}
+            >
+              {selectedSubscription?.name ?? managedSubscription.name}
+            </div>
+          ) : (
+            <select
+              data-testid={testId('automation-event-subscription', 'event-subscription')}
+              value={value ?? ''}
+              disabled={busy || subscriptions.length === 0}
+              onChange={event => onChange(event.target.value)}
+              className="flex-1"
+            >
+              {subscriptions.length === 0 ? (
+                <option value="">{t('todo.automation_event_subscription_none')}</option>
+              ) : (
+                subscriptions.map(subscription => (
+                  <option key={subscription.id} value={subscription.id}>
+                    {subscription.name}
+                  </option>
+                ))
+              )}
+            </select>
+          )}
           <button
             type="button"
-            data-testid="automation-create-subscription"
+            data-testid={testId('automation-create-subscription', 'create-subscription')}
             disabled={busy}
-            onClick={() => setEditorOpen(current => !current)}
+            onClick={() =>
+              managedSubscription ? void createSubscription() : setEditorOpen(current => !current)
+            }
             className="inline-flex h-10 shrink-0 items-center gap-1 rounded-lg border border-border bg-background px-2.5 text-xs text-text-secondary shadow-sm hover:text-text-primary"
           >
-            ＋ {t('todo.event_subscription_add')}
+            {managedSubscription
+              ? t('todo.event_subscription_save')
+              : `＋ ${t('todo.event_subscription_add')}`}
           </button>
         </div>
       </label>
 
-      {editorOpen ? (
+      {editorOpen && !managedSubscription ? (
         <div
           className="grid gap-3 rounded-xl border border-border bg-muted/30 p-3"
-          data-testid="event-subscription-editor"
+          data-testid={testId('event-subscription-editor', 'subscription-editor')}
         >
           <div className="grid gap-3 sm:grid-cols-2">
             <label className="text-sm text-text-secondary">
               <span className="mb-1 block">{t('todo.event_subscription_name')}</span>
               <input
-                data-testid="event-subscription-name"
+                data-testid={testId('event-subscription-name', 'subscription-name')}
                 value={draft.name}
                 onChange={event => setDraft(current => ({ ...current, name: event.target.value }))}
                 className="h-9 w-full rounded-lg border border-border bg-background px-3"
@@ -295,7 +362,7 @@ export function EventSubscriptionManager({
             <label className="text-sm text-text-secondary">
               <span className="mb-1 block">{t('todo.event_subscription_resource_url')}</span>
               <input
-                data-testid="event-subscription-resource-url"
+                data-testid={testId('event-subscription-resource-url', 'subscription-resource-url')}
                 value={draft.resourceUrl}
                 onChange={event =>
                   setDraft(current => ({ ...current, resourceUrl: event.target.value }))
@@ -308,29 +375,39 @@ export function EventSubscriptionManager({
                 className="h-9 w-full rounded-lg border border-border bg-background px-3"
               />
             </label>
-            {collectionMode === 'poll' || collectionMode === 'hybrid' ? (
+            {(collectionMode === 'poll' || collectionMode === 'hybrid') && showPollIntervalField ? (
               <>
                 <label className="text-sm text-text-secondary">
                   <span className="mb-1 block">{t('todo.event_subscription_interval')}</span>
-                  <input
-                    data-testid="event-subscription-poll-interval"
-                    type="number"
-                    min={60}
-                    max={86400}
-                    value={draft.pollIntervalSeconds}
-                    onChange={event =>
-                      setDraft(current => ({
-                        ...current,
-                        pollIntervalSeconds: Number(event.target.value),
-                      }))
-                    }
-                    className="h-9 w-full rounded-lg border border-border bg-background px-3"
-                  />
+                  <div className="flex h-9 items-center rounded-lg border border-border bg-background">
+                    <input
+                      data-testid={testId(
+                        'event-subscription-poll-interval',
+                        'subscription-poll-interval'
+                      )}
+                      type="number"
+                      min={1}
+                      max={1440}
+                      value={Math.max(1, Math.round(draft.pollIntervalSeconds / 60))}
+                      onChange={event =>
+                        setDraft(current => ({
+                          ...current,
+                          pollIntervalSeconds: Math.max(1, Number(event.target.value) || 1) * 60,
+                        }))
+                      }
+                      className="h-full min-w-0 flex-1 bg-transparent px-3 outline-none"
+                    />
+                    <span className="pr-3 text-xs text-text-muted">分钟</span>
+                  </div>
                 </label>
+              </>
+            ) : null}
+            {collectionMode === 'poll' || collectionMode === 'hybrid' ? (
+              <>
                 <label className="text-sm text-text-secondary">
                   <span className="mb-1 block">{t('todo.event_subscription_credential')}</span>
                   <input
-                    data-testid="event-subscription-credential"
+                    data-testid={testId('event-subscription-credential', 'subscription-credential')}
                     value={draft.credentialRef}
                     onChange={event =>
                       setDraft(current => ({ ...current, credentialRef: event.target.value }))
@@ -348,7 +425,7 @@ export function EventSubscriptionManager({
           <div className="flex justify-end gap-2">
             <button
               type="button"
-              data-testid="event-subscription-cancel"
+              data-testid={testId('event-subscription-cancel', 'subscription-cancel')}
               onClick={() => setEditorOpen(false)}
               className="h-8 rounded-lg px-3 text-sm text-text-secondary hover:bg-background"
             >
@@ -356,7 +433,7 @@ export function EventSubscriptionManager({
             </button>
             <button
               type="button"
-              data-testid="event-subscription-save"
+              data-testid={testId('event-subscription-save', 'subscription-save')}
               disabled={
                 busy ||
                 !draft.resourceUrl.trim() ||
@@ -369,7 +446,6 @@ export function EventSubscriptionManager({
               {t('todo.event_subscription_save')}
             </button>
           </div>
-          {error ? <p className="text-xs text-destructive">{error}</p> : null}
         </div>
       ) : null}
 
@@ -526,12 +602,13 @@ export function EventSubscriptionManager({
             </div>
           ) : null}
         </div>
-      ) : subscriptions.length === 0 ? (
-        <p className={automationClass('panel-help')}>
+      ) : (
+        <div className={automationClass('panel-help')}>
           <Webhook size={14} />
-          <p>{t('todo.automation_event_subscription_missing')}</p>
-        </p>
-      ) : null}
+          <span>{t('todo.automation_event_subscription_missing')}</span>
+        </div>
+      )}
+      {error ? <p className="text-xs text-destructive">{error}</p> : null}
     </div>
   )
 }

@@ -4,11 +4,7 @@ import type {
   ProjectAutomationRule,
   ProjectAutomationRun,
 } from '@/api/projectAutomations'
-import type {
-  ProjectAutomationExecutionTarget,
-  ProjectEventCollectionMode,
-  ProjectEventSourceType,
-} from '@/api/projectIncomingHooks'
+import type { ProjectEventCollectionMode, ProjectEventSourceType } from '@/api/projectIncomingHooks'
 import type {
   CloudProject,
   ProjectWorkflowDefinition,
@@ -68,9 +64,12 @@ export interface AutomationUiStep {
   branchConditions?: Array<{
     eventType: string
     handlerNodeIds: string[]
-    sourceType?: ProjectEventSourceType | ''
-    collectionMode?: ProjectEventCollectionMode | ''
   }>
+  eventWait?: {
+    sourceType: Extract<ProjectEventSourceType, 'github' | 'gitlab'>
+    collectionMode: Extract<ProjectEventCollectionMode, 'webhook' | 'poll'>
+    pollIntervalSeconds: number | null
+  } | null
   subgraph: AutomationUiGraph | null
 }
 
@@ -89,7 +88,7 @@ export interface AutomationUiTrigger {
     | Exclude<ProjectAutomationEventType, 'task.created' | 'task.status_changed'>
   tags: string[]
   subscriptionId?: string | null
-  executionTarget?: ProjectAutomationExecutionTarget
+  pollIntervalSeconds?: number
   targetBranches?: string[]
   repositories?: string[]
   schedule: {
@@ -345,9 +344,27 @@ function normalizeStoredStep(
     branchConditions: recordArray(item.branchConditions).map(condition => ({
       eventType: typeof condition.eventType === 'string' ? condition.eventType : '',
       handlerNodeIds: stringArray(condition.handlerNodeIds),
-      sourceType: normalizeBranchSourceType(condition.sourceType),
-      collectionMode: normalizeBranchCollectionMode(condition.collectionMode),
     })),
+    eventWait: (() => {
+      const stored = isRecord(item.eventWait) ? item.eventWait : null
+      const legacyCondition = recordArray(item.branchConditions)[0]
+      const sourceType = normalizeBranchSourceType(
+        stored?.sourceType ?? legacyCondition?.sourceType
+      )
+      const collectionMode = normalizeBranchCollectionMode(
+        stored?.collectionMode ?? legacyCondition?.collectionMode
+      )
+      return nodeType === 'branch'
+        ? {
+            sourceType: sourceType || 'github',
+            collectionMode: collectionMode || 'poll',
+            pollIntervalSeconds:
+              typeof stored?.pollIntervalSeconds === 'number'
+                ? Math.max(60, stored.pollIntervalSeconds)
+                : 300,
+          }
+        : null
+    })(),
     subgraph: null,
   }
   if (kind === 'dynamic') {
@@ -493,23 +510,21 @@ const TRIGGER_SOURCE_TYPES = new Set<ProjectEventSourceType>([
   'generic',
 ])
 
-const BRANCH_COLLECTION_MODES = new Set<ProjectEventCollectionMode>([
-  'webhook',
-  'poll',
-  'internal',
-  'hybrid',
-])
+type BranchCollectionMode = Extract<ProjectEventCollectionMode, 'webhook' | 'poll'>
+type BranchSourceType = Extract<ProjectEventSourceType, 'github' | 'gitlab'>
 
-function normalizeBranchSourceType(value: unknown): ProjectEventSourceType | '' {
-  return typeof value === 'string' && TRIGGER_SOURCE_TYPES.has(value as ProjectEventSourceType)
-    ? (value as ProjectEventSourceType)
+const BRANCH_COLLECTION_MODES = new Set<BranchCollectionMode>(['webhook', 'poll'])
+const BRANCH_SOURCE_TYPES = new Set<BranchSourceType>(['github', 'gitlab'])
+
+function normalizeBranchSourceType(value: unknown): BranchSourceType | '' {
+  return typeof value === 'string' && BRANCH_SOURCE_TYPES.has(value as BranchSourceType)
+    ? (value as BranchSourceType)
     : ''
 }
 
-function normalizeBranchCollectionMode(value: unknown): ProjectEventCollectionMode | '' {
-  return typeof value === 'string' &&
-    BRANCH_COLLECTION_MODES.has(value as ProjectEventCollectionMode)
-    ? (value as ProjectEventCollectionMode)
+function normalizeBranchCollectionMode(value: unknown): BranchCollectionMode | '' {
+  return typeof value === 'string' && BRANCH_COLLECTION_MODES.has(value as BranchCollectionMode)
+    ? (value as BranchCollectionMode)
     : ''
 }
 
@@ -570,12 +585,10 @@ export function automationRuleFromBackend(rule: ProjectAutomationRule): Automati
         ? rule.eventConfig.tags.filter((value): value is string => typeof value === 'string')
         : [],
       subscriptionId,
-      executionTarget:
-        rule.eventConfig.execution_target === 'existing_issue' ||
-        rule.eventConfig.execution_target === 'continue_binding' ||
-        rule.eventConfig.execution_target === 'create_issue'
-          ? rule.eventConfig.execution_target
-          : undefined,
+      pollIntervalSeconds:
+        typeof rule.eventConfig.poll_interval_seconds === 'number'
+          ? Math.max(60, rule.eventConfig.poll_interval_seconds)
+          : 300,
       targetBranches: stringArray(
         rule.eventConfig.target_branches ?? rule.eventConfig.targetBranches
       ),
@@ -688,9 +701,23 @@ function workflowNodesFromLegacy(
       branchConditions: (node.branch_conditions ?? []).map(condition => ({
         eventType: condition.event_type,
         handlerNodeIds: [...(condition.handler_node_ids ?? [])],
-        sourceType: normalizeBranchSourceType(condition.source_type),
-        collectionMode: normalizeBranchCollectionMode(condition.collection_mode),
       })),
+      eventWait:
+        node.node_type === 'branch'
+          ? {
+              sourceType:
+                normalizeBranchSourceType(node.event_wait?.source_type) ||
+                normalizeBranchSourceType(node.branch_conditions?.[0]?.source_type) ||
+                'github',
+              collectionMode:
+                node.event_wait?.collection_mode ??
+                (normalizeBranchCollectionMode(node.branch_conditions?.[0]?.collection_mode) ||
+                  'poll'),
+              pollIntervalSeconds:
+                node.event_wait?.poll_interval_seconds ??
+                (node.event_wait?.collection_mode === 'webhook' ? null : 300),
+            }
+          : null,
       dependencies: [...node.depends_on].filter(dependencyId => dependencyId !== 'start'),
       dependencyContext: { ...(node.dependency_context ?? {}) },
       x: 440 + (rowOverride ?? depth) * 420,
@@ -926,9 +953,19 @@ function workflowNodeFromUi(
         ? (node.branchConditions ?? []).map(condition => ({
             event_type: condition.eventType,
             handler_node_ids: [...condition.handlerNodeIds],
-            source_type: condition.sourceType || undefined,
-            collection_mode: condition.collectionMode || undefined,
           }))
+        : undefined,
+    event_wait:
+      node.nodeType === 'branch'
+        ? {
+            subject_source: 'upstream_pull_request',
+            source_type: node.eventWait?.sourceType ?? 'github',
+            collection_mode: node.eventWait?.collectionMode ?? 'poll',
+            poll_interval_seconds:
+              node.eventWait?.collectionMode === 'webhook'
+                ? null
+                : (node.eventWait?.pollIntervalSeconds ?? 300),
+          }
         : undefined,
     execution_mode: node.executionMode === 'automatic' ? 'robot' : 'human',
     depends_on: [...node.dependencies],
@@ -1012,13 +1049,6 @@ export function legacyWorkflowFromAutomationRule(
               : ('task' as const),
       loop_id: step.id,
       depends_on: bodyStep.nodeType === 'loopStart' ? [] : [...(bodyStep.dependencies ?? [])],
-      branch_conditions:
-        bodyStep.nodeType === 'branch'
-          ? (bodyStep.branchConditions ?? []).map(condition => ({
-              event_type: condition.eventType,
-              handler_node_ids: [...condition.handlerNodeIds],
-            }))
-          : undefined,
     }))
     loopNodes.push(...bodyNodes)
     return [
@@ -1160,7 +1190,11 @@ export function automationInputFromUi(
             source_type: rule.trigger.source,
             collection_mode: rule.trigger.collectionMode ?? 'webhook',
             subscription_id: rule.trigger.subscriptionId,
-            execution_target: rule.trigger.executionTarget,
+            execution_target: 'create_issue',
+            poll_interval_seconds:
+              rule.trigger.collectionMode === 'poll'
+                ? (rule.trigger.pollIntervalSeconds ?? 300)
+                : undefined,
             target_branches: rule.trigger.targetBranches ?? [],
             repositories: rule.trigger.repositories ?? [],
           }

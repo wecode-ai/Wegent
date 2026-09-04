@@ -370,6 +370,36 @@ def _runtime_capacity_used(
     return runtime_active + pending_reservations
 
 
+def _canonical_execution_device(
+    db: Session,
+    *,
+    owner_user_id: int,
+    submitted_device_id: str,
+) -> str:
+    """Resolve a submitted device identity to the canonical logical id.
+
+    The local App puller submits the desktop App registration id (for example
+    ``electron-b93c95cf-...``), while queue rows persist the canonical logical
+    device id (for example ``local-device``) at enqueue time. Claim matching
+    must use the same canonical id the row was written with, otherwise the
+    queued run can never be claimed. Unresolved identities are returned as-is
+    so legacy rows keep their original matching semantics.
+    """
+
+    if not submitted_device_id:
+        return submitted_device_id
+    from app.services.device.runtime_route import normalize_execution_device_id
+
+    return (
+        normalize_execution_device_id(
+            db,
+            user_id=owner_user_id,
+            submitted_device_id=submitted_device_id,
+        )
+        or submitted_device_id
+    )
+
+
 def _active_agent_counts(
     db: Session,
     agent_ids: set[str] | None = None,
@@ -786,6 +816,20 @@ class LoopItemExecutionService:
         waiting_runtime: bool = False,
     ) -> LoopItemExecution:
         """Persist queue identity and its immutable non-secret V2 intent."""
+
+        # A queued run may be resolved from a desktop App registration id that
+        # is not unique across active devices. Persisting the canonical logical
+        # device id keeps the row claimable by the names the App puller sends.
+        if execution_device_id:
+            from app.services.device.runtime_route import normalize_execution_device_id
+
+            normalized = normalize_execution_device_id(
+                db,
+                user_id=owner_user_id,
+                submitted_device_id=execution_device_id,
+            )
+            if normalized:
+                execution_device_id = normalized
 
         # Project robots keep the shipped assignment semantics: their target
         # is validated when the robot is configured, and legacy local targets
@@ -1246,6 +1290,12 @@ class LoopItemExecutionService:
         below keeps a single claim atomic even without it.
         """
 
+        submitted_execution_device_id = execution_device_id
+        execution_device_id = _canonical_execution_device(
+            db,
+            owner_user_id=owner_user_id,
+            submitted_device_id=execution_device_id,
+        )
         running_count = _runtime_capacity_used(
             db,
             owner_user_id=owner_user_id,
@@ -1304,7 +1354,7 @@ class LoopItemExecutionService:
                     "claimed_at": now,
                     "heartbeat_at": now,
                     "lease_expires_at": now + timedelta(seconds=lease_seconds),
-                    "runtime_device_id": execution_device_id,
+                    "runtime_device_id": submitted_execution_device_id,
                     "runtime_instance_id": runtime_instance_id,
                     "runtime_task_id": runtime_task_id_for(candidate.id),
                     "version": LoopItemExecution.version + 1,
@@ -1333,6 +1383,12 @@ class LoopItemExecutionService:
     ) -> Optional[LoopItemExecution]:
         """Claim one queued run for a stable execution target."""
 
+        submitted_execution_device_id = execution_device_id
+        execution_device_id = _canonical_execution_device(
+            db,
+            owner_user_id=owner_user_id,
+            submitted_device_id=execution_device_id,
+        )
         running_count = _runtime_capacity_used(
             db,
             owner_user_id=owner_user_id,
@@ -1412,7 +1468,7 @@ class LoopItemExecutionService:
         if candidate is None:
             return None
         now = utcnow()
-        claimed_runtime_device_id = runtime_device_id or execution_device_id
+        claimed_runtime_device_id = runtime_device_id or submitted_execution_device_id
         claimed = (
             db.query(LoopItemExecution)
             .filter(
@@ -1607,6 +1663,12 @@ class LoopItemExecutionService:
     ) -> Optional[LoopItemExecution]:
         """Claim a legacy project-robot run without a persisted device binding."""
 
+        submitted_execution_device_id = execution_device_id
+        execution_device_id = _canonical_execution_device(
+            db,
+            owner_user_id=owner_user_id,
+            submitted_device_id=execution_device_id,
+        )
         occupied = _runtime_capacity_used(
             db,
             owner_user_id=owner_user_id,
@@ -1667,7 +1729,7 @@ class LoopItemExecutionService:
                     "claimed_at": now,
                     "heartbeat_at": now,
                     "lease_expires_at": now + timedelta(seconds=lease_seconds),
-                    "runtime_device_id": execution_device_id,
+                    "runtime_device_id": submitted_execution_device_id,
                     "runtime_instance_id": runtime_instance_id,
                     "runtime_task_id": runtime_task_id_for(candidate.id),
                     "version": LoopItemExecution.version + 1,

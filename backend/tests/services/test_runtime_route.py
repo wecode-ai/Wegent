@@ -15,6 +15,7 @@ from app.services.device.runtime_route import (
     RuntimeRouteError,
     RuntimeRouteIdentity,
     RuntimeRouteResolver,
+    normalize_execution_device_id,
     resolve_runtime_route_identity,
 )
 
@@ -26,6 +27,7 @@ def _device(
     runtime_id: str = "runtime-cloud",
     runtime_instance_id: str = "runtime-instance-1",
     app_device_id: str | None = None,
+    device_type: str = "cloud",
 ) -> Kind:
     return Kind(
         user_id=user_id,
@@ -39,7 +41,7 @@ def _device(
             "metadata": {"name": logical_id, "namespace": "default"},
             "spec": {
                 "deviceId": runtime_id,
-                "deviceType": "cloud",
+                "deviceType": device_type,
                 "runtimeInstanceId": runtime_instance_id,
                 "appDeviceId": app_device_id,
                 "cloudConfig": {
@@ -130,6 +132,80 @@ def test_resolve_runtime_route_identity_rejects_ambiguous_runtime_id(test_db):
             test_db,
             user_id=7,
             submitted_device_id="shared-runtime",
+        )
+        is None
+    )
+
+
+def test_resolve_runtime_route_identity_prefers_app_when_app_id_is_shared(test_db):
+    # An ephemeral verification device reused the desktop App registration id;
+    # the App registration remains the canonical route for that channel.
+    test_db.add(
+        _device(
+            logical_id="app-logical",
+            runtime_id="app-runtime",
+            runtime_instance_id="runtime-app",
+            app_device_id="electron-app",
+            device_type="app",
+        )
+    )
+    test_db.add(
+        _device(
+            logical_id="verify-logical",
+            runtime_id="verify-runtime",
+            runtime_instance_id="runtime-verify",
+            app_device_id="electron-app",
+            device_type="local",
+        )
+    )
+    test_db.commit()
+
+    identity = resolve_runtime_route_identity(
+        test_db,
+        user_id=7,
+        submitted_device_id="electron-app",
+    )
+
+    assert identity == RuntimeRouteIdentity(
+        logical_device_id="electron-app",
+        runtime_device_id="app-runtime",
+        runtime_instance_id="runtime-app",
+        device_type=DeviceType.APP,
+    )
+
+
+def test_normalize_execution_device_id_returns_canonical_logical_id(test_db):
+    test_db.add(
+        _device(
+            logical_id="app-logical",
+            runtime_id="app-runtime",
+            app_device_id="electron-app",
+            device_type="app",
+        )
+    )
+    test_db.commit()
+
+    assert (
+        normalize_execution_device_id(
+            test_db,
+            user_id=7,
+            submitted_device_id="electron-app",
+        )
+        == "app-runtime"
+    )
+    assert (
+        normalize_execution_device_id(
+            test_db,
+            user_id=7,
+            submitted_device_id="app-runtime",
+        )
+        == "app-runtime"
+    )
+    assert (
+        normalize_execution_device_id(
+            test_db,
+            user_id=7,
+            submitted_device_id="unknown-device",
         )
         is None
     )

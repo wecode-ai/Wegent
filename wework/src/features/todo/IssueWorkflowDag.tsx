@@ -128,8 +128,19 @@ const RuntimeStageNodeCard = memo(function RuntimeStageNodeCard({
 }: NodeProps<RuntimeStageFlowNode>) {
   const { t } = useTranslation('common')
   const { stage, tasks, selected, onSelect } = data
-  const statusLabel = workflowNodeStatusLabel(t, stage.status)
+  const isLoopControl = stage.node_type === 'loop_start' || stage.node_type === 'loop_end'
+  const statusLabel = isLoopControl
+    ? t('todo.workflow_structure_node')
+    : workflowNodeStatusLabel(t, stage.status)
   const automated = workflowNodeExecutionMode(stage) === 'robot'
+  const collectorState = stage.node_type === 'branch' ? (stage.collector_state ?? null) : null
+  const collectorLabel = collectorState
+    ? collectorState.status === 'needs_registration' || collectorState.mode === 'webhook'
+      ? t('todo.workflow_branch_collector_webhook')
+      : collectorState.status === 'error'
+        ? collectorState.error || t('todo.workflow_branch_collector_error')
+        : t('todo.workflow_branch_collector_poll')
+    : null
 
   return (
     <article
@@ -155,10 +166,20 @@ const RuntimeStageNodeCard = memo(function RuntimeStageNodeCard({
           {automated ? <Bot className="h-3.5 w-3.5" /> : <UserRound className="h-3.5 w-3.5" />}
           {automated ? t('todo.workflow_ai_execution') : t('todo.workflow_stage_human_execution')}
         </span>
+        {collectorLabel ? (
+          <span
+            className="block truncate text-xs leading-none text-text-muted"
+            title={collectorLabel}
+          >
+            {collectorLabel}
+          </span>
+        ) : null}
       </header>
       <footer className="issue-workflow-node-footer">
         <span className={cn('issue-workflow-status', `is-${stage.status.replaceAll('_', '-')}`)}>
-          {isWorkflowNodeCompleted(stage.status) ? <Check className="h-3 w-3" /> : null}
+          {!isLoopControl && isWorkflowNodeCompleted(stage.status) ? (
+            <Check className="h-3 w-3" />
+          ) : null}
           {statusLabel}
         </span>
         <span className="ml-auto">{t('todo.workflow_task_count', { count: tasks.length })}</span>

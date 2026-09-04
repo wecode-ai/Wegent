@@ -165,50 +165,12 @@ const BranchNewControl = memo(function BranchNewControl({
   branchId,
   kinds,
   eventTypeOptions,
-  eventSourceCatalog = [],
   onAddBranchHandler,
 }) {
   const { t } = useTranslation('common')
   const [open, setOpen] = useState(false)
   const [kind, setKind] = useState(kinds[0])
-  const [collectionMode, setCollectionMode] = useState('webhook')
-  const [sourceType, setSourceType] = useState('')
   const [eventType, setEventType] = useState('')
-
-  const platformSources = mode =>
-    eventSourceCatalog.filter(
-      item =>
-        item.sourceType !== 'wework' &&
-        item.sourceType !== 'generic' &&
-        (item.collectionModes ?? []).includes(mode)
-    )
-  const candidatePlatforms = platformSources(collectionMode)
-  const selectedSource = eventSourceCatalog.find(
-    item => item.sourceType === sourceType && (item.collectionModes ?? []).includes(collectionMode)
-  )
-  const sourceEventTypes = selectedSource?.eventTypes?.length
-    ? selectedSource.eventTypes
-    : eventTypeOptions
-  const sourceLabel = sourceTypeValue => {
-    const labels = {
-      webhook: t('todo.automation_trigger_webhook_label'),
-      poll: t('todo.automation_trigger_poll_label'),
-      github: t('todo.automation_trigger_github_label'),
-      gitlab: t('todo.automation_trigger_gitlab_label'),
-    }
-    return labels[sourceTypeValue] ?? sourceTypeValue
-  }
-  const changeMode = mode => {
-    const fallback = platformSources(mode)[0]
-    setCollectionMode(mode)
-    setSourceType(fallback?.sourceType ?? '')
-    setEventType(fallback?.eventTypes?.[0] ?? '')
-  }
-  const changePlatform = value => {
-    const source = eventSourceCatalog.find(item => item.sourceType === value)
-    setSourceType(value)
-    setEventType(source?.eventTypes?.[0] ?? '')
-  }
 
   return (
     <div
@@ -245,33 +207,6 @@ const BranchNewControl = memo(function BranchNewControl({
           </label>
           <div className={automationClass('react-flow-branch-new-condition')}>
             <label>
-              <span>触发来源</span>
-              <select
-                data-testid={`branch-new-source-${branchId}`}
-                value={collectionMode}
-                onChange={event => changeMode(event.target.value)}
-              >
-                <option value="webhook">{t('todo.automation_trigger_webhook_label')}</option>
-                <option value="poll">{t('todo.automation_trigger_poll_label')}</option>
-              </select>
-            </label>
-            {candidatePlatforms.length > 0 ? (
-              <label>
-                <span>平台</span>
-                <select
-                  data-testid={`branch-new-platform-${branchId}`}
-                  value={sourceType}
-                  onChange={event => changePlatform(event.target.value)}
-                >
-                  {candidatePlatforms.map(candidate => (
-                    <option key={candidate.sourceType} value={candidate.sourceType}>
-                      {sourceLabel(candidate.sourceType)}
-                    </option>
-                  ))}
-                </select>
-              </label>
-            ) : null}
-            <label>
               <span>事件类型</span>
               <select
                 data-testid={`branch-new-event-${branchId}`}
@@ -279,7 +214,7 @@ const BranchNewControl = memo(function BranchNewControl({
                 onChange={event => setEventType(event.target.value)}
               >
                 <option value="">选择事件</option>
-                {sourceEventTypes.map(candidate => (
+                {eventTypeOptions.map(candidate => (
                   <option key={candidate} value={candidate}>
                     {eventTypeLabel(candidate, t)}
                   </option>
@@ -295,9 +230,7 @@ const BranchNewControl = memo(function BranchNewControl({
               onAddBranchHandler(branchId, {
                 kind,
                 eventType,
-                sourceType,
-                collectionMode,
-                select: 'handler',
+                select: 'branch',
               })
               setOpen(false)
             }}

@@ -21,6 +21,12 @@ const project = {
   name: 'Automation project',
   current_user_id: 7,
   tags: ['自动开发', '缺陷'],
+  task_provider: 'gitlab',
+  provider_config: {
+    domain: 'gitlab.example',
+    repository: 'Test-Gitlab',
+    credential_configured: true,
+  },
 } as CloudProject
 
 const rule: ProjectAutomationRule = {
@@ -921,9 +927,9 @@ describe('ProjectAutomationView', () => {
     fireEvent.click(screen.getByTestId(`branch-new-${branchId}`))
     fireEvent.click(screen.getByTestId(`branch-new-confirm-${branchId}`))
 
-    expect(await screen.findByText('分支 1')).toBeInTheDocument()
+    expect((await screen.findAllByText('分支 1')).length).toBeGreaterThan(0)
     expect(screen.getAllByTestId(/^execution-node-step-/)).toHaveLength(3)
-    expect(await screen.findByTestId(/^execution-node-name-/)).toBeInTheDocument()
+    expect(await screen.findByTestId('branch-node-name')).toBeInTheDocument()
   })
 
   test('offers every supported top-level node type from the branch add control', async () => {
@@ -1024,13 +1030,13 @@ describe('ProjectAutomationView', () => {
     const incomingHookApi = {
       catalog: vi.fn().mockResolvedValue([
         {
-          sourceType: 'github',
+          sourceType: 'gitlab',
           collectionModes: ['webhook', 'poll', 'hybrid'],
-          resourceTypes: ['repository'],
+          resourceTypes: ['project'],
           eventTypes: ['change_request.merged', 'change_request.checks_failed'],
           executionTargets: ['continue_binding', 'create_issue'],
-          nameKey: 'event_sources.github.name',
-          descriptionKey: 'event_sources.github.description',
+          nameKey: 'event_sources.gitlab.name',
+          descriptionKey: 'event_sources.gitlab.description',
         },
       ]),
       list: vi.fn().mockResolvedValue([]),
@@ -1046,31 +1052,24 @@ describe('ProjectAutomationView', () => {
     const branchId = branchNode.getAttribute('data-testid').replace('branch-node-', '')
     fireEvent.click(screen.getByTestId(`branch-new-${branchId}`))
     await waitFor(() => {
-      const platform = screen.getByTestId(`branch-new-platform-${branchId}`)
-      expect(Array.from(platform.querySelectorAll('option')).some(o => o.value === 'github')).toBe(
-        true
-      )
-    })
-    fireEvent.change(screen.getByTestId(`branch-new-platform-${branchId}`), {
-      target: { value: 'github' },
-    })
-    await waitFor(() =>
       expect(
         Array.from(
           screen.getByTestId(`branch-new-event-${branchId}`).querySelectorAll('option')
-        ).some(o => o.value === 'change_request.merged')
-      ).toBe(true)
-    )
+        ).map(option => option.value)
+      ).toContain('change_request.merged')
+    })
     fireEvent.change(screen.getByTestId(`branch-new-event-${branchId}`), {
       target: { value: 'change_request.merged' },
     })
     fireEvent.click(screen.getByTestId(`branch-new-confirm-${branchId}`))
 
-    expect(await screen.findByText(/分支 1/)).toBeInTheDocument()
+    expect((await screen.findAllByText(/分支 1/)).length).toBeGreaterThan(0)
     // The branch row applies eventTypeLabel instead of the raw identifier.
-    expect(
-      screen.getByText(/分支 1/).closest('.react-flow-branch-condition-row')?.textContent
-    ).not.toContain('change_request.merged')
+    const branchRow = screen
+      .getAllByText(/分支 1/)
+      .map(element => element.closest('.react-flow-branch-condition-row'))
+      .find(Boolean)
+    expect(branchRow?.textContent).not.toContain('change_request.merged')
   })
 
   test('places a node inserted after a loop to the right of its rendered width', async () => {
@@ -1642,6 +1641,13 @@ describe('ProjectAutomationView', () => {
       screen.getAllByText('https://cloud.example/api/v1/incoming-hooks/sub-1').length
     ).toBeGreaterThan(0)
     expect(screen.getByTestId('automation-copy-webhook-url')).toBeInTheDocument()
+    expect(screen.queryByTestId('automation-execution-target')).toBeNull()
+    expect(
+      screen
+        .getByTestId('automation-target-branches')
+        .compareDocumentPosition(screen.getByTestId('automation-event-subscription')) &
+        Node.DOCUMENT_POSITION_FOLLOWING
+    ).toBeTruthy()
   })
 
   test('filters subscriptions by the selected collection mode', async () => {
@@ -1741,9 +1747,102 @@ describe('ProjectAutomationView', () => {
     })
     await waitFor(() => expect(screen.getByTestId('automation-trigger-type')).toHaveValue('poll'))
     expect(screen.getByTestId('automation-trigger-platform')).toHaveValue('github')
+    expect(screen.getByTestId('automation-trigger-poll-interval')).toHaveValue(5)
+    fireEvent.change(screen.getByTestId('automation-trigger-poll-interval'), {
+      target: { value: '7' },
+    })
+    expect(screen.getByTestId('automation-trigger-poll-interval')).toHaveValue(7)
     await waitFor(() =>
       expect(screen.getByTestId('automation-event-subscription')).toHaveValue('sub-2')
     )
+  })
+
+  test('configures a branch listener from upstream PR/MR deliveries without a project repository', async () => {
+    const incomingHookApi = {
+      catalog: vi.fn().mockResolvedValue([
+        {
+          sourceType: 'github',
+          collectionModes: ['webhook', 'poll'],
+          resourceTypes: ['repository'],
+          eventTypes: ['change_request.checks_failed'],
+          executionTargets: ['create_issue'],
+          nameKey: 'event_sources.github.name',
+          descriptionKey: 'event_sources.github.description',
+        },
+        {
+          sourceType: 'gitlab',
+          collectionModes: ['webhook', 'poll'],
+          resourceTypes: ['project'],
+          eventTypes: ['change_request.comment_created'],
+          executionTargets: ['create_issue'],
+          nameKey: 'event_sources.gitlab.name',
+          descriptionKey: 'event_sources.gitlab.description',
+        },
+      ]),
+      list: vi.fn().mockResolvedValue([]),
+    } as unknown as ReturnType<typeof createProjectIncomingHookApi>
+
+    const { projectAutomationApi } = renderView({
+      incomingHookApi,
+      viewProject: {
+        ...project,
+        task_provider: 'local',
+        provider_config: {},
+      } as CloudProject,
+    })
+    await openRuleEditor()
+    fireEvent.click(screen.getByTestId('automation-node-insert-after-step-1'))
+    fireEvent.click(screen.getByTestId('automation-node-insert-after-branch-step-1'))
+
+    const branchNode = await screen.findByTestId(/^branch-node-branch-/)
+    const branchId = branchNode.getAttribute('data-testid').replace('branch-node-', '')
+    fireEvent.click(screen.getByTestId(`branch-new-${branchId}`))
+    fireEvent.change(screen.getByTestId(`branch-new-event-${branchId}`), {
+      target: { value: 'change_request.checks_failed' },
+    })
+    fireEvent.click(screen.getByTestId(`branch-new-confirm-${branchId}`))
+    const handlerNode = screen
+      .getAllByTestId(/^execution-node-step-/)
+      .find(node => node.getAttribute('data-testid') !== 'execution-node-step-1')
+    fireEvent.click(handlerNode!)
+    fireEvent.change(screen.getByTestId(/^execution-node-name-/), {
+      target: { value: '处理 MR 事件' },
+    })
+    fireEvent.click(screen.getByTestId(`branch-node-main-${branchId}`))
+    expect(screen.queryByText(/当前项目未连接 GitHub\/GitLab 仓库/)).toBeNull()
+    fireEvent.change(screen.getByTestId('branch-event-wait-platform'), {
+      target: { value: 'gitlab' },
+    })
+    expect(screen.getByTestId('branch-event-wait-platform')).toHaveValue('gitlab')
+    fireEvent.change(screen.getByTestId('branch-event-wait-mode'), {
+      target: { value: 'webhook' },
+    })
+    fireEvent.change(screen.getByTestId('branch-condition-event-0'), {
+      target: { value: 'change_request.comment_created' },
+    })
+    fireEvent.change(screen.getByTestId('branch-event-wait-mode'), {
+      target: { value: 'poll' },
+    })
+    fireEvent.change(screen.getByTestId('branch-event-wait-poll-interval'), {
+      target: { value: '7' },
+    })
+    fireEvent.click(screen.getByTestId('automation-editor-section-menu'))
+    fireEvent.change(screen.getByLabelText('自动化名称'), {
+      target: { value: '上游 MR 监听' },
+    })
+    fireEvent.click(screen.getByTestId('automation-save'))
+
+    await waitFor(() => expect(projectAutomationApi.update).toHaveBeenCalled())
+    const input = projectAutomationApi.update.mock.calls.at(-1)?.[2]
+    const branch = input.eventConfig.runtime_workflow_definition.nodes.find(
+      node => node.node_type === 'branch'
+    )
+    expect(branch.event_wait).toEqual({
+      subject_source: 'upstream_pull_request',
+      source_type: 'gitlab',
+      collection_mode: 'poll',
+      poll_interval_seconds: 420,
+    })
   })
 
   test('creates a subscription inline inside the trigger settings', async () => {
@@ -1892,6 +1991,11 @@ describe('ProjectAutomationView', () => {
     fireEvent.click(screen.getByTestId(`branch-new-${branchId}`))
     fireEvent.click(screen.getByTestId(`branch-new-confirm-${branchId}`))
 
+    const handlerNode = screen
+      .getAllByTestId(/^execution-node-step-/)
+      .find(node => node.getAttribute('data-testid') !== 'execution-node-step-1')
+    expect(handlerNode).toBeDefined()
+    fireEvent.click(handlerNode!)
     const handlerDelete = await screen.findByTestId(/^execution-node-delete-step-/)
     fireEvent.click(handlerDelete)
 

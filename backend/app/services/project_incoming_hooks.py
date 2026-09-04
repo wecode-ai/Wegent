@@ -116,6 +116,8 @@ class ProjectIncomingHookService:
         project_id: str,
         user_id: int,
         values: ProjectIncomingHookCreate,
+        *,
+        validate: bool = True,
     ) -> tuple[ProjectIncomingHook, str | None]:
         access = require_cloud_project_role(
             db,
@@ -174,7 +176,7 @@ class ProjectIncomingHookService:
         )
         db.add(hook)
         db.flush()
-        if values.collection_mode in {"poll", "hybrid"}:
+        if validate and values.collection_mode in {"poll", "hybrid"}:
             try:
                 project_event_polling_service.validate_configuration(db, hook)
             except EventPollingError as exc:
@@ -302,6 +304,32 @@ class ProjectIncomingHookService:
         db.commit()
         db.refresh(hook)
         return hook, webhook_secret
+
+    def reveal_webhook_token(
+        self,
+        db: Session,
+        project_id: str,
+        hook_id: str,
+        user_id: int,
+    ) -> str:
+        """Return the signing token without rotating it."""
+
+        hook = self.get(db, project_id, hook_id, user_id)
+        hook_metadata = self.metadata(hook)
+        encrypted = hook_metadata.get("webhook_secret_encrypted")
+        if (
+            hook_metadata.get("collection_mode") not in {"webhook", "hybrid"}
+            or not encrypted
+        ):
+            raise HTTPException(
+                status.HTTP_422_UNPROCESSABLE_CONTENT,
+                "Only webhook subscriptions have signing secrets",
+            )
+        return decrypt_subscription_secret(
+            encrypted,
+            project_id=str(hook.cloud_project_id),
+            subscription_id=str(hook.id),
+        )
 
     def get(
         self,

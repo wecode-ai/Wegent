@@ -187,6 +187,11 @@ class GitHubEventPoller(_HttpPoller):
                 if isinstance(value, dict)
                 and _is_after(value.get("updated_at"), cutoff)
             ]
+            relevant_numbers = {
+                int(pull["number"])
+                for pull in relevant
+                if isinstance(pull.get("number"), int)
+            }
             for pull in relevant:
                 changes.extend(
                     await self._pull_inputs(
@@ -196,6 +201,24 @@ class GitHubEventPoller(_HttpPoller):
                         headers=headers,
                         pull=pull,
                         cutoff=cutoff,
+                    )
+                )
+            if int(state.get("page") or 1) == 1:
+                changes.extend(
+                    await self._open_pull_health_sweep_inputs(
+                        client,
+                        api_base=api_base,
+                        repository=repository,
+                        headers=headers,
+                        seen_numbers=relevant_numbers,
+                    )
+                )
+                changes.extend(
+                    await self._merged_pull_sweep_inputs(
+                        client,
+                        api_base=api_base,
+                        repository=repository,
+                        headers=headers,
                     )
                 )
         complete = len(pulls) < POLL_PAGE_SIZE or len(relevant) < len(pulls)
@@ -227,24 +250,13 @@ class GitHubEventPoller(_HttpPoller):
         changes: list[PolledInput] = []
         head = _mapping(detail.get("head"))
         head_sha = _text(head.get("sha"))
-        mergeable_state = _text(detail.get("mergeable_state")).lower()
-        if detail.get("mergeable") is False or mergeable_state in {
-            "dirty",
-            "conflicting",
-        }:
-            changes.append(
-                PolledInput(
-                    identity=f"pull_request:{number}:conflict:{head_sha}",
-                    title=f"github: pull_request #{number}",
-                    payload={
-                        "action": "synchronize",
-                        "pull_request": detail,
-                        "repository": repository_payload,
-                    },
-                    headers={"x-github-event": "pull_request"},
-                    occurred_at=_text(detail.get("updated_at")) or None,
-                )
-            )
+        conflict = _pull_request_conflict_input(
+            number=number,
+            pull=detail,
+            repository_payload=repository_payload,
+        )
+        if conflict is not None:
+            changes.append(conflict)
         if head_sha:
             checks = await self._list_all(
                 client,
@@ -253,34 +265,15 @@ class GitHubEventPoller(_HttpPoller):
                 params={"filter": "latest"},
                 list_key="check_runs",
             )
-            for check in checks:
-                conclusion = _text(check.get("conclusion")).lower()
-                if _text(check.get("status")).lower() == "completed" and conclusion in {
-                    "failure",
-                    "timed_out",
-                    "cancelled",
-                    "action_required",
-                }:
-                    check_payload = {
-                        **check,
-                        "pull_requests": [detail],
-                        "head_sha": head_sha,
-                    }
-                    changes.append(
-                        PolledInput(
-                            identity=(
-                                f"check_run:{check.get('id')}:{conclusion}:{head_sha}"
-                            ),
-                            title=f"github: check_run #{number}",
-                            payload={
-                                "action": "completed",
-                                "check_run": check_payload,
-                                "repository": repository_payload,
-                            },
-                            headers={"x-github-event": "check_run"},
-                            occurred_at=_text(check.get("completed_at")) or None,
-                        )
-                    )
+            changes.extend(
+                _failed_check_run_inputs(
+                    number=number,
+                    head_sha=head_sha,
+                    checks=checks,
+                    pull_requests=[detail],
+                    repository_payload=repository_payload,
+                )
+            )
         reviews = await self._list_all(
             client,
             f"{api_base}/repos/{repository}/pulls/{number}/reviews",
@@ -348,6 +341,136 @@ class GitHubEventPoller(_HttpPoller):
             )
         return changes
 
+    async def _open_pull_health_sweep_inputs(
+        self,
+        client: httpx.AsyncClient,
+        *,
+        api_base: str,
+        repository: str,
+        headers: Mapping[str, str],
+        seen_numbers: set[int],
+    ) -> list[PolledInput]:
+        """Sweep every open PR for conflicts and failed checks.
+
+        Mergeability and CI results can change without touching the PR's
+        ``updated_at`` (for example when the target branch moves), which would
+        keep the PR out of the incremental window forever.
+        """
+
+        changes: list[PolledInput] = []
+        page = 1
+        while page <= 50:
+            pulls = await self._get(
+                client,
+                f"{api_base}/repos/{repository}/pulls",
+                headers=headers,
+                params={
+                    "state": "open",
+                    "sort": "updated",
+                    "direction": "desc",
+                    "per_page": POLL_PAGE_SIZE,
+                    "page": page,
+                },
+            )
+            if not isinstance(pulls, list):
+                raise EventPollingError("GitHub pull request response is invalid")
+            for pull in pulls:
+                if not isinstance(pull, dict):
+                    continue
+                try:
+                    number = int(pull["number"])
+                except (KeyError, TypeError, ValueError):
+                    continue
+                if number in seen_numbers:
+                    continue
+                detail = await self._get(
+                    client,
+                    f"{api_base}/repos/{repository}/pulls/{number}",
+                    headers=headers,
+                )
+                if not isinstance(detail, dict):
+                    continue
+                repository_payload = _github_repository_payload(repository, detail)
+                conflict = _pull_request_conflict_input(
+                    number=number,
+                    pull=detail,
+                    repository_payload=repository_payload,
+                )
+                if conflict is not None:
+                    changes.append(conflict)
+                head_sha = _text(_mapping(detail.get("head")).get("sha"))
+                if head_sha:
+                    checks = await self._list_all(
+                        client,
+                        f"{api_base}/repos/{repository}/commits/{head_sha}/check-runs",
+                        headers=headers,
+                        params={"filter": "latest"},
+                        list_key="check_runs",
+                    )
+                    changes.extend(
+                        _failed_check_run_inputs(
+                            number=number,
+                            head_sha=head_sha,
+                            checks=checks,
+                            pull_requests=[detail],
+                            repository_payload=repository_payload,
+                        )
+                    )
+            if len(pulls) < POLL_PAGE_SIZE:
+                break
+            page += 1
+        return changes
+
+    async def _merged_pull_sweep_inputs(
+        self,
+        client: httpx.AsyncClient,
+        *,
+        api_base: str,
+        repository: str,
+        headers: Mapping[str, str],
+    ) -> list[PolledInput]:
+        """Emit merged events for recently closed merged PRs.
+
+        A merged PR leaves the ``open`` list, so polling would never see it.
+        Sweep the most recent closed PRs once per cycle; ingestion deduplicates
+        by ``pull_request:{number}:merged:{sha}``.
+        """
+
+        changes: list[PolledInput] = []
+        for page in range(1, 4):
+            pulls = await self._get(
+                client,
+                f"{api_base}/repos/{repository}/pulls",
+                headers=headers,
+                params={
+                    "state": "closed",
+                    "sort": "updated",
+                    "direction": "desc",
+                    "per_page": POLL_PAGE_SIZE,
+                    "page": page,
+                },
+            )
+            if not isinstance(pulls, list):
+                raise EventPollingError("GitHub pull request response is invalid")
+            for pull in pulls:
+                if not isinstance(pull, dict) or pull.get("merged") is not True:
+                    continue
+                try:
+                    number = int(pull["number"])
+                except (KeyError, TypeError, ValueError):
+                    continue
+                repository_payload = _github_repository_payload(repository, pull)
+                changes.append(
+                    _pull_request_merged_input(
+                        number=number,
+                        pull=pull,
+                        repository_payload=repository_payload,
+                    )
+                )
+            if len(pulls) < POLL_PAGE_SIZE:
+                break
+        return changes
+
 
 class GitLabEventPoller(_HttpPoller):
     async def fetch_page(
@@ -386,9 +509,14 @@ class GitLabEventPoller(_HttpPoller):
             if not isinstance(merge_requests, list):
                 raise EventPollingError("GitLab merge request response is invalid")
             changes: list[PolledInput] = []
+            incremental_ids: set[int] = set()
             for merge_request in merge_requests:
                 if not isinstance(merge_request, dict):
                     continue
+                try:
+                    incremental_ids.add(int(merge_request["iid"]))
+                except (KeyError, TypeError, ValueError):
+                    pass
                 changes.extend(
                     await self._merge_request_inputs(
                         client,
@@ -401,12 +529,182 @@ class GitLabEventPoller(_HttpPoller):
                         cutoff=cutoff,
                     )
                 )
+            # Conflicts can appear without touching the MR itself (for example
+            # when the target branch moves), which never bumps ``updated_at``
+            # and would keep the MR out of the incremental window forever.
+            # Sweep every opened MR once per polling cycle for the conflict
+            # state; note/pipeline discovery stays incremental.
+            if int(state.get("page") or 1) == 1:
+                changes.extend(
+                    await self._conflict_sweep_inputs(
+                        client,
+                        api_base=api_base,
+                        project=project,
+                        project_path=project_path,
+                        instance_url=instance_url,
+                        headers=headers,
+                        seen_iids=incremental_ids,
+                        cutoff=cutoff,
+                    )
+                )
+                changes.extend(
+                    await self._merged_sweep_inputs(
+                        client,
+                        api_base=api_base,
+                        project=project,
+                        project_path=project_path,
+                        instance_url=instance_url,
+                        headers=headers,
+                    )
+                )
         complete = len(merge_requests) < POLL_PAGE_SIZE
         return PollPage(
             inputs=tuple(changes),
             next_cursor=_next_cursor(state, complete),
             complete=complete,
         )
+
+    async def _conflict_sweep_inputs(
+        self,
+        client: httpx.AsyncClient,
+        *,
+        api_base: str,
+        project: str,
+        project_path: str,
+        instance_url: str,
+        headers: Mapping[str, str],
+        seen_iids: set[int],
+        cutoff: datetime | None,
+    ) -> list[PolledInput]:
+        """Return conflict and failed-pipeline events for every opened MR.
+
+        Conflicts and pipeline outcomes can change without touching the MR's
+        ``updated_at`` (for example when the target branch moves or CI finishes
+        late), which would keep the MR out of the incremental window forever.
+        """
+
+        changes: list[PolledInput] = []
+        page = 1
+        while page <= 50:
+            merge_requests = await self._get(
+                client,
+                f"{api_base}/projects/{project}/merge_requests",
+                headers=headers,
+                params={
+                    "state": "opened",
+                    "order_by": "updated_at",
+                    "sort": "desc",
+                    "per_page": POLL_PAGE_SIZE,
+                    "page": page,
+                },
+            )
+            if not isinstance(merge_requests, list):
+                raise EventPollingError("GitLab merge request response is invalid")
+            for merge_request in merge_requests:
+                if not isinstance(merge_request, dict):
+                    continue
+                try:
+                    iid = int(merge_request["iid"])
+                except (KeyError, TypeError, ValueError):
+                    continue
+                if iid in seen_iids:
+                    continue
+                project_payload = {
+                    "id": merge_request.get("project_id"),
+                    "path_with_namespace": project_path,
+                    "web_url": f"{instance_url}/{project_path}",
+                }
+                if _is_conflicted(merge_request):
+                    changes.append(
+                        _conflict_polled_input(
+                            iid=iid,
+                            change_request=merge_request,
+                            project_payload=project_payload,
+                        )
+                    )
+                pipelines = await self._list_all(
+                    client,
+                    f"{api_base}/projects/{project}/merge_requests/{iid}/pipelines",
+                    headers=headers,
+                )
+                for pipeline in pipelines:
+                    occurred_at = _text(
+                        pipeline.get("updated_at") or pipeline.get("created_at")
+                    )
+                    if not _is_after(occurred_at, cutoff):
+                        continue
+                    if _text(pipeline.get("status")).lower() not in {
+                        "failed",
+                        "canceled",
+                    }:
+                        continue
+                    changes.append(
+                        _gitlab_pipeline_input(
+                            iid=iid,
+                            pipeline=pipeline,
+                            merge_request=merge_request,
+                            project_payload=project_payload,
+                        )
+                    )
+            if len(merge_requests) < POLL_PAGE_SIZE:
+                break
+            page += 1
+        return changes
+
+    async def _merged_sweep_inputs(
+        self,
+        client: httpx.AsyncClient,
+        *,
+        api_base: str,
+        project: str,
+        project_path: str,
+        instance_url: str,
+        headers: Mapping[str, str],
+    ) -> list[PolledInput]:
+        """Return merged events for recently merged MRs.
+
+        Polling can never see an MR flip to ``merged`` through the incremental
+        ``opened`` window, so sweep the most recent merged MRs once per cycle.
+        Ingestion deduplicates by ``merge_request:{iid}:merged:{sha}``, so a
+        merged MR emits an event exactly once.
+        """
+
+        merge_requests = await self._get(
+            client,
+            f"{api_base}/projects/{project}/merge_requests",
+            headers=headers,
+            params={
+                "state": "merged",
+                "order_by": "updated_at",
+                "sort": "desc",
+                "per_page": POLL_PAGE_SIZE,
+            },
+        )
+        if not isinstance(merge_requests, list):
+            raise EventPollingError("GitLab merge request response is invalid")
+        changes: list[PolledInput] = []
+        for merge_request in merge_requests:
+            if not isinstance(merge_request, dict):
+                continue
+            try:
+                iid = int(merge_request["iid"])
+            except (KeyError, TypeError, ValueError):
+                continue
+            if _text(merge_request.get("state")).lower() != "merged":
+                continue
+            project_payload = {
+                "id": merge_request.get("project_id"),
+                "path_with_namespace": project_path,
+                "web_url": f"{instance_url}/{project_path}",
+            }
+            changes.append(
+                _merged_polled_input(
+                    iid=iid,
+                    change_request=merge_request,
+                    project_payload=project_payload,
+                )
+            )
+        return changes
 
     async def _merge_request_inputs(
         self,
@@ -434,28 +732,12 @@ class GitLabEventPoller(_HttpPoller):
             "web_url": f"{instance_url}/{project_path}",
         }
         changes: list[PolledInput] = []
-        head_sha = _text(detail.get("sha"))
-        merge_status = (
-            _text(detail.get("detailed_merge_status"))
-            or _text(detail.get("merge_status"))
-        ).lower()
-        if detail.get("has_conflicts") is True or merge_status in {
-            "cannot_be_merged",
-            "conflict",
-            "conflicting",
-        }:
-            attributes = _gitlab_merge_request_payload(detail)
+        if _is_conflicted(detail):
             changes.append(
-                PolledInput(
-                    identity=f"merge_request:{iid}:conflict:{head_sha}",
-                    title=f"gitlab: merge_request !{iid}",
-                    payload={
-                        "object_kind": "merge_request",
-                        "object_attributes": attributes,
-                        "project": project_payload,
-                    },
-                    headers={"x-gitlab-event": "Merge Request Hook"},
-                    occurred_at=_text(detail.get("updated_at")) or None,
+                _conflict_polled_input(
+                    iid=iid,
+                    change_request=detail,
+                    project_payload=project_payload,
                 )
             )
         pipelines = await self._list_all(
@@ -472,23 +754,11 @@ class GitLabEventPoller(_HttpPoller):
             if _text(pipeline.get("status")).lower() not in {"failed", "canceled"}:
                 continue
             changes.append(
-                PolledInput(
-                    identity=(
-                        f"pipeline:{pipeline.get('id')}:{pipeline.get('status')}"
-                    ),
-                    title=f"gitlab: pipeline !{iid}",
-                    payload={
-                        "object_kind": "pipeline",
-                        "object_attributes": {
-                            **pipeline,
-                            "sha": pipeline.get("sha") or head_sha,
-                            "ref": pipeline.get("ref") or detail.get("source_branch"),
-                        },
-                        "merge_request": _gitlab_merge_request_payload(detail),
-                        "project": project_payload,
-                    },
-                    headers={"x-gitlab-event": "Pipeline Hook"},
-                    occurred_at=occurred_at or None,
+                _gitlab_pipeline_input(
+                    iid=iid,
+                    pipeline=pipeline,
+                    merge_request=detail,
+                    project_payload=project_payload,
                 )
             )
         notes = await self._list_all(
@@ -597,12 +867,177 @@ def _github_repository_payload(
     }
 
 
+def _pull_request_conflict_input(
+    *,
+    number: int,
+    pull: Mapping[str, Any],
+    repository_payload: dict[str, Any],
+) -> PolledInput | None:
+    head_sha = _text(_mapping(pull.get("head")).get("sha"))
+    mergeable_state = _text(pull.get("mergeable_state")).lower()
+    if pull.get("mergeable") is not False and mergeable_state not in {
+        "dirty",
+        "conflicting",
+    }:
+        return None
+    return PolledInput(
+        identity=f"pull_request:{number}:conflict:{head_sha}",
+        title=f"github: pull_request #{number}",
+        payload={
+            "action": "synchronize",
+            "pull_request": dict(pull),
+            "repository": repository_payload,
+        },
+        headers={"x-github-event": "pull_request"},
+        occurred_at=_text(pull.get("updated_at")) or None,
+    )
+
+
+def _failed_check_run_inputs(
+    *,
+    number: int,
+    head_sha: str,
+    checks: list[dict[str, Any]],
+    pull_requests: list[dict[str, Any]],
+    repository_payload: dict[str, Any],
+) -> list[PolledInput]:
+    changes: list[PolledInput] = []
+    for check in checks:
+        conclusion = _text(check.get("conclusion")).lower()
+        if _text(check.get("status")).lower() == "completed" and conclusion in {
+            "failure",
+            "timed_out",
+            "cancelled",
+            "action_required",
+        }:
+            changes.append(
+                PolledInput(
+                    identity=f"check_run:{check.get('id')}:{conclusion}:{head_sha}",
+                    title=f"github: check_run #{number}",
+                    payload={
+                        "action": "completed",
+                        "check_run": {
+                            **check,
+                            "pull_requests": pull_requests,
+                            "head_sha": head_sha,
+                        },
+                        "repository": repository_payload,
+                    },
+                    headers={"x-github-event": "check_run"},
+                    occurred_at=_text(check.get("completed_at")) or None,
+                )
+            )
+    return changes
+
+
+def _pull_request_merged_input(
+    *,
+    number: int,
+    pull: Mapping[str, Any],
+    repository_payload: dict[str, Any],
+) -> PolledInput:
+    merge_sha = _text(pull.get("merge_commit_sha")) or _text(
+        _mapping(pull.get("head")).get("sha")
+    )
+    return PolledInput(
+        identity=f"pull_request:{number}:merged:{merge_sha}",
+        title=f"github: pull_request #{number}",
+        payload={
+            "action": "closed",
+            "pull_request": dict(pull),
+            "repository": repository_payload,
+        },
+        headers={"x-github-event": "pull_request"},
+        occurred_at=_text(pull.get("merged_at"))
+        or _text(pull.get("updated_at"))
+        or None,
+    )
+
+
 def _gitlab_merge_request_payload(value: Mapping[str, Any]) -> dict[str, Any]:
     return {
         **dict(value),
         "url": value.get("web_url") or value.get("url"),
         "last_commit": {"id": value.get("sha")},
     }
+
+
+def _is_conflicted(change_request: Mapping[str, Any]) -> bool:
+    merge_status = (
+        _text(change_request.get("detailed_merge_status"))
+        or _text(change_request.get("merge_status"))
+    ).lower()
+    return change_request.get("has_conflicts") is True or merge_status in {
+        "cannot_be_merged",
+        "conflict",
+        "conflicting",
+    }
+
+
+def _conflict_polled_input(
+    *,
+    iid: int,
+    change_request: Mapping[str, Any],
+    project_payload: dict[str, Any],
+) -> PolledInput:
+    return PolledInput(
+        identity=f"merge_request:{iid}:conflict:{_text(change_request.get('sha'))}",
+        title=f"gitlab: merge_request !{iid}",
+        payload={
+            "object_kind": "merge_request",
+            "object_attributes": _gitlab_merge_request_payload(change_request),
+            "project": project_payload,
+        },
+        headers={"x-gitlab-event": "Merge Request Hook"},
+        occurred_at=_text(change_request.get("updated_at")) or None,
+    )
+
+
+def _merged_polled_input(
+    *,
+    iid: int,
+    change_request: Mapping[str, Any],
+    project_payload: dict[str, Any],
+) -> PolledInput:
+    return PolledInput(
+        identity=f"merge_request:{iid}:merged:{_text(change_request.get('sha'))}",
+        title=f"gitlab: merge_request !{iid}",
+        payload={
+            "object_kind": "merge_request",
+            "object_attributes": _gitlab_merge_request_payload(change_request),
+            "project": project_payload,
+        },
+        headers={"x-gitlab-event": "Merge Request Hook"},
+        occurred_at=_text(change_request.get("merged_at"))
+        or _text(change_request.get("updated_at"))
+        or None,
+    )
+
+
+def _gitlab_pipeline_input(
+    *,
+    iid: int,
+    pipeline: Mapping[str, Any],
+    merge_request: Mapping[str, Any],
+    project_payload: dict[str, Any],
+) -> PolledInput:
+    return PolledInput(
+        identity=f"pipeline:{pipeline.get('id')}:{pipeline.get('status')}",
+        title=f"gitlab: pipeline !{iid}",
+        payload={
+            "object_kind": "pipeline",
+            "object_attributes": {
+                **dict(pipeline),
+                "sha": pipeline.get("sha") or merge_request.get("sha"),
+                "ref": pipeline.get("ref") or merge_request.get("source_branch"),
+            },
+            "merge_request": _gitlab_merge_request_payload(merge_request),
+            "project": project_payload,
+        },
+        headers={"x-gitlab-event": "Pipeline Hook"},
+        occurred_at=_text(pipeline.get("updated_at") or pipeline.get("created_at"))
+        or None,
+    )
 
 
 def _required_text(value: Mapping[str, Any], key: str) -> str:

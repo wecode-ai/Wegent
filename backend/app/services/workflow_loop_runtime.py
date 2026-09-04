@@ -176,6 +176,22 @@ def advance_root_branches(nodes: list[dict]) -> None:
             if not all(handler.get("status") in COMPLETED for handler in handlers):
                 break
             completed.update(handler.get("id") for handler in handlers)
+            # A root branch fires at most one condition per arm. Sibling
+            # handlers that were not released must not be treated as sequential
+            # successors, so skip them instead of letting the generic DAG
+            # promoter dispatch them after the branch completes.
+            sibling_ids = {
+                str(handler_id)
+                for condition in (branch.get("branch_conditions") or [])
+                if isinstance(condition, dict)
+                for handler_id in (condition.get("handler_node_ids") or [])
+            }
+            for sibling_id in sibling_ids:
+                sibling = by_id.get(sibling_id)
+                if sibling is None or sibling.get("status") in COMPLETED:
+                    continue
+                sibling["status"] = "completed"
+                completed.add(sibling_id)
             branch["status"] = "completed"
             branch["active_condition"] = None
 
@@ -351,6 +367,11 @@ def _save_workflow(item: LoopItem, nodes: list[dict], workflow: dict) -> None:
     item.version += 1
 
 
+def _workflow_terminal(nodes: list[dict]) -> bool:
+    required = [node for node in nodes if node.get("required", True)]
+    return bool(required) and all(node.get("status") in COMPLETED for node in required)
+
+
 def _subject_item(
     db: Session,
     event: ProjectAutomationEvent,
@@ -395,7 +416,7 @@ def _subject_item(
 
 def _matching_branch(
     nodes: list[dict],
-    event_type: str,
+    event: ProjectAutomationEvent,
 ) -> dict | None:
     candidates = [
         node
@@ -404,13 +425,27 @@ def _matching_branch(
         and node.get("status") in {"waiting", "reacting"}
     ]
     for branch in candidates:
-        conditions = branch.get("branch_conditions") or []
-        if any(
-            isinstance(condition, dict) and condition.get("event_type") == event_type
-            for condition in conditions
+        event_wait = branch.get("event_wait")
+        if (
+            isinstance(event_wait, dict)
+            and event.source in {"github", "gitlab"}
+            and event_wait.get("source_type") in {"github", "gitlab"}
+            and event_wait.get("source_type") != event.source
         ):
+            continue
+        conditions = branch.get("branch_conditions") or []
+        if any(_condition_matches_event(condition, event) for condition in conditions):
             return branch
     return None
+
+
+def _condition_matches_event(
+    condition: object,
+    event: ProjectAutomationEvent,
+) -> bool:
+    if not isinstance(condition, dict):
+        return False
+    return condition.get("event_type") == event.event_type
 
 
 def route_event_to_workflow_loop(
@@ -425,7 +460,7 @@ def route_event_to_workflow_loop(
     nodes = _workflow_nodes(item)
     if nodes is None:
         return None
-    branch = _matching_branch(nodes, event.event_type)
+    branch = _matching_branch(nodes, event)
     if branch is None:
         return None
     metadata = item.metadata_json if isinstance(item.metadata_json, dict) else {}
@@ -465,7 +500,12 @@ def route_event_to_workflow_loop(
     )
     advance_loops(nodes)
     advance_root_branches(nodes)
-    _save_workflow(item, nodes, workflow)
+    if _workflow_terminal(nodes):
+        from app.services.project_workflow_projection import apply_workflow_nodes
+
+        apply_workflow_nodes(db, item, workflow=workflow, nodes=nodes)
+    else:
+        _save_workflow(item, nodes, workflow)
     db.commit()
     db.refresh(item)
     return item
@@ -610,11 +650,11 @@ def catch_up_branch_events(
     if since.tzinfo is None:
         since = since.replace(tzinfo=timezone.utc)
     since = since.astimezone(timezone.utc).replace(tzinfo=None)
-    conditions = {
-        str(condition.get("event_type"))
+    conditions = [
+        condition
         for condition in (branch.get("branch_conditions") or [])
         if isinstance(condition, dict)
-    }
+    ]
     if not conditions:
         return
     rows = (
@@ -636,8 +676,6 @@ def catch_up_branch_events(
             if not isinstance(normalized, dict):
                 continue
             event_type = normalized.get("event_type")
-            if event_type not in conditions:
-                continue
             subject = normalized.get("subject")
             subject = subject if isinstance(subject, dict) else {}
             event = ProjectAutomationEvent(
@@ -651,6 +689,18 @@ def catch_up_branch_events(
                 event_id=str(row.public_id or row.id),
                 subscription_id=str(row.parent_id or ""),
             )
+            event_wait = branch.get("event_wait")
+            if (
+                isinstance(event_wait, dict)
+                and event.source in {"github", "gitlab"}
+                and event_wait.get("source_type") in {"github", "gitlab"}
+                and event_wait.get("source_type") != event.source
+            ):
+                continue
+            if not any(
+                _condition_matches_event(condition, event) for condition in conditions
+            ):
+                continue
             if not _subject_matches_item(db, item, event):
                 continue
             _apply_condition_event(

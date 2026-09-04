@@ -52,6 +52,7 @@ const PROJECT = {
   created_by_user_id: 9001,
   status: 'active',
   task_provider: 'local',
+  provider_config: {},
   access_role: 'Owner',
   version: 1,
   created_at: '2026-08-11T00:00:00',
@@ -2715,6 +2716,12 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
         const created = {
           ...EVENT_SUBSCRIPTION,
           ...payload,
+          webhookUrl:
+            payload.collectionMode === 'webhook'
+              ? `https://cloud.example/api/v1/incoming-hooks/subscription-${eventSubscriptions.length + 1}`
+              : null,
+          webhookSecret:
+            payload.collectionMode === 'webhook' ? `secret-${eventSubscriptions.length + 1}` : null,
           version: 1,
           created_at: '2026-08-11T00:00:00',
           updated_at: '2026-08-11T00:00:00',
@@ -4144,10 +4151,12 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
         'change_request.checks_failed',
         'The external automation did not default to the catalog event type'
       )
-      assert.equal(
-        await control.command('getValue', '[data-testid="automation-execution-target"]'),
-        'continue_binding',
-        'The external automation did not default to the catalog execution target'
+      const externalEditorSnapshot = JSON.parse(
+        await control.command('snapshot', '[data-testid="automation-rule-editor"]')
+      )
+      assert.ok(
+        !externalEditorSnapshot.testIds.includes('automation-execution-target'),
+        'The external trigger still exposed an execution target'
       )
       await control.command('click', '[data-testid="automation-editor-section-menu"]')
       await control.command('fill', '[aria-label="自动化名称"]', {
@@ -4167,9 +4176,10 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
       assert.equal(externalAutomation.eventType, 'change_request.checks_failed')
       assert.equal(externalAutomation.eventConfig.source_type, 'github')
       assert.equal(externalAutomation.eventConfig.subscription_id, 'subscription-1')
-      assert.equal(externalAutomation.eventConfig.execution_target, 'continue_binding')
+      assert.equal(externalAutomation.eventConfig.execution_target, 'create_issue')
       assert.deepEqual(externalAutomation.eventConfig.target_branches, [])
       await captureScreenshot(control, 'project-external-event-automation.png')
+
       await control.command('click', '[data-testid="automation-editor-section-menu"]', {
         visible: true,
       })
@@ -4197,6 +4207,81 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
       )
       assert.ok(!waitingRunText.includes('执行中'))
       assert.ok(!waitingRunText.includes('0 秒'))
+
+      await control.command('click', '[data-testid="automation-editor-back"]', {
+        visible: true,
+      })
+      await control.command('click', '[data-testid="automation-create-rule"]', {
+        visible: true,
+      })
+      await control.command('waitFor', '[data-testid="automation-rule-editor"]', {
+        timeoutMs: uiTimeoutMs,
+        visible: true,
+      })
+      await control.command('click', '[data-testid="automation-node-insert-after-trigger"]')
+      await control.command('click', '[data-testid="automation-node-insert-after-branch-trigger"]')
+      await control.command('waitFor', '[data-testid="branch-event-wait-mode"]', {
+        timeoutMs: uiTimeoutMs,
+        visible: true,
+      })
+      const branchEditorSnapshot = JSON.parse(
+        await control.command('snapshot', '[data-testid="automation-rule-editor"]')
+      )
+      assert.ok(
+        !branchEditorSnapshot.testIds.includes('branch-event-wait-subscription-resource-url'),
+        'The branch listener unexpectedly asked for a repository URL'
+      )
+      assert.ok(
+        branchEditorSnapshot.testIds.includes('branch-event-wait-platform'),
+        'The branch listener did not expose its GitHub/GitLab platform'
+      )
+      const branchNewTestId = branchEditorSnapshot.testIds.find(testId =>
+        testId.startsWith('branch-new-')
+      )
+      assert.ok(branchNewTestId, 'The branch condition control was not rendered')
+      const branchId = branchNewTestId.replace('branch-new-', '')
+      await control.command('click', `[data-testid="${branchNewTestId}"]`)
+      await control.command('select', `[data-testid="branch-new-event-${branchId}"]`, {
+        value: 'change_request.comment_created',
+      })
+      await control.command('click', `[data-testid="branch-new-confirm-${branchId}"]`)
+      const handlerTestId = JSON.parse(
+        await control.command('snapshot', '[data-testid="automation-rule-editor"]')
+      ).testIds.find(
+        testId => testId.startsWith('execution-node-step-') && testId !== 'execution-node-step-1'
+      )
+      assert.ok(handlerTestId, 'The branch handler node was not created')
+      await control.command('click', `[data-testid="${handlerTestId}"]`)
+      const handlerId = handlerTestId.replace('execution-node-', '')
+      await control.command('fill', `[data-testid="execution-node-name-${handlerId}"]`, {
+        value: '处理 MR 评论',
+      })
+      await control.command('click', `[data-testid="branch-node-main-${branchId}"]`)
+      await control.command('select', '[data-testid="branch-event-wait-platform"]', {
+        value: 'gitlab',
+      })
+      await control.command('fill', '[data-testid="branch-event-wait-poll-interval"]', {
+        value: '3',
+      })
+      await control.command('click', '[data-testid="automation-editor-section-menu"]')
+      await control.command('fill', '[aria-label="自动化名称"]', {
+        value: '项目 MR 事件分支',
+      })
+      await control.command('clickWhenEnabled', '[data-testid="automation-save"]', {
+        timeoutMs: uiTimeoutMs,
+      })
+      const branchAutomation = createdPayloads.find(payload => payload.name === '项目 MR 事件分支')
+      assert.ok(branchAutomation, 'The upstream MR branch automation was not saved')
+      const savedBranch = branchAutomation.eventConfig.runtime_workflow_definition.nodes.find(
+        node => node.node_type === 'branch'
+      )
+      assert.deepEqual(savedBranch?.event_wait, {
+        subject_source: 'upstream_pull_request',
+        source_type: 'gitlab',
+        collection_mode: 'poll',
+        poll_interval_seconds: 180,
+      })
+      await captureScreenshot(control, 'project-automation-branch-event-listener.png')
 
       await control.command(
         'click',

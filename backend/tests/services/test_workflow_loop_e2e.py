@@ -72,6 +72,10 @@ def _definition() -> ProjectWorkflowDefinition:
                 node_type="branch",
                 loop_id="loop1",
                 depends_on=["ls"],
+                event_wait={
+                    "source_type": "github",
+                    "collection_mode": "webhook",
+                },
                 branch_conditions=[
                     {
                         "event_type": "change_request.checks_failed",

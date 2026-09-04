@@ -245,10 +245,28 @@ class WorkflowBranchCondition(BaseModel):
 
     event_type: str = Field(min_length=1, max_length=100)
     handler_node_ids: list[str] = Field(default_factory=list, max_length=50)
-    # Describes how the event is delivered and from which platform. These are
-    # scoping metadata for the condition picker; routing still keys on event_type.
+    # Legacy transport fields are read so existing definitions can be migrated
+    # into the branch-level event_wait configuration.
+    subscription_id: str | None = Field(default=None, min_length=1, max_length=128)
     source_type: str | None = Field(default=None, max_length=50)
     collection_mode: str | None = Field(default=None, max_length=50)
+
+
+class WorkflowEventWaitConfig(BaseModel):
+    """How one branch observes its upstream PR/MR while it is waiting."""
+
+    subject_source: Literal["upstream_pull_request"] = "upstream_pull_request"
+    source_type: Literal["github", "gitlab"] = "github"
+    collection_mode: Literal["webhook", "poll"] = "poll"
+    poll_interval_seconds: int | None = Field(default=300, ge=60, le=86_400)
+
+    @model_validator(mode="after")
+    def validate_poll_interval(self) -> "WorkflowEventWaitConfig":
+        if self.collection_mode == "poll":
+            self.poll_interval_seconds = self.poll_interval_seconds or 300
+        else:
+            self.poll_interval_seconds = None
+        return self
 
 
 class WorkflowLoopBreakCondition(BaseModel):
@@ -308,6 +326,7 @@ class WorkflowNodeDefinition(BaseModel):
     branch_conditions: list[WorkflowBranchCondition] = Field(
         default_factory=list, max_length=20
     )
+    event_wait: WorkflowEventWaitConfig | None = None
     execution_mode: Literal["human", "robot"] = "human"
     depends_on: list[str] = Field(default_factory=list, max_length=50)
     dependency_context: dict[str, list[WorkflowContextSource]] = Field(
@@ -344,6 +363,30 @@ class WorkflowNodeDefinition(BaseModel):
                 raise ValueError("workflow control nodes cannot own automation runs")
             if self.execution_config is not None or self.execution_config_override:
                 raise ValueError("workflow control nodes cannot define execution")
+        if self.node_type == "branch" and self.event_wait is None:
+            legacy_condition = next(
+                (
+                    condition
+                    for condition in self.branch_conditions
+                    if condition.collection_mode or condition.subscription_id
+                ),
+                None,
+            )
+            if legacy_condition is not None:
+                self.event_wait = WorkflowEventWaitConfig(
+                    source_type=(
+                        legacy_condition.source_type
+                        if legacy_condition.source_type in {"github", "gitlab"}
+                        else "github"
+                    ),
+                    collection_mode=(
+                        legacy_condition.collection_mode
+                        if legacy_condition.collection_mode in {"webhook", "poll"}
+                        else "poll"
+                    ),
+                )
+        elif self.node_type != "branch" and self.event_wait is not None:
+            raise ValueError("event_wait is only valid for branch nodes")
         if self.automation_rule_id and self.execution_mode != "robot":
             raise ValueError("workflow automation rule requires robot execution")
         if unknown := set(self.dependency_context) - set(self.depends_on):
@@ -555,6 +598,10 @@ class WorkflowNodeInstance(WorkflowNodeDefinition):
     execution_id: int | None = Field(default=None, ge=1)
     automation_run_id: str | None = Field(default=None, max_length=64)
     execution_error: str | None = Field(default=None, max_length=2000)
+    # Runtime event collector created for a waiting branch node. The collector
+    # is an incoming-hook subscription watching the upstream PR/MR repository.
+    collector_id: str | None = Field(default=None, max_length=64)
+    collector_state: dict[str, Any] | None = None
 
 
 class WorkflowNodeDecision(BaseModel):

@@ -123,6 +123,7 @@ function createExecutionNode({
   bodyNodeIds = [],
   loopConfig = null,
   branchConditions = [],
+  eventWait = null,
 }) {
   return {
     id,
@@ -157,6 +158,7 @@ function createExecutionNode({
     bodyNodeIds,
     loopConfig,
     branchConditions,
+    eventWait,
   }
 }
 
@@ -328,6 +330,11 @@ function createLoopBodyNode(executionCatalog, loopId, kind) {
       x: 240,
       y: 0,
       branchConditions: [],
+      eventWait: {
+        sourceType: 'github',
+        collectionMode: 'poll',
+        pollIntervalSeconds: 300,
+      },
     })
   }
   if (kind === 'loopEnd') {
@@ -372,6 +379,11 @@ function createBranchNode(id = `branch-${Date.now()}`) {
     workspacePolicy: 'none',
     nodeType: 'branch',
     branchConditions: [],
+    eventWait: {
+      sourceType: 'github',
+      collectionMode: 'poll',
+      pollIntervalSeconds: 300,
+    },
   })
 }
 
@@ -1033,13 +1045,13 @@ export function AutomationRulesView({
       notify('请填写所有执行节点名称')
       return null
     }
-    const hasEmptyBranchEvent = nodes =>
+    const hasInvalidBranchCondition = nodes =>
       nodes.some(
         node =>
           (node.branchConditions ?? []).some(condition => !(condition.eventType ?? '').trim()) ||
-          hasEmptyBranchEvent(node.subgraph?.nodes ?? [])
+          hasInvalidBranchCondition(node.subgraph?.nodes ?? [])
       )
-    if (hasEmptyBranchEvent(draft.steps)) {
+    if (hasInvalidBranchCondition(draft.steps)) {
       notify('请为每个分支选择事件类型')
       return null
     }
@@ -1845,7 +1857,7 @@ function WorkflowEditor({
   const eventTypeOptions = useMemo(
     () =>
       Array.from(
-        new Set((eventSourceCatalog ?? []).flatMap(source => source.event_types ?? []))
+        new Set((eventSourceCatalog ?? []).flatMap(source => source.eventTypes ?? []))
       ).sort(),
     [eventSourceCatalog]
   )
@@ -2247,10 +2259,7 @@ function WorkflowEditor({
     }))
   }
 
-  const addBranchHandler = (
-    branchId,
-    { kind = 'task', eventType = '', sourceType = '', collectionMode = '', select = 'branch' }
-  ) => {
+  const addBranchHandler = (branchId, { kind = 'task', eventType = '', select = 'branch' }) => {
     const branchOwner = findBranchOwner(draft.steps, branchId)
     if (!branchOwner) return
 
@@ -2268,7 +2277,7 @@ function WorkflowEditor({
       onDraftChange(current => {
         const result = insertStepAfter(current.steps, branchId, handlerNode, {
           gap: BRANCH_HANDLER_COLUMN_GAP,
-          condition: { eventType, sourceType, collectionMode },
+          condition: { eventType },
           stack: true,
         })
         if (!result) return current
@@ -2281,7 +2290,7 @@ function WorkflowEditor({
           if (step.id !== branchOwner.step.id) return step
           const result = insertStepAfter(step.subgraph?.nodes ?? [], branchId, handlerNode, {
             gap: LOOP_BODY_HANDLER_COLUMN_GAP,
-            condition: { eventType, sourceType, collectionMode },
+            condition: { eventType },
             stack: true,
             nodeSize: loopBodyNodeSize,
           })
@@ -2880,6 +2889,42 @@ function RunStatus({ status }) {
   )
 }
 
+function PollIntervalField({ testId, value, onChange, index }) {
+  const minutes = Math.max(1, Math.round((value ?? 300) / 60))
+  const suggestionsId = `${testId}-suggestions`
+  return (
+    <label className={automationClass('panel-field')}>
+      <span>
+        {index ? <i className={automationClass('cascade-index')}>{index}</i> : null}
+        轮询间隔
+      </span>
+      <div className={automationClass('poll-interval-control')}>
+        <input
+          data-testid={testId}
+          type="number"
+          min={1}
+          max={1440}
+          step={1}
+          list={suggestionsId}
+          value={minutes}
+          onChange={event => onChange(Math.max(1, Number(event.target.value) || 1) * 60)}
+        />
+        <span>分钟</span>
+        <datalist id={suggestionsId}>
+          <option value="1" />
+          <option value="3" />
+          <option value="5" />
+          <option value="10" />
+          <option value="30" />
+        </datalist>
+      </div>
+      <small className={automationClass('panel-field-hint')}>
+        常用 1、3、5、10 分钟，也可输入任意整数
+      </small>
+    </label>
+  )
+}
+
 function TriggerSettings({
   draft,
   projectTags,
@@ -2945,7 +2990,6 @@ function TriggerSettings({
   const handleSubscriptionChange = subscriptionId => {
     onChange('subscriptionId', subscriptionId)
     onChange('event', selectedSource?.eventTypes[0] ?? 'change_request.checks_failed')
-    onChange('executionTarget', selectedSource?.executionTargets[0] ?? 'continue_binding')
   }
 
   const applyPlatform = sourceType => {
@@ -2953,7 +2997,6 @@ function TriggerSettings({
     onChange('source', sourceType)
     onChange('subscriptionId', null)
     onChange('event', source?.eventTypes[0] ?? 'change_request.checks_failed')
-    onChange('executionTarget', source?.executionTargets[0] ?? 'continue_binding')
   }
 
   const handleTriggerKindChange = value => {
@@ -3001,7 +3044,7 @@ function TriggerSettings({
       <label className={automationClass('panel-field')}>
         <span>
           <i className={automationClass('cascade-index')}>1</i>
-          触发来源
+          事件源
         </span>
         <select
           data-testid="automation-trigger-type"
@@ -3088,7 +3131,14 @@ function TriggerSettings({
           </label>
         </section>
       ) : trigger.source !== 'wework' ? (
-        <section className={automationClass('schedule-settings')}>
+        <section className={automationClass('event-source-settings')}>
+          <div className={automationClass('event-source-heading')}>
+            <div>
+              <strong>外部事件源</strong>
+              <span>选择接收方式与代码托管平台</span>
+            </div>
+            <small>{sourceLabel(collectionMode)}</small>
+          </div>
           {selectedPlatforms.length ? (
             <label className={automationClass('panel-field')}>
               <span>
@@ -3108,6 +3158,36 @@ function TriggerSettings({
               </select>
             </label>
           ) : null}
+          {collectionMode === 'poll' ? (
+            <PollIntervalField
+              testId="automation-trigger-poll-interval"
+              value={trigger.pollIntervalSeconds}
+              index={hasPlatformStep ? 3 : 2}
+              onChange={value => onChange('pollIntervalSeconds', value)}
+            />
+          ) : null}
+          <label className={automationClass('panel-field')}>
+            <span>
+              <i className={automationClass('cascade-index')}>
+                {hasPlatformStep ? (collectionMode === 'poll' ? 4 : 3) : 2}
+              </i>
+              {t('todo.automation_target_branches')}
+            </span>
+            <input
+              data-testid="automation-target-branches"
+              value={(trigger.targetBranches ?? []).join(', ')}
+              onChange={event =>
+                onChange(
+                  'targetBranches',
+                  event.target.value
+                    .split(',')
+                    .map(value => value.trim())
+                    .filter(Boolean)
+                )
+              }
+              placeholder="main, release"
+            />
+          </label>
           <EventSubscriptionManager
             key={`${collectionMode}:${trigger.source}`}
             api={projectIncomingHookApi}
@@ -3115,13 +3195,31 @@ function TriggerSettings({
             sourceType={trigger.source}
             collectionMode={collectionMode}
             sourceLabel={sourceLabel}
-            cascadeIndex={hasPlatformStep ? 3 : 2}
+            cascadeIndex={
+              hasPlatformStep
+                ? collectionMode === 'poll'
+                  ? 5
+                  : 4
+                : collectionMode === 'poll'
+                  ? 4
+                  : 3
+            }
+            pollIntervalSeconds={trigger.pollIntervalSeconds ?? 300}
+            showPollIntervalField={false}
             value={trigger.subscriptionId}
             onChange={handleSubscriptionChange}
           />
           <label className={automationClass('panel-field')}>
             <span>
-              <i className={automationClass('cascade-index')}>{hasPlatformStep ? 4 : 3}</i>
+              <i className={automationClass('cascade-index')}>
+                {hasPlatformStep
+                  ? collectionMode === 'poll'
+                    ? 6
+                    : 5
+                  : collectionMode === 'poll'
+                    ? 5
+                    : 4}
+              </i>
               {t('todo.automation_event_type')}
             </span>
             <select
@@ -3144,44 +3242,9 @@ function TriggerSettings({
               {t('todo.automation_event_comment_loop_hint')}
             </p>
           ) : null}
-          <label className={automationClass('panel-field')}>
-            <span>
-              <i className={automationClass('cascade-index')}>{hasPlatformStep ? 5 : 4}</i>
-              {t('todo.automation_execution_target')}
-            </span>
-            <select
-              data-testid="automation-execution-target"
-              value={trigger.executionTarget ?? selectedSource?.executionTargets[0] ?? ''}
-              onChange={event => onChange('executionTarget', event.target.value)}
-            >
-              {(selectedSource?.executionTargets ?? []).map(target => (
-                <option key={target} value={target}>
-                  {target === 'continue_binding'
-                    ? t('todo.automation_continue_bound_session')
-                    : target === 'create_issue'
-                      ? t('todo.automation_create_issue')
-                      : t('todo.automation_existing_issue')}
-                </option>
-              ))}
-            </select>
-          </label>
-          <label className={automationClass('panel-field')}>
-            <span>{t('todo.automation_target_branches')}</span>
-            <input
-              data-testid="automation-target-branches"
-              value={(trigger.targetBranches ?? []).join(', ')}
-              onChange={event =>
-                onChange(
-                  'targetBranches',
-                  event.target.value
-                    .split(',')
-                    .map(value => value.trim())
-                    .filter(Boolean)
-                )
-              }
-              placeholder="main, release"
-            />
-          </label>
+          <p className={automationClass('execution-hint')}>
+            收到事件后会新建一个 Issue，并只沿当前自动化的后续节点执行。
+          </p>
         </section>
       ) : (
         <>
@@ -3639,19 +3702,23 @@ function BranchSettings({
 }) {
   const { t } = useTranslation('common')
   const conditions = step.branchConditions ?? []
+  const eventWait = step.eventWait ?? {
+    sourceType: 'github',
+    collectionMode: 'poll',
+    pollIntervalSeconds: 300,
+  }
+  const platformSources = eventSourceCatalog.filter(
+    source => source.sourceType === 'github' || source.sourceType === 'gitlab'
+  )
+  const selectedSource = platformSources.find(source => source.sourceType === eventWait.sourceType)
+  const sourceEventTypes = (
+    selectedSource?.eventTypes?.length ? selectedSource.eventTypes : eventTypeOptions
+  ).filter(eventType => eventType.startsWith('change_request.'))
   const updateCondition = (index, key, value) => {
     onChange(
       'branchConditions',
       conditions.map((condition, candidate) =>
         candidate === index ? { ...condition, [key]: value } : condition
-      )
-    )
-  }
-  const patchCondition = (index, patch) => {
-    onChange(
-      'branchConditions',
-      conditions.map((condition, candidate) =>
-        candidate === index ? { ...condition, ...patch } : condition
       )
     )
   }
@@ -3663,27 +3730,24 @@ function BranchSettings({
       condition.handlerNodeIds.filter(id => id !== handlerId)
     )
   }
-  const platformSources = mode =>
-    eventSourceCatalog.filter(
-      item =>
-        item.sourceType !== 'wework' &&
-        item.sourceType !== 'generic' &&
-        (item.collectionModes ?? []).includes(mode)
-    )
-  const changeConditionMode = (index, mode) => {
-    const fallback = platformSources(mode)[0]
-    patchCondition(index, {
+  const changeCollectionMode = mode => {
+    onChange('eventWait', {
+      ...eventWait,
       collectionMode: mode,
-      sourceType: fallback?.sourceType ?? '',
-      eventType: fallback?.eventTypes?.[0] ?? '',
+      pollIntervalSeconds: mode === 'poll' ? (eventWait.pollIntervalSeconds ?? 300) : null,
     })
   }
-  const changeConditionPlatform = (index, sourceType) => {
-    const source = eventSourceCatalog.find(item => item.sourceType === sourceType)
-    patchCondition(index, {
-      sourceType,
-      eventType: source?.eventTypes?.[0] ?? '',
-    })
+  const changeSourceType = sourceType => {
+    const source = platformSources.find(candidate => candidate.sourceType === sourceType)
+    const supportedEvents = source?.eventTypes ?? []
+    onChange('eventWait', { ...eventWait, sourceType })
+    onChange(
+      'branchConditions',
+      conditions.map(condition => ({
+        ...condition,
+        eventType: supportedEvents.includes(condition.eventType) ? condition.eventType : '',
+      }))
+    )
   }
   return (
     <div className={automationClass('panel-settings')}>
@@ -3699,8 +3763,74 @@ function BranchSettings({
         />
       </label>
       <p className={automationClass('execution-hint')}>
-        分支节点会等待事件出现；命中条件后路由到对应处理节点。位于循环体内时，处理完回到分支继续等待，直到循环结束；位于主流程时，处理完成后分支结束。
+        分支节点监听当前 Issue 上游交付的
+        PR/MR；仓库、编号和平台会从交付物自动识别。命中条件后路由到对应处理节点。
       </p>
+      <section className={automationClass('event-source-settings')}>
+        <div className={automationClass('event-source-heading')}>
+          <div>
+            <strong>事件源</strong>
+            <span>运行时从当前 Issue 的前序节点交付物中识别 PR/MR</span>
+          </div>
+          <small>{eventWait.sourceType === 'gitlab' ? 'GitLab' : 'GitHub'}</small>
+        </div>
+        <label className={automationClass('panel-field')}>
+          <span>
+            <i className={automationClass('cascade-index')}>1</i>
+            代码托管平台
+          </span>
+          <select
+            data-testid="branch-event-wait-platform"
+            value={eventWait.sourceType}
+            onChange={event => changeSourceType(event.target.value)}
+          >
+            {[{ sourceType: 'github' }, { sourceType: 'gitlab' }].map(source => (
+              <option key={source.sourceType} value={source.sourceType}>
+                {source.sourceType === 'gitlab' ? 'GitLab' : 'GitHub'}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label className={automationClass('panel-field')}>
+          <span>
+            <i className={automationClass('cascade-index')}>2</i>
+            接收方式
+          </span>
+          <select
+            data-testid="branch-event-wait-mode"
+            value={eventWait.collectionMode}
+            onChange={event => changeCollectionMode(event.target.value)}
+          >
+            <option value="poll">{t('todo.automation_trigger_poll_label')}</option>
+            <option value="webhook">{t('todo.automation_trigger_webhook_label')}</option>
+          </select>
+        </label>
+        {eventWait.collectionMode === 'poll' ? (
+          <PollIntervalField
+            testId="branch-event-wait-poll-interval"
+            value={eventWait.pollIntervalSeconds}
+            index={3}
+            onChange={pollIntervalSeconds =>
+              onChange('eventWait', { ...eventWait, pollIntervalSeconds })
+            }
+          />
+        ) : null}
+        {eventWait.collectionMode === 'poll' ? (
+          <p
+            className={automationClass('execution-hint')}
+            data-testid="branch-event-wait-poll-hint"
+          >
+            {t('todo.workflow_branch_collector_poll_hint')}
+          </p>
+        ) : (
+          <p
+            className={automationClass('execution-hint')}
+            data-testid="branch-event-wait-webhook-hint"
+          >
+            {t('todo.workflow_branch_collector_webhook_hint')}
+          </p>
+        )}
+      </section>
       <div className={automationClass('branch-conditions')}>
         <span className={automationClass('branch-conditions-heading')}>分支条件</span>
         {conditions.length === 0 ? (
@@ -3719,26 +3849,6 @@ function BranchSettings({
                 (!candidate.nodeType || candidate.nodeType === 'task') &&
                 !condition.handlerNodeIds.includes(candidate.id)
             )
-            const conditionMode = condition.collectionMode || 'webhook'
-            const candidatePlatforms = platformSources(conditionMode)
-            const hasPlatforms = candidatePlatforms.length > 0
-            const selectedSource = eventSourceCatalog.find(
-              item =>
-                item.sourceType === condition.sourceType &&
-                (item.collectionModes ?? []).includes(conditionMode)
-            )
-            const sourceEventTypes = selectedSource?.eventTypes?.length
-              ? selectedSource.eventTypes
-              : eventTypeOptions
-            const sourceLabel = sourceType => {
-              const labels = {
-                webhook: t('todo.automation_trigger_webhook_label'),
-                poll: t('todo.automation_trigger_poll_label'),
-                github: t('todo.automation_trigger_github_label'),
-                gitlab: t('todo.automation_trigger_gitlab_label'),
-              }
-              return labels[sourceType] ?? sourceType
-            }
             return (
               <div className={automationClass('branch-condition-card')} key={`condition-${index}`}>
                 <div className={automationClass('branch-condition-head')}>
@@ -3760,43 +3870,7 @@ function BranchSettings({
                 </div>
                 <div className={automationClass('branch-condition-source')}>
                   <label className={automationClass('panel-field')}>
-                    <span>
-                      <i className={automationClass('cascade-index')}>1</i>
-                      触发来源
-                    </span>
-                    <select
-                      data-testid={`branch-condition-source-${index}`}
-                      value={conditionMode}
-                      onChange={event => changeConditionMode(index, event.target.value)}
-                    >
-                      <option value="webhook">{t('todo.automation_trigger_webhook_label')}</option>
-                      <option value="poll">{t('todo.automation_trigger_poll_label')}</option>
-                    </select>
-                  </label>
-                  {hasPlatforms ? (
-                    <label className={automationClass('panel-field')}>
-                      <span>
-                        <i className={automationClass('cascade-index')}>2</i>
-                        {t('todo.automation_trigger_platform')}
-                      </span>
-                      <select
-                        data-testid={`branch-condition-platform-${index}`}
-                        value={condition.sourceType ?? ''}
-                        onChange={event => changeConditionPlatform(index, event.target.value)}
-                      >
-                        {candidatePlatforms.map(item => (
-                          <option key={item.sourceType} value={item.sourceType}>
-                            {sourceLabel(item.sourceType)}
-                          </option>
-                        ))}
-                      </select>
-                    </label>
-                  ) : null}
-                  <label className={automationClass('panel-field')}>
-                    <span>
-                      <i className={automationClass('cascade-index')}>{hasPlatforms ? 3 : 2}</i>
-                      事件类型
-                    </span>
+                    <span>事件类型</span>
                     <select
                       data-testid={`branch-condition-event-${index}`}
                       value={condition.eventType}

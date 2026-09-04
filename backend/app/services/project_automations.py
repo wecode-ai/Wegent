@@ -78,6 +78,8 @@ def _canonical_event_config(
         config.pop("transition", None)
     if event_type in {"task.created", "task.status_changed"}:
         config["execution_target"] = "existing_issue"
+    elif event_type:
+        config["execution_target"] = "create_issue"
     return config
 
 

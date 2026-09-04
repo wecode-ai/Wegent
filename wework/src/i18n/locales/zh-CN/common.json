@@ -312,7 +312,6 @@
     "project_automation_skipped": "已跳过",
     "project_automation_unknown": "状态待核实",
     "project_automation_completed": "已完成",
-    "project_automation_run_details": "查看运行详情",
     "project_automation_run_details": "运行详情",
     "project_automation_run_failed_details": "运行失败，查看详情",
     "project_automation_run_succeeded_details": "运行成功，查看详情",
@@ -2172,7 +2171,6 @@
     "plugins_back_to_management": "返回管理插件",
     "plugins_back_to_create_task": "返回创建任务",
     "plugins_install_plugin": "安装插件",
-    "plugins_manage_access": "管理权限",
     "plugin_detail_access_scope": "可用范围",
     "plugin_detail_access_private": "仅自己可用",
     "plugin_detail_access_workspace": "组织内可用",
@@ -3543,7 +3541,7 @@
     "event_subscription_add": "添加订阅",
     "event_subscription_name": "订阅名称",
     "event_subscription_resource_url": "资源地址",
-    "event_subscription_interval": "轮询间隔（秒）",
+    "event_subscription_interval": "轮询间隔（分钟）",
     "event_subscription_credential": "凭据引用",
     "event_subscription_credential_placeholder": "github、gitlab 或 project-provider",
     "event_subscription_credential_hint": "填写已连接的连接器名称，或使用 project-provider 复用项目提供方的凭据。",
@@ -3967,6 +3965,9 @@
     "workflow_runtime_title": "阶段与任务",
     "workflow_node_blocked": "等待前置任务",
     "workflow_node_ready": "可开始",
+    "workflow_node_waiting": "等待事件",
+    "workflow_node_reacting": "处理事件中",
+    "workflow_structure_node": "流程控制",
     "workflow_node_queued": "排队中",
     "workflow_node_running": "执行中",
     "workflow_node_awaiting_approval": "待人工批准",
@@ -4235,6 +4236,11 @@
     "sunday": "星期日",
     "minutes": "分钟",
     "hours": "小时",
-    "days": "天"
+    "days": "天",
+    "workflow_branch_collector_poll_hint": "分支进入等待后，系统会自动使用本机 gh/glab 凭据为交付的 MR/PR 仓库建立轮询采集，按上面间隔获取评论、合并与冲突事件。",
+    "workflow_branch_collector_webhook_hint": "分支进入等待后，系统会为交付的 MR/PR 创建 webhook 采集入口；请在对应平台仓库设置中，把回调地址与令牌注册到该仓库。",
+    "workflow_branch_collector_poll": "轮询采集中",
+    "workflow_branch_collector_webhook": "webhook 待注册",
+    "workflow_branch_collector_error": "采集器不可用"
   }
 }

@@ -30,6 +30,9 @@ vi.mock('@/hooks/useTranslation', () => ({
           'todo.workflow_run': '运行',
           'todo.workflow_node_blocked': '等待前置任务',
           'todo.workflow_node_ready': '可开始',
+          'todo.workflow_node_waiting': '等待事件',
+          'todo.workflow_node_reacting': '处理事件中',
+          'todo.workflow_structure_node': '流程控制',
           'todo.workflow_node_queued': '排队中',
           'todo.workflow_node_running': '执行中',
           'todo.workflow_node_awaiting_approval': '待人工批准',
@@ -48,6 +51,8 @@ vi.mock('@/hooks/useTranslation', () => ({
           'todo.workflow_approve_stage': '批准进入下一阶段',
           'todo.workflow_reject_stage': '驳回',
           'todo.workflow_force_advance': '强制推进',
+          'todo.workflow_branch_collector_poll': '轮询采集中',
+          'todo.workflow_branch_collector_webhook': 'webhook 待注册',
           'todo.workflow_decision_reason_placeholder': '填写原因',
           'todo.workflow_wait_dependencies': '等待前置阶段',
           'todo.workflow_no_stage_tasks': '尚无具体任务',
@@ -254,6 +259,32 @@ describe('IssueWorkflowDag', () => {
     expect(screen.getByTestId('mock-flow-node-branch')).toHaveAttribute('data-parent-id', 'loop')
     expect(screen.getByTestId('mock-flow-node-loop-end')).toHaveAttribute('data-parent-id', 'loop')
     expect(screen.getByTestId('mock-flow-node-after')).not.toHaveAttribute('data-parent-id')
+    expect(screen.getByTestId('mock-flow-node-loop-start')).toHaveTextContent('流程控制')
+    expect(screen.getByTestId('mock-flow-node-loop-end')).toHaveTextContent('流程控制')
+  })
+
+  test('shows the branch event collector state on the node card', () => {
+    render(
+      <IssueWorkflowDag
+        nodes={[
+          stage('branch-poll', {
+            node_type: 'branch',
+            status: 'waiting',
+            collector_state: { mode: 'poll', status: 'active' },
+          }),
+          stage('branch-webhook', {
+            node_type: 'branch',
+            status: 'waiting',
+            collector_state: { mode: 'webhook', status: 'needs_registration' },
+          }),
+        ]}
+        tasks={[]}
+      />
+    )
+
+    expect(screen.getByTestId('mock-flow-node-branch-poll')).toHaveTextContent('轮询采集中')
+    expect(screen.getByTestId('mock-flow-node-branch-poll')).toHaveTextContent('等待事件')
+    expect(screen.getByTestId('mock-flow-node-branch-webhook')).toHaveTextContent('webhook 待注册')
   })
 
   test('shows the execution failure reason in the failed stage details', () => {

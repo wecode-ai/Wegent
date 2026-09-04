@@ -26,10 +26,20 @@ from app.services.issue_workflow_start import issue_workflow_start_service
 from app.services.loop_item_executions.service import loop_item_execution_service
 from app.services.project_automation_domain import utc_aware
 from app.services.project_automations import (
+    _canonical_event_config,
     _next_run,
     project_automation_execution,
     project_automation_service,
 )
+
+
+def test_external_events_default_to_creating_an_issue() -> None:
+    config = _canonical_event_config(
+        "change_request.checks_failed",
+        {"execution_target": "continue_binding"},
+    )
+
+    assert config["execution_target"] == "create_issue"
 
 
 def test_next_run_respects_rule_timezone():

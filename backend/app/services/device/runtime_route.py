@@ -14,6 +14,7 @@ from sqlalchemy.orm import Session
 
 from app.models.kind import Kind
 from app.schemas.device import DeviceType
+from app.services.device.identity import device_kind_type, preferred_device
 from app.services.device_service import device_service
 from shared.telemetry.decorators import trace_async
 
@@ -55,15 +56,6 @@ class RuntimeRoute:
     device_type: DeviceType
     socket_id: str
     online_info: dict[str, Any]
-
-
-def _device_type(device: Kind) -> DeviceType:
-    spec = device.json.get("spec", {}) if isinstance(device.json, dict) else {}
-    raw_type = spec.get("deviceType", DeviceType.LOCAL.value)
-    try:
-        return DeviceType(raw_type)
-    except (TypeError, ValueError):
-        return DeviceType.LOCAL
 
 
 def _runtime_device_id(device: Kind) -> str:
@@ -115,26 +107,25 @@ def resolve_runtime_route_identity(
             logical_device_id=logical_match.name,
             runtime_device_id=runtime_device_id,
             runtime_instance_id=_runtime_instance_id(logical_match),
-            device_type=_device_type(logical_match),
+            device_type=device_kind_type(logical_match),
         )
 
     devices = db.query(Kind).filter(base_filter).all()
     app_matches = [
         device for device in devices if _app_device_id(device) == submitted_device_id
     ]
-    if len(app_matches) == 1:
-        app_match = app_matches[0]
-        runtime_device_id = _runtime_device_id(app_match)
-        if not runtime_device_id:
-            return None
-        return RuntimeRouteIdentity(
-            logical_device_id=submitted_device_id,
-            runtime_device_id=runtime_device_id,
-            runtime_instance_id=_runtime_instance_id(app_match),
-            device_type=_device_type(app_match),
-        )
-    if len(app_matches) > 1:
-        return None
+    if app_matches:
+        app_match = preferred_device(app_matches)
+        if app_match is not None:
+            runtime_device_id = _runtime_device_id(app_match)
+            if not runtime_device_id:
+                return None
+            return RuntimeRouteIdentity(
+                logical_device_id=submitted_device_id,
+                runtime_device_id=runtime_device_id,
+                runtime_instance_id=_runtime_instance_id(app_match),
+                device_type=device_kind_type(app_match),
+            )
 
     runtime_matches = [
         device
@@ -149,8 +140,33 @@ def resolve_runtime_route_identity(
         logical_device_id=runtime_match.name,
         runtime_device_id=submitted_device_id,
         runtime_instance_id=_runtime_instance_id(runtime_match),
-        device_type=_device_type(runtime_match),
+        device_type=device_kind_type(runtime_match),
     )
+
+
+def normalize_execution_device_id(
+    db: Session,
+    *,
+    user_id: int,
+    submitted_device_id: str,
+) -> str | None:
+    """Return the canonical logical device id for a submitted identity.
+
+    Queued executions and deliveries may persist a desktop App registration id
+    instead of the stable logical name. Persisting the canonical ``runtime
+    device id`` keeps the queue claimable by the device names the App puller
+    sends, so a raw ``appDeviceId`` never becomes an ambiguous orphan. Returns
+    ``None`` when the submitted id cannot be resolved to an owned device.
+    """
+
+    identity = resolve_runtime_route_identity(
+        db,
+        user_id=user_id,
+        submitted_device_id=submitted_device_id,
+    )
+    if identity is None:
+        return None
+    return identity.runtime_device_id
 
 
 class RuntimeRouteResolver:

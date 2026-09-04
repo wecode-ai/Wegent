@@ -25,6 +25,7 @@ from app.models.delivery import (
     loop_datetime_value_is_unset,
 )
 from app.services.connector_connections import connector_connection_service
+from app.services.machine_cli_credentials import machine_cli_token
 from app.services.project_automation_domain import utcnow
 from app.services.project_event_polling import (
     EventPollingError,
@@ -53,6 +54,17 @@ def resolve_polling_credential(
             "Polling requires a credential reference",
             disable_subscription=True,
         )
+    if credential_ref in {"machine-cli", "local-cli"}:
+        resource = _mapping(metadata.get("resource"))
+        instance_url = _text(resource.get("instance_url")) or _text(resource.get("url"))
+        try:
+            token = machine_cli_token(
+                source_type=source_type,
+                instance_url=instance_url,
+            )
+        except ValueError as exc:
+            raise EventPollingError(str(exc)) from exc
+        return "configured" if validate_only else token
     if credential_ref == "project-provider":
         project = db.get(CloudProject, hook.cloud_project_id)
         if project is None:

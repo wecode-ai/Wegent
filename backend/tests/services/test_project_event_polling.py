@@ -13,6 +13,7 @@ from app.services.connector_connections import connector_connection_service
 from app.services.project_event_polling import (
     EventPollingError,
     GitHubEventPoller,
+    GitLabEventPoller,
     PolledInput,
     PollPage,
 )
@@ -304,3 +305,270 @@ async def test_github_poller_emits_webhook_equivalent_inputs(
         "issue_comment",
         "pull_request_review_comment",
     }
+
+
+@pytest.mark.anyio
+async def test_gitlab_poller_detects_conflict_outside_incremental_window(monkeypatch):
+    """Target-branch conflicts must be found even when the MR was not updated."""
+
+    def handler(request):
+        if request.url.path.endswith("/pipelines"):
+            return httpx.Response(200, json=[])
+        if not request.url.path.endswith("/merge_requests"):
+            raise AssertionError(f"Unexpected request: {request.url}")
+        params = dict(request.url.params)
+        if "updated_after" in params:
+            return httpx.Response(200, json=[])
+        if params.get("state") == "merged":
+            return httpx.Response(200, json=[])
+        return httpx.Response(
+            200,
+            json=[
+                {
+                    "iid": 41,
+                    "project_id": 1,
+                    "title": "Conflict MR",
+                    "web_url": "https://gitlab.example/g/p/-/merge_requests/41",
+                    "source_branch": "feature",
+                    "target_branch": "main",
+                    "sha": "conflict-sha-1",
+                    "has_conflicts": True,
+                    "detailed_merge_status": "conflict",
+                    "updated_at": "2026-09-03T10:19:04.000Z",
+                }
+            ],
+        )
+
+    transport = httpx.MockTransport(handler)
+    original_client = httpx.AsyncClient
+
+    def client_factory(*args, **kwargs):
+        return original_client(*args, transport=transport, **kwargs)
+
+    monkeypatch.setattr(
+        "app.services.project_event_polling.httpx.AsyncClient",
+        client_factory,
+    )
+
+    page = await GitLabEventPoller().fetch_page(
+        resource={
+            "path": "g/p",
+            "instance_url": "https://gitlab.example",
+        },
+        credential="gitlab-token",
+        cursor={"watermark": "2026-09-03T10:00:00Z", "page": 1},
+    )
+
+    assert page.complete
+    conflicts = [
+        value
+        for value in page.inputs
+        if value.identity == "merge_request:41:conflict:conflict-sha-1"
+    ]
+    assert len(conflicts) == 1
+    assert (
+        conflicts[0].payload["object_attributes"]["url"].endswith("/merge_requests/41")
+    )
+
+
+@pytest.mark.anyio
+async def test_gitlab_poller_emits_merged_event_for_merged_mr(monkeypatch):
+    """A merged MR must release the loop end even when only polled."""
+
+    def handler(request):
+        if request.url.path.endswith("/pipelines"):
+            return httpx.Response(200, json=[])
+        if not request.url.path.endswith("/merge_requests"):
+            raise AssertionError(f"Unexpected request: {request.url}")
+        params = dict(request.url.params)
+        if "updated_after" in params or params.get("state") != "merged":
+            return httpx.Response(200, json=[])
+        return httpx.Response(
+            200,
+            json=[
+                {
+                    "iid": 41,
+                    "project_id": 1,
+                    "title": "Merged MR",
+                    "web_url": "https://gitlab.example/g/p/-/merge_requests/41",
+                    "source_branch": "feature",
+                    "target_branch": "main",
+                    "state": "merged",
+                    "sha": "merged-sha-1",
+                    "merged_at": "2026-09-03T10:27:06.284Z",
+                    "updated_at": "2026-09-03T10:27:06.758Z",
+                }
+            ],
+        )
+
+    transport = httpx.MockTransport(handler)
+    original_client = httpx.AsyncClient
+
+    def client_factory(*args, **kwargs):
+        return original_client(*args, transport=transport, **kwargs)
+
+    monkeypatch.setattr(
+        "app.services.project_event_polling.httpx.AsyncClient",
+        client_factory,
+    )
+
+    page = await GitLabEventPoller().fetch_page(
+        resource={
+            "path": "g/p",
+            "instance_url": "https://gitlab.example",
+        },
+        credential="gitlab-token",
+        cursor={"watermark": "2026-09-03T10:00:00Z", "page": 1},
+    )
+
+    merged = [
+        value
+        for value in page.inputs
+        if value.identity == "merge_request:41:merged:merged-sha-1"
+    ]
+    assert len(merged) == 1
+    assert merged[0].occurred_at == "2026-09-03T10:27:06.284Z"
+
+
+@pytest.mark.anyio
+async def test_github_poller_emits_merged_event_from_closed_sweep(monkeypatch):
+    """A merged PR must release the loop end even when only polled."""
+
+    def handler(request):
+        if request.url.path.endswith("/pulls"):
+            params = dict(request.url.params)
+            if params.get("state") != "closed":
+                return httpx.Response(200, json=[])
+            return httpx.Response(
+                200,
+                json=[
+                    {
+                        "number": 9,
+                        "state": "closed",
+                        "merged": True,
+                        "merged_at": "2026-09-03T10:30:00Z",
+                        "updated_at": "2026-09-03T10:31:00Z",
+                        "merge_commit_sha": "merge-sha-9",
+                        "head": {"sha": "head-sha-9"},
+                        "base": {
+                            "repo": {
+                                "id": 1,
+                                "full_name": "acme/app",
+                                "html_url": "https://github.com/acme/app",
+                            }
+                        },
+                    }
+                ],
+            )
+        raise AssertionError(f"Unexpected request: {request.url}")
+
+    transport = httpx.MockTransport(handler)
+    original_client = httpx.AsyncClient
+
+    def client_factory(*args, **kwargs):
+        return original_client(*args, transport=transport, **kwargs)
+
+    monkeypatch.setattr(
+        "app.services.project_event_polling.httpx.AsyncClient",
+        client_factory,
+    )
+
+    page = await GitHubEventPoller().fetch_page(
+        resource={
+            "path": "acme/app",
+            "instance_url": "https://github.com",
+        },
+        credential="github-token",
+        cursor={"watermark": "2026-09-03T10:00:00Z", "page": 1},
+    )
+
+    merged = [
+        value
+        for value in page.inputs
+        if value.identity == "pull_request:9:merged:merge-sha-9"
+    ]
+    assert len(merged) == 1
+
+
+@pytest.mark.anyio
+async def test_github_poller_health_sweep_finds_conflict_and_failed_checks(
+    monkeypatch,
+):
+    """Open PRs outside the incremental window still get conflict/CI checks."""
+
+    def handler(request):
+        path = request.url.path
+        if (
+            path.endswith("/pulls")
+            and dict(request.url.params).get("state") == "closed"
+        ):
+            return httpx.Response(200, json=[])
+        if path.endswith("/pulls"):
+            return httpx.Response(
+                200,
+                json=[
+                    {
+                        "number": 9,
+                        "updated_at": "2026-09-03T09:00:00Z",
+                    }
+                ],
+            )
+        if path.endswith("/pulls/9"):
+            return httpx.Response(
+                200,
+                json={
+                    "number": 9,
+                    "url": "https://github.com/acme/app/pulls/9",
+                    "updated_at": "2026-09-03T09:00:00Z",
+                    "mergeable": False,
+                    "mergeable_state": "dirty",
+                    "head": {"sha": "head-sha-9"},
+                    "base": {
+                        "repo": {
+                            "id": 1,
+                            "full_name": "acme/app",
+                            "html_url": "https://github.com/acme/app",
+                        }
+                    },
+                },
+            )
+        if path.endswith("/commits/head-sha-9/check-runs"):
+            return httpx.Response(
+                200,
+                json={
+                    "check_runs": [
+                        {
+                            "id": 500,
+                            "status": "completed",
+                            "conclusion": "failure",
+                            "completed_at": "2026-09-03T09:10:00Z",
+                            "name": "ci",
+                        }
+                    ]
+                },
+            )
+        raise AssertionError(f"Unexpected request: {request.url}")
+
+    transport = httpx.MockTransport(handler)
+    original_client = httpx.AsyncClient
+
+    def client_factory(*args, **kwargs):
+        return original_client(*args, transport=transport, **kwargs)
+
+    monkeypatch.setattr(
+        "app.services.project_event_polling.httpx.AsyncClient",
+        client_factory,
+    )
+
+    page = await GitHubEventPoller().fetch_page(
+        resource={
+            "path": "acme/app",
+            "instance_url": "https://github.com",
+        },
+        credential="github-token",
+        cursor={"watermark": "2026-09-03T10:00:00Z", "page": 1},
+    )
+
+    identities = {value.identity for value in page.inputs}
+    assert "pull_request:9:conflict:head-sha-9" in identities
+    assert "check_run:500:failure:head-sha-9" in identities

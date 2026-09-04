@@ -64,6 +64,10 @@ def _nodes(
             node_type="branch",
             loop_id="loop1",
             depends_on=["ls"],
+            event_wait={
+                "source_type": "github",
+                "collection_mode": "poll",
+            },
             branch_conditions=[
                 {
                     "event_type": "task.status_changed",
@@ -162,6 +166,65 @@ def test_root_branch_reacts_releases_handlers_and_completes():
     advance_root_branches(nodes)
     assert by_id["br1"]["status"] == "completed"
     assert by_id["br1"]["active_condition"] is None
+
+
+def test_root_branch_skips_sibling_handlers_that_did_not_match():
+    definition = ProjectWorkflowDefinition(
+        stage_mode="dag",
+        advancement_policy="manual",
+        nodes=[
+            WorkflowNodeDefinition(
+                id="start",
+                name="触发",
+                node_type="event",
+                role="start",
+            ),
+            WorkflowNodeDefinition(
+                id="br1",
+                name="分支",
+                node_type="branch",
+                depends_on=["start"],
+                branch_conditions=[
+                    {
+                        "event_type": "change_request.comment_created",
+                        "handler_node_ids": ["fix1"],
+                    },
+                    {
+                        "event_type": "change_request.merged",
+                        "handler_node_ids": ["merge1"],
+                    },
+                ],
+            ),
+            WorkflowNodeDefinition(
+                id="fix1",
+                name="按评论修复",
+                depends_on=["br1"],
+                automation_rule_id="r1",
+                execution_mode="robot",
+            ),
+            WorkflowNodeDefinition(
+                id="merge1",
+                name="合并后收尾",
+                depends_on=["br1"],
+                automation_rule_id="r2",
+                execution_mode="robot",
+            ),
+        ],
+    )
+    nodes = [
+        node.model_dump(mode="json") for node in instantiate_workflow(definition).nodes
+    ]
+    by_id = _by_id(nodes)
+    by_id["br1"]["status"] = "reacting"
+    by_id["br1"]["active_condition"] = "change_request.comment_created"
+    advance_root_branches(nodes)
+    assert by_id["fix1"]["status"] == "ready"
+    assert by_id["merge1"]["status"] == "blocked"
+    by_id["fix1"]["status"] = "completed"
+    advance_root_branches(nodes)
+    assert by_id["br1"]["status"] == "completed"
+    assert by_id["merge1"]["status"] == "completed"
+    assert by_id["merge1"].get("automation_run_id") is None
 
 
 def test_root_branch_ignores_unmatched_condition():
@@ -413,6 +476,7 @@ def test_route_event_reacts_to_armed_branch(test_db):
             actor_user_id=1,
             payload={"title": "processing"},
             event_id="evt-1",
+            subscription_id="subscription-1",
         ),
     )
     assert routed is not None
@@ -434,6 +498,7 @@ def test_route_event_queues_while_reacting(test_db):
             actor_user_id=1,
             payload={"title": "processing"},
             event_id="evt-1",
+            subscription_id="subscription-1",
         ),
     )
     routed = route_event_to_workflow_loop(
@@ -446,6 +511,7 @@ def test_route_event_queues_while_reacting(test_db):
             actor_user_id=1,
             payload={"title": "processing again"},
             event_id="evt-2",
+            subscription_id="subscription-1",
         ),
     )
     by_id = {node["id"]: node for node in routed.metadata_json["workflow"]["nodes"]}
@@ -465,9 +531,28 @@ def test_route_event_ignores_unmatched_event(test_db):
             actor_user_id=1,
             payload={"title": "comment"},
             event_id="evt-3",
+            subscription_id="subscription-1",
         ),
     )
     assert routed is None
+
+
+def test_route_event_uses_subject_binding_instead_of_transport_subscription(test_db):
+    _, item = _workflow_item(test_db)
+    routed = route_event_to_workflow_loop(
+        test_db,
+        ProjectAutomationEvent(
+            event_type="task.status_changed",
+            project_id=str(item.cloud_project_id),
+            subject_id=str(item.id),
+            source="wework",
+            actor_user_id=1,
+            payload={"title": "processing"},
+            event_id="evt-other-subscription",
+            subscription_id="subscription-2",
+        ),
+    )
+    assert routed is item
 
 
 def test_scan_loop_timeouts_completes_expired_loop(test_db):
@@ -521,6 +606,7 @@ async def test_process_with_runs_routes_event_to_loop_without_new_run(test_db):
             actor_user_id=1,
             payload={"title": "processing", "status": "in_progress"},
             event_id="loop-event-1",
+            subscription_id="subscription-1",
         ),
     )
 
@@ -530,3 +616,110 @@ async def test_process_with_runs_routes_event_to_loop_without_new_run(test_db):
     by_id = {node["id"]: node for node in item.metadata_json["workflow"]["nodes"]}
     assert by_id["br"]["status"] == "reacting"
     assert by_id["fix1"]["status"] == "ready"
+
+
+def _terminal_loop_item(test_db) -> LoopItem:
+    project = CloudProject(
+        project_key="LOOPEND",
+        name="Loop end project",
+        created_by_user_id=1,
+        storage_prefix="projects/loopend",
+    )
+    test_db.add(project)
+    test_db.flush()
+    definition = ProjectWorkflowDefinition(
+        stage_mode="dag",
+        advancement_policy="manual",
+        nodes=[
+            WorkflowNodeDefinition(
+                id="start",
+                name="触发",
+                node_type="event",
+                role="start",
+            ),
+            WorkflowNodeDefinition(
+                id="loop1",
+                name="修复循环",
+                node_type="loop",
+                depends_on=["start"],
+                body_node_ids=["ls", "br", "fix", "le"],
+                loop_config={"max_attempts": 5},
+            ),
+            WorkflowNodeDefinition(
+                id="ls",
+                name="循环开始",
+                node_type="loop_start",
+                loop_id="loop1",
+            ),
+            WorkflowNodeDefinition(
+                id="br",
+                name="分支",
+                node_type="branch",
+                loop_id="loop1",
+                depends_on=["ls"],
+                branch_conditions=[
+                    {
+                        "event_type": "change_request.merged",
+                        "handler_node_ids": ["le"],
+                    },
+                ],
+            ),
+            WorkflowNodeDefinition(
+                id="fix",
+                name="修复",
+                node_type="task",
+                loop_id="loop1",
+                depends_on=["br"],
+                automation_rule_id="fix-rule",
+                execution_mode="robot",
+                workspace_policy="none",
+            ),
+            WorkflowNodeDefinition(
+                id="le",
+                name="循环结束",
+                node_type="loop_end",
+                loop_id="loop1",
+                depends_on=["br"],
+            ),
+        ],
+    )
+    instance = instantiate_workflow(definition)
+    item = LoopItem(
+        cloud_project_id=str(project.id),
+        title="Loop end issue",
+        resource_type="task",
+        status="in_progress",
+        created_by_user_id=1,
+        metadata_json={
+            "workflow_automation": {"rule_id": "rule-1", "run_id": "run-1"},
+            "workflow": instance.model_dump(mode="json"),
+        },
+    )
+    test_db.add(item)
+    test_db.flush()
+    return item
+
+
+def test_route_event_projects_terminal_loop_to_review(test_db):
+    item = _terminal_loop_item(test_db)
+
+    routed = route_event_to_workflow_loop(
+        test_db,
+        ProjectAutomationEvent(
+            event_type="change_request.merged",
+            project_id=str(item.cloud_project_id),
+            subject_id=str(item.id),
+            source="wework",
+            actor_user_id=1,
+            payload={"title": "merged"},
+            event_id="evt-merged",
+            subscription_id="subscription-1",
+        ),
+    )
+
+    assert routed is not None
+    workflow = routed.metadata_json["workflow"]
+    by_id = {node["id"]: node for node in workflow["nodes"]}
+    assert by_id["loop1"]["exit_reason"] == "loop_end"
+    assert by_id["le"]["status"] == "completed"
+    assert routed.status == "in_review"

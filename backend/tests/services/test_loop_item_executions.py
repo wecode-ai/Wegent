@@ -656,6 +656,56 @@ def test_claim_next_for_device_orders_by_priority(
     assert claimed.id == urgent.id
 
 
+def test_claim_next_for_device_accepts_app_registration_id(
+    test_db: Session, test_user: User
+) -> None:
+    """A run queued under the canonical logical device id is claimable when the
+    caller submits the desktop App registration id instead of that canonical id.
+
+    The local App puller reports ``appDeviceId`` (for example
+    ``electron-app-1``) while queue rows persist the canonical logical device
+    id (``local-device``). Claim matching must canonicalize the submitted id
+    exactly as enqueue does, otherwise the run is never claimed.
+    """
+
+    project = _make_project(test_db, test_user)
+    bot = _make_bot(test_db, project, test_user)
+    execution = _make_execution(
+        test_db,
+        _make_item(test_db, project, test_user),
+        bot,
+        test_user,
+    )
+    # Persist the canonical logical id, as _enqueue does for an App target.
+    execution.execution_device_id = "local-device"
+    execution.execution_environment = "local"
+    execution.status = "queued"
+    test_db.commit()
+
+    device = _ensure_device(test_db, test_user, "local-device", device_type="app")
+    spec = dict(device.json["spec"])
+    spec["deviceId"] = "local-device"
+    spec["appDeviceId"] = "electron-app-1"
+    device.json = {"spec": spec}
+    test_db.commit()
+
+    claimed = loop_item_execution_service.claim_next_for_device(
+        test_db,
+        execution_device_id="electron-app-1",
+        environment="local",
+        owner_user_id=test_user.id,
+        runtime_instance_id="runtime-1",
+        device_capacity=1,
+        runtime_active=0,
+        runtime_active_task_ids=set(),
+    )
+    assert claimed is not None
+    assert claimed.id == execution.id
+    # Matching uses the canonical logical id, but the runtime device is the
+    # executor's own reported id so the App can route the run on it.
+    assert claimed.runtime_device_id == "electron-app-1"
+
+
 def test_heartbeat_and_complete_release_slot(test_db: Session, test_user: User) -> None:
     project = _make_project(test_db, test_user)
     bot = _make_bot(test_db, project, test_user)
@@ -5711,3 +5761,92 @@ def test_cancel_queued_execution_closes_linked_activity_without_runtime_device(
     assert activity.metadata_json["run_status"] == "cancelled"
     assert run.status == "cancelled"
     push_message.assert_called_once()
+
+
+def test_enqueue_automation_manager_normalizes_ambiguous_app_device_id(
+    test_db: Session, test_user: User
+) -> None:
+    """A shared App registration id is persisted as the canonical logical id."""
+
+    project = _make_project(test_db, test_user)
+    item = _make_item(test_db, project, test_user)
+    # The desktop App registration and an ephemeral verification device claim
+    # the same appDeviceId; the App registration is the canonical target.
+    app = Kind(
+        kind="Device",
+        name="local-device",
+        namespace="default",
+        user_id=test_user.id,
+        is_active=True,
+        json={
+            "spec": {
+                "deviceType": "app",
+                "deviceId": "local-device",
+                "appDeviceId": "electron-shared",
+            }
+        },
+    )
+    verifier = Kind(
+        kind="Device",
+        name="verifier-1",
+        namespace="default",
+        user_id=test_user.id,
+        is_active=True,
+        json={
+            "spec": {
+                "deviceType": "local",
+                "deviceId": "verifier-1",
+                "appDeviceId": "electron-shared",
+            }
+        },
+    )
+    test_db.add_all([app, verifier])
+    test_db.commit()
+
+    rule = ProjectAutomationRule(
+        id=f"rule-{uuid.uuid4().hex[:10]}",
+        cloud_project_id=project.id,
+        title="Managed assignment",
+        description="Choose an assignee.",
+        status="enabled",
+        created_by_user_id=test_user.id,
+        metadata_json=_automation_metadata(
+            action="ai_assign",
+            manager_type="custom",
+            model="test-model",
+            execution_environment="local",
+            execution_device_id="electron-shared",
+        ),
+    )
+    run = ProjectAutomationRun(
+        cloud_project_id=project.id,
+        parent_id=rule.id,
+        task_id=item.id,
+        title="Managed run",
+        description="",
+        status="queued",
+        created_by_user_id=test_user.id,
+        metadata_json={"trigger": "event"},
+    )
+    test_db.add_all([rule, run])
+    test_db.flush()
+
+    execution = loop_item_execution_service.enqueue_automation_manager(
+        test_db,
+        loop_item_id=item.id,
+        cloud_project_id=str(project.id),
+        owner_user_id=test_user.id,
+        assigner_user_id=test_user.id,
+        environment="local",
+        execution_device_id="electron-shared",
+        priority="medium",
+        automation_context={"run_id": str(run.id)},
+        runtime_selection={
+            "model": "test-model",
+            "model_type": None,
+            "model_options": {},
+        },
+    )
+
+    assert execution.execution_device_id == "local-device"
+    assert execution.execution_environment == "local"

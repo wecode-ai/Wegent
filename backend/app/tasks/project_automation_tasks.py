@@ -8,7 +8,9 @@ import logging
 
 from app.core.celery_app import celery_app
 from app.db.session import SessionLocal
+from app.models.delivery import LoopItem, loop_datetime_is_unset
 from app.services.project_automations import project_automation_service
+from app.services.project_branch_collectors import sweep_item_collectors
 from app.services.project_event_polling_service import (
     check_due_project_event_subscriptions_sync,
 )
@@ -69,6 +71,41 @@ def scan_workflow_loop_timeouts() -> int:
     except Exception:
         db.rollback()
         logger.exception("Workflow loop timeout scan failed")
+        return 0
+    finally:
+        db.close()
+
+
+@celery_app.task(name="app.tasks.project_automation_tasks.scan_branch_collectors")
+def scan_branch_collectors() -> int:
+    """Ensure collectors for armed branches and release terminal ones."""
+
+    db = SessionLocal()
+    try:
+        items = (
+            db.query(LoopItem)
+            .filter(
+                LoopItem.cloud_project_id.isnot(None),
+                loop_datetime_is_unset(LoopItem.deleted_at),
+                LoopItem.status.in_(["pending", "in_progress", "in_review"]),
+            )
+            .limit(500)
+            .all()
+        )
+        changed = 0
+        for item in items:
+            try:
+                changed += sweep_item_collectors(db, item)
+            except Exception:
+                db.rollback()
+                logger.exception(
+                    "[BranchCollector] sweep failed item=%s",
+                    item.id,
+                )
+        return changed
+    except Exception:
+        db.rollback()
+        logger.exception("Branch collector scan failed")
         return 0
     finally:
         db.close()

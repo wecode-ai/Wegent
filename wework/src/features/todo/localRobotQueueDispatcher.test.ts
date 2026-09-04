@@ -306,6 +306,41 @@ describe('startLocalRobotQueueDispatcher', () => {
     stop()
   })
 
+  it('dispatches on the raw claiming device id even when the execution binding is canonical', async () => {
+    // The App puller submits its raw registration id (electron-app-1) while the
+    // queue row persists the canonical logical device (local-device). The
+    // backend resolves the registration id during claim, but the Runtime API
+    // still routes on the local executor's own id, so the dispatcher must keep
+    // the raw claiming id for the runtime create.
+    const claimNext = vi
+      .fn()
+      .mockResolvedValueOnce(execution({ execution_device_id: 'local-device' }))
+      .mockResolvedValue(null)
+    const createRuntimeTask = vi.fn(async () => ({
+      accepted: true,
+      deviceId: 'local-device',
+      taskId: 'codex-queue-1',
+      workspacePath: '/tmp/workspace',
+    }))
+    const { services: svc, mocks } = services({
+      claimNext,
+      createRuntimeTask,
+      devices: [{ device_id: 'electron-app-1', device_type: 'app' }],
+    })
+    const stop = startLocalRobotQueueDispatcher(svc)
+    await vi.advanceTimersByTimeAsync(LOCAL_QUEUE_POLL_MS)
+    await vi.runOnlyPendingTimersAsync()
+
+    expect(claimNext).toHaveBeenNthCalledWith(1, {
+      execution_device_id: 'electron-app-1',
+      lease_seconds: 300,
+    })
+    const call = mocks.createRuntimeTask.mock.calls[0][0] as Record<string, unknown>
+    expect(call.deviceId).toBe('electron-app-1')
+    expect(mocks.fail).not.toHaveBeenCalled()
+    stop()
+  })
+
   it('heartbeats the claimed run and keeps the lease alive', async () => {
     const heartbeat = vi.fn(async () => execution({ status: 'running' }))
     const claimNext = vi.fn().mockResolvedValueOnce(execution()).mockResolvedValue(null)

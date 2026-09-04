@@ -384,6 +384,17 @@ def apply_workflow_nodes(
         ):
             node["status"] = "ready"
 
+    from app.services.project_branch_collectors import (
+        ensure_branch_collectors,
+        release_item_collectors,
+    )
+
+    ensure_branch_collectors(
+        db,
+        item,
+        nodes=nodes,
+        actor_user_id=actor_user_id,
+    )
     next_workflow = dict(workflow)
     next_workflow["version"] = int(workflow.get("version") or 1) + 1
     next_workflow["nodes"] = nodes
@@ -395,6 +406,7 @@ def apply_workflow_nodes(
         node.get("status") in COMPLETED_NODE_STATUSES for node in required
     ):
         projected_status = "in_review"
+        release_item_collectors(db, item, nodes=nodes)
     elif any(
         node.get("status") in {"running", "changes_requested", "waiting", "reacting"}
         for node in nodes
