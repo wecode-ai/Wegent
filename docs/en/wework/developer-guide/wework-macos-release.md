@@ -78,6 +78,7 @@ offline:
   process, Core DSH, plugin subprocesses, and Codex skill scripts;
 - Core DSH;
 - Wework core DSH plugins;
+- Wework application static assets;
 - bundled personal plugins and Skills;
 - Executor;
 - Codex;
@@ -86,16 +87,17 @@ offline:
 `components.json` records the application version, release channel, and each
 component's version, resource path, and content SHA-256. The Electron
 application itself continues to update through `electron-updater`; the other
-six components use independent
+seven components use independent
 `components-<channel>-<platform>-<arch>.json` manifests.
 
 Component archives are named by their archive SHA-256 and stored as immutable
-assets. Repository-built Wework core plugin/UI, bundled plugin, and Executor
-archives live in their corresponding version Release. External Core DSH,
-Codex, and DWS archives live centrally in `wework-updater` for reuse across
-versions. Every publication Release contains complete installers and its
-component manifests, and uploads only archive hashes that are not already
-available at the appropriate location.
+assets. Repository-built Wework core plugin/UI, application static asset,
+bundled plugin, and Executor archives live in their corresponding version
+Release. External Core DSH, Codex, and DWS archives live centrally in
+`wework-updater` for reuse across versions. Version Releases must not attach
+Core DSH, Codex, or DWS binaries. Every publication Release contains complete
+installers and its component manifests, and uploads only archive hashes that
+are not already available at the appropriate location.
 
 The version boundary follows whether an artifact must remain atomically
 compatible with the Electron host:
@@ -105,7 +107,8 @@ compatible with the Electron host:
   modules, application identity, signing permissions, icons, installers,
   updater protocols, and incompatible local-data migrations.
 - Independently versioned components: Core DSH, Wework core DSH plugins and UI,
-  bundled personal plugins and Skills, Executor, Codex, and DWS.
+  Wework application static assets, bundled personal plugins and Skills,
+  Executor, Codex, and DWS.
 - User-installed marketplace plugins remain independently managed by the
   plugin system and are not part of desktop component publication.
 
@@ -114,13 +117,23 @@ Independent components must still exactly match the current Electron
 requires a new Host capability, native module, or incompatible data format
 automatically becomes a full application release.
 
-The Wework UI, core plugins, bundled personal plugins, and Executor share one
-`wework-<sourceSha12>` runtime version, where `sourceSha12` is the first 12
-hexadecimal characters of the source commit, and switch atomically through the
-same component manifest. They remain separate content-addressed archives only
-as a transport optimization, so clients download the files that actually
-changed; the split does not make Executor an independently released product.
-Codex and DWS retain their own product versions.
+The Wework UI, core plugins, application static assets, bundled personal
+plugins, and Executor share one `wework-<sourceSha12>` runtime version, where
+`sourceSha12` is the first 12 hexadecimal characters of the source commit, and
+switch atomically through the same component manifest. They remain separate
+content-addressed archives only as a transport optimization, so clients
+download the files that actually changed; the split does not make Executor an
+independently released product. Codex and DWS retain their own product
+versions.
+
+The Wework application is further split by change frequency:
+`weworkCorePlugins` contains frequently changing application code and UI,
+while `weworkAppStatic` contains stable `web/vendor` and `web/wasm` assets. The
+client atomically composes both components into the complete plugin directory
+before startup. A routine Wework UI change should publish and download only
+`weworkCorePlugins`, whose archive must remain below 20 MiB. If it exceeds that
+limit, re-examine component ownership instead of adding external binaries such
+as Codex, Core DSH, or DWS to the version Release.
 
 The release workflow automatically compares the source commit recorded by the
 previous component manifest. If only managed components changed, the Electron
@@ -139,14 +152,27 @@ marked as the GitHub `latest` Release. New users download a complete installer
 from that Release, while every historical Release also remains independently
 installable.
 
-Repository-built Wework core plugin/UI, bundled plugin, and Executor archives
-are uploaded to their corresponding version Release. External Core DSH, Codex,
-DWS, and other non-repository binary dependencies use content-addressed
-archives stored centrally in `wework-updater` for reuse across versions.
-Rolling component manifests are also published there, but it is no longer the
-first-time installer download entry point. Existing users therefore download
-only components that actually changed and do not redownload Electron and
-Chromium for a component-only change.
+Repository-built Wework core plugin/UI, application static asset, bundled
+plugin, and Executor archives are uploaded to their corresponding version
+Release. External Core DSH, Codex, DWS, and other non-repository binary
+dependencies use content-addressed archives stored centrally in
+`wework-updater` for reuse across versions. Rolling component manifests are
+also published there, but it is no longer the first-time installer download
+entry point. Existing users therefore download only components that actually
+changed and do not redownload Electron and Chromium for a component-only
+change.
+
+Online Electron host updates use a separate `WeWorkHostUpdate` artifact. The
+rolling Electron manifest points at a slim host package without the seven
+managed components only after the currently published version advertises
+`componentizedHostUpdate: 1`. The client stages the complete component set for
+the target application version before installing that host update. Older
+clients without this capability first receive one migration host package that
+still contains the managed components, preventing missing runtime resources
+after the upgrade. Component manifests and archives must be published before
+the Electron YAML so a visible host update never references unavailable
+components. Complete installers always contain every component for first-time
+offline installation.
 
 The client accepts only a component manifest that exactly matches the running
 Electron application version, channel, platform, and architecture. A

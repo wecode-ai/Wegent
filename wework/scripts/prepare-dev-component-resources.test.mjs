@@ -58,6 +58,8 @@ describe('prepare development component resources', () => {
     )
     expect(manifest.components.weworkCorePlugins.path).toBe('wework-core-plugins')
     expect(manifest.components.weworkCorePlugins.sha256).toMatch(/^[0-9a-f]{64}$/)
+    expect(manifest.components.weworkAppStatic.path).toBe('wework-app-static')
+    expect(manifest.components.weworkAppStatic.sha256).toMatch(/^[0-9a-f]{64}$/)
     const appPluginRoot = join(
       resourcesRoot,
       manifest.components.weworkCorePlugins.path,

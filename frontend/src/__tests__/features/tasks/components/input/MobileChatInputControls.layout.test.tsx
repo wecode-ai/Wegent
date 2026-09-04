@@ -124,15 +124,18 @@ jest.mock('@/features/tasks/components/selector/VideoSettingsPopover', () => ({
   default: ({
     showDuration,
     hiddenVideoParams,
+    inline,
   }: {
     showDuration?: boolean
     hiddenVideoParams?: string[]
+    inline?: boolean
   }) => (
     <button
       type="button"
       data-testid="mobile-video-settings"
       data-show-duration={showDuration === false ? 'false' : 'true'}
       data-hidden-video-params={hiddenVideoParams?.join(',')}
+      data-inline={inline ? 'true' : 'false'}
     />
   ),
 }))
@@ -504,13 +507,21 @@ describe('MobileChatInputControls layout', () => {
       />
     )
 
-    expect(screen.getByTestId('mobile-video-model-selector')).toBeInTheDocument()
     expect(screen.getByTestId('mobile-team-selector-slot')).toContainElement(
       screen.getByTestId('mobile-team-selector')
     )
     expect(screen.queryByTestId('mobile-model-selector-slot')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('mobile-video-model-selector')).not.toBeInTheDocument()
 
-    fireEvent.click(screen.getByTestId('mobile-input-more-actions-button'))
+    expect(screen.getByTestId('mobile-video-configuration-button')).toBeInTheDocument()
+    fireEvent.click(screen.getByTestId('mobile-video-configuration-button'))
+    expect(screen.getByTestId('mobile-video-configuration')).toContainElement(
+      screen.getByTestId('mobile-video-model-selector')
+    )
+    expect(screen.getByTestId('mobile-video-model-selector')).toHaveAttribute(
+      'data-trigger-variant',
+      'settings-row'
+    )
     expect(screen.getByTestId('mobile-video-settings')).toHaveAttribute(
       'data-show-duration',
       'false'
@@ -518,6 +529,46 @@ describe('MobileChatInputControls layout', () => {
     expect(screen.getByTestId('mobile-video-settings')).toHaveAttribute(
       'data-hidden-video-params',
       'duration'
+    )
+    expect(screen.getByTestId('mobile-video-settings')).toHaveAttribute('data-inline', 'true')
+  })
+
+  it('moves video mode and model out of the primary row', () => {
+    render(
+      <MobileChatInputControls
+        {...buildProps()}
+        taskType="video"
+        videoGenerationModes={[
+          { id: 'text_to_video', label: 'Text to video' },
+          { id: 'omni_reference', label: 'Omni reference' },
+        ]}
+        selectedVideoGenerationMode="omni_reference"
+        onVideoGenerationModeChange={jest.fn()}
+        selectedVideoModel={null}
+        onVideoModelChange={jest.fn()}
+      />
+    )
+
+    expect(screen.getByTestId('mobile-team-selector-slot')).toContainElement(
+      screen.getByTestId('mobile-team-selector')
+    )
+    expect(screen.queryByTestId('video-generation-mode-selector')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('mobile-video-model-selector')).not.toBeInTheDocument()
+    expect(screen.getByTestId('mobile-video-configuration-button')).toHaveClass('h-11', 'w-11')
+
+    fireEvent.click(screen.getByTestId('mobile-video-configuration-button'))
+
+    const videoConfiguration = screen.getByTestId('mobile-video-configuration')
+    expect(videoConfiguration).toContainElement(screen.getByTestId('video-generation-mode-options'))
+    expect(videoConfiguration).toContainElement(screen.getByTestId('mobile-video-model-selector'))
+    expect(screen.queryByTestId('video-generation-mode-selector')).not.toBeInTheDocument()
+    expect(screen.getByTestId('video-generation-mode-omni_reference')).toHaveAttribute(
+      'aria-pressed',
+      'true'
+    )
+    expect(screen.getByTestId('mobile-video-model-selector')).toHaveAttribute(
+      'data-trigger-variant',
+      'settings-row'
     )
   })
 
@@ -548,6 +599,7 @@ describe('MobileChatInputControls layout', () => {
 
     expect(screen.queryByTestId('mobile-video-model-selector')).not.toBeInTheDocument()
     expect(screen.queryByTestId('mobile-video-settings')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('mobile-video-configuration-button')).not.toBeInTheDocument()
     expect(screen.queryByTestId('mobile-input-more-actions-button')).not.toBeInTheDocument()
     expect(screen.getByTestId('send-button')).toBeInTheDocument()
   })

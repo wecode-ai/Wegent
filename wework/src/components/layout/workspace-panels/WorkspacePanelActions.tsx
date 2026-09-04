@@ -6,6 +6,7 @@ import { useTranslation } from '@/hooks/useTranslation'
 import {
   supportsCloudSessions,
   supportsLocalTerminalLaunch,
+  supportsRemoteCodeServerSessions,
   supportsRemoteSessions,
 } from '@/lib/device-capabilities'
 import {
@@ -33,6 +34,7 @@ import {
 } from '@/lib/keybindings'
 import { cn } from '@/lib/utils'
 import { LocalWorkspaceOpenerIcon, LocalWorkspaceOpenerPicker } from './LocalWorkspaceOpenerMenu'
+import { WorkspaceToolbarExtensions } from './WorkspaceToolbarExtensions'
 import type { DeviceInfo, ProjectWithTasks, RuntimeSupervisorState } from '@/types/api'
 import type { EnvironmentInfo } from '@/types/environment'
 import type { WorkspaceTarget } from '@/types/workspace-files'
@@ -147,8 +149,7 @@ export const WorkspacePanelActions = memo(function WorkspacePanelActions({
   const codeServerEnabled = Boolean(
     workspaceSessionApi &&
     codeServerDevice &&
-    (supportsCloudSessions(codeServerDevice, codeServerProjectDeviceId) ||
-      supportsRemoteSessions(codeServerDevice, codeServerProjectDeviceId))
+    supportsRemoteCodeServerSessions(codeServerDevice, codeServerProjectDeviceId)
   )
   const localWorkspacePath =
     workspaceTarget?.path ?? (currentProject ? configuredWorkspacePath(currentProject) : undefined)
@@ -226,7 +227,7 @@ export const WorkspacePanelActions = memo(function WorkspacePanelActions({
       })
     : codeServerEnabled
       ? t('workbench.open_project_ide')
-      : t('workbench.project_ide_cloud_only_tooltip')
+      : t('workbench.project_ide_unavailable_tooltip')
   const bottomPanelTitle = t('workbench.toggle_bottom_workspace_panel')
   const rightPanelTitle = t('workbench.toggle_right_workspace_panel')
   const rightPanelExpandedTitle = rightPanelExpanded
@@ -297,6 +298,13 @@ export const WorkspacePanelActions = memo(function WorkspacePanelActions({
 
   return (
     <>
+      {mode === 'all' && (
+        <WorkspaceToolbarExtensions
+          currentProject={currentProject}
+          environmentInfo={environmentInfo}
+          workspaceTarget={workspaceTarget}
+        />
+      )}
       {showEnvironmentInfo && (
         <EnvironmentInfoPopover
           key={environmentInfoDocked ? 'docked' : 'floating'}

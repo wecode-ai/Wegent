@@ -688,6 +688,45 @@ describe('WorkspacePanelCards', () => {
     expect(startProjectTerminalMock).not.toHaveBeenCalled()
   })
 
+  test('keeps the remote terminal entry visible but disabled when the device disables it', async () => {
+    isLocalTerminalAvailableMock.mockReturnValue(false)
+
+    render(
+      <WorkspacePanelCards
+        currentProject={project}
+        devices={[
+          ...localDevices,
+          {
+            id: 22,
+            device_id: 'device-2',
+            name: 'Remote Device',
+            status: 'online',
+            is_default: false,
+            device_type: 'remote',
+            bind_shell: 'claudecode',
+            runtime_features: {
+              schemaVersion: 3,
+              interactiveSessions: { codeServer: true, terminal: false },
+            },
+          },
+        ]}
+        workspaceTarget={{
+          deviceId: 'device-2',
+          path: '/workspace/worktrees/9/project38',
+          source: 'runtime',
+        }}
+      />
+    )
+
+    const terminal = await screen.findByTestId('workspace-terminal-card')
+    expect(terminal).toBeDisabled()
+    expect(terminal).toHaveAttribute('title', 'workbench.project_terminal_unavailable_tooltip')
+    expect(terminal).toHaveTextContent('workbench.project_terminal_disabled_by_device')
+    await userEvent.click(terminal)
+    expect(startDeviceTerminalMock).not.toHaveBeenCalled()
+    expect(startProjectTerminalMock).not.toHaveBeenCalled()
+  })
+
   test('starts remote terminal on a new project workspace device and path', async () => {
     isLocalTerminalAvailableMock.mockReturnValue(false)
 

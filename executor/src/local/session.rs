@@ -459,6 +459,8 @@ impl SessionGateway {
 
 pub struct LocalSessionHandler {
     pub gateway_enabled: bool,
+    pub code_server_enabled: bool,
+    pub terminal_enabled: bool,
     pub public_base_url: String,
     pub code_server_port: u16,
     pub workspace_root: PathBuf,
@@ -478,6 +480,8 @@ impl LocalSessionHandler {
     ) -> Self {
         Self {
             gateway_enabled,
+            code_server_enabled: true,
+            terminal_enabled: true,
             public_base_url: public_base_url.trim_end_matches('/').to_owned(),
             code_server_port,
             workspace_root,
@@ -486,7 +490,26 @@ impl LocalSessionHandler {
         }
     }
 
+    pub fn with_interactive_sessions(
+        mut self,
+        code_server_enabled: bool,
+        terminal_enabled: bool,
+    ) -> Self {
+        self.code_server_enabled = code_server_enabled;
+        self.terminal_enabled = terminal_enabled;
+        self
+    }
+
     pub fn handle_start_session(&mut self, request: SessionStartRequest) -> SessionResult {
+        match request.session_type {
+            SessionType::CodeServer if !self.code_server_enabled => {
+                return SessionResult::error("Code-server sessions are disabled on this device");
+            }
+            SessionType::Terminal if !self.terminal_enabled => {
+                return SessionResult::error("Terminal sessions are disabled on this device");
+            }
+            _ => {}
+        }
         let path = match self.project_path(&request.path, request.create_if_missing) {
             Ok(path) => path,
             Err(error) => return SessionResult::error(error),

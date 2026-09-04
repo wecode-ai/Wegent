@@ -17,6 +17,7 @@ interface AppUpdateServiceOptions {
   updater: AppUpdater
   currentVersion: () => string
   isPackaged: () => boolean
+  prepareUpdate: (version: string, channel: WeworkUpdateChannel) => Promise<void>
   prepareInstall: () => Promise<void>
   updateBaseUrl: string
 }
@@ -25,9 +26,11 @@ export class AppUpdateService {
   private readonly updater: AppUpdater
   private readonly currentVersion: () => string
   private readonly isPackaged: () => boolean
+  private readonly prepareUpdate: (version: string, channel: WeworkUpdateChannel) => Promise<void>
   private readonly prepareInstall: () => Promise<void>
   private readonly updateBaseUrl: string
   private pendingVersion: string | null = null
+  private pendingChannel: WeworkUpdateChannel | null = null
   private downloadedVersion: string | null = null
   private downloadPromise: Promise<void> | null = null
   private progress: WeworkUpdateDownloadProgress = {
@@ -39,6 +42,7 @@ export class AppUpdateService {
     this.updater = options.updater
     this.currentVersion = options.currentVersion
     this.isPackaged = options.isPackaged
+    this.prepareUpdate = options.prepareUpdate
     this.prepareInstall = options.prepareInstall
     this.updateBaseUrl = options.updateBaseUrl.replace(/\/+$/, '')
     this.updater.autoDownload = false
@@ -58,6 +62,7 @@ export class AppUpdateService {
       useMultipleRangeRequest: false,
     })
     this.pendingVersion = null
+    this.pendingChannel = null
     this.downloadedVersion = null
     this.downloadPromise = null
     this.progress = { downloadedBytes: 0, totalBytes: null }
@@ -72,6 +77,7 @@ export class AppUpdateService {
 
     const update = toWeworkUpdateInfo(this.currentVersion(), result.updateInfo)
     this.pendingVersion = update.version
+    this.pendingChannel = channel
     return update
   }
 
@@ -80,7 +86,7 @@ export class AppUpdateService {
   }
 
   async download(): Promise<void> {
-    if (!this.pendingVersion) {
+    if (!this.pendingVersion || !this.pendingChannel) {
       throw new Error('No pending Wework update is available.')
     }
     if (this.downloadedVersion === this.pendingVersion) return
@@ -93,9 +99,11 @@ export class AppUpdateService {
       }
     }
     const pendingVersion = this.pendingVersion
+    const pendingChannel = this.pendingChannel
     this.downloadPromise = (async () => {
       this.updater.on('download-progress', progress)
       try {
+        await this.prepareUpdate(pendingVersion, pendingChannel)
         await this.updater.downloadUpdate()
         this.downloadedVersion = pendingVersion
       } finally {

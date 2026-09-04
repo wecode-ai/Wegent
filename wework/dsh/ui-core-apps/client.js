@@ -45,7 +45,7 @@ window.__ModuleLoader__.load({
       apply(ctx) {
         ctx.slots.inject('wework.app', function* () {
           for (const app of apps) {
-            yield ctx.wework.ui.register(ctx, 'wework.app', app)
+            yield ctx.wework.contributions.register(ctx, 'wework.app', app)
           }
         })
       },

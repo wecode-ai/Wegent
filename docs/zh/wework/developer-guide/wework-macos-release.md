@@ -69,39 +69,47 @@ SHA-512 校验。
   Codex skill 脚本使用；
 - Core DSH；
 - Wework 核心 DSH 插件；
+- Wework 应用静态资源；
 - 内置个人插件与 Skills；
 - Executor；
 - Codex；
 - DWS。
 
 `components.json` 记录应用版本、发布通道、每个组件的版本、资源路径和内容
-SHA-256。Electron 应用本身仍通过 `electron-updater` 升级；其余六个组件使用
+SHA-256。Electron 应用本身仍通过 `electron-updater` 升级；其余七个组件使用
 `components-<channel>-<platform>-<arch>.json` 独立升级。
 
 组件压缩包以压缩包 SHA-256 命名并作为不可变资产保存。本项目源码构建的 Wework
-核心插件及 UI、内置插件和 Executor 压缩包存放在对应的版本 Release；外部 Core
-DSH、Codex 和 DWS 压缩包集中存放在 `wework-updater`，供不同版本复用。每次发布
-对应的版本 Release 都携带完整安装包和当次组件清单，并且只向相应位置上传尚未存在
-的哈希资产。
+核心插件及 UI、应用静态资源、内置插件和 Executor 压缩包存放在对应的版本
+Release；外部 Core DSH、Codex 和 DWS 压缩包集中存放在 `wework-updater`，供
+不同版本复用。版本 Release 不得附带 Core DSH、Codex 或 DWS 二进制。每次发布
+对应的版本 Release 都携带完整安装包和当次组件清单，并且只向相应位置上传尚未
+存在的哈希资产。
 
 版本边界按是否必须与 Electron 宿主原子兼容划分：
 
 - 跟随应用版本：Electron/Chromium/Node、主进程、preload、启动 Shell、Host
   capability 实现、原生 Node 模块、应用标识、签名权限、图标、安装器、updater
   协议与不兼容的本地数据迁移；
-- 独立组件版本：Core DSH、Wework 核心 DSH 插件及 UI、内置个人插件与 Skills、
-  Executor、Codex、DWS；
+- 独立组件版本：Core DSH、Wework 核心 DSH 插件及 UI、Wework 应用静态资源、
+  内置个人插件与 Skills、Executor、Codex、DWS；
 - 用户从插件市场安装的插件继续由插件系统独立管理，不进入桌面组件发布。
 
 独立组件仍必须与当前 Electron `appVersion` 精确匹配，并作为一个组件集合原子
 切换。如果某个组件开始依赖新的 Host capability、原生模块或不兼容的数据格式，
 该次发布自动升级为整包发布。
 
-Wework UI、核心插件、内置个人插件和 Executor 共用同一个
+Wework UI、核心插件、应用静态资源、内置个人插件和 Executor 共用同一个
 `wework-<sourceSha12>` 运行时版本，其中 `sourceSha12` 是源码提交 SHA 的前 12
 个十六进制字符；它们通过同一份组件清单原子切换。物理上仍使用独立的内容寻址
 压缩包，因此只下载发生变化的文件；这个拆分只是传输优化，不代表 Executor 独立于
 Wework 发布。Codex 和 DWS 保留各自的产品版本。
+
+Wework 应用按变化频率进一步拆分：`weworkCorePlugins` 保存经常变化的应用代码和
+UI，`weworkAppStatic` 保存稳定的 `web/vendor` 与 `web/wasm`。客户端在启动前将
+同一版本的两个组件原子组合成完整插件目录。常规 Wework UI 修改只应发布并下载
+`weworkCorePlugins`，其压缩包必须小于 20 MiB；如果超过该上限，应重新检查组件
+归属，不得把 Codex、Core DSH、DWS 等外部二进制塞入版本 Release。
 
 发布工作流会自动比较上一次组件清单记录的源码提交。如果改动只影响可管理组件，
 当前 Electron 应用版本保持不变，已安装客户端只收到组件清单；Electron 主进程、
@@ -115,12 +123,19 @@ preload、打包资源或发布边界发生变化时，工作流才提升应用�
 的最新版本 Release 标记为 GitHub `latest`，新人从该 Release 下载完整安装包，
 任意历史 Release 也都可以独立完成首次安装。
 
-本项目源码构建的 Wework 核心插件及 UI、内置插件和 Executor 组件包上传到对应的
-版本 Release。Core DSH、Codex、DWS 等外部或非本项目源码构建的二进制依赖，以
-内容哈希命名并统一存放在 `wework-updater`，供不同版本复用。滚动组件清单也发布
-到 `wework-updater`，但这里不再作为新人完整安装包的下载入口。已有用户因此只
-下载实际发生变化的组件，无需因为纯 Wework UI 或组件改动重复下载 Electron 和
-Chromium。
+本项目源码构建的 Wework 核心插件及 UI、应用静态资源、内置插件和 Executor
+组件包上传到对应的版本 Release。Core DSH、Codex、DWS 等外部或非本项目源码
+构建的二进制依赖，以内容哈希命名并统一存放在 `wework-updater`，供不同版本复用。
+滚动组件清单也发布到 `wework-updater`，但这里不再作为新人完整安装包的下载入口。
+已有用户因此只下载实际发生变化的组件，无需因为纯 Wework UI 或组件改动重复下载
+Electron 和 Chromium。
+
+Electron 宿主在线更新使用独立的 `WeWorkHostUpdate` 产物。滚动 Electron 清单只有
+在当前已发布版本声明 `componentizedHostUpdate: 1` 后，才会指向不含上述七个托管
+组件的精简宿主包；客户端会先暂存目标应用版本的完整组件集合，再安装宿主更新。
+不具备该能力的旧客户端会先收到一次包含托管组件的迁移宿主包，避免升级后缺少
+运行资源。组件清单和压缩包必须先于 Electron YAML 发布，防止客户端看到宿主更新
+时对应组件尚不可下载。完整安装包始终包含所有组件，以支持离线首次安装。
 
 客户端只接受与当前 Electron 应用版本、通道、平台和架构完全匹配的组件清单。
 清单中的 `downloadUrl` 可以指向版本 Release、共享依赖 Release 或独立对象存储，

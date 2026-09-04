@@ -5,7 +5,7 @@
 
 # Public multi-architecture device image used by release pipelines.
 
-ARG DEVICE_BASE_IMAGE=ubuntu:22.04
+ARG DEVICE_BASE_IMAGE=ubuntu:26.04
 
 # ---------------------------------------------------------------------------
 # Builder stage: compile the Rust wegent-executor binary.
@@ -27,11 +27,17 @@ ARG CARGO_HTTPS_PROXY=
 ENV DEBIAN_FRONTEND=noninteractive
 
 RUN if [ -n "$DEVICE_APT_MIRROR" ]; then \
-        sed -i \
-          -e "s|http://archive.ubuntu.com/ubuntu|$DEVICE_APT_MIRROR|g" \
-          -e "s|http://security.ubuntu.com/ubuntu|$DEVICE_APT_MIRROR|g" \
-          -e "s|http://ports.ubuntu.com/ubuntu-ports|$DEVICE_APT_PORTS_MIRROR|g" \
-          /etc/apt/sources.list; \
+        for sources_file in \
+          /etc/apt/sources.list \
+          /etc/apt/sources.list.d/ubuntu.sources; do \
+            if [ -f "$sources_file" ]; then \
+              sed -i \
+                -e "s|http://archive.ubuntu.com/ubuntu|$DEVICE_APT_MIRROR|g" \
+                -e "s|http://security.ubuntu.com/ubuntu|$DEVICE_APT_MIRROR|g" \
+                -e "s|http://ports.ubuntu.com/ubuntu-ports|$DEVICE_APT_PORTS_MIRROR|g" \
+                "$sources_file"; \
+            fi; \
+        done; \
     fi \
     && apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
@@ -88,11 +94,17 @@ LABEL org.opencontainers.image.version=${APP_VERSION} \
 
 # Install base tools, Python, and Node.js 22.
 RUN if [ -n "$DEVICE_APT_MIRROR" ]; then \
-        sed -i \
-          -e "s|http://archive.ubuntu.com/ubuntu|$DEVICE_APT_MIRROR|g" \
-          -e "s|http://security.ubuntu.com/ubuntu|$DEVICE_APT_MIRROR|g" \
-          -e "s|http://ports.ubuntu.com/ubuntu-ports|$DEVICE_APT_PORTS_MIRROR|g" \
-          /etc/apt/sources.list; \
+        for sources_file in \
+          /etc/apt/sources.list \
+          /etc/apt/sources.list.d/ubuntu.sources; do \
+            if [ -f "$sources_file" ]; then \
+              sed -i \
+                -e "s|http://archive.ubuntu.com/ubuntu|$DEVICE_APT_MIRROR|g" \
+                -e "s|http://security.ubuntu.com/ubuntu|$DEVICE_APT_MIRROR|g" \
+                -e "s|http://ports.ubuntu.com/ubuntu-ports|$DEVICE_APT_PORTS_MIRROR|g" \
+                "$sources_file"; \
+            fi; \
+        done; \
     fi \
     && apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates \
@@ -240,6 +252,8 @@ ENV WEGENT_WORKSPACE_ROOTS=/home/wegent
 ENV DEVICE_PUBLIC_BASE_URL=
 ENV DEVICE_SESSION_GATEWAY_HOST=0.0.0.0
 ENV DEVICE_SESSION_GATEWAY_PORT=17888
+ENV DEVICE_CODE_SERVER_ENABLED=true
+ENV DEVICE_TERMINAL_ENABLED=true
 
 RUN cat >/usr/local/bin/wegent-device-entrypoint <<'EOF'
 #!/usr/bin/env bash
@@ -250,6 +264,24 @@ export DEVICE_SESSION_GATEWAY_HOST="${DEVICE_SESSION_GATEWAY_HOST:-0.0.0.0}"
 export DEVICE_SESSION_GATEWAY_PORT="${DEVICE_SESSION_GATEWAY_PORT:-17888}"
 export DEVICE_CODE_SERVER_PORT="${DEVICE_CODE_SERVER_PORT:-18080}"
 EXPECTED_EXECUTOR_HOME="/home/wegent/.wecode/wegent-executor"
+
+normalize_enabled_flag() {
+    local name="$1"
+    local value="${!name:-true}"
+    case "${value,,}" in
+        true | 1 | yes | on) printf 'true' ;;
+        false | 0 | no | off) printf 'false' ;;
+        *)
+            echo "$name must be true or false" >&2
+            return 1
+            ;;
+    esac
+}
+
+DEVICE_SESSION_GATEWAY_ENABLED="$(normalize_enabled_flag DEVICE_SESSION_GATEWAY_ENABLED)"
+DEVICE_CODE_SERVER_ENABLED="$(normalize_enabled_flag DEVICE_CODE_SERVER_ENABLED)"
+DEVICE_TERMINAL_ENABLED="$(normalize_enabled_flag DEVICE_TERMINAL_ENABLED)"
+export DEVICE_SESSION_GATEWAY_ENABLED DEVICE_CODE_SERVER_ENABLED DEVICE_TERMINAL_ENABLED
 
 if [[ "$WEGENT_EXECUTOR_HOME" != /* ]]; then
     echo "WEGENT_EXECUTOR_HOME must be an absolute path" >&2
@@ -336,21 +368,22 @@ if [ -z "${DEVICE_PUBLIC_BASE_URL:-}" ]; then
     export DEVICE_PUBLIC_BASE_URL="http://${_device_ip}:${DEVICE_SESSION_GATEWAY_PORT}"
 fi
 
-mkdir -p "$HOME/.config/code-server"
-printf "bind-addr: 127.0.0.1:%s\nauth: none\ncert: false\n" "$DEVICE_CODE_SERVER_PORT" >"$HOME/.config/code-server/config.yaml"
-
 pids=()
 
 # Match the local device installer: code-server only listens on loopback and
 # leaves remote authentication to the token-gated device session gateway.
-code-server /home/wegent \
-    --bind-addr "127.0.0.1:${DEVICE_CODE_SERVER_PORT}" \
-    --auth none \
-    --disable-telemetry \
-    --disable-update-check \
-    >"$DEVICE_LOG_DIR/code-server.log" \
-    2>"$DEVICE_LOG_DIR/code-server-error.log" &
-pids+=("$!")
+if [ "$DEVICE_CODE_SERVER_ENABLED" = "true" ] && [ "$DEVICE_SESSION_GATEWAY_ENABLED" = "true" ]; then
+    mkdir -p "$HOME/.config/code-server"
+    printf "bind-addr: 127.0.0.1:%s\nauth: none\ncert: false\n" "$DEVICE_CODE_SERVER_PORT" >"$HOME/.config/code-server/config.yaml"
+    code-server /home/wegent \
+        --bind-addr "127.0.0.1:${DEVICE_CODE_SERVER_PORT}" \
+        --auth none \
+        --disable-telemetry \
+        --disable-update-check \
+        >"$DEVICE_LOG_DIR/code-server.log" \
+        2>"$DEVICE_LOG_DIR/code-server-error.log" &
+    pids+=("$!")
+fi
 
 if [ -n "${WEGENT_AUTH_TOKEN:-}" ]; then
     wegent-executor >"$DEVICE_LOG_DIR/wegent-executor.log" 2>&1 &
