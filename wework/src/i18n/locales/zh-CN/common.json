@@ -583,6 +583,7 @@
     "worktree_unavailable_preflight_failed": "无法确认工作树是否可用。",
     "worktree_unavailable_workspace_identity_mismatch": "工作区仓库已经变化，请重新关联代码工作区后再创建工作树。",
     "archive_all_chats": "归档所有聊天",
+    "show_offline_device_items": "显示离线设备中的项目和任务",
     "archive_chats": "归档会话",
     "archive_chat": "归档会话",
     "archive_runtime_task": "归档任务",

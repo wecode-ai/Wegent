@@ -584,6 +584,7 @@
     "worktree_unavailable_preflight_failed": "Could not verify worktree availability.",
     "worktree_unavailable_workspace_identity_mismatch": "The workspace repository has changed. Reconnect the code workspace before creating a worktree.",
     "archive_all_chats": "Archive all chats",
+    "show_offline_device_items": "Show projects and tasks from offline devices",
     "archive_chats": "Archive chats",
     "archive_chat": "Archive chat",
     "archive_runtime_task": "Archive task",
