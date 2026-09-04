@@ -9,13 +9,17 @@ from app.schemas.device import DeviceHeartbeatPayload, DeviceInfo
 
 def _runtime_features():
     return {
-        "schemaVersion": 2,
+        "schemaVersion": 3,
         "runtimeTaskCreate": {
             "schemaVersions": [1, 2],
             "features": {
                 "goal": True,
                 "supervisor": True,
             },
+        },
+        "interactiveSessions": {
+            "codeServer": False,
+            "terminal": True,
         },
         "worktrees": {
             "version": 1,
@@ -47,6 +51,9 @@ def test_heartbeat_runtime_features_use_independent_contract():
     assert payload.runtime_features.runtime_task_create is not None
     assert payload.runtime_features.runtime_task_create.schema_versions == [1, 2]
     assert payload.runtime_features.runtime_task_create.features["goal"] is True
+    assert payload.runtime_features.interactive_sessions is not None
+    assert payload.runtime_features.interactive_sessions.code_server is False
+    assert payload.runtime_features.interactive_sessions.terminal is True
     assert payload.runtime_features.worktrees.deferred_prepare is True
     assert payload.runtime_features.worktrees.persistent_storage_verified is True
     assert payload.runtime_features.model_dump(by_alias=True) == _runtime_features()
@@ -94,3 +101,22 @@ def test_worktree_runtime_features_default_persistent_storage_to_unverified():
         ]
         is False
     )
+
+
+def test_interactive_session_features_default_to_enabled_when_members_are_missing():
+    info = DeviceInfo(
+        id=1,
+        device_id="legacy-runtime",
+        name="Legacy",
+        status="online",
+        device_type="remote",
+        runtime_features={
+            "schemaVersion": 3,
+            "interactiveSessions": {},
+        },
+    )
+
+    assert info.runtime_features is not None
+    assert info.runtime_features.interactive_sessions is not None
+    assert info.runtime_features.interactive_sessions.code_server is True
+    assert info.runtime_features.interactive_sessions.terminal is True

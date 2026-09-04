@@ -28,8 +28,9 @@ pub(crate) use notification_mapping::codex_stream_debug_enabled;
 pub(crate) use util::runtime_task_title;
 
 pub(crate) fn runtime_features() -> serde_json::Value {
+    let gateway_enabled = env_enabled("DEVICE_SESSION_GATEWAY_ENABLED", true);
     serde_json::json!({
-        "schemaVersion": 2,
+        "schemaVersion": 3,
         "runtimeTaskCreate": {
             "schemaVersions": [1, 2],
             "features": {
@@ -44,8 +45,24 @@ pub(crate) fn runtime_features() -> serde_json::Value {
                 "worktree": true
             }
         },
+        "interactiveSessions": {
+            "codeServer": gateway_enabled && env_enabled("DEVICE_CODE_SERVER_ENABLED", true),
+            "terminal": env_enabled("DEVICE_TERMINAL_ENABLED", true),
+        },
         "worktrees": worktrees::WorktreeManager::capabilities_from_env(),
     })
+}
+
+fn env_enabled(name: &str, default: bool) -> bool {
+    std::env::var(name)
+        .ok()
+        .map(|value| {
+            !matches!(
+                value.trim().to_ascii_lowercase().as_str(),
+                "" | "0" | "false" | "no" | "off"
+            )
+        })
+        .unwrap_or(default)
 }
 
 pub(crate) fn codex_workspace_roots() -> Vec<std::path::PathBuf> {

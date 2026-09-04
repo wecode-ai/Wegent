@@ -115,6 +115,7 @@ export interface SendCurrentInputOptions {
   additionalContext?: RuntimeAdditionalContext
   cloudProjectId?: string
   origin?: RuntimeTaskCreateRequest['origin']
+  wegentTeamId?: number
 }
 
 export interface CreateTemporaryRuntimeTaskOptions {

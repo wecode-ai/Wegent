@@ -42,7 +42,7 @@ class UserRuntimeConfigSyncError(RuntimeError):
 
 RUNTIME_AUTH_FILES: dict[str, dict[str, str]] = {
     "codex": {
-        "target_path": "~/.codex/auth.json",
+        "target_path": "auth.json",
         "display_name": "Codex",
     },
 }
@@ -357,7 +357,6 @@ class UserRuntimeConfigService:
     ) -> dict[str, Any]:
         """Read auth JSON from an online device and store it encrypted."""
         normalized_runtime = _normalize_runtime(runtime)
-        target_path = RUNTIME_AUTH_FILES[normalized_runtime]["target_path"]
         try:
             result = await execute_configured_device_command(
                 db=db,
@@ -366,7 +365,6 @@ class UserRuntimeConfigService:
                 command_key="read_runtime_auth_file",
                 env={
                     "WEGENT_RUNTIME_CONFIG_RUNTIME": normalized_runtime,
-                    "WEGENT_RUNTIME_CONFIG_TARGET_PATH": target_path,
                 },
                 timeout_seconds=DEFAULT_COMMAND_TIMEOUT_SECONDS,
             )
@@ -415,10 +413,7 @@ class UserRuntimeConfigService:
         if not auth_json or auth_json == encrypted_value:
             raise UserRuntimeConfigSyncError("auth_json could not be decrypted")
 
-        target_path = (
-            auth.get("targetPath")
-            or RUNTIME_AUTH_FILES[normalized_runtime]["target_path"]
-        )
+        target_path = RUNTIME_AUTH_FILES[normalized_runtime]["target_path"]
         selected_device_ids = {device_id for device_id in device_ids or [] if device_id}
         online_devices = await device_service.get_online_devices(db, user_id)
         if selected_device_ids:
@@ -438,7 +433,6 @@ class UserRuntimeConfigService:
                 user_id=user_id,
                 device_id=device_id,
                 runtime=normalized_runtime,
-                target_path=target_path,
                 auth_json=auth_json,
             )
             results.append(result)
@@ -457,7 +451,6 @@ class UserRuntimeConfigService:
         user_id: int,
         device_id: str,
         runtime: str,
-        target_path: str,
         auth_json: str,
     ) -> dict[str, Any]:
         try:
@@ -468,7 +461,6 @@ class UserRuntimeConfigService:
                 command_key="sync_runtime_auth_file",
                 env={
                     "WEGENT_RUNTIME_CONFIG_RUNTIME": runtime,
-                    "WEGENT_RUNTIME_CONFIG_TARGET_PATH": target_path,
                     "WEGENT_RUNTIME_CONFIG_CONTENT": auth_json,
                 },
                 timeout_seconds=DEFAULT_COMMAND_TIMEOUT_SECONDS,
@@ -621,8 +613,7 @@ class UserRuntimeConfigService:
             "use_user_config": is_runtime_user_config_enabled(preferences, runtime),
             "use_proxy": bool(proxy_url),
             "configured": bool(auth.get("encryptedValue")),
-            "target_path": auth.get("targetPath")
-            or RUNTIME_AUTH_FILES[runtime]["target_path"],
+            "target_path": RUNTIME_AUTH_FILES[runtime]["target_path"],
             "auth_json_sha256": auth.get("sha256"),
             "auth_json_updated_at": auth.get("updatedAt"),
             "proxy_configured": bool(proxy_url),

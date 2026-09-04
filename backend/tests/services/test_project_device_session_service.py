@@ -484,6 +484,102 @@ async def test_local_device_session_service_calls_device_start_session(monkeypat
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("session_type", "feature_key", "message"),
+    [
+        ("terminal", "terminal", "Terminal sessions are disabled on this device"),
+        (
+            "code_server",
+            "codeServer",
+            "Code-server sessions are disabled on this device",
+        ),
+    ],
+)
+async def test_local_device_session_service_rejects_disabled_interactive_session(
+    monkeypatch,
+    session_type,
+    feature_key,
+    message,
+):
+    from app.services.device import session_service
+
+    mock_sio = AsyncMock()
+    monkeypatch.setattr(
+        session_service.device_service,
+        "get_device_online_info",
+        AsyncMock(
+            return_value={
+                "socket_id": "socket-123",
+                "runtime_features": {
+                    "schemaVersion": 3,
+                    "interactiveSessions": {feature_key: False},
+                },
+            }
+        ),
+    )
+    monkeypatch.setattr(
+        session_service.device_service,
+        "get_device_by_device_id",
+        lambda db, user_id, device_id: object(),
+    )
+    monkeypatch.setattr(session_service, "get_sio", lambda: mock_sio)
+
+    with pytest.raises(session_service.DeviceSessionError, match=message):
+        await session_service.local_device_session_service.start_session(
+            db=object(),
+            user_id=7,
+            device_id="device-abc",
+            project_id=123,
+            session_type=session_type,
+            path="/repo",
+        )
+
+    mock_sio.call.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_local_device_session_service_keeps_legacy_session_defaults(monkeypatch):
+    from app.services.device import session_service
+
+    mock_sio = AsyncMock()
+    mock_sio.call.return_value = {
+        "success": True,
+        "session_id": "session-123",
+        "url": "http://localhost:17888/s/session-123/",
+        "path": "/repo",
+        "device_id": "device-abc",
+        "type": "code_server",
+    }
+    monkeypatch.setattr(
+        session_service.device_service,
+        "get_device_online_info",
+        AsyncMock(
+            return_value={
+                "socket_id": "socket-123",
+                "runtime_features": {"schemaVersion": 2},
+            }
+        ),
+    )
+    monkeypatch.setattr(
+        session_service.device_service,
+        "get_device_by_device_id",
+        lambda db, user_id, device_id: object(),
+    )
+    monkeypatch.setattr(session_service, "get_sio", lambda: mock_sio)
+
+    await session_service.local_device_session_service.start_session(
+        db=object(),
+        user_id=7,
+        device_id="device-abc",
+        project_id=123,
+        session_type="code_server",
+        path="/repo",
+    )
+
+    mock_sio.call.assert_awaited_once()
+
+
+@pytest.mark.asyncio
 async def test_external_session_rejects_app_device_when_remote_control_is_disabled(
     monkeypatch,
 ):

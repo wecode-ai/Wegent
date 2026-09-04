@@ -1817,6 +1817,41 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
     assert.equal(unifiedGraphNodes[1].kind, 'dynamic')
     assert.equal(unifiedGraphNodes[1].subgraph.nodes.length, 1)
 
+    const executionPrompt = '[data-testid^="execution-node-prompt-"]'
+    const unsavedPrompt = '尚未保存的自动化输入必须保留。'
+    await control.command('click', '[data-testid^="execution-node-step-"]', {
+      visible: true,
+    })
+    await control.command('fill', executionPrompt, { value: unsavedPrompt })
+    await control.command('waitFor', 'body', {
+      text: '有未保存更改',
+      timeoutMs: uiTimeoutMs,
+    })
+    await control.command('click', '[data-testid="workspace-tab-select-fixed-task"]')
+    await control.command('waitFor', '[data-testid="desktop-empty-composer-frame"]', {
+      timeoutMs: uiTimeoutMs,
+      visible: true,
+    })
+    await control.command('click', boardWorkspaceTabSelector)
+    await control.command('waitFor', executionPrompt, {
+      timeoutMs: uiTimeoutMs,
+      visible: true,
+    })
+    assert.equal(
+      await control.command('getValue', executionPrompt),
+      unsavedPrompt,
+      'Automation editor lost unsaved input after its parent workspace rerendered'
+    )
+    await captureScreenshot(control, 'project-automation-unsaved-draft-preserved.png')
+    await control.command('fill', executionPrompt, {
+      value: '根据 Issue 修改代码并运行相关测试。',
+    })
+    await control.command('waitFor', '[data-testid="automation-editor-global-actions"]', {
+      text: '已保存',
+      timeoutMs: uiTimeoutMs,
+      visible: true,
+    })
+
     await disableRule(projectId, unifiedRule)
     const projectWithWorkflow = await cloudRequest(`/api/v1/cloud-projects/${projectId}`)
     await cloudRequest(`/api/v1/cloud-projects/${projectId}`, {

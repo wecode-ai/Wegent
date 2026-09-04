@@ -470,7 +470,7 @@ export default function PluginPublicationReviewDrawer({
 
   return (
     <>
-      <Drawer open={requestId !== null} onOpenChange={onOpenChange}>
+      <Drawer direction="right" open={requestId !== null} onOpenChange={onOpenChange}>
         <DrawerContent
           className="ml-auto h-screen w-full max-w-[860px] rounded-none bg-base"
           showHandle={false}

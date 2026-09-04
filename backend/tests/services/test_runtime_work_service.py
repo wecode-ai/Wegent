@@ -5,7 +5,7 @@
 import asyncio
 import time
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, Mock
+from unittest.mock import AsyncMock, MagicMock, Mock
 
 import pytest
 from fastapi import HTTPException
@@ -2668,6 +2668,145 @@ def test_compile_explicit_bot_request_resolves_backend_project_workspace(
     )
 
 
+def test_team_runtime_compilation_reuses_canonical_builder_without_task_rows(
+    test_db,
+    test_user,
+    monkeypatch,
+):
+    from app.schemas.runtime_work import (
+        RuntimeTaskCreateRequest,
+        RuntimeTaskMaterializeRequest,
+    )
+    from app.services import execution, project_automation_domain, runtime_work_service
+
+    team = SimpleNamespace(
+        id=42,
+        name="review-team",
+        namespace="engineering",
+        user_id=test_user.id,
+    )
+    monkeypatch.setattr(
+        project_automation_domain,
+        "runnable_wegent_team",
+        lambda db, user_id, team_id: team,
+    )
+    execution_request = SimpleNamespace(workspace={})
+    builder = MagicMock()
+    builder.build.return_value = execution_request
+    monkeypatch.setattr(execution, "TaskRequestBuilder", lambda db: builder)
+    target = runtime_work_service.RuntimeTaskTarget(
+        device_id="cloud-device-1",
+        workspace_path="/srv/workspaces/Wegent",
+        project=None,
+        workspace_source="local_path",
+    )
+
+    result = runtime_work_service._build_runtime_execution_request(
+        db=test_db,
+        user_id=test_user.id,
+        request=RuntimeTaskCreateRequest(
+            schemaVersion=3,
+            wegentTeamId=42,
+            deviceId="cloud-device-1",
+            workspacePath="/srv/workspaces/Wegent",
+            taskId="runtime-team-1",
+            runtime="codex",
+            message="Review the implementation",
+        ),
+        target=target,
+    )
+
+    assert result is execution_request
+    build_kwargs = builder.build.call_args.kwargs
+    assert build_kwargs["team"] is team
+    assert build_kwargs["new_session"] is True
+    assert build_kwargs["task"].json["spec"]["teamRef"] == {
+        "name": "review-team",
+        "namespace": "engineering",
+        "user_id": test_user.id,
+    }
+    assert build_kwargs["task"].json["spec"]["execution"]["workspace"] == {
+        "source": "local_path",
+        "path": "/srv/workspaces/Wegent",
+    }
+    assert execution_request.task_id == "runtime-team-1"
+    assert execution_request.device_id == "cloud-device-1"
+    assert test_db.query(TaskResource).count() == 0
+
+    builder.reset_mock()
+    runtime_work_service._build_runtime_execution_request(
+        db=test_db,
+        user_id=test_user.id,
+        request=RuntimeTaskMaterializeRequest(
+            schemaVersion=3,
+            wegentTeamId=42,
+            newSession=False,
+            deviceId="local-device-1",
+            workspacePath="/srv/workspaces/Wegent",
+            taskId="runtime-team-1",
+            runtime="codex",
+            message="Continue the review",
+        ),
+        target=target,
+    )
+
+    assert builder.build.call_args.kwargs["new_session"] is False
+
+
+def test_team_create_v3_keeps_executor_wire_protocol_at_v2(
+    test_db,
+    test_user,
+) -> None:
+    from app.schemas.runtime_work import RuntimeTaskCreateRequest
+    from app.services import runtime_work_service
+
+    payload = runtime_work_service._runtime_task_create_payload(
+        db=test_db,
+        user_id=test_user.id,
+        request=RuntimeTaskCreateRequest(
+            schemaVersion=3,
+            wegentTeamId=42,
+            deviceId="cloud-device-1",
+            workspacePath="/srv/workspaces/Wegent",
+            runtime="codex",
+            message="Review the implementation",
+        ),
+        target=runtime_work_service.RuntimeTaskTarget(
+            device_id="cloud-device-1",
+            workspace_path="/srv/workspaces/Wegent",
+        ),
+        execution_request=SimpleNamespace(
+            team_id=42,
+            attachments=[],
+            to_dict=lambda: {"team_id": 42},
+        ),
+    )
+
+    assert payload["schemaVersion"] == 2
+    assert "wegentTeamId" not in payload
+
+
+def test_materialize_runtime_task_requires_team_intent(
+    test_db,
+    test_user,
+) -> None:
+    from app.schemas.runtime_work import RuntimeTaskMaterializeRequest
+    from app.services import runtime_work_service
+
+    with pytest.raises(HTTPException, match="wegentTeamId is required"):
+        runtime_work_service.materialize_runtime_task_create(
+            db=test_db,
+            user_id=test_user.id,
+            request=RuntimeTaskMaterializeRequest(
+                schemaVersion=2,
+                deviceId="local-device-1",
+                workspacePath="/srv/workspaces/Wegent",
+                runtime="codex",
+                message="Run the default assistant",
+            ),
+        )
+
+
 def test_compile_rejects_project_bound_to_another_device(
     test_db,
     test_user,
@@ -4983,6 +5122,21 @@ def test_build_runtime_execution_request_v2_without_team_uses_direct_wework_path
     assert execution_request.team_id == 0
     assert execution_request.bot == []
     assert execution_request.model_config["model_id"] == "doubao-seed-2.0-lite"
+
+
+def test_runtime_address_team_binding_is_additive() -> None:
+    from app.schemas.runtime_work import RuntimeTaskAddress
+    from app.services import runtime_work_service
+
+    legacy = RuntimeTaskAddress(deviceId="device-1", taskId="legacy-task")
+    bound = RuntimeTaskAddress(
+        deviceId="device-1",
+        taskId="team-task",
+        runtimeHandle={"wegentTeam": {"id": 7}},
+    )
+
+    assert runtime_work_service._runtime_address_team_id(legacy) is None
+    assert runtime_work_service._runtime_address_team_id(bound) == 7
 
 
 def test_build_runtime_send_execution_request_includes_valid_task_token(

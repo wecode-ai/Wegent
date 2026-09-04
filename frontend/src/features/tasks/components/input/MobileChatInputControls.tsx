@@ -12,7 +12,7 @@ import React, {
   type Dispatch,
   type SetStateAction,
 } from 'react'
-import { ChevronRight, CircleStop, Hand, Plus, Zap } from 'lucide-react'
+import { ChevronRight, CircleStop, Hand, Plus, SlidersHorizontal, Zap } from 'lucide-react'
 import MobileModelSelector from '../selector/MobileModelSelector'
 import type { Model } from '../selector/ModelSelector'
 import VideoGenerationModeSelector from '../selector/VideoGenerationModeSelector'
@@ -258,6 +258,7 @@ export function MobileChatInputControls({
 }: MobileChatInputControlsProps) {
   const { t } = useTranslation('chat')
   const [resourceDrawerOpen, setResourceDrawerOpen] = useState(false)
+  const [videoConfigurationDrawerOpen, setVideoConfigurationDrawerOpen] = useState(false)
   const [nestedSelectorOpen, setNestedSelectorOpen] = useState(false)
   const [skillDrawerOpen, setSkillDrawerOpen] = useState(false)
   const [dingTalkAudioSupported, setDingTalkAudioSupported] = useState(false)
@@ -295,6 +296,14 @@ export function MobileChatInputControls({
     onRatioChange &&
     onDurationChange
   )
+  const showVideoGenerationModeAction = Boolean(
+    isVideoMode && onVideoGenerationModeChange && videoGenerationModes.length > 1
+  )
+  const showVideoModelAction = Boolean(
+    isVideoMode && videoParamVisibility.showModel && onVideoModelChange
+  )
+  const showVideoConfiguration =
+    showVideoGenerationModeAction || showVideoModelAction || showVideoSettings
   const hasMoreActions =
     showAttachmentAction ||
     showChatContexts ||
@@ -302,8 +311,7 @@ export function MobileChatInputControls({
     showRepositoryAction ||
     showClarificationAction ||
     showCorrectionAction ||
-    showGuidanceAction ||
-    showVideoSettings
+    showGuidanceAction
   const handleAttachmentFileSelect = useCallback(
     (files: File | File[]) => {
       setResourceDrawerOpen(false)
@@ -491,28 +499,6 @@ export function MobileChatInputControls({
           </div>
         )}
 
-        {!isVoiceMode && isVideoMode && onVideoGenerationModeChange && (
-          <VideoGenerationModeSelector
-            modes={videoGenerationModes}
-            value={selectedVideoGenerationMode}
-            onChange={onVideoGenerationModeChange}
-            disabled={isStreaming}
-          />
-        )}
-        {!isVoiceMode && isVideoMode && videoParamVisibility.showModel && onVideoModelChange && (
-          <div className="min-w-0 flex-1 overflow-hidden">
-            <MobileModelSelector
-              selectedModel={selectedVideoModel ?? null}
-              setSelectedModel={model => model && onVideoModelChange(model)}
-              forceOverride={false}
-              setForceOverride={() => {}}
-              selectedTeam={selectedTeam}
-              disabled={isStreaming}
-              isLoading={isVideoModelsLoading}
-              modelCategoryType="video"
-            />
-          </div>
-        )}
         {!isVoiceMode && isImageMode && onImageModelChange && (
           <div
             className="min-w-0 flex-1 overflow-hidden"
@@ -546,6 +532,25 @@ export function MobileChatInputControls({
           </div>
         )}
 
+        {!isVoiceMode && showVideoConfiguration && (
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon"
+            aria-expanded={videoConfigurationDrawerOpen}
+            aria-label={t('video.settings_title')}
+            data-testid="mobile-video-configuration-button"
+            title={t('video.settings_title')}
+            onClick={() => {
+              setResourceDrawerOpen(false)
+              setVideoConfigurationDrawerOpen(true)
+            }}
+            disabled={isStreaming || Boolean(hideSelectors)}
+            className="h-11 w-11 shrink-0 rounded-xl border border-border bg-base text-text-muted hover:bg-hover hover:text-text-primary"
+          >
+            <SlidersHorizontal className="h-5 w-5" />
+          </Button>
+        )}
         <div className="shrink-0">{renderSendButton()}</div>
       </div>
 
@@ -656,28 +661,6 @@ export function MobileChatInputControls({
                   )}
                 </div>
               )}
-              {showVideoSettings && onResolutionChange && onRatioChange && onDurationChange && (
-                <div className="mt-3 overflow-hidden rounded-xl bg-white dark:bg-[#2c2c2e]">
-                  <VideoSettingsPopover
-                    selectedRatio={selectedRatio}
-                    onRatioChange={onRatioChange}
-                    availableRatios={availableRatios ?? ['16:9', '9:16', '1:1']}
-                    ratioOptions={ratioOptions}
-                    selectedDuration={selectedDuration}
-                    onDurationChange={onDurationChange}
-                    availableDurations={availableDurations ?? [5, 10]}
-                    selectedResolution={selectedResolution}
-                    onResolutionChange={onResolutionChange}
-                    availableResolutions={availableResolutions ?? ['480p', '720p', '1080p']}
-                    resolutionOptions={resolutionOptions}
-                    disabled={isStreaming}
-                    showDuration={!hideDurationSelector}
-                    hiddenVideoParams={hiddenVideoParams}
-                    triggerVariant="menu-item"
-                  />
-                </div>
-              )}
-
               {showGuidanceAction && onSendGuidance && (
                 <div className="mt-3 overflow-hidden rounded-xl bg-white dark:bg-[#2c2c2e]">
                   <Button
@@ -693,6 +676,74 @@ export function MobileChatInputControls({
                   </Button>
                 </div>
               )}
+            </div>
+          </DrawerContent>
+        )}
+      </Drawer>
+
+      <Drawer open={videoConfigurationDrawerOpen} onOpenChange={setVideoConfigurationDrawerOpen}>
+        {videoConfigurationDrawerOpen && (
+          <DrawerContent
+            className="max-h-[85vh] bg-[#f2f2f7] dark:bg-[#1c1c1e]"
+            showHandle={false}
+            data-testid="mobile-video-configuration-menu"
+          >
+            <div className="flex justify-center pb-3 pt-2">
+              <div className="h-1 w-9 rounded-full bg-[#3c3c43]/30 dark:bg-[#5c5c5e]" />
+            </div>
+            <div
+              className="max-h-[65vh] min-h-0 flex-1 overflow-y-auto px-4 pb-4"
+              style={{ paddingBottom: 'max(12px, env(safe-area-inset-bottom))' }}
+            >
+              <div className="px-1 pb-2 text-xs font-medium text-[#8e8e93]">
+                {t('video.settings_title')}
+              </div>
+              <div
+                className="divide-y divide-border overflow-hidden rounded-xl bg-white dark:bg-[#2c2c2e]"
+                data-testid="mobile-video-configuration"
+              >
+                {showVideoGenerationModeAction && onVideoGenerationModeChange && (
+                  <VideoGenerationModeSelector
+                    modes={videoGenerationModes}
+                    value={selectedVideoGenerationMode}
+                    onChange={onVideoGenerationModeChange}
+                    disabled={isStreaming}
+                    inline
+                  />
+                )}
+                {showVideoModelAction && onVideoModelChange && (
+                  <MobileModelSelector
+                    selectedModel={selectedVideoModel ?? null}
+                    setSelectedModel={model => model && onVideoModelChange(model)}
+                    forceOverride={false}
+                    setForceOverride={() => {}}
+                    selectedTeam={selectedTeam}
+                    disabled={isStreaming}
+                    isLoading={isVideoModelsLoading}
+                    modelCategoryType="video"
+                    triggerVariant="settings-row"
+                  />
+                )}
+                {showVideoSettings && onResolutionChange && onRatioChange && onDurationChange && (
+                  <VideoSettingsPopover
+                    selectedRatio={selectedRatio}
+                    onRatioChange={onRatioChange}
+                    availableRatios={availableRatios ?? ['16:9', '9:16', '1:1']}
+                    ratioOptions={ratioOptions}
+                    selectedDuration={selectedDuration}
+                    onDurationChange={onDurationChange}
+                    availableDurations={availableDurations ?? [5, 10]}
+                    selectedResolution={selectedResolution}
+                    onResolutionChange={onResolutionChange}
+                    availableResolutions={availableResolutions ?? ['480p', '720p', '1080p']}
+                    resolutionOptions={resolutionOptions}
+                    disabled={isStreaming}
+                    showDuration={!hideDurationSelector}
+                    hiddenVideoParams={hiddenVideoParams}
+                    inline
+                  />
+                )}
+              </div>
             </div>
           </DrawerContent>
         )}

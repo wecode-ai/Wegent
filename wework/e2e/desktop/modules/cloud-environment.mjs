@@ -952,7 +952,12 @@ class RealCloudEnvironment {
     }
   }
 
-  async startGeneratedRemoteDevice({ deviceId, deviceName, authToken }) {
+  async startGeneratedRemoteDevice({
+    deviceId,
+    deviceName,
+    authToken,
+    interactiveSessions = null,
+  }) {
     assert.ok(this.executorBinary, 'Remote executor binary is not ready')
     const home = join(resultDir, `generated-remote-device-${deviceId}`)
     const codexHome = join(home, 'codex')
@@ -967,6 +972,10 @@ class RealCloudEnvironment {
       logFile: `generated-remote-device-${deviceId}-runtime.log`,
       authToken,
     })
+    if (interactiveSessions) {
+      env.DEVICE_CODE_SERVER_ENABLED = String(interactiveSessions.codeServer)
+      env.DEVICE_TERMINAL_ENABLED = String(interactiveSessions.terminal)
+    }
     delete env.WEGENT_APP_IPC_DEVICE_ID
     const executor = spawn(this.executorBinary, [], {
       cwd: weworkDir,
@@ -980,6 +989,7 @@ class RealCloudEnvironment {
       appendProcessOutput(executor.stderr, logPath),
     ])
     await this.waitForDevice(deviceId, logPath)
+    return { home, logPath }
   }
 
   async seedCloudProtocolModels() {

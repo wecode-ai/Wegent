@@ -2,7 +2,7 @@ import Ionicons from '@expo/vector-icons/Ionicons'
 import { useIsFocused } from '@react-navigation/native'
 import type { GlassColorScheme } from 'expo-glass-effect'
 import { useEffect, useMemo, useState } from 'react'
-import { FlatList, Platform, Pressable, StyleSheet, View } from 'react-native'
+import { FlatList, Platform, Pressable, RefreshControl, StyleSheet, View } from 'react-native'
 import { ActivityIndicator, Portal, Text, useTheme, type MD3Theme } from 'react-native-paper'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
 
@@ -29,10 +29,14 @@ interface ConversationListScreenProps {
   workspaces: Array<{ projectName: string; workspace: RuntimeDeviceWorkspace }>
   currentAddress: RuntimeTaskAddress | null
   selectedDeviceId: string | null
+  allDevicesSelected: boolean
   search: string
   loading: boolean
+  refreshing: boolean
   onSearch: (value: string) => void
+  onRefresh: () => Promise<void>
   onSelectDevice: (deviceId: string) => void
+  onSelectAllDevices: () => void
   onSelectConversation: (item: ConversationItem) => void
   onNewConversation: (workspace?: RuntimeDeviceWorkspace) => void
   onNewProject: () => void
@@ -41,7 +45,13 @@ interface ConversationListScreenProps {
 }
 
 type DrawerItem =
-  | { key: 'projects-title'; type: 'projects-title' }
+  | {
+      key: 'projects-title' | 'tasks-title'
+      type: 'section'
+      section: DrawerSection
+      title: '项目' | '任务'
+      expanded: boolean
+    }
   | {
       key: string
       type: 'project'
@@ -51,6 +61,8 @@ type DrawerItem =
     }
   | { key: string; type: 'conversation'; conversation: ConversationItem }
   | { key: 'empty'; type: 'empty' }
+
+type DrawerSection = 'projects' | 'tasks'
 
 const BOTTOM_CONTROL_HEIGHT = 52
 const SEARCH_LINE_HEIGHT = 22
@@ -66,6 +78,7 @@ export function ConversationListScreen(props: ConversationListScreenProps) {
   const glassColorScheme: GlassColorScheme = theme.dark ? 'dark' : 'light'
   const [actionsVisible, setActionsVisible] = useState(false)
   const [showAllDevices, setShowAllDevices] = useState(false)
+  const [collapsedSections, setCollapsedSections] = useState<Set<DrawerSection>>(() => new Set())
   const [collapsedProjects, setCollapsedProjects] = useState<Set<string>>(() => new Set())
   const onlineDeviceIds = useMemo(
     () =>
@@ -76,10 +89,11 @@ export function ConversationListScreen(props: ConversationListScreenProps) {
   )
   const onlineDevices = props.devices.filter(device => onlineDeviceIds.has(device.device_id))
   const displayedDevices = showAllDevices ? onlineDevicesFirst(props.devices) : onlineDevices
-  const selectedDeviceId =
-    onlineDevices.find(device => device.device_id === props.selectedDeviceId)?.device_id ??
-    onlineDevices[0]?.device_id ??
-    null
+  const selectedDeviceId = props.allDevicesSelected
+    ? null
+    : (onlineDevices.find(device => device.device_id === props.selectedDeviceId)?.device_id ??
+      onlineDevices[0]?.device_id ??
+      null)
   const query = props.search.trim().toLocaleLowerCase()
 
   const filteredConversations = props.conversations.filter(item => {
@@ -98,37 +112,58 @@ export function ConversationListScreen(props: ConversationListScreenProps) {
   )
 
   const drawerItems = useMemo<DrawerItem[]>(() => {
-    const items: DrawerItem[] = [{ key: 'projects-title', type: 'projects-title' }]
+    const projectsExpanded = !collapsedSections.has('projects')
+    const tasksExpanded = !collapsedSections.has('tasks')
+    const items: DrawerItem[] = [
+      {
+        key: 'projects-title',
+        type: 'section',
+        section: 'projects',
+        title: '项目',
+        expanded: projectsExpanded,
+      },
+    ]
     const projectNames = new Set<string>()
     visibleWorkspaces.forEach(({ projectName }) => projectNames.add(projectName))
     filteredConversations.forEach(item => {
       if (item.projectName) projectNames.add(item.projectName)
     })
 
-    for (const projectName of projectNames) {
-      const workspace = visibleWorkspaces.find(item => item.projectName === projectName)?.workspace
-      const expanded = !collapsedProjects.has(projectName)
-      items.push({
-        key: `project:${projectName}`,
-        type: 'project',
-        name: projectName,
-        workspace,
-        expanded,
-      })
-      if (!expanded) continue
-      for (const conversation of filteredConversations.filter(
-        item => item.projectName === projectName
-      )) {
+    if (projectsExpanded) {
+      for (const projectName of projectNames) {
+        const workspace = visibleWorkspaces.find(
+          item => item.projectName === projectName
+        )?.workspace
+        const expanded = !collapsedProjects.has(projectName)
         items.push({
-          key: `conversation:${conversation.address.deviceId}:${conversation.address.taskId}`,
-          type: 'conversation',
-          conversation,
+          key: `project:${projectName}`,
+          type: 'project',
+          name: projectName,
+          workspace,
+          expanded,
         })
+        if (!expanded) continue
+        for (const conversation of filteredConversations.filter(
+          item => item.projectName === projectName
+        )) {
+          items.push({
+            key: `conversation:${conversation.address.deviceId}:${conversation.address.taskId}`,
+            type: 'conversation',
+            conversation,
+          })
+        }
       }
     }
 
     const standaloneConversations = filteredConversations.filter(item => !item.projectName)
-    if (projectNames.size === 0 || standaloneConversations.length > 0) {
+    items.push({
+      key: 'tasks-title',
+      type: 'section',
+      section: 'tasks',
+      title: '任务',
+      expanded: tasksExpanded,
+    })
+    if (tasksExpanded) {
       for (const conversation of standaloneConversations) {
         items.push({
           key: `conversation:${conversation.address.deviceId}:${conversation.address.taskId}`,
@@ -138,9 +173,20 @@ export function ConversationListScreen(props: ConversationListScreenProps) {
       }
     }
 
-    if (items.length === 1) items.push({ key: 'empty', type: 'empty' })
+    if (projectNames.size === 0 && standaloneConversations.length === 0) {
+      items.push({ key: 'empty', type: 'empty' })
+    }
     return items
-  }, [collapsedProjects, filteredConversations, visibleWorkspaces])
+  }, [collapsedProjects, collapsedSections, filteredConversations, visibleWorkspaces])
+
+  const toggleSection = (section: DrawerSection) => {
+    setCollapsedSections(current => {
+      const next = new Set(current)
+      if (next.has(section)) next.delete(section)
+      else next.add(section)
+      return next
+    })
+  }
 
   const toggleProject = (projectName: string) => {
     setCollapsedProjects(current => {
@@ -237,6 +283,15 @@ export function ConversationListScreen(props: ConversationListScreenProps) {
                   }}
                   testID="drawer-settings"
                 />
+                <DrawerAction
+                  icon={showAllDevices ? 'eye-off-outline' : 'eye-outline'}
+                  label={showAllDevices ? '仅显示在线设备' : '显示全部设备'}
+                  onPress={() => {
+                    setActionsVisible(false)
+                    setShowAllDevices(current => !current)
+                  }}
+                  testID="drawer-toggle-offline-devices"
+                />
               </LiquidGlassSurface>
             </Pressable>
           </Pressable>
@@ -250,15 +305,23 @@ export function ConversationListScreen(props: ConversationListScreenProps) {
         keyExtractor={device => device.device_id}
         ListHeaderComponent={
           <LiquidGlassButton
-            accessibilityLabel={showAllDevices ? '仅显示在线设备' : '显示全部设备'}
+            accessibilityLabel="显示所有设备任务"
             colorScheme={glassColorScheme}
             contentStyle={styles.allDevicePill}
-            fallbackStyle={styles.glassFallback}
-            onPress={() => setShowAllDevices(current => !current)}
+            fallbackStyle={
+              props.allDevicesSelected ? styles.selectedGlassFallback : styles.glassFallback
+            }
+            glassEffectStyle={props.allDevicesSelected ? 'clear' : 'regular'}
+            onPress={props.onSelectAllDevices}
             style={styles.deviceGlass}
             testID="device-option-all"
+            tintColor={props.allDevicesSelected ? theme.colors.primary : undefined}
           >
-            <Text style={styles.deviceText}>{showAllDevices ? '仅在线' : '全部'}</Text>
+            <Text
+              style={[styles.deviceText, props.allDevicesSelected && styles.deviceTextSelected]}
+            >
+              全部
+            </Text>
           </LiquidGlassButton>
         }
         renderItem={({ item: device }) => {
@@ -306,12 +369,37 @@ export function ConversationListScreen(props: ConversationListScreenProps) {
           keyExtractor={item => item.key}
           keyboardDismissMode="interactive"
           keyboardShouldPersistTaps="handled"
+          refreshControl={
+            <RefreshControl
+              onRefresh={() => void props.onRefresh()}
+              refreshing={props.refreshing}
+              testID="conversation-list-refresh"
+              tintColor={theme.colors.onSurfaceVariant}
+            />
+          }
           renderItem={({ item }) => {
-            if (item.type === 'projects-title') {
+            if (item.type === 'section') {
               return (
-                <Text style={styles.sectionTitle} variant="titleMedium">
-                  项目
-                </Text>
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityState={{ expanded: item.expanded }}
+                  onPress={() => toggleSection(item.section)}
+                  style={({ pressed }) => [
+                    styles.sectionHeader,
+                    item.section === 'tasks' && styles.tasksSectionHeader,
+                    pressed && styles.rowPressed,
+                  ]}
+                  testID={`section-${item.section}-toggle`}
+                >
+                  <Text style={styles.sectionTitle} variant="titleMedium">
+                    {item.title}
+                  </Text>
+                  <Ionicons
+                    color={theme.colors.onSurfaceVariant}
+                    name={item.expanded ? 'chevron-down' : 'chevron-forward'}
+                    size={18}
+                  />
+                </Pressable>
               )
             }
             if (item.type === 'project') {
@@ -569,12 +657,17 @@ function createStyles(colors: MD3Theme['colors']) {
     deviceTextSelected: { color: colors.onPrimary },
     loader: { flex: 1 },
     list: { paddingTop: 12, paddingBottom: 104, flexGrow: 1 },
-    sectionTitle: {
-      color: colors.onBackground,
-      fontWeight: '600',
-      marginHorizontal: 24,
-      marginBottom: 10,
+    sectionHeader: {
+      minHeight: 44,
+      marginHorizontal: 16,
+      paddingHorizontal: 8,
+      borderRadius: 12,
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 6,
     },
+    tasksSectionHeader: { marginTop: 32 },
+    sectionTitle: { color: colors.onBackground, fontWeight: '600' },
     projectRow: {
       minHeight: 52,
       marginBottom: 6,

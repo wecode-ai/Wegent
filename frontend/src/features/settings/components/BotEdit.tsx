@@ -7,6 +7,7 @@ import React, {
   useState,
   useEffect,
   useMemo,
+  useRef,
   useImperativeHandle,
   forwardRef,
 } from 'react'
@@ -593,26 +594,22 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
     allowGenerationPrimaryModel,
   ])
 
+  // Key of the bot/shell combination whose MCP config was last normalized. Used
+  // to skip re-normalization on shell refreshes while still re-processing when
+  // the edited bot (or clone source) changes.
+  const normalizedMcpKeyRef = useRef('')
+
   // Reset base form when switching editing object
   useEffect(() => {
     setBotName(baseBot?.name || '')
     // Use shell_name for the selected shell, fallback to shell_type for backward compatibility
     setAgentName(baseBot?.shell_name || baseBot?.shell_type || '')
     setPrompt(baseBot?.system_prompt || '')
+    normalizedMcpKeyRef.current = ''
 
-    // Apply type normalization when loading MCP config
     if (baseBot?.mcp_servers) {
       const mcpServers = migrateLegacyProviderMcpConfig(baseBot.mcp_servers)
-      const shellName = baseBot.shell_name || baseBot.shell_type || ''
-      const shell = shells.find(s => s.name === shellName)
-      const agentType = shell?.shellType
-
-      if (agentType && isMcpCapableShellType(agentType)) {
-        const adaptedConfig = adaptMcpConfigForShell(mcpServers, agentType)
-        setMcpConfig(JSON.stringify(adaptedConfig, null, 2))
-      } else {
-        setMcpConfig(JSON.stringify(mcpServers, null, 2))
-      }
+      setMcpConfig(JSON.stringify(mcpServers, null, 2))
     } else {
       setMcpConfig('')
     }
@@ -632,7 +629,26 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
     } else {
       setAgentConfig('')
     }
-  }, [editingBotId, baseBot, shells])
+  }, [editingBotId, baseBot])
+
+  // Normalize the MCP config once the bot's shell type is known. Deliberately
+  // skips later shell refreshes (e.g. publish-scope switches) so they do not
+  // discard a create draft or unsaved edits of an existing bot.
+  useEffect(() => {
+    if (!baseBot?.mcp_servers) return
+
+    const shellName = baseBot.shell_name || baseBot.shell_type || ''
+    const shell = shells.find(s => s.name === shellName)
+    const agentType = shell?.shellType
+    if (!agentType || !isMcpCapableShellType(agentType)) return
+
+    const key = `${editingBotId}:${shellName}:${agentType}`
+    if (normalizedMcpKeyRef.current === key) return
+
+    normalizedMcpKeyRef.current = key
+    const mcpServers = migrateLegacyProviderMcpConfig(baseBot.mcp_servers)
+    setMcpConfig(JSON.stringify(adaptMcpConfigForShell(mcpServers, agentType), null, 2))
+  }, [baseBot, editingBotId, shells])
 
   // Initialize model-related data after agents and models are loaded
   useEffect(() => {

@@ -281,6 +281,7 @@ export function ProjectAutomationView(props: ProjectAutomationViewProps) {
   const projectId = String(project.id)
   const cacheKey = `${projectId}:${String(currentUserId ?? '')}`
   const projectRef = useRef(project)
+  const onProjectUpdatedRef = useRef(onProjectUpdated)
   const initialCache = readProjectAutomationRuleCache(cacheKey, projectAutomationApi)
   const [rules, setRules] = useState<AutomationUiRule[]>(() => initialCache?.rules ?? [])
   const [runs, setRuns] = useState<AutomationUiRun[]>([])
@@ -295,6 +296,10 @@ export function ProjectAutomationView(props: ProjectAutomationViewProps) {
   useEffect(() => {
     projectRef.current = project
   }, [project])
+
+  useEffect(() => {
+    onProjectUpdatedRef.current = onProjectUpdated
+  }, [onProjectUpdated])
 
   const load = useCallback(
     async ({ force = false }: { force?: boolean } = {}) => {
@@ -343,7 +348,7 @@ export function ProjectAutomationView(props: ProjectAutomationViewProps) {
               version: result.projectVersion,
             }
             projectRef.current = updatedProject
-            onProjectUpdated?.(updatedProject)
+            onProjectUpdatedRef.current?.(updatedProject)
             return buildAutomationRuleSnapshot(updatedProject, [result.automation, ...backendRules])
           })
           request = { source: projectAutomationApi, promise }
@@ -372,7 +377,7 @@ export function ProjectAutomationView(props: ProjectAutomationViewProps) {
         setLoading(false)
       }
     },
-    [cacheKey, canManageAgents, currentUserId, onProjectUpdated, projectAutomationApi, projectId, t]
+    [cacheKey, canManageAgents, currentUserId, projectAutomationApi, projectId, t]
   )
 
   useEffect(() => {

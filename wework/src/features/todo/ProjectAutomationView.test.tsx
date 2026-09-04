@@ -3,6 +3,8 @@ import { beforeAll, beforeEach, describe, expect, test, vi } from 'vitest'
 import type { CloudProject } from '@/api/deliveries'
 import type { ProjectAutomationRule, ProjectAutomationRun } from '@/api/projectAutomations'
 import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
+import { AutomationRulesView } from './AutomationRulesView.jsx'
+import { automationRuleFromBackend } from './automationRuleBackend'
 import { ProjectAutomationView } from './ProjectAutomationView'
 
 const localExecutorMocks = vi.hoisted(() => ({
@@ -255,7 +257,9 @@ function renderView({
       },
     ]),
   }
-  const view = render(
+  const projectAutomationView = (
+    updatedCallback: ((project: CloudProject) => void) | undefined = onProjectUpdated
+  ) => (
     <ProjectAutomationView
       api={{} as NonNullable<WorkbenchServices['deliveryApi']>}
       project={viewProject}
@@ -265,15 +269,35 @@ function renderView({
       pluginApi={pluginApi}
       currentUserId={7}
       canManageAgents
-      onProjectUpdated={onProjectUpdated}
+      onProjectUpdated={updatedCallback}
     />
   )
-  return { projectAutomationApi, deviceApi, modelApi, pluginApi, view }
+  const view = render(projectAutomationView())
+  return {
+    projectAutomationApi,
+    deviceApi,
+    modelApi,
+    pluginApi,
+    view,
+    rerender: (updatedCallback?: (project: CloudProject) => void) =>
+      view.rerender(projectAutomationView(updatedCallback)),
+  }
 }
 
 async function openRuleEditor(ruleId = 'rule-1') {
   fireEvent.click(await screen.findByTestId(`automation-card-${ruleId}`))
   return screen.findByTestId('automation-rule-editor')
+}
+
+function refreshedFirstStepPrompt(
+  current: ReturnType<typeof automationRuleFromBackend>,
+  prompt: string
+) {
+  return {
+    ...current,
+    version: current.version + 1,
+    steps: current.steps.map((step, index) => (index === 0 ? { ...step, prompt } : step)),
+  }
 }
 
 describe('ProjectAutomationView', () => {
@@ -405,6 +429,55 @@ describe('ProjectAutomationView', () => {
     expect(deviceApi.listDevices).not.toHaveBeenCalled()
     expect(modelApi.listModels).not.toHaveBeenCalled()
     expect(pluginApi.listPlugins).not.toHaveBeenCalled()
+  })
+
+  test('does not reload automation rules when a parent callback changes', async () => {
+    let now = Date.now()
+    const nowSpy = vi.spyOn(Date, 'now').mockImplementation(() => now)
+    try {
+      const { projectAutomationApi, rerender } = renderView({ onProjectUpdated: vi.fn() })
+      expect(await screen.findByTestId('automation-card-rule-1')).toBeInTheDocument()
+      expect(projectAutomationApi.list).toHaveBeenCalledOnce()
+
+      now += 31_000
+      rerender(vi.fn())
+      await act(async () => {
+        await Promise.resolve()
+      })
+
+      expect(projectAutomationApi.list).toHaveBeenCalledOnce()
+    } finally {
+      nowSpy.mockRestore()
+    }
+  })
+
+  test('preserves a dirty editor draft when refreshed rules arrive', async () => {
+    const initialRule = automationRuleFromBackend(rule)
+    const refreshedRule = refreshedFirstStepPrompt(initialRule, '服务端刷新内容')
+    const view = render(<AutomationRulesView rules={[initialRule]} runs={[]} />)
+    fireEvent.click(screen.getByTestId('automation-card-rule-1'))
+    fireEvent.click(screen.getByTestId('execution-node-step-1'))
+    fireEvent.change(screen.getByTestId('execution-node-prompt-step-1'), {
+      target: { value: '尚未保存的本地输入' },
+    })
+
+    view.rerender(<AutomationRulesView rules={[refreshedRule]} runs={[]} />)
+
+    expect(screen.getByTestId('execution-node-prompt-step-1')).toHaveValue('尚未保存的本地输入')
+    expect(screen.getByText('有未保存更改')).toBeInTheDocument()
+  })
+
+  test('applies a refreshed rule when the editor draft is clean', async () => {
+    const initialRule = automationRuleFromBackend(rule)
+    const refreshedRule = refreshedFirstStepPrompt(initialRule, '服务端刷新内容')
+    const view = render(<AutomationRulesView rules={[initialRule]} runs={[]} />)
+    fireEvent.click(screen.getByTestId('automation-card-rule-1'))
+    fireEvent.click(screen.getByTestId('execution-node-step-1'))
+
+    view.rerender(<AutomationRulesView rules={[refreshedRule]} runs={[]} />)
+
+    expect(screen.getByTestId('execution-node-prompt-step-1')).toHaveValue('服务端刷新内容')
+    expect(screen.queryByText('有未保存更改')).not.toBeInTheDocument()
   })
 
   test('opens and applies an embedded template from the template store', async () => {

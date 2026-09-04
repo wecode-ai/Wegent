@@ -150,6 +150,7 @@ export const BottomWorkspacePanel = memo(function BottomWorkspacePanel({
         icon: SquareTerminal,
         label: t('workbench.terminal', '终端'),
         disabled: activeMenuActions.terminal.disabled,
+        title: activeMenuActions.terminal.title,
         onSelect: openTerminalTab,
       })
     }
@@ -160,6 +161,7 @@ export const BottomWorkspacePanel = memo(function BottomWorkspacePanel({
         icon: Monitor,
         label: t('workbench.desktop', '桌面'),
         disabled: activeMenuActions.desktop.disabled,
+        title: activeMenuActions.desktop.title,
         onSelect: activeMenuActions.desktop.run,
       })
     }
