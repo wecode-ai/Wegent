@@ -106,6 +106,8 @@ export async function prepareDevelopmentComponentResources(options) {
   const bundledPluginsRoot = join(resourcesRoot, 'bundled-plugins')
   await materializeBundledPluginResources(weworkRoot, bundledPluginsRoot)
   const corePluginsSha256 = await hashTree(corePluginsRoot)
+  const weworkAppStaticRoot = join(resourcesRoot, 'wework-app-static')
+  await mkdir(weworkAppStaticRoot, { recursive: true, mode: 0o700 })
 
   const electronPackage = JSON.parse(await readFile(join(electronRoot, 'package.json'), 'utf8'))
   const weworkPackage = JSON.parse(await readFile(join(weworkRoot, 'package.json'), 'utf8'))
@@ -121,6 +123,11 @@ export async function prepareDevelopmentComponentResources(options) {
       version,
       path: 'wework-core-plugins',
       sha256: corePluginsSha256,
+    },
+    weworkAppStatic: {
+      version,
+      path: 'wework-app-static',
+      sha256: await hashTree(weworkAppStaticRoot),
     },
     bundledPlugins: component('bundled-plugins', bundledPluginsRoot),
     executor: component(join('bin', 'wegent-executor'), options.executorPath),

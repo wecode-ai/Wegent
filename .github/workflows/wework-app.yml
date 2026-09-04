@@ -40,6 +40,7 @@ jobs:
       prerelease: ${{ steps.plan.outputs.prerelease }}
       publish_release: ${{ steps.version.outputs.publish_release }}
       release_kind: ${{ steps.plan.outputs.kind }}
+      componentized_host_update: ${{ steps.current-channel.outputs.componentized_host_update }}
 
     steps:
       - name: Create release app token
@@ -83,6 +84,10 @@ jobs:
           const manifest = JSON.parse(readFileSync(manifestPath, 'utf8'))
           appendFileSync(outputPath, `app_version=${manifest.appVersion || ''}\n`)
           appendFileSync(outputPath, `source_ref=${manifest.sourceSha || ''}\n`)
+          appendFileSync(
+            outputPath,
+            `componentized_host_update=${manifest.capabilities?.componentizedHostUpdate === 1}\n`,
+          )
           NODE
           fi
 
@@ -311,6 +316,7 @@ jobs:
           WEWORK_CUSTOM_MACOS_NOTARIZATION: ${{ matrix.platform == 'macos' && 'true' || '' }}
           WEWORK_RELEASE_ARCH: ${{ matrix.arch }}
           WEWORK_RELEASE_PLATFORM: ${{ matrix.platform }}
+          WEWORK_ONLINE_UPDATE_INCLUDE_COMPONENTS: ${{ needs.prepare-release.outputs.componentized_host_update != 'true' }}
           WEWORK_SOURCE_SHA: ${{ needs.prepare-release.outputs.release_sha }}
           WIN_CSC_KEY_PASSWORD: ${{ secrets.WIN_CSC_KEY_PASSWORD }}
           WIN_CSC_LINK: ${{ secrets.WIN_CSC_LINK }}
@@ -348,12 +354,24 @@ jobs:
         env:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+          WEWORK_USE_COMPONENTIZED_HOST_UPDATE: ${{ needs.prepare-release.outputs.componentized_host_update }}
         run: |
           node wework/scripts/prepare-desktop-release-assets.mjs \
             "${{ matrix.platform }}" \
             "${{ matrix.arch }}" \
             "${{ needs.prepare-release.outputs.version }}" \
             "$RUNNER_TEMP/wework-release-assets"
+
+      - name: Verify componentized macOS update package
+        if: matrix.platform == 'macos' && needs.prepare-release.outputs.componentized_host_update == 'true'
+        run: |
+          set -euo pipefail
+          zip="$(find "$RUNNER_TEMP/wework-release-assets" -maxdepth 1 -name 'WeWorkHostUpdate_*_macos_*.zip' -print -quit)"
+          test -n "$zip"
+          if unzip -Z1 "$zip" | grep -Eq '/Resources/(bin|codex|harness-runtime|wework-core-plugins|wework-app-static|bundled-plugins)/'; then
+            echo "::error::The online Host update contains managed component resources."
+            exit 1
+          fi
 
       - name: Upload release build
         uses: actions/upload-artifact@v4
@@ -397,6 +415,7 @@ jobs:
           RELEASE_CHANNEL: ${{ needs.prepare-release.outputs.channel }}
           RELEASE_TAG: ${{ needs.prepare-release.outputs.release_tag }}
           RELEASE_VERSION: ${{ needs.prepare-release.outputs.version }}
+          WEWORK_USE_COMPONENTIZED_HOST_UPDATE: ${{ needs.prepare-release.outputs.componentized_host_update }}
         run: |
           set -euo pipefail
           notes="$(mktemp)"
@@ -420,11 +439,13 @@ jobs:
           set -euo pipefail
           find release-assets -maxdepth 1 -type f \
             ! -name 'components-*.json' \
-            ! -name 'WeworkComponent_coreDsh_*.tar.gz' \
-            ! -name 'WeworkComponent_codex_*.tar.gz' \
-            ! -name 'WeworkComponent_dws_*.tar.gz' \
+            ! -name 'WeworkComponent_*.tar.gz' \
             -print0 |
             xargs -0 gh release upload "$RELEASE_TAG" --clobber
+          while IFS= read -r component_name; do
+            [[ -n "$component_name" ]] || continue
+            gh release upload "$RELEASE_TAG" "release-assets/$component_name" --clobber
+          done < <(node wework/scripts/desktop-component-release.mjs release-assets version)
           if [[ "$RELEASE_KIND" == "full" ]]; then
             gh release upload "$RELEASE_TAG" release-manifests/* --clobber
           else
@@ -479,11 +500,12 @@ jobs:
             fi
             gh release upload wework-updater "$component_asset"
             echo "$component_name" >> "$existing_component_assets"
-          done < <(find release-assets -maxdepth 1 -type f \
-            \( -name 'WeworkComponent_coreDsh_*.tar.gz' \
-            -o -name 'WeworkComponent_codex_*.tar.gz' \
-            -o -name 'WeworkComponent_dws_*.tar.gz' \) \
-            -print | sort)
+          done < <(
+            node wework/scripts/desktop-component-release.mjs release-assets shared |
+              while IFS= read -r component_name; do
+                [[ -n "$component_name" ]] && printf '%s\n' "release-assets/$component_name"
+              done
+          )
 
           publish_channel() {
             local channel="$1"
@@ -537,15 +559,19 @@ jobs:
             fi
 
             gh release upload wework-updater \
-              "release-manifests/${electron_channel}.yml" \
-              "release-manifests/${electron_channel}-mac.yml" \
-              "release-manifests/${channel}-darwin-aarch64.json" \
-              "release-manifests/${channel}-darwin-x86_64.json" \
-              "release-manifests/${channel}-windows-x86_64.json" \
               "release-manifests/components-${channel}-macos-arm64.json" \
               "release-manifests/components-${channel}-macos-x64.json" \
               "release-manifests/components-${channel}-windows-x64.json" \
               "release-manifests/components-${channel}-linux-x64.json" \
+              --clobber
+            gh release upload wework-updater \
+              "release-manifests/${channel}-darwin-aarch64.json" \
+              "release-manifests/${channel}-darwin-x86_64.json" \
+              "release-manifests/${channel}-windows-x86_64.json" \
+              --clobber
+            gh release upload wework-updater \
+              "release-manifests/${electron_channel}.yml" \
+              "release-manifests/${electron_channel}-mac.yml" \
               --clobber
           }
 
