@@ -177,7 +177,7 @@ function LocalCodexModelRow({
         <div className="mt-1 break-all text-xs leading-5 text-text-secondary">
           {t('workbench.local_codex_auth_path_value', {
             defaultValue: '本机 {{path}}',
-            path: status?.targetPath ?? '~/.codex/auth.json',
+            path: status?.targetPath ?? 'auth.json',
           })}
           {formatRuntimeDate(status?.updatedAt) && (
             <span className="ml-2">
@@ -2604,41 +2604,52 @@ function DisconnectedCloudCodexSyncSection({
           <div className="min-w-0 flex-1">
             <div className="flex flex-wrap items-center gap-2">
               <h3 className="text-sm font-semibold text-text-secondary">
-                {t('workbench.runtime_config_auth_file_title', '共享认证')}
+                {t('workbench.runtime_config_auth_file_title', 'Codex 认证同步')}
               </h3>
               <span
                 data-testid="runtime-config-status"
                 className="rounded-full bg-muted px-2 py-0.5 text-xs text-text-muted"
               >
-                {t('workbench.runtime_config_not_configured', '未配置')}
+                {t('workbench.runtime_config_cloud_disconnected', '未连接云端')}
               </span>
             </div>
             <p className="mt-1 text-xs leading-5 text-text-secondary">
-              {t('workbench.runtime_config_codex_description', '在不同设备之间同步CodeX认证信息。')}
+              {t(
+                'workbench.runtime_config_codex_description',
+                '从本机或在线设备保存一份认证；开启后自动同步到同一账号下缺少认证的设备。'
+              )}
             </p>
           </div>
 
-          <div className="flex min-w-[320px] flex-wrap items-center justify-end gap-2">
-            <select
-              data-testid="runtime-config-sync-source-select"
-              disabled
-              className="h-8 w-[152px] cursor-not-allowed rounded-md border border-border bg-muted px-2 text-sm text-text-muted"
-              aria-label={t('workbench.runtime_config_sync_source', '认证来源')}
+          <div className="grid min-w-[320px] gap-1.5">
+            <label
+              htmlFor="runtime-config-sync-source-disconnected"
+              className="text-xs text-text-secondary"
             >
-              <option value="">
-                {t('workbench.runtime_config_current_device_source', '当前设备')}
-              </option>
-            </select>
-            <button
-              type="button"
-              data-testid="runtime-config-sync-auth-button"
-              onClick={onOpenCloudSettings}
-              disabled={!onOpenCloudSettings}
-              className="inline-flex h-8 items-center justify-center gap-1.5 rounded-md border border-border bg-background px-3 text-sm font-medium text-text-primary hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50"
-            >
-              <Network className="h-3.5 w-3.5" />
-              {t('workbench.runtime_config_cloud_disabled_hint', '连接云端后可用')}
-            </button>
+              {t('workbench.runtime_config_sync_source', '认证来源')}
+            </label>
+            <div className="flex flex-wrap items-center justify-end gap-2">
+              <select
+                id="runtime-config-sync-source-disconnected"
+                data-testid="runtime-config-sync-source-select"
+                disabled
+                className="h-8 w-[152px] cursor-not-allowed rounded-md border border-border bg-muted px-2 text-sm text-text-muted"
+              >
+                <option value="">
+                  {t('workbench.runtime_config_current_device_source', '本机')}
+                </option>
+              </select>
+              <button
+                type="button"
+                data-testid="runtime-config-sync-auth-button"
+                onClick={onOpenCloudSettings}
+                disabled={!onOpenCloudSettings}
+                className="inline-flex h-8 items-center justify-center gap-1.5 rounded-md border border-border bg-background px-3 text-sm font-medium text-text-primary hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                <Network className="h-3.5 w-3.5" />
+                {t('workbench.runtime_config_cloud_disabled_hint', '连接云端后可用')}
+              </button>
+            </div>
           </div>
         </div>
       </CodexSettingsGroup>
@@ -2762,6 +2773,9 @@ export function ModelSettingsPage({
   const selectedAuthSyncSourceIsLocal = selectedAuthSyncSource === 'local'
   const authSyncBusy = uploading || importing
   const canSyncAuthSource = selectedAuthSyncSourceIsLocal || Boolean(effectiveImportDeviceId)
+  const authSourceActionLabel = selectedAuthSyncSourceIsLocal
+    ? t('workbench.runtime_config_choose_local_auth_action', '选择并保存')
+    : t('workbench.runtime_config_import_action', '读取并保存')
 
   const loadLocalAuthStatus = useCallback(async () => {
     setLocalAuthLoading(true)
@@ -2909,8 +2923,17 @@ export function ModelSettingsPage({
       setConfig(nextConfig)
       setNotice(t('workbench.runtime_config_import_success', '已从设备导入 auth.json'))
     } catch (importError) {
+      const message = getErrorMessage(
+        importError,
+        t('workbench.runtime_config_import_failed', '从设备导入失败')
+      )
       setError(
-        getErrorMessage(importError, t('workbench.runtime_config_import_failed', '从设备导入失败'))
+        message.includes('runtime auth file does not exist')
+          ? t(
+              'workbench.runtime_config_source_auth_missing',
+              '所选设备没有 Codex 认证，请选择本机或其他已配置设备。'
+            )
+          : message
       )
     } finally {
       setImporting(false)
@@ -2927,8 +2950,8 @@ export function ModelSettingsPage({
   }
 
   const statusLabel = config?.configured
-    ? t('workbench.runtime_config_configured', '已配置')
-    : t('workbench.runtime_config_not_configured', '未配置')
+    ? t('workbench.runtime_config_auth_saved', '认证已保存')
+    : t('workbench.runtime_config_auth_not_saved', '认证未保存')
   const statusClassName = config?.configured
     ? 'bg-primary/10 text-primary'
     : 'bg-muted text-text-muted'
@@ -3025,7 +3048,7 @@ export function ModelSettingsPage({
                   <div className="min-w-0 flex-1">
                     <div className="flex flex-wrap items-center gap-2">
                       <h3 className="text-sm font-semibold text-text-primary">
-                        {t('workbench.runtime_config_auth_file_title', '共享认证')}
+                        {t('workbench.runtime_config_auth_file_title', 'Codex 认证同步')}
                       </h3>
                       <span
                         data-testid="runtime-config-status"
@@ -3049,27 +3072,34 @@ export function ModelSettingsPage({
                       >
                         {updating && <Loader2 className="h-3 w-3 animate-spin" />}
                         {config?.use_user_config
-                          ? t('workbench.runtime_config_use_enabled', '正在使用')
-                          : t('workbench.runtime_config_use_disabled', '未启用')}
+                          ? t('workbench.runtime_config_use_enabled', '自动同步开启')
+                          : t('workbench.runtime_config_use_disabled', '自动同步关闭')}
                       </button>
                     </div>
-                    <div className="mt-1 break-all text-xs leading-5 text-text-secondary">
-                      {config?.target_path ?? '~/.codex/auth.json'}
-                      {updatedAt && (
-                        <span className="ml-2">
-                          {t('workbench.runtime_config_updated_at', '更新时间')}: {updatedAt}
-                        </span>
+                    <p className="mt-1 text-xs leading-5 text-text-secondary">
+                      {t(
+                        'workbench.runtime_config_codex_description',
+                        '从本机或在线设备保存一份认证；开启后自动同步到同一账号下缺少认证的设备。'
                       )}
-                    </div>
-                    <div className="mt-1 flex items-center gap-1.5 text-xs text-text-muted">
-                      <ShieldCheck className="h-3.5 w-3.5" />
-                      {config?.auth_json_sha256
-                        ? `SHA-256 ${shortDigest(config.auth_json_sha256)}`
-                        : t('workbench.runtime_config_secret_stored', '认证信息会加密保存。')}
-                    </div>
+                    </p>
+                    {config?.configured && (
+                      <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-text-muted">
+                        {updatedAt && (
+                          <span>
+                            {t('workbench.runtime_config_updated_at', '更新时间')}: {updatedAt}
+                          </span>
+                        )}
+                        {config.auth_json_sha256 && (
+                          <span className="inline-flex items-center gap-1.5">
+                            <ShieldCheck className="h-3.5 w-3.5" />
+                            SHA-256 {shortDigest(config.auth_json_sha256)}
+                          </span>
+                        )}
+                      </div>
+                    )}
                   </div>
 
-                  <div className="flex min-w-[320px] flex-wrap items-center justify-end gap-2">
+                  <div className="grid min-w-[320px] gap-1.5">
                     <input
                       ref={fileInputRef}
                       type="file"
@@ -3078,37 +3108,45 @@ export function ModelSettingsPage({
                       className="hidden"
                       onChange={event => void handleFileChange(event)}
                     />
-                    <select
-                      data-testid="runtime-config-sync-source-select"
-                      value={selectedAuthSyncSource}
-                      onChange={event => setSelectedAuthSyncSource(event.target.value)}
-                      disabled={authSyncBusy}
-                      className="h-8 w-[152px] rounded-md border border-border bg-background px-2 text-sm text-text-primary disabled:cursor-not-allowed disabled:bg-muted disabled:text-text-muted"
-                      aria-label={t('workbench.runtime_config_sync_source', '认证来源')}
+                    <label
+                      htmlFor="runtime-config-sync-source"
+                      className="text-xs text-text-secondary"
                     >
-                      <option value="local">
-                        {t('workbench.runtime_config_current_device_source', '当前设备')}
-                      </option>
-                      {onlineDevices.map(device => (
-                        <option key={device.device_id} value={`device:${device.device_id}`}>
-                          {device.name}
+                      {t('workbench.runtime_config_sync_source', '认证来源')}
+                    </label>
+                    <div className="flex flex-wrap items-center justify-end gap-2">
+                      <select
+                        id="runtime-config-sync-source"
+                        data-testid="runtime-config-sync-source-select"
+                        value={selectedAuthSyncSource}
+                        onChange={event => setSelectedAuthSyncSource(event.target.value)}
+                        disabled={authSyncBusy}
+                        className="h-8 w-[152px] rounded-md border border-border bg-background px-2 text-sm text-text-primary disabled:cursor-not-allowed disabled:bg-muted disabled:text-text-muted"
+                      >
+                        <option value="local">
+                          {t('workbench.runtime_config_current_device_source', '本机')}
                         </option>
-                      ))}
-                    </select>
-                    <button
-                      type="button"
-                      data-testid="runtime-config-sync-auth-button"
-                      onClick={handleSyncAuthSource}
-                      disabled={!canSyncAuthSource || authSyncBusy}
-                      className="inline-flex h-8 items-center justify-center gap-1.5 rounded-md border border-border bg-background px-3 text-sm font-medium text-text-primary hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50"
-                    >
-                      {authSyncBusy ? (
-                        <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                      ) : (
-                        <Upload className="h-3.5 w-3.5" />
-                      )}
-                      {t('workbench.runtime_config_sync_action', '同步到其他设备')}
-                    </button>
+                        {onlineDevices.map(device => (
+                          <option key={device.device_id} value={`device:${device.device_id}`}>
+                            {device.name}
+                          </option>
+                        ))}
+                      </select>
+                      <button
+                        type="button"
+                        data-testid="runtime-config-sync-auth-button"
+                        onClick={handleSyncAuthSource}
+                        disabled={!canSyncAuthSource || authSyncBusy}
+                        className="inline-flex h-8 items-center justify-center gap-1.5 rounded-md border border-border bg-background px-3 text-sm font-medium text-text-primary hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50"
+                      >
+                        {authSyncBusy ? (
+                          <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                        ) : (
+                          <Upload className="h-3.5 w-3.5" />
+                        )}
+                        {authSourceActionLabel}
+                      </button>
+                    </div>
                   </div>
                 </div>
               </CodexSettingsGroup>

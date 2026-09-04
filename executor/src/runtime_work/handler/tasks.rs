@@ -530,6 +530,19 @@ impl RuntimeWorkRpcHandler {
         link.project_instructions = request.system_prompt.clone();
         link.project_plugin_ids = project_plugin_ids(&request);
         set_runtime_handle_model_selection(&mut link.runtime_handle, &payload);
+        if let (Some(runtime_handle), Some(payload_handle)) = (
+            link.runtime_handle.as_object_mut(),
+            payload
+                .get("runtimeHandle")
+                .or_else(|| payload.get("runtime_handle"))
+                .and_then(Value::as_object),
+        ) {
+            for key in ["wegentTeam"] {
+                if let Some(value) = payload_handle.get(key) {
+                    runtime_handle.insert(key.to_owned(), value.clone());
+                }
+            }
+        }
         if let Some(executable_path) = request
             .extra
             .get("runtime_executable_path")

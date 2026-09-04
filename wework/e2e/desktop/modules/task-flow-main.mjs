@@ -51,6 +51,7 @@ import {
   toolDetailsMcpConfigToml,
   verifyCloudProjectFlow,
   verifyConnectedModelsOnLocalExecution,
+  verifyDisabledRemoteSessionCapabilities,
   verifyLocalRemoteControlFlow,
   verifyModelProtocolMatrix,
   verifyRemoteDockerCommandFlow,
@@ -1358,7 +1359,10 @@ last_updated = "2026-07-30T00:00:00Z"`
     if (DESKTOP_SEGMENT === 'remote-device-onboarding') {
       phase = 'remote-device-onboarding'
       await verifyLocalRemoteControlFlow(control, cloudEnvironment)
-      await verifyRemoteDockerCommandFlow(control, cloudEnvironment)
+      const generatedDevice = await verifyRemoteDockerCommandFlow(control, cloudEnvironment, {
+        interactiveSessions: { codeServer: false, terminal: false },
+      })
+      await verifyDisabledRemoteSessionCapabilities(control, cloudEnvironment, generatedDevice)
       console.log(
         `Wework desktop remote-device onboarding checkpoint passed. Evidence: ${resultDir}`
       )
@@ -1654,7 +1658,11 @@ last_updated = "2026-07-30T00:00:00Z"`
         timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
       })
       await selectE2EModel(control, DEFAULT_MODEL_ID, DEFAULT_MODEL_LABEL)
-      await verifyShortConversationLayout({ composerSelector: ACTIVE_COMPOSER_SELECTOR, control })
+      await verifyShortConversationLayout({
+        composerSelector: ACTIVE_COMPOSER_SELECTOR,
+        control,
+        restartDesktopApp,
+      })
       console.log(`Wework desktop short-conversation E2E passed. Evidence: ${resultDir}`)
       return
     }
@@ -1741,7 +1749,7 @@ last_updated = "2026-07-30T00:00:00Z"`
       }
       if (shouldRunPluginSegment('sites-plugin-auto-install')) {
         phase = 'sites-plugin-auto-install'
-        await verifySitesPluginAutoInstall(control)
+        await verifySitesPluginAutoInstall(control, executorHome)
       }
       if (officialPluginFixture) {
         phase = 'plugin-uninstall'
@@ -3171,6 +3179,7 @@ last_updated = "2026-07-30T00:00:00Z"`
       const secondTaskRowTestId = await verifyShortConversationLayout({
         composerSelector,
         control,
+        restartDesktopApp,
       })
 
       phase = 'edit-last-user-message'

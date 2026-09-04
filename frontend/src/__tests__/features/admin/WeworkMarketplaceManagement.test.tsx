@@ -24,6 +24,11 @@ jest.mock('@/features/admin/components/PluginPublicationReviewQueue', () => ({
   default: () => <div data-testid="mock-plugin-publications">Plugin publications</div>,
 }))
 
+jest.mock('@/features/admin/components/PluginMarketplaceManagement', () => ({
+  __esModule: true,
+  default: () => <div data-testid="mock-plugin-management">Plugin management</div>,
+}))
+
 jest.mock('@/features/admin/components/MarketplaceManagement', () => ({
   __esModule: true,
   default: ({ mode }: { mode?: string }) => (
@@ -37,10 +42,17 @@ describe('WeworkMarketplaceManagement', () => {
     mockSearchParams = new URLSearchParams('tab=wework-marketplace&view=smart-apps')
   })
 
-  it('groups plugin reviews and Smart Apps under one WeWork marketplace tab', () => {
+  it('groups plugin reviews, plugin management, and Smart Apps under one WeWork tab', () => {
     render(<WeworkMarketplaceManagement />)
 
     expect(screen.getByTestId('mock-smart-app-management')).toHaveTextContent('smart-app')
+
+    fireEvent.mouseDown(screen.getByTestId('wework-marketplace-tab-plugins'))
+
+    expect(screen.getByTestId('mock-plugin-management')).toBeInTheDocument()
+    expect(mockRouterReplace).toHaveBeenCalledWith('?tab=wework-marketplace&view=plugins', {
+      scroll: false,
+    })
 
     fireEvent.mouseDown(screen.getByTestId('wework-marketplace-tab-plugin-publications'))
 

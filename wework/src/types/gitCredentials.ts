@@ -21,6 +21,7 @@ export interface GitCliSyncResult {
   domain: string
   status: 'configured' | 'not_installed' | 'failed'
   reason_code: string | null
+  detail: string | null
 }
 
 export interface DeviceGitAccountSyncResult {

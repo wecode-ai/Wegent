@@ -68,8 +68,8 @@ export function WindowFrameControls({ className }: { className?: string }) {
         data-testid="window-minimize-button"
         onClick={handleMinimize}
         className={FRAME_CONTROL_BUTTON_CLASS}
-        aria-label={t('window.minimize')}
-        title={t('window.minimize')}
+        aria-label={t('common.window.minimize')}
+        title={t('common.window.minimize')}
       >
         <Minus className="h-4 w-4" />
       </button>
@@ -78,8 +78,8 @@ export function WindowFrameControls({ className }: { className?: string }) {
         data-testid="window-maximize-button"
         onClick={handleMaximize}
         className={FRAME_CONTROL_BUTTON_CLASS}
-        aria-label={isMaximized ? t('window.restore') : t('window.maximize')}
-        title={isMaximized ? t('window.restore') : t('window.maximize')}
+        aria-label={isMaximized ? t('common.window.restore') : t('common.window.maximize')}
+        title={isMaximized ? t('common.window.restore') : t('common.window.maximize')}
       >
         {isMaximized ? <Copy className="h-4 w-4" /> : <Square className="h-4 w-4" />}
       </button>
@@ -91,8 +91,8 @@ export function WindowFrameControls({ className }: { className?: string }) {
           FRAME_CONTROL_BUTTON_CLASS,
           'hover:bg-[#e81123] hover:text-white active:bg-[#f1707a] active:text-white'
         )}
-        aria-label={t('window.close')}
-        title={t('window.close')}
+        aria-label={t('common.window.close')}
+        title={t('common.window.close')}
       >
         <X className="h-4 w-4" />
       </button>

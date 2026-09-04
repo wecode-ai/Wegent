@@ -13,6 +13,7 @@ describe('Electron window layout', () => {
 
   test('uses an inset native titlebar on macOS so traffic lights overlay the DSH titlebar', () => {
     expect(desktopWindowFrameOptions('darwin')).toEqual({
+      acceptFirstMouse: true,
       frame: true,
       titleBarStyle: 'hiddenInset',
       trafficLightPosition: { x: 14, y: 12 },

@@ -81,6 +81,10 @@ class RuntimeTaskAddress(BaseModel):
         validation_alias=AliasChoices("taskId", "localTaskId", "local_task_id"),
         min_length=1,
     )
+    runtime_handle: Optional[dict[str, Any]] = Field(
+        default=None,
+        alias="runtimeHandle",
+    )
 
 
 class RuntimeModelSelection(BaseModel):
@@ -873,7 +877,12 @@ class RuntimeTaskCreateRequest(BaseModel):
 
     model_config = ConfigDict(populate_by_name=True)
 
-    schema_version: Literal[1, 2] = Field(default=1, alias="schemaVersion")
+    schema_version: Literal[1, 2, 3] = Field(default=1, alias="schemaVersion")
+    wegent_team_id: Optional[int] = Field(
+        default=None,
+        alias="wegentTeamId",
+        ge=1,
+    )
     project_id: Optional[int] = Field(default=None, alias="projectId", ge=1)
     device_workspace_id: Optional[int] = Field(
         default=None,
@@ -981,14 +990,22 @@ class RuntimeTaskCreateRequest(BaseModel):
     )
 
     @model_validator(mode="after")
-    def validate_v2_intent_boundary(self) -> "RuntimeTaskCreateRequest":
-        """Keep materialized provider configuration out of producer V2 intent."""
+    def validate_versioned_intent_boundary(self) -> "RuntimeTaskCreateRequest":
+        """Validate fields introduced by versioned producer contracts."""
 
-        if self.schema_version == 2 and self.runtime_model_config is not None:
+        if self.schema_version >= 2 and self.runtime_model_config is not None:
             raise ValueError(
-                "RuntimeTaskCreateRequest V2 cannot carry materialized modelConfig"
+                "RuntimeTaskCreateRequest V2+ cannot carry materialized modelConfig"
             )
+        if self.wegent_team_id is not None and self.schema_version < 3:
+            raise ValueError("wegentTeamId requires RuntimeTaskCreateRequest V3")
         return self
+
+
+class RuntimeTaskMaterializeRequest(RuntimeTaskCreateRequest):
+    """Team intent compiled for direct local Executor dispatch."""
+
+    new_session: bool = Field(default=True, alias="newSession")
 
 
 class RuntimeTaskCreatePayload(BaseModel):
@@ -1078,6 +1095,18 @@ class RuntimeTaskCreatePayload(BaseModel):
     )
 
 
+class RuntimeTaskMaterializeResponse(BaseModel):
+    """Executor payload compiled by Backend without dispatching it."""
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    payload: RuntimeTaskCreatePayload
+    runtime_handle: Optional[dict[str, Any]] = Field(
+        default=None,
+        alias="runtimeHandle",
+    )
+
+
 class RuntimeTaskCreateResponse(BaseModel):
     """Acknowledgement from device-local runtime task creation."""
 
@@ -1088,6 +1117,10 @@ class RuntimeTaskCreateResponse(BaseModel):
     local_task_id: str = Field(..., alias="taskId")
     workspace_path: str = Field(..., alias="workspacePath")
     runtime: RuntimeName
+    runtime_handle: Optional[dict[str, Any]] = Field(
+        default=None,
+        alias="runtimeHandle",
+    )
     error: Optional[str] = None
     error_code: Optional[str] = Field(default=None, alias="errorCode")
 

@@ -5,7 +5,7 @@
 
 # Public multi-architecture device image used by release pipelines.
 
-ARG DEVICE_BASE_IMAGE=ubuntu:22.04
+ARG DEVICE_BASE_IMAGE=ubuntu:26.04
 
 # ---------------------------------------------------------------------------
 # Builder stage: compile the Rust wegent-executor binary.
@@ -27,11 +27,17 @@ ARG CARGO_HTTPS_PROXY=
 ENV DEBIAN_FRONTEND=noninteractive
 
 RUN if [ -n "$DEVICE_APT_MIRROR" ]; then \
-        sed -i \
-          -e "s|http://archive.ubuntu.com/ubuntu|$DEVICE_APT_MIRROR|g" \
-          -e "s|http://security.ubuntu.com/ubuntu|$DEVICE_APT_MIRROR|g" \
-          -e "s|http://ports.ubuntu.com/ubuntu-ports|$DEVICE_APT_PORTS_MIRROR|g" \
-          /etc/apt/sources.list; \
+        for sources_file in \
+          /etc/apt/sources.list \
+          /etc/apt/sources.list.d/ubuntu.sources; do \
+            if [ -f "$sources_file" ]; then \
+              sed -i \
+                -e "s|http://archive.ubuntu.com/ubuntu|$DEVICE_APT_MIRROR|g" \
+                -e "s|http://security.ubuntu.com/ubuntu|$DEVICE_APT_MIRROR|g" \
+                -e "s|http://ports.ubuntu.com/ubuntu-ports|$DEVICE_APT_PORTS_MIRROR|g" \
+                "$sources_file"; \
+            fi; \
+        done; \
     fi \
     && apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
@@ -74,6 +80,8 @@ ARG DEVICE_APT_PORTS_MIRROR=${DEVICE_APT_MIRROR}
 ARG NODE_VERSION=22.23.2
 ARG NODE_DIST_MIRROR=https://nodejs.org/dist
 ARG NPM_REGISTRY=https://registry.npmjs.org
+ARG GH_VERSION=2.100.0
+ARG GLAB_VERSION=1.116.0
 ARG CODE_SERVER_VERSION=4.121.0
 ARG CODE_SERVER_REPOSITORY_RAW=https://raw.githubusercontent.com/coder/code-server
 ARG CODE_SERVER_HTTPS_PROXY=
@@ -86,11 +94,17 @@ LABEL org.opencontainers.image.version=${APP_VERSION} \
 
 # Install base tools, Python, and Node.js 22.
 RUN if [ -n "$DEVICE_APT_MIRROR" ]; then \
-        sed -i \
-          -e "s|http://archive.ubuntu.com/ubuntu|$DEVICE_APT_MIRROR|g" \
-          -e "s|http://security.ubuntu.com/ubuntu|$DEVICE_APT_MIRROR|g" \
-          -e "s|http://ports.ubuntu.com/ubuntu-ports|$DEVICE_APT_PORTS_MIRROR|g" \
-          /etc/apt/sources.list; \
+        for sources_file in \
+          /etc/apt/sources.list \
+          /etc/apt/sources.list.d/ubuntu.sources; do \
+            if [ -f "$sources_file" ]; then \
+              sed -i \
+                -e "s|http://archive.ubuntu.com/ubuntu|$DEVICE_APT_MIRROR|g" \
+                -e "s|http://security.ubuntu.com/ubuntu|$DEVICE_APT_MIRROR|g" \
+                -e "s|http://ports.ubuntu.com/ubuntu-ports|$DEVICE_APT_PORTS_MIRROR|g" \
+                "$sources_file"; \
+            fi; \
+        done; \
     fi \
     && apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates \
@@ -116,6 +130,24 @@ RUN if [ -n "$DEVICE_APT_MIRROR" ]; then \
 RUN npm install -g --registry "$NPM_REGISTRY" \
       @anthropic-ai/claude-code@2.1.247 @openai/codex@0.142.5 \
     && npm cache clean --force
+
+# Install the GitHub (gh) and GitLab (glab) CLIs used by git hosting features.
+RUN case "$DEVICE_IMAGE_PLATFORM" in \
+        linux/amd64) cli_arch=amd64 ;; \
+        linux/arm64) cli_arch=arm64 ;; \
+        *) echo "Unsupported DEVICE_IMAGE_PLATFORM=$DEVICE_IMAGE_PLATFORM" >&2; exit 1 ;; \
+    esac \
+    && curl -fsSL --retry 5 --retry-all-errors \
+      "https://github.com/cli/cli/releases/download/v${GH_VERSION}/gh_${GH_VERSION}_linux_${cli_arch}.tar.gz" \
+      | tar -xz -C /tmp \
+    && install -m 0755 "/tmp/gh_${GH_VERSION}_linux_${cli_arch}/bin/gh" /usr/local/bin/gh \
+    && rm -rf "/tmp/gh_${GH_VERSION}_linux_${cli_arch}" \
+    && curl -fsSL --retry 5 --retry-all-errors \
+      "https://gitlab.com/gitlab-org/cli/-/releases/v${GLAB_VERSION}/downloads/glab_${GLAB_VERSION}_linux_${cli_arch}.tar.gz" \
+      | tar -xz -C /tmp bin/glab \
+    && install -m 0755 /tmp/bin/glab /usr/local/bin/glab \
+    && rm -rf /tmp/bin \
+    && gh --version && glab --version
 
 # Follow code-server's official install.sh flow, pinned to the selected release.
 # Standalone mode avoids distro services and native npm compilation in the image.
@@ -220,6 +252,8 @@ ENV WEGENT_WORKSPACE_ROOTS=/home/wegent
 ENV DEVICE_PUBLIC_BASE_URL=
 ENV DEVICE_SESSION_GATEWAY_HOST=0.0.0.0
 ENV DEVICE_SESSION_GATEWAY_PORT=17888
+ENV DEVICE_CODE_SERVER_ENABLED=true
+ENV DEVICE_TERMINAL_ENABLED=true
 
 RUN cat >/usr/local/bin/wegent-device-entrypoint <<'EOF'
 #!/usr/bin/env bash
@@ -230,6 +264,24 @@ export DEVICE_SESSION_GATEWAY_HOST="${DEVICE_SESSION_GATEWAY_HOST:-0.0.0.0}"
 export DEVICE_SESSION_GATEWAY_PORT="${DEVICE_SESSION_GATEWAY_PORT:-17888}"
 export DEVICE_CODE_SERVER_PORT="${DEVICE_CODE_SERVER_PORT:-18080}"
 EXPECTED_EXECUTOR_HOME="/home/wegent/.wecode/wegent-executor"
+
+normalize_enabled_flag() {
+    local name="$1"
+    local value="${!name:-true}"
+    case "${value,,}" in
+        true | 1 | yes | on) printf 'true' ;;
+        false | 0 | no | off) printf 'false' ;;
+        *)
+            echo "$name must be true or false" >&2
+            return 1
+            ;;
+    esac
+}
+
+DEVICE_SESSION_GATEWAY_ENABLED="$(normalize_enabled_flag DEVICE_SESSION_GATEWAY_ENABLED)"
+DEVICE_CODE_SERVER_ENABLED="$(normalize_enabled_flag DEVICE_CODE_SERVER_ENABLED)"
+DEVICE_TERMINAL_ENABLED="$(normalize_enabled_flag DEVICE_TERMINAL_ENABLED)"
+export DEVICE_SESSION_GATEWAY_ENABLED DEVICE_CODE_SERVER_ENABLED DEVICE_TERMINAL_ENABLED
 
 if [[ "$WEGENT_EXECUTOR_HOME" != /* ]]; then
     echo "WEGENT_EXECUTOR_HOME must be an absolute path" >&2
@@ -316,21 +368,22 @@ if [ -z "${DEVICE_PUBLIC_BASE_URL:-}" ]; then
     export DEVICE_PUBLIC_BASE_URL="http://${_device_ip}:${DEVICE_SESSION_GATEWAY_PORT}"
 fi
 
-mkdir -p "$HOME/.config/code-server"
-printf "bind-addr: 127.0.0.1:%s\nauth: none\ncert: false\n" "$DEVICE_CODE_SERVER_PORT" >"$HOME/.config/code-server/config.yaml"
-
 pids=()
 
 # Match the local device installer: code-server only listens on loopback and
 # leaves remote authentication to the token-gated device session gateway.
-code-server /home/wegent \
-    --bind-addr "127.0.0.1:${DEVICE_CODE_SERVER_PORT}" \
-    --auth none \
-    --disable-telemetry \
-    --disable-update-check \
-    >"$DEVICE_LOG_DIR/code-server.log" \
-    2>"$DEVICE_LOG_DIR/code-server-error.log" &
-pids+=("$!")
+if [ "$DEVICE_CODE_SERVER_ENABLED" = "true" ] && [ "$DEVICE_SESSION_GATEWAY_ENABLED" = "true" ]; then
+    mkdir -p "$HOME/.config/code-server"
+    printf "bind-addr: 127.0.0.1:%s\nauth: none\ncert: false\n" "$DEVICE_CODE_SERVER_PORT" >"$HOME/.config/code-server/config.yaml"
+    code-server /home/wegent \
+        --bind-addr "127.0.0.1:${DEVICE_CODE_SERVER_PORT}" \
+        --auth none \
+        --disable-telemetry \
+        --disable-update-check \
+        >"$DEVICE_LOG_DIR/code-server.log" \
+        2>"$DEVICE_LOG_DIR/code-server-error.log" &
+    pids+=("$!")
+fi
 
 if [ -n "${WEGENT_AUTH_TOKEN:-}" ]; then
     wegent-executor >"$DEVICE_LOG_DIR/wegent-executor.log" 2>&1 &

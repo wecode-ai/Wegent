@@ -1,10 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { createLocalCodexPluginApi } from '@/api/local/codexPlugins'
 import { useTranslation } from '@/hooks/useTranslation'
-import {
-  localConnectorAuthHealth,
-  type LocalConnectorAuthTarget,
-} from '@/api/local/localConnectorAuth'
+import type { LocalConnectorAuthTarget } from '@/api/local/localConnectorAuth'
 import {
   enrichInstalledPluginsForLocalAuth,
   extractConnectorAuthConnectorSlug,
@@ -43,13 +40,6 @@ function requirementTitle(
     : t('workbench.plugins_local_qr_login_title', { name: requirement.displayName })
 }
 
-function hintTitle(
-  displayName: string,
-  t: (key: string, options?: Record<string, unknown>) => string
-): string {
-  return t('workbench.plugins_local_qr_login_title', { name: displayName })
-}
-
 async function loadInstalledPlugins(options?: {
   pluginNames?: string[]
 }): Promise<InstalledPlugin[]> {
@@ -69,16 +59,6 @@ async function loadInstalledPlugins(options?: {
           : () => false,
     }
   )
-}
-
-async function targetNeedsLogin(target: LocalConnectorAuthTarget): Promise<boolean> {
-  try {
-    const health = await localConnectorAuthHealth(target)
-    return health.status !== 'ok'
-  } catch {
-    // If health cannot run, still show the card so the user can recover.
-    return true
-  }
 }
 
 function hasOnlyOpenAiOfficialPluginMentions(input: string): boolean {
@@ -136,9 +116,8 @@ export function useLocalConnectorAuthGate(options: {
       if (!messageNeedsConnectorPreflight(input)) return 'send'
       try {
         const mentioned = listMentionedPluginNames(input)
-        const hint = resolveLocalConnectorAuthHint(input)
-        if (!hint && hasOnlyOpenAiOfficialPluginMentions(input)) return 'send'
-        const pluginNames = [...mentioned, ...(hint?.pluginKey ? [hint.pluginKey] : [])]
+        if (hasOnlyOpenAiOfficialPluginMentions(input)) return 'send'
+        const pluginNames = mentioned
         const cached = pluginsRef.current
         const cachedCoversMentions =
           Boolean(cached) &&
@@ -176,19 +155,7 @@ export function useLocalConnectorAuthGate(options: {
         }
         const requirements = findLocalConnectorsForMessage(input, plugins)
         if (requirements.length === 0) {
-          if (!hint) return 'send'
-          const target: LocalConnectorAuthTarget = {
-            pluginKey: hint.pluginKey,
-            connectorSlug: hint.connectorSlug,
-          }
-          if (!(await targetNeedsLogin(target))) return 'send'
-          setPending({
-            target,
-            title: hintTitle(hint.displayName, t),
-            mode: 'preflight',
-            pendingInput: input,
-          })
-          return 'blocked'
+          return 'send'
         }
         const needing = await findFirstLocalNeedingLogin(requirements)
         if (!needing) return 'send'

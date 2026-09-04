@@ -8,6 +8,7 @@ import zipfile
 
 from app.models.kind import Kind
 from app.models.marketplace_resource import MarketplaceResource
+from app.models.plugin_marketplace import Plugin, PluginRelease
 from app.models.smart_app_marketplace import SmartApp, SmartAppRelease
 from app.services.marketplace_artifact_storage import marketplace_artifact_storage
 
@@ -76,6 +77,44 @@ def _mock_smart_app_storage(monkeypatch) -> dict[str, bytes]:
         lambda key: (f"https://assets.example/{key}", None),
     )
     return values
+
+
+def _marketplace_plugin(
+    test_db,
+    *,
+    catalog_namespace: str,
+    slug: str,
+    status: str = "published",
+    featured_rank: int = 0,
+    release_status: str = "ready",
+    scan_status: str = "passed",
+) -> Plugin:
+    plugin = Plugin(
+        catalog_namespace=catalog_namespace,
+        slug=slug,
+        name=slug,
+        display_name=slug.replace("-", " ").title(),
+        summary=f"{slug} marketplace summary",
+        description_md=f"# {slug}",
+        visibility="public" if catalog_namespace == "wework-official" else "workspace",
+        status=status,
+        featured_rank=featured_rank,
+    )
+    test_db.add(plugin)
+    test_db.flush()
+    release = PluginRelease(
+        plugin_id=plugin.id,
+        version="1.2.3",
+        manifest_json={"author": {"name": "Wegent"}},
+        status=release_status,
+        scan_status=scan_status,
+    )
+    test_db.add(release)
+    test_db.flush()
+    plugin.latest_release_id = release.id
+    test_db.commit()
+    test_db.refresh(plugin)
+    return plugin
 
 
 def _resource(
@@ -560,3 +599,171 @@ def test_admin_prioritizes_only_public_marketplace_smart_apps(
     assert [item["id"] for item in second_page.json()["items"]] == [public_user_app.id]
     assert second_page.json()["items"][0]["is_listed"] is False
     assert restricted.id not in {item["id"] for item in relisted.json()["items"]}
+
+
+def test_admin_lists_only_managed_plugins_with_filters_and_score_order(
+    test_client,
+    test_db,
+    test_admin_token,
+    test_token,
+):
+    official = _marketplace_plugin(
+        test_db,
+        catalog_namespace="wework-official",
+        slug="official-mail",
+        featured_rank=80,
+    )
+    enterprise = _marketplace_plugin(
+        test_db,
+        catalog_namespace="enterprise",
+        slug="enterprise-docs",
+        featured_rank=95,
+    )
+    unlisted = _marketplace_plugin(
+        test_db,
+        catalog_namespace="wework-official",
+        slug="official-unlisted",
+        status="unpublished",
+        featured_rank=70,
+    )
+    personal = _marketplace_plugin(
+        test_db,
+        catalog_namespace="personal/42",
+        slug="personal-hidden",
+        featured_rank=100,
+    )
+    pending = _marketplace_plugin(
+        test_db,
+        catalog_namespace="enterprise",
+        slug="enterprise-pending",
+        status="pending_review",
+        featured_rank=100,
+    )
+
+    listed = test_client.get(
+        "/api/admin/marketplace-plugins",
+        headers=_headers(test_admin_token),
+    )
+    official_only = test_client.get(
+        "/api/admin/marketplace-plugins?source=wework-official",
+        headers=_headers(test_admin_token),
+    )
+    published_only = test_client.get(
+        "/api/admin/marketplace-plugins?listing_status=listed",
+        headers=_headers(test_admin_token),
+    )
+    searched = test_client.get(
+        "/api/admin/marketplace-plugins?search=docs",
+        headers=_headers(test_admin_token),
+    )
+    page_two = test_client.get(
+        "/api/admin/marketplace-plugins?page=2&limit=1",
+        headers=_headers(test_admin_token),
+    )
+    ascending = test_client.get(
+        "/api/admin/marketplace-plugins?score_order=asc",
+        headers=_headers(test_admin_token),
+    )
+    forbidden = test_client.get(
+        "/api/admin/marketplace-plugins",
+        headers=_headers(test_token),
+    )
+
+    assert listed.status_code == 200
+    assert listed.json()["total"] == 3
+    assert [item["id"] for item in listed.json()["items"]] == [
+        official.id,
+        unlisted.id,
+        enterprise.id,
+    ]
+    assert listed.json()["items"][0]["version"] == "1.2.3"
+    assert listed.json()["items"][0]["author"] == "Wegent"
+    assert listed.json()["items"][0]["created_at"]
+    assert [item["id"] for item in official_only.json()["items"]] == [
+        official.id,
+        unlisted.id,
+    ]
+    assert [item["id"] for item in published_only.json()["items"]] == [
+        official.id,
+        enterprise.id,
+    ]
+    assert [item["id"] for item in searched.json()["items"]] == [enterprise.id]
+    assert page_two.json()["total"] == 3
+    assert [item["id"] for item in page_two.json()["items"]] == [unlisted.id]
+    assert [item["id"] for item in ascending.json()["items"]] == [
+        unlisted.id,
+        official.id,
+        enterprise.id,
+    ]
+    assert forbidden.status_code == 403
+    assert personal.id not in {item["id"] for item in listed.json()["items"]}
+    assert pending.id not in {item["id"] for item in listed.json()["items"]}
+
+
+def test_admin_updates_plugin_description_score_and_listing_state(
+    test_client,
+    test_db,
+    test_admin_token,
+):
+    plugin = _marketplace_plugin(
+        test_db,
+        catalog_namespace="wework-official",
+        slug="editable-plugin",
+        featured_rank=60,
+    )
+    incomplete = _marketplace_plugin(
+        test_db,
+        catalog_namespace="enterprise",
+        slug="incomplete-plugin",
+        status="unpublished",
+        release_status="processing",
+        scan_status="pending",
+    )
+    personal = _marketplace_plugin(
+        test_db,
+        catalog_namespace="personal/42",
+        slug="personal-plugin",
+    )
+
+    updated = test_client.put(
+        f"/api/admin/marketplace-plugins/{plugin.id}",
+        json={
+            "description": "  Updated marketplace description  ",
+            "featured_rank": 98,
+            "is_listed": False,
+        },
+        headers=_headers(test_admin_token),
+    )
+    relisted = test_client.put(
+        f"/api/admin/marketplace-plugins/{plugin.id}",
+        json={"is_listed": True},
+        headers=_headers(test_admin_token),
+    )
+    cleared = test_client.put(
+        f"/api/admin/marketplace-plugins/{plugin.id}",
+        json={"description": ""},
+        headers=_headers(test_admin_token),
+    )
+    rejected = test_client.put(
+        f"/api/admin/marketplace-plugins/{incomplete.id}",
+        json={"is_listed": True},
+        headers=_headers(test_admin_token),
+    )
+    unmanaged = test_client.put(
+        f"/api/admin/marketplace-plugins/{personal.id}",
+        json={"featured_rank": 10},
+        headers=_headers(test_admin_token),
+    )
+
+    assert updated.status_code == 200
+    assert updated.json()["description"] == "Updated marketplace description"
+    assert updated.json()["featured_rank"] == 98
+    assert updated.json()["is_listed"] is False
+    assert test_db.get(Plugin, plugin.id).status == "published"
+    assert relisted.status_code == 200
+    assert relisted.json()["is_listed"] is True
+    assert cleared.status_code == 200
+    assert cleared.json()["description"] == ""
+    assert test_db.get(Plugin, plugin.id).description_md == ""
+    assert rejected.status_code == 409
+    assert unmanaged.status_code == 404

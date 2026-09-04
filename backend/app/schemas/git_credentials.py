@@ -44,6 +44,7 @@ class GitCliSyncResult(BaseModel):
     domain: str
     status: Literal["configured", "not_installed", "failed"]
     reason_code: Optional[str] = None
+    detail: Optional[str] = None
 
 
 class DeviceGitAccountSyncResponse(BaseModel):
