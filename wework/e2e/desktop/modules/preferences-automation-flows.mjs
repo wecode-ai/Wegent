@@ -751,10 +751,82 @@ async function verifySitesPluginAutoInstall(control) {
     timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
   })
 
+  await control.command('clickWhenEnabled', '[data-testid="site-more-prj_e2e_product"]')
+  await control.command(
+    'clickWhenEnabled',
+    '[data-testid="site-environment-menu-item-prj_e2e_product"]'
+  )
+  await control.command('waitFor', '[data-testid="environment-variables-dialog"]', {
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await control.command('clickWhenEnabled', '[data-testid="environment-add-button"]')
+  await control.command('fill', '[data-testid="environment-key-new-1"]', {
+    value: 'E2E_API_BASE',
+  })
+  await control.command('fill', '[data-testid="environment-value-new-1"]', {
+    value: 'https://api.example.test',
+  })
+  await control.command('clickWhenEnabled', '[data-testid="environment-save-button"]')
+  await waitForSnapshot(
+    control,
+    snapshot =>
+      snapshot.testIds.includes('environment-variables-dialog') &&
+      /已保存|Saved/.test(snapshot.text),
+    'Saving Site environment variables did not update the environment dialog',
+    DEFAULT_STEP_TIMEOUT_MS
+  )
+  assert.deepEqual(
+    control.siteEnvironmentVariables.map(item => [item.key, item.type, item.value]),
+    [['E2E_API_BASE', 'plain', 'https://api.example.test']],
+    'Saving Site environment variables did not persist through the Backend fixture'
+  )
+  await captureVerificationScreenshot(control, 'plugins-05-site-environment.png')
+  await control.command('click', '[data-testid="environment-close-button"]')
+
+  await control.command('clickWhenEnabled', '[data-testid="site-more-prj_e2e_product"]')
+  await control.command(
+    'clickWhenEnabled',
+    '[data-testid="site-collaborators-menu-item-prj_e2e_product"]'
+  )
+  await control.command('waitFor', '[data-testid="site-collaborators-dialog"]', {
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await control.command('fill', '[data-testid="site-collaborator-subject-input"]', {
+    value: 'e2e-collaborator',
+  })
+  await control.command('clickWhenEnabled', '[data-testid="site-collaborator-add"]')
+  await control.command('waitFor', '[data-testid="site-collaborator-remove-e2e-collaborator"]', {
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  assert.deepEqual(
+    control.siteCollaborators.map(item => item.subject),
+    ['e2e-collaborator'],
+    'Adding a Site collaborator did not persist through the Backend fixture'
+  )
+  await control.command(
+    'clickWhenEnabled',
+    '[data-testid="site-collaborator-remove-e2e-collaborator"]'
+  )
+  await waitForSnapshot(
+    control,
+    snapshot =>
+      snapshot.testIds.includes('site-collaborators-dialog') &&
+      !snapshot.testIds.includes('site-collaborator-remove-e2e-collaborator'),
+    'Removing a Site collaborator did not update the collaborator dialog',
+    DEFAULT_STEP_TIMEOUT_MS
+  )
+  assert.deepEqual(
+    control.siteCollaborators,
+    [],
+    'Removing a Site collaborator did not persist through the Backend fixture'
+  )
+  await captureVerificationScreenshot(control, 'plugins-06-site-collaborators.png')
+  await control.command('click', '[data-testid="site-collaborators-close"]')
+
   const siteInstallPath = '/api/plugins/builtin/wegent-sites/ensure-installed'
   const siteContinueCanonical =
-    '[E2E Product Site](wegent-sites-project://prj_e2e_product) 请说出你要做的改动'
-  const siteContinueVisible = 'E2E Product Site 请说出你要做的改动'
+    '[$快速建站](plugin://wegent-sites@wegent) [E2E Product Site](wegent-sites-project://prj_e2e_product) 请说出你要做的改动'
+  const siteContinueVisible = '快速建站 E2E Product Site 请说出你要做的改动'
   const continueIdentity = await captureApplicationChatIdentity(control)
   const siteInstallRequestsBeforeContinue = applicationInstallRequestCount(control, siteInstallPath)
   await control.command(
@@ -775,6 +847,7 @@ async function verifySitesPluginAutoInstall(control) {
     1,
     'Continuing a Site did not install the Site plugin on demand'
   )
+  await assertPluginComposerChip(control, 'wegent-sites')
   const siteLinkSelector = `${ACTIVE_COMPOSER_SELECTOR} [data-testid="composer-link-chip"]`
   assert.equal(await control.command('getText', siteLinkSelector), 'E2E Product Site')
   assert.equal(
@@ -788,7 +861,7 @@ async function verifySitesPluginAutoInstall(control) {
     'wegent-sites-project'
   )
   await assertNoSitesCreateError(control)
-  await captureVerificationScreenshot(control, 'plugins-05-site-continue-fresh-task.png')
+  await captureVerificationScreenshot(control, 'plugins-07-site-continue-fresh-task.png')
 
   await navigateToApplications(control)
   const siteCreateIdentity = await captureApplicationChatIdentity(control)
@@ -814,7 +887,7 @@ async function verifySitesPluginAutoInstall(control) {
   )
   await assertPluginComposerChip(control, 'wegent-sites')
   await assertNoSitesCreateError(control)
-  await captureVerificationScreenshot(control, 'plugins-06-site-create-fresh-task.png')
+  await captureVerificationScreenshot(control, 'plugins-08-site-create-fresh-task.png')
 
   await navigateToApplications(control, 'miniapp')
   await control.command('waitFor', '[data-testid="mini-program-row-prj_e2e_mini"]', {
@@ -850,7 +923,7 @@ async function verifySitesPluginAutoInstall(control) {
   )
   await assertPluginComposerChip(control, 'weibo-miniapp-h5-develop-agent')
   await assertNoSitesCreateError(control)
-  await captureVerificationScreenshot(control, 'plugins-07-mini-program-create-fresh-task.png')
+  await captureVerificationScreenshot(control, 'plugins-09-mini-program-create-fresh-task.png')
 }
 
 function applicationInstallRequestCount(control, pathname) {

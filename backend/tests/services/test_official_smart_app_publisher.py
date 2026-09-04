@@ -2,7 +2,9 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
+import io
 import json
+import zipfile
 
 import pytest
 
@@ -66,6 +68,40 @@ def test_official_package_is_deterministic(tmp_path):
     assert first.metadata["releaseExtensions"]["com.weibo.build"] == {
         "pipeline": "official"
     }
+
+
+def test_uploaded_official_package_reads_embedded_marketplace_assets(tmp_path):
+    built = official_smart_app_publisher.build_package(_source(tmp_path))
+
+    uploaded = official_smart_app_publisher.build_uploaded_package(built.package)
+
+    assert uploaded.name == "official-research"
+    assert uploaded.version == "1.0.0"
+    assert uploaded.metadata["summary"] == "Official research workspace"
+    assert uploaded.icon == b"png"
+    assert uploaded.icon_content_type == "image/png"
+    assert uploaded.has_marketplace_metadata is True
+
+
+def test_uploaded_wework_package_allows_marketplace_metadata_to_be_added_later(
+    tmp_path,
+):
+    built = official_smart_app_publisher.build_package(_source(tmp_path))
+    package_without_metadata = tmp_path / "plain.zip"
+    with zipfile.ZipFile(package_without_metadata, "w") as target:
+        with zipfile.ZipFile(io.BytesIO(built.package)) as source:
+            for name in source.namelist():
+                if name not in {"smart-app-marketplace.json", "icon.png"}:
+                    target.writestr(name, source.read(name))
+
+    uploaded = official_smart_app_publisher.build_uploaded_package(
+        package_without_metadata.read_bytes()
+    )
+
+    assert uploaded.name == "official-research"
+    assert uploaded.icon is None
+    assert uploaded.metadata == {}
+    assert uploaded.has_marketplace_metadata is False
 
 
 def test_official_package_rejects_invalid_version(tmp_path):

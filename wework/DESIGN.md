@@ -136,10 +136,10 @@ the static CSS bundle:
 
 | Token/role     | Default size | Typical line height | Weight    | Use                                   |
 | -------------- | -----------: | ------------------: | --------- | ------------------------------------- |
-| `text-xs`      |       `12px` |              `16px` | `400–500` | shortcuts, timestamps, dense metadata |
-| `text-sm`      |       `13px` |         `18px–19px` | `400–500` | helper text and compact controls      |
-| `text-base`    |       `14px` |              `21px` | `400–500` | rows, menus, forms and ordinary body  |
-| `text-lg`      |       `16px` |         `24px–25px` | `400–500` | emphasized UI                         |
+| `text-xs`      |       `12px` |              `16px` | `445–500` | shortcuts, timestamps, dense metadata |
+| `text-sm`      |       `13px` |         `18px–19px` | `445–500` | helper text and compact controls      |
+| `text-base`    |       `14px` |              `21px` | `445–500` | rows, menus, forms and ordinary body  |
+| `text-lg`      |       `16px` |         `24px–25px` | `445–500` | emphasized UI                         |
 | Heading small  |       `18px` |              `24px` | `500`     | section or dialog heading             |
 | Heading medium |       `20px` |              `27px` | `500`     | page heading where needed             |
 | Heading large  |       `24px` |              `29px` | `500`     | rare prominent heading                |
@@ -167,9 +167,9 @@ font size is allowed only when it derives from the shared typography tokens,
 such as an animated transition between two heading roles. Third-party content
 that cannot inherit Wework variables requires a narrow documented exception.
 
-The primary weight is regular. Codex uses subtle intermediate platform weights,
-but Wework maps them to `400` for body and `500` for emphasis. Use `600`
-sparingly and avoid `700` in product chrome.
+The primary Electron UI weight is `445`, matching ChatGPT's platform-adjusted
+normal weight. Explicit `font-normal` content remains `400`, while emphasis and
+headings use `500`. Use `600` sparingly and avoid `700` in product chrome.
 
 Entered composer text uses the primary text color so it reads as content. Normal
 menu labels and composer actions such as the quick-phrase trigger also use the

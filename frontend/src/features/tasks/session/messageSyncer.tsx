@@ -674,12 +674,6 @@ export function useMessageSyncer({
         currentUserName?: string
       }
     ): Promise<number> => {
-      if (!isConnected) {
-        const error = new Error('WebSocket not connected')
-        options?.onError?.(error)
-        throw error
-      }
-
       const immediateTaskId = options?.immediateTaskId || request.task_id || -Date.now()
       const userMessageId = options?.localMessageId || generateMessageId('user')
 
@@ -818,7 +812,7 @@ export function useMessageSyncer({
         throw error
       }
     },
-    [ensureMachine, isConnected, joinTask, onTaskIdResolved, sendChatMessage]
+    [ensureMachine, joinTask, onTaskIdResolved, sendChatMessage]
   )
 
   /**

@@ -67,8 +67,8 @@ const MarketplaceManagement = dynamic(
   () => import('@/features/admin/components/MarketplaceManagement'),
   { ssr: false }
 )
-const PluginPublicationReviewQueue = dynamic(
-  () => import('@/features/admin/components/PluginPublicationReviewQueue'),
+const WeworkMarketplaceManagement = dynamic(
+  () => import('@/features/admin/components/WeworkMarketplaceManagement'),
   { ssr: false }
 )
 const BackgroundExecutionMonitorPanel = dynamic(
@@ -120,8 +120,11 @@ function AdminContent() {
   // Get initial tab from URL
   const getInitialTab = (): AdminTabId => {
     const tab = searchParams.get('tab')
-    if (tab === 'marketplace' && searchParams.get('view') === 'plugin-publications') {
-      return 'wework-plugin-publications'
+    if (
+      tab === 'wework-plugin-publications' ||
+      (tab === 'marketplace' && searchParams.get('view') === 'plugin-publications')
+    ) {
+      return 'wework-marketplace'
     }
     if (
       tab &&
@@ -137,7 +140,7 @@ function AdminContent() {
         'templates',
         'api-keys',
         'marketplace',
-        'wework-plugin-publications',
+        'wework-marketplace',
         'system-config',
         'im-channels',
         'connector-apps',
@@ -155,12 +158,15 @@ function AdminContent() {
   const [activeTab, setActiveTab] = useState<AdminTabId>(getInitialTab)
 
   useEffect(() => {
-    if (searchParams.get('tab') !== 'marketplace') return
-    if (searchParams.get('view') !== 'plugin-publications') return
+    const tab = searchParams.get('tab')
+    const isLegacyPluginRoute =
+      tab === 'wework-plugin-publications' ||
+      (tab === 'marketplace' && searchParams.get('view') === 'plugin-publications')
+    if (!isLegacyPluginRoute) return
 
     const params = new URLSearchParams(searchParams.toString())
-    params.set('tab', 'wework-plugin-publications')
-    params.delete('view')
+    params.set('tab', 'wework-marketplace')
+    params.set('view', 'plugin-publications')
     router.replace(`?${params.toString()}`, { scroll: false })
   }, [router, searchParams])
 
@@ -220,8 +226,8 @@ function AdminContent() {
         return <ApiKeyManagement />
       case 'marketplace':
         return <MarketplaceManagement />
-      case 'wework-plugin-publications':
-        return <PluginPublicationReviewQueue />
+      case 'wework-marketplace':
+        return <WeworkMarketplaceManagement />
       case 'system-config':
         return <SystemConfigPanel />
       case 'im-channels':

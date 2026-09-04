@@ -19,6 +19,7 @@ interface HostPipeSession {
   output: Writable
   lines: Interface
   principal: string | null
+  child: ChildProcessWithoutNullStreams | null
 }
 
 export interface HostPipeEvents {
@@ -53,10 +54,14 @@ export class HostPipeServer extends EventEmitter<HostPipeEvents> {
     if (!input || typeof (input as Readable).pipe !== 'function') {
       throw new Error('DSH host response pipe is unavailable')
     }
-    this.attachStreams(input as Readable, output as Writable)
+    this.attachStreams(input as Readable, output as Writable, child)
   }
 
-  attachStreams(input: Readable, output: Writable): void {
+  attachStreams(
+    input: Readable,
+    output: Writable,
+    child: ChildProcessWithoutNullStreams | null = null
+  ): void {
     this.detach()
     const lines = createInterface({ input })
     const session: HostPipeSession = {
@@ -64,6 +69,7 @@ export class HostPipeServer extends EventEmitter<HostPipeEvents> {
       output,
       lines,
       principal: null,
+      child,
     }
     this.session = session
     lines.on('line', line => void this.handleLine(session, line))
@@ -78,6 +84,11 @@ export class HostPipeServer extends EventEmitter<HostPipeEvents> {
   }
 
   stop(): void {
+    this.detach()
+  }
+
+  detachChild(child: ChildProcessWithoutNullStreams): void {
+    if (this.session?.child !== child) return
     this.detach()
   }
 

@@ -17,6 +17,8 @@ SITES_API_BASE_URL = "https://sites.example.test"
 def _project(**overrides: Any) -> dict[str, Any]:
     project = {
         "id": "prj_01K0A0BCDEFGHJKMNPQRSTVWXY",
+        "owner_username": "testuser",
+        "access_role": "owner",
         "network": "inner",
         "title": "Product site",
         "url": "https://product.inner.test",
@@ -30,6 +32,8 @@ def _project(**overrides: Any) -> dict[str, Any]:
 def _mini_program(**overrides: Any) -> dict[str, Any]:
     project = {
         "id": "mini_01K0A0BCDEFGHJKMNPQRSTVWXY",
+        "owner_username": "testuser",
+        "access_role": "owner",
         "project_type": "miniapp",
         "network": "inner",
         "title": "Campaign assistant",
@@ -49,6 +53,34 @@ def _authorization(token: str) -> dict[str, str]:
 
 def _json_body(request) -> dict[str, Any]:
     return json.loads(request.content.decode("utf-8"))
+
+
+def _environment_revision(**overrides: Any) -> dict[str, Any]:
+    revision = {
+        "id": "env_01K0A0BCDEFGHJKMNPQRSTVWXY",
+        "project_id": "prj_01K0A0BCDEFGHJKMNPQRSTVWXY",
+        "revision_number": 3,
+        "variables": [
+            {
+                "key": "PUBLIC_API_URL",
+                "type": "plain",
+                "value": "https://api.example.test",
+                "updated_by": "testuser",
+                "updated_at": "2026-09-02T08:00:00Z",
+            },
+            {
+                "key": "API_TOKEN",
+                "type": "secret",
+                "configured": True,
+                "updated_by": "testuser",
+                "updated_at": "2026-09-02T08:00:00Z",
+            },
+        ],
+        "created_by": "testuser",
+        "created_at": "2026-09-02T08:00:00Z",
+    }
+    revision.update(overrides)
+    return revision
 
 
 def test_list_sites_requires_authentication(
@@ -78,7 +110,13 @@ def test_list_site_app_types_returns_ordered_capabilities(
                 "app_type": "web",
                 "enabled": True,
                 "order": 10,
-                "capabilities": ["create", "publish", "edit", "delete"],
+                "capabilities": [
+                    "create",
+                    "publish",
+                    "edit",
+                    "delete",
+                    "configure_environment",
+                ],
                 "create": {
                     "plugin_name": "wegent-sites",
                     "marketplace_name": "wegent",
@@ -145,6 +183,8 @@ def test_list_sites_searches_platform_projects_with_authenticated_username(
         "project_id": "prj_01K0A0BCDEFGHJKMNPQRSTVWXY",
         "taskid": "prj_01K0A0BCDEFGHJKMNPQRSTVWXY",
         "username": "testuser",
+        "owner_username": "testuser",
+        "access_role": "owner",
         "name": "Product site",
         "slug": "prj_01K0A0BCDEFGHJKMNPQRSTVWXY",
         "custom_domain_prefix": None,
@@ -224,6 +264,8 @@ def test_list_sites_returns_mini_programs_from_the_shared_endpoint(
             "project_id": "mini_01K0A0BCDEFGHJKMNPQRSTVWXY",
             "taskid": "mini_01K0A0BCDEFGHJKMNPQRSTVWXY",
             "username": "testuser",
+            "owner_username": "testuser",
+            "access_role": "owner",
             "name": "Campaign assistant",
             "slug": "mini_01K0A0BCDEFGHJKMNPQRSTVWXY",
             "app_id": None,
@@ -514,6 +556,272 @@ def test_update_site_metadata_proxies_platform_patch(
         "title": "Docs Site",
         "custom_domain_prefix": "docs",
     }
+
+
+def test_get_environment_variables_returns_strict_no_store_snapshot(
+    test_client: TestClient,
+    test_token: str,
+    monkeypatch: pytest.MonkeyPatch,
+    httpx_mock: HTTPXMock,
+) -> None:
+    monkeypatch.setattr(settings, "SITES_API_BASE_URL", SITES_API_BASE_URL)
+    httpx_mock.add_response(
+        method="GET",
+        url=(
+            f"{SITES_API_BASE_URL}/api/v1/projects/"
+            "prj_01K0A0BCDEFGHJKMNPQRSTVWXY/environment-variables"
+        ),
+        json={
+            "revision_id": "env_01K0A0BCDEFGHJKMNPQRSTVWXY",
+            "project_id": "prj_01K0A0BCDEFGHJKMNPQRSTVWXY",
+            "revision_number": 3,
+            "items": _environment_revision()["variables"],
+        },
+    )
+
+    response = test_client.get(
+        "/api/sites/prj_01K0A0BCDEFGHJKMNPQRSTVWXY/environment-variables",
+        headers=_authorization(test_token),
+    )
+
+    assert response.status_code == 200
+    assert response.headers["cache-control"] == "no-store"
+    assert response.json()["items"][1] == {
+        "key": "API_TOKEN",
+        "type": "secret",
+        "configured": True,
+        "updated_by": "testuser",
+        "updated_at": "2026-09-02T08:00:00Z",
+    }
+    assert httpx_mock.get_requests()[0].headers["x-wegent-username"] == "testuser"
+
+
+def test_get_environment_variables_fails_closed_if_secret_value_is_returned(
+    test_client: TestClient,
+    test_token: str,
+    monkeypatch: pytest.MonkeyPatch,
+    httpx_mock: HTTPXMock,
+) -> None:
+    monkeypatch.setattr(settings, "SITES_API_BASE_URL", SITES_API_BASE_URL)
+    secret = _environment_revision()["variables"][1]
+    httpx_mock.add_response(
+        method="GET",
+        url=(
+            f"{SITES_API_BASE_URL}/api/v1/projects/"
+            "prj_01K0A0BCDEFGHJKMNPQRSTVWXY/environment-variables"
+        ),
+        json={
+            "revision_id": "env_01K0A0BCDEFGHJKMNPQRSTVWXY",
+            "project_id": "prj_01K0A0BCDEFGHJKMNPQRSTVWXY",
+            "revision_number": 3,
+            "items": [{**secret, "value": "must-not-cross-the-boundary"}],
+        },
+    )
+
+    response = test_client.get(
+        "/api/sites/prj_01K0A0BCDEFGHJKMNPQRSTVWXY/environment-variables",
+        headers=_authorization(test_token),
+    )
+
+    assert response.status_code == 502
+    assert response.json()["detail"]["code"] == "sites_upstream_unavailable"
+
+
+def test_patch_environment_variables_forwards_identity_and_safety_headers(
+    test_client: TestClient,
+    test_token: str,
+    monkeypatch: pytest.MonkeyPatch,
+    httpx_mock: HTTPXMock,
+) -> None:
+    monkeypatch.setattr(settings, "SITES_API_BASE_URL", SITES_API_BASE_URL)
+    httpx_mock.add_response(
+        method="PATCH",
+        url=(
+            f"{SITES_API_BASE_URL}/api/v1/projects/"
+            "prj_01K0A0BCDEFGHJKMNPQRSTVWXY/environment-variables"
+        ),
+        json=_environment_revision(),
+    )
+    payload = {
+        "expected_revision_id": "env_01K00000000000000000000000",
+        "operations": [
+            {
+                "op": "upsert",
+                "key": "API_TOKEN",
+                "type": "secret",
+                "value": "write-only-value",
+            }
+        ],
+    }
+
+    response = test_client.patch(
+        "/api/sites/prj_01K0A0BCDEFGHJKMNPQRSTVWXY/environment-variables",
+        json=payload,
+        headers={
+            **_authorization(test_token),
+            "Idempotency-Key": "env-update-12345678",
+            "X-Request-ID": "req-env-patch",
+        },
+    )
+
+    assert response.status_code == 201
+    assert response.headers["cache-control"] == "no-store"
+    request = httpx_mock.get_requests()[0]
+    assert request.headers["x-wegent-username"] == "testuser"
+    assert request.headers["idempotency-key"] == "env-update-12345678"
+    assert request.headers["x-request-id"] == "req-env-patch"
+    assert _json_body(request) == payload
+
+
+@pytest.mark.parametrize(
+    ("method", "payload"),
+    [
+        (
+            "PUT",
+            {
+                "type": "plain",
+                "value": "https://api.example.test",
+                "expected_revision_id": None,
+            },
+        ),
+        ("DELETE", {"expected_revision_id": None}),
+    ],
+)
+def test_single_environment_variable_writes_proxy_platform(
+    method: str,
+    payload: dict[str, Any],
+    test_client: TestClient,
+    test_token: str,
+    monkeypatch: pytest.MonkeyPatch,
+    httpx_mock: HTTPXMock,
+) -> None:
+    monkeypatch.setattr(settings, "SITES_API_BASE_URL", SITES_API_BASE_URL)
+    url = (
+        f"{SITES_API_BASE_URL}/api/v1/projects/"
+        "prj_01K0A0BCDEFGHJKMNPQRSTVWXY/environment-variables/PUBLIC_API_URL"
+    )
+    httpx_mock.add_response(method=method, url=url, json=_environment_revision())
+
+    response = test_client.request(
+        method,
+        (
+            "/api/sites/prj_01K0A0BCDEFGHJKMNPQRSTVWXY/"
+            "environment-variables/PUBLIC_API_URL"
+        ),
+        json=payload,
+        headers={
+            **_authorization(test_token),
+            "Idempotency-Key": "env-single-12345678",
+            "X-Request-ID": "req-env-single",
+        },
+    )
+
+    assert response.status_code == 201
+    assert response.headers["cache-control"] == "no-store"
+    assert _json_body(httpx_mock.get_requests()[0]) == payload
+
+
+def test_list_site_collaborators_forwards_trusted_owner_identity(
+    test_client: TestClient,
+    test_token: str,
+    monkeypatch: pytest.MonkeyPatch,
+    httpx_mock: HTTPXMock,
+) -> None:
+    monkeypatch.setattr(settings, "SITES_API_BASE_URL", SITES_API_BASE_URL)
+    httpx_mock.add_response(
+        method="GET",
+        url=(
+            f"{SITES_API_BASE_URL}/api/v1/projects/"
+            "prj_01K0A0BCDEFGHJKMNPQRSTVWXY/collaborators"
+        ),
+        json={
+            "items": [
+                {
+                    "subject": "member",
+                    "added_by": "testuser",
+                    "created_at": "2026-09-03T08:00:00Z",
+                }
+            ]
+        },
+    )
+
+    response = test_client.get(
+        "/api/sites/prj_01K0A0BCDEFGHJKMNPQRSTVWXY/collaborators",
+        headers=_authorization(test_token),
+    )
+
+    assert response.status_code == 200
+    assert response.json()["items"][0]["subject"] == "member"
+    assert httpx_mock.get_requests()[0].headers["x-wegent-username"] == "testuser"
+
+
+def test_add_site_collaborator_forwards_idempotency_and_request_identity(
+    test_client: TestClient,
+    test_token: str,
+    monkeypatch: pytest.MonkeyPatch,
+    httpx_mock: HTTPXMock,
+) -> None:
+    monkeypatch.setattr(settings, "SITES_API_BASE_URL", SITES_API_BASE_URL)
+    httpx_mock.add_response(
+        method="POST",
+        url=(
+            f"{SITES_API_BASE_URL}/api/v1/projects/"
+            "prj_01K0A0BCDEFGHJKMNPQRSTVWXY/collaborators"
+        ),
+        json={
+            "subject": "member",
+            "added_by": "testuser",
+            "created_at": "2026-09-03T08:00:00Z",
+        },
+    )
+
+    response = test_client.post(
+        "/api/sites/prj_01K0A0BCDEFGHJKMNPQRSTVWXY/collaborators",
+        json={"subject": " member "},
+        headers={
+            **_authorization(test_token),
+            "Idempotency-Key": "collaborator-add-12345678",
+            "X-Request-ID": "req-collaborator-add",
+        },
+    )
+
+    assert response.status_code == 201
+    request = httpx_mock.get_requests()[0]
+    assert request.headers["x-wegent-username"] == "testuser"
+    assert request.headers["idempotency-key"] == "collaborator-add-12345678"
+    assert request.headers["x-request-id"] == "req-collaborator-add"
+    assert _json_body(request) == {"subject": "member"}
+
+
+def test_remove_site_collaborator_encodes_subject_and_forwards_identity(
+    test_client: TestClient,
+    test_token: str,
+    monkeypatch: pytest.MonkeyPatch,
+    httpx_mock: HTTPXMock,
+) -> None:
+    monkeypatch.setattr(settings, "SITES_API_BASE_URL", SITES_API_BASE_URL)
+    httpx_mock.add_response(
+        method="DELETE",
+        url=(
+            f"{SITES_API_BASE_URL}/api/v1/projects/"
+            "prj_01K0A0BCDEFGHJKMNPQRSTVWXY/collaborators/member%2Btest"
+        ),
+        json={"deleted": True},
+    )
+
+    response = test_client.delete(
+        "/api/sites/prj_01K0A0BCDEFGHJKMNPQRSTVWXY/collaborators/member%2Btest",
+        headers={
+            **_authorization(test_token),
+            "X-Request-ID": "req-collaborator-remove",
+        },
+    )
+
+    assert response.status_code == 204
+    assert response.content == b""
+    request = httpx_mock.get_requests()[0]
+    assert request.headers["x-wegent-username"] == "testuser"
+    assert request.headers["x-request-id"] == "req-collaborator-remove"
 
 
 def test_delete_site_removes_owned_platform_project(

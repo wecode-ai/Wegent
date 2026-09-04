@@ -14,6 +14,7 @@ core_segments=(
   offline-local-project-space
   cloud-context-resilience
   core-dsh-plugin-management
+  plugin-development
   project-ai-settings
   model-routing
   permission-modes
@@ -135,7 +136,7 @@ core_shards=(
   rendering-extensions
   runtime-task-queue,release-package-startup,component-update,native-window-startup,renderer-storage,external-content-import
   local-harness,running-conversation-history,native-window-chrome
-  codex-notification-isolation,core-dsh-plugin-management,executor-stream-recovery
+  codex-notification-isolation,core-dsh-plugin-management,plugin-development,executor-stream-recovery
   model-routing,computer-use
 )
 
@@ -308,6 +309,25 @@ classify_wework_path() {
       return
       ;;
 
+    # Plugin development verifies the installed Codex guide, generated local
+    # project, conditional conversation sidebar, isolated Wework, and HMR.
+    wework/dsh/plugin-developer/* | \
+      wework/e2e/desktop/scenarios/plugin-development.scenario.mjs | \
+      wework/electron/src/runtime/plugin-development-manager* | \
+      wework/resources/bundled-plugins/wework-personal/plugins/wework-plugin-developer/* | \
+      wework/src/features/dsh-plugins/pluginDevelopment* | \
+      wework/src/components/layout/workspace-panels/rightWorkspaceDshSidebar* | \
+      wework/src/components/layout/workspace-panels/RightWorkspacePanel.tsx)
+      select_target "core:plugin-development"
+      if [[ "$path" == wework/dsh/plugin-developer/codex-plugin/skills/develop-wework-plugin/assets/ui-extension-demo/* ]]; then
+        select_target "plugins:core-dsh-ui-plugin-composition"
+      fi
+      if [[ "$path" == wework/src/components/layout/workspace-panels/RightWorkspacePanel.tsx ]]; then
+        select_target "core:temporary-chat"
+      fi
+      return
+      ;;
+
     # DSH UI composition verifies that Wework starts empty and gains each
     # application, route, settings page, and navigation item from plugins.
     wework/dsh/app-wework/* | \
@@ -323,10 +343,12 @@ classify_wework_path() {
       wework/src/features/dsh-plugins/* | \
       wework/electron/src/runtime/core-dsh-plugin-manager*)
       select_target "core:core-dsh-plugin-management"
+      select_target "core:plugin-development"
       return
       ;;
     wework/src/components/plugins/PluginManagementWorkspace*)
       select_target "core:core-dsh-plugin-management"
+      select_target "core:plugin-development"
       select_target "core:project-ai-settings"
       select_target "plugins:plugin-lifecycle"
       return

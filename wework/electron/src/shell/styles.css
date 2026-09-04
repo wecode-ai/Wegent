@@ -12,8 +12,8 @@
 }
 
 :root[data-theme='dark'] {
-  color: #f4f4f5;
-  background: #101316;
+  color: #fff;
+  background: #181818;
 }
 
 * {
@@ -90,17 +90,17 @@ button:disabled {
 }
 
 :root[data-theme='dark'] #runtime-status {
-  color: #a1a1aa;
+  color: rgb(255 255 255 / 50%);
 }
 
 :root[data-theme='dark'] #details {
   border-color: rgb(255 255 255 / 8%);
-  background: #181b1f;
-  color: #d4d4d8;
+  background: #212121;
+  color: rgb(255 255 255 / 70%);
 }
 
 :root[data-theme='dark'] button {
   border-color: rgb(255 255 255 / 12%);
-  background: #f4f4f5;
-  color: #171717;
+  background: #f3f3f3;
+  color: #0d0d0d;
 }
