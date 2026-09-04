@@ -233,6 +233,7 @@ function installDefaultDshUiTestRuntime() {
     [WEWORK_DSH_SLOTS.app, testApps],
     [WEWORK_DSH_SLOTS.pluginsAction, []],
     [WEWORK_DSH_SLOTS.boardCardStatus, []],
+    [WEWORK_DSH_SLOTS.composerAction, []],
     [WEWORK_DSH_SLOTS.environmentSection, []],
     [WEWORK_DSH_SLOTS.projectCreateSection, []],
     [WEWORK_DSH_SLOTS.projectWorkSection, []],
@@ -245,8 +246,10 @@ function installDefaultDshUiTestRuntime() {
     [WEWORK_DSH_SLOTS.shellOverlay, []],
     [WEWORK_DSH_SLOTS.taskStatus, []],
     [WEWORK_DSH_SLOTS.workspaceMenuSection, []],
+    [WEWORK_DSH_SLOTS.workspaceBottomPanelTab, []],
     [WEWORK_DSH_SLOTS.workspaceSidebarTab, []],
     [WEWORK_DSH_SLOTS.workspaceTab, []],
+    [WEWORK_DSH_SLOTS.workspaceToolbarAction, []],
   ])
   window.__WEWORK_DSH_UI__ = {
     getEntries: slotName => entries.get(slotName) ?? [],

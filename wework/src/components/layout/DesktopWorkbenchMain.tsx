@@ -101,6 +101,7 @@ import {
   type RightWorkspaceExtensionTabState,
 } from './workspace-panels/rightWorkspaceDshSidebar'
 import { WorkspacePanelActions } from './workspace-panels/WorkspacePanelActions'
+import { WorkspaceToolbarExtensions } from './workspace-panels/WorkspaceToolbarExtensions'
 import { WorkItemContextPanel } from '@/features/todo/WorkItemContextPanel'
 import { WorkItemComposerGuide } from '@/features/todo/WorkItemComposerGuide'
 import { TaskBoardAssociationDialog } from '@/features/todo/TaskBoardAssociationDialog'
@@ -4214,6 +4215,13 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     />
   )
   const workspacePanelActions = renderWorkspacePanelActions('all')
+  const workspaceToolbarExtensions = (
+    <WorkspaceToolbarExtensions
+      currentProject={currentProject}
+      environmentInfo={environmentInfo}
+      workspaceTarget={workspaceTarget}
+    />
+  )
   const mainHeaderProjectAction = renderWorkspacePanelActions('primary-target')
   const mainHeaderEnvironmentAction = renderWorkspacePanelActions('environment')
   const panelChromeActions = renderWorkspacePanelActions('panel-toggles')
@@ -4325,12 +4333,16 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     ) : undefined
   const feedbackInChromeTitlebar = isDesktop && getPlatform() === 'mac'
   const mainHeaderActions = activeLocalHarnessSession ? (
-    <>{closeHarnessButton}</>
+    <>
+      {workspaceToolbarExtensions}
+      {closeHarnessButton}
+    </>
   ) : (
     <>
       {forkTaskButton}
       {continueInImButton}
       {!feedbackInChromeTitlebar && feedbackButton}
+      {workspaceToolbarExtensions}
       {mainHeaderProjectAction}
       {mainHeaderEnvironmentAction}
     </>
@@ -4440,11 +4452,15 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     </div>
   ) : undefined
   const paneHeaderActions = activeLocalHarnessSession ? (
-    <>{closeHarnessButton}</>
+    <>
+      {workspaceToolbarExtensions}
+      {closeHarnessButton}
+    </>
   ) : (
     <>
       {forkTaskButton}
       {continueInImButton}
+      {workspaceToolbarExtensions}
       {mainHeaderProjectAction}
       {mainHeaderEnvironmentAction}
       {panelChromeActions}

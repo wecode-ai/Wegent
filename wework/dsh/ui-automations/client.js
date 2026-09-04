@@ -5,7 +5,7 @@ window.__ModuleLoader__.load({
       inject: ['slots', 'wework'],
       apply(ctx) {
         ctx.slots.inject('wework.route', () =>
-          ctx.wework.ui.register(ctx, 'wework.route', {
+          ctx.wework.contributions.register(ctx, 'wework.route', {
             id: 'automations.root',
             icon: 'alarm-clock',
             module: 'plugins/wework-ui-automations.js',
@@ -17,7 +17,7 @@ window.__ModuleLoader__.load({
           })
         )
         ctx.slots.inject('wework.sidebar.navigation', () =>
-          ctx.wework.ui.register(ctx, 'wework.sidebar.navigation', {
+          ctx.wework.contributions.register(ctx, 'wework.sidebar.navigation', {
             id: 'automations.navigation',
             activeItem: 'automation',
             icon: 'alarm-clock',
