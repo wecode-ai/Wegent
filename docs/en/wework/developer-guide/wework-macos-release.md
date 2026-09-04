@@ -233,6 +233,14 @@ uses this marker as the published build ID, so the page reloads only after the
 marker changes instead of treating an intermediate `index.html` write as a
 loadable generation.
 
+Automatic reload is enabled only in desktop renderers that expose the Wework
+Electron preload capabilities. Opening the Core DSH URL directly in the system
+default browser must not start the hot-reload poller. When a desktop renderer
+observes a newly published build, it records that build ID before attempting a
+reload. If the new page fails to load and the old document remains alive, the
+same build must not trigger another reload. A later build with a new ID still
+reloads normally.
+
 In development hot-reload mode, static resources under `/wework/app/` must use
 `Cache-Control: no-store`. In addition to hashed assets, this tree contains
 fixed-name `plugins/*.js` bundles. Serving those files with the production

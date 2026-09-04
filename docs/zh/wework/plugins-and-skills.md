@@ -17,7 +17,7 @@ Skill 为 AI 提供特定任务的操作说明和资源；插件可以组合 Ski
 在 Wework 桌面端打开 **插件 → 管理插件**，可以在两个管理面板之间切换：
 
 - **Codex 插件**：管理为 AI 提供 Skills、MCP Server、应用和命令的插件。它们由 Codex 或 Wegent 插件市场安装，并在任务和对话中使用。
-- **Wework 插件**：管理直接扩展 Wework 桌面运行时能力的 DSH bundle。它们属于本机 Wework 运行时，不会作为普通 Codex 插件出现在任务选择器中。
+- **Wework 插件**：管理直接扩展 Wework 桌面运行时能力的 DSH bundle。Wework 插件是外层交付单元，可以选择携带一个官方格式的 Codex 插件；只有其中的 Codex 能力会进入对话和任务选择器。
 
 在 **Wework 插件** 面板中，可以输入 npm 包、Git 地址或绝对本地目录来安装插件。安装前会显示信任确认，因为插件及其安装脚本以当前用户权限运行。用户安装的插件支持更新、启用、停用和卸载；Wework 自带的运行时插件只读展示，不能在这里修改或删除。
 
@@ -110,6 +110,10 @@ Wework 支持标准 DSH Release ZIP：`plugin-manifest.json` 通过 `packages` �
 Wegent 云端市场会预先提供 `wegent-sites` 和 `weibo-miniapp-h5-develop-agent`，但不会提前安装到每个用户。打开 **应用** 后，可以在 **站点** 和 **小程序** 两个标签页中查看对应应用；点击 **创建** 并选择应用类型时，Wework 会先检查选定在线设备是否已经安装对应插件，已安装时会直接将插件引用写入新任务输入框。未安装时，Wework 会为当前账号幂等安装并同步插件到该设备。
 
 内置应用插件属于 `visibility=workspace`，站点使用 `plugin://wegent-sites@wegent`，小程序使用 `plugin://weibo-miniapp-h5-develop-agent@wegent`，后者还会带入插件提供的创建提示。安装和同步期间，应用页会显示正在安装插件的提示；重复点击会复用当前设备上已安装的插件，不会创建重复安装记录或重复发起安装。
+
+站点列表同时显示自己拥有的站点和作为协作者参与的站点。站点所有者可以从行末 **… → 管理协作者** 按用户名添加或移除协作者；协作者可以继续开发、编辑、发布、删除和配置环境变量，但不能管理协作者。点击 **继续开发** 时，Wework 会确保目标设备已经安装 `wegent-sites`，并把插件引用和站点引用一起写入新的任务输入框，让 AI 同时获得站点工作流和目标项目上下文。
+
+在站点行末选择 **… → 环境变量**，可以批量新增、修改或删除 `Plain` 和 `Secret` 变量。Secret 的值不会从服务端回显，已配置的 Secret 留空保存时保持不变；保存后的新版本在下一次部署时生效。静态站点会把变量注入浏览器 bundle，因此其中的 Secret 对站点访问者可见，只适合内部受众。
 
 Wegent 市场发布和上传同时接受包含 `.codex-plugin/plugin.json` 或 `.claude-plugin/plugin.json` 的插件包。Backend 会在入库前补齐缺少的运行时清单，因此每个已安装插件都会同步到设备的 Codex 和 Claude Code 插件目录。
 

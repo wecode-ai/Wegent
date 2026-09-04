@@ -187,3 +187,71 @@ The original and redesigned publication-review screenshots were also opened in o
 ## Result
 
 final result: passed
+
+# Plugin Debug Panel Design QA
+
+## Comparison target
+
+- Date: 2026-09-03
+- Source visual:
+  `/Users/axb-mac/.wework/codex/generated_images/01a061e5-791e-7ab2-be17-023b94b22361/call_kBFwQbowCxNRlelG0oIEULmh.png`
+- Desktop E2E evidence:
+  `/Users/axb-mac/.wework/workspace/worktrees/runtime-280422601/Wegent/wework/test-results/desktop-e2e/2026-09-03T07-05-48-885Z-95579`
+- Full comparison:
+  `design-qa-full-comparison.png`
+- Focused panel comparison:
+  `design-qa-panel-hmr-comparison.png`
+
+## Product structure
+
+The implementation keeps plugin development in the conversation workspace and
+models the debugging target as one explicit relationship:
+
+1. current project (development side);
+2. Core DSH runtime;
+3. isolated Wework debugging instance (runtime side).
+
+The primary start/focus action is attached to the isolated instance. Lifecycle,
+live HMR status, and recent events remain visible. Diagnostic actions use
+progressive disclosure, while stopping is placed in an overflow menu and
+requires confirmation.
+
+## Visual comparison
+
+- No actionable P0, P1, or P2 differences remain.
+- The panel follows Wework's neutral desktop hierarchy instead of introducing a
+  dashboard-like visual language.
+- Green is restricted to connected/success indicators; destructive color is
+  reserved for stop confirmation.
+- The implementation uses real runtime state and does not add mock controls,
+  decorative assets, gradients, emoji, custom SVG, or nonstandard plugin UI.
+- The automatic-HMR switch from the concept was intentionally omitted because
+  there is no corresponding user-controlled behavior.
+- Decorative connector arrows and row icons were omitted because the official
+  Core DSH plugin surface does not expose the host icon system. Explicit labels
+  and grouping preserve the relationship without private assets.
+
+## Interaction verification
+
+The CI-covered desktop E2E checkpoint verified:
+
+- creating and registering a Wework plugin project;
+- exposing the Plugin Debugging tab only for the plugin project;
+- rendering the stopped target and lifecycle state;
+- starting and focusing a separate Wework instance;
+- receiving Core DSH status through the desktop event stream;
+- filtering recent events and expanding diagnostics;
+- accepting and displaying HMR generation 1;
+- confirming and stopping the debugging instance.
+
+An additional isolated `ai:verify` Electron run covered project selection, the
+stopped state, starting the debugging instance, and the connected state. The
+application log contained no plugin-panel errors or warnings.
+
+## Follow-up
+
+- P3: if the official Wework plugin UI API later exposes the host icon system,
+  the textual overflow and disclosure affordances can adopt those official
+  icons without changing the official Codex plugin format.
+
+final result: passed

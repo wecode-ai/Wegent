@@ -1,15 +1,7 @@
-import type { CSSProperties } from 'react'
+import { useLayoutEffect, useRef } from 'react'
 
-const SHIMMER_DURATION_SECONDS = 1.6
-const SHIMMER_TRAILING_SLOTS = 5
-const MAX_ANIMATED_GRAPHEMES = 96
-const SHIMMER_SEGMENTER = new Intl.Segmenter(undefined, {
-  granularity: 'grapheme',
-})
-
-type ShimmerBandStyle = CSSProperties & {
-  '--activity-shimmer-delay': string
-}
+const SHIMMER_TEXT_WIDTH = '--activity-shimmer-text-width'
+const SHIMMER_TEXT_OFFSET = '--activity-shimmer-text-offset'
 
 export function ActivityShimmerText({
   children,
@@ -20,35 +12,36 @@ export function ActivityShimmerText({
   variant: 'thinking' | 'tool'
   className?: string
 }) {
-  const segments = Array.from(
-    SHIMMER_SEGMENTER.segment(children),
-    segment => segment.segment
-  ).slice(0, MAX_ANIMATED_GRAPHEMES)
-  const cycleSlots = segments.length + SHIMMER_TRAILING_SLOTS
+  const textRef = useRef<HTMLSpanElement>(null)
+
+  useLayoutEffect(() => {
+    const text = textRef.current
+    if (!text) return
+
+    const updateWidth = () => {
+      const width = text.clientWidth
+      text.style.setProperty(SHIMMER_TEXT_WIDTH, `${width}px`)
+      text.style.setProperty(SHIMMER_TEXT_OFFSET, `${-width}px`)
+    }
+
+    updateWidth()
+    if (typeof ResizeObserver === 'undefined') return
+
+    const resizeObserver = new ResizeObserver(updateWidth)
+    resizeObserver.observe(text)
+    return () => resizeObserver.disconnect()
+  }, [])
 
   return (
     <span
+      ref={textRef}
       className={`activity-shimmer-text ${variant === 'thinking' ? 'waiting-thinking-text' : 'tool-activity-shimmer'} ${className}`}
     >
       {children}
       <span aria-hidden="true" className="activity-shimmer-highlight">
-        {segments.map((segment, index) => {
-          const style: ShimmerBandStyle = {
-            '--activity-shimmer-delay': `${-(
-              ((segments.length - index) * SHIMMER_DURATION_SECONDS) /
-              cycleSlots
-            ).toFixed(4)}s`,
-          }
-
-          return (
-            <span
-              key={`${segment}-${index}`}
-              className="activity-shimmer-band"
-              data-grapheme={segment}
-              style={style}
-            />
-          )
-        })}
+        <span className="activity-shimmer-sweep">
+          <span className="activity-shimmer-band" data-text={children} />
+        </span>
       </span>
     </span>
   )

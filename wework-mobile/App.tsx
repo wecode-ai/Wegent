@@ -39,6 +39,7 @@ export default function App() {
           <RuntimeApplication
             config={auth.config}
             onLogout={auth.logout}
+            userId={auth.user?.id ?? 0}
             userLabel={auth.user?.full_name || auth.user?.user_name || ''}
           />
         ) : (
@@ -58,19 +59,20 @@ export default function App() {
 function RuntimeApplication({
   config,
   onLogout,
+  userId,
   userLabel,
 }: {
   config: RuntimeSessionConfig
   onLogout: () => Promise<void>
+  userId: number
   userLabel: string
 }) {
-  const runtime = useMobileRuntime(config)
+  const runtime = useMobileRuntime(config, userId)
   const theme = useTheme()
   const glassColorScheme: GlassColorScheme = theme.dark ? 'dark' : 'light'
   const [projectVisible, setProjectVisible] = useState(false)
   const [settingsVisible, setSettingsVisible] = useState(false)
   const [search, setSearch] = useState('')
-  const [filterDeviceId, setFilterDeviceId] = useState<string | null>(null)
   const [conversationEntryRevision, setConversationEntryRevision] = useState(0)
 
   const workspaces = useMemo(
@@ -100,6 +102,7 @@ function RuntimeApplication({
           <RuntimeStack.Screen name="conversationList" options={{ animation: 'none' }}>
             {({ navigation }) => (
               <ConversationListScreen
+                allDevicesSelected={runtime.allDevicesSelected}
                 conversations={runtime.conversations}
                 currentAddress={runtime.currentAddress}
                 devices={runtime.devices}
@@ -111,18 +114,20 @@ function RuntimeApplication({
                 onNewProject={() => setProjectVisible(true)}
                 onOpenCurrentConversation={() => navigation.navigate('conversation')}
                 onSearch={setSearch}
+                onRefresh={runtime.refresh}
+                onSelectAllDevices={runtime.selectAllDevices}
                 onSelectConversation={item => {
                   setConversationEntryRevision(current => current + 1)
                   void runtime.openConversation(item)
                   navigation.navigate('conversation')
                 }}
                 onSelectDevice={deviceId => {
-                  setFilterDeviceId(deviceId)
                   runtime.selectDevice(deviceId)
                 }}
                 onSettings={() => setSettingsVisible(true)}
                 search={search}
-                selectedDeviceId={filterDeviceId ?? runtime.selectedDeviceId}
+                refreshing={runtime.refreshing}
+                selectedDeviceId={runtime.selectedDeviceId}
                 workspaces={workspaces}
               />
             )}
@@ -148,13 +153,16 @@ function RuntimeApplication({
                   entryRevision={conversationEntryRevision}
                   gitRef={runtime.gitRef}
                   isNew={isNewConversation}
+                  hasMoreMessagesBefore={runtime.hasMoreMessagesBefore}
                   loading={runtime.loading}
+                  loadingMoreMessagesBefore={runtime.loadingMoreMessagesBefore}
                   messages={runtime.messages}
                   model={runtime.selectedModel}
                   modelOptions={runtime.selectedModelOptions}
                   permissionMode={runtime.permissionMode}
                   onBack={navigation.goBack}
                   onLoadApps={runtime.loadComposerApps}
+                  onLoadMoreMessagesBefore={runtime.loadMoreMessagesBefore}
                   onMore={() => setSettingsVisible(true)}
                   onNewConversation={() =>
                     runtime.startNewConversation(runtime.selectedWorkspace ?? undefined)
