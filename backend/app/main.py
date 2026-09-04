@@ -495,6 +495,12 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.warning("Failed to recover video jobs: %s", e, exc_info=True)
 
+    logger.info("Starting terminal session invalidation listener...")
+    from app.services.device.terminal_session_service import terminal_session_service
+
+    await terminal_session_service.start()
+    logger.info("✓ Terminal session invalidation listener started")
+
     logger.info("=" * 60)
     logger.info("Application startup completed successfully!")
     logger.info("=" * 60)
@@ -580,6 +586,9 @@ async def lifespan(app: FastAPI):
 
         await shutdown_pending_request_registry()
         logger.info("✓ PendingRequestRegistry shutdown completed")
+
+        await terminal_session_service.stop()
+        logger.info("✓ Terminal session invalidation listener stopped")
 
         from app.services.loop_items.external_provider import (
             external_loop_item_provider,

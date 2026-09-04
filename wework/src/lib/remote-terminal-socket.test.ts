@@ -26,6 +26,7 @@ describe('createRemoteTerminalClient', () => {
   const offMock = vi.fn()
   const ensureConnectedMock = vi.fn()
   const disposeMock = vi.fn()
+  const onReconnectMock = vi.fn()
 
   beforeEach(() => {
     vi.clearAllMocks()
@@ -59,7 +60,7 @@ describe('createRemoteTerminalClient', () => {
       getRawSocket: vi.fn(),
       getState: vi.fn(),
       subscribe: vi.fn(),
-      onReconnect: vi.fn(),
+      onReconnect: onReconnectMock,
     })
   })
 
@@ -80,7 +81,27 @@ describe('createRemoteTerminalClient', () => {
     expect(ensureConnectedMock).toHaveBeenCalledTimes(1)
     expect(emitMock).toHaveBeenCalledWith(
       'terminal:attach',
-      { session_id: 'terminal-1' },
+      {
+        session_id: 'terminal-1',
+        consumer_id: expect.any(String),
+        last_acked_sequence: 0,
+      },
+      expect.any(Function)
+    )
+  })
+
+  test('resumes attach from the last acknowledged output sequence', async () => {
+    const client = createRemoteTerminalClient('terminal-1')
+
+    await client.attach(42)
+
+    expect(emitMock).toHaveBeenCalledWith(
+      'terminal:attach',
+      {
+        session_id: 'terminal-1',
+        consumer_id: expect.any(String),
+        last_acked_sequence: 42,
+      },
       expect.any(Function)
     )
   })
@@ -102,37 +123,92 @@ describe('createRemoteTerminalClient', () => {
     expect(options.getToken).toBe(resolveToken)
   })
 
-  test('relays terminal input, resize, and close over Socket.IO', async () => {
+  test('relays terminal acknowledgement, input, resize, and close over Socket.IO', async () => {
     const client = createRemoteTerminalClient('terminal-1')
 
+    await client.ack(7)
     await client.write('pwd\r')
     await client.resize(32, 120)
     await client.close()
 
+    expect(emitMock).toHaveBeenCalledWith(
+      'terminal:ack',
+      {
+        session_id: 'terminal-1',
+        consumer_id: expect.any(String),
+        sequence: 7,
+      },
+      expect.any(Function)
+    )
     expect(emitMock).toHaveBeenCalledWith('terminal:input', {
       session_id: 'terminal-1',
+      consumer_id: expect.any(String),
       data: 'pwd\r',
     })
     expect(emitMock).toHaveBeenCalledWith('terminal:resize', {
       session_id: 'terminal-1',
+      consumer_id: expect.any(String),
       rows: 32,
       cols: 120,
     })
     expect(emitMock).toHaveBeenCalledWith(
       'terminal:close',
-      { session_id: 'terminal-1' },
+      {
+        session_id: 'terminal-1',
+        consumer_id: expect.any(String),
+      },
       expect.any(Function)
     )
+    expect(new Set(emitMock.mock.calls.map(([, payload]) => payload.consumer_id)).size).toBe(1)
   })
 
-  test('subscribes and unsubscribes terminal output handlers', () => {
+  test('subscribes only to output for its active consumer', async () => {
     const client = createRemoteTerminalClient('terminal-1')
     const handler = vi.fn()
 
     const unsubscribe = client.onOutput(handler)
+    await client.attach()
+    const consumerId = emitMock.mock.calls[0][1].consumer_id
+    const activeConsumerHandler = onMock.mock.calls[0][1]
+    activeConsumerHandler({
+      session_id: 'terminal-1',
+      consumer_id: 'other-consumer',
+      sequence: 1,
+      data: 'ignored',
+    })
+    activeConsumerHandler({
+      session_id: 'terminal-1',
+      consumer_id: consumerId,
+      sequence: 1,
+      data: 'accepted',
+    })
     unsubscribe()
 
-    expect(onMock).toHaveBeenCalledWith('terminal:output', handler)
-    expect(offMock).toHaveBeenCalledWith('terminal:output', handler)
+    expect(handler).toHaveBeenCalledTimes(1)
+    expect(handler).toHaveBeenCalledWith(expect.objectContaining({ data: 'accepted' }))
+    expect(offMock).toHaveBeenCalledWith('terminal:output', activeConsumerHandler)
+  })
+
+  test('subscribes to authenticated socket reconnects', () => {
+    const unsubscribe = vi.fn()
+    const handler = vi.fn()
+    onReconnectMock.mockReturnValue(unsubscribe)
+    const client = createRemoteTerminalClient('terminal-1')
+
+    const result = client.onReconnect(handler)
+
+    expect(onReconnectMock).toHaveBeenCalledWith(handler)
+    expect(result).toBe(unsubscribe)
+  })
+
+  test('subscribes and unsubscribes socket disconnect handlers', () => {
+    const handler = vi.fn()
+    const client = createRemoteTerminalClient('terminal-1')
+
+    const unsubscribe = client.onDisconnect(handler)
+    unsubscribe()
+
+    expect(onMock).toHaveBeenCalledWith('disconnect', handler)
+    expect(offMock).toHaveBeenCalledWith('disconnect', handler)
   })
 })
