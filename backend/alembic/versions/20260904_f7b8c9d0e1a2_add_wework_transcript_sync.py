@@ -23,6 +23,8 @@ def upgrade() -> None:
         sa.Column("id", sa.BigInteger(), autoincrement=True, nullable=False),
         sa.Column("user_id", sa.Integer(), nullable=False),
         sa.Column("transcript_id", sa.String(length=100), nullable=False),
+        sa.Column("parent_transcript_id", sa.String(length=100), nullable=True),
+        sa.Column("forked_at_sequence", sa.BigInteger(), nullable=True),
         sa.Column("title", sa.String(length=512), nullable=False),
         sa.Column("state", sa.String(length=20), nullable=False),
         sa.Column("current_sequence", sa.BigInteger(), nullable=False),
@@ -52,6 +54,11 @@ def upgrade() -> None:
         "idx_wework_transcript_user_updated",
         "wework_transcripts",
         ["user_id", "updated_at"],
+    )
+    op.create_index(
+        "idx_wework_transcript_parent",
+        "wework_transcripts",
+        ["user_id", "parent_transcript_id"],
     )
     op.create_table(
         "wework_transcript_turns",
@@ -131,6 +138,10 @@ def downgrade() -> None:
         table_name="wework_transcript_turns",
     )
     op.drop_table("wework_transcript_turns")
+    op.drop_index(
+        "idx_wework_transcript_parent",
+        table_name="wework_transcripts",
+    )
     op.drop_index(
         "idx_wework_transcript_user_updated",
         table_name="wework_transcripts",

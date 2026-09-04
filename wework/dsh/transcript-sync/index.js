@@ -1,6 +1,7 @@
 import { mkdir, readFile, rename, writeFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
-import { randomUUID } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
+import { SqliteSyncOutbox } from './outbox.js'
 
 export const name = 'wework-transcript-sync'
 export const inject = ['weworkDesktop', 'weworkSecureStorage', 'weworkTranscriptSource']
@@ -26,8 +27,10 @@ const PREFERENCES_FIELDS = [
 ]
 
 export async function apply(ctx) {
-  const state = new SyncState(join(process.env.DSH_HOME ?? '.', 'wework-transcript-sync.json'))
+  const home = process.env.DSH_HOME ?? '.'
+  const state = new SyncState(join(home, 'wework-transcript-sync.json'))
   await state.load()
+  const outbox = new SqliteSyncOutbox(join(home, 'wework-transcript-sync-outbox.sqlite3'))
   const secure = ctx.weworkSecureStorage.scope('wework-transcript-sync')
   let clientId = await secure.get('client-id')
   if (typeof clientId !== 'string' || !clientId) {
@@ -38,10 +41,14 @@ export async function apply(ctx) {
     apiBaseUrl: resolveApiBaseUrl(process.env),
     clientId,
     desktop: ctx.weworkDesktop,
+    outbox,
+    source: ctx.weworkTranscriptSource,
     state,
   })
   const unsubscribe = ctx.weworkTranscriptSource.subscribe(turn => {
-    void sync.enqueue(turn).catch(() => {})
+    void sync.enqueue(turn).catch(error => {
+      console.error('[wework-transcript-sync] failed to persist transcript turn', error)
+    })
   })
   ctx.effect(() => {
     const unprovide = ctx.reflect.provide('weworkTranscriptSync', sync.service())
@@ -57,25 +64,24 @@ export async function apply(ctx) {
 }
 
 export class WeworkSync {
-  constructor({ apiBaseUrl, clientId, desktop, state, pollIntervalMs = 5000 }) {
+  constructor({ apiBaseUrl, clientId, desktop, outbox, source, state, pollIntervalMs = 5000 }) {
     this.apiBaseUrl = apiBaseUrl
     this.clientId = clientId
     this.desktop = desktop
+    this.outbox = outbox
+    this.source = source
     this.state = state
     this.pollIntervalMs = pollIntervalMs
     this.active = false
-    this.processing = Promise.resolve()
+    this.processing = null
     this.timer = null
     this.lastError = null
+    this.failureCount = 0
   }
 
   async start() {
     this.active = true
-    try {
-      await this.flush()
-    } finally {
-      this.schedule()
-    }
+    await this.flush()
   }
 
   stop() {
@@ -89,7 +95,7 @@ export class WeworkSync {
       status: () => ({
         clientId: this.clientId,
         configured: Boolean(this.apiBaseUrl),
-        pendingTurns: this.state.value.pending.length,
+        pendingTurns: this.outbox.count(),
         transcripts: Object.keys(this.state.value.transcripts).length,
         lastError: this.lastError,
       }),
@@ -98,45 +104,43 @@ export class WeworkSync {
     })
   }
 
-  enqueue(turn) {
-    return this.serial(async () => {
-      if (
-        !this.state.value.pending.some(
-          item => item.transcriptId === turn.transcriptId && item.sequence === turn.sequence
-        )
-      ) {
-        this.state.value.pending.push(structuredClone(turn))
-        await this.state.save()
-      }
-      if (await this.ensureApiBaseUrl()) await this.flushPending()
-    })
+  async enqueue(turn) {
+    const target = this.outbox.target(turn)
+    const knownSequence = this.state.value.transcripts[target]?.currentSequence ?? 0
+    this.outbox.enqueue(turn, knownSequence)
+    this.schedule(0)
   }
 
   flush() {
-    return this.serial(async () => {
+    if (this.processing) return this.processing
+    const operation = async () => {
       if (!(await this.ensureApiBaseUrl())) return
       await this.flushPending()
       await this.pullTranscripts()
       await this.syncPreferences()
-    })
-  }
-
-  serial(action) {
-    const next = this.processing.then(action, action)
-    this.processing = next.catch(error => {
-      this.lastError = error instanceof Error ? error.message : String(error)
-      console.error('[wework-transcript-sync] synchronization failed', error)
-    })
-    return next
+    }
+    this.processing = operation()
+      .then(result => {
+        this.failureCount = 0
+        return result
+      })
+      .catch(error => {
+        this.failureCount += 1
+        this.lastError = error instanceof Error ? error.message : String(error)
+        console.error('[wework-transcript-sync] synchronization failed', error)
+        throw error
+      })
+      .finally(() => {
+        this.processing = null
+        this.schedule(this.retryDelay())
+      })
+    return this.processing
   }
 
   async flushPending() {
-    this.state.value.pending.sort(
-      (left, right) =>
-        left.transcriptId.localeCompare(right.transcriptId) || left.sequence - right.sequence
-    )
-    while (this.state.value.pending.length) {
-      const turn = this.state.value.pending[0]
+    let pending
+    while ((pending = this.outbox.first())) {
+      const turn = await this.source.read(pending)
       const lease = await this.request(
         `/wework-transcripts/${encodeURIComponent(turn.transcriptId)}/lease`,
         'POST',
@@ -144,29 +148,42 @@ export class WeworkSync {
           clientId: this.clientId,
           ttlSeconds: 300,
           title: turn.title || '',
+          ...(turn.parentTranscriptId
+            ? {
+                parentTranscriptId: turn.parentTranscriptId,
+                forkedAtSequence: turn.forkedAtSequence,
+              }
+            : {}),
         }
       )
-      if (!Number.isSafeInteger(turn.cloudSequence)) {
-        turn.cloudSequence = lease.currentSequence + 1
-        await this.state.save()
+      if (lease.currentSequence < turn.baseSequence) {
+        throw new Error('Cloud transcript sequence moved behind the local causal base')
+      }
+      if (lease.currentSequence !== turn.baseSequence) {
+        const delivered = await this.reconcilePendingTurn(turn)
+        await this.releaseLease(turn, lease)
+        if (delivered) {
+          this.outbox.acknowledge(turn)
+        } else {
+          this.forkPendingTurn(turn)
+        }
+        continue
       }
       try {
         await this.appendPendingTurn(turn, lease)
       } catch (error) {
         if (!isSequenceConflict(error)) throw error
         const delivered = await this.reconcilePendingTurn(turn)
-        if (!delivered) await this.appendPendingTurn(turn, lease)
-      }
-      await this.request(
-        `/wework-transcripts/${encodeURIComponent(turn.transcriptId)}/lease/release`,
-        'POST',
-        {
-          clientId: this.clientId,
-          fencingToken: lease.fencingToken,
+        await this.releaseLease(turn, lease)
+        if (delivered) {
+          this.outbox.acknowledge(turn)
+        } else {
+          this.forkPendingTurn(turn)
         }
-      )
-      this.state.value.pending.shift()
-      await this.state.save()
+        continue
+      }
+      await this.releaseLease(turn, lease)
+      this.outbox.acknowledge(turn)
     }
   }
 
@@ -192,10 +209,7 @@ export class WeworkSync {
 
   async reconcilePendingTurn(turn) {
     const response = await this.request(
-      `/wework-transcripts/${encodeURIComponent(turn.transcriptId)}/turns?after=${Math.max(
-        0,
-        turn.cloudSequence - 1
-      )}&limit=500`
+      `/wework-transcripts/${encodeURIComponent(turn.transcriptId)}/turns?after=${turn.baseSequence}&limit=500`
     )
     const existing = response.turns?.find(candidate => candidate.turnId === turn.turnId)
     if (existing) {
@@ -204,9 +218,25 @@ export class WeworkSync {
       }
       return true
     }
-    turn.cloudSequence = response.currentSequence + 1
-    await this.state.save()
     return false
+  }
+
+  releaseLease(turn, lease) {
+    return this.request(
+      `/wework-transcripts/${encodeURIComponent(turn.transcriptId)}/lease/release`,
+      'POST',
+      {
+        clientId: this.clientId,
+        fencingToken: lease.fencingToken,
+      }
+    )
+  }
+
+  forkPendingTurn(turn) {
+    const transcriptId = `fork-${createHash('sha256')
+      .update(`${this.clientId}\u0000${turn.transcriptId}\u0000${turn.turnId}`)
+      .digest('hex')}`
+    this.outbox.fork(turn, transcriptId)
   }
 
   async pullTranscripts() {
@@ -315,14 +345,17 @@ export class WeworkSync {
     return true
   }
 
-  schedule() {
-    if (!this.active) return
+  retryDelay() {
+    if (!this.failureCount) return this.pollIntervalMs
+    return Math.min(this.pollIntervalMs * 2 ** (this.failureCount - 1), 60_000)
+  }
+
+  schedule(delayMs = this.pollIntervalMs) {
+    if (!this.active || this.timer || this.processing) return
     this.timer = setTimeout(() => {
       this.timer = null
-      void this.flush()
-        .catch(() => {})
-        .finally(() => this.schedule())
-    }, this.pollIntervalMs)
+      void this.flush().catch(() => {})
+    }, delayMs)
   }
 }
 
@@ -338,13 +371,19 @@ class SyncRequestError extends Error {
 class SyncState {
   constructor(path) {
     this.path = path
-    this.value = { version: 1, pending: [], transcripts: {}, preferencesHash: null }
+    this.value = { version: 2, transcripts: {}, preferencesHash: null }
   }
 
   async load() {
     try {
       const value = JSON.parse(await readFile(this.path, 'utf8'))
-      if (value?.version === 1) this.value = value
+      if (value?.version === 2) {
+        this.value = {
+          version: 2,
+          transcripts: value.transcripts ?? {},
+          preferencesHash: value.preferencesHash ?? null,
+        }
+      }
     } catch (error) {
       if (error?.code !== 'ENOENT') throw error
     }

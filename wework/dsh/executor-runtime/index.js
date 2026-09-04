@@ -23,6 +23,7 @@ export async function apply(ctx) {
     onError: error => {
       console.error('[wework-executor-runtime] transcript subscriber failed', error)
     },
+    readTurn: turn => readExecutorTurn(client, turn),
   })
   const projector = new ExecutorSessionProjector(ctx.sessions, {
     onTurnCompleted: turn => transcriptSource.publish(turn),
@@ -43,6 +44,81 @@ export async function apply(ctx) {
   register(ctx, BASE_PATH, (req, res) => describe(req, res, client))
   register(ctx, `${BASE_PATH}/rpc`, (req, res) => handleExecutorRpc(req, res, client))
   register(ctx, `${BASE_PATH}/events`, (req, res) => handleExecutorEvents(req, res))
+}
+
+export async function readExecutorTurn(client, turn) {
+  let beforeCursor
+  const pages = []
+  const observedCursors = new Set()
+  for (;;) {
+    const transcript = await client.request('runtime.tasks.transcript', {
+      taskId: turn.taskId,
+      limit: 100,
+      ...(beforeCursor ? { beforeCursor } : {}),
+    })
+    const turns = Array.isArray(transcript?.turns) ? transcript.turns : []
+    pages.push(turns)
+    const matched = turn.executorTurnId
+      ? turns.find(candidate => candidate?.id === turn.executorTurnId)
+      : null
+    if (matched) return { ...turn, payload: executorTurnPayload(matched) }
+    const nextCursor =
+      transcript?.hasMoreBefore && typeof transcript.beforeCursor === 'string'
+        ? transcript.beforeCursor
+        : null
+    if (!nextCursor || observedCursors.has(nextCursor)) break
+    observedCursors.add(nextCursor)
+    beforeCursor = nextCursor
+  }
+  if (!turn.executorTurnId) {
+    const orderedTurns = pages.reverse().flat()
+    const matched = orderedTurns[turn.sequence - 1]
+    if (matched) return { ...turn, payload: executorTurnPayload(matched) }
+  }
+  throw new Error(
+    `Executor transcript turn is unavailable: ${turn.taskId}#${turn.executorTurnId ?? turn.sequence}`
+  )
+}
+
+function executorTurnPayload(turn) {
+  const items = Array.isArray(turn.items) ? turn.items : []
+  const userMessages = items
+    .filter(item => item?.type === 'user_message' && item.message)
+    .map(item => ({
+      id: item.message.clientUserMessageId ?? item.message.id ?? item.id,
+      text: typeof item.message.content === 'string' ? item.message.content : '',
+    }))
+    .filter(message => message.text)
+  const assistantMessage = items
+    .filter(
+      item =>
+        (item?.type === 'assistant_text' && typeof item.content === 'string') ||
+        (item?.type === 'agentMessage' && typeof item.text === 'string')
+    )
+    .map(item => item.content ?? item.text)
+    .join('')
+  const reasoning = items
+    .filter(item => item?.type === 'reasoning')
+    .flatMap(item => (Array.isArray(item.summary) ? item.summary : []))
+    .filter(value => typeof value === 'string')
+    .join('')
+  return {
+    userMessages,
+    assistantMessage,
+    reasoning,
+    completion: completionFromExecutorTurn(turn),
+  }
+}
+
+function completionFromExecutorTurn(turn) {
+  const status = String(turn.status ?? turn.runtimeStatus ?? 'done').toLowerCase()
+  if (status === 'failed' || status === 'error') {
+    return { kind: 'error', message: String(turn.error ?? 'Executor turn failed') }
+  }
+  if (status === 'cancelled' || status === 'canceled' || status === 'interrupted') {
+    return { kind: 'interrupted' }
+  }
+  return { kind: 'completed' }
 }
 
 function register(ctx, path, handler) {

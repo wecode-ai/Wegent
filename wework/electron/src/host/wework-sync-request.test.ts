@@ -1,6 +1,11 @@
 import { describe, expect, test } from 'vitest'
 
-import { normalizeWeworkSyncApiBaseUrl, normalizeWeworkSyncPath } from './wework-sync-request.js'
+import {
+  createWeworkSyncRequestSignal,
+  normalizeWeworkSyncApiBaseUrl,
+  normalizeWeworkSyncPath,
+  WEWORK_SYNC_REQUEST_TIMEOUT_MS,
+} from './wework-sync-request.js'
 
 describe('Wework sync request normalization', () => {
   test('preserves allowed transcript and plugin-storage query parameters', () => {
@@ -33,5 +38,14 @@ describe('Wework sync request normalization', () => {
     expect(() =>
       normalizeWeworkSyncApiBaseUrl('https://user:secret@cloud.example.com/api')
     ).toThrow('Invalid Wework sync API URL')
+  })
+
+  test('bounds an unavailable backend request without blocking the desktop', async () => {
+    expect(WEWORK_SYNC_REQUEST_TIMEOUT_MS).toBe(30_000)
+    const signal = createWeworkSyncRequestSignal(1)
+    await new Promise<void>(resolve => {
+      signal.addEventListener('abort', () => resolve(), { once: true })
+    })
+    expect(signal.aborted).toBe(true)
   })
 })

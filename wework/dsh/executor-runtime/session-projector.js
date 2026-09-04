@@ -111,7 +111,6 @@ export class ExecutorSessionProjector {
       blocks: new Map(),
       sourceEventSeqs: [],
       generatedUserMessageIds: new Set(),
-      userMessages: [],
     }
     this.tasks.set(key, state)
     return state
@@ -129,7 +128,6 @@ export class ExecutorSessionProjector {
     state.textStarted = false
     state.reasoningStarted = false
     state.usage = null
-    state.userMessages = []
     state.blocks.clear()
     state.sourceEventSeqs = []
     state.session.append('turn/start', { turn: state.turn })
@@ -149,7 +147,6 @@ export class ExecutorSessionProjector {
     const id = stringField(generated, 'id') ?? randomUUID()
     if (state.generatedUserMessageIds.has(id)) return
     state.generatedUserMessageIds.add(id)
-    state.userMessages.push({ id, text })
     state.session.append(
       'user/message',
       {
@@ -280,13 +277,8 @@ export class ExecutorSessionProjector {
       title: state.title,
       sequence: state.turn,
       turnId: syncTurnId(state),
-      payload: {
-        userMessages: state.userMessages,
-        assistantMessage: state.text,
-        reasoning: state.reasoning,
-        ...(state.usage ? { usage: state.usage } : {}),
-        completion: turnEndReason(event, data),
-      },
+      sessionId: state.session.id,
+      executorTurnId: state.subtaskId,
     })
     state.open = false
   }

@@ -35,11 +35,11 @@ Backend 使用三张表：
 `baseSequence`、连续 `sequence` 和稳定 `turnId` 保证幂等。
 
 本地 turn 序号只描述单台设备上的执行顺序，云端 `sequence` 则是 transcript 的全局
-顺序。客户端取得租约后根据 Backend 返回的 `currentSequence` 为 outbox turn 保留云端
-序号，并在请求前持久化。若设备离线期间其他设备占用了该序号，恢复设备先拉取冲突位置：
-相同 `turnId` 表示前一次提交已成功，只需完成幂等确认；不同 turn 则把原 outbox 项重基
-到最新尾部，`turnId` 和 payload 保持不变。因此 A → B → A 接力及离线恢复不会覆盖其他
-设备已经提交的 turn。
+顺序。turn 完成时，客户端根据本地已知的云端 head 持久化 `baseSequence`。如果上传时
+head 已变化，客户端先拉取冲突位置：相同 `turnId` 表示前一次提交已成功，只需完成幂等
+确认；不同 turn 表示两台设备基于同一旧上下文并行执行，不能安全线性合并，此时自动创建
+新 transcript 分支。分支只记录 `parentTranscriptId`、`forkedAtSequence` 和分叉后的
+turn，不复制父会话正文。
 
 归档时，Backend 先把热 turn 编码为 JSON Lines，再压缩为 `jsonl.zst` 并写入私有对象
 存储。只有对象上传成功后才删除对应热表记录。归档文件的对象 key 使用 transcript ID
@@ -52,9 +52,14 @@ Backend 使用三张表：
 Backend 拒绝写入；过期或被替换的 token 也不能提交 turn。插件在一次 finalized turn
 提交完成后立即释放租约，不需要为每个 turn 重新上传整个 transcript 文件。
 
-插件先把待上传 turn 原子写入 `DSH_HOME` 下的本地 outbox，再尝试访问 Backend。启动时
-尚未连接云端也不会丢数据；连接建立后，5 秒轮询会自动补传 outbox，并拉取其他设备写入
-的热 turn。首次恢复已归档会话时，插件先读取归档段，再追加归档之后的热尾。
+插件先把待上传 turn 的定位信息原子写入 `DSH_HOME` 下的 SQLite outbox，再尝试访问
+Backend。outbox 只保存 `sessionId`、本地/云端序号、稳定 `turnId`、目标 transcript 和
+Executor turn 标识和分支路由，不重复保存消息正文；上传时通过
+`runtime.tasks.transcript` 直接从 Executor 的权威会话存储分页读取对应 turn。同步插件
+不会再持久化一份 DSH Session 正文。启动时尚未连接云端也不会丢数据；连接建立后，轮询
+会自动补传 outbox，并拉取其他设备写入的热 turn。连续失败采用最长 60 秒的指数退避，
+单次 Backend 请求最长 30 秒，不阻塞本地任务执行。首次恢复已归档会话时，插件先读取
+归档段，再追加归档之后的热尾。
 
 每个 Wework 安装都是平等的同步客户端。云端 Executor 只是任务的执行位置，不作为一个
 额外同步设备参与租约竞争。

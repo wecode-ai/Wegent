@@ -43,15 +43,14 @@ increment only after a turn finishes. `baseSequence`, contiguous `sequence`
 values, and stable `turnId` values make retries idempotent.
 
 A local turn number only describes execution order on one device, while the
-cloud `sequence` is global to the transcript. After acquiring a lease, a
-client reserves the outbox turn's cloud sequence from the Backend
-`currentSequence` and persists it before appending. If another device occupies
-that sequence while the client is offline, the recovering client pulls the
-conflicting position. A matching `turnId` confirms that its earlier append
-succeeded; a different turn rebases the original outbox item onto the latest
-tail without changing its `turnId` or payload. A → B → A handoffs and offline
-recovery therefore cannot overwrite turns already committed by another
-device.
+cloud `sequence` is local to one transcript branch. When a turn finishes, the
+client persists a `baseSequence` from its locally known cloud head. If that
+head changed before upload, the client pulls the conflicting position. A
+matching `turnId` confirms that an earlier append succeeded. A different turn
+means two devices executed from the same stale context and cannot be safely
+linearized, so the client automatically creates a transcript branch. A branch
+stores only `parentTranscriptId`, `forkedAtSequence`, and its new turns; it
+does not copy the parent transcript body.
 
 During archival, the Backend encodes hot turns as JSON Lines, compresses them
 as `jsonl.zst`, and uploads the result to private object storage. It deletes hot
@@ -68,12 +67,19 @@ superseded fencing tokens cannot append turns. The plugin releases the lease
 immediately after one finalized turn is committed; it never uploads the whole
 transcript file for every turn.
 
-The plugin atomically persists pending turns in an outbox under `DSH_HOME`
-before contacting the Backend. Starting Wework without a cloud connection does
-not lose data. After a connection is established, a five-second poll uploads
-the outbox and downloads hot turns written by other devices. When restoring an
-archived transcript for the first time, the plugin loads archive segments
-before appending the resumed hot tail.
+The plugin atomically persists pending turn locators in a SQLite outbox under
+`DSH_HOME` before contacting the Backend. The outbox stores the `sessionId`,
+local and cloud sequence metadata, stable `turnId`, target transcript, and
+Executor turn identifier and branch route, but never duplicates message bodies.
+Upload pages through `runtime.tasks.transcript` and reads the matching turn
+directly from the Executor's authoritative conversation store. The sync plugin
+does not persist another DSH Session body. Starting Wework without a cloud
+connection does not lose data. Polling uploads the outbox and downloads hot
+turns after a connection is established. Consecutive failures use exponential
+backoff capped at 60 seconds, and each Backend request is bounded to 30 seconds,
+so local task execution remains available. When restoring an archived
+transcript for the first time, the plugin loads archive segments before
+appending the resumed hot tail.
 
 Every Wework installation is an equal sync client. A cloud Executor is an
 execution location, not another sync device competing for the lease.

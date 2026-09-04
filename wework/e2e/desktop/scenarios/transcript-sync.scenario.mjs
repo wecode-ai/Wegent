@@ -3,6 +3,7 @@ import { generateKeyPairSync } from 'node:crypto'
 import { mkdirSync, writeFileSync } from 'node:fs'
 import { readFile } from 'node:fs/promises'
 import { join } from 'node:path'
+import { DatabaseSync } from 'node:sqlite'
 
 import {
   ACTIVE_COMPOSER_SELECTOR,
@@ -10,6 +11,7 @@ import {
   createSingleRootLocalProject,
 } from '../modules/shared.mjs'
 import { WeworkSync } from '../../../dsh/transcript-sync/index.js'
+import { MemorySyncOutbox } from '../../../dsh/transcript-sync/outbox.js'
 
 const ARCHIVE_TRANSCRIPT_ID = 'desktop-e2e-archived-transcript'
 const FIRST_PROMPT = 'WEWORK_DESKTOP_E2E_TRANSCRIPT_SYNC_COMMIT_RESPONSE_LOST'
@@ -101,9 +103,11 @@ async function waitFor(predicate, timeoutMs, message) {
   throw new Error(message)
 }
 
-function transcriptSummary(transcriptId, currentSequence, archives = []) {
+function transcriptSummary(transcriptId, currentSequence, archives = [], relation = {}) {
   return {
     transcriptId,
+    parentTranscriptId: relation.parentTranscriptId ?? null,
+    forkedAtSequence: relation.forkedAtSequence ?? null,
     title: transcriptId,
     state: 'active',
     currentSequence,
@@ -118,8 +122,17 @@ function transcriptSummary(transcriptId, currentSequence, archives = []) {
 }
 
 function createSimulatedDevice(apiBaseUrl, clientId) {
+  const outbox = new MemorySyncOutbox()
+  const payloads = new Map()
+  const source = {
+    read(turn) {
+      const payload = payloads.get(turn.turnId)
+      assert.ok(payload, `Simulated ${clientId} session lost ${turn.turnId}`)
+      return { ...turn, payload: structuredClone(payload) }
+    },
+  }
   const state = {
-    value: { version: 1, pending: [], transcripts: {}, preferencesHash: null },
+    value: { version: 2, transcripts: {}, preferencesHash: null },
     async save() {},
   }
   const desktop = {
@@ -146,15 +159,32 @@ function createSimulatedDevice(apiBaseUrl, clientId) {
       },
     },
   }
-  return {
+  const sync = new WeworkSync({
+    apiBaseUrl,
+    clientId,
+    desktop,
+    outbox,
+    source,
     state,
-    sync: new WeworkSync({
-      apiBaseUrl,
-      clientId,
-      desktop,
-      state,
-      pollIntervalMs: 60_000,
-    }),
+    pollIntervalMs: 60_000,
+  })
+  return {
+    async enqueue(turn) {
+      payloads.set(turn.turnId, structuredClone(turn.payload))
+      await sync.enqueue(turn)
+    },
+    outbox,
+    state,
+    sync,
+  }
+}
+
+function sqliteOutboxCount(path) {
+  const database = new DatabaseSync(path, { readOnly: true })
+  try {
+    return Number(database.prepare('SELECT COUNT(*) AS count FROM pending_turns').get().count)
+  } finally {
+    database.close()
   }
 }
 
@@ -178,6 +208,7 @@ export function createDesktopScenario({ electronUserDataDirectory, uiTimeoutMs, 
   let deviceBAppendFailed = false
   let fencingToken = 0
   let lease = null
+  let restartDesktopApp = null
   const deviceB = createSimulatedDevice(apiBaseUrl, 'device-b')
 
   function activeTranscript() {
@@ -188,6 +219,10 @@ export function createDesktopScenario({ electronUserDataDirectory, uiTimeoutMs, 
   return {
     appEnvironment: {
       WEWORK_BACKEND_URL: apiBaseUrl,
+    },
+
+    setRestartDesktopApp(restart) {
+      restartDesktopApp = restart
     },
 
     async handleHttp(request, response, url) {
@@ -236,7 +271,7 @@ export function createDesktopScenario({ electronUserDataDirectory, uiTimeoutMs, 
             },
           ]),
           ...[...transcripts.entries()].map(([transcriptId, transcript]) =>
-            transcriptSummary(transcriptId, transcript.turns.length)
+            transcriptSummary(transcriptId, transcript.turns.length, [], transcript)
           ),
         ]
         json(response, 200, { items })
@@ -278,10 +313,31 @@ export function createDesktopScenario({ electronUserDataDirectory, uiTimeoutMs, 
         const body = await requestBody(request)
         activeTranscriptId ??= transcriptId
         if (body.clientId !== 'device-b') deviceAClientId ??= body.clientId
-        const transcript = transcripts.get(transcriptId) ?? { turns: [] }
+        const transcript = transcripts.get(transcriptId) ?? {
+          turns: [],
+          parentTranscriptId: body.parentTranscriptId ?? null,
+          forkedAtSequence: body.forkedAtSequence ?? null,
+        }
         transcripts.set(transcriptId, transcript)
+        if (
+          transcript.parentTranscriptId !== (body.parentTranscriptId ?? null) ||
+          transcript.forkedAtSequence !== (body.forkedAtSequence ?? null)
+        ) {
+          json(response, 409, {
+            detail: {
+              code: 'fork_identity_conflict',
+              message: 'Transcript already exists with a different parent',
+            },
+          })
+          return true
+        }
         const nextSequence = transcript.turns.length + 1
-        if (body.clientId === deviceAClientId && nextSequence === 3 && !secondLeaseRejected) {
+        if (
+          transcriptId === activeTranscriptId &&
+          body.clientId === deviceAClientId &&
+          nextSequence === 3 &&
+          !secondLeaseRejected
+        ) {
           secondLeaseRejected = true
           json(response, 409, {
             detail: {
@@ -313,6 +369,7 @@ export function createDesktopScenario({ electronUserDataDirectory, uiTimeoutMs, 
         assert.equal(body.turns.length, 1, 'Transcript sync uploaded more than one finalized turn')
 
         if (
+          transcriptId === activeTranscriptId &&
           body.clientId === deviceAClientId &&
           body.turns[0].sequence === 3 &&
           !secondFencingRejected
@@ -387,7 +444,13 @@ export function createDesktopScenario({ electronUserDataDirectory, uiTimeoutMs, 
           'Transcript sync released a lease owned by another writer'
         )
         lease = null
-        json(response, 200, transcriptSummary(decodeURIComponent(releaseMatch[1]), 0))
+        const transcriptId = decodeURIComponent(releaseMatch[1])
+        const transcript = transcripts.get(transcriptId)
+        json(
+          response,
+          200,
+          transcriptSummary(transcriptId, transcript?.turns.length ?? 0, [], transcript)
+        )
         return true
       }
 
@@ -425,6 +488,11 @@ export function createDesktopScenario({ electronUserDataDirectory, uiTimeoutMs, 
 
     async verify(control) {
       const statePath = join(electronUserDataDirectory, 'dsh-core', 'wework-transcript-sync.json')
+      const outboxPath = join(
+        electronUserDataDirectory,
+        'dsh-core',
+        'wework-transcript-sync-outbox.sqlite3'
+      )
       const restoredState = await waitFor(
         async () => {
           try {
@@ -468,11 +536,43 @@ export function createDesktopScenario({ electronUserDataDirectory, uiTimeoutMs, 
         () => {
           if (!activeTranscriptId) return null
           const transcript = transcripts.get(activeTranscriptId)
-          const attempts = appendAttempts.filter(item => item.turns[0].sequence === 1)
-          return transcript?.turns.length === 1 && attempts.length >= 2 && lease === null
+          return (
+            transcript?.turns.length === 1 &&
+            firstCommitResponseDropped &&
+            sqliteOutboxCount(outboxPath) === 1
+          )
+        },
+        uiTimeoutMs,
+        'Device A did not retain the committed turn before restart after losing its response'
+      )
+      assert.equal(
+        typeof restartDesktopApp,
+        'function',
+        'Transcript sync E2E cannot restart Wework'
+      )
+      const requestCountBeforeRestart = requestLog.length
+      await restartDesktopApp()
+      await control.command('waitFor', ACTIVE_COMPOSER_SELECTOR, { timeoutMs: uiTimeoutMs })
+      await waitFor(
+        () => {
+          const restartRequests = requestLog.slice(requestCountBeforeRestart)
+          return (
+            restartRequests.some(
+              value =>
+                value ===
+                `POST /api/wework-transcripts/${encodeURIComponent(activeTranscriptId)}/lease`
+            ) &&
+            restartRequests.some(value =>
+              value.startsWith(
+                `GET /api/wework-transcripts/${encodeURIComponent(activeTranscriptId)}/turns?`
+              )
+            ) &&
+            lease === null &&
+            sqliteOutboxCount(outboxPath) === 0
+          )
         },
         uiTimeoutMs + SYNC_POLL_INTERVAL_MS,
-        'A committed turn was not retried idempotently after its response was lost'
+        'Restarted device A did not reconcile the committed turn idempotently'
       )
 
       const transcriptId = activeTranscriptId
@@ -483,14 +583,16 @@ export function createDesktopScenario({ electronUserDataDirectory, uiTimeoutMs, 
         [1],
         'Device B did not pull device A transcript before continuing'
       )
-      await deviceB.sync.enqueue({
+      await deviceB.enqueue({
         transcriptId,
         taskId: 'device-b-local-task',
         title: 'Shared transcript',
         sequence: 1,
         turnId: 'device-b-turn-1',
+        sessionId: 'device-b-session',
         payload: { assistantMessage: 'Device B continuation' },
       })
+      await deviceB.sync.flush()
       assert.deepEqual(
         activeTranscript().turns.map(turn => [turn.sequence, turn.turnId]),
         [
@@ -500,6 +602,14 @@ export function createDesktopScenario({ electronUserDataDirectory, uiTimeoutMs, 
         'Device B did not append after device A'
       )
 
+      await waitFor(
+        async () => {
+          const state = JSON.parse(await readFile(statePath, 'utf8'))
+          return state.transcripts[transcriptId]?.downloadedThrough === 2
+        },
+        uiTimeoutMs + SYNC_POLL_INTERVAL_MS,
+        'Device A did not observe device B before continuing the shared mainline'
+      )
       await control.command('fill', ACTIVE_COMPOSER_SELECTOR, { value: SECOND_PROMPT })
       await control.command('press', ACTIVE_COMPOSER_SELECTOR, { key: 'Enter' })
       await control.command('waitFor', '[data-testid="message-assistant"]', {
@@ -533,8 +643,8 @@ export function createDesktopScenario({ electronUserDataDirectory, uiTimeoutMs, 
       )
       assert.equal(
         appendAttempts.filter(item => item.turns[0].sequence === 1).length,
-        2,
-        'The response-loss case did not perform exactly one idempotent replay'
+        1,
+        'The response-loss case duplicated an already committed turn during reconciliation'
       )
       assert.equal(
         appendAttempts.filter(
@@ -551,18 +661,26 @@ export function createDesktopScenario({ electronUserDataDirectory, uiTimeoutMs, 
         'Device B did not observe the A→B→A continuation before going offline'
       )
       failNextDeviceBAppend = true
-      await assert.rejects(
-        deviceB.sync.enqueue({
-          transcriptId,
-          taskId: 'device-b-local-task',
-          title: 'Shared transcript',
-          sequence: 2,
-          turnId: 'device-b-turn-2',
-          payload: { assistantMessage: 'Device B pending while offline' },
-        }),
-        /Device B lost its network/u
-      )
-      assert.equal(deviceB.state.value.pending.length, 1, 'Device B lost its offline outbox turn')
+      await deviceB.enqueue({
+        transcriptId,
+        taskId: 'device-b-local-task',
+        title: 'Shared transcript',
+        sequence: 2,
+        turnId: 'device-b-turn-2',
+        sessionId: 'device-b-session',
+        payload: { assistantMessage: 'Device B pending while offline' },
+      })
+      await assert.rejects(deviceB.sync.flush(), /Device B lost its network/u)
+      await deviceB.enqueue({
+        transcriptId,
+        taskId: 'device-b-local-task',
+        title: 'Shared transcript',
+        sequence: 3,
+        turnId: 'device-b-turn-3',
+        sessionId: 'device-b-session',
+        payload: { assistantMessage: 'Device B second offline continuation' },
+      })
+      assert.equal(deviceB.outbox.count(), 2, 'Device B lost its offline outbox chain')
 
       await control.command('fill', ACTIVE_COMPOSER_SELECTOR, { value: THIRD_PROMPT })
       await control.command('press', ACTIVE_COMPOSER_SELECTOR, { key: 'Enter' })
@@ -577,6 +695,11 @@ export function createDesktopScenario({ electronUserDataDirectory, uiTimeoutMs, 
       )
 
       await deviceB.sync.flush()
+      const branches = [...transcripts.entries()].filter(
+        ([, value]) => value.parentTranscriptId === transcriptId
+      )
+      assert.equal(branches.length, 1, 'Concurrent device B work did not create one branch')
+      const [branchTranscriptId, branch] = branches[0]
       assert.deepEqual(
         activeTranscript().turns.map(turn => [turn.sequence, turn.turnId]),
         [
@@ -584,31 +707,49 @@ export function createDesktopScenario({ electronUserDataDirectory, uiTimeoutMs, 
           [2, 'device-b-turn-1'],
           [3, activeTranscript().turns[2].turnId],
           [4, activeTranscript().turns[3].turnId],
-          [5, 'device-b-turn-2'],
         ],
-        'Recovered device B overwrote device A instead of rebasing its pending turn'
+        'Recovered device B changed the mainline instead of preserving device A'
+      )
+      assert.equal(branch.forkedAtSequence, 3, 'Device B branch used the wrong causal fork point')
+      assert.deepEqual(
+        branch.turns.map(turn => [turn.sequence, turn.turnId]),
+        [
+          [1, 'device-b-turn-2'],
+          [2, 'device-b-turn-3'],
+        ],
+        'Device B offline chain did not stay together on one automatic branch'
       )
       assert.equal(deviceBAppendFailed, true, 'The device B offline failure was not exercised')
-      assert.deepEqual(
-        deviceB.state.value.pending,
-        [],
-        'Device B outbox remained stuck after rebase'
-      )
+      assert.equal(deviceB.outbox.count(), 0, 'Device B outbox remained stuck after branching')
 
       await waitFor(
         async () => {
           const state = JSON.parse(await readFile(statePath, 'utf8'))
-          return state.transcripts[transcriptId]?.downloadedThrough === 5 ? state : null
+          return state.transcripts[branchTranscriptId]?.downloadedThrough === 2 ? state : null
         },
         uiTimeoutMs + SYNC_POLL_INTERVAL_MS,
-        'Device A did not pull device B recovered turn'
+        'Device A did not pull device B automatic branch'
       )
       const finalState = JSON.parse(await readFile(statePath, 'utf8'))
-      assert.deepEqual(finalState.pending, [], 'Successfully synchronized turns remained in outbox')
+      assert.equal(
+        sqliteOutboxCount(outboxPath),
+        0,
+        'Successfully synchronized turns remained in the SQLite outbox'
+      )
       assert.deepEqual(
         finalState.transcripts[transcriptId].turns.map(turn => turn.sequence),
-        [1, 2, 3, 4, 5],
-        'Device A local mirror did not converge after device B recovered'
+        [1, 2, 3, 4],
+        'Device A mainline mirror changed after device B branched'
+      )
+      assert.equal(
+        finalState.transcripts[branchTranscriptId].parentTranscriptId,
+        transcriptId,
+        'Device A mirror lost the automatic branch parent'
+      )
+      assert.deepEqual(
+        finalState.transcripts[branchTranscriptId].turns.map(turn => turn.sequence),
+        [1, 2],
+        'Device A branch mirror did not converge after device B recovered'
       )
       await control.command('waitFor', ACTIVE_WORKBENCH_SELECTOR, { timeoutMs: uiTimeoutMs })
     },
@@ -617,9 +758,12 @@ export function createDesktopScenario({ electronUserDataDirectory, uiTimeoutMs, 
       return {
         activeTranscriptId,
         appendAttempts,
+        branches: Object.fromEntries(
+          [...transcripts].filter(([, value]) => value.parentTranscriptId !== null)
+        ),
         deviceAClientId,
         deviceBAppendFailed,
-        deviceBPending: deviceB.state.value.pending,
+        deviceBPending: deviceB.outbox.list(),
         firstCommitResponseDropped,
         requestLog,
         secondFencingRejected,

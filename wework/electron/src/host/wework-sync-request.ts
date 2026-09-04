@@ -1,6 +1,13 @@
 import { CloudCredentialError } from './cloud-credential-service.js'
 
 const REQUEST_ORIGIN = 'https://wework-sync.local'
+export const WEWORK_SYNC_REQUEST_TIMEOUT_MS = 30_000
+
+export function createWeworkSyncRequestSignal(
+  timeoutMs = WEWORK_SYNC_REQUEST_TIMEOUT_MS
+): AbortSignal {
+  return AbortSignal.timeout(timeoutMs)
+}
 
 export function normalizeWeworkSyncApiBaseUrl(value: string): string {
   const url = new URL(value.trim())

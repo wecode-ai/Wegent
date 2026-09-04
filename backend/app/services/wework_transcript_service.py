@@ -82,6 +82,7 @@ def acquire_lease(
     transcript_id: str,
     request: TranscriptLeaseRequest,
 ) -> WeworkTranscript:
+    _validate_fork_request(request)
     transcript = (
         db.query(WeworkTranscript)
         .filter(
@@ -93,9 +94,28 @@ def acquire_lease(
     )
     now = utcnow()
     if transcript is None:
+        if request.parent_transcript_id is not None:
+            forked_at_sequence = request.forked_at_sequence
+            assert forked_at_sequence is not None
+            parent = get_transcript(
+                db,
+                user_id=user_id,
+                transcript_id=request.parent_transcript_id,
+                for_update=True,
+            )
+            if forked_at_sequence > parent.current_sequence:
+                raise WeworkTranscriptError(
+                    "invalid_fork_point",
+                    "Wework transcript fork point is newer than its parent",
+                    status_code=422,
+                )
         transcript = WeworkTranscript(
             user_id=user_id,
             transcript_id=transcript_id,
+            parent_transcript_id=request.parent_transcript_id,
+            forked_at_sequence=(
+                forked_at_sequence if request.parent_transcript_id is not None else None
+            ),
             title=request.title or "",
         )
         db.add(transcript)
@@ -112,6 +132,14 @@ def acquire_lease(
                 .with_for_update()
                 .one()
             )
+    if (
+        transcript.parent_transcript_id != request.parent_transcript_id
+        or transcript.forked_at_sequence != request.forked_at_sequence
+    ):
+        raise WeworkTranscriptError(
+            "fork_identity_conflict",
+            "Wework transcript already exists with a different parent",
+        )
 
     lease_active = (
         transcript.writer_lease_expires_at is not None
@@ -133,6 +161,17 @@ def acquire_lease(
     db.commit()
     db.refresh(transcript)
     return transcript
+
+
+def _validate_fork_request(request: TranscriptLeaseRequest) -> None:
+    has_parent = request.parent_transcript_id is not None
+    has_fork_point = request.forked_at_sequence is not None
+    if has_parent != has_fork_point:
+        raise WeworkTranscriptError(
+            "invalid_fork",
+            "Wework transcript parent and fork point must be provided together",
+            status_code=422,
+        )
 
 
 def renew_lease(

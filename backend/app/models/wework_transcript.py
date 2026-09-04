@@ -37,6 +37,8 @@ class WeworkTranscript(Base):
     id = Column(big_integer_id_type(), primary_key=True, autoincrement=True)
     user_id = Column(Integer, nullable=False, index=True)
     transcript_id = Column(String(100), nullable=False)
+    parent_transcript_id = Column(String(100), nullable=True)
+    forked_at_sequence = Column(BigInteger, nullable=True)
     title = Column(String(512), nullable=False, default="")
     state = Column(String(20), nullable=False, default="active")
     current_sequence = Column(BigInteger, nullable=False, default=0)
@@ -60,6 +62,11 @@ class WeworkTranscript(Base):
             name="uniq_wework_transcript_user_identity",
         ),
         Index("idx_wework_transcript_user_updated", "user_id", "updated_at"),
+        Index(
+            "idx_wework_transcript_parent",
+            "user_id",
+            "parent_transcript_id",
+        ),
         {
             "mysql_engine": "InnoDB",
             "mysql_charset": "utf8mb4",

@@ -34,6 +34,17 @@ class TranscriptLeaseRequest(BaseModel):
     client_id: str = Field(alias="clientId", min_length=1, max_length=100)
     ttl_seconds: int = Field(default=60, alias="ttlSeconds", ge=15, le=300)
     title: str | None = Field(default=None, max_length=512)
+    parent_transcript_id: str | None = Field(
+        default=None,
+        alias="parentTranscriptId",
+        min_length=1,
+        max_length=100,
+    )
+    forked_at_sequence: int | None = Field(
+        default=None,
+        alias="forkedAtSequence",
+        ge=0,
+    )
 
 
 class TranscriptLeaseReleaseRequest(BaseModel):
@@ -83,6 +94,8 @@ class TranscriptResponse(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
     transcript_id: str = Field(alias="transcriptId")
+    parent_transcript_id: str | None = Field(alias="parentTranscriptId")
+    forked_at_sequence: int | None = Field(alias="forkedAtSequence")
     title: str
     state: str
     current_sequence: int = Field(alias="currentSequence")

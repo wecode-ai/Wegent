@@ -109,6 +109,7 @@ import { SecureValueStore } from './host/secure-value-store.js'
 import { resolveDevelopmentDockIdentity } from './host/development-dock-identity.js'
 import { isEffectivePackagedApplication } from './host/application-packaging-mode.js'
 import {
+  createWeworkSyncRequestSignal,
   normalizeWeworkSyncApiBaseUrl,
   normalizeWeworkSyncPath,
 } from './host/wework-sync-request.js'
@@ -1378,6 +1379,7 @@ async function configureDesktopRuntime(): Promise<void> {
             const credential = await requiredCloudCredentials().refreshAccessToken(apiBaseUrl)
             const response = await fetch(`${apiBaseUrl}${path}`, {
               method: request.method,
+              signal: createWeworkSyncRequestSignal(),
               headers: {
                 authorization: `${credential.tokenType} ${credential.accessToken}`,
                 ...(request.body === undefined ? {} : { 'content-type': 'application/json' }),

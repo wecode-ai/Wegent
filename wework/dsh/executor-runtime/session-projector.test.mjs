@@ -79,18 +79,8 @@ test('projects executor text, reasoning, usage, and completion into standard ses
       title: '',
       sequence: 1,
       turnId: '<stable-sync-turn-id>',
-      payload: {
-        userMessages: [{ id: 'user-1', text: 'Build the feature' }],
-        assistantMessage: 'Done',
-        reasoning: 'Think',
-        usage: {
-          inputTokens: 60,
-          outputTokens: 25,
-          cacheReadTokens: 40,
-          reasoningTokens: 5,
-        },
-        completion: { kind: 'completed' },
-      },
+      sessionId: executorSessionId('device-1', 'task-1'),
+      executorTurnId: 'task-1-turn-1',
     }
   )
 })

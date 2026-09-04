@@ -291,6 +291,8 @@ def _transcript_response(
     )
     return TranscriptResponse(
         transcriptId=transcript.transcript_id,
+        parentTranscriptId=transcript.parent_transcript_id,
+        forkedAtSequence=transcript.forked_at_sequence,
         title=transcript.title,
         state=transcript.state,
         currentSequence=transcript.current_sequence,
