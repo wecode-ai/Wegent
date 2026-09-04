@@ -1285,6 +1285,10 @@
       "republishHint": "会替换当前页面；引用旧页面的链接不会因此修复",
       "republishConfirmTitle": "恢复这个版本？",
       "republishConfirmBody": "当前所有页面会被这个版本替换。被替换掉的页面不会保留原来的文档 id，指向它们的链接会失效。",
+      "republishConfirmSlow": "同步页面并清理旧索引可能需要一些时间。新内容的检索索引会在后台继续更新。",
+      "republishSyncingTitle": "正在恢复并同步版本",
+      "republishSyncingBody": "正在写入页面、清理旧内容并刷新阅读视图。请保持此窗口打开。",
+      "republishSyncing": "正在同步…",
       "viewFailure": "查看完整错误",
       "failureDetailsTitle": "生成错误",
       "failureDetailsDescription": "本次生成的完整错误信息。"

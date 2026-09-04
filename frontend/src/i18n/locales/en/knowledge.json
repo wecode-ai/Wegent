@@ -1285,6 +1285,10 @@
       "republishHint": "Replaces the current pages. Citations of deleted pages are not repaired by this.",
       "republishConfirmTitle": "Restore this version?",
       "republishConfirmBody": "Every current page is replaced by this version. The pages it replaces do not keep their document ids, so links pointing at them will break.",
+      "republishConfirmSlow": "Synchronizing pages and clearing old indexes can take a little while. Retrieval indexes for new content continue updating in the background.",
+      "republishSyncingTitle": "Restoring and synchronizing this version",
+      "republishSyncingBody": "Writing pages, clearing replaced content, and refreshing the reader. Keep this window open.",
+      "republishSyncing": "Synchronizing…",
       "viewFailure": "View full error",
       "failureDetailsTitle": "Generation error",
       "failureDetailsDescription": "Full error message from this generation run."
