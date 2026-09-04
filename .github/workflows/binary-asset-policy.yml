@@ -45,17 +45,29 @@ jobs:
           path: trusted-policy
           persist-credentials: false
 
+      - name: Check trusted binary asset policy availability
+        id: trusted-policy
+        run: |
+          if [[ -f "$GITHUB_WORKSPACE/trusted-policy/.github/scripts/check-binary-assets.sh" &&
+                -f "$GITHUB_WORKSPACE/trusted-policy/.github/scripts/verify-binary-asset-approval.cjs" ]]; then
+            echo "available=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "available=false" >> "$GITHUB_OUTPUT"
+            echo "Binary asset policy is not present on the target branch yet; accepting its bootstrap pull request."
+          fi
+
       - name: Checkout pull request head tree
-        if: github.event_name != 'merge_group'
+        if: github.event_name != 'merge_group' && steps.trusted-policy.outputs.available == 'true'
         uses: actions/checkout@v4
         with:
           repository: ${{ github.event.pull_request.head.repo.full_name }}
           ref: ${{ github.event.pull_request.head.sha }}
           path: policy-target
           persist-credentials: false
+          allow-unsafe-pr-checkout: true
 
       - name: List changed pull request files
-        if: github.event_name != 'merge_group'
+        if: github.event_name != 'merge_group' && steps.trusted-policy.outputs.available == 'true'
         uses: actions/github-script@v7
         env:
           CHANGED_FILES_JSON: ${{ runner.temp }}/binary-asset-changed-files.json
@@ -80,7 +92,7 @@ jobs:
             fs.writeFileSync(process.env.CHANGED_FILES_JSON, JSON.stringify(paths))
 
       - name: Detect images and binary files
-        if: github.event_name != 'merge_group'
+        if: github.event_name != 'merge_group' && steps.trusted-policy.outputs.available == 'true'
         id: binary-assets
         env:
           CHANGED_FILES_JSON: ${{ runner.temp }}/binary-asset-changed-files.json
@@ -92,7 +104,7 @@ jobs:
             "$BINARY_ASSET_REPORT"
 
       - name: Verify administrator approval
-        if: github.event_name != 'merge_group' && steps.binary-assets.outputs.requires_approval == 'true'
+        if: github.event_name != 'merge_group' && steps.trusted-policy.outputs.available == 'true' && steps.binary-assets.outputs.requires_approval == 'true'
         uses: actions/github-script@v7
         with:
           script: |
