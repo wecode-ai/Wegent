@@ -181,9 +181,9 @@ git commit -m "feat(wework): define smart app verification contract"
 - Modify: `electron/src/host/smart-app-manager.ts`
 - Modify: `electron/src/host/smart-app-manager.test.ts`
 
-- [ ] 先为现有 `validatePackageDirectory`、manifest paths、符号链接、大小限制、重复 package/plugin、`entry.installPackage` 一致性和敏感文件规则补测试。
-- [ ] 添加回归测试，证明市场 ZIP 预览、安装、关联目录刷新行为不变。
-- [ ] 运行：
+- [x] 先为现有 `validatePackageDirectory`、manifest paths、符号链接、大小限制、重复 package/plugin、`entry.installPackage` 一致性和敏感文件规则补测试。
+- [x] 添加回归测试，证明市场 ZIP 预览、安装、关联目录刷新行为不变。
+- [x] 运行：
 
 ```bash
 pnpm --filter wework test electron/src/host/smart-app-package-validator.test.ts electron/src/host/smart-app-manager.test.ts
@@ -191,10 +191,10 @@ pnpm --filter wework test electron/src/host/smart-app-package-validator.test.ts 
 
 预期：新增断言先失败；现有 Manager 测试保持通过。
 
-- [ ] 将包遍历、hash、manifest 校验、ZIP 解包限制和敏感文件检查移动到 validator；Manager 只调用公开函数。
-- [ ] validator 对目录和解包目录返回统一 `ValidatedSmartAppPackage`，结构问题映射为 `SA-MANIFEST-*` 或 `SA-PACKAGE-*`。
-- [ ] 再次运行同一测试，预期全部通过。
-- [ ] 提交：
+- [x] 将包遍历、hash、manifest 校验、ZIP 解包限制和敏感文件检查移动到 validator；Manager 只调用公开函数。
+- [x] validator 对目录和解包目录返回统一 `ValidatedSmartAppPackage`，结构问题映射为 `SA-MANIFEST-*` 或 `SA-PACKAGE-*`。
+- [x] 再次运行同一测试，预期全部通过。
+- [x] 提交：
 
 ```bash
 git add electron/src/host/smart-app-package-validator.ts electron/src/host/smart-app-package-validator.test.ts electron/src/host/smart-app-manager.ts electron/src/host/smart-app-manager.test.ts
@@ -666,7 +666,8 @@ git commit -m "docs(wework): document smart app verification workflow"
 
 执行者在每个 Task 完成后追加一行，不改写历史结果：
 
-| 日期       | Task   | 提交                                                   | 验证结果                                       | 证据/备注                                |
-| ---------- | ------ | ------------------------------------------------------ | ---------------------------------------------- | ---------------------------------------- |
-| 2026-09-04 | 计划   | 本次计划提交                                           | 文档格式与路径检查通过                         | 设计提交 `5fb59f9bc`                     |
-| 2026-09-04 | Task 1 | `feat(wework): define smart app verification contract` | 14 个聚焦测试、ESLint、Electron typecheck 通过 | 完成严格契约解析和 typed report 基础类型 |
+| 日期       | Task   | 提交                                                     | 验证结果                                            | 证据/备注                                    |
+| ---------- | ------ | -------------------------------------------------------- | --------------------------------------------------- | -------------------------------------------- |
+| 2026-09-04 | 计划   | 本次计划提交                                             | 文档格式与路径检查通过                              | 设计提交 `5fb59f9bc`                         |
+| 2026-09-04 | Task 1 | `feat(wework): define smart app verification contract`   | 14 个聚焦测试、ESLint、Electron typecheck 通过      | 完成严格契约解析和 typed report 基础类型     |
+| 2026-09-04 | Task 2 | `refactor(wework): isolate smart app package validation` | 17 个聚焦/回归测试、ESLint、Electron typecheck 通过 | Manager 删除重复 validator，新增结构化包错误 |

@@ -250,6 +250,32 @@ describe('SmartAppManager', () => {
       expect.objectContaining({ id: created.id })
     )
   })
+
+  test('refreshes linked package metadata through the shared validator', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'wework-smart-app-refresh-'))
+    roots.push(root)
+    const parent = join(root, 'projects')
+    await mkdir(parent)
+    const manager = createManager(root)
+    const created = await manager.createDirectory({
+      parentPath: parent,
+      name: 'refresh-app',
+      displayName: 'Refresh App',
+      description: 'Refresh fixture',
+    })
+    const manifestPath = join(created.packagePath, 'plugin-manifest.json')
+    const manifest = JSON.parse(await readFile(manifestPath, 'utf8')) as WorkbenchAppManifest
+    manifest.version = '0.2.0'
+    await writeFile(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`)
+
+    await expect(manager.list()).resolves.toContainEqual(
+      expect.objectContaining({
+        id: created.id,
+        manifest: expect.objectContaining({ version: '0.2.0' }),
+        state: 'installed',
+      })
+    )
+  })
 })
 
 function createManager(root: string): SmartAppManager {
