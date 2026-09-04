@@ -815,17 +815,17 @@ finish(
 SETUP_SHARED_SKILLS_COMMAND = f"python3 -c {shlex.quote(SETUP_SHARED_SKILLS_SCRIPT)}"
 
 RUNTIME_AUTH_FILE_PATH_HELPER = """
-def runtime_auth_file(runtime):
+def runtime_auth_file(runtime: str) -> Path:
     if runtime != "codex":
         fail(f"unsupported runtime: {runtime}")
 
     configured_home = os.environ.get("WEGENT_CODEX_HOME", "").strip()
     if configured_home:
-        codex_home = Path(configured_home).expanduser()
+        codex_home = Path(configured_home)
     else:
         executor_home = os.environ.get("WEGENT_EXECUTOR_HOME", "").strip()
         base = (
-            Path(executor_home).expanduser()
+            Path(executor_home)
             if executor_home
             else Path.home() / ".wegent-executor"
         )

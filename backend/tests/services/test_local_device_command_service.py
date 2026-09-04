@@ -769,6 +769,7 @@ def test_local_device_command_registry_default_includes_diagnostic_commands():
     assert "WEGENT_RUNTIME_CONFIG_CONTENT" in sync_runtime_auth_file_definition.command
     assert "WEGENT_EXECUTOR_HOME" in sync_runtime_auth_file_definition.command
     assert "WEGENT_CODEX_HOME" in sync_runtime_auth_file_definition.command
+    assert ".expanduser()" not in sync_runtime_auth_file_definition.command
     assert (
         "WEGENT_RUNTIME_CONFIG_TARGET_PATH"
         not in sync_runtime_auth_file_definition.command
@@ -777,6 +778,7 @@ def test_local_device_command_registry_default_includes_diagnostic_commands():
     assert read_runtime_auth_file_definition is not None
     assert "WEGENT_EXECUTOR_HOME" in read_runtime_auth_file_definition.command
     assert "WEGENT_CODEX_HOME" in read_runtime_auth_file_definition.command
+    assert ".expanduser()" not in read_runtime_auth_file_definition.command
     assert (
         "WEGENT_RUNTIME_CONFIG_TARGET_PATH"
         not in read_runtime_auth_file_definition.command

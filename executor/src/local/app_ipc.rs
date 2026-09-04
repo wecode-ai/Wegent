@@ -168,10 +168,10 @@ def iso_mtime(path_stat):
 
 configured_home = os.environ.get("WEGENT_CODEX_HOME", "").strip()
 if configured_home:
-    codex_home = Path(configured_home).expanduser()
+    codex_home = Path(configured_home)
 else:
     executor_home = os.environ.get("WEGENT_EXECUTOR_HOME", "").strip()
-    base = Path(executor_home).expanduser() if executor_home else Path.home() / ".wegent-executor"
+    base = Path(executor_home) if executor_home else Path.home() / ".wegent-executor"
     codex_home = base / "codex"
 target = codex_home / "auth.json"
 result = {
