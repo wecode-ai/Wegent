@@ -146,23 +146,17 @@ export class WeworkSync {
           title: turn.title || '',
         }
       )
-      await this.request(
-        `/wework-transcripts/${encodeURIComponent(turn.transcriptId)}/turns`,
-        'POST',
-        {
-          clientId: this.clientId,
-          baseSequence: turn.sequence - 1,
-          fencingToken: lease.fencingToken,
-          title: turn.title || '',
-          turns: [
-            {
-              turnId: turn.turnId,
-              sequence: turn.sequence,
-              payload: { ...turn.payload, taskId: turn.taskId },
-            },
-          ],
-        }
-      )
+      if (!Number.isSafeInteger(turn.cloudSequence)) {
+        turn.cloudSequence = lease.currentSequence + 1
+        await this.state.save()
+      }
+      try {
+        await this.appendPendingTurn(turn, lease)
+      } catch (error) {
+        if (!isSequenceConflict(error)) throw error
+        const delivered = await this.reconcilePendingTurn(turn)
+        if (!delivered) await this.appendPendingTurn(turn, lease)
+      }
       await this.request(
         `/wework-transcripts/${encodeURIComponent(turn.transcriptId)}/lease/release`,
         'POST',
@@ -174,6 +168,45 @@ export class WeworkSync {
       this.state.value.pending.shift()
       await this.state.save()
     }
+  }
+
+  appendPendingTurn(turn, lease) {
+    return this.request(
+      `/wework-transcripts/${encodeURIComponent(turn.transcriptId)}/turns`,
+      'POST',
+      {
+        clientId: this.clientId,
+        baseSequence: turn.cloudSequence - 1,
+        fencingToken: lease.fencingToken,
+        title: turn.title || '',
+        turns: [
+          {
+            turnId: turn.turnId,
+            sequence: turn.cloudSequence,
+            payload: pendingTurnPayload(turn),
+          },
+        ],
+      }
+    )
+  }
+
+  async reconcilePendingTurn(turn) {
+    const response = await this.request(
+      `/wework-transcripts/${encodeURIComponent(turn.transcriptId)}/turns?after=${Math.max(
+        0,
+        turn.cloudSequence - 1
+      )}&limit=500`
+    )
+    const existing = response.turns?.find(candidate => candidate.turnId === turn.turnId)
+    if (existing) {
+      if (stableJson(existing.payload) !== stableJson(pendingTurnPayload(turn))) {
+        throw new Error('Cloud transcript turn identity has conflicting content')
+      }
+      return true
+    }
+    turn.cloudSequence = response.currentSequence + 1
+    await this.state.save()
+    return false
   }
 
   async pullTranscripts() {
@@ -265,7 +298,7 @@ export class WeworkSync {
         (typeof detail?.message === 'string' && detail.message) ||
         (typeof detail === 'string' && detail) ||
         `Cloud request failed (${response.status})`
-      throw new Error(message)
+      throw new SyncRequestError(message, response.status, detail?.code)
     }
     this.lastError = null
     return response.body
@@ -290,6 +323,15 @@ export class WeworkSync {
         .catch(() => {})
         .finally(() => this.schedule())
     }, this.pollIntervalMs)
+  }
+}
+
+class SyncRequestError extends Error {
+  constructor(message, status, code) {
+    super(message)
+    this.name = 'SyncRequestError'
+    this.status = status
+    this.code = typeof code === 'string' ? code : null
   }
 }
 
@@ -365,6 +407,17 @@ function stableJson(value) {
       .join(',')}}`
   }
   return JSON.stringify(value)
+}
+
+function pendingTurnPayload(turn) {
+  return { ...turn.payload, taskId: turn.taskId }
+}
+
+function isSequenceConflict(error) {
+  return (
+    error instanceof SyncRequestError &&
+    (error.code === 'sequence_conflict' || error.code === 'turn_conflict')
+  )
 }
 
 function dedupeTurns(turns) {

@@ -50,7 +50,7 @@ test('persists a finalized turn before uploading it with a writer lease', async 
       async request(request) {
         requests.push(request)
         if (request.path.endsWith('/lease')) {
-          return { status: 200, body: { fencingToken: 7 } }
+          return { status: 200, body: { fencingToken: 7, currentSequence: 0 } }
         }
         return { status: 200, body: { currentSequence: 1, appended: 1 } }
       },
@@ -73,7 +73,7 @@ test('persists a finalized turn before uploading it with a writer lease', async 
   })
 
   assert.equal(state.value.pending.length, 0)
-  assert.equal(state.saves, 2)
+  assert.equal(state.saves, 3)
   assert.equal(requests.length, 3)
   assert.equal(requests[1].body.baseSequence, 0)
   assert.equal(requests[1].body.fencingToken, 7)
@@ -174,7 +174,7 @@ test('keeps offline turns queued and discovers a cloud connection later', async 
       async request(request) {
         requests.push(request)
         if (request.path.endsWith('/lease')) {
-          return { status: 200, body: { fencingToken: 9 } }
+          return { status: 200, body: { fencingToken: 9, currentSequence: 0 } }
         }
         if (request.path === '/wework-transcripts?includeArchived=true') {
           return { status: 200, body: { items: [] } }
@@ -210,4 +210,86 @@ test('keeps offline turns queued and discovers a cloud connection later', async 
 
   assert.equal(state.value.pending.length, 0)
   assert.equal(requests[0].apiBaseUrl, 'https://cloud.example.com/api')
+})
+
+test('rebases an offline device turn after another device commits its reserved sequence', async () => {
+  const requests = []
+  let appendAttempt = 0
+  const state = {
+    value: {
+      version: 1,
+      pending: [
+        {
+          transcriptId: 'shared-transcript',
+          taskId: 'device-b-task',
+          title: 'Shared task',
+          sequence: 2,
+          cloudSequence: 2,
+          turnId: 'device-b-turn-2',
+          payload: { assistantMessage: 'B recovered' },
+        },
+      ],
+      transcripts: {},
+      preferencesHash: null,
+    },
+    async save() {},
+  }
+  const desktop = {
+    weworkSync: {
+      async request(request) {
+        requests.push(request)
+        if (request.path.endsWith('/lease')) {
+          return { status: 200, body: { fencingToken: 12, currentSequence: 2 } }
+        }
+        if (request.method === 'POST' && request.path.endsWith('/turns')) {
+          appendAttempt += 1
+          if (appendAttempt === 1) {
+            return {
+              status: 409,
+              body: {
+                detail: {
+                  code: 'sequence_conflict',
+                  message: 'Pull remote turns before retrying',
+                },
+              },
+            }
+          }
+          return { status: 200, body: { currentSequence: 3, appended: 1 } }
+        }
+        if (request.method === 'GET' && request.path.includes('/turns?after=1')) {
+          return {
+            status: 200,
+            body: {
+              turns: [{ turnId: 'device-a-turn-2', sequence: 2, payload: {} }],
+              currentSequence: 2,
+              archivedThroughSequence: 0,
+              hasMore: false,
+            },
+          }
+        }
+        return { status: 200, body: {} }
+      },
+    },
+  }
+  const sync = new WeworkSync({
+    apiBaseUrl: 'https://cloud.example.com/api',
+    clientId: 'device-b',
+    desktop,
+    state,
+  })
+
+  await sync.flushPending()
+
+  const appends = requests.filter(
+    request => request.method === 'POST' && request.path.endsWith('/turns')
+  )
+  assert.deepEqual(
+    appends.map(request => request.body.turns[0].sequence),
+    [2, 3]
+  )
+  assert.deepEqual(
+    appends.map(request => request.body.turns[0].turnId),
+    ['device-b-turn-2', 'device-b-turn-2']
+  )
+  assert.equal(state.value.pending.length, 0)
 })

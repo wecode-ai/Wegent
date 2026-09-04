@@ -42,6 +42,17 @@ Clients do not write one row per token or streaming chunk. They append one
 increment only after a turn finishes. `baseSequence`, contiguous `sequence`
 values, and stable `turnId` values make retries idempotent.
 
+A local turn number only describes execution order on one device, while the
+cloud `sequence` is global to the transcript. After acquiring a lease, a
+client reserves the outbox turn's cloud sequence from the Backend
+`currentSequence` and persists it before appending. If another device occupies
+that sequence while the client is offline, the recovering client pulls the
+conflicting position. A matching `turnId` confirms that its earlier append
+succeeded; a different turn rebases the original outbox item onto the latest
+tail without changing its `turnId` or payload. A → B → A handoffs and offline
+recovery therefore cannot overwrite turns already committed by another
+device.
+
 During archival, the Backend encodes hot turns as JSON Lines, compresses them
 as `jsonl.zst`, and uploads the result to private object storage. It deletes hot
 rows only after the object upload succeeds. Object keys use a digest of the

@@ -1,4 +1,4 @@
-import { randomUUID } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
 
 const TERMINAL_EVENTS = new Set([
   'response.completed',
@@ -95,6 +95,7 @@ export class ExecutorSessionProjector {
     const session = this.sessions.get(sessionId) ?? this.sessions.create(sessionId)
     const state = {
       session,
+      deviceId,
       taskId,
       transcriptId: stringField(payload, 'transcriptId') ?? taskId,
       title: stringField(payload, 'taskTitle') ?? '',
@@ -278,7 +279,7 @@ export class ExecutorSessionProjector {
       taskId: state.taskId,
       title: state.title,
       sequence: state.turn,
-      turnId: `${state.transcriptId}:${state.turn}`,
+      turnId: syncTurnId(state),
       payload: {
         userMessages: state.userMessages,
         assistantMessage: state.text,
@@ -298,6 +299,12 @@ export class ExecutorSessionProjector {
     })
     state.sourceEventSeqs.push(appended.seq)
   }
+}
+
+function syncTurnId(state) {
+  return createHash('sha256')
+    .update(`${state.deviceId}\u0000${state.taskId}\u0000${state.subtaskId ?? state.turn}`)
+    .digest('base64url')
 }
 
 export function executorSessionId(deviceId, taskId) {

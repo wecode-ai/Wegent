@@ -34,6 +34,13 @@ Backend 使用三张表：
 客户端不会按 token 或流式 chunk 写数据库。一个 turn 完成后才写入一条增量记录，并通过
 `baseSequence`、连续 `sequence` 和稳定 `turnId` 保证幂等。
 
+本地 turn 序号只描述单台设备上的执行顺序，云端 `sequence` 则是 transcript 的全局
+顺序。客户端取得租约后根据 Backend 返回的 `currentSequence` 为 outbox turn 保留云端
+序号，并在请求前持久化。若设备离线期间其他设备占用了该序号，恢复设备先拉取冲突位置：
+相同 `turnId` 表示前一次提交已成功，只需完成幂等确认；不同 turn 则把原 outbox 项重基
+到最新尾部，`turnId` 和 payload 保持不变。因此 A → B → A 接力及离线恢复不会覆盖其他
+设备已经提交的 turn。
+
 归档时，Backend 先把热 turn 编码为 JSON Lines，再压缩为 `jsonl.zst` 并写入私有对象
 存储。只有对象上传成功后才删除对应热表记录。归档文件的对象 key 使用 transcript ID
 摘要，不暴露原始标识；下载恢复时会重新校验 SHA-256。归档后的新 turn 继续写热表，

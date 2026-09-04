@@ -9,12 +9,15 @@ import {
   ACTIVE_WORKBENCH_SELECTOR,
   createSingleRootLocalProject,
 } from '../modules/shared.mjs'
+import { WeworkSync } from '../../../dsh/transcript-sync/index.js'
 
 const ARCHIVE_TRANSCRIPT_ID = 'desktop-e2e-archived-transcript'
 const FIRST_PROMPT = 'WEWORK_DESKTOP_E2E_TRANSCRIPT_SYNC_COMMIT_RESPONSE_LOST'
 const FIRST_COMPLETION = 'WEWORK_DESKTOP_E2E_TRANSCRIPT_SYNC_COMMIT_RESPONSE_LOST_COMPLETE'
 const SECOND_PROMPT = 'WEWORK_DESKTOP_E2E_TRANSCRIPT_SYNC_LEASE_AND_FENCING_RACE'
 const SECOND_COMPLETION = 'WEWORK_DESKTOP_E2E_TRANSCRIPT_SYNC_LEASE_AND_FENCING_RACE_COMPLETE'
+const THIRD_PROMPT = 'WEWORK_DESKTOP_E2E_TRANSCRIPT_SYNC_A_CONTINUES_WHILE_B_FAILED'
+const THIRD_COMPLETION = 'WEWORK_DESKTOP_E2E_TRANSCRIPT_SYNC_A_CONTINUES_WHILE_B_FAILED_COMPLETE'
 const SYNC_POLL_INTERVAL_MS = 5_000
 
 function json(response, status, body) {
@@ -114,6 +117,47 @@ function transcriptSummary(transcriptId, currentSequence, archives = []) {
   }
 }
 
+function createSimulatedDevice(apiBaseUrl, clientId) {
+  const state = {
+    value: { version: 1, pending: [], transcripts: {}, preferencesHash: null },
+    async save() {},
+  }
+  const desktop = {
+    preferences: {
+      async get() {
+        return {}
+      },
+      async update() {},
+    },
+    weworkSync: {
+      async request(request) {
+        const response = await fetch(`${request.apiBaseUrl}${request.path}`, {
+          method: request.method,
+          headers: {
+            authorization: `Bearer ${clientId}`,
+            ...(request.body === undefined ? {} : { 'content-type': 'application/json' }),
+          },
+          ...(request.body === undefined ? {} : { body: JSON.stringify(request.body) }),
+        })
+        return {
+          status: response.status,
+          body: await response.json(),
+        }
+      },
+    },
+  }
+  return {
+    state,
+    sync: new WeworkSync({
+      apiBaseUrl,
+      clientId,
+      desktop,
+      state,
+      pollIntervalMs: 60_000,
+    }),
+  }
+}
+
 export function createDesktopScenario({ electronUserDataDirectory, uiTimeoutMs, workspacePath }) {
   const port = process.env.WEWORK_E2E_MODEL_SERVER_PORT
   assert.ok(port, 'Transcript sync E2E requires a reserved model server port')
@@ -129,8 +173,12 @@ export function createDesktopScenario({ electronUserDataDirectory, uiTimeoutMs, 
   let firstCommitResponseDropped = false
   let secondLeaseRejected = false
   let secondFencingRejected = false
+  let deviceAClientId = null
+  let failNextDeviceBAppend = false
+  let deviceBAppendFailed = false
   let fencingToken = 0
   let lease = null
+  const deviceB = createSimulatedDevice(apiBaseUrl, 'device-b')
 
   function activeTranscript() {
     assert.ok(activeTranscriptId, 'The active transcript ID was not observed')
@@ -229,10 +277,11 @@ export function createDesktopScenario({ electronUserDataDirectory, uiTimeoutMs, 
         const transcriptId = decodeURIComponent(leaseMatch[1])
         const body = await requestBody(request)
         activeTranscriptId ??= transcriptId
+        if (body.clientId !== 'device-b') deviceAClientId ??= body.clientId
         const transcript = transcripts.get(transcriptId) ?? { turns: [] }
         transcripts.set(transcriptId, transcript)
         const nextSequence = transcript.turns.length + 1
-        if (nextSequence === 2 && !secondLeaseRejected) {
+        if (body.clientId === deviceAClientId && nextSequence === 3 && !secondLeaseRejected) {
           secondLeaseRejected = true
           json(response, 409, {
             detail: {
@@ -263,7 +312,11 @@ export function createDesktopScenario({ electronUserDataDirectory, uiTimeoutMs, 
         appendAttempts.push(structuredClone(body))
         assert.equal(body.turns.length, 1, 'Transcript sync uploaded more than one finalized turn')
 
-        if (body.turns[0].sequence === 2 && !secondFencingRejected) {
+        if (
+          body.clientId === deviceAClientId &&
+          body.turns[0].sequence === 3 &&
+          !secondFencingRejected
+        ) {
           secondFencingRejected = true
           fencingToken += 1
           lease = { clientId: 'competing-device', fencingToken }
@@ -277,6 +330,19 @@ export function createDesktopScenario({ electronUserDataDirectory, uiTimeoutMs, 
           return true
         }
 
+        if (body.clientId === 'device-b' && failNextDeviceBAppend) {
+          failNextDeviceBAppend = false
+          deviceBAppendFailed = true
+          lease = null
+          json(response, 503, {
+            detail: {
+              code: 'device_offline',
+              message: 'Device B lost its network before append completed',
+            },
+          })
+          return true
+        }
+
         assert.deepEqual(
           { clientId: body.clientId, fencingToken: body.fencingToken },
           lease,
@@ -284,15 +350,18 @@ export function createDesktopScenario({ electronUserDataDirectory, uiTimeoutMs, 
         )
         const incoming = body.turns[0]
         const existing = transcript.turns.find(turn => turn.turnId === incoming.turnId)
-        if (!existing) {
-          assert.equal(
-            body.baseSequence,
-            transcript.turns.length,
-            'Transcript append did not continue from the committed sequence'
-          )
-          transcript.turns.push(structuredClone(incoming))
-        } else {
+        if (existing) {
           assert.deepEqual(incoming, existing, 'Idempotent replay changed the committed turn')
+        } else if (body.baseSequence !== transcript.turns.length) {
+          json(response, 409, {
+            detail: {
+              code: 'sequence_conflict',
+              message: 'Transcript sequence has changed; pull remote turns before retrying',
+            },
+          })
+          return true
+        } else {
+          transcript.turns.push(structuredClone(incoming))
         }
 
         if (incoming.sequence === 1 && !firstCommitResponseDropped) {
@@ -336,11 +405,13 @@ export function createDesktopScenario({ electronUserDataDirectory, uiTimeoutMs, 
 
       if (request.method === 'POST' && ['/responses', '/v1/responses'].includes(url.pathname)) {
         const body = JSON.stringify(await requestBody(request))
-        const completion = body.includes(SECOND_PROMPT)
-          ? SECOND_COMPLETION
-          : body.includes(FIRST_PROMPT)
-            ? FIRST_COMPLETION
-            : null
+        const completion = body.includes(THIRD_PROMPT)
+          ? THIRD_COMPLETION
+          : body.includes(SECOND_PROMPT)
+            ? SECOND_COMPLETION
+            : body.includes(FIRST_PROMPT)
+              ? FIRST_COMPLETION
+              : null
         if (!completion) return false
         modelSequence += 1
         const responseId = `wework-transcript-sync-${modelSequence}`
@@ -404,6 +475,31 @@ export function createDesktopScenario({ electronUserDataDirectory, uiTimeoutMs, 
         'A committed turn was not retried idempotently after its response was lost'
       )
 
+      const transcriptId = activeTranscriptId
+      assert.ok(transcriptId, 'Device A did not establish the shared transcript')
+      await deviceB.sync.flush()
+      assert.deepEqual(
+        deviceB.state.value.transcripts[transcriptId].turns.map(turn => turn.sequence),
+        [1],
+        'Device B did not pull device A transcript before continuing'
+      )
+      await deviceB.sync.enqueue({
+        transcriptId,
+        taskId: 'device-b-local-task',
+        title: 'Shared transcript',
+        sequence: 1,
+        turnId: 'device-b-turn-1',
+        payload: { assistantMessage: 'Device B continuation' },
+      })
+      assert.deepEqual(
+        activeTranscript().turns.map(turn => [turn.sequence, turn.turnId]),
+        [
+          [1, activeTranscript().turns[0].turnId],
+          [2, 'device-b-turn-1'],
+        ],
+        'Device B did not append after device A'
+      )
+
       await control.command('fill', ACTIVE_COMPOSER_SELECTOR, { value: SECOND_PROMPT })
       await control.command('press', ACTIVE_COMPOSER_SELECTOR, { key: 'Enter' })
       await control.command('waitFor', '[data-testid="message-assistant"]', {
@@ -414,7 +510,7 @@ export function createDesktopScenario({ electronUserDataDirectory, uiTimeoutMs, 
         () => {
           const transcript = activeTranscript()
           return (
-            transcript.turns.length === 2 &&
+            transcript.turns.length === 3 &&
             secondLeaseRejected &&
             secondFencingRejected &&
             lease === null
@@ -427,8 +523,13 @@ export function createDesktopScenario({ electronUserDataDirectory, uiTimeoutMs, 
       const transcript = activeTranscript()
       assert.deepEqual(
         transcript.turns.map(turn => turn.sequence),
-        [1, 2],
-        'Transcript race recovery committed duplicate or non-contiguous turns'
+        [1, 2, 3],
+        'A→B→A continuation committed duplicate or non-contiguous turns'
+      )
+      assert.equal(
+        transcript.turns[2].payload.assistantMessage,
+        SECOND_COMPLETION,
+        'Device A did not continue after pulling the device B turn'
       )
       assert.equal(
         appendAttempts.filter(item => item.turns[0].sequence === 1).length,
@@ -436,12 +537,79 @@ export function createDesktopScenario({ electronUserDataDirectory, uiTimeoutMs, 
         'The response-loss case did not perform exactly one idempotent replay'
       )
       assert.equal(
-        appendAttempts.filter(item => item.turns[0].sequence === 2).length,
+        appendAttempts.filter(
+          item => item.clientId === deviceAClientId && item.turns[0].sequence === 3
+        ).length,
         2,
         'The fencing race did not retry exactly once with a fresh lease'
       )
+
+      await deviceB.sync.flush()
+      assert.deepEqual(
+        deviceB.state.value.transcripts[transcriptId].turns.map(turn => turn.sequence),
+        [1, 2, 3],
+        'Device B did not observe the A→B→A continuation before going offline'
+      )
+      failNextDeviceBAppend = true
+      await assert.rejects(
+        deviceB.sync.enqueue({
+          transcriptId,
+          taskId: 'device-b-local-task',
+          title: 'Shared transcript',
+          sequence: 2,
+          turnId: 'device-b-turn-2',
+          payload: { assistantMessage: 'Device B pending while offline' },
+        }),
+        /Device B lost its network/u
+      )
+      assert.equal(deviceB.state.value.pending.length, 1, 'Device B lost its offline outbox turn')
+
+      await control.command('fill', ACTIVE_COMPOSER_SELECTOR, { value: THIRD_PROMPT })
+      await control.command('press', ACTIVE_COMPOSER_SELECTOR, { key: 'Enter' })
+      await control.command('waitFor', '[data-testid="message-assistant"]', {
+        text: THIRD_COMPLETION,
+        timeoutMs: uiTimeoutMs,
+      })
+      await waitFor(
+        () => activeTranscript().turns.length === 4 && lease === null,
+        uiTimeoutMs + SYNC_POLL_INTERVAL_MS,
+        'Device A did not continue while device B retained a failed outbox turn'
+      )
+
+      await deviceB.sync.flush()
+      assert.deepEqual(
+        activeTranscript().turns.map(turn => [turn.sequence, turn.turnId]),
+        [
+          [1, activeTranscript().turns[0].turnId],
+          [2, 'device-b-turn-1'],
+          [3, activeTranscript().turns[2].turnId],
+          [4, activeTranscript().turns[3].turnId],
+          [5, 'device-b-turn-2'],
+        ],
+        'Recovered device B overwrote device A instead of rebasing its pending turn'
+      )
+      assert.equal(deviceBAppendFailed, true, 'The device B offline failure was not exercised')
+      assert.deepEqual(
+        deviceB.state.value.pending,
+        [],
+        'Device B outbox remained stuck after rebase'
+      )
+
+      await waitFor(
+        async () => {
+          const state = JSON.parse(await readFile(statePath, 'utf8'))
+          return state.transcripts[transcriptId]?.downloadedThrough === 5 ? state : null
+        },
+        uiTimeoutMs + SYNC_POLL_INTERVAL_MS,
+        'Device A did not pull device B recovered turn'
+      )
       const finalState = JSON.parse(await readFile(statePath, 'utf8'))
       assert.deepEqual(finalState.pending, [], 'Successfully synchronized turns remained in outbox')
+      assert.deepEqual(
+        finalState.transcripts[transcriptId].turns.map(turn => turn.sequence),
+        [1, 2, 3, 4, 5],
+        'Device A local mirror did not converge after device B recovered'
+      )
       await control.command('waitFor', ACTIVE_WORKBENCH_SELECTOR, { timeoutMs: uiTimeoutMs })
     },
 
@@ -449,6 +617,9 @@ export function createDesktopScenario({ electronUserDataDirectory, uiTimeoutMs, 
       return {
         activeTranscriptId,
         appendAttempts,
+        deviceAClientId,
+        deviceBAppendFailed,
+        deviceBPending: deviceB.state.value.pending,
         firstCommitResponseDropped,
         requestLog,
         secondFencingRejected,
