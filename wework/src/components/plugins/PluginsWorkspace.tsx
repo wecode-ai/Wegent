@@ -997,7 +997,8 @@ export function PluginsWorkspace({
                   grantUserCount: access.targets.filter(target => target.entityType === 'user')
                     .length,
                   grantNamespaceCount: access.targets.filter(
-                    target => target.entityType === 'namespace'
+                    target =>
+                      target.entityType === 'namespace' || target.entityType === 'org_department'
                   ).length,
                 }
               : item
@@ -1198,7 +1199,8 @@ export function PluginsWorkspace({
                 grantUserCount: access.targets.filter(target => target.entityType === 'user')
                   .length,
                 grantNamespaceCount: access.targets.filter(
-                  target => target.entityType === 'namespace'
+                  target =>
+                    target.entityType === 'namespace' || target.entityType === 'org_department'
                 ).length,
               }
             : item
@@ -1240,8 +1242,8 @@ export function PluginsWorkspace({
     (value: string) => pluginApi.searchPluginShareUsers(value).then(response => response.users),
     [pluginApi]
   )
-  const searchPluginShareGroups = useCallback(
-    (value: string) => pluginApi.searchPluginShareGroups(value).then(response => response.items),
+  const searchPluginShareDepartments = useCallback(
+    (value: string) => pluginApi.searchPluginShareDepartments(value),
     [pluginApi]
   )
 
@@ -3921,7 +3923,7 @@ export function PluginsWorkspace({
       onClose={() => setPluginShareState(null)}
       onSave={request => void savePluginShare(request)}
       searchUsers={searchPluginShareUsers}
-      searchGroups={searchPluginShareGroups}
+      searchDepartments={searchPluginShareDepartments}
     />
   ) : null
 
@@ -3976,7 +3978,7 @@ export function PluginsWorkspace({
       }}
       onPublish={request => void publishCreatedPlugin(pluginPublishTarget, request)}
       searchUsers={searchPluginShareUsers}
-      searchGroups={searchPluginShareGroups}
+      searchDepartments={searchPluginShareDepartments}
     />
   ) : null
   const openPublicationRevision = (publication: PluginPublicationRequestItem) => {

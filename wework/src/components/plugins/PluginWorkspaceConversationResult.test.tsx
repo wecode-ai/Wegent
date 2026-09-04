@@ -65,7 +65,7 @@ describe('PluginWorkspaceConversationResult', () => {
     createDefaultPluginApi.mockReset()
     createDefaultPluginApi.mockReturnValue({
       searchPluginShareUsers: vi.fn().mockResolvedValue({ users: [] }),
-      searchPluginShareGroups: vi.fn().mockResolvedValue({ items: [] }),
+      searchPluginShareDepartments: vi.fn().mockResolvedValue([]),
     })
   })
 

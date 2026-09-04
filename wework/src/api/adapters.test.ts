@@ -192,14 +192,14 @@ describe('REST adapters', () => {
     expect(client.get).toHaveBeenNthCalledWith(2, '/teams/2/skills')
   })
 
-  test('searches both departments and the organization root for plugin sharing', async () => {
+  test('searches ERP departments for internal plugin sharing', async () => {
     const client = mockClient()
-    vi.mocked(client.get).mockResolvedValueOnce({ items: [], total: 0 })
+    vi.mocked(client.get).mockResolvedValueOnce({ departments: [] })
 
-    await createPluginApi(client).searchPluginShareGroups('研发 部')
+    await createPluginApi(client).searchPluginShareDepartments('研发 部')
 
     expect(client.get).toHaveBeenCalledWith(
-      '/groups/search?q=%E7%A0%94%E5%8F%91%20%E9%83%A8&limit=20&include_organization=true'
+      '/internal/departments/search?q=%E7%A0%94%E5%8F%91%20%E9%83%A8'
     )
   })
 

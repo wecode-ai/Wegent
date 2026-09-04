@@ -42,6 +42,11 @@ from app.schemas.smart_app import (
     SmartAppSubmissionInitResponse,
     SmartAppSubmissionItem,
 )
+from app.services.marketplace_access_target_service import (
+    ORG_DEPARTMENT_ENTITY_TYPE,
+    get_org_department_resource_ids,
+    normalize_org_department_target,
+)
 from app.services.marketplace_artifact_storage import marketplace_artifact_storage
 from app.services.marketplace_submission_upload import (
     build_marketplace_submission_upload_url,
@@ -79,12 +84,22 @@ class SmartAppMarketplaceService:
         tag: str = "",
     ) -> SmartAppMarketplaceListResponse:
         apps = db.query(SmartApp).filter(SmartApp.status == "published").all()
+        org_department_app_ids = get_org_department_resource_ids(
+            db,
+            user_id=user_id,
+            resource_type=ResourceType.SMART_APP.value,
+        )
         normalized_query = query.strip().lower()
         ranked_items: list[tuple[int, SmartAppMarketplaceItem]] = []
         for app in apps:
             if app.visibility == "public" and not app.is_listed:
                 continue
-            role = self._access_role(db, app=app, user_id=user_id)
+            role = self._access_role(
+                db,
+                app=app,
+                user_id=user_id,
+                org_department_app_ids=org_department_app_ids,
+            )
             if role is None:
                 continue
             if role == "owner" and app.visibility != "public":
@@ -892,7 +907,14 @@ class SmartAppMarketplaceService:
             raise HTTPException(status_code=404, detail="Owned Smart app not found")
         return app
 
-    def _access_role(self, db: Session, *, app: SmartApp, user_id: int) -> str | None:
+    def _access_role(
+        self,
+        db: Session,
+        *,
+        app: SmartApp,
+        user_id: int,
+        org_department_app_ids: set[int] | None = None,
+    ) -> str | None:
         if app.source_type == "official" and app.visibility == "public":
             return "official"
         if app.owner_user_id == user_id:
@@ -901,6 +923,14 @@ class SmartAppMarketplaceService:
             return "public"
         if app.visibility != "restricted":
             return None
+        if org_department_app_ids is None:
+            org_department_app_ids = get_org_department_resource_ids(
+                db,
+                user_id=user_id,
+                resource_type=ResourceType.SMART_APP.value,
+            )
+        if app.id in org_department_app_ids:
+            return "recipient"
         namespace_ids = self._user_namespace_ids(db, user_id)
         grant = (
             db.query(ResourceMember.id)
@@ -976,6 +1006,21 @@ class SmartAppMarketplaceService:
                         entityType="user",
                         entityId=str(user.id),
                         displayName=user.user_name,
+                    )
+                )
+                continue
+            if target.entityType == ORG_DEPARTMENT_ENTITY_TYPE:
+                entity_id, display_name = normalize_org_department_target(
+                    db,
+                    entity_id=target.entityId,
+                    display_name=target.displayName,
+                    invalid_detail="Invalid Smart app share department",
+                )
+                normalized.append(
+                    SmartAppAccessTarget(
+                        entityType=ORG_DEPARTMENT_ENTITY_TYPE,
+                        entityId=entity_id,
+                        displayName=display_name,
                     )
                 )
                 continue

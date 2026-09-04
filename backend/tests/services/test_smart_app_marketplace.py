@@ -24,9 +24,11 @@ from app.schemas.smart_app import (
     SmartAppAccessUpdateRequest,
     SmartAppSubmissionInitRequest,
 )
+from app.services.external_entity_resolver import register_entity_resolver
 from app.services.marketplace_artifact_storage import marketplace_artifact_storage
 from app.services.smart_app_download_link import verify_smart_app_download_token
 from app.services.smart_app_marketplace_service import smart_app_marketplace_service
+from tests.utils.mock_resolver import MockDepartmentResolver, cleanup_resolvers
 
 
 def _package(name: str = "research-desk", version: str = "1.0.0") -> bytes:
@@ -526,6 +528,70 @@ def test_department_grant_allows_member_download(test_db, test_user, monkeypatch
     assert claims.smart_app_id == item.id
     assert claims.release_id == item.latestReleaseId
     assert claims.user_id == member.id
+
+
+def test_erp_department_grant_allows_only_department_members(
+    test_db, test_user, monkeypatch, cleanup_resolvers
+):
+    member = _user(test_db, "erp-smart-app-member")
+    outsider = _user(test_db, "erp-smart-app-outsider")
+    register_entity_resolver(
+        "org_department",
+        lambda: MockDepartmentResolver(
+            {member.id: {"dept-2001"}},
+            entity_type="org_department",
+        ),
+    )
+    package = _package()
+    _mock_storage(monkeypatch)
+    request = _submission(package, member)
+    request.targets = [
+        SmartAppAccessTarget(
+            entityType="org_department",
+            entityId="dept-2001",
+            displayName="Client department name",
+        )
+    ]
+    initialized = smart_app_marketplace_service.init_submission(
+        test_db, user_id=test_user.id, request=request
+    )
+    _upload_submission(
+        test_db,
+        submission_id=initialized.submissionId,
+        user_id=test_user.id,
+        package=package,
+    )
+    completed = smart_app_marketplace_service.complete_submission(
+        test_db,
+        submission_id=initialized.submissionId,
+        user_id=test_user.id,
+    )
+
+    assert completed.item is not None
+    access = smart_app_marketplace_service.get_access(
+        test_db,
+        smart_app_id=completed.item.id,
+        user_id=test_user.id,
+    )
+    assert access.targets == [
+        SmartAppAccessTarget(
+            entityType="org_department",
+            entityId="dept-2001",
+            displayName="Dept-dept-2001",
+        )
+    ]
+    assert [
+        item.id
+        for item in smart_app_marketplace_service.list_marketplace(
+            test_db, user_id=member.id
+        ).items
+    ] == [completed.item.id]
+    assert (
+        smart_app_marketplace_service.list_marketplace(
+            test_db, user_id=outsider.id
+        ).items
+        == []
+    )
 
 
 def test_revocation_blocks_future_download_but_does_not_track_local_copy(

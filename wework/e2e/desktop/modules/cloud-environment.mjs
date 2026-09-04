@@ -47,6 +47,10 @@ const CLOUD_PUBLIC_MODEL_OPTIONS = {
   weworkCloudModelResourceUserId: '0',
   weworkCloudModelUpstreamApiFormat: 'openai-responses',
 }
+const E2E_ERP_DEPARTMENT = {
+  department_id: 'wework-e2e-erp-department',
+  name: 'Wework E2E ERP Department',
+}
 
 async function waitForRedisReady(redis, logPath, fromOffset) {
   let spawnError = null
@@ -216,6 +220,73 @@ class LocalPluginObjectStorage {
   }
 }
 
+class LocalErpOpenSearch {
+  async start() {
+    this.port = await reservePort()
+    this.server = createServer((request, response) => {
+      void this.handle(request, response).catch(error => {
+        if (response.headersSent) {
+          response.destroy(error instanceof Error ? error : undefined)
+          return
+        }
+        response.writeHead(500)
+        response.end()
+      })
+    })
+    await new Promise((resolvePromise, reject) => {
+      this.server.once('error', reject)
+      this.server.listen(this.port, '127.0.0.1', resolvePromise)
+    })
+    this.endpoint = `http://127.0.0.1:${this.port}`
+  }
+
+  sendJson(response, body) {
+    response.writeHead(200, { 'Content-Type': 'application/json' })
+    response.end(JSON.stringify(body))
+  }
+
+  async handle(request, response) {
+    const url = new URL(request.url ?? '/', this.endpoint)
+    if (request.method === 'POST' && url.pathname === '/api/oauth/client-token') {
+      request.resume()
+      this.sendJson(response, {
+        data: { access_token: 'wework-e2e-erp-token', expires_in: 3600 },
+      })
+      return
+    }
+    if (request.method === 'GET' && url.pathname === '/api/open/search') {
+      const keyword = url.searchParams.get('keyword') ?? ''
+      const departments = keyword === E2E_ERP_DEPARTMENT.name ? [E2E_ERP_DEPARTMENT] : []
+      this.sendJson(response, { data: { departments, employees: [] } })
+      return
+    }
+    if (request.method === 'POST' && url.pathname === '/api/open/batch-check-membership') {
+      const chunks = []
+      for await (const chunk of request) chunks.push(chunk)
+      const payload = JSON.parse(Buffer.concat(chunks).toString('utf8'))
+      this.sendJson(response, {
+        data: {
+          results: (payload.department_ids ?? []).map(departmentId => ({
+            department_id: departmentId,
+            is_member: departmentId === E2E_ERP_DEPARTMENT.department_id,
+          })),
+        },
+      })
+      return
+    }
+    response.writeHead(404)
+    response.end()
+  }
+
+  async stop() {
+    if (!this.server) return
+    await new Promise(resolvePromise => {
+      this.server.close(resolvePromise)
+      this.server.closeAllConnections?.()
+    })
+  }
+}
+
 class RealCloudEnvironment {
   constructor({
     claudeBinary,
@@ -246,6 +317,8 @@ class RealCloudEnvironment {
     this.remoteDockerExecutorRuntimeLogPath = join(resultDir, 'remote-docker-executor-runtime.log')
     this.pluginObjectStorage = new LocalPluginObjectStorage()
     await this.pluginObjectStorage.start()
+    this.erpOpenSearch = new LocalErpOpenSearch()
+    await this.erpOpenSearch.start()
 
     const redisServer = await startRedisServer(this.redisLogPath)
     this.redisPort = redisServer.port
@@ -281,6 +354,9 @@ class RealCloudEnvironment {
       ATTACHMENT_S3_ACCESS_KEY: 'desktop-e2e-access-key',
       ATTACHMENT_S3_SECRET_KEY: 'desktop-e2e-secret-key',
       ATTACHMENT_S3_USE_SSL: 'false',
+      ERP_OPENSEARCH_BASE_URL: this.erpOpenSearch.endpoint,
+      ERP_CLIENT_ID: 'wework-e2e-client',
+      ERP_CLIENT_secret: 'wework-e2e-secret',
     }
     this.backendEnv = backendEnv
     await runChecked('uv', ['run', 'alembic', 'upgrade', 'head'], {
@@ -1212,6 +1288,7 @@ class RealCloudEnvironment {
     await Promise.all(this.generatedRemoteExecutors.map(executor => stopProcessGroup(executor)))
     await stopProcess(this.backend)
     await this.pluginObjectStorage?.stop()
+    await this.erpOpenSearch?.stop()
     await stopProcess(this.redis)
   }
 }

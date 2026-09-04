@@ -10,7 +10,7 @@ const defaultProps = {
   onClose: vi.fn(),
   onPublish: vi.fn(),
   searchUsers: vi.fn(async () => []),
-  searchGroups: vi.fn(async () => []),
+  searchDepartments: vi.fn(async () => []),
 }
 
 describe('PluginPublishDialog', () => {
@@ -53,13 +53,19 @@ describe('PluginPublishDialog', () => {
     const searchUsers = vi.fn(async () => [
       { id: 7, user_name: 'Alice', email: 'alice@example.com' },
     ])
-    const searchGroups = vi.fn(async () => [{ id: 11, name: 'root', display_name: '微博研发部' }])
+    const searchDepartments = vi.fn(async () => [
+      {
+        entityType: 'org_department' as const,
+        entityId: '11',
+        displayName: '微博研发部',
+      },
+    ])
     render(
       <PluginPublishDialog
         {...defaultProps}
         onPublish={onPublish}
         searchUsers={searchUsers}
-        searchGroups={searchGroups}
+        searchDepartments={searchDepartments}
       />
     )
 
@@ -67,7 +73,7 @@ describe('PluginPublishDialog', () => {
     fireEvent.change(screen.getByTestId('plugin-share-search'), { target: { value: 'Alice' } })
     fireEvent.click(await screen.findByTestId('plugin-share-user-7'))
     fireEvent.change(screen.getByTestId('plugin-share-search'), { target: { value: '研发' } })
-    fireEvent.click(await screen.findByTestId('plugin-share-namespace-11'))
+    fireEvent.click(await screen.findByTestId('plugin-share-department-11'))
     fireEvent.click(screen.getByTestId('plugin-share-allow-copy'))
     fireEvent.click(screen.getByTestId('plugin-share-save-scope'))
 
@@ -76,7 +82,7 @@ describe('PluginPublishDialog', () => {
       visibility: 'personal',
       targets: [
         { entityType: 'user', entityId: '7', displayName: 'Alice' },
-        { entityType: 'namespace', entityId: '11', displayName: '微博研发部' },
+        { entityType: 'org_department', entityId: '11', displayName: '微博研发部' },
       ],
       allowCopy: true,
     })

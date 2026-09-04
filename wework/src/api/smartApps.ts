@@ -1,7 +1,8 @@
 import type { HttpClient } from './http'
-import type { PluginShareGroupSearchItem, PluginShareUserSearchItem } from './plugins'
+import type { PluginShareUserSearchItem } from './plugins'
 import { sha256Hex } from './fileHash'
 import { resolveApiUrl } from './resolveApiUrl'
+import { accessTargetsExtension } from '@extensions/access-targets'
 
 export interface SmartAppMarketplaceTag {
   id: string
@@ -12,7 +13,7 @@ export interface SmartAppMarketplaceTag {
 }
 
 export interface SmartAppAccessTarget {
-  entityType: 'user' | 'namespace'
+  entityType: 'user' | 'namespace' | 'org_department'
   entityId: string
   displayName: string
 }
@@ -163,11 +164,8 @@ export function createSmartAppsApi(client: HttpClient, apiBaseUrl = '') {
       )
       return response.users
     },
-    async searchGroups(query: string) {
-      const response = await client.get<{ items: PluginShareGroupSearchItem[] }>(
-        `/groups/search?q=${encodeURIComponent(query)}&limit=20`
-      )
-      return response.items
+    async searchDepartments(query: string) {
+      return accessTargetsExtension.searchDepartments(client, query)
     },
     getItem(id: number) {
       return client.get<SmartAppMarketplaceItem>(`/smart-apps/marketplace/${id}`)
