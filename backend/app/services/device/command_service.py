@@ -80,11 +80,13 @@ REMOTE_MUTATING_COMMAND_KEYS = frozenset(
         "turn_file_changes_revert",
     }
 )
-REMOTE_DEVICE_COMMAND_KEYS = (
-    REMOTE_READ_ONLY_COMMAND_KEYS | REMOTE_MUTATING_COMMAND_KEYS
-)
-CLOUD_DEVICE_COMMAND_KEYS = REMOTE_DEVICE_COMMAND_KEYS | frozenset(
+RUNTIME_AUTH_COMMAND_KEYS = frozenset(
     {"read_runtime_auth_file", "sync_runtime_auth_file"}
+)
+REMOTE_DEVICE_COMMAND_KEYS = (
+    REMOTE_READ_ONLY_COMMAND_KEYS
+    | REMOTE_MUTATING_COMMAND_KEYS
+    | RUNTIME_AUTH_COMMAND_KEYS
 )
 LOCAL_COMMAND_DEVICE_TYPES = frozenset({DeviceType.LOCAL, DeviceType.APP})
 INTERNAL_DEVICE_COMMAND_KEYS = frozenset({"sync_git_credentials"})
@@ -144,12 +146,7 @@ async def _resolve_dispatch_device_id(
             f"Device command RPC is not supported for {device_type.value} devices"
         )
 
-    supported_command_keys = (
-        CLOUD_DEVICE_COMMAND_KEYS
-        if device_type == DeviceType.CLOUD
-        else REMOTE_DEVICE_COMMAND_KEYS
-    )
-    if command_key not in supported_command_keys:
+    if command_key not in REMOTE_DEVICE_COMMAND_KEYS:
         raise DeviceCommandError(
             f"Device command key '{command_key}' is not supported for "
             f"{device_type.value} devices"

@@ -77,7 +77,7 @@ The Rust executor binary does not bundle the Claude CLI. The runtime environment
 
 #### Use Personal Codex CLI Configuration
 
-By default, the executor uses the Claude/Codex model and provider configuration issued by Wegent. To use personal Codex login information, open Wework **Settings** -> **Personal**, import or upload `~/.codex/auth.json` from a device, and enable the personal configuration. When device heartbeat reports that the local Codex auth file is missing, Wegent syncs the saved auth in the background; if `~/.codex/auth.json` already exists on the device, it is not overwritten. GPT models that use Codex access Codex through that authenticated account.
+By default, the executor uses the Claude/Codex model and provider configuration issued by Wegent. To use personal Codex login information, open Wework **Settings** -> **Personal**, import or upload the local `~/.codex/auth.json`, and enable the personal configuration. When device heartbeat reports that `auth.json` is missing from the executor's Codex Home, Wegent schedules the sync asynchronously; an existing file is not overwritten. Cloud devices use `$WEGENT_EXECUTOR_HOME/codex/auth.json` by default. GPT models that use Codex access Codex through that authenticated account.
 
 If Codex access requires a proxy, first save the personal proxy URL in Wework **Settings** -> **Personal** -> **Proxy**, then enable the Codex proxy switch in **Codex Auth**. Wegent injects `HTTP_PROXY`, `HTTPS_PROXY`, `ALL_PROXY`, and the matching lowercase environment variables when executing Codex. If `NO_PROXY` or `no_proxy` already exists, Wegent keeps that value; otherwise it bypasses `localhost`, `127.0.0.1`, `::1`, and `host.docker.internal` by default.
 
