@@ -2301,6 +2301,23 @@ describe('DesktopWorkbenchLayout', () => {
     )
   }
 
+  test('focuses a restored conversation when its composer mounts', async () => {
+    const { composer } = renderFocusableConversation()
+
+    await waitFor(() => expect(composer).toHaveFocus())
+  })
+
+  test('refocuses a restored conversation when the app window becomes active', async () => {
+    const { composer } = renderFocusableConversation()
+
+    await waitFor(() => expect(composer).toHaveFocus())
+    composer.blur()
+    window.dispatchEvent(new Event('blur'))
+    window.dispatchEvent(new Event('focus'))
+
+    await waitFor(() => expect(composer).toHaveFocus())
+  })
+
   test('focuses the composer from a non-interactive conversation click', async () => {
     const { composer } = renderFocusableConversation()
 

@@ -4692,6 +4692,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
                                         />
                                       )}
                                       <BufferedChatInput
+                                        autoFocus
                                         insertion={conversationSelectionInsertion}
                                         value={paneSession.input}
                                         onChange={paneSession.setInput}

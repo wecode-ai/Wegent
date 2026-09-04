@@ -32,7 +32,7 @@ import {
 
 import { captureVerificationScreenshot } from './workspace-flows.mjs'
 
-async function verifyShortConversationLayout({ composerSelector, control }) {
+async function verifyShortConversationLayout({ composerSelector, control, restartDesktopApp }) {
   const taskRowsBeforeConversation = new Set(
     JSON.parse(await control.command('snapshot', 'body')).testIds.filter(testId =>
       testId.startsWith('runtime-local-task-row-')
@@ -74,6 +74,17 @@ async function verifyShortConversationLayout({ composerSelector, control }) {
     text: FRESH_CHAT_COMPLETION_TEXT,
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
+  await restartDesktopApp()
+  await control.command('focusMainWindow', 'body')
+  await control.command('waitFor', '[data-testid="message-assistant"]', {
+    text: FRESH_CHAT_COMPLETION_TEXT,
+    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+  })
+  await waitForComposerFocus(
+    control,
+    DEFAULT_STEP_TIMEOUT_MS,
+    'Restoring an existing conversation on app startup did not focus the composer'
+  )
   await control.command('click', `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="message-assistant"]`)
   await waitForComposerFocus(
     control,
