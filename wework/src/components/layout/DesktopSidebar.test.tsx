@@ -1667,7 +1667,8 @@ describe('DesktopSidebar', () => {
     const projectsTitle = projectsToggle.querySelector('span')
 
     for (const button of [newTaskButton, pluginsButton, cloudButton]) {
-      expect(button).toHaveClass('font-normal', 'text-[rgb(var(--color-sidebar-text-primary))]')
+      expect(button).not.toHaveClass('font-normal')
+      expect(button).toHaveClass('text-[rgb(var(--color-sidebar-text-primary))]')
     }
     expect(collapseSidebarButton).toHaveClass(
       'text-[rgb(var(--color-sidebar-text-primary))]',
