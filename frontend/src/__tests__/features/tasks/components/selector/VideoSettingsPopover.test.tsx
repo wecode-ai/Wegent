@@ -104,6 +104,8 @@ describe('VideoSettingsPopover', () => {
 
     expect(screen.getByTestId('video-settings-inline')).toBeInTheDocument()
     expect(screen.queryByTestId('video-settings-trigger')).not.toBeInTheDocument()
+    expect(screen.getByTestId('video-duration-option-5')).toHaveClass('min-h-11')
+    expect(screen.getByTestId('video-resolution-option-720p')).toHaveClass('min-h-11')
 
     fireEvent.click(screen.getByTestId('video-ratio-option-9:16'))
     expect(onRatioChange).toHaveBeenCalledWith('9:16')

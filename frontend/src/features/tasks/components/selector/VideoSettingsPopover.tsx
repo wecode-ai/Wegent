@@ -159,7 +159,7 @@ export function VideoSettingsPopover({
                 onClick={() => onDurationChange(duration)}
                 disabled={disabled}
                 className={cn(
-                  'flex-1 rounded-lg border py-2 text-sm transition-colors',
+                  'min-h-11 flex-1 rounded-lg border py-2 text-sm transition-colors',
                   selectedDuration === duration
                     ? 'border-primary bg-primary/5 text-primary'
                     : 'border-border bg-surface text-text-secondary hover:bg-hover',
@@ -189,7 +189,7 @@ export function VideoSettingsPopover({
                 disabled={disabled}
                 title={'tooltip' in option ? option.tooltip : undefined}
                 className={cn(
-                  'flex-1 rounded-lg border py-2 text-sm transition-colors',
+                  'min-h-11 flex-1 rounded-lg border py-2 text-sm transition-colors',
                   selectedResolution === value
                     ? 'border-primary bg-primary/5 text-primary'
                     : 'border-border bg-surface text-text-secondary hover:bg-hover',
