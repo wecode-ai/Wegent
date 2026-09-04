@@ -395,7 +395,11 @@ function AITableGroupFieldPicker({
         setOpen(false)
       }
     }
-    const closeOnScroll = () => setOpen(false)
+    const closeOnScroll = (event: Event) => {
+      const target = event.target
+      if (target instanceof Node && menuRef.current?.contains(target)) return
+      setOpen(false)
+    }
     const closeOnEscape = (event: KeyboardEvent) => {
       if (event.key === 'Escape') setOpen(false)
     }
