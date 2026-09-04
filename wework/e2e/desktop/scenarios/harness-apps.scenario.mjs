@@ -800,6 +800,22 @@ export async function createDesktopScenario({ captureScreenshot, resultDir, uiTi
         )
       )
       await captureScreenshot(control, 'harness-apps-03b4-plugin-reloaded.png', 'body')
+      await control.command(
+        'clickWhenEnabled',
+        '[data-testid="smart-app-development-preview-verify"]',
+        {
+          timeoutMs: uiTimeoutMs,
+        }
+      )
+      await control.command(
+        'waitFor',
+        '[data-testid="smart-app-development-preview-verification-passed"]',
+        {
+          text: '验证通过',
+          timeoutMs: 120_000,
+        }
+      )
+      await captureScreenshot(control, 'harness-apps-03b4-verification-refreshed.png', 'body')
       const developmentWorkspaceTabId = await control.command(
         'getAttribute',
         '[data-workspace-tab-content][aria-hidden="false"]',
