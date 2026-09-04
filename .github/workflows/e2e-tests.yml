@@ -827,7 +827,7 @@ jobs:
           WEGENT_BACKEND_URL: http://localhost:8000
           DEVICE_ID: e2e-claudecode-device
           DEVICE_NAME: E2E ClaudeCode Device
-          DEVICE_TYPE: local
+          DEVICE_TYPE: app
           BIND_SHELL: claudecode
           WEGENT_EXECUTOR_HOME: ${{ runner.temp }}/wegent-executor
           LOCAL_WORKSPACE_ROOT: ${{ runner.temp }}/wegent-workspace

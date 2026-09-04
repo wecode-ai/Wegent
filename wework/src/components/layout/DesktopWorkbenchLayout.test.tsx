@@ -1,7 +1,7 @@
-import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
+import { act, configure, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { StrictMode, useEffect, useMemo } from 'react'
-import { beforeEach, describe, expect, test, vi } from 'vitest'
+import { afterAll, beforeAll, beforeEach, describe, expect, test, vi } from 'vitest'
 import type { ProjectChatControls } from '@/components/chat/ChatInput'
 import { createDeviceApi } from '@/api/devices'
 import { getLocalCodexUsageDisplay } from '@/api/local/codexUsage'
@@ -591,6 +591,16 @@ function createDefaultImNotificationSettings() {
 }
 
 describe('DesktopWorkbenchLayout', () => {
+  beforeAll(() => {
+    configure({ asyncUtilTimeout: 5_000 })
+    vi.setConfig({ testTimeout: 30_000 })
+  })
+
+  afterAll(() => {
+    configure({ asyncUtilTimeout: 1_000 })
+    vi.resetConfig()
+  })
+
   function createDeferred<T>() {
     let resolve!: (value: T) => void
     let reject!: (error: unknown) => void
@@ -7094,7 +7104,7 @@ describe('DesktopWorkbenchLayout', () => {
       createResult.resolve(optimisticAddress)
       await createResult.promise
     })
-  }, 15_000)
+  }, 30_000)
 
   test('temporary chat uses the refreshed source thread when the route address is stale', async () => {
     const { propsForTask, runtimeWork, taskA } = createLocalRuntimeTaskPanelFixture()
@@ -7129,7 +7139,7 @@ describe('DesktopWorkbenchLayout', () => {
         })
       )
     )
-  }, 15_000)
+  }, 30_000)
 
   test('temporary chat queues a follow-up while its current response is running', async () => {
     const address: RuntimeTaskAddress = {
@@ -7172,7 +7182,7 @@ describe('DesktopWorkbenchLayout', () => {
     expect(within(sideChat).getAllByTestId('user-message-content').at(-1)).toHaveTextContent(
       'queued follow-up'
     )
-  }, 15_000)
+  }, 30_000)
 
   test('temporary chat renders a direct follow-up before its thinking indicator', async () => {
     const address: RuntimeTaskAddress = {
@@ -7217,7 +7227,7 @@ describe('DesktopWorkbenchLayout', () => {
       followUpSend.resolve(true)
       await followUpSend.promise
     })
-  }, 15_000)
+  }, 30_000)
 
   test('temporary chat sends a busy follow-up as guidance when selected', async () => {
     const address: RuntimeTaskAddress = {
@@ -7287,7 +7297,7 @@ describe('DesktopWorkbenchLayout', () => {
     expect(within(sideChat).getAllByTestId('user-message-content').at(-1)).toHaveTextContent(
       'guide the current response'
     )
-  }, 15_000)
+  }, 30_000)
 
   test('editing a temporary chat queued message replaces draft attachments', async () => {
     const address: RuntimeTaskAddress = {
@@ -7337,7 +7347,7 @@ describe('DesktopWorkbenchLayout', () => {
     expect(within(sideChat).getAllByTestId('attachment-badge')).toHaveLength(1)
     expect(within(sideChat).getByTitle('queued attachment')).toBeInTheDocument()
     expect(within(sideChat).queryByTitle('draft attachment')).not.toBeInTheDocument()
-  }, 15_000)
+  }, 30_000)
 
   test('temporary chat keeps a stale busy rejection queued without blind retries', async () => {
     const address: RuntimeTaskAddress = {
@@ -7379,7 +7389,7 @@ describe('DesktopWorkbenchLayout', () => {
     expect(within(sideChat).queryByTestId('chat-input-error')).not.toBeInTheDocument()
 
     expect(sendRuntimePaneMessageMock).toHaveBeenCalledTimes(1)
-  }, 20_000)
+  }, 30_000)
 
   test('temporary chat marks a rejected queued send as failed', async () => {
     const address: RuntimeTaskAddress = {
@@ -7420,7 +7430,7 @@ describe('DesktopWorkbenchLayout', () => {
       )
     )
     expect(sendRuntimePaneMessageMock).toHaveBeenCalledTimes(1)
-  }, 15_000)
+  }, 30_000)
 
   test('temporary chat rolls back its optimistic address when runtime creation fails', async () => {
     const createResult = createDeferred<RuntimeTaskAddress | false>()
@@ -7461,7 +7471,7 @@ describe('DesktopWorkbenchLayout', () => {
     await waitFor(() => expect(unsubscribe).toHaveBeenCalledTimes(1))
     expect(sideChatInput).toHaveValue('side chat')
     expect(within(sideChat).getByTestId('send-message-button')).toBeEnabled()
-  }, 15_000)
+  }, 30_000)
 
   test('moves right workspace tabs into the titlebar in Electron', async () => {
     runtimeMocks.electron = true

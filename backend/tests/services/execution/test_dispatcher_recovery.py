@@ -390,9 +390,6 @@ async def test_dispatch_does_not_restore_fork_archive_for_device_target():
             recovery_service,
             create=True,
         ),
-        patch(
-            "app.services.execution.dispatcher.ensure_remote_control_enabled_for_device"
-        ) as ensure_remote_control,
         patch.object(dispatcher.router, "route", return_value=target),
         patch.object(dispatcher, "_update_subtask_to_running", AsyncMock()),
         patch.object(dispatcher, "_dispatch_websocket", AsyncMock()) as dispatch_mock,
@@ -400,7 +397,6 @@ async def test_dispatch_does_not_restore_fork_archive_for_device_target():
         await dispatcher.dispatch(request, device_id="macbook", emitter=emitter)
 
     recovery_service.recover.assert_not_awaited()
-    ensure_remote_control.assert_called_once_with(user_id=7, device_id="macbook")
     dispatch_mock.assert_awaited_once()
 
 

@@ -31,6 +31,7 @@ import {
   Check,
   Settings,
   Cpu,
+  AppWindow,
 } from 'lucide-react'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
@@ -317,7 +318,13 @@ export function DeviceSelectorTab({
   const totalDeviceCount = visibleDevices.length
 
   const localDevices = useMemo(() => {
-    return displayDevices.filter(device => device.device_type !== 'cloud')
+    return displayDevices.filter(
+      device => device.device_type !== 'cloud' && device.device_type !== 'app'
+    )
+  }, [displayDevices])
+
+  const weworkDevices = useMemo(() => {
+    return displayDevices.filter(device => device.device_type === 'app')
   }, [displayDevices])
 
   const cloudDevices = useMemo(() => {
@@ -423,13 +430,19 @@ export function DeviceSelectorTab({
   const renderTriggerContent = () => {
     if (selectedDevice) {
       const devicePrefix =
-        selectedDevice.device_type === 'cloud' ? t('cloud_device_prefix') : t('local_device_prefix')
+        selectedDevice.device_type === 'cloud'
+          ? t('cloud_device_prefix')
+          : selectedDevice.device_type === 'app'
+            ? t('wework_device_prefix')
+            : t('local_device_prefix')
       const displayName = `${devicePrefix}${selectedDevice.name}`
 
       return (
         <>
           {selectedDevice.device_type === 'cloud' ? (
             <Server className="w-3.5 h-3.5 text-primary flex-shrink-0" />
+          ) : selectedDevice.device_type === 'app' ? (
+            <AppWindow className="w-3.5 h-3.5 text-primary flex-shrink-0" />
           ) : (
             <Monitor className="w-3.5 h-3.5 text-primary flex-shrink-0" />
           )}
@@ -504,13 +517,17 @@ export function DeviceSelectorTab({
                 <>
                   {selectedDevice.device_type === 'cloud' ? (
                     <Server className="w-3.5 h-3.5" />
+                  ) : selectedDevice.device_type === 'app' ? (
+                    <AppWindow className="w-3.5 h-3.5" />
                   ) : (
                     <Monitor className="w-3.5 h-3.5" />
                   )}
                   <span className="truncate max-w-[160px]">
                     {selectedDevice.device_type === 'cloud'
                       ? t('cloud_device_prefix')
-                      : t('local_device_prefix')}
+                      : selectedDevice.device_type === 'app'
+                        ? t('wework_device_prefix')
+                        : t('local_device_prefix')}
                     {selectedDevice.name}
                   </span>
                   <span
@@ -611,6 +628,30 @@ export function DeviceSelectorTab({
                   </div>
                   <div className="grid grid-cols-2 gap-2">
                     {localDevices.map(device => (
+                      <DeviceCard
+                        key={device.device_id}
+                        device={device}
+                        isSelected={selectedTargetDeviceId === device.device_id}
+                        isDefault={defaultExecutionTarget === device.device_id}
+                        disabled={disabled || isLoading}
+                        onSelect={() => handleDeviceSelect(device.device_id)}
+                        onSetDefault={e => void handleSetDefaultTarget(e, device.device_id)}
+                      />
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* Wework devices section */}
+              {weworkDevices.length > 0 && (
+                <div className="space-y-2" data-testid="wework-device-section">
+                  <div className="flex items-center gap-2 text-xs font-medium text-text-muted">
+                    <AppWindow className="w-3.5 h-3.5" />
+                    {t('wework_devices_section')}
+                    <span className="text-text-muted/60">({weworkDevices.length})</span>
+                  </div>
+                  <div className="grid grid-cols-2 gap-2">
+                    {weworkDevices.map(device => (
                       <DeviceCard
                         key={device.device_id}
                         device={device}

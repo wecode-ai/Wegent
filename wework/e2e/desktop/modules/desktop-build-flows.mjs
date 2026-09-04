@@ -637,65 +637,25 @@ export async function verifyRemoteDockerCommandFlow(control, cloudEnvironment) {
   await control.command('navigate', 'body', { value: '/' })
 }
 
-export async function verifyLocalRemoteControlFlow(control, cloudEnvironment) {
-  await control.command('setAppPreferences', 'body', {
-    value: JSON.stringify({ remoteControlEnabled: false }),
-  })
+export async function verifyWeworkAppDeviceRegistrationFlow(control, cloudEnvironment) {
   await control.command('navigate', 'body', { value: '/settings/connections' })
-  await control.command('waitFor', '[data-testid="remote-control-toggle"]', {
-    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
-  })
-  assert.equal(
-    await control.command('getAttribute', '[data-testid="remote-control-toggle"]', {
-      value: 'aria-checked',
-    }),
-    'false',
-    'Remote control should default to disabled'
-  )
 
-  const initialDevice = await cloudEnvironment.waitForConnectedAppDevice()
-  assert.ok(initialDevice.runtime_instance_id, 'The app device did not expose a Runtime identity')
-  assert.ok(initialDevice.app_device_id, 'The app device did not expose its physical app identity')
-
-  await control.command('click', '[data-testid="remote-control-toggle"]')
-  const remoteDevice = await cloudEnvironment.waitForDeviceType(initialDevice.device_id, 'remote')
-  assert.equal(remoteDevice.device_id, initialDevice.device_id)
-  assert.equal(remoteDevice.runtime_instance_id, initialDevice.runtime_instance_id)
-  assert.equal(remoteDevice.app_device_id, initialDevice.app_device_id)
-  assert.equal(
-    await control.command('getAttribute', '[data-testid="remote-control-toggle"]', {
-      value: 'aria-checked',
-    }),
-    'true',
-    'Remote control switch did not stay enabled'
-  )
-  const runtimeSettings = await cloudEnvironment.runtimeSettings(initialDevice.device_id)
-  assert.equal(runtimeSettings.device_id, initialDevice.device_id)
-  await captureVerificationScreenshot(control, 'cloud-00-local-remote-control-enabled.png')
-
-  await control.command('click', '[data-testid="remote-control-toggle"]')
-  const appDevice = await cloudEnvironment.waitForDeviceType(initialDevice.device_id, 'app')
-  assert.equal(appDevice.device_id, initialDevice.device_id)
-  assert.equal(appDevice.runtime_instance_id, initialDevice.runtime_instance_id)
-  assert.equal(appDevice.app_device_id, initialDevice.app_device_id)
+  const appDevice = await cloudEnvironment.waitForConnectedAppDevice()
+  assert.ok(appDevice.runtime_instance_id, 'The app device did not expose a Runtime identity')
+  assert.ok(appDevice.app_device_id, 'The app device did not expose its physical app identity')
   assert.equal(
     (await cloudEnvironment.devices()).filter(
-      device => device.device_id === initialDevice.device_id
+      device => device.device_type === 'app' && device.app_device_id === appDevice.app_device_id
     ).length,
     1,
-    'Toggling remote control created a duplicate device registration'
+    'Wework created a duplicate app device registration'
   )
-  assert.equal(
-    await control.command('getAttribute', '[data-testid="remote-control-toggle"]', {
-      value: 'aria-checked',
-    }),
-    'false',
-    'Remote control switch did not stay disabled'
+  const snapshot = JSON.parse(await control.command('snapshot', 'body'))
+  assert.ok(
+    !snapshot.testIds.includes('remote-control-toggle'),
+    'Wework app registration should not depend on a remote-control switch'
   )
-  await assert.rejects(
-    () => cloudEnvironment.runtimeSettings(initialDevice.device_id),
-    /Remote control is disabled for this app device/
-  )
+  await captureVerificationScreenshot(control, 'cloud-00-wework-app-device.png')
   await control.command('navigate', 'body', { value: '/' })
 }
 
@@ -748,7 +708,7 @@ async function verifyCloudProjectFlow(
   await control.command('waitFor', '[data-testid="projects-create-button"]', {
     timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
   })
-  await verifyLocalRemoteControlFlow(control, cloudEnvironment)
+  await verifyWeworkAppDeviceRegistrationFlow(control, cloudEnvironment)
   await verifyRemoteDockerCommandFlow(control, cloudEnvironment)
   await control.command('waitFor', '[data-testid="projects-create-button"]', {
     timeoutMs: WORKBENCH_READY_TIMEOUT_MS,

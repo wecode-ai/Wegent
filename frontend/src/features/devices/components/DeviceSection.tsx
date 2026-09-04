@@ -17,7 +17,7 @@ export interface DeviceSectionProps {
   icon: LucideIcon
   devices: DeviceInfo[]
   emptyMessage: string
-  type?: 'local' | 'cloud' | 'remote'
+  type?: DeviceInfo['device_type']
   children: (device: DeviceInfo) => React.ReactNode
 }
 
@@ -27,7 +27,7 @@ export interface DeviceSectionProps {
  * Features:
  * - Section header with icon, title, and device count
  * - Device grid using render prop pattern
- * - Optional type filtering (local/cloud/remote)
+ * - Optional device type filtering
  * - Empty state placeholder when no devices
  *
  * Usage:
@@ -60,7 +60,7 @@ export function DeviceSection({
     : devices
 
   return (
-    <div>
+    <div data-testid={type ? `device-section-${type}` : undefined}>
       {/* Section header */}
       <div className="flex items-center gap-2 mb-4">
         <Icon className="w-5 h-5 text-text-secondary" />

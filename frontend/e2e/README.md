@@ -151,14 +151,14 @@ pnpm exec playwright test e2e/tests/knowledge/dingtalk-import.spec.ts \
 - Normal mode Chat Shell dialogue and follow-up.
 - Normal mode ClaudeCode dialogue, follow-up, and executor session resume.
 - Coding mode ClaudeCode dialogue and follow-up.
-- Device mode ClaudeCode dialogue and follow-up through a local executor device.
+- Wework app-device discovery, card-to-chat navigation, ClaudeCode dialogue, and follow-up.
 
 The regression runs in the dedicated `executor-e2e-tests` GitHub Actions job. Ordinary sharded E2E jobs skip this spec so they do not install executor dependencies, build executor images, or start executor-manager. It uses global setup authentication like the rest of `frontend/e2e`; no external Playwright auth-state secret is required.
 
 CI starts these support services:
 
 - `utils/mock-model-server.ts` receives real Chat Shell OpenAI-compatible requests and real ClaudeCode Anthropic Messages API requests, then records the second-turn prompt package.
-- A real `executor` local-mode process registers a ClaudeCode device through the Backend `/local-executor` Socket.IO namespace.
+- A real `executor` local-mode process registers a Wework `app` device through the Backend `/local-executor` Socket.IO namespace.
 
 Normal and coding ClaudeCode tests run through the actual executor-manager Docker path and the real `ClaudeCodeAgent` inside an executor container. Device mode runs through the actual Backend-to-local-executor WebSocket path and a real local-mode `ClaudeCodeAgent`. The model endpoint is the only mocked boundary, and the tests assert that the second-turn `/v1/messages` request received by the mock model server contains both the first-turn prompt and context token.
 

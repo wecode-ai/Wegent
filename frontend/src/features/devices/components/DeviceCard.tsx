@@ -161,6 +161,7 @@ export function DeviceCard({
                     onClick={() => onStartTask(device.device_id)}
                     disabled={device.status !== 'online'}
                     className="flex items-center gap-2"
+                    data-testid={`start-device-chat-${device.device_id}`}
                   >
                     <Play className="w-4 h-4" />
                     {t('start_task')}

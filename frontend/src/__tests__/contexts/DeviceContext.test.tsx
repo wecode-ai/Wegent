@@ -80,7 +80,7 @@ describe('DeviceContext', () => {
     })
   })
 
-  it('excludes app-only registrations from Wegent device consumers', async () => {
+  it('includes Wework app registrations in Wegent device consumers', async () => {
     render(
       <DeviceProvider>
         <DeviceProbe />
@@ -89,11 +89,12 @@ describe('DeviceContext', () => {
 
     await waitFor(() => expect(screen.getByTestId('loading-state')).toHaveTextContent('false'))
 
-    expect(screen.getByTestId('device-list')).toHaveTextContent('Local Device,Remote Device')
-    expect(screen.getByTestId('device-list')).not.toHaveTextContent('App Device')
+    expect(screen.getByTestId('device-list')).toHaveTextContent(
+      'Local Device,App Device,Remote Device'
+    )
   })
 
-  it('clears a selection that is not exposed to Wegent web', async () => {
+  it('keeps a selected Wework app device available for chat', async () => {
     render(
       <DeviceProvider>
         <DeviceProbe />
@@ -104,6 +105,6 @@ describe('DeviceContext', () => {
 
     fireEvent.click(screen.getByRole('button', { name: 'Select app device' }))
 
-    await waitFor(() => expect(screen.getByTestId('selected-device')).toHaveTextContent('cloud'))
+    expect(screen.getByTestId('selected-device')).toHaveTextContent('app-device')
   })
 })

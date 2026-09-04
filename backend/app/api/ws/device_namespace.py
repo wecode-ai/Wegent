@@ -84,9 +84,6 @@ from app.services.chat.access import get_token_expiry, verify_jwt_token
 from app.services.chat.storage.db import get_db_session, run_sync_in_executor
 from app.services.chat.webpage_ws_chat_emitter import get_extended_emitter
 from app.services.device.capability_sync_service import device_capability_sync_service
-from app.services.device.remote_control_policy import (
-    remote_control_is_enabled,
-)
 from app.services.device.terminal_session_service import (
     TerminalSessionRecord,
     terminal_session_service,
@@ -1904,16 +1901,15 @@ class DeviceNamespace(socketio.AsyncNamespace):
             ),
             "sync global capabilities after device registration",
         )
-        if remote_control_is_enabled(payload.device_type):
-            from app.tasks.robot_queue_tasks import reconcile_device_executions
+        from app.tasks.robot_queue_tasks import reconcile_device_executions
 
-            self._schedule_background_task(
-                reconcile_device_executions(
-                    user_id=int(user_id),
-                    device_id=payload.device_id,
-                ),
-                "reconcile active executions after device registration",
-            )
+        self._schedule_background_task(
+            reconcile_device_executions(
+                user_id=int(user_id),
+                device_id=payload.device_id,
+            ),
+            "reconcile active executions after device registration",
+        )
 
         logger.info(
             f"[Device WS] Device registered: user={user_id}, device={payload.device_id}"
@@ -2213,21 +2209,16 @@ class DeviceNamespace(socketio.AsyncNamespace):
             f"[Device WS] Heartbeat received: user={user_id}, device={payload.device_id}, "
             f"running_tasks={len(payload.running_task_ids)}"
         )
-        try:
-            device_type = DeviceType(session.get("device_type"))
-        except (TypeError, ValueError):
-            device_type = None
-        if remote_control_is_enabled(device_type):
-            from app.tasks.robot_queue_tasks import reconcile_device_executions
+        from app.tasks.robot_queue_tasks import reconcile_device_executions
 
-            self._schedule_background_task(
-                reconcile_device_executions(
-                    user_id=int(user_id),
-                    device_id=payload.device_id,
-                    needs_confirmation_only=True,
-                ),
-                "reconcile unconfirmed executions after device heartbeat",
-            )
+        self._schedule_background_task(
+            reconcile_device_executions(
+                user_id=int(user_id),
+                device_id=payload.device_id,
+                needs_confirmation_only=True,
+            ),
+            "reconcile unconfirmed executions after device heartbeat",
+        )
 
         return {"success": True}
 
@@ -2240,10 +2231,6 @@ class DeviceNamespace(socketio.AsyncNamespace):
         execution_target_id = session.get("execution_target_id")
         environment = session.get("execution_environment")
         runtime_instance_id = session.get("runtime_instance_id")
-        try:
-            device_type = DeviceType(session.get("device_type"))
-        except (TypeError, ValueError):
-            device_type = None
         if (
             not user_id
             or not runtime_device_id
@@ -2252,8 +2239,6 @@ class DeviceNamespace(socketio.AsyncNamespace):
             or not runtime_instance_id
         ):
             return {"success": False, "error": "Device is not registered"}
-        if not remote_control_is_enabled(device_type):
-            return {"success": True, "task": None}
         runtime_capacity = (
             data.get("runtime_capacity")
             if isinstance(data, dict) and isinstance(data.get("runtime_capacity"), dict)

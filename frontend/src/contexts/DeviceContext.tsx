@@ -24,7 +24,6 @@ import React, {
 } from 'react'
 import { useSocket } from './SocketContext'
 import { deviceApis, DeviceInfo } from '@/apis/devices'
-import { isWegentExecutionDevice } from '@/features/devices/utils/device-visibility'
 import {
   DeviceOnlinePayload,
   DeviceOfflinePayload,
@@ -42,7 +41,7 @@ export interface DeviceUpgradeState {
 }
 
 interface DeviceContextType {
-  /** List of Wegent execution devices (including offline) */
+  /** List of Wegent execution devices, including Wework and offline devices */
   devices: DeviceInfo[]
   /** Currently selected device ID (null = cloud executor) */
   selectedDeviceId: string | null
@@ -106,13 +105,13 @@ export function DeviceProvider({ children }: DeviceProviderProps) {
     [upgradingDevices]
   )
 
-  // Fetch all Wegent execution devices (including offline)
+  // Fetch all Wegent execution devices (including Wework and offline devices)
   const refreshDevices = useCallback(async () => {
     setIsLoading(true)
     setError(null)
     try {
       const response = await deviceApis.getAllDevices()
-      setDevices((response.items || []).filter(isWegentExecutionDevice))
+      setDevices(response.items || [])
     } catch (err) {
       console.error('[DeviceContext] Failed to fetch devices:', err)
       setError('Failed to load devices')
@@ -156,8 +155,7 @@ export function DeviceProvider({ children }: DeviceProviderProps) {
     refreshDevices()
   }, [refreshDevices])
 
-  // Drop stale selections that are no longer available to Wegent web. This
-  // includes app-only registrations filtered out by refreshDevices.
+  // Drop stale selections that no longer exist.
   useEffect(() => {
     if (
       !isLoading &&
