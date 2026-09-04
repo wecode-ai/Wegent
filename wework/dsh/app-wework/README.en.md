@@ -23,6 +23,10 @@ The host declares these standard extension points:
 - `wework.workspace.tab`
 - `wework.workspace.sidebar.tab`
 
+The extension tree is split into catalog, workspace, and shell branches rather
+than flattening every slot under `root`. Workspace and Composer occurrences use
+`session-maybe`; global catalogs and shell surfaces use `root`.
+
 Wework itself runs as a composition of DSH plugins including `ui-core-apps`,
 `ui-core-settings`, `ui-plugin-center`, `ui-applications`, `ui-automations`,
 and `ui-cloud-work`. Third-party plugins inject the same extension points with
@@ -31,25 +35,29 @@ and `ui-cloud-work`. Third-party plugins inject the same extension points with
 ```js
 const inject = ['slots', 'wework']
 
-ctx.slots.inject('wework.workspace.tab', () =>
-  ctx.wework.ui.register(
-    ctx,
-    'wework.workspace.tab',
+ctx.slots.inject('wework.workspace.tab', function* () {
+  const descriptor = {
+    id: 'quality-dashboard',
+    label: 'Quality dashboard',
+    order: 20,
+  }
+  yield ctx.wework.contributions.register(ctx, 'wework.workspace.tab', descriptor)
+  yield ctx.slots.register(
     {
-      id: 'quality-dashboard',
-      label: 'Quality dashboard',
-      order: 20,
+      name: 'wework.workspace.tab',
+      id: descriptor.id,
+      label: descriptor.label,
+      order: descriptor.order,
     },
     QualityDashboard
   )
-)
+})
 ```
 
-`wework` is the Wework host service, with UI extension APIs under
-`ctx.wework.ui`. DSH slots retain only generic identity and ordering options.
-The API attaches the Wework descriptor to the standard DSH component and calls
-`ctx.slots.register(...)`; discovery, rendering, and disposal remain owned by
-DSH, with no secondary registry.
+`ctx.wework.contributions` stores host-readable labels, icons, paths, and module
+metadata. Components register directly with native `ctx.slots.register`, so
+DSH kind, scope, child-slot, store, and inject semantics remain intact. The
+host also exposes dedicated chat, testing, and environment provider registries.
 
 Electron hosts one primary DSH `WebContentsView`. Host features such as the
 Wework built-in browser, file pickers, native windows, and system menus remain

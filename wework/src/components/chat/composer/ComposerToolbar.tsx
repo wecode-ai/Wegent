@@ -5,6 +5,7 @@ import type { ComposerSubmitOptions } from './ComposerTextarea'
 import { useTranslation } from '@/hooks/useTranslation'
 import { Tooltip } from '@/components/ui/tooltip'
 import type { LocalDeviceApp, ModelOptions, RuntimeContextUsage, UnifiedModel } from '@/types/api'
+import type { WorkspaceTarget } from '@/types/workspace-files'
 import { AddContextMenu } from './AddContextMenu'
 import { ComposerModePill, GoalDraftPill } from './GoalDraftPill'
 import { ContextUsageIndicator } from './ContextUsageIndicator'
@@ -20,6 +21,9 @@ import {
   runtimePermissionMode,
 } from '@/features/workbench/runtimePermissionMode'
 import { cn } from '@/lib/utils'
+import { DshContributionSlotSurface } from '@/features/dsh-runtime/DshContributionSlotSurface'
+import { DshMenuActions } from '@/features/dsh-runtime/DshMenuActions'
+import { WEWORK_DSH_SLOTS } from '@/features/dsh-runtime/dshUiSlots'
 
 interface ComposerToolbarProps {
   className?: string
@@ -61,6 +65,7 @@ interface ComposerToolbarProps {
   sendButtonTestId?: string
   leadingContext?: ReactNode
   onListLocalApps?: () => Promise<LocalDeviceApp[]>
+  workspaceTarget?: WorkspaceTarget | null
 }
 
 const COMPACT_TOOLBAR_WIDTH = 475
@@ -106,6 +111,7 @@ export function ComposerToolbar({
   sendButtonTestId = 'send-message-button',
   leadingContext,
   onListLocalApps,
+  workspaceTarget,
 }: ComposerToolbarProps) {
   const { t } = useTranslation('common')
   const toolbarRef = useRef<HTMLDivElement>(null)
@@ -153,6 +159,14 @@ export function ComposerToolbar({
           supervisorEnabled={showExecutionTools && supervisorEnabled}
           supervisorPending={showExecutionTools && supervisorPending}
         />
+        <DshMenuActions location="composer.toolbar" />
+        <div className="contents" data-testid="composer-extension-actions">
+          <DshContributionSlotSurface
+            attachedClassName="contents"
+            props={{ compact, disabled, workspaceTarget }}
+            slot={WEWORK_DSH_SLOTS.composerAction}
+          />
+        </div>
         {showExecutionTools ? (
           <>
             <QuickPhraseMenu

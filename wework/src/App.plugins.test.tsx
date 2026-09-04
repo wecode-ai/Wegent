@@ -136,7 +136,6 @@ const desktopHostMocks = vi.hoisted(() => {
           Object.assign(preferences, params.patch)
           return { ...preferences }
         }
-        if (capability === 'plugins.list') return []
         if (capability === 'smartApps.list') return []
         if (capability === 'executor.plugins.personal.list') return { items: [] }
         if (capability === 'runtime.listCoreDshPlugins') return []

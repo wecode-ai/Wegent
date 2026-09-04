@@ -11,16 +11,25 @@ gate the Wework plugin.
 
 ## Use the bundled development kit
 
-This Skill includes the complete public Wework UI extension catalog and a
-runnable plugin that demonstrates every declared extension point:
+This Skill includes the complete public Wework extension catalog, one
+exhaustive smoke-test plugin, three focused API references, and three
+product-oriented showcase plugins:
 
 - Read [references/extension-points.md](references/extension-points.md) before
   choosing a UI surface. It documents descriptor fields, component props, and
   the browser-module boundary.
 - Inspect [assets/ui-extension-demo](assets/ui-extension-demo) before writing a
-  UI contribution. Copy that directory into the user's writable project when a
-  runnable starting point is useful, then delete every contribution the plugin
-  does not need.
+  low-level UI contribution.
+- Inspect [assets/reference-plugins](assets/reference-plugins) for runnable,
+  independently installable examples of Composer augmentation, persistent
+  workflow UI, and typed desktop-host integration. Copy only the closest
+  example into the user's writable project, then delete every contribution the
+  plugin does not need.
+- Start with [assets/showcase-plugins](assets/showcase-plugins) when the user
+  wants a product-quality example. Workspace Copilot, Test Explorer, and Dev
+  Environments represent popular AI-assistant, testing, and
+  development-environment categories with deliberately different interaction
+  models.
 - Never edit files inside an installed plugin cache. Resolve these resources
   relative to this Skill, and copy examples to the active project first.
 
@@ -31,12 +40,20 @@ The catalog covers all public host slots:
 - Project and workspace: `wework.plugins.action`,
   `wework.project.create.section`, `wework.project.work.section`,
   `wework.workspace.menu.section`, `wework.workspace.tab`,
-  `wework.workspace.sidebar.tab`, and
+  `wework.workspace.sidebar.tab`, `wework.workspace.toolbar.action`,
+  `wework.workspace.bottom-panel.tab`, and
   `wework.runtime-profile.workspace-policy`.
+- Composer: `wework.composer.action`.
 - Context: `wework.task.status`, `wework.environment.section`, and
   `wework.board.card.status`.
 - Shell: `wework.shell.before`, `wework.shell.after`, and
   `wework.shell.overlay`.
+
+It also documents the public `ctx.wework.host`, `backend`, `commands`,
+`composer`, `contributions`, `chat`, `testing`, `environments`, `context`,
+`menus`, `keybindings`, `configuration`, `storage`, and `secrets` services.
+Prefer a command-backed menu contribution when the host already owns the button
+surface; use a raw UI slot when the plugin needs custom rendering.
 
 ## Understand the package boundaries
 
@@ -94,6 +111,10 @@ Start from the user-visible outcome, then select the narrowest matching slot:
 - Create a selectable top-level workspace tab with `wework.workspace.tab`.
 - Add project-scoped inspection or controls with
   `wework.workspace.sidebar.tab`.
+- Add compact workspace-level actions with
+  `wework.workspace.toolbar.action`.
+- Add a full bottom-panel tool with `wework.workspace.bottom-panel.tab`.
+- Add an input-adjacent action with `wework.composer.action`.
 - Add plugin-management actions with `wework.plugins.action`.
 - Add settings with `wework.settings.page`.
 - Use contextual and shell slots only when the UI genuinely belongs to that
@@ -119,7 +140,7 @@ function workspaceTabPath(path, id, title) {
 }
 
 ctx.slots.inject('wework.sidebar.navigation', () =>
-  ctx.wework.ui.register(ctx, 'wework.sidebar.navigation', {
+  ctx.wework.contributions.register(ctx, 'wework.sidebar.navigation', {
     id: 'example.navigation',
     label: 'Example',
     path: workspaceTabPath('/example', 'auxiliary-example', 'Example'),
@@ -136,8 +157,33 @@ Wework modules into a plugin.
 
 ## Build the capability
 
-- Register Wework UI through `ctx.wework.ui.register` and a documented slot.
-- Inject the same slot with `ctx.slots.inject` so registration follows the
+- Register reusable behavior once through `ctx.wework.commands`; invoke that
+  same command from menus, shortcuts, or plugin UI.
+- Register privileged Node behavior through the injected
+  `ctx.weworkPluginRuntime`, then call it from browser UI through a namespaced
+  `ctx.wework.backend` client. Do not invent plugin-specific loopback servers.
+- Use `ctx.wework.host` for typed desktop capabilities; do not call private
+  Electron bridge URLs.
+- Publish state used by visibility and enablement rules through
+  `ctx.wework.context`.
+- Use `ctx.wework.menus` for standard Composer and workspace toolbar actions.
+- A command selected from `composer.slash` receives
+  `invocation.composer`; use its `getValue`, `setValue`, `insertText`, and
+  `focus` methods to edit the active draft without importing Composer internals.
+- Use `ctx.wework.composer.references` for resources that users should discover
+  and insert through the Composer `@` menu.
+- Use `ctx.wework.chat.providers`, `ctx.wework.testing.providers`, or
+  `ctx.wework.environments.providers` when the capability must be reusable
+  across multiple host or plugin surfaces.
+- Use namespaced `ctx.wework.storage` for JSON state and
+  `ctx.wework.secrets` only for sensitive strings.
+- Declare settings through `ctx.wework.configuration`; do not invent a second
+  configuration store.
+- Register host-readable metadata through `ctx.wework.contributions`.
+- Register visual components directly through native `ctx.slots.register`.
+  Do not attach descriptors to component statics or flatten DSH `kind`, `scope`,
+  child slots, stores, and injected business faces into a generic UI API.
+- Inject the same slot with `ctx.slots.inject` so both registrations follow the
   Core DSH lifecycle.
 - Keep contribution ids stable and provide `data-testid` values for interactive
   controls.
@@ -154,22 +200,26 @@ Wework modules into a plugin.
 A minimal browser registration follows this shape:
 
 ```js
-ctx.slots.inject('wework.workspace.sidebar.tab', () =>
-  ctx.wework.ui.register(
-    ctx,
-    'wework.workspace.sidebar.tab',
+ctx.slots.inject('wework.workspace.sidebar.tab', function* () {
+  const descriptor = {
+    id: 'example.inspector',
+    label: 'Inspector',
+    when: { projectKinds: ['wework-core-dsh-plugin'] },
+  }
+  yield ctx.wework.contributions.register(ctx, 'wework.workspace.sidebar.tab', descriptor)
+  yield ctx.slots.register(
     {
-      id: 'example.inspector',
-      label: 'Inspector',
-      when: { projectKinds: ['wework-core-dsh-plugin'] },
+      name: 'wework.workspace.sidebar.tab',
+      id: descriptor.id,
+      label: descriptor.label,
     },
     InspectorPanel
   )
-)
+})
 ```
 
-Use the bundled Demo for complete runnable declarations instead of expanding
-this snippet into guessed APIs.
+Use the exhaustive Demo for API coverage and the three reference plugins for
+product-oriented patterns instead of expanding this snippet into guessed APIs.
 
 ## Debug
 

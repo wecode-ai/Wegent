@@ -59,6 +59,7 @@ describe('ComposerToolbar', () => {
     )
 
     expect(screen.getByTestId('composer-toolbar')).toHaveAttribute('data-compact', 'false')
+    expect(screen.getByTestId('composer-extension-actions')).toBeInTheDocument()
     expect(screen.getByTestId('quick-phrase-layout')).toHaveTextContent('icon')
 
     act(() => {

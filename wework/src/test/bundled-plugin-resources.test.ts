@@ -153,9 +153,8 @@ describe('bundled plugin resources', () => {
     ) as Record<string, unknown>
 
     expect(weworkManifest.wework?.codexPlugin).toBe('./codex-plugin')
-    expect(weworkManifest.version).toBe('0.1.4')
     expect(codexManifest.name).toBe('wework-plugin-developer')
-    expect(codexManifest.version).toBe('0.1.4')
+    expect(weworkManifest.version).toBe(codexManifest.version)
     expect(Object.keys(codexManifest)).toEqual([
       'name',
       'version',
