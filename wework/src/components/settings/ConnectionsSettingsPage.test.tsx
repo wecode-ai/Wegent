@@ -2062,6 +2062,31 @@ describe('ConnectionsSettingsPage', () => {
     expect(moreButton).toHaveClass('bg-background', 'text-text-secondary')
   })
 
+  test('disables remote IDE and terminal actions when the runtime disables them', async () => {
+    api.getAllDevices.mockResolvedValue([
+      remoteDevice({
+        runtime_features: {
+          schemaVersion: 3,
+          interactiveSessions: { codeServer: false, terminal: false },
+        },
+      }),
+    ])
+
+    render(<ConnectionsSettingsPage onBack={vi.fn()} />)
+
+    const terminalButton = await screen.findByTestId('connection-terminal-button-remote-device')
+    const ideButton = screen.getByTestId('connection-code-server-button-remote-device')
+    expect(terminalButton).toBeDisabled()
+    expect(terminalButton).toHaveAttribute('title', '此设备未启用终端')
+    expect(ideButton).toBeDisabled()
+    expect(ideButton).toHaveAttribute('title', '此设备未启用项目 IDE')
+
+    await userEvent.click(terminalButton)
+    await userEvent.click(ideButton)
+    expect(api.startTerminal).not.toHaveBeenCalled()
+    expect(api.startCodeServer).not.toHaveBeenCalled()
+  })
+
   test('shows cloud device metrics while omitting local devices and scaling guidance', async () => {
     runtimeConfigMock.value = {
       appBasePath: '',
