@@ -812,12 +812,15 @@ describe('ProjectAutomationView', () => {
     fireEvent.click(screen.getByTestId(/^automation-node-insert-after-loop-start-/))
     fireEvent.click(screen.getByTestId(/^automation-node-insert-after-branch-loop-start-/))
 
+    const branchNode = await screen.findByTestId(/^loop-body-node-loop-body-/)
+    const branchId = branchNode.getAttribute('data-testid').replace('loop-body-node-', '')
     expect(
-      await screen.findByText('还没有分支，可通过画布中的「新建分支」或右侧加号添加。')
+      await screen.findByText('还没有分支，可通过分支节点右侧的加号添加。')
     ).toBeInTheDocument()
     expect(await screen.findByTestId('branch-node-name')).toBeInTheDocument()
 
-    fireEvent.click(screen.getByTestId('branch-add-condition'))
+    fireEvent.click(screen.getByTestId(`automation-node-insert-after-${branchId}`))
+    fireEvent.click(screen.getByTestId(`automation-node-insert-after-task-${branchId}`))
 
     expect((await screen.findAllByText('分支 1')).length).toBeGreaterThan(0)
   })
@@ -907,14 +910,16 @@ describe('ProjectAutomationView', () => {
     expect(await screen.findByTestId(/^branch-node-branch-/)).toBeInTheDocument()
     expect(screen.getByText('完成后继续')).toBeInTheDocument()
 
-    expect(await screen.findByTestId('branch-node-name')).toBeInTheDocument()
-    fireEvent.click(screen.getByTestId('branch-add-condition'))
+    const branchNode = await screen.findByTestId(/^branch-node-branch-/)
+    const branchId = branchNode.getAttribute('data-testid').replace('branch-node-', '')
+    fireEvent.click(screen.getByTestId(`automation-node-insert-after-${branchId}`))
+    fireEvent.click(screen.getByTestId(`automation-node-insert-after-task-${branchId}`))
     expect((await screen.findAllByText('分支 1')).length).toBeGreaterThan(0)
     expect(screen.getAllByTestId(/^execution-node-step-/)).toHaveLength(3)
     expect(await screen.findByTestId('branch-node-name')).toBeInTheDocument()
   })
 
-  test('creates a branch from the in-node 新建分支 control', async () => {
+  test('creates a branch handler from the right plus with the next available event', async () => {
     const { projectAutomationApi } = renderView()
     projectAutomationApi.update = vi.fn().mockResolvedValue(rule)
     await openRuleEditor()
@@ -924,15 +929,15 @@ describe('ProjectAutomationView', () => {
 
     const branchNode = await screen.findByTestId(/^branch-node-branch-/)
     const branchId = branchNode.getAttribute('data-testid').replace('branch-node-', '')
-    fireEvent.click(screen.getByTestId(`branch-new-${branchId}`))
-    fireEvent.click(screen.getByTestId(`branch-new-confirm-${branchId}`))
+    fireEvent.click(screen.getByTestId(`automation-node-insert-after-${branchId}`))
+    fireEvent.click(screen.getByTestId(`automation-node-insert-after-task-${branchId}`))
 
     expect((await screen.findAllByText('分支 1')).length).toBeGreaterThan(0)
     expect(screen.getAllByTestId(/^execution-node-step-/)).toHaveLength(3)
     expect(await screen.findByTestId('branch-node-name')).toBeInTheDocument()
   })
 
-  test('offers every supported top-level node type from the branch add control', async () => {
+  test('offers every supported top-level node type from the branch right plus', async () => {
     renderView()
     await openRuleEditor()
 
@@ -941,15 +946,12 @@ describe('ProjectAutomationView', () => {
 
     const branchNode = await screen.findByTestId(/^branch-node-branch-/)
     const branchId = branchNode.getAttribute('data-testid').replace('branch-node-', '')
-    fireEvent.click(screen.getByTestId(`branch-new-${branchId}`))
-
-    const kindSelect = screen.getByTestId(`branch-new-kind-${branchId}`)
-    expect(Array.from(kindSelect.querySelectorAll('option')).map(option => option.value)).toEqual([
-      'task',
-      'dynamic',
-      'loop',
-      'branch',
-    ])
+    fireEvent.click(screen.getByTestId(`automation-node-insert-after-${branchId}`))
+    ;['task', 'dynamic', 'loop', 'branch'].forEach(kind => {
+      expect(
+        screen.getByTestId(`automation-node-insert-after-${kind}-${branchId}`)
+      ).toBeInTheDocument()
+    })
   })
 
   test('offers branch and loop-end handlers inside a loop branch', async () => {
@@ -963,14 +965,12 @@ describe('ProjectAutomationView', () => {
 
     const branchNode = await screen.findByTestId(/^loop-body-node-loop-body-/)
     const branchId = branchNode.getAttribute('data-testid').replace('loop-body-node-', '')
-    fireEvent.click(screen.getByTestId(`branch-new-${branchId}`))
-
-    const kindSelect = screen.getByTestId(`branch-new-kind-${branchId}`)
-    expect(Array.from(kindSelect.querySelectorAll('option')).map(option => option.value)).toEqual([
-      'task',
-      'branch',
-      'loopEnd',
-    ])
+    fireEvent.click(screen.getByTestId(`automation-node-insert-after-${branchId}`))
+    ;['task', 'branch', 'loopEnd'].forEach(kind => {
+      expect(
+        screen.getByTestId(`automation-node-insert-after-${kind}-${branchId}`)
+      ).toBeInTheDocument()
+    })
   })
 
   test('creates a branch handler from the right plus and switches to branch settings', async () => {
@@ -1000,10 +1000,10 @@ describe('ProjectAutomationView', () => {
 
     const branchNode = await screen.findByTestId(/^branch-node-branch-/)
     const branchId = branchNode.getAttribute('data-testid').replace('branch-node-', '')
-    fireEvent.click(screen.getByTestId(`branch-new-${branchId}`))
-    fireEvent.click(screen.getByTestId(`branch-new-confirm-${branchId}`))
-    fireEvent.click(screen.getByTestId(`branch-new-${branchId}`))
-    fireEvent.click(screen.getByTestId(`branch-new-confirm-${branchId}`))
+    fireEvent.click(screen.getByTestId(`automation-node-insert-after-${branchId}`))
+    fireEvent.click(screen.getByTestId(`automation-node-insert-after-task-${branchId}`))
+    fireEvent.click(screen.getByTestId(`automation-node-insert-after-${branchId}`))
+    fireEvent.click(screen.getByTestId(`automation-node-insert-after-task-${branchId}`))
 
     const readPosition = handle => {
       const node = handle?.closest('.react-flow__node')
@@ -1050,18 +1050,15 @@ describe('ProjectAutomationView', () => {
 
     const branchNode = await screen.findByTestId(/^branch-node-branch-/)
     const branchId = branchNode.getAttribute('data-testid').replace('branch-node-', '')
-    fireEvent.click(screen.getByTestId(`branch-new-${branchId}`))
-    await waitFor(() => {
-      expect(
-        Array.from(
-          screen.getByTestId(`branch-new-event-${branchId}`).querySelectorAll('option')
-        ).map(option => option.value)
-      ).toContain('change_request.merged')
-    })
-    fireEvent.change(screen.getByTestId(`branch-new-event-${branchId}`), {
-      target: { value: 'change_request.merged' },
-    })
-    fireEvent.click(screen.getByTestId(`branch-new-confirm-${branchId}`))
+    fireEvent.click(screen.getByTestId(`automation-node-insert-after-${branchId}`))
+    fireEvent.click(screen.getByTestId(`automation-node-insert-after-task-${branchId}`))
+    fireEvent.click(screen.getByTestId(`branch-node-main-${branchId}`))
+    await waitFor(() =>
+      expect(screen.getByTestId('branch-condition-source-0')).toHaveValue('gitlab')
+    )
+    await waitFor(() =>
+      expect(screen.getByTestId('branch-condition-event-0')).toHaveValue('change_request.merged')
+    )
 
     expect((await screen.findAllByText(/分支 1/)).length).toBeGreaterThan(0)
     // The branch row applies eventTypeLabel instead of the raw identifier.
@@ -1796,11 +1793,15 @@ describe('ProjectAutomationView', () => {
 
     const branchNode = await screen.findByTestId(/^branch-node-branch-/)
     const branchId = branchNode.getAttribute('data-testid').replace('branch-node-', '')
-    fireEvent.click(screen.getByTestId(`branch-new-${branchId}`))
-    fireEvent.change(screen.getByTestId(`branch-new-event-${branchId}`), {
-      target: { value: 'change_request.checks_failed' },
-    })
-    fireEvent.click(screen.getByTestId(`branch-new-confirm-${branchId}`))
+    fireEvent.click(screen.getByTestId(`automation-node-insert-after-${branchId}`))
+    fireEvent.click(screen.getByTestId(`automation-node-insert-after-task-${branchId}`))
+    fireEvent.click(screen.getByTestId(`branch-node-main-${branchId}`))
+    await waitFor(() =>
+      expect(screen.getByTestId('branch-condition-event-0')).toHaveValue(
+        'change_request.checks_failed'
+      )
+    )
+    expect(screen.getByTestId('branch-condition-source-0')).toHaveValue('github')
     const handlerNode = screen
       .getAllByTestId(/^execution-node-step-/)
       .find(node => node.getAttribute('data-testid') !== 'execution-node-step-1')
@@ -1810,10 +1811,10 @@ describe('ProjectAutomationView', () => {
     })
     fireEvent.click(screen.getByTestId(`branch-node-main-${branchId}`))
     expect(screen.queryByText(/当前项目未连接 GitHub\/GitLab 仓库/)).toBeNull()
-    fireEvent.change(screen.getByTestId('branch-event-wait-platform'), {
+    fireEvent.change(screen.getByTestId('branch-condition-source-0'), {
       target: { value: 'gitlab' },
     })
-    expect(screen.getByTestId('branch-event-wait-platform')).toHaveValue('gitlab')
+    expect(screen.getByTestId('branch-condition-source-0')).toHaveValue('gitlab')
     fireEvent.change(screen.getByTestId('branch-event-wait-mode'), {
       target: { value: 'webhook' },
     })
@@ -1839,10 +1840,10 @@ describe('ProjectAutomationView', () => {
     )
     expect(branch.event_wait).toEqual({
       subject_source: 'upstream_pull_request',
-      source_type: 'gitlab',
       collection_mode: 'poll',
       poll_interval_seconds: 420,
     })
+    expect(branch.branch_conditions[0].source_type).toBe('gitlab')
   })
 
   test('creates a subscription inline inside the trigger settings', async () => {
@@ -1988,8 +1989,8 @@ describe('ProjectAutomationView', () => {
 
     const branchNode = await screen.findByTestId(/^branch-node-branch-/)
     const branchId = branchNode.getAttribute('data-testid').replace('branch-node-', '')
-    fireEvent.click(screen.getByTestId(`branch-new-${branchId}`))
-    fireEvent.click(screen.getByTestId(`branch-new-confirm-${branchId}`))
+    fireEvent.click(screen.getByTestId(`automation-node-insert-after-${branchId}`))
+    fireEvent.click(screen.getByTestId(`automation-node-insert-after-task-${branchId}`))
 
     const handlerNode = screen
       .getAllByTestId(/^execution-node-step-/)

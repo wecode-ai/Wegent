@@ -331,7 +331,6 @@ function createLoopBodyNode(executionCatalog, loopId, kind) {
       y: 0,
       branchConditions: [],
       eventWait: {
-        sourceType: 'github',
         collectionMode: 'poll',
         pollIntervalSeconds: 300,
       },
@@ -380,7 +379,6 @@ function createBranchNode(id = `branch-${Date.now()}`) {
     nodeType: 'branch',
     branchConditions: [],
     eventWait: {
-      sourceType: 'github',
       collectionMode: 'poll',
       pollIntervalSeconds: 300,
     },
@@ -1053,6 +1051,23 @@ export function AutomationRulesView({
       )
     if (hasInvalidBranchCondition(draft.steps)) {
       notify('请为每个分支选择事件类型')
+      return null
+    }
+    const duplicateBranchCondition = nodes =>
+      nodes.find(node => {
+        const conditionKeys = new Set()
+        return (
+          (node.branchConditions ?? []).find(condition => {
+            const key = `${condition.sourceType ?? 'github'}:${condition.eventType ?? ''}`
+            if (conditionKeys.has(key)) return true
+            conditionKeys.add(key)
+            return false
+          }) || duplicateBranchCondition(node.subgraph?.nodes ?? [])
+        )
+      })
+    const duplicatedBranch = duplicateBranchCondition(draft.steps)
+    if (duplicatedBranch) {
+      notify('同一分支下的事件平台和事件类型不能重复')
       return null
     }
     setSaving(true)
@@ -1861,6 +1876,19 @@ function WorkflowEditor({
       ).sort(),
     [eventSourceCatalog]
   )
+  const branchConditionCatalog = useMemo(() => {
+    const sources = (eventSourceCatalog ?? []).filter(
+      source => source.sourceType === 'github' || source.sourceType === 'gitlab'
+    )
+    if (sources.length > 0) {
+      return sources.map(source => ({
+        sourceType: source.sourceType,
+        eventTypes:
+          source.eventTypes?.filter(eventType => eventType.startsWith('change_request.')) ?? [],
+      }))
+    }
+    return [{ sourceType: 'github', eventTypes: eventTypeOptions }]
+  }, [eventSourceCatalog, eventTypeOptions])
   const hasSelectedNode = selectedNode.type !== 'none'
   const showRightPanel = editorSection === 'runs' || hasSelectedNode
 
@@ -2259,9 +2287,20 @@ function WorkflowEditor({
     }))
   }
 
-  const addBranchHandler = (branchId, { kind = 'task', eventType = '', select = 'branch' }) => {
+  const addBranchHandler = (branchId, { kind = 'task', select = 'branch' }) => {
     const branchOwner = findBranchOwner(draft.steps, branchId)
     if (!branchOwner) return
+    const currentConditions = branchOwner.step.branchConditions ?? []
+    const usedKeys = new Set(
+      currentConditions.map(
+        condition => `${condition.sourceType ?? 'github'}:${condition.eventType ?? ''}`
+      )
+    )
+    const defaultCondition = branchConditionCatalog.flatMap(source =>
+      source.eventTypes
+        .filter(eventType => !usedKeys.has(`${source.sourceType}:${eventType}`))
+        .map(eventType => ({ sourceType: source.sourceType, eventType }))
+    )[0] ?? { sourceType: 'github', eventType: '' }
 
     let handlerNode
     let handlerId
@@ -2277,7 +2316,7 @@ function WorkflowEditor({
       onDraftChange(current => {
         const result = insertStepAfter(current.steps, branchId, handlerNode, {
           gap: BRANCH_HANDLER_COLUMN_GAP,
-          condition: { eventType },
+          condition: defaultCondition,
           stack: true,
         })
         if (!result) return current
@@ -2290,7 +2329,7 @@ function WorkflowEditor({
           if (step.id !== branchOwner.step.id) return step
           const result = insertStepAfter(step.subgraph?.nodes ?? [], branchId, handlerNode, {
             gap: LOOP_BODY_HANDLER_COLUMN_GAP,
-            condition: { eventType },
+            condition: defaultCondition,
             stack: true,
             nodeSize: loopBodyNodeSize,
           })
@@ -2450,8 +2489,6 @@ function WorkflowEditor({
               onInsertNode={insertNode}
               onAddBranchHandler={addBranchHandler}
               onAddBranchContinuation={addBranchContinuation}
-              eventTypeOptions={eventTypeOptions}
-              eventSourceCatalog={eventSourceCatalog}
               onAddDagStage={addDagStage}
               onToggleDagDependency={toggleDagDependency}
               onMoveDagStage={moveDagStage}
@@ -2665,7 +2702,6 @@ function WorkflowEditor({
                         eventSourceCatalog={eventSourceCatalog}
                         onChange={updateStep}
                         onDelete={() => onRemoveStep()}
-                        onAddBranchHandler={addBranchHandler}
                       />
                     ) : selectedLoopBody?.nodeType === 'branch' ? (
                       <BranchSettings
@@ -2675,7 +2711,6 @@ function WorkflowEditor({
                         eventSourceCatalog={eventSourceCatalog}
                         onChange={updateLoopBodyStep}
                         onDelete={() => removeLoopBodyStep()}
-                        onAddBranchHandler={addBranchHandler}
                       />
                     ) : selectedLoopBody?.nodeType === 'loopStart' ? (
                       <div className={automationClass('panel-settings')}>
@@ -3698,22 +3733,24 @@ function BranchSettings({
   eventSourceCatalog = [],
   onChange,
   onDelete,
-  onAddBranchHandler,
 }) {
   const { t } = useTranslation('common')
   const conditions = step.branchConditions ?? []
   const eventWait = step.eventWait ?? {
-    sourceType: 'github',
     collectionMode: 'poll',
     pollIntervalSeconds: 300,
   }
   const platformSources = eventSourceCatalog.filter(
     source => source.sourceType === 'github' || source.sourceType === 'gitlab'
   )
-  const selectedSource = platformSources.find(source => source.sourceType === eventWait.sourceType)
-  const sourceEventTypes = (
-    selectedSource?.eventTypes?.length ? selectedSource.eventTypes : eventTypeOptions
-  ).filter(eventType => eventType.startsWith('change_request.'))
+  const eventTypesBySource = new Map(
+    platformSources.map(source => [
+      source.sourceType,
+      (source.eventTypes?.length ? source.eventTypes : eventTypeOptions).filter(eventType =>
+        eventType.startsWith('change_request.')
+      ),
+    ])
+  )
   const updateCondition = (index, key, value) => {
     onChange(
       'branchConditions',
@@ -3737,16 +3774,17 @@ function BranchSettings({
       pollIntervalSeconds: mode === 'poll' ? (eventWait.pollIntervalSeconds ?? 300) : null,
     })
   }
-  const changeSourceType = sourceType => {
-    const source = platformSources.find(candidate => candidate.sourceType === sourceType)
-    const supportedEvents = source?.eventTypes ?? []
-    onChange('eventWait', { ...eventWait, sourceType })
+  const changeConditionSource = (index, sourceType) => {
+    const supportedEvents = eventTypesBySource.get(sourceType) ?? []
+    const current = conditions[index]
+    const nextEventType = supportedEvents.includes(current.eventType)
+      ? current.eventType
+      : (supportedEvents[0] ?? '')
     onChange(
       'branchConditions',
-      conditions.map(condition => ({
-        ...condition,
-        eventType: supportedEvents.includes(condition.eventType) ? condition.eventType : '',
-      }))
+      conditions.map((condition, candidate) =>
+        candidate === index ? { ...condition, sourceType, eventType: nextEventType } : condition
+      )
     )
   }
   return (
@@ -3772,25 +3810,17 @@ function BranchSettings({
             <strong>事件源</strong>
             <span>运行时从当前 Issue 的前序节点交付物中识别 PR/MR</span>
           </div>
-          <small>{eventWait.sourceType === 'gitlab' ? 'GitLab' : 'GitHub'}</small>
+          <small>
+            {[...new Set(conditions.map(condition => condition.sourceType))]
+              .map(sourceType => (sourceType === 'gitlab' ? 'GitLab' : 'GitHub'))
+              .join(' / ')}
+          </small>
         </div>
-        <label className={automationClass('panel-field')}>
-          <span>
-            <i className={automationClass('cascade-index')}>1</i>
-            代码托管平台
-          </span>
-          <select
-            data-testid="branch-event-wait-platform"
-            value={eventWait.sourceType}
-            onChange={event => changeSourceType(event.target.value)}
-          >
-            {[{ sourceType: 'github' }, { sourceType: 'gitlab' }].map(source => (
-              <option key={source.sourceType} value={source.sourceType}>
-                {source.sourceType === 'gitlab' ? 'GitLab' : 'GitHub'}
-              </option>
-            ))}
-          </select>
-        </label>
+        {eventWait.collectionMode === 'poll' ? (
+          <p className={automationClass('execution-hint')} data-testid="branch-event-sources-hint">
+            分支条件可分别选择 GitHub/GitLab；运行时会为绑定的各平台 PR/MR 建立对应采集器。
+          </p>
+        ) : null}
         <label className={automationClass('panel-field')}>
           <span>
             <i className={automationClass('cascade-index')}>2</i>
@@ -3809,7 +3839,7 @@ function BranchSettings({
           <PollIntervalField
             testId="branch-event-wait-poll-interval"
             value={eventWait.pollIntervalSeconds}
-            index={3}
+            index={1}
             onChange={pollIntervalSeconds =>
               onChange('eventWait', { ...eventWait, pollIntervalSeconds })
             }
@@ -3835,7 +3865,7 @@ function BranchSettings({
         <span className={automationClass('branch-conditions-heading')}>分支条件</span>
         {conditions.length === 0 ? (
           <div className={automationClass('branch-conditions-empty')}>
-            还没有分支，可通过画布中的「新建分支」或右侧加号添加。
+            还没有分支，可通过分支节点右侧的加号添加。
           </div>
         ) : (
           conditions.map((condition, index) => {
@@ -3870,6 +3900,20 @@ function BranchSettings({
                 </div>
                 <div className={automationClass('branch-condition-source')}>
                   <label className={automationClass('panel-field')}>
+                    <span>事件平台</span>
+                    <select
+                      data-testid={`branch-condition-source-${index}`}
+                      value={condition.sourceType}
+                      onChange={event => changeConditionSource(index, event.target.value)}
+                    >
+                      {platformSources.map(source => (
+                        <option key={source.sourceType} value={source.sourceType}>
+                          {source.sourceType === 'gitlab' ? 'GitLab' : 'GitHub'}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <label className={automationClass('panel-field')}>
                     <span>事件类型</span>
                     <select
                       data-testid={`branch-condition-event-${index}`}
@@ -3877,7 +3921,7 @@ function BranchSettings({
                       onChange={event => updateCondition(index, 'eventType', event.target.value)}
                     >
                       <option value="">选择事件</option>
-                      {sourceEventTypes.map(eventType => (
+                      {(eventTypesBySource.get(condition.sourceType) ?? []).map(eventType => (
                         <option key={eventType} value={eventType}>
                           {eventTypeLabel(eventType, t)}
                         </option>
@@ -3952,17 +3996,6 @@ function BranchSettings({
           })
         )}
       </div>
-      <button
-        type="button"
-        className={automationClass('branch-add-condition')}
-        data-testid="branch-add-condition"
-        onClick={() =>
-          onAddBranchHandler(step.id, { kind: 'task', eventType: '', select: 'branch' })
-        }
-      >
-        <Plus size={14} />
-        新建分支
-      </button>
       <div className={automationClass('panel-danger-zone compact')}>
         <button
           type="button"

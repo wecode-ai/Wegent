@@ -440,6 +440,7 @@ export interface WorkflowNodeDefinition {
     timeout_seconds?: number | null
   } | null
   branch_conditions?: Array<{
+    source_type: 'github' | 'gitlab'
     event_type: string
     handler_node_ids: string[]
     subscription_id?: string | null
@@ -448,7 +449,6 @@ export interface WorkflowNodeDefinition {
   }>
   event_wait?: {
     subject_source: 'upstream_pull_request'
-    source_type: 'github' | 'gitlab'
     collection_mode: 'webhook' | 'poll'
     poll_interval_seconds?: number | null
   } | null
@@ -503,13 +503,16 @@ export interface WorkflowNodeInstance extends WorkflowNodeDefinition {
   execution_id?: number | null
   automation_run_id?: string | null
   execution_error?: string | null
-  collector_id?: string | null
-  collector_state?: {
-    mode?: string
-    status?: string
-    error?: string | null
-    created_at?: string
-  } | null
+  collectors?: Record<
+    string,
+    {
+      collector_id: string
+      mode?: string
+      status?: string
+      error?: string | null
+      created_at?: string
+    }
+  >
 }
 
 export interface IssueWorkflowInstance {

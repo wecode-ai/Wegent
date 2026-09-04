@@ -44,7 +44,11 @@ def _branch_nodes(nodes: list[dict[str, Any]]) -> list[dict[str, Any]]:
         for node in nodes
         if node.get("node_type") == "branch"
         and isinstance(node.get("event_wait"), dict)
-        and node.get("event_wait", {}).get("source_type") in {"github", "gitlab"}
+        and any(
+            isinstance(condition, dict)
+            and condition.get("source_type") in {"github", "gitlab"}
+            for condition in node.get("branch_conditions") or []
+        )
     ]
 
 
@@ -52,8 +56,15 @@ def _armed(branch: Mapping[str, Any]) -> bool:
     return branch.get("status") in {"waiting", "reacting"}
 
 
-def _platform(branch: Mapping[str, Any]) -> str:
-    return str(branch["event_wait"].get("source_type") or "github")
+def _platforms(branch: Mapping[str, Any]) -> list[str]:
+    return list(
+        dict.fromkeys(
+            str(condition.get("source_type"))
+            for condition in branch.get("branch_conditions") or []
+            if isinstance(condition, dict)
+            and condition.get("source_type") in {"github", "gitlab"}
+        )
+    )
 
 
 def _poll_interval(branch: Mapping[str, Any]) -> int:
@@ -251,70 +262,64 @@ def ensure_branch_collectors(
     changed = 0
     for branch in branches:
         try:
-            platform = _platform(branch)
-            change_request = _bound_change_request(db, item, platform)
-            if change_request is None:
-                continue
-            collector_id = branch.get("collector_id")
-            hook = db.get(ProjectIncomingHook, collector_id) if collector_id else None
-            if (
-                hook is None
-                or hook.status != "active"
-                or not loop_datetime_value_is_unset(hook.deleted_at)
-            ):
-                event_wait = branch.get("event_wait") or {}
-                mode = str(event_wait.get("collection_mode") or "poll")
-                resource = _collector_resource(platform, change_request)
-                hook = _existing_collector(
-                    db,
-                    project_id=str(project.id),
-                    platform=platform,
-                    mode=mode,
-                    resource=resource,
+            collectors = _collectors(branch)
+            event_wait = branch.get("event_wait") or {}
+            mode = str(event_wait.get("collection_mode") or "poll")
+            for platform in _platforms(branch):
+                collector = collectors.get(platform)
+                hook = (
+                    db.get(ProjectIncomingHook, collector.get("collector_id"))
+                    if collector
+                    else None
                 )
                 if hook is None:
-                    hook = _create_collector(
+                    change_request = _bound_change_request(db, item, platform)
+                    if change_request is None:
+                        continue
+                    resource = _collector_resource(platform, change_request)
+                    hook = _existing_collector(
                         db,
-                        project=project,
-                        item=item,
-                        user_id=user_id,
+                        project_id=str(project.id),
                         platform=platform,
                         mode=mode,
                         resource=resource,
-                        poll_interval=_poll_interval(branch),
                     )
-                    hook.due_at = utcnow()
-            if hook is None:
-                continue
-            refs = _hook_refs(hook)
-            node_refs = refs.get(str(item.id))
-            if (
-                not isinstance(node_refs, list)
-                or str(branch.get("id")) not in node_refs
-            ):
-                node_refs = list(node_refs) if isinstance(node_refs, list) else []
-                node_refs.append(str(branch.get("id")))
-                refs[str(item.id)] = node_refs
-                _save_hook_refs(db, hook, refs)
-            if str(branch.get("collector_id") or "") != str(hook.id):
-                branch["collector_id"] = str(hook.id)
-                branch["collector_state"] = {
-                    "mode": str(
-                        (branch.get("event_wait") or {}).get("collection_mode")
-                        or "poll"
-                    ),
-                    "status": (
-                        "needs_registration"
-                        if str(
-                            (branch.get("event_wait") or {}).get("collection_mode")
-                            or "poll"
+                    if hook is None:
+                        hook = _create_collector(
+                            db,
+                            project=project,
+                            item=item,
+                            user_id=user_id,
+                            platform=platform,
+                            mode=mode,
+                            resource=resource,
+                            poll_interval=_poll_interval(branch),
                         )
-                        == "webhook"
-                        else "active"
-                    ),
-                    "created_at": utcnow().isoformat(),
-                }
-                changed += 1
+                        hook.due_at = utcnow()
+                if hook is None:
+                    continue
+                refs = _hook_refs(hook)
+                node_refs = refs.get(str(item.id))
+                if (
+                    not isinstance(node_refs, list)
+                    or str(branch.get("id")) not in node_refs
+                ):
+                    node_refs = list(node_refs) if isinstance(node_refs, list) else []
+                    node_refs.append(str(branch.get("id")))
+                    refs[str(item.id)] = node_refs
+                    _save_hook_refs(db, hook, refs)
+                current = collectors.get(platform) or {}
+                if str(current.get("collector_id") or "") != str(hook.id):
+                    collectors[platform] = {
+                        "collector_id": str(hook.id),
+                        "mode": mode,
+                        "status": (
+                            "needs_registration" if mode == "webhook" else "active"
+                        ),
+                        "created_at": current.get("created_at") or utcnow().isoformat(),
+                    }
+                    branch["collectors"] = collectors
+                    changed += 1
         except HTTPException as exc:
             db.rollback()
             logger.warning(
@@ -339,6 +344,11 @@ def ensure_branch_collectors(
     return changed
 
 
+def _collectors(branch: Mapping[str, Any]) -> dict[str, dict[str, Any]]:
+    collectors = branch.get("collectors")
+    return dict(collectors) if isinstance(collectors, dict) else {}
+
+
 def _workflow_terminal(nodes: list[dict[str, Any]]) -> bool:
     required = [node for node in nodes if node.get("required", True)]
     return bool(required) and all(
@@ -359,9 +369,10 @@ def release_item_collectors(
     if not nodes:
         return 0
     collector_ids = {
-        str(node.get("collector_id"))
+        str(collector.get("collector_id"))
         for node in _branch_nodes(nodes)
-        if node.get("collector_id")
+        for collector in _collectors(node).values()
+        if collector.get("collector_id")
     }
     if not collector_ids:
         return 0

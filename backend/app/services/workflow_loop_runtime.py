@@ -50,6 +50,12 @@ def root_branch_nodes(nodes: list[dict]) -> list[dict]:
     ]
 
 
+def _condition_key(source: object, event_type: object) -> str:
+    if source is None:
+        source = "wework" if str(event_type).startswith("task.") else "github"
+    return f"{source}:{str(event_type or '')}"
+
+
 def active_loop_timeout_expired(loop: Mapping[str, Any]) -> bool:
     deadline = loop.get("loop_deadline")
     if not deadline or loop.get("loop_state") != "active":
@@ -95,8 +101,11 @@ def _activate_loop(loop: dict, nodes: list[dict]) -> None:
 
 def _start_reaction(branch: dict, event: Mapping[str, Any]) -> None:
     branch["status"] = "reacting"
-    branch["active_condition"] = event["event_type"]
+    branch["active_condition"] = _condition_key(
+        event.get("source"), event["event_type"]
+    )
     branch["last_event"] = {
+        "source": event.get("source") or "github",
         "event_type": event["event_type"],
         "event_id": event.get("event_id") or "",
         "subject_id": event.get("subject_id") or "",
@@ -149,7 +158,9 @@ def advance_root_branches(nodes: list[dict]) -> None:
             if branch.get("status") != "reacting":
                 break
             conditions = {
-                condition.get("event_type"): condition
+                _condition_key(
+                    condition.get("source_type"), condition.get("event_type")
+                ): condition
                 for condition in (branch.get("branch_conditions") or [])
                 if isinstance(condition, dict)
             }
@@ -272,7 +283,9 @@ def _advance_loop(
                 _consume_pending(branch)
             if branch.get("status") == "reacting":
                 conditions = {
-                    condition.get("event_type"): condition
+                    _condition_key(
+                        condition.get("source_type"), condition.get("event_type")
+                    ): condition
                     for condition in (branch.get("branch_conditions") or [])
                     if isinstance(condition, dict)
                 }
@@ -425,14 +438,6 @@ def _matching_branch(
         and node.get("status") in {"waiting", "reacting"}
     ]
     for branch in candidates:
-        event_wait = branch.get("event_wait")
-        if (
-            isinstance(event_wait, dict)
-            and event.source in {"github", "gitlab"}
-            and event_wait.get("source_type") in {"github", "gitlab"}
-            and event_wait.get("source_type") != event.source
-        ):
-            continue
         conditions = branch.get("branch_conditions") or []
         if any(_condition_matches_event(condition, event) for condition in conditions):
             return branch
@@ -445,7 +450,10 @@ def _condition_matches_event(
 ) -> bool:
     if not isinstance(condition, dict):
         return False
-    return condition.get("event_type") == event.event_type
+    source = condition.get("source_type")
+    if source is None:
+        source = "wework" if event.event_type.startswith("task.") else "github"
+    return source == event.source and condition.get("event_type") == event.event_type
 
 
 def route_event_to_workflow_loop(
@@ -479,6 +487,7 @@ def route_event_to_workflow_loop(
         ):
             pending.append(
                 {
+                    "source": event.source,
                     "event_type": event.event_type,
                     "event_id": event_id,
                     "subject_id": event.subject_id,
@@ -493,6 +502,7 @@ def route_event_to_workflow_loop(
     _start_reaction(
         branch,
         {
+            "source": event.source,
             "event_type": event.event_type,
             "event_id": event.event_id,
             "subject_id": event.subject_id,
@@ -525,7 +535,9 @@ def loop_handler_run_ids(item: LoopItem) -> list[str]:
         if branch is None or branch.get("status") != "reacting":
             continue
         conditions = {
-            condition.get("event_type"): condition
+            _condition_key(
+                condition.get("source_type"), condition.get("event_type")
+            ): condition
             for condition in (branch.get("branch_conditions") or [])
             if isinstance(condition, dict)
         }
@@ -557,7 +569,9 @@ def forced_loop_handler_run_ids(item: LoopItem) -> list[str]:
         if branch is None:
             continue
         conditions = {
-            condition.get("event_type"): condition
+            _condition_key(
+                condition.get("source_type"), condition.get("event_type")
+            ): condition
             for condition in (branch.get("branch_conditions") or [])
             if isinstance(condition, dict)
         }
@@ -607,6 +621,7 @@ def _apply_condition_event(branch: dict, event: Mapping[str, Any]) -> None:
         ):
             pending.append(
                 {
+                    "source": str(event.get("source") or ""),
                     "event_type": event.get("event_type"),
                     "event_id": event_id,
                     "subject_id": str(event.get("subject_id") or ""),
@@ -689,14 +704,6 @@ def catch_up_branch_events(
                 event_id=str(row.public_id or row.id),
                 subscription_id=str(row.parent_id or ""),
             )
-            event_wait = branch.get("event_wait")
-            if (
-                isinstance(event_wait, dict)
-                and event.source in {"github", "gitlab"}
-                and event_wait.get("source_type") in {"github", "gitlab"}
-                and event_wait.get("source_type") != event.source
-            ):
-                continue
             if not any(
                 _condition_matches_event(condition, event) for condition in conditions
             ):
@@ -706,6 +713,7 @@ def catch_up_branch_events(
             _apply_condition_event(
                 branch,
                 {
+                    "source": event.source,
                     "event_type": event.event_type,
                     "event_id": event.event_id or "",
                     "subject_id": event.subject_id,

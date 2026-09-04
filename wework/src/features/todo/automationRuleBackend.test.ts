@@ -569,12 +569,12 @@ describe('automationRuleBackend', () => {
               y: 0,
               dependencies: ['ls'],
               eventWait: {
-                sourceType: 'gitlab',
                 collectionMode: 'poll',
                 pollIntervalSeconds: 180,
               },
               branchConditions: [
                 {
+                  sourceType: 'gitlab',
                   eventType: 'change_request.checks_failed',
                   handlerNodeIds: ['fix1'],
                 },
@@ -629,6 +629,7 @@ describe('automationRuleBackend', () => {
     const branch = definition.nodes.find(node => node.node_type === 'branch')
     expect(branch?.branch_conditions).toEqual([
       {
+        source_type: 'gitlab',
         event_type: 'change_request.checks_failed',
         handler_node_ids: ['fix1'],
       },
@@ -639,10 +640,10 @@ describe('automationRuleBackend', () => {
     ])
     expect(branch?.event_wait).toEqual({
       subject_source: 'upstream_pull_request',
-      source_type: 'gitlab',
       collection_mode: 'poll',
       poll_interval_seconds: 180,
     })
+    expect(branch?.branch_conditions[0].source_type).toBe('gitlab')
     const fix = definition.nodes.find(node => node.id === 'fix1')
     expect(fix).toMatchObject({ loop_id: 'loop1', depends_on: ['br'], execution_mode: 'robot' })
     const start = definition.nodes.find(node => node.id === 'ls')

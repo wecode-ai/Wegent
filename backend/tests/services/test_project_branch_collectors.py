@@ -67,16 +67,17 @@ def _definition() -> ProjectWorkflowDefinition:
                 loop_id="loop1",
                 depends_on=["ls"],
                 event_wait={
-                    "source_type": "gitlab",
                     "collection_mode": "poll",
                     "poll_interval_seconds": 120,
                 },
                 branch_conditions=[
                     {
+                        "source_type": "gitlab",
                         "event_type": "change_request.comment_created",
                         "handler_node_ids": ["fix1"],
                     },
                     {
+                        "source_type": "gitlab",
                         "event_type": "change_request.merged",
                         "handler_node_ids": ["le"],
                     },
@@ -102,6 +103,19 @@ def _definition() -> ProjectWorkflowDefinition:
     )
 
 
+def _multi_platform_definition() -> ProjectWorkflowDefinition:
+    definition = _definition()
+    branch = next(node for node in definition.nodes if node.id == "br")
+    branch.branch_conditions[0] = branch.branch_conditions[0].model_copy(
+        update={
+            "source_type": "github",
+            "handler_node_ids": ["fix1"],
+        },
+    )
+    branch.branch_conditions[1].source_type = "gitlab"
+    return definition
+
+
 def _project(test_db) -> CloudProject:
     project = CloudProject(
         project_key="TESTBRANCH",
@@ -121,8 +135,9 @@ def _item(
     *,
     armed: bool = True,
     mr_number: int = 7,
+    definition: ProjectWorkflowDefinition | None = None,
 ) -> LoopItem:
-    instance = instantiate_workflow(_definition())
+    instance = instantiate_workflow(definition or _definition())
     by_id = {node.id: node for node in instance.nodes}
     if armed:
         by_id["start"].status = "completed"
@@ -165,6 +180,19 @@ def _item(
             head_branch="fix/comment",
             base_branch="main",
             head_commit="abc1234",
+            source="delivery",
+        ),
+    )
+    project_change_request_binding_service.upsert(
+        test_db,
+        binding=binding,
+        values=ChangeRequestBindingInput(
+            provider="github",
+            url=f"https://github.example/acme/app/pull/{mr_number + 10}",
+            number=mr_number + 10,
+            head_branch="fix/comment",
+            base_branch="main",
+            head_commit="def5678",
             source="delivery",
         ),
     )
@@ -212,9 +240,9 @@ def test_ensure_creates_poll_collector_and_records_node_state(test_db):
     assert metadata["scope"] == {"source": "branch_wait"}
     assert metadata["resource"]["path"] == "acme/app"
     branch = next(node for node in nodes if node["id"] == "br")
-    assert branch["collector_id"] == str(hook.id)
-    assert branch["collector_state"]["mode"] == "poll"
-    assert branch["collector_state"]["status"] == "active"
+    assert branch["collectors"]["gitlab"]["collector_id"] == str(hook.id)
+    assert branch["collectors"]["gitlab"]["mode"] == "poll"
+    assert branch["collectors"]["gitlab"]["status"] == "active"
 
 
 def test_ensure_is_idempotent(test_db):
@@ -230,12 +258,30 @@ def test_ensure_is_idempotent(test_db):
     assert _hook_count(test_db, project, "poll") == 1
 
 
+def test_ensure_creates_one_collector_per_selected_platform(test_db):
+    project = _project(test_db)
+    item = _item(
+        test_db,
+        project,
+        definition=_multi_platform_definition(),
+    )
+    nodes = _nodes(item)
+    created = ensure_branch_collectors(test_db, item, nodes=nodes)
+
+    assert created == 2
+    branch = next(node for node in nodes if node["id"] == "br")
+    assert set(branch["collectors"]) == {"github", "gitlab"}
+    assert _hook_count(test_db, project, "poll") == 2
+
+
 def test_release_disables_collector_when_workflow_terminal(test_db):
     project = _project(test_db)
     item = _item(test_db, project)
     nodes = _nodes(item)
     ensure_branch_collectors(test_db, item, nodes=nodes)
-    hook_id = next(node for node in nodes if node["id"] == "br")["collector_id"]
+    hook_id = next(node for node in nodes if node["id"] == "br")["collectors"][
+        "gitlab"
+    ]["collector_id"]
 
     for node in nodes:
         node["status"] = "completed"
@@ -256,7 +302,9 @@ def test_release_keeps_shared_collector_for_other_item(test_db):
     ensure_branch_collectors(test_db, first, nodes=first_nodes)
     ensure_branch_collectors(test_db, second, nodes=second_nodes)
     assert _hook_count(test_db, project, "poll") == 1
-    hook_id = next(node for node in first_nodes if node["id"] == "br")["collector_id"]
+    hook_id = next(node for node in first_nodes if node["id"] == "br")["collectors"][
+        "gitlab"
+    ]["collector_id"]
 
     for node in first_nodes:
         node["status"] = "completed"

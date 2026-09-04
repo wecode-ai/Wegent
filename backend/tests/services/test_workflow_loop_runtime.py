@@ -10,6 +10,7 @@ import pytest
 from app.models.delivery import (
     CloudProject,
     LoopItem,
+    LoopItemTaskBinding,
     ProjectAutomationRule,
     ProjectAutomationRun,
 )
@@ -65,7 +66,6 @@ def _nodes(
             loop_id="loop1",
             depends_on=["ls"],
             event_wait={
-                "source_type": "github",
                 "collection_mode": "poll",
             },
             branch_conditions=[
@@ -158,7 +158,7 @@ def test_root_branch_reacts_releases_handlers_and_completes():
     nodes = [node.model_dump(mode="json") for node in _root_branch_instance().nodes]
     by_id = _by_id(nodes)
     by_id["br1"]["status"] = "reacting"
-    by_id["br1"]["active_condition"] = "task.status_changed"
+    by_id["br1"]["active_condition"] = "wework:task.status_changed"
     advance_root_branches(nodes)
     assert by_id["fix1"]["status"] == "ready"
     assert by_id["br1"]["status"] == "reacting"
@@ -216,7 +216,7 @@ def test_root_branch_skips_sibling_handlers_that_did_not_match():
     ]
     by_id = _by_id(nodes)
     by_id["br1"]["status"] = "reacting"
-    by_id["br1"]["active_condition"] = "change_request.comment_created"
+    by_id["br1"]["active_condition"] = "github:change_request.comment_created"
     advance_root_branches(nodes)
     assert by_id["fix1"]["status"] == "ready"
     assert by_id["merge1"]["status"] == "blocked"
@@ -231,7 +231,7 @@ def test_root_branch_ignores_unmatched_condition():
     nodes = [node.model_dump(mode="json") for node in _root_branch_instance().nodes]
     by_id = _by_id(nodes)
     by_id["br1"]["status"] = "reacting"
-    by_id["br1"]["active_condition"] = "change_request.merged"
+    by_id["br1"]["active_condition"] = "github:change_request.merged"
     advance_root_branches(nodes)
     assert by_id["br1"]["status"] == "waiting"
     assert by_id["br1"]["active_condition"] is None
@@ -301,7 +301,7 @@ def test_reaction_releases_handlers_and_reams_branch():
     nodes = [node.model_dump(mode="json") for node in _instance().nodes]
     by_id = _by_id(nodes)
     by_id["br"]["status"] = "reacting"
-    by_id["br"]["active_condition"] = "task.status_changed"
+    by_id["br"]["active_condition"] = "wework:task.status_changed"
     advance_loops(nodes)
     assert by_id["fix1"]["status"] == "ready"
     by_id["fix1"]["status"] = "completed"
@@ -315,7 +315,7 @@ def test_loop_end_completes_loop():
     nodes = [node.model_dump(mode="json") for node in _instance().nodes]
     by_id = _by_id(nodes)
     by_id["br"]["status"] = "reacting"
-    by_id["br"]["active_condition"] = "change_request.merged"
+    by_id["br"]["active_condition"] = "github:change_request.merged"
     advance_loops(nodes)
     # A loop_end reached by an event ends the loop in the same advance pass.
     assert by_id["le"]["status"] == "completed"
@@ -327,7 +327,7 @@ def test_max_attempts_completes_loop():
     nodes = [node.model_dump(mode="json") for node in _instance(max_attempts=1).nodes]
     by_id = _by_id(nodes)
     by_id["br"]["status"] = "reacting"
-    by_id["br"]["active_condition"] = "task.status_changed"
+    by_id["br"]["active_condition"] = "wework:task.status_changed"
     advance_loops(nodes)
     by_id["fix1"]["status"] = "completed"
     advance_loops(nodes)
@@ -412,15 +412,20 @@ def test_pending_events_are_consumed_serially():
     nodes = [node.model_dump(mode="json") for node in _instance().nodes]
     by_id = _by_id(nodes)
     by_id["br"]["status"] = "reacting"
-    by_id["br"]["active_condition"] = "task.status_changed"
+    by_id["br"]["active_condition"] = "wework:task.status_changed"
     by_id["br"]["pending_events"] = [
-        {"event_type": "task.status_changed", "event_id": "evt-2", "subject_id": "s"}
+        {
+            "source": "wework",
+            "event_type": "task.status_changed",
+            "event_id": "evt-2",
+            "subject_id": "s",
+        }
     ]
     advance_loops(nodes)
     by_id["fix1"]["status"] = "completed"
     advance_loops(nodes)
     assert by_id["br"]["status"] == "reacting"
-    assert by_id["br"]["active_condition"] == "task.status_changed"
+    assert by_id["br"]["active_condition"] == "wework:task.status_changed"
     assert by_id["fix1"]["status"] == "ready"
     assert by_id["loop1"]["attempts"] == 1
 
@@ -555,6 +560,97 @@ def test_route_event_uses_subject_binding_instead_of_transport_subscription(test
     assert routed is item
 
 
+def test_route_event_matches_platform_specific_condition(test_db):
+    project, item = _workflow_item(test_db)
+    binding = LoopItemTaskBinding(
+        cloud_project_id=str(project.id),
+        loop_item_id=str(item.id),
+        task_user_id=1,
+        device_id="desktop-1",
+        task_id="runtime-task-1",
+        task_title="Loop issue",
+        linked_by_user_id=1,
+        metadata_json={
+            "change_requests": [
+                {
+                    "provider": "gitlab",
+                    "instance_url": "https://gitlab.example",
+                    "repository": "acme/app",
+                    "number": 7,
+                }
+            ]
+        },
+    )
+    test_db.add(binding)
+    test_db.flush()
+    workflow = dict(item.metadata_json["workflow"])
+    nodes = [dict(node) for node in workflow["nodes"]]
+    branch = next(node for node in nodes if node["id"] == "br")
+    branch["branch_conditions"] = [
+        {
+            "source_type": "github",
+            "event_type": "change_request.merged",
+            "handler_node_ids": ["fix1"],
+            "collection_mode": None,
+        },
+        {
+            "source_type": "gitlab",
+            "event_type": "change_request.merged",
+            "handler_node_ids": ["le"],
+            "collection_mode": None,
+        },
+    ]
+    workflow["nodes"] = nodes
+    item.metadata_json = {**item.metadata_json, "workflow": workflow}
+    test_db.commit()
+    item = test_db.get(LoopItem, item.id)
+    branch = next(
+        node for node in item.metadata_json["workflow"]["nodes"] if node["id"] == "br"
+    )
+    assert branch["branch_conditions"] == [
+        {
+            "source_type": "github",
+            "event_type": "change_request.merged",
+            "handler_node_ids": ["fix1"],
+            "collection_mode": None,
+        },
+        {
+            "source_type": "gitlab",
+            "event_type": "change_request.merged",
+            "handler_node_ids": ["le"],
+            "collection_mode": None,
+        },
+    ]
+
+    routed = route_event_to_workflow_loop(
+        test_db,
+        ProjectAutomationEvent(
+            event_type="change_request.merged",
+            project_id=str(project.id),
+            subject_id=str(item.id),
+            source="gitlab",
+            actor_user_id=1,
+            payload={
+                "title": "merged",
+                "subject": {
+                    "provider": "gitlab",
+                    "instance_url": "https://gitlab.example",
+                    "repository": "acme/app",
+                    "number": 7,
+                },
+            },
+            event_id="evt-gitlab-merged",
+            subscription_id="subscription-1",
+        ),
+    )
+
+    assert routed is item
+    by_id = {node["id"]: node for node in routed.metadata_json["workflow"]["nodes"]}
+    assert by_id["br"]["active_condition"] == "gitlab:change_request.merged"
+    assert by_id["le"]["status"] == "completed"
+    assert by_id["fix1"].get("automation_run_id") is None
+
+
 def test_scan_loop_timeouts_completes_expired_loop(test_db):
     _, item = _workflow_item(test_db, max_attempts=5)
     workflow = dict(item.metadata_json["workflow"])
@@ -659,6 +755,7 @@ def _terminal_loop_item(test_db) -> LoopItem:
                 depends_on=["ls"],
                 branch_conditions=[
                     {
+                        "source_type": "wework",
                         "event_type": "change_request.merged",
                         "handler_node_ids": ["le"],
                     },

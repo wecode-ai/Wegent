@@ -133,14 +133,17 @@ const RuntimeStageNodeCard = memo(function RuntimeStageNodeCard({
     ? t('todo.workflow_structure_node')
     : workflowNodeStatusLabel(t, stage.status)
   const automated = workflowNodeExecutionMode(stage) === 'robot'
-  const collectorState = stage.node_type === 'branch' ? (stage.collector_state ?? null) : null
-  const collectorLabel = collectorState
-    ? collectorState.status === 'needs_registration' || collectorState.mode === 'webhook'
-      ? t('todo.workflow_branch_collector_webhook')
-      : collectorState.status === 'error'
-        ? collectorState.error || t('todo.workflow_branch_collector_error')
-        : t('todo.workflow_branch_collector_poll')
-    : null
+  const collectors = stage.node_type === 'branch' ? (stage.collectors ?? {}) : {}
+  const collectorLabels = Object.entries(collectors).map(([platform, collector]) => {
+    const platformLabel = platform === 'gitlab' ? 'GitLab' : 'GitHub'
+    const stateLabel =
+      collector.status === 'needs_registration' || collector.mode === 'webhook'
+        ? t('todo.workflow_branch_collector_webhook')
+        : collector.status === 'error'
+          ? collector.error || t('todo.workflow_branch_collector_error')
+          : t('todo.workflow_branch_collector_poll')
+    return `${platformLabel} ${stateLabel}`
+  })
 
   return (
     <article
@@ -166,12 +169,12 @@ const RuntimeStageNodeCard = memo(function RuntimeStageNodeCard({
           {automated ? <Bot className="h-3.5 w-3.5" /> : <UserRound className="h-3.5 w-3.5" />}
           {automated ? t('todo.workflow_ai_execution') : t('todo.workflow_stage_human_execution')}
         </span>
-        {collectorLabel ? (
+        {collectorLabels.length > 0 ? (
           <span
             className="block truncate text-xs leading-none text-text-muted"
-            title={collectorLabel}
+            title={collectorLabels.join('、')}
           >
-            {collectorLabel}
+            {collectorLabels.join('、')}
           </span>
         ) : null}
       </header>

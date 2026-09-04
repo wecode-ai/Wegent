@@ -168,15 +168,6 @@ const recipes: Record<string, string> = {
   'react-flow-branch-condition-row':
     'relative grid h-[30px] grid-cols-[44px_minmax(0,1fr)] items-center gap-2 pl-3 pr-4 [&>em]:text-xs [&>em]:not-italic [&>em]:text-text-muted [&>span]:truncate [&>span]:text-xs [&>span]:text-text-secondary [&>span>i]:ml-1 [&>span>i]:text-xs [&>span>i]:not-italic [&>span>i]:text-text-muted',
   'react-flow-branch-empty': 'grid h-[30px] place-items-center text-xs text-text-muted',
-  'react-flow-branch-new': 'relative grid h-[34px] place-items-center border-t border-border/50',
-  'react-flow-branch-new-trigger':
-    'inline-flex h-6 items-center gap-1 rounded-md px-2 text-xs text-text-secondary transition-colors hover:bg-muted hover:text-text-primary',
-  'react-flow-branch-new-menu':
-    'absolute bottom-9 left-2 z-40 grid w-72 gap-2 rounded-xl border border-border bg-popover p-2.5 shadow-xl [&_label]:grid [&_label]:gap-1 [&_label>span]:text-xs [&_label>span]:text-text-muted [&_select]:h-8 [&_select]:w-full [&_select]:rounded-lg [&_select]:border [&_select]:border-border [&_select]:bg-background [&_select]:px-2 [&_select]:text-xs [&_select]:text-text-primary [&_select]:outline-none',
-  'react-flow-branch-new-condition':
-    'grid gap-2 rounded-lg border border-border/60 bg-muted/25 p-2.5',
-  'react-flow-branch-new-confirm':
-    'inline-flex h-8 items-center justify-center rounded-lg bg-text-primary px-3 text-xs font-medium text-background transition-colors hover:bg-text-primary/90',
   'react-flow-branch-continuation': 'relative',
   'react-flow-branch-continuation-trigger':
     'grid size-5 place-items-center rounded-md text-text-muted transition-colors hover:bg-muted hover:text-text-primary',
@@ -291,8 +282,6 @@ const recipes: Record<string, string> = {
     'inline-flex h-7 items-center gap-1.5 rounded-md bg-background px-2 text-xs text-text-secondary shadow-sm [&_svg]:shrink-0 [&_svg]:text-focus [&_em]:max-w-40 [&_em]:truncate [&_em]:not-italic [&_button]:grid [&_button]:size-4 [&_button]:place-items-center [&_button]:rounded [&_button]:text-text-muted [&_button:hover]:text-destructive',
   'branch-add-handler':
     'inline-flex h-7 w-fit items-center gap-1 rounded-md border border-dashed border-border bg-transparent px-2 text-xs text-text-secondary transition-colors hover:bg-muted hover:text-text-primary',
-  'branch-add-condition':
-    'mt-1 inline-flex h-9 w-full items-center justify-center gap-2 rounded-lg border border-dashed border-border bg-transparent text-sm text-text-secondary transition-colors hover:border-focus/35 hover:bg-focus/5 hover:text-text-primary',
   'required-node':
     'flex items-center gap-2 text-sm text-text-secondary [&_input]:size-4 [&_input]:accent-focus',
   'panel-help':

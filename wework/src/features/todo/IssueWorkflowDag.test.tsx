@@ -270,12 +270,18 @@ describe('IssueWorkflowDag', () => {
           stage('branch-poll', {
             node_type: 'branch',
             status: 'waiting',
-            collector_state: { mode: 'poll', status: 'active' },
+            collectors: { github: { collector_id: 'hook-1', mode: 'poll', status: 'active' } },
           }),
           stage('branch-webhook', {
             node_type: 'branch',
             status: 'waiting',
-            collector_state: { mode: 'webhook', status: 'needs_registration' },
+            collectors: {
+              github: {
+                collector_id: 'hook-2',
+                mode: 'webhook',
+                status: 'needs_registration',
+              },
+            },
           }),
         ]}
         tasks={[]}

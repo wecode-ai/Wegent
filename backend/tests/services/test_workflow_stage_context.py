@@ -52,9 +52,10 @@ def _definition() -> ProjectWorkflowDefinition:
                 node_type="branch",
                 loop_id="loop1",
                 depends_on=["ls"],
-                event_wait={"source_type": "gitlab", "collection_mode": "poll"},
+                event_wait={"collection_mode": "poll"},
                 branch_conditions=[
                     {
+                        "source_type": "gitlab",
                         "event_type": "change_request.comment_created",
                         "handler_node_ids": ["fix"],
                     },

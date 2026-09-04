@@ -4328,20 +4328,15 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
         !branchEditorSnapshot.testIds.includes('branch-event-wait-subscription-resource-url'),
         'The branch listener unexpectedly asked for a repository URL'
       )
-      assert.ok(
-        branchEditorSnapshot.testIds.includes('branch-event-wait-platform'),
-        'The branch listener did not expose its GitHub/GitLab platform'
+      const branchId = branchEditorSnapshot.testIds
+        .find(testId => /^branch-node-branch-/.test(testId))
+        ?.replace('branch-node-', '')
+      assert.ok(branchId, 'The branch node was not rendered')
+      await control.command('click', `[data-testid="automation-node-insert-after-${branchId}"]`)
+      await control.command(
+        'click',
+        `[data-testid="automation-node-insert-after-task-${branchId}"]`
       )
-      const branchNewTestId = branchEditorSnapshot.testIds.find(testId =>
-        testId.startsWith('branch-new-')
-      )
-      assert.ok(branchNewTestId, 'The branch condition control was not rendered')
-      const branchId = branchNewTestId.replace('branch-new-', '')
-      await control.command('click', `[data-testid="${branchNewTestId}"]`)
-      await control.command('select', `[data-testid="branch-new-event-${branchId}"]`, {
-        value: 'change_request.comment_created',
-      })
-      await control.command('click', `[data-testid="branch-new-confirm-${branchId}"]`)
       const handlerTestId = JSON.parse(
         await control.command('snapshot', '[data-testid="automation-rule-editor"]')
       ).testIds.find(
@@ -4354,8 +4349,15 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
         value: '处理 MR 评论',
       })
       await control.command('click', `[data-testid="branch-node-main-${branchId}"]`)
-      await control.command('select', '[data-testid="branch-event-wait-platform"]', {
+      const conditionId = JSON.parse(
+        await control.command('snapshot', '[data-testid="automation-rule-editor"]')
+      ).testIds.find(testId => /^branch-condition-source-/.test(testId))
+      assert.ok(conditionId, 'The branch condition platform selector was not rendered')
+      await control.command('select', `[data-testid="${conditionId}"]`, {
         value: 'gitlab',
+      })
+      await control.command('select', '[data-testid="branch-condition-event-0"]', {
+        value: 'change_request.comment_created',
       })
       await control.command('fill', '[data-testid="branch-event-wait-poll-interval"]', {
         value: '3',
@@ -4374,10 +4376,10 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
       )
       assert.deepEqual(savedBranch?.event_wait, {
         subject_source: 'upstream_pull_request',
-        source_type: 'gitlab',
         collection_mode: 'poll',
         poll_interval_seconds: 180,
       })
+      assert.equal(savedBranch?.branch_conditions[0]?.source_type, 'gitlab')
       await captureScreenshot(control, 'project-automation-branch-event-listener.png')
 
       await control.command(

@@ -243,20 +243,33 @@ class WorkflowStartConfig(BaseModel):
 class WorkflowBranchCondition(BaseModel):
     """One event condition routed to its handler nodes (loop body or top-level)."""
 
+    source_type: Literal["github", "gitlab", "wework", "generic"]
     event_type: str = Field(min_length=1, max_length=100)
     handler_node_ids: list[str] = Field(default_factory=list, max_length=50)
     # Legacy transport fields are read so existing definitions can be migrated
     # into the branch-level event_wait configuration.
     subscription_id: str | None = Field(default=None, min_length=1, max_length=128)
-    source_type: str | None = Field(default=None, max_length=50)
     collection_mode: str | None = Field(default=None, max_length=50)
+
+    @model_validator(mode="before")
+    @classmethod
+    def infer_default_source_type(cls, value: object) -> object:
+        if not isinstance(value, dict) or value.get("source_type") is not None:
+            return value
+        event_type = str(value.get("event_type") or "")
+        if event_type.startswith("change_request."):
+            return {**value, "source_type": "github"}
+        if event_type.startswith("task."):
+            return {**value, "source_type": "wework"}
+        if event_type.startswith("document."):
+            return {**value, "source_type": "generic"}
+        return value
 
 
 class WorkflowEventWaitConfig(BaseModel):
     """How one branch observes its upstream PR/MR while it is waiting."""
 
     subject_source: Literal["upstream_pull_request"] = "upstream_pull_request"
-    source_type: Literal["github", "gitlab"] = "github"
     collection_mode: Literal["webhook", "poll"] = "poll"
     poll_interval_seconds: int | None = Field(default=300, ge=60, le=86_400)
 
@@ -374,11 +387,6 @@ class WorkflowNodeDefinition(BaseModel):
             )
             if legacy_condition is not None:
                 self.event_wait = WorkflowEventWaitConfig(
-                    source_type=(
-                        legacy_condition.source_type
-                        if legacy_condition.source_type in {"github", "gitlab"}
-                        else "github"
-                    ),
                     collection_mode=(
                         legacy_condition.collection_mode
                         if legacy_condition.collection_mode in {"webhook", "poll"}
@@ -387,6 +395,9 @@ class WorkflowNodeDefinition(BaseModel):
                 )
         elif self.node_type != "branch" and self.event_wait is not None:
             raise ValueError("event_wait is only valid for branch nodes")
+        if self.node_type == "branch":
+            if self.event_wait is None:
+                self.event_wait = WorkflowEventWaitConfig()
         if self.automation_rule_id and self.execution_mode != "robot":
             raise ValueError("workflow automation rule requires robot execution")
         if unknown := set(self.dependency_context) - set(self.depends_on):
@@ -559,11 +570,12 @@ def _validate_branch_conditions(
     seen_handlers: dict[str, str] = {}
     seen_events: set[str] = set()
     for condition in branch.branch_conditions:
-        if condition.event_type in seen_events:
+        condition_key = f"{condition.source_type}:{condition.event_type}"
+        if condition_key in seen_events:
             raise ValueError(
-                f"branch condition duplicates event {condition.event_type}"
+                f"同一分支下重复配置了 {condition.source_type}:{condition.event_type} 事件"
             )
-        seen_events.add(condition.event_type)
+        seen_events.add(condition_key)
         if unknown := set(condition.handler_node_ids) - allowed_handler_ids:
             raise ValueError(
                 f"branch handler outside {handler_scope}: " + ", ".join(sorted(unknown))
@@ -574,7 +586,9 @@ def _validate_branch_conditions(
                     f"branch handler {handler_id} is shared by "
                     f"{owner} and {condition.event_type}"
                 )
-            seen_handlers[handler_id] = condition.event_type
+            seen_handlers[handler_id] = (
+                f"{condition.source_type}:{condition.event_type}"
+            )
 
 
 class WorkflowNodeInstance(WorkflowNodeDefinition):
@@ -598,10 +612,10 @@ class WorkflowNodeInstance(WorkflowNodeDefinition):
     execution_id: int | None = Field(default=None, ge=1)
     automation_run_id: str | None = Field(default=None, max_length=64)
     execution_error: str | None = Field(default=None, max_length=2000)
-    # Runtime event collector created for a waiting branch node. The collector
-    # is an incoming-hook subscription watching the upstream PR/MR repository.
-    collector_id: str | None = Field(default=None, max_length=64)
-    collector_state: dict[str, Any] | None = None
+    # Runtime event collectors created for a waiting branch node, keyed by the
+    # event source platform. Each collector watches that platform's upstream
+    # PR/MR repository.
+    collectors: dict[str, dict[str, Any]] = Field(default_factory=dict)
 
 
 class WorkflowNodeDecision(BaseModel):
@@ -660,6 +674,7 @@ class IssueWorkflowInstance(BaseModel):
                     body_node_ids=node.body_node_ids,
                     loop_config=node.loop_config,
                     branch_conditions=node.branch_conditions,
+                    event_wait=node.event_wait,
                     execution_mode=node.execution_mode,
                     depends_on=node.depends_on,
                     dependency_context=node.dependency_context,

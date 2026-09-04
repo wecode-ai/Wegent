@@ -334,9 +334,12 @@ class ProjectAutomationService:
 
             ProjectWorkflowDefinition.model_validate(raw_definition)
         except ValueError as exc:
+            errors = exc.errors() if hasattr(exc, "errors") else []
+            error_detail = errors[0].get("msg", str(exc)) if errors else str(exc)
+            error_detail = str(error_detail).removeprefix("Value error, ").strip()
             raise HTTPException(
                 status.HTTP_422_UNPROCESSABLE_CONTENT,
-                f"Invalid automation workflow definition: {exc}",
+                f"自动化流程配置无效：{error_detail}",
             ) from exc
 
     @staticmethod

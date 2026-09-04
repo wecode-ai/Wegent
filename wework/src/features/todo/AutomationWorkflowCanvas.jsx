@@ -161,88 +161,6 @@ const WorkflowNodeInsertControls = memo(function WorkflowNodeInsertControls({
   )
 })
 
-const BranchNewControl = memo(function BranchNewControl({
-  branchId,
-  kinds,
-  eventTypeOptions,
-  onAddBranchHandler,
-}) {
-  const { t } = useTranslation('common')
-  const [open, setOpen] = useState(false)
-  const [kind, setKind] = useState(kinds[0])
-  const [eventType, setEventType] = useState('')
-
-  return (
-    <div
-      className={automationClass('react-flow-branch-new')}
-      onPointerDown={event => event.stopPropagation()}
-      onClick={event => event.stopPropagation()}
-    >
-      <button
-        type="button"
-        className={automationClass('react-flow-branch-new-trigger nodrag nopan')}
-        data-testid={`branch-new-${branchId}`}
-        aria-label="新建分支"
-        aria-expanded={open}
-        onClick={() => setOpen(current => !current)}
-      >
-        <Plus size={13} />
-        新建分支
-      </button>
-      {open ? (
-        <div className={automationClass('react-flow-branch-new-menu nodrag nopan')}>
-          <label>
-            <span>节点类型</span>
-            <select
-              data-testid={`branch-new-kind-${branchId}`}
-              value={kind}
-              onChange={event => setKind(event.target.value)}
-            >
-              {kinds.map(candidate => (
-                <option key={candidate} value={candidate}>
-                  {INSERT_ITEM_DEFS[candidate].label}
-                </option>
-              ))}
-            </select>
-          </label>
-          <div className={automationClass('react-flow-branch-new-condition')}>
-            <label>
-              <span>事件类型</span>
-              <select
-                data-testid={`branch-new-event-${branchId}`}
-                value={eventType}
-                onChange={event => setEventType(event.target.value)}
-              >
-                <option value="">选择事件</option>
-                {eventTypeOptions.map(candidate => (
-                  <option key={candidate} value={candidate}>
-                    {eventTypeLabel(candidate, t)}
-                  </option>
-                ))}
-              </select>
-            </label>
-          </div>
-          <button
-            type="button"
-            className={automationClass('react-flow-branch-new-confirm')}
-            data-testid={`branch-new-confirm-${branchId}`}
-            onClick={() => {
-              onAddBranchHandler(branchId, {
-                kind,
-                eventType,
-                select: 'branch',
-              })
-              setOpen(false)
-            }}
-          >
-            创建分支
-          </button>
-        </div>
-      ) : null}
-    </div>
-  )
-})
-
 const BranchContinuationControl = memo(function BranchContinuationControl({
   branchId,
   kinds,
@@ -500,7 +418,7 @@ const BranchConditionRows = memo(function BranchConditionRows({ step }) {
     <div className={automationClass('react-flow-branch-conditions')}>
       {conditions.length === 0 ? (
         <div className={automationClass('react-flow-branch-empty')}>
-          还没有分支，点击下方「新建分支」添加
+          还没有分支，可通过右侧加号添加
         </div>
       ) : (
         conditions.map((condition, index) => (
@@ -546,14 +464,7 @@ const BranchNodeHeader = memo(function BranchNodeHeader({ step, testId, onSelect
 })
 
 const BranchCanvasNode = memo(function BranchCanvasNode({ data, selected }) {
-  const {
-    step,
-    onSelect,
-    onAddBranchHandler,
-    onAddBranchContinuation,
-    eventTypeOptions,
-    eventSourceCatalog,
-  } = data
+  const { step, onSelect, onAddBranchHandler, onAddBranchContinuation } = data
   return (
     <article
       className={automationClass(`workflow-node-shell ${selected ? 'selected' : ''}`)}
@@ -570,13 +481,6 @@ const BranchCanvasNode = memo(function BranchCanvasNode({ data, selected }) {
       >
         <BranchNodeHeader step={step} testId={`branch-node-main-${step.id}`} onSelect={onSelect} />
         <BranchConditionRows step={step} />
-        <BranchNewControl
-          branchId={step.id}
-          kinds={BRANCH_HANDLER_KINDS}
-          eventTypeOptions={eventTypeOptions ?? []}
-          eventSourceCatalog={eventSourceCatalog ?? []}
-          onAddBranchHandler={onAddBranchHandler}
-        />
         <div className={automationClass('react-flow-branch-footer')}>
           <span>完成后继续</span>
           <BranchContinuationControl
@@ -605,7 +509,7 @@ const BranchCanvasNode = memo(function BranchCanvasNode({ data, selected }) {
 })
 
 const LoopBranchCanvasNode = memo(function LoopBranchCanvasNode({ data, selected }) {
-  const { step, onSelect, onAddBranchHandler, eventTypeOptions, eventSourceCatalog } = data
+  const { step, onSelect, onAddBranchHandler } = data
   return (
     <article
       className={automationClass(`react-flow-branch-node ${selected ? 'selected' : ''}`)}
@@ -618,13 +522,6 @@ const LoopBranchCanvasNode = memo(function LoopBranchCanvasNode({ data, selected
       />
       <BranchNodeHeader step={step} testId={`loop-body-node-${step.id}`} onSelect={onSelect} />
       <BranchConditionRows step={step} />
-      <BranchNewControl
-        branchId={step.id}
-        kinds={LOOP_BRANCH_HANDLER_KINDS}
-        eventTypeOptions={eventTypeOptions ?? []}
-        eventSourceCatalog={eventSourceCatalog ?? []}
-        onAddBranchHandler={onAddBranchHandler}
-      />
       <WorkflowNodeInsertControls
         nodeId={step.id}
         allowBefore={false}
@@ -908,8 +805,6 @@ export function AutomationWorkflowCanvas({
   onInsertNode,
   onAddBranchHandler,
   onAddBranchContinuation,
-  eventTypeOptions,
-  eventSourceCatalog = [],
   onAddDagStage,
   onToggleDagDependency,
   onMoveDagStage,
@@ -1083,8 +978,6 @@ export function AutomationWorkflowCanvas({
               onInsert: (placement, kind) =>
                 onInsertLoopBodyNode(step.id, bodyStep.id, placement, kind),
               onAddBranchHandler,
-              eventTypeOptions,
-              eventSourceCatalog,
             },
             style: { width: bodySize.width, height: bodySize.height },
           })
@@ -1139,8 +1032,6 @@ export function AutomationWorkflowCanvas({
             onSelect: () => onSelectNode({ type: 'step', id: step.id }),
             onAddBranchHandler,
             onAddBranchContinuation,
-            eventTypeOptions,
-            eventSourceCatalog,
           },
           style: { width: OUTER_NODE_WIDTH, height: branchNodeHeight(step, { footer: true }) },
         })
@@ -1207,7 +1098,6 @@ export function AutomationWorkflowCanvas({
     return { nodes, edges }
   }, [
     draft,
-    eventTypeOptions,
     onAddBranchContinuation,
     onAddBranchHandler,
     onAddDagStage,

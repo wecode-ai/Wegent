@@ -610,7 +610,7 @@ def test_create_rejects_invalid_runtime_workflow_definition(
         )
 
     assert exc_info.value.status_code == 422
-    assert "Invalid automation workflow definition" in str(exc_info.value.detail)
+    assert str(exc_info.value.detail).startswith("自动化流程配置无效：")
     test_db.rollback()
     assert (
         test_db.query(ProjectAutomationRule)

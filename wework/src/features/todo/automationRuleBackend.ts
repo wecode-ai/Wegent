@@ -62,11 +62,11 @@ export interface AutomationUiStep {
     timeoutSeconds: number | null
   } | null
   branchConditions?: Array<{
+    sourceType: BranchSourceType
     eventType: string
     handlerNodeIds: string[]
   }>
   eventWait?: {
-    sourceType: Extract<ProjectEventSourceType, 'github' | 'gitlab'>
     collectionMode: Extract<ProjectEventCollectionMode, 'webhook' | 'poll'>
     pollIntervalSeconds: number | null
   } | null
@@ -342,21 +342,21 @@ function normalizeStoredStep(
           }
         : null,
     branchConditions: recordArray(item.branchConditions).map(condition => ({
+      sourceType:
+        normalizeBranchSourceType(condition.sourceType ?? condition.source_type) ||
+        normalizeBranchSourceType(item.eventWait?.sourceType ?? item.eventWait?.source_type) ||
+        'github',
       eventType: typeof condition.eventType === 'string' ? condition.eventType : '',
       handlerNodeIds: stringArray(condition.handlerNodeIds),
     })),
     eventWait: (() => {
       const stored = isRecord(item.eventWait) ? item.eventWait : null
       const legacyCondition = recordArray(item.branchConditions)[0]
-      const sourceType = normalizeBranchSourceType(
-        stored?.sourceType ?? legacyCondition?.sourceType
-      )
       const collectionMode = normalizeBranchCollectionMode(
-        stored?.collectionMode ?? legacyCondition?.collectionMode
+        stored?.collectionMode ?? stored?.collection_mode ?? legacyCondition?.collectionMode
       )
       return nodeType === 'branch'
         ? {
-            sourceType: sourceType || 'github',
             collectionMode: collectionMode || 'poll',
             pollIntervalSeconds:
               typeof stored?.pollIntervalSeconds === 'number'
@@ -699,20 +699,18 @@ function workflowNodesFromLegacy(
           }
         : null,
       branchConditions: (node.branch_conditions ?? []).map(condition => ({
+        sourceType:
+          normalizeBranchSourceType(condition.source_type) ||
+          normalizeBranchSourceType(node.event_wait?.source_type) ||
+          'github',
         eventType: condition.event_type,
         handlerNodeIds: [...(condition.handler_node_ids ?? [])],
       })),
       eventWait:
         node.node_type === 'branch'
           ? {
-              sourceType:
-                normalizeBranchSourceType(node.event_wait?.source_type) ||
-                normalizeBranchSourceType(node.branch_conditions?.[0]?.source_type) ||
-                'github',
               collectionMode:
-                node.event_wait?.collection_mode ??
-                (normalizeBranchCollectionMode(node.branch_conditions?.[0]?.collection_mode) ||
-                  'poll'),
+                normalizeBranchCollectionMode(node.event_wait?.collection_mode) || 'poll',
               pollIntervalSeconds:
                 node.event_wait?.poll_interval_seconds ??
                 (node.event_wait?.collection_mode === 'webhook' ? null : 300),
@@ -951,6 +949,7 @@ function workflowNodeFromUi(
     branch_conditions:
       node.nodeType === 'branch'
         ? (node.branchConditions ?? []).map(condition => ({
+            source_type: condition.sourceType,
             event_type: condition.eventType,
             handler_node_ids: [...condition.handlerNodeIds],
           }))
@@ -959,7 +958,6 @@ function workflowNodeFromUi(
       node.nodeType === 'branch'
         ? {
             subject_source: 'upstream_pull_request',
-            source_type: node.eventWait?.sourceType ?? 'github',
             collection_mode: node.eventWait?.collectionMode ?? 'poll',
             poll_interval_seconds:
               node.eventWait?.collectionMode === 'webhook'
