@@ -48,24 +48,26 @@ resident model directory and keeps the Wework surface stable.
 
 ## Extension points
 
-| Slot                            | Purpose                                  | Required metadata                 | Component props                              |
-| ------------------------------- | ---------------------------------------- | --------------------------------- | -------------------------------------------- |
-| `wework.action`                 | Host-invoked navigation action           | `id`, `path`                      | No component                                 |
-| `wework.app`                    | Product switcher and app surface         | `id`, `label`, `mode`             | `visible`, `tab`                             |
-| `wework.task.status`            | Left task-row status                     | `id`                              | `task`, `workspace`, layout hints            |
-| `wework.environment.section`    | Additional environment-panel section     | `id`                              | `info`, `onClose`                            |
-| `wework.board.card.status`      | Board task-card status                   | `id`                              | Board item, task binding, layout hints       |
-| `wework.workspace.menu.section` | Additional workspace-menu section        | `id`                              | Generic workspace context, close action      |
-| `wework.project.work.section`   | Additional project-work-bar section      | `id`                              | Generic project context                      |
-| `wework.project.create.section` | Additional project-create-menu section   | `id`                              | Generic project-create context, close action |
-| `wework.route`                  | Top-level auxiliary page                 | `id`, `path`, `telemetryFeature`  | `search`, `onNavigate`                       |
-| `wework.sidebar.navigation`     | Left-sidebar navigation entry            | `id`, `path`, `label`             | Usually metadata-only                        |
-| `wework.settings.page`          | Settings navigation and content          | `id`, `path`, `label`, `category` | Settings context, `onBack`                   |
-| `wework.workspace.tab`          | Closable top workspace tab               | `id`, `label`                     | `visible`, `tab`                             |
-| `wework.workspace.sidebar.tab`  | Right workspace-panel tab type           | `id`, `label`                     | `visible`, `scope`, `tab`                    |
-| `wework.shell.before`           | Before the workbench root                | `id`                              | Empty object                                 |
-| `wework.shell.after`            | After the workbench root                 | `id`                              | Empty object                                 |
-| `wework.shell.overlay`          | Global pointer-transparent overlay layer | `id`                              | Empty object                                 |
+| Slot                                      | Purpose                                  | Required metadata                 | Component props                              |
+| ----------------------------------------- | ---------------------------------------- | --------------------------------- | -------------------------------------------- |
+| `wework.action`                           | Host-invoked navigation action           | `id`, `path`                      | No component                                 |
+| `wework.app`                              | Product switcher and app surface         | `id`, `label`, `mode`             | `visible`, `tab`                             |
+| `wework.plugins.action`                   | Plugins-page action                      | `id`, `label`                     | Host-provided callbacks                      |
+| `wework.task.status`                      | Left task-row status                     | `id`                              | `task`, `workspace`, layout hints            |
+| `wework.environment.section`              | Additional environment-panel section     | `id`                              | `info`, `onClose`                            |
+| `wework.board.card.status`                | Board task-card status                   | `id`                              | Board item, task binding, layout hints       |
+| `wework.workspace.menu.section`           | Additional workspace-menu section        | `id`                              | Generic workspace context, close action      |
+| `wework.project.work.section`             | Additional project-work-bar section      | `id`                              | Generic project context                      |
+| `wework.project.create.section`           | Additional project-create-menu section   | `id`                              | Generic project-create context, close action |
+| `wework.runtime-profile.workspace-policy` | Runtime workspace policy option          | `id`, `label`                     | No component                                 |
+| `wework.route`                            | Top-level auxiliary page                 | `id`, `path`, `telemetryFeature`  | `search`, `onNavigate`                       |
+| `wework.sidebar.navigation`               | Left-sidebar navigation entry            | `id`, `path`, `label`             | Usually metadata-only                        |
+| `wework.settings.page`                    | Settings navigation and content          | `id`, `path`, `label`, `category` | Settings context, `onBack`                   |
+| `wework.workspace.tab`                    | Closable top workspace tab               | `id`, `label`                     | `visible`, `tab`                             |
+| `wework.workspace.sidebar.tab`            | Right workspace-panel tab type           | `id`, `label`                     | `visible`, `scope`, `tab`                    |
+| `wework.shell.before`                     | Before the workbench root                | `id`                              | Empty object                                 |
+| `wework.shell.after`                      | After the workbench root                 | `id`                              | Empty object                                 |
+| `wework.shell.overlay`                    | Global pointer-transparent overlay layer | `id`                              | Empty object                                 |
 
 `wework.app` supports three modes:
 
@@ -149,17 +151,20 @@ plugin lifecycle scoped to that declaration.
 
 ## Runnable plugin demo
 
-The repository's
-[`wework/dsh/examples/ui-extension-demo`](https://github.com/wecode-ai/Wegent/tree/main/wework/dsh/examples/ui-extension-demo)
-is a complete third-party plugin with no imports from Wework-private React
-modules. It contains a standard `package.json`, `cordis.patch.yml`, host entry,
-client entry, and Node regression tests, and covers every slot in the table.
+The
+[`assets/ui-extension-demo`](https://github.com/wecode-ai/Wegent/tree/main/wework/dsh/plugin-developer/codex-plugin/skills/develop-wework-plugin/assets/ui-extension-demo)
+shipped by the **Wework Plugin Developer** Skill is a complete third-party
+plugin with no imports from Wework-private React modules. It contains a
+standard `package.json`, `cordis.patch.yml`, host entry, client entry, and Node
+regression tests, and covers every slot in the table. Codex can inspect the
+real code and copy it to a writable project directory before removing
+unneeded contributions.
 
 In development, install the Demo's absolute directory from **Plugins → Manage
 → Wework plugins**, or use:
 
 ```text
-file:/absolute/path/to/Wegent/wework/dsh/examples/ui-extension-demo
+file:/absolute/path/to/copied/ui-extension-demo
 ```
 
 Installation, update, enablement, and removal mutate the managed `wework-core`

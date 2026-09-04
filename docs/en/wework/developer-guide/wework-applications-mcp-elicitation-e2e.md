@@ -48,6 +48,20 @@ GitHub CI must invoke both checkpoints. The desktop E2E classifier should map th
 - After each click, require `standaloneChatKey` to increase by one, `scopeKey` to change, `currentRuntimeTask` to be `null`, and the current project to remain unchanged.
 - Assert normalized draft text by complete equality and separately verify structured chip attributes. A substring assertion is insufficient.
 
+### Manage Site Environment Variables
+
+1. Open the more-actions menu for `E2E Product Site`, then choose Environment variables.
+2. Add the `Plain` variable `E2E_API_BASE=https://api.example.test` and save it.
+3. Wait for the saved state and assert that the request persisted to the Sites upstream fixture through the real Backend.
+4. Capture the saved state and close the dialog.
+
+### Manage Site Collaborators
+
+1. Open the more-actions menu for `E2E Product Site`, then choose Manage collaborators.
+2. Add `e2e-collaborator`, wait for it to appear, and assert that the upstream fixture persisted it.
+3. Remove the same collaborator, wait for it to disappear, and assert that the upstream fixture is empty.
+4. Capture the final state and close the dialog.
+
 ### Continue Developing a Site
 
 1. Open Applications > Sites.
@@ -56,16 +70,16 @@ GitHub CI must invoke both checkpoints. The desktop E2E classifier should map th
 4. Assert the visible draft:
 
 ```text
-E2E Product Site 请说出你要做的改动
+快速建站 E2E Product Site 请说出你要做的改动
 ```
 
 5. Assert the internal draft:
 
 ```text
-[E2E Product Site](wegent-sites-project://prj_e2e_product) 请说出你要做的改动
+[$快速建站](plugin://wegent-sites@wegent) [E2E Product Site](wegent-sites-project://prj_e2e_product) 请说出你要做的改动
 ```
 
-6. Assert that the link chip provider, label, and URL are `wegent-sites-project`, `E2E Product Site`, and `wegent-sites-project://prj_e2e_product`.
+6. Assert that the plugin chip targets `wegent-sites@wegent`, and that the link chip provider, label, and URL are `wegent-sites-project`, `E2E Product Site`, and `wegent-sites-project://prj_e2e_product`.
 7. Assert that first use installs `wegent-sites` on demand and that the page exposes no `sites-create-error`.
 
 ### Create a Site

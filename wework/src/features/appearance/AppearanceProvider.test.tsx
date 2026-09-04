@@ -246,7 +246,7 @@ describe('AppearanceProvider', () => {
     )
   })
 
-  test('migrates the old default sidebar colors to the quieter palette', () => {
+  test('migrates the old default dark palette to the neutral palette', () => {
     localStorage.setItem(
       'wework.appearance',
       JSON.stringify({
@@ -254,7 +254,25 @@ describe('AppearanceProvider', () => {
           sidebar: '229 229 231 / 0.72',
         },
         dark: {
-          sidebar: '31 35 41 / 0.82',
+          bgBase: '17 19 22',
+          bgSurface: '28 31 36',
+          bgMuted: '38 42 48',
+          bgHover: '96 165 250 / 0.12',
+          sidebar: '40 40 40 / 0.92',
+          sidebarActive: '52 58 66',
+          sidebarHover: '255 255 255 / 0.08',
+          sidebarTextPrimary: '232 238 246',
+          sidebarTextSecondary: '181 191 205',
+          sidebarTextMuted: '126 138 153',
+          mobileDrawer: '24 39 58',
+          border: '55 61 70',
+          textPrimary: '241 245 249',
+          textSecondary: '203 213 225',
+          textMuted: '148 163 184',
+          primary: '96 165 250',
+          primaryContrast: '11 18 20',
+          popover: '28 31 36',
+          codeBg: '15 23 42',
         },
       })
     )
@@ -268,9 +286,7 @@ describe('AppearanceProvider', () => {
     expect(localStorage.getItem('wework.appearance')).toContain(
       `"sidebar":"${lightPalette.sidebar}"`
     )
-    expect(localStorage.getItem('wework.appearance')).toContain(
-      `"sidebar":"${darkPalette.sidebar}"`
-    )
+    expect(JSON.parse(localStorage.getItem('wework.appearance') ?? '{}').dark).toEqual(darkPalette)
   })
 
   test('normalizes stored background settings and preserves old configuration defaults', () => {

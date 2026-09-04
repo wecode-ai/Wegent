@@ -128,6 +128,7 @@ declare global {
 }
 
 export function isWeworkAutomationEnabled(): boolean {
+  if (getDesktopE2ERuntimeConfig().disabled === true) return false
   return (
     import.meta.env.MODE === 'e2e' ||
     import.meta.env.VITE_WEWORK_E2E === 'true' ||
@@ -143,6 +144,7 @@ export function shouldUseNativeProjectDirectoryPicker(): boolean {
 }
 
 function desktopControlUrl(): string | null {
+  if (getDesktopE2ERuntimeConfig().disabled === true) return null
   const value =
     getDesktopE2ERuntimeConfig().controlUrl ??
     import.meta.env.VITE_WEWORK_DESKTOP_E2E_CONTROL_URL?.trim()
@@ -150,6 +152,7 @@ function desktopControlUrl(): string | null {
 }
 
 function desktopControlHeaders(): HeadersInit | undefined {
+  if (getDesktopE2ERuntimeConfig().disabled === true) return undefined
   const token =
     getDesktopE2ERuntimeConfig().controlToken ??
     import.meta.env.VITE_WEWORK_DESKTOP_E2E_CONTROL_TOKEN?.trim()
@@ -2496,10 +2499,12 @@ async function runDesktopControlClient(url: string, windowLabel: string): Promis
 function installDesktopControlClient() {
   if (!isDesktopRuntime()) return
   const url = desktopControlUrl()
-  const windowLabel = getDesktopWindowLabel()
+  const windowLabel = getDesktopE2ERuntimeConfig().windowLabel ?? getDesktopWindowLabel()
   if (
     !url ||
-    (windowLabel !== 'main' && !windowLabel.startsWith('workspace-')) ||
+    (windowLabel !== 'main' &&
+      !windowLabel.startsWith('workspace-') &&
+      !windowLabel.startsWith('plugin-development-')) ||
     window.location.pathname.startsWith('/system-drag')
   ) {
     return

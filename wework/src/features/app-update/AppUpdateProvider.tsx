@@ -100,6 +100,7 @@ export function AppUpdateProvider({ children }: { children: ReactNode }) {
   const activeDownloadRef = useRef<{
     version: string
     promise: Promise<void>
+    progressListeners: Set<(progress: WeworkUpdateDownloadProgress) => void>
   } | null>(null)
   const simulationTimerRef = useRef<number | null>(null)
   const installedReleaseNotes =
@@ -118,21 +119,33 @@ export function AppUpdateProvider({ children }: { children: ReactNode }) {
       update: WeworkUpdateInfo,
       onProgress?: (progress: WeworkUpdateDownloadProgress) => void
     ): Promise<void> => {
-      if (activeDownloadRef.current?.version === update.version) {
-        return activeDownloadRef.current.promise
+      const activeDownload = activeDownloadRef.current
+      if (activeDownload?.version === update.version) {
+        if (!onProgress) return activeDownload.promise
+
+        activeDownload.progressListeners.add(onProgress)
+        return activeDownload.promise.finally(() => {
+          activeDownload.progressListeners.delete(onProgress)
+        })
       }
 
-      const promise = onProgress
-        ? downloadPendingWeworkUpdate(onProgress)
-        : downloadPendingWeworkUpdate()
-      activeDownloadRef.current = { version: update.version, promise }
+      const progressListeners = new Set<(progress: WeworkUpdateDownloadProgress) => void>()
+      if (onProgress) progressListeners.add(onProgress)
+      const promise = downloadPendingWeworkUpdate(progress => {
+        progressListeners.forEach(listener => listener(progress))
+      })
+      activeDownloadRef.current = { version: update.version, promise, progressListeners }
       const clearActiveDownload = () => {
         if (activeDownloadRef.current?.promise === promise) {
           activeDownloadRef.current = null
         }
       }
       void promise.then(clearActiveDownload, clearActiveDownload)
-      return promise
+      if (!onProgress) return promise
+
+      return promise.finally(() => {
+        progressListeners.delete(onProgress)
+      })
     },
     []
   )

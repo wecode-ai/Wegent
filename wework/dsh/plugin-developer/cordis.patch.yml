@@ -1,0 +1,3 @@
+- insert:
+    - id: wework-plugin-developer
+      name: '@wegent/dsh-wework-plugin-developer'

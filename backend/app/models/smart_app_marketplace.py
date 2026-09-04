@@ -8,6 +8,7 @@ from datetime import datetime
 
 from sqlalchemy import (
     JSON,
+    Boolean,
     Column,
     DateTime,
     Index,
@@ -165,6 +166,13 @@ class SmartApp(Base):
         default=0,
         server_default="0",
         comment="Marketplace featured rank; 0 means not featured",
+    )
+    is_listed = Column(
+        Boolean,
+        nullable=False,
+        default=True,
+        server_default="1",
+        comment="Whether the Smart app is listed in the WeWork marketplace",
     )
     created_at = Column(
         _DATETIME,

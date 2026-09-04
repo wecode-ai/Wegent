@@ -17,20 +17,25 @@ class SmartAppAccessTarget(BaseModel):
 
 
 class SmartAppAccessUpdateRequest(BaseModel):
-    scope: Literal["private", "restricted"]
+    scope: Literal["private", "restricted", "public"]
     targets: list[SmartAppAccessTarget] = Field(default_factory=list)
 
     @model_validator(mode="after")
     def validate_targets(self) -> "SmartAppAccessUpdateRequest":
         if self.scope == "restricted" and not self.targets:
             raise ValueError("Restricted sharing requires at least one target")
+        if self.scope != "restricted" and self.targets:
+            raise ValueError(f"{self.scope.title()} sharing does not accept targets")
         return self
 
 
 class SmartAppAccessResponse(BaseModel):
     smartAppId: int
-    scope: Literal["private", "restricted"]
+    scope: Literal["private", "restricted", "public"]
     targets: list[SmartAppAccessTarget] = Field(default_factory=list)
+    isListed: bool
+    latestReleaseId: int
+    version: str
 
 
 class SmartAppReleaseItem(BaseModel):
@@ -53,7 +58,8 @@ class SmartAppMarketplaceItem(BaseModel):
     sourceType: Literal["official", "user"]
     ownerUserId: int
     ownerDisplayName: str = ""
-    accessRole: Literal["official", "owner", "recipient"]
+    accessRole: Literal["official", "owner", "public", "recipient"]
+    visibility: Literal["private", "restricted", "public"]
     tags: list[str] = Field(default_factory=list)
     iconUrl: str = ""
     screenshotUrls: list[str] = Field(default_factory=list)
@@ -105,7 +111,20 @@ class SmartAppSubmissionInitRequest(BaseModel):
     releaseNotes: str = Field(default="", max_length=4096)
     extensions: dict[str, Any] = Field(default_factory=dict)
     releaseExtensions: dict[str, Any] = Field(default_factory=dict)
+    scope: Literal["private", "restricted", "public"] | None = None
     targets: list[SmartAppAccessTarget] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def validate_scope(self) -> "SmartAppSubmissionInitRequest":
+        if self.smartAppId is None and self.scope not in {"restricted", "public"}:
+            raise ValueError("New Smart apps must be restricted or public")
+        if self.scope == "restricted" and not self.targets:
+            raise ValueError("Restricted sharing requires at least one target")
+        if self.scope in {"private", "public"} and self.targets:
+            raise ValueError(f"{self.scope.title()} sharing does not accept targets")
+        if self.scope is None and self.targets:
+            raise ValueError("Sharing scope is required when targets are provided")
+        return self
 
 
 class SmartAppSubmissionInitResponse(BaseModel):

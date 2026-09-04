@@ -12,6 +12,7 @@ export const DESKTOP_CHECKPOINTS = [
   'offline-local-project-space',
   'cloud-context-resilience',
   'core-dsh-plugin-management',
+  'plugin-development',
   'plugin-auto-update',
   'plugin-workspace-publication',
   'project-ai-settings',

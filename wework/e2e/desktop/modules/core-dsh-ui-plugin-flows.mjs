@@ -104,11 +104,24 @@ const UI_PLUGINS = [
 ]
 const DEMO_PLUGIN = {
   name: '@wegent/dsh-wework-extension-demo',
-  directory: fileURLToPath(new URL('../../../dsh/examples/ui-extension-demo', import.meta.url)),
+  directory: fileURLToPath(
+    new URL(
+      '../../../dsh/plugin-developer/codex-plugin/skills/develop-wework-plugin/assets/ui-extension-demo',
+      import.meta.url
+    )
+  ),
   contributions: {
     'wework.action': ['dsh-extension-demo.open'],
     'wework.app': ['dsh-extension-demo'],
+    'wework.task.status': ['dsh-extension-demo.task-status'],
+    'wework.environment.section': ['dsh-extension-demo.environment-section'],
+    'wework.board.card.status': ['dsh-extension-demo.board-card-status'],
+    'wework.workspace.menu.section': ['demo-workspace-menu'],
+    'wework.plugins.action': ['dsh-extension-demo.create'],
+    'wework.project.create.section': ['dsh-extension-demo.project-create'],
+    'wework.project.work.section': ['dsh-extension-demo.project-work'],
     'wework.route': ['dsh-extension-demo.route'],
+    'wework.runtime-profile.workspace-policy': ['dsh_extension_demo'],
     'wework.sidebar.navigation': ['dsh-extension-demo.navigation'],
     'wework.settings.page': ['dsh-extension-demo.settings'],
     'wework.workspace.tab': ['dsh-extension-demo.workspace'],

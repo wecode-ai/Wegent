@@ -12,10 +12,10 @@ const LIGHT_TERMINAL_THEME: RequiredTerminalTheme = {
 }
 
 const DARK_TERMINAL_THEME: RequiredTerminalTheme = {
-  background: '#111316',
-  foreground: '#f1f5f9',
-  cursor: '#2dd4bf',
-  selectionBackground: 'rgba(45, 212, 191, 0.28)',
+  background: '#181818',
+  foreground: '#ffffff',
+  cursor: '#339cff',
+  selectionBackground: 'rgba(51, 156, 255, 0.28)',
 }
 
 function isDarkAppearance(): boolean {

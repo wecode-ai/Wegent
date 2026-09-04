@@ -503,6 +503,7 @@ jobs:
 
       - name: Run Provider-native E2E tests serially
         if: matrix.shardIndex == 1
+        timeout-minutes: 15
         working-directory: ./frontend
         env:
           E2E_BASE_URL: http://localhost:3000

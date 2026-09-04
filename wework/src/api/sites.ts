@@ -3,7 +3,58 @@ import { ApiError, createHttpClient } from './http'
 export type SitePublishStatus = 'unpublished' | 'publishing' | 'published' | 'failed' | 'scanning'
 export type SiteAppType = 'web' | 'miniapp'
 export type SiteNetwork = 'inner' | 'outer'
-export type ApplicationCapability = 'create' | 'publish' | 'edit' | 'delete' | 'open_experience'
+export type SiteAccessRole = 'owner' | 'collaborator'
+export type ApplicationCapability =
+  | 'create'
+  | 'publish'
+  | 'edit'
+  | 'delete'
+  | 'open_experience'
+  | 'configure_environment'
+export type EnvironmentVariableType = 'plain' | 'secret'
+
+export interface PlainEnvironmentVariable {
+  key: string
+  type: 'plain'
+  value: string
+  updated_by: string
+  updated_at: string
+}
+
+export interface SecretEnvironmentVariable {
+  key: string
+  type: 'secret'
+  configured: true
+  updated_by: string
+  updated_at: string
+}
+
+export type EnvironmentVariable = PlainEnvironmentVariable | SecretEnvironmentVariable
+
+export interface EnvironmentSnapshot {
+  revision_id: string | null
+  project_id: string
+  revision_number: number
+  items: EnvironmentVariable[]
+}
+
+export interface EnvironmentRevision {
+  id: string
+  project_id: string
+  revision_number: number
+  variables: EnvironmentVariable[]
+  created_by: string
+  created_at: string
+}
+
+export type EnvironmentPatchOperation =
+  | { op: 'upsert'; key: string; type: EnvironmentVariableType; value: string }
+  | { op: 'remove'; key: string }
+
+export interface PatchEnvironmentVariablesInput {
+  expected_revision_id: string | null
+  operations: EnvironmentPatchOperation[]
+}
 
 export interface Site {
   app_type: 'web'
@@ -11,6 +62,8 @@ export interface Site {
   project_id?: string | null
   taskid: string
   username: string
+  owner_username: string
+  access_role: SiteAccessRole
   name: string
   slug: string
   custom_domain_prefix?: string | null
@@ -31,6 +84,8 @@ export interface MiniProgram {
   project_id?: string | null
   taskid: string
   username: string
+  owner_username: string
+  access_role: SiteAccessRole
   name: string
   slug: string
   app_id?: string | null
@@ -80,6 +135,12 @@ export interface UpdateSiteInput {
   customDomainPrefix?: string | null
 }
 
+export interface SiteCollaborator {
+  subject: string
+  added_by: string
+  created_at: string
+}
+
 export interface SitesApi {
   listApplicationTypes(): Promise<ApplicationTypeListResponse>
   listSites(input: ListSitesInput): Promise<SiteListResponse>
@@ -87,6 +148,19 @@ export interface SitesApi {
   updateSiteNetwork(siteid: string, network: SiteNetwork): Promise<Site>
   updateSite(siteid: string, input: UpdateSiteInput): Promise<Site>
   deleteSite(siteid: string): Promise<void>
+  getEnvironmentVariables(siteid: string): Promise<EnvironmentSnapshot>
+  patchEnvironmentVariables(
+    siteid: string,
+    input: PatchEnvironmentVariablesInput,
+    idempotencyKey: string
+  ): Promise<EnvironmentRevision>
+  listCollaborators(siteid: string): Promise<{ items: SiteCollaborator[] }>
+  addCollaborator(
+    siteid: string,
+    subject: string,
+    idempotencyKey: string
+  ): Promise<SiteCollaborator>
+  removeCollaborator(siteid: string, subject: string): Promise<void>
 }
 
 interface SitesApiOptions {
@@ -134,6 +208,31 @@ export function createSitesApi(baseUrl: string, options: SitesApiOptions = {}): 
     deleteSite(siteid) {
       return client.delete<void>(`/sites/${encodeURIComponent(siteid)}`)
     },
+    getEnvironmentVariables(siteid) {
+      return client.get(`/sites/${encodeURIComponent(siteid)}/environment-variables`)
+    },
+    patchEnvironmentVariables(siteid, input, idempotencyKey) {
+      return client.patch(`/sites/${encodeURIComponent(siteid)}/environment-variables`, input, {
+        headers: { 'Idempotency-Key': idempotencyKey },
+      })
+    },
+    listCollaborators(siteid) {
+      return client.get(`/sites/${encodeURIComponent(siteid)}/collaborators`)
+    },
+    addCollaborator(siteid, subject, idempotencyKey) {
+      return client.post(
+        `/sites/${encodeURIComponent(siteid)}/collaborators`,
+        { subject },
+        {
+          headers: { 'Idempotency-Key': idempotencyKey },
+        }
+      )
+    },
+    removeCollaborator(siteid, subject) {
+      return client.delete<void>(
+        `/sites/${encodeURIComponent(siteid)}/collaborators/${encodeURIComponent(subject)}`
+      )
+    },
   }
 }
 
@@ -148,6 +247,11 @@ export function createUnavailableSitesApi(): SitesApi {
     updateSiteNetwork: unavailable,
     updateSite: unavailable,
     deleteSite: unavailable,
+    getEnvironmentVariables: unavailable,
+    patchEnvironmentVariables: unavailable,
+    listCollaborators: unavailable,
+    addCollaborator: unavailable,
+    removeCollaborator: unavailable,
   }
 }
 

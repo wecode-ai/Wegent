@@ -13,7 +13,7 @@ Open **Plugins** to inspect installed plugins and manage their capabilities. Rev
 In the Wework desktop app, open **Plugins → Manage plugins** and switch between two management surfaces:
 
 - **Codex plugins** provide Skills, MCP servers, applications, and commands to AI. They are installed through Codex or Wegent plugin marketplaces and are used in tasks and conversations.
-- **Wework plugins** are DSH bundles that directly extend the local Wework desktop runtime. They are not regular Codex plugins and do not appear in the task plugin picker.
+- **Wework plugins** are DSH bundles that directly extend the local Wework desktop runtime. A Wework plugin is the outer delivery unit and may carry an official-format Codex plugin; only those nested Codex capabilities appear in conversations and the task plugin picker.
 
 From **Wework plugins**, install a plugin from an npm package, Git source, or absolute local directory. Wework shows a trust confirmation because the plugin and its installation scripts run with the current user's permissions. User-installed plugins can be updated, enabled, disabled, or uninstalled. Bundled Wework runtime plugins are displayed as read-only and cannot be changed or removed here.
 
@@ -121,6 +121,10 @@ refresh the impact and confirm again.
 The Wegent cloud marketplace publishes `wegent-sites` and `weibo-miniapp-h5-develop-agent` in advance, but does not preinstall them for every user. Open **Applications** to view the **Sites** and **Mini Programs** tabs. When you click **Create** and choose an application type, Wework first checks whether the selected online device already has the matching plugin installed; if it does, Wework inserts the plugin reference into a new task composer immediately. If not, Wework idempotently installs the plugin for the account and syncs it to that device.
 
 Built-in application plugins use `visibility=workspace`, so Sites use `plugin://wegent-sites@wegent`; Mini Programs use `plugin://weibo-miniapp-h5-develop-agent@wegent`, which also supplies its plugin-provided creation prompt. The Applications page shows an installation notice while that preparation is running. Repeated clicks reuse the plugin already installed on the current device instead of creating duplicate installation records or sending another install request.
+
+The Sites list contains both Sites you own and Sites where you are a collaborator. A Site owner can use **… → Manage collaborators** to add or remove collaborators by username. Collaborators can continue development, edit, publish, delete, and configure environment variables, but cannot manage collaborators. **Continue developing** makes sure `wegent-sites` is installed on the selected device and inserts both the plugin reference and Site reference into a fresh task composer so the AI receives the Site workflow and target-project context together.
+
+Use **… → Environment variables** on a Site row to add, change, or remove `Plain` and `Secret` variables as one update. Secret values are never returned by the server; leave an already configured Secret empty to keep its value unchanged. A saved revision takes effect on the next deployment. Static Sites inject variables into the browser bundle, so their Secret values are visible to Site visitors and are suitable only for internal audiences.
 
 Wegent marketplace publication and upload accept packages containing either `.codex-plugin/plugin.json` or `.claude-plugin/plugin.json`. Backend adds the missing runtime manifest before storing the package, so every installed plugin is synchronized into both the Codex and Claude Code plugin directories on each device.
 

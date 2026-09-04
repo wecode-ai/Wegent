@@ -1,7 +1,7 @@
 {
   "name": "@wegent/dsh-wework-extension-demo",
   "displayName": "Wework DSH 扩展 Demo",
-  "description": "A runnable third-party plugin demonstrating Wework DSH UI extension points.",
+  "description": "A runnable Skill asset demonstrating every Wework DSH UI extension point.",
   "version": "0.1.0",
   "private": true,
   "type": "module",

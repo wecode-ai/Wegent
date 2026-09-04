@@ -7,6 +7,7 @@
 import base64
 import hashlib
 import json
+import logging
 import re
 import uuid
 from dataclasses import dataclass
@@ -57,6 +58,7 @@ from app.services.smart_app_package_parser import (
 _DATA_URL = re.compile(r"^data:(image/(?:png|webp|jpeg));base64,([A-Za-z0-9+/=]+)$")
 _APPROVED = (MemberStatus.APPROVED.value, MemberStatus.APPROVED.name)
 _MAX_EXTENSIONS_BYTES = 64 * 1024
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -78,18 +80,22 @@ class SmartAppMarketplaceService:
     ) -> SmartAppMarketplaceListResponse:
         apps = db.query(SmartApp).filter(SmartApp.status == "published").all()
         normalized_query = query.strip().lower()
-        items = []
+        ranked_items: list[tuple[int, SmartAppMarketplaceItem]] = []
         for app in apps:
+            if app.visibility == "public" and not app.is_listed:
+                continue
             role = self._access_role(db, app=app, user_id=user_id)
             if role is None:
                 continue
-            if app.source_type == "user" and role == "owner":
+            if role == "owner" and app.visibility != "public":
                 continue
-            if (
-                source
-                and source != app.source_type
-                and not (source == "shared" and role == "recipient")
+            if source == "official" and app.source_type != "official":
+                continue
+            if source == "public" and (
+                app.source_type != "user" or app.visibility != "public"
             ):
+                continue
+            if source == "shared" and role != "recipient":
                 continue
             tags = list(app.tags_json or [])
             if tag and tag not in tags:
@@ -102,15 +108,19 @@ class SmartAppMarketplaceService:
                 ).lower()
             ):
                 continue
-            items.append(self._item(db, app=app, role=role))
-        items.sort(
-            key=lambda item: (
-                item.sourceType != "official",
-                not item.featured,
-                -item.updatedAt.timestamp(),
-            )
+            ranked_items.append((app.featured_rank, self._item(db, app=app, role=role)))
+        ranked_items.sort(
+            key=lambda row: (
+                row[0],
+                row[1].sourceType == "official",
+                row[1].updatedAt.timestamp(),
+                row[1].id,
+            ),
+            reverse=True,
         )
-        return SmartAppMarketplaceListResponse(items=items)
+        return SmartAppMarketplaceListResponse(
+            items=[item for _featured_rank, item in ranked_items]
+        )
 
     def list_owned(self, db: Session, *, user_id: int) -> SmartAppOwnedListResponse:
         apps = (
@@ -162,15 +172,21 @@ class SmartAppMarketplaceService:
             name=request.name,
             display_name=request.displayName,
         )
-        if request.smartAppId is None and not request.targets:
-            raise HTTPException(
-                status_code=422, detail="User Smart apps require at least one recipient"
+        scope = request.scope or app.visibility
+        targets = []
+        if scope == "restricted":
+            targets = (
+                self._validated_targets(
+                    db, owner_user_id=user_id, targets=request.targets
+                )
+                if request.targets
+                else self._grant_targets(db, app.id)
             )
-        targets = (
-            self._validated_targets(db, owner_user_id=user_id, targets=request.targets)
-            if request.targets
-            else self._grant_targets(db, app.id)
-        )
+            if not targets:
+                raise HTTPException(
+                    status_code=422,
+                    detail="Restricted sharing requires at least one target",
+                )
         self._ensure_newer_version(db, app=app, version=request.version)
         pending = (
             db.query(SmartAppSubmission.id)
@@ -218,6 +234,7 @@ class SmartAppMarketplaceService:
                     "releaseExtensions": release_extensions,
                     "icon": {"key": icon_key, "contentType": icon[2]},
                     "screenshots": asset_keys,
+                    "scope": scope,
                     "targets": [target.model_dump() for target in targets],
                 },
             )
@@ -300,11 +317,18 @@ class SmartAppMarketplaceService:
                 metadata=dict(submission.metadata_json or {}),
                 created_by_user_id=user_id,
             )
+            scope = str((submission.metadata_json or {}).get("scope") or "private")
             targets = [
                 SmartAppAccessTarget.model_validate(target)
                 for target in (submission.metadata_json or {}).get("targets", [])
             ]
-            self._replace_grants(db, app=app, owner_user_id=user_id, targets=targets)
+            self._replace_access(
+                db,
+                app=app,
+                owner_user_id=user_id,
+                scope=scope,
+                targets=targets,
+            )
             submission.status = "published"
             db.commit()
             db.refresh(app)
@@ -339,11 +363,17 @@ class SmartAppMarketplaceService:
         self, db: Session, *, smart_app_id: int, user_id: int
     ) -> SmartAppAccessResponse:
         app = self._owned_user_app(db, smart_app_id, user_id)
-        targets = self._grant_targets(db, app.id)
+        release = self._latest_release(db, app)
+        targets = (
+            self._grant_targets(db, app.id) if app.visibility == "restricted" else []
+        )
         return SmartAppAccessResponse(
             smartAppId=app.id,
-            scope="restricted" if targets else "private",
+            scope=app.visibility,
             targets=targets,
+            isListed=app.is_listed,
+            latestReleaseId=release.id,
+            version=release.version,
         )
 
     def update_access(
@@ -360,8 +390,13 @@ class SmartAppMarketplaceService:
             if request.scope == "restricted"
             else []
         )
-        self._replace_grants(db, app=app, owner_user_id=user_id, targets=targets)
-        app.visibility = "restricted" if targets else "private"
+        self._replace_access(
+            db,
+            app=app,
+            owner_user_id=user_id,
+            scope=request.scope,
+            targets=targets,
+        )
         db.commit()
         return self.get_access(db, smart_app_id=smart_app_id, user_id=user_id)
 
@@ -422,11 +457,11 @@ class SmartAppMarketplaceService:
         db: Session,
         *,
         package: bytes,
-        summary: str,
-        description_md: str,
-        tags: list[str],
-        icon: bytes,
-        icon_content_type: str,
+        summary: str | None,
+        description_md: str | None,
+        tags: list[str] | None,
+        icon: bytes | None,
+        icon_content_type: str | None,
         screenshots: list[tuple[bytes, str]],
         release_notes: str = "",
         featured_rank: int = 0,
@@ -434,8 +469,12 @@ class SmartAppMarketplaceService:
         release_extensions: dict[str, Any] | None = None,
     ) -> tuple[SmartApp, SmartAppRelease, bool]:
         parsed = smart_app_package_parser.parse(package)
-        validated_tags = marketplace_tag_service.validate_resource_tags(
-            db, tags, require_nonempty=True
+        validated_tags = (
+            marketplace_tag_service.validate_resource_tags(
+                db, tags, require_nonempty=True
+            )
+            if tags is not None
+            else None
         )
         app = (
             db.query(SmartApp)
@@ -450,7 +489,7 @@ class SmartAppMarketplaceService:
                 source_type="official",
                 visibility="public",
                 status="draft",
-                tags_json=validated_tags,
+                tags_json=validated_tags or [],
             )
             db.add(app)
             db.flush()
@@ -470,34 +509,48 @@ class SmartAppMarketplaceService:
             return app, duplicate, False
         self._ensure_newer_version(db, app=app, version=parsed.version)
         nonce = uuid.uuid4().hex
-        icon_key = f"smart-apps/staging/official/{nonce}/icon"
-        marketplace_artifact_storage.put(icon_key, icon, content_type=icon_content_type)
+        icon_key = None
+        if icon is not None and icon_content_type is not None:
+            icon_key = f"smart-apps/staging/official/{nonce}/icon"
+            marketplace_artifact_storage.put(
+                icon_key, icon, content_type=icon_content_type
+            )
         screenshot_meta = []
         for index, (value, content_type) in enumerate(screenshots):
             key = f"smart-apps/staging/official/{nonce}/screenshot-{index + 1}"
             marketplace_artifact_storage.put(key, value, content_type=content_type)
             screenshot_meta.append({"key": key, "contentType": content_type})
-        staging_keys = [icon_key, *(item["key"] for item in screenshot_meta)]
+        staging_keys = [
+            *(value for value in [icon_key] if value),
+            *(item["key"] for item in screenshot_meta),
+        ]
+        metadata: dict[str, Any] = {
+            "releaseNotes": release_notes,
+            "extensions": self._validated_extensions(extensions or {}, "extensions"),
+            "releaseExtensions": self._validated_extensions(
+                release_extensions or {}, "releaseExtensions"
+            ),
+        }
+        if summary is not None:
+            metadata["summary"] = summary
+        if description_md is not None:
+            metadata["descriptionMd"] = description_md
+        if validated_tags is not None:
+            metadata["tags"] = validated_tags
+        if icon_key is not None and icon_content_type is not None:
+            metadata["icon"] = {
+                "key": icon_key,
+                "contentType": icon_content_type,
+            }
+        if screenshot_meta:
+            metadata["screenshots"] = screenshot_meta
         try:
             release, _ = self._publish_release(
                 db,
                 app=app,
                 parsed=parsed,
                 package=package,
-                metadata={
-                    "summary": summary,
-                    "descriptionMd": description_md,
-                    "tags": validated_tags,
-                    "releaseNotes": release_notes,
-                    "extensions": self._validated_extensions(
-                        extensions or {}, "extensions"
-                    ),
-                    "releaseExtensions": self._validated_extensions(
-                        release_extensions or {}, "releaseExtensions"
-                    ),
-                    "icon": {"key": icon_key, "contentType": icon_content_type},
-                    "screenshots": screenshot_meta,
-                },
+                metadata=metadata,
                 created_by_user_id=0,
             )
             app.source_type = "official"
@@ -511,6 +564,91 @@ class SmartAppMarketplaceService:
                     marketplace_artifact_storage.delete(key)
                 except Exception:
                     pass
+
+    def update_official_marketplace_metadata(
+        self,
+        db: Session,
+        *,
+        app: SmartApp,
+        summary: str,
+        description_md: str,
+        tags: list[str],
+        icon: bytes | None = None,
+        icon_content_type: str | None = None,
+    ) -> SmartApp:
+        """Update mutable marketplace presentation without changing the release."""
+        validated_tags = marketplace_tag_service.validate_resource_tags(
+            db, tags, require_nonempty=True
+        )
+        if icon is not None and icon_content_type is not None:
+            digest = hashlib.sha256(icon).hexdigest()
+            extension = self._extension(icon_content_type)
+            icon_key = f"smart-apps/assets/{app.id}/icon-{digest}.{extension}"
+            marketplace_artifact_storage.put_immutable(
+                icon_key, icon, content_type=icon_content_type
+            )
+            app.icon_storage_key = icon_key
+        app.summary = summary.strip()
+        app.description_md = description_md.strip()
+        app.tags_json = validated_tags
+        db.commit()
+        db.refresh(app)
+        return app
+
+    def delete_official_marketplace_app(
+        self,
+        db: Session,
+        *,
+        app: SmartApp,
+    ) -> None:
+        """Permanently remove one platform-owned app and its cloud artifacts."""
+        releases = (
+            db.query(SmartAppRelease)
+            .filter(SmartAppRelease.smart_app_id == app.id)
+            .all()
+        )
+        submissions = (
+            db.query(SmartAppSubmission)
+            .filter(SmartAppSubmission.smart_app_id == app.id)
+            .all()
+        )
+        artifact_keys = {
+            app.icon_storage_key,
+            *(app.screenshots_json or []),
+            *(release.storage_key for release in releases),
+        }
+        for submission in submissions:
+            metadata = dict(submission.metadata_json or {})
+            artifact_keys.add(submission.staging_storage_key)
+            artifact_keys.add(str((metadata.get("icon") or {}).get("key") or ""))
+            artifact_keys.update(
+                str(item.get("key") or "") for item in metadata.get("screenshots") or []
+            )
+
+        db.query(ResourceMember).filter(
+            ResourceMember.resource_type.in_(
+                (ResourceType.SMART_APP.value, ResourceType.SMART_APP.name)
+            ),
+            ResourceMember.resource_id == app.id,
+        ).delete(synchronize_session=False)
+        db.query(SmartAppSubmission).filter(
+            SmartAppSubmission.smart_app_id == app.id
+        ).delete(synchronize_session=False)
+        db.query(SmartAppRelease).filter(SmartAppRelease.smart_app_id == app.id).delete(
+            synchronize_session=False
+        )
+        db.delete(app)
+        db.commit()
+
+        for key in filter(None, artifact_keys):
+            try:
+                marketplace_artifact_storage.delete(key)
+            except Exception:
+                logger.warning(
+                    "Failed to delete Smart app artifact after catalog deletion: %s",
+                    key,
+                    exc_info=True,
+                )
 
     def _submission_app(
         self,
@@ -582,11 +720,18 @@ class SmartAppMarketplaceService:
         db.add(release)
         db.flush()
         app.display_name = parsed.display_name
-        app.summary = str(metadata.get("summary") or parsed.description)
-        app.description_md = str(metadata.get("descriptionMd") or parsed.description)
-        app.tags_json = list(metadata.get("tags") or [])
-        app.icon_storage_key = final_assets[0]
-        app.screenshots_json = final_assets[1]
+        if "summary" in metadata or not app.summary:
+            app.summary = str(metadata.get("summary") or parsed.description)
+        if "descriptionMd" in metadata or not app.description_md:
+            app.description_md = str(
+                metadata.get("descriptionMd") or parsed.description
+            )
+        if "tags" in metadata:
+            app.tags_json = list(metadata.get("tags") or [])
+        if final_assets[0] is not None:
+            app.icon_storage_key = final_assets[0]
+        if "screenshots" in metadata:
+            app.screenshots_json = final_assets[1]
         app.extensions_json = self._merge_extensions(
             dict(app.extensions_json or {}),
             self._validated_extensions(metadata.get("extensions") or {}, "extensions"),
@@ -595,18 +740,25 @@ class SmartAppMarketplaceService:
         app.status = "published"
         if not app.published_at or app.published_at == EPOCH_TIME:
             app.published_at = datetime.now()
-        return release, [final_assets[0], *final_assets[1]]
+        return release, [
+            *(value for value in [final_assets[0]] if value),
+            *final_assets[1],
+        ]
 
-    def _activate_assets(self, app_id: int, metadata: dict) -> tuple[str, list[str]]:
-        icon_meta = dict(metadata.get("icon") or {})
-        icon_value = marketplace_artifact_storage.get(str(icon_meta["key"]))
-        icon_digest = hashlib.sha256(icon_value).hexdigest()
-        icon_type = str(icon_meta.get("contentType") or "image/png")
-        icon_extension = self._extension(icon_type)
-        icon_key = f"smart-apps/assets/{app_id}/icon-{icon_digest}.{icon_extension}"
-        marketplace_artifact_storage.put_immutable(
-            icon_key, icon_value, content_type=icon_type
-        )
+    def _activate_assets(
+        self, app_id: int, metadata: dict
+    ) -> tuple[str | None, list[str]]:
+        icon_key = None
+        if metadata.get("icon"):
+            icon_meta = dict(metadata["icon"])
+            icon_value = marketplace_artifact_storage.get(str(icon_meta["key"]))
+            icon_digest = hashlib.sha256(icon_value).hexdigest()
+            icon_type = str(icon_meta.get("contentType") or "image/png")
+            icon_extension = self._extension(icon_type)
+            icon_key = f"smart-apps/assets/{app_id}/icon-{icon_digest}.{icon_extension}"
+            marketplace_artifact_storage.put_immutable(
+                icon_key, icon_value, content_type=icon_type
+            )
         screenshot_keys = []
         for index, raw in enumerate(metadata.get("screenshots") or []):
             item = dict(raw)
@@ -648,6 +800,7 @@ class SmartAppMarketplaceService:
             ownerUserId=app.owner_user_id,
             ownerDisplayName=(owner.user_name if owner else "Wegent"),
             accessRole=role,
+            visibility=app.visibility,
             tags=list(app.tags_json or []),
             iconUrl=icon_url,
             screenshotUrls=screenshot_urls,
@@ -744,6 +897,8 @@ class SmartAppMarketplaceService:
             return "official"
         if app.owner_user_id == user_id:
             return "owner"
+        if app.visibility == "public":
+            return "public"
         if app.visibility != "restricted":
             return None
         namespace_ids = self._user_namespace_ids(db, user_id)
@@ -846,12 +1001,13 @@ class SmartAppMarketplaceService:
             )
         return normalized
 
-    def _replace_grants(
+    def _replace_access(
         self,
         db: Session,
         *,
         app: SmartApp,
         owner_user_id: int,
+        scope: str,
         targets: list[SmartAppAccessTarget],
     ) -> None:
         db.query(ResourceMember).filter(
@@ -860,22 +1016,23 @@ class SmartAppMarketplaceService:
             ),
             ResourceMember.resource_id == app.id,
         ).delete(synchronize_session=False)
-        now = datetime.now()
-        for target in targets:
-            db.add(
-                ResourceMember.create(
-                    resource_type=ResourceType.SMART_APP.value,
-                    resource_id=app.id,
-                    entity_type=target.entityType,
-                    entity_id=target.entityId,
-                    entity_display_name=target.displayName,
-                    status=MemberStatus.APPROVED.value,
-                    invited_by_user_id=owner_user_id,
-                    reviewed_by_user_id=owner_user_id,
-                    reviewed_at=now,
+        if scope == "restricted":
+            now = datetime.now()
+            for target in targets:
+                db.add(
+                    ResourceMember.create(
+                        resource_type=ResourceType.SMART_APP.value,
+                        resource_id=app.id,
+                        entity_type=target.entityType,
+                        entity_id=target.entityId,
+                        entity_display_name=target.displayName,
+                        status=MemberStatus.APPROVED.value,
+                        invited_by_user_id=owner_user_id,
+                        reviewed_by_user_id=owner_user_id,
+                        reviewed_at=now,
+                    )
                 )
-            )
-        app.visibility = "restricted" if targets else "private"
+        app.visibility = scope
 
     def _grant_targets(self, db: Session, app_id: int) -> list[SmartAppAccessTarget]:
         grants = (
