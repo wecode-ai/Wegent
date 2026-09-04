@@ -26,6 +26,7 @@ from app.services.knowledge.code_wiki.source import SourceAccessDenied
 from app.services.knowledge.knowledge_service import KnowledgeService
 
 CREATE_URL = "/api/knowledge-bases/code-wikis"
+STRATEGIES_URL = f"{CREATE_URL}/generation-strategies"
 
 PAYLOAD = {
     "name": "Wegent Wiki",
@@ -112,6 +113,57 @@ def test_creation_requires_authentication(test_client: TestClient):
     response = test_client.post(CREATE_URL, json=PAYLOAD)
 
     assert response.status_code in (401, 403)
+
+
+def test_generation_strategy_capabilities_hide_unready_deployment_wiring(
+    test_client: TestClient,
+    auth_headers: dict[str, str],
+):
+    """The UI gets runnable choices, never deployment Team names or broken options."""
+    adaptive = SimpleNamespace(
+        strategy_id="coordinator_adaptive",
+        revision=1,
+        definition=SimpleNamespace(
+            display_name="Adaptive coordinator",
+            description="Writes or delegates by scope.",
+        ),
+    )
+    reviewed = SimpleNamespace(
+        strategy_id="coordinator_reviewed",
+        revision=1,
+        definition=SimpleNamespace(
+            display_name="Reviewed coordinator",
+            description="Reviews the plan before writing.",
+        ),
+    )
+    with (
+        patch(
+            "app.api.endpoints.knowledge_code_wiki.selectable_strategies",
+            return_value=(adaptive, reviewed),
+        ),
+        patch(
+            "app.api.endpoints.knowledge_code_wiki.selectable_default_strategy",
+            return_value="coordinator_adaptive",
+        ),
+        patch(
+            "app.api.endpoints.knowledge_code_wiki.strategy_team_readiness",
+            side_effect=("Writer is missing", ""),
+        ),
+    ):
+        response = test_client.get(STRATEGIES_URL, headers=auth_headers)
+
+    assert response.status_code == 200, response.text
+    assert response.json() == {
+        "default_strategy": None,
+        "strategies": [
+            {
+                "id": "coordinator_reviewed",
+                "revision": 1,
+                "display_name": "Reviewed coordinator",
+                "description": "Reviews the plan before writing.",
+            }
+        ],
+    }
 
 
 def test_unsupported_source_type_is_rejected_by_validation(

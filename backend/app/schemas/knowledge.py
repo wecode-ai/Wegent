@@ -756,6 +756,24 @@ class CodeWikiRunCreate(BaseModel):
         return self
 
 
+class CodeWikiGenerationStrategyOption(BaseModel):
+    """One deployment-enabled, validated strategy a caller may select."""
+
+    id: str
+    revision: int
+    display_name: str
+    description: str
+
+
+class CodeWikiGenerationStrategyCapabilities(BaseModel):
+    """Deployment policy projected into the choices a Code Wiki UI needs."""
+
+    # None means the deployment is still on an internal legacy default. The UI leaves
+    # creation unset in that case rather than displaying a strategy users cannot pick.
+    default_strategy: Optional[str] = None
+    strategies: List[CodeWikiGenerationStrategyOption] = Field(default_factory=list)
+
+
 class CodeWikiRunResponse(BaseModel):
     """What happened when a code wiki was asked to regenerate."""
 

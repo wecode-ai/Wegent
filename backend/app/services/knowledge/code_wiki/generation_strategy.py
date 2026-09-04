@@ -37,6 +37,8 @@ class GenerationStrategyDefinition:
 
     strategy_id: str
     revision: int
+    display_name: str
+    description: str
     review_protocol: ReviewProtocol
     requires_section_writer: bool = False
     selectable: bool = True
@@ -81,12 +83,16 @@ _DEFINITIONS = {
     COORDINATOR_ADAPTIVE: GenerationStrategyDefinition(
         strategy_id=COORDINATOR_ADAPTIVE,
         revision=1,
+        display_name="Adaptive coordinator",
+        description="Coordinator writes known scopes and delegates deeper work packages.",
         review_protocol=ReviewProtocol.NONE,
         requires_section_writer=True,
     ),
     COORDINATOR_REVIEWED: GenerationStrategyDefinition(
         strategy_id=COORDINATOR_REVIEWED,
         revision=1,
+        display_name="Reviewed coordinator",
+        description="Coordinator follows the persisted plan review before writing.",
         review_protocol=ReviewProtocol.PLAN_ONLY,
     ),
     # Existing wikis did infer review behaviour from collaborationModel. Keeping
@@ -95,6 +101,8 @@ _DEFINITIONS = {
     LEGACY: GenerationStrategyDefinition(
         strategy_id=LEGACY,
         revision=1,
+        display_name="Legacy",
+        description="Compatibility behaviour for wikis created before strategy selection.",
         review_protocol=ReviewProtocol.TEAM_LEGACY,
         selectable=False,
     ),
@@ -121,6 +129,27 @@ def strategy_for_new_wiki(requested_id: Optional[str] = None) -> str:
     return resolved.strategy_id
 
 
+def selectable_strategies() -> tuple[ResolvedGenerationStrategy, ...]:
+    """The policy-enabled strategies a caller may choose for a Code Wiki."""
+    policy = configured_policy()
+    return tuple(
+        resolved
+        for strategy_id in _DEFINITIONS
+        if (resolved := _resolve_if_enabled(policy, strategy_id)) is not None
+        and resolved.definition.selectable
+    )
+
+
+def selectable_default_strategy() -> Optional[str]:
+    """Deployment default when it is a strategy an API caller may choose."""
+    strategy_id = configured_policy().default_strategy
+    return (
+        strategy_id
+        if any(item.strategy_id == strategy_id for item in selectable_strategies())
+        else None
+    )
+
+
 def strategy_for_run(
     stored_id: Optional[str], requested_id: Optional[str] = None
 ) -> ResolvedGenerationStrategy:
@@ -145,4 +174,16 @@ def _resolve(
         raise ValueError(
             f"Code Wiki generation strategy '{strategy_id}' is not enabled"
         )
+    return ResolvedGenerationStrategy(definition=definition, team_ref=binding.team_ref)
+
+
+def _resolve_if_enabled(
+    policy: CodeWikiGenerationPolicy, strategy_id: str
+) -> Optional[ResolvedGenerationStrategy]:
+    binding = policy.strategies.get(strategy_id)
+    if binding is None or not binding.enabled:
+        return None
+    definition = _DEFINITIONS.get(strategy_id)
+    if definition is None:
+        return None
     return ResolvedGenerationStrategy(definition=definition, team_ref=binding.team_ref)

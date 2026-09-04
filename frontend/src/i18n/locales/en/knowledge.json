@@ -1198,6 +1198,19 @@
       "modelRequired": "Select the model to generate with",
       "created": "Code Wiki created. Content is generating."
     },
+    "strategy": {
+      "label": "Generation strategy",
+      "createDescription": "Choose how this wiki is generated, or leave the deployment default.",
+      "settingsDescription": "Applies to future generations. Existing versions are unchanged.",
+      "loading": "Loading available strategies…",
+      "deploymentDefault": "Deployment default",
+      "deploymentDefaultNamed": "Uses the deployment default: {{strategy}}.",
+      "deploymentDefaultLegacy": "Uses the deployment's legacy compatibility strategy.",
+      "wikiDefault": "Use this wiki's default",
+      "wikiDefaultDescription": "Uses the strategy saved in this wiki's settings.",
+      "legacy": "Legacy compatibility strategy",
+      "unavailable": "Current strategy is unavailable in this deployment"
+    },
     "reader": {
       "regenerate": "Regenerate",
       "regenerating": "Generating…",
@@ -1279,6 +1292,7 @@
       },
       "commitUnreported": "no commit reported",
       "taskFailed": "The task failed",
+      "strategy": "Strategy: {{strategy}}",
       "republish": "Restore this version",
       "republished": "This version is published again",
       "republishedDescription": "The page content has been refreshed.",

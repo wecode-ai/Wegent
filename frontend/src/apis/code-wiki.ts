@@ -4,6 +4,7 @@
 
 import type {
   CodeWikiCreateRequest,
+  CodeWikiGenerationStrategyCapabilities,
   CodeWikiListResponse,
   CodeWikiPageTree,
   CodeWikiResolution,
@@ -58,6 +59,12 @@ export const codeWikiApi = {
   create: async (data: CodeWikiCreateRequest): Promise<CodeWikiSummary> =>
     client.post<CodeWikiSummary>('/knowledge-bases/code-wikis', data),
 
+  /** Deployment-enabled strategy choices; Team mapping stays server-side. */
+  strategies: async (): Promise<CodeWikiGenerationStrategyCapabilities> =>
+    client.get<CodeWikiGenerationStrategyCapabilities>(
+      '/knowledge-bases/code-wikis/generation-strategies'
+    ),
+
   /**
    * The navigation: every published page, already nested and ordered.
    *
@@ -105,9 +112,10 @@ export const codeWikiApi = {
   /**
    * Regenerate the complete wiki now, without waiting for a schedule or a new commit.
    */
-  regenerate: async (knowledgeBaseId: number): Promise<CodeWikiRunResponse> =>
+  regenerate: async (knowledgeBaseId: number, strategyId?: string): Promise<CodeWikiRunResponse> =>
     client.post<CodeWikiRunResponse>(`/knowledge-bases/${knowledgeBaseId}/code-wiki/generations`, {
       force_full: true,
+      ...(strategyId ? { strategy_id: strategyId } : {}),
     }),
 
   /** Stop the currently running version without changing the published wiki. */

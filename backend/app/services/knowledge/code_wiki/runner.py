@@ -444,6 +444,36 @@ def _resolve_execution_context(
     return team, task_user
 
 
+def strategy_team_readiness(
+    db: Session, user: User, strategy: ResolvedGenerationStrategy
+) -> str:
+    """Return an actionable reason when a policy strategy cannot start for ``user``.
+
+    The capabilities endpoint uses this before advertising a choice. ``start_run``
+    still resolves independently because deployment resources can change after a form
+    opened.
+    """
+    team = team_kinds_service.get_team_by_name_and_namespace(
+        db=db,
+        team_name=strategy.team_ref.name,
+        team_namespace=strategy.team_ref.namespace,
+        user_id=user.id,
+    )
+    if team is None:
+        return (
+            f"Team '{strategy.team_ref.namespace}/{strategy.team_ref.name}' is not "
+            "available"
+        )
+    try:
+        if strategy.requires_plan_review(collaboration_model=""):
+            _reviewer_agent_type(db, team)
+        if strategy.requires_section_writer:
+            _required_member_agent_type(db, team, "writer", "Section Writer")
+    except CodeWikiRunError as error:
+        return str(error)
+    return ""
+
+
 def _reviewer_agent_type(db: Session, team: Kind) -> str:
     """Resolve the exact Claude Code subagent type written by the Executor."""
     members = ((team.json or {}).get("spec") or {}).get("members") or []

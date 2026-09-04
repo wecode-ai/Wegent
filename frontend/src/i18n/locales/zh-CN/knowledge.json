@@ -1198,6 +1198,19 @@
       "modelRequired": "请选择生成模型",
       "created": "代码 Wiki 已创建，正在生成内容。"
     },
+    "strategy": {
+      "label": "生成策略",
+      "createDescription": "选择这个 Wiki 的生成方式；留空则使用部署默认策略。",
+      "settingsDescription": "仅影响后续生成，已有版本不会变化。",
+      "loading": "正在加载可用策略…",
+      "deploymentDefault": "部署默认策略",
+      "deploymentDefaultNamed": "使用部署默认策略：{{strategy}}。",
+      "deploymentDefaultLegacy": "使用部署配置的历史兼容策略。",
+      "wikiDefault": "使用此 Wiki 的默认策略",
+      "wikiDefaultDescription": "使用该 Wiki 设置中保存的策略。",
+      "legacy": "历史兼容策略",
+      "unavailable": "当前策略在此部署中不可用"
+    },
     "reader": {
       "regenerate": "重新生成",
       "regenerating": "生成中…",
@@ -1279,6 +1292,7 @@
       },
       "commitUnreported": "未记录 commit",
       "taskFailed": "执行任务失败",
+      "strategy": "策略：{{strategy}}",
       "republish": "恢复此版本",
       "republished": "已恢复该版本",
       "republishedDescription": "页面内容已刷新。",

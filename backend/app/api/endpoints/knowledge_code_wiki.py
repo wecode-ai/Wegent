@@ -40,6 +40,8 @@ from app.models.wiki import WikiGeneration, WikiGenerationStatus
 from app.schemas.knowledge import (
     CodeWikiCreate,
     CodeWikiExisting,
+    CodeWikiGenerationStrategyCapabilities,
+    CodeWikiGenerationStrategyOption,
     CodeWikiListItem,
     CodeWikiListResponse,
     CodeWikiPageNode,
@@ -66,6 +68,10 @@ from app.services.knowledge.code_wiki.generation import (
     current_run_state,
     run_history,
 )
+from app.services.knowledge.code_wiki.generation_strategy import (
+    selectable_default_strategy,
+    selectable_strategies,
+)
 from app.services.knowledge.code_wiki.navigation import page_tree
 from app.services.knowledge.code_wiki.publisher import (
     PUBLISHED_AT_KEY,
@@ -85,6 +91,7 @@ from app.services.knowledge.code_wiki.runner import (
     republish_generation,
     start_first_run,
     start_run,
+    strategy_team_readiness,
 )
 from app.services.knowledge.code_wiki.source import (
     SourceAccessDenied,
@@ -97,6 +104,51 @@ from shared.telemetry.decorators import add_span_event, trace_async, trace_sync
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
+
+
+@router.get(
+    "/code-wikis/generation-strategies",
+    response_model=CodeWikiGenerationStrategyCapabilities,
+)
+@trace_sync("get_code_wiki_generation_strategies", "knowledge.api")
+def get_code_wiki_generation_strategies(
+    current_user: User = Depends(security.get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Choices enabled by deployment policy and runnable by this caller.
+
+    Team names are intentionally not returned. They are deployment wiring, while this
+    small interface is all a create or settings form needs to render a safe choice.
+    """
+    options = []
+    for strategy in selectable_strategies():
+        reason = strategy_team_readiness(db, current_user, strategy)
+        if reason:
+            logger.warning(
+                "[code_wiki] hiding unavailable generation strategy %s for user %s: %s",
+                strategy.strategy_id,
+                current_user.id,
+                reason,
+            )
+            continue
+        options.append(
+            CodeWikiGenerationStrategyOption(
+                id=strategy.strategy_id,
+                revision=strategy.revision,
+                display_name=strategy.definition.display_name,
+                description=strategy.definition.description,
+            )
+        )
+
+    configured_default = selectable_default_strategy()
+    policy_default = next(
+        (option.id for option in options if option.id == configured_default),
+        None,
+    )
+    return CodeWikiGenerationStrategyCapabilities(
+        default_strategy=policy_default,
+        strategies=options,
+    )
 
 
 @router.post("/code-wikis/resolve", response_model=CodeWikiResolveResponse)

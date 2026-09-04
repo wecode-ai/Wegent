@@ -604,31 +604,6 @@ status:
   state: Available
 ---
 apiVersion: agent.wecode.io/v1
-kind: Team
-metadata:
-  name: code-wiki-adaptive-team
-  namespace: default
-spec:
-  description: Generates code wikis with adaptive Coordinator or Section Writer authorship.
-  members:
-    - role: leader
-      botRef:
-        name: code-wiki-bot
-        namespace: default
-      prompt: ""
-    - role: writer
-      botRef:
-        name: code-wiki-section-writer
-        namespace: default
-      prompt: ""
-  collaborationModel: coordinate
-  bind_mode: []
-  workflow:
-    mode: coordinate
-status:
-  state: Available
----
-apiVersion: agent.wecode.io/v1
 kind: Ghost
 metadata:
   name: chat-ghost

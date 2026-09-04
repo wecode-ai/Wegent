@@ -28,6 +28,19 @@ export interface CodeWikiSummary {
   updated_at: string
 }
 
+export interface CodeWikiGenerationStrategyOption {
+  id: string
+  revision: number
+  display_name: string
+  description: string
+}
+
+export interface CodeWikiGenerationStrategyCapabilities {
+  /** Null when the deployment still uses its invisible legacy compatibility default. */
+  default_strategy: string | null
+  strategies: CodeWikiGenerationStrategyOption[]
+}
+
 export interface CodeWikiListResponse {
   items: CodeWikiSummary[]
   total: number
@@ -115,6 +128,8 @@ export interface CodeWikiRunResponse {
   reason: string
   generation_id: number
   task_id: number
+  strategy_id?: string
+  strategy_revision?: number
 }
 
 /**
@@ -230,6 +245,8 @@ export interface CodeWikiRunRecord {
    * behind even if its container then died.
    */
   task_status: string
+  strategy_id?: string
+  strategy_revision?: number
 }
 
 export interface CodeWikiRunHistory {

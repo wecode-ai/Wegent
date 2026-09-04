@@ -19,6 +19,7 @@ import { SimpleConfigRow } from '@/features/settings/components/team-edit/Simple
 import { useTranslation } from '@/hooks/useTranslation'
 import { buildKbUrl } from '@/utils/knowledgeUrl'
 import { codeWikiApi } from '@/apis/code-wiki'
+import { GenerationStrategySelect } from './GenerationStrategySelect'
 import { useUser } from '@/features/common/UserContext'
 import type { GitInfo, GitRepoInfo } from '@/types/api'
 import type { CodeWikiResolution, CodeWikiSourceType } from '@/types/code-wiki'
@@ -27,6 +28,8 @@ export interface CodeWikiSource {
   source_type: CodeWikiSourceType
   source_url: string
   language: string
+  /** Empty means resolve the configured deployment default during creation. */
+  generation_strategy: string
   /** Whether generation runs appear in the conversation list. Off unless asked for. */
   show_generation_task: boolean
   /** Set once resolved; the parent uses it to know the form is usable. */
@@ -228,6 +231,17 @@ export function CodeWikiSourceFields({ value, onChange }: CodeWikiSourceFieldsPr
             <SelectItem value="en">{t('codeWiki.create.languageEn')}</SelectItem>
           </SelectContent>
         </Select>
+      </SimpleConfigRow>
+      <SimpleConfigRow
+        label={t('codeWiki.strategy.label')}
+        description={t('codeWiki.strategy.createDescription')}
+      >
+        <GenerationStrategySelect
+          value={value.generation_strategy}
+          onChange={generation_strategy => onChange({ ...value, generation_strategy })}
+          emptyOption="deployment"
+          testId="code-wiki-generation-strategy"
+        />
       </SimpleConfigRow>
     </>
   )

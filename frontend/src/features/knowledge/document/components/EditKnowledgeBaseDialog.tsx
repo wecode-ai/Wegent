@@ -17,6 +17,7 @@ import {
 import { Button } from '@/components/ui/button'
 import { Spinner } from '@/components/ui/spinner'
 import { GenerationTaskRow } from '@/features/knowledge/code-wiki/GenerationTaskRow'
+import { GenerationStrategySelect } from '@/features/knowledge/code-wiki/GenerationStrategySelect'
 import { KnowledgeBaseForm } from './KnowledgeBaseForm'
 import { useMultimodalKBConfig } from '@/features/knowledge/multimodal/hooks/useMultimodalKBConfig'
 import { useMultimodalFeatureEnabled } from '@/features/knowledge/multimodal/hooks/useMultimodalFeatureEnabled'
@@ -62,6 +63,8 @@ export function EditKnowledgeBaseDialog({
   const { t: tKnowledge } = useTranslation('knowledge')
   const [name, setName] = useState('')
   const [showGenerationTask, setShowGenerationTask] = useState(false)
+  const [generationStrategy, setGenerationStrategy] = useState('')
+  const [generationStrategyTouched, setGenerationStrategyTouched] = useState(false)
   const isCodeWiki = (knowledgeBase?.kb_type || 'notebook') === 'code_wiki'
   const [description, setDescription] = useState('')
   const [directAccessRequirement, setDirectAccessRequirement] =
@@ -173,6 +176,8 @@ export function EditKnowledgeBaseDialog({
         multimodalImagePrompt: kb.multimodal_analysis_image_prompt ?? null,
       })
       setShowGenerationTask(kb.show_generation_task ?? false)
+      setGenerationStrategy(kb.generation_strategy || '')
+      setGenerationStrategyTouched(false)
       setShowAdvanced(false) // Reset expanded state
       // Initialize retrieval config from knowledge base
       if (kb.retrieval_config) {
@@ -250,6 +255,9 @@ export function EditKnowledgeBaseDialog({
         max_calls_per_conversation: maxCalls,
         exempt_calls_before_check: exemptCalls,
         ...(isCodeWiki ? { show_generation_task: showGenerationTask } : {}),
+        ...(isCodeWiki && generationStrategyTouched && generationStrategy
+          ? { generation_strategy: generationStrategy }
+          : {}),
         // Applies to the next run. One already going keeps the model it was started
         // with, which is the model its pages were written by. Omitted entirely when
         // untouched on a wiki that had none, so "unset" survives an unrelated save.
@@ -380,6 +388,24 @@ export function EditKnowledgeBaseDialog({
                         // box is the truth there, and only a real pick may change it.
                         autoSelect={false}
                         dataTestId="code-wiki-execution-model-select"
+                      />
+                    </SimpleConfigRow>
+                  </div>
+                )}
+
+                {isCodeWiki && (
+                  <div className="mb-4">
+                    <SimpleConfigRow
+                      label={tKnowledge('codeWiki.strategy.label')}
+                      description={tKnowledge('codeWiki.strategy.settingsDescription')}
+                    >
+                      <GenerationStrategySelect
+                        value={generationStrategy}
+                        onChange={strategy => {
+                          setGenerationStrategy(strategy)
+                          setGenerationStrategyTouched(true)
+                        }}
+                        testId="code-wiki-generation-strategy"
                       />
                     </SimpleConfigRow>
                   </div>

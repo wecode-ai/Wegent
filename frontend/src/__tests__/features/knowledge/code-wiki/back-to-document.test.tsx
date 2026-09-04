@@ -59,6 +59,7 @@ jest.mock('@/apis/code-wiki', () => ({
         { path: 'other', title: 'Other', document_id: 2, has_content: true, children: [] },
       ],
     }),
+    strategies: jest.fn().mockResolvedValue({ default_strategy: null, strategies: [] }),
   },
 }))
 

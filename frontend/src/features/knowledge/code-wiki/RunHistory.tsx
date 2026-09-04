@@ -141,6 +141,11 @@ function RunRow({
               {t(`codeWiki.history.mode.${run.mode}`)}
             </span>
           )}
+          {run.strategy_id && (
+            <span className="text-[11px] text-text-tertiary" data-testid="code-wiki-run-strategy">
+              {t('codeWiki.history.strategy', { strategy: run.strategy_id })}
+            </span>
+          )}
           {run.published && (
             <span className="rounded bg-primary/10 px-1 text-[11px] text-primary">
               {t('codeWiki.history.current')}

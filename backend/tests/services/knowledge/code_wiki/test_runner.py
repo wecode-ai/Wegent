@@ -376,7 +376,6 @@ def test_adaptive_full_run_requires_writer_without_creating_review_state(
     )
     test_db.add(writer)
     test_db.flush()
-    tasks.team.name = "code-wiki-adaptive-team"
     tasks.team.json = {
         "spec": {
             "collaborationModel": "coordinate",
@@ -400,7 +399,7 @@ def test_adaptive_full_run_requires_writer_without_creating_review_state(
             legacyFallbackStrategy="legacy",
             strategies={
                 "coordinator_adaptive": CodeWikiStrategyBinding(
-                    teamRef=CodeWikiTeamRef(name="code-wiki-adaptive-team")
+                    teamRef=CodeWikiTeamRef(name="code-wiki-team")
                 ),
                 "legacy": CodeWikiStrategyBinding(
                     teamRef=CodeWikiTeamRef(name="code-wiki-team")

@@ -100,6 +100,7 @@ function createEmptySource(): CodeWikiSource {
     source_type: 'github',
     source_url: '',
     language: 'zh',
+    generation_strategy: '',
     show_generation_task: false,
     resolution: null,
   }
@@ -290,6 +291,9 @@ export function CreateKnowledgeBaseDialog({
               source_type: source.source_type,
               source_url: source.source_url,
               language: source.language,
+              ...(source.generation_strategy
+                ? { generation_strategy: source.generation_strategy }
+                : {}),
               show_generation_task: source.show_generation_task,
               // Left blank, the repository's own name is used. Sent from what the
               // form already resolved rather than pre-filled into the box, which

@@ -61,7 +61,7 @@ def test_adaptive_is_selectable_only_when_deployment_enables_it(monkeypatch) -> 
         legacyFallbackStrategy=LEGACY,
         strategies={
             COORDINATOR_ADAPTIVE: CodeWikiStrategyBinding(
-                teamRef=CodeWikiTeamRef(name="code-wiki-adaptive-team")
+                teamRef=CodeWikiTeamRef(name="code-wiki-team")
             ),
             LEGACY: CodeWikiStrategyBinding(teamRef=CodeWikiTeamRef(name="old-team")),
         },

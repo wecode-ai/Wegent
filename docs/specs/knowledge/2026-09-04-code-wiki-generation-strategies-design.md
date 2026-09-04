@@ -86,7 +86,7 @@ backend 定义一个有类型的 `CodeWikiGenerationPolicy`，作为部署中唯
   "strategies": {
     "coordinator_adaptive": {
       "enabled": true,
-      "teamRef": { "namespace": "default", "name": "code-wiki-adaptive-team" }
+      "teamRef": { "namespace": "default", "name": "code-wiki-team" }
     },
     "coordinator_reviewed": {
       "enabled": true,
@@ -108,8 +108,8 @@ backend 定义一个有类型的 `CodeWikiGenerationPolicy`，作为部署中唯
 ```
 
 Policy 只表达部署选择：支持哪些策略、各自绑定哪个 Team、创建新 Wiki 时默认哪一种、历史 Wiki 如何
-兼容。它不承载 prompt、状态机或任意工作流定义。策略行为仍由代码中的 registry 定义，防止生产配置
-演变成无类型 DSL。
+兼容。不同策略可以复用同一个 Team；只有模型、工具权限或角色能力确有差异时才需要独立 Team。它不承载
+prompt、状态机或任意工作流定义。策略行为仍由代码中的 registry 定义，防止生产配置演变成无类型 DSL。
 
 `legacy` 是不可选择、不会出现在 UI 的内部策略，只为兼容尚未迁移到新 Policy 的部署，保留升级前
 “是否评审由 Team collaborationModel 决定”的行为。完成 Policy 迁移后，新 Wiki 必须固化正式策略 ID。
