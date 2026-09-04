@@ -24,6 +24,8 @@ alongside the mode is what keeps the two from being merged as duplicates later.
 from dataclasses import dataclass
 from typing import Optional, Sequence
 
+from app.services.knowledge.code_wiki.generation_strategy import COORDINATOR_ADAPTIVE
+
 
 @dataclass(frozen=True)
 class WikiRunContext:
@@ -39,10 +41,13 @@ class WikiRunContext:
     existing_pages: Sequence[str] = ()
     reviewer_agent_type: str = ""
     section_writer_agent_type: str = ""
+    strategy_id: str = ""
 
 
 def build_full_prompt(context: WikiRunContext) -> str:
     """Instructions for rebuilding a wiki from nothing."""
+    if context.strategy_id == COORDINATOR_ADAPTIVE:
+        return _build_adaptive_full_prompt(context)
     return f"""\
 Document the repository **{context.project_name}**, from scratch.
 
@@ -90,6 +95,64 @@ subagent's prose response, and handle only missing planned pages after each dele
 Do not delegate in coordinator mode. Write coordinator-owned synthesis pages only
 after the relevant Work Packages have submitted their domain pages.
 Incremental-only shortcuts do not apply to this run.\
+"""
+
+
+def _build_adaptive_full_prompt(context: WikiRunContext) -> str:
+    """A full rebuild whose Coordinator chooses page authorship by source scope."""
+    return f"""\
+Document the repository **{context.project_name}**, from scratch.
+
+## This run
+
+- Generation: `{context.generation_id}`
+- Commit: `{context.head_commit or "current HEAD"}`
+- Language: {context.language}
+- Strategy: `coordinator_adaptive`
+- This is a **full rebuild**: the wiki is being written from scratch.
+
+Your version begins empty. A page nobody writes is not in the wiki, so account for
+every planned page, including pages an earlier run already covered. Declaring a
+removal does nothing here, because there is nothing to remove from.
+
+## Adaptive Coordinator protocol
+
+Do not open Plan, QA, Recheck, or other Reviewer phases, and do not delegate a
+Reviewer. This strategy deliberately has no review loop.
+
+Start with shallow discovery: identify the repository topology, important workflows,
+state owners, integration boundaries, and representative tests without deeply reading
+every planned scope. Build one ordered page plan. For every page record its path,
+purpose, concrete `Must explain` questions, seed paths, related or prerequisite pages,
+and exactly one author: `coordinator` or `writer:<work-package-id>`.
+
+Choose authorship early. Write a page yourself when you already have enough evidence,
+especially `index`, `quickstart`, compact local topics, and final cross-page assembly.
+When a scope requires deeper reading across modules or its `Must explain` questions
+exceed your evidence, delegate one complete research-and-writing Work Package to
+`{context.section_writer_agent_type or "the configured Section Writer agent"}`. Pass
+the generation ID plus that package's full page contracts, seed paths, prerequisites,
+known source-grounded facts, and output language. The same Writer must complete the
+package's remaining exploration and page submission in that one synchronous call; do
+not run a separate exploration delegation first, do not delegate one agent per page,
+and do not ask a Writer to delegate again. Keep related module and workflow pages in
+one package when doing so lets that Writer reuse evidence.
+
+Once a scope is delegated, do not deeply reread it. Reconcile the pages actually
+submitted after each package rather than trusting its prose response. Handle only
+missing or rejected pages, and never rewrite a successfully delegated page merely to
+change its voice.
+
+Before writing any coordinator-owned page, reread that page's purpose, `Must explain`
+questions, seed paths, and prerequisite pages. Coordinator-owned and delegated pages
+must meet the same standard: explain mechanisms, state changes, boundaries, failure or
+recovery behaviour, practical change guidance, and resolvable source citations where
+the source supports them. Use completed prerequisite pages for shared facts instead of
+deriving those facts from source again.
+
+Write or delegate every planned page, then call `complete` with every resulting path in
+the intended reading order. Follow the existing wiki_submit completion and Mermaid
+feedback rules. Incremental-only shortcuts do not apply to this run.\
 """
 
 

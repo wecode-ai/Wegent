@@ -352,6 +352,74 @@ def test_a_generation_snapshots_the_resolved_strategy(
     }
 
 
+def test_adaptive_full_run_requires_writer_without_creating_review_state(
+    monkeypatch,
+    test_db: Session,
+    knowledge_base: Kind,
+    test_user: User,
+    tasks: FakeTasks,
+) -> None:
+    from app.core.wiki_config import (
+        CodeWikiGenerationPolicy,
+        CodeWikiStrategyBinding,
+        CodeWikiTeamRef,
+        wiki_settings,
+    )
+
+    writer = Kind(
+        kind="Bot",
+        name="code-wiki-section-writer",
+        namespace="default",
+        user_id=test_user.id,
+        json={"spec": {}},
+        is_active=True,
+    )
+    test_db.add(writer)
+    test_db.flush()
+    tasks.team.name = "code-wiki-adaptive-team"
+    tasks.team.json = {
+        "spec": {
+            "collaborationModel": "coordinate",
+            "members": [
+                {
+                    "role": "writer",
+                    "botRef": {
+                        "name": writer.name,
+                        "namespace": writer.namespace,
+                    },
+                }
+            ],
+        }
+    }
+    _set_spec(test_db, knowledge_base, generationStrategy="coordinator_adaptive")
+    monkeypatch.setattr(
+        wiki_settings,
+        "CODE_WIKI_GENERATION_POLICY",
+        CodeWikiGenerationPolicy(
+            defaultStrategy="coordinator_adaptive",
+            legacyFallbackStrategy="legacy",
+            strategies={
+                "coordinator_adaptive": CodeWikiStrategyBinding(
+                    teamRef=CodeWikiTeamRef(name="code-wiki-adaptive-team")
+                ),
+                "legacy": CodeWikiStrategyBinding(
+                    teamRef=CodeWikiTeamRef(name="code-wiki-team")
+                ),
+            },
+        ),
+    )
+
+    started = start_run(
+        test_db, knowledge_base=knowledge_base, user=test_user, head_commit=HEAD
+    )
+
+    assert started.strategy_id == "coordinator_adaptive"
+    assert "qualityReview" not in started.generation.ext
+    assert "Strategy: `coordinator_adaptive`" in tasks.prompt
+    assert f"`code-wiki-section-writer-{writer.id}`" in tasks.prompt
+    assert "review-open" not in tasks.prompt
+
+
 def test_a_strategy_override_requires_a_forced_full_rebuild(
     test_db: Session, knowledge_base: Kind, test_user: User, tasks: FakeTasks
 ) -> None:

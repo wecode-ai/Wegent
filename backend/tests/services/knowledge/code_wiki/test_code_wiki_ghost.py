@@ -295,3 +295,41 @@ def test_section_writer_has_a_bounded_persisted_assignment() -> None:
     assert "state=passed" in prompt
     assert "only at the package's assigned paths" in prompt
     assert "do not complete or fail" in prompt
+
+
+def test_section_writer_accepts_one_complete_adaptive_package() -> None:
+    resources = list(yaml.safe_load_all(RESOURCES.read_text()))
+    writer = next(
+        document
+        for document in resources
+        if document
+        and document.get("kind") == "Ghost"
+        and document.get("metadata", {}).get("name") == "code-wiki-section-writer-ghost"
+    )
+    prompt = " ".join(writer["spec"]["systemPrompt"].split())
+
+    assert "In an adaptive run, do not use review commands" in prompt
+    assert "complete Work Package contract directly" in prompt
+    assert "known facts, and language" in prompt
+    assert "Task" not in writer["spec"]["tools"]
+    assert "Agent" not in writer["spec"]["tools"]
+    for required in ("Bash", "Read", "Write", "Grep", "Skill"):
+        assert required in writer["spec"]["tools"]
+
+
+def test_adaptive_team_has_a_coordinator_and_writer_but_no_reviewer() -> None:
+    resources = list(yaml.safe_load_all(RESOURCES.read_text()))
+    team = next(
+        document
+        for document in resources
+        if document
+        and document.get("kind") == "Team"
+        and document.get("metadata", {}).get("name") == "code-wiki-adaptive-team"
+    )
+
+    assert team["spec"]["collaborationModel"] == "coordinate"
+    assert team["spec"]["workflow"]["mode"] == "coordinate"
+    assert [member["role"] for member in team["spec"]["members"]] == [
+        "leader",
+        "writer",
+    ]

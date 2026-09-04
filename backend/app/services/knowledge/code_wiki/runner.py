@@ -260,6 +260,10 @@ def start_run(
         reviewer_agent_type = _reviewer_agent_type(db, team)
         section_writer_agent_type = _optional_member_agent_type(db, team, "writer")
         require_quality_review(generation, policy=PLAN_ONLY_REVIEW_POLICY)
+    elif full and strategy.requires_section_writer:
+        section_writer_agent_type = _required_member_agent_type(
+            db, team, "writer", "Section Writer"
+        )
     prompt = build_prompt(
         WikiRunContext(
             project_name=source.project_name,
@@ -276,6 +280,7 @@ def start_run(
             ],
             reviewer_agent_type=reviewer_agent_type,
             section_writer_agent_type=section_writer_agent_type,
+            strategy_id=strategy.strategy_id,
         ),
         full=full,
     )
@@ -478,6 +483,17 @@ def _optional_member_agent_type(db: Session, team: Kind, role: str) -> str:
     if bot is None:
         raise CodeWikiRunError(f"Coordinate Code Wiki {role.title()} Bot was not found")
     return _claude_subagent_type(bot.name, bot.id)
+
+
+def _required_member_agent_type(db: Session, team: Kind, role: str, label: str) -> str:
+    """Resolve a member whose strategy cannot execute without it."""
+    agent_type = _optional_member_agent_type(db, team, role)
+    if not agent_type:
+        raise CodeWikiRunError(
+            f"Code Wiki strategy requires a {label} Bot, but Team '{team.name}' "
+            f"has no member with role '{role}'"
+        )
+    return agent_type
 
 
 def _claude_subagent_type(name: str, bot_id: int) -> str:

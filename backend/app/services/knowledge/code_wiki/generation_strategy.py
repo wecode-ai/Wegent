@@ -18,6 +18,7 @@ from app.core.wiki_config import (
 GENERATION_STRATEGY_SPEC_KEY = "generationStrategy"
 GENERATION_STRATEGY_EXT_KEY = "generationStrategy"
 
+COORDINATOR_ADAPTIVE = "coordinator_adaptive"
 COORDINATOR_REVIEWED = "coordinator_reviewed"
 LEGACY = "legacy"
 
@@ -25,6 +26,7 @@ LEGACY = "legacy"
 class ReviewProtocol(str, Enum):
     """How a full rebuild decides whether to initialise the review loop."""
 
+    NONE = "none"
     PLAN_ONLY = "plan_only"
     TEAM_LEGACY = "team_legacy"
 
@@ -36,6 +38,7 @@ class GenerationStrategyDefinition:
     strategy_id: str
     revision: int
     review_protocol: ReviewProtocol
+    requires_section_writer: bool = False
     selectable: bool = True
 
 
@@ -59,6 +62,10 @@ class ResolvedGenerationStrategy:
             return collaboration_model == "coordinate"
         return self.definition.review_protocol is ReviewProtocol.PLAN_ONLY
 
+    @property
+    def requires_section_writer(self) -> bool:
+        return self.definition.requires_section_writer
+
     def snapshot(self) -> dict:
         return {
             "id": self.strategy_id,
@@ -71,6 +78,12 @@ class ResolvedGenerationStrategy:
 
 
 _DEFINITIONS = {
+    COORDINATOR_ADAPTIVE: GenerationStrategyDefinition(
+        strategy_id=COORDINATOR_ADAPTIVE,
+        revision=1,
+        review_protocol=ReviewProtocol.NONE,
+        requires_section_writer=True,
+    ),
     COORDINATOR_REVIEWED: GenerationStrategyDefinition(
         strategy_id=COORDINATOR_REVIEWED,
         revision=1,

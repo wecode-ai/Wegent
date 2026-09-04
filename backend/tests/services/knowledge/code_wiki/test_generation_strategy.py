@@ -12,6 +12,7 @@ from app.core.wiki_config import (
     wiki_settings,
 )
 from app.services.knowledge.code_wiki.generation_strategy import (
+    COORDINATOR_ADAPTIVE,
     COORDINATOR_REVIEWED,
     LEGACY,
     strategy_for_new_wiki,
@@ -52,6 +53,26 @@ def test_explicit_policy_owns_the_team_mapping(monkeypatch) -> None:
         "revision": 1,
         "teamRef": {"name": "reviewed-team", "namespace": "system"},
     }
+
+
+def test_adaptive_is_selectable_only_when_deployment_enables_it(monkeypatch) -> None:
+    policy = CodeWikiGenerationPolicy(
+        defaultStrategy=COORDINATOR_ADAPTIVE,
+        legacyFallbackStrategy=LEGACY,
+        strategies={
+            COORDINATOR_ADAPTIVE: CodeWikiStrategyBinding(
+                teamRef=CodeWikiTeamRef(name="code-wiki-adaptive-team")
+            ),
+            LEGACY: CodeWikiStrategyBinding(teamRef=CodeWikiTeamRef(name="old-team")),
+        },
+    )
+    monkeypatch.setattr(wiki_settings, "CODE_WIKI_GENERATION_POLICY", policy)
+
+    resolved = strategy_for_run(strategy_for_new_wiki())
+
+    assert resolved.strategy_id == COORDINATOR_ADAPTIVE
+    assert resolved.requires_section_writer is True
+    assert resolved.requires_plan_review(collaboration_model="coordinate") is False
 
 
 def test_an_unknown_or_internal_strategy_cannot_be_selected(monkeypatch) -> None:
