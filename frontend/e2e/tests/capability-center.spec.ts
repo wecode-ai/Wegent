@@ -27,6 +27,7 @@ interface MarketplaceTagsResponse {
 }
 
 interface AdminMarketplaceResourceResponse {
+  total: number
   items: Array<{
     id: number
     name: string
@@ -37,10 +38,19 @@ interface AdminMarketplaceResourceResponse {
 async function ensureRecommendedSystemAgent(request: APIRequestContext) {
   const apiClient = createApiClient(request)
   expect((await apiClient.login(ADMIN_USER.username, ADMIN_USER.password)).status).toBe(200)
-  const response = await apiClient.get<AdminMarketplaceResourceResponse>(
-    '/api/admin/marketplace-resources?resource_type=agent&limit=200'
-  )
-  const agent = response.data?.items.find(item => item.is_system && item.name === 'wegent-chat')
+  const pageSize = 200
+  let page = 1
+  let agent: AdminMarketplaceResourceResponse['items'][number] | undefined
+  let total = 0
+  do {
+    const response = await apiClient.get<AdminMarketplaceResourceResponse>(
+      `/api/admin/marketplace-resources?resource_type=agent&page=${page}&limit=${pageSize}`
+    )
+    expect(response.status).toBe(200)
+    total = response.data?.total ?? 0
+    agent = response.data?.items.find(item => item.is_system && item.name === 'wegent-chat')
+    page += 1
+  } while (!agent && (page - 1) * pageSize < total)
   expect(agent, 'The Wegent Chat system agent must exist').toBeTruthy()
   expect(
     (
