@@ -10,7 +10,8 @@ import identityModule from '../scripts/build-identity.cjs'
 
 const { DEFAULT_IDENTITY, resolveBuildIdentity } = identityModule
 const require = createRequire(import.meta.url)
-const builderConfig = require('../electron-builder.config.cjs')
+const builderConfigPath = require.resolve('../electron-builder.config.cjs')
+const builderConfig = require(builderConfigPath)
 
 test('uses the public Electron identity by default', () => {
   expect(resolveBuildIdentity({})).toEqual(DEFAULT_IDENTITY)
@@ -134,7 +135,7 @@ process.stdout.write(JSON.stringify({
   linuxArtifactName: config.linux.artifactName,
 }))
 `,
-        resolve(process.cwd(), 'electron/electron-builder.config.cjs'),
+        builderConfigPath,
       ],
       {
         encoding: 'utf8',
@@ -170,7 +171,7 @@ test('builds a complete Host update for the componentized updater migration rele
 const config = require(process.argv[1])
 process.stdout.write(JSON.stringify(config.extraResources.map(resource => resource.to)))
 `,
-        resolve(process.cwd(), 'electron/electron-builder.config.cjs'),
+        builderConfigPath,
       ],
       {
         encoding: 'utf8',
