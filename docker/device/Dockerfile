@@ -74,6 +74,8 @@ ARG DEVICE_APT_PORTS_MIRROR=${DEVICE_APT_MIRROR}
 ARG NODE_VERSION=22.23.2
 ARG NODE_DIST_MIRROR=https://nodejs.org/dist
 ARG NPM_REGISTRY=https://registry.npmjs.org
+ARG GH_VERSION=2.100.0
+ARG GLAB_VERSION=1.116.0
 ARG CODE_SERVER_VERSION=4.121.0
 ARG CODE_SERVER_REPOSITORY_RAW=https://raw.githubusercontent.com/coder/code-server
 ARG CODE_SERVER_HTTPS_PROXY=
@@ -116,6 +118,24 @@ RUN if [ -n "$DEVICE_APT_MIRROR" ]; then \
 RUN npm install -g --registry "$NPM_REGISTRY" \
       @anthropic-ai/claude-code@2.1.247 @openai/codex@0.142.5 \
     && npm cache clean --force
+
+# Install the GitHub (gh) and GitLab (glab) CLIs used by git hosting features.
+RUN case "$DEVICE_IMAGE_PLATFORM" in \
+        linux/amd64) cli_arch=amd64 ;; \
+        linux/arm64) cli_arch=arm64 ;; \
+        *) echo "Unsupported DEVICE_IMAGE_PLATFORM=$DEVICE_IMAGE_PLATFORM" >&2; exit 1 ;; \
+    esac \
+    && curl -fsSL --retry 5 --retry-all-errors \
+      "https://github.com/cli/cli/releases/download/v${GH_VERSION}/gh_${GH_VERSION}_linux_${cli_arch}.tar.gz" \
+      | tar -xz -C /tmp \
+    && install -m 0755 "/tmp/gh_${GH_VERSION}_linux_${cli_arch}/bin/gh" /usr/local/bin/gh \
+    && rm -rf "/tmp/gh_${GH_VERSION}_linux_${cli_arch}" \
+    && curl -fsSL --retry 5 --retry-all-errors \
+      "https://gitlab.com/gitlab-org/cli/-/releases/v${GLAB_VERSION}/downloads/glab_${GLAB_VERSION}_linux_${cli_arch}.tar.gz" \
+      | tar -xz -C /tmp bin/glab \
+    && install -m 0755 /tmp/bin/glab /usr/local/bin/glab \
+    && rm -rf /tmp/bin \
+    && gh --version && glab --version
 
 # Follow code-server's official install.sh flow, pinned to the selected release.
 # Standalone mode avoids distro services and native npm compilation in the image.
