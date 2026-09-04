@@ -109,15 +109,17 @@ async fn local_backend_accepts_socketio_wrapped_registration_ack() {
 #[tokio::test]
 async fn local_backend_heartbeat_reports_running_tasks_capabilities_and_auth_files() {
     let _lock = ENV_LOCK.lock().await;
-    let _codex_home = EnvGuard::set("CODEX_HOME", "");
-    let home = temp_home("auth-report");
-    std::fs::create_dir_all(home.join(".codex")).unwrap();
-    std::fs::write(home.join(".codex/auth.json"), "{}").unwrap();
-    let expected_auth_path = home.join(".codex/auth.json").display().to_string();
+    let executor_home = temp_home("auth-report");
+    let _executor_home =
+        EnvGuard::set("WEGENT_EXECUTOR_HOME", &executor_home.display().to_string());
+    let _codex_home = EnvGuard::set("WEGENT_CODEX_HOME", "");
+    let codex_home = executor_home.join("codex");
+    std::fs::create_dir_all(&codex_home).unwrap();
+    std::fs::write(codex_home.join("auth.json"), "{}").unwrap();
+    let expected_auth_path = codex_home.join("auth.json").display().to_string();
 
     let transport = RecordingTransport::with_responses(vec![json!({"success": true})]);
-    let mut config = local_backend_config();
-    config.runtime_auth_home = home;
+    let config = local_backend_config();
     let client = LocalBackendClient::with_capability_reporter(
         config,
         transport.clone(),
@@ -802,12 +804,10 @@ fn local_backend_config_uses_device_config_and_normalizes_token() {
 
 #[tokio::test]
 async fn local_backend_auth_file_report_and_ip_filter_follow_runtime_paths() {
-    let _lock = ENV_LOCK.lock().await;
-    let _codex_home = EnvGuard::set("CODEX_HOME", "");
-    let home = temp_home("missing-auth-report");
-    let expected_auth_path = home.join(".codex/auth.json").display().to_string();
+    let codex_home = temp_home("missing-auth-report").join("codex");
+    let expected_auth_path = codex_home.join("auth.json").display().to_string();
     assert_eq!(
-        build_runtime_auth_file_report(&home),
+        build_runtime_auth_file_report(&codex_home),
         json!({"codex": {"target_path": expected_auth_path, "exists": false}})
     );
 
@@ -1023,7 +1023,6 @@ fn local_backend_config() -> LocalBackendConfig {
         reconnect_delay: Duration::from_secs(1),
         reconnect_delay_max: Duration::from_secs(30),
         configured_capabilities: Vec::new(),
-        runtime_auth_home: temp_home("runtime-auth"),
         local_workspace_root: temp_home("workspace"),
         update: UpdateConfig::default(),
     }
