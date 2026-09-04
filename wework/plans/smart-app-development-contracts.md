@@ -153,9 +153,9 @@ export interface SmartAppVerificationReport {
 - Create: `electron/src/host/smart-app-verification-contract.test.ts`
 - Create: `electron/src/host/smart-app-verification-types.ts`
 
-- [ ] 写解析失败测试，覆盖缺文件、未知 schema、非法 script 名、缺失 package script、profile 不一致、非法 path/selector 和 `remote` 缺少 Host/Client。
-- [ ] 写最小正向测试，分别覆盖纯 Host、纯 Client、Host + Client、Host + Client + Remote。
-- [ ] 运行测试并确认先失败：
+- [x] 写解析失败测试，覆盖缺文件、未知 schema、非法 script 名、缺失 package script、profile 不一致、非法 path/selector 和 `remote` 缺少 Host/Client。
+- [x] 写最小正向测试，分别覆盖纯 Host、纯 Client、Host + Client、Host + Client + Remote。
+- [x] 运行测试并确认先失败：
 
 ```bash
 pnpm --filter wework test electron/src/host/smart-app-verification-contract.test.ts
@@ -163,9 +163,9 @@ pnpm --filter wework test electron/src/host/smart-app-verification-contract.test
 
 预期：Vitest 只收集该文件，并因模块尚不存在或断言未实现而失败。
 
-- [ ] 实现严格 JSON 解析、字段归一化和 `SA-MANIFEST-CONTRACT-*` 问题码。解析器返回 typed result，不直接抛出面向 UI 的自由文本。
-- [ ] 再次运行同一命令，预期全部通过。
-- [ ] 提交：
+- [x] 实现严格 JSON 解析、字段归一化和 `SA-MANIFEST-CONTRACT-*` 问题码。解析器返回 typed result，不直接抛出面向 UI 的自由文本。
+- [x] 再次运行同一命令，预期全部通过。
+- [x] 提交：
 
 ```bash
 git add electron/src/host/smart-app-verification-contract.ts electron/src/host/smart-app-verification-contract.test.ts electron/src/host/smart-app-verification-types.ts
@@ -666,6 +666,7 @@ git commit -m "docs(wework): document smart app verification workflow"
 
 执行者在每个 Task 完成后追加一行，不改写历史结果：
 
-| 日期       | Task | 提交         | 验证结果               | 证据/备注            |
-| ---------- | ---- | ------------ | ---------------------- | -------------------- |
-| 2026-09-04 | 计划 | 本次计划提交 | 文档格式与路径检查通过 | 设计提交 `5fb59f9bc` |
+| 日期       | Task   | 提交                                                   | 验证结果                                       | 证据/备注                                |
+| ---------- | ------ | ------------------------------------------------------ | ---------------------------------------------- | ---------------------------------------- |
+| 2026-09-04 | 计划   | 本次计划提交                                           | 文档格式与路径检查通过                         | 设计提交 `5fb59f9bc`                     |
+| 2026-09-04 | Task 1 | `feat(wework): define smart app verification contract` | 14 个聚焦测试、ESLint、Electron typecheck 通过 | 完成严格契约解析和 typed report 基础类型 |
