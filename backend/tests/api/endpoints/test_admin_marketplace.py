@@ -246,7 +246,7 @@ def test_admin_manages_agent_and_skill_marketplace_curation(
     assert [item["id"] for item in featured_skill.json()["items"]] == [skill.id]
 
 
-def test_new_system_public_agent_is_featured_by_default(
+def test_new_system_public_agent_is_not_recommended_by_default(
     test_client,
     test_db,
     test_admin_token,
@@ -254,13 +254,13 @@ def test_new_system_public_agent_is_featured_by_default(
     created = test_client.post(
         "/api/admin/public-teams",
         json={
-            "name": "default-featured-system-agent",
+            "name": "default-unfeatured-system-agent",
             "namespace": "default",
             "json": {
                 "kind": "Team",
                 "metadata": {
-                    "name": "default-featured-system-agent",
-                    "displayName": "Default Featured System Agent",
+                    "name": "default-unfeatured-system-agent",
+                    "displayName": "Default Unfeatured System Agent",
                 },
                 "spec": {
                     "members": [],
@@ -270,14 +270,19 @@ def test_new_system_public_agent_is_featured_by_default(
         },
         headers=_headers(test_admin_token),
     )
+    marketplace_response = test_client.get(
+        "/api/admin/marketplace-resources?resource_type=agent",
+        headers=_headers(test_admin_token),
+    )
 
     assert created.status_code == 201
-    agent = test_db.get(Kind, created.json()["id"])
-    assert agent is not None
-    marketplace = (
-        agent.json.get("spec", {}).get("capability", {}).get("marketplace", {})
+    assert marketplace_response.status_code == 200
+    agent = next(
+        item
+        for item in marketplace_response.json()["items"]
+        if item["id"] == created.json()["id"]
     )
-    assert "recommendationScore" not in marketplace
+    assert agent["recommendation_score"] == 0
 
 
 def test_system_recommendation_score_changes_keep_listing_public(
