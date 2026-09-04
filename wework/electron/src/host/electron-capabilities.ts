@@ -759,11 +759,17 @@ export function createElectronCapabilityRouter(
   router.register('smartApps.exportToDownloads', params =>
     requiredSmartApps(smartApps).exportToDownloads(stringParam(params, 'installationId'))
   )
+  router.register('smartApps.inspectVerification', params =>
+    requiredSmartApps(smartApps).inspectVerification(stringParam(params, 'installationId'))
+  )
   router.register('smartApps.upload', params =>
     requiredSmartApps(smartApps).upload(
       stringParam(params, 'archivePath'),
       stringParam(params, 'uploadUrl')
     )
+  )
+  router.register('smartApps.verify', params =>
+    requiredSmartApps(smartApps).verify(stringParam(params, 'installationId'))
   )
   router.register('systemDrag.complete', params =>
     e2eHost.completeSystemDragDrop(systemDragPayload(params))
