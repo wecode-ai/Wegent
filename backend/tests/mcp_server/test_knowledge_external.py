@@ -1191,6 +1191,108 @@ async def test_list_nodes_returns_document_capability_metadata(test_db, test_use
 
 
 @pytest.mark.asyncio
+async def test_list_nodes_reports_protected_document_as_not_downloadable(
+    test_db, test_user
+):
+    now = datetime(2026, 1, 3, 9, 45, 0)
+    attachment = _make_attachment(test_user.id)
+    test_db.add(attachment)
+    test_db.flush()
+    document = KnowledgeDocument(
+        kind_id=19,
+        attachment_id=attachment.id,
+        name="protected.pdf",
+        file_extension="pdf",
+        file_size=123,
+        user_id=test_user.id,
+        is_active=True,
+        index_status=DocumentIndexStatus.SUCCESS,
+        source_type="file",
+        folder_id=0,
+        created_at=now,
+        updated_at=now,
+    )
+    test_db.add(document)
+    test_db.commit()
+
+    kb = _make_kb(19, test_user.id, "Protected KB", now)
+    kb.json["spec"]["allowDocumentDownload"] = False
+    token = _set_external_user(test_user)
+    try:
+        with (
+            patch.object(knowledge_external, "SessionLocal", return_value=test_db),
+            patch.object(
+                knowledge_external.KnowledgeService,
+                "get_knowledge_base",
+                return_value=(kb, True),
+            ),
+        ):
+            result = await knowledge_external.wegent_kb_list_nodes(
+                knowledge_base_id=19,
+            )
+    finally:
+        _reset_external_user(token)
+
+    payload = json.loads(result)
+    assert payload["items"][0]["downloadable"] is False
+    assert payload["items"][0]["previewable"] is False
+
+
+@pytest.mark.asyncio
+async def test_list_nodes_keeps_document_downloadable_for_exempt_external_user(
+    test_db, test_user
+):
+    now = datetime(2026, 1, 3, 9, 50, 0)
+    attachment = _make_attachment(test_user.id)
+    test_db.add(attachment)
+    test_db.flush()
+    document = KnowledgeDocument(
+        kind_id=20,
+        attachment_id=attachment.id,
+        name="exempt.pdf",
+        file_extension="pdf",
+        file_size=123,
+        user_id=test_user.id,
+        is_active=True,
+        index_status=DocumentIndexStatus.SUCCESS,
+        source_type="file",
+        folder_id=0,
+        created_at=now,
+        updated_at=now,
+    )
+    test_db.add(document)
+    test_db.commit()
+
+    kb = _make_kb(20, test_user.id, "Protected KB", now)
+    kb.json["spec"]["allowDocumentDownload"] = False
+    token = _set_external_user(
+        ExternalKnowledgeUser(
+            id=test_user.id,
+            user_name=test_user.user_name,
+            document_download_exempt=True,
+        )
+    )
+    try:
+        with (
+            patch.object(knowledge_external, "SessionLocal", return_value=test_db),
+            patch.object(
+                knowledge_external.KnowledgeService,
+                "get_knowledge_base",
+                return_value=(kb, True),
+            ),
+        ):
+            result = await knowledge_external.wegent_kb_list_nodes(
+                knowledge_base_id=20,
+            )
+    finally:
+        _reset_external_user(token)
+
+    payload = json.loads(result)
+    assert payload["items"][0]["downloadable"] is True
+    assert payload["items"][0]["previewable"] is True
+
+
+@pytest.mark.asyncio
 async def test_list_nodes_can_filter_inactive_documents(test_db, test_user):
     now = datetime(2026, 1, 3, 10, 0, 0)
     inactive_doc = KnowledgeDocument(

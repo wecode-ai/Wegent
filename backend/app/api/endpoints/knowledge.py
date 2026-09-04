@@ -526,7 +526,7 @@ def get_document_protection(
     response: Response,
     current_user: User = Depends(security.get_current_user),
     db: Session = Depends(get_db),
-):
+) -> DocumentProtectionResponse:
     """Return UI-only protection state; file exits still authorize independently."""
     knowledge_base, has_access = KnowledgeService.get_knowledge_base(
         db=db,

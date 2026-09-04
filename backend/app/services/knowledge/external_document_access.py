@@ -110,6 +110,8 @@ def build_content_disposition(disposition: str, file_name: str) -> str:
 def build_document_capabilities(
     document: KnowledgeDocument,
     attachment: Optional[SubtaskContext],
+    *,
+    original_download_allowed: bool = True,
 ) -> ExternalDocumentAccess:
     """Build external metadata and capability flags for a document."""
     is_attachment = (
@@ -133,7 +135,8 @@ def build_document_capabilities(
         if is_attachment and attachment.file_size is not None
         else document.file_size
     )
-    downloadable = bool(is_attachment and attachment.storage_key)
+    file_available = bool(is_attachment and attachment.storage_key)
+    downloadable = bool(file_available and original_download_allowed)
     previewable = bool(
         downloadable and mime_type and mime_type.lower() in INLINE_PREVIEW_MIME_TYPES
     )

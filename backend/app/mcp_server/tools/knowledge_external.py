@@ -38,6 +38,9 @@ from app.schemas.knowledge_external import (
     ExternalSearchContentRecord,
     ExternalSearchContentResponse,
 )
+from app.services.knowledge.document_download_policy import (
+    is_original_download_allowed,
+)
 from app.services.knowledge.document_read_service import (
     DOCUMENT_READ_ERROR_ACCESS_DENIED,
     DOCUMENT_READ_ERROR_NOT_FOUND,
@@ -345,6 +348,7 @@ def _list_nodes_sync(
     include_inactive: bool,
     limit: int,
     offset: int,
+    document_download_exempt: bool = False,
 ) -> str:
     db = SessionLocal()
     try:
@@ -355,6 +359,10 @@ def _list_nodes_sync(
             return _json_error("Knowledge base not found", "not_found")
         if not has_access:
             return _json_error("Access denied to knowledge base", "forbidden")
+
+        original_download_allowed = (
+            document_download_exempt or is_original_download_allowed(db, kb)
+        )
 
         if folder_id != 0:
             folder = (
@@ -375,6 +383,7 @@ def _list_nodes_sync(
                 knowledge_base_id=knowledge_base_id,
                 folder_id=folder_id,
                 include_inactive=include_inactive,
+                original_download_allowed=original_download_allowed,
             )
             total_returned = count_nodes(items)
             total_available = total_returned
@@ -387,6 +396,7 @@ def _list_nodes_sync(
                 include_inactive=include_inactive,
                 limit=limit,
                 offset=offset,
+                original_download_allowed=original_download_allowed,
             )
             items = direct_nodes.items
             total_available = direct_nodes.total_available
@@ -709,6 +719,7 @@ async def wegent_kb_list_nodes(
             include_inactive=include_inactive,
             limit=limit,
             offset=offset,
+            document_download_exempt=getattr(user, "document_download_exempt", False),
         )
     )
 

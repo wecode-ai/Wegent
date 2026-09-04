@@ -14,9 +14,7 @@ from app.services.knowledge.document_download_policy import (
     require_document_download_allowed,
 )
 
-AttachmentAccessPurpose = Literal[
-    "download", "preview", "playback", "executor", "share"
-]
+AttachmentAccessPurpose = Literal["download", "playback", "executor", "share"]
 
 
 def require_attachment_download_allowed(
@@ -42,9 +40,7 @@ def require_attachment_download_allowed(
         return
 
     normalized_mime_type = (mime_type or "").lower()
-    if purpose in {"preview", "playback"} and normalized_mime_type.startswith(
-        ("image/", "video/")
-    ):
+    if purpose == "playback" and normalized_mime_type.startswith(("image/", "video/")):
         return
 
     knowledge_base = (
