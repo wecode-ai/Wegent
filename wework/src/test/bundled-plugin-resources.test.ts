@@ -153,9 +153,8 @@ describe('bundled plugin resources', () => {
     ) as Record<string, unknown>
 
     expect(weworkManifest.wework?.codexPlugin).toBe('./codex-plugin')
-    expect(weworkManifest.version).toBe('0.1.4')
     expect(codexManifest.name).toBe('wework-plugin-developer')
-    expect(codexManifest.version).toBe('0.1.4')
+    expect(weworkManifest.version).toBe(codexManifest.version)
     expect(Object.keys(codexManifest)).toEqual([
       'name',
       'version',
@@ -261,9 +260,9 @@ describe('bundled plugin resources', () => {
     expect(workflow).toContain('RELEASE_KIND')
     expect(workflow).toContain('TAURI_SIGNING_PRIVATE_KEY')
     expect(workflow).toContain('release-manifests/*')
-    expect(workflow).toContain("! -name 'WeworkComponent_coreDsh_*.tar.gz'")
-    expect(workflow).toContain("! -name 'WeworkComponent_codex_*.tar.gz'")
-    expect(workflow).toContain("! -name 'WeworkComponent_dws_*.tar.gz'")
+    expect(workflow).toContain("! -name 'WeworkComponent_*.tar.gz'")
+    expect(workflow).toContain('desktop-component-release.mjs release-assets version')
+    expect(workflow).toContain('desktop-component-release.mjs release-assets shared')
     expect(workflow).toContain('Reusing immutable component asset')
     expect(workflow).toContain('components-${channel}-linux-x64.json')
     expect(

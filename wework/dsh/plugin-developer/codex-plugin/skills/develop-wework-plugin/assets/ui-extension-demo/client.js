@@ -3,6 +3,9 @@ window.__ModuleLoader__.load({
   factory: require => {
     const React = require('react')
     const { createElement } = React
+    const DEMO_COMMAND = 'dsh-extension-demo.run'
+    const DEMO_CONFIGURATION = 'dsh-extension-demo.settings'
+    const DEMO_CONTEXT = 'dsh-extension-demo.enabled'
 
     const colors = {
       border: 'rgb(var(--color-border))',
@@ -121,6 +124,41 @@ window.__ModuleLoader__.load({
         'div',
         { 'data-testid': 'dsh-extension-demo-workspace-menu-section' },
         'Demo workspace menu section'
+      )
+    }
+
+    function DemoComposerAction({ disabled }) {
+      return createElement(
+        'button',
+        {
+          'data-testid': 'dsh-extension-demo-composer-action',
+          disabled,
+          type: 'button',
+        },
+        'Demo'
+      )
+    }
+
+    function DemoWorkspaceToolbarAction() {
+      return createElement(
+        'button',
+        {
+          'data-testid': 'dsh-extension-demo-workspace-toolbar-action',
+          type: 'button',
+        },
+        'Demo'
+      )
+    }
+
+    function DemoBottomPanel({ visible }) {
+      return createElement(
+        'div',
+        {
+          'data-testid': 'dsh-extension-demo-bottom-panel',
+          hidden: !visible,
+          style: { color: colors.primary, height: '100%', padding: '16px' },
+        },
+        'Demo bottom-panel tool'
       )
     }
 
@@ -275,6 +313,32 @@ window.__ModuleLoader__.load({
         component: DemoWorkspaceMenuSection,
       },
       {
+        slot: 'wework.composer.action',
+        descriptor: {
+          id: 'dsh-extension-demo.composer-action',
+          order: 90,
+        },
+        component: DemoComposerAction,
+      },
+      {
+        slot: 'wework.workspace.toolbar.action',
+        descriptor: {
+          id: 'dsh-extension-demo.workspace-toolbar-action',
+          order: 90,
+        },
+        component: DemoWorkspaceToolbarAction,
+      },
+      {
+        slot: 'wework.workspace.bottom-panel.tab',
+        descriptor: {
+          icon: 'blocks',
+          id: 'dsh-extension-demo.bottom-panel',
+          label: 'DSH Demo',
+          order: 90,
+        },
+        component: DemoBottomPanel,
+      },
+      {
         slot: 'wework.plugins.action',
         descriptor: {
           id: 'dsh-extension-demo.create',
@@ -382,15 +446,85 @@ window.__ModuleLoader__.load({
     return {
       inject: ['slots', 'wework'],
       apply(ctx) {
+        const state = ctx.wework.storage.scope('dsh-extension-demo')
+        ctx.wework.context.set(ctx, DEMO_CONTEXT, true)
+        ctx.wework.composer.references.register(ctx, {
+          description: 'Insert a stable reference owned by the demo plugin.',
+          id: 'dsh-extension-demo.reference',
+          metaLabel: 'DSH Demo',
+          reference: '[$DSH Demo](dsh-demo://overview)',
+          searchAliases: ['demo', 'extension'],
+          title: 'DSH Demo',
+          when: DEMO_CONTEXT,
+        })
+        ctx.wework.configuration.register(ctx, {
+          defaults: { message: 'Hello from the Wework extension framework' },
+          description: 'Settings owned and persisted by the demo plugin.',
+          id: DEMO_CONFIGURATION,
+          properties: {
+            message: { type: 'string' },
+          },
+          title: 'DSH extension demo',
+        })
+        ctx.wework.commands.register(
+          ctx,
+          {
+            enablement: ['wework.desktop', DEMO_CONTEXT],
+            icon: 'play',
+            id: DEMO_COMMAND,
+            title: 'Run DSH extension demo',
+          },
+          (_args, invocation) => {
+            const runCount = state.get('run-count', 0) + 1
+            state.set('run-count', runCount)
+            return {
+              invocation,
+              message: ctx.wework.configuration.get(DEMO_CONFIGURATION)?.message,
+              runCount,
+            }
+          }
+        )
+        ctx.wework.menus.register(ctx, 'composer.toolbar', {
+          command: DEMO_COMMAND,
+          group: 'extensions',
+          icon: 'play',
+          id: 'dsh-extension-demo.composer-menu',
+          order: 90,
+        })
+        ctx.wework.menus.register(ctx, 'composer.slash', {
+          command: DEMO_COMMAND,
+          group: 'Extensions',
+          id: 'dsh-extension-demo.slash-menu',
+          order: 90,
+        })
+        ctx.wework.menus.register(ctx, 'workspace.toolbar', {
+          command: DEMO_COMMAND,
+          group: 'extensions',
+          icon: 'play',
+          id: 'dsh-extension-demo.workspace-menu',
+          order: 90,
+        })
+        ctx.wework.keybindings.register(ctx, {
+          command: DEMO_COMMAND,
+          id: 'dsh-extension-demo.run-keybinding',
+          key: 'Ctrl+Shift+D',
+          mac: 'Command+Shift+D',
+          when: DEMO_CONTEXT,
+        })
+
         for (const contribution of contributions) {
-          ctx.slots.inject(contribution.slot, () =>
-            ctx.wework.ui.register(
-              ctx,
-              contribution.slot,
-              contribution.descriptor,
+          ctx.slots.inject(contribution.slot, function* () {
+            yield ctx.wework.contributions.register(ctx, contribution.slot, contribution.descriptor)
+            yield ctx.slots.register(
+              {
+                name: contribution.slot,
+                id: contribution.descriptor.id,
+                label: contribution.descriptor.label,
+                order: contribution.descriptor.order,
+              },
               contribution.component
             )
-          )
+          })
         }
       },
     }

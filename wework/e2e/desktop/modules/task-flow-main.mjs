@@ -1752,7 +1752,7 @@ last_updated = "2026-07-30T00:00:00Z"`
       }
       if (shouldRunPluginSegment('sites-plugin-auto-install')) {
         phase = 'sites-plugin-auto-install'
-        await verifySitesPluginAutoInstall(control)
+        await verifySitesPluginAutoInstall(control, executorHome)
       }
       if (officialPluginFixture) {
         phase = 'plugin-uninstall'

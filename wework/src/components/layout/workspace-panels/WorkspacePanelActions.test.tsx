@@ -127,6 +127,7 @@ describe('WorkspacePanelActions', () => {
   test('hides environment info while a task is being created', () => {
     render(<WorkspacePanelActions {...baseProps} environmentInfoVisible={false} />)
 
+    expect(screen.getByTestId('workspace-toolbar-extension-actions')).toBeInTheDocument()
     expect(screen.queryByTestId('environment-info-button')).not.toBeInTheDocument()
     expect(
       screen.queryByTestId('toggle-right-workspace-panel-expanded-button')
@@ -256,6 +257,7 @@ describe('WorkspacePanelActions', () => {
 
     render(<WorkspacePanelActions {...baseProps} mode="environment" />)
 
+    expect(screen.queryByTestId('workspace-toolbar-extension-actions')).not.toBeInTheDocument()
     expect(screen.getByTestId('environment-info-button')).toHaveAttribute('aria-expanded', 'false')
     expect(screen.queryByTestId('environment-info-popover')).not.toBeInTheDocument()
   })

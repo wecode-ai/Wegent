@@ -53,6 +53,7 @@ test('generates Electron and legacy Tauri rolling manifests from one release', a
         contentSha256: 'a'.repeat(64),
         archiveSha256,
         assetName,
+        releaseScope: id === 'coreDsh' ? 'shared' : 'version',
         entryPath: '.',
       }
     }
@@ -103,6 +104,7 @@ test('generates Electron and legacy Tauri rolling manifests from one release', a
     await readFile(resolve(output, 'components-stable-macos-arm64.json'), 'utf8')
   )
   expect(components.sourceSha).toBe('a'.repeat(40))
+  expect(components.capabilities).toEqual({ componentizedHostUpdate: 1 })
   expect(components.components.coreDsh).toMatchObject({
     version: '0.1.1-rc.2',
     contentSha256: 'a'.repeat(64),
@@ -113,6 +115,71 @@ test('generates Electron and legacy Tauri rolling manifests from one release', a
   expect(components.components.executor.downloadUrl).toBe(
     `https://github.com/wecode-ai/Wegent/releases/download/wework-v1.2.3/WeworkComponent_executor_${createHash('sha256').update('macos-arm64-executor').digest('hex')}_macos_arm64.tar.gz`
   )
+})
+
+test('prefers slim Host update artifacts while retaining version release URLs', async () => {
+  const root = await mkdtemp(resolve(tmpdir(), 'wework-host-update-manifests-'))
+  temporaryDirectories.push(root)
+  const assets = resolve(root, 'assets')
+  const output = resolve(root, 'output')
+  const notes = resolve(root, 'notes.md')
+  await import('node:fs/promises').then(({ mkdir }) => mkdir(assets))
+  const version = '1.2.3'
+  for (const name of [
+    `WeWorkHostUpdate_${version}_macos_arm64.zip`,
+    `WeWorkHostUpdate_${version}_macos_x64.zip`,
+    `WeWorkHostUpdate_${version}_windows_x64-setup.exe`,
+    `WeWorkHostUpdate_${version}_macos_arm64.zip.blockmap`,
+    `WeWorkHostUpdate_${version}_macos_x64.zip.blockmap`,
+    `WeWorkHostUpdate_${version}_windows_x64-setup.exe.blockmap`,
+    `WeWork_${version}_macos_arm64.app.tar.gz`,
+    `WeWork_${version}_macos_x64.app.tar.gz`,
+    `WeWork_${version}_windows_x64-setup.exe`,
+  ]) {
+    await writeFile(resolve(assets, name), name)
+  }
+  for (const name of [
+    `WeWork_${version}_macos_arm64.app.tar.gz.sig`,
+    `WeWork_${version}_macos_x64.app.tar.gz.sig`,
+    `WeWork_${version}_windows_x64-setup.exe.sig`,
+  ]) {
+    await writeFile(resolve(assets, name), `signature-${name}`)
+  }
+  for (const [platform, arch] of [
+    ['macos', 'arm64'],
+    ['macos', 'x64'],
+    ['windows', 'x64'],
+  ]) {
+    await writeFile(
+      resolve(assets, `components-${platform}-${arch}.json`),
+      JSON.stringify({ components: {} })
+    )
+  }
+  await writeFile(notes, '## Changes\n')
+
+  await run(
+    [
+      resolve(process.cwd(), 'scripts/generate-desktop-update-manifests.mjs'),
+      assets,
+      output,
+      version,
+      'beta',
+      'wecode-ai/Wegent',
+      'wework-v1.2.3',
+      notes,
+      'a'.repeat(40),
+    ],
+    { WEWORK_USE_COMPONENTIZED_HOST_UPDATE: 'true' }
+  )
+
+  expect(await readFile(resolve(output, 'beta-mac.yml'), 'utf8')).toContain(
+    `WeWorkHostUpdate_${version}_macos_arm64.zip`
+  )
+  expect(await readFile(resolve(output, 'beta.yml'), 'utf8')).toContain(
+    `WeWorkHostUpdate_${version}_windows_x64-setup.exe`
+  )
+  const legacy = JSON.parse(await readFile(resolve(output, 'beta-windows-x86_64.json'), 'utf8'))
+  expect(legacy.platforms['beta-windows'].url).toContain(`WeWork_${version}_windows_x64-setup.exe`)
 })
 
 test('rejects a release without every differential update blockmap', async () => {
@@ -170,9 +237,12 @@ test('rejects an invalid release source SHA', async () => {
   ).rejects.toThrow('manifest generator exited with code 1')
 })
 
-function run(args) {
+function run(args, environment = {}) {
   return new Promise((resolvePromise, reject) => {
-    const child = spawn(process.execPath, args, { stdio: 'inherit' })
+    const child = spawn(process.execPath, args, {
+      env: { ...process.env, ...environment },
+      stdio: 'inherit',
+    })
     child.once('error', reject)
     child.once('exit', code => {
       if (code === 0) resolvePromise()

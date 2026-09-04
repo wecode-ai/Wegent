@@ -1444,6 +1444,10 @@ class DesktopE2EServer {
     }
 
     if (request.method === 'GET' && url.pathname === '/api/plugins/installed') {
+      if (this.applicationPluginInspectionUnavailable) {
+        json(response, 500, { detail: 'Plugin inventory unavailable' })
+        return
+      }
       json(response, 200, {
         items: [
           ...(this.sitesPluginInstalled
@@ -1469,6 +1473,9 @@ class DesktopE2EServer {
       const installedPlugin = isSitesPlugin
         ? installedSitesPlugin(targetDeviceId ?? 'local-device')
         : installedMiniProgramPlugin(targetDeviceId ?? 'local-device')
+      if (targetDeviceId && this.onApplicationPluginInstalled) {
+        await this.onApplicationPluginInstalled(installedPlugin)
+      }
       const installedPluginId = isSitesPlugin ? 601 : 602
       if (isSitesPlugin) {
         this.sitesPluginInstalled = true
