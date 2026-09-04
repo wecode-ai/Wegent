@@ -1,0 +1,107 @@
+# SPDX-FileCopyrightText: 2026 Weibo, Inc.
+#
+# SPDX-License-Identifier: Apache-2.0
+
+name: Binary Asset Policy
+
+on:
+  pull_request_target:
+    branches:
+      - main
+    types:
+      - opened
+      - synchronize
+      - reopened
+      - ready_for_review
+  pull_request_review:
+    types:
+      - submitted
+      - edited
+      - dismissed
+  merge_group:
+    types:
+      - checks_requested
+
+permissions:
+  contents: read
+  pull-requests: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name == 'merge_group' && github.ref || github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  binary-asset-policy:
+    name: Binary Asset Policy Check
+    if: github.event_name == 'merge_group' || github.event.pull_request.base.ref == 'main'
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout trusted policy scripts
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ github.repository }}
+          ref: ${{ github.event_name == 'merge_group' && github.event.repository.default_branch || github.event.pull_request.base.sha }}
+          path: trusted-policy
+          persist-credentials: false
+
+      - name: Checkout pull request head tree
+        if: github.event_name != 'merge_group'
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ github.event.pull_request.head.repo.full_name }}
+          ref: ${{ github.event.pull_request.head.sha }}
+          path: policy-target
+          persist-credentials: false
+
+      - name: List changed pull request files
+        if: github.event_name != 'merge_group'
+        uses: actions/github-script@v7
+        env:
+          CHANGED_FILES_JSON: ${{ runner.temp }}/binary-asset-changed-files.json
+        with:
+          script: |
+            const fs = require('fs')
+            const files = await github.paginate(github.rest.pulls.listFiles, {
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: context.payload.pull_request.number,
+              per_page: 100,
+            })
+            if (files.length >= 3000) {
+              core.setFailed(
+                'GitHub only exposes the first 3000 changed files. Split this pull request before retrying.',
+              )
+              return
+            }
+            const paths = files
+              .filter((file) => file.status !== 'removed')
+              .map((file) => file.filename)
+            fs.writeFileSync(process.env.CHANGED_FILES_JSON, JSON.stringify(paths))
+
+      - name: Detect images and binary files
+        if: github.event_name != 'merge_group'
+        id: binary-assets
+        env:
+          CHANGED_FILES_JSON: ${{ runner.temp }}/binary-asset-changed-files.json
+          BINARY_ASSET_REPORT: ${{ runner.temp }}/binary-asset-report.tsv
+        run: |
+          bash "$GITHUB_WORKSPACE/trusted-policy/.github/scripts/check-binary-assets.sh" \
+            "$CHANGED_FILES_JSON" \
+            "$GITHUB_WORKSPACE/policy-target" \
+            "$BINARY_ASSET_REPORT"
+
+      - name: Verify administrator approval
+        if: github.event_name != 'merge_group' && steps.binary-assets.outputs.requires_approval == 'true'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const verifyApproval = require(
+              `${process.env.GITHUB_WORKSPACE}/trusted-policy/.github/scripts/verify-binary-asset-approval.cjs`,
+            )
+            await verifyApproval({ github, context, core })
+
+      - name: Accept merge group
+        if: github.event_name == 'merge_group'
+        run: |
+          echo "Binary assets were already checked and approved before the pull request entered the merge queue."

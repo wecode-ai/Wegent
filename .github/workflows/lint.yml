@@ -165,6 +165,9 @@ jobs:
       - name: Test repository policy workflow
         run: scripts/test-repository-policy-workflow.sh
 
+      - name: Test binary asset policy workflow
+        run: .github/scripts/test-binary-asset-policy.sh
+
       - name: Run repository policy check
         # Fork PRs run this in repository-policy.yml using pull_request_target
         # with the trusted base-branch script and the PR merge tree as data.
