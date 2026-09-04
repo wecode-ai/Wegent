@@ -12,7 +12,10 @@
       "icon": "./assets/icon.png",
       "bundleIdentifier": "io.wecode.wework",
       "buildNumber": "2",
-      "appleTeamId": "27XH7KRW54"
+      "appleTeamId": "27XH7KRW54",
+      "config": {
+        "usesNonExemptEncryption": false
+      }
     },
     "android": {
       "package": "com.wecode.wegent",
