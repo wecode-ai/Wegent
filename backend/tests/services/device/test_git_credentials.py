@@ -6,6 +6,7 @@
 
 import json
 import os
+import shlex
 import shutil
 import stat
 import subprocess
@@ -479,3 +480,78 @@ def test_device_command_reports_cli_outcome_without_affecting_git_auth(
     assert f"password={token}" in credential.stdout
     env_file = home / ".wecode" / "git-auth" / "env.sh"
     assert env_file.exists() is (expected_status == "configured")
+
+
+def _recording_tool_path(
+    tmp_path: Path,
+    *,
+    tool: str,
+    help_text: str,
+    reject_flag: str | None = None,
+) -> tuple[str, Path]:
+    bin_path = tmp_path / "bin"
+    bin_path.mkdir()
+    for command in ("git", "python3", "sh"):
+        executable = shutil.which(command)
+        assert executable is not None
+        (bin_path / command).symlink_to(executable)
+    args_log = tmp_path / "tool-args.log"
+    script = (
+        "#!/bin/sh\n"
+        'if [ "$1" = "auth" ] && [ "$2" = "login" ] && [ "$3" = "--help" ]; then\n'
+        f"  printf '%s\\n' {shlex.quote(help_text)}\n"
+        "  exit 0\n"
+        "fi\n"
+        f"printf '%s\\n' \"$*\" >> {shlex.quote(str(args_log))}\n"
+    )
+    if reject_flag:
+        script += f'case " $* " in *" {reject_flag} "*) exit 1;; esac\n'
+    script += "read -r credential\nexit 0\n"
+    executable = bin_path / tool
+    executable.write_text(script, encoding="utf-8")
+    executable.chmod(0o700)
+    return str(bin_path), args_log
+
+
+@pytest.mark.parametrize("supports_insecure_storage", [True, False])
+def test_device_command_only_passes_insecure_storage_when_supported(
+    tmp_path,
+    supports_insecure_storage,
+):
+    # Legacy CLIs (e.g. glab 1.79 shipped in executor images) exit 1 on the
+    # unknown --insecure-storage flag, so the sync must probe for support.
+    home = tmp_path / "home"
+    home.mkdir()
+    help_text = "Usage: glab auth login --hostname <host> --stdin"
+    if supports_insecure_storage:
+        help_text += " --insecure-storage"
+    command_path, args_log = _recording_tool_path(
+        tmp_path,
+        tool="glab",
+        help_text=help_text,
+        reject_flag=None if supports_insecure_storage else "--insecure-storage",
+    )
+    account = {
+        "domain": "gitlab.example.com",
+        "host": "gitlab.example.com",
+        "provider": "gitlab",
+        "token": "cli-probe-secret",
+        "username": "alice",
+        "identity_name": "Alice",
+        "identity_email": "alice@example.com",
+    }
+
+    applied = _run_sync_command(home, [account], command_path=command_path)
+
+    assert applied.returncode == 0, applied.stderr
+    result = json.loads(applied.stdout)
+    assert result["cli"][0]["status"] == "configured"
+    login_invocations = [
+        line
+        for line in args_log.read_text(encoding="utf-8").splitlines()
+        if "--hostname" in line
+    ]
+    assert len(login_invocations) == 1
+    assert (
+        "--insecure-storage" in login_invocations[0]
+    ) is supports_insecure_storage

@@ -163,6 +163,24 @@ def secure_tree(path):
     ensure_mode(path, 0o700)
 
 
+def cli_supports_insecure_storage(executable):
+    # --insecure-storage only exists on gh/glab releases with keyring-backed
+    # token storage; older CLIs already store tokens in the config file.
+    try:
+        result = subprocess.run(
+            [executable, "auth", "login", "--help"],
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            timeout=10,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+    return "--insecure-storage" in (result.stdout or "")
+
+
 def configure_cli(account, revision):
     provider = account["provider"]
     tool = "gh" if provider == "github" else "glab" if provider == "gitlab" else None
@@ -182,30 +200,22 @@ def configure_cli(account, revision):
     environment = os.environ.copy()
     if tool == "gh":
         environment["GH_CONFIG_DIR"] = str(config_dir)
-        command = [
-            executable,
-            "auth",
-            "login",
-            "--hostname",
-            account["domain"],
-            "--git-protocol",
-            "https",
-            "--with-token",
-            "--insecure-storage",
-        ]
+        token_flag = "--with-token"
     else:
         environment["GLAB_CONFIG_DIR"] = str(config_dir)
-        command = [
-            executable,
-            "auth",
-            "login",
-            "--hostname",
-            account["domain"],
-            "--git-protocol",
-            "https",
-            "--stdin",
-            "--insecure-storage",
-        ]
+        token_flag = "--stdin"
+    command = [
+        executable,
+        "auth",
+        "login",
+        "--hostname",
+        account["domain"],
+        "--git-protocol",
+        "https",
+        token_flag,
+    ]
+    if cli_supports_insecure_storage(executable):
+        command.append("--insecure-storage")
 
     try:
         result = subprocess.run(
