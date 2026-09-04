@@ -208,21 +208,43 @@ def _resolve_task_bound_team(
     if not team_ref:
         return client_team
 
-    bound_team = (
-        db.query(Kind)
-        .filter(
-            Kind.kind == "Team",
-            Kind.name == team_ref.get("name"),
-            Kind.namespace == team_ref.get("namespace", "default"),
-            Kind.user_id == team_ref.get("user_id", existing_task.user_id),
-            Kind.is_active.is_(True),
+    name = team_ref.get("name")
+    namespace = team_ref.get("namespace", "default")
+    ref_user_id = team_ref.get("user_id")
+    if name is None:
+        return client_team
+
+    if ref_user_id is not None:
+        # Modern teamRef records the exact team identity captured at task
+        # creation. Resolve it directly, matching the task list/detail
+        # resolution in task_kinds helpers.
+        bound_team = (
+            db.query(Kind)
+            .filter(
+                Kind.kind == "Team",
+                Kind.name == name,
+                Kind.namespace == namespace,
+                Kind.user_id == ref_user_id,
+                Kind.is_active.is_(True),
+            )
+            .first()
         )
-        .first()
-    )
+    else:
+        # Legacy teamRef without an owner: resolve through the same
+        # permission-aware reader used by the REST append path.
+        from app.services.readers.kinds import KindType, kindReader
+
+        bound_team = kindReader.get_by_name_and_namespace(
+            db,
+            existing_task.user_id,
+            KindType.TEAM,
+            namespace,
+            name,
+        )
     if bound_team is None:
         raise ValueError(
             f"Task {existing_task.id} belongs to agent "
-            f"'{team_ref.get('name')}' which no longer exists"
+            f"'{name}' which no longer exists"
         )
     return bound_team
 

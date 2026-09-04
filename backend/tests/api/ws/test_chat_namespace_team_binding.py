@@ -77,6 +77,58 @@ def test_task_without_team_ref_keeps_client_team() -> None:
     assert result is client_team
 
 
+def test_team_ref_without_name_keeps_client_team() -> None:
+    task = _task({"namespace": "default"})
+    client_team = SimpleNamespace(id=273960, name="qbird-direct-log")
+    db = _db_returning_team(None)
+
+    result = _resolve_task_bound_team(db, task, client_team)
+
+    assert result is client_team
+
+
+def test_legacy_team_ref_without_owner_uses_reader(monkeypatch) -> None:
+    task = _task(
+        {
+            "name": "creator-php-workflow",
+            "namespace": "default",
+        }
+    )
+    bound_team = SimpleNamespace(id=267213, name="creator-php-workflow")
+    reader = Mock(return_value=bound_team)
+    monkeypatch.setattr(
+        "app.services.readers.kinds.kindReader",
+        Mock(get_by_name_and_namespace=reader),
+    )
+    client_team = SimpleNamespace(id=273960, name="qbird-direct-log")
+
+    result = _resolve_task_bound_team(Mock(), task, client_team)
+
+    assert result is bound_team
+    assert reader.call_count == 1
+    args = reader.call_args.args
+    assert args[1] == 2838
+    assert args[3] == "default"
+    assert args[4] == "creator-php-workflow"
+
+
+def test_legacy_team_ref_missing_team_raises(monkeypatch) -> None:
+    task = _task(
+        {
+            "name": "creator-php-workflow",
+            "namespace": "default",
+        }
+    )
+    monkeypatch.setattr(
+        "app.services.readers.kinds.kindReader",
+        Mock(get_by_name_and_namespace=Mock(return_value=None)),
+    )
+    client_team = SimpleNamespace(id=273960, name="qbird-direct-log")
+
+    with pytest.raises(ValueError, match="no longer exists"):
+        _resolve_task_bound_team(Mock(), task, client_team)
+
+
 def test_missing_bound_team_raises() -> None:
     task = _task(
         {
