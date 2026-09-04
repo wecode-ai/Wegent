@@ -151,15 +151,15 @@ scripts/acceptance/executor-home-persistence-probe.sh cleanup
 
 Backend 会在 Cloud/Remote 设备首次注册时固定 `runtimeInstanceId`。后续同一逻辑设备如果携带新的或空的 Runtime Instance ID，注册会以持久存储身份不匹配失败，不能覆盖旧值或创建旁路设备记录。因此误挂全新空卷时，即使部署仍传入原 `DEVICE_ID`，新卷生成的新 Runtime Instance ID 也不能让设备静默重新上线。Local/App 设备保持原有可更新行为。
 
-### 添加远程 Docker 设备
+### 添加远程设备
 
-远程 Docker 设备适合把一台自管服务器或容器主机接入 Wegent。它和云设备一样通过设备 WebSocket 协议接收任务，并支持终端与 code-server 会话；区别是容器生命周期由用户自己管理，Wegent 不会自动创建、重启或销毁这台 Docker 容器。
+远程设备适合把一台自管 Linux 服务器接入 Wegent。它和云设备一样通过设备 WebSocket 协议接收任务，并支持终端与 code-server 会话；区别是设备进程生命周期由用户自己管理，Wegent 不会自动启动、重启或销毁它。
 
-每个用户最多只能创建一台云设备。如果已经存在云设备，添加设备弹窗会禁用云设备创建入口，但仍可继续生成远程 Docker 设备命令。
+每个用户最多只能创建一台云设备。如果已经存在云设备，添加设备弹窗会禁用云设备创建入口，但仍可继续生成远程设备启动方式。
 
-在 Wework 中进入 **设置** -> **连接**，或在 Wegent 的 **AI 设备** 页面点击 **添加设备**，选择 **远程 Docker 设备**并生成启动命令。生成命令时只创建连接凭据，不会提前创建离线 Device 记录；Executor 成功注册后，设备才会显示在独立的 **远程设备** 分组。
+在 Wework 中进入 **设置** -> **连接**，或在 Wegent 的 **AI 设备** 页面点击 **添加设备**，选择 **远程设备**并生成启动方式。Docker 仍是默认选项；目标主机不使用 Docker 时，可切换到 **脚本启动**并复制完整 Bash 脚本。生成启动方式时只创建连接凭据，不会提前创建离线 Device 记录；Executor 成功注册后，设备才会显示在独立的 **远程设备** 分组。
 
-生成的命令会包含类似参数：
+生成的 Docker 命令会包含类似参数：
 
 ```bash
 docker run -d \
@@ -179,9 +179,13 @@ docker run -d \
   ghcr.io/wecode-ai/wegent-device:latest
 ```
 
-生成接口继续兼容可选的 `client_origin`，并依次使用它、请求来源或 Backend 地址生成 `DEVICE_PUBLIC_BASE_URL`。`WEGENT_AUTH_TOKEN` 每次生成命令时都会新建一把 remote device API Key，只出现在生成命令中。
+脚本启动当前仅支持 Linux。脚本会先检查系统，通过 `curl` 或 `wget` 下载官方安装脚本（仅在 `wegent-executor` 不存在时执行），导出当前远程设备的连接配置，再使用 `nohup` 在后台启动 Executor。默认二进制、日志和 PID 文件分别位于 `~/.wegent-executor/bin/wegent-executor`、`~/.wegent-executor/logs/executor.log` 和 `~/.wegent-executor/executor.pid`；可在执行脚本前通过 `WEGENT_EXECUTOR_BIN`、`WEGENT_EXECUTOR_LOG_DIR` 和 `WEGENT_EXECUTOR_PID_FILE` 覆盖。停止该进程时可执行 `kill "$(cat ~/.wegent-executor/executor.pid)"`。脚本不会创建 systemd 服务，主机重启后需要重新执行脚本或自行配置进程托管。
+
+生成接口继续兼容可选的 `client_origin`，并依次使用它、请求来源或 Backend 地址生成 `DEVICE_PUBLIC_BASE_URL`。`WEGENT_AUTH_TOKEN` 每次生成启动方式时都会新建一把 remote device API Key，只出现在生成的 Docker 命令和 Bash 脚本中；它属于敏感凭据，不应写入代码仓库、日志或公开文档。
 
 `-v wegent-remote-device-home:/home/wegent/.wecode/wegent-executor` 会把 Docker 命名卷 `wegent-remote-device-home` 挂载到 Executor home。该卷持久化工作区、下载的能力、配置和运行数据，使容器删除并按同名命令重建后仍能复用这些数据。`WEGENT_EXECUTOR_HOME_ID` 将该卷固定到逻辑设备；`WEGENT_WORKTREE_PERSISTENT_STORAGE_VERIFIED=true` 表示这条启动命令已经提供并验证稳定卷、固定绝对挂载路径和单写约束，Executor 才会向 Wework 开放 Remote Worktree。不要在临时目录、匿名卷或未完成持久化验收的部署中设置该值。`DEVICE_ID` 和连接 token 来自启动命令的环境变量，不由该卷保存。为避免卷中旧二进制阻碍升级，容器每次启动都会用当前镜像内的 Executor 刷新卷中的 `bin/wegent-executor`，其他数据保持不变。删除容器不会删除命名卷；只有显式执行 `docker volume rm wegent-remote-device-home` 才会清除它。
+
+脚本启动不会设置 `WEGENT_WORKTREE_PERSISTENT_STORAGE_VERIFIED`，因此不声明 Remote Worktree 持久化能力。需要远程 Worktree 时，应继续使用通过持久卷验收的 Docker 启动方式。
 
 设备镜像由 Backend 环境变量 `REMOTE_DEVICE_DOCKER_IMAGE` 控制，默认使用 `ghcr.io/wecode-ai/wegent-device:latest`。需要可复现部署时应固定发布版本或 digest。公共发布工作流会发布多架构镜像，并校验镜像架构、OCI 版本、源码 revision 和 Executor 版本。
 
@@ -196,13 +200,13 @@ WEGENT_REMOTE_DEVICE_ACCEPTANCE_IMAGE=ghcr.io/wecode-ai/wegent-device:<version> 
 
 目标主机的内网防火墙需要允许浏览器访问 17888，但不能把该端口开放到公网。17888 只提供带短期会话 token 的 IDE 访问；session gateway 校验 token 后设置 HttpOnly Cookie，并从重定向 URL 中移除 token，不提供匿名 code-server 入口。
 
-设备镜像默认只启动 `wegent-executor` 和 code-server session gateway。Wework 项目终端通过 Backend 和 Executor 之间已有的 Socket.IO 连接中转，不要求设备有公网地址；云设备和远程 Docker 设备的 IDE/code-server 通过自动探测地址对应的 session gateway 访问，因此探测到的设备 IP 必须能从用户浏览器访问。公开版 Wework 不提供云桌面；部分产品发行版可以通过可选扩展增加该能力。
+远程设备会启动 `wegent-executor` 和 code-server session gateway。Wework 项目终端通过 Backend 和 Executor 之间已有的 Socket.IO 连接中转，不要求设备有公网地址；云设备和远程设备的 IDE/code-server 通过自动探测地址对应的 session gateway 访问，因此探测到的设备 IP 必须能从用户浏览器访问。公开版 Wework 不提供云桌面；部分产品发行版可以通过可选扩展增加该能力。
 
 - `POST /api/projects/{project_id}/terminal`：在项目路径中启动可写 PTY，返回 `transport=socketio` 的终端会话 ID；浏览器通过 Backend `/terminal` Socket.IO namespace 连接。
 - `POST /api/projects/{project_id}/code-server`：返回带短期 token 的 code-server 访问 URL。设备镜像内的 code-server 只监听容器回环地址并使用 `auth: none`，session gateway 在外层校验短期 token，浏览器不会直接访问 code-server。
 - `POST /api/devices/{device_id}/code-server`：打开指定设备上的 code-server。请求 body 可选传入 `path`；不传时由 Executor 解析为自己的默认工作区（设备镜像中为 `/home/wegent/.wecode/wegent-executor/workspace`）。Executor 只接受默认 workspace、`WEGENT_WORKSPACE_ROOTS` 配置目录和已保存的 Codex 项目根目录，越界路径会被拒绝。
 
-Terminal 会话适用于本地设备、云设备和远程 Docker 设备：Backend 记录 `session_id`、用户、设备和 executor socket 绑定关系，前端使用登录 JWT 连接 `/terminal` namespace。浏览器加入会话 room 后，Backend 会通过 `/local-executor` namespace 发送带 ACK 的 `terminal:attach`；Executor 收到 attach 后才读取 PTY 中暂存的首屏输出，并通过 `terminal:output` 和 `terminal:exit` 回传，避免初始 Shell 提示符在浏览器订阅前丢失。Backend 还会把输入、resize、关闭事件转发给设备，设备上的 Executor 直接管理 PTY。code-server 是容器内持久进程，云设备和远程 Docker 设备通过 gateway 按项目路径打开目录；本地设备不支持 code-server 项目会话。
+Terminal 会话适用于本地设备、云设备和远程设备：Backend 记录 `session_id`、用户、设备和 executor socket 绑定关系，前端使用登录 JWT 连接 `/terminal` namespace。浏览器加入会话 room 后，Backend 会通过 `/local-executor` namespace 发送带 ACK 的 `terminal:attach`；Executor 收到 attach 后才读取 PTY 中暂存的首屏输出，并通过 `terminal:output` 和 `terminal:exit` 回传，避免初始 Shell 提示符在浏览器订阅前丢失。Backend 还会把输入、resize、关闭事件转发给设备，设备上的 Executor 直接管理 PTY。code-server 是设备上的持久进程，云设备和远程设备通过 gateway 按项目路径打开目录；本地设备不支持 code-server 项目会话。
 
 如果项目配置了 `workspace.localPath`、`workspace.devicePath` 或 `workspace.checkoutPath`，Wework 会在确认项目时通过设备命令创建该目录，并在启动 terminal 或 code-server 前再次确保目录存在；目录创建失败时项目不会静默进入不可用状态。`localPath` 用于本机 local executor，`devicePath` 用于绑定到具体 cloud 或 remote 设备的沙箱目录。若请求携带任务 ID 且该任务记录了执行工作区路径（例如 Git 新工作树），terminal 或 code-server 会直接在任务工作区路径中启动，不会回退到项目目录。
 
@@ -357,7 +361,7 @@ wegent-executor
 
 本地设备会显示设备名称、在线状态和 executor 版本，但不会展示 CPU、MEM、磁盘监控数据和资源监控说明，也不会展示终端、IDE、云桌面、重启或删除云资源等云设备专属操作。离线本地设备会显示删除入口，用于移除该设备的注册记录；如果设备重新连接，它会自动重新注册。
 
-在线云设备和远程 Docker 设备支持直接打开交互式会话：
+在线云设备和远程设备支持直接打开交互式会话：
 
 | 操作     | 后端接口                                    | 说明                                                                                                                                 |
 | -------- | ------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------ |

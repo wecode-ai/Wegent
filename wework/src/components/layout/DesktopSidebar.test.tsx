@@ -1962,7 +1962,7 @@ describe('DesktopSidebar', () => {
       'docker run'
     )
     expect(screen.getByTestId('remote-device-startup-tab-docker')).toBeInTheDocument()
-    expect(screen.getByTestId('remote-device-startup-tab-process')).toHaveTextContent('宿主机启动')
+    expect(screen.getByTestId('remote-device-startup-tab-process')).toHaveTextContent('脚本启动')
 
     await userEvent.click(screen.getByTestId('remote-device-startup-tab-process'))
 

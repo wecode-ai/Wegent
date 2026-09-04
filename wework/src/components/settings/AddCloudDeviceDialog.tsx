@@ -1,10 +1,10 @@
-import { Check, Cloud, Copy, Plus, Server, X } from 'lucide-react'
+import { Cloud, Plus, Server, X } from 'lucide-react'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { createHttpClient } from '@/api/http'
 import { createDeviceApi } from '@/api/devices'
+import { RemoteDeviceStartupCommandPanel } from '@/components/common/RemoteDeviceStartupCommandPanel'
 import type { RemoteDeviceConnectionStatus } from '@/extensions/remote-device-onboarding-contract'
 import { useTranslation } from '@/hooks/useTranslation'
-import { copyTextToClipboard } from '@/lib/clipboard'
 import type { DeviceInfo, DockerRemoteDeviceCommandResponse } from '@/types/devices'
 import { track } from '@/telemetry/client'
 import { remoteDeviceOnboardingExtension } from '@extensions/remote-device-onboarding'
@@ -56,7 +56,6 @@ export function AddCloudDeviceDialog({
   const [error, setError] = useState<string | null>(null)
   const [remoteCommand, setRemoteCommand] = useState<DockerRemoteDeviceCommandResponse | null>(null)
   const [remoteStatus, setRemoteStatus] = useState<RemoteDeviceConnectionStatus>('idle')
-  const [copied, setCopied] = useState(false)
   const onCloseRef = useRef(onClose)
   const onCreatedRef = useRef(onCreated)
   const cloudApiBaseUrl = cloudConnection.apiBaseUrl
@@ -148,10 +147,9 @@ export function AddCloudDeviceDialog({
     }
   }, [cloudConnection, hasCloudDevice, onClose, onCreated, onCreatingChange, t])
 
-  const handleCreateRemoteDocker = useCallback(async () => {
+  const handleCreateRemoteDevice = useCallback(async () => {
     setRemoteLoading(true)
     setError(null)
-    setCopied(false)
     setRemoteStatus('idle')
     try {
       const result = await createCloudDeviceApi(cloudConnection).createDockerRemoteDeviceCommand()
@@ -159,21 +157,15 @@ export function AddCloudDeviceDialog({
       track('feature_action_completed', { domain: 'cloud_device', action: 'create' })
     } catch (e) {
       track('operation_failed', { operation: 'cloud_device_action' })
-      setError(e instanceof Error ? e.message : t('workbench.remote_docker_generate_failed'))
+      setError(
+        e instanceof Error
+          ? e.message
+          : t('workbench.remote_device_generate_failed', '生成远程设备启动方式失败，请重试。')
+      )
     } finally {
       setRemoteLoading(false)
     }
   }, [cloudConnection, t])
-
-  const handleCopyRemoteCommand = useCallback(async () => {
-    if (!remoteCommand) return
-    try {
-      await copyTextToClipboard(remoteCommand.command)
-      setCopied(true)
-    } catch {
-      setError(t('workbench.remote_docker_copy_failed'))
-    }
-  }, [remoteCommand, t])
 
   if (!open) return null
 
@@ -260,56 +252,47 @@ export function AddCloudDeviceDialog({
               <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                 <div className="min-w-0">
                   <h3 className="text-sm font-semibold text-text-primary">
-                    {t('workbench.remote_docker_title')}
+                    {t('workbench.remote_device_title', '远程设备')}
                   </h3>
                   <p className="mt-1 text-xs leading-5 text-text-secondary">
-                    {t('workbench.remote_docker_description')}
+                    {t(
+                      'workbench.remote_device_description',
+                      '生成 Docker 命令或 Linux 启动脚本。设备进程由你自行管理。'
+                    )}
                   </p>
                 </div>
                 <button
                   type="button"
                   data-testid="add-remote-docker-button"
-                  onClick={handleCreateRemoteDocker}
+                  onClick={handleCreateRemoteDevice}
                   disabled={loading || remoteLoading}
                   className="h-8 shrink-0 rounded-md bg-surface px-3 text-sm text-text-primary hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50"
                 >
                   {remoteLoading
-                    ? t('workbench.remote_docker_generating')
-                    : t('workbench.remote_docker_generate')}
+                    ? t('workbench.remote_device_generating', '生成中…')
+                    : t('workbench.remote_device_generate', '生成启动方式')}
                 </button>
               </div>
 
               <remoteDeviceOnboardingExtension.Notice />
 
               {remoteCommand && (
-                <div className="mt-3 overflow-hidden rounded-lg border border-border bg-background">
-                  <div className="flex h-8 items-center justify-between border-b border-border px-3">
-                    <span className="text-xs font-semibold text-text-secondary">
-                      {t('workbench.remote_docker_command_title')}
-                    </span>
-                    <button
-                      type="button"
-                      data-testid="copy-remote-docker-command"
-                      onClick={handleCopyRemoteCommand}
-                      className="inline-flex h-6 items-center gap-1 rounded px-2 text-xs text-text-secondary hover:bg-muted hover:text-text-primary"
-                    >
-                      {copied ? <Check className="h-3 w-3" /> : <Copy className="h-3 w-3" />}
-                      {copied
-                        ? t('workbench.remote_docker_copied')
-                        : t('workbench.remote_docker_copy')}
-                    </button>
-                  </div>
-                  <pre
-                    data-testid="remote-docker-command"
-                    className="max-h-[360px] overflow-auto whitespace-pre p-3 font-mono text-xs leading-5 text-text-primary"
-                  >
-                    {remoteCommand.command}
-                  </pre>
+                <RemoteDeviceStartupCommandPanel
+                  key={remoteCommand.device_id}
+                  response={remoteCommand}
+                  className="mt-3"
+                  commandClassName="max-h-[360px]"
+                  commandTestId="remote-docker-command"
+                  copyButtonTestId="copy-remote-docker-command"
+                  onCopyError={() =>
+                    setError(t('workbench.remote_device_copy_failed', '复制远程设备启动命令失败。'))
+                  }
+                >
                   <remoteDeviceOnboardingExtension.CommandDetails
                     command={remoteCommand}
                     status={remoteStatus}
                   />
-                </div>
+                </RemoteDeviceStartupCommandPanel>
               )}
             </div>
           </div>

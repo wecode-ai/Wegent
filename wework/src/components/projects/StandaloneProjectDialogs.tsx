@@ -1,8 +1,6 @@
 import {
   AlertCircle,
-  Check,
   ChevronLeft,
-  Copy,
   FolderOpen,
   FolderPlus,
   GitBranch,
@@ -32,7 +30,8 @@ import {
   isWeWorkExecutorVersionCompatible,
 } from '@/lib/device-capabilities'
 import type { CloneGitRepositoryInput, DeviceInfo } from '@/types/api'
-import type { DockerRemoteDeviceCommandResponse, RemoteDeviceStartupCommand } from '@/types/devices'
+import type { DockerRemoteDeviceCommandResponse } from '@/types/devices'
+import { RemoteDeviceStartupCommandPanel } from '@/components/common/RemoteDeviceStartupCommandPanel'
 import { DeviceFolderPicker } from './DeviceFolderPicker'
 import { basename, joinPath } from './device-folder-path'
 import { LocalProjectCreateDialog } from './LocalProjectCreateDialog'
@@ -175,22 +174,6 @@ function isValidGitRepositoryUrl(url: string): boolean {
   } catch {
     return false
   }
-}
-
-function normalizeRemoteDeviceStartupCommands(
-  response: DockerRemoteDeviceCommandResponse | null
-): RemoteDeviceStartupCommand[] {
-  if (!response) return []
-  if (Array.isArray(response.commands) && response.commands.length > 0) {
-    return response.commands.filter(command => command.command.trim())
-  }
-  return [
-    {
-      kind: 'docker',
-      label: 'Docker',
-      command: response.command,
-    },
-  ]
 }
 
 export function StandaloneBlankProjectDialog({
@@ -401,8 +384,6 @@ export function StandaloneFolderProjectDialog({
     null
   )
   const [startupCommandError, setStartupCommandError] = useState<string | null>(null)
-  const [startupCommandCopied, setStartupCommandCopied] = useState(false)
-  const [activeStartupCommandKind, setActiveStartupCommandKind] = useState<string>('docker')
   const [nativePickerError, setNativePickerError] = useState<string | null>(null)
   const [nativePickerFallback, setNativePickerFallback] = useState(false)
   const [selectedLocalRoots, setSelectedLocalRoots] = useState<string[]>([])
@@ -522,14 +503,6 @@ export function StandaloneFolderProjectDialog({
               )
       : t('workbench.use_existing_folder_desc', '选择本地设备上的一个文件夹。')
   const startupCommandLoading = showStartupCommand && !startupCommand && !startupCommandError
-  const startupCommands = useMemo(
-    () => normalizeRemoteDeviceStartupCommands(startupCommand),
-    [startupCommand]
-  )
-  const activeStartupCommand =
-    startupCommands.find(command => command.kind === activeStartupCommandKind) ??
-    startupCommands[0] ??
-    null
   const shouldUseNativeLocalPicker =
     open &&
     mode === 'existing' &&
@@ -549,8 +522,6 @@ export function StandaloneFolderProjectDialog({
       .then(command => {
         if (!cancelled) {
           setStartupCommand(command)
-          const firstCommand = normalizeRemoteDeviceStartupCommands(command)[0]
-          setActiveStartupCommandKind(firstCommand?.kind ?? 'docker')
         }
       })
       .catch(error => {
@@ -654,14 +625,6 @@ export function StandaloneFolderProjectDialog({
   const retryLoadStartupCommand = () => {
     setStartupCommand(null)
     setStartupCommandError(null)
-    setStartupCommandCopied(false)
-    setActiveStartupCommandKind('docker')
-  }
-
-  const copyStartupCommand = async () => {
-    if (!activeStartupCommand) return
-    await navigator.clipboard?.writeText(activeStartupCommand.command)
-    setStartupCommandCopied(true)
   }
 
   const submitGitProject = async () => {
@@ -963,39 +926,14 @@ export function StandaloneFolderProjectDialog({
                 </div>
               )}
 
-              {startupCommands.length > 0 && activeStartupCommand && (
-                <div className="mt-5">
-                  <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-                    <div className="inline-flex h-10 w-full rounded-xl border border-border bg-surface p-1 sm:w-auto">
-                      {startupCommands.map(command => {
-                        const isActive = command.kind === activeStartupCommand.kind
-                        return (
-                          <button
-                            key={command.kind}
-                            type="button"
-                            data-testid={`remote-device-startup-tab-${command.kind}`}
-                            onClick={() => {
-                              setActiveStartupCommandKind(command.kind)
-                              setStartupCommandCopied(false)
-                            }}
-                            className={[
-                              'flex h-8 flex-1 items-center justify-center rounded-lg px-3 text-sm font-medium sm:flex-none',
-                              isActive
-                                ? 'bg-background text-text-primary shadow-sm'
-                                : 'text-text-secondary hover:text-text-primary',
-                            ].join(' ')}
-                          >
-                            {command.kind === 'process'
-                              ? t('workbench.remote_device_startup_process', '宿主机启动')
-                              : command.kind === 'docker'
-                                ? t('workbench.remote_device_startup_docker', 'Docker')
-                                : command.label}
-                          </button>
-                        )
-                      })}
-                    </div>
-                    <div className="flex gap-2 sm:justify-end">
-                      {onRefreshDevices && (
+              {startupCommand && (
+                <RemoteDeviceStartupCommandPanel
+                  key={startupCommand.device_id}
+                  response={startupCommand}
+                  className="mt-5"
+                  actions={
+                    onRefreshDevices ? (
+                      <div className="flex gap-2 sm:justify-end">
                         <button
                           type="button"
                           data-testid="refresh-remote-devices-button"
@@ -1004,53 +942,10 @@ export function StandaloneFolderProjectDialog({
                         >
                           {t('workbench.remote_device_refresh', '刷新设备')}
                         </button>
-                      )}
-                    </div>
-                  </div>
-
-                  <p className="mt-3 text-sm leading-5 text-text-secondary">
-                    {activeStartupCommand.kind === 'process'
-                      ? t(
-                          'workbench.remote_device_startup_process_desc',
-                          '适合不使用容器的远程机器，直接在宿主机运行云端设备连接程序。'
-                        )
-                      : activeStartupCommand.kind === 'docker'
-                        ? t(
-                            'workbench.remote_device_startup_docker_desc',
-                            '推荐方式。用容器启动云端设备连接程序，适合云主机或远程服务器。'
-                          )
-                        : activeStartupCommand.description}
-                  </p>
-
-                  <div className="mt-3 overflow-hidden rounded-lg border border-border bg-background">
-                    <div className="flex h-9 items-center justify-between gap-3 border-b border-border px-3">
-                      <span className="truncate text-xs font-semibold text-text-secondary">
-                        {t('workbench.remote_device_startup_script_title', '启动脚本')}
-                      </span>
-                      <button
-                        type="button"
-                        data-testid="copy-remote-device-startup-command"
-                        onClick={() => void copyStartupCommand()}
-                        className="inline-flex h-7 shrink-0 items-center gap-1.5 rounded-md px-2 text-xs font-medium text-text-secondary hover:bg-muted hover:text-text-primary"
-                      >
-                        {startupCommandCopied ? (
-                          <Check className="h-3.5 w-3.5" />
-                        ) : (
-                          <Copy className="h-3.5 w-3.5" />
-                        )}
-                        {startupCommandCopied
-                          ? t('workbench.remote_device_startup_copied', '已复制')
-                          : t('workbench.remote_device_startup_copy', '复制')}
-                      </button>
-                    </div>
-                    <pre
-                      data-testid="remote-device-startup-command"
-                      className="max-h-[220px] overflow-auto whitespace-pre p-3 font-mono text-xs leading-5 text-text-primary"
-                    >
-                      {activeStartupCommand.command}
-                    </pre>
-                  </div>
-                </div>
+                      </div>
+                    ) : null
+                  }
+                />
               )}
             </div>
           ) : (
