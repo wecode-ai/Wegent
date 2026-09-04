@@ -420,6 +420,57 @@ describe('BotEdit default knowledge bases', () => {
     expect(screen.getByText('Product Docs')).toBeInTheDocument()
   })
 
+  test('keeps a create-mode bot draft when the publish scope changes', async () => {
+    let view: ReturnType<typeof render>
+    await act(async () => {
+      view = render(
+        <BotEdit
+          bots={[]}
+          setBots={jest.fn()}
+          editingBotId={0}
+          cloningBot={null}
+          onClose={jest.fn()}
+          toast={jest.fn()}
+          scope="personal"
+          embedded
+          hideActions
+        />
+      )
+    })
+
+    const nameInput = await screen.findByPlaceholderText('common:bot.name_placeholder')
+    fireEvent.change(nameInput, { target: { value: 'draft-bot' } })
+    const promptTextarea = screen.getByPlaceholderText('common:bot.prompt_placeholder')
+    fireEvent.change(promptTextarea, { target: { value: 'Draft prompt' } })
+    expect(nameInput).toHaveValue('draft-bot')
+    expect(promptTextarea).toHaveValue('Draft prompt')
+
+    await act(async () => {
+      view.rerender(
+        <BotEdit
+          bots={[]}
+          setBots={jest.fn()}
+          editingBotId={0}
+          cloningBot={null}
+          onClose={jest.fn()}
+          toast={jest.fn()}
+          scope="group"
+          groupName="engineering"
+          embedded
+          hideActions
+        />
+      )
+    })
+
+    await waitFor(() => {
+      expect(mockedGetUnifiedShells).toHaveBeenCalledTimes(2)
+    })
+
+    const nameAfter = screen.getByPlaceholderText('common:bot.name_placeholder')
+    expect(nameAfter).toHaveValue('draft-bot')
+    expect(screen.getByPlaceholderText('common:bot.prompt_placeholder')).toHaveValue('Draft prompt')
+  })
+
   test('renders selected hidden skill display name without exposing it as selectable', async () => {
     mockedFetchUnifiedSkillsList.mockResolvedValue([
       {
