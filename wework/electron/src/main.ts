@@ -108,6 +108,10 @@ import {
 import { SecureValueStore } from './host/secure-value-store.js'
 import { resolveDevelopmentDockIdentity } from './host/development-dock-identity.js'
 import { isEffectivePackagedApplication } from './host/application-packaging-mode.js'
+import {
+  normalizeWeworkSyncApiBaseUrl,
+  normalizeWeworkSyncPath,
+} from './host/wework-sync-request.js'
 
 const packageRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const packageMetadata = createRequire(import.meta.url)('../package.json') as {
@@ -1854,30 +1858,6 @@ function requiredPreferences(): PreferencesStore {
 function requiredCloudCredentials(): CloudCredentialService {
   if (!cloudCredentials) throw new Error('Desktop cloud credentials are unavailable')
   return cloudCredentials
-}
-
-function normalizeWeworkSyncApiBaseUrl(value: string): string {
-  const url = new URL(value.trim())
-  if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password) {
-    throw new CloudCredentialError('request_failed', 'Invalid Wework sync API URL')
-  }
-  url.pathname = url.pathname.replace(/\/+$/, '')
-  url.search = ''
-  url.hash = ''
-  return url.toString().replace(/\/$/, '')
-}
-
-function normalizeWeworkSyncPath(value: string): string {
-  const path = value.trim()
-  if (
-    !path.startsWith('/') ||
-    path.includes('..') ||
-    (!(path === '/wework-transcripts' || path.startsWith('/wework-transcripts/')) &&
-      !path.startsWith('/v1/dsh-plugin-storage/'))
-  ) {
-    throw new CloudCredentialError('request_failed', 'Wework sync path is not allowed')
-  }
-  return path
 }
 
 function requiredStartupRecovery(): StartupRecoveryService {
