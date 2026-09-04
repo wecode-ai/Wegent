@@ -533,6 +533,21 @@ export class SmartAppManager {
     return this.verificationService.inspect(installation.packagePath)
   }
 
+  async verifyProject(projectRoot: string): Promise<SmartAppVerificationReport> {
+    const installation = await this.linkedInstallationByProject(projectRoot)
+    return this.verificationService.verify(installation.packagePath)
+  }
+
+  async inspectProject(projectRoot: string): Promise<SmartAppVerificationReport | null> {
+    const installation = await this.linkedInstallationByProject(projectRoot)
+    return this.verificationService.inspect(installation.packagePath)
+  }
+
+  async packProject(projectRoot: string, outputPath: string): Promise<SmartAppPackResult> {
+    const installation = await this.linkedInstallationByProject(projectRoot)
+    return this.verificationService.pack(installation.packagePath, outputPath)
+  }
+
   async upload(archivePath: string, uploadUrl: string): Promise<void> {
     const url = new URL(uploadUrl)
     if (!isSecureTransferUrl(url)) throw new Error('Smart app upload must use HTTPS')
@@ -592,6 +607,15 @@ export class SmartAppManager {
     const host = this.options.runtimeHost()
     if (!host) throw new Error('Smart app runtime host is unavailable')
     return host
+  }
+
+  private async linkedInstallationByProject(projectRoot: string): Promise<SmartAppInstallation> {
+    const root = await requiredSmartAppDirectory(projectRoot, 'Smart app project')
+    const installation = (await this.readRegistry()).find(
+      item => item.source === 'linked' && item.packagePath === root
+    )
+    if (!installation) throw new Error('Smart app project is not a linked project root')
+    return installation
   }
 
   private async registerLinkedDirectory(directoryPath: string): Promise<SmartAppInstallation> {

@@ -1279,6 +1279,7 @@ async function configureDesktopRuntime(): Promise<void> {
     projectRoot: process.env.WEWORK_PLUGIN_DEVELOPMENT_ROOT?.trim() || null,
     registryDirectory: desktopControlRegistryDirectory(),
     window: () => mainWindow,
+    smartApps: () => smartApps,
   })
   await desktopControlBridge.start()
   computerUse = new ComputerUseService(

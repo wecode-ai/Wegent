@@ -327,8 +327,18 @@ describe('SmartAppManager', () => {
 
     await expect(manager.verify(linked.id)).resolves.toBe(report)
     await expect(manager.inspectVerification(linked.id)).resolves.toBe(report)
+    await expect(manager.verifyProject(linked.packagePath)).resolves.toBe(report)
+    await expect(manager.inspectProject(linked.packagePath)).resolves.toBe(report)
     expect(verificationService.verify).toHaveBeenCalledWith(linked.packagePath)
     expect(verificationService.inspect).toHaveBeenCalledWith(linked.packagePath)
+
+    await expect(manager.packProject(linked.packagePath, '/workspace/direct.zip')).resolves.toEqual(
+      expect.objectContaining({ archivePath: '/verified.zip' })
+    )
+    expect(verificationService.pack).toHaveBeenCalledWith(
+      linked.packagePath,
+      '/workspace/direct.zip'
+    )
 
     await expect(manager.export(linked.id)).resolves.toMatchObject({
       archivePath: '/verified.zip',
@@ -352,7 +362,10 @@ describe('SmartAppManager', () => {
     await expect(manager.export(managed.id)).resolves.toMatchObject({
       manifest: { name: 'fixture-app' },
     })
-    expect(verificationService.pack).toHaveBeenCalledTimes(1)
+    expect(verificationService.pack).toHaveBeenCalledTimes(2)
+    await expect(manager.inspectProject(parent)).rejects.toThrow(
+      'Smart app project is not a linked project root'
+    )
   })
 })
 
