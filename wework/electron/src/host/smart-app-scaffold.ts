@@ -270,7 +270,7 @@ function remoteDescriptorSource(packageName: string): string {
 }
 
 function remoteHostSource(): string {
-  return `import { Remote, TypertRemoteService } from '@deepseek-ai/dsh-typert-protocol'\n\nconst healthInitializers = []\n\nexport class HealthService extends TypertRemoteService {\n  constructor(ctx) {\n    super(ctx, 'health')\n    for (const initialize of healthInitializers) initialize.call(this)\n  }\n  async ping() { return { ok: true } }\n}\nRemote('ping')(HealthService.prototype.ping, {\n  kind: 'method',\n  name: 'ping',\n  static: false,\n  private: false,\n  addInitializer(initialize) { healthInitializers.push(initialize) },\n})\n\nexport function applyHost(ctx) { new HealthService(ctx) }\n`
+  return `export async function applyHost(ctx) {\n  const { Remote, TypertRemoteService } = await import('@deepseek-ai/dsh-typert-protocol')\n  const healthInitializers = []\n  class HealthService extends TypertRemoteService {\n    constructor(ctx) {\n      super(ctx, 'health')\n      for (const initialize of healthInitializers) initialize.call(this)\n    }\n    async ping() { return { ok: true } }\n  }\n  Remote('ping')(HealthService.prototype.ping, {\n    kind: 'method',\n    name: 'ping',\n    static: false,\n    private: false,\n    addInitializer(initialize) { healthInitializers.push(initialize) },\n  })\n  new HealthService(ctx)\n}\n`
 }
 
 function typertHostSource(): string {
