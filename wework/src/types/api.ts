@@ -1302,7 +1302,9 @@ export interface RuntimeTaskExecutionConfig {
 }
 
 export interface RuntimeTaskCreateRequest {
-  schemaVersion?: 1 | 2
+  schemaVersion?: 1 | 2 | 3
+  wegentTeamId?: number
+  newSession?: boolean
   projectId?: number
   deviceWorkspaceId?: number
   deviceId?: string
@@ -1346,6 +1348,11 @@ export interface RuntimeTaskCreateRequest {
     [key: string]: unknown
   }
   additionalContext?: RuntimeAdditionalContext
+}
+
+export interface RuntimeTaskMaterializeResponse {
+  payload: Record<string, unknown>
+  runtimeHandle?: Record<string, unknown> | null
 }
 
 export interface RuntimeTaskCreateResponse {
