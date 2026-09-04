@@ -242,6 +242,8 @@ class Settings(BaseSettings):
     WORKSPACE_ARCHIVE_BUCKET: str = "wegent-archives"
     WORKSPACE_ARCHIVE_ENABLED: bool = True
     WORKSPACE_ARCHIVE_TIMEZONE: str = "Asia/Shanghai"
+    WEWORK_TRANSCRIPT_S3_BUCKET: str = "wework-transcripts"
+    WEWORK_TRANSCRIPT_DOWNLOAD_URL_EXPIRE_SECONDS: int = 900
 
     # Publish storage configuration
     PUBLISH_PRESIGNED_UPLOAD_EXPIRE_SECONDS: int = 3600

@@ -4,7 +4,10 @@ import { ExecutorSessionProjector, executorSessionId } from './session-projector
 
 test('projects executor text, reasoning, usage, and completion into standard session events', () => {
   const sessions = new SessionStoreFixture()
-  const projector = new ExecutorSessionProjector(sessions)
+  const completed = []
+  const projector = new ExecutorSessionProjector(sessions, {
+    onTurnCompleted: turn => completed.push(turn),
+  })
 
   projector.handle(
     executorEvent(1, 'response.created', {
@@ -66,6 +69,27 @@ test('projects executor text, reasoning, usage, and completion into standard ses
     reasoningTokens: 5,
   })
   assert.equal(session.events.at(-1).data.reason.kind, 'completed')
+  assert.deepEqual(completed, [
+    {
+      transcriptId: 'task-1',
+      taskId: 'task-1',
+      title: '',
+      sequence: 1,
+      turnId: 'task-1:1',
+      payload: {
+        userMessages: [{ id: 'user-1', text: 'Build the feature' }],
+        assistantMessage: 'Done',
+        reasoning: 'Think',
+        usage: {
+          inputTokens: 60,
+          outputTokens: 25,
+          cacheReadTokens: 40,
+          reasoningTokens: 5,
+        },
+        completion: { kind: 'completed' },
+      },
+    },
+  ])
 })
 
 test('projects streamed Executor text blocks into standard assistant deltas', () => {

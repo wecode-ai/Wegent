@@ -75,6 +75,12 @@ export interface ElectronDesktopServices {
   pluginDevelopment: () => PluginDevelopmentService | null
   takePendingWorkspaceOpenRequests?: () => Array<{ path: string; label?: string }>
   updatePreferences?: (patch: Record<string, unknown>) => Promise<Record<string, unknown>>
+  weworkSyncRequest?: (request: {
+    apiBaseUrl: string
+    path: string
+    method: 'GET' | 'POST' | 'PUT'
+    body?: unknown
+  }) => Promise<unknown>
 }
 
 interface ElectronNotificationHandle {
@@ -627,6 +633,22 @@ export function createElectronCapabilityRouter(
       e2eHost.setSystemSleepEnabled(updated.preventSleepWhileTasksRunning)
     }
     return updated
+  })
+  router.register('weworkSync.request', params => {
+    if (!desktopServices.weworkSyncRequest) {
+      throw new HostCapabilityError(
+        'capability_unavailable',
+        'Wework cloud synchronization is unavailable'
+      )
+    }
+    const method = optionalStringParam(params, 'method') ?? 'GET'
+    if (!['GET', 'POST', 'PUT'].includes(method)) invalidParam('method')
+    return desktopServices.weworkSyncRequest({
+      apiBaseUrl: stringParam(params, 'apiBaseUrl'),
+      path: stringParam(params, 'path'),
+      method: method as 'GET' | 'POST' | 'PUT',
+      ...(Object.hasOwn(params, 'body') ? { body: params.body } : {}),
+    })
   })
   registerRendererStorageCapabilities(router, rendererStorage)
   router.register('rendererHealth.getState', () => rendererHealth())

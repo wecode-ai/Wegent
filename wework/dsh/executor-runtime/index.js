@@ -5,6 +5,7 @@ import { ExecutorRuntimeClient, ExecutorRuntimeError } from './executor-runtime-
 import { LocalEndpointEventByteStream } from './local-endpoint-event-stream.js'
 import { ExecutorSessionProjector } from './session-projector.js'
 import { ExecutorSessionProjectionStream } from './session-projection-stream.js'
+import { TranscriptSource } from './transcript-source.js'
 
 export const name = 'wework-executor-runtime'
 export const inject = ['webServer', 'sessions']
@@ -18,7 +19,18 @@ export async function apply(ctx) {
   const client = ExecutorRuntimeClient.fromEnvironment()
   await client.start()
   ctx.effect(() => () => client.stop(), 'wework-executor-runtime: transport')
-  const projector = new ExecutorSessionProjector(ctx.sessions)
+  const transcriptSource = new TranscriptSource({
+    onError: error => {
+      console.error('[wework-executor-runtime] transcript subscriber failed', error)
+    },
+  })
+  const projector = new ExecutorSessionProjector(ctx.sessions, {
+    onTurnCompleted: turn => transcriptSource.publish(turn),
+  })
+  ctx.effect(
+    () => ctx.reflect.provide('weworkTranscriptSource', transcriptSource),
+    'wework-executor-runtime: transcript source'
+  )
   const projectionStream = new ExecutorSessionProjectionStream(projector, {
     onError: error => {
       console.error('[wework-executor-runtime] DSH session projection failed', error)

@@ -8,8 +8,9 @@ const TERMINAL_EVENTS = new Set([
 ])
 
 export class ExecutorSessionProjector {
-  constructor(sessions) {
+  constructor(sessions, options = {}) {
     this.sessions = sessions
+    this.onTurnCompleted = options.onTurnCompleted ?? (() => {})
     this.tasks = new Map()
   }
 
@@ -20,6 +21,8 @@ export class ExecutorSessionProjector {
     if (!taskId) return
 
     const state = this.taskState(payload, taskId)
+    const taskTitle = stringField(payload, 'taskTitle')
+    if (taskTitle) state.title = taskTitle
     const event = stringField(envelope, 'event')
     if (!event) return
     const subtaskId = stringField(payload, 'subtaskId')
@@ -92,6 +95,9 @@ export class ExecutorSessionProjector {
     const session = this.sessions.get(sessionId) ?? this.sessions.create(sessionId)
     const state = {
       session,
+      taskId,
+      transcriptId: stringField(payload, 'transcriptId') ?? taskId,
+      title: stringField(payload, 'taskTitle') ?? '',
       turn: completedTurns(session),
       subtaskId: null,
       open: false,
@@ -104,6 +110,7 @@ export class ExecutorSessionProjector {
       blocks: new Map(),
       sourceEventSeqs: [],
       generatedUserMessageIds: new Set(),
+      userMessages: [],
     }
     this.tasks.set(key, state)
     return state
@@ -121,6 +128,7 @@ export class ExecutorSessionProjector {
     state.textStarted = false
     state.reasoningStarted = false
     state.usage = null
+    state.userMessages = []
     state.blocks.clear()
     state.sourceEventSeqs = []
     state.session.append('turn/start', { turn: state.turn })
@@ -140,6 +148,7 @@ export class ExecutorSessionProjector {
     const id = stringField(generated, 'id') ?? randomUUID()
     if (state.generatedUserMessageIds.has(id)) return
     state.generatedUserMessageIds.add(id)
+    state.userMessages.push({ id, text })
     state.session.append(
       'user/message',
       {
@@ -263,6 +272,20 @@ export class ExecutorSessionProjector {
     state.session.append('turn/end', {
       turn: state.turn,
       reason: turnEndReason(event, data),
+    })
+    this.onTurnCompleted({
+      transcriptId: state.transcriptId,
+      taskId: state.taskId,
+      title: state.title,
+      sequence: state.turn,
+      turnId: `${state.transcriptId}:${state.turn}`,
+      payload: {
+        userMessages: state.userMessages,
+        assistantMessage: state.text,
+        reasoning: state.reasoning,
+        ...(state.usage ? { usage: state.usage } : {}),
+        completion: turnEndReason(event, data),
+      },
     })
     state.open = false
   }

@@ -1368,6 +1368,29 @@ async function configureDesktopRuntime(): Promise<void> {
           secureStorage,
           takePendingWorkspaceOpenRequests,
           updatePreferences: updateDesktopPreferences,
+          weworkSyncRequest: async request => {
+            const apiBaseUrl = normalizeWeworkSyncApiBaseUrl(request.apiBaseUrl)
+            const path = normalizeWeworkSyncPath(request.path)
+            const credential = await requiredCloudCredentials().refreshAccessToken(apiBaseUrl)
+            const response = await fetch(`${apiBaseUrl}${path}`, {
+              method: request.method,
+              headers: {
+                authorization: `${credential.tokenType} ${credential.accessToken}`,
+                ...(request.body === undefined ? {} : { 'content-type': 'application/json' }),
+              },
+              ...(request.body === undefined ? {} : { body: JSON.stringify(request.body) }),
+            })
+            const text = await response.text()
+            let body: unknown = null
+            if (text) {
+              try {
+                body = JSON.parse(text)
+              } catch {
+                body = text
+              }
+            }
+            return { status: response.status, body }
+          },
         },
         {
           captureTarget: windowLabel =>
@@ -1831,6 +1854,30 @@ function requiredPreferences(): PreferencesStore {
 function requiredCloudCredentials(): CloudCredentialService {
   if (!cloudCredentials) throw new Error('Desktop cloud credentials are unavailable')
   return cloudCredentials
+}
+
+function normalizeWeworkSyncApiBaseUrl(value: string): string {
+  const url = new URL(value.trim())
+  if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password) {
+    throw new CloudCredentialError('request_failed', 'Invalid Wework sync API URL')
+  }
+  url.pathname = url.pathname.replace(/\/+$/, '')
+  url.search = ''
+  url.hash = ''
+  return url.toString().replace(/\/$/, '')
+}
+
+function normalizeWeworkSyncPath(value: string): string {
+  const path = value.trim()
+  if (
+    !path.startsWith('/') ||
+    path.includes('..') ||
+    (!(path === '/wework-transcripts' || path.startsWith('/wework-transcripts/')) &&
+      !path.startsWith('/v1/dsh-plugin-storage/'))
+  ) {
+    throw new CloudCredentialError('request_failed', 'Wework sync path is not allowed')
+  }
+  return path
 }
 
 function requiredStartupRecovery(): StartupRecoveryService {
