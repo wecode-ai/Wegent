@@ -17,6 +17,10 @@ import {
   applyRuntimeConversationAction,
   clearRuntimeConversationCacheForTests,
 } from '@/features/workbench/runtimeConversationCache'
+import {
+  resolveTemporaryChatActiveModel,
+  resolveTemporaryChatModelSelection,
+} from '@/features/workbench/temporaryChatModelContext'
 import type {
   WorkbenchContextValue,
   WorkbenchPaneContextValue,
@@ -1192,11 +1196,35 @@ describe('DesktopWorkbenchLayout', () => {
         projectWork.pendingProjectWorkspaceProjectId ??
         null,
     }
-    const projectChat = {
+    const projectChatBase = {
       ...baseProps.projectChat,
       isModelSelectionReady: true,
       onBlockedModelSelect: vi.fn(),
       ...props.projectChat,
+    }
+    const projectChat = {
+      ...projectChatBase,
+      resolveRuntimeTaskModelSelection:
+        projectChatBase.resolveRuntimeTaskModelSelection ??
+        ((address: RuntimeTaskAddress) => {
+          const taskSelection = resolveTemporaryChatModelSelection(runtimeWork, address)
+          const taskModel = resolveTemporaryChatActiveModel(
+            projectChatBase.models,
+            runtimeWork,
+            address
+          )
+          return {
+            taskSelection,
+            selectedModel: taskModel,
+            activeModel: taskModel,
+            selectedModelOptions: taskSelection?.options ?? {},
+          }
+        }),
+      setRuntimeTaskSelectedModel: projectChatBase.setRuntimeTaskSelectedModel ?? vi.fn(),
+      setRuntimeTaskSelectedModelAndOptions:
+        projectChatBase.setRuntimeTaskSelectedModelAndOptions ?? vi.fn(),
+      setRuntimeTaskSelectedModelOption:
+        projectChatBase.setRuntimeTaskSelectedModelOption ?? vi.fn(),
     }
     const lifecycleTaskRunning = props.lifecycleTaskRunning ?? Boolean(state.currentRuntimeTask)
     const workbenchValue = {
@@ -6850,6 +6878,112 @@ describe('DesktopWorkbenchLayout', () => {
         )
       )
       expect(screen.queryByTestId('dsh-inspector-panel')).not.toBeInTheDocument()
+    } finally {
+      delete window.__WEWORK_DSH_UI__
+    }
+  })
+
+  test('uses the side conversation width for a right workspace extension tab', async () => {
+    const tabs = [{ id: 'test:inspector', title: 'DSH Inspector', order: 5 }]
+    const entries = tabs.map(tab => ({ ...tab, label: tab.title }))
+    window.__WEWORK_DSH_UI__ = {
+      getEntries: slot => (slot === 'wework.workspace.sidebar.tab' ? entries : []),
+      subscribe: () => () => undefined,
+      attach: (_slot, _id, container) => {
+        const panel = document.createElement('section')
+        panel.dataset.testid = 'dsh-inspector-panel'
+        container.append(panel)
+        return {
+          update() {},
+          dispose() {
+            panel.remove()
+          },
+        }
+      },
+    }
+
+    try {
+      renderWorkspacePanelLayout({ mainWidth: 1000 })
+      await userEvent.click(screen.getByTestId('toggle-right-workspace-panel-button'))
+      await userEvent.click(screen.getByTestId('right-workspace-extension-option-test:inspector'))
+
+      const contentFrame = screen.getByTestId('desktop-workbench-content').parentElement
+      expect(contentFrame).not.toBeNull()
+      await waitFor(() => {
+        expect(contentFrame).toHaveStyle({ width: '580px' })
+        expect(screen.getByTestId('right-workspace-panel-shell')).toHaveStyle({
+          width: 'calc(100% - 580px)',
+        })
+      })
+    } finally {
+      delete window.__WEWORK_DSH_UI__
+    }
+  })
+
+  test('keeps the active right workspace panel when the blank composer creates its first task', async () => {
+    const tabs = [{ id: 'test:inspector', title: 'DSH Inspector', order: 5 }]
+    const entries = tabs.map(tab => ({ ...tab, label: tab.title }))
+    window.__WEWORK_DSH_UI__ = {
+      getEntries: slot => (slot === 'wework.workspace.sidebar.tab' ? entries : []),
+      subscribe: () => () => undefined,
+      attach: (_slot, _id, container, props) => {
+        const panel = document.createElement('section')
+        panel.dataset.testid = 'dsh-inspector-panel'
+        panel.dataset.visible = String(props.visible)
+        container.append(panel)
+        return {
+          update(nextProps) {
+            panel.dataset.visible = String(nextProps.visible)
+          },
+          dispose() {
+            panel.remove()
+          },
+        }
+      },
+    }
+
+    try {
+      const { propsForTask, taskA } = createLocalRuntimeTaskPanelFixture()
+      const taskProps = propsForTask(taskA)
+      const onSend = vi.fn(
+        async (
+          _value?: string,
+          options?: {
+            onRuntimeTaskCreated?: (address: RuntimeTaskAddress) => void
+          }
+        ) => {
+          options?.onRuntimeTaskCreated?.(taskA)
+          return true
+        }
+      )
+      const blankProps = {
+        ...taskProps,
+        onSend,
+        state: {
+          ...taskProps.state,
+          currentRuntimeTask: null,
+          input: 'Start plugin work',
+        },
+      }
+      const { rerender } = render(<DesktopWorkbenchLayout {...blankProps} />)
+
+      await userEvent.click(screen.getByTestId('toggle-right-workspace-panel-button'))
+      await userEvent.click(screen.getByTestId('right-workspace-extension-option-test:inspector'))
+      expect(screen.getByTestId('dsh-inspector-panel')).toHaveAttribute('data-visible', 'true')
+
+      await userEvent.click(screen.getByTestId('send-message-button'))
+      expect(onSend).toHaveBeenCalledOnce()
+      rerender(<DesktopWorkbenchLayout {...taskProps} />)
+
+      expect(screen.getByTestId('right-workspace-panel-shell')).toHaveAttribute(
+        'aria-hidden',
+        'false'
+      )
+      expect(screen.getByTestId('right-workspace-extension-tab-test%3Ainspector')).toHaveAttribute(
+        'aria-selected',
+        'true'
+      )
+      expect(screen.getByTestId('dsh-inspector-panel')).toHaveAttribute('data-visible', 'true')
     } finally {
       delete window.__WEWORK_DSH_UI__
     }

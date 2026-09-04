@@ -14,6 +14,7 @@ window.__ModuleLoader__.load({
     const SLOT_DECLARATIONS = {
       'wework.action': { kind: 'list', scope: 'root' },
       'wework.app': { kind: 'list', scope: 'root' },
+      'wework.plugins.action': { kind: 'list', scope: 'root' },
       'wework.board.card.status': { kind: 'list', scope: 'root' },
       'wework.environment.section': { kind: 'list', scope: 'root' },
       'wework.project.create.section': { kind: 'list', scope: 'root' },

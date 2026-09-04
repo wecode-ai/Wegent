@@ -151,11 +151,11 @@ export function coreDshDeepLinkLocation(value) {
 
 export function injectDevelopmentReload(html, environment, buildId) {
   if (environment.WEWORK_APP_HOT_RELOAD !== '1') return html
-  const script = `<script>(()=>{const current=${escapeJsonForHtml(
+  const script = `<script>(()=>{if(!window.weworkElectronFiles)return;let current=${escapeJsonForHtml(
     buildId
   )};let checking=false;setInterval(async()=>{if(checking)return;checking=true;try{const response=await fetch(${JSON.stringify(
     `${APP_BASE_PATH}/`
-  )},{method:'HEAD',cache:'no-store'});const next=response.headers.get('x-wework-app-build-id');if(next&&next!==current)window.location.reload()}catch{}finally{checking=false}},500)})()</script>`
+  )},{method:'HEAD',cache:'no-store'});const next=response.headers.get('x-wework-app-build-id');if(next&&next!==current){current=next;window.location.reload()}}catch{}finally{checking=false}},500)})()</script>`
   return html.includes('</head>') ? html.replace('</head>', `${script}</head>`) : `${script}${html}`
 }
 
@@ -240,6 +240,10 @@ export function runtimeConfigScript(environment = process.env, windowLabel = 'ma
       environment.WEWORK_E2E_CONTROL_TOKEN || environment.VITE_WEWORK_DESKTOP_E2E_CONTROL_TOKEN,
     controlUrl:
       environment.WEWORK_E2E_CONTROL_URL || environment.VITE_WEWORK_DESKTOP_E2E_CONTROL_URL,
+    disabled:
+      (environment.WEWORK_INSTANCE_MODE === 'core-dsh-plugin-development' &&
+        environment.WEWORK_PLUGIN_DEVELOPMENT_E2E !== '1') ||
+      undefined,
     localModelsCatalogReady: environmentBoolean(
       environment,
       'WEWORK_E2E_LOCAL_MODELS_CATALOG_READY',
@@ -259,6 +263,7 @@ export function runtimeConfigScript(environment = process.env, windowLabel = 'ma
       'WEWORK_E2E_TRANSCRIPT_PAGE_SIZE',
       'VITE_WEWORK_E2E_TRANSCRIPT_PAGE_SIZE'
     ),
+    windowLabel: environment.WEWORK_PLUGIN_DEVELOPMENT_E2E_WINDOW_LABEL,
     worktreeCreationDelayMs: environmentPositiveInteger(
       environment,
       'WEWORK_E2E_WORKTREE_CREATION_DELAY_MS',

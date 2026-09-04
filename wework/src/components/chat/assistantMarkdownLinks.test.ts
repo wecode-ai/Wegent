@@ -58,4 +58,15 @@ describe('classifyMarkdownLink', () => {
   test('classifies drive-relative paths without a separator as external', () => {
     expect(classifyMarkdownLink('D:relative/path')).toEqual({ kind: 'external' })
   })
+
+  test('maps Sites environment configuration URLs into the Applications route', () => {
+    expect(
+      classifyMarkdownLink(
+        '/projects/prj_01K0A0BCDEFGHJKMNPQRSTVWXY/settings/environment-variables'
+      )
+    ).toEqual({
+      kind: 'internal',
+      path: '/sites?app_type=web&view=environment-variables&project_id=prj_01K0A0BCDEFGHJKMNPQRSTVWXY',
+    })
+  })
 })

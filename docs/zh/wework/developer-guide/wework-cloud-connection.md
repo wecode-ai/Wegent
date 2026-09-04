@@ -97,9 +97,15 @@ macOS 桌面版 Wework 启动时会安装用户级 `wework` launcher 到 `~/.loc
 wework
 wework .
 wework /path/to/project
+wework desktop instances
+wework desktop inspect --project .
 ```
 
 `wework` 和 `wework .` 会把当前目录解析为绝对路径，并请求 Wework 打开该目录作为本机 workspace。release 构建通过 macOS app single-instance 机制把请求转发给已有窗口；debug 构建仍允许多实例，CLI 会启动当前 debug executable 并携带 `--open-workspace <path>` 参数。
+
+`desktop` 是同一个 `wework` CLI 的实例控制子命令，不会再安装或注入另一个同名命令。
+Wework 管理的 Agent 环境和 macOS 用户级入口使用同一套分发规则，因此
+`wework <目录>` 始终打开 workspace，而 `wework desktop ...` 始终操作已运行实例。
 
 ## 模型身份与执行传输
 
