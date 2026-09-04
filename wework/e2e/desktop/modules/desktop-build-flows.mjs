@@ -131,8 +131,16 @@ async function verifyRemoteTerminalUsesPanelWidth(control) {
   )
 }
 
-async function waitForSingleProjectByTitle(control, expectedTitle, message, timeoutMs) {
+async function waitForSingleProjectByTitle(
+  control,
+  expectedTitle,
+  message,
+  timeoutMs,
+  stableMs = 0
+) {
   const startedAt = Date.now()
+  let matchingProjectId = null
+  let matchingSince = null
   while (Date.now() - startedAt < timeoutMs) {
     const snapshot = JSON.parse(await control.command('snapshot', 'body'))
     const projectMenuTestIds = snapshot.testIds.filter(testId => testId.startsWith('project-menu-'))
@@ -143,7 +151,17 @@ async function waitForSingleProjectByTitle(control, expectedTitle, message, time
       if (title.trim() === expectedTitle) matchingProjectIds.push(projectId)
     }
     if (matchingProjectIds.length === 1) {
-      return { projectId: matchingProjectIds[0], snapshot }
+      const nextProjectId = matchingProjectIds[0]
+      if (nextProjectId !== matchingProjectId) {
+        matchingProjectId = nextProjectId
+        matchingSince = Date.now()
+      }
+      if (Date.now() - matchingSince >= stableMs) {
+        return { projectId: nextProjectId, snapshot }
+      }
+    } else {
+      matchingProjectId = null
+      matchingSince = null
     }
     await new Promise(resolvePromise => setTimeout(resolvePromise, 100))
   }
@@ -561,7 +579,11 @@ async function verifyCloudVisionFlows(control, composerSelector) {
   })
 }
 
-export async function verifyRemoteDockerCommandFlow(control, cloudEnvironment) {
+export async function verifyRemoteDockerCommandFlow(
+  control,
+  cloudEnvironment,
+  { interactiveSessions = null } = {}
+) {
   await control.command('navigate', 'body', { value: '/settings/connections?addDevice=1' })
   await control.command('waitFor', '[data-testid="add-cloud-device-dialog"]', {
     timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
@@ -622,10 +644,11 @@ export async function verifyRemoteDockerCommandFlow(control, cloudEnvironment) {
   assert.ok(generatedDeviceId, 'The generated command did not include a device ID')
   assert.ok(generatedDeviceName, 'The generated command did not include a device name')
   assert.ok(generatedAuthToken, 'The generated command did not include an auth token')
-  await cloudEnvironment.startGeneratedRemoteDevice({
+  const generatedDevice = await cloudEnvironment.startGeneratedRemoteDevice({
     deviceId: generatedDeviceId,
     deviceName: generatedDeviceName,
     authToken: generatedAuthToken,
+    interactiveSessions,
   })
   await waitForSnapshot(
     control,
@@ -635,6 +658,104 @@ export async function verifyRemoteDockerCommandFlow(control, cloudEnvironment) {
     'The generated remote device did not close the dialog and refresh the device list'
   )
   await control.command('navigate', 'body', { value: '/' })
+  return { deviceId: generatedDeviceId, ...generatedDevice }
+}
+
+async function assertDisabledControl(control, selector, message) {
+  await control.command('waitFor', selector, { timeoutMs: DEFAULT_STEP_TIMEOUT_MS })
+  assert.notEqual(
+    await control.command('getAttribute', selector, { value: 'disabled' }),
+    null,
+    message
+  )
+}
+
+export async function verifyDisabledRemoteSessionCapabilities(
+  control,
+  cloudEnvironment,
+  { deviceId, home }
+) {
+  const device = await cloudEnvironment.device(deviceId)
+  assert.deepEqual(
+    device.runtime_features?.interactiveSessions,
+    { codeServer: false, terminal: false },
+    'The real Executor did not publish the disabled interactive session capabilities'
+  )
+
+  await control.command('navigate', 'body', { value: '/settings/connections' })
+  await control.command('waitFor', `[data-testid="connection-device-${deviceId}"]`, {
+    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+  })
+  await assertDisabledControl(
+    control,
+    `[data-testid="connection-terminal-button-${deviceId}"]`,
+    'The Connections terminal action remained enabled after the Executor disabled terminal sessions'
+  )
+  await assertDisabledControl(
+    control,
+    `[data-testid="connection-code-server-button-${deviceId}"]`,
+    'The Connections IDE action remained enabled after the Executor disabled code-server sessions'
+  )
+  await captureVerificationScreenshot(control, 'cloud-00-disabled-session-settings.png')
+
+  const projectTitle = 'disabled-interactive-sessions'
+  const workspacePath = join(home, projectTitle)
+  await mkdir(workspacePath, { recursive: true })
+  await control.command('navigate', 'body', { value: '/' })
+  await control.command('waitFor', '[data-testid="projects-create-button"]', {
+    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+  })
+  await control.command('click', '[data-testid="projects-create-button"]')
+  await control.command('click', '[data-testid="project-create-remote-option"]')
+  await control.command('waitFor', '[data-testid="standalone-remote-device-select"]', {
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await control.command('fill', '[data-testid="standalone-remote-device-select"]', {
+    value: deviceId,
+  })
+  await control.command('clickWhenEnabled', '[data-testid="remote-project-source-existing"]', {
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await waitForControlValue(
+    control,
+    '[data-testid="device-folder-path-input"]',
+    home,
+    'The disabled-session device picker did not load the real Executor home'
+  )
+  await control.command('fill', '[data-testid="device-folder-path-input"]', {
+    value: workspacePath,
+  })
+  await control.command('press', '[data-testid="device-folder-path-input"]', { key: 'Enter' })
+  await waitForFolderPathReady(control, workspacePath)
+  await control.command('clickWhenEnabled', '[data-testid="confirm-device-folder-picker-button"]')
+  const { projectId } = await waitForSingleProjectByTitle(
+    control,
+    projectTitle,
+    'The disabled-session project was not created through the real remote project flow',
+    WORKBENCH_READY_TIMEOUT_MS,
+    COMPOSER_READY_STABILITY_MS * 4
+  )
+  await control.command(
+    'clickWhenEnabled',
+    `[data-testid="project-row-${projectId}"] [data-testid="project-new-conversation-button"]`
+  )
+  await control.command('waitFor', ACTIVE_COMPOSER_SELECTOR, {
+    stableMs: COMPOSER_READY_STABILITY_MS,
+    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+  })
+
+  await assertDisabledControl(
+    control,
+    '[data-testid="open-code-server-titlebar-button"]',
+    'The project IDE action remained enabled after the Executor disabled code-server sessions'
+  )
+  await control.command('click', '[data-testid="toggle-bottom-workspace-panel-button"]')
+  await assertDisabledControl(
+    control,
+    `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="workspace-terminal-card"]`,
+    'The project terminal card remained enabled after the Executor disabled terminal sessions'
+  )
+  await captureVerificationScreenshot(control, 'cloud-00-disabled-session-project.png')
 }
 
 export async function verifyLocalRemoteControlFlow(control, cloudEnvironment) {
