@@ -148,32 +148,22 @@ def test_missing_bound_team_raises() -> None:
         _resolve_task_bound_team(db, task, client_team)
 
 
-def test_new_message_validates_client_team() -> None:
-    team = SimpleNamespace(id=267213, name="creator-php-workflow")
-    db = _db_returning_team(team)
-    user = SimpleNamespace(id=2838)
+def test_existing_task_missing_returns_error(monkeypatch: MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        task_stores.task_store,
+        "get_regular_active_task",
+        Mock(return_value=None),
+    )
+    client_team = SimpleNamespace(id=273960, name="qbird-direct-log")
 
-    task, result, error = _resolve_existing_task_team(db, user, None, 267213)
-
-    assert task is None
-    assert result is team
-    assert error is None
-
-
-def test_new_message_missing_client_team_returns_error() -> None:
-    db = _db_returning_team(None)
-    user = SimpleNamespace(id=2838)
-
-    task, result, error = _resolve_existing_task_team(db, user, None, 273960)
+    task, result, error = _resolve_existing_task_team(Mock(), 42, client_team)
 
     assert task is None
     assert result is None
-    assert error == {"error": "Team not found for id=273960"}
+    assert error == {"error": "Task not found"}
 
 
-def test_existing_task_uses_bound_team_without_valid_client_team(
-    monkeypatch: MonkeyPatch,
-) -> None:
+def test_existing_task_uses_bound_team(monkeypatch: MonkeyPatch) -> None:
     existing_task = _task(
         {
             "name": "creator-php-workflow",
@@ -188,24 +178,14 @@ def test_existing_task_uses_bound_team_without_valid_client_team(
         Mock(return_value=existing_task),
     )
     monkeypatch.setattr(
-        task_stores.task_access_store,
-        "is_member",
-        Mock(return_value=True),
-    )
-    monkeypatch.setattr(
-        chat_namespace,
-        "_get_active_team_by_id",
-        Mock(return_value=None),
-    )
-    monkeypatch.setattr(
         chat_namespace,
         "_resolve_task_bound_team",
         Mock(return_value=bound_team),
     )
-    user = SimpleNamespace(id=2838)
+    client_team = SimpleNamespace(id=273960, name="qbird-direct-log")
 
     task, result, error = _resolve_existing_task_team(
-        Mock(), user, existing_task.id, 273960
+        Mock(), existing_task.id, client_team
     )
 
     assert task is existing_task
@@ -213,7 +193,7 @@ def test_existing_task_uses_bound_team_without_valid_client_team(
     assert error is None
 
 
-def test_existing_task_denies_non_member(monkeypatch: MonkeyPatch) -> None:
+def test_bound_team_same_as_client_returns_team(monkeypatch: MonkeyPatch) -> None:
     existing_task = _task(
         {
             "name": "creator-php-workflow",
@@ -221,77 +201,24 @@ def test_existing_task_denies_non_member(monkeypatch: MonkeyPatch) -> None:
             "user_id": 2838,
         }
     )
+    bound_team = SimpleNamespace(id=267213, name="creator-php-workflow")
     monkeypatch.setattr(
         task_stores.task_store,
         "get_regular_active_task",
         Mock(return_value=existing_task),
     )
     monkeypatch.setattr(
-        task_stores.task_access_store,
-        "is_member",
-        Mock(return_value=False),
+        chat_namespace,
+        "_resolve_task_bound_team",
+        Mock(return_value=bound_team),
     )
-    user = SimpleNamespace(id=1)
 
     task, result, error = _resolve_existing_task_team(
-        Mock(), user, existing_task.id, 273960
-    )
-
-    assert task is None
-    assert result is None
-    assert error == {"error": "Task not found"}
-
-
-def test_missing_active_task_validates_client_team(monkeypatch: MonkeyPatch) -> None:
-    team = SimpleNamespace(id=267213, name="creator-php-workflow")
-    monkeypatch.setattr(
-        task_stores.task_store,
-        "get_regular_active_task",
-        Mock(return_value=None),
-    )
-    monkeypatch.setattr(
-        chat_namespace,
-        "_get_active_team_by_id",
-        Mock(return_value=team),
-    )
-    user = SimpleNamespace(id=2838)
-
-    db = Mock()
-    task, result, error = _resolve_existing_task_team(db, user, 42, 267213)
-
-    assert task is None
-    assert result is team
-    assert error is None
-
-
-def test_legacy_task_without_team_falls_back_to_client_team(
-    monkeypatch: MonkeyPatch,
-) -> None:
-    existing_task = _task(None)
-    client_team = SimpleNamespace(id=273960, name="qbird-direct-log")
-    monkeypatch.setattr(
-        task_stores.task_store,
-        "get_regular_active_task",
-        Mock(return_value=existing_task),
-    )
-    monkeypatch.setattr(
-        task_stores.task_access_store,
-        "is_member",
-        Mock(return_value=True),
-    )
-    monkeypatch.setattr(
-        chat_namespace,
-        "_get_active_team_by_id",
-        Mock(return_value=client_team),
-    )
-    user = SimpleNamespace(id=2838)
-
-    task, result, error = _resolve_existing_task_team(
-        Mock(), user, existing_task.id, 273960
+        Mock(), existing_task.id, bound_team
     )
 
     assert task is existing_task
-    assert result is client_team
+    assert result is bound_team
     assert error is None
 
 
@@ -309,24 +236,14 @@ def test_bound_team_resolution_error_is_returned(monkeypatch: MonkeyPatch) -> No
         Mock(return_value=existing_task),
     )
     monkeypatch.setattr(
-        task_stores.task_access_store,
-        "is_member",
-        Mock(return_value=True),
-    )
-    monkeypatch.setattr(
-        chat_namespace,
-        "_get_active_team_by_id",
-        Mock(return_value=None),
-    )
-    monkeypatch.setattr(
         chat_namespace,
         "_resolve_task_bound_team",
         Mock(side_effect=ValueError("Team missing")),
     )
-    user = SimpleNamespace(id=2838)
+    client_team = SimpleNamespace(id=273960, name="qbird-direct-log")
 
     task, result, error = _resolve_existing_task_team(
-        Mock(), user, existing_task.id, 273960
+        Mock(), existing_task.id, client_team
     )
 
     assert task is None

@@ -193,8 +193,8 @@ async def _finalize_failed_ai_trigger(
 def _resolve_task_bound_team(
     db: Session,
     existing_task: TaskResource,
-    client_team: Optional[Kind],
-) -> Optional[Kind]:
+    client_team: Kind,
+) -> Kind:
     """Resolve the team an existing task is bound to.
 
     chat:send used to trust the client-selected ``team_id`` even when the
@@ -202,7 +202,9 @@ def _resolve_task_bound_team(
     single turn on a bot outside the task's team. Mirror the REST append path
     (``task_kinds.operations``), which reuses ``task.spec.teamRef``, by
     returning the task's bound team instead of the client team. ``client_team``
-    is only returned for legacy tasks that do not carry a usable teamRef.
+    is only returned for legacy tasks that do not carry a usable teamRef; it
+    is always non-None because the client team is validated before this
+    helper is called.
     """
     task_json = existing_task.json or {}
     team_ref = (task_json.get("spec") or {}).get("teamRef")
@@ -267,60 +269,24 @@ def _get_active_team_by_id(db: Session, team_id: Optional[int]) -> Optional[Kind
 
 def _resolve_existing_task_team(
     db: Session,
-    user: User,
-    task_id: Optional[int],
-    client_team_id: Optional[int],
+    task_id: int,
+    client_team: Kind,
 ) -> tuple[Optional[TaskResource], Optional[Kind], Optional[dict]]:
-    """Resolve the task and team for a chat:send message.
+    """Resolve the task and team for a follow-up on an existing task.
 
-    Follow-ups on an existing task always run on the task's bound team: the
-    task is fetched and authorized first, so a stale or deleted client-selected
-    team cannot block a valid continuation. The client team is only validated
-    when no task-bound team applies (new conversations and legacy tasks without
-    a usable teamRef).
-
-    Returns ``(existing_task, team, error)``. For a new conversation
-    ``existing_task`` is None. Exactly one of ``team`` or ``error`` is set.
+    Returns ``(existing_task, team, error)``; exactly one of ``team`` or
+    ``error`` is set. A follow-up runs on the task's bound team, so a stale
+    client-selected team cannot move a turn onto another agent. For legacy
+    tasks without a usable teamRef the validated client team is returned
+    unchanged.
     """
-    if not task_id:
-        team = _get_active_team_by_id(db, client_team_id)
-        if team is None:
-            logger.warning(
-                "[WS] chat:send client team %s not found for new conversation",
-                client_team_id,
-            )
-            return None, None, {"error": f"Team not found for id={client_team_id}"}
-        return None, team, None
-
     existing_task = task_stores.task_store.get_regular_active_task(
         db,
         task_id=task_id,
     )
     if not existing_task:
-        # No active task to continue; fall back to client-team validation as
-        # for a new conversation. Later task guards reject unknown task ids.
-        team = _get_active_team_by_id(db, client_team_id)
-        if team is None:
-            logger.warning(
-                "[WS] chat:send client team %s not found for task %s "
-                "(task not active yet)",
-                client_team_id,
-                task_id,
-            )
-            return None, None, {"error": f"Team not found for id={client_team_id}"}
-        return None, team, None
-
-    if not task_stores.task_access_store.is_member(
-        db, task_id=existing_task.id, user_id=user.id
-    ):
-        logger.warning(
-            "[WS] chat:send task access denied: task_id=%s user_id=%s",
-            task_id,
-            user.id,
-        )
         return None, None, {"error": "Task not found"}
 
-    client_team = _get_active_team_by_id(db, client_team_id)
     try:
         bound_team = _resolve_task_bound_team(db, existing_task, client_team)
     except ValueError as exc:
@@ -330,23 +296,7 @@ def _resolve_existing_task_team(
             exc,
         )
         return None, None, {"error": str(exc)}
-    if bound_team is None:
-        logger.warning(
-            "[WS] chat:send client team %s not found for task %s "
-            "without usable teamRef",
-            client_team_id,
-            task_id,
-        )
-        return None, None, {"error": f"Team not found for id={client_team_id}"}
-    if client_team is None:
-        logger.warning(
-            "[WS] chat:send client team %s is not active; continuing task %s "
-            "on its bound agent team %s",
-            client_team_id,
-            existing_task.id,
-            bound_team.id,
-        )
-    elif bound_team.id != client_team.id:
+    if bound_team.id != client_team.id:
         logger.warning(
             "[WS] chat:send re-binding task %s to its agent team %s "
             "(client sent team_id=%s)",
@@ -872,17 +822,28 @@ class ChatNamespace(socketio.AsyncNamespace):
                 return {"error": "User not found"}
             logger.info(f"[WS] chat:send user found: {user.user_name}")
 
-            # Follow-ups on an existing task run on the task's bound team, so a
-            # stale client-selected team cannot move a turn onto another agent
-            # or block a valid continuation. The client team is only validated
-            # for new conversations or legacy tasks without a usable teamRef.
-            existing_task, team, team_error = _resolve_existing_task_team(
-                db, user, payload.task_id, payload.team_id
-            )
-            if team_error:
-                logger.error("[WS] chat:send error: %s", team_error["error"])
-                return team_error
+            # Get the client-selected team
+            team = _get_active_team_by_id(db, payload.team_id)
+            if not team:
+                logger.error(
+                    f"[WS] chat:send error: Team not found for id={payload.team_id}"
+                )
+                return {"error": "Team not found"}
             logger.info(f"[WS] chat:send team found: {team.name} (id={team.id})")
+
+            # Follow-ups on an existing task must run on the task's bound team,
+            # so a stale client selection cannot move a turn onto another agent.
+            existing_task = None
+            if payload.task_id:
+                existing_task, team, team_error = _resolve_existing_task_team(
+                    db, payload.task_id, team
+                )
+                if team_error:
+                    logger.error("[WS] chat:send error: %s", team_error["error"])
+                    return team_error
+                logger.info(
+                    f"[WS] chat:send using task team: {team.name} (id={team.id})"
+                )
 
             # Handle pipeline mode
             team_crd = Team.model_validate(team.json)
