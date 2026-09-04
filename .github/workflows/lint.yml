@@ -166,7 +166,7 @@ jobs:
         run: scripts/test-repository-policy-workflow.sh
 
       - name: Test binary asset policy workflow
-        run: .github/scripts/test-binary-asset-policy.sh
+        run: bash .github/scripts/test-binary-asset-policy.sh
 
       - name: Run repository policy check
         # Fork PRs run this in repository-policy.yml using pull_request_target
