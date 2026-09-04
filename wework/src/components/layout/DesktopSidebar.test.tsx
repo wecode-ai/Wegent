@@ -213,6 +213,7 @@ describe('DesktopSidebar', () => {
     experimentalFeatures.enabled = true
     window.history.replaceState({}, '', '/')
     localStorage.clear()
+    vi.stubEnv('VITE_WEGENT_BACKEND_URL', '')
     enableElectron()
     setActiveKeybindings([])
     Element.prototype.scrollIntoView = vi.fn()
