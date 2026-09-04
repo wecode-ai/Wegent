@@ -256,6 +256,9 @@ const appUpdates = new AppUpdateService({
   updater: autoUpdater,
   currentVersion: () => app.getVersion(),
   isPackaged: () => packagedApplication,
+  prepareUpdate: async (version, channel) => {
+    await componentUpdates?.stageUpdateForApp(version, channel)
+  },
   prepareInstall: async () => {
     await prepareApplicationShutdown()
     await appUpdateLogger

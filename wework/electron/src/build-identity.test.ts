@@ -1,3 +1,4 @@
+import { execFileSync } from 'node:child_process'
 import { writeFile } from 'node:fs/promises'
 import { createRequire } from 'node:module'
 import { tmpdir } from 'node:os'
@@ -32,6 +33,7 @@ test('uses a configured identity required for overwrite installation', async () 
     productName: 'Example Workbench',
     identifier: 'com.example.workbench',
     executableName: 'Example Workbench',
+    packageName: 'com.example.workbench',
     executorNamespace: 'com.example.workbench',
     backendUrl: 'https://backend.example.com/api',
     socketUrl: 'wss://socket.example.com',
@@ -107,8 +109,90 @@ test.each([
 })
 
 test('packages only product locales and skips individual static plugin signing', () => {
+  expect(builderConfig.extraMetadata.name).toBe(DEFAULT_IDENTITY.packageName)
   expect(builderConfig.mac.electronLanguages).toEqual(['en', 'zh_CN'])
   expect(builderConfig.mac.signIgnore).toEqual(['/Contents/Resources/wework-core-plugins/'])
   expect(builderConfig.win.electronLanguages).toEqual(['en-US', 'zh-CN'])
   expect(builderConfig.linux.electronLanguages).toEqual(['en-US', 'zh-CN'])
+})
+
+test('builds a slim Host update without managed components', () => {
+  const config = JSON.parse(
+    execFileSync(
+      process.execPath,
+      [
+        '-e',
+        `
+const config = require(process.argv[1])
+process.stdout.write(JSON.stringify({
+  compression: config.compression,
+  output: config.directories.output,
+  resources: config.extraResources,
+  macTarget: config.mac.target,
+  macArtifactName: config.mac.artifactName,
+  winArtifactName: config.win.artifactName,
+  linuxArtifactName: config.linux.artifactName,
+}))
+`,
+        resolve(process.cwd(), 'electron/electron-builder.config.cjs'),
+      ],
+      {
+        encoding: 'utf8',
+        env: {
+          ...process.env,
+          WEWORK_ONLINE_UPDATE_BUILD: 'true',
+        },
+      }
+    )
+  )
+
+  expect(config.output).toBe('release-online-update')
+  expect(config.compression).toBe('store')
+  expect(config.resources).toEqual([
+    { from: 'resources/components.json', to: 'components.json' },
+    { from: '../resources/licenses', to: 'licenses' },
+    { from: '../resources/icons', to: 'icons' },
+    { from: '../../LICENSE', to: 'LICENSE' },
+  ])
+  expect(config.macTarget).toEqual(['zip'])
+  expect(config.macArtifactName).toBe('WeWorkHostUpdate_${version}_macos_${arch}.${ext}')
+  expect(config.winArtifactName).toBe('WeWorkHostUpdate_${version}_windows_${arch}-setup.${ext}')
+  expect(config.linuxArtifactName).toBe('WeWorkHostUpdate_${version}_linux_${arch}.${ext}')
+})
+
+test('builds a complete Host update for the componentized updater migration release', () => {
+  const config = JSON.parse(
+    execFileSync(
+      process.execPath,
+      [
+        '-e',
+        `
+const config = require(process.argv[1])
+process.stdout.write(JSON.stringify(config.extraResources.map(resource => resource.to)))
+`,
+        resolve(process.cwd(), 'electron/electron-builder.config.cjs'),
+      ],
+      {
+        encoding: 'utf8',
+        env: {
+          ...process.env,
+          WEWORK_ONLINE_UPDATE_BUILD: 'true',
+          WEWORK_ONLINE_UPDATE_INCLUDE_COMPONENTS: 'true',
+        },
+      }
+    )
+  )
+
+  expect(config).toEqual([
+    'harness-runtime',
+    'bin',
+    'codex',
+    'wework-core-plugins',
+    'wework-app-static',
+    'bundled-plugins',
+    'components.json',
+    'licenses',
+    'icons',
+    'LICENSE',
+  ])
 })

@@ -34,8 +34,19 @@ describe('prepareDesktopComponents', () => {
     const paths: ComponentPaths = {
       coreDsh: '/components/core-dsh',
       weworkCorePlugins: '/components/wework-core-plugins',
+      bundledPlugins: '/components/bundled-plugins',
       executor: '/components/executor',
       codex: '/components/codex',
+      dws: '/components/dws',
+      contentSha256: {
+        coreDsh: '1',
+        weworkCorePlugins: '2',
+        weworkAppStatic: '3',
+        bundledPlugins: '4',
+        executor: '5',
+        codex: '6',
+        dws: '7',
+      },
     }
     const manager = {
       prepareStartup: vi.fn().mockResolvedValue(paths),

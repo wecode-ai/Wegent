@@ -40,10 +40,32 @@ await run(
   electronRoot
 )
 
-function run(command, args, cwd) {
+await run(
+  pnpmCommand,
+  [
+    'exec',
+    'electron-builder',
+    '--config',
+    'electron-builder.config.cjs',
+    platformFlag,
+    `--${arch}`,
+    '--publish',
+    'never',
+  ],
+  electronRoot,
+  {
+    WEWORK_ONLINE_UPDATE_BUILD: 'true',
+  }
+)
+
+function run(command, args, cwd, environment = {}) {
   return new Promise((resolvePromise, reject) => {
     const resolved = wrapWindowsScriptCommand(command, args)
-    const child = spawn(resolved.command, resolved.args, { cwd, stdio: 'inherit' })
+    const child = spawn(resolved.command, resolved.args, {
+      cwd,
+      env: { ...process.env, ...environment },
+      stdio: 'inherit',
+    })
     child.once('error', reject)
     child.once('exit', code => {
       if (code === 0) resolvePromise()
