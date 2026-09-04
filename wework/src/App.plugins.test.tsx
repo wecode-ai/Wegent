@@ -1055,7 +1055,7 @@ describe('App plugins route', () => {
     workbenchValue.state.standaloneDeviceId = 'local-device'
     vi.mocked(workbenchValue.openRuntimeTask).mockReset().mockResolvedValue(undefined)
     vi.mocked(workbenchValue.startNewSkillChat).mockReset().mockResolvedValue(false)
-    localCodexPluginMocks.listInstalledPlugins.mockReset().mockResolvedValue([])
+    localCodexPluginMocks.listInstalledPlugins.mockReset().mockResolvedValue({ items: [] })
     localCodexPluginMocks.listSkills.mockReset().mockResolvedValue([])
     workbenchProviderMocks.autoReady = true
     workbenchProviderMocks.mounts.mockClear()
@@ -1150,6 +1150,10 @@ describe('App plugins route', () => {
   })
 
   test('loads Sites from the authenticated cloud Backend in local mode', async () => {
+    localCodexPluginMocks.listInstalledPlugins.mockResolvedValue({
+      items: [],
+      deviceId: 'local-device',
+    })
     window.__WEWORK_RUNTIME_CONFIG__ = {
       ...window.__WEWORK_RUNTIME_CONFIG__,
       runtimeMode: 'local-first',
@@ -1910,6 +1914,101 @@ describe('App plugins route', () => {
     )
     expect(window.location.pathname).toBe('/sites')
     expect(sessionStorage.getItem('wework:pending-plugin-trial')).toBeNull()
+  })
+
+  test.each(['site', 'miniapp', 'continue'] as const)(
+    'opens %s using local membership while Backend plugin queries fail',
+    async entry => {
+      const installed =
+        entry === 'miniapp' ? installedCodexMiniProgramPlugin() : installedCodexSitesPlugin()
+      localCodexPluginMocks.listInstalledPlugins.mockResolvedValue({
+        items: [installed],
+        deviceId: 'local-device',
+      })
+      vi.mocked(fetch).mockImplementation(async input => {
+        const url = String(input)
+        if (url.includes('/sites/app-types'))
+          return { ok: true, status: 200, json: async () => applicationTypesResponse() } as Response
+        if (url.includes('/sites?'))
+          return {
+            ok: true,
+            status: 200,
+            json: async () => ({
+              items: [
+                {
+                  app_type: 'web',
+                  siteid: 'site-local',
+                  project_id: 'project-local',
+                  name: 'Local site',
+                  internal_url: 'http://sites.internal/local',
+                  publish_status: 'unpublished',
+                },
+              ],
+              total: 1,
+              offset: 0,
+              limit: 20,
+            }),
+          } as Response
+        throw new Error('Backend plugin service unavailable')
+      })
+      window.history.pushState({}, '', '/sites')
+      renderApp()
+      await screen.findByText('Local site')
+      if (entry === 'continue')
+        await userEvent.click(screen.getByTestId('site-continue-development-site-local'))
+      else {
+        await userEvent.click(screen.getByTestId('sites-create-button'))
+        await userEvent.click(
+          screen.getByTestId(
+            entry === 'miniapp'
+              ? 'sites-create-mini-program-menu-item'
+              : 'sites-create-site-menu-item'
+          )
+        )
+      }
+      await waitFor(() => expect(window.location.pathname).toBe('/'))
+      const trial = JSON.parse(sessionStorage.getItem('wework:pending-plugin-trial') ?? '{}')
+      expect(trial.input).toContain('plugin://' + installed.spec.source.pluginKey + '@wegent')
+      if (entry === 'continue')
+        expect(trial.input).toContain('wegent-sites-project://project-local')
+      expect(
+        vi.mocked(fetch).mock.calls.some(([input]) => String(input).includes('/plugins/builtin/'))
+      ).toBe(false)
+    }
+  )
+
+  test('shows inspection failure without installing, and permits retry', async () => {
+    localCodexPluginMocks.listInstalledPlugins.mockRejectedValue(
+      new Error('Executor inventory unavailable')
+    )
+    vi.mocked(fetch).mockImplementation(async input => {
+      const url = String(input)
+      if (url.includes('/sites/app-types'))
+        return { ok: true, status: 200, json: async () => applicationTypesResponse() } as Response
+      if (url.includes('/sites?'))
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({ items: [], total: 0, offset: 0, limit: 20 }),
+        } as Response
+      throw new Error('Unexpected request: ' + url)
+    })
+    window.history.pushState({}, '', '/sites')
+    renderApp()
+    await createSiteFromMenu()
+    expect(await screen.findByTestId('sites-create-error')).toHaveTextContent(
+      '无法确认目标设备的插件安装状态'
+    )
+    expect(
+      vi.mocked(fetch).mock.calls.some(([input]) => String(input).includes('/plugins/builtin/'))
+    ).toBe(false)
+    expect(sessionStorage.getItem('wework:pending-plugin-trial')).toBeNull()
+    localCodexPluginMocks.listInstalledPlugins.mockResolvedValue({
+      items: [installedCodexSitesPlugin()],
+      deviceId: 'local-device',
+    })
+    await createSiteFromMenu()
+    await waitFor(() => expect(window.location.pathname).toBe('/'))
   })
 
   test('opens a runtime task from the plugins sidebar and leaves the plugins route', async () => {
