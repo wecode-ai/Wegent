@@ -258,6 +258,21 @@ test('keeps descriptors separate from native DSH slot components', async () => {
   assert.equal(ctx.wework.contributions.get('wework.workspace.tab', descriptor.id).path, '/quality')
 })
 
+test('rejects unnamed bottom-panel contributions at registration', async () => {
+  const client = await loadClient()
+  const runtime = client.exports.createExtensionRuntime()
+  const owner = { effect: factory => factory() }
+
+  assert.throws(
+    () =>
+      runtime.service.contributions.register(owner, 'wework.workspace.bottom-panel.tab', {
+        id: 'quality.bottom-panel',
+        label: ' ',
+      }),
+    /Bottom panel contribution label must be a non-empty string/
+  )
+})
+
 test('projects native DSH workspace tab entries into Wework surfaces', async () => {
   const client = await loadClient()
   const registrations = []
@@ -345,7 +360,7 @@ test('registers scoped commands and removes them with their Cordis owner', async
     await runtime.service.commands.execute(
       'quality.refresh',
       { full: true },
-      { source: 'keybinding' }
+      { commandId: 'spoofed.command', source: 'keybinding' }
     ),
     'refreshed'
   )
@@ -354,7 +369,7 @@ test('registers scoped commands and removes them with their Cordis owner', async
     JSON.stringify([
       {
         args: { full: true },
-        invocation: { commandId: 'quality.refresh', source: 'keybinding' },
+        invocation: { source: 'keybinding', commandId: 'quality.refresh' },
       },
     ])
   )
@@ -439,6 +454,23 @@ test('filters menus and keybindings through shared context expressions', async (
   assert.equal(runtime.service.keybindings.list().length, 1)
   runtime.service.context.set(owner, 'workspace.writable', true)
   assert.equal(runtime.service.menus.list('workspace.title')[0].enabled, true)
+})
+
+test('localizes standalone plugin copy without private Wework imports', async () => {
+  const client = await loadClient()
+  let locale = 'zh-CN'
+  const runtime = client.exports.createExtensionRuntime({ locale: () => locale })
+
+  assert.equal(runtime.service.localization.getLocale(), 'zh-CN')
+  assert.equal(runtime.service.localization.translate({ en: 'Refresh', 'zh-CN': '刷新' }), '刷新')
+  locale = 'en-US'
+  assert.equal(
+    runtime.service.localization.translate({ en: 'Refresh', 'zh-CN': '刷新' }),
+    'Refresh'
+  )
+  locale = 'zh'
+  assert.equal(runtime.service.localization.translate({ en: 'Refresh', 'zh-CN': '刷新' }), '刷新')
+  assert.equal(runtime.service.localization.translate({ fr: 'Actualiser' }, 'Fallback'), 'Fallback')
 })
 
 test('restores overlapping context contributions regardless of disposal order', async () => {
@@ -615,6 +647,8 @@ test('provides namespaced state, validated configuration, and secure values', as
   const state = runtime.service.storage.scope('quality')
   state.set('last-run', { passed: 4 })
   assert.equal(JSON.stringify(state.get('last-run')), JSON.stringify({ passed: 4 }))
+  values.set('wework.plugin.quality.corrupted', '{invalid')
+  assert.equal(state.get('corrupted', 'fallback'), 'fallback')
 
   runtime.service.configuration.register(owner, {
     id: 'quality',
@@ -624,6 +658,7 @@ test('provides namespaced state, validated configuration, and secure values', as
       if (value.threshold < 0) throw new Error('Threshold is invalid')
     },
   })
+  values.set('wework.plugin.configuration.quality', '{invalid')
   assert.equal(runtime.service.configuration.get('quality').threshold, 80)
   assert.equal(runtime.service.configuration.update('quality', { threshold: 90 }).threshold, 90)
   assert.throws(

@@ -85,6 +85,7 @@ import {
   dispatchStepFontSizeShortcut,
   dispatchResetFontSizeShortcut,
   dispatchBuiltinShortcutCommand,
+  isEditableShortcutTarget,
   isBuiltinShortcutCommand,
   keybindingFromKeyboardEvent,
   mergeKeybindings,
@@ -1015,6 +1016,7 @@ function AppShell() {
       if (!command) return
       const executable = isBuiltinShortcutCommand(command) || isDshCommandEnabled(command)
       if (!executable) return
+      if (isEditableShortcutTarget(event.target)) return
       event.preventDefault()
       executeShortcutCommand(command, 'keybinding')
     }

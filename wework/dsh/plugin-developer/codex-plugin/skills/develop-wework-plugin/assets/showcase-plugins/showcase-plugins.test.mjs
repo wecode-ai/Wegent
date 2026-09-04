@@ -7,7 +7,7 @@ import vm from 'node:vm'
 
 import React from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
-import { discoverTests } from './quality-guardian-demo/index.js'
+import { buildTestCommands, discoverTests } from './quality-guardian-demo/index.js'
 import { inspectEnvironment, prepareEnvironment } from './runtime-doctor-demo/index.js'
 import { analyzeWorkspace } from './workspace-copilot-demo/index.js'
 
@@ -65,6 +65,22 @@ test('Workspace Copilot analyzes real repository signals', async () => {
   await rm(fixture, { recursive: true, force: true })
 })
 
+test('Workspace Copilot localizes visible copy through the public host service', async () => {
+  const client = await loadClient('workspace-copilot-demo')
+  const registrations = []
+  client.apply(createClientContext(registrations, [], [], 'en-US'))
+  const Component = registrations.find(entry => entry.id === 'workspace-copilot.action').component
+
+  assert.match(
+    renderToStaticMarkup(
+      React.createElement(Component, {
+        workspaceTarget: { path: '/tmp/workspace' },
+      })
+    ),
+    /aria-label="Open Workspace Copilot"/
+  )
+})
+
 test('Test Explorer discovers real test files and groups their frameworks', async () => {
   const fixture = await workspaceFixture()
   await mkdir(join(fixture, 'tests'))
@@ -77,6 +93,31 @@ test('Test Explorer discovers real test files and groups their frameworks', asyn
     report.tests.map(test => test.path),
     ['tests/test_api.py', 'tests/widget.test.ts']
   )
+  await rm(fixture, { recursive: true, force: true })
+})
+
+test('Test Explorer builds separate commands for mixed Python and JavaScript tests', async () => {
+  const fixture = await workspaceFixture()
+  await writeFile(
+    join(fixture, 'package.json'),
+    JSON.stringify({ scripts: { test: 'vitest run' } })
+  )
+
+  const commands = await buildTestCommands(fixture, [
+    { framework: 'Pytest', path: 'tests/test_api.py' },
+    { framework: 'Test runner', path: 'tests/widget.test.ts' },
+  ])
+
+  assert.deepEqual(commands, [
+    {
+      file: 'python3',
+      args: ['-m', 'pytest', '-q', 'tests/test_api.py'],
+    },
+    {
+      file: 'npm',
+      args: ['test', '--', '--run', 'tests/widget.test.ts'],
+    },
+  ])
   await rm(fixture, { recursive: true, force: true })
 })
 
@@ -125,7 +166,7 @@ async function loadClient(directory) {
   })
 }
 
-function createClientContext(registrations, commands, providers) {
+function createClientContext(registrations, commands, providers, locale = 'zh-CN') {
   const context = {
     slots: {
       inject(_slot, factory) {
@@ -156,6 +197,18 @@ function createClientContext(registrations, commands, providers) {
       menus: {
         register() {
           return () => {}
+        },
+      },
+      localization: {
+        getLocale() {
+          return locale
+        },
+        translate(messages, fallback = '') {
+          if (typeof messages === 'string') return messages
+          const language = locale.split('-')[0]
+          return (
+            messages[locale] ?? messages[language] ?? messages.en ?? messages['zh-CN'] ?? fallback
+          )
         },
       },
       composer: {

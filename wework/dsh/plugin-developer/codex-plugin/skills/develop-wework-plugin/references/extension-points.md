@@ -70,6 +70,7 @@ context is disposed.
 | `ctx.wework.context`       | Publish scoped context keys and evaluate `all`, `any`, `not`, equality, inequality, and membership.      |
 | `ctx.wework.menus`         | Place command-backed actions in public menu locations with `when`, `enablement`, grouping, and ordering. |
 | `ctx.wework.keybindings`   | Add platform-specific default shortcuts gated by context expressions.                                    |
+| `ctx.wework.localization`  | Resolve visible plugin copy against the current Wework locale without importing private React hooks.     |
 | `ctx.wework.configuration` | Declare plugin settings, merge defaults with persisted values, validate updates, and subscribe.          |
 | `ctx.wework.storage`       | Read and write JSON-serializable plugin state under an isolated namespace.                               |
 | `ctx.wework.secrets`       | Read and write plugin secrets through Wework secure storage under an isolated namespace.                 |
@@ -147,6 +148,21 @@ invocation. Store data, not the controller itself.
 Composer-adjacent components may use the same operations through
 `ctx.wework.composer`. They fail loudly when no Composer is active.
 
+Standalone browser plugins cannot import Wework's private localization hooks.
+Resolve user-visible copy through the public locale service:
+
+```js
+const label = ctx.wework.localization.translate({
+  en: 'Refresh workspace context',
+  'zh-CN': '刷新工作区上下文',
+})
+```
+
+`translate(messages, fallback?)` accepts either a string or a locale map. It
+tries the active locale, its base language, a matching regional variant, then
+English and Simplified Chinese. Use `getLocale()` only when formatting logic
+needs the active locale code.
+
 ## Domain providers
 
 Use a provider when the host or several surfaces need to consume one plugin's
@@ -201,11 +217,17 @@ export function apply(ctx) {
 }
 ```
 
-The browser client calls the same namespace:
+The browser client calls the same namespace with the path supplied by its slot
+props or another explicit host context:
 
 ```js
-const backend = ctx.wework.backend.scope('example-quality')
-const result = await backend.request('scan', { cwd: workspaceTarget.path })
+function QualityAction({ workspaceTarget }) {
+  const workspacePath = workspaceTarget?.path
+  if (!workspacePath) return null
+
+  const backend = ctx.wework.backend.scope('example-quality')
+  return backend.request('scan', { cwd: workspacePath })
+}
 ```
 
 Registrations reject duplicate IDs and invalid methods. Requests are bounded,

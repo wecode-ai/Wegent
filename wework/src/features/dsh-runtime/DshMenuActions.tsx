@@ -8,6 +8,7 @@ import { useDshMenuCommands } from './useDshMenuCommands'
 interface DshMenuActionsProps {
   buttonClassName?: string
   className?: string
+  disabled?: boolean
   location: string
   showLabels?: boolean
 }
@@ -15,6 +16,7 @@ interface DshMenuActionsProps {
 export function DshMenuActions({
   buttonClassName,
   className,
+  disabled = false,
   location,
   showLabels = false,
 }: DshMenuActionsProps) {
@@ -30,7 +32,7 @@ export function DshMenuActions({
             key={action.id}
             type="button"
             data-testid={`wework-menu-action-${action.id}`}
-            disabled={!action.enabled}
+            disabled={disabled || !action.enabled}
             className={cn(
               'flex h-7 min-w-7 shrink-0 items-center justify-center gap-1.5 rounded-lg px-1.5 text-sm text-text-secondary transition-colors hover:bg-muted hover:text-text-primary disabled:cursor-not-allowed disabled:opacity-40',
               buttonClassName

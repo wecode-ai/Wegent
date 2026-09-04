@@ -145,6 +145,10 @@ export interface WeworkContribution {
   readonly [key: string]: unknown
 }
 
+export interface WeworkLabeledContribution extends WeworkContribution {
+  readonly label: string
+}
+
 export interface WeworkContributionMap {
   readonly 'wework.action': WeworkContribution
   readonly 'wework.app': WeworkContribution
@@ -163,7 +167,7 @@ export interface WeworkContributionMap {
   readonly 'wework.shell.overlay': WeworkContribution
   readonly 'wework.task.status': WeworkContribution
   readonly 'wework.workspace.menu.section': WeworkContribution
-  readonly 'wework.workspace.bottom-panel.tab': WeworkContribution
+  readonly 'wework.workspace.bottom-panel.tab': WeworkLabeledContribution
   readonly 'wework.workspace.sidebar.tab': WeworkContribution
   readonly 'wework.workspace.tab': WeworkContribution
   readonly 'wework.workspace.toolbar.action': WeworkContribution
@@ -278,6 +282,13 @@ export interface WeworkKeybindingRegistry {
   subscribe(listener: () => void): () => void
 }
 
+export type WeworkLocalizedMessages = Readonly<Record<string, string>>
+
+export interface WeworkLocalizationService {
+  getLocale(): string
+  translate(messages: string | WeworkLocalizedMessages, fallback?: string): string
+}
+
 export interface WeworkConfigurationDefinition<
   Value extends Readonly<Record<string, unknown>> = Readonly<Record<string, unknown>>,
 > {
@@ -328,6 +339,7 @@ export interface WeworkService {
   readonly environments: WeworkEnvironmentService
   readonly menus: WeworkMenuRegistry
   readonly keybindings: WeworkKeybindingRegistry
+  readonly localization: WeworkLocalizationService
   readonly configuration: WeworkConfigurationRegistry
   readonly storage: WeworkStorageRegistry
   readonly secrets: WeworkSecretRegistry
@@ -345,6 +357,7 @@ export interface WeworkExtensionHost extends Pick<
   | 'environments'
   | 'menus'
   | 'keybindings'
+  | 'localization'
   | 'configuration'
   | 'storage'
   | 'secrets'

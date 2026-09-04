@@ -51,9 +51,10 @@ The catalog covers all public host slots:
 
 It also documents the public `ctx.wework.host`, `backend`, `commands`,
 `composer`, `contributions`, `chat`, `testing`, `environments`, `context`,
-`menus`, `keybindings`, `configuration`, `storage`, and `secrets` services.
-Prefer a command-backed menu contribution when the host already owns the button
-surface; use a raw UI slot when the plugin needs custom rendering.
+`menus`, `keybindings`, `localization`, `configuration`, `storage`, and
+`secrets` services. Prefer a command-backed menu contribution when the host
+already owns the button surface; use a raw UI slot when the plugin needs custom
+rendering.
 
 ## Understand the package boundaries
 
@@ -164,6 +165,8 @@ Wework modules into a plugin.
   `ctx.wework.backend` client. Do not invent plugin-specific loopback servers.
 - Use `ctx.wework.host` for typed desktop capabilities; do not call private
   Electron bridge URLs.
+- Localize visible copy with `ctx.wework.localization.translate(...)`. Standalone
+  plugins must not import Wework's private React localization hooks.
 - Publish state used by visibility and enablement rules through
   `ctx.wework.context`.
 - Use `ctx.wework.menus` for standard Composer and workspace toolbar actions.

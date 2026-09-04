@@ -62,6 +62,10 @@ desktop capability 调用这些能力。
 该包必须显式导出 `./package.json`。DSH client module registry 通过这个子路径读取
 `dsh.client` 声明；缺少导出会导致插件不进入 browser boot graph。
 
+独立插件不能导入 Wework 私有的 React Hook。用户可见文本应通过
+`ctx.wework.localization.translate({ en: '...', 'zh-CN': '...' })` 本地化；
+`getLocale()` 可用于确实需要语言代码的格式化逻辑。
+
 “Wework 插件开发”Skill 携带的可安装示例位于
 [`../plugin-developer/codex-plugin/skills/develop-wework-plugin/assets/ui-extension-demo`](../plugin-developer/codex-plugin/skills/develop-wework-plugin/assets/ui-extension-demo)，
 覆盖以上全部扩展点。

@@ -59,8 +59,60 @@ export async function runTests({ cwd, testIds = [] }) {
   )
   if (selected.length === 0) throw new Error('没有可运行的测试')
 
-  const command = await testCommand(root, selected)
+  const commands = await buildTestCommands(root, selected)
   const startedAt = Date.now()
+  const results = []
+  for (const command of commands) {
+    results.push(await executeTestCommand(root, command))
+  }
+  return {
+    id: `run-${startedAt}`,
+    state: aggregateRunState(results),
+    durationMs: Date.now() - startedAt,
+    command: results.map(result => result.command).join('\n'),
+    output: results
+      .map(result => `$ ${result.command}\n${result.output}`.trim())
+      .join('\n\n')
+      .slice(-30_000),
+    testIds: selected.map(test => test.id),
+  }
+}
+
+export async function buildTestCommands(root, selected) {
+  const groups = {
+    javascript: selected.filter(
+      test => test.framework === 'Spec runner' || test.framework === 'Test runner'
+    ),
+    go: selected.filter(test => test.framework === 'Go test'),
+    python: selected.filter(test => test.framework === 'Pytest'),
+  }
+  const commands = []
+  if (groups.python.length > 0) {
+    commands.push({
+      file: 'python3',
+      args: ['-m', 'pytest', '-q', ...groups.python.map(test => test.path)],
+    })
+  }
+  if (groups.go.length > 0) {
+    const packages = [...new Set(groups.go.map(test => `./${dirname(test.path)}`))]
+    commands.push({ file: 'go', args: ['test', ...packages] })
+  }
+  if (groups.javascript.length > 0) {
+    const manifest = await readJson(join(root, 'package.json'))
+    if (!manifest?.scripts?.test) {
+      throw new Error('未找到可运行 JavaScript 测试的 package.json test 脚本')
+    }
+    const runner = await packageRunner(root)
+    commands.push({
+      file: runner,
+      args: ['test', '--', '--run', ...groups.javascript.map(test => test.path)],
+    })
+  }
+  return commands
+}
+
+async function executeTestCommand(root, command) {
+  const displayCommand = [command.file, ...command.args].join(' ')
   try {
     const { stdout, stderr } = await execFileAsync(command.file, command.args, {
       cwd: root,
@@ -70,44 +122,23 @@ export async function runTests({ cwd, testIds = [] }) {
       maxBuffer: 2 * 1024 * 1024,
     })
     return {
-      id: `run-${startedAt}`,
+      command: displayCommand,
+      output: `${stdout}${stderr}`.trim(),
       state: 'passed',
-      durationMs: Date.now() - startedAt,
-      command: [command.file, ...command.args].join(' '),
-      output: `${stdout}${stderr}`.trim().slice(-30_000),
-      testIds: selected.map(test => test.id),
     }
   } catch (error) {
     return {
-      id: `run-${startedAt}`,
+      command: displayCommand,
+      output: `${error?.stdout ?? ''}${error?.stderr ?? error?.message ?? ''}`.trim(),
       state: error?.killed ? 'cancelled' : 'failed',
-      durationMs: Date.now() - startedAt,
-      command: [command.file, ...command.args].join(' '),
-      output: `${error?.stdout ?? ''}${error?.stderr ?? error?.message ?? ''}`
-        .trim()
-        .slice(-30_000),
-      testIds: selected.map(test => test.id),
     }
   }
 }
 
-async function testCommand(root, selected) {
-  const paths = selected.map(test => test.path)
-  const frameworks = new Set(selected.map(test => test.framework))
-  if ([...frameworks].every(framework => framework === 'Pytest')) {
-    return { file: 'python3', args: ['-m', 'pytest', '-q', ...paths] }
-  }
-  if ([...frameworks].every(framework => framework === 'Go test')) {
-    const packages = [...new Set(paths.map(path => `./${dirname(path)}`))]
-    return { file: 'go', args: ['test', ...packages] }
-  }
-
-  const manifest = await readJson(join(root, 'package.json'))
-  if (!manifest?.scripts?.test) {
-    throw new Error('未找到可运行这些测试的 package.json test 脚本')
-  }
-  const runner = await packageRunner(root)
-  return { file: runner, args: ['test', '--', '--run', ...paths] }
+function aggregateRunState(results) {
+  if (results.some(result => result.state === 'failed')) return 'failed'
+  if (results.some(result => result.state === 'cancelled')) return 'cancelled'
+  return 'passed'
 }
 
 async function packageRunner(root) {

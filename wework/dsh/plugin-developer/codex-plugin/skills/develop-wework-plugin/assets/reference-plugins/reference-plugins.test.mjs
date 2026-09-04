@@ -226,3 +226,18 @@ test('Endpoint Watch performs a typed background-browser health check', async ()
   const Page = componentFor(runtime, 'wework.route')
   assert.match(renderToStaticMarkup(React.createElement(Page)), /data-testid="endpoint-watch-page"/)
 })
+
+test('Endpoint Watch reports invalid endpoint input through its normal failure path', async () => {
+  const plugin = await loadPlugin('endpoint-watch-demo')
+  const runtime = createRuntime()
+  plugin.apply(runtime.ctx)
+
+  const Page = componentFor(runtime, 'wework.route')
+  const store = Page().props.store
+  const result = await store.run('example.com', true)
+
+  assert.equal(result.ok, false)
+  assert.equal(result.endpoint, 'example.com')
+  assert.equal(runtime.browserCalls.length, 0)
+  assert.equal(runtime.notifications[0].title, 'Endpoint Watch · 检查失败')
+})

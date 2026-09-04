@@ -75,6 +75,15 @@ window.__ModuleLoader__.load({
       return Object.freeze({ ...value })
     }
 
+    function validateContribution(location, entry) {
+      if (
+        location === 'wework.workspace.bottom-panel.tab' &&
+        (typeof entry.label !== 'string' || entry.label.trim() === '')
+      ) {
+        throw new Error('Bottom panel contribution label must be a non-empty string')
+      }
+    }
+
     function createContributionRegistry(kind, onChange) {
       const entries = new Map()
 
@@ -120,6 +129,7 @@ window.__ModuleLoader__.load({
           const location = requiredContributionId(rawLocation, 'Contribution location')
           const entry = freezeContribution(rawEntry)
           const id = requiredContributionId(entry.id, 'Contribution id')
+          validateContribution(location, entry)
           let entries = locations.get(location)
           if (!entries) {
             entries = new Map()
@@ -242,7 +252,11 @@ window.__ModuleLoader__.load({
         get(key, fallback = null) {
           const raw = storage.getItem(storageKey(key))
           if (raw === null) return fallback
-          return JSON.parse(raw)
+          try {
+            return JSON.parse(raw)
+          } catch {
+            return fallback
+          }
         },
         set(key, value) {
           const serialized = JSON.stringify(value)
@@ -253,6 +267,39 @@ window.__ModuleLoader__.load({
         delete(key) {
           storage.removeItem(storageKey(key))
           notify()
+        },
+      })
+    }
+
+    function createLocalizationService(localeSource) {
+      const getLocale = () => {
+        const value = typeof localeSource === 'function' ? localeSource() : localeSource
+        return typeof value === 'string' && value.trim() ? value.trim() : 'en'
+      }
+      return Object.freeze({
+        getLocale,
+        translate(messages, fallback = '') {
+          if (typeof messages === 'string') return messages
+          if (!messages || typeof messages !== 'object' || Array.isArray(messages)) {
+            throw new Error('Localized messages must be a string or locale map')
+          }
+          const locale = getLocale()
+          const language = locale.split('-')[0]
+          const entries = Object.entries(messages)
+          for (const candidate of [locale, language]) {
+            const match = entries.find(([key]) => key.toLowerCase() === candidate.toLowerCase())
+            if (typeof match?.[1] === 'string') return match[1]
+          }
+          const languageMatch = entries.find(([key]) => {
+            const normalized = key.toLowerCase()
+            return normalized.startsWith(`${language.toLowerCase()}-`)
+          })
+          if (typeof languageMatch?.[1] === 'string') return languageMatch[1]
+          for (const candidate of ['en', 'zh-CN']) {
+            const match = entries.find(([key]) => key.toLowerCase() === candidate.toLowerCase())
+            if (typeof match?.[1] === 'string') return match[1]
+          }
+          return fallback
         },
       })
     }
@@ -295,6 +342,10 @@ window.__ModuleLoader__.load({
       const storage = options.storage ?? createMemoryStorage()
       const secureStorage = options.secureStorage ?? null
       const backendFetch = options.fetch ?? window.fetch?.bind(window)
+      const localization = createLocalizationService(
+        options.locale ??
+          (() => window.document?.documentElement?.lang || window.navigator?.language || 'en')
+      )
       let activeComposer = null
 
       const assertActive = () => {
@@ -385,7 +436,7 @@ window.__ModuleLoader__.load({
             if (!matchesContextExpression(contextValues, definition.enablement)) {
               throw new Error(`Command is disabled: ${commandId}`)
             }
-            return handler(args, Object.freeze({ commandId, source: 'api', ...invocation }))
+            return handler(args, Object.freeze({ source: 'api', ...invocation, commandId }))
           },
           subscribe(listener) {
             assertActive()
@@ -593,6 +644,7 @@ window.__ModuleLoader__.load({
             return () => listeners.delete(listener)
           },
         }),
+        localization,
         configuration: Object.freeze({
           register(owner, definition) {
             assertActive()
@@ -672,6 +724,7 @@ window.__ModuleLoader__.load({
           environments: service.environments,
           menus: service.menus,
           keybindings: service.keybindings,
+          localization: service.localization,
           configuration: service.configuration,
           storage: service.storage,
           secrets: service.secrets,

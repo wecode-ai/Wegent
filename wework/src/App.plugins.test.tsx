@@ -1081,6 +1081,27 @@ describe('App plugins route', () => {
     expect(workbenchProviderMocks.mounts).toHaveBeenCalledWith(true)
   })
 
+  test('does not dispatch application shortcuts from editable targets', async () => {
+    window.history.pushState({}, '', '/')
+    renderApp()
+    await screen.findByTestId('app-shell')
+    const input = document.createElement('input')
+    document.body.appendChild(input)
+
+    expect(
+      fireEvent.keyDown(input, {
+        bubbles: true,
+        cancelable: true,
+        code: 'Comma',
+        key: ',',
+        metaKey: true,
+      })
+    ).toBe(true)
+    expect(window.location.pathname).toBe('/')
+
+    input.remove()
+  })
+
   test('does not bypass startup readiness after ten seconds or an active app change', async () => {
     vi.useFakeTimers()
     workbenchProviderMocks.autoReady = false

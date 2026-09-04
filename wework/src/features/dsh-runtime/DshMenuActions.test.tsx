@@ -120,4 +120,12 @@ describe('DshMenuActions', () => {
       source: 'menu',
     })
   })
+
+  test('honors a disabled host surface', () => {
+    context.set('workspace.ready', true)
+
+    render(<DshMenuActions disabled location="composer.toolbar" />)
+
+    expect(screen.getByTestId('wework-menu-action-quality.refresh.menu')).toBeDisabled()
+  })
 })

@@ -2,7 +2,7 @@ window.__ModuleLoader__.load({
   id: '@wegent/dsh-test-explorer-demo',
   factory: require => {
     const React = require('react')
-    const { createElement, useEffect, useMemo, useState } = React
+    const { createElement, useEffect, useMemo, useRef, useState } = React
     const PROVIDER_ID = 'test-explorer'
 
     function TestExplorer({ scope, visible }) {
@@ -12,21 +12,40 @@ window.__ModuleLoader__.load({
       const [loading, setLoading] = useState(false)
       const [error, setError] = useState('')
       const path = scope?.cwd ?? ''
+      const activePath = useRef(path)
+      const requestSequence = useRef(0)
+      if (activePath.current !== path) {
+        activePath.current = path
+        requestSequence.current += 1
+      }
+
+      useEffect(() => {
+        setReport(null)
+        setSelected(new Set())
+        setRun(null)
+        setError('')
+        setLoading(false)
+      }, [path])
 
       const discover = async () => {
         if (!path || loading) return
+        const requestedPath = path
+        const requestId = ++requestSequence.current
+        const isCurrent = () =>
+          activePath.current === requestedPath && requestSequence.current === requestId
         setLoading(true)
         setError('')
         try {
           const next = await TestExplorer.wework.testing.discover(PROVIDER_ID, {
-            workspacePath: path,
+            workspacePath: requestedPath,
           })
+          if (!isCurrent()) return
           setReport(next)
           setSelected(new Set())
         } catch (reason) {
-          setError(reason instanceof Error ? reason.message : String(reason))
+          if (isCurrent()) setError(reason instanceof Error ? reason.message : String(reason))
         } finally {
-          setLoading(false)
+          if (isCurrent()) setLoading(false)
         }
       }
 
@@ -46,21 +65,26 @@ window.__ModuleLoader__.load({
 
       const runSelected = async () => {
         if (!path || loading) return
+        const requestedPath = path
+        const requestId = ++requestSequence.current
+        const isCurrent = () =>
+          activePath.current === requestedPath && requestSequence.current === requestId
         setLoading(true)
         setError('')
         setRun({ state: 'running', output: '正在启动测试…' })
         try {
-          setRun(
-            await TestExplorer.wework.testing.run(PROVIDER_ID, {
-              workspacePath: path,
-              testIds: [...selected],
-            })
-          )
+          const next = await TestExplorer.wework.testing.run(PROVIDER_ID, {
+            workspacePath: requestedPath,
+            testIds: [...selected],
+          })
+          if (isCurrent()) setRun(next)
         } catch (reason) {
-          setError(reason instanceof Error ? reason.message : String(reason))
-          setRun(null)
+          if (isCurrent()) {
+            setError(reason instanceof Error ? reason.message : String(reason))
+            setRun(null)
+          }
         } finally {
-          setLoading(false)
+          if (isCurrent()) setLoading(false)
         }
       }
 

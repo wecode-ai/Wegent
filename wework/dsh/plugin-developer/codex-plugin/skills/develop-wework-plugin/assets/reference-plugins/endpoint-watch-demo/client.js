@@ -42,11 +42,12 @@ window.__ModuleLoader__.load({
           return snapshot
         },
         async run(value = snapshot.endpoint, notify = false) {
-          const endpoint = normalizeEndpoint(value)
-          publish({ checking: true, endpoint })
-          service.configuration.update(CONFIGURATION_ID, { endpoint })
+          let endpoint = value
           const startedAt = performance.now()
           try {
+            endpoint = normalizeEndpoint(value)
+            publish({ checking: true, endpoint })
+            service.configuration.update(CONFIGURATION_ID, { endpoint })
             if (!pageCreated) {
               await service.host.browser.createBackgroundPage(PAGE_ID)
               pageCreated = true

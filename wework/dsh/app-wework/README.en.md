@@ -68,6 +68,10 @@ The package must explicitly export `./package.json`. The DSH client module
 registry resolves that subpath to read the `dsh.client` declaration; without
 the export, the plugin is omitted from the browser boot graph.
 
+Standalone plugins cannot import private Wework React hooks. Localize visible
+copy with `ctx.wework.localization.translate({ en: '...', 'zh-CN': '...' })`;
+`getLocale()` is available when formatting logic needs the active locale code.
+
 The installable example shipped by the **Wework Plugin Developer** Skill at
 [`../plugin-developer/codex-plugin/skills/develop-wework-plugin/assets/ui-extension-demo`](../plugin-developer/codex-plugin/skills/develop-wework-plugin/assets/ui-extension-demo)
 covers every extension point above.

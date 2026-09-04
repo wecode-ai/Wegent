@@ -2,19 +2,31 @@ window.__ModuleLoader__.load({
   id: '@wegent/dsh-dev-environments-demo',
   factory: require => {
     const React = require('react')
-    const { createElement, useEffect, useState } = React
+    const { createElement, useEffect, useRef, useState } = React
     const PROVIDER_ID = 'dev-environments'
     const OPEN_EVENT = 'wework-demo:open-dev-environments'
-    let activePath = ''
+    const WORKSPACE_EVENT = 'wework-demo:dev-environments-workspace'
 
     function EnvironmentStatusAction({ workspaceTarget }) {
-      activePath = workspaceTarget?.path ?? activePath
+      const workspacePath = workspaceTarget?.path ?? ''
+      useEffect(() => {
+        window.dispatchEvent(
+          new CustomEvent(WORKSPACE_EVENT, {
+            detail: { workspacePath },
+          })
+        )
+      }, [workspacePath])
       return createElement(
         'button',
         {
           type: 'button',
-          disabled: !activePath,
-          onClick: () => window.dispatchEvent(new CustomEvent(OPEN_EVENT)),
+          disabled: !workspacePath,
+          onClick: () =>
+            window.dispatchEvent(
+              new CustomEvent(OPEN_EVENT, {
+                detail: { workspacePath },
+              })
+            ),
           'aria-label': '打开开发环境',
           'data-testid': 'dev-environments-trigger',
           className:
@@ -30,48 +42,96 @@ window.__ModuleLoader__.load({
       const [report, setReport] = useState(null)
       const [loading, setLoading] = useState(false)
       const [error, setError] = useState('')
+      const activePath = useRef('')
+      const openState = useRef(false)
+      const requestSequence = useRef(0)
 
       useEffect(() => {
-        const show = () => {
-          setOpen(true)
-          void inspect()
+        const workspacePathFromEvent = event =>
+          typeof event.detail?.workspacePath === 'string' ? event.detail.workspacePath : ''
+        const updateWorkspace = event => {
+          const workspacePath = workspacePathFromEvent(event)
+          if (activePath.current === workspacePath) return
+          activePath.current = workspacePath
+          requestSequence.current += 1
+          setReport(null)
+          setError('')
+          setLoading(false)
+          if (!workspacePath) {
+            openState.current = false
+            setOpen(false)
+          } else if (openState.current) {
+            void inspect(workspacePath)
+          }
         }
+        const show = event => {
+          const workspacePath = workspacePathFromEvent(event)
+          activePath.current = workspacePath
+          requestSequence.current += 1
+          setReport(null)
+          setError('')
+          setLoading(false)
+          if (!workspacePath) {
+            openState.current = false
+            setOpen(false)
+            return
+          }
+          openState.current = true
+          setOpen(true)
+          void inspect(workspacePath)
+        }
+        window.addEventListener(WORKSPACE_EVENT, updateWorkspace)
         window.addEventListener(OPEN_EVENT, show)
-        return () => window.removeEventListener(OPEN_EVENT, show)
+        return () => {
+          window.removeEventListener(WORKSPACE_EVENT, updateWorkspace)
+          window.removeEventListener(OPEN_EVENT, show)
+        }
       }, [])
 
-      const inspect = async () => {
-        if (!activePath) return
+      const close = () => {
+        openState.current = false
+        requestSequence.current += 1
+        setLoading(false)
+        setOpen(false)
+      }
+
+      const inspect = async (workspacePath = activePath.current) => {
+        if (!workspacePath) return
+        const requestId = ++requestSequence.current
+        const isCurrent = () =>
+          activePath.current === workspacePath && requestSequence.current === requestId
         setLoading(true)
         setError('')
         try {
-          setReport(
-            await DevEnvironmentWizard.wework.environments.inspect(PROVIDER_ID, {
-              workspacePath: activePath,
-            })
-          )
+          const next = await DevEnvironmentWizard.wework.environments.inspect(PROVIDER_ID, {
+            workspacePath,
+          })
+          if (isCurrent()) setReport(next)
         } catch (reason) {
-          setError(reason instanceof Error ? reason.message : String(reason))
+          if (isCurrent()) setError(reason instanceof Error ? reason.message : String(reason))
         } finally {
-          setLoading(false)
+          if (isCurrent()) setLoading(false)
         }
       }
 
       const prepare = async () => {
-        if (!activePath || loading) return
+        const workspacePath = activePath.current
+        if (!workspacePath || loading) return
+        const requestId = ++requestSequence.current
+        const isCurrent = () =>
+          activePath.current === workspacePath && requestSequence.current === requestId
         setLoading(true)
         setError('')
         try {
-          setReport(
-            await DevEnvironmentWizard.wework.environments.prepare(PROVIDER_ID, {
-              workspacePath: activePath,
-              target: 'devcontainer',
-            })
-          )
+          const next = await DevEnvironmentWizard.wework.environments.prepare(PROVIDER_ID, {
+            workspacePath,
+            target: 'devcontainer',
+          })
+          if (isCurrent()) setReport(next)
         } catch (reason) {
-          setError(reason instanceof Error ? reason.message : String(reason))
+          if (isCurrent()) setError(reason instanceof Error ? reason.message : String(reason))
         } finally {
-          setLoading(false)
+          if (isCurrent()) setLoading(false)
         }
       }
 
@@ -108,7 +168,7 @@ window.__ModuleLoader__.load({
               'button',
               {
                 type: 'button',
-                onClick: () => setOpen(false),
+                onClick: close,
                 'aria-label': '关闭开发环境向导',
                 'data-testid': 'dev-environments-close',
                 className: 'h-8 w-8 rounded-lg text-text-secondary hover:bg-muted',
@@ -218,7 +278,7 @@ window.__ModuleLoader__.load({
               'button',
               {
                 type: 'button',
-                onClick: () => setOpen(false),
+                onClick: close,
                 'data-testid': 'dev-environments-cancel',
                 className: 'h-8 rounded-lg px-3 text-sm hover:bg-muted',
               },

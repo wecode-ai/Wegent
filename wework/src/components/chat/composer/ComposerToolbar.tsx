@@ -159,7 +159,7 @@ export function ComposerToolbar({
           supervisorEnabled={showExecutionTools && supervisorEnabled}
           supervisorPending={showExecutionTools && supervisorPending}
         />
-        <DshMenuActions location="composer.toolbar" />
+        <DshMenuActions disabled={disabled} location="composer.toolbar" />
         <div className="contents" data-testid="composer-extension-actions">
           <DshContributionSlotSurface
             attachedClassName="contents"
