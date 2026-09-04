@@ -383,6 +383,63 @@ describe('CloudConnectionProvider', () => {
     )
   })
 
+  it('prefers desktop connection settings over a stale renderer connection', async () => {
+    const staleToken = tokenWithExp()
+    saveStoredCloudConnection({
+      backendUrl: 'https://stale.example.com',
+      apiBaseUrl: 'https://stale.example.com/api',
+      socketBaseUrl: 'wss://stale.example.com',
+      socketPath: '/socket.io',
+      webUrl: 'https://stale.example.com',
+      credentialMode: 'legacy_access_token',
+      token: staleToken,
+      tokenExpiresAt: getJwtExpiry(staleToken),
+      user: { id: 99, user_name: 'stale', email: 'stale@example.com' },
+      connectedAt: '2026-08-27T00:00:00.000Z',
+    })
+    const desktopConnection = {
+      backendUrl: 'http://127.0.0.1:8000',
+      apiBaseUrl: 'http://127.0.0.1:8000/api',
+      socketBaseUrl: 'http://127.0.0.1:8000',
+      socketPath: '/socket.io',
+      webUrl: 'http://127.0.0.1:3000',
+      credentialMode: 'desktop_refresh' as const,
+      user: { id: 2, user_name: 'local', email: 'local@example.com' },
+      connectedAt: '2026-08-31T00:00:00.000Z',
+    }
+    await updateAppPreferences({ cloudConnection: desktopConnection })
+    httpMocks.get.mockImplementation((endpoint: string) => {
+      if (endpoint === '/auth/wework/config') {
+        return Promise.resolve({
+          web_url: 'http://127.0.0.1:3000',
+          socket_url: 'http://127.0.0.1:8000',
+        })
+      }
+      if (endpoint === '/users/me') return Promise.resolve(desktopConnection.user)
+      return Promise.reject(new Error(`Unexpected GET ${endpoint}`))
+    })
+
+    render(
+      <CloudConnectionProvider>
+        <CloudSocketProbe />
+      </CloudConnectionProvider>
+    )
+
+    await waitFor(() => {
+      expect(JSON.parse(localStorage.getItem('wework.cloudConnection') || '{}')).toMatchObject({
+        backendUrl: 'http://127.0.0.1:8000',
+        user: { id: 2, user_name: 'local' },
+      })
+      expect(screen.getByTestId('cloud-connection-status')).toHaveTextContent('connected')
+    })
+    expect(createHttpClient).toHaveBeenCalledWith(
+      expect.objectContaining({ baseUrl: 'http://127.0.0.1:8000/api' })
+    )
+    expect(createHttpClient).not.toHaveBeenCalledWith(
+      expect.objectContaining({ baseUrl: 'https://stale.example.com/api' })
+    )
+  })
+
   it('does not restore stale desktop preferences after disconnecting', async () => {
     const storedConnection = {
       backendUrl: 'https://cloud.example.com',

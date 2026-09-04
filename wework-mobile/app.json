@@ -1,0 +1,42 @@
+{
+  "expo": {
+    "name": "WeWork",
+    "slug": "wework-mobile",
+    "scheme": "wework",
+    "version": "0.1.0",
+    "icon": "./assets/icon.png",
+    "orientation": "portrait",
+    "userInterfaceStyle": "automatic",
+    "ios": {
+      "supportsTablet": true,
+      "icon": "./assets/icon.png",
+      "bundleIdentifier": "io.wecode.wework",
+      "buildNumber": "2",
+      "appleTeamId": "27XH7KRW54",
+      "config": {
+        "usesNonExemptEncryption": false
+      }
+    },
+    "android": {
+      "package": "com.wecode.wegent",
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/icon.png",
+        "backgroundColor": "#ffffff"
+      },
+      "predictiveBackGestureEnabled": true
+    },
+    "plugins": [
+      "expo-secure-store",
+      "expo-web-browser",
+      "expo-document-picker",
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "允许 WeWork 选择照片并作为会话附件发送。",
+          "cameraPermission": "允许 WeWork 拍摄照片并作为会话附件发送。",
+          "microphonePermission": false
+        }
+      ]
+    ]
+  }
+}

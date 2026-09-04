@@ -4,12 +4,12 @@
 
 'use client'
 
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { codeWikiApi } from '@/apis/code-wiki'
 import type { CodeWikiRunStatus } from '@/types/code-wiki'
 
 /** How often to ask again while a run is going. */
-const POLL_INTERVAL_MS = 5000
+const POLL_INTERVAL_MS = 10_000
 
 export interface RunStatusView {
   status: CodeWikiRunStatus | null
@@ -21,7 +21,7 @@ export interface RunStatusView {
 /**
  * What is being done to a wiki, kept current while something is.
  *
- * Polled rather than pushed: a run takes minutes, so the cost of asking every few
+ * Polled rather than pushed: a run takes minutes, so the cost of asking every ten
  * seconds is small next to a socket, and the answer is only needed while a reader is
  * looking at the page. Polling stops as soon as the run ends.
  *
@@ -31,43 +31,45 @@ export interface RunStatusView {
  */
 export function useCodeWikiRunStatus(knowledgeBaseId: number): RunStatusView {
   const [status, setStatus] = useState<CodeWikiRunStatus | null>(null)
-  const timer = useRef<ReturnType<typeof setTimeout> | null>(null)
 
-  const load = useCallback(async () => {
+  const load = useCallback(async (): Promise<CodeWikiRunStatus | null> => {
     try {
-      setStatus(await codeWikiApi.status(knowledgeBaseId))
+      const next = await codeWikiApi.status(knowledgeBaseId)
+      setStatus(next)
+      return next
     } catch {
       // A status that cannot be read must not disable the button: the reader would
       // then be unable to act because of a failure unrelated to the wiki.
-      setStatus(null)
+      // Keep an observed run active across a transient request failure as well. If
+      // this poll replaced it with null, the state-driven timer would stop and one
+      // network hiccup could leave the progress frozen until a page refresh.
+      setStatus(current => (current?.status === 'running' ? current : null))
+      return null
     }
   }, [knowledgeBaseId])
 
   useEffect(() => {
-    let cancelled = false
+    void load()
+  }, [load])
 
-    const tick = async () => {
-      if (cancelled) return
-      await load()
-      if (cancelled) return
-      timer.current = setTimeout(tick, POLL_INTERVAL_MS)
+  useEffect(() => {
+    if (status?.status !== 'running') return
+
+    let cancelled = false
+    let timer: ReturnType<typeof setTimeout> | null = null
+    const schedule = () => {
+      timer = setTimeout(async () => {
+        const next = await load()
+        if (!cancelled && (!next || next.status === 'running')) schedule()
+      }, POLL_INTERVAL_MS)
     }
-    void tick()
+    schedule()
 
     return () => {
       cancelled = true
-      if (timer.current) clearTimeout(timer.current)
+      if (timer) clearTimeout(timer)
     }
-  }, [load])
-
-  // Stop asking once nothing is happening. Kept as a separate effect so the polling
-  // loop above does not need to know the answer it is about to receive.
-  useEffect(() => {
-    if (status && status.status !== 'running' && timer.current) {
-      clearTimeout(timer.current)
-      timer.current = null
-    }
-  }, [status])
+  }, [load, status?.generation_id, status?.status])
 
   return {
     status,

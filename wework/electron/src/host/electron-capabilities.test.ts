@@ -1,5 +1,6 @@
 import { describe, expect, test, vi } from 'vitest'
 import type { WebContents } from 'electron'
+import { resolve } from 'node:path'
 import type { EmbeddedBrowserManager } from './embedded-browser-manager.js'
 import type {
   HostCapability,
@@ -9,10 +10,12 @@ import type {
 import {
   captureWebContentsDataUrl,
   cpuLoadRatioBetween,
+  e2eOpenDialogOverride,
   registerAppUpdateCapabilities,
   registerBrowserHistoryCapabilities,
   registerCoreDshPluginCapabilities,
   registerDesktopServiceCapabilities,
+  registerPluginDevelopmentCapabilities,
   registerRendererStorageCapabilities,
   showElectronNotification,
 } from './electron-capabilities.js'
@@ -28,6 +31,25 @@ describe('cpuLoadRatioBetween', () => {
       0.7
     )
     expect(cpuLoadRatioBetween({ idle: 100, total: 200 }, { idle: 100, total: 200 })).toBe(0)
+  })
+})
+
+describe('e2eOpenDialogOverride', () => {
+  test('returns the selected directory only for a controlled desktop E2E process', () => {
+    expect(
+      e2eOpenDialogOverride({
+        WEWORK_E2E_CONTROL_URL: 'http://127.0.0.1:1234',
+        WEWORK_E2E_OPEN_DIALOG_PATH: '/workspace/plugin',
+      })
+    ).toEqual({
+      canceled: false,
+      filePaths: [resolve('/workspace/plugin')],
+    })
+  })
+
+  test('does not bypass the native dialog without both E2E signals', () => {
+    expect(e2eOpenDialogOverride({ WEWORK_E2E_OPEN_DIALOG_PATH: '/workspace/plugin' })).toBeNull()
+    expect(e2eOpenDialogOverride({ WEWORK_E2E_CONTROL_URL: 'http://127.0.0.1:1234' })).toBeNull()
   })
 })
 
@@ -118,24 +140,26 @@ function createWebContents(input: {
 
 describe('captureWebContentsDataUrl', () => {
   test('uses Electron native capturePage for the visible composed surface', async () => {
-    const { contents, debuggerSession } = createWebContents({
+    const { capturePage, contents, debuggerSession } = createWebContents({
       captureDataUrl: 'data:image/png;base64,native-capture',
     })
+    const rect = { x: 10, y: 20, width: 30, height: 40 }
 
-    await expect(captureWebContentsDataUrl(contents)).resolves.toBe(
+    await expect(captureWebContentsDataUrl(contents, { rect })).resolves.toBe(
       'data:image/png;base64,native-capture'
     )
+    expect(capturePage).toHaveBeenCalledWith(rect)
     expect(debuggerSession.attach).not.toHaveBeenCalled()
     expect(debuggerSession.sendCommand).not.toHaveBeenCalled()
   })
 
-  test('can use debugger-only view capture without blocking on Electron capturePage', async () => {
+  test('can prefer debugger view capture without blocking on Electron capturePage', async () => {
     const { capturePage, contents, debuggerSession } = createWebContents({
       captureDataUrl: 'data:image/png;base64,native-capture',
       debuggerData: 'debugger-capture',
     })
 
-    await expect(captureWebContentsDataUrl(contents, { debuggerOnly: true })).resolves.toBe(
+    await expect(captureWebContentsDataUrl(contents, { preferDebugger: true })).resolves.toBe(
       'data:image/png;base64,debugger-capture'
     )
     expect(debuggerSession.attach).toHaveBeenCalledOnce()
@@ -148,35 +172,41 @@ describe('captureWebContentsDataUrl', () => {
     expect(capturePage).not.toHaveBeenCalled()
   })
 
-  test('times out debugger-only capture and detaches the session', async () => {
+  test('falls back to native capture when preferred debugger capture times out', async () => {
     vi.useFakeTimers()
     try {
-      const { contents, debuggerSession } = createWebContents({
+      const { capturePage, contents, debuggerSession } = createWebContents({
+        captureDataUrl: 'data:image/png;base64,native-after-debugger-timeout',
         debuggerPending: true,
       })
 
-      const capture = expect(
-        captureWebContentsDataUrl(contents, { debuggerOnly: true })
-      ).rejects.toThrow(
-        'CDP Page.captureScreenshot failed: CDP Page.captureScreenshot timed out after 10000ms'
-      )
+      const capture = captureWebContentsDataUrl(contents, { preferDebugger: true })
       await vi.advanceTimersByTimeAsync(10_000)
-      await capture
+
+      await expect(capture).resolves.toBe('data:image/png;base64,native-after-debugger-timeout')
       expect(debuggerSession.detach).toHaveBeenCalledOnce()
+      expect(capturePage).toHaveBeenCalledOnce()
     } finally {
       vi.useRealTimers()
     }
   })
 
   test('reports both capture failures', async () => {
-    const { contents } = createWebContents({
+    const { contents, debuggerSession } = createWebContents({
       captureError: new Error('UnknownVizError'),
       debuggerError: new Error('DebuggerCaptureError'),
     })
+    const rect = { x: 10, y: 20, width: 30, height: 40 }
 
-    await expect(captureWebContentsDataUrl(contents)).rejects.toThrow(
+    await expect(captureWebContentsDataUrl(contents, { rect })).rejects.toThrow(
       'Electron capturePage failed: UnknownVizError; CDP Page.captureScreenshot failed: DebuggerCaptureError'
     )
+    expect(debuggerSession.sendCommand).toHaveBeenCalledWith('Page.captureScreenshot', {
+      captureBeyondViewport: false,
+      format: 'png',
+      fromSurface: true,
+      clip: { ...rect, scale: 1 },
+    })
   })
 
   test('falls back to the debugger when Electron native capture hangs', async () => {
@@ -525,5 +555,56 @@ describe('registerCoreDshPluginCapabilities', () => {
     expect(coreDshPlugins.updateCoreDshPlugin).toHaveBeenCalledWith('dsh-example')
     expect(coreDshPlugins.setCoreDshPluginEnabled).toHaveBeenCalledWith('dsh-example', false)
     expect(coreDshPlugins.uninstallCoreDshPlugin).toHaveBeenCalledWith('dsh-example')
+  })
+})
+
+describe('registerPluginDevelopmentCapabilities', () => {
+  test('forwards isolated Wework lifecycle operations', async () => {
+    const handlers = new Map<HostCapability, HostCapabilityHandler>()
+    const router = {
+      register: vi.fn((capability: HostCapability, handler: HostCapabilityHandler) => {
+        handlers.set(capability, handler)
+      }),
+    } as unknown as HostCapabilityRouter
+    const pluginDevelopment = {
+      deleteData: vi.fn(async () => undefined),
+      focus: vi.fn(async () => undefined),
+      list: vi.fn(async () => []),
+      openDevTools: vi.fn(async () => undefined),
+      openLogDirectory: vi.fn(async () => undefined),
+      restartCoreDsh: vi.fn(async () => undefined),
+      start: vi.fn(async () => ({})),
+      stop: vi.fn(async () => undefined),
+      validate: vi.fn(async () => ({})),
+    }
+    const services = {
+      pluginDevelopment: () => pluginDevelopment,
+    }
+
+    registerPluginDevelopmentCapabilities(router, services)
+    await handlers.get('pluginDevelopment.list')?.({}, { principal: 'test' })
+    await handlers.get('pluginDevelopment.validate')?.(
+      { sourceRoot: '/workspace/plugin' },
+      { principal: 'test' }
+    )
+    await handlers.get('pluginDevelopment.start')?.(
+      { sourceRoot: '/workspace/plugin' },
+      { principal: 'test' }
+    )
+    await handlers.get('pluginDevelopment.focus')?.({}, { principal: 'test' })
+    await handlers.get('pluginDevelopment.restartCoreDsh')?.({}, { principal: 'test' })
+    await handlers.get('pluginDevelopment.openDevTools')?.({}, { principal: 'test' })
+    await handlers.get('pluginDevelopment.openLogDirectory')?.({}, { principal: 'test' })
+    await handlers.get('pluginDevelopment.stop')?.({}, { principal: 'test' })
+    await handlers.get('pluginDevelopment.deleteData')?.({}, { principal: 'test' })
+
+    expect(pluginDevelopment.validate).toHaveBeenCalledWith('/workspace/plugin')
+    expect(pluginDevelopment.start).toHaveBeenCalledWith('/workspace/plugin')
+    expect(pluginDevelopment.focus).toHaveBeenCalledOnce()
+    expect(pluginDevelopment.restartCoreDsh).toHaveBeenCalledOnce()
+    expect(pluginDevelopment.openDevTools).toHaveBeenCalledOnce()
+    expect(pluginDevelopment.openLogDirectory).toHaveBeenCalledOnce()
+    expect(pluginDevelopment.stop).toHaveBeenCalledOnce()
+    expect(pluginDevelopment.deleteData).toHaveBeenCalledOnce()
   })
 })

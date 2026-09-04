@@ -46,3 +46,44 @@ class AdminMarketplaceResourceUpdate(BaseModel):
         default=None,
         max_length=10,
     )
+
+
+class AdminMarketplaceSmartApp(BaseModel):
+    """One public Smart app available for marketplace curation."""
+
+    id: int
+    name: str
+    display_name: str
+    summary: str = ""
+    description_md: str = ""
+    tags: list[str] = Field(default_factory=list)
+    icon_url: str = ""
+    publisher_user_name: str | None = None
+    is_system: bool
+    featured_rank: int
+    is_listed: bool
+    needs_metadata: bool
+
+
+class AdminMarketplaceSmartAppList(BaseModel):
+    """Paginated public Smart app marketplace response."""
+
+    items: list[AdminMarketplaceSmartApp]
+    total: int
+    page: int
+    limit: int
+
+
+class AdminMarketplaceSmartAppUpdate(BaseModel):
+    """Editable Smart app marketplace curation fields."""
+
+    featured_rank: int | None = Field(default=None, ge=0, le=100)
+    is_listed: bool | None = None
+
+
+class AdminMarketplaceSmartAppMetadataUpdate(BaseModel):
+    """Editable marketplace presentation for an official Smart app."""
+
+    summary: str = Field(min_length=1, max_length=500)
+    description_md: str = Field(min_length=1, max_length=8192)
+    tags: list[str] = Field(min_length=1, max_length=3)

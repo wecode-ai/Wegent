@@ -50,6 +50,7 @@ import {
   teamSupportsBothGenerationModes,
   type TeamModeFilter,
 } from '../selector/team-selector-utils'
+import { getVideoParamVisibility } from '../../utils/teamModeSpec'
 
 export interface ChatInputControlsProps {
   /** Task type to determine which controls to show */
@@ -61,6 +62,8 @@ export interface ChatInputControlsProps {
   /** Available teams for team selector */
   teams?: Team[]
   onTeamChange?: (team: Team) => void
+  onClearTeam?: () => void
+  showClearTeamButton?: boolean
   /** Callback to refresh teams list after creation */
   onTeamsRefresh?: () => Promise<void>
   selectedModel: Model | null
@@ -205,6 +208,8 @@ export function ChatInputControls({
   selectedTeam,
   teams = [],
   onTeamChange,
+  onClearTeam,
+  showClearTeamButton = false,
   onTeamsRefresh,
   selectedModel,
   setSelectedModel,
@@ -294,6 +299,8 @@ export function ChatInputControls({
   // Check if we're in video or image mode
   const isVideoMode = taskType === 'video' || showVideoControlsInChat
   const isImageMode = taskType === 'image'
+  const hiddenVideoParams = selectedTeam?.mode_spec?.hiddenVideoParams ?? []
+  const videoParamVisibility = getVideoParamVisibility(hiddenVideoParams, !hideDurationSelector)
   // Check if we're in generation mode (video or image)
   const isGenerationMode = isVideoMode || isImageMode
   // Always use compact mode (icon only) to save space
@@ -402,6 +409,8 @@ export function ChatInputControls({
         selectedTeam={selectedTeam}
         teams={teams}
         onTeamChange={onTeamChange}
+        onClearTeam={onClearTeam}
+        showClearTeamButton={showClearTeamButton}
         taskType={taskType}
         teamModeFilter={teamModeFilter}
         selectedModel={selectedModel}
@@ -458,6 +467,9 @@ export function ChatInputControls({
         selectedVideoModel={selectedVideoModel}
         onVideoModelChange={onVideoModelChange}
         isVideoModelsLoading={isVideoModelsLoading}
+        selectedImageModel={selectedImageModel}
+        onImageModelChange={onImageModelChange}
+        isImageModelsLoading={isImageModelsLoading}
         showVideoControlsInChat={showVideoControlsInChat}
         selectedResolution={selectedResolution}
         onResolutionChange={onResolutionChange}
@@ -481,7 +493,7 @@ export function ChatInputControls({
   const compactVideoControls = isVideoMode && shouldCollapseSelectors
   const compactVideoMenuItems = compactVideoControls ? (
     <>
-      {onVideoModelChange && (
+      {videoParamVisibility.showModel && onVideoModelChange && (
         <ModelSelector
           selectedModel={selectedVideoModel ?? null}
           setSelectedModel={model => model && onVideoModelChange(model)}
@@ -558,7 +570,7 @@ export function ChatInputControls({
               />
             )}
             {/* Video Model Selector - using unified ModelSelector with video category */}
-            {!compactVideoControls && onVideoModelChange && (
+            {!compactVideoControls && videoParamVisibility.showModel && onVideoModelChange && (
               <ModelSelector
                 selectedModel={selectedVideoModel ?? null}
                 setSelectedModel={model => model && onVideoModelChange(model)}
@@ -572,24 +584,28 @@ export function ChatInputControls({
             )}
 
             {/* Unified Video Settings Popover (ratio + duration + resolution) */}
-            {onResolutionChange && onRatioChange && onDurationChange && (
-              <VideoSettingsPopover
-                selectedRatio={selectedRatio}
-                onRatioChange={onRatioChange}
-                availableRatios={availableRatios ?? ['16:9', '9:16', '1:1']}
-                ratioOptions={ratioOptions}
-                selectedDuration={selectedDuration}
-                onDurationChange={onDurationChange}
-                availableDurations={availableDurations ?? [5, 10]}
-                selectedResolution={selectedResolution}
-                onResolutionChange={onResolutionChange}
-                availableResolutions={availableResolutions ?? ['480p', '720p', '1080p']}
-                resolutionOptions={resolutionOptions}
-                disabled={isStreaming}
-                showDuration={!hideDurationSelector}
-                iconOnly={compactVideoControls}
-              />
-            )}
+            {videoParamVisibility.showSettings &&
+              onResolutionChange &&
+              onRatioChange &&
+              onDurationChange && (
+                <VideoSettingsPopover
+                  selectedRatio={selectedRatio}
+                  onRatioChange={onRatioChange}
+                  availableRatios={availableRatios ?? ['16:9', '9:16', '1:1']}
+                  ratioOptions={ratioOptions}
+                  selectedDuration={selectedDuration}
+                  onDurationChange={onDurationChange}
+                  availableDurations={availableDurations ?? [5, 10]}
+                  selectedResolution={selectedResolution}
+                  onResolutionChange={onResolutionChange}
+                  availableResolutions={availableResolutions ?? ['480p', '720p', '1080p']}
+                  resolutionOptions={resolutionOptions}
+                  disabled={isStreaming}
+                  showDuration={!hideDurationSelector}
+                  hiddenVideoParams={hiddenVideoParams}
+                  iconOnly={compactVideoControls}
+                />
+              )}
             {compactVideoMenuItems && (
               <InputMoreActionsMenu
                 showClarification={false}

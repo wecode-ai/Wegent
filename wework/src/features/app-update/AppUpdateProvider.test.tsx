@@ -116,7 +116,7 @@ describe('AppUpdateProvider', () => {
     })
 
     expect(appUpdate?.autoUpdateEnabled).toBe(true)
-    expect(downloadPendingWeworkUpdate).toHaveBeenCalledWith()
+    expect(downloadPendingWeworkUpdate).toHaveBeenCalledWith(expect.any(Function))
     expect(appUpdate?.downloadProgress).toBeNull()
     expect(appUpdate?.status).toBe('available')
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
@@ -133,15 +133,19 @@ describe('AppUpdateProvider', () => {
   test('waits for an active background download before asking for restart confirmation', async () => {
     let appUpdate: AppUpdateContextValue | null = null
     let finishDownload: (() => void) | undefined
+    let reportProgress:
+      | ((progress: { downloadedBytes: number; totalBytes: number | null }) => void)
+      | undefined
     let updateRequest: Promise<void> | undefined
     vi.mocked(checkForWeworkUpdate).mockResolvedValue({
       currentVersion: '0.1.0',
       version: '0.2.0',
     })
     vi.mocked(downloadPendingWeworkUpdate).mockImplementation(
-      () =>
+      onProgress =>
         new Promise(resolve => {
           finishDownload = resolve
+          reportProgress = onProgress
         })
     )
 
@@ -167,6 +171,11 @@ describe('AppUpdateProvider', () => {
     expect(appUpdate?.status).toBe('downloading')
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
     expect(downloadPendingWeworkUpdate).toHaveBeenCalledTimes(1)
+
+    act(() => {
+      reportProgress?.({ downloadedBytes: 50, totalBytes: 100 })
+    })
+    expect(appUpdate?.downloadProgress).toEqual({ downloadedBytes: 50, totalBytes: 100 })
 
     if (!finishDownload) {
       throw new Error('Background download resolver was not initialized')
@@ -235,7 +244,7 @@ describe('AppUpdateProvider', () => {
     })
 
     expect(localStorage.getItem(APP_UPDATE_AUTO_DOWNLOAD_KEY)).toBe('true')
-    expect(downloadPendingWeworkUpdate).toHaveBeenCalledWith()
+    expect(downloadPendingWeworkUpdate).toHaveBeenCalledWith(expect.any(Function))
     expect(appUpdate?.downloadProgress).toBeNull()
   })
 
@@ -332,7 +341,39 @@ describe('AppUpdateProvider', () => {
     })
 
     expect(appUpdate?.status).toBe('upToDate')
-    expect(appUpdate?.message).toBe('upToDate')
+  })
+
+  test('normalizes an HTML network failure before publishing update state', async () => {
+    let appUpdate: AppUpdateContextValue | null = null
+    vi.mocked(checkForWeworkUpdate).mockRejectedValue(
+      new Error(
+        '<!doctype html><style>body{color:red}</style><body>SGErrorDomain EOF https://internal.example/update</body>'
+      )
+    )
+
+    const Probe = () => {
+      appUpdate = useAppUpdate()
+      return null
+    }
+
+    render(
+      <AppUpdateProvider>
+        <Probe />
+      </AppUpdateProvider>
+    )
+
+    await act(async () => {
+      await appUpdate?.checkNow()
+    })
+
+    expect(appUpdate?.status).toBe('error')
+    expect(appUpdate?.error).toEqual({
+      stage: 'check',
+      kind: 'network',
+      code: 'APP_UPDATE_NETWORK_UNAVAILABLE',
+      occurredAt: Date.now(),
+      detail: null,
+    })
   })
 
   test('wakes hourly but only checks the update source after 24 hours', async () => {
@@ -598,7 +639,12 @@ describe('AppUpdateProvider', () => {
 
     expect(checkForWeworkUpdate).toHaveBeenCalledTimes(2)
     expect(appUpdate?.status).toBe('available')
-    expect(appUpdate?.error).toBe('The signature verification failed')
+    expect(appUpdate?.error).toMatchObject({
+      stage: 'install',
+      kind: 'generic',
+      code: 'APP_UPDATE_INSTALL_FAILED',
+      detail: 'The signature verification failed',
+    })
     expect(localStorage.getItem(APP_UPDATE_PENDING_RELEASE_NOTES_KEY)).toBeNull()
 
     await act(async () => {

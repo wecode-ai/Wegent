@@ -51,6 +51,7 @@ import {
   streamingTextEvents,
   telemetryEvents,
 } from './response-protocol.mjs'
+import { tmpdir } from 'node:os'
 
 import {
   ANTHROPIC_EMPTY_COMPLETION_TEXT,
@@ -124,6 +125,9 @@ import {
   GUIDANCE_SCROLL_PROMPT,
   GUIDANCE_SCROLL_RESPONSE,
   LATER_TOOL_BLOCK_ID,
+  LOCAL_MARKDOWN_IMAGE_ALT,
+  LOCAL_MARKDOWN_IMAGE_FILENAME,
+  LOCAL_MARKDOWN_IMAGE_PROMPT,
   LOCAL_MODEL_CASES,
   LOCAL_MODEL_SWITCH_COMPLETE,
   LOCAL_MODEL_SWITCH_FOLLOW_UP_PROMPT,
@@ -193,6 +197,7 @@ import {
   REQUEST_USER_INPUT_PROMPT,
   REQUEST_USER_INPUT_QUESTION,
   RETRY_COMPLETION_TEXT,
+  RETRY_CONTINUATION_PROMPT,
   RETRY_FAILURE_TEXT,
   RETRY_PROMPT,
   RUNNING_FORK_COMPLETION_TEXT,
@@ -236,6 +241,9 @@ import {
 } from './shared.mjs'
 
 const DESKTOP_CONTROL_COMMAND_INTERVAL_MS = 250
+const CLOUD_STORED_USER_NAME = 'wework-desktop-e2e-cloud-user'
+const CLOUD_AUTHENTICATED_USER_NAME = 'admin'
+const CLOUD_RUNTIME_IDENTITY_TOOL_CALL_ID = 'wework-cloud-e2e-identity-tool-call'
 const PLUGIN_WORKSPACE_PUBLISH_CALL_ID = 'wework-plugin-workspace-publish'
 const PLUGIN_WORKSPACE_PUBLISH_COMMAND_PREFIX = 'Run this exact command: '
 const PLUGIN_WORKSPACE_RESULT_MARKER = '[WEGENT_PLUGIN_RESULT]'
@@ -245,6 +253,7 @@ const ELECTRON_OBSERVATION_ACTIONS = new Set([
   'activeElement',
   'getAttribute',
   'getElementCount',
+  'getTerminalText',
   'getText',
   'metrics',
   'snapshot',
@@ -267,6 +276,33 @@ function findNestedString(value, predicate) {
     if (match) return match
   }
   return null
+}
+
+function requestContainsSkillLocator(body, skillPath, skillName) {
+  const requestText = JSON.stringify(body)
+  if (requestText.includes(skillPath)) return true
+
+  const normalizedSkillPath = skillPath.replaceAll('\\', '/')
+  const relativeSkillPath = `${skillName}/SKILL.md`
+  const skillRoot = normalizedSkillPath.slice(0, -relativeSkillPath.length).replace(/\/$/u, '')
+  const catalog = findNestedString(
+    body,
+    value => value.includes('### Skill roots') && value.includes(relativeSkillPath)
+  )
+  if (!catalog) return false
+
+  for (const line of catalog.split(/\r?\n/u)) {
+    const rootMatch = line.match(/^- `([^`]+)` = `([^`]+)`$/u)
+    if (!rootMatch) continue
+    const [, alias, root] = rootMatch
+    if (
+      root.replaceAll('\\', '/') === skillRoot &&
+      catalog.includes(`(file: ${alias}/${relativeSkillPath})`)
+    ) {
+      return true
+    }
+  }
+  return false
 }
 
 function toolOutputText(request, callId) {
@@ -306,18 +342,17 @@ function pluginWorkspacePublishCommand(body) {
 }
 
 function publishedPluginWorkspaceResult(body) {
+  const completedStatus = /"status":"(?:published|pending_review)"/u
   const output = findNestedString(
     body,
-    value =>
-      value.includes(PLUGIN_WORKSPACE_RESULT_MARKER) && value.includes('"status":"published"')
+    value => value.includes(PLUGIN_WORKSPACE_RESULT_MARKER) && completedStatus.test(value)
   )
   if (!output) return null
   const line = output
     .split(/\r?\n/u)
     .find(
       candidate =>
-        candidate.includes(PLUGIN_WORKSPACE_RESULT_MARKER) &&
-        candidate.includes('"status":"published"')
+        candidate.includes(PLUGIN_WORKSPACE_RESULT_MARKER) && completedStatus.test(candidate)
     )
   if (!line) return null
   return line.slice(line.indexOf(PLUGIN_WORKSPACE_RESULT_MARKER))
@@ -390,6 +425,9 @@ class DesktopE2EServer {
     this.failedCloudModelWaiter = null
     this.sitesPluginInstalled = false
     this.sitesPluginDeviceId = null
+    this.siteEnvironmentRevision = 0
+    this.siteEnvironmentVariables = []
+    this.siteCollaborators = []
     this.miniProgramPluginInstalled = false
     this.miniProgramPluginDeviceId = null
     this.sitesConnectionBootstrapRequests = 0
@@ -515,6 +553,9 @@ class DesktopE2EServer {
     })
     this.toolBlockGenericRelease = new Promise(resolvePromise => {
       this.releaseToolBlockGeneric = resolvePromise
+    })
+    this.cloudInitialRelease = new Promise(resolvePromise => {
+      this.releaseCloudInitial = resolvePromise
     })
     this.cloudFollowUpRelease = new Promise(resolvePromise => {
       this.releaseCloudFollowUp = resolvePromise
@@ -742,8 +783,10 @@ class DesktopE2EServer {
         'vision_sidecar',
         'multimodal_vision',
         'view_image',
+        'local_markdown_image',
         'tool_block_order',
         'official_plugin',
+        'plugin_development',
         'automation',
         'skill_mention_display',
         'connector_auth_unmatched_resume',
@@ -942,6 +985,10 @@ class DesktopE2EServer {
     this.goalRestartResumeRequested = true
   }
 
+  releaseCloudInitialResponse() {
+    this.releaseCloudInitial()
+  }
+
   releaseCloudFollowUpResponse() {
     this.releaseCloudFollowUp()
   }
@@ -1107,7 +1154,7 @@ class DesktopE2EServer {
     if (request.method === 'GET' && url.pathname === '/api/users/me') {
       json(response, 200, {
         id: 9001,
-        user_name: 'wework-desktop-e2e-cloud-user',
+        user_name: CLOUD_STORED_USER_NAME,
         email: 'desktop-e2e@wework.local',
       })
       return
@@ -1227,7 +1274,7 @@ class DesktopE2EServer {
             app_type: 'web',
             enabled: true,
             order: 10,
-            capabilities: ['create', 'publish', 'edit', 'delete'],
+            capabilities: ['create', 'publish', 'edit', 'delete', 'configure_environment'],
             create: {
               plugin_name: 'wegent-sites',
               marketplace_name: 'wegent',
@@ -1259,6 +1306,8 @@ class DesktopE2EServer {
                 siteid: 'prj_e2e_mini',
                 taskid: 'prj_e2e_mini',
                 username: 'wework-desktop-e2e-cloud-user',
+                owner_username: 'wework-desktop-e2e-cloud-user',
+                access_role: 'owner',
                 name: 'E2E Mini Program',
                 slug: 'prj_e2e_mini',
                 app_id: 'wx-e2e-mini',
@@ -1276,6 +1325,8 @@ class DesktopE2EServer {
                 siteid: 'prj_e2e_product',
                 taskid: 'prj_e2e_product',
                 username: 'wework-desktop-e2e-cloud-user',
+                owner_username: 'wework-desktop-e2e-cloud-user',
+                access_role: 'owner',
                 name: 'E2E Product Site',
                 slug: 'prj_e2e_product',
                 internal_url: 'https://sites.internal/e2e-product',
@@ -1297,6 +1348,106 @@ class DesktopE2EServer {
         offset: Number.parseInt(url.searchParams.get('offset') || '0', 10),
         limit: Number.parseInt(url.searchParams.get('limit') || '20', 10),
       })
+      return
+    }
+
+    if (
+      url.pathname === '/api/sites/prj_e2e_product/environment-variables' &&
+      request.method === 'GET'
+    ) {
+      json(response, 200, {
+        revision_id:
+          this.siteEnvironmentRevision > 0 ? `env_e2e_${this.siteEnvironmentRevision}` : null,
+        project_id: 'prj_e2e_product',
+        revision_number: this.siteEnvironmentRevision,
+        items: this.siteEnvironmentVariables,
+      })
+      return
+    }
+    if (
+      url.pathname === '/api/sites/prj_e2e_product/environment-variables' &&
+      request.method === 'PATCH'
+    ) {
+      assert.ok(
+        typeof request.headers['idempotency-key'] === 'string' &&
+          request.headers['idempotency-key'].length > 0,
+        'Updating Site environment variables did not include an Idempotency-Key'
+      )
+      const body = await readRequestBody(request)
+      assert.ok(Array.isArray(body.operations))
+      for (const operation of body.operations) {
+        if (operation.op === 'remove') {
+          this.siteEnvironmentVariables = this.siteEnvironmentVariables.filter(
+            item => item.key !== operation.key
+          )
+          continue
+        }
+        assert.equal(operation.op, 'upsert')
+        const item =
+          operation.type === 'secret'
+            ? {
+                key: operation.key,
+                type: 'secret',
+                configured: true,
+                updated_by: 'wework-desktop-e2e-cloud-user',
+                updated_at: '2026-09-03T00:00:00Z',
+              }
+            : {
+                key: operation.key,
+                type: 'plain',
+                value: operation.value,
+                updated_by: 'wework-desktop-e2e-cloud-user',
+                updated_at: '2026-09-03T00:00:00Z',
+              }
+        this.siteEnvironmentVariables = [
+          ...this.siteEnvironmentVariables.filter(existing => existing.key !== operation.key),
+          item,
+        ]
+      }
+      this.siteEnvironmentRevision += 1
+      json(response, 201, {
+        id: `env_e2e_${this.siteEnvironmentRevision}`,
+        project_id: 'prj_e2e_product',
+        revision_number: this.siteEnvironmentRevision,
+        variables: this.siteEnvironmentVariables,
+        created_by: 'wework-desktop-e2e-cloud-user',
+        created_at: '2026-09-03T00:00:00Z',
+      })
+      return
+    }
+
+    const siteCollaboratorsMatch = url.pathname.match(
+      /^\/api\/sites\/prj_e2e_product\/collaborators(?:\/([^/]+))?$/
+    )
+    if (siteCollaboratorsMatch && request.method === 'GET' && !siteCollaboratorsMatch[1]) {
+      json(response, 200, { items: this.siteCollaborators })
+      return
+    }
+    if (siteCollaboratorsMatch && request.method === 'POST' && !siteCollaboratorsMatch[1]) {
+      assert.ok(
+        typeof request.headers['idempotency-key'] === 'string' &&
+          request.headers['idempotency-key'].length > 0,
+        'Adding a Site collaborator did not include an Idempotency-Key'
+      )
+      const body = await readRequestBody(request)
+      assert.equal(typeof body.subject, 'string')
+      const collaborator = {
+        subject: body.subject,
+        added_by: 'wework-desktop-e2e-cloud-user',
+        created_at: '2026-09-03T00:00:00Z',
+      }
+      this.siteCollaborators = [
+        ...this.siteCollaborators.filter(item => item.subject !== collaborator.subject),
+        collaborator,
+      ]
+      json(response, 201, collaborator)
+      return
+    }
+    if (siteCollaboratorsMatch && request.method === 'DELETE' && siteCollaboratorsMatch[1]) {
+      const subject = decodeURIComponent(siteCollaboratorsMatch[1])
+      this.siteCollaborators = this.siteCollaborators.filter(item => item.subject !== subject)
+      response.writeHead(204)
+      response.end()
       return
     }
 
@@ -2037,6 +2188,21 @@ class DesktopE2EServer {
       return
     }
 
+    if (this.scenario === 'local_markdown_image') {
+      this.recordScenarioRequest('local_markdown_image', modelRequest)
+      assert.ok(
+        JSON.stringify(body).includes(LOCAL_MARKDOWN_IMAGE_PROMPT),
+        'The real Codex request did not contain the local Markdown image prompt'
+      )
+      const imageUrl = pathToFileURL(join(tmpdir(), LOCAL_MARKDOWN_IMAGE_FILENAME)).href
+      this.writeSse(response, [
+        responseCreated(responseId),
+        assistantMessage(`![${LOCAL_MARKDOWN_IMAGE_ALT}](${imageUrl})`),
+        responseCompleted(responseId),
+      ])
+      return
+    }
+
     if (this.scenario === 'tool_block_order') {
       this.recordScenarioRequest('tool_block_order', modelRequest)
       const requestNumber = this.scenarioRequests.get('tool_block_order').length
@@ -2486,12 +2652,16 @@ class DesktopE2EServer {
         JSON.stringify(body).includes(CLOUD_TASK_PROMPT),
         'The real cloud Codex request did not contain the UI task prompt'
       )
-      const tool = selectShellTool(body, this.cloudWorkspacePath)
+      const tool = selectShellToolCommand(
+        body,
+        `printf '%s' "$WEGENT_SKILL_USER_NAME"`,
+        this.cloudWorkspacePath
+      )
       const patch = selectCloudApplyPatchTool(body)
       this.cloudModelStage = 'awaiting_tool_output'
       this.writeSse(response, [
         responseCreated(responseId),
-        ...functionCall('wework-cloud-e2e-tool-call', tool.name, tool.arguments),
+        ...functionCall(CLOUD_RUNTIME_IDENTITY_TOOL_CALL_ID, tool.name, tool.arguments),
         customToolCall('wework-cloud-e2e-apply-patch', 'apply_patch', patch),
         responseCompleted(responseId),
       ])
@@ -2505,12 +2675,36 @@ class DesktopE2EServer {
         true,
         'The real cloud Codex request did not report its tool output to the model service'
       )
+      const identityToolOutput = toolOutputText(body, CLOUD_RUNTIME_IDENTITY_TOOL_CALL_ID) ?? ''
+      assert.equal(
+        identityToolOutput.trim().endsWith(`Output:\n${CLOUD_AUTHENTICATED_USER_NAME}`),
+        true,
+        'The real cloud executor did not expose the authenticated Wework user identity'
+      )
+      const stream = streamingTextEvents(responseId, CLOUD_COMPLETION_TEXT)
+      this.cloudModelStage = 'streaming'
+      response.writeHead(200, {
+        'Access-Control-Allow-Origin': '*',
+        'Cache-Control': 'no-cache',
+        Connection: 'keep-alive',
+        'Content-Type': 'text/event-stream; charset=utf-8',
+      })
+      response.write(
+        createSse([
+          ...stream.start,
+          {
+            type: 'response.output_text.delta',
+            item_id: stream.itemId,
+            output_index: 0,
+            content_index: 0,
+            delta: CLOUD_COMPLETION_TEXT,
+            offset: 0,
+          },
+        ])
+      )
+      await this.cloudInitialRelease
       this.cloudModelStage = 'complete'
-      this.writeSse(response, [
-        responseCreated(responseId),
-        assistantMessage(CLOUD_COMPLETION_TEXT),
-        responseCompleted(responseId),
-      ])
+      response.end(createSse(stream.finish))
       return
     }
 
@@ -2520,20 +2714,28 @@ class DesktopE2EServer {
         JSON.stringify(body).includes(CLOUD_FOLLOW_UP_PROMPT),
         'The real cloud Codex request did not contain the follow-up prompt'
       )
+      const stream = streamingTextEvents(responseId, CLOUD_FOLLOW_UP_COMPLETION_TEXT)
       response.writeHead(200, {
         'Access-Control-Allow-Origin': '*',
         'Cache-Control': 'no-cache',
         Connection: 'keep-alive',
         'Content-Type': 'text/event-stream; charset=utf-8',
       })
-      response.write(createSse([responseCreated(responseId)]))
-      await this.cloudFollowUpRelease
-      response.end(
+      response.write(
         createSse([
-          assistantMessage(CLOUD_FOLLOW_UP_COMPLETION_TEXT),
-          responseCompleted(responseId),
+          ...stream.start,
+          {
+            type: 'response.output_text.delta',
+            item_id: stream.itemId,
+            output_index: 0,
+            content_index: 0,
+            delta: CLOUD_FOLLOW_UP_COMPLETION_TEXT,
+            offset: 0,
+          },
         ])
       )
+      await this.cloudFollowUpRelease
+      response.end(createSse(stream.finish))
       return
     }
 
@@ -3126,7 +3328,7 @@ class DesktopE2EServer {
         assert.ok(
           requestText.includes(OFFICIAL_PLUGIN_NAME) &&
             requestText.includes(OFFICIAL_PLUGIN_SKILL_NAME) &&
-            requestText.includes(skillPath),
+            requestContainsSkillLocator(body, skillPath, OFFICIAL_PLUGIN_SKILL_NAME),
           'The real Codex request did not inject the selected official plugin skill'
         )
         const shell = selectShellToolCommand(
@@ -3361,6 +3563,25 @@ class DesktopE2EServer {
       this.writeSse(response, [
         responseCreated(responseId),
         assistantMessage(FRESH_CHAT_COMPLETION_TEXT),
+        responseCompleted(responseId),
+      ])
+      return
+    }
+
+    if (this.scenario === 'plugin_development') {
+      this.recordScenarioRequest('plugin_development', modelRequest)
+      const requestText = JSON.stringify(body)
+      assert.ok(
+        requestText.includes('开发这个 Wework 插件：'),
+        'The plugin development prompt was lost'
+      )
+      assert.ok(
+        requestText.includes('wework-plugin-developer:develop-wework-plugin'),
+        'The Wework plugin developer Skill was not available to Codex'
+      )
+      this.writeSse(response, [
+        responseCreated(responseId),
+        assistantMessage('Wework plugin development request accepted.'),
         responseCompleted(responseId),
       ])
       return
@@ -3697,18 +3918,28 @@ class DesktopE2EServer {
 
     if (this.scenario === 'retry') {
       this.recordScenarioRequest('retry', modelRequest)
-      assert.ok(
-        JSON.stringify(body).includes(RETRY_PROMPT),
-        'The real Codex request did not contain the retry prompt'
-      )
       const retryRequests = this.scenarioRequests.get('retry') ?? []
       if (retryRequests.length === 1) {
+        assert.ok(
+          latestModelInputText(body).includes(RETRY_PROMPT),
+          'The initial Codex request did not contain the retry scenario prompt'
+        )
         this.writeSse(response, [
           responseCreated(responseId),
           responseFailed(responseId, RETRY_FAILURE_TEXT),
         ])
         return
       }
+      const continuationInput = latestModelInputText(body)
+      assert.ok(
+        continuationInput.includes(RETRY_CONTINUATION_PROMPT),
+        'The retry action did not continue the existing Codex conversation'
+      )
+      assert.equal(
+        continuationInput.includes(RETRY_PROMPT),
+        false,
+        'The retry action replayed the original user prompt'
+      )
       await this.retryCompletionRelease
       this.writeSse(response, [
         responseCreated(responseId),

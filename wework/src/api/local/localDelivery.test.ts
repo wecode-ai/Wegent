@@ -619,6 +619,59 @@ describe('local delivery API', () => {
     })
   })
 
+  test('creates a new local board item when the runtime task belongs to another project', async () => {
+    const movedTask = { ...taskRecord, id: 'LOCAL-MOVED', cloud_project_id: 'project-2' }
+    const request = vi.fn(async (method: string) => {
+      if (method === 'runtime_tasks.user_context') {
+        return {
+          id: 'binding-old',
+          cloud_project_id: 'project-1',
+          loop_item_id: 'LOCAL-1',
+          task_user_id: 0,
+          device_id: 'local-device',
+          task_id: 'runtime-1',
+          task_title: 'Runtime task',
+          backend_task_id: null,
+          linked_at: '2026-08-31T00:00:00Z',
+        }
+      }
+      if (method === 'todos.create') return movedTask
+      if (method === 'todos.bind') return { id: 'binding-new' }
+      throw new Error(`Unexpected method: ${method}`)
+    })
+    const api = createLocalDeliveryApi(request)
+
+    await expect(
+      api.trackProjectTask(
+        'project-2',
+        { deviceId: 'local-device', taskId: 'runtime-1' },
+        'Runtime task',
+        'Move to another board'
+      )
+    ).resolves.toMatchObject({ item: { id: 'LOCAL-MOVED' } })
+
+    expect(request).toHaveBeenCalledWith('todos.create', {
+      project_id: 'project-2',
+      todo: {
+        title: 'Runtime task',
+        description: 'Move to another board',
+        status: 'pending',
+        priority: 'none',
+        parent_id: null,
+        tags: [],
+      },
+    })
+    expect(request).toHaveBeenCalledWith('todos.bind', {
+      project_id: 'project-2',
+      item_id: 'LOCAL-MOVED',
+      task: {
+        deviceId: 'local-device',
+        taskId: 'runtime-1',
+        taskTitle: 'Runtime task',
+      },
+    })
+  })
+
   test('allows retrying project tracking after a failed request', async () => {
     const trackedTask = { ...taskRecord, status: 'in_progress' }
     let createAttempts = 0

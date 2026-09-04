@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
 import { ChevronLeft, ChevronRight } from 'lucide-react'
 
 import { useTranslation } from '@/hooks/useTranslation'
+import { useIsMobile } from '@/features/layout/hooks/useMediaQuery'
 
 import type { QuickLauncher } from './types'
 
@@ -61,6 +62,31 @@ function LauncherCard({
           {description}
         </span>
       )}
+    </button>
+  )
+}
+
+function MobileLauncherCard({
+  launcher,
+  isSelected,
+  onClick,
+}: {
+  launcher: QuickLauncher
+  isSelected: boolean
+  onClick: () => void
+}) {
+  return (
+    <button
+      type="button"
+      data-testid={`mobile-quick-launcher-${launcher.type}-${launcher.key.replace(':', '-')}`}
+      onClick={onClick}
+      className={`flex h-16 w-36 shrink-0 snap-start items-center rounded-2xl border px-3 text-left ${
+        isSelected
+          ? 'border-primary bg-primary/5 text-primary'
+          : 'border-border bg-base text-text-primary'
+      }`}
+    >
+      <span className="line-clamp-2 text-sm font-medium leading-5">{launcher.title}</span>
     </button>
   )
 }
@@ -172,6 +198,44 @@ export function QuickLauncherCards({
   renderQuickCreateCard,
 }: QuickLauncherCardsProps) {
   const { t } = useTranslation('chat')
+  const isMobile = useIsMobile()
+
+  if (isMobile) {
+    const visibleLauncherCount = renderMoreButton ? 2 : 3
+    const mobileLaunchers = [...systemLaunchers, ...favoriteLaunchers].slice(
+      0,
+      visibleLauncherCount
+    )
+
+    if (mobileLaunchers.length === 0 && !renderMoreButton) {
+      return null
+    }
+
+    return (
+      <section
+        className="mx-auto mt-4 w-full max-w-[820px] space-y-2"
+        data-testid="quick-launch-cards"
+      >
+        <h3 className="px-1 text-xs font-medium text-text-muted">
+          {t('quick_launch.quick_start')}
+        </h3>
+        <div
+          className="scrollbar-hide flex w-full snap-x snap-proximity items-center gap-2 overflow-x-auto overscroll-x-contain pb-1 pr-3 scroll-pr-3"
+          data-testid="quick-launch-mobile-row"
+        >
+          {mobileLaunchers.map(launcher => (
+            <MobileLauncherCard
+              key={`${launcher.type}:${launcher.key}`}
+              launcher={launcher}
+              isSelected={launcher.key === selectedLauncherKey}
+              onClick={() => onSelectLauncher(launcher)}
+            />
+          ))}
+          {renderMoreButton?.()}
+        </div>
+      </section>
+    )
+  }
 
   return (
     <div className="mx-auto mt-6 w-full max-w-[820px] space-y-3" data-testid="quick-launch-cards">

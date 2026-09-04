@@ -4,6 +4,7 @@
 
 use std::{
     env, fs,
+    io::Write,
     path::{Path, PathBuf},
 };
 
@@ -121,39 +122,60 @@ pub(crate) fn select_wework_codex_user_instructions(
 }
 
 pub(crate) fn replace_config(config_path: &Path, content: String) -> Result<(), String> {
-    let temporary_path = config_path.with_extension("toml.tmp");
-    fs::write(&temporary_path, content).map_err(|error| {
-        format!(
-            "failed to write Codex config {}: {error}",
-            temporary_path.display()
-        )
-    })?;
+    let parent = config_path
+        .parent()
+        .ok_or_else(|| format!("Codex config has no parent: {}", config_path.display()))?;
+    fs::create_dir_all(parent)
+        .map_err(|error| format!("failed to create Codex config directory: {error}"))?;
+    let mut temporary = tempfile::NamedTempFile::new_in(parent)
+        .map_err(|error| format!("failed to create Codex config temp file: {error}"))?;
+    temporary
+        .write_all(content.as_bytes())
+        .map_err(|error| format!("failed to write Codex config temp file: {error}"))?;
     if let Ok(metadata) = fs::metadata(config_path) {
-        fs::set_permissions(&temporary_path, metadata.permissions()).map_err(|error| {
+        fs::set_permissions(temporary.path(), metadata.permissions()).map_err(|error| {
             format!(
                 "failed to preserve Codex config permissions {}: {error}",
-                temporary_path.display()
+                temporary.path().display()
             )
         })?;
     }
     #[cfg(unix)]
     if !config_path.exists() {
         use std::os::unix::fs::PermissionsExt;
-        fs::set_permissions(&temporary_path, fs::Permissions::from_mode(0o600)).map_err(
+        fs::set_permissions(temporary.path(), fs::Permissions::from_mode(0o600)).map_err(
             |error| {
                 format!(
                     "failed to secure Codex config permissions {}: {error}",
-                    temporary_path.display()
+                    temporary.path().display()
                 )
             },
         )?;
     }
-    fs::rename(&temporary_path, config_path).map_err(|error| {
+    temporary
+        .as_file()
+        .sync_all()
+        .map_err(|error| format!("failed to sync Codex config temp file: {error}"))?;
+    temporary.persist(config_path).map_err(|error| {
         format!(
-            "failed to replace Codex config {}: {error}",
-            config_path.display()
+            "failed to replace Codex config {}: {}",
+            config_path.display(),
+            error.error
         )
-    })
+    })?;
+    sync_parent_directory(parent)
+        .map_err(|error| format!("failed to sync Codex config directory: {error}"))?;
+    Ok(())
+}
+
+#[cfg(unix)]
+fn sync_parent_directory(parent: &Path) -> std::io::Result<()> {
+    fs::File::open(parent)?.sync_all()
+}
+
+#[cfg(not(unix))]
+fn sync_parent_directory(_parent: &Path) -> std::io::Result<()> {
+    Ok(())
 }
 
 fn link_user_codex_auth(codex_home: &Path) -> Result<(), String> {

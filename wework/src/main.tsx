@@ -18,11 +18,27 @@ import { isDesktopRuntime, isElectronRuntime } from '@/lib/runtime-environment'
 import { installFrontendRecoveryBridge } from '@/lib/frontendRecovery'
 import { DshClientContextProvider } from '@/features/dsh-runtime/DshClientContextProvider'
 import { initializeDesktopLocalStoragePersistence } from '@/desktop/localStoragePersistence'
+import { invokeDesktopHost } from '@/api/dsh/desktopHost'
 
 import type { Context } from '@deepseek-ai/cordis'
 
 interface WeworkAppRuntime {
   mount(container: HTMLElement, context: Context): Promise<() => void>
+}
+
+const rendererStartupStartedAt = performance.now()
+
+function logRendererStartupStep(
+  step: string,
+  status: 'started' | 'completed' | 'failed',
+  details: Record<string, unknown> = {}
+): void {
+  console.info('[startup][renderer]', {
+    step,
+    status,
+    elapsedMs: Math.round(performance.now() - rendererStartupStartedAt),
+    ...details,
+  })
 }
 
 declare global {
@@ -48,6 +64,7 @@ if (!isSystemDragPanel) {
 const performanceDiagnostics = isSystemDragPanel ? null : installPerformanceDiagnostics()
 
 async function mountApp(container: HTMLElement, context: Context | null): Promise<() => void> {
+  logRendererStartupStep('react-mount', 'started')
   const root = createRoot(container)
   root.render(
     <StrictMode>
@@ -62,11 +79,18 @@ async function mountApp(container: HTMLElement, context: Context | null): Promis
       </DshClientContextProvider>
     </StrictMode>
   )
+  logRendererStartupStep('react-mount', 'completed')
   return () => root.unmount()
 }
 
 function renderStartupFailure(container: HTMLElement, error: unknown): void {
+  logRendererStartupStep('renderer-startup', 'failed', {
+    errorType: error instanceof Error ? error.name : typeof error,
+  })
   console.error('[Wework] Failed to initialize the desktop frontend:', error)
+  void invokeDesktopHost<void>('renderer.startupFailed').catch(startupError => {
+    console.error('[Wework] Failed to report desktop startup failure:', startupError)
+  })
   createRoot(container).render(
     <main
       className="flex min-h-screen items-center justify-center bg-background p-6 text-foreground"
@@ -90,26 +114,43 @@ function renderStartupFailure(container: HTMLElement, error: unknown): void {
   )
 }
 
-const desktopStorageReady = initializeDesktopLocalStoragePersistence().then(
-  () => null,
-  error => error
-)
+const desktopStorageReady = (async () => {
+  logRendererStartupStep('renderer-storage-initialize', 'started')
+  try {
+    await initializeDesktopLocalStoragePersistence()
+    logRendererStartupStep('renderer-storage-initialize', 'completed')
+    return null
+  } catch (error) {
+    logRendererStartupStep('renderer-storage-initialize', 'failed', {
+      errorType: error instanceof Error ? error.name : typeof error,
+    })
+    return error
+  }
+})()
 
 async function mountWework(container: HTMLElement, context: Context | null): Promise<() => void> {
+  logRendererStartupStep('wework-mount', 'started')
   const storageError = await desktopStorageReady
   if (storageError !== null) {
     renderStartupFailure(container, storageError)
     return () => {}
   }
   if (!isSystemDragPanel) {
+    logRendererStartupStep('automation-bridge-install', 'started')
     try {
       await installWeworkAutomationBridge()
+      logRendererStartupStep('automation-bridge-install', 'completed')
     } catch (error) {
+      logRendererStartupStep('automation-bridge-install', 'failed', {
+        errorType: error instanceof Error ? error.name : typeof error,
+      })
       console.error('[Wework] Failed to install the automation bridge:', error)
     }
   }
   try {
-    return await mountApp(container, context)
+    const unmount = await mountApp(container, context)
+    logRendererStartupStep('wework-mount', 'completed')
+    return unmount
   } catch (error) {
     renderStartupFailure(container, error)
     return () => {}

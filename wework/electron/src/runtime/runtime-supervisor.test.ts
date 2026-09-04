@@ -117,10 +117,13 @@ describe('RuntimeSupervisor', () => {
 
     await supervisor.start()
     let grandchildPid = 0
-    await vi.waitFor(async () => {
-      grandchildPid = Number(await readFile(pidPath, 'utf8'))
-      expect(grandchildPid).toBeGreaterThan(0)
-    })
+    await vi.waitFor(
+      async () => {
+        grandchildPid = Number(await readFile(pidPath, 'utf8'))
+        expect(grandchildPid).toBeGreaterThan(0)
+      },
+      { timeout: 3_000 }
+    )
     await supervisor.stop()
     await vi.waitFor(() => expect(processExists(grandchildPid)).toBe(false), {
       timeout: 3_000,
@@ -154,10 +157,13 @@ describe('RuntimeSupervisor', () => {
 
       await supervisor.start()
       let grandchildPid = 0
-      await vi.waitFor(async () => {
-        grandchildPid = Number(await readFile(pidPath, 'utf8'))
-        expect(grandchildPid).toBeGreaterThan(0)
-      })
+      await vi.waitFor(
+        async () => {
+          grandchildPid = Number(await readFile(pidPath, 'utf8'))
+          expect(grandchildPid).toBeGreaterThan(0)
+        },
+        { timeout: 3_000 }
+      )
       await supervisor.stop()
 
       await vi.waitFor(() => expect(processExists(grandchildPid)).toBe(false), {

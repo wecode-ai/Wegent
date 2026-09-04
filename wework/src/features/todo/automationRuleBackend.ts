@@ -1159,7 +1159,12 @@ function flowPrompt(rule: AutomationUiRule): string {
       return `${'  '.repeat(depth)}${index + 1}. ${step.name}\n${'  '.repeat(depth)}${step.prompt}${deliverables}${dependencies}${subgraph}`
     })
   const steps = describeNodes(rule.steps)
-  return [`自动化目标：${rule.description}`, '按照以下流程完成任务：', ...steps].join('\n\n')
+  const description = rule.description.trim()
+  return [
+    ...(description ? [`自动化目标：${description}`] : []),
+    '按照以下流程完成任务：',
+    ...steps,
+  ].join('\n\n')
 }
 
 export function automationInputFromUi(
@@ -1173,6 +1178,7 @@ export function automationInputFromUi(
   const eventTrigger = rule.trigger.type === 'event'
   const externalEventTrigger = eventTrigger && rule.trigger.source !== 'wework'
   const isAiDynamicWorkflow = rule.steps.length === 1 && rule.steps[0]?.kind === 'dynamic'
+  const description = rule.description.trim()
   return {
     name: rule.name.trim(),
     prompt: flowPrompt(rule),
@@ -1205,7 +1211,7 @@ export function automationInputFromUi(
       runtime_workflow_definition: legacyWorkflowFromAutomationRule(rule),
       [FLOW_KEY]: {
         version: 2,
-        description: rule.description,
+        description,
         graph: {
           nodes: rule.steps.map(storedStepFromUi),
         },

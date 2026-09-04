@@ -33,6 +33,7 @@ import type { KnowledgeBase } from '@/types/knowledge'
 import { PageOutline } from './PageOutline'
 import { RunHistory } from './RunHistory'
 import { failureText } from './failureText'
+import { GenerationProgress } from './GenerationProgress'
 import { WikiNavigation } from './WikiNavigation'
 import { WikiPageContent } from './WikiPageContent'
 
@@ -171,10 +172,12 @@ export function CodeWikiReader({ wiki, canConfigure = false, onConfigure }: Code
   const [activePath, setActivePath] = useState('')
   const [markdown, setMarkdown] = useState('')
   const [regenerating, setRegenerating] = useState(false)
+  const [cancelling, setCancelling] = useState(false)
   // Regenerating rewrites every page of the wiki and costs a full agent run, so it
   // is asked for twice. The first run after creation is not: creating the wiki was
   // the request, and confirming it again would be asking about work already agreed.
   const [confirmingRegenerate, setConfirmingRegenerate] = useState(false)
+  const [confirmingCancel, setConfirmingCancel] = useState(false)
   const [scrollHost, setScrollHost] = useState<HTMLElement | null>(null)
   // Whether the chat is still showing its empty state, reported by the page body as
   // it mounts and unmounts inside it. The chat replaces that state with the
@@ -198,6 +201,7 @@ export function CodeWikiReader({ wiki, canConfigure = false, onConfigure }: Code
   // page it was just asked to show.
   const [navigationOpen, setNavigationOpen] = useState(false)
   const pagesRequest = useRef(0)
+  const pageTreeGenerationId = useRef<number | null>(null)
   const projectName = String(
     (wiki.source as { projectName?: string } | undefined)?.projectName ?? ''
   )
@@ -206,24 +210,31 @@ export function CodeWikiReader({ wiki, canConfigure = false, onConfigure }: Code
   const emptyState = emptyStateText(runStatus.status, t)
 
   const reloadPages = useCallback(
-    async (showError = true) => {
+    async (showError = true, showLoading = true) => {
       const request = pagesRequest.current + 1
       pagesRequest.current = request
-      setLoading(true)
+      if (showLoading) setLoading(true)
 
       try {
         const response = await codeWikiApi.pages(wiki.id)
         if (pagesRequest.current !== request) return
 
+        pageTreeGenerationId.current = response.published_generation_id ?? 0
         setPages(response.pages)
         const first = firstReadable(response.pages)
-        if (first) setActivePath(first.path)
+        setActivePath(current => {
+          const stillExists = current ? findByPath(response.pages, current) : null
+          return stillExists?.has_content ? current : (first?.path ?? '')
+        })
       } catch (error) {
         if (showError && pagesRequest.current === request) {
           toast.error(error instanceof Error ? error.message : String(error))
         }
         throw error
       } finally {
+        // A status-driven refresh can supersede the initial request before it has
+        // settled. The newer request must be able to finish that initial spinner
+        // even though the refresh itself did not ask to show one.
         if (pagesRequest.current === request) setLoading(false)
       }
     },
@@ -236,6 +247,20 @@ export function CodeWikiReader({ wiki, canConfigure = false, onConfigure }: Code
       pagesRequest.current += 1
     }
   }, [reloadPages])
+
+  const runState = runStatus.status?.status
+  const runGenerationId = runStatus.status?.generation_id
+
+  useEffect(() => {
+    if (runState !== 'completed' || runGenerationId === undefined) return
+    if (pageTreeGenerationId.current === runGenerationId) return
+
+    // Status is intentionally the only thing polled during a long run. Compare its
+    // completed version with the version the tree actually came from instead of
+    // inferring a transition from this component's lifetime: the reader may mount
+    // after completion, and the first tree request may have started before publish.
+    void reloadPages(true, false).catch(() => undefined)
+  }, [reloadPages, runGenerationId, runState])
 
   const handleRepublished = useCallback(async () => {
     // A restore replaces the whole published version. Re-fetch its tree so both
@@ -289,6 +314,26 @@ export function CodeWikiReader({ wiki, canConfigure = false, onConfigure }: Code
       toast.error(error instanceof Error ? error.message : String(error))
     } finally {
       setRegenerating(false)
+    }
+  }, [wiki.id, t, runStatus])
+
+  const handleCancel = useCallback(async () => {
+    const generationId = runStatus.status?.generation_id
+    if (!generationId) return
+
+    setConfirmingCancel(false)
+    setCancelling(true)
+    try {
+      await codeWikiApi.cancel(wiki.id, generationId)
+      toast.success(t('codeWiki.reader.cancelRequested'))
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : String(error))
+    } finally {
+      // A task can finish between opening the confirmation and asking to cancel it.
+      // Refresh even when the request was refused so the reader sees that terminal
+      // state now instead of waiting for the next polling interval.
+      runStatus.refresh()
+      setCancelling(false)
     }
   }, [wiki.id, t, runStatus])
 
@@ -410,6 +455,29 @@ export function CodeWikiReader({ wiki, canConfigure = false, onConfigure }: Code
         </AlertDialog>
       )}
 
+      {canConfigure && (
+        <AlertDialog open={confirmingCancel} onOpenChange={setConfirmingCancel}>
+          <AlertDialogContent data-testid="code-wiki-cancel-confirm">
+            <AlertDialogHeader>
+              <AlertDialogTitle>{t('codeWiki.reader.cancelConfirmTitle')}</AlertDialogTitle>
+              <AlertDialogDescription>
+                {t('codeWiki.reader.cancelConfirmBody')}
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            <AlertDialogFooter>
+              <AlertDialogCancel>{t('common:actions.cancel')}</AlertDialogCancel>
+              <AlertDialogAction
+                variant="primary"
+                onClick={handleCancel}
+                data-testid="code-wiki-cancel-confirm-action"
+              >
+                {t('codeWiki.progress.cancel')}
+              </AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
+      )}
+
       <div className="flex min-h-0 flex-1">
         {/* The left column carries what is true of the wiki: when it last changed,
             and what it contains. Both stay put while the middle column changes.
@@ -435,6 +503,15 @@ export function CodeWikiReader({ wiki, canConfigure = false, onConfigure }: Code
         </div>
 
         <div className="flex min-w-0 flex-1 flex-col">
+          <GenerationProgress
+            status={runStatus.status}
+            onCancel={
+              canConfigure && runStatus.status?.status === 'running' && !runStatus.status.is_stale
+                ? () => setConfirmingCancel(true)
+                : undefined
+            }
+            cancelling={cancelling}
+          />
           {pages.length === 0 ? (
             <div className="flex flex-1 flex-col items-center justify-center gap-3 py-16">
               <p className="text-text-secondary" data-testid="code-wiki-empty-title">

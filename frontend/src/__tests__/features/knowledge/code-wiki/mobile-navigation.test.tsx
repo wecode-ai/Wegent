@@ -13,10 +13,16 @@
 
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { CodeWikiReader } from '@/features/knowledge/code-wiki/CodeWikiReader'
+import type { CodeWikiRunStatus } from '@/types/code-wiki'
 import type { KnowledgeBase } from '@/types/knowledge'
 
 const mockPush = jest.fn()
 const mockRunStatusRefresh = jest.fn()
+let mockRunStatus: CodeWikiRunStatus | null = null
+const mockDefaultPages = [
+  { path: 'index', title: 'Overview', document_id: 1, has_content: true, children: [] },
+  { path: 'other', title: 'Other', document_id: 2, has_content: true, children: [] },
+]
 
 jest.mock('@/hooks/useTranslation', () => ({
   useTranslation: () => ({ t: (key: string) => key }),
@@ -34,7 +40,7 @@ jest.mock('@/contexts/TeamContext', () => ({
 
 jest.mock('@/features/knowledge/code-wiki/useCodeWikiRunStatus', () => ({
   useCodeWikiRunStatus: () => ({
-    status: null,
+    status: mockRunStatus,
     canRegenerate: true,
     refresh: mockRunStatusRefresh,
   }),
@@ -47,7 +53,9 @@ jest.mock('@/features/knowledge/code-wiki/RunHistory', () => ({
 }))
 
 jest.mock('@/features/knowledge/code-wiki/WikiPageContent', () => ({
-  WikiPageContent: () => <div data-testid="wiki-page-content" />,
+  WikiPageContent: ({ page }: { page: { document_id: number } | null }) => (
+    <div data-testid="wiki-page-content">{page?.document_id}</div>
+  ),
 }))
 
 jest.mock('@/features/tasks/components/chat', () => ({
@@ -58,12 +66,8 @@ jest.mock('@/features/tasks/components/chat', () => ({
 
 jest.mock('@/apis/code-wiki', () => ({
   codeWikiApi: {
-    pages: jest.fn().mockResolvedValue({
-      pages: [
-        { path: 'index', title: 'Overview', document_id: 1, has_content: true, children: [] },
-        { path: 'other', title: 'Other', document_id: 2, has_content: true, children: [] },
-      ],
-    }),
+    pages: jest.fn(),
+    cancel: jest.fn(),
   },
 }))
 
@@ -104,8 +108,95 @@ async function renderReader() {
 
 describe('navigating a wiki on a narrow screen', () => {
   beforeEach(() => {
+    const { codeWikiApi } = jest.requireMock('@/apis/code-wiki')
     mockPush.mockReset()
     mockRunStatusRefresh.mockReset()
+    mockRunStatus = null
+    codeWikiApi.pages.mockReset()
+    codeWikiApi.pages.mockResolvedValue({ pages: mockDefaultPages })
+    codeWikiApi.cancel.mockReset()
+    codeWikiApi.cancel.mockResolvedValue(undefined)
+  })
+
+  it('loads the newly published page tree when a running generation completes', async () => {
+    const { codeWikiApi } = jest.requireMock('@/apis/code-wiki')
+    const oldPages = [
+      { path: 'index', title: 'Old overview', document_id: 1, has_content: true, children: [] },
+    ]
+    const newPages = [
+      { path: 'index', title: 'New overview', document_id: 11, has_content: true, children: [] },
+      {
+        path: 'architecture',
+        title: 'Architecture',
+        document_id: 12,
+        has_content: true,
+        children: [],
+      },
+    ]
+    codeWikiApi.pages.mockReset()
+    codeWikiApi.pages.mockResolvedValueOnce({ pages: oldPages })
+    codeWikiApi.pages.mockResolvedValueOnce({ pages: newPages })
+    mockRunStatus = {
+      status: 'running',
+      generation_id: 34,
+      error_message: '',
+      failure_code: '',
+      is_stale: false,
+      last_published_at: '2026-08-28T00:00:00Z',
+      last_published_commit: 'old',
+    }
+
+    const { rerender } = render(<CodeWikiReader wiki={WIKI} />)
+    await waitFor(() => expect(screen.getByTestId('code-wiki-reader')).toBeInTheDocument())
+    expect(codeWikiApi.pages).toHaveBeenCalledTimes(1)
+
+    mockRunStatus = {
+      ...mockRunStatus,
+      status: 'completed',
+      last_published_at: '2026-08-31T00:00:00Z',
+      last_published_commit: 'new',
+    }
+    rerender(<CodeWikiReader wiki={WIKI} />)
+
+    await waitFor(() => expect(codeWikiApi.pages).toHaveBeenCalledTimes(2))
+    await waitFor(() =>
+      expect(screen.getByTestId('wiki-nav-page-architecture')).toBeInTheDocument()
+    )
+    expect(screen.getByTestId('wiki-page-content')).toHaveTextContent('11')
+  })
+
+  it('rechecks the tree when status already reports a newly published generation', async () => {
+    const { codeWikiApi } = jest.requireMock('@/apis/code-wiki')
+    const oldTree = { pages: [], published_generation_id: 33 }
+    const newTree = {
+      pages: [
+        {
+          path: 'index',
+          title: 'New overview',
+          document_id: 11,
+          has_content: true,
+          children: [],
+        },
+      ],
+      published_generation_id: 34,
+    }
+    codeWikiApi.pages.mockReset()
+    codeWikiApi.pages.mockResolvedValueOnce(oldTree)
+    codeWikiApi.pages.mockResolvedValueOnce(newTree)
+    mockRunStatus = {
+      status: 'completed',
+      generation_id: 34,
+      error_message: '',
+      failure_code: '',
+      is_stale: false,
+      last_published_at: '2026-09-01T00:00:00Z',
+      last_published_commit: 'new',
+    }
+
+    render(<CodeWikiReader wiki={WIKI} />)
+
+    await waitFor(() => expect(codeWikiApi.pages).toHaveBeenCalledTimes(2))
+    await waitFor(() => expect(screen.getByTestId('wiki-page-content')).toHaveTextContent('11'))
   })
 
   it('reloads the published page tree after restoring a version', async () => {
@@ -194,6 +285,62 @@ describe('navigating a wiki on a narrow screen', () => {
     expect(configure).toHaveClass('h-11', 'w-11')
     fireEvent.click(configure)
     expect(onConfigure).toHaveBeenCalledTimes(1)
+  })
+
+  it('lets a manager stop the in-flight generation from its progress card', async () => {
+    const { codeWikiApi } = jest.requireMock('@/apis/code-wiki')
+    mockRunStatus = {
+      status: 'running',
+      generation_id: 34,
+      error_message: '',
+      failure_code: '',
+      is_stale: false,
+      last_published_commit: '',
+      progress: {
+        stage: 'writing',
+        current_step: 2,
+        total_steps: 3,
+        pages_written: 4,
+        pages_total: 9,
+      },
+    }
+
+    render(<CodeWikiReader wiki={WIKI} canConfigure />)
+
+    const cancel = await screen.findByTestId('code-wiki-progress-cancel')
+    expect(cancel).toHaveClass('h-11', 'sm:h-9')
+    fireEvent.click(cancel)
+    fireEvent.click(await screen.findByTestId('code-wiki-cancel-confirm-action'))
+
+    await waitFor(() => expect(codeWikiApi.cancel).toHaveBeenCalledWith(WIKI.id, 34))
+    expect(mockRunStatusRefresh).toHaveBeenCalledTimes(1)
+  })
+
+  it('refreshes a manager view when the stop request loses a race with completion', async () => {
+    const { codeWikiApi } = jest.requireMock('@/apis/code-wiki')
+    mockRunStatus = {
+      status: 'running',
+      generation_id: 34,
+      error_message: '',
+      failure_code: '',
+      is_stale: false,
+      last_published_commit: '',
+      progress: {
+        stage: 'writing',
+        current_step: 2,
+        total_steps: 3,
+        pages_written: 4,
+        pages_total: 9,
+      },
+    }
+    codeWikiApi.cancel.mockRejectedValue(new Error('generation is no longer running'))
+
+    render(<CodeWikiReader wiki={WIKI} canConfigure />)
+
+    fireEvent.click(await screen.findByTestId('code-wiki-progress-cancel'))
+    fireEvent.click(await screen.findByTestId('code-wiki-cancel-confirm-action'))
+
+    await waitFor(() => expect(mockRunStatusRefresh).toHaveBeenCalledTimes(1))
   })
 
   it('does not show the configuration control without manage permission', async () => {

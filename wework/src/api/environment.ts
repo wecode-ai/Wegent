@@ -47,6 +47,7 @@ interface EnvironmentLoadDiagnostics {
 export type EnvironmentDiffMode = 'branch' | 'unstaged' | 'staged' | 'commit'
 
 export interface EnvironmentInfoLoadOptions {
+  changeRequestStatusEnabled?: boolean
   force?: boolean
   onPartialInfo?: (info: EnvironmentInfo) => void
 }
@@ -577,6 +578,14 @@ export function parseGitShortStat(value: string): Pick<EnvironmentInfo, 'additio
   }
 }
 
+function porcelainHasTrackedChanges(lines: string[]): boolean {
+  // Porcelain entries that modify, delete, rename or copy tracked files
+  // (index or worktree column) imply a commit baseline exists. Untracked
+  // (`??`) and staged additions (`A `) alone also appear in a repository that
+  // has no commit yet, so they cannot distinguish the two cases by themselves.
+  return lines.some(line => /[MDRC]/.test(line.slice(0, 1)) || /[MDRC]/.test(line.slice(1, 2)))
+}
+
 export function parseGitRemote(remoteUrl: string): GitRemoteParts | null {
   const trimmed = remoteUrl.trim().replace(/\.git$/, '')
   if (!trimmed) {
@@ -750,14 +759,16 @@ async function loadBranchDiffShortStat(
   api: DeviceCommandApi,
   deviceId: string,
   path: string
-): Promise<string> {
+): Promise<string | null> {
   // Compare the current branch with its merge base to the primary branch.
   // This includes committed branch changes as well as tracked worktree changes.
   try {
     return await runGitCommand(api, deviceId, 'git_branch_diff_shortstat', path)
   } catch {
-    // HEAD may not exist (no commits yet).
-    return ''
+    // No diff base could be resolved, most commonly because HEAD does not
+    // exist yet (a repository without commits). Callers use this to decide
+    // whether the pending porcelain file count is a valid substitute.
+    return null
   }
 }
 
@@ -797,6 +808,7 @@ async function loadProjectEnvironmentUncached(
   project: ProjectWithTasks | null,
   target?: EnvironmentWorkspaceTarget | null,
   onPartialInfo?: (info: EnvironmentInfo) => void,
+  changeRequestStatusEnabled?: boolean,
   diagnostics: EnvironmentLoadDiagnostics = {
     loadId: ++environmentLoadSequence,
     startedAt: environmentNow(),
@@ -853,11 +865,12 @@ async function loadProjectEnvironmentUncached(
     const remoteUrlPromise = traceEnvironmentOperation(diagnostics, 'git_remote', () =>
       runGitCommand(api, deviceId, 'git_remote_url', path)
     ).catch(() => '')
-    const changeRequestEnabledPromise = traceEnvironmentOperation(
-      diagnostics,
-      'change_request_preference',
-      () => getAppPreferences().then(preferences => preferences.changeRequestStatusEnabled)
-    )
+    const changeRequestEnabledPromise =
+      changeRequestStatusEnabled === undefined
+        ? traceEnvironmentOperation(diagnostics, 'change_request_preference', () =>
+            getAppPreferences().then(preferences => preferences.changeRequestStatusEnabled)
+          )
+        : Promise.resolve(changeRequestStatusEnabled)
     const branchInfoPromise = Promise.all([branchNamePromise, remoteUrlPromise]).then(
       ([branchName, remoteUrl]) => {
         const branchInfo: EnvironmentInfo = {
@@ -908,23 +921,18 @@ async function loadProjectEnvironmentUncached(
       porcelainPromise,
       changeRequestPromise,
     ])
-    const diff = parseGitShortStat(shortStat)
-
-    // Count pending files from porcelain (untracked, staged, modified).
-    // git diff --shortstat only covers tracked files, so we merge
-    // porcelain data to include untracked and no-commit scenarios.
+    const diff = parseGitShortStat(shortStat ?? '')
     const porcelainLines = porcelain.split('\n').filter(line => line.trim().length > 0)
 
-    if (shortStat) {
-      // Repo has commits — diff stat covers tracked changes.
-      // Add untracked file count on top.
-      const untrackedCount = porcelainLines.filter(line => line.startsWith('??')).length
-      if (untrackedCount > 0) {
-        const trackedAdditions = parseInt(diff.additions.replace(/^\+/, ''), 10) || 0
-        diff.additions = `+${trackedAdditions + untrackedCount}`
-      }
-    } else if (porcelainLines.length > 0) {
-      // Repo has no commits — every porcelain line is a pending change.
+    // git diff --shortstat counts changed lines of tracked files, which is the
+    // same basis code hosting uses, so untracked files never inflate the line
+    // counts. Only a repository without any commit baseline falls back to the
+    // pending file count; a committed repository keeps the (empty) shortstat.
+    if (
+      shortStat === null &&
+      porcelainLines.length > 0 &&
+      !porcelainHasTrackedChanges(porcelainLines)
+    ) {
       diff.additions = `+${porcelainLines.length}`
     }
 
@@ -972,11 +980,21 @@ export async function loadProjectEnvironment(
     return cloneEnvironmentInfo(EMPTY_ENVIRONMENT_INFO)
   }
 
-  const cacheKey = environmentInfoCacheKey(project, target)
-  if (!cacheKey) {
+  const workspaceCacheKey = environmentInfoCacheKey(project, target)
+  if (!workspaceCacheKey) {
     logEnvironmentLoad(diagnostics, 'cache_bypassed')
-    return loadProjectEnvironmentUncached(api, project, target, options.onPartialInfo, diagnostics)
+    return loadProjectEnvironmentUncached(
+      api,
+      project,
+      target,
+      options.onPartialInfo,
+      options.changeRequestStatusEnabled,
+      diagnostics
+    )
   }
+  const cacheKey = `${workspaceCacheKey}\0change-request:${String(
+    options.changeRequestStatusEnabled ?? 'preference'
+  )}`
 
   const now = Date.now()
   const environmentInfoCache = getEnvironmentInfoCache(api)
@@ -1040,6 +1058,7 @@ export async function loadProjectEnvironment(
         listener(cloneEnvironmentInfo(partialState.info ?? partialInfo))
       )
     },
+    options.changeRequestStatusEnabled,
     diagnostics
   )
   logEnvironmentLoad(diagnostics, 'cache_miss', {

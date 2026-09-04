@@ -68,6 +68,93 @@ def _add_member(
     return member
 
 
+def test_search_groups_excludes_organization_by_default(
+    test_client: TestClient, test_db: Session, test_user: User, test_token: str
+) -> None:
+    group = _create_group(test_db, test_user, name="search-default-group")
+    organization = _create_group(test_db, test_user, name="search-default-organization")
+    organization.level = "organization"
+    test_db.commit()
+    _add_member(test_db, group, test_user, "Owner")
+    _add_member(test_db, organization, test_user, "Owner")
+
+    response = test_client.get(
+        "/api/groups/search?q=search-default",
+        headers=_auth_header(test_token),
+    )
+
+    assert response.status_code == 200
+    assert [item["name"] for item in response.json()["items"]] == [group.name]
+
+
+def test_search_groups_can_include_accessible_organization(
+    test_client: TestClient, test_db: Session, test_user: User, test_token: str
+) -> None:
+    group = _create_group(test_db, test_user, name="search-inclusive-group")
+    organization = _create_group(
+        test_db, test_user, name="search-inclusive-organization"
+    )
+    organization.level = "organization"
+    test_db.commit()
+    _add_member(test_db, group, test_user, "Owner")
+    _add_member(test_db, organization, test_user, "Owner")
+
+    response = test_client.get(
+        "/api/groups/search?q=search-inclusive&include_organization=true",
+        headers=_auth_header(test_token),
+    )
+
+    assert response.status_code == 200
+    assert {item["name"] for item in response.json()["items"]} == {
+        group.name,
+        organization.name,
+    }
+
+
+def test_search_groups_does_not_include_inaccessible_organization(
+    test_client: TestClient, test_db: Session, test_user: User, test_token: str
+) -> None:
+    other_owner = _create_user(
+        test_db,
+        "search-organization-owner",
+        "search-organization-owner@example.com",
+    )
+    organization = _create_group(
+        test_db, other_owner, name="search-inaccessible-organization"
+    )
+    organization.level = "organization"
+    test_db.commit()
+    _add_member(test_db, organization, other_owner, "Owner")
+
+    response = test_client.get(
+        "/api/groups/search?q=search-inaccessible&include_organization=true",
+        headers=_auth_header(test_token),
+    )
+
+    assert response.status_code == 200
+    assert response.json()["items"] == []
+
+
+def test_search_groups_admin_can_include_active_organization_without_membership(
+    test_client: TestClient,
+    test_db: Session,
+    test_user: User,
+    test_admin_token: str,
+) -> None:
+    organization = _create_group(test_db, test_user, name="search-admin-organization")
+    organization.level = "organization"
+    test_db.commit()
+
+    response = test_client.get(
+        "/api/groups/search?q=search-admin&include_organization=true",
+        headers=_auth_header(test_admin_token),
+    )
+
+    assert response.status_code == 200
+    assert [item["name"] for item in response.json()["items"]] == [organization.name]
+    assert response.json()["items"][0]["my_role"] == "Owner"
+
+
 def test_batch_update_group_member_roles_success(
     test_client: TestClient, test_db: Session, test_user: User, test_token: str
 ):

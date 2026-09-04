@@ -325,6 +325,7 @@
     "active": "Active",
     "inactive": "Inactive",
     "select_team": "Select a team",
+    "clear_selection": "Remove current agent",
     "recently_used": "Recently used",
     "search_team": "Select a team",
     "no_bots": "No bots",
@@ -677,6 +678,23 @@
       "cancel": "Cancel",
       "approve": "Authorize",
       "authorization_failed": "Authorization failed"
+    },
+    "oauth_authorize": {
+      "invalid_title": "Invalid OAuth authorization link",
+      "loading": "Loading authorization request",
+      "failed": "OAuth authorization failed",
+      "redirecting_approved": "Authorized. Returning to the external application",
+      "redirecting_denied": "Denied. Returning to the external application",
+      "title": "Authorize {{client}} to read your identity",
+      "description": "This external application can only confirm your Wegent identity. It cannot access projects, tasks, models, devices, or other Wegent business data.",
+      "application": "Application",
+      "account": "Account",
+      "permission": "Permission",
+      "redirect_uri": "Return URL",
+      "boundary": "Authorization exposes only your ID, username, and email. The external application remains responsible for its own roles and permissions.",
+      "switch_account": "Switch account",
+      "deny": "Deny",
+      "approve": "Authorize"
     }
   },
   "branches": {

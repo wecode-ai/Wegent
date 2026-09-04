@@ -96,7 +96,11 @@ def _patch_device_cache(monkeypatch) -> _MemoryDeviceCache:
     return cache
 
 
-def _patch_namespace(monkeypatch, namespace: DeviceNamespace, session: dict) -> None:
+def _patch_namespace(
+    monkeypatch,
+    namespace: DeviceNamespace,
+    session: dict,
+) -> AsyncMock:
     monkeypatch.setattr(namespace, "get_session", AsyncMock(return_value=session))
     monkeypatch.setattr(namespace, "save_session", AsyncMock())
     monkeypatch.setattr(namespace, "enter_room", AsyncMock())
@@ -113,10 +117,12 @@ def _patch_namespace(monkeypatch, namespace: DeviceNamespace, session: dict) -> 
         "run_sync_in_executor",
         AsyncMock(return_value=(True, "Runtime Device", None)),
     )
+    reconcile = AsyncMock(return_value=0)
     monkeypatch.setattr(
         "app.tasks.robot_queue_tasks.reconcile_device_executions",
-        AsyncMock(return_value=0),
+        reconcile,
     )
+    return reconcile
 
 
 async def _wait_for_registration_followups(namespace: DeviceNamespace) -> None:
@@ -220,6 +226,47 @@ async def test_remote_heartbeat_runtime_features_reach_provider_projection(
     assert (
         devices[0]["runtime_features"]["worktrees"]["persistentStorageVerified"] is True
     )
+
+
+@pytest.mark.asyncio
+async def test_app_only_heartbeat_does_not_reconcile_cloud_work(
+    test_db,
+    test_user,
+    monkeypatch,
+):
+    device_id = "app-only-runtime"
+    test_db.add(_device(test_user.id, device_id, DeviceType.APP))
+    test_db.commit()
+    _patch_device_cache(monkeypatch)
+    namespace = DeviceNamespace()
+    session = {"user_id": test_user.id, "client_ip": "198.51.100.40"}
+    reconcile = _patch_namespace(monkeypatch, namespace, session)
+
+    registered = await namespace.on_device_register(
+        "socket-app",
+        {
+            "device_id": device_id,
+            "name": "Local App Runtime",
+            "device_type": DeviceType.APP.value,
+            "executor_version": "1.0.0",
+            "runtime_instance_id": "runtime-instance-app",
+            "app_device_id": device_id,
+        },
+    )
+    await _wait_for_registration_followups(namespace)
+    heartbeat = await namespace.on_device_heartbeat(
+        "socket-app",
+        {
+            "device_id": device_id,
+            "executor_version": "1.0.1",
+            "runtime_instance_id": "runtime-instance-app",
+        },
+    )
+
+    assert registered == {"success": True, "device_id": device_id}
+    assert heartbeat == {"success": True}
+    assert session["device_type"] == DeviceType.APP.value
+    reconcile.assert_not_awaited()
 
 
 @pytest.mark.asyncio

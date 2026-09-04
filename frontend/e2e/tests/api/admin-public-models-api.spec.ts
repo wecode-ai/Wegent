@@ -52,7 +52,9 @@ test.describe('Admin - Public Model API Tests', () => {
 
     expect([200, 201]).toContain(response.status)
     if (response.data) {
-      testModelId = (response.data as { id: number }).id
+      const createdModel = response.data as { id: number; is_visible: boolean }
+      testModelId = createdModel.id
+      expect(createdModel.is_visible).toBe(true)
     }
   })
 
@@ -85,10 +87,20 @@ test.describe('Admin - Public Model API Tests', () => {
 
     // Update model
     const updateResponse = await apiClient.adminUpdatePublicModel(testModelId, {
-      is_active: false,
+      is_visible: false,
     })
 
     expect(updateResponse.status).toBe(200)
+    expect((updateResponse.data as { is_active: boolean }).is_active).toBe(true)
+    expect((updateResponse.data as { is_visible: boolean }).is_visible).toBe(false)
+
+    const deactivateResponse = await apiClient.adminUpdatePublicModel(testModelId, {
+      is_active: false,
+    })
+
+    expect(deactivateResponse.status).toBe(200)
+    expect((deactivateResponse.data as { is_active: boolean }).is_active).toBe(false)
+    expect((deactivateResponse.data as { is_visible: boolean }).is_visible).toBe(false)
   })
 
   test('DELETE /api/admin/public-models/:id - should delete public model', async () => {

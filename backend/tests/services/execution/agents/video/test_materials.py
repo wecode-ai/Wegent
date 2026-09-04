@@ -211,3 +211,47 @@ def test_uploaded_image_does_not_require_public_attachment_url() -> None:
             "mime_type": "image/png",
         }
     ]
+
+
+def test_uploaded_media_preserves_requested_attachment_order() -> None:
+    first = SimpleNamespace(
+        id=11,
+        user_id=1,
+        storage_backend="local",
+        storage_key="attachments/first",
+        updated_at=datetime(2026, 8, 12),
+        original_filename="first.png",
+        file_extension=".png",
+        file_size=100,
+        mime_type="image/png",
+    )
+    second = SimpleNamespace(
+        id=22,
+        user_id=1,
+        storage_backend="local",
+        storage_key="attachments/second",
+        updated_at=datetime(2026, 8, 12),
+        original_filename="second.png",
+        file_extension=".png",
+        file_size=100,
+        mime_type="image/png",
+    )
+
+    with (
+        patch(
+            "app.db.session.SessionLocal",
+            return_value=MagicMock(),
+        ),
+        patch.object(
+            context_service,
+            "get_attachments_by_subtask",
+            return_value=[second, first],
+        ),
+    ):
+        images, _, _ = resolve_uploaded_media(
+            user_subtask_id=10,
+            user_id=1,
+            attachment_ids=[11, 22],
+        )
+
+    assert [image["attachment_id"] for image in images] == [11, 22]

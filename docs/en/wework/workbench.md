@@ -30,7 +30,7 @@ Every runtime task has at least one system-managed **My tasks** issue. A user ma
 
 Lanes follow actual execution state: a task that is explicitly queued but has not started appears in **To start**, and an active task appears in **In progress**. Successful, stopped, cancelled, and failed tasks all enter **To confirm**. A successful run means execution has ended; it does not automatically accept the work as completed. After confirming the result, the user can manually move the card to **Completed**. Confirmation cards show the linked task and the first three lines of the final AI response so users can decide whether more work is needed. Archived runtime tasks are excluded from the completed lane. The completed lane also provides batch archive, with an additional confirmation when a workspace still contains uncommitted changes.
 
-Hover anywhere on a board card to open a task-progress panel with the full conversation layout. The panel shows the latest user message and AI response, can load earlier history, and includes the same composer used in the task conversation. In the normal preview state, it remains visible while the pointer stays over either the card or the panel; it closes after you leave both areas, scroll the surrounding board, or press `Esc`. Interacting with the composer pins the panel until you use its top-right close button or press `Esc`.
+Hover anywhere on a board card to open a task-progress panel. The panel directly reuses the task conversation component, shows the complete currently loaded conversation, and uses the same composer in its collapsed-by-default state. Message loading, live updates, continuation, and attachments therefore behave exactly as they do on the task page. In the normal preview state, the panel remains visible while the pointer stays over either the card or the panel; it closes after you leave both areas, scroll the surrounding board, or press `Esc`. Interacting with the composer pins the panel until you use its top-right close button or press `Esc`.
 
 The work-item control above the composer shows the board name and work-item identifier. Its menu exposes the next step, linked-task count, and participants, and can open details in the unified right workspace. **Open in work-item board** focuses the linked work item while preserving the original Task tab. If a board tab for the same project is already open, Wework reuses it instead of loading a duplicate board; otherwise, it creates a board tab.
 
@@ -81,6 +81,8 @@ New tasks appear immediately at the top of their project's task list. Tasks with
 
 IM notifications are generally available and do not require **Experimental features**. Use the message-bubble entry in the sidebar account area to configure away-from-computer reminders. After opening a runtime task, select **Continue in private chat** in the title bar to bind that task to an available IM private chat.
 
+The away-reminder panel shows the current delivery conversation. When cloud connectivity is available, **Change conversation** and the primary enable or disable action remain fully visible in the same action row, so either setting can be adjusted directly.
+
 After binding succeeds, Wework's switch confirmation uses the current task title instead of an internal `runtime-xxx` task identifier. Later task replies continue to be delivered to the selected private chat.
 
 ## Split tasks by dragging
@@ -125,6 +127,8 @@ You can still collapse the left sidebar while the workspace is expanded, leaving
 
 When a conversation is taller than the current viewport, turn markers appear along the left side of the message area. The navigation stays centered in the conversation viewport instead of scrolling with message content. Select a marker to jump to that turn, or hover over it to preview the user request and assistant response summary.
 
+While an assistant response is still growing, navigation keeps the current turn active until the message area finishes its next layout measurement. This prevents bottom-follow scrolling from briefly clearing the marker or switching it to another turn.
+
 ## Switch conversations and restore position
 
 When switching conversations, the desktop workbench saves runtime state, recent messages, right-workspace tabs, and panel state, so returning restores the workspace as it was left. The Files tab restores the selected file and its actual directory, including absolute paths opened from assistant messages outside the workspace root. The Review tab restores the selected review scope and loaded diff. Ordinary conversations do not retain a hidden full-page DOM, which bounds WebView memory growth from long conversations.
@@ -138,6 +142,8 @@ Message, scroll-position, and measured-height caches are bounded. Archiving a ta
 ## Use selected response text
 
 Select text in an assistant response to add it to the current conversation composer or ask a follow-up question in the sidebar. These actions remain available while the response is streaming; later content updates do not dismiss an action menu that is already open.
+
+Process text shown above tool calls while a task is running is also selectable response content. Selecting it opens the same action menu and can add the text directly to the current task composer.
 
 ## Review and undo changes
 

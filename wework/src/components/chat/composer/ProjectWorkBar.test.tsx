@@ -1,10 +1,19 @@
 import { render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { describe, expect, test, vi } from 'vitest'
+import type { ComponentProps } from 'react'
+import { beforeEach, describe, expect, test, vi } from 'vitest'
 import '@/i18n'
-import { ProjectWorkBar } from './ProjectWorkBar'
+import { WEWORK_DSH_SLOTS } from '@/features/dsh-runtime/dshUiSlots'
+import { installDshUiTestContributions } from '@/test/setup'
+import { ProjectWorkBar as HostProjectWorkBar } from './ProjectWorkBar'
 import { runtimeProjectUiId } from '@/lib/runtime-project'
 import type { DeviceInfo, ProjectWithTasks, RuntimeWorkListResponse } from '@/types/api'
+
+function ProjectWorkBar(
+  props: ComponentProps<typeof HostProjectWorkBar> & Record<string, unknown>
+) {
+  return <HostProjectWorkBar {...props} extensionContext={props} />
+}
 
 const project: ProjectWithTasks = {
   id: 7,
@@ -119,13 +128,37 @@ const availableWorktree = {
 } as const
 
 describe('ProjectWorkBar', () => {
+  beforeEach(async () => {
+    await installDshUiTestContributions(
+      {
+        [WEWORK_DSH_SLOTS.projectCreateSection]: [
+          {
+            id: 'git-project-create',
+            module: 'plugins/wework-ui-git-project-create-section.js',
+          },
+        ],
+        [WEWORK_DSH_SLOTS.projectWorkSection]: [
+          {
+            id: 'git-project-work',
+            module: 'plugins/wework-ui-git-project-work-section.js',
+          },
+        ],
+      },
+      {
+        'plugins/wework-ui-git-project-create-section.js': () =>
+          import('../../../../dsh/ui-git/src/project-create-section'),
+        'plugins/wework-ui-git-project-work-section.js': () =>
+          import('../../../../dsh/ui-git/src/project-work-section'),
+      }
+    )
+  })
+
   test('orders project, workspace, and execution context by user decision flow', () => {
     render(
       <ProjectWorkBar
         devices={[localDevice]}
         currentProject={null}
         executionMode="current_workspace"
-        isGitProject={false}
         onSelectProject={vi.fn()}
         onSelectStandaloneDevice={vi.fn()}
         middleContext={<button data-testid="workspace-context">我的任务</button>}
@@ -405,7 +438,38 @@ describe('ProjectWorkBar', () => {
           deviceId: 'device-1',
           sourcePath: '/repo/Wegent',
         }}
-        isGitProject
+        onSelectProject={vi.fn()}
+        onSelectStandaloneDevice={vi.fn()}
+        onSelectProjectWorkspace={vi.fn()}
+        onExecutionModeChange={onExecutionModeChange}
+      />
+    )
+
+    await userEvent.click(screen.getByTestId('execution-mode-button'))
+    await userEvent.click(screen.getByTestId('execution-mode-git-worktree-button'))
+
+    expect(onExecutionModeChange).toHaveBeenCalledWith('git_worktree')
+  })
+
+  test('trusts runtime preflight when stored project metadata is stale', async () => {
+    const onExecutionModeChange = vi.fn()
+
+    render(
+      <ProjectWorkBar
+        projects={[nonGitProject]}
+        devices={[device]}
+        runtimeWork={runtimeWork}
+        currentProject={nonGitProject}
+        currentProjectId={nonGitProject.id}
+        currentStandaloneDeviceId={null}
+        selectedDeviceWorkspaceId={201}
+        executionMode="current_workspace"
+        worktreeAvailability={{
+          available: true,
+          reason: 'available',
+          deviceId: 'device-1',
+          sourcePath: '/workspace/notes',
+        }}
         onSelectProject={vi.fn()}
         onSelectStandaloneDevice={vi.fn()}
         onSelectProjectWorkspace={vi.fn()}
@@ -438,7 +502,6 @@ describe('ProjectWorkBar', () => {
           deviceId: 'device-1',
           sourcePath: '/repo/Wegent',
         }}
-        isGitProject
         onSelectProject={vi.fn()}
         onSelectStandaloneDevice={vi.fn()}
         onSelectProjectWorkspace={vi.fn()}
@@ -1299,7 +1362,6 @@ describe('ProjectWorkBar', () => {
         devices={[localDevice]}
         runtimeWork={runtimeLocalWork}
         currentProjectId={projectId}
-        isGitProject
         currentStandaloneDeviceId={null}
         selectedDeviceWorkspaceId={null}
         executionMode="current_workspace"

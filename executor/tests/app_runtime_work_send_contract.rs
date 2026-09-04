@@ -572,11 +572,12 @@ async fn runtime_tasks_send_accepts_address_content_source_and_attachments() {
                     && data["updates"]["status"] == "streaming"
             })
             .is_some()
-            && find_runtime_event(runtime_events, "response.block.created", |event| {
-                let block = &event["payload"]["data"]["block"];
-                block["type"] == "text"
-                    && block["content"] == "done"
-                    && block["status"] == "streaming"
+            && find_runtime_event(runtime_events, "response.output_text.delta", |event| {
+                event["payload"]["data"]["delta"] == "done"
+            })
+            .is_some()
+            && find_runtime_event(runtime_events, "response.output_text.done", |event| {
+                event["payload"]["data"]["text"] == "done"
             })
             .is_some()
             && find_runtime_event(runtime_events, "response.completed", |event| {
@@ -632,27 +633,52 @@ async fn runtime_tasks_send_accepts_address_content_source_and_attachments() {
         "streaming"
     );
 
-    let final_process_block =
-        find_runtime_event(&runtime_events, "response.block.created", |event| {
-            let block = &event["payload"]["data"]["block"];
-            block["type"] == "text" && block["content"] == "done" && block["status"] == "streaming"
+    let final_delta_positions = runtime_events
+        .iter()
+        .enumerate()
+        .filter_map(|(index, event)| {
+            (event["event"] == "response.output_text.delta"
+                && event["payload"]["data"]["delta"] == "done")
+                .then_some(index)
         })
-        .expect("final-answer phase delta should create a process text block");
+        .collect::<Vec<_>>();
     assert_eq!(
-        final_process_block["payload"]["data"]["block"]["content"],
-        "done"
+        final_delta_positions.len(),
+        1,
+        "final-answer phase should emit exactly one matching output delta"
     );
-    assert!(
-        find_runtime_event(&runtime_events, "response.output_text.delta", |event| {
-            event["payload"]["data"]["delta"] == "done"
+    let final_delta_position = final_delta_positions[0];
+    let final_delta = &runtime_events[final_delta_position];
+    assert_eq!(final_delta["payload"]["data"]["item_id"], "final-2");
+    assert_eq!(final_delta["payload"]["data"]["delta"], "done");
+    let final_done_positions = runtime_events
+        .iter()
+        .enumerate()
+        .filter_map(|(index, event)| {
+            (event["event"] == "response.output_text.done"
+                && event["payload"]["data"]["text"] == "done")
+                .then_some(index)
         })
-        .is_none(),
-        "assistant text must not emit a final-text delta while the turn is streaming"
+        .collect::<Vec<_>>();
+    assert_eq!(
+        final_done_positions.len(),
+        1,
+        "completed final-answer item should emit exactly one matching output completion"
     );
-    let completed = find_runtime_event(&runtime_events, "response.completed", |event| {
-        event["payload"]["data"]["value"] == "done"
-    })
-    .expect("completed response should contain only the final answer");
+    let final_done_position = final_done_positions[0];
+    let final_done = &runtime_events[final_done_position];
+    assert_eq!(final_done["payload"]["data"]["item_id"], "final-2");
+    let completed_position = runtime_events
+        .iter()
+        .position(|event| {
+            event["event"] == "response.completed" && event["payload"]["data"]["value"] == "done"
+        })
+        .expect("completed response should contain only the final answer");
+    assert!(
+        final_delta_position < final_done_position && final_done_position < completed_position,
+        "final output events should be ordered delta, done, response.completed"
+    );
+    let completed = &runtime_events[completed_position];
     assert_eq!(completed["payload"]["data"]["value"], "done");
 }
 
@@ -3879,6 +3905,7 @@ while IFS= read -r line; do
       printf '%s\n' '{{"method":"item/agentMessage/delta","params":{{"threadId":"thread-1","turnId":"'"$turn_id"'","itemId":"'"$progress_id"'","delta":"workspace."}}}}'
       printf '%s\n' '{{"method":"item/completed","params":{{"threadId":"thread-1","turnId":"'"$turn_id"'","item":{{"id":"'"$progress_id"'","type":"agentMessage","text":"Inspecting workspace.","phase":"commentary"}}}}}}'
       printf '%s\n' '{{"method":"item/agentMessage/delta","params":{{"threadId":"thread-1","turnId":"'"$turn_id"'","itemId":"'"$final_id"'","delta":"done","phase":"finalAnswer"}}}}'
+      printf '%s\n' '{{"method":"item/completed","params":{{"threadId":"thread-1","turnId":"'"$turn_id"'","item":{{"id":"'"$final_id"'","type":"agentMessage","text":"done","phase":"finalAnswer"}}}}}}'
       printf '%s\n' '{{"method":"turn/completed","params":{{"threadId":"thread-1","turn":{{"id":"'"$turn_id"'","status":"completed"}}}}}}'
       ;;
   esac

@@ -108,7 +108,7 @@ export function processIsAlive(processId) {
   return true
 }
 
-function isProcessGroupRunning(processGroupId) {
+export function processGroupIsAlive(processGroupId) {
   try {
     process.kill(-processGroupId, 0)
     if (process.platform === 'linux') {
@@ -127,10 +127,10 @@ function isProcessGroupRunning(processGroupId) {
 async function waitForProcessGroupExit(processGroupId, timeoutMs) {
   const startedAt = Date.now()
   while (Date.now() - startedAt < timeoutMs) {
-    if (!isProcessGroupRunning(processGroupId)) return true
+    if (!processGroupIsAlive(processGroupId)) return true
     await new Promise(resolvePromise => setTimeout(resolvePromise, PROCESS_GROUP_POLL_INTERVAL_MS))
   }
-  return !isProcessGroupRunning(processGroupId)
+  return !processGroupIsAlive(processGroupId)
 }
 
 export async function stopProcess(child) {

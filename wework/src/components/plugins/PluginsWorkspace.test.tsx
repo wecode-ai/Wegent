@@ -18,7 +18,7 @@ import {
   setPluginMarketplaceCache,
 } from '@/features/plugins/pluginMarketplaceCache'
 import { resetLocalExecutorStateForTests } from '@/desktop/localExecutor'
-import type { PluginMarketplaceItem } from '@/types/api'
+import type { PluginMarketplaceItem, PluginPublicationRequestItem } from '@/types/api'
 import '@/i18n'
 import { PluginsWorkspace } from './PluginsWorkspace'
 
@@ -458,13 +458,22 @@ function expectCodexAppServerRequestNotCalled(method: string) {
   })
 }
 
+function expectFetchRequest(path: string, method = 'GET') {
+  expect(vi.mocked(fetch).mock.calls).toEqual(
+    expect.arrayContaining([
+      expect.arrayContaining([
+        expect.stringMatching(new RegExp(`${path.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`)),
+        expect.objectContaining({ method }),
+      ]),
+    ])
+  )
+}
+
 function mockSystemSkillsFetch(
   overrides: Partial<{
     installState: 'not_installed' | 'installed' | 'update_available'
     enabled: boolean
     installedSkillId: number | null
-    canPublish: boolean
-    canSharePersonalPlugins: boolean
     marketplaceInstalled: boolean
     marketplaceDeviceState: 'installed' | 'failed' | 'pending'
     marketplaceInstallError: string
@@ -487,6 +496,10 @@ function mockSystemSkillsFetch(
     marketplaceUpdatePolicy: 'manual' | 'auto'
     autoUpdateBatchSizes: number[]
     deviceAutoSyncGate: Promise<void>
+    pluginAccessGate: Promise<void>
+    publicationRequestGate: Promise<void>
+    publicationRequests: PluginPublicationRequestItem[]
+    publicationRequestFailures: number
   }> = {}
 ) {
   let marketplaceUpdateAvailable = Boolean(overrides.marketplaceUpdateAvailable)
@@ -500,6 +513,7 @@ function mockSystemSkillsFetch(
   let syncDeviceCalls = 0
   let reportDeviceCalls = 0
   let remainingReportDeviceFailures = overrides.reportDeviceFailures ?? 0
+  let remainingPublicationRequestFailures = overrides.publicationRequestFailures ?? 0
   const deviceAutoSyncSucceeds = Boolean(overrides.deviceAutoSyncSucceeds)
   const personalSkillsResponse = {
     items: [
@@ -961,17 +975,6 @@ function mockSystemSkillsFetch(
           json: () => Promise.resolve(customMcpResponse),
         })
       }
-      if (requestUrl.pathname === '/api/plugins/capabilities') {
-        return Promise.resolve({
-          ok: true,
-          status: 200,
-          json: () =>
-            Promise.resolve({
-              canPublish: overrides.canPublish ?? false,
-              canSharePersonalPlugins: overrides.canSharePersonalPlugins ?? true,
-            }),
-        })
-      }
       if (requestUrl.pathname === '/api/plugins/installed') {
         return Promise.resolve({
           ok: true,
@@ -981,6 +984,27 @@ function mockSystemSkillsFetch(
               items: cloudMarketplacePluginInstalled ? [buildInstalledMarketplacePlugin()] : [],
             }),
         })
+      }
+      if (requestUrl.pathname === '/api/plugins/marketplace/101/access') {
+        const body = init?.body ? JSON.parse(String(init.body)) : null
+        const response = {
+          pluginId: 101,
+          scope: body?.scope ?? 'restricted',
+          targets: body?.targets ?? [
+            {
+              entityType: 'user',
+              entityId: '7',
+              displayName: 'Alice',
+            },
+          ],
+          allowCopy: body?.allowCopy ?? true,
+          revocationPendingCount: 0,
+        }
+        return (overrides.pluginAccessGate ?? Promise.resolve()).then(() => ({
+          ok: true,
+          status: 200,
+          json: () => Promise.resolve(response),
+        }))
       }
       if (requestUrl.pathname === '/api/plugins/installed/report-device') {
         reportDeviceCalls += 1
@@ -1131,6 +1155,41 @@ function mockSystemSkillsFetch(
           json: () => Promise.resolve(null),
         })
       }
+      if (requestUrl.pathname === '/api/plugins/publication-requests') {
+        if (remainingPublicationRequestFailures > 0) {
+          remainingPublicationRequestFailures -= 1
+          return Promise.resolve({
+            ok: false,
+            status: 503,
+            json: () => Promise.resolve({ detail: 'Publication service unavailable' }),
+          })
+        }
+        const publications = overrides.publicationRequests ?? []
+        return (overrides.publicationRequestGate ?? Promise.resolve()).then(() => ({
+          ok: true,
+          status: 200,
+          json: () =>
+            Promise.resolve({
+              items: publications,
+              total: publications.length,
+              page: Number(requestUrl.searchParams.get('page') ?? 1),
+              limit: Number(requestUrl.searchParams.get('limit') ?? 100),
+            }),
+        }))
+      }
+      const publicationRequestMatch = requestUrl.pathname.match(
+        /^\/api\/plugins\/publication-requests\/(\d+)$/
+      )
+      if (publicationRequestMatch) {
+        const publication = (overrides.publicationRequests ?? []).find(
+          item => item.id === Number(publicationRequestMatch[1])
+        )
+        return Promise.resolve({
+          ok: Boolean(publication),
+          status: publication ? 200 : 404,
+          json: () => Promise.resolve(publication ?? { detail: 'Not found' }),
+        })
+      }
       const page = Number(requestUrl.searchParams.get('page') ?? 1)
       const keyword = requestUrl.searchParams.get('keyword')
       const item = skill(page)
@@ -1198,6 +1257,61 @@ const emptyPluginComponents = {
   monitors: [],
   bins: [],
   connectors: [],
+}
+
+function buildPublicationRequest(
+  overrides: Partial<PluginPublicationRequestItem> = {}
+): PluginPublicationRequestItem {
+  const revision = {
+    id: 901,
+    number: 1,
+    requestedVersion: '1.0.0',
+    snapshotSha256: 'a'.repeat(64),
+    status: 'published' as const,
+    releaseNotes: 'Initial enterprise release',
+    testNotes: 'Windows and macOS passed',
+    createdAt: '2026-08-28T08:00:00Z',
+    declarations: [],
+    manifest: {},
+    packageEntries: ['dev-tools/.codex-plugin/plugin.json'],
+    packageEntryCount: 1,
+    packageEntriesTruncated: false,
+    capabilities: ['skill:dev-tools'],
+  }
+  return {
+    id: 82,
+    pluginId: 101,
+    enterprisePluginId: 303,
+    pluginName: 'Dev Tools',
+    pluginSlug: 'dev-tools',
+    requestedVersion: '1.0.0',
+    submitter: { id: 7, userName: 'Alice', email: 'alice@example.com' },
+    currentRevision: 1,
+    stage: 'release',
+    status: 'published',
+    riskLevel: 'low',
+    blockerCount: 0,
+    warningCount: 0,
+    gitlabStatus: null,
+    waitingDurationSeconds: 3600,
+    submittedAt: '2026-08-28T08:00:00Z',
+    updatedAt: '2026-08-28T09:00:00Z',
+    revision,
+    revisions: [revision],
+    checks: [],
+    events: [],
+    gitlab: null,
+    actionEligibility: {
+      canWithdraw: false,
+      canCreateRevision: false,
+      canViewEnterprisePlugin: true,
+      canReturn: false,
+      canAccept: false,
+      canReconcile: false,
+      blockedReasons: [],
+    },
+    ...overrides,
+  }
 }
 
 function githubConnectorComponent() {
@@ -2014,8 +2128,6 @@ describe('PluginsWorkspace', () => {
       ],
       selectedMarketplaceKey: 'cloud:default',
       deviceId: 'local-device',
-      canPublish: false,
-      canSharePersonalPlugins: true,
       fetchedAt: Date.now(),
     })
     window.localStorage.setItem(
@@ -2160,8 +2272,6 @@ describe('PluginsWorkspace', () => {
       ],
       selectedMarketplaceKey: 'cloud:default',
       deviceId: 'local-device',
-      canPublish: false,
-      canSharePersonalPlugins: true,
       fetchedAt: Date.now(),
     })
     window.localStorage.setItem(
@@ -2334,8 +2444,6 @@ describe('PluginsWorkspace', () => {
       ],
       selectedMarketplaceKey: 'cloud:default',
       deviceId: 'local-device',
-      canPublish: false,
-      canSharePersonalPlugins: true,
       fetchedAt: Date.now(),
     })
     seedDurableOpenAiGithubPeek()
@@ -2437,8 +2545,6 @@ describe('PluginsWorkspace', () => {
       ],
       selectedMarketplaceKey: 'cloud:default',
       deviceId: 'local-device',
-      canPublish: false,
-      canSharePersonalPlugins: true,
       fetchedAt: Date.now(),
     })
     seedDurableOpenAiGithubPeek({ includeGmailInstall: true })
@@ -2527,8 +2633,6 @@ describe('PluginsWorkspace', () => {
       ],
       selectedMarketplaceKey: 'cloud:default',
       deviceId: 'local-device',
-      canPublish: false,
-      canSharePersonalPlugins: true,
       fetchedAt: Date.now(),
     })
     window.localStorage.setItem(
@@ -2620,15 +2724,10 @@ describe('PluginsWorkspace', () => {
 
     await userEvent.click(screen.getByTestId('plugins-refresh-button'))
 
-    await waitFor(() =>
-      expect(fetch).toHaveBeenCalledWith(
-        '/api/plugins/marketplace',
-        expect.objectContaining({ method: 'GET' })
-      )
-    )
+    await waitFor(() => expectFetchRequest('/api/plugins/marketplace'))
     const marketplaceFetches = vi
       .mocked(fetch)
-      .mock.calls.filter(([url]) => String(url).startsWith('/api/plugins/marketplace'))
+      .mock.calls.filter(([url]) => String(url).endsWith('/api/plugins/marketplace'))
     expect(marketplaceFetches.length).toBeGreaterThanOrEqual(2)
   })
 
@@ -2925,8 +3024,6 @@ describe('PluginsWorkspace', () => {
       ],
       selectedMarketplaceKey: 'cloud:default',
       deviceId: 'local-device',
-      canPublish: false,
-      canSharePersonalPlugins: true,
       fetchedAt: Date.now(),
     })
     seedDurableOpenAiGithubPeek({ includeGithubConnector: true, includeGmailInstall: true })
@@ -3053,10 +3150,7 @@ describe('PluginsWorkspace', () => {
       'Codex App Server rejected install'
     )
     expect(screen.getByTestId('plugin-detail-actions-101')).toBeInTheDocument()
-    expect(fetch).toHaveBeenCalledWith(
-      '/api/plugins/marketplace?device_id=current-device',
-      expect.objectContaining({ method: 'GET' })
-    )
+    expectFetchRequest('/api/plugins/marketplace?device_id=current-device')
   })
 
   test('auto-syncs account installs onto the current device once per session', async () => {
@@ -3646,8 +3740,6 @@ describe('PluginsWorkspace', () => {
       ],
       selectedMarketplaceKey: 'cloud:default',
       deviceId: 'local-device',
-      canPublish: false,
-      canSharePersonalPlugins: true,
       fetchedAt: Date.now(),
     })
     seedDurableOpenAiGithubPeek()
@@ -3860,8 +3952,6 @@ describe('PluginsWorkspace', () => {
       ],
       selectedMarketplaceKey: 'cloud:default',
       deviceId: 'current-device',
-      canPublish: false,
-      canSharePersonalPlugins: true,
       fetchedAt: Date.now(),
     })
 
@@ -4181,8 +4271,6 @@ describe('PluginsWorkspace', () => {
       ],
       selectedMarketplaceKey: 'cloud:default',
       deviceId: 'current-device',
-      canPublish: false,
-      canSharePersonalPlugins: true,
       fetchedAt: Date.now(),
     })
 
@@ -4218,7 +4306,7 @@ describe('PluginsWorkspace', () => {
   })
 
   test('clears search and distribution from the empty marketplace state', async () => {
-    mockSystemSkillsFetch({ canPublish: true })
+    mockSystemSkillsFetch()
     render(<PluginsWorkspace />)
 
     await userEvent.click(await screen.findByTestId('plugins-distribution-tab-workspace'))
@@ -4610,8 +4698,6 @@ describe('PluginsWorkspace', () => {
       ],
       selectedMarketplaceKey: 'cloud:default',
       deviceId: 'local-device',
-      canPublish: false,
-      canSharePersonalPlugins: true,
       fetchedAt: Date.now(),
     })
     seedDurableOpenAiGithubPeek()
@@ -4824,8 +4910,6 @@ describe('PluginsWorkspace', () => {
       ],
       selectedMarketplaceKey: 'cloud:default',
       deviceId: 'local-device',
-      canPublish: false,
-      canSharePersonalPlugins: true,
       fetchedAt: Date.now(),
     })
 
@@ -4878,8 +4962,6 @@ describe('PluginsWorkspace', () => {
         ],
         selectedMarketplaceKey: 'cloud:default',
         deviceId: 'local-device',
-        canPublish: false,
-        canSharePersonalPlugins: true,
         fetchedAt: Date.now(),
       })
 
@@ -4967,7 +5049,7 @@ describe('PluginsWorkspace', () => {
     expect(screen.getByTestId('plugin-detail-toggle-101')).toHaveTextContent('安装插件')
   })
 
-  test('shows publish-new-version for personal owners before local created install hydrates', async () => {
+  test('shows share for personal owners before local created install hydrates', async () => {
     window.__WEWORK_RUNTIME_CONFIG__ = { desktopHost: 'electron' }
     mockSystemSkillsFetch({
       marketplaceInstalled: true,
@@ -4976,8 +5058,6 @@ describe('PluginsWorkspace', () => {
       marketplaceAccessRole: 'owner',
       marketplaceName: 'dev-tools',
       marketplaceDisplayName: 'Dev Tools',
-      canPublish: false,
-      canSharePersonalPlugins: true,
     })
     mockCodexAppServerInvoke({
       deviceId: 'current-device',
@@ -5002,10 +5082,230 @@ describe('PluginsWorkspace', () => {
 
     expect(await screen.findByTestId('plugin-marketplace-row-101')).toBeInTheDocument()
     await userEvent.click(screen.getByTestId('plugin-marketplace-row-101'))
+    expect(await screen.findByTestId('plugin-detail-share-101')).toHaveTextContent('分享')
     expect(await screen.findByTestId('plugin-detail-manage-access')).toHaveTextContent('管理权限')
     await userEvent.click(screen.getByTestId('plugin-detail-actions-101'))
     expect(screen.getByTestId('plugin-detail-edit-101')).toHaveTextContent('继续编辑')
-    expect(screen.getByTestId('plugin-detail-menu-publish-101')).toHaveTextContent('发布新版本')
+    expect(screen.queryByTestId('plugin-detail-menu-publish-101')).not.toBeInTheDocument()
+  })
+
+  test('waits for existing personal access before opening share and preserves its targets', async () => {
+    window.__WEWORK_RUNTIME_CONFIG__ = { desktopHost: 'electron' }
+    let resolvePluginAccess!: () => void
+    const pluginAccessGate = new Promise<void>(resolve => {
+      resolvePluginAccess = resolve
+    })
+    let resolvePublicationRequests!: () => void
+    const publicationRequestGate = new Promise<void>(resolve => {
+      resolvePublicationRequests = resolve
+    })
+    mockSystemSkillsFetch({
+      marketplaceVisibility: 'personal',
+      marketplaceAccessRole: 'owner',
+      marketplaceName: 'dev-tools',
+      marketplaceDisplayName: 'Dev Tools',
+      pluginAccessGate,
+      publicationRequestGate,
+    })
+    mockCodexAppServerInvoke({
+      deviceId: 'current-device',
+      installedPluginNames: ['dev-tools'],
+      marketplaces: [
+        {
+          name: 'wework-personal',
+          displayName: 'Personal',
+          path: '/Users/test/.wework/capabilities/bundled-marketplaces/wework-personal',
+          plugins: [
+            {
+              id: 'dev-tools-local',
+              name: 'dev-tools',
+              displayName: 'Dev Tools',
+              description: 'Developer tools',
+            },
+          ],
+        },
+      ],
+    })
+    render(<PluginsWorkspace cloudApiBaseUrl="/api" cloudToken="cloud-token" />)
+
+    await userEvent.click(await screen.findByTestId('plugin-marketplace-row-101'))
+    await userEvent.click(screen.getByTestId(/^plugin-detail-share-/))
+
+    await waitFor(() =>
+      expect(fetch).toHaveBeenCalledWith(
+        '/api/plugins/marketplace/101/access',
+        expect.objectContaining({ method: 'GET' })
+      )
+    )
+    expect(screen.queryByTestId('plugin-share-intent-dialog')).not.toBeInTheDocument()
+
+    resolvePluginAccess()
+    await act(async () => Promise.resolve())
+    expect(screen.queryByTestId('plugin-share-intent-dialog')).not.toBeInTheDocument()
+
+    resolvePublicationRequests()
+    expect(await screen.findByTestId('plugin-share-intent-dialog')).toBeInTheDocument()
+    expect(screen.getByTestId('plugin-share-intent-restricted')).toHaveAttribute(
+      'aria-checked',
+      'true'
+    )
+    await userEvent.click(screen.getByTestId('plugin-share-intent-continue'))
+    expect(screen.getByTestId('plugin-share-targets')).toHaveTextContent('Alice')
+    await userEvent.click(screen.getByTestId('plugin-share-save-scope'))
+
+    await waitFor(() => {
+      const updateCall = vi.mocked(fetch).mock.calls.find(([input, init]) => {
+        return String(input) === '/api/plugins/marketplace/101/access' && init?.method === 'PUT'
+      })
+      expect(updateCall).toBeDefined()
+      expect(JSON.parse(String(updateCall?.[1]?.body))).toMatchObject({
+        targets: [{ entityType: 'user', entityId: '7', displayName: 'Alice' }],
+      })
+    })
+  })
+
+  test('restores every request and keeps an earlier published enterprise version reachable', async () => {
+    window.__WEWORK_RUNTIME_CONFIG__ = { desktopHost: 'electron' }
+    const published = buildPublicationRequest()
+    const withdrawnRevision = {
+      ...published.revision,
+      id: 902,
+      number: 1,
+      requestedVersion: '2.0.0',
+      snapshotSha256: 'b'.repeat(64),
+      status: 'withdrawn' as const,
+      createdAt: '2026-08-29T08:00:00Z',
+    }
+    const withdrawn = buildPublicationRequest({
+      id: 83,
+      enterprisePluginId: null,
+      requestedVersion: '2.0.0',
+      status: 'withdrawn',
+      updatedAt: '2026-08-29T09:00:00Z',
+      revision: withdrawnRevision,
+      revisions: [withdrawnRevision],
+      actionEligibility: {
+        canWithdraw: false,
+        canCreateRevision: false,
+        canViewEnterprisePlugin: false,
+        canReturn: false,
+        canAccept: false,
+        canReconcile: false,
+        blockedReasons: [],
+      },
+    })
+    mockSystemSkillsFetch({
+      marketplaceVisibility: 'personal',
+      marketplaceAccessRole: 'owner',
+      marketplaceName: 'dev-tools',
+      marketplaceDisplayName: 'Dev Tools',
+      publicationRequests: [withdrawn, published],
+    })
+    mockCodexAppServerInvoke({
+      deviceId: 'current-device',
+      installedPluginNames: ['dev-tools'],
+      marketplaces: [
+        {
+          name: 'wework-personal',
+          displayName: 'Personal',
+          path: '/Users/test/.wework/capabilities/bundled-marketplaces/wework-personal',
+          plugins: [
+            {
+              id: 'dev-tools-local',
+              name: 'dev-tools',
+              displayName: 'Dev Tools',
+              description: 'Developer tools',
+            },
+          ],
+        },
+      ],
+    })
+    render(<PluginsWorkspace cloudApiBaseUrl="/api" cloudToken="cloud-token" />)
+
+    await userEvent.click(await screen.findByTestId('plugin-marketplace-row-101'))
+    expect(await screen.findByTestId('plugin-publication-card-82')).toHaveTextContent('v1.0.0')
+    await userEvent.click(screen.getByTestId('plugin-publication-view-history-82'))
+
+    expect(await screen.findByTestId('plugin-publication-request-history')).toHaveTextContent(
+      '#82 · v1.0.0'
+    )
+    expect(screen.getByTestId('plugin-publication-request-history')).toHaveTextContent(
+      '#83 · v2.0.0'
+    )
+  })
+
+  test('keeps enterprise publication available without a server capability gate', async () => {
+    window.__WEWORK_RUNTIME_CONFIG__ = { desktopHost: 'electron' }
+    mockSystemSkillsFetch({
+      marketplaceVisibility: 'personal',
+      marketplaceAccessRole: 'owner',
+      marketplaceName: 'dev-tools',
+      marketplaceDisplayName: 'Dev Tools',
+    })
+    mockCodexAppServerInvoke({
+      deviceId: 'current-device',
+      installedPluginNames: ['dev-tools'],
+      marketplaces: [
+        {
+          name: 'wework-personal',
+          displayName: 'Personal',
+          path: '/Users/test/.wework/capabilities/bundled-marketplaces/wework-personal',
+          plugins: [
+            {
+              id: 'dev-tools-local',
+              name: 'dev-tools',
+              displayName: 'Dev Tools',
+              description: 'Developer tools',
+            },
+          ],
+        },
+      ],
+    })
+    render(<PluginsWorkspace cloudApiBaseUrl="/api" cloudToken="cloud-token" />)
+
+    await userEvent.click(await screen.findByTestId('plugin-marketplace-row-101'))
+    await userEvent.click(screen.getByTestId(/^plugin-detail-share-/))
+
+    expect(await screen.findByTestId('plugin-share-intent-enterprise')).toBeEnabled()
+  })
+
+  test('offers a retry when publication readiness cannot be loaded', async () => {
+    window.__WEWORK_RUNTIME_CONFIG__ = { desktopHost: 'electron' }
+    mockSystemSkillsFetch({
+      marketplaceVisibility: 'personal',
+      marketplaceAccessRole: 'owner',
+      marketplaceName: 'dev-tools',
+      marketplaceDisplayName: 'Dev Tools',
+      publicationRequestFailures: 2,
+    })
+    mockCodexAppServerInvoke({
+      deviceId: 'current-device',
+      installedPluginNames: ['dev-tools'],
+      marketplaces: [
+        {
+          name: 'wework-personal',
+          displayName: 'Personal',
+          path: '/Users/test/.wework/capabilities/bundled-marketplaces/wework-personal',
+          plugins: [
+            {
+              id: 'dev-tools-local',
+              name: 'dev-tools',
+              displayName: 'Dev Tools',
+              description: 'Developer tools',
+            },
+          ],
+        },
+      ],
+    })
+    render(<PluginsWorkspace cloudApiBaseUrl="/api" cloudToken="cloud-token" />)
+
+    await userEvent.click(await screen.findByTestId('plugin-marketplace-row-101'))
+    await userEvent.click(screen.getByTestId(/^plugin-detail-share-/))
+
+    expect(await screen.findByTestId('plugin-operation-notice-action')).toHaveTextContent('重试')
+    expect(screen.queryByTestId('plugin-share-intent-dialog')).not.toBeInTheDocument()
+    await userEvent.click(screen.getByTestId('plugin-operation-notice-action'))
+    expect(await screen.findByTestId('plugin-share-intent-dialog')).toBeInTheDocument()
   })
 
   test('allows deleting local source after a personal plugin has been published', async () => {
@@ -5015,8 +5315,6 @@ describe('PluginsWorkspace', () => {
       marketplaceAccessRole: 'owner',
       marketplaceName: 'dev-tools',
       marketplaceDisplayName: 'Dev Tools',
-      canPublish: true,
-      canSharePersonalPlugins: true,
     })
     mockCodexAppServerInvoke({
       deviceId: 'current-device',
@@ -5039,10 +5337,11 @@ describe('PluginsWorkspace', () => {
     render(<PluginsWorkspace cloudApiBaseUrl="/api" cloudToken="cloud-token" />)
 
     await userEvent.click(await screen.findByTestId('plugin-marketplace-row-101'))
+    expect(screen.getByTestId(/^plugin-detail-share-/)).toHaveTextContent('分享')
     await userEvent.click(screen.getByTestId(/^plugin-detail-actions-(?!bar$)/))
 
     expect(screen.getByTestId(/^plugin-detail-edit-/)).toHaveTextContent('继续编辑')
-    expect(screen.getByTestId(/^plugin-detail-menu-publish-/)).toHaveTextContent('发布新版本')
+    expect(screen.queryByTestId(/^plugin-detail-menu-publish-/)).not.toBeInTheDocument()
     expect(screen.getByTestId(/^plugin-detail-delete-/)).toHaveTextContent('删除插件')
   })
 
@@ -5674,8 +5973,6 @@ describe('PluginsWorkspace', () => {
       ],
       selectedMarketplaceKey: 'cloud:default',
       deviceId: 'local-device',
-      canPublish: true,
-      canSharePersonalPlugins: true,
       fetchedAt: Date.now(),
     })
     mockCodexAppServerInvoke({
@@ -6289,7 +6586,7 @@ describe('PluginsWorkspace', () => {
     })
   })
 
-  test('lists enabled local apps through Codex app-server', async () => {
+  test('lists enabled accessible apps and can retain inaccessible apps for internal merging', async () => {
     window.__WEWORK_RUNTIME_CONFIG__ = { desktopHost: 'electron' }
     mockCodexAppServerInvoke({
       apps: [
@@ -6333,6 +6630,9 @@ describe('PluginsWorkspace', () => {
         source: 'codex-app',
       },
     ])
+    await expect(
+      localPluginApi.listApps({ includeInaccessible: true }).then(apps => apps.map(app => app.id))
+    ).resolves.toEqual(['google-calendar', 'inaccessible-app'])
     expectCodexAppServerRequest('app/list', {
       cursor: null,
       limit: 100,

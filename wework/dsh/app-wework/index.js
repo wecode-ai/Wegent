@@ -12,11 +12,13 @@ export const APP_BASE_PATH = '/wework/app'
 const API_PROXY_PATH = '/wework/api'
 const SOCKET_PROXY_PATH = '/wework/socket.io'
 const DEEP_LINK_PARAMETER = '__wework_route'
+const HOT_RELOAD_BUILD_ID_FILE = '.wework-build-id'
 const configuredWebRoot = process.env.WEWORK_APP_WEB_ROOT?.trim()
 const webRoot = configuredWebRoot
   ? resolve(configuredWebRoot)
   : resolve(dirname(fileURLToPath(import.meta.url)), 'web')
 const indexPath = join(webRoot, 'index.html')
+const hotReloadBuildIdPath = join(webRoot, HOT_RELOAD_BUILD_ID_FILE)
 
 const MIME_TYPES = {
   '.css': 'text/css; charset=utf-8',
@@ -111,7 +113,7 @@ export async function serveWeworkApp(req, res) {
     if (req.method === 'HEAD' && process.env.WEWORK_APP_HOT_RELOAD === '1') {
       res.writeHead(200, {
         'cache-control': 'no-store',
-        'x-wework-app-build-id': fileBuildId(indexPath),
+        'x-wework-app-build-id': hotReloadBuildId(hotReloadBuildIdPath, indexPath),
       })
       res.end()
       return
@@ -127,7 +129,7 @@ export async function serveWeworkApp(req, res) {
   const metadata = await stat(asset)
   res.writeHead(200, {
     'content-type': MIME_TYPES[extname(asset)] ?? 'application/octet-stream',
-    'cache-control': 'public, max-age=31536000, immutable',
+    'cache-control': weworkAssetCacheControl(process.env),
     'content-length': metadata.size,
   })
   if (req.method === 'HEAD') {
@@ -149,17 +151,21 @@ export function coreDshDeepLinkLocation(value) {
 
 export function injectDevelopmentReload(html, environment, buildId) {
   if (environment.WEWORK_APP_HOT_RELOAD !== '1') return html
-  const script = `<script>(()=>{const current=${escapeJsonForHtml(
+  const script = `<script>(()=>{if(!window.weworkElectronFiles)return;let current=${escapeJsonForHtml(
     buildId
   )};let checking=false;setInterval(async()=>{if(checking)return;checking=true;try{const response=await fetch(${JSON.stringify(
     `${APP_BASE_PATH}/`
-  )},{method:'HEAD',cache:'no-store'});const next=response.headers.get('x-wework-app-build-id');if(next&&next!==current)window.location.reload()}catch{}finally{checking=false}},500)})()</script>`
+  )},{method:'HEAD',cache:'no-store'});const next=response.headers.get('x-wework-app-build-id');if(next&&next!==current){current=next;window.location.reload()}}catch{}finally{checking=false}},500)})()</script>`
   return html.includes('</head>') ? html.replace('</head>', `${script}</head>`) : `${script}${html}`
 }
 
 export function weworkIndexInjection(environment = process.env, appIndexPath = indexPath) {
   const assets = weworkIndexAssets(readFileSync(appIndexPath, 'utf8'))
-  const developmentReload = injectDevelopmentReload('', environment, fileBuildId(appIndexPath))
+  const developmentReload = injectDevelopmentReload(
+    '',
+    environment,
+    hotReloadBuildId(join(dirname(appIndexPath), HOT_RELOAD_BUILD_ID_FILE), appIndexPath)
+  )
   const injection = [
     {
       kind: 'html',
@@ -185,6 +191,22 @@ export function weworkIndexInjection(environment = process.env, appIndexPath = i
 function fileBuildId(path) {
   const metadata = statSync(path, { bigint: true })
   return `${metadata.mtimeNs}:${metadata.size}`
+}
+
+function hotReloadBuildId(buildIdPath, appIndexPath) {
+  try {
+    const buildId = readFileSync(buildIdPath, 'utf8').trim()
+    if (buildId) return buildId
+  } catch (error) {
+    if (error?.code !== 'ENOENT') throw error
+  }
+  return fileBuildId(appIndexPath)
+}
+
+export function weworkAssetCacheControl(environment = process.env) {
+  return environment.WEWORK_APP_HOT_RELOAD === '1'
+    ? 'no-store'
+    : 'public, max-age=31536000, immutable'
 }
 
 export function injectRuntimeConfig(html, environment = process.env, windowLabel = 'main') {
@@ -218,6 +240,10 @@ export function runtimeConfigScript(environment = process.env, windowLabel = 'ma
       environment.WEWORK_E2E_CONTROL_TOKEN || environment.VITE_WEWORK_DESKTOP_E2E_CONTROL_TOKEN,
     controlUrl:
       environment.WEWORK_E2E_CONTROL_URL || environment.VITE_WEWORK_DESKTOP_E2E_CONTROL_URL,
+    disabled:
+      (environment.WEWORK_INSTANCE_MODE === 'core-dsh-plugin-development' &&
+        environment.WEWORK_PLUGIN_DEVELOPMENT_E2E !== '1') ||
+      undefined,
     localModelsCatalogReady: environmentBoolean(
       environment,
       'WEWORK_E2E_LOCAL_MODELS_CATALOG_READY',
@@ -237,6 +263,7 @@ export function runtimeConfigScript(environment = process.env, windowLabel = 'ma
       'WEWORK_E2E_TRANSCRIPT_PAGE_SIZE',
       'VITE_WEWORK_E2E_TRANSCRIPT_PAGE_SIZE'
     ),
+    windowLabel: environment.WEWORK_PLUGIN_DEVELOPMENT_E2E_WINDOW_LABEL,
     worktreeCreationDelayMs: environmentPositiveInteger(
       environment,
       'WEWORK_E2E_WORKTREE_CREATION_DELAY_MS',

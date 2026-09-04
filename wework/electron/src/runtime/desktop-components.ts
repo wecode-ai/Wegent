@@ -23,6 +23,10 @@ export interface PreparedDesktopComponents {
   paths: ComponentPaths | null
 }
 
+export function shouldStageDesktopComponentUpdates(environment: NodeJS.ProcessEnv): boolean {
+  return environment.WEWORK_E2E_DISABLE_COMPONENT_UPDATES !== '1'
+}
+
 export async function prepareDesktopComponents(
   options: PrepareDesktopComponentsOptions
 ): Promise<PreparedDesktopComponents> {

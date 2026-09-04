@@ -54,6 +54,26 @@ function createDetailPlugin(): InstalledPluginItem {
 }
 
 describe('PluginDetailView owner actions', () => {
+  test('deduplicates identical category and publisher metadata', () => {
+    const plugin = createDetailPlugin()
+    plugin.raw.spec.interface = {
+      category: '个人创建',
+    }
+
+    render(
+      <PluginDetailView
+        plugin={plugin}
+        onBack={vi.fn()}
+        onToggle={vi.fn()}
+        onComponentToggle={vi.fn()}
+        onUninstall={vi.fn()}
+      />
+    )
+
+    expect(screen.getByText('个人创建 · v0.1.0')).toBeInTheDocument()
+    expect(screen.queryByText('个人创建 · 个人创建 · v0.1.0')).not.toBeInTheDocument()
+  })
+
   test('allows automatic updates to be changed explicitly', () => {
     const plugin = createDetailPlugin()
     plugin.raw.spec.source = {
@@ -149,9 +169,9 @@ describe('PluginDetailView owner actions', () => {
     expect(screen.getByTestId('plugin-auto-update-paused-local-1')).toHaveTextContent('3')
   })
 
-  test('keeps manage access in the availability section and publish new version in the menu', () => {
+  test('keeps manage access in availability and orders share before menu and chat', () => {
     const onManageAccess = vi.fn()
-    const onMenuPublish = vi.fn()
+    const onShareAction = vi.fn()
 
     render(
       <PluginDetailView
@@ -165,15 +185,44 @@ describe('PluginDetailView owner actions', () => {
         shareGrantUserCount={3}
         shareGrantNamespaceCount={0}
         onManageAccess={onManageAccess}
-        menuPublishLabel="发布新版本"
-        onMenuPublish={onMenuPublish}
+        shareActionLabel="分享"
+        onShareAction={onShareAction}
+        primaryActionLabel="立即对话"
       />
     )
 
     expect(screen.queryByTestId('plugin-detail-secondary-local-1')).not.toBeInTheDocument()
     expect(screen.getByTestId('plugin-detail-manage-access')).toHaveTextContent('管理权限')
-    fireEvent.click(screen.getByTestId('plugin-detail-actions-local-1'))
-    expect(screen.getByTestId('plugin-detail-menu-publish-local-1')).toHaveTextContent('发布新版本')
+    const actions = screen.getByTestId('plugin-detail-actions-bar')
+    const share = screen.getByTestId('plugin-detail-share-local-1')
+    const menu = screen.getByTestId('plugin-detail-actions-local-1')
+    const primary = screen.getByTestId('plugin-detail-toggle-local-1')
+    expect(Array.from(actions.children).indexOf(share)).toBeLessThan(
+      Array.from(actions.children).indexOf(menu.parentElement!)
+    )
+    expect(Array.from(actions.children).indexOf(menu.parentElement!)).toBeLessThan(
+      Array.from(actions.children).indexOf(primary)
+    )
+    fireEvent.click(share)
+    expect(onShareAction).toHaveBeenCalledTimes(1)
+  })
+
+  test('links an enterprise release back to its personal source for the owner', () => {
+    const onOpenOriginPersonalPlugin = vi.fn()
+    render(
+      <PluginDetailView
+        plugin={createDetailPlugin()}
+        onBack={vi.fn()}
+        onToggle={vi.fn()}
+        onComponentToggle={vi.fn()}
+        onUninstall={vi.fn()}
+        originPersonalActionLabel="查看个人创建版本"
+        onOpenOriginPersonalPlugin={onOpenOriginPersonalPlugin}
+      />
+    )
+
+    fireEvent.click(screen.getByTestId('plugin-detail-open-origin-personal'))
+    expect(onOpenOriginPersonalPlugin).toHaveBeenCalledTimes(1)
   })
 
   test('closes the overflow menu when clicking outside', () => {
@@ -184,8 +233,8 @@ describe('PluginDetailView owner actions', () => {
         onToggle={vi.fn()}
         onComponentToggle={vi.fn()}
         onUninstall={vi.fn()}
-        menuPublishLabel="发布新版本"
-        onMenuPublish={vi.fn()}
+        editActionLabel="继续编辑"
+        onEditAction={vi.fn()}
       />
     )
 

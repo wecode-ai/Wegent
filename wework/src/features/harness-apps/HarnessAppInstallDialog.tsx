@@ -1,12 +1,4 @@
-import {
-  AlertTriangle,
-  Archive,
-  CheckCircle2,
-  ChevronDown,
-  Loader2,
-  RefreshCw,
-  X,
-} from 'lucide-react'
+import { AlertTriangle, Archive, CheckCircle2, ChevronDown, Loader2, X } from 'lucide-react'
 import type { HarnessAppPreview } from '@/api/local/harnessApps'
 import { Button } from '@/components/ui/button'
 import type { LocalHarnessModelOption } from '@/features/local-harness/localHarnessModels'
@@ -19,7 +11,6 @@ interface HarnessAppInstallDialogProps {
   modelOptions: LocalHarnessModelOption[]
   preview: HarnessAppPreview
   onCancel: () => void
-  onChooseAnother: () => void
   onInstall: () => void
   onModelChange: (modelKey: string) => void
 }
@@ -31,7 +22,6 @@ export function HarnessAppInstallDialog({
   modelOptions,
   preview,
   onCancel,
-  onChooseAnother,
   onInstall,
   onModelChange,
 }: HarnessAppInstallDialogProps) {
@@ -203,17 +193,7 @@ export function HarnessAppInstallDialog({
           ) : null}
         </div>
 
-        <footer className="plugin-dialog-divider flex shrink-0 items-center justify-between gap-3 border-t px-6 py-4">
-          <button
-            type="button"
-            data-testid="harness-app-choose-another"
-            disabled={busy}
-            className="flex h-11 items-center gap-2 rounded-lg px-2 text-sm font-medium text-text-secondary hover:bg-surface disabled:opacity-40 sm:h-9"
-            onClick={onChooseAnother}
-          >
-            <RefreshCw className="h-4 w-4" />
-            {t('workbench.harness_apps_choose_another', '重新选择')}
-          </button>
+        <footer className="plugin-dialog-divider flex shrink-0 items-center justify-end gap-3 border-t px-6 py-4">
           <div className="flex items-center gap-2">
             <Button
               size="sm"

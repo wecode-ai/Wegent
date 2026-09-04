@@ -18,6 +18,13 @@ After enabling Experimental features, open the composer's **+** menu and select 
 
 For an existing task, open the right-side **Environment** panel and select **Link project space**. You can link the current project or task to a local or cloud project space, or quickly create a task in that space. Local-space operations remain on the current device; cloud-space operations use shared cloud data.
 
+After a task is linked to a board, select **Change board link** from the task summary above the composer, then choose the destination project space. Wework offers two choices:
+
+- **Create board task** creates and links a card using the current task title and execution status.
+- **Link an existing board task** searches editable cards in the destination board by task ID or title and links the current task to the selected card without changing that card's status.
+
+When the destination differs from the current board, Wework asks you to confirm the move. After confirmation, the runtime task keeps only one user-selected board link. The original board card remains in place but is no longer linked to the runtime task. A newly created card enters the column that matches the current task state; for example, a settled task awaiting confirmation enters **In review**.
+
 ### Review board-task progress
 
 The linked-task progress area does not repeat the runtime task title. While a task is running, the first row shows the latest AI text or thinking state, and a second indented row with a short vertical guide shows the most recent tool or edit action. PR/MR status remains a trailing action. After execution stops, the card shows only the last non-empty line from the final response of the latest turn and never falls back to an older turn. Unread cards use a subtle background in addition to the unread indicator.

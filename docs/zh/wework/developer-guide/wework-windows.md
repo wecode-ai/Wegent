@@ -28,6 +28,12 @@ pnpm --filter wework dev:windows
 `wework/electron` 主进程加载 Wework renderer。Electron 通过子进程 stdin/stdout
 与 Executor sidecar 交换 JSONL，不依赖 Unix Domain Socket 或固定 TCP 端口。
 
+开发模式下，脚本会先构建 renderer 产物（`wework/dsh/app-wework/web`）并启动
+Vite watch 构建，再通过 `WEWORK_APP_WEB_ROOT`/`WEWORK_APP_HOT_RELOAD` 让
+运行的桌面应用直接服务最新构建并在产物变化时自动刷新（与 `dev-mac-app.sh`
+一致）。因此切换分支或修改 renderer 源码后，无需手动同步打包插件产物即可
+生效。
+
 运行时与 Executor 构建缓存默认放在 `%LOCALAPPDATA%\wegent\`（可用
 `WEWORK_DEV_CACHE_ROOT`、`WEGENT_CARGO_TARGET_ROOT` 覆盖），首次准备较慢，
 之后为增量。可用 `-- --executor-isolation` 使用临时 Executor Home，或用

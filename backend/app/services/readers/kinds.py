@@ -54,6 +54,50 @@ PUBLIC_FALLBACK_KINDS: Set[KindType] = {
 }
 
 
+def _get_team_by_share_permission(
+    db: Session,
+    *,
+    user_id: int,
+    namespace: str,
+    name: str,
+) -> Optional[Kind]:
+    """Resolve direct or entity-derived Team sharing with the unified policy."""
+    from app.schemas.share import MemberRole
+    from app.services.share.team_share_service import team_share_service
+
+    candidates = (
+        db.query(Kind)
+        .filter(
+            Kind.user_id.notin_((0, user_id)),
+            Kind.kind == KindType.TEAM.value,
+            Kind.namespace == namespace,
+            Kind.name == name,
+            Kind.is_active == True,
+        )
+        .order_by(Kind.updated_at.desc(), Kind.id.desc())
+        .all()
+    )
+    for team in candidates:
+        if team_share_service.check_permission(
+            db,
+            team.id,
+            user_id,
+            MemberRole.Reporter,
+        ):
+            logger.info(
+                "[KindReader] Team resolved via unified share permission: "
+                "user_id=%s, team_id=%s, team_owner_user_id=%s, "
+                "namespace=%s, name=%s",
+                user_id,
+                team.id,
+                team.user_id,
+                namespace,
+                name,
+            )
+            return team
+    return None
+
+
 # =============================================================================
 # Interface
 # =============================================================================
@@ -165,6 +209,8 @@ class IKindReader(ABC):
         from app.services.readers.shared_teams import sharedTeamReader
 
         if namespace == "default":
+            shared_team_ids: List[int] = []
+
             # First, query user's own Team
             if user_id != 0:
                 result = self.get_personal(db, user_id, KindType.TEAM, namespace, name)
@@ -188,6 +234,15 @@ class IKindReader(ABC):
                     )
                     if team:
                         return team
+
+                team = _get_team_by_share_permission(
+                    db,
+                    user_id=user_id,
+                    namespace=namespace,
+                    name=name,
+                )
+                if team:
+                    return team
 
             # If not found, check public Teams (user_id=0)
             public_team = self.get_public(db, KindType.TEAM, namespace, name)

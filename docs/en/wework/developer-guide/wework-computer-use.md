@@ -61,11 +61,21 @@ the corresponding application process after a permission change. Windows and
 Linux do not show the macOS permission flow, but Driver capability and runtime
 errors remain visible.
 
-The master switch is stored in Wework desktop preferences. At startup, the
-application reads that preference and attempts to start the Driver. If
-permissions are missing, it preserves the enabled intent without creating the
-bridge and the settings page continues to show the missing permissions. A
-later status check retries startup after permissions become available.
+The master switch is stored in Wework desktop preferences. While configuring
+the Desktop Runtime, Electron only creates `ComputerUseService`; it does not
+read the enablement preference or load the Driver. Once the main surface is
+actionable, the Renderer closes the startup window through
+`renderer.startupReady`. Electron then schedules one background preference
+restore without waiting for native Driver initialization. CUA native module
+loading and macOS permission checks therefore do not block Executor, Core DSH,
+or the first actionable workbench.
+
+The background restore reads the latest preference before it starts. It skips
+Driver startup when the feature has been disabled or the application is
+quitting. If permissions are missing, it preserves the enabled intent without
+creating the bridge and the settings page continues to show the missing
+permissions. A later status check retries startup after permissions become
+available.
 
 ## Release integration
 
@@ -117,7 +127,9 @@ Focused verification includes:
 
 ```bash
 pnpm --dir wework/electron typecheck
-pnpm --dir wework/electron test src/host/computer-use-service.test.ts
+pnpm --dir wework/electron test \
+  src/host/computer-use-startup.test.ts \
+  src/host/computer-use-service.test.ts
 pnpm --filter wework test \
   src/components/settings/ComputerUseSettingsPage.test.tsx \
   src/features/computer-use/ComputerUseActivityIndicator.test.tsx \

@@ -68,11 +68,11 @@ export default function TopNavigation({
         {showHamburgerMenu && (
           <button
             type="button"
-            className="lg:hidden p-2 rounded-md text-text-muted hover:text-text-primary hover:bg-muted focus:outline-none focus:ring-2 focus:ring-primary/40 bg-surface border border-border flex-shrink-0"
+            className="flex h-11 w-11 flex-shrink-0 items-center justify-center rounded-xl border border-border bg-surface text-text-muted hover:bg-muted hover:text-text-primary focus:outline-none focus:ring-2 focus:ring-primary/40 lg:hidden"
             onClick={onMobileSidebarToggle}
             aria-label={t('common:common.open_sidebar')}
           >
-            <Bars3Icon className={isMobile ? 'h-4 w-4' : 'h-5 w-5'} aria-hidden="true" />
+            <Bars3Icon className="h-5 w-5" aria-hidden="true" />
           </button>
         )}
 

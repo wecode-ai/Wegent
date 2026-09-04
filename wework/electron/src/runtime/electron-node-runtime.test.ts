@@ -1,4 +1,4 @@
-import { execFile } from 'node:child_process'
+import { execFile, spawn } from 'node:child_process'
 import { mkdir, readFile, stat, symlink, writeFile } from 'node:fs/promises'
 import { delimiter, join } from 'node:path'
 import { promisify } from 'node:util'
@@ -34,6 +34,8 @@ describe('prepareElectronNodeRuntime', () => {
     expect(runtime.environment.WEWORK_NODE_RUNTIME_KIND).toBe('electron')
     expect(runtimeNodeArgs(runtime.environment, ['dsh.js'])).toEqual([
       '--expose-internals',
+      '--require',
+      join(directory, 'runtime', 'bin', 'electron-node-bootstrap.cjs'),
       'dsh.js',
     ])
     expect(runtime.status).toMatchObject({
@@ -44,7 +46,10 @@ describe('prepareElectronNodeRuntime', () => {
     })
     expect((await stat(nodePath)).isFile()).toBe(true)
     expect(await readFile(nodePath, 'utf8')).toContain('export ELECTRON_RUN_AS_NODE=1')
-    expect(await readFile(nodePath, 'utf8')).toContain(`exec '${helperExecPath}' "$@"`)
+    expect(await readFile(nodePath, 'utf8')).toContain(`exec '${helperExecPath}' --require`)
+    expect(await readFile(nodePath, 'utf8')).toContain(
+      `--require '${join(directory, 'runtime', 'bin', 'electron-node-bootstrap.cjs')}'`
+    )
   })
 
   test('preserves an explicitly configured Node executable', async () => {
@@ -93,6 +98,57 @@ describe('prepareElectronNodeRuntime', () => {
       )
 
       expect(result.stdout).toBe('1')
+    }
+  )
+
+  test.skipIf(process.platform === 'win32')(
+    'keeps Electron Node children alive when their diagnostic pipe closes',
+    async () => {
+      const directory = await import('node:fs/promises').then(fs => fs.mkdtemp('/tmp/wework-node-'))
+      const runtime = await prepareElectronNodeRuntime({
+        dataDirectory: directory,
+        environment: { PATH: process.env.PATH },
+        helperExecPath: process.execPath,
+        nodeVersion: process.version,
+        platform: process.platform,
+      })
+      const child = spawn(
+        runtime.environment.WEWORK_NODE_PATH!,
+        [
+          '-e',
+          [
+            "process.stdin.once('data', () => {",
+            "  process.emitWarning('closed diagnostic pipe')",
+            "  setTimeout(() => process.stdout.write('survived'), 50)",
+            '})',
+          ].join('\n'),
+        ],
+        {
+          env: runtime.environment,
+          stdio: ['pipe', 'pipe', 'pipe'],
+        }
+      )
+
+      const stdout = new Promise<string>((resolve, reject) => {
+        let output = ''
+        child.stdout.setEncoding('utf8')
+        child.stdout.on('data', chunk => {
+          output += chunk
+        })
+        child.once('error', reject)
+        child.once('close', code => {
+          if (code === 0) resolve(output)
+          else reject(new Error(`Electron Node child exited with ${code}`))
+        })
+      })
+      const stderrClosed = new Promise<void>(resolve => {
+        child.stderr.once('close', resolve)
+      })
+      child.stderr.destroy()
+      await stderrClosed
+      child.stdin.end('warn')
+
+      await expect(stdout).resolves.toBe('survived')
     }
   )
 
@@ -155,7 +211,10 @@ describe('prepareElectronNodeRuntime', () => {
     const launcherPath = join(directory, 'runtime', 'bin', 'node.cmd')
     expect(runtime.environment.WEWORK_NODE_PATH).toBe(helperExecPath)
     expect(await readFile(launcherPath, 'utf8')).toContain('set ELECTRON_RUN_AS_NODE=1')
-    expect(await readFile(launcherPath, 'utf8')).toContain(`"${helperExecPath}" %*`)
+    expect(await readFile(launcherPath, 'utf8')).toContain(`"${helperExecPath}" --require`)
+    expect(await readFile(launcherPath, 'utf8')).toContain(
+      `--require "${join(directory, 'runtime', 'bin', 'electron-node-bootstrap.cjs')}"`
+    )
     expect(runtime.environment.Path).toBeUndefined()
     expect(runtime.environment.PATH?.split(';')).toEqual([
       join(directory, 'runtime', 'bin'),

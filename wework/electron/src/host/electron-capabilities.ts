@@ -14,7 +14,7 @@ import {
 } from 'electron'
 import { stat } from 'node:fs/promises'
 import { cpus, freemem, totalmem } from 'node:os'
-import { join } from 'node:path'
+import { join, resolve } from 'node:path'
 import {
   HOST_CAPABILITIES,
   HostCapabilityError,
@@ -45,19 +45,35 @@ import {
   saveCustomWorkspaceOpener,
 } from './local-workspace-openers.js'
 import type { DesktopHostEventBroker } from './desktop-host-events.js'
+import type { SecureValueStore } from './secure-value-store.js'
+import type { BrowserAnnotationController } from './browser-annotation-controller.js'
+import { RotatingLog } from '../runtime/rotating-log.js'
 
 export { captureWebContentsDataUrl } from './web-contents-capture.js'
 
 export const WEWORK_APP_PRINCIPAL = '@wegent/dsh-app-wework'
 
+export function e2eOpenDialogOverride(
+  environment: NodeJS.ProcessEnv = process.env
+): { canceled: false; filePaths: string[] } | null {
+  const controlUrl = environment.WEWORK_E2E_CONTROL_URL?.trim()
+  const selectedPath = environment.WEWORK_E2E_OPEN_DIALOG_PATH?.trim()
+  if (!controlUrl || !selectedPath) return null
+  return { canceled: false, filePaths: [resolve(selectedPath)] }
+}
+
 export interface ElectronDesktopServices {
   appUpdates?: AppUpdateService
+  browserAnnotations?: BrowserAnnotationController
   events: DesktopHostEventBroker
   feedback: FeedbackBundleManager
   openRuntimeTask: (taskAddressId: string) => void
   plugins: WorkbenchPluginManager
+  secureStorage: SecureValueStore
   cleanupStaleTemporaryImages: () => Promise<void>
   coreDshPlugins: () => CoreDshPluginService | null
+  pluginDevelopment: () => PluginDevelopmentService | null
+  takePendingWorkspaceOpenRequests?: () => Array<{ path: string; label?: string }>
   updatePreferences?: (patch: Record<string, unknown>) => Promise<Record<string, unknown>>
 }
 
@@ -99,6 +115,21 @@ export interface CoreDshPluginService {
   uninstallCoreDshPlugin(name: string): Promise<unknown>
 }
 
+export interface PluginDevelopmentService {
+  classify(sourceRoot: string): Promise<unknown>
+  deleteData(): Promise<void>
+  focus(): Promise<void>
+  initialize(sourceRoot: string): Promise<unknown>
+  list(): Promise<unknown>
+  observe(sourceRoot: string | null): Promise<unknown>
+  openDevTools(): Promise<void>
+  openLogDirectory(): Promise<void>
+  restartCoreDsh(): Promise<void>
+  start(sourceRoot: string): Promise<unknown>
+  stop(): Promise<void>
+  validate(sourceRoot: string): Promise<unknown>
+}
+
 export interface ElectronE2EHost {
   capturePopout: () => Promise<string>
   captureTarget: (windowLabel: string) => WebContents | null
@@ -120,6 +151,8 @@ export interface ElectronE2EHost {
     executorPid: number | null
     workbenchRuntimes: unknown[]
   }
+  rendererStartupReady: (source: 'task-list' | 'other') => void | Promise<void>
+  rendererStartupFailed: () => void | Promise<void>
   startupSplashSnapshot: () => StartupSplashSnapshot | null
   trayActivate: (activation: TrayActivation) => boolean
   traySetState: (state: TrayMenuState) => void
@@ -172,9 +205,12 @@ export function createElectronCapabilityRouter(
     getSystemDragContext: () => ({ conversationTitle: null }),
     runtimeDiagnostics: () => ({
       coreDshPid: null,
+      developmentPlugin: null,
       executorPid: null,
       workbenchRuntimes: [],
     }),
+    rendererStartupReady: () => undefined,
+    rendererStartupFailed: () => undefined,
     startupSplashSnapshot: () => null,
     trayActivate: () => false,
     traySetState: () => undefined,
@@ -194,12 +230,27 @@ export function createElectronCapabilityRouter(
 ): HostCapabilityRouter {
   const router = new HostCapabilityRouter()
   const attachments = new LocalAttachmentStore(localAttachmentRoot())
+  const filePreviewLog = new RotatingLog({
+    path: join(app.getPath('logs'), 'file-preview.log'),
+    maxBytes: 2 * 1024 * 1024,
+    retainedFiles: 2,
+  })
   router.grant(WEWORK_APP_PRINCIPAL, HOST_CAPABILITIES)
 
   router.register('app.getVersion', () => ({ version: app.getVersion() }))
   router.register('desktop.events', params =>
     desktopServices.events.read(integerParam(params, 'after') ?? 0)
   )
+  router.register('renderer.startupReady', params =>
+    e2eHost.rendererStartupReady(
+      optionalStringParam(params, 'source') === 'task-list' ? 'task-list' : 'other'
+    )
+  )
+  router.register('renderer.startupFailed', () => e2eHost.rendererStartupFailed())
+  router.register('diagnostics.filePreview', params => {
+    const event = recordParam(params, 'event')
+    return filePreviewLog.write('supervisor', JSON.stringify(event))
+  })
   registerAppUpdateCapabilities(router, desktopServices.appUpdates)
   router.register('attachment.begin', params =>
     attachments.begin(stringParam(params, 'filename'), requiredIntegerParam(params, 'size'))
@@ -224,6 +275,7 @@ export function createElectronCapabilityRouter(
       navigateExisting: booleanParam(params, 'navigateExisting') ?? true,
     })
   )
+  registerBrowserAnnotationCapabilities(router, desktopServices.browserAnnotations)
   router.register('browser.setBounds', params =>
     browser.setBounds(
       stringParam(params, 'label'),
@@ -281,6 +333,12 @@ export function createElectronCapabilityRouter(
       booleanParam(params, 'approved') ?? false
     )
   )
+  router.register('browser.notifyAgentCursorArrived', params =>
+    browser.notifyAgentCursorArrived(
+      stringParam(params, 'label'),
+      integerParam(params, 'moveSequence') ?? 0
+    )
+  )
   router.register('browser.close', params =>
     browser.close(stringParam(params, 'label'), optionalStringParam(params, 'expectedNativeLabel'))
   )
@@ -303,6 +361,48 @@ export function createElectronCapabilityRouter(
   router.register('browser.deleteDownload', params =>
     browser.deleteDownload(stringParam(params, 'id'))
   )
+  router.register('browser.setRequestHeaderRule', params =>
+    browser.setRequestHeaderRule({
+      id: stringParam(params, 'id'),
+      origins: stringArrayParam(params, 'origins') ?? [],
+      pathPrefixes: stringArrayParam(params, 'pathPrefixes') ?? [],
+      headers: stringRecordParam(params, 'headers'),
+      expiresAt: nullableIntegerParam(params, 'expiresAt'),
+      allowInsecure: booleanParam(params, 'allowInsecure') ?? false,
+    })
+  )
+  router.register('browser.removeRequestHeaderRule', params =>
+    browser.removeRequestHeaderRule(stringParam(params, 'id'))
+  )
+  router.register('browser.createBackgroundPage', params =>
+    browser.createBackgroundPage(stringParam(params, 'id'))
+  )
+  router.register('browser.navigateBackgroundPage', params =>
+    browser.navigateBackgroundPage(stringParam(params, 'id'), stringParam(params, 'url'))
+  )
+  router.register('browser.setBackgroundPageUserAgent', params =>
+    browser.setBackgroundPageUserAgent(stringParam(params, 'id'), stringParam(params, 'userAgent'))
+  )
+  router.register('browser.backgroundPageState', params =>
+    browser.backgroundPageState(stringParam(params, 'id'))
+  )
+  router.register('browser.closeBackgroundPage', params =>
+    browser.closeBackgroundPage(stringParam(params, 'id'))
+  )
+  router.register('secureStorage.get', params =>
+    desktopServices.secureStorage.get(stringParam(params, 'key'))
+  )
+  router.register('secureStorage.set', async params => {
+    await desktopServices.secureStorage.set(
+      stringParam(params, 'key'),
+      stringParam(params, 'value')
+    )
+    return { stored: true }
+  })
+  router.register('secureStorage.delete', async params => {
+    await desktopServices.secureStorage.delete(stringParam(params, 'key'))
+    return { deleted: true }
+  })
   router.register('clipboard.readWorkspacePaths', async params => {
     const fallbackPaths = stringArrayParam(params, 'fallbackPaths') ?? []
     const nativePayloads = clipboard
@@ -359,11 +459,12 @@ export function createElectronCapabilityRouter(
   })
   router.register('e2e.capturePopoutWindow', () => e2eHost.capturePopout())
   router.register('e2e.capturePrimaryView', async params => {
-    const contents = e2eHost.captureTarget(optionalStringParam(params, 'windowLabel') ?? 'main')
+    const windowLabel = optionalStringParam(params, 'windowLabel') ?? 'main'
+    const contents = e2eHost.captureTarget(windowLabel)
     if (!contents || contents.isDestroyed()) {
       throw new HostCapabilityError('e2e_view_unavailable', 'Primary DSH view is unavailable')
     }
-    return captureWebContentsDataUrl(contents, { debuggerOnly: true })
+    return captureWebContentsDataUrl(contents, { preferDebugger: true })
   })
   router.register('e2e.captureWorkspaceWindow', async params => {
     const requestedLabel = optionalStringParam(params, 'windowLabel')
@@ -381,7 +482,7 @@ export function createElectronCapabilityRouter(
         `Workspace DSH view is unavailable: ${label}`
       )
     }
-    return captureWebContentsDataUrl(contents, { debuggerOnly: true })
+    return captureWebContentsDataUrl(contents, { preferDebugger: true })
   })
   router.register('e2e.closeMainWindow', () => requiredWindow(window).close())
   router.register('e2e.activateRuntimeTaskNotification', params => {
@@ -461,9 +562,10 @@ export function createElectronCapabilityRouter(
     else target.maximize()
   })
   router.register('window.close', () => requiredWindow(window).close())
-  router.register('dialog.open', params =>
-    dialog.showOpenDialog(requiredWindow(window), openDialogOptions(params))
-  )
+  router.register('dialog.open', params => {
+    const override = e2eOpenDialogOverride()
+    return override ?? dialog.showOpenDialog(requiredWindow(window), openDialogOptions(params))
+  })
   router.register('dialog.save', params =>
     dialog.showSaveDialog(requiredWindow(window), saveDialogOptions(params))
   )
@@ -526,6 +628,7 @@ export function createElectronCapabilityRouter(
   registerRendererStorageCapabilities(router, rendererStorage)
   router.register('rendererHealth.getState', () => rendererHealth())
   registerCoreDshPluginCapabilities(router, desktopServices)
+  registerPluginDevelopmentCapabilities(router, desktopServices)
   router.register('runtime.restartCoreDsh', () => {
     e2eHost.scheduleCoreDshRestart()
     return { scheduled: true }
@@ -548,6 +651,10 @@ export function createElectronCapabilityRouter(
     shell.showItemInFolder(stringParam(params, 'path'))
   )
   router.register('workspace.listOpeners', () => listLocalWorkspaceOpeners(app.getPath('userData')))
+  router.register(
+    'workspace.takePendingOpenRequests',
+    () => desktopServices.takePendingWorkspaceOpenRequests?.() ?? []
+  )
   router.register('workspace.open', async params => {
     const opener = stringParam(params, 'opener')
     const path = stringParam(params, 'path')
@@ -775,6 +882,36 @@ export function registerDesktopServiceCapabilities(
   )
 }
 
+export function registerBrowserAnnotationCapabilities(
+  router: HostCapabilityRouter,
+  annotations: BrowserAnnotationController | undefined
+): void {
+  router.register('browser.annotation.start', params => {
+    const controller = requiredBrowserAnnotations(annotations)
+    const mode = stringParam(params, 'mode')
+    if (mode !== 'quick' && mode !== 'batch') invalidParam('browser.annotation.start')
+    const x = nullableNumberParam(params, 'x')
+    const y = nullableNumberParam(params, 'y')
+    if ((x == null) !== (y == null)) invalidParam('browser.annotation.start')
+    controller.start(stringParam(params, 'label'), mode, x == null || y == null ? null : { x, y })
+  })
+  router.register('browser.annotation.stop', params =>
+    requiredBrowserAnnotations(annotations).stop(stringParam(params, 'label'))
+  )
+  router.register('browser.annotation.clear', params =>
+    requiredBrowserAnnotations(annotations).clear(stringParam(params, 'label'))
+  )
+  router.register('browser.annotation.state', params =>
+    requiredBrowserAnnotations(annotations).state(stringParam(params, 'label'))
+  )
+  router.register('browser.annotation.setOriginalView', params =>
+    requiredBrowserAnnotations(annotations).setOriginalView(
+      stringParam(params, 'label'),
+      booleanParam(params, 'enabled') ?? false
+    )
+  )
+}
+
 interface CpuTimeSample {
   idle: number
   total: number
@@ -840,6 +977,46 @@ export function registerCoreDshPluginCapabilities(
   )
   router.register('runtime.uninstallCoreDshPlugin', params =>
     requiredCoreDshPluginService(services).uninstallCoreDshPlugin(stringParam(params, 'name'))
+  )
+}
+
+export function registerPluginDevelopmentCapabilities(
+  router: HostCapabilityRouter,
+  services: ElectronDesktopServices
+): void {
+  router.register('pluginDevelopment.classify', params =>
+    requiredPluginDevelopmentService(services).classify(stringParam(params, 'sourceRoot'))
+  )
+  router.register('pluginDevelopment.initialize', params =>
+    requiredPluginDevelopmentService(services).initialize(stringParam(params, 'sourceRoot'))
+  )
+  router.register('pluginDevelopment.list', () => requiredPluginDevelopmentService(services).list())
+  router.register('pluginDevelopment.observe', params =>
+    requiredPluginDevelopmentService(services).observe(
+      optionalStringParam(params, 'sourceRoot') ?? null
+    )
+  )
+  router.register('pluginDevelopment.validate', params =>
+    requiredPluginDevelopmentService(services).validate(stringParam(params, 'sourceRoot'))
+  )
+  router.register('pluginDevelopment.start', params =>
+    requiredPluginDevelopmentService(services).start(stringParam(params, 'sourceRoot'))
+  )
+  router.register('pluginDevelopment.focus', () =>
+    requiredPluginDevelopmentService(services).focus()
+  )
+  router.register('pluginDevelopment.restartCoreDsh', () =>
+    requiredPluginDevelopmentService(services).restartCoreDsh()
+  )
+  router.register('pluginDevelopment.openDevTools', () =>
+    requiredPluginDevelopmentService(services).openDevTools()
+  )
+  router.register('pluginDevelopment.openLogDirectory', () =>
+    requiredPluginDevelopmentService(services).openLogDirectory()
+  )
+  router.register('pluginDevelopment.stop', () => requiredPluginDevelopmentService(services).stop())
+  router.register('pluginDevelopment.deleteData', () =>
+    requiredPluginDevelopmentService(services).deleteData()
   )
 }
 
@@ -948,6 +1125,19 @@ function requiredCoreDshPluginService(services: ElectronDesktopServices): CoreDs
     throw new HostCapabilityError(
       'capability_unavailable',
       'Core DSH plugin management requires the managed desktop runtime'
+    )
+  }
+  return service
+}
+
+function requiredPluginDevelopmentService(
+  services: ElectronDesktopServices
+): PluginDevelopmentService {
+  const service = services.pluginDevelopment()
+  if (!service) {
+    throw new HostCapabilityError(
+      'capability_unavailable',
+      'Wework plugin development is unavailable in this instance'
     )
   }
   return service
@@ -1271,6 +1461,15 @@ function compact<Value extends object>(value: Value): Value {
 function requiredAppUpdates(value: AppUpdateService | undefined): AppUpdateService {
   if (!value) throw new HostCapabilityError('capability_unavailable', 'App updates are unavailable')
   return value
+}
+
+function requiredBrowserAnnotations(
+  annotations: BrowserAnnotationController | undefined
+): BrowserAnnotationController {
+  if (!annotations) {
+    throw new HostCapabilityError('capability_unavailable', 'Browser annotations are unavailable')
+  }
+  return annotations
 }
 
 function updateChannelParam(params: Record<string, unknown>): WeworkUpdateChannel {

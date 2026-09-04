@@ -388,4 +388,59 @@ describe('HoverCard', () => {
       top: '380px',
     })
   })
+
+  test('calibrates once when the rendered size changes with its position', async () => {
+    vi.useFakeTimers()
+    let cardMeasurements = 0
+    vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function () {
+      const isCard = this.dataset.testid === 'stable-hover-card'
+      if (!isCard) {
+        return {
+          x: 100,
+          y: 500,
+          width: 100,
+          height: 40,
+          top: 500,
+          right: 200,
+          bottom: 540,
+          left: 100,
+          toJSON: () => undefined,
+        }
+      }
+
+      cardMeasurements += 1
+      const top = Number.parseFloat(this.style.top)
+      const height = top === 500 ? 340 : 220
+      return {
+        x: 210,
+        y: top,
+        width: 360,
+        height,
+        top,
+        right: 570,
+        bottom: top + height,
+        left: 210,
+        toJSON: () => undefined,
+      }
+    })
+    vi.stubGlobal('innerWidth', 1024)
+    vi.stubGlobal('innerHeight', 768)
+
+    render(
+      <HoverCard
+        testId="stable-hover-card"
+        estimatedWidth={360}
+        estimatedHeight={220}
+        content={<div>Position-sensitive details</div>}
+      >
+        <div>Current task</div>
+      </HoverCard>
+    )
+
+    fireEvent.mouseEnter(screen.getByText('Current task'))
+    await act(async () => vi.advanceTimersByTime(450))
+
+    expect(screen.getByTestId('stable-hover-card')).toHaveStyle({ left: '210px', top: '200px' })
+    expect(cardMeasurements).toBe(1)
+  })
 })

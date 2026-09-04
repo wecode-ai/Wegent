@@ -56,15 +56,25 @@ describe('DSH executor transport', () => {
       '/wework/executor/v1/rpc',
       expect.objectContaining({
         method: 'POST',
-        body: JSON.stringify({
-          method: 'runtime.tasks.list',
-          params: { archived: false },
+        headers: expect.objectContaining({
+          'x-request-id': expect.stringMatching(/^wework-local-/),
         }),
+        body: expect.stringContaining('"method":"runtime.tasks.list"'),
       })
+    )
+    const request = JSON.parse(fetchMock.mock.calls[0][1]?.body as string)
+    expect(request).toMatchObject({
+      id: expect.stringMatching(/^wework-local-/),
+      method: 'runtime.tasks.list',
+      params: { archived: false },
+    })
+    expect(request.id).toBe(
+      (fetchMock.mock.calls[0][1]?.headers as Record<string, string>)['x-request-id']
     )
   })
 
   test('preserves structured executor errors', async () => {
+    const warning = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
     vi.stubGlobal(
       'fetch',
       vi.fn(
@@ -89,6 +99,37 @@ describe('DSH executor transport', () => {
       code: 'runtime_unavailable',
       retryable: true,
     })
+    expect(warning).toHaveBeenCalledWith(
+      '[Wework] Executor RPC request failed',
+      expect.objectContaining({
+        request_id: expect.stringMatching(/^wework-local-/),
+        method: 'runtime.tasks.list',
+        status: 503,
+        code: 'runtime_unavailable',
+        retryable: true,
+      })
+    )
+    warning.mockRestore()
+  })
+
+  test('logs correlated metadata when an executor response is not valid json', async () => {
+    const warning = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => new Response('not-json', { status: 502 }))
+    )
+
+    await expect(requestDshExecutor('runtime.tasks.list')).rejects.toBeInstanceOf(SyntaxError)
+    expect(warning).toHaveBeenCalledWith(
+      '[Wework] Executor RPC response parsing failed',
+      expect.objectContaining({
+        request_id: expect.stringMatching(/^wework-local-/),
+        method: 'runtime.tasks.list',
+        status: 502,
+        error_type: 'SyntaxError',
+      })
+    )
+    warning.mockRestore()
   })
 
   test('delivers text deltas without waiting for animation frames', () => {

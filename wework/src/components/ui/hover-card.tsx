@@ -91,6 +91,7 @@ export function HoverCard({
   const pinnedRef = useRef(false)
   const [position, setPosition] = useState<HoverCardPosition | null>(null)
   const [pinned, setPinned] = useState(false)
+  const isOpen = position !== null
 
   const clearTimers = useCallback(() => {
     if (openTimerRef.current !== null) {
@@ -206,8 +207,10 @@ export function HoverCard({
     []
   )
 
+  // Calibrate once per open transition. Re-running from the position update can
+  // make position-sensitive content alternate between two measured layouts.
   useLayoutEffect(() => {
-    if (!position) return
+    if (!isOpen) return
     const anchorRect = anchorRef.current?.getBoundingClientRect()
     const cardRect = cardRef.current?.getBoundingClientRect()
     if (!anchorRect || !cardRect) return
@@ -217,9 +220,13 @@ export function HoverCard({
       cardRect.width || estimatedWidth,
       cardRect.height || estimatedHeight
     )
-    if (nextPosition.left === position.left && nextPosition.top === position.top) return
-    setPosition(nextPosition)
-  }, [estimatedHeight, estimatedWidth, position])
+    setPosition(current => {
+      if (!current || (nextPosition.left === current.left && nextPosition.top === current.top)) {
+        return current
+      }
+      return nextPosition
+    })
+  }, [estimatedHeight, estimatedWidth, isOpen])
 
   useEffect(() => {
     if (!position) return

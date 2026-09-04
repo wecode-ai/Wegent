@@ -46,6 +46,8 @@ import { useRouter, useSearchParams } from 'next/navigation'
 import { paths } from '@/config/paths'
 import type { DeviceInfo } from '@/apis/devices'
 import type { TaskType } from '@/types/api'
+import { useAdvancedDeviceMode } from '@/features/devices/hooks/useAdvancedDeviceMode'
+import { filterDevicesByAdvancedMode } from '@/features/devices/utils/device-visibility'
 
 interface DeviceSelectorTabProps {
   /** Additional className */
@@ -250,6 +252,7 @@ export function DeviceSelectorTab({
   const searchParams = useSearchParams()
   const { user, updatePreferences } = useUser()
   const { devices, selectedDeviceId, setSelectedDeviceId, isLoading } = useDevices()
+  const { showAdvancedDevices, isAdvancedDeviceModeReady } = useAdvancedDeviceMode()
   const newTaskSelectionInitializedRef = useRef(false)
   const previousTaskIdRef = useRef<number | null>(taskId ?? null)
   const [isOpen, setIsOpen] = useState(false)
@@ -295,18 +298,23 @@ export function DeviceSelectorTab({
   // Get user's default execution target preference
   const defaultExecutionTarget = user?.preferences?.default_execution_target
 
+  const visibleDevices = useMemo(
+    () => filterDevicesByAdvancedMode(devices, showAdvancedDevices),
+    [devices, showAdvancedDevices]
+  )
+
   const displayDevices = useMemo(
-    () => [...devices].sort(compareDevicesByExecutionPriority),
-    [devices]
+    () => [...visibleDevices].sort(compareDevicesByExecutionPriority),
+    [visibleDevices]
   )
 
   // Count online devices
   const onlineDeviceCount = useMemo(
-    () => devices.filter(device => device.status !== 'offline').length,
-    [devices]
+    () => visibleDevices.filter(device => device.status !== 'offline').length,
+    [visibleDevices]
   )
 
-  const totalDeviceCount = devices.length
+  const totalDeviceCount = visibleDevices.length
 
   const localDevices = useMemo(() => {
     return displayDevices.filter(device => device.device_type !== 'cloud')
@@ -334,7 +342,12 @@ export function DeviceSelectorTab({
       return
     }
 
-    if (isLoading || hasExplicitDeviceParam || newTaskSelectionInitializedRef.current) {
+    if (
+      isLoading ||
+      !isAdvancedDeviceModeReady ||
+      hasExplicitDeviceParam ||
+      newTaskSelectionInitializedRef.current
+    ) {
       return
     }
 
@@ -345,17 +358,28 @@ export function DeviceSelectorTab({
     // A new draft starts from the account default. Preserve an existing
     // selection only on the first mount, where it may be an explicit launch
     // choice made by the device page before this selector mounted.
-    if (returningFromTask || !selectedDeviceId) {
-      setSelectedDeviceId(getAccountDefaultDeviceId(defaultExecutionTarget))
+    const selectedDeviceIsVisible = visibleDevices.some(
+      device => device.device_id === selectedDeviceId
+    )
+    if (returningFromTask || !selectedDeviceId || !selectedDeviceIsVisible) {
+      const defaultDeviceId = getAccountDefaultDeviceId(defaultExecutionTarget)
+      const availableDefaultDeviceId = visibleDevices.some(
+        device => device.device_id === defaultDeviceId
+      )
+        ? defaultDeviceId
+        : null
+      setSelectedDeviceId(availableDefaultDeviceId)
     }
   }, [
     defaultExecutionTarget,
     hasExplicitDeviceParam,
+    isAdvancedDeviceModeReady,
     isExistingTask,
     isLoading,
     selectedDeviceId,
     setSelectedDeviceId,
     taskId,
+    visibleDevices,
   ])
 
   const isSelectedDeviceAvailable =

@@ -6,7 +6,7 @@
 
 from datetime import datetime
 from types import SimpleNamespace
-from unittest.mock import Mock, patch
+from unittest.mock import ANY, AsyncMock, Mock, patch
 
 import pytest
 from fastapi.testclient import TestClient
@@ -374,6 +374,8 @@ def test_the_creator_can_read_the_wiki_they_just_created(
     )
 
     assert response.status_code == 200, response.text
+    assert response.headers["cache-control"] == "no-store"
+    assert response.json()["published_generation_id"] == 0
 
 
 def test_a_code_wiki_appears_in_the_general_knowledge_base_list(
@@ -1063,6 +1065,10 @@ def _status_url(knowledge_base_id: int) -> str:
     return f"/api/knowledge-bases/{knowledge_base_id}/code-wiki/status"
 
 
+def _cancel_url(knowledge_base_id: int, generation_id: int) -> str:
+    return f"/api/knowledge-bases/{knowledge_base_id}/code-wiki/generations/{generation_id}/cancel"
+
+
 def test_a_wiki_that_has_never_run_says_so(
     test_client: TestClient,
     auth_headers: dict[str, str],
@@ -1126,6 +1132,85 @@ def test_a_running_wiki_reports_the_run_rather_than_looking_idle(
     assert body["status"] == "running"
     assert body["generation_id"] == generation.id
     assert body["is_stale"] is False
+    assert body["progress"] == {
+        "stage": "generating",
+        "current_step": 0,
+        "total_steps": 0,
+        "pages_written": 0,
+        "pages_total": 0,
+    }
+
+
+def test_a_maintainer_can_stop_the_current_wiki_generation(
+    test_client: TestClient,
+    auth_headers: dict[str, str],
+    test_db: Session,
+    test_user: User,
+    kind_services_use_test_db,
+):
+    with patch("app.api.endpoints.knowledge_code_wiki.start_first_run"):
+        kb_id = _create_wiki(test_client, auth_headers)
+    generation = _record_a_running_generation(test_db, kb_id)
+    maintainer = _create_user(test_db, "wiki-cancel-maintainer")
+    _add_kb_member(test_db, kb_id, maintainer, ResourceRole.Maintainer)
+
+    with patch(
+        "app.api.endpoints.knowledge_code_wiki.task_kinds_service.cancel_task",
+        new_callable=AsyncMock,
+        return_value={"status": "CANCELLED"},
+    ) as cancel_task:
+        response = test_client.post(
+            _cancel_url(kb_id, generation.id), headers=_headers_for(maintainer)
+        )
+
+    assert response.status_code == 204, response.text
+    cancel_task.assert_awaited_once_with(
+        db=test_db,
+        task_id=generation.task_id,
+        user_id=test_user.id,
+        background_task_runner=ANY,
+    )
+    test_db.refresh(generation)
+    assert generation.status == "FAILED"
+    body = test_client.get(_status_url(kb_id), headers=auth_headers).json()
+    assert body["status"] == "failed"
+    assert body["failure_code"] == "cancelled_by_user"
+
+
+def test_a_wiki_generation_can_only_be_stopped_while_it_is_running(
+    test_client: TestClient,
+    auth_headers: dict[str, str],
+    test_db: Session,
+    kind_services_use_test_db,
+):
+    with patch("app.api.endpoints.knowledge_code_wiki.start_first_run"):
+        kb_id = _create_wiki(test_client, auth_headers)
+    generation = _record_a_running_generation(test_db, kb_id)
+    generation.status = "FAILED"
+    test_db.commit()
+
+    response = test_client.post(_cancel_url(kb_id, generation.id), headers=auth_headers)
+
+    assert response.status_code == 409
+
+
+def test_a_reporter_cannot_stop_a_wiki_generation(
+    test_client: TestClient,
+    auth_headers: dict[str, str],
+    test_db: Session,
+    kind_services_use_test_db,
+):
+    with patch("app.api.endpoints.knowledge_code_wiki.start_first_run"):
+        kb_id = _create_wiki(test_client, auth_headers)
+    generation = _record_a_running_generation(test_db, kb_id)
+    reporter = _create_user(test_db, "wiki-cancel-reporter")
+    _add_kb_member(test_db, kb_id, reporter, ResourceRole.Reporter)
+
+    response = test_client.post(
+        _cancel_url(kb_id, generation.id), headers=_headers_for(reporter)
+    )
+
+    assert response.status_code == 403
 
 
 def test_a_run_whose_worker_went_quiet_is_reported_as_stale(

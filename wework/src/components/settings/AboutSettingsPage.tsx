@@ -1,6 +1,7 @@
 import { Bot, Download, ExternalLink, Loader2 } from 'lucide-react'
 import type { ComponentType } from 'react'
 import { useOptionalAppUpdate } from '@/features/app-update/app-update-context'
+import { formatAppUpdateErrorSummary } from '@/features/app-update/app-update-error-copy'
 import {
   calculateAppUpdateDownloadPercent,
   formatAppUpdateVersion,
@@ -13,16 +14,6 @@ import { SettingsGroup, SettingsPage, SettingsRow, SettingsSwitch } from './sett
 const PROJECT_URL = 'https://github.com/wecode-ai/Wegent'
 const LICENSE_URL = `${PROJECT_URL}/blob/main/LICENSE`
 const DISCORD_URL = 'https://discord.gg/MVzJzyqEUp'
-
-function formatUpdateError(message: string | null, t: ReturnType<typeof useTranslation>['t']) {
-  if (!message) return null
-  if (message.toLowerCase().includes('updater does not have any endpoints set')) {
-    return t('workbench.app_update_endpoint_missing', {
-      defaultValue: '当前版本暂不支持自动更新检查',
-    })
-  }
-  return message
-}
 
 function AboutLink({ label, url }: { label: string; url: string }) {
   return (
@@ -77,7 +68,7 @@ export function AboutSettingsPage() {
   const updateStatus = appUpdate?.status ?? 'idle'
   const downloadProgress = appUpdate?.downloadProgress ?? null
   const updateError = appUpdate?.error ?? null
-  const formattedUpdateError = formatUpdateError(updateError, t)
+  const formattedUpdateError = updateError ? formatAppUpdateErrorSummary(updateError, t) : null
   const isUpdateBusy =
     updateStatus === 'checking' || updateStatus === 'downloading' || updateStatus === 'installing'
   const downloadPercent = downloadProgress

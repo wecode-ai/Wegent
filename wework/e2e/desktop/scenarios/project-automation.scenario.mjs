@@ -4,6 +4,7 @@ import { join } from 'node:path'
 import { ensureExperimentalFeaturesEnabled } from '../modules/preferences-automation-flows.mjs'
 
 import {
+  AUTOMATION_SCHEDULE_TIMEOUT_MS,
   CHECKPOINT_TASK_COMPLETION_TEXT,
   CHECKPOINT_TASK_PROMPT,
   DEFAULT_MODEL_ID,
@@ -365,6 +366,12 @@ function assertExecutionTruthContract(execution) {
 }
 
 export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspacePath }) {
+  // Cloud executions are claimed asynchronously. Keep the assertion budget
+  // beyond one complete claim window so a commit at the boundary is observed.
+  const automationRuntimeTimeoutMs = Math.max(
+    uiTimeoutMs * 6,
+    AUTOMATION_SCHEDULE_TIMEOUT_MS + 10_000
+  )
   const rules = [RULE]
   const eventSubscriptions = []
   const runs = [
@@ -455,7 +462,7 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
     projectId,
     taskId,
     executorType,
-    timeoutMs = uiTimeoutMs * 3
+    timeoutMs = automationRuntimeTimeoutMs
   ) {
     const execution = await waitForValue(
       () => allExecutions(projectId),
@@ -486,7 +493,7 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
     projectId,
     ruleId,
     taskId = null,
-    timeoutMs = uiTimeoutMs * 3
+    timeoutMs = automationRuntimeTimeoutMs
   ) {
     return waitForValue(
       () => cloudRequest(`/api/v1/cloud-projects/${projectId}/automations/${ruleId}/runs`),
@@ -1160,6 +1167,75 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
       'The private Runtime handle escaped the cloud projection boundary'
     )
 
+    await control.command('drag', moonshotOverrideCard, {
+      target: `${activeBoard} [data-testid="cloud-todo-column-dropzone-in_review"]`,
+    })
+    await waitForValue(
+      () => cloudRequest(`/api/v1/loop-items/${moonshotOverrideIssue.id}`),
+      item => item.status === 'in_review',
+      'The completed Issue did not reach the review state required for board follow-up',
+      uiTimeoutMs
+    )
+    await control.command(
+      'waitFor',
+      `${activeBoard} [data-testid="cloud-todo-card-tasks-${moonshotOverrideIssue.id}"]`,
+      {
+        timeoutMs: uiTimeoutMs,
+        visible: true,
+      }
+    )
+    const moonshotProgressPopup = `[data-testid="cloud-todo-card-progress-popup-${moonshotOverrideIssue.id}"]`
+    const moonshotPopupConversation = `${moonshotProgressPopup} [data-testid="cloud-todo-card-popup-conversation-${moonshotOverrideIssue.id}"]`
+    const moonshotPopupModelSelector = `${moonshotPopupConversation} [data-testid="model-selector-button"]`
+    const moonshotPopupInput = `${moonshotPopupConversation} [data-testid="chat-message-input"]`
+    const moonshotPopupSend = `${moonshotPopupConversation} [data-testid="send-message-button"]`
+    await control.command('scrollIntoView', moonshotOverrideCard, { visible: true })
+    await control.command('hover', moonshotOverrideCard, { visible: true })
+    await control.command('waitFor', moonshotProgressPopup, {
+      timeoutMs: uiTimeoutMs,
+      visible: true,
+    })
+    const followUpRequestOffset = upstreamResponseRequests.length
+    await control.command('click', moonshotPopupInput, { visible: true })
+    await waitForValue(
+      () =>
+        control.command(
+          'getAttribute',
+          `${moonshotPopupConversation} [data-testid="project-chat-composer-form"]`,
+          { value: 'data-short-expanded' }
+        ),
+      value => value === 'true',
+      'The board popup composer did not expand after focusing its input',
+      uiTimeoutMs
+    )
+    await control.command('fill', moonshotPopupInput, {
+      value: MOONSHOT_OVERRIDE_FOLLOW_UP,
+    })
+    const popupModelLabel = await control.command('getText', moonshotPopupModelSelector)
+    assert.equal(
+      popupModelLabel,
+      `公网:${CLOUD_MODEL_UPSTREAM_ID}`,
+      'The board popup displayed the global GPT default instead of the task model'
+    )
+    assert.ok(!popupModelLabel.includes(DEFAULT_MODEL_LABEL))
+    await control.command('click', moonshotPopupSend, { visible: true })
+    const followUpRequests = await waitForValue(
+      () => Promise.resolve(upstreamResponseRequests.slice(followUpRequestOffset)),
+      requests =>
+        requests.some(request => JSON.stringify(request).includes(MOONSHOT_OVERRIDE_FOLLOW_UP)),
+      'The board popup follow-up did not reach the task model service',
+      uiTimeoutMs
+    )
+    const routedFollowUp = followUpRequests.find(request =>
+      JSON.stringify(request).includes(MOONSHOT_OVERRIDE_FOLLOW_UP)
+    )
+    assert.equal(
+      routedFollowUp?.model,
+      CLOUD_MODEL_UPSTREAM_ID,
+      'The board popup follow-up used the global default instead of the task model'
+    )
+    await control.command('press', 'body', { key: 'Escape' })
+
     await control.command('waitFor', `${activeBoard} [data-testid="cloud-project-board-view"]`, {
       timeoutMs: uiTimeoutMs,
       visible: true,
@@ -1640,9 +1716,6 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
     await control.command('fill', '[aria-label="自动化名称"]', {
       value: '统一自动化回归',
     })
-    await control.command('fill', '[data-testid="automation-rule-description"]', {
-      value: '创建 Issue 后按完整流程执行，并持久化节点与 DAG 配置。',
-    })
     await control.command('click', '[data-testid="automation-node-insert-after-trigger"]')
     await control.command('click', '[data-testid="automation-node-insert-after-task-trigger"]')
     await control.command('waitFor', '[data-testid^="execution-node-name-"]', {
@@ -1660,6 +1733,21 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
     })
     await control.command('fill', '[data-testid^="execution-node-prompt-"]', {
       value: '根据 Issue 修改代码并运行相关测试。',
+    })
+    const automationExecutionEnvironment = '[data-testid^="execution-node-environment-"]'
+    await control.command('scrollIntoView', automationExecutionEnvironment)
+    await control.command('waitFor', automationExecutionEnvironment, {
+      timeoutMs: uiTimeoutMs,
+      visible: true,
+    })
+    await control.command('click', automationExecutionEnvironment, { visible: true })
+    await control.command(
+      'click',
+      `[data-testid^="execution-node-environment-"][data-testid$="-option-${CLOUD_DEVICE_ID}"]`,
+      { visible: true }
+    )
+    await control.command('select', '[data-testid^="execution-node-model-"]', {
+      value: CLOUD_MODEL_NAME,
     })
     await control.command('select', '[data-testid^="execution-node-workspace-"]', {
       value: 'composer',
@@ -1747,11 +1835,15 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
     assert.equal(unifiedRule.roleSource, 'generic')
     assert.equal(unifiedRule.runtimeSource, 'runtime_user')
     assert.equal(unifiedRule.eventType, 'task.created')
-    assert.deepEqual(
+    assert.equal(unifiedRule.eventConfig.wework_flow.description, '')
+    const unifiedExecutionConfig =
       unifiedRule.eventConfig.runtime_workflow_definition.nodes[0].execution_config
-        .workspace_binding,
-      { type: 'standalone' }
-    )
+    assert.equal(unifiedExecutionConfig.execution_device_id, CLOUD_DEVICE_ID)
+    assert.equal(unifiedExecutionConfig.model, CLOUD_MODEL_NAME)
+    assert.equal(unifiedExecutionConfig.model_type, 'public')
+    assert.equal(unifiedExecutionConfig.model_options.weworkCloudModelNamespace, 'default')
+    assert.equal(unifiedExecutionConfig.model_options.weworkCloudModelResourceUserId, '0')
+    assert.deepEqual(unifiedExecutionConfig.workspace_binding, { type: 'standalone' })
     const unifiedGraphNodes = unifiedRule.eventConfig.wework_flow.graph.nodes
     assert.equal(unifiedGraphNodes.length, 2)
     const unifiedDeliverable = unifiedGraphNodes[0].deliverables[0]
@@ -4016,6 +4108,11 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
         value: '完成代码实现和测试。',
       })
       const executionEnvironment = '[data-testid^="execution-node-environment-"]'
+      await control.command('scrollIntoView', executionEnvironment)
+      await control.command('waitFor', executionEnvironment, {
+        timeoutMs: uiTimeoutMs,
+        visible: true,
+      })
       await control.command('click', executionEnvironment, { visible: true })
       await control.command(
         'click',

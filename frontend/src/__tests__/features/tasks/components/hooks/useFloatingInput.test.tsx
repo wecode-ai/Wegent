@@ -54,4 +54,21 @@ describe('useFloatingInput', () => {
 
     await waitFor(() => expect(result.current.inputHeight).toBe(0))
   })
+
+  it('measures a fixed input while its empty state is visible', async () => {
+    const input = document.createElement('div')
+    Object.defineProperty(input, 'offsetHeight', {
+      configurable: true,
+      value: 216,
+    })
+    const { result } = renderHook(() =>
+      useFloatingInput({ hasMessages: false, inputAlwaysAtBottom: true })
+    )
+
+    act(() => {
+      result.current.floatingInputRef(input)
+    })
+
+    await waitFor(() => expect(result.current.inputHeight).toBe(216))
+  })
 })

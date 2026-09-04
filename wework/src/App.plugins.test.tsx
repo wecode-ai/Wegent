@@ -1082,7 +1082,7 @@ describe('App plugins route', () => {
     expect(workbenchProviderMocks.mounts).toHaveBeenCalledWith(true)
   })
 
-  test('closes the idle maintenance gate when the active app changes after startup timeout', async () => {
+  test('does not bypass startup readiness after ten seconds or an active app change', async () => {
     vi.useFakeTimers()
     workbenchProviderMocks.autoReady = false
     window.history.pushState({}, '', '/')
@@ -1097,9 +1097,9 @@ describe('App plugins route', () => {
     expect(idleTaskCoordinatorMocks.active).toHaveBeenLastCalledWith(false)
 
     await act(async () => {
-      vi.advanceTimersByTime(6000)
+      vi.advanceTimersByTime(10_000)
     })
-    expect(idleTaskCoordinatorMocks.active).toHaveBeenLastCalledWith(true)
+    expect(idleTaskCoordinatorMocks.active).toHaveBeenLastCalledWith(false)
 
     await act(async () => {
       window.history.pushState({}, '', '/todo')
@@ -1343,6 +1343,70 @@ describe('App plugins route', () => {
         input:
           '[$快速建站](plugin://wegent-sites@wegent) Build an internal website and validate it locally',
         pluginName: '快速建站',
+        openInNewChat: true,
+      }
+    )
+  })
+
+  test('opens continue development with the Sites plugin reference before the project reference', async () => {
+    localStorage.setItem('auth_token', 'wegent-secret')
+    vi.mocked(fetch).mockImplementation(async input => {
+      const url = String(input)
+      if (url.includes('/plugins/installed')) {
+        return {
+          ok: true,
+          status: 200,
+          json: () =>
+            Promise.resolve({ items: [installedOnLocalDevice(installedCodexSitesPlugin())] }),
+        } as Response
+      }
+      if (url.includes('/sites/app-types')) {
+        return {
+          ok: true,
+          status: 200,
+          json: () => Promise.resolve(applicationTypesResponse()),
+        } as Response
+      }
+      if (url.includes('/sites?')) {
+        return {
+          ok: true,
+          status: 200,
+          json: () =>
+            Promise.resolve({
+              items: [
+                {
+                  app_type: 'web',
+                  siteid: 'site-1',
+                  project_id: 'prj_01arz3ndektsv4rrffq69g5fav',
+                  name: '产品发布页',
+                  internal_url: 'http://sites.internal/product',
+                  external_url: null,
+                  publish_status: 'unpublished',
+                  thumbnail_url: null,
+                },
+              ],
+              total: 1,
+              offset: 0,
+              limit: 20,
+            }),
+        } as Response
+      }
+      throw new Error(`Unexpected request: ${url}`)
+    })
+    window.history.pushState({}, '', '/sites?app_type=web')
+
+    renderApp()
+    await updateAppPreferences({ experimentalFeaturesEnabled: true })
+    await screen.findByText('产品发布页')
+    await userEvent.click(screen.getByTestId('site-continue-development-site-1'))
+
+    await waitFor(() => expect(window.location.pathname).toBe('/'))
+    expect(JSON.parse(sessionStorage.getItem('wework:pending-plugin-trial') ?? '{}')).toMatchObject(
+      {
+        input:
+          '[$快速建站](plugin://wegent-sites@wegent) [产品发布页](wegent-sites-project://prj_01arz3ndektsv4rrffq69g5fav) 请说出你要做的改动',
+        pluginName: '快速建站',
+        app: expect.objectContaining({ pluginKey: 'wegent-sites' }),
         openInNewChat: true,
       }
     )

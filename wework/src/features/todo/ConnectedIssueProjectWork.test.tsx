@@ -78,4 +78,22 @@ describe('ConnectedIssueProjectWork', () => {
     expect(mocks.globalSelectProjectWorkspace).not.toHaveBeenCalled()
     expect(mocks.globalSelectProject).not.toHaveBeenCalled()
   })
+
+  it('preserves an opaque execution strategy selected by the caller', () => {
+    const project: ProjectWithTasks = { id: 92, name: '研发工作区', tasks: [] }
+
+    render(
+      <ConnectedIssueProjectWork
+        project={project}
+        selectedDeviceWorkspaceId={202}
+        executionMode="plugin-owned-strategy"
+        onSelectProject={vi.fn()}
+        onSelectProjectWorkspace={vi.fn()}
+      >
+        {projectWork => <span data-testid="execution-strategy">{projectWork.executionMode}</span>}
+      </ConnectedIssueProjectWork>
+    )
+
+    expect(screen.getByTestId('execution-strategy')).toHaveTextContent('plugin-owned-strategy')
+  })
 })

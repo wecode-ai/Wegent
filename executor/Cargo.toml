@@ -51,7 +51,7 @@ serde_json = "1.0"
 sha2 = "0.10"
 tar = "0.4"
 tempfile = "3.23"
-tf-rust-socketio = { version = "0.8.1", features = ["async"] }
+tf-rust-socketio = { version = "0.9.2", features = ["async"] }
 thiserror = "2.0"
 tokio = { version = "1.48", features = ["io-std", "io-util", "macros", "net", "process", "rt-multi-thread", "sync", "time"] }
 tokio-tungstenite = "0.21"

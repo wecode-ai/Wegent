@@ -14,7 +14,7 @@ import {
   X,
 } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
-import { memo, useCallback, useEffect, useState, useSyncExternalStore } from 'react'
+import { memo, useCallback, useEffect, useMemo, useState, useSyncExternalStore } from 'react'
 import type { ComponentType, KeyboardEvent as ReactKeyboardEvent, ReactNode } from 'react'
 import {
   FileChangesReviewPanel,
@@ -39,6 +39,16 @@ import { isDesktopRuntime } from '@/lib/runtime-environment'
 import { getPlatform } from '@/lib/platform'
 import { reloadEmbeddedBrowser, type EmbeddedBrowserOpenRequest } from '@/lib/embedded-browser'
 import { cn } from '@/lib/utils'
+import {
+  observePluginDevelopmentWorkspace,
+  pluginDevelopmentProjectKind,
+  pluginDevelopmentProjectsRevision,
+  subscribePluginDevelopmentProjects,
+} from '@/features/dsh-plugins/pluginDevelopmentProjects'
+import {
+  getComposerApps,
+  subscribeComposerApps,
+} from '@/components/chat/composer/composerAppsSnapshot'
 import type { DeviceInfo, ProjectWithTasks, RuntimeTaskAddress } from '@/types/api'
 import { isEditableShortcutTarget } from '@/lib/keybindings'
 import { FileWorkspacePanel, type FileWorkspacePanelSelection } from './FileWorkspacePanel'
@@ -47,9 +57,12 @@ import { WorkspaceBrowserPanel } from './WorkspaceBrowserPanelContainer'
 import { WorkspacePanelCards } from './WorkspacePanelCards'
 import { TemporaryChatPanel } from './TemporaryChatPanel'
 import { DshSidebarExtensionPanel } from './DshSidebarExtensionPanel'
+import { BrowserAgentCursorIcon } from './BrowserAgentCursorIcon'
 import {
   resolveRightWorkspaceExtensionDescriptor,
   rightWorkspaceDshSidebar,
+  isWeworkWorkspaceSidebarTabAvailable,
+  shouldCloseUnavailableWeworkWorkspaceSidebarTab,
   isRightWorkspaceExtensionTab,
   titleOfWeworkWorkspaceSidebarTab,
   type WeworkWorkspaceScope,
@@ -129,9 +142,11 @@ export interface RightWorkspaceBrowserState {
   label: string
   nativeLabel?: string | null
   browserSessionId: string
+  url: string | null
   title: string | null
   faviconUrl: string | null
   isLoading: boolean
+  agentActive?: boolean
   hasActiveDownload: boolean
   openRequest: EmbeddedBrowserOpenRequest | null
   developmentPreview?: {
@@ -184,6 +199,7 @@ interface RightWorkspacePanelProps {
   extensionTabs?: Partial<Record<RightWorkspaceExtensionTab, RightWorkspaceExtensionTabState>>
   extensionScope: WeworkWorkspaceScope
   browserStates: Partial<Record<RightWorkspaceBrowserTab, RightWorkspaceBrowserState>>
+  browserTransferSourceLabels?: Partial<Record<RightWorkspaceBrowserTab, string>>
   onBrowserStateChange: (
     tab: RightWorkspaceBrowserTab,
     update: Partial<RightWorkspaceBrowserState>
@@ -231,6 +247,7 @@ interface RightWorkspaceBrowserPanelSlotProps {
   tab: RightWorkspaceBrowserTab
   active: boolean
   state: RightWorkspaceBrowserState
+  transferFromLabel?: string
   codeCommentCount: number
   codeCommentContexts: CodeCommentContext[]
   browserAnnotationCommand?: BrowserAnnotationCommand | null
@@ -250,6 +267,7 @@ function RightWorkspaceBrowserPanelSlot({
   tab,
   active,
   state,
+  transferFromLabel,
   codeCommentCount,
   codeCommentContexts,
   browserAnnotationCommand,
@@ -270,6 +288,10 @@ function RightWorkspaceBrowserPanelSlot({
     (isLoading: boolean) => onBrowserStateChange(tab, { isLoading }),
     [onBrowserStateChange, tab]
   )
+  const handleAgentActiveChange = useCallback(
+    (agentActive: boolean) => onBrowserStateChange(tab, { agentActive }),
+    [onBrowserStateChange, tab]
+  )
   const handleTitleChange = useCallback(
     (title: string | null) => onBrowserStateChange(tab, { title }),
     [onBrowserStateChange, tab]
@@ -278,12 +300,19 @@ function RightWorkspaceBrowserPanelSlot({
     (nativeLabel: string | null) => onBrowserStateChange(tab, { nativeLabel }),
     [onBrowserStateChange, tab]
   )
+  const handleUrlChange = useCallback(
+    (url: string | null) => onBrowserStateChange(tab, { url }),
+    [onBrowserStateChange, tab]
+  )
 
   return (
     <WorkspaceBrowserPanel
       active={active}
       hideToolbar={Boolean(state.developmentPreview)}
       label={state.label}
+      transferFromLabel={transferFromLabel}
+      transferredNativeLabel={transferFromLabel ? state.nativeLabel : null}
+      transferredUrl={transferFromLabel ? state.url : null}
       browserTabId={tab}
       openRequest={state.openRequest}
       codeCommentCount={codeCommentCount}
@@ -295,8 +324,10 @@ function RightWorkspaceBrowserPanelSlot({
       onDownloadActivityChange={handleDownloadActivityChange}
       onFaviconChange={handleFaviconChange}
       onLoadingChange={handleLoadingChange}
+      onAgentActiveChange={handleAgentActiveChange}
       onTitleChange={handleTitleChange}
       onNativeLabelChange={handleNativeLabelChange}
+      onUrlChange={handleUrlChange}
     />
   )
 }
@@ -371,6 +402,7 @@ export const RightWorkspacePanel = memo(function RightWorkspacePanel({
   extensionTabs = {},
   extensionScope,
   browserStates,
+  browserTransferSourceLabels = {},
   onBrowserStateChange,
   onReloadSmartAppDevelopmentPreview,
   onAddSmartAppDevelopmentPlugin,
@@ -405,6 +437,33 @@ export const RightWorkspacePanel = memo(function RightWorkspacePanel({
     rightWorkspaceDshSidebar.getTabs,
     rightWorkspaceDshSidebar.getTabs
   )
+  useSyncExternalStore(
+    subscribePluginDevelopmentProjects,
+    pluginDevelopmentProjectsRevision,
+    pluginDevelopmentProjectsRevision
+  )
+  const [composerApps, setComposerApps] = useState(getComposerApps)
+  useEffect(
+    () =>
+      subscribeComposerApps(() => {
+        setComposerApps(getComposerApps())
+      }),
+    []
+  )
+  useEffect(
+    () => observePluginDevelopmentWorkspace(extensionScope.cwd ?? null),
+    [extensionScope.cwd]
+  )
+  const currentProjectKind = pluginDevelopmentProjectKind(extensionScope.cwd)
+  const availableExtensionTabs = registeredExtensionTabs.filter(descriptor =>
+    isWeworkWorkspaceSidebarTabAvailable(descriptor, currentProjectKind, pluginKey =>
+      composerApps.some(app => app.pluginKey === pluginKey)
+    )
+  )
+  const availableExtensionTabIds = useMemo(
+    () => new Set(availableExtensionTabs.map(descriptor => descriptor.id)),
+    [availableExtensionTabs]
+  )
   const [pluginDialog, setPluginDialog] = useState<{
     tab: RightWorkspaceBrowserTab
     installationId: string
@@ -421,6 +480,23 @@ export const RightWorkspacePanel = memo(function RightWorkspacePanel({
   const harnessSessionsById = new Map(
     harnessSessions.map(session => [session.sessionId, session] as const)
   )
+
+  useEffect(() => {
+    for (const tab of openTabs) {
+      if (!isRightWorkspaceExtensionTab(tab)) continue
+      const descriptor = resolveRightWorkspaceExtensionDescriptor(extensionTabs[tab])
+      if (
+        descriptor &&
+        shouldCloseUnavailableWeworkWorkspaceSidebarTab(
+          descriptor,
+          currentProjectKind,
+          availableExtensionTabIds.has(descriptor.id)
+        )
+      ) {
+        onCloseTab(tab)
+      }
+    }
+  }, [availableExtensionTabIds, currentProjectKind, extensionTabs, onCloseTab, openTabs])
 
   useEffect(() => {
     if (!visible) return
@@ -477,14 +553,14 @@ export const RightWorkspacePanel = memo(function RightWorkspacePanel({
 
   const getNewTabOptions = (): WorkspaceAddMenuItem[] => [
     ...workspaceActions,
-    ...[...registeredExtensionTabs]
+    ...[...availableExtensionTabs]
       .sort((left, right) => (left.order ?? 100) - (right.order ?? 100))
       .map(
         (descriptor): WorkspaceAddMenuItem => ({
           id: `wework-sidebar-extension:${descriptor.id}`,
           testId: `right-workspace-extension-option-${descriptor.id}`,
           icon: PanelRight,
-          label: titleOfWeworkWorkspaceSidebarTab(descriptor),
+          label: titleOfWeworkWorkspaceSidebarTab(descriptor, t),
           onSelect: () => rightWorkspaceDshSidebar.openTab({ type: descriptor.id }),
         })
       ),
@@ -582,6 +658,7 @@ export const RightWorkspacePanel = memo(function RightWorkspacePanel({
               browserStates[tab]?.developmentPreview?.status === 'starting' ||
               browserStates[tab]?.developmentPreview?.status === 'reloading')
           }
+          agentActive={isRightWorkspaceBrowserTab(tab) && browserStates[tab]?.agentActive}
           onSelect={getTabSelectHandler(tab)}
           onClose={() => closeTab(tab)}
         />
@@ -636,7 +713,7 @@ export const RightWorkspacePanel = memo(function RightWorkspacePanel({
             canBrowseFiles={canBrowseFiles}
             allowTemporaryChat={allowTemporaryChat}
             workspaceActions={workspaceActions}
-            extensionTabs={registeredExtensionTabs}
+            extensionTabs={availableExtensionTabs}
             onSelectReview={onSelectReview}
             onSelectTerminal={onSelectTerminal}
             onSelectBrowser={onSelectBrowser}
@@ -660,10 +737,9 @@ export const RightWorkspacePanel = memo(function RightWorkspacePanel({
           <PlanWorkspacePanel content={planContent ?? ''} />
         ) : !isRightWorkspaceChatTab(activeView) && activeView === 'work-item' ? (
           workItemPanel
-        ) : !isRightWorkspaceChatTab(activeView) && workspaceTargetError ? (
+        ) : activeView === 'files' && workspaceTargetError ? (
           <section
             data-testid="workspace-target-error"
-            hidden={activeView !== 'files'}
             className="flex min-h-0 flex-1 items-center justify-center px-6 text-center text-sm text-red-500"
           >
             {workspaceTargetError}
@@ -743,6 +819,7 @@ export const RightWorkspacePanel = memo(function RightWorkspacePanel({
               tab={tab}
               active={visible && activeView === tab}
               state={browserState}
+              transferFromLabel={browserTransferSourceLabels[tab]}
               codeCommentCount={codeCommentCount}
               codeCommentContexts={codeCommentContexts}
               browserAnnotationCommand={browserAnnotationCommand}
@@ -915,6 +992,7 @@ function RightWorkspaceTitleTab({
   extensionState,
   iconSrc,
   loading = false,
+  agentActive = false,
   onSelect,
   onClose,
 }: {
@@ -925,6 +1003,7 @@ function RightWorkspaceTitleTab({
   extensionState?: RightWorkspaceExtensionTabState
   iconSrc?: string | null
   loading?: boolean
+  agentActive?: boolean
   onSelect: () => void
   onClose: () => void
 }) {
@@ -965,6 +1044,7 @@ function RightWorkspaceTitleTab({
           extensionState={extensionState}
           iconSrc={iconSrc}
           loading={loading}
+          agentActive={agentActive}
           testId={getRightWorkspaceTabTestId(tab)}
         />
         <span className="min-w-0 flex-1 truncate">{label}</span>
@@ -992,16 +1072,22 @@ function RightWorkspaceTabIcon({
   extensionState,
   iconSrc,
   loading,
+  agentActive,
   testId,
 }: {
   icon: ComponentType<{ className?: string }>
   extensionState?: RightWorkspaceExtensionTabState
   iconSrc?: string | null
   loading: boolean
+  agentActive: boolean
   testId: string
 }) {
   const [failedIconSrc, setFailedIconSrc] = useState<string | null>(null)
   const imageFailed = Boolean(iconSrc && failedIconSrc === iconSrc)
+
+  if (agentActive) {
+    return <BrowserAgentCursorIcon testId={`${testId}-agent-icon`} className="h-4 w-4" />
+  }
 
   if (loading) {
     return (
@@ -1092,7 +1178,7 @@ function RightWorkspaceLauncher({
               key={descriptor.id}
               data-testid={`right-workspace-extension-option-${descriptor.id}`}
               icon={PanelRight}
-              label={titleOfWeworkWorkspaceSidebarTab(descriptor)}
+              label={titleOfWeworkWorkspaceSidebarTab(descriptor, t)}
               onClick={() => rightWorkspaceDshSidebar.openTab({ type: descriptor.id })}
             />
           ))}
@@ -1195,7 +1281,7 @@ function getRightWorkspaceTabLabel(
   if (isRightWorkspaceExtensionTab(tab)) {
     const descriptor = resolveRightWorkspaceExtensionDescriptor(extensionTabs[tab])
     if (!descriptor) return t('workbench.workspace_tab_plugin', '插件')
-    return titleOfWeworkWorkspaceSidebarTab(descriptor)
+    return titleOfWeworkWorkspaceSidebarTab(descriptor, t)
   }
   if (tab === 'review') return t('workbench.workspace_tab_review', '审查')
   if (isRightWorkspaceTerminalTab(tab)) {

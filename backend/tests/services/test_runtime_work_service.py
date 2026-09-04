@@ -803,12 +803,99 @@ async def test_list_runtime_work_keeps_empty_executor_workspaces(
         "Hello project"
     ]
     workspace = response.projects[0].device_workspaces[0]
+    assert workspace.device_id == "remote-ssh-discovered:10.201.3.200"
+    assert workspace.device_name == "remote-ssh-discovered:10.201.3.200"
+    assert workspace.device_status == "unavailable"
     assert workspace.workspace_path == "/Users/crystal/Documents/hello-0"
     assert workspace.label == "Hello project"
     assert workspace.workspace_source == "remote"
     assert workspace.remote_host_id == "remote-ssh-discovered:10.201.3.200"
+    assert workspace.available is False
     assert workspace.tasks == []
     assert workspace.mapped is True
+
+
+@pytest.mark.parametrize(
+    "device_ids",
+    [
+        ("app-device", "cloud-device"),
+        ("cloud-device", "app-device"),
+    ],
+)
+@pytest.mark.asyncio
+async def test_list_runtime_work_prefers_owner_device_over_remote_projection(
+    test_db,
+    test_user,
+    monkeypatch,
+    device_ids,
+):
+    from app.services import runtime_work_service
+
+    devices_by_id = {
+        "app-device": {
+            "device_id": "app-device",
+            "name": "Local App",
+            "status": "online",
+            "device_type": "app",
+        },
+        "cloud-device": {
+            "device_id": "cloud-device",
+            "name": "Cloud Device",
+            "status": "online",
+            "device_type": "cloud",
+        },
+    }
+    monkeypatch.setattr(
+        runtime_work_service.device_service,
+        "get_all_devices",
+        AsyncMock(return_value=[devices_by_id[device_id] for device_id in device_ids]),
+    )
+
+    async def rpc_side_effect(**kwargs):
+        if kwargs["device_id"] == "app-device":
+            return {
+                "workspaces": [
+                    {
+                        "workspacePath": "/workspace/Wegent",
+                        "label": "Projected from app",
+                        "workspaceSource": "remote",
+                        "remoteHostId": "cloud-device",
+                        "tasks": [],
+                    }
+                ]
+            }
+        return {
+            "workspaces": [
+                {
+                    "workspacePath": "/workspace/Wegent",
+                    "label": "Authoritative cloud workspace",
+                    "workspaceSource": "local",
+                    "tasks": [],
+                }
+            ]
+        }
+
+    monkeypatch.setattr(
+        runtime_work_service.runtime_rpc_service,
+        "call",
+        AsyncMock(side_effect=rpc_side_effect),
+    )
+
+    response = await runtime_work_service.list_runtime_work(
+        db=test_db,
+        user_id=test_user.id,
+    )
+
+    assert len(response.projects) == 1
+    project = response.projects[0]
+    assert project.project.name == "Authoritative cloud workspace"
+    workspace = project.device_workspaces[0]
+    assert workspace.device_id == "cloud-device"
+    assert workspace.device_name == "Cloud Device"
+    assert workspace.device_status == "online"
+    assert workspace.workspace_source == "local"
+    assert workspace.remote_host_id is None
+    assert workspace.available is True
 
 
 @pytest.mark.asyncio
@@ -4896,6 +4983,69 @@ def test_build_runtime_execution_request_v2_without_team_uses_direct_wework_path
     assert execution_request.team_id == 0
     assert execution_request.bot == []
     assert execution_request.model_config["model_id"] == "doubao-seed-2.0-lite"
+
+
+def test_build_runtime_send_execution_request_includes_valid_task_token(
+    test_db,
+    test_user,
+):
+    from app.schemas.runtime_work import RuntimeTaskAddress
+    from app.services import runtime_work_service
+    from app.services.auth import verify_task_token
+
+    execution_request = runtime_work_service._build_runtime_send_execution_request(
+        db=test_db,
+        user_id=test_user.id,
+        address=RuntimeTaskAddress(
+            deviceId="device-1",
+            localTaskId="codex-1",
+            workspacePath="/repo/Wegent",
+        ),
+        message="continue",
+        attachment_ids=[],
+    )
+
+    token_info = verify_task_token(execution_request.auth_token)
+    assert token_info is not None
+    assert token_info.task_id == 0
+    assert token_info.subtask_id == 0
+    assert token_info.user_id == test_user.id
+
+
+def test_build_runtime_send_execution_request_refreshes_task_token(
+    test_db,
+    test_user,
+    monkeypatch,
+):
+    from app.schemas.runtime_work import RuntimeTaskAddress
+    from app.services import auth, runtime_work_service
+
+    create_task_token = Mock(side_effect=["first-task-token", "second-task-token"])
+    monkeypatch.setattr(auth, "create_task_token", create_task_token)
+    address = RuntimeTaskAddress(
+        deviceId="device-1",
+        localTaskId="codex-1",
+        workspacePath="/repo/Wegent",
+    )
+
+    first_request = runtime_work_service._build_runtime_send_execution_request(
+        db=test_db,
+        user_id=test_user.id,
+        address=address,
+        message="continue once",
+        attachment_ids=[],
+    )
+    second_request = runtime_work_service._build_runtime_send_execution_request(
+        db=test_db,
+        user_id=test_user.id,
+        address=address,
+        message="continue later",
+        attachment_ids=[],
+    )
+
+    assert first_request.auth_token == "first-task-token"
+    assert second_request.auth_token == "second-task-token"
+    assert create_task_token.call_count == 2
 
 
 def test_build_runtime_execution_request_resolves_crd_model_id(

@@ -15,6 +15,7 @@ import {
   CORE_PLUGIN_DIRECTORIES,
   corePluginTarget,
 } from '../../scripts/lib/core-plugin-resources.mjs'
+import { materializeBundledPluginResources } from '../../scripts/lib/bundled-plugin-resources.mjs'
 import { resolveHarnessRuntimeCachePaths } from '../../scripts/lib/harness-runtime-cache.mjs'
 import { normalizeFileViewerAssetManifest } from '../../scripts/lib/harness-runtime-metadata.mjs'
 
@@ -69,11 +70,7 @@ await writeFile(
   `${JSON.stringify({ runtimes: packagedRuntimes }, null, 2)}\n`,
   { mode: 0o600 }
 )
-await cp(
-  join(sharedResourcesRoot, 'bundled-plugins', 'wework-personal'),
-  join(resourcesRoot, 'bundled-plugins', 'wework-personal'),
-  { recursive: true }
-)
+await materializeBundledPluginResources(weworkRoot, join(resourcesRoot, 'bundled-plugins'))
 const corePluginsRoot = join(resourcesRoot, 'wework-core-plugins')
 await mkdir(corePluginsRoot, { recursive: true, mode: 0o700 })
 for (const directory of CORE_PLUGIN_DIRECTORIES) {

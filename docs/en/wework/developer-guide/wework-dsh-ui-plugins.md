@@ -29,20 +29,45 @@ layers it needs:
    use only explicitly public Wework client adapters. Plugins in one Core DSH
    page share a JavaScript trust domain, so install only trusted plugins.
 
+## Core DSH model catalog
+
+Wework exposes its executable model catalog as Core DSH providers and
+synchronizes providers and local proxies when models are added, removed, or
+reconfigured. This synchronization owns only the catalog. It must not follow
+the model selected in the Wework composer: the composer selection is an
+execution parameter for the current Wework conversation, while
+`agent-default-model` is the deployment default used when Core DSH creates a
+new Agent. Neither selection may overwrite the other.
+
+Switching the current Wework model must not register model proxies again or
+mutate Core DSH settings. Catalog synchronization preserves an existing Core
+DSH default while that provider remains valid and selects the first catalog
+entry only after the previous default becomes unavailable. This avoids
+`settings/document-updated` and `llm/adapters-updated` events that reload every
+resident model directory and keeps the Wework surface stable.
+
 ## Extension points
 
-| Slot                           | Purpose                                  | Required metadata                 | Component props            |
-| ------------------------------ | ---------------------------------------- | --------------------------------- | -------------------------- |
-| `wework.action`                | Host-invoked navigation action           | `id`, `path`                      | No component               |
-| `wework.app`                   | Product switcher and app surface         | `id`, `label`, `mode`             | `visible`, `tab`           |
-| `wework.route`                 | Top-level auxiliary page                 | `id`, `path`, `telemetryFeature`  | `search`, `onNavigate`     |
-| `wework.sidebar.navigation`    | Left-sidebar navigation entry            | `id`, `path`, `label`             | Usually metadata-only      |
-| `wework.settings.page`         | Settings navigation and content          | `id`, `path`, `label`, `category` | Settings context, `onBack` |
-| `wework.workspace.tab`         | Closable top workspace tab               | `id`, `label`                     | `visible`, `tab`           |
-| `wework.workspace.sidebar.tab` | Right workspace-panel tab type           | `id`, `label`                     | `visible`, `scope`, `tab`  |
-| `wework.shell.before`          | Before the workbench root                | `id`                              | Empty object               |
-| `wework.shell.after`           | After the workbench root                 | `id`                              | Empty object               |
-| `wework.shell.overlay`         | Global pointer-transparent overlay layer | `id`                              | Empty object               |
+| Slot                                      | Purpose                                  | Required metadata                 | Component props                              |
+| ----------------------------------------- | ---------------------------------------- | --------------------------------- | -------------------------------------------- |
+| `wework.action`                           | Host-invoked navigation action           | `id`, `path`                      | No component                                 |
+| `wework.app`                              | Product switcher and app surface         | `id`, `label`, `mode`             | `visible`, `tab`                             |
+| `wework.plugins.action`                   | Plugins-page action                      | `id`, `label`                     | Host-provided callbacks                      |
+| `wework.task.status`                      | Left task-row status                     | `id`                              | `task`, `workspace`, layout hints            |
+| `wework.environment.section`              | Additional environment-panel section     | `id`                              | `info`, `onClose`                            |
+| `wework.board.card.status`                | Board task-card status                   | `id`                              | Board item, task binding, layout hints       |
+| `wework.workspace.menu.section`           | Additional workspace-menu section        | `id`                              | Generic workspace context, close action      |
+| `wework.project.work.section`             | Additional project-work-bar section      | `id`                              | Generic project context                      |
+| `wework.project.create.section`           | Additional project-create-menu section   | `id`                              | Generic project-create context, close action |
+| `wework.runtime-profile.workspace-policy` | Runtime workspace policy option          | `id`, `label`                     | No component                                 |
+| `wework.route`                            | Top-level auxiliary page                 | `id`, `path`, `telemetryFeature`  | `search`, `onNavigate`                       |
+| `wework.sidebar.navigation`               | Left-sidebar navigation entry            | `id`, `path`, `label`             | Usually metadata-only                        |
+| `wework.settings.page`                    | Settings navigation and content          | `id`, `path`, `label`, `category` | Settings context, `onBack`                   |
+| `wework.workspace.tab`                    | Closable top workspace tab               | `id`, `label`                     | `visible`, `tab`                             |
+| `wework.workspace.sidebar.tab`            | Right workspace-panel tab type           | `id`, `label`                     | `visible`, `scope`, `tab`                    |
+| `wework.shell.before`                     | Before the workbench root                | `id`                              | Empty object                                 |
+| `wework.shell.after`                      | After the workbench root                 | `id`                              | Empty object                                 |
+| `wework.shell.overlay`                    | Global pointer-transparent overlay layer | `id`                              | Empty object                                 |
 
 `wework.app` supports three modes:
 
@@ -54,6 +79,13 @@ layers it needs:
 channel. Register `{ id, path }` so existing host entry points can resolve the
 action by id and navigate. Do not put functions, tokens, or non-serializable
 state in a descriptor.
+
+Status and section slots are repeatable positional interfaces. They do not
+assume Git, SVN, branches, or any source-control semantics. A plugin can pass a React
+component as the fourth argument to `ctx.wework.ui.register`; the host renders
+contributions in slot order and provides only the generic context for that
+position. Multiple plugins may contribute to the same slot. The host neither
+reads plugin ids nor infers implementation capabilities from a contribution.
 
 Third-party `wework.settings.page` and `wework.route` contributions must not set
 the Wework-internal `module` or `component` fields. Pass the React component as
@@ -119,17 +151,20 @@ plugin lifecycle scoped to that declaration.
 
 ## Runnable plugin demo
 
-The repository's
-[`wework/dsh/examples/ui-extension-demo`](https://github.com/wecode-ai/Wegent/tree/main/wework/dsh/examples/ui-extension-demo)
-is a complete third-party plugin with no imports from Wework-private React
-modules. It contains a standard `package.json`, `cordis.patch.yml`, host entry,
-client entry, and Node regression tests, and covers every slot in the table.
+The
+[`assets/ui-extension-demo`](https://github.com/wecode-ai/Wegent/tree/main/wework/dsh/plugin-developer/codex-plugin/skills/develop-wework-plugin/assets/ui-extension-demo)
+shipped by the **Wework Plugin Developer** Skill is a complete third-party
+plugin with no imports from Wework-private React modules. It contains a
+standard `package.json`, `cordis.patch.yml`, host entry, client entry, and Node
+regression tests, and covers every slot in the table. Codex can inspect the
+real code and copy it to a writable project directory before removing
+unneeded contributions.
 
 In development, install the Demo's absolute directory from **Plugins → Manage
 → Wework plugins**, or use:
 
 ```text
-file:/absolute/path/to/Wegent/wework/dsh/examples/ui-extension-demo
+file:/absolute/path/to/copied/ui-extension-demo
 ```
 
 Installation, update, enablement, and removal mutate the managed `wework-core`
@@ -159,6 +194,7 @@ Wework bundles these UI plugins with Core DSH:
 - `@wegent/dsh-ui-applications`
 - `@wegent/dsh-ui-automations`
 - `@wegent/dsh-ui-cloud-work`
+- `@wegent/dsh-ui-git`
 
 They use the same slot protocol as third-party plugins. A first-party plugin
 may declare a private Wework `component` id in its contribution descriptor so
@@ -166,6 +202,16 @@ the existing page implementation is rendered inside the Wework React tree and
 inherits Auth, Cloud, and Workbench contexts. Third-party plugins must not use
 this field; they should pass their own React component as the fourth argument
 to `ctx.wework.ui.register`.
+
+`@wegent/dsh-ui-git` is one implementation of these generic positional
+contracts. It contributes components to the workspace menu, project work bar,
+project-create menu, task status, environment panel, and board card, plus the
+Git hosting and Worktrees settings pages. Branches, commits, pushes, cloning,
+PR/MR behavior, and execution payloads are interpreted by plugin components.
+The host contracts contain no Git command names, Git plugin id, branch
+capability checks, or source-control section. When the plugin is disabled or
+absent, those positions are empty and the related controls, polling, and
+settings pages disappear.
 
 ## Plugin sync and fingerprint-based reload
 

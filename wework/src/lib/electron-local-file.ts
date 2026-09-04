@@ -9,6 +9,11 @@ interface ElectronLocalFileChunk {
   size: number
 }
 
+interface ElectronLocalFileReadOptions {
+  expectedSize?: number
+  maxBytes?: number
+}
+
 function decodeBase64Chunk(value: string): Uint8Array<ArrayBuffer> {
   const decoded = atob(value)
   const bytes = new Uint8Array(decoded.length)
@@ -18,10 +23,26 @@ function decodeBase64Chunk(value: string): Uint8Array<ArrayBuffer> {
   return bytes
 }
 
-export async function readElectronLocalFile(path: string): Promise<Uint8Array<ArrayBuffer>> {
+export async function readElectronLocalFile(
+  path: string,
+  options: ElectronLocalFileReadOptions = {}
+): Promise<Uint8Array<ArrayBuffer>> {
   const chunks: Uint8Array<ArrayBuffer>[] = []
   let offset = 0
   let expectedSize: number | null = null
+
+  if (
+    options.expectedSize !== undefined &&
+    (!Number.isSafeInteger(options.expectedSize) || options.expectedSize < 0)
+  ) {
+    throw new Error('Expected Electron local file size must be a non-negative safe integer')
+  }
+  if (
+    options.maxBytes !== undefined &&
+    (!Number.isSafeInteger(options.maxBytes) || options.maxBytes < 0)
+  ) {
+    throw new Error('Electron local file size limit must be a non-negative safe integer')
+  }
 
   while (expectedSize === null || offset < expectedSize) {
     const result = await invokeDesktopHost<ElectronLocalFileChunk>('filesystem.readFileChunk', {
@@ -32,13 +53,24 @@ export async function readElectronLocalFile(path: string): Promise<Uint8Array<Ar
     if (
       !Number.isSafeInteger(result.bytesRead) ||
       result.bytesRead < 0 ||
+      result.bytesRead > ELECTRON_LOCAL_FILE_CHUNK_BYTES ||
       !Number.isSafeInteger(result.size) ||
       result.size < 0 ||
+      offset + result.bytesRead > result.size ||
       (result.bytesRead === 0 && !result.eof)
     ) {
       throw new Error('Electron returned an invalid local file chunk')
     }
 
+    if (expectedSize !== null && result.size !== expectedSize) {
+      throw new Error('Electron local file size changed while it was being read')
+    }
+    if (options.expectedSize !== undefined && result.size !== options.expectedSize) {
+      throw new Error('Electron local file size did not match the expected size')
+    }
+    if (options.maxBytes !== undefined && result.size > options.maxBytes) {
+      throw new Error('Electron local file exceeds the allowed size')
+    }
     expectedSize = result.size
     if (result.bytesRead > 0) {
       const chunk = decodeBase64Chunk(result.chunkBase64)

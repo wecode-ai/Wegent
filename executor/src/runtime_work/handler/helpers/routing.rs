@@ -3,16 +3,29 @@ fn normalize_settled_task_state(link: &mut RuntimeTaskLink) {
         return;
     }
 
-    link.status = settled_task_status(link).to_owned();
+    let settled_status = settled_task_status(link);
+    link.status = settled_status.to_owned();
     if runtime_status_is_running(&link.thread_status) {
-        link.thread_status = "idle".to_owned();
+        link.thread_status = match settled_status {
+            "failed" => "failed",
+            "cancelled" => "idle",
+            _ => "idle",
+        }
+        .to_owned();
     }
     if link
         .turn_status
         .as_deref()
         .is_some_and(runtime_status_is_running)
     {
-        link.turn_status = Some("completed".to_owned());
+        link.turn_status = Some(
+            match settled_status {
+                "failed" => "failed",
+                "cancelled" => "interrupted",
+                _ => "completed",
+            }
+            .to_owned(),
+        );
     }
 }
 

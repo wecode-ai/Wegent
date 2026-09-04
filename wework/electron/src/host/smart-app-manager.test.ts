@@ -136,6 +136,50 @@ describe('SmartAppManager', () => {
     ).rejects.toThrow('Smart app download must use HTTPS')
   })
 
+  test('uploads Smart apps through a loopback HTTP Backend', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'wework-smart-app-upload-'))
+    roots.push(root)
+    const archivePath = join(root, 'smart-app.zip')
+    const archive = Buffer.from('smart-app-package')
+    await writeFile(archivePath, archive)
+    let uploaded = Buffer.alloc(0)
+    const server = createServer((request, response) => {
+      const chunks: Buffer[] = []
+      request.on('data', chunk => chunks.push(Buffer.from(chunk)))
+      request.on('end', () => {
+        uploaded = Buffer.concat(chunks)
+        response.writeHead(204)
+        response.end()
+      })
+    })
+    await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve))
+    const address = server.address()
+    if (!address || typeof address === 'string') throw new Error('Missing server address')
+
+    try {
+      await createManager(root).upload(
+        archivePath,
+        `http://127.0.0.1:${address.port}/api/smart-apps/submissions/1/artifact`
+      )
+      expect(uploaded).toEqual(archive)
+    } finally {
+      await new Promise<void>((resolve, reject) =>
+        server.close(error => (error ? reject(error) : resolve()))
+      )
+    }
+  })
+
+  test('rejects Smart app uploads over non-loopback HTTP', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'wework-smart-app-upload-'))
+    roots.push(root)
+    const archivePath = join(root, 'smart-app.zip')
+    await writeFile(archivePath, 'smart-app-package')
+
+    await expect(
+      createManager(root).upload(archivePath, 'http://example.com/smart-app.zip')
+    ).rejects.toThrow('Smart app upload must use HTTPS')
+  })
+
   test('creates linked apps, adds local plugins and copies marketplace apps for editing', async () => {
     const root = await mkdtemp(join(tmpdir(), 'wework-smart-app-editable-'))
     roots.push(root)

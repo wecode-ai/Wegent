@@ -23,7 +23,11 @@ Wework 默认就是一个完整的本地应用。本机 Codex、本地模型配�
 未发送草稿、布局和其他使用 `localStorage` 的界面偏好仍会保留。主进程串行处理变更，
 通过原子替换写入文件，并在 Unix 系统上使用 `0600` 权限。用户主动断开连接、删除配置
 或清空对应状态时，同样会同步删除持久化副本；不使用 Electron host 的网页版不经过
-这层桌面镜像。
+这层桌面镜像。主进程还会在加载新的 Core DSH origin 前清理旧 origin 的 Chromium
+`localStorage`：已有权威快照但尚无 origin 记录时执行一次全量迁移清理，之后只精确
+清理上一次记录的 `scheme://host:port`。当前 origin 写入
+`renderer-local-storage-origins.json`，同 origin 的 renderer 重建不会重复清理。
+首次还没有权威快照时保留浏览器存储，避免在建立持久化副本前丢失迁移数据。
 
 用户可以输入 Backend 根地址，也可以直接输入 `/api` 地址。前端会把地址归一化为 HTTP API 地址和 Socket.IO 连接信息。连接时先请求 `/health`，再调用 `/auth/wework/sessions` 创建短生命周期授权会话。Backend 返回完整 `authorize_url`，本地 Wework 在内置授权窗打开该云端授权页，并携带 `poll_token` 轮询会话结果。
 
@@ -93,9 +97,15 @@ macOS 桌面版 Wework 启动时会安装用户级 `wework` launcher 到 `~/.loc
 wework
 wework .
 wework /path/to/project
+wework desktop instances
+wework desktop inspect --project .
 ```
 
 `wework` 和 `wework .` 会把当前目录解析为绝对路径，并请求 Wework 打开该目录作为本机 workspace。release 构建通过 macOS app single-instance 机制把请求转发给已有窗口；debug 构建仍允许多实例，CLI 会启动当前 debug executable 并携带 `--open-workspace <path>` 参数。
+
+`desktop` 是同一个 `wework` CLI 的实例控制子命令，不会再安装或注入另一个同名命令。
+Wework 管理的 Agent 环境和 macOS 用户级入口使用同一套分发规则，因此
+`wework <目录>` 始终打开 workspace，而 `wework desktop ...` 始终操作已运行实例。
 
 ## 模型身份与执行传输
 

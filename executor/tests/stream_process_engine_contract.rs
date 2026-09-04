@@ -381,7 +381,7 @@ async fn stream_process_engine_emits_claude_subagent_lifecycle() {
         event.event_type == "response.block.updated"
             && event.data["block_id"] == "Agent_0"
             && event.data["updates"]["output"] == "Detailed child result"
-            && event.data["updates"].get("status").is_none()
+            && event.data["updates"]["status"] == "completed"
     }));
     assert_eq!(
         outcome,

@@ -157,24 +157,6 @@ export function resolveInstalledPluginLogoUrl(
   })
 }
 
-export function resolveInstalledPluginLogo(
-  plugin: InstalledPlugin,
-  appearanceMode: ResolvedAppearanceMode = currentPluginLogoAppearanceMode(),
-  interfaceOverride?: PluginLogoInterfaceFields | null
-): ResolvedPluginLogo {
-  const interfaceData = interfaceOverride ?? plugin.spec.interface
-  return resolvePluginLogo({
-    pluginKey: plugin.spec.source.pluginKey,
-    logo: resolveInstalledPluginAssetPath(plugin, interfaceData?.logo) || interfaceData?.logo,
-    logoDark:
-      resolveInstalledPluginAssetPath(plugin, interfaceData?.logoDark) || interfaceData?.logoDark,
-    composerIcon:
-      resolveInstalledPluginAssetPath(plugin, interfaceData?.composerIcon) ||
-      interfaceData?.composerIcon,
-    appearanceMode,
-  })
-}
-
 /**
  * Resolve a package logo. Missing / host-neutral icons return an empty URL with
  * `source: 'fallback'` so UI can render the plugin name initial instead of wework.svg.

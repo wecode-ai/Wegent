@@ -41,36 +41,36 @@ describe('resolveRuntimeTaskCreateWorkspacePath', () => {
     expect(
       resolveRuntimeTaskCreateWorkspacePath({
         sourcePath: '/workspace/project',
-        requestedWorktree: false,
+        requestedManagedWorkspace: false,
       })
     ).toBe('/workspace/project')
   })
 
-  test('requires the Executor planned path for a Worktree task', () => {
+  test('requires the Executor planned path for a managed workspace task', () => {
     expect(() =>
       resolveRuntimeTaskCreateWorkspacePath({
         sourcePath: '/workspace/project',
-        requestedWorktree: true,
+        requestedManagedWorkspace: true,
       })
     ).toThrow('did not return a planned workspace path')
   })
 
-  test('rejects a Worktree response that falls back to the base workspace', () => {
+  test('rejects a managed workspace response that falls back to the base workspace', () => {
     expect(() =>
       resolveRuntimeTaskCreateWorkspacePath({
         sourcePath: '/workspace/project/',
         responsePath: '/workspace/project',
-        requestedWorktree: true,
+        requestedManagedWorkspace: true,
       })
     ).toThrow('returned the base workspace path')
   })
 
-  test('accepts a distinct planned Worktree path', () => {
+  test('accepts a distinct planned managed workspace path', () => {
     expect(
       resolveRuntimeTaskCreateWorkspacePath({
         sourcePath: '/workspace/project',
         responsePath: '/executor/worktrees/task-1/project',
-        requestedWorktree: true,
+        requestedManagedWorkspace: true,
       })
     ).toBe('/executor/worktrees/task-1/project')
   })

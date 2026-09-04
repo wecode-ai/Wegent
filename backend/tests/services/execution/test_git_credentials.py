@@ -8,9 +8,11 @@ from types import SimpleNamespace
 
 from app.services.execution import git_credentials
 from shared.models.execution import (
+    GIT_AUTH_TRANSPORT_DEVICE_LOCAL,
     GIT_AUTH_TRANSPORT_ENCRYPTED_REQUEST_TOKEN,
     GIT_AUTH_TRANSPORT_LEGACY_USER_SECRET,
     GIT_AUTH_TRANSPORT_NONE,
+    ExecutionRequest,
 )
 from shared.utils.crypto import decrypt_git_token
 
@@ -110,6 +112,32 @@ def test_unresolved_masked_token_stays_on_legacy_secret_path(mocker):
         == GIT_AUTH_TRANSPORT_LEGACY_USER_SECRET
     )
     assert user_info["git_token"] == "***"
+
+
+def test_build_device_git_execution_payload_uses_device_credentials():
+    request = ExecutionRequest(
+        task_id=10,
+        subtask_id=20,
+        user={
+            "id": 7,
+            "name": "alice",
+            "git_domain": "git.example.com",
+            "git_login": "alice",
+            "git_token": "encrypted-token",
+            "gitToken": "legacy-token",
+        },
+        git_auth_transport=GIT_AUTH_TRANSPORT_ENCRYPTED_REQUEST_TOKEN,
+        skill_identity_token="skill-jwt",
+    )
+
+    payload = git_credentials.build_device_git_execution_payload(request)
+
+    assert payload["git_auth_transport"] == GIT_AUTH_TRANSPORT_DEVICE_LOCAL
+    assert "git_token" not in payload["user"]
+    assert "gitToken" not in payload["user"]
+    assert payload["user"]["git_login"] == "alice"
+    assert payload["skill_identity_token"] == "skill-jwt"
+    assert request.user["git_token"] == "encrypted-token"
 
 
 def test_extract_git_domain_supports_https_and_scp_urls():

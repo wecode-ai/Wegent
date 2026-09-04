@@ -10,8 +10,10 @@ import {
   observeTerminalTheme,
 } from '@/lib/xterm-theme'
 import { appendRuntimeTerminalContext } from '@/lib/runtime-terminal-context'
+import { focusTerminalUnlessComposerFocusRequested } from '@/lib/workbenchComposerFocus'
 import { defaultAppearance, useOptionalAppearance } from '@/features/appearance'
 import { installXtermInputFallback, type XtermInputFallbackController } from './xtermInputFallback'
+import { installXtermMacKeybindings } from './xtermMacKeybindings'
 import { createXtermWebLinksAddon } from './xtermLinks'
 import { installXtermSelectionGuard } from './xtermSelectionGuard'
 import { installXtermTextDrag } from './xtermTextDrag'
@@ -158,11 +160,12 @@ export function EmbeddedLocalTerminal({
       noteData: () => undefined,
       dispose: () => undefined,
     }
-    const dataDisposable = terminal.onData(data => {
+    const writeTerminalInput = (data: string) => {
       if (!terminalInputReady) return
       inputFallback.noteData(data)
       void writeLocalTerminal(sessionId, data)
-    })
+    }
+    const dataDisposable = terminal.onData(writeTerminalInput)
     const titleDisposable = terminal.onTitleChange(title => {
       onTitleChangeRef.current?.(title)
     })
@@ -176,12 +179,9 @@ export function EmbeddedLocalTerminal({
     const textDrag = installXtermTextDrag({ container, terminal })
     inputFallback = installXtermInputFallback({
       terminal,
-      writeData: data => {
-        if (!terminalInputReady) return
-        inputFallback.noteData(data)
-        void writeLocalTerminal(sessionId, data)
-      },
+      writeData: writeTerminalInput,
     })
+    installXtermMacKeybindings({ terminal, writeData: writeTerminalInput })
     terminalRef.current = terminal
     fitAddonRef.current = fitAddon
     applyTerminalTheme(terminal, container, getTerminalTheme(), showWorkbenchBackground)
@@ -322,7 +322,7 @@ export function EmbeddedLocalTerminal({
           terminal,
           terminalKind: 'local',
         })
-        terminal.textarea?.focus({ preventScroll: true })
+        focusTerminalUnlessComposerFocusRequested(terminal.textarea)
         if (terminal.rows > 0 && terminal.cols > 0) {
           const lastSize = lastSizeRef.current
           if (lastSize?.rows !== terminal.rows || lastSize.cols !== terminal.cols) {

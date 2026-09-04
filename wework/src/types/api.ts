@@ -173,7 +173,7 @@ export interface CreatedRuntimeProject extends ProjectWithTasks {
   runtimeProjectKey: string
 }
 
-export type ProjectExecutionMode = 'current_workspace' | 'git_worktree'
+export type ProjectExecutionMode = string
 
 export interface ProjectListResponse {
   total?: number
@@ -1296,7 +1296,7 @@ export interface RuntimeTaskCancelResponse {
 
 export interface RuntimeTaskExecutionConfig {
   workspace?: {
-    source: 'git_worktree'
+    source: string
     branch?: string
   }
 }
@@ -1702,7 +1702,7 @@ export interface ChatSendPayload {
   additional_skills?: SkillRef[]
   execution?: {
     workspace?: {
-      source: 'git_worktree'
+      source: string
       branch?: string
     }
   }
@@ -2295,6 +2295,7 @@ export interface PluginMarketplaceItem {
   manifest: Record<string, unknown>
   ownerUserId: number
   ownerDisplayName?: string
+  originPersonalPluginId?: number | null
   accessRole?: 'catalog' | 'owner' | 'recipient'
   allowCopy?: boolean
   grantUserCount?: number
@@ -2324,10 +2325,6 @@ export interface PluginMarketplaceItem {
 
 export interface PluginMarketplaceListResponse {
   items: PluginMarketplaceItem[]
-}
-
-export interface PluginMarketplacePublishResponse {
-  item: PluginMarketplaceItem
 }
 
 export interface DeviceCapabilityItemResult {
@@ -2398,11 +2395,6 @@ export interface PluginAutoUpdateBatchResponse {
   remainingCount: number
 }
 
-export interface PluginMarketplaceCapabilities {
-  canPublish: boolean
-  canSharePersonalPlugins?: boolean
-}
-
 export interface InstalledPluginUpdateRequest {
   enabled?: boolean
   componentStates?: Record<string, boolean>
@@ -2448,6 +2440,173 @@ export interface PluginSubmissionItem {
 export interface PluginSubmissionCompleteResponse {
   submission: PluginSubmissionItem
   plugin?: PluginMarketplaceItem | null
+}
+
+export type PluginPublicationStage =
+  | 'submit_request'
+  | 'automated_checks'
+  | 'administrator_review'
+  | 'code_review'
+  | 'release'
+
+export type PluginPublicationStatus =
+  | 'uploading'
+  | 'submitted'
+  | 'automatic_checking'
+  | 'automatic_check_failed'
+  | 'awaiting_admin'
+  | 'admin_review'
+  | 'changes_requested'
+  | 'admin_accepted'
+  | 'materializing'
+  | 'draft_mr_open'
+  | 'ci_running'
+  | 'code_changes_requested'
+  | 'merge_ready'
+  | 'merged'
+  | 'publishing'
+  | 'published'
+  | 'publish_failed'
+  | 'withdrawn'
+  | 'closed'
+
+export interface PluginPublicationCheckItem {
+  id: number
+  checkCode: string
+  title: string
+  severity: 'info' | 'warning' | 'blocker'
+  status: 'pending' | 'running' | 'passed' | 'warning' | 'blocked' | 'failed' | 'not_run'
+  summary?: string | null
+  evidence: string[]
+  jobUrl?: string | null
+  acknowledgementRequired: boolean
+  acknowledged: boolean
+}
+
+export interface PluginPublicationEventItem {
+  id: number
+  eventType: string
+  actorType: 'user' | 'admin' | 'gitlab' | 'pipeline' | 'release_service' | 'system'
+  actorName?: string | null
+  message: string
+  requiredChanges?: string[]
+  failureDetails?: PluginPublicationFailureDetail[]
+  createdAt: string
+}
+
+export interface PluginPublicationFailureDetail {
+  jobName: string
+  stage?: string | null
+  status: string
+  reason?: string | null
+  jobUrl?: string | null
+}
+
+export interface PluginPublicationGitLabState {
+  projectUrl?: string | null
+  sourceBranch?: string | null
+  mergeRequestIid?: number | null
+  mergeRequestUrl?: string | null
+  mergeRequestStatus?: string | null
+  pipelineId?: number | null
+  pipelineUrl?: string | null
+  pipelineStatus?: string | null
+  commitSha?: string | null
+}
+
+export interface PluginPublicationRevisionItem {
+  id: number
+  number: number
+  requestedVersion: string
+  snapshotSha256: string
+  sourceTreeSha256?: string | null
+  status: PluginPublicationStatus
+  releaseNotes?: string | null
+  testNotes?: string | null
+  sourceUpdatedAt?: string | null
+  createdAt: string
+  declarations: Array<{
+    key: string
+    label: string
+    declared: boolean
+    detected?: boolean | null
+    confirmed?: boolean | null
+    details: string[]
+  }>
+  manifest: Record<string, unknown>
+  packageEntries: string[]
+  packageEntryCount: number
+  packageEntriesTruncated: boolean
+  capabilities: string[]
+}
+
+export interface PluginPublicationActionEligibility {
+  canWithdraw: boolean
+  canCreateRevision: boolean
+  canViewEnterprisePlugin: boolean
+  canReturn: boolean
+  canAccept: boolean
+  canReconcile: boolean
+  blockedReasons: string[]
+}
+
+export interface PluginPublicationRequestSummary {
+  id: number
+  pluginId: number
+  pluginName: string
+  pluginSlug: string
+  requestedVersion: string
+  submitter: { id: number; userName: string; email?: string | null }
+  currentRevision: number
+  stage: PluginPublicationStage
+  status: PluginPublicationStatus
+  riskLevel: 'none' | 'low' | 'medium' | 'high' | 'critical'
+  blockerCount: number
+  warningCount: number
+  gitlabStatus?: string | null
+  waitingDurationSeconds: number
+  submittedAt: string
+  updatedAt: string
+}
+
+export interface PluginPublicationRequestItem extends PluginPublicationRequestSummary {
+  enterprisePluginId?: number | null
+  revision: PluginPublicationRevisionItem
+  revisions: PluginPublicationRevisionItem[]
+  checks: PluginPublicationCheckItem[]
+  events: PluginPublicationEventItem[]
+  gitlab: PluginPublicationGitLabState | null
+  actionEligibility: PluginPublicationActionEligibility
+}
+
+export interface PluginPublicationRequestListResponse {
+  items: PluginPublicationRequestSummary[]
+  total: number
+  page: number
+  limit: number
+}
+
+export interface PluginPublicationCreateRequest {
+  sourcePluginId?: number
+  slug: string
+  displayName: string
+  requestedVersion: string
+  filename: string
+  snapshotSha256: string
+  sizeBytes: number
+  listingType?: 'plugin' | 'skill'
+  releaseNotes: string
+  testNotes: string
+  sourceUpdatedAt?: string | null
+  riskDeclaration: Record<string, unknown>
+}
+
+export interface PluginPublicationInitResponse {
+  requestId: number
+  sourcePluginId: number
+  revision: PluginPublicationRevisionItem
+  uploadUrl: string
+  expiresAt: string
 }
 
 export interface PluginAccessTarget {

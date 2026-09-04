@@ -30,6 +30,7 @@ export default function AuthGuard({ children }: AuthGuardProps) {
       paths.home.getHref(),
       paths.auth.password_login.getHref(),
       paths.auth.wework_authorize.getHref(),
+      paths.auth.oauth_authorize.getHref(),
       '/shared/task', // Allow public shared task page without authentication
       '/shared/knowledge', // Allow public shared knowledge base page without authentication
     ]

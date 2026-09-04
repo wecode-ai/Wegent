@@ -275,23 +275,12 @@ class PluginUploadInfo(BaseModel):
         return cleaned[:100]
 
 
-class PluginMarketplacePublishRequest(BaseModel):
-    """Metadata for publishing an uploaded plugin package to Wegent marketplace."""
-
-    visibility: Literal["personal", "workspace", "public"] = "workspace"
-    featured: bool = False
-
-
-class PluginMarketplacePublishResponse(BaseModel):
-    """Response after publishing a plugin package to the marketplace."""
-
-    item: "PluginMarketplaceItem"
-
-
 class PluginMarketplaceItem(BaseModel):
     """Plugin entry exposed by the Wegent cloud marketplace."""
 
     id: int
+    catalogNamespace: str = "enterprise"
+    originPersonalPluginId: Optional[int] = None
     remotePluginId: str
     name: str
     displayName: str
@@ -391,13 +380,6 @@ class PluginAutoUpdateBatchResponse(BaseModel):
     remainingCount: int = 0
 
 
-class PluginMarketplaceCapabilities(BaseModel):
-    """User-specific marketplace operations enabled by server policy."""
-
-    canPublish: bool = False
-    canSharePersonalPlugins: bool = True
-
-
 class PluginReleaseItem(BaseModel):
     """Published immutable release exposed by the marketplace API."""
 
@@ -422,9 +404,9 @@ class PluginSubmissionInitRequest(BaseModel):
     sha256: str = Field(min_length=64, max_length=64)
     sizeBytes: int = Field(gt=0, le=50 * 1024 * 1024)
     listingType: Literal["plugin", "skill"] = "plugin"
-    purpose: Literal["marketplace_publish", "restricted_share"] = "marketplace_publish"
-    # Unified publish scope. When set, purpose is derived:
-    # personal -> restricted_share (auto-approve); workspace/public -> marketplace_publish (review).
+    purpose: Literal["marketplace_publish", "restricted_share"] = "restricted_share"
+    # Legacy submissions are retained only for personal ACL sharing. Enterprise
+    # publication uses the independent publication-request workflow.
     visibility: Optional[Literal["personal", "workspace", "public"]] = None
     targets: List["PluginAccessTarget"] = Field(default_factory=list)
     allowCopy: bool = False
@@ -570,6 +552,3 @@ class PluginUpstreamItem(BaseModel):
 
 class PluginUpstreamListResponse(BaseModel):
     items: List[PluginUpstreamItem]
-
-
-PluginMarketplacePublishResponse.model_rebuild()

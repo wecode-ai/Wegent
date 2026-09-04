@@ -8,6 +8,7 @@ import gzip
 import hashlib
 import json
 import os
+import shlex
 import subprocess
 import sys
 from pathlib import Path
@@ -1006,6 +1007,76 @@ def test_local_device_command_registry_default_includes_workspace_file_commands(
     assert read_definition is not None
     assert read_definition.post_processor == "json"
     assert "MAX_BYTES = 262144" in read_definition.command
+
+
+def test_branch_diff_prefers_fork_parent_default_branch(tmp_path: Path) -> None:
+    """Fork branches should compare with their parent base instead of stale origin."""
+    from app.services.device.command_registry import resolve_local_device_command
+
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _run_git(repo, "init", "-q")
+    _run_git(repo, "config", "user.email", "tests@example.com")
+    _run_git(repo, "config", "user.name", "Tests")
+    (repo / "README.md").write_text("base\n", encoding="utf-8")
+    _run_git(repo, "add", "--all")
+    _run_git(repo, "commit", "-qm", "initial")
+    _run_git(repo, "branch", "-M", "main")
+    stale_origin_main = _run_git(repo, "rev-parse", "HEAD").decode().strip()
+
+    _run_git(repo, "remote", "add", "origin", "https://example.com/fork.git")
+    _run_git(repo, "update-ref", "refs/remotes/origin/main", stale_origin_main)
+    _run_git(
+        repo,
+        "symbolic-ref",
+        "refs/remotes/origin/HEAD",
+        "refs/remotes/origin/main",
+    )
+
+    canonical_lines = "".join(f"canonical-{index}\n" for index in range(300))
+    (repo / "canonical.txt").write_text(canonical_lines, encoding="utf-8")
+    _run_git(repo, "add", "--all")
+    _run_git(repo, "commit", "-qm", "canonical update")
+    canonical_main = _run_git(repo, "rev-parse", "HEAD").decode().strip()
+
+    _run_git(repo, "remote", "add", "upstream", "https://example.com/parent.git")
+    _run_git(repo, "update-ref", "refs/remotes/upstream/main", canonical_main)
+    _run_git(
+        repo,
+        "symbolic-ref",
+        "refs/remotes/upstream/HEAD",
+        "refs/remotes/upstream/main",
+    )
+
+    _run_git(repo, "checkout", "-qb", "feature/fork-base")
+    (repo / "feature.txt").write_text("one\ntwo\nthree\n", encoding="utf-8")
+    _run_git(repo, "add", "--all")
+    _run_git(repo, "commit", "-qm", "feature change")
+
+    shortstat_definition = resolve_local_device_command("git_branch_diff_shortstat", {})
+    diff_definition = resolve_local_device_command("git_branch_diff", {})
+    assert shortstat_definition is not None
+    assert diff_definition is not None
+
+    shortstat = subprocess.run(
+        shlex.split(shortstat_definition.command),
+        cwd=repo,
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout
+    diff = subprocess.run(
+        shlex.split(diff_definition.command),
+        cwd=repo,
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout
+
+    assert "1 file changed" in shortstat
+    assert "3 insertions(+)" in shortstat
+    assert "canonical.txt" not in diff
+    assert "feature.txt" in diff
 
 
 def test_remote_command_policy_separates_read_only_and_mutating_keys():
@@ -2401,6 +2472,52 @@ async def test_execute_configured_device_command_routes_remote_home_directory_co
 
 
 @pytest.mark.asyncio
+async def test_external_device_command_rejects_app_device_when_remote_control_is_disabled(
+    monkeypatch,
+):
+    from app.services.device import command_service
+
+    execute_mock = AsyncMock(return_value={"success": True})
+    monkeypatch.setattr(
+        command_service.device_service,
+        "get_device_by_device_id",
+        lambda db, user_id, device_id: SimpleNamespace(
+            name="app-device",
+            json={"spec": {"deviceType": "app"}},
+        ),
+    )
+    monkeypatch.setattr(
+        command_service.local_device_command_service,
+        "execute_command",
+        execute_mock,
+    )
+
+    with pytest.raises(command_service.DeviceCommandError) as exc_info:
+        await command_service.execute_configured_device_command(
+            db=object(),
+            user_id=7,
+            device_id="app-device",
+            command_key="repo_status",
+            command_config={"repo_status": {"command": "git status --short"}},
+            allow_app_device=False,
+        )
+
+    assert str(exc_info.value) == "Remote control is disabled for this app device"
+    execute_mock.assert_not_awaited()
+
+    result = await command_service.execute_configured_device_command(
+        db=object(),
+        user_id=7,
+        device_id="app-device",
+        command_key="repo_status",
+        command_config={"repo_status": {"command": "git status --short"}},
+    )
+
+    assert result == {"success": True}
+    execute_mock.assert_awaited_once()
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("device_type", "submitted_device_id", "dispatch_device_id"),
     [
@@ -2842,6 +2959,7 @@ async def test_execute_device_command_endpoint_maps_request_to_service(monkeypat
         env={"A": "B"},
         timeout_seconds=5,
         max_output_bytes=1024,
+        allow_app_device=False,
     )
 
 

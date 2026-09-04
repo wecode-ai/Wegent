@@ -1,0 +1,3 @@
+- insert:
+    - id: wework-ui-git
+      name: '@wegent/dsh-ui-git'

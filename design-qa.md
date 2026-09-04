@@ -82,4 +82,139 @@ Required fidelity surfaces:
 - [x] State-specific unavailable copy and icons
 - [x] Real Electron interaction, geometry, screenshot, and error verification
 
+Applications result: passed
+
+# Wework plugin sharing and enterprise publication design QA
+
+## Comparison target
+
+- Source visual truth:
+  - Visibility scope: `/var/folders/v7/cdzm7jt91951hnc_97lch7h40000gn/T/codex-clipboard-54264685-bee1-4844-82d2-6f321df22e54.png`
+  - Publication progress: `/var/folders/v7/cdzm7jt91951hnc_97lch7h40000gn/T/codex-clipboard-95f3ec07-c1bb-4888-b666-0db30e86cf7f.png`
+  - Version and risk form: `/var/folders/v7/cdzm7jt91951hnc_97lch7h40000gn/T/codex-clipboard-00007236-6f37-4df7-8b8a-b1fd03f2cb55.png`
+  - Plugin detail: `/var/folders/v7/cdzm7jt91951hnc_97lch7h40000gn/T/codex-clipboard-a853ac42-2c1e-47a1-9fd2-4a680c268a7c.png`
+- Latest real implementation capture:
+  - Electron run: `/Users/junlong5/Documents/ai3c_workspace/Wegent/wework/test-results/desktop-e2e/2026-08-29T04-15-24-805Z-52498`
+  - Side-by-side comparison: `/Users/junlong5/Documents/ai3c_workspace/Wegent/wework/test-results/design-qa/plugin-publication-flow-comparison.png`
+  - Ordered interaction sequence: `/Users/junlong5/Documents/ai3c_workspace/Wegent/wework/test-results/design-qa/plugin-publication-interaction-sequence.png`
+
+## Environment and normalization
+
+- Runtime: packaged Electron application with real backend requests and a fresh migrated database, macOS arm64, light theme, Chinese locale.
+- CSS viewport: `1387 x 869`; capture: `2774 x 1738`; `deviceScaleFactor: 2`.
+- Reference and implementation frames were opened together in one comparison input. Differences caused only by the real Task workspace background and E2E fixture content were not treated as component defects.
+
+## Approved interaction sequence
+
+1. A plugin created in a Task workspace is persisted as a personal plugin and exposes `分享` on the personal detail/result surface.
+2. `分享与发布` contains exactly two intents: `指定成员或部门` and `全员可见`; the organization root is represented by the department selector rather than a third organization option. Every authenticated owner may submit the current personal plugin for enterprise-wide publication; there is no people allowlist or application-level publication switch.
+3. Restricted sharing becomes effective after scanning and requires no administrator review.
+4. Enterprise-wide publication opens the three-step drawer: `确认版本` -> `权限与风险` -> `确认提交`.
+5. Final submission freezes the selected version as an immutable revision, runs automatic checks, and then enters administrator review.
+6. The personal plugin remains usable and editable during review. Its detail surface shows a five-stage card: `提交申请` -> `自动检查` -> `管理员审核` -> `代码审核` -> `发布`.
+7. `查看申请进度` opens the revision, SHA256, check results, history, refresh, and context-appropriate withdrawal/action controls.
+8. Administrator approval is handled in the Web admin queue; acceptance creates or advances the Draft GitLab MR. Protected `master` remains the only release source, and its pipeline calls the internal release endpoint through a scoped release key.
+
+## Detail-page continuity
+
+- Personal detail preserves the existing task examples, Share action, overflow actions, install/chat action by state, automatic-update setting, application authorization, capability list, and information sections.
+- Owner-only actions remain in the overflow menu: continue editing, uninstall, and delete. Deleting a personal plugin with an active enterprise request requires withdrawing or closing that request first.
+- Submitted enterprise publication adds progress visibility without replacing the existing detail flow.
+
+## Visual findings
+
+- The latest scope dialog matches the approved neutral modal treatment and selection hierarchy, and explicitly shows `自动检查 -> 管理员审核 -> 代码审核 -> 发布`.
+- The three-step drawer preserves the selected right-side panel, step indicator, bottom action bar, form density, and read-only final review treatment.
+- The personal detail removes duplicate source metadata and places the five-stage status card between existing task examples and capability content.
+- The progress drawer preserves the implementation's information density while using the approved status hierarchy and real check-result content.
+- No actionable P0, P1, or P2 visual differences remain on the desktop submission and progress path.
+
+## Verification evidence
+
+- Packaged Electron E2E, `plugin-workspace-publication`: passed in 52 seconds with real backend requests and no publication-switch, allowlist, or marketplace-capability endpoint.
+- Post-cleanup regression: 124 focused backend tests, 233 Wework plugin/publication tests, 17 Web-admin tests, and 8 Executor publication tests passed; Backend Ruff, Wework/Frontend type checks and lint, Rust formatting, locale JSON parsing, and `git diff --check` also passed.
+- Backend publication, marketplace, configuration, internal-release, and HTTP-contract coverage: 142 focused tests passed, including ordinary-user request creation, owner isolation, submitter-row locking, terminal-request reactivation, and the active-request capacity boundary.
+- Real MySQL/InnoDB two-connection validation passed for concurrent new submissions, concurrent terminal-request reactivation, and the create-versus-complete lock order: each capacity-one scenario admitted exactly one active request and rejected the other with `429`, while both lock-order transactions committed without a deadlock.
+- Latest changed Wework publication suites: 152 tests passed; TypeScript type-check and the packaged Electron build also passed.
+- Wework HTTP and adapter regression suites: 44 tests passed after removing the obsolete capability request.
+- FastAPI route inspection confirmed `/api/plugins/capabilities` is absent and `/api/plugins/publication-requests` remains registered.
+- Wework lint for every changed publication file passed with no errors.
+- Web admin publication queue/review APIs and components are covered by focused frontend tests; the desktop visual comparison does not claim a live Web-admin screenshot.
+- Focused Web-admin publication API, queue, review drawer, marketplace integration, and i18n coverage: 17 Jest tests passed.
+- Plugin repository CI contract and publisher coverage: 40 tests and 5 subtests passed; 3 native-Windows checks were skipped on macOS.
+
+## Release-readiness boundary
+
+- Local implementation and documentation are complete on `feature/wework-plugin-publication`; no commit, push, merge request, remote pipeline, deployment, or production publication was performed.
+- There is no application-level publication switch to turn on after deployment. Protected GitLab branches/environments, macOS and Windows runners, CI variables and TLS connectivity, release-key provisioning, historical token rotation, and a migration/rollback drill must therefore be completed before the coordinated production deployment.
+- Native Windows compatibility remains a release gate; a portable macOS-hosted check cannot substitute for a real Windows runner.
+
+final result: passed
+
+# Plugin Debug Panel Design QA
+
+## Comparison target
+
+- Date: 2026-09-03
+- Source visual:
+  `/Users/axb-mac/.wework/codex/generated_images/01a061e5-791e-7ab2-be17-023b94b22361/call_kBFwQbowCxNRlelG0oIEULmh.png`
+- Desktop E2E evidence:
+  `/Users/axb-mac/.wework/workspace/worktrees/runtime-280422601/Wegent/wework/test-results/desktop-e2e/2026-09-03T07-05-48-885Z-95579`
+- Full comparison:
+  `design-qa-full-comparison.png`
+- Focused panel comparison:
+  `design-qa-panel-hmr-comparison.png`
+
+## Product structure
+
+The implementation keeps plugin development in the conversation workspace and
+models the debugging target as one explicit relationship:
+
+1. current project (development side);
+2. Core DSH runtime;
+3. isolated Wework debugging instance (runtime side).
+
+The primary start/focus action is attached to the isolated instance. Lifecycle,
+live HMR status, and recent events remain visible. Diagnostic actions use
+progressive disclosure, while stopping is placed in an overflow menu and
+requires confirmation.
+
+## Visual comparison
+
+- No actionable P0, P1, or P2 differences remain.
+- The panel follows Wework's neutral desktop hierarchy instead of introducing a
+  dashboard-like visual language.
+- Green is restricted to connected/success indicators; destructive color is
+  reserved for stop confirmation.
+- The implementation uses real runtime state and does not add mock controls,
+  decorative assets, gradients, emoji, custom SVG, or nonstandard plugin UI.
+- The automatic-HMR switch from the concept was intentionally omitted because
+  there is no corresponding user-controlled behavior.
+- Decorative connector arrows and row icons were omitted because the official
+  Core DSH plugin surface does not expose the host icon system. Explicit labels
+  and grouping preserve the relationship without private assets.
+
+## Interaction verification
+
+The CI-covered desktop E2E checkpoint verified:
+
+- creating and registering a Wework plugin project;
+- exposing the Plugin Debugging tab only for the plugin project;
+- rendering the stopped target and lifecycle state;
+- starting and focusing a separate Wework instance;
+- receiving Core DSH status through the desktop event stream;
+- filtering recent events and expanding diagnostics;
+- accepting and displaying HMR generation 1;
+- confirming and stopping the debugging instance.
+
+An additional isolated `ai:verify` Electron run covered project selection, the
+stopped state, starting the debugging instance, and the connected state. The
+application log contained no plugin-panel errors or warnings.
+
+## Follow-up
+
+- P3: if the official Wework plugin UI API later exposes the host icon system,
+  the textual overflow and disclosure affordances can adopt those official
+  icons without changing the official Codex plugin format.
+
 final result: passed

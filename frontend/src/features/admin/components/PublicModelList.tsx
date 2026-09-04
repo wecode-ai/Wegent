@@ -42,6 +42,43 @@ import {
 } from '@/apis/admin'
 import UnifiedAddButton from '@/components/common/UnifiedAddButton'
 
+const isJsonObject = (value: unknown): value is Record<string, unknown> =>
+  typeof value === 'object' && value !== null && !Array.isArray(value)
+
+export const parsePublicModelConfig = (value: string): Record<string, unknown> | null => {
+  try {
+    const parsed: unknown = JSON.parse(value)
+    if (!isJsonObject(parsed)) {
+      return null
+    }
+    if ('spec' in parsed && !isJsonObject(parsed.spec)) {
+      return null
+    }
+    return parsed
+  } catch {
+    return null
+  }
+}
+
+export const getPublicModelVisibilityFromConfig = (value: string): boolean | undefined => {
+  const parsed = parsePublicModelConfig(value)
+  if (!parsed || !isJsonObject(parsed.spec)) {
+    return undefined
+  }
+  const isVisible = parsed.spec.isVisible
+  return typeof isVisible === 'boolean' ? isVisible : undefined
+}
+
+export const setPublicModelVisibilityInConfig = (value: string, isVisible: boolean): string => {
+  const config = parsePublicModelConfig(value)
+  if (!config) {
+    return value
+  }
+  const spec = isJsonObject(config.spec) ? { ...config.spec } : {}
+  spec.isVisible = isVisible
+  return JSON.stringify({ ...config, spec }, null, 2)
+}
+
 const PublicModelList: React.FC = () => {
   const { t } = useTranslation()
   const { toast } = useToast()
@@ -64,6 +101,7 @@ const PublicModelList: React.FC = () => {
     modelSubGroup: string
     config: string
     is_active: boolean
+    is_visible: boolean
     is_advanced: boolean
     is_wework_available: boolean
   }>({
@@ -73,6 +111,7 @@ const PublicModelList: React.FC = () => {
     modelSubGroup: '',
     config: '{}',
     is_active: true,
+    is_visible: true,
     is_advanced: false,
     is_wework_available: false,
   })
@@ -105,18 +144,13 @@ const PublicModelList: React.FC = () => {
       setConfigError(t('admin:public_models.errors.config_required'))
       return null
     }
-    try {
-      const parsed = JSON.parse(value)
-      if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
-        setConfigError(t('admin:public_models.errors.config_invalid_json'))
-        return null
-      }
-      setConfigError('')
-      return parsed as Record<string, unknown>
-    } catch {
+    const parsed = parsePublicModelConfig(value)
+    if (!parsed) {
       setConfigError(t('admin:public_models.errors.config_invalid_json'))
       return null
     }
+    setConfigError('')
+    return parsed
   }
 
   const getSpecValue = (json: Record<string, unknown>, key: 'modelGroup' | 'modelSubGroup') => {
@@ -163,9 +197,31 @@ const PublicModelList: React.FC = () => {
     } else {
       delete spec.isWeworkAvailable
     }
+    spec.isVisible = formData.is_visible
 
     nextConfig.spec = spec
     return nextConfig
+  }
+
+  const handleConfigChange = (value: string) => {
+    const configVisibility = getPublicModelVisibilityFromConfig(value)
+    setFormData(current => ({
+      ...current,
+      config: value,
+      ...(configVisibility === undefined ? {} : { is_visible: configVisibility }),
+    }))
+    validateConfig(value)
+  }
+
+  const handleVisibilityChange = (isVisible: boolean) => {
+    if (!validateConfig(formData.config)) {
+      return
+    }
+    setFormData(current => ({
+      ...current,
+      is_visible: isVisible,
+      config: setPublicModelVisibilityInConfig(current.config, isVisible),
+    }))
   }
 
   const handleCreateModel = async () => {
@@ -193,6 +249,7 @@ const PublicModelList: React.FC = () => {
         name: formData.name.trim(),
         namespace: formData.namespace.trim() || 'default',
         json: config,
+        is_visible: formData.is_visible,
       }
       await adminApis.createPublicModel(createData)
       toast({ title: t('admin:public_models.success.created') })
@@ -235,6 +292,9 @@ const PublicModelList: React.FC = () => {
       updateData.json = config
       if (formData.is_active !== selectedModel.is_active) {
         updateData.is_active = formData.is_active
+      }
+      if (formData.is_visible !== selectedModel.is_visible) {
+        updateData.is_visible = formData.is_visible
       }
       if (formData.is_advanced !== (selectedModel.is_advanced ?? false)) {
         updateData.is_advanced = formData.is_advanced
@@ -285,6 +345,7 @@ const PublicModelList: React.FC = () => {
       modelSubGroup: '',
       config: '{}',
       is_active: true,
+      is_visible: true,
       is_advanced: false,
       is_wework_available: false,
     })
@@ -301,6 +362,7 @@ const PublicModelList: React.FC = () => {
       modelSubGroup: getSpecValue(model.json, 'modelSubGroup'),
       config: JSON.stringify(model.json, null, 2),
       is_active: model.is_active,
+      is_visible: model.is_visible,
       is_advanced: model.is_advanced ?? false,
       is_wework_available: getSpecBooleanValue(model.json, 'isWeworkAvailable'),
     })
@@ -380,6 +442,9 @@ const PublicModelList: React.FC = () => {
                           <Tag variant="success">{t('admin:public_models.status.active')}</Tag>
                         ) : (
                           <Tag variant="error">{t('admin:public_models.status.inactive')}</Tag>
+                        )}
+                        {!model.is_visible && (
+                          <Tag variant="error">{t('admin:public_models.status.hidden')}</Tag>
                         )}
                         {model.is_advanced && (
                           <Tag variant="warning">{t('admin:public_models.status.advanced')}</Tag>
@@ -504,14 +569,27 @@ const PublicModelList: React.FC = () => {
               <Textarea
                 id="config"
                 value={formData.config}
-                onChange={e => {
-                  setFormData({ ...formData, config: e.target.value })
-                  validateConfig(e.target.value)
-                }}
+                onChange={e => handleConfigChange(e.target.value)}
                 placeholder={t('admin:public_models.form.config_placeholder')}
                 className={`font-mono text-sm min-h-[200px] ${configError ? 'border-error' : ''}`}
               />
               {configError && <p className="text-xs text-error">{configError}</p>}
+            </div>
+            <div className="flex items-center justify-between">
+              <Label htmlFor="create-is-visible">{t('admin:public_models.form.is_visible')}</Label>
+              <div className="flex items-center gap-2">
+                <span className="text-sm text-text-muted">
+                  {formData.is_visible
+                    ? t('admin:public_models.status.visible')
+                    : t('admin:public_models.status.hidden')}
+                </span>
+                <Switch
+                  id="create-is-visible"
+                  data-testid="public-model-create-visible-switch"
+                  checked={formData.is_visible}
+                  onCheckedChange={handleVisibilityChange}
+                />
+              </div>
             </div>
             <div className="flex items-center justify-between">
               <Label htmlFor="create-is-wework-available">
@@ -602,10 +680,7 @@ const PublicModelList: React.FC = () => {
               <Textarea
                 id="edit-config"
                 value={formData.config}
-                onChange={e => {
-                  setFormData({ ...formData, config: e.target.value })
-                  validateConfig(e.target.value)
-                }}
+                onChange={e => handleConfigChange(e.target.value)}
                 placeholder={t('admin:public_models.form.config_placeholder')}
                 className={`font-mono text-sm min-h-[200px] ${configError ? 'border-error' : ''}`}
               />
@@ -623,6 +698,22 @@ const PublicModelList: React.FC = () => {
                   id="edit-is-active"
                   checked={formData.is_active}
                   onCheckedChange={checked => setFormData({ ...formData, is_active: checked })}
+                />
+              </div>
+            </div>
+            <div className="flex items-center justify-between">
+              <Label htmlFor="edit-is-visible">{t('admin:public_models.form.is_visible')}</Label>
+              <div className="flex items-center gap-2">
+                <span className="text-sm text-text-muted">
+                  {formData.is_visible
+                    ? t('admin:public_models.status.visible')
+                    : t('admin:public_models.status.hidden')}
+                </span>
+                <Switch
+                  id="edit-is-visible"
+                  data-testid="public-model-edit-visible-switch"
+                  checked={formData.is_visible}
+                  onCheckedChange={handleVisibilityChange}
                 />
               </div>
             </div>

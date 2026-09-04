@@ -17,6 +17,7 @@ from app.core.security import (
     get_admin_user,
     get_auth_context,
     get_current_user,
+    get_current_user_from_token,
     get_current_user_optional,
     get_password_hash,
     verify_password,
@@ -190,6 +191,24 @@ class TestTokenOperations:
             verify_token(token)
 
         assert exc_info.value.status_code == 401
+
+    def test_verify_token_rejects_scoped_token(self) -> None:
+        """Scoped JWTs are capability tokens, not Wegent session tokens."""
+        token = create_access_token({"sub": "testuser", "scope": "userinfo.read"})
+
+        with pytest.raises(HTTPException) as exc_info:
+            verify_token(token)
+
+        assert exc_info.value.status_code == 401
+
+    def test_optional_token_lookup_rejects_scoped_token(
+        self, test_db: Session, test_user: User
+    ) -> None:
+        token = create_access_token(
+            {"sub": test_user.user_name, "scope": "userinfo.read"}
+        )
+
+        assert get_current_user_from_token(token, test_db) is None
 
 
 @pytest.mark.unit

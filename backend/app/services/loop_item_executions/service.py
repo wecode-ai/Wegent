@@ -2269,6 +2269,8 @@ class LoopItemExecutionService:
         execution_id: int,
         note: Optional[str] = None,
         content: Optional[str] = None,
+        expected_status: Optional[str] = None,
+        expected_version: Optional[int] = None,
         observed_at: Optional[datetime] = None,
         event_seq: Optional[int] = None,
     ) -> Optional[LoopItemExecution]:
@@ -2286,6 +2288,8 @@ class LoopItemExecutionService:
             terminal_status=STATUS_COMPLETED,
             note=note,
             content=content if content is not None else note,
+            expected_status=expected_status,
+            expected_version=expected_version,
             observed_state=OBSERVED_SUCCEEDED,
             observed_at=observed_at,
             event_seq=event_seq,
@@ -2463,6 +2467,10 @@ class LoopItemExecutionService:
             approved_by_user_id=previous.approved_by_user_id,
             approved_at=previous.approved_at,
             execution_note=previous.execution_note,
+            execution_payload=LoopItemExecutionService._serialize_execution_intent(
+                runtime_selection=dict(previous.runtime_selection),
+                origin_context=dict(previous.runtime_origin_context),
+            ),
         )
 
     def mark_dispatch_unknown(
@@ -4144,25 +4152,20 @@ class LoopItemExecutionService:
             db.refresh(row)
             self.push_linked_activity_after_commit(db, execution=row)
             return row
-        terminal = {
-            "completed": STATUS_COMPLETED,
-            "succeeded": STATUS_COMPLETED,
-            "failed": STATUS_FAILED,
-            "error": STATUS_FAILED,
-            "cancelled": STATUS_CANCELLED,
-            "canceled": STATUS_CANCELLED,
-            "interrupted": STATUS_CANCELLED,
-            "aborted": STATUS_CANCELLED,
-        }.get(normalized_turn) or {
-            "completed": STATUS_COMPLETED,
-            "succeeded": STATUS_COMPLETED,
-            "failed": STATUS_FAILED,
-            "error": STATUS_FAILED,
-            "cancelled": STATUS_CANCELLED,
-            "canceled": STATUS_CANCELLED,
-        }.get(
-            normalized
-        )
+        terminal_observations = {normalized, normalized_turn}
+        if terminal_observations & {"failed", "error"}:
+            terminal = STATUS_FAILED
+        elif terminal_observations & {
+            "cancelled",
+            "canceled",
+            "interrupted",
+            "aborted",
+        }:
+            terminal = STATUS_CANCELLED
+        elif terminal_observations & {"completed", "succeeded"}:
+            terminal = STATUS_COMPLETED
+        else:
+            terminal = None
         if terminal == STATUS_COMPLETED:
             self.open_execution_activity(
                 db,
@@ -4170,7 +4173,13 @@ class LoopItemExecutionService:
                 commit=False,
                 push=False,
             )
-            return self.complete(db, execution_id=row.id, note="Runtime reconciled")
+            return self.complete(
+                db,
+                execution_id=row.id,
+                note="Runtime reconciled",
+                expected_status=row.status,
+                expected_version=row.version,
+            )
         if terminal == STATUS_FAILED:
             self.open_execution_activity(
                 db,
@@ -4182,6 +4191,9 @@ class LoopItemExecutionService:
                 db,
                 execution_id=row.id,
                 error="Runtime reported a failed task during reconciliation",
+                requeue=True,
+                expected_status=row.status,
+                expected_version=row.version,
                 termination_reason="runtime_reconciled_failed",
             )
         if terminal == STATUS_CANCELLED:
@@ -4199,6 +4211,8 @@ class LoopItemExecutionService:
                 content="AI execution was cancelled.",
                 observed_state=OBSERVED_CANCELLED,
                 observed_at=utcnow(),
+                expected_status=row.status,
+                expected_version=row.version,
                 termination_reason="runtime_reconciled_cancelled",
             )
         if normalized in {"accepted", "active", "pending", "queued", "starting"}:

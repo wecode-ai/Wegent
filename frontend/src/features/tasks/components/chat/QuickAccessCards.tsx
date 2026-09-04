@@ -30,9 +30,6 @@ import { getCurrentTargetPageByMode, type QuickLaunchIntent } from './quick-laun
 import { QuickLaunchPanel } from './quick-launch/quick-launch-panel'
 import type { QuickPresetSelection } from './quick-launch/types'
 
-// Small button width (compact size for more/quick create buttons)
-const SMALL_BUTTON_WIDTH = 72
-
 interface QuickAccessCardsProps {
   teams: Team[]
   selectedTeam: Team | null
@@ -401,10 +398,8 @@ export function QuickAccessCards({
         type="button"
         data-testid="quick-create-agent"
         onClick={handleOpenCreateAgent}
-        className="group relative flex flex-col justify-center items-center cursor-pointer transition-all duration-200 border border-dashed border-border bg-base hover:border-primary hover:bg-primary/5 hover:shadow-[0_2px_12px_0_rgba(0,0,0,0.1)]"
+        className="group relative flex h-16 w-16 flex-col items-center justify-center cursor-pointer border border-dashed border-border bg-base transition-all duration-200 hover:border-primary hover:bg-primary/5 hover:shadow-[0_2px_12px_0_rgba(0,0,0,0.1)] md:h-[78px] md:w-[72px]"
         style={{
-          width: SMALL_BUTTON_WIDTH,
-          height: 78,
           padding: '8px 12px',
           borderRadius: 20,
           flexShrink: 0,
@@ -432,10 +427,8 @@ export function QuickAccessCards({
       <Popover open={morePopoverOpen} onOpenChange={handleMorePopoverOpenChange}>
         <PopoverTrigger asChild>
           <div
-            className="group relative flex flex-col justify-center items-center cursor-pointer transition-all duration-200 border border-border bg-base hover:border-border-strong hover:bg-hover hover:shadow-sm"
+            className="group relative flex h-16 w-16 flex-col items-center justify-center cursor-pointer border border-border bg-base transition-all duration-200 hover:border-border-strong hover:bg-hover hover:shadow-sm md:h-[78px] md:w-[72px]"
             style={{
-              width: SMALL_BUTTON_WIDTH,
-              height: 78,
               padding: '8px 12px',
               borderRadius: 20,
               flexShrink: 0,

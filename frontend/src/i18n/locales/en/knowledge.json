@@ -285,14 +285,6 @@
       "batchMovePartial": "Batch move completed: {{success}} succeeded, {{failed}} failed. Failed documents remain selected and highlighted for retry"
     },
     "document": {
-      "retrievalProfile": {
-        "fallbackReasons": {
-          "retriever_unavailable": "The configured retrieval default profile is unavailable, so automatic defaults will be used.",
-          "embedding_model_unavailable": "The configured retrieval default profile is unavailable, so automatic defaults will be used.",
-          "profile_incomplete": "The configured retrieval default profile is incomplete, so automatic defaults will be used.",
-          "unavailable": "The retrieval default profile is unavailable, so automatic defaults will be used."
-        }
-      },
       "title": "Documents",
       "upload": "Add sources",
       "edit": "Edit Document",
@@ -1224,10 +1216,44 @@
       "generateFirst": "Generate",
       "regenerateConfirmTitle": "Regenerate this wiki?",
       "regenerateConfirmBody": "The whole repository is read again and every page rewritten, which usually takes minutes rather than seconds. The current pages stay readable until the new version is published.",
+      "cancelConfirmTitle": "Stop this generation?",
+      "cancelConfirmBody": "The current draft will be discarded. Published pages are unchanged.",
+      "cancelRequested": "Stop request accepted",
       "emptyGenerating": "This wiki is being generated",
       "emptyGeneratingHint": "Reading a whole repository usually takes several minutes. Feel free to come back to it later.",
       "emptyFailed": "The last run did not finish",
       "emptyFailedHint": "You can start it again. If it keeps failing, the reason is below."
+    },
+    "progress": {
+      "title": "Generating",
+      "step": "Stage {{current}}/{{total}}",
+      "cancel": "Stop generation",
+      "cancelling": "Stopping…",
+      "stepLabel": {
+        "plan": "Plan review",
+        "planPassed_one": "Plan review passed ({{count}} page)",
+        "planPassed_other": "Plan review passed ({{count}} pages)",
+        "writing": "Write pages",
+        "writingActive": "Writing pages ({{current}} / {{total}})",
+        "writingCompleted_one": "Page writing complete ({{count}} page)",
+        "writingCompleted_other": "Page writing complete ({{count}} pages)",
+        "qa": "Final quality review",
+        "qaCompleted": "Final quality review passed",
+        "publish": "Integrate and publish",
+        "publishCompleted": "Published"
+      },
+      "stage": {
+        "generating": "Generating wiki content",
+        "planning": "Analyzing the repository and planning pages",
+        "plan_review": "Reviewing the wiki page plan",
+        "revising_plan": "Revising the plan from review findings",
+        "writing": "Writing wiki pages",
+        "qa_review": "Running content QA",
+        "repairing": "Repairing documentation from QA findings",
+        "recheck": "Rechecking the repairs",
+        "publishing": "Validating and publishing the wiki",
+        "finishing": "Finishing this generation"
+      }
     },
     "workspace": {
       "wiki": "Wiki",
@@ -1264,6 +1290,7 @@
       "failureDetailsDescription": "Full error message from this generation run."
     },
     "failure": {
+      "cancelled_by_user": "Generation was stopped",
       "task_ended_without_report": "The task ended without reporting a result",
       "task_not_created": "The generation task could not be created",
       "worker_abandoned": "The worker stopped reporting and the run was reclaimed",

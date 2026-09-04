@@ -30,6 +30,15 @@ class FailedSubtaskDetail:
     user_name: Optional[str]
 
 
+@dataclass(frozen=True)
+class ExecutorReference:
+    """Executor state preserved while chat history is regenerated."""
+
+    namespace: str
+    name: str
+    deleted_at: bool
+
+
 class TaskIdAllocationError(RuntimeError):
     """Raised when a task ID reservation cannot be allocated."""
 
@@ -778,6 +787,15 @@ class SubtaskStore(Protocol):
         after_message_id: int,
         owner_user_id: Optional[int] = None,
     ) -> list[Subtask]: ...
+
+    def get_latest_assistant_executor_from(
+        self,
+        db: Session,
+        *,
+        task_id: int,
+        from_message_id: int,
+        owner_user_id: Optional[int] = None,
+    ) -> Optional[ExecutorReference]: ...
 
     def get_latest_by_task(
         self, db: Session, *, task_id: int, owner_user_id: Optional[int] = None

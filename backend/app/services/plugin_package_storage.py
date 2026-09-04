@@ -126,17 +126,6 @@ class PluginPackageStorage:
 
         return chunks()
 
-    def presign_upload(self, object_key: str) -> tuple[str, datetime]:
-        self.ensure_bucket()
-        try:
-            return object_storage_presign_service.generate_upload_url(
-                bucket=self.bucket,
-                object_key=object_key,
-                expires_seconds=settings.PLUGIN_PACKAGE_URL_EXPIRES_SECONDS,
-            )
-        except _STORAGE_ERRORS as exc:
-            raise PluginPackageStorageError(str(exc)) from exc
-
     def presign_download(self, object_key: str) -> tuple[str, datetime]:
         try:
             return object_storage_presign_service.generate_download_url(

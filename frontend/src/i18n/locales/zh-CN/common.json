@@ -325,6 +325,7 @@
     "active": "活跃",
     "inactive": "非活跃",
     "select_team": "选择一个智能体",
+    "clear_selection": "移除当前智能体",
     "recently_used": "最近使用",
     "search_team": "搜索智能体...",
     "no_bots": "没有机器人",
@@ -677,6 +678,23 @@
       "cancel": "取消",
       "approve": "授权",
       "authorization_failed": "授权失败"
+    },
+    "oauth_authorize": {
+      "invalid_title": "OAuth 授权链接无效",
+      "loading": "正在加载授权请求",
+      "failed": "OAuth 授权失败",
+      "redirecting_approved": "已授权，正在返回外部应用",
+      "redirecting_denied": "已拒绝，正在返回外部应用",
+      "title": "授权 {{client}} 读取你的身份信息",
+      "description": "此外部应用仅能确认你的 Wegent 身份，不能访问项目、任务、模型、设备或其他 Wegent 业务数据。",
+      "application": "应用",
+      "account": "账号",
+      "permission": "权限",
+      "redirect_uri": "返回地址",
+      "boundary": "授权后仅开放 id、用户名和邮箱。外部应用中的角色与权限仍由外部应用自行管理。",
+      "switch_account": "切换账号",
+      "deny": "拒绝",
+      "approve": "授权"
     }
   },
   "branches": {

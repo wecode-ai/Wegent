@@ -32,6 +32,13 @@ bundled plugins), Codex/DWS binaries, the Node runtime, and the Harness runtime
 JSONL with the Executor sidecar through child process stdin/stdout, without a
 Unix domain socket or fixed TCP port.
 
+In development the script builds the renderer output
+(`wework/dsh/app-wework/web`), starts a Vite watch build, and serves the
+running desktop app from the latest build through
+`WEWORK_APP_WEB_ROOT`/`WEWORK_APP_HOT_RELOAD` with automatic reload when the
+build changes, matching `dev-mac-app.sh`. Branch switches and renderer edits
+therefore take effect without manually syncing packaged plugin artifacts.
+
 Runtime and Executor build caches default to `%LOCALAPPDATA%\wegent\` (override
 with `WEWORK_DEV_CACHE_ROOT` or `WEGENT_CARGO_TARGET_ROOT`); the first
 preparation is slow and later runs are incremental. Pass

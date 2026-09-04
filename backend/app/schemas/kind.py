@@ -338,6 +338,11 @@ class ModelSpec(BaseModel):
         description="Whether this model is available in the wework desktop client. "
         "Only models with this field set to True are returned to wework.",
     )
+    isVisible: bool = Field(
+        True,
+        description="Whether this public model is visible in user model selectors. "
+        "Hidden models remain available to existing bindings.",
+    )
     modelCapabilities: Optional[ModelCapabilities] = Field(
         None,
         description="Declared multimodal capabilities (supportsImage / supportsVideo). "

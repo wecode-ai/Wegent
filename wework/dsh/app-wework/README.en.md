@@ -8,6 +8,14 @@ The host declares these standard extension points:
 
 - `wework.action`
 - `wework.app`
+- `wework.plugins.action`
+- `wework.task.status`
+- `wework.environment.section`
+- `wework.board.card.status`
+- `wework.workspace.menu.section`
+- `wework.project.work.section`
+- `wework.project.create.section`
+- `wework.runtime-profile.workspace-policy`
 - `wework.route`
 - `wework.sidebar.navigation`
 - `wework.settings.page`
@@ -52,6 +60,6 @@ The package must explicitly export `./package.json`. The DSH client module
 registry resolves that subpath to read the `dsh.client` declaration; without
 the export, the plugin is omitted from the browser boot graph.
 
-The installable third-party example at
-[`../examples/ui-extension-demo`](../examples/ui-extension-demo) covers every
-extension point above.
+The installable example shipped by the **Wework Plugin Developer** Skill at
+[`../plugin-developer/codex-plugin/skills/develop-wework-plugin/assets/ui-extension-demo`](../plugin-developer/codex-plugin/skills/develop-wework-plugin/assets/ui-extension-demo)
+covers every extension point above.

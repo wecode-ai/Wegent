@@ -102,7 +102,7 @@ export function buildRuntimeTaskCreateHandle(
   }
 }
 
-interface PreparedRuntimeTaskIntent {
+export interface PreparedRuntimeTaskIntent {
   projectId: number | null
   message: string
   title?: string
@@ -114,6 +114,7 @@ interface PreparedRuntimeTaskIntent {
   attachments?: Attachment[]
   execution?: RuntimeTaskCreateRequest['execution']
 }
+
 import { getDesktopE2ERuntimeConfig } from '@/e2e/runtime-config'
 import type { WorkbenchServices } from './workbenchServices'
 import { track } from '@/telemetry/client'
@@ -295,23 +296,23 @@ export function resolveTemporaryChatSource(
 export function resolveRuntimeTaskCreateWorkspacePath({
   sourcePath,
   responsePath,
-  requestedWorktree,
+  requestedManagedWorkspace,
 }: {
   sourcePath?: string
   responsePath?: string
-  requestedWorktree: boolean
+  requestedManagedWorkspace: boolean
 }): string | undefined {
   const normalizedResponsePath = responsePath?.trim()
-  if (!requestedWorktree) return normalizedResponsePath || sourcePath
+  if (!requestedManagedWorkspace) return normalizedResponsePath || sourcePath
   if (!normalizedResponsePath) {
-    throw new Error('Worktree task creation did not return a planned workspace path')
+    throw new Error('Managed workspace creation did not return a planned workspace path')
   }
   if (
     sourcePath &&
     normalizeRuntimeWorkspacePath(normalizedResponsePath) ===
       normalizeRuntimeWorkspacePath(sourcePath)
   ) {
-    throw new Error('Worktree task creation returned the base workspace path')
+    throw new Error('Managed workspace creation returned the base workspace path')
   }
   return normalizedResponsePath
 }
@@ -847,11 +848,11 @@ export function useWorkbenchRuntimeMessaging({
       const selectedModelOptions =
         modelSelection.getSelectedModelOptions?.() ?? modelSelection.selectedModelOptions
 
-      if (activeProject && projectExecutionMode === 'git_worktree') {
+      if (activeProject && projectExecutionMode !== 'current_workspace') {
         const branch = projectWorktreeBranch?.trim()
         intent.execution = {
           workspace: {
-            source: 'git_worktree',
+            source: projectExecutionMode,
             ...(branch ? { branch } : {}),
           },
         }
@@ -949,7 +950,7 @@ export function useWorkbenchRuntimeMessaging({
       const launchStartedAt = options?.launchStartedAt ?? runtimeLaunchNowMs()
       const sourceBlankChatKey = state.currentRuntimeTask ? null : state.standaloneChatKey
       const projectId = intent.projectId
-      const requestedWorktree = intent.execution?.workspace?.source === 'git_worktree'
+      const requestedManagedWorkspace = Boolean(intent.execution?.workspace)
       const hasOverrideSelection = Boolean(
         options && Object.prototype.hasOwnProperty.call(options, 'modelSelection')
       )
@@ -1058,7 +1059,7 @@ export function useWorkbenchRuntimeMessaging({
         }
       }
 
-      if (requestedWorktree) {
+      if (requestedManagedWorkspace) {
         const worktreeProject =
           state.projects.find(project => project.id === projectId) ??
           (state.currentProject?.id === projectId ? state.currentProject : null)
@@ -1232,7 +1233,7 @@ export function useWorkbenchRuntimeMessaging({
         deviceId: optimisticDeviceId,
         taskId,
         runtime,
-        workspacePath: requestedWorktree ? undefined : sourceWorkspacePath,
+        workspacePath: requestedManagedWorkspace ? undefined : sourceWorkspacePath,
         ...(createRuntimeHandle ? { runtimeHandle: createRuntimeHandle } : {}),
       }
       const seedOptimisticUserMessage = (address: RuntimeTaskAddress) => {
@@ -1249,7 +1250,7 @@ export function useWorkbenchRuntimeMessaging({
         selectedModel,
         selectedModelOptions
       )
-      const optimisticWorkspacePath = requestedWorktree
+      const optimisticWorkspacePath = requestedManagedWorkspace
         ? undefined
         : (sourceWorkspacePath ?? selectedProjectWorkspace?.workspacePath)
       const optimisticWorkspace =
@@ -1284,7 +1285,9 @@ export function useWorkbenchRuntimeMessaging({
         optimisticWorkspacePath: optimisticWorkspacePath ?? null,
       })
       lifecycleStore.sendRequested(optimisticAddress, {
-        ...(requestedWorktree ? { workspaceCreationKind: 'worktree' } : {}),
+        ...(requestedManagedWorkspace
+          ? { workspaceCreationKind: intent.execution?.workspace?.source }
+          : {}),
       })
       if (options?.initialGoal) {
         lifecycleStore.goalStatusReceived(optimisticAddress, options.initialGoal.status ?? 'active')
@@ -1303,7 +1306,7 @@ export function useWorkbenchRuntimeMessaging({
             0
         )
         if (
-          intent.execution?.workspace?.source === 'git_worktree' &&
+          intent.execution?.workspace &&
           Number.isFinite(worktreeCreationDelayMs) &&
           worktreeCreationDelayMs > 0
         ) {
@@ -1375,7 +1378,7 @@ export function useWorkbenchRuntimeMessaging({
         const resolvedCreateWorkspacePath = resolveRuntimeTaskCreateWorkspacePath({
           sourcePath: sourceWorkspacePath,
           responsePath: response.workspacePath,
-          requestedWorktree,
+          requestedManagedWorkspace,
         })
         const address: RuntimeTaskAddress = {
           deviceId: response.deviceId || optimisticAddress.deviceId,
@@ -1414,8 +1417,7 @@ export function useWorkbenchRuntimeMessaging({
               deviceId: address.deviceId,
               workspacePath: resolvedWorkspacePath,
               projectId,
-              workspaceKind:
-                intent.execution?.workspace?.source === 'git_worktree' ? 'worktree' : undefined,
+              workspaceKind: intent.execution?.workspace?.source,
             }),
             task: buildOptimisticRuntimeTask({
               taskId: address.taskId,
@@ -1424,8 +1426,7 @@ export function useWorkbenchRuntimeMessaging({
               runtime,
               status: response.status ?? 'running',
               queuePosition: response.queuePosition,
-              workspaceKind:
-                intent.execution?.workspace?.source === 'git_worktree' ? 'worktree' : undefined,
+              workspaceKind: intent.execution?.workspace?.source,
               modelSelection: createModelSelection,
             }),
           })
@@ -1531,8 +1532,7 @@ export function useWorkbenchRuntimeMessaging({
               title: createRequest.title ?? buildRuntimeTaskTitle(displayMessage, intent.title),
               runtime,
               status: 'failed',
-              workspaceKind:
-                intent.execution?.workspace?.source === 'git_worktree' ? 'worktree' : undefined,
+              workspaceKind: intent.execution?.workspace?.source,
               error: message,
             }),
           })
@@ -1732,62 +1732,6 @@ export function useWorkbenchRuntimeMessaging({
       state.currentRuntimeTask,
       state.devices,
     ]
-  )
-
-  const retryFailedMessage = useCallback(
-    async (
-      messageId: string,
-      messagesOverride?: WorkbenchMessage[],
-      retryUserMessageOverride?: WorkbenchMessage
-    ): Promise<boolean> => {
-      const messageSource = messagesOverride ?? []
-      const failedMessageIndex = messageSource.findIndex(
-        message =>
-          message.id === messageId && message.role === 'assistant' && message.status === 'failed'
-      )
-      if (failedMessageIndex === -1) {
-        dispatch({ type: 'error_set', error: '未找到可重试的失败消息' })
-        return false
-      }
-      const failedMessage = messageSource[failedMessageIndex]
-
-      const previousUserMessage =
-        retryUserMessageOverride?.role === 'user'
-          ? retryUserMessageOverride
-          : [...messageSource]
-              .slice(0, failedMessageIndex)
-              .reverse()
-              .find(message => message.role === 'user')
-      if (!previousUserMessage) {
-        dispatch({ type: 'error_set', error: '未找到可重试的用户消息' })
-        return false
-      }
-
-      if (state.currentRuntimeTask) {
-        const runtimeSelectedModel =
-          modelSelection.getSelectedModel?.() ??
-          modelSelection.selectedModel ??
-          resolveAutomaticModel(modelSelection.models)
-        const runtimeSelectedModelOptions =
-          modelSelection.getSelectedModelOptions?.() ?? modelSelection.selectedModelOptions
-        const previousAttachments = previousUserMessage.attachments ?? []
-        const attachmentIds = remoteAttachmentIds(previousAttachments)
-        const attachments = localRuntimeAttachments(previousAttachments)
-        return sendRuntimePaneMessage({
-          address: state.currentRuntimeTask,
-          message: previousUserMessage.content,
-          clientUserMessageId: previousUserMessage.id,
-          retrySourceTurnId: failedMessage.turnId ?? failedMessage.subtaskId,
-          ...selectedModelExecutionFields(runtimeSelectedModel, runtimeSelectedModelOptions),
-          ...(attachmentIds.length > 0 ? { attachmentIds } : {}),
-          ...(attachments.length > 0 ? { attachments } : {}),
-        })
-      }
-
-      reportSendBlocked('当前没有可重试的 LocalTask')
-      return false
-    },
-    [dispatch, modelSelection, reportSendBlocked, sendRuntimePaneMessage, state.currentRuntimeTask]
   )
 
   const createEphemeralRuntimeTask = useCallback(
@@ -2077,7 +2021,6 @@ export function useWorkbenchRuntimeMessaging({
     createTemporaryRuntimeTask,
     createEphemeralRuntimeTask,
     createProjectRuntimeTask,
-    retryFailedMessage,
     pauseCurrentResponse,
     loadTurnFileChangesDiff,
     revertTurnFileChanges,

@@ -73,6 +73,7 @@ class RemoteDeviceProvider(LocalDeviceProvider):
         return {
             "id": device_kind.id,
             "device_id": device_id,
+            "socket_device_id": spec.get("deviceId") or device_id,
             "name": spec.get("displayName") or device_id,
             "status": online_info.get("status", "online") if online_info else "offline",
             "is_default": spec.get("isDefault", False),
@@ -95,6 +96,7 @@ class RemoteDeviceProvider(LocalDeviceProvider):
             "client_ip": spec.get("clientIp"),
             "runtime_transfer_host": spec.get("runtimeTransferHost"),
             "runtime_instance_id": spec.get("runtimeInstanceId"),
+            "app_device_id": spec.get("appDeviceId"),
             "runtime_features": (
                 online_info.get("runtime_features") if online_info else None
             ),
@@ -157,6 +159,7 @@ class RemoteDeviceProvider(LocalDeviceProvider):
                 {
                     "id": device_kind.id,
                     "device_id": device_kind.name,
+                    "socket_device_id": spec.get("deviceId") or device_kind.name,
                     "name": spec.get("displayName") or device_kind.name,
                     "status": (
                         online_info.get("status", "online")
@@ -183,6 +186,7 @@ class RemoteDeviceProvider(LocalDeviceProvider):
                     "client_ip": spec.get("clientIp"),
                     "runtime_transfer_host": spec.get("runtimeTransferHost"),
                     "runtime_instance_id": spec.get("runtimeInstanceId"),
+                    "app_device_id": spec.get("appDeviceId"),
                     "runtime_features": (
                         online_info.get("runtime_features") if online_info else None
                     ),

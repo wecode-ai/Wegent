@@ -5,10 +5,14 @@ import {
   closeEmbeddedBrowser,
   evalEmbeddedBrowserJson,
   listenEmbeddedBrowserAnnotationRequests,
+  listenEmbeddedBrowserAgentCursor,
   listenEmbeddedBrowserAgentState,
   listenEmbeddedBrowserOpenRequests,
   listenEmbeddedBrowserPageStateChanges,
+  migrateEmbeddedBrowserLabel,
+  migrateEmbeddedBrowserLabelSequence,
   relabelEmbeddedBrowser,
+  notifyEmbeddedBrowserAgentCursorArrived,
   resolveEmbeddedBrowserAgentApproval,
   requestEmbeddedBrowserOpen,
   setEmbeddedBrowserAgentControlPaused,
@@ -72,6 +76,83 @@ describe('embedded-browser', () => {
     })
   })
 
+  test('waits for an opening browser before migrating its label', async () => {
+    vi.useFakeTimers()
+    desktopHostMocks.invoke
+      .mockRejectedValueOnce(
+        new Error('Embedded browser is unavailable: workspace-browser-blank-0')
+      )
+      .mockResolvedValueOnce(undefined)
+
+    const migration = migrateEmbeddedBrowserLabel(
+      'workspace-browser-blank-0',
+      'workspace-browser-task-1',
+      { waitForSource: true }
+    )
+    await vi.advanceTimersByTimeAsync(50)
+
+    await expect(migration).resolves.toBeUndefined()
+    expect(desktopHostMocks.invoke).toHaveBeenCalledTimes(2)
+  })
+
+  test('migrates an empty browser label without waiting for a native browser', async () => {
+    desktopHostMocks.invoke.mockRejectedValueOnce(
+      new Error('Embedded browser is unavailable: workspace-browser-blank-0')
+    )
+
+    await expect(
+      migrateEmbeddedBrowserLabel('workspace-browser-blank-0', 'workspace-browser-task-1', {
+        waitForSource: false,
+      })
+    ).resolves.toBeUndefined()
+    expect(desktopHostMocks.invoke).toHaveBeenCalledTimes(1)
+  })
+
+  test('does not retry unrelated browser migration errors', async () => {
+    desktopHostMocks.invoke.mockRejectedValueOnce(new Error('Browser label already exists'))
+
+    await expect(
+      migrateEmbeddedBrowserLabel('workspace-browser-blank-0', 'workspace-browser-task-1', {
+        waitForSource: true,
+      })
+    ).rejects.toThrow('Browser label already exists')
+    expect(desktopHostMocks.invoke).toHaveBeenCalledTimes(1)
+  })
+
+  test('reports each successful label migration before a later migration fails', async () => {
+    const onMigrated = vi.fn()
+    desktopHostMocks.invoke
+      .mockResolvedValueOnce(undefined)
+      .mockRejectedValueOnce(new Error('Browser label already exists'))
+
+    await expect(
+      migrateEmbeddedBrowserLabelSequence(
+        [
+          {
+            tab: 'browser-1',
+            fromLabel: 'workspace-browser-blank-0',
+            toLabel: 'workspace-browser-task-1',
+            waitForSource: true,
+          },
+          {
+            tab: 'browser-2',
+            fromLabel: 'workspace-browser-blank-0:tab-2',
+            toLabel: 'workspace-browser-task-1:tab-2',
+            waitForSource: true,
+          },
+        ],
+        { onMigrated }
+      )
+    ).rejects.toThrow('Browser label already exists')
+    expect(onMigrated).toHaveBeenCalledOnce()
+    expect(onMigrated).toHaveBeenCalledWith(
+      expect.objectContaining({
+        tab: 'browser-1',
+        toLabel: 'workspace-browser-task-1',
+      })
+    )
+  })
+
   test('closes only the expected native browser identity', async () => {
     await closeEmbeddedBrowser('workspace-browser-task-1', 'embedded-browser-native-7')
 
@@ -124,10 +205,56 @@ describe('embedded-browser', () => {
     })
   })
 
+  test('acknowledges AI cursor arrival through Electron', async () => {
+    await notifyEmbeddedBrowserAgentCursorArrived('workspace-browser-task-1', 7)
+
+    expect(desktopHostMocks.invoke).toHaveBeenCalledWith('browser.notifyAgentCursorArrived', {
+      label: 'workspace-browser-task-1',
+      moveSequence: 7,
+    })
+  })
+
   test('listens for embedded browser agent state events', async () => {
     const handler = vi.fn()
 
     const unlisten = await listenEmbeddedBrowserAgentState(handler)
+    expect(desktopHostMocks.subscribe).toHaveBeenCalledOnce()
+    unlisten?.()
+  })
+
+  test('listens for embedded browser agent cursor events', async () => {
+    desktopHostMocks.subscribe.mockImplementation(handler => {
+      handler({
+        sequence: 1,
+        type: 'browser.event',
+        payload: {
+          sequence: 7,
+          type: 'agent-cursor',
+          payload: {
+            label: 'workspace-browser',
+            visible: true,
+            x: 120,
+            y: 80,
+            animateMovement: true,
+            moveSequence: 3,
+            createdAtUnixMs: 1_788_249_600_000,
+          },
+        },
+      })
+      return () => {}
+    })
+    const handler = vi.fn()
+
+    const unlisten = await listenEmbeddedBrowserAgentCursor(handler)
+    expect(handler).toHaveBeenCalledWith({
+      label: 'workspace-browser',
+      visible: true,
+      x: 120,
+      y: 80,
+      animateMovement: true,
+      moveSequence: 3,
+      createdAtUnixMs: 1_788_249_600_000,
+    })
     expect(desktopHostMocks.subscribe).toHaveBeenCalledOnce()
     unlisten?.()
   })

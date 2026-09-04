@@ -102,6 +102,7 @@ interface ActiveComposerMenu {
 }
 
 export interface ComposerTextareaHandle {
+  readonly element: HTMLElement | null
   focus: () => void
   getValue: () => string
   setValue: (value: string, selectionOffset?: number) => void
@@ -175,6 +176,9 @@ export const ComposerTextarea = forwardRef<ComposerTextareaHandle, ComposerTexta
     useImperativeHandle(
       ref,
       () => ({
+        get element() {
+          return editorRef.current?.element ?? null
+        },
         focus: () => {
           focusRequestExpiresAtRef.current = Date.now() + 2_000
           editorRef.current?.focus()

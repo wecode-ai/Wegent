@@ -65,6 +65,9 @@ interface DesktopControlResult {
 
 interface ScrollStabilitySamplePoint {
   anchorTop: number
+  clientHeight: number
+  scrollHeight: number
+  scrollOrigin: 'bottom' | 'top'
   scrollTop: number
   time: number
 }
@@ -77,7 +80,26 @@ interface ScrollStabilitySample {
   stop: () => void
 }
 
+interface ElementMetricsSamplePoint {
+  connected: boolean
+  height: number
+  label: string | null
+  left: number
+  testIds: string[]
+  time: number
+  top: number
+  visibility: string
+  width: number
+}
+
+interface ElementMetricsSample {
+  done: boolean
+  frames: ElementMetricsSamplePoint[]
+  stop: () => void
+}
+
 let activeScrollStabilitySample: ScrollStabilitySample | null = null
+let activeElementMetricsSample: ElementMetricsSample | null = null
 
 export interface WeworkAutomationBridge {
   version: 1
@@ -106,6 +128,7 @@ declare global {
 }
 
 export function isWeworkAutomationEnabled(): boolean {
+  if (getDesktopE2ERuntimeConfig().disabled === true) return false
   return (
     import.meta.env.MODE === 'e2e' ||
     import.meta.env.VITE_WEWORK_E2E === 'true' ||
@@ -121,6 +144,7 @@ export function shouldUseNativeProjectDirectoryPicker(): boolean {
 }
 
 function desktopControlUrl(): string | null {
+  if (getDesktopE2ERuntimeConfig().disabled === true) return null
   const value =
     getDesktopE2ERuntimeConfig().controlUrl ??
     import.meta.env.VITE_WEWORK_DESKTOP_E2E_CONTROL_URL?.trim()
@@ -128,6 +152,7 @@ function desktopControlUrl(): string | null {
 }
 
 function desktopControlHeaders(): HeadersInit | undefined {
+  if (getDesktopE2ERuntimeConfig().disabled === true) return undefined
   const token =
     getDesktopE2ERuntimeConfig().controlToken ??
     import.meta.env.VITE_WEWORK_DESKTOP_E2E_CONTROL_TOKEN?.trim()
@@ -507,6 +532,7 @@ function desktopControlElementMetrics(selector: string): string {
         right: rect.right,
         scrollHeight: element.scrollHeight,
         scrollLeft: element.scrollLeft,
+        scrollOrigin: element.dataset.scrollOrigin === 'bottom' ? 'bottom' : 'top',
         scrollTop: element.scrollTop,
         scrollWidth: element.scrollWidth,
         top: rect.top,
@@ -514,6 +540,16 @@ function desktopControlElementMetrics(selector: string): string {
       }
     })
   )
+}
+
+function desktopControlContentScrollTop(element: HTMLElement): number {
+  if (element.dataset.scrollOrigin !== 'bottom') return element.scrollTop
+  return Math.max(0, element.scrollHeight - element.clientHeight + element.scrollTop)
+}
+
+function desktopControlDomScrollTop(element: HTMLElement, contentScrollTop: number): number {
+  if (element.dataset.scrollOrigin !== 'bottom') return contentScrollTop
+  return contentScrollTop - Math.max(0, element.scrollHeight - element.clientHeight)
 }
 
 function desktopControlSnapshot(selector = 'body'): string {
@@ -1197,6 +1233,7 @@ function selectDesktopControlText(selector: string, value: string): string {
 
 type XtermAutomationTarget = HTMLElement & {
   __weworkInputForE2E?: (value: string) => void
+  __weworkTextForE2E?: () => string
   __weworkSelectTextForE2E?: (value: string) => string
 }
 
@@ -1206,9 +1243,20 @@ function findXtermAutomationTarget(root: HTMLElement | null): XtermAutomationTar
   return (
     candidates.find(candidate => {
       const target = candidate as XtermAutomationTarget
-      return Boolean(target.__weworkInputForE2E || target.__weworkSelectTextForE2E)
+      return Boolean(
+        target.__weworkInputForE2E || target.__weworkTextForE2E || target.__weworkSelectTextForE2E
+      )
     }) ?? null
   )
+}
+
+function getDesktopControlTerminalText(selector: string): string {
+  const terminalRoot = findDesktopControlElements(selector)[0]
+  const target = findXtermAutomationTarget(terminalRoot ?? null)
+  if (!target?.__weworkTextForE2E) {
+    throw new Error(`Unable to locate the xterm text bridge inside "${selector}"`)
+  }
+  return target.__weworkTextForE2E()
 }
 
 function selectDesktopControlTerminalText(selector: string, value: string): string {
@@ -1433,6 +1481,20 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
           label: command.value,
         })
       )
+    case 'setEmbeddedBrowserAgentControlPaused': {
+      const input = JSON.parse(command.value ?? '{}') as {
+        label?: string
+        paused?: boolean
+      }
+      if (!input.label?.trim()) {
+        throw new Error('setEmbeddedBrowserAgentControlPaused requires label')
+      }
+      await invokeDesktopHost('browser.setAgentControlPaused', {
+        label: input.label,
+        paused: input.paused ?? false,
+      })
+      return ''
+    }
     case 'verifyEmbeddedBrowserDetachedInspector':
       return JSON.stringify(
         await invokeDesktopHost('e2e.verifyEmbeddedBrowserDetachedInspector', {
@@ -1698,6 +1760,8 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
       return waitForDesktopControlElement(command)
     case 'getText':
       return desktopControlElementText(command.selector, command.visible)
+    case 'getTerminalText':
+      return getDesktopControlTerminalText(command.selector)
     case 'getElementCount':
       return String(
         command.visible
@@ -1721,6 +1785,67 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
     }
     case 'getElementMetrics':
       return desktopControlElementMetrics(command.selector)
+    case 'startElementMetricsSampling': {
+      const durationMs = Number(command.value)
+      if (!Number.isFinite(durationMs) || durationMs <= 0) {
+        throw new Error('startElementMetricsSampling requires a finite positive durationMs')
+      }
+      const initialElements = findDesktopControlElements(command.selector)
+      const initialElement = command.visible
+        ? initialElements.find(desktopControlElementVisible)
+        : initialElements[0]
+      if (!initialElement) throw new Error(`Unable to find selector "${command.selector}"`)
+      activeElementMetricsSample?.stop()
+      const startedAt = performance.now()
+      let animationFrame = 0
+      const sample: ElementMetricsSample = {
+        done: false,
+        frames: [],
+        stop: () => {},
+      }
+      const finish = () => {
+        if (sample.done) return
+        sample.done = true
+        if (animationFrame) window.cancelAnimationFrame(animationFrame)
+      }
+      const captureFrame = (time: number) => {
+        const element = initialElement
+        const rect = element?.getBoundingClientRect()
+        const testIds = element
+          ? [element, ...element.querySelectorAll<HTMLElement>('[data-testid]')]
+              .map(candidate => candidate.dataset.testid)
+              .filter((testId): testId is string => Boolean(testId))
+          : []
+        sample.frames.push({
+          connected: element?.isConnected ?? false,
+          height: rect?.height ?? 0,
+          label: element?.dataset.weworkBrowserWebview ?? null,
+          left: rect?.left ?? 0,
+          testIds,
+          time: time - startedAt,
+          top: rect?.top ?? 0,
+          visibility: element ? window.getComputedStyle(element).visibility : '',
+          width: rect?.width ?? 0,
+        })
+        if (time - startedAt >= durationMs) {
+          finish()
+          return
+        }
+        animationFrame = window.requestAnimationFrame(captureFrame)
+      }
+      sample.stop = finish
+      activeElementMetricsSample = sample
+      animationFrame = window.requestAnimationFrame(captureFrame)
+      return ''
+    }
+    case 'getElementMetricsSample': {
+      const sample = activeElementMetricsSample
+      if (!sample) throw new Error('Element metrics sampling has not started')
+      return JSON.stringify({
+        done: sample.done,
+        frames: sample.frames,
+      })
+    }
     case 'startScrollStabilitySampling': {
       const options = JSON.parse(command.value ?? '{}') as {
         anchorText?: string
@@ -1748,7 +1873,7 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
         scrollEvents: [],
         stop: () => {},
       }
-      const capture = (time: number) => {
+      const capture = (time: number): ScrollStabilitySamplePoint | null => {
         const anchors = findDesktopControlElements(command.selector)
         const anchor = options.anchorText
           ? anchors.find(candidate => candidate.textContent?.includes(options.anchorText ?? ''))
@@ -1756,6 +1881,9 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
         if (!anchor) return null
         return {
           anchorTop: anchor.getBoundingClientRect().top,
+          clientHeight: scroller.clientHeight,
+          scrollHeight: scroller.scrollHeight,
+          scrollOrigin: scroller.dataset.scrollOrigin === 'bottom' ? 'bottom' : 'top',
           scrollTop: scroller.scrollTop,
           time: time - startedAt,
         }
@@ -1909,7 +2037,10 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
           deltaY: 120,
         })
       )
-      element.scrollTop = element.scrollHeight
+      element.scrollTop =
+        element.dataset.scrollOrigin === 'bottom'
+          ? 0
+          : Math.max(0, element.scrollHeight - element.clientHeight)
       element.dispatchEvent(new Event('scroll', { bubbles: true }))
       return String(element.scrollTop)
     }
@@ -1929,7 +2060,11 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
           deltaY: -Math.max(120, distance),
         })
       )
-      scroller.scrollTop = Math.max(0, scroller.scrollHeight - scroller.clientHeight - distance)
+      const maxScrollTop = Math.max(0, scroller.scrollHeight - scroller.clientHeight)
+      scroller.scrollTop =
+        scroller.dataset.scrollOrigin === 'bottom'
+          ? -Math.min(distance, maxScrollTop)
+          : Math.max(0, maxScrollTop - distance)
       scroller.dispatchEvent(new Event('scroll', { bubbles: true }))
       return String(scroller.scrollTop)
     }
@@ -1942,16 +2077,17 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
       }
 
       const maxScrollTop = Math.max(0, scroller.scrollHeight - scroller.clientHeight)
-      const nextScrollTop = maxScrollTop * ratio
+      const nextContentScrollTop = maxScrollTop * ratio
+      const currentContentScrollTop = desktopControlContentScrollTop(scroller)
       scroller.dispatchEvent(
         new WheelEvent('wheel', {
           bubbles: true,
           cancelable: true,
           composed: true,
-          deltaY: nextScrollTop < scroller.scrollTop ? -120 : 120,
+          deltaY: nextContentScrollTop < currentContentScrollTop ? -120 : 120,
         })
       )
-      scroller.scrollTop = nextScrollTop
+      scroller.scrollTop = desktopControlDomScrollTop(scroller, nextContentScrollTop)
       scroller.dispatchEvent(new Event('scroll', { bubbles: true }))
       return String(scroller.scrollTop)
     }
@@ -1977,16 +2113,17 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
       const maxScrollTop = Math.max(0, scroller.scrollHeight - scroller.clientHeight)
       const viewport = scroller.getBoundingClientRect()
       const samples = ratios.map(ratio => {
-        const nextScrollTop = maxScrollTop * ratio
+        const nextContentScrollTop = maxScrollTop * ratio
+        const currentContentScrollTop = desktopControlContentScrollTop(scroller)
         scroller.dispatchEvent(
           new WheelEvent('wheel', {
             bubbles: true,
             cancelable: true,
             composed: true,
-            deltaY: nextScrollTop < scroller.scrollTop ? -120 : 120,
+            deltaY: nextContentScrollTop < currentContentScrollTop ? -120 : 120,
           })
         )
-        scroller.scrollTop = nextScrollTop
+        scroller.scrollTop = desktopControlDomScrollTop(scroller, nextContentScrollTop)
         scroller.dispatchEvent(new Event('scroll', { bubbles: true }))
 
         const hasVisibleContent = Array.from(
@@ -2362,10 +2499,12 @@ async function runDesktopControlClient(url: string, windowLabel: string): Promis
 function installDesktopControlClient() {
   if (!isDesktopRuntime()) return
   const url = desktopControlUrl()
-  const windowLabel = getDesktopWindowLabel()
+  const windowLabel = getDesktopE2ERuntimeConfig().windowLabel ?? getDesktopWindowLabel()
   if (
     !url ||
-    (windowLabel !== 'main' && !windowLabel.startsWith('workspace-')) ||
+    (windowLabel !== 'main' &&
+      !windowLabel.startsWith('workspace-') &&
+      !windowLabel.startsWith('plugin-development-')) ||
     window.location.pathname.startsWith('/system-drag')
   ) {
     return

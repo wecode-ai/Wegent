@@ -28,7 +28,12 @@ from sqlalchemy.orm import Session
 
 from app.models.kind import Kind
 from app.models.user import User
-from app.models.wiki import WikiGeneration, WikiGenerationStatus, WikiGenerationType
+from app.models.wiki import (
+    WikiContent,
+    WikiGeneration,
+    WikiGenerationStatus,
+    WikiGenerationType,
+)
 from app.services.knowledge.code_wiki.projection import ProjectionSideEffects
 from app.services.knowledge.code_wiki.publish_gate import PublishPolicy
 from app.services.knowledge.code_wiki.publisher import (
@@ -36,6 +41,13 @@ from app.services.knowledge.code_wiki.publisher import (
     publish_generation,
     published_generation_id,
     read_version_pages,
+)
+from app.services.knowledge.code_wiki.quality_gate import (
+    PLAN_ONLY_REVIEW_POLICY,
+    QUALITY_REVIEW_EXT_KEY,
+    review_policy,
+    review_state,
+    writing_progress,
 )
 from app.services.knowledge.code_wiki.run_mode import (
     ChangedPath,
@@ -79,6 +91,8 @@ FAILURE_CODE_EXT_KEY = "failureCode"
 class FailureCode:
     """Failures this server states in its own words."""
 
+    #: A knowledge-base manager deliberately stopped the generation.
+    CANCELLED_BY_USER = "cancelled_by_user"
     #: The task reached a terminal state without the agent concluding its run.
     TASK_ENDED_WITHOUT_REPORT = "task_ended_without_report"
     #: No task could be created, so nothing was ever going to run.
@@ -455,6 +469,17 @@ def version_page_count(db: Session, generation_id: int) -> int:
 
 
 @dataclass(frozen=True)
+class RunProgress:
+    """A reader-facing stage derived from durable generation evidence."""
+
+    stage: str
+    current_step: int
+    total_steps: int
+    pages_written: int
+    pages_total: int
+
+
+@dataclass(frozen=True)
 class RunState:
     """What is happening to a wiki right now, as a reader needs to see it."""
 
@@ -468,6 +493,7 @@ class RunState:
     # trigger reclaims it and starts afresh, so the caller may act on it — which is
     # the whole reason this is reported rather than folded into "running".
     is_stale: bool = False
+    progress: Optional[RunProgress] = None
 
 
 def reader_status(generation: WikiGeneration) -> str:
@@ -520,6 +546,7 @@ def current_run_state(
             generation_id=latest.id,
             started_at=latest.created_at,
             is_stale=stale,
+            progress=_run_progress(db, latest),
         )
 
     if reported == "completed":
@@ -534,6 +561,66 @@ def current_run_state(
         error_message=failure_reason(latest),
         failure_code=failure_code(latest),
     )
+
+
+def _run_progress(db: Session, generation: WikiGeneration) -> RunProgress:
+    """Describe progress without persisting a second workflow state machine."""
+    quality_review = (generation.ext or {}).get(QUALITY_REVIEW_EXT_KEY) or {}
+    if not quality_review.get("required"):
+        return RunProgress("generating", 0, 0, 0, 0)
+
+    pages_written = (
+        db.query(WikiContent).filter(WikiContent.generation_id == generation.id).count()
+    )
+
+    plan = review_state(generation, phase="plan")
+    plan_evidence = (
+        plan.get("effectivePlan") or plan.get("handoff") or plan.get("review") or {}
+    )
+    pages_total = len(plan_evidence.get("paths") or [])
+    plan_only = review_policy(generation) == PLAN_ONLY_REVIEW_POLICY
+    total_steps = 3 if plan_only else 4
+    if plan["state"] != "passed":
+        if plan["state"] == "ready":
+            return RunProgress(
+                "plan_review", 1, total_steps, pages_written, pages_total
+            )
+        if plan["state"] == "changes_requested":
+            stage = (
+                "revising_plan"
+                if plan["nextAction"] == "revise_plan_then_open_plan"
+                else "finishing"
+            )
+            return RunProgress(stage, 1, total_steps, pages_written, pages_total)
+        return RunProgress("planning", 1, total_steps, pages_written, pages_total)
+
+    if plan_only:
+        page_progress = writing_progress(db, generation)
+        page_set_complete = bool(
+            page_progress
+            and not page_progress["missingPaths"]
+            and not page_progress["unexpectedPaths"]
+        )
+        if pages_total > 0 and page_set_complete:
+            return RunProgress("publishing", 3, 3, pages_written, pages_total)
+        return RunProgress("writing", 2, 3, pages_written, pages_total)
+
+    qa = review_state(generation, phase="qa")
+    if qa["state"] == "not_started":
+        return RunProgress("writing", 2, 4, pages_written, pages_total)
+    if qa["state"] == "ready":
+        return RunProgress("qa_review", 3, 4, pages_written, pages_total)
+    if qa["state"] == "passed":
+        return RunProgress("publishing", 4, 4, pages_written, pages_total)
+
+    recheck = review_state(generation, phase="recheck")
+    if recheck["state"] == "not_started":
+        return RunProgress("repairing", 3, 4, pages_written, pages_total)
+    if recheck["state"] == "ready":
+        return RunProgress("recheck", 4, 4, pages_written, pages_total)
+    if recheck["state"] == "passed":
+        return RunProgress("publishing", 4, 4, pages_written, pages_total)
+    return RunProgress("finishing", 4, 4, pages_written, pages_total)
 
 
 @dataclass(frozen=True)

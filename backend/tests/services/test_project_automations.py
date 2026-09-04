@@ -1472,6 +1472,6 @@ async def test_inherited_direct_stage_queues_for_app_target_with_executor_worksp
     assert execution.status == "queued"
     assert execution.execution_device_id == "local-device"
     assert execution.runtime_request["workspaceSourceTask"] == {
-        "deviceId": "local-device",
+        "deviceId": "executor-runtime-device",
         "taskId": "previous-runtime-task",
     }

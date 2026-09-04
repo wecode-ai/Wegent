@@ -29,6 +29,11 @@ import {
   hasConversationScrollSnapshot,
   type ConversationScrollSnapshot,
 } from '@/features/workbench/runtimeConversationCache'
+import {
+  getDistanceFromBottom,
+  getDistanceFromTop,
+  setDistanceFromBottom,
+} from './bottomOriginScroll'
 
 const BOTTOM_THRESHOLD = 48
 const SCROLLED_TO_BOTTOM_THRESHOLD = 8
@@ -261,6 +266,7 @@ function ScrollableMessagePaneContent({
   const { t } = useTranslation('common')
   const internalScrollRef = useRef<HTMLDivElement>(null)
   const scrollRef = externalScrollRef ?? internalScrollRef
+  const bottomOrigin = externalScrollRef !== undefined
   const activeScrollRefRef = useRef(scrollRef)
   const contentRef = useRef<HTMLDivElement>(null)
   const stickyFooterRef = useRef<HTMLDivElement>(null)
@@ -293,7 +299,7 @@ function ScrollableMessagePaneContent({
   const userScrollPausedAutoFollowRef = useRef(false)
   const userScrollIntentRef = useRef(false)
   const userViewportAnchorRef = useRef<UserViewportAnchor | null>(null)
-  const lastScrollTopRef = useRef<number | null>(null)
+  const lastScrollPositionRef = useRef<number | null>(null)
   const scheduledScrollStateSignatureRef = useRef<string | null>(null)
   const completedScrollStateSignatureRef = useRef<string | null>(null)
   const loadingTranscriptGapKeyRef = useRef<string | null>(null)
@@ -402,11 +408,11 @@ function ScrollableMessagePaneContent({
     pendingLayoutScrollPositionRef.current = {
       conversationKey: currentScrollKey,
       scrollHeightPx: scroller.scrollHeight,
-      distanceFromBottomPx: scroller.scrollHeight - scroller.clientHeight - scroller.scrollTop,
+      distanceFromBottomPx: getDistanceFromBottom(scroller, bottomOrigin),
       previousOverflowAnchor: scroller.style.overflowAnchor,
     }
     scroller.style.overflowAnchor = 'none'
-  }, [clearScheduledScrolls, currentScrollKey, releasePendingLayoutScrollPosition])
+  }, [bottomOrigin, clearScheduledScrolls, currentScrollKey, releasePendingLayoutScrollPosition])
 
   const handleTurnNavigationScrollTargetChange = useCallback(
     (messageId: string | null) => {
@@ -424,10 +430,10 @@ function ScrollableMessagePaneContent({
         navigationScrollKey !== null &&
         navigationScrollKey === currentScrollKey
       ) {
-        const snapshot = createScrollSnapshot(element)
+        const snapshot = createScrollSnapshot(element, bottomOrigin)
         setConversationScrollSnapshot(currentScrollKey, snapshot)
         followingBottomKeyRef.current = null
-        lastScrollTopRef.current = element.scrollTop
+        lastScrollPositionRef.current = getDistanceFromTop(element, bottomOrigin)
         isAtBottomRef.current = snapshot.pinnedToBottom
         userScrollPausedAutoFollowRef.current = !snapshot.pinnedToBottom
       }
@@ -436,7 +442,7 @@ function ScrollableMessagePaneContent({
         preserveLatestUserTurnRef.current = false
       }
     },
-    [clearScheduledScrolls, currentScrollKey]
+    [bottomOrigin, clearScheduledScrolls, currentScrollKey]
   )
 
   const handleTurnNavigationLoadStateChange = useCallback(
@@ -503,14 +509,11 @@ function ScrollableMessagePaneContent({
     [loadTranscriptGap, loadedTranscriptRanges, loadingTranscriptGapKey, scrollRef]
   )
 
-  const saveCurrentScrollPosition = useCallback(
-    (scrollTop?: number) => {
-      const element = activeScrollRefRef.current.current
-      if (!element || currentScrollKey === null || messages.length === 0) return
-      setConversationScrollSnapshot(currentScrollKey, createScrollSnapshot(element, scrollTop))
-    },
-    [currentScrollKey, messages.length]
-  )
+  const saveCurrentScrollPosition = useCallback(() => {
+    const element = activeScrollRefRef.current.current
+    if (!element || currentScrollKey === null || messages.length === 0) return
+    setConversationScrollSnapshot(currentScrollKey, createScrollSnapshot(element, bottomOrigin))
+  }, [bottomOrigin, currentScrollKey, messages.length])
 
   const saveCurrentScrollPositionWithoutLayout = useCallback(() => {
     const element = activeScrollRefRef.current.current
@@ -518,10 +521,7 @@ function ScrollableMessagePaneContent({
 
     const measuredSnapshot = lastMeasuredScrollSnapshotRef.current
     if (measuredSnapshot?.key === currentScrollKey) {
-      setConversationScrollSnapshot(currentScrollKey, {
-        ...measuredSnapshot.snapshot,
-        scrollTopPx: element.scrollTop,
-      })
+      setConversationScrollSnapshot(currentScrollKey, measuredSnapshot.snapshot)
       return
     }
 
@@ -529,7 +529,6 @@ function ScrollableMessagePaneContent({
     setConversationScrollSnapshot(currentScrollKey, {
       distanceFromBottomPx: existingSnapshot?.distanceFromBottomPx ?? 0,
       pinnedToBottom: existingSnapshot?.pinnedToBottom ?? isAtBottomRef.current,
-      scrollTopPx: element.scrollTop,
     })
   }, [currentScrollKey, messages.length])
 
@@ -552,7 +551,7 @@ function ScrollableMessagePaneContent({
       }
 
       const overflow = element.scrollHeight > element.clientHeight + 8
-      const distanceToBottom = element.scrollHeight - element.clientHeight - element.scrollTop
+      const distanceToBottom = getDistanceFromBottom(element, bottomOrigin)
       const isAtBottom = distanceToBottom <= BOTTOM_THRESHOLD
       const isScrolledToBottom = distanceToBottom <= SCROLLED_TO_BOTTOM_THRESHOLD
       if (currentScrollKey !== null) {
@@ -561,17 +560,19 @@ function ScrollableMessagePaneContent({
           snapshot: {
             distanceFromBottomPx: Math.max(0, distanceToBottom),
             pinnedToBottom: isScrolledToBottom,
-            scrollTopPx: element.scrollTop,
           },
         }
       }
+      const scrollPosition = getDistanceFromTop(element, bottomOrigin)
+      const previousScrollPosition = lastScrollPositionRef.current
       const scrolledUp =
-        lastScrollTopRef.current !== null && element.scrollTop < lastScrollTopRef.current - 0.5
-      lastScrollTopRef.current = element.scrollTop
+        previousScrollPosition !== null && scrollPosition < previousScrollPosition - 0.5
+      lastScrollPositionRef.current = scrollPosition
       isAtBottomRef.current = isAtBottom
-      const layoutMayHaveClampedPausedScroll =
-        userScrollPausedAutoFollowRef.current && !options.forceSave && scrolledUp
-      if (isScrolledToBottom && !layoutMayHaveClampedPausedScroll) {
+      const pausedBeforeUpdate = userScrollPausedAutoFollowRef.current
+      // Anchor restoration can emit a clamped scroll event at the bottom. Only user input
+      // may release an existing pause; explicit follow paths clear the pause themselves.
+      if (isScrolledToBottom && (!pausedBeforeUpdate || options.forceSave)) {
         userScrollPausedAutoFollowRef.current = false
         userViewportAnchorRef.current = null
       } else if (options.forceSave) {
@@ -588,7 +589,13 @@ function ScrollableMessagePaneContent({
       }
       setShowScrollButton(overflow && !isAtBottom)
     },
-    [clearScheduledScrolls, currentScrollKey, messages.length, saveCurrentScrollPosition]
+    [
+      bottomOrigin,
+      clearScheduledScrolls,
+      currentScrollKey,
+      messages.length,
+      saveCurrentScrollPosition,
+    ]
   )
 
   const restorePendingLayoutScrollPosition = useCallback(() => {
@@ -603,16 +610,12 @@ function ScrollableMessagePaneContent({
       return false
     }
 
-    const nextScrollTop = Math.max(
-      0,
-      scroller.scrollHeight - scroller.clientHeight - pending.distanceFromBottomPx
-    )
     releasePendingLayoutScrollPosition()
-    scroller.scrollTop = nextScrollTop
-    lastScrollTopRef.current = scroller.scrollTop
+    setDistanceFromBottom(scroller, pending.distanceFromBottomPx, 'auto', bottomOrigin)
+    lastScrollPositionRef.current = getDistanceFromTop(scroller, bottomOrigin)
     updateScrollState({ skipSave: true })
     return true
-  }, [currentScrollKey, releasePendingLayoutScrollPosition, updateScrollState])
+  }, [bottomOrigin, currentScrollKey, releasePendingLayoutScrollPosition, updateScrollState])
 
   const setScrollToBottom = useCallback(
     (behavior: ScrollBehavior = 'auto', options: { saveSnapshot?: boolean } = {}) => {
@@ -620,39 +623,37 @@ function ScrollableMessagePaneContent({
       if (!element) return
       stopStreamingFollow()
 
-      const scrollHeight = element.scrollHeight
-      if (typeof element.scrollTo === 'function') {
-        element.scrollTo({
-          top: scrollHeight,
-          behavior,
-        })
+      if (bottomOrigin) {
+        setDistanceFromBottom(element, 0, behavior, true)
+      } else if (typeof element.scrollTo === 'function') {
+        element.scrollTo({ top: element.scrollHeight, behavior })
       } else {
-        element.scrollTop = scrollHeight
+        element.scrollTop = element.scrollHeight
       }
-      lastScrollTopRef.current = element.scrollTop
+      lastScrollPositionRef.current = getDistanceFromTop(element, bottomOrigin)
       if (currentScrollKey !== null) {
-        const distanceFromBottomPx = Math.max(
-          0,
-          scrollHeight - element.clientHeight - element.scrollTop
-        )
+        const distanceFromBottomPx = options.saveSnapshot
+          ? 0
+          : getDistanceFromBottom(element, bottomOrigin)
+        const snapshot = {
+          distanceFromBottomPx,
+          pinnedToBottom:
+            options.saveSnapshot || distanceFromBottomPx <= SCROLLED_TO_BOTTOM_THRESHOLD,
+        }
         lastMeasuredScrollSnapshotRef.current = {
           key: currentScrollKey,
-          snapshot: {
-            distanceFromBottomPx,
-            pinnedToBottom: distanceFromBottomPx <= SCROLLED_TO_BOTTOM_THRESHOLD,
-            scrollTopPx: element.scrollTop,
-          },
+          snapshot,
         }
-      }
-      if (options.saveSnapshot) {
-        saveCurrentScrollPosition(scrollHeight)
+        if (options.saveSnapshot) {
+          setConversationScrollSnapshot(currentScrollKey, snapshot)
+        }
       }
       isAtBottomRef.current = true
       userScrollPausedAutoFollowRef.current = false
       userViewportAnchorRef.current = null
       setShowScrollButton(false)
     },
-    [currentScrollKey, saveCurrentScrollPosition, stopStreamingFollow]
+    [bottomOrigin, currentScrollKey, stopStreamingFollow]
   )
 
   const restoreSavedScrollPosition = useCallback(
@@ -660,20 +661,16 @@ function ScrollableMessagePaneContent({
       const element = activeScrollRefRef.current.current
       if (!element || !snapshot) return
 
-      const maxScrollTop = Math.max(0, element.scrollHeight - element.clientHeight)
-      const nextScrollTop = Math.min(getRestoredScrollTop(element, snapshot), maxScrollTop)
-      if (typeof element.scrollTo === 'function') {
-        element.scrollTo({
-          top: nextScrollTop,
-          behavior: 'auto',
-        })
-      } else {
-        element.scrollTop = nextScrollTop
-      }
-      lastScrollTopRef.current = element.scrollTop
+      setDistanceFromBottom(
+        element,
+        snapshot.pinnedToBottom ? 0 : snapshot.distanceFromBottomPx,
+        'auto',
+        bottomOrigin
+      )
+      lastScrollPositionRef.current = getDistanceFromTop(element, bottomOrigin)
 
       const overflow = element.scrollHeight > element.clientHeight + 8
-      const distanceToBottom = element.scrollHeight - element.clientHeight - nextScrollTop
+      const distanceToBottom = getDistanceFromBottom(element, bottomOrigin)
       const isAtBottom = distanceToBottom <= BOTTOM_THRESHOLD
       const isScrolledToBottom = distanceToBottom <= SCROLLED_TO_BOTTOM_THRESHOLD
       lastMeasuredScrollSnapshotRef.current = {
@@ -681,7 +678,6 @@ function ScrollableMessagePaneContent({
         snapshot: {
           distanceFromBottomPx: Math.max(0, distanceToBottom),
           pinnedToBottom: isScrolledToBottom,
-          scrollTopPx: element.scrollTop,
         },
       }
       isAtBottomRef.current = isAtBottom
@@ -689,7 +685,7 @@ function ScrollableMessagePaneContent({
       setShowScrollButton(overflow && !isAtBottom)
       setConversationScrollSnapshot(key, snapshot)
     },
-    []
+    [bottomOrigin]
   )
 
   const scrollToBottom = useCallback(
@@ -734,12 +730,18 @@ function ScrollableMessagePaneContent({
         return
       }
 
-      const target = Math.max(0, element.scrollHeight - element.clientHeight)
-      const lag = Math.max(0, target - element.scrollTop)
+      const topOriginTarget = Math.max(0, element.scrollHeight - element.clientHeight)
+      const lag = bottomOrigin
+        ? getDistanceFromBottom(element, true)
+        : Math.max(0, topOriginTarget - element.scrollTop)
       if (lag <= STREAM_FOLLOW_SETTLE_PX) {
-        element.scrollTo?.({ top: target, behavior: 'auto' })
-        element.scrollTop = target
-        lastScrollTopRef.current = target
+        if (bottomOrigin) {
+          setDistanceFromBottom(element, 0, 'auto', true)
+        } else {
+          element.scrollTo?.({ top: topOriginTarget, behavior: 'auto' })
+          element.scrollTop = topOriginTarget
+        }
+        lastScrollPositionRef.current = getDistanceFromTop(element, bottomOrigin)
         isAtBottomRef.current = true
         stopStreamingFollow()
         return
@@ -753,10 +755,14 @@ function ScrollableMessagePaneContent({
         previousFrameAt === null ? 16 : now - previousFrameAt
       )
       streamingFollowVelocityRef.current = step.velocityPxPerSecond
-      const nextScrollTop = Math.min(target, element.scrollTop + step.advancePx)
-      element.scrollTo?.({ top: nextScrollTop, behavior: 'auto' })
-      element.scrollTop = nextScrollTop
-      lastScrollTopRef.current = element.scrollTop
+      if (bottomOrigin) {
+        setDistanceFromBottom(element, Math.max(0, lag - step.advancePx), 'auto', true)
+      } else {
+        const nextScrollTop = Math.min(topOriginTarget, element.scrollTop + step.advancePx)
+        element.scrollTo?.({ top: nextScrollTop, behavior: 'auto' })
+        element.scrollTop = nextScrollTop
+      }
+      lastScrollPositionRef.current = getDistanceFromTop(element, bottomOrigin)
       isAtBottomRef.current = true
       userScrollPausedAutoFollowRef.current = false
       setShowScrollButton(false)
@@ -766,6 +772,7 @@ function ScrollableMessagePaneContent({
     streamingFollowFrameRef.current = requestSafeAnimationFrame(advanceFrame)
   }, [
     autoScrollSuspended,
+    bottomOrigin,
     currentScrollKey,
     isTurnNavigationAutoScrollSuspended,
     setScrollToBottom,
@@ -786,21 +793,19 @@ function ScrollableMessagePaneContent({
     setConversationScrollSnapshot(currentScrollKey, snapshot)
   }, [currentScrollKey])
 
-  const adoptVirtualBottomPosition = useCallback(
-    (scrollTopPx: number | null = null) => {
-      clearScheduledScrolls()
-      virtualInitialPositionOwnerRef.current = { key: currentScrollKey }
-      restoredScrollSnapshotRef.current = null
-      followingBottomKeyRef.current = currentScrollKey
-      markCurrentConversationPinnedToBottom()
-      lastScrollTopRef.current = scrollTopPx
-      isAtBottomRef.current = true
-      userScrollPausedAutoFollowRef.current = false
-      userViewportAnchorRef.current = null
-      requestAnimationFrame(() => setShowScrollButton(false))
-    },
-    [clearScheduledScrolls, currentScrollKey, markCurrentConversationPinnedToBottom]
-  )
+  const adoptVirtualBottomPosition = useCallback(() => {
+    clearScheduledScrolls()
+    virtualInitialPositionOwnerRef.current = { key: currentScrollKey }
+    restoredScrollSnapshotRef.current = null
+    followingBottomKeyRef.current = currentScrollKey
+    markCurrentConversationPinnedToBottom()
+    const element = activeScrollRefRef.current.current
+    lastScrollPositionRef.current = element ? getDistanceFromTop(element, bottomOrigin) : null
+    isAtBottomRef.current = true
+    userScrollPausedAutoFollowRef.current = false
+    userViewportAnchorRef.current = null
+    requestAnimationFrame(() => setShowScrollButton(false))
+  }, [bottomOrigin, clearScheduledScrolls, currentScrollKey, markCurrentConversationPinnedToBottom])
 
   const scheduleStableScrollToBottom = useCallback(
     (
@@ -822,7 +827,7 @@ function ScrollableMessagePaneContent({
               followingBottomKeyRef.current = null
               const element = activeScrollRefRef.current.current
               const distanceToBottom = element
-                ? element.scrollHeight - element.clientHeight - element.scrollTop
+                ? getDistanceFromBottom(element, bottomOrigin)
                 : Number.POSITIVE_INFINITY
               if (
                 distanceToBottom <= SCROLLED_TO_BOTTOM_THRESHOLD &&
@@ -838,6 +843,7 @@ function ScrollableMessagePaneContent({
     },
     [
       clearScheduledScrolls,
+      bottomOrigin,
       currentScrollKey,
       markCurrentConversationPinnedToBottom,
       scheduleScrollTimer,
@@ -948,7 +954,7 @@ function ScrollableMessagePaneContent({
       if (snapshot) {
         restoredScrollSnapshotRef.current = { key: currentScrollKey, snapshot }
         if (virtualScrollOwnsInitialPosition && snapshot.pinnedToBottom) {
-          adoptVirtualBottomPosition(snapshot.scrollTopPx ?? null)
+          adoptVirtualBottomPosition()
           return
         }
         restoreSavedScrollPosition(currentScrollKey, snapshot)
@@ -1107,8 +1113,8 @@ function ScrollableMessagePaneContent({
     const offsetDelta = offsetFromScrollerTop - anchor.offsetFromScrollerTop
     if (Math.abs(offsetDelta) < 0.5) return
     scroller.scrollTop += offsetDelta
-    lastScrollTopRef.current = scroller.scrollTop
-  }, [])
+    lastScrollPositionRef.current = getDistanceFromTop(scroller, bottomOrigin)
+  }, [bottomOrigin])
 
   const handleContentLayoutChange = useCallback(() => {
     if (virtualInitialPositionOwnerRef.current?.key === currentScrollKey) {
@@ -1235,8 +1241,7 @@ function ScrollableMessagePaneContent({
       const scroller = activeScrollRefRef.current.current
       if (pending && scroller && pending.conversationKey === currentScrollKey) {
         pending.scrollHeightPx = scroller.scrollHeight
-        pending.distanceFromBottomPx =
-          scroller.scrollHeight - scroller.clientHeight - scroller.scrollTop
+        pending.distanceFromBottomPx = getDistanceFromBottom(scroller, bottomOrigin)
       }
     }
     if (!userInitiated) {
@@ -1250,9 +1255,7 @@ function ScrollableMessagePaneContent({
           getConversationScrollSnapshot(currentScrollKey)?.pinnedToBottom === true)
       const scroller = activeScrollRefRef.current.current
       const distanceFromBottom =
-        scroller === null
-          ? Number.POSITIVE_INFINITY
-          : scroller.scrollHeight - scroller.clientHeight - scroller.scrollTop
+        scroller === null ? Number.POSITIVE_INFINITY : getDistanceFromBottom(scroller, bottomOrigin)
       if (shouldFollowBottom && distanceFromBottom > SCROLLED_TO_BOTTOM_THRESHOLD) {
         if (streamingFollowActive) {
           followStreamingToBottom()
@@ -1270,6 +1273,7 @@ function ScrollableMessagePaneContent({
     }
   }, [
     autoScrollSuspended,
+    bottomOrigin,
     captureUserViewportAnchor,
     currentScrollKey,
     followStreamingToBottom,
@@ -1314,16 +1318,6 @@ function ScrollableMessagePaneContent({
 
   return (
     <div className={cn('relative min-h-0 flex-1', className)}>
-      <MessageTurnNavigation
-        messages={messages}
-        turnNavigation={turnNavigation}
-        scrollRef={scrollRef}
-        contentRef={contentRef}
-        onLoadTurnNavigationItem={onLoadTurnNavigationItem}
-        onNavigationLoadStateChange={handleTurnNavigationLoadStateChange}
-        onNavigationScrollTargetChange={handleTurnNavigationScrollTargetChange}
-        portalTarget={turnNavigationPortalTarget}
-      />
       {turnNavigationLoading && (
         <div
           className="pointer-events-none absolute left-1/2 top-5 z-30 flex -translate-x-1/2 items-center gap-2 rounded-full border border-border bg-background/95 px-3 py-1.5 text-xs font-medium text-text-secondary shadow-[0_8px_22px_rgba(15,23,42,0.12)]"
@@ -1405,6 +1399,7 @@ function ScrollableMessagePaneContent({
                 </div>
               )}
               <MessageList
+                key={currentScrollKey ?? 'keyless-conversation'}
                 messages={messages}
                 scrollElementRef={scrollRef}
                 initialDistanceFromBottomPx={getInitialDistanceFromBottomPx(currentScrollKey)}
@@ -1435,6 +1430,7 @@ function ScrollableMessagePaneContent({
                 onAddSelectionToConversation={onAddSelectionToConversation}
                 onAskSelectionInSidebar={onAskSelectionInSidebar}
                 virtualAnchorToEnd={!showScrollButton}
+                bottomOrigin={bottomOrigin}
                 renderGapAfterMessage={renderTranscriptGapAfterMessage}
               />
               {contentFooter ? (
@@ -1459,6 +1455,16 @@ function ScrollableMessagePaneContent({
           </div>
         ) : null}
       </div>
+      <MessageTurnNavigation
+        messages={messages}
+        turnNavigation={turnNavigation}
+        scrollRef={scrollRef}
+        contentRef={contentRef}
+        onLoadTurnNavigationItem={onLoadTurnNavigationItem}
+        onNavigationLoadStateChange={handleTurnNavigationLoadStateChange}
+        onNavigationScrollTargetChange={handleTurnNavigationScrollTargetChange}
+        portalTarget={turnNavigationPortalTarget}
+      />
       {!stickyFooter ? scrollToBottomButton : null}
     </div>
   )
@@ -1601,29 +1607,13 @@ function getTextOffsetRect(
 
 function createScrollSnapshot(
   scroller: HTMLElement,
-  scrollTop?: number
+  bottomOrigin: boolean
 ): ConversationScrollSnapshot {
-  const resolvedScrollTop = scrollTop ?? scroller.scrollTop
-  const distanceFromBottomPx = Math.max(
-    0,
-    scroller.scrollHeight - scroller.clientHeight - resolvedScrollTop
-  )
+  const distanceFromBottomPx = getDistanceFromBottom(scroller, bottomOrigin)
   return {
     distanceFromBottomPx,
     pinnedToBottom: distanceFromBottomPx <= SCROLLED_TO_BOTTOM_THRESHOLD,
-    scrollTopPx: resolvedScrollTop,
   }
-}
-
-function getRestoredScrollTop(scroller: HTMLElement, snapshot: ConversationScrollSnapshot): number {
-  if (!snapshot.pinnedToBottom && Number.isFinite(snapshot.scrollTopPx)) {
-    return Math.max(0, snapshot.scrollTopPx ?? 0)
-  }
-  const storedDistance = Number.isFinite(snapshot.distanceFromBottomPx)
-    ? snapshot.distanceFromBottomPx
-    : 0
-  const distance = snapshot.pinnedToBottom ? 0 : storedDistance
-  return Math.max(0, scroller.scrollHeight - scroller.clientHeight - distance)
 }
 
 function RuntimeTranscriptGapMarker({

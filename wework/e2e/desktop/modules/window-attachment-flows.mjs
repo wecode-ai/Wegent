@@ -1,5 +1,6 @@
 import {
   distanceFromBottom,
+  distanceFromTop,
   getSingleElementMetrics,
   waitForBottomMetrics,
   waitForNewTaskRow,
@@ -603,7 +604,7 @@ async function verifyBackgroundTaskWindowLifecycle({
   )
   const middleDistanceBeforeSwitch = distanceFromBottom(middlePositionBeforeSwitch)
   assert.ok(
-    middlePositionBeforeSwitch.scrollTop > 100,
+    distanceFromTop(middlePositionBeforeSwitch) > 100,
     'The long conversation did not leave the top before testing position restoration'
   )
   assert.ok(
@@ -675,7 +676,7 @@ async function verifyBackgroundTaskWindowLifecycle({
   )
   const middleDistanceAfterSwitch = distanceFromBottom(middlePositionAfterSwitch)
   assert.ok(
-    middlePositionAfterSwitch.scrollTop > 100,
+    distanceFromTop(middlePositionAfterSwitch) > 100,
     'The restored long conversation unexpectedly returned to the top'
   )
   assert.ok(
@@ -687,8 +688,8 @@ async function verifyBackgroundTaskWindowLifecycle({
     lifecycleScreenshotName('08-task-middle-position-after-switch-back.png')
   )
   assert.ok(
-    Math.abs(middlePositionAfterSwitch.scrollTop - middlePositionBeforeSwitch.scrollTop) <= 32,
-    `The middle scroll position moved from ${middlePositionBeforeSwitch.scrollTop}px to ${middlePositionAfterSwitch.scrollTop}px`
+    Math.abs(middleDistanceAfterSwitch - middleDistanceBeforeSwitch) <= 32,
+    `The middle distance from bottom moved from ${middleDistanceBeforeSwitch}px to ${middleDistanceAfterSwitch}px`
   )
 
   setPhase('turn-navigation-virtualized-anchor')

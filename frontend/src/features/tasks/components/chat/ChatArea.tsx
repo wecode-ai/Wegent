@@ -414,8 +414,11 @@ function ChatAreaContent({
   const imageCapabilities = imageConfig?.capabilities
   const imageReferenceFormats = imageCapabilities?.image_formats
   const videoGenerationModes = useMemo(
-    () => videoCapabilities?.generation_modes ?? [],
-    [videoCapabilities?.generation_modes]
+    () =>
+      teamHidesVideoParam(chatState.selectedTeam, 'generation_mode')
+        ? []
+        : (videoCapabilities?.generation_modes ?? []),
+    [chatState.selectedTeam, videoCapabilities?.generation_modes]
   )
   const [selectedVideoGenerationMode, setSelectedVideoGenerationMode] = useState<
     string | undefined
@@ -1300,6 +1303,7 @@ function ChatAreaContent({
     controlsContainerWidth,
   } = useFloatingInput({
     hasMessages: hasMessagesForHooks,
+    inputAlwaysAtBottom,
   })
 
   // For video/image mode, use respective model selection; otherwise use regular model selection
@@ -2654,11 +2658,8 @@ function ChatAreaContent({
       >
         {/* Center area for input when no messages (and not in inputAlwaysAtBottom mode) */}
         {!hasMessages && !inputAlwaysAtBottom && (
-          <div
-            className="flex-1 flex items-center justify-center w-full"
-            style={{ marginBottom: '12vh' }}
-          >
-            <div ref={floatingInputRef} className="w-full max-w-4xl mx-auto px-4 sm:px-6">
+          <div className="flex w-full flex-1 items-start justify-center pt-[8dvh] md:items-center md:pt-0 md:[margin-bottom:12vh]">
+            <div ref={floatingInputRef} className="mx-auto w-full max-w-4xl px-3 sm:px-6">
               {taskType !== 'knowledge' && (
                 <SloganDisplay slogan={chatState.randomSlogan} project={activeProject} />
               )}
@@ -2700,9 +2701,11 @@ function ChatAreaContent({
           <div
             className="absolute inset-0 flex flex-col items-center w-full px-4 sm:px-6 overflow-y-auto pt-4"
             style={{
-              // Reserve space for: GuidedQuestions (~200px max) + ChatInputCard (~120px) + padding (32px)
-              // This prevents overlap between summary card and guided questions on smaller screens
-              paddingBottom: guidedQuestions && guidedQuestions.length > 0 ? '352px' : '152px',
+              // Keep the empty-state scroller clear of the actual floating input,
+              // whose height varies with the selected controls. The extra space is
+              // for the fade above the input; the floor avoids a first-render jump
+              // before the input has been measured.
+              paddingBottom: `${Math.max(inputHeight + 32, 152)}px`,
             }}
           >
             {emptyStateContent}

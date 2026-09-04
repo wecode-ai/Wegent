@@ -136,6 +136,8 @@
   "cloud_coming_soon_title": "云端设备即将推出",
   "cloud_coming_soon_description": "云端设备支持正在积极开发中，敬请期待！",
   "openclaw_badge": "🦞 OpenClaw",
+  "advanced_mode": "高级模式",
+  "advanced_mode_description": "显示 OpenClaw 设备",
   "got_it": "知道了",
   "actions": {
     "upgrade": "升级"

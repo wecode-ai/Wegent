@@ -143,7 +143,9 @@ export function SplitWorkbenchPaneStack({
       const cached = paneCacheRef.current.get(paneKey)
       if (cached) return cached
       const resolved = resolvePane(paneKey)
-      if (resolved) paneCacheRef.current.set(paneKey, resolved)
+      if (resolved && getWorkbenchPaneKey(resolved) === paneKey) {
+        paneCacheRef.current.set(paneKey, resolved)
+      }
       return resolved
     },
     [resolvePane]

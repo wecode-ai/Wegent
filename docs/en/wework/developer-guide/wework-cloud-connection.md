@@ -25,7 +25,14 @@ unsent drafts, layout state, and other UI preferences backed by `localStorage`
 therefore remain available. The main process serializes updates, writes through
 atomic file replacement, and uses mode `0600` on Unix. Explicitly disconnecting,
 deleting a configuration, or clearing its state also removes the durable copy.
-The web app, which has no Electron host, does not use this desktop mirror.
+The web app, which has no Electron host, does not use this desktop mirror. Before
+loading a new Core DSH origin, the main process also removes Chromium
+`localStorage` belonging to the previous origin. When a durable snapshot exists
+without origin metadata, it performs one full migration cleanup; later launches
+clear only the previously recorded `scheme://host:port`. The current origin is
+stored in `renderer-local-storage-origins.json`, and renderer recreation on the
+same origin does not clear storage again. Browser storage remains untouched before
+the first durable snapshot exists so migration data is not lost.
 
 Users may enter either the Backend root URL or an `/api` URL. The frontend normalizes that input into HTTP API and Socket.IO connection settings. Connecting first checks `/health`, then calls `/auth/wework/sessions` to create a short-lived authorization session. Backend returns a complete `authorize_url`; local Wework opens that cloud authorization page in the embedded authorization browser and polls the session result with the client-only `poll_token`.
 
@@ -95,9 +102,17 @@ Users can run:
 wework
 wework .
 wework /path/to/project
+wework desktop instances
+wework desktop inspect --project .
 ```
 
 `wework` and `wework .` resolve the current directory to an absolute path and ask Wework to open it as a local workspace. Release builds forward the request to the existing window through the macOS app single-instance path; debug builds still allow multiple instances, so the CLI starts the current debug executable with `--open-workspace <path>`.
+
+`desktop` is an instance-control subcommand of the same `wework` CLI. Wework
+does not install or inject a second command with the same name. The
+Wework-managed agent environment and the macOS user-level entry use the same
+dispatch rules: `wework <path>` opens a workspace, while
+`wework desktop ...` controls a running instance.
 
 ## Model Identity and Execution Transport
 

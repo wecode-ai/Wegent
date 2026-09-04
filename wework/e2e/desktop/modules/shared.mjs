@@ -23,6 +23,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url'
 
 import { DESKTOP_CHECKPOINTS, PLUGIN_SEGMENTS } from '../checkpoints.mjs'
 import { processIsAlive, stopProcess, stopProcessGroup } from '../process-lifecycle.mjs'
+import { resolveDesktopE2EResultRoot } from '../result-retention.mjs'
 import { loadDesktopScenario } from '../scenario-loader.mjs'
 import { waitForSnapshot } from './conversation-layout.mjs'
 import { sendPrompt } from './conversation-navigation.mjs'
@@ -213,6 +214,8 @@ const SEND_REJECTION_RETRY_PROMPT =
   'WEWORK_DESKTOP_E2E_SEND_REJECTION_RETRY: queue this send after stale idle state.'
 const SEND_REJECTION_COMPLETION_TEXT = 'WEWORK_DESKTOP_E2E_SEND_REJECTION_COMPLETE'
 const RETRY_PROMPT = 'WEWORK_DESKTOP_E2E_RETRY: fail once and then succeed after retry.'
+const RETRY_CONTINUATION_PROMPT =
+  'Continue the unfinished work from the previous turn. Use the existing conversation context and do not repeat work that is already complete.'
 const RETRY_FAILURE_TEXT = 'WEWORK_DESKTOP_E2E_RETRY_FAILURE'
 const RETRY_CODEX_ERROR_TEXT = "Codex ran out of room in the model's context window."
 const RETRY_COMPLETION_TEXT = 'WEWORK_DESKTOP_E2E_RETRY_COMPLETE'
@@ -256,6 +259,10 @@ const ARTIFACT_CONTENT = 'CODEX_EXECUTED_REAL_TOOL'
 const IMAGE_ARTIFACT_NAME = 'wework-e2e-image.png'
 const VIEW_IMAGE_PROMPT = 'WEWORK_DESKTOP_E2E_VIEW_IMAGE: inspect the verification image.'
 const VIEW_IMAGE_COMPLETION_TEXT = 'WEWORK_DESKTOP_E2E_VIEW_IMAGE_COMPLETE'
+const LOCAL_MARKDOWN_IMAGE_PROMPT =
+  'WEWORK_DESKTOP_E2E_LOCAL_MARKDOWN_IMAGE: render the temporary image.'
+const LOCAL_MARKDOWN_IMAGE_FILENAME = `wework-e2e-assistant-markdown-image-${randomUUID()}.png`
+const LOCAL_MARKDOWN_IMAGE_ALT = 'WEWORK_DESKTOP_E2E_LOCAL_MARKDOWN_IMAGE_ALT'
 const VISION_SIDECAR_PROMPT =
   'WEWORK_DESKTOP_E2E_VISION_SIDECAR: describe the attached verification image.'
 const VISION_SIDECAR_DESCRIPTION = 'The verification image is a solid red square.'
@@ -518,9 +525,7 @@ const repoDir = resolve(weworkDir, '..')
 const toolDetailsMcpServerPath = join(weworkDir, 'e2e', 'utils', 'tool-details-mcp-server.mjs')
 const mcpElicitationServerPath = join(weworkDir, 'e2e', 'utils', 'mcp-elicitation-server.mjs')
 const runId = `${new Date().toISOString().replace(/[:.]/g, '-')}-${process.pid}`
-const resultRoot = process.env.WEWORK_E2E_RESULT_ROOT?.trim()
-  ? resolve(process.env.WEWORK_E2E_RESULT_ROOT.trim())
-  : join(weworkDir, 'test-results', 'desktop-e2e')
+const resultRoot = resolveDesktopE2EResultRoot(weworkDir)
 const resultDir = join(resultRoot, runId)
 
 const OFFICIAL_PLUGIN_REPOSITORY = 'https://github.com/openai/plugins.git'
@@ -883,6 +888,38 @@ function commandOutput(command, args, options = {}) {
     )
   }
   return result.stdout.trim()
+}
+
+async function commandOutputAsync(command, args, options = {}) {
+  return await new Promise((resolvePromise, reject) => {
+    const child = spawn(command, args, {
+      cwd: options.cwd,
+      env: options.env,
+      stdio: ['ignore', 'pipe', 'pipe'],
+    })
+    let stdout = ''
+    let stderr = ''
+    child.stdout.setEncoding('utf8')
+    child.stderr.setEncoding('utf8')
+    child.stdout.on('data', chunk => {
+      stdout += chunk
+    })
+    child.stderr.on('data', chunk => {
+      stderr += chunk
+    })
+    child.once('error', reject)
+    child.once('close', code => {
+      if (code === 0) {
+        resolvePromise(stdout.trim())
+        return
+      }
+      reject(
+        new Error(
+          `${command} ${args.join(' ')} exited with ${code ?? 'unknown status'}: ${stderr || stdout}`
+        )
+      )
+    })
+  })
 }
 
 async function stopDesktopAppProcess(app) {
@@ -1547,6 +1584,7 @@ export {
   SEND_REJECTION_RETRY_PROMPT,
   SEND_REJECTION_COMPLETION_TEXT,
   RETRY_PROMPT,
+  RETRY_CONTINUATION_PROMPT,
   RETRY_FAILURE_TEXT,
   RETRY_CODEX_ERROR_TEXT,
   RETRY_COMPLETION_TEXT,
@@ -1577,6 +1615,9 @@ export {
   IMAGE_ARTIFACT_NAME,
   VIEW_IMAGE_PROMPT,
   VIEW_IMAGE_COMPLETION_TEXT,
+  LOCAL_MARKDOWN_IMAGE_PROMPT,
+  LOCAL_MARKDOWN_IMAGE_FILENAME,
+  LOCAL_MARKDOWN_IMAGE_ALT,
   VISION_SIDECAR_PROMPT,
   VISION_SIDECAR_DESCRIPTION,
   VISION_SIDECAR_COMPLETION_TEXT,
@@ -1769,6 +1810,7 @@ export {
   isExecutable,
   pathExists,
   commandOutput,
+  commandOutputAsync,
   stopDesktopAppProcess,
   runChecked,
   reservePort,

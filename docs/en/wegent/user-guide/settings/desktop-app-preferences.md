@@ -67,9 +67,11 @@ The lower-left quota menu and the settings item use the full quota source name, 
 **Settings → General → Import work from other AI apps** imports compatible content from other local coding apps into Wework's separate Codex home. Importing replaces files with the same name in the destination, but does not remove content from the source app.
 
 - **Codex**: Imports the same content as Wework's first-launch Codex migration, including configuration, sign-in information, global instructions, plugins, Skills, and related caches.
-- **Claude Code**: Imports `~/.claude/CLAUDE.md` as the Codex global `AGENTS.md` and imports `~/.claude/skills/`.
+- **Claude Code**: Imports `~/.claude/CLAUDE.md` as the Codex global `AGENTS.md`, plus settings, plugins, and Skills.
 
-The first release does not import project lists, Claude Code plugins, or conversation history. Import is available only in the Wework desktop app. If the source directory is missing or contains no compatible content, Wework keeps the dialog open and shows an error so the import can be retried after the source is fixed.
+The Wework-managed local Executor performs the import; the Renderer does not access user directories directly. The Executor accepts only import methods explicitly declared by the desktop protocol. If Wework's `auth.json` already links to the same source Codex sign-in file, importing preserves that link and continues copying the other compatible content instead of overwriting the same credential file.
+
+The first release does not import project lists or conversation history. Import is available only in the Wework desktop app. If the source directory is missing or contains no compatible content, Wework keeps the dialog open and shows an error so the import can be retried after the source is fixed.
 
 ## Continue Running After Closing the Window
 
