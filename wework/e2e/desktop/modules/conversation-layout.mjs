@@ -74,17 +74,6 @@ async function verifyShortConversationLayout({ composerSelector, control, restar
     text: FRESH_CHAT_COMPLETION_TEXT,
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
-  await restartDesktopApp()
-  await control.command('focusMainWindow', 'body')
-  await control.command('waitFor', '[data-testid="message-assistant"]', {
-    text: FRESH_CHAT_COMPLETION_TEXT,
-    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
-  })
-  await waitForComposerFocus(
-    control,
-    DEFAULT_STEP_TIMEOUT_MS,
-    'Restoring an existing conversation on app startup did not focus the composer'
-  )
   await control.command('click', `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="message-assistant"]`)
   await waitForComposerFocus(
     control,
@@ -256,6 +245,43 @@ async function verifyShortConversationLayout({ composerSelector, control, restar
     'The late background transcript leaked into the restored conversation'
   )
   control.setScenario('fresh_chat')
+  await restartDesktopApp()
+  await control.command('focusMainWindow', 'body')
+  await ensureTaskRowVisible(control, shortConversationTaskRowTestId)
+  await control.command('clickWhenEnabled', `[data-testid="${shortConversationTaskRowTestId}"]`, {
+    stableMs: COMPOSER_READY_STABILITY_MS,
+    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+  })
+  await control.command('waitFor', '[data-testid="message-assistant"]', {
+    text: FRESH_CHAT_COMPLETION_TEXT,
+    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+  })
+  await waitForComposerFocus(
+    control,
+    DEFAULT_STEP_TIMEOUT_MS,
+    'Opening an existing conversation after app startup did not focus the composer'
+  )
+  await control.command(
+    'hover',
+    `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="message-assistant"] [data-testid="message-hover-region"]`
+  )
+  await control.command(
+    'click',
+    `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="message-assistant"] [data-testid="copy-message-button"]`
+  )
+  assert.equal(
+    await control.command('getClipboardText', ''),
+    FRESH_CHAT_COMPLETION_TEXT,
+    'The assistant-message copy action did not populate the desktop clipboard'
+  )
+  await control.command('press', 'body', {
+    key: process.platform === 'darwin' ? 'Meta+v' : 'Control+v',
+  })
+  await waitForComposerFocus(
+    control,
+    DEFAULT_STEP_TIMEOUT_MS,
+    'Pasting after copying a message did not transfer keyboard focus to the composer'
+  )
   return shortConversationTaskRowTestId
 }
 

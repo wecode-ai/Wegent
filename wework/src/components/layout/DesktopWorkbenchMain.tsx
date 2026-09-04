@@ -312,6 +312,12 @@ const CONVERSATION_COMPOSER_FOCUS_EXCLUSION_SELECTOR = [
   '[role="tab"]',
 ].join(', ')
 
+function isConversationPasteShortcut(event: KeyboardEvent) {
+  const primaryPressed =
+    getPlatform() === 'mac' ? event.metaKey && !event.ctrlKey : event.ctrlKey && !event.metaKey
+  return primaryPressed && !event.altKey && event.key.toLowerCase() === 'v'
+}
+
 interface SelectedAssistantPlan {
   blockId: string
   subtaskId: string
@@ -1610,6 +1616,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
   const isDesktop = isDesktopRuntime()
   const workbenchMainRef = useRef<HTMLElement | null>(null)
   const workbenchScrollRef = useRef<HTMLDivElement | null>(null)
+  const conversationSurfaceRef = useRef<HTMLDivElement | null>(null)
   const [measuredWorkbenchContentWidth, setMeasuredWorkbenchContentWidth] = useState(0)
   const workbenchResizeObserverRef = useRef<ResizeObserver | null>(null)
   const setWorkbenchMainRef = useCallback((element: HTMLElement | null) => {
@@ -3369,6 +3376,33 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     },
     [paneActive, paneSession.scopeKey, paneVisible, workbenchVisible]
   )
+  useEffect(() => {
+    if (!hasConversation || !paneActive || !paneVisible || !workbenchVisible) return
+
+    const focusComposerForPasteShortcut = (event: KeyboardEvent) => {
+      if (event.defaultPrevented || event.isComposing || !isConversationPasteShortcut(event)) {
+        return
+      }
+      const conversationSurface = conversationSurfaceRef.current
+      if (!conversationSurface) return
+      const activeElement = document.activeElement
+      if (isEditableShortcutTarget(activeElement)) return
+      if (
+        activeElement &&
+        activeElement !== document.body &&
+        activeElement !== document.documentElement &&
+        !conversationSurface.contains(activeElement)
+      ) {
+        return
+      }
+      conversationSurface
+        .querySelector<HTMLElement>('[data-testid="chat-message-input"][contenteditable="true"]')
+        ?.focus({ preventScroll: true })
+    }
+
+    window.addEventListener('keydown', focusComposerForPasteShortcut)
+    return () => window.removeEventListener('keydown', focusComposerForPasteShortcut)
+  }, [hasConversation, paneActive, paneVisible, workbenchVisible])
   const routeEmbeddedBrowserOpenRequest = useCallback(
     (request: EmbeddedBrowserOpenRequest) => {
       const states = browserStatesRef.current
@@ -4529,6 +4563,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
                 </div>
               ) : hasConversation ? (
                 <div
+                  ref={conversationSurfaceRef}
                   className="relative flex min-h-full min-w-0 shrink-0 flex-col"
                   onClick={focusComposerFromConversationClick}
                 >

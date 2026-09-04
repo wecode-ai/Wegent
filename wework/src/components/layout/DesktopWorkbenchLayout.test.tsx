@@ -2339,6 +2339,41 @@ describe('DesktopWorkbenchLayout', () => {
     expect(composer).not.toHaveFocus()
   })
 
+  test('focuses the composer before pasting after a message copy action', async () => {
+    const { composer, hoverRegion } = renderFocusableConversation()
+
+    composer.blur()
+    fireEvent.pointerEnter(hoverRegion)
+    const copyButton = await screen.findByTestId('copy-message-button')
+    await userEvent.click(copyButton)
+    expect(composer).not.toHaveFocus()
+
+    fireEvent.keyDown(document.body, { key: 'v', metaKey: true })
+
+    expect(composer).toHaveFocus()
+    fireEvent.paste(composer, {
+      clipboardData: {
+        files: [],
+        getData: (type: string) => (type === 'text/plain' ? 'Selectable response' : ''),
+        types: ['text/plain'],
+      },
+    })
+    expect(composer).toHaveValue('Selectable response')
+  })
+
+  test('keeps paste shortcuts in an explicitly focused editor', () => {
+    const { composer } = renderFocusableConversation()
+    const editor = document.createElement('textarea')
+    document.body.append(editor)
+    editor.focus()
+
+    fireEvent.keyDown(editor, { key: 'v', metaKey: true })
+
+    expect(editor).toHaveFocus()
+    expect(composer).not.toHaveFocus()
+    editor.remove()
+  })
+
   test('does not focus the composer while conversation text is selected', async () => {
     const { composer, messageText } = renderFocusableConversation()
 
