@@ -1,6 +1,6 @@
 import { Search } from 'lucide-react'
 import { useEffect, useRef, useState, type RefObject } from 'react'
-import type { PluginShareGroupSearchItem, PluginShareUserSearchItem } from '@/api/plugins'
+import type { PluginShareDepartmentSearchItem, PluginShareUserSearchItem } from '@/api/plugins'
 import { useTranslation } from '@/hooks/useTranslation'
 import type { PluginAccessTarget } from '@/types/api'
 
@@ -9,20 +9,20 @@ const SEARCH_DEBOUNCE_MS = 180
 interface PluginShareTargetSearchProps {
   inputRef?: RefObject<HTMLInputElement | null>
   searchUsers: (query: string) => Promise<PluginShareUserSearchItem[]>
-  searchGroups: (query: string) => Promise<PluginShareGroupSearchItem[]>
+  searchDepartments: (query: string) => Promise<PluginShareDepartmentSearchItem[]>
   onSelect: (target: PluginAccessTarget) => void
 }
 
 export function PluginShareTargetSearch({
   inputRef,
   searchUsers,
-  searchGroups,
+  searchDepartments,
   onSelect,
 }: PluginShareTargetSearchProps) {
   const { t } = useTranslation('common')
   const [query, setQuery] = useState('')
   const [users, setUsers] = useState<PluginShareUserSearchItem[]>([])
-  const [groups, setGroups] = useState<PluginShareGroupSearchItem[]>([])
+  const [departments, setDepartments] = useState<PluginShareDepartmentSearchItem[]>([])
   const [searching, setSearching] = useState(false)
   const requestIdRef = useRef(0)
 
@@ -32,16 +32,16 @@ export function PluginShareTargetSearch({
 
     const requestId = ++requestIdRef.current
     const timeoutId = window.setTimeout(() => {
-      void Promise.all([searchUsers(normalized), searchGroups(normalized)])
-        .then(([nextUsers, nextGroups]) => {
+      void Promise.all([searchUsers(normalized), searchDepartments(normalized)])
+        .then(([nextUsers, nextDepartments]) => {
           if (requestIdRef.current !== requestId) return
           setUsers(nextUsers)
-          setGroups(nextGroups)
+          setDepartments(nextDepartments)
         })
         .catch(() => {
           if (requestIdRef.current !== requestId) return
           setUsers([])
-          setGroups([])
+          setDepartments([])
         })
         .finally(() => {
           if (requestIdRef.current === requestId) setSearching(false)
@@ -52,13 +52,13 @@ export function PluginShareTargetSearch({
       window.clearTimeout(timeoutId)
       if (requestIdRef.current === requestId) requestIdRef.current += 1
     }
-  }, [query, searchGroups, searchUsers])
+  }, [query, searchDepartments, searchUsers])
 
   const clearSearch = () => {
     requestIdRef.current += 1
     setQuery('')
     setUsers([])
-    setGroups([])
+    setDepartments([])
     setSearching(false)
   }
 
@@ -66,7 +66,7 @@ export function PluginShareTargetSearch({
     requestIdRef.current += 1
     setQuery(value)
     setUsers([])
-    setGroups([])
+    setDepartments([])
     setSearching(Boolean(value.trim()))
   }
 
@@ -119,21 +119,15 @@ export function PluginShareTargetSearch({
               </span>
             </button>
           ))}
-          {groups.map(group => (
+          {departments.map(department => (
             <button
-              key={`namespace-${group.id}`}
+              key={`${department.entityType}-${department.entityId}`}
               type="button"
-              data-testid={`plugin-share-namespace-${group.id}`}
+              data-testid={`plugin-share-department-${department.entityId}`}
               className="flex min-h-11 w-full items-center justify-between rounded-lg px-3 text-left hover:bg-surface"
-              onClick={() =>
-                selectTarget({
-                  entityType: 'namespace',
-                  entityId: String(group.id),
-                  displayName: group.display_name || group.name,
-                })
-              }
+              onClick={() => selectTarget(department)}
             >
-              <span className="text-sm font-medium">{group.display_name || group.name}</span>
+              <span className="text-sm font-medium">{department.displayName}</span>
               <span className="text-xs text-text-muted">
                 {t('workbench.plugins_share_department', '部门')}
               </span>

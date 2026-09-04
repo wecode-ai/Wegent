@@ -1945,8 +1945,8 @@ function TargetPicker({
     }
     let active = true
     const timer = window.setTimeout(() => {
-      Promise.all([api.searchUsers(query), api.searchGroups(query)])
-        .then(([users, groups]) => {
+      Promise.all([api.searchUsers(query), api.searchDepartments(query)])
+        .then(([users, departments]) => {
           if (!active) return
           setResults([
             ...users.map(user => ({
@@ -1954,11 +1954,7 @@ function TargetPicker({
               entityId: String(user.id),
               displayName: user.user_name,
             })),
-            ...groups.map(group => ({
-              entityType: 'namespace' as const,
-              entityId: String(group.id),
-              displayName: group.display_name || group.name,
-            })),
+            ...departments,
           ])
         })
         .catch(() => setResults([]))
@@ -1986,6 +1982,7 @@ function TargetPicker({
             <button
               key={`${result.entityType}-${result.entityId}`}
               type="button"
+              data-testid={`smart-app-target-${result.entityType}-${result.entityId}`}
               className="flex w-full justify-between rounded-md px-3 py-2 text-sm hover:bg-surface"
               onClick={() => {
                 if (

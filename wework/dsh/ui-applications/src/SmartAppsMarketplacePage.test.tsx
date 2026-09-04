@@ -130,7 +130,7 @@ function api(items: SmartAppMarketplaceItem[] = [item()]): SmartAppsApi {
     getAccess: vi.fn(),
     updateAccess: vi.fn(),
     searchUsers: vi.fn(),
-    searchGroups: vi.fn(),
+    searchDepartments: vi.fn(),
     initSubmission: vi.fn(),
     completeSubmission: vi.fn(),
     cancelSubmission: vi.fn(),
@@ -647,6 +647,59 @@ describe('SmartAppsMarketplacePage', () => {
     fireEvent.click(viewMarketplaceButton)
     expect(navigateTo).toHaveBeenCalledWith('/sites?app_type=smart_app')
     expect(screen.queryByTestId('smart-app-access-success')).not.toBeInTheDocument()
+  })
+
+  test('adds an ERP department to an owned app sharing scope', async () => {
+    const ownedItem = item({
+      sourceType: 'user',
+      ownerUserId: 1,
+      ownerDisplayName: 'Alice',
+      accessRole: 'owner',
+      visibility: 'restricted',
+    })
+    const smartAppsApi = api([ownedItem])
+    const existingTarget = { entityType: 'user' as const, entityId: '2', displayName: 'Bob' }
+    const departmentTarget = {
+      entityType: 'org_department' as const,
+      entityId: 'dept-1001',
+      displayName: '创新技术组',
+    }
+    vi.mocked(smartAppsApi.getAccess).mockResolvedValue({
+      smartAppId: ownedItem.id,
+      scope: 'restricted',
+      targets: [existingTarget],
+      isListed: true,
+      latestReleaseId: ownedItem.latestReleaseId,
+      version: ownedItem.version,
+    })
+    vi.mocked(smartAppsApi.searchUsers).mockResolvedValue([])
+    vi.mocked(smartAppsApi.searchDepartments).mockResolvedValue([departmentTarget])
+    vi.mocked(smartAppsApi.updateAccess).mockResolvedValue({
+      smartAppId: ownedItem.id,
+      scope: 'restricted',
+      targets: [existingTarget, departmentTarget],
+      isListed: true,
+      latestReleaseId: ownedItem.latestReleaseId,
+      version: ownedItem.version,
+    })
+    listInstalled.mockResolvedValue([{ ...importedInstallation, smartAppId: ownedItem.id }])
+
+    render(<SmartAppsMarketplacePage api={smartAppsApi} mode="owned" />)
+
+    fireEvent.click(await screen.findByTestId(`smart-app-visibility-${ownedItem.id}`))
+    await screen.findByTestId('smart-app-share-dialog')
+    fireEvent.change(screen.getByTestId('smart-app-target-search'), {
+      target: { value: '创新' },
+    })
+    fireEvent.click(await screen.findByTestId('smart-app-target-org_department-dept-1001'))
+    fireEvent.click(screen.getByTestId('smart-app-share-save'))
+
+    await waitFor(() =>
+      expect(smartAppsApi.updateAccess).toHaveBeenCalledWith(ownedItem.id, {
+        scope: 'restricted',
+        targets: [existingTarget, departmentTarget],
+      })
+    )
   })
 
   test('reports when an administrator has unlisted a public app', async () => {
