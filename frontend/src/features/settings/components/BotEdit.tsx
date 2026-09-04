@@ -593,12 +593,18 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
     allowGenerationPrimaryModel,
   ])
 
+  // Key of the bot/shell combination whose MCP config was last normalized. Used
+  // to skip re-normalization on shell refreshes while still re-processing when
+  // the edited bot (or clone source) changes.
+  const normalizedMcpKeyRef = useRef('')
+
   // Reset base form when switching editing object
   useEffect(() => {
     setBotName(baseBot?.name || '')
     // Use shell_name for the selected shell, fallback to shell_type for backward compatibility
     setAgentName(baseBot?.shell_name || baseBot?.shell_type || '')
     setPrompt(baseBot?.system_prompt || '')
+    normalizedMcpKeyRef.current = ''
 
     if (baseBot?.mcp_servers) {
       setMcpConfig(JSON.stringify(baseBot.mcp_servers, null, 2))
@@ -626,7 +632,6 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
   // Normalize the MCP config once the bot's shell type is known. Deliberately
   // skips later shell refreshes (e.g. publish-scope switches) so they do not
   // discard a create draft or unsaved edits of an existing bot.
-  const normalizedMcpKeyRef = useRef('')
   useEffect(() => {
     if (!baseBot?.mcp_servers) return
 

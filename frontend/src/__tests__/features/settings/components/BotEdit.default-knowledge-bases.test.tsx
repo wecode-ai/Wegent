@@ -421,6 +421,17 @@ describe('BotEdit default knowledge bases', () => {
   })
 
   test('keeps a create-mode bot draft when the publish scope changes', async () => {
+    const shellData = {
+      data: [{ name: 'ClaudeCode', type: 'public', shellType: 'ClaudeCode' }],
+    }
+    let resolveInitialShells!: (value: typeof shellData) => void
+    let resolveRefreshShells!: (value: typeof shellData) => void
+    mockedGetUnifiedShells.mockReset()
+    mockedGetUnifiedShells
+      .mockImplementationOnce(() => new Promise(resolve => (resolveInitialShells = resolve)))
+      .mockImplementationOnce(() => new Promise(resolve => (resolveRefreshShells = resolve)))
+
+    const agentSelect = () => screen.getAllByTestId('mock-select')[0]
     let view: ReturnType<typeof render>
     await act(async () => {
       view = render(
@@ -436,6 +447,12 @@ describe('BotEdit default knowledge bases', () => {
           hideActions
         />
       )
+    })
+    await act(async () => {
+      resolveInitialShells(shellData)
+    })
+    await waitFor(() => {
+      expect(agentSelect()).not.toHaveAttribute('data-disabled', 'true')
     })
 
     const nameInput = await screen.findByPlaceholderText('common:bot.name_placeholder')
@@ -464,6 +481,12 @@ describe('BotEdit default knowledge bases', () => {
 
     await waitFor(() => {
       expect(mockedGetUnifiedShells).toHaveBeenCalledTimes(2)
+    })
+    await act(async () => {
+      resolveRefreshShells(shellData)
+    })
+    await waitFor(() => {
+      expect(agentSelect()).not.toHaveAttribute('data-disabled', 'true')
     })
 
     const nameAfter = screen.getByPlaceholderText('common:bot.name_placeholder')
