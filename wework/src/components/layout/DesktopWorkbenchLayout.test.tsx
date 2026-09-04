@@ -2246,6 +2246,151 @@ describe('DesktopWorkbenchLayout', () => {
     expect(screen.queryByTestId('project-work-button')).not.toBeInTheDocument()
   })
 
+  function renderFocusableConversation() {
+    const onlineDevice = {
+      id: 1,
+      device_id: 'device-1',
+      name: 'Runtime Device',
+      status: 'online' as const,
+      is_default: true,
+      device_type: 'cloud' as const,
+      bind_shell: 'claudecode',
+      executor_version: '1.8.5',
+    }
+    render(
+      <DesktopWorkbenchLayout
+        {...baseProps}
+        state={{
+          ...baseProps.state,
+          devices: [onlineDevice],
+          standaloneDeviceId: 'device-1',
+        }}
+        projectWork={{
+          ...baseProps.projectWork,
+          devices: [onlineDevice],
+          currentStandaloneDeviceId: 'device-1',
+        }}
+        projectChat={{
+          ...baseProps.projectChat,
+          scopeKey: 'standalone:device-1',
+        }}
+        messages={[
+          {
+            id: 'message-1',
+            role: 'assistant',
+            content: 'Selectable response',
+            status: 'done',
+            createdAt: '2026-05-29T00:00:00.000Z',
+          },
+        ]}
+      />
+    )
+    return {
+      composer: screen.getByTestId('chat-message-input'),
+      hoverRegion: screen.getByTestId('message-hover-region'),
+      messageText: screen.getByText('Selectable response'),
+    }
+  }
+
+  async function waitForComposerFocusRequest() {
+    await act(
+      () =>
+        new Promise<void>(resolvePromise => {
+          window.requestAnimationFrame(() => resolvePromise())
+        })
+    )
+  }
+
+  test('focuses a restored conversation when its composer mounts', async () => {
+    const { composer } = renderFocusableConversation()
+
+    await waitFor(() => expect(composer).toHaveFocus())
+  })
+
+  test('refocuses a restored conversation when the app window becomes active', async () => {
+    const { composer } = renderFocusableConversation()
+
+    await waitFor(() => expect(composer).toHaveFocus())
+    composer.blur()
+    window.dispatchEvent(new Event('blur'))
+    window.dispatchEvent(new Event('focus'))
+
+    await waitFor(() => expect(composer).toHaveFocus())
+  })
+
+  test('focuses the composer from a non-interactive conversation click', async () => {
+    const { composer } = renderFocusableConversation()
+
+    composer.blur()
+    fireEvent.click(screen.getByTestId('desktop-chat-scroll-content'))
+
+    await waitFor(() => expect(composer).toHaveFocus())
+  })
+
+  test('does not focus the composer from a conversation action click', async () => {
+    const { composer, hoverRegion } = renderFocusableConversation()
+
+    composer.blur()
+    fireEvent.pointerEnter(hoverRegion)
+    const copyButton = await screen.findByTestId('copy-message-button')
+    await userEvent.click(copyButton)
+    await waitForComposerFocusRequest()
+
+    expect(composer).not.toHaveFocus()
+  })
+
+  test('focuses the composer before pasting after a message copy action', async () => {
+    const { composer, hoverRegion } = renderFocusableConversation()
+
+    composer.blur()
+    fireEvent.pointerEnter(hoverRegion)
+    const copyButton = await screen.findByTestId('copy-message-button')
+    await userEvent.click(copyButton)
+    expect(composer).not.toHaveFocus()
+
+    fireEvent.keyDown(document.body, { key: 'v', metaKey: true })
+
+    expect(composer).toHaveFocus()
+    fireEvent.paste(composer, {
+      clipboardData: {
+        files: [],
+        getData: (type: string) => (type === 'text/plain' ? 'Selectable response' : ''),
+        types: ['text/plain'],
+      },
+    })
+    expect(composer).toHaveValue('Selectable response')
+  })
+
+  test('keeps paste shortcuts in an explicitly focused editor', () => {
+    const { composer } = renderFocusableConversation()
+    const editor = document.createElement('textarea')
+    document.body.append(editor)
+    editor.focus()
+
+    fireEvent.keyDown(editor, { key: 'v', metaKey: true })
+
+    expect(editor).toHaveFocus()
+    expect(composer).not.toHaveFocus()
+    editor.remove()
+  })
+
+  test('does not focus the composer while conversation text is selected', async () => {
+    const { composer, messageText } = renderFocusableConversation()
+
+    composer.blur()
+    const selection = window.getSelection()
+    const range = document.createRange()
+    range.selectNodeContents(messageText)
+    selection?.removeAllRanges()
+    selection?.addRange(range)
+    fireEvent.click(messageText)
+    await waitForComposerFocusRequest()
+
+    expect(composer).not.toHaveFocus()
+    expect(selection?.toString()).toBe('Selectable response')
+    selection?.removeAllRanges()
+  })
+
   test('renders subagent status below the top bar without shifting messages', () => {
     mockDesktopWorkbenchMainWidth(1024)
     render(

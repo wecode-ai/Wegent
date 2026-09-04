@@ -357,8 +357,10 @@ describe('ComposerProseMirrorEditor', () => {
     expect(screen.getByTestId('composer-editor').querySelector('.composer-empty-caret')).toBeNull()
   })
 
-  test('renders the measurable empty caret in Electron', () => {
+  test('shows the measurable empty caret only while the Electron window is focused', () => {
     const previousRuntimeConfig = window.__WEWORK_RUNTIME_CONFIG__
+    let documentFocused = true
+    const hasFocus = vi.spyOn(document, 'hasFocus').mockImplementation(() => documentFocused)
     window.__WEWORK_RUNTIME_CONFIG__ = {
       ...previousRuntimeConfig,
       desktopHost: 'electron',
@@ -370,7 +372,28 @@ describe('ComposerProseMirrorEditor', () => {
       expect(
         screen.getByTestId('composer-editor').querySelector('.composer-empty-caret')
       ).toHaveAttribute('aria-hidden', 'true')
+
+      const editor = screen.getByTestId('composer-editor')
+      editor.focus()
+      expect(editor).toHaveAttribute('data-composer-focus-visible')
+
+      documentFocused = false
+      act(() => window.dispatchEvent(new Event('blur')))
+      expect(editor).not.toHaveAttribute('data-composer-focus-visible')
+      expect(editor).toHaveFocus()
+
+      documentFocused = true
+      act(() => window.dispatchEvent(new Event('focus')))
+      expect(editor).toHaveFocus()
+      expect(editor).toHaveAttribute('data-composer-focus-visible')
+
+      const otherButton = document.createElement('button')
+      document.body.append(otherButton)
+      otherButton.focus()
+      expect(editor).not.toHaveAttribute('data-composer-focus-visible')
+      otherButton.remove()
     } finally {
+      hasFocus.mockRestore()
       window.__WEWORK_RUNTIME_CONFIG__ = previousRuntimeConfig
     }
   })

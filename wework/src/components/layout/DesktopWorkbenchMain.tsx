@@ -1,5 +1,6 @@
 import {
   memo,
+  type MouseEvent as ReactMouseEvent,
   useCallback,
   useEffect,
   useEffectEvent,
@@ -158,8 +159,12 @@ import {
   listLocalHarnessModelOptions,
   type LocalHarnessModelOption,
 } from '@/features/local-harness/localHarnessModels'
+import { getRuntimeTaskChatScopeKey } from '@/features/workbench/workbenchProviderHelpers'
 import { getWeworkDevInstanceInfo } from '@/lib/wework-dev-instance'
-import { WORKBENCH_NEW_CHAT_FOCUS_EVENT } from '@/lib/workbenchComposerFocus'
+import {
+  requestWorkbenchComposerFocus,
+  WORKBENCH_NEW_CHAT_FOCUS_EVENT,
+} from '@/lib/workbenchComposerFocus'
 import {
   DEFAULT_EMBEDDED_BROWSER_LABEL,
   closeEmbeddedBrowser,
@@ -285,6 +290,33 @@ const DOCKED_ENVIRONMENT_INFO_WIDTH = 320
 const MIN_CHAT_COLUMN_WIDTH_FOR_DOCKED_ENVIRONMENT_INFO = 680
 const COLLAPSED_RIGHT_TITLEBAR_ACTIONS_CLEARANCE = '5rem'
 const MACOS_COLLAPSED_SIDEBAR_CONTROL_ALIGNMENT_CLASS = 'pl-2'
+const CONVERSATION_COMPOSER_FOCUS_EXCLUSION_SELECTOR = [
+  'a',
+  'button',
+  'input',
+  'textarea',
+  'select',
+  'label',
+  'summary',
+  '[contenteditable]:not([contenteditable="false"])',
+  '[role="button"]',
+  '[role="link"]',
+  '[role="textbox"]',
+  '[role="menuitem"]',
+  '[role="menuitemradio"]',
+  '[role="option"]',
+  '[role="slider"]',
+  '[role="checkbox"]',
+  '[role="radio"]',
+  '[role="switch"]',
+  '[role="tab"]',
+].join(', ')
+
+function isConversationPasteShortcut(event: KeyboardEvent) {
+  const primaryPressed =
+    getPlatform() === 'mac' ? event.metaKey && !event.ctrlKey : event.ctrlKey && !event.metaKey
+  return primaryPressed && !event.altKey && event.key.toLowerCase() === 'v'
+}
 
 interface SelectedAssistantPlan {
   blockId: string
@@ -1200,6 +1232,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
         onRuntimeTaskCreated: address => {
           onRuntimeTaskCreated(sourcePaneKey, address)
           cloudSubmission.onRuntimeTaskCreated(address)
+          requestWorkbenchComposerFocus(getRuntimeTaskChatScopeKey(address))
         },
         onRuntimeTaskReady: () => {
           if (supervisorConfig) {
@@ -1583,6 +1616,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
   const isDesktop = isDesktopRuntime()
   const workbenchMainRef = useRef<HTMLElement | null>(null)
   const workbenchScrollRef = useRef<HTMLDivElement | null>(null)
+  const conversationSurfaceRef = useRef<HTMLDivElement | null>(null)
   const [measuredWorkbenchContentWidth, setMeasuredWorkbenchContentWidth] = useState(0)
   const workbenchResizeObserverRef = useRef<ResizeObserver | null>(null)
   const setWorkbenchMainRef = useCallback((element: HTMLElement | null) => {
@@ -3320,6 +3354,55 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     (selectedText: string) => openTemporaryChatTab(selectedText),
     [openTemporaryChatTab]
   )
+  const focusComposerFromConversationClick = useCallback(
+    (event: ReactMouseEvent<HTMLDivElement>) => {
+      if (
+        event.defaultPrevented ||
+        !paneActive ||
+        !paneVisible ||
+        !workbenchVisible ||
+        !(event.target instanceof Element) ||
+        event.target.closest(CONVERSATION_COMPOSER_FOCUS_EXCLUSION_SELECTOR)
+      ) {
+        return
+      }
+      const selection = window.getSelection()
+      if (selection && !selection.isCollapsed) return
+      const composer = event.currentTarget.querySelector<HTMLElement>(
+        '[data-testid="chat-message-input"][contenteditable="true"]'
+      )
+      if (!composer) return
+      requestWorkbenchComposerFocus(paneSession.scopeKey)
+    },
+    [paneActive, paneSession.scopeKey, paneVisible, workbenchVisible]
+  )
+  useEffect(() => {
+    if (!hasConversation || !paneActive || !paneVisible || !workbenchVisible) return
+
+    const focusComposerForPasteShortcut = (event: KeyboardEvent) => {
+      if (event.defaultPrevented || event.isComposing || !isConversationPasteShortcut(event)) {
+        return
+      }
+      const conversationSurface = conversationSurfaceRef.current
+      if (!conversationSurface) return
+      const activeElement = document.activeElement
+      if (isEditableShortcutTarget(activeElement)) return
+      if (
+        activeElement &&
+        activeElement !== document.body &&
+        activeElement !== document.documentElement &&
+        !conversationSurface.contains(activeElement)
+      ) {
+        return
+      }
+      conversationSurface
+        .querySelector<HTMLElement>('[data-testid="chat-message-input"][contenteditable="true"]')
+        ?.focus({ preventScroll: true })
+    }
+
+    window.addEventListener('keydown', focusComposerForPasteShortcut)
+    return () => window.removeEventListener('keydown', focusComposerForPasteShortcut)
+  }, [hasConversation, paneActive, paneVisible, workbenchVisible])
   const routeEmbeddedBrowserOpenRequest = useCallback(
     (request: EmbeddedBrowserOpenRequest) => {
       const states = browserStatesRef.current
@@ -4479,7 +4562,11 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
                   )}
                 </div>
               ) : hasConversation ? (
-                <div className="relative flex min-h-full min-w-0 shrink-0 flex-col">
+                <div
+                  ref={conversationSurfaceRef}
+                  className="relative flex min-h-full min-w-0 shrink-0 flex-col"
+                  onClick={focusComposerFromConversationClick}
+                >
                   <ScrollableMessageArea
                     messages={paneMessages}
                     loading={paneSession.transcriptLoading}
@@ -4640,6 +4727,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
                                         />
                                       )}
                                       <BufferedChatInput
+                                        autoFocus
                                         insertion={conversationSelectionInsertion}
                                         value={paneSession.input}
                                         onChange={paneSession.setInput}
