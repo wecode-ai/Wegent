@@ -814,6 +814,29 @@ finish(
 
 SETUP_SHARED_SKILLS_COMMAND = f"python3 -c {shlex.quote(SETUP_SHARED_SKILLS_SCRIPT)}"
 
+RUNTIME_AUTH_FILE_PATH_HELPER = """
+def runtime_auth_file(runtime):
+    if runtime != "codex":
+        fail(f"unsupported runtime: {runtime}")
+
+    configured_home = os.environ.get("WEGENT_CODEX_HOME", "").strip()
+    if configured_home:
+        codex_home = Path(configured_home).expanduser()
+    else:
+        executor_home = os.environ.get("WEGENT_EXECUTOR_HOME", "").strip()
+        base = (
+            Path(executor_home).expanduser()
+            if executor_home
+            else Path.home() / ".wegent-executor"
+        )
+        codex_home = base / "codex"
+
+    try:
+        return codex_home.resolve(strict=False) / "auth.json"
+    except OSError as exc:
+        fail(f"failed to resolve runtime auth path: {exc}")
+""".strip()
+
 SYNC_RUNTIME_AUTH_FILE_SCRIPT = """
 import json
 import os
@@ -826,14 +849,13 @@ def fail(message, code=64):
     sys.exit(code)
 
 
+__RUNTIME_AUTH_FILE_PATH_HELPER__
+
 runtime = os.environ.get("WEGENT_RUNTIME_CONFIG_RUNTIME", "").strip()
-target_path = os.environ.get("WEGENT_RUNTIME_CONFIG_TARGET_PATH", "").strip()
 content = os.environ.get("WEGENT_RUNTIME_CONFIG_CONTENT", "")
 
 if not runtime:
     fail("runtime is required")
-if not target_path.startswith("~/"):
-    fail("target path must be inside the user home directory")
 if not content:
     fail("runtime config content is required")
 
@@ -844,15 +866,8 @@ except json.JSONDecodeError as exc:
 if not isinstance(parsed, dict):
     fail("runtime config content must be a JSON object")
 
-home = Path.home().resolve()
-target = Path(target_path).expanduser()
-try:
-    resolved_target = target.resolve(strict=False)
-except OSError as exc:
-    fail(f"failed to resolve target path: {exc}")
-
-if home not in [resolved_target, *resolved_target.parents]:
-    fail("target path must stay inside the user home directory")
+target = runtime_auth_file(runtime)
+target_path = str(target)
 
 if target.exists():
     print(
@@ -885,7 +900,10 @@ print(
         ensure_ascii=False,
     )
 )
-""".strip()
+""".replace(
+    "__RUNTIME_AUTH_FILE_PATH_HELPER__",
+    RUNTIME_AUTH_FILE_PATH_HELPER,
+).strip()
 
 SYNC_RUNTIME_AUTH_FILE_COMMAND = (
     f"python3 -c {shlex.quote(SYNC_RUNTIME_AUTH_FILE_SCRIPT)}"
@@ -903,23 +921,14 @@ def fail(message, code=64):
     sys.exit(code)
 
 
+__RUNTIME_AUTH_FILE_PATH_HELPER__
+
 runtime = os.environ.get("WEGENT_RUNTIME_CONFIG_RUNTIME", "").strip()
-target_path = os.environ.get("WEGENT_RUNTIME_CONFIG_TARGET_PATH", "").strip()
 
 if not runtime:
     fail("runtime is required")
-if not target_path.startswith("~/"):
-    fail("target path must be inside the user home directory")
-
-home = Path.home().resolve()
-target = Path(target_path).expanduser()
-try:
-    resolved_target = target.resolve(strict=False)
-except OSError as exc:
-    fail(f"failed to resolve target path: {exc}")
-
-if home not in [resolved_target, *resolved_target.parents]:
-    fail("target path must stay inside the user home directory")
+target = runtime_auth_file(runtime)
+target_path = str(target)
 if not target.is_file():
     fail("runtime auth file does not exist", code=66)
 
@@ -946,7 +955,10 @@ print(
         ensure_ascii=False,
     )
 )
-""".strip()
+""".replace(
+    "__RUNTIME_AUTH_FILE_PATH_HELPER__",
+    RUNTIME_AUTH_FILE_PATH_HELPER,
+).strip()
 
 READ_RUNTIME_AUTH_FILE_COMMAND = (
     f"python3 -c {shlex.quote(READ_RUNTIME_AUTH_FILE_SCRIPT)}"
