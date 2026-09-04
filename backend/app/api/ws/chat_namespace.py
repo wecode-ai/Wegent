@@ -285,6 +285,10 @@ def _resolve_existing_task_team(
     if not task_id:
         team = _get_active_team_by_id(db, client_team_id)
         if team is None:
+            logger.warning(
+                "[WS] chat:send client team %s not found for new conversation",
+                client_team_id,
+            )
             return None, None, {"error": f"Team not found for id={client_team_id}"}
         return None, team, None
 
@@ -297,6 +301,12 @@ def _resolve_existing_task_team(
         # for a new conversation. Later task guards reject unknown task ids.
         team = _get_active_team_by_id(db, client_team_id)
         if team is None:
+            logger.warning(
+                "[WS] chat:send client team %s not found for task %s "
+                "(task not active yet)",
+                client_team_id,
+                task_id,
+            )
             return None, None, {"error": f"Team not found for id={client_team_id}"}
         return None, team, None
 
@@ -314,8 +324,19 @@ def _resolve_existing_task_team(
     try:
         bound_team = _resolve_task_bound_team(db, existing_task, client_team)
     except ValueError as exc:
+        logger.exception(
+            "[WS] chat:send failed to resolve task %s bound agent: %s",
+            task_id,
+            exc,
+        )
         return None, None, {"error": str(exc)}
     if bound_team is None:
+        logger.warning(
+            "[WS] chat:send client team %s not found for task %s "
+            "without usable teamRef",
+            client_team_id,
+            task_id,
+        )
         return None, None, {"error": f"Team not found for id={client_team_id}"}
     if client_team is None:
         logger.warning(
