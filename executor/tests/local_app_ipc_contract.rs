@@ -1359,6 +1359,45 @@ async fn app_ipc_resolves_configured_device_command() {
 }
 
 #[tokio::test]
+async fn app_ipc_runtime_auth_status_uses_executor_codex_home() {
+    let _lock = env_lock().await;
+    let root = tempfile::tempdir().unwrap();
+    let executor_home = root.path().join("executor-home");
+    let codex_home = executor_home.join("codex");
+    fs::create_dir_all(&codex_home).unwrap();
+    fs::write(codex_home.join("auth.json"), "{}").unwrap();
+    let _executor_home =
+        EnvGuard::set("WEGENT_EXECUTOR_HOME", &executor_home.display().to_string());
+    let _codex_home = EnvGuard::set("WEGENT_CODEX_HOME", "");
+    let _native_codex_home = EnvGuard::set("CODEX_HOME", "");
+
+    let response = AppIpcServer::new()
+        .handle_line(
+            &json!({
+                "type": "request",
+                "id": "req-runtime-auth-status",
+                "method": "device.execute_command",
+                "params": {
+                    "command_key": "runtime_auth_status",
+                    "timeout_seconds": 10,
+                    "max_output_bytes": 4096
+                }
+            })
+            .to_string(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response["ok"], true);
+    assert_eq!(response["result"]["success"], true);
+    assert_eq!(
+        response["result"]["stdout"]["target_path"],
+        json!(codex_home.join("auth.json").display().to_string())
+    );
+    assert_eq!(response["result"]["stdout"]["exists"], true);
+}
+
+#[tokio::test]
 async fn app_ipc_lists_and_reads_workspace_files_locally() {
     let workspace = unique_dir("workspace-files");
     fs::create_dir_all(workspace.join("src")).unwrap();

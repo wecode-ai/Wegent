@@ -909,6 +909,12 @@ async function createWindow(startupTheme: StartupSplashTheme): Promise<void> {
   startupSplashWindow.on('closed', () => {
     startupSplashWindow = null
   })
+  mainWindow.on('focus', () => {
+    mainWindow?.webContents.send('window:focus-changed', true)
+  })
+  mainWindow.on('blur', () => {
+    mainWindow?.webContents.send('window:focus-changed', false)
+  })
   mainWindow.on('resize', layoutPrimaryView)
   mainWindow.on('close', event => {
     if (quitting) return
@@ -1375,6 +1381,7 @@ async function configureDesktopRuntime(): Promise<void> {
                   : (workspaceWindows.get(windowLabel)?.webContents ?? null),
           cancelCloseToTray: cancelMainWindowClose,
           closeToTray: closeMainWindowToTray,
+          focusMainWindow: reactivateMainWindow,
           focusWindow: windowLabel => {
             const target =
               windowLabel === 'main' ? mainWindow : (workspaceWindows.get(windowLabel) ?? null)
@@ -1391,6 +1398,10 @@ async function configureDesktopRuntime(): Promise<void> {
               capturePath: process.env.WEWORK_E2E_STARTUP_SPLASH_CAPTURE?.trim(),
             })
             logStartupStep('startup-splash-close', 'completed')
+            if (!keepE2EWindowInBackground) {
+              mainWindow.focus()
+              mainWindow.webContents.focus()
+            }
             scheduleComputerUseStartup()
           },
           rendererStartupFailed: () => {

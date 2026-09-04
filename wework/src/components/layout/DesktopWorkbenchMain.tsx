@@ -1,5 +1,6 @@
 import {
   memo,
+  type MouseEvent as ReactMouseEvent,
   useCallback,
   useEffect,
   useEffectEvent,
@@ -59,6 +60,7 @@ import type {
   WorkspaceFileOpenRequest,
   WorkspaceTarget,
 } from '@/types/workspace-files'
+import type { Team } from '@/types/api'
 import { cn } from '@/lib/utils'
 import { runtimeProjectUiId } from '@/lib/runtime-project'
 import {
@@ -158,8 +160,12 @@ import {
   listLocalHarnessModelOptions,
   type LocalHarnessModelOption,
 } from '@/features/local-harness/localHarnessModels'
+import { getRuntimeTaskChatScopeKey } from '@/features/workbench/workbenchProviderHelpers'
 import { getWeworkDevInstanceInfo } from '@/lib/wework-dev-instance'
-import { WORKBENCH_NEW_CHAT_FOCUS_EVENT } from '@/lib/workbenchComposerFocus'
+import {
+  requestWorkbenchComposerFocus,
+  WORKBENCH_NEW_CHAT_FOCUS_EVENT,
+} from '@/lib/workbenchComposerFocus'
 import {
   DEFAULT_EMBEDDED_BROWSER_LABEL,
   closeEmbeddedBrowser,
@@ -235,6 +241,7 @@ import { HarnessSessionPickerDialog } from './HarnessSessionPickerDialog'
 import { DesktopEmptyTaskLauncher } from './DesktopEmptyTaskLauncher'
 import { WorkbenchHarnessModelSelector } from './WorkbenchHarnessModelSelector'
 import { WorkbenchHarnessSelector } from './WorkbenchHarnessSelector'
+import { WorkbenchTeamSelector } from './WorkbenchTeamSelector'
 import type {
   LocalHarnessSessionRegistrationOptions,
   LocalHarnessWorkbenchSession,
@@ -285,6 +292,33 @@ const DOCKED_ENVIRONMENT_INFO_WIDTH = 320
 const MIN_CHAT_COLUMN_WIDTH_FOR_DOCKED_ENVIRONMENT_INFO = 680
 const COLLAPSED_RIGHT_TITLEBAR_ACTIONS_CLEARANCE = '5rem'
 const MACOS_COLLAPSED_SIDEBAR_CONTROL_ALIGNMENT_CLASS = 'pl-2'
+const CONVERSATION_COMPOSER_FOCUS_EXCLUSION_SELECTOR = [
+  'a',
+  'button',
+  'input',
+  'textarea',
+  'select',
+  'label',
+  'summary',
+  '[contenteditable]:not([contenteditable="false"])',
+  '[role="button"]',
+  '[role="link"]',
+  '[role="textbox"]',
+  '[role="menuitem"]',
+  '[role="menuitemradio"]',
+  '[role="option"]',
+  '[role="slider"]',
+  '[role="checkbox"]',
+  '[role="radio"]',
+  '[role="switch"]',
+  '[role="tab"]',
+].join(', ')
+
+function isConversationPasteShortcut(event: KeyboardEvent) {
+  const primaryPressed =
+    getPlatform() === 'mac' ? event.metaKey && !event.ctrlKey : event.ctrlKey && !event.metaKey
+  return primaryPressed && !event.altKey && event.key.toLowerCase() === 'v'
+}
 
 type SmartAppDevelopmentVerificationStatus =
   | 'unverified'
@@ -1029,6 +1063,9 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
   const paneInput = paneSession.input
   const setPaneInput = paneSession.setInput
   const [newChatRuntime, setNewChatRuntime] = useState<'codex' | LocalHarnessId>('codex')
+  const [wegentTeams, setWegentTeams] = useState<Team[]>([])
+  const [selectedTeam, setSelectedTeam] = useState<Team | null>(null)
+  const [teamsLoading, setTeamsLoading] = useState(false)
   const [localHarnessModelKeys, setLocalHarnessModelKeys] = useState<
     Partial<Record<LocalHarnessId, string | null>>
   >({})
@@ -1061,6 +1098,32 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     message: string
   } | null>(null)
   const centralHarnessRequestIdRef = useRef(0)
+  useEffect(() => {
+    if (!experimentalFeaturesEnabled) return
+
+    let cancelled = false
+    void Promise.resolve().then(async () => {
+      if (cancelled) return
+      setTeamsLoading(true)
+      try {
+        const teams = await services.teamApi.listTeams()
+        if (!cancelled) setWegentTeams(teams.filter(team => team.is_active))
+      } catch (error) {
+        console.warn('[Wework] Failed to load Wegent Teams', error)
+        if (!cancelled) setWegentTeams([])
+      } finally {
+        if (!cancelled) setTeamsLoading(false)
+      }
+    })
+
+    return () => {
+      cancelled = true
+    }
+  }, [experimentalFeaturesEnabled, services.teamApi])
+  const selectWegentTeam = useCallback((team: Team | null) => {
+    setCentralHarnessError(null)
+    setSelectedTeam(team)
+  }, [])
   useEffect(() => {
     if (!experimentalFeaturesEnabled || !isLocalHarnessAvailable()) return
 
@@ -1197,6 +1260,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
         runtimeExecutablePath?: string
         runtimePermissionMode?: 'default' | 'acceptEdits' | 'plan' | 'auto' | 'bypassPermissions'
         modelSelection?: ModelSelectionConfig | null
+        wegentTeamId?: number
       }
     ) => {
       const sourcePaneKey = paneKeyRef.current
@@ -1213,6 +1277,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
         onRuntimeTaskCreated: address => {
           onRuntimeTaskCreated(sourcePaneKey, address)
           cloudSubmission.onRuntimeTaskCreated(address)
+          requestWorkbenchComposerFocus(getRuntimeTaskChatScopeKey(address))
         },
         onRuntimeTaskReady: () => {
           if (supervisorConfig) {
@@ -1250,6 +1315,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
         runtimeExecutablePath?: string
         runtimePermissionMode?: 'default' | 'acceptEdits' | 'plan' | 'auto' | 'bypassPermissions'
         modelSelection?: ModelSelectionConfig | null
+        wegentTeamId?: number
       }
     ) => {
       const submitted = (value ?? paneSession.input).trim()
@@ -1596,6 +1662,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
   const isDesktop = isDesktopRuntime()
   const workbenchMainRef = useRef<HTMLElement | null>(null)
   const workbenchScrollRef = useRef<HTMLDivElement | null>(null)
+  const conversationSurfaceRef = useRef<HTMLDivElement | null>(null)
   const [measuredWorkbenchContentWidth, setMeasuredWorkbenchContentWidth] = useState(0)
   const workbenchResizeObserverRef = useRef<ResizeObserver | null>(null)
   const setWorkbenchMainRef = useCallback((element: HTMLElement | null) => {
@@ -1969,6 +2036,8 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     experimentalFeaturesEnabled && newChatRuntime !== 'codex' && selectedHarnessInstalled
       ? newChatRuntime
       : 'codex'
+  const activeTeam =
+    experimentalFeaturesEnabled && activeNewChatRuntime === 'codex' ? selectedTeam : null
   const localPluginApi = useMemo(() => createLocalCodexPluginApi(), [])
   const resolveHarnessPluginRoots = useCallback(async () => {
     const [skillsResult, installedResult] = await Promise.allSettled([
@@ -2025,6 +2094,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
       setCentralHarnessStarting(false)
       setCentralHarnessError(null)
       setNewChatRuntime('codex')
+      setSelectedTeam(null)
     }
     window.addEventListener(WORKBENCH_NEW_CHAT_FOCUS_EVENT, resetCentralHarness)
     return () => {
@@ -2293,10 +2363,17 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
       runtimeExecutablePath?: string
       runtimePermissionMode?: 'default' | 'acceptEdits' | 'plan' | 'auto' | 'bypassPermissions'
       modelSelection?: ModelSelectionConfig | null
+      wegentTeamId?: number
     }
   ) => {
-    if (currentRuntimeTask || activeNewChatRuntime === 'codex') {
+    if (currentRuntimeTask) {
       return submitPaneInput(value, options)
+    }
+    if (activeNewChatRuntime === 'codex') {
+      return submitPaneInput(value, {
+        ...options,
+        ...(activeTeam ? { wegentTeamId: activeTeam.id } : {}),
+      })
     }
     if (activeNewChatRuntime === 'claude_code') {
       return submitPaneInput(value, {
@@ -3389,6 +3466,55 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     (selectedText: string) => openTemporaryChatTab(selectedText),
     [openTemporaryChatTab]
   )
+  const focusComposerFromConversationClick = useCallback(
+    (event: ReactMouseEvent<HTMLDivElement>) => {
+      if (
+        event.defaultPrevented ||
+        !paneActive ||
+        !paneVisible ||
+        !workbenchVisible ||
+        !(event.target instanceof Element) ||
+        event.target.closest(CONVERSATION_COMPOSER_FOCUS_EXCLUSION_SELECTOR)
+      ) {
+        return
+      }
+      const selection = window.getSelection()
+      if (selection && !selection.isCollapsed) return
+      const composer = event.currentTarget.querySelector<HTMLElement>(
+        '[data-testid="chat-message-input"][contenteditable="true"]'
+      )
+      if (!composer) return
+      requestWorkbenchComposerFocus(paneSession.scopeKey)
+    },
+    [paneActive, paneSession.scopeKey, paneVisible, workbenchVisible]
+  )
+  useEffect(() => {
+    if (!hasConversation || !paneActive || !paneVisible || !workbenchVisible) return
+
+    const focusComposerForPasteShortcut = (event: KeyboardEvent) => {
+      if (event.defaultPrevented || event.isComposing || !isConversationPasteShortcut(event)) {
+        return
+      }
+      const conversationSurface = conversationSurfaceRef.current
+      if (!conversationSurface) return
+      const activeElement = document.activeElement
+      if (isEditableShortcutTarget(activeElement)) return
+      if (
+        activeElement &&
+        activeElement !== document.body &&
+        activeElement !== document.documentElement &&
+        !conversationSurface.contains(activeElement)
+      ) {
+        return
+      }
+      conversationSurface
+        .querySelector<HTMLElement>('[data-testid="chat-message-input"][contenteditable="true"]')
+        ?.focus({ preventScroll: true })
+    }
+
+    window.addEventListener('keydown', focusComposerForPasteShortcut)
+    return () => window.removeEventListener('keydown', focusComposerForPasteShortcut)
+  }, [hasConversation, paneActive, paneVisible, workbenchVisible])
   const routeEmbeddedBrowserOpenRequest = useCallback(
     (request: EmbeddedBrowserOpenRequest) => {
       const states = browserStatesRef.current
@@ -4548,7 +4674,11 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
                   )}
                 </div>
               ) : hasConversation ? (
-                <div className="relative flex min-h-full min-w-0 shrink-0 flex-col">
+                <div
+                  ref={conversationSurfaceRef}
+                  className="relative flex min-h-full min-w-0 shrink-0 flex-col"
+                  onClick={focusComposerFromConversationClick}
+                >
                   <ScrollableMessageArea
                     messages={paneMessages}
                     loading={paneSession.transcriptLoading}
@@ -4709,6 +4839,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
                                         />
                                       )}
                                       <BufferedChatInput
+                                        autoFocus
                                         insertion={conversationSelectionInsertion}
                                         value={paneSession.input}
                                         onChange={paneSession.setInput}
@@ -4944,19 +5075,29 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
                           projectWorkBarMiddleContext={projectSpaceContext}
                           projectWorkBarTrailingContext={
                             experimentalFeaturesEnabled ? (
-                              <WorkbenchHarnessSelector
-                                runtime={activeNewChatRuntime}
-                                harnesses={localHarnesses}
-                                enabledHarnesses={enabledLocalHarnesses.map(
-                                  preference => preference.id
+                              <div className="flex items-center gap-1">
+                                {activeNewChatRuntime === 'codex' && (
+                                  <WorkbenchTeamSelector
+                                    teams={wegentTeams}
+                                    selectedTeamId={activeTeam?.id ?? null}
+                                    loading={teamsLoading}
+                                    onTeamChange={selectWegentTeam}
+                                  />
                                 )}
-                                loading={localHarnessesLoading}
-                                detectionFailed={localHarnessDetectionFailed}
-                                onRuntimeChange={runtime => {
-                                  setCentralHarnessError(null)
-                                  setNewChatRuntime(runtime)
-                                }}
-                              />
+                                <WorkbenchHarnessSelector
+                                  runtime={activeNewChatRuntime}
+                                  harnesses={localHarnesses}
+                                  enabledHarnesses={enabledLocalHarnesses.map(
+                                    preference => preference.id
+                                  )}
+                                  loading={localHarnessesLoading}
+                                  detectionFailed={localHarnessDetectionFailed}
+                                  onRuntimeChange={runtime => {
+                                    setCentralHarnessError(null)
+                                    setNewChatRuntime(runtime)
+                                  }}
+                                />
+                              </div>
                             ) : undefined
                           }
                           modelSelectorOverride={

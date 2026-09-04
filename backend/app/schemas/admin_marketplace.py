@@ -4,6 +4,7 @@
 
 """Schemas for administrator marketplace curation."""
 
+from datetime import datetime
 from typing import Literal
 
 from pydantic import BaseModel, Field
@@ -46,6 +47,39 @@ class AdminMarketplaceResourceUpdate(BaseModel):
         default=None,
         max_length=10,
     )
+
+
+class AdminMarketplacePlugin(BaseModel):
+    """One official or enterprise plugin available for marketplace curation."""
+
+    id: int
+    catalog_namespace: Literal["wework-official", "enterprise"]
+    name: str
+    display_name: str
+    description: str = ""
+    version: str | None = None
+    author: str | None = None
+    featured_rank: int = Field(ge=0, le=100)
+    is_listed: bool
+    created_at: datetime
+    updated_at: datetime
+
+
+class AdminMarketplacePluginList(BaseModel):
+    """Paginated official and enterprise plugin marketplace response."""
+
+    items: list[AdminMarketplacePlugin]
+    total: int
+    page: int
+    limit: int
+
+
+class AdminMarketplacePluginUpdate(BaseModel):
+    """Editable plugin marketplace presentation and listing fields."""
+
+    description: str | None = Field(default=None, max_length=500)
+    featured_rank: int | None = Field(default=None, ge=0, le=100)
+    is_listed: bool | None = None
 
 
 class AdminMarketplaceSmartApp(BaseModel):

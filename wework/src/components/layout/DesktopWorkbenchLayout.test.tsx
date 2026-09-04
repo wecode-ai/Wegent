@@ -1634,6 +1634,97 @@ describe('DesktopWorkbenchLayout', () => {
     expect(screen.queryByTestId('desktop-workbench-content')).not.toBeInTheDocument()
   })
 
+  test('keeps a retained board bound to its own workspace tab route', async () => {
+    deliveryApiMock.available = true
+    const project = {
+      id: 'project-1',
+      public_id: 'public-project-1',
+      project_key: 'PROJECT-1',
+      name: 'Retained Project',
+      description: '',
+      project_store: 'backend',
+      task_provider: 'local',
+      provider_config: {},
+      created_by_user_id: 1,
+      status: 'active',
+      tags: [],
+      version: 1,
+      created_at: '2026-08-09T00:00:00Z',
+      updated_at: '2026-08-09T00:00:00Z',
+    }
+    deliveryApiMock.listCloudProjects.mockResolvedValue({ items: [project] })
+    const boardTab = {
+      id: 'board-project-1',
+      kind: 'board' as const,
+      title: project.name,
+      contentRoute: '/todo?projectStore=backend&projectId=project-1',
+      fixed: false,
+    }
+    const taskTab = {
+      id: 'fixed-task',
+      kind: 'task' as const,
+      title: '任务',
+      contentRoute: '/',
+      fixed: true,
+    }
+    const actions = {
+      openTab: vi.fn(),
+      selectTab: vi.fn(),
+      closeTab: vi.fn(),
+      closeOtherTabs: vi.fn(),
+      restoreClosedTab: vi.fn(),
+      moveTab: vi.fn(),
+      updateActiveTab: vi.fn(),
+    }
+    const workspaceTabs = (activeTab: typeof boardTab | typeof taskTab) => ({
+      tabs: [taskTab, boardTab],
+      activeTabId: activeTab.id,
+      activeTab,
+      ...actions,
+    })
+    const props = {
+      ...baseProps,
+      workspaceTabId: boardTab.id,
+      surfaceKind: 'board' as const,
+      state: {
+        ...baseProps.state,
+        user: {
+          id: 1,
+          user_name: 'local',
+          email: 'local@example.com',
+        },
+      },
+    }
+    const view = render(
+      <WorkspaceTabsContext.Provider value={workspaceTabs(boardTab)}>
+        <DesktopWorkbenchLayout {...props} />
+      </WorkspaceTabsContext.Provider>
+    )
+
+    expect(await screen.findByTestId('cloud-project-header')).toHaveTextContent(project.name)
+    await userEvent.click(screen.getByTestId('cloud-project-automation-view'))
+    expect(screen.getByTestId('cloud-project-automation-view')).toHaveClass('bg-background')
+
+    view.rerender(
+      <WorkspaceTabsContext.Provider value={workspaceTabs(taskTab)}>
+        <DesktopWorkbenchLayout {...props} routeActive={false} />
+      </WorkspaceTabsContext.Provider>
+    )
+
+    expect(screen.getByTestId('cloud-project-header')).toHaveTextContent(project.name)
+    expect(screen.getByTestId('cloud-project-automation-view')).toHaveClass('bg-background')
+    expect(actions.updateActiveTab).not.toHaveBeenCalled()
+
+    view.rerender(
+      <WorkspaceTabsContext.Provider value={workspaceTabs(boardTab)}>
+        <DesktopWorkbenchLayout {...props} />
+      </WorkspaceTabsContext.Provider>
+    )
+
+    expect(screen.getByTestId('cloud-project-header')).toHaveTextContent(project.name)
+    expect(screen.getByTestId('cloud-project-automation-view')).toHaveClass('bg-background')
+  })
+
   test('returns to the workspace after opening settings from its account menu', async () => {
     deliveryApiMock.available = true
     window.history.pushState({}, '', '/todo')
@@ -2250,6 +2341,151 @@ describe('DesktopWorkbenchLayout', () => {
     )
     expect(screen.getByTestId('desktop-floating-composer-card')).toHaveClass('pointer-events-auto')
     expect(screen.queryByTestId('project-work-button')).not.toBeInTheDocument()
+  })
+
+  function renderFocusableConversation() {
+    const onlineDevice = {
+      id: 1,
+      device_id: 'device-1',
+      name: 'Runtime Device',
+      status: 'online' as const,
+      is_default: true,
+      device_type: 'cloud' as const,
+      bind_shell: 'claudecode',
+      executor_version: '1.8.5',
+    }
+    render(
+      <DesktopWorkbenchLayout
+        {...baseProps}
+        state={{
+          ...baseProps.state,
+          devices: [onlineDevice],
+          standaloneDeviceId: 'device-1',
+        }}
+        projectWork={{
+          ...baseProps.projectWork,
+          devices: [onlineDevice],
+          currentStandaloneDeviceId: 'device-1',
+        }}
+        projectChat={{
+          ...baseProps.projectChat,
+          scopeKey: 'standalone:device-1',
+        }}
+        messages={[
+          {
+            id: 'message-1',
+            role: 'assistant',
+            content: 'Selectable response',
+            status: 'done',
+            createdAt: '2026-05-29T00:00:00.000Z',
+          },
+        ]}
+      />
+    )
+    return {
+      composer: screen.getByTestId('chat-message-input'),
+      hoverRegion: screen.getByTestId('message-hover-region'),
+      messageText: screen.getByText('Selectable response'),
+    }
+  }
+
+  async function waitForComposerFocusRequest() {
+    await act(
+      () =>
+        new Promise<void>(resolvePromise => {
+          window.requestAnimationFrame(() => resolvePromise())
+        })
+    )
+  }
+
+  test('focuses a restored conversation when its composer mounts', async () => {
+    const { composer } = renderFocusableConversation()
+
+    await waitFor(() => expect(composer).toHaveFocus())
+  })
+
+  test('refocuses a restored conversation when the app window becomes active', async () => {
+    const { composer } = renderFocusableConversation()
+
+    await waitFor(() => expect(composer).toHaveFocus())
+    composer.blur()
+    window.dispatchEvent(new Event('blur'))
+    window.dispatchEvent(new Event('focus'))
+
+    await waitFor(() => expect(composer).toHaveFocus())
+  })
+
+  test('focuses the composer from a non-interactive conversation click', async () => {
+    const { composer } = renderFocusableConversation()
+
+    composer.blur()
+    fireEvent.click(screen.getByTestId('desktop-chat-scroll-content'))
+
+    await waitFor(() => expect(composer).toHaveFocus())
+  })
+
+  test('does not focus the composer from a conversation action click', async () => {
+    const { composer, hoverRegion } = renderFocusableConversation()
+
+    composer.blur()
+    fireEvent.pointerEnter(hoverRegion)
+    const copyButton = await screen.findByTestId('copy-message-button')
+    await userEvent.click(copyButton)
+    await waitForComposerFocusRequest()
+
+    expect(composer).not.toHaveFocus()
+  })
+
+  test('focuses the composer before pasting after a message copy action', async () => {
+    const { composer, hoverRegion } = renderFocusableConversation()
+
+    composer.blur()
+    fireEvent.pointerEnter(hoverRegion)
+    const copyButton = await screen.findByTestId('copy-message-button')
+    await userEvent.click(copyButton)
+    expect(composer).not.toHaveFocus()
+
+    fireEvent.keyDown(document.body, { key: 'v', metaKey: true })
+
+    expect(composer).toHaveFocus()
+    fireEvent.paste(composer, {
+      clipboardData: {
+        files: [],
+        getData: (type: string) => (type === 'text/plain' ? 'Selectable response' : ''),
+        types: ['text/plain'],
+      },
+    })
+    expect(composer).toHaveValue('Selectable response')
+  })
+
+  test('keeps paste shortcuts in an explicitly focused editor', () => {
+    const { composer } = renderFocusableConversation()
+    const editor = document.createElement('textarea')
+    document.body.append(editor)
+    editor.focus()
+
+    fireEvent.keyDown(editor, { key: 'v', metaKey: true })
+
+    expect(editor).toHaveFocus()
+    expect(composer).not.toHaveFocus()
+    editor.remove()
+  })
+
+  test('does not focus the composer while conversation text is selected', async () => {
+    const { composer, messageText } = renderFocusableConversation()
+
+    composer.blur()
+    const selection = window.getSelection()
+    const range = document.createRange()
+    range.selectNodeContents(messageText)
+    selection?.removeAllRanges()
+    selection?.addRange(range)
+    fireEvent.click(messageText)
+    await waitForComposerFocusRequest()
+
+    expect(composer).not.toHaveFocus()
+    expect(selection?.toString()).toBe('Selectable response')
+    selection?.removeAllRanges()
   })
 
   test('renders subagent status below the top bar without shifting messages', () => {
@@ -4712,6 +4948,7 @@ describe('DesktopWorkbenchLayout', () => {
     await userEvent.click(screen.getByTestId('project-create-remote-option'))
 
     const select = screen.getByTestId('standalone-remote-device-select')
+    expect(select).toHaveClass('wework-native-select')
     expect(select).toHaveTextContent('云设备')
     expect(select).toHaveTextContent('远程 Docker 设备')
     expect(select).toHaveTextContent('Cloud Device')

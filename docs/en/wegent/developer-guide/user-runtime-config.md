@@ -24,7 +24,7 @@ Each runtime uses one user-owned Kind resource:
     "runtime": "codex",
     "auth": {
       "format": "json",
-      "targetPath": "~/.codex/auth.json",
+      "targetPath": "auth.json",
       "encryptedValue": "...",
       "sha256": "...",
       "updatedAt": "..."
@@ -56,6 +56,8 @@ The personal proxy configuration uses an independent user-owned Kind resource so
 ```
 
 Resources follow the normal Kind lookup rule: `user_id + namespace + name`. For `UserRuntimeConfig`, `name` is the runtime identifier, for example `codex`; future Claude support can add a `claude` resource. For `UserProxyConfig`, `name` is fixed to `default`, representing the current user's default personal proxy.
+
+`targetPath` is a logical filename relative to the device Codex Home, not a fixed path under the user's home directory. Codex Home uses `WEGENT_CODEX_HOME` when set, otherwise `$WEGENT_EXECUTOR_HOME/codex`, and falls back to `~/.wegent-executor/codex` when no executor home is configured.
 
 Whether personal configuration is enabled and whether a runtime uses the personal proxy are not stored in Kind resources. They are user preferences stored in `users.preferences`:
 
@@ -89,13 +91,13 @@ executor injects the proxy URL into the Codex SDK environment as `HTTP_PROXY`, `
 
 ## Heartbeat Sync
 
-After the user enables personal configuration, executor heartbeat reports whether the local Codex auth file exists. When Backend sees an online device missing `~/.codex/auth.json`, and the user's preferences enable Codex personal configuration with saved auth content, Backend syncs the auth file to that device in the background.
+After the user enables personal configuration, executor heartbeat reports whether `auth.json` exists in its Codex Home. When Backend sees an online device missing that file, and the user's preferences enable Codex personal configuration with saved auth content, Backend schedules the sync asynchronously.
 
-The sync path reuses Local Device Command RPC: Backend calls the whitelisted `sync_runtime_auth_file` command and passes auth content through environment variables so the command line logs do not contain auth data. Session startup only injects the personal-configuration state; it no longer decrypts or sends the auth file.
+Heartbeat only reports status; it does not read or write the file. The sync path uses a separate Local Device Command RPC: Backend calls the whitelisted `sync_runtime_auth_file` command and passes auth content through environment variables so the command line logs do not contain auth data. Session startup only injects the personal-configuration state; it no longer decrypts or sends the auth file.
 
 Device write rules:
 
-- The target path must stay inside the current user's home directory.
+- The target is fixed to `auth.json` under the Codex Home resolved by executor; requests cannot select another path.
 - If the target file already exists, the command returns `skipped_existing` and does not overwrite it.
 - If the target file does not exist, the command creates the parent directory and writes the file with `0600` permissions.
 

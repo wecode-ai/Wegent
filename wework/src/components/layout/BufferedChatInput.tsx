@@ -6,6 +6,7 @@ import {
   type ChatSubmitOptions,
 } from '@/components/chat/ChatInput'
 import { recordComposerDiagnostic } from '@/components/chat/composer/composerDiagnostics'
+import { subscribeMainWindowFocus } from '@/desktop/windowFocus'
 import {
   consumeWorkbenchComposerFocusRequest,
   hasWorkbenchComposerFocusRequest,
@@ -19,6 +20,7 @@ export interface BufferedChatInputInsertion {
 }
 
 interface BufferedChatInputProps extends ChatInputProps {
+  autoFocus?: boolean
   insertion?: BufferedChatInputInsertion | null
   onDraftEdit?: () => void
 }
@@ -29,6 +31,7 @@ export const BufferedChatInput = memo(function BufferedChatInput({
   value,
   onChange,
   onSubmit,
+  autoFocus,
   insertion,
   onDraftEdit,
   onCompositionStart: onParentCompositionStart,
@@ -61,17 +64,18 @@ export const BufferedChatInput = memo(function BufferedChatInput({
   const scopeKeyRef = useRef(scopeKey)
   scopeKeyRef.current = scopeKey
 
+  const focusComposer = useCallback(() => {
+    const composer = composerRef.current
+    if (!composer) return false
+    const element = composer.element
+    const pane = element?.closest<HTMLElement>('[data-active-workbench-pane]')
+    if (pane?.dataset.activeWorkbenchPane !== 'true') return false
+    if (element?.closest('[hidden], [aria-hidden="true"]')) return false
+    composer.focus()
+    return true
+  }, [])
+
   useLayoutEffect(() => {
-    const focusComposer = () => {
-      const composer = composerRef.current
-      if (!composer) return false
-      const element = composer.element
-      const pane = element?.closest<HTMLElement>('[data-active-workbench-pane]')
-      if (pane?.dataset.activeWorkbenchPane !== 'true') return false
-      if (element?.closest('[hidden], [aria-hidden="true"]')) return false
-      composer.focus()
-      return true
-    }
     const focusRequestedComposer = (event: Event) => {
       const detail = (event as CustomEvent<WorkbenchComposerFocusDetail>).detail
       if (props.disabled || !scopeKey || detail?.scopeKey !== scopeKey) return
@@ -91,7 +95,28 @@ export const BufferedChatInput = memo(function BufferedChatInput({
     return () => {
       window.removeEventListener(WORKBENCH_COMPOSER_FOCUS_EVENT, focusRequestedComposer)
     }
-  }, [props.disabled, scopeKey])
+  }, [focusComposer, props.disabled, scopeKey])
+
+  useEffect(() => {
+    if (!autoFocus || props.disabled) return
+    focusComposer()
+    return subscribeMainWindowFocus(focused => {
+      if (!focused) return
+      const activeElement = document.activeElement
+      const composerElement = composerRef.current?.element
+      if (
+        activeElement &&
+        activeElement !== document.body &&
+        activeElement !== document.documentElement &&
+        activeElement !== composerElement
+      ) {
+        return
+      }
+      window.requestAnimationFrame(() => {
+        focusComposer()
+      })
+    })
+  }, [autoFocus, focusComposer, props.disabled, scopeKey])
 
   const setComposerValue = useCallback((nextValue: string, cursor: number) => {
     programmaticUpdateDepthRef.current += 1

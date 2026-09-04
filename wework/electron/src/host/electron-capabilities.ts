@@ -142,6 +142,7 @@ export interface ElectronE2EHost {
   }) => Promise<void>
   dismissPopout: () => void
   dismissSystemDragPanel: () => void
+  focusMainWindow: () => void | Promise<void>
   focusWindow: (windowLabel: string) => void
   hideMainWindow: () => Promise<void>
   dockVisible: () => boolean
@@ -199,6 +200,7 @@ export function createElectronCapabilityRouter(
     completeSystemDragDrop: () => Promise.reject(new Error('System drag is unavailable')),
     dismissPopout: () => undefined,
     dismissSystemDragPanel: () => undefined,
+    focusMainWindow: () => undefined,
     focusWindow: () => undefined,
     hideMainWindow: () => Promise.reject(new Error('Main window backgrounding is unavailable')),
     dockVisible: () => true,
@@ -488,7 +490,8 @@ export function createElectronCapabilityRouter(
   router.register('e2e.activateRuntimeTaskNotification', params => {
     desktopServices.openRuntimeTask(stringParam(params, 'taskAddressId'))
   })
-  router.register('e2e.focusMainWindow', () => {
+  router.register('e2e.focusMainWindow', async () => {
+    await e2eHost.focusMainWindow()
     const target = requiredWindow(window)
     if (target.isMinimized()) target.restore()
     target.show()

@@ -40,7 +40,8 @@ export interface DeviceInfo {
   device_id: string
   name: string
   status: DeviceStatus
-  device_type?: string | null
+  device_type: 'local' | 'app' | 'cloud' | 'remote'
+  bind_shell: 'claudecode' | 'openclaw'
   capabilities?: string[] | null
 }
 
@@ -58,14 +59,20 @@ export interface RuntimeTaskAddress {
 
 export interface RuntimeTaskSummary {
   taskId: string
+  threadId?: string | null
   title: string
   runtime: string
   workspacePath: string
   workspaceKind?: string | null
+  worktreeId?: string | null
+  gitInfo?: Record<string, unknown> | null
   updatedAt?: string | number | null
   createdAt?: string | number | null
   running?: boolean
   status?: string | null
+  pinned?: boolean
+  pinnedOrder?: number | null
+  sidebarOrder?: number | null
 }
 
 export interface RuntimeDeviceWorkspace {
@@ -77,7 +84,11 @@ export interface RuntimeDeviceWorkspace {
   available: boolean
   workspacePath: string
   workspaceKind?: string | null
+  worktreeId?: string | null
   label?: string | null
+  workspaceSource?: string | null
+  remoteHostId?: string | null
+  mapped?: boolean
   tasks: RuntimeTaskSummary[]
 }
 
@@ -85,11 +96,13 @@ export interface RuntimeProjectRef {
   id?: number
   key: string
   name: string
+  stateDeviceId?: string | null
 }
 
 export interface RuntimeProjectWork {
   project: RuntimeProjectRef
   deviceWorkspaces: RuntimeDeviceWorkspace[]
+  totalTasks?: number
 }
 
 export interface RuntimeWorkListResponse {
@@ -314,7 +327,12 @@ export interface ChatNarrativeBlock extends ChatProcessingBlockBase {
   content: string
 }
 
-export type ChatProcessingBlock = ChatToolBlock | ChatNarrativeBlock
+export interface ChatFileChangesBlock extends ChatProcessingBlockBase {
+  type: 'file_changes'
+  fileChanges: ChatFileChangesSummary
+}
+
+export type ChatProcessingBlock = ChatToolBlock | ChatNarrativeBlock | ChatFileChangesBlock
 
 export interface ChatFileChangeItem {
   path: string
@@ -364,6 +382,8 @@ export interface RuntimeChatBlock {
   toolOutput?: unknown
   render_payload?: unknown
   renderPayload?: unknown
+  file_changes?: RuntimeFileChangesSummary
+  fileChanges?: RuntimeFileChangesSummary
   status?: string
   timestamp?: string | number | null
   created_at?: string | number | null
