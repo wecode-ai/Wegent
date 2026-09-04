@@ -254,6 +254,21 @@ export class ComponentUpdateManager {
     for (const id of MANAGED_COMPONENT_IDS) {
       const component = remote.components[id]
       const effectiveComponent = effective?.[id]
+      const expectedCurrentContentSha256 =
+        effectiveComponent?.contentSha256 ?? packaged.components[id].sha256
+      if (
+        appVersion === this.currentAppVersion &&
+        component.contentSha256 === expectedCurrentContentSha256
+      ) {
+        stagedComponents[id] =
+          effectiveComponent ??
+          (await this.packagedComponentDescriptor(
+            packaged.components[id].version,
+            reusablePaths[id],
+            packaged.components[id].sha256
+          ))
+        continue
+      }
       const reusableContentSha256 = await hashComponentPath(reusablePaths[id])
       if (component.contentSha256 === reusableContentSha256) {
         const reusable =

@@ -85,6 +85,24 @@ describe('ComponentUpdateManager', () => {
     ).resolves.toBe('stable static')
   })
 
+  test('does not redownload unchanged packaged components after post-package processing', async () => {
+    const fixture = await createFixture()
+    const update = await createCorePluginUpdate(fixture.root, 'updated plugin code')
+    await writeFile(join(fixture.resources, 'bin', 'wegent-executor'), 'stripped executor')
+    const requests: string[] = []
+    const manager = createManager(
+      fixture,
+      componentFetch(update.manifest, update.assetName, update.archive, requests)
+    )
+
+    expect(await manager.stageAvailableUpdate()).toBe(true)
+
+    expect(requests).toEqual([
+      `${updateBaseUrl}/components-beta-macos-arm64.json`,
+      `${updateBaseUrl}/${update.assetName}`,
+    ])
+  })
+
   test('stages a future app component set and reuses unchanged local components', async () => {
     const fixture = await createFixture()
     const targetVersion = '1.2.3-beta.5'

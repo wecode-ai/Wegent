@@ -102,6 +102,7 @@ describe('core DSH runtime', () => {
     expect(first.args).toContain('3080')
     expect(first.environment).toMatchObject({
       DSH_HOME: join(dataDirectory, 'dsh-core'),
+      WEWORK_APP_WEB_ROOT: join(runtime.pluginRoots['@wegent/dsh-app-wework'], 'web'),
       WEWORK_HARNESS_API_KEY: 'wework-local-router',
     })
     expect(second.args).toContain('3081')
