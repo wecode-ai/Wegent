@@ -21,6 +21,9 @@ chat_config_module = ModuleType("app.services.chat.config")
 chat_config_module.get_team_first_bot_shell_type = Mock()
 sys.modules.setdefault("app.services.chat.config", chat_config_module)
 
+import app.stores.tasks as task_stores  # noqa: E402
+from app.api.ws import chat_namespace  # noqa: E402
+from app.api.ws.chat_namespace import _resolve_existing_task_team  # noqa: E402
 from app.api.ws.chat_namespace import _resolve_task_bound_team  # noqa: E402
 
 
@@ -143,3 +146,80 @@ def test_missing_bound_team_raises() -> None:
 
     with pytest.raises(ValueError, match="no longer exists"):
         _resolve_task_bound_team(db, task, client_team)
+
+
+def test_no_task_id_keeps_team_and_returns_no_task() -> None:
+    team = SimpleNamespace(id=267213, name="creator-php-workflow")
+
+    task, result = _resolve_existing_task_team(Mock(), None, team)
+
+    assert task is None
+    assert result is team
+
+
+def test_missing_task_keeps_client_team(monkeypatch: MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        task_stores.task_store,
+        "get_regular_active_task",
+        Mock(return_value=None),
+    )
+    team = SimpleNamespace(id=273960, name="qbird-direct-log")
+
+    task, result = _resolve_existing_task_team(Mock(), 42, team)
+
+    assert task is None
+    assert result is team
+
+
+def test_same_bound_team_keeps_client_team(monkeypatch: MonkeyPatch) -> None:
+    existing_task = _task(
+        {
+            "name": "creator-php-workflow",
+            "namespace": "default",
+            "user_id": 2838,
+        }
+    )
+    bound_team = SimpleNamespace(id=267213, name="creator-php-workflow")
+    monkeypatch.setattr(
+        task_stores.task_store,
+        "get_regular_active_task",
+        Mock(return_value=existing_task),
+    )
+    monkeypatch.setattr(
+        chat_namespace,
+        "_resolve_task_bound_team",
+        Mock(return_value=bound_team),
+    )
+    team = SimpleNamespace(id=267213, name="creator-php-workflow")
+
+    task, result = _resolve_existing_task_team(Mock(), existing_task.id, team)
+
+    assert task is existing_task
+    assert result is team
+
+
+def test_different_bound_team_rebinds(monkeypatch: MonkeyPatch) -> None:
+    existing_task = _task(
+        {
+            "name": "creator-php-workflow",
+            "namespace": "default",
+            "user_id": 2838,
+        }
+    )
+    bound_team = SimpleNamespace(id=267213, name="creator-php-workflow")
+    monkeypatch.setattr(
+        task_stores.task_store,
+        "get_regular_active_task",
+        Mock(return_value=existing_task),
+    )
+    monkeypatch.setattr(
+        chat_namespace,
+        "_resolve_task_bound_team",
+        Mock(return_value=bound_team),
+    )
+    team = SimpleNamespace(id=273960, name="qbird-direct-log")
+
+    task, result = _resolve_existing_task_team(Mock(), existing_task.id, team)
+
+    assert task is existing_task
+    assert result is bound_team

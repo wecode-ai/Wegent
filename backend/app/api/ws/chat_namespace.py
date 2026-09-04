@@ -249,6 +249,40 @@ def _resolve_task_bound_team(
     return bound_team
 
 
+def _resolve_existing_task_team(
+    db: Session,
+    task_id: Optional[int],
+    team: Kind,
+) -> tuple[Optional[TaskResource], Kind]:
+    """Resolve the team for a follow-up that continues an existing task.
+
+    chat:send used to trust the client-selected ``team_id`` even when the
+    message continued an existing task, so a stale agent selection could run a
+    single turn on a bot outside the task's team. Keep follow-ups on the task's
+    bound team (same rule as the REST append path). The returned task is reused
+    later for group-chat handling.
+    """
+    if not task_id:
+        return None, team
+    existing_task = task_stores.task_store.get_regular_active_task(
+        db,
+        task_id=task_id,
+    )
+    if not existing_task:
+        return existing_task, team
+    bound_team = _resolve_task_bound_team(db, existing_task, team)
+    if bound_team.id == team.id:
+        return existing_task, team
+    logger.warning(
+        "[WS] chat:send re-binding task %s to its agent team %s "
+        "(client sent team_id=%s)",
+        task_id,
+        bound_team.id,
+        team.id,
+    )
+    return existing_task, bound_team
+
+
 class ChatNamespace(socketio.AsyncNamespace):
     """
     Socket.IO namespace for chat functionality.
@@ -782,27 +816,9 @@ class ChatNamespace(socketio.AsyncNamespace):
                 return {"error": "Team not found"}
             logger.info(f"[WS] chat:send team found: {team.name} (id={team.id})")
 
-            # An existing task owns its agent. Follow-up messages must stay on
-            # the task's bound team (same rule as the REST append path), so a
-            # stale client-side agent selection cannot move a turn onto a bot
-            # outside the task's team.
-            existing_task = None
-            if payload.task_id:
-                existing_task = task_stores.task_store.get_regular_active_task(
-                    db,
-                    task_id=payload.task_id,
-                )
-                if existing_task:
-                    bound_team = _resolve_task_bound_team(db, existing_task, team)
-                    if bound_team.id != team.id:
-                        logger.warning(
-                            "[WS] chat:send re-binding task %s to its agent team %s "
-                            "(client sent team_id=%s)",
-                            payload.task_id,
-                            bound_team.id,
-                            team.id,
-                        )
-                        team = bound_team
+            # An existing task owns its agent: keep the follow-up on the task's
+            # bound team and expose the task for later group-chat handling.
+            existing_task, team = _resolve_existing_task_team(db, payload.task_id, team)
 
             # Handle pipeline mode
             team_crd = Team.model_validate(team.json)
