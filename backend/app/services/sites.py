@@ -5,13 +5,19 @@
 """Gateway for the external Sites project API."""
 
 from typing import Any
+from urllib.parse import quote
 from uuid import uuid4
 
 import httpx
+from pydantic import ValidationError
 
 from app.core.config import settings
 from app.schemas.site import (
+    EnvironmentRevision,
+    EnvironmentSnapshot,
     SiteAppType,
+    SiteCollaborator,
+    SiteCollaboratorListResponse,
     SiteListItem,
     SiteListResponse,
     SiteNetwork,
@@ -138,6 +144,7 @@ class SitesService:
             "POST",
             "/api/v1/projects/del",
             json={"username": username, "project_id": siteid},
+            headers={"X-Wegent-Username": username},
         )
 
     async def update_site_network(
@@ -155,6 +162,7 @@ class SitesService:
                 "project_id": siteid,
                 "network": network,
             },
+            headers={"X-Wegent-Username": username},
         )
         return self._parse_site_project(payload, username=username)
 
@@ -173,6 +181,7 @@ class SitesService:
                 "project_id": siteid,
                 "sitename": sitename,
             },
+            headers={"X-Wegent-Username": username},
         )
         return self._parse_site_project(payload, username=username)
 
@@ -200,6 +209,156 @@ class SitesService:
             },
         )
         return self._parse_site_project(payload, username=username)
+
+    async def get_environment_variables(
+        self,
+        siteid: str,
+        *,
+        username: str,
+    ) -> EnvironmentSnapshot:
+        """Return the latest Project environment snapshot for management UI use."""
+        payload = await self._request(
+            "GET",
+            f"/api/v1/projects/{quote(siteid, safe='')}/environment-variables",
+            headers={"X-Wegent-Username": username},
+        )
+        return self._parse_environment_snapshot(payload)
+
+    async def list_collaborators(
+        self, siteid: str, *, username: str
+    ) -> SiteCollaboratorListResponse:
+        payload = await self._request(
+            "GET",
+            f"/api/v1/projects/{quote(siteid, safe='')}/collaborators",
+            headers={"X-Wegent-Username": username},
+        )
+        try:
+            return SiteCollaboratorListResponse.model_validate(payload)
+        except ValidationError as exc:
+            raise SitesUpstreamUnavailableError(
+                "Sites service returned an invalid collaborator list"
+            ) from exc
+
+    async def add_collaborator(
+        self,
+        siteid: str,
+        *,
+        username: str,
+        subject: str,
+        idempotency_key: str,
+        request_id: str,
+    ) -> SiteCollaborator:
+        payload = await self._request(
+            "POST",
+            f"/api/v1/projects/{quote(siteid, safe='')}/collaborators",
+            json={"subject": subject},
+            headers={
+                "X-Wegent-Username": username,
+                "Idempotency-Key": idempotency_key,
+                "X-Request-ID": request_id,
+            },
+        )
+        try:
+            return SiteCollaborator.model_validate(payload)
+        except ValidationError as exc:
+            raise SitesUpstreamUnavailableError(
+                "Sites service returned an invalid collaborator"
+            ) from exc
+
+    async def remove_collaborator(
+        self, siteid: str, subject: str, *, username: str, request_id: str
+    ) -> None:
+        await self._request(
+            "DELETE",
+            (
+                f"/api/v1/projects/{quote(siteid, safe='')}/collaborators/"
+                f"{quote(subject, safe='')}"
+            ),
+            headers={
+                "X-Wegent-Username": username,
+                "X-Request-ID": request_id,
+            },
+        )
+
+    async def patch_environment_variables(
+        self,
+        siteid: str,
+        *,
+        username: str,
+        body: dict[str, Any],
+        idempotency_key: str,
+        request_id: str,
+    ) -> EnvironmentRevision:
+        """Atomically update one Project environment configuration."""
+        payload = await self._request(
+            "PATCH",
+            f"/api/v1/projects/{quote(siteid, safe='')}/environment-variables",
+            json=body,
+            headers=self._environment_write_headers(
+                username, idempotency_key, request_id
+            ),
+        )
+        return self._parse_environment_revision(payload)
+
+    async def put_environment_variable(
+        self,
+        siteid: str,
+        key: str,
+        *,
+        username: str,
+        body: dict[str, Any],
+        idempotency_key: str,
+        request_id: str,
+    ) -> EnvironmentRevision:
+        """Create or replace one Project environment variable."""
+        payload = await self._request(
+            "PUT",
+            (
+                f"/api/v1/projects/{quote(siteid, safe='')}/"
+                f"environment-variables/{quote(key, safe='')}"
+            ),
+            json=body,
+            headers=self._environment_write_headers(
+                username, idempotency_key, request_id
+            ),
+        )
+        return self._parse_environment_revision(payload)
+
+    async def delete_environment_variable(
+        self,
+        siteid: str,
+        key: str,
+        *,
+        username: str,
+        body: dict[str, Any],
+        idempotency_key: str,
+        request_id: str,
+    ) -> EnvironmentRevision:
+        """Delete one Project environment variable."""
+        payload = await self._request(
+            "DELETE",
+            (
+                f"/api/v1/projects/{quote(siteid, safe='')}/"
+                f"environment-variables/{quote(key, safe='')}"
+            ),
+            json=body,
+            headers=self._environment_write_headers(
+                username, idempotency_key, request_id
+            ),
+        )
+        return self._parse_environment_revision(payload)
+
+    @staticmethod
+    def _environment_write_headers(
+        username: str,
+        idempotency_key: str,
+        request_id: str,
+    ) -> dict[str, str]:
+        return {
+            "X-Wegent-Username": username,
+            "Idempotency-Key": idempotency_key,
+            "X-Request-ID": request_id,
+        }
 
     async def _list_platform_sites(
         self,
@@ -231,7 +390,10 @@ class SitesService:
                 seen_cursors.add(cursor)
                 params["cursor"] = cursor
             payload = await self._request(
-                "GET", "/api/v1/projects/search", params=params
+                "GET",
+                "/api/v1/projects/search",
+                params=params,
+                headers={"X-Wegent-Username": username},
             )
             page_items = payload.get("items", []) if isinstance(payload, dict) else []
             if not isinstance(page_items, list):
@@ -297,6 +459,24 @@ class SitesService:
         except InvalidApplicationProjectError as exc:
             raise SitesUpstreamUnavailableError(
                 "Sites service returned an invalid site"
+            ) from exc
+
+    @staticmethod
+    def _parse_environment_snapshot(payload: Any) -> EnvironmentSnapshot:
+        try:
+            return EnvironmentSnapshot.model_validate(payload)
+        except ValidationError as exc:
+            raise SitesUpstreamUnavailableError(
+                "Sites service returned an invalid environment snapshot"
+            ) from exc
+
+    @staticmethod
+    def _parse_environment_revision(payload: Any) -> EnvironmentRevision:
+        try:
+            return EnvironmentRevision.model_validate(payload)
+        except ValidationError as exc:
+            raise SitesUpstreamUnavailableError(
+                "Sites service returned an invalid environment revision"
             ) from exc
 
 

@@ -53,6 +53,7 @@ describe('AppUpdateService', () => {
     expect(updater.setFeedURL).toHaveBeenCalledWith({
       provider: 'generic',
       url: 'https://example.com/wework-updater',
+      useMultipleRangeRequest: false,
     })
   })
 

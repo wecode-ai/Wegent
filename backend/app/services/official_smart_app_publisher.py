@@ -10,7 +10,8 @@ import json
 import os
 import zipfile
 from dataclasses import dataclass
-from pathlib import Path
+from io import BytesIO
+from pathlib import Path, PurePosixPath
 from typing import Any
 
 from sqlalchemy.orm import Session
@@ -30,9 +31,10 @@ class OfficialSmartAppPackage:
     version: str
     sha256: str
     metadata: dict[str, Any]
-    icon: bytes
-    icon_content_type: str
+    icon: bytes | None
+    icon_content_type: str | None
     screenshots: list[tuple[bytes, str]]
+    has_marketplace_metadata: bool
 
 
 class OfficialSmartAppPublisher:
@@ -44,11 +46,7 @@ class OfficialSmartAppPublisher:
         if not metadata_path.is_file():
             raise ValueError("smart-app-marketplace.json is required")
         metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
-        if not isinstance(metadata, dict):
-            raise ValueError("smart-app-marketplace.json must contain an object")
-        for field in ("summary", "descriptionMd", "tags", "icon"):
-            if not metadata.get(field):
-                raise ValueError(f"Official Smart app metadata requires {field}")
+        self._validate_metadata(metadata)
         icon_path = self._asset_path(root, str(metadata["icon"]))
         icon_content_type = self._image_content_type(icon_path, icon=True)
         screenshot_paths = [
@@ -85,6 +83,41 @@ class OfficialSmartAppPublisher:
             icon=icon_path.read_bytes(),
             icon_content_type=icon_content_type,
             screenshots=screenshots,
+            has_marketplace_metadata=True,
+        )
+
+    def build_uploaded_package(self, package: bytes) -> OfficialSmartAppPackage:
+        parsed = smart_app_package_parser.parse(package)
+        try:
+            with zipfile.ZipFile(BytesIO(package)) as archive:
+                metadata_path = self._marketplace_metadata_path(archive)
+                if metadata_path is None:
+                    metadata = {}
+                    icon = None
+                    icon_content_type = None
+                    screenshots = []
+                else:
+                    metadata = json.loads(archive.read(metadata_path))
+                    self._validate_metadata(metadata)
+                    root = PurePosixPath(metadata_path).parent
+                    icon_path = self._archive_asset_path(root, str(metadata["icon"]))
+                    icon = archive.read(icon_path)
+                    icon_content_type = self._image_content_type(
+                        PurePosixPath(icon_path), icon=True
+                    )
+                    screenshots = self._archive_screenshots(archive, root, metadata)
+        except (KeyError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+            raise ValueError("smart-app-marketplace.json is invalid") from exc
+        return OfficialSmartAppPackage(
+            package=package,
+            name=parsed.name,
+            version=parsed.version,
+            sha256=hashlib.sha256(package).hexdigest(),
+            metadata=metadata,
+            icon=icon,
+            icon_content_type=icon_content_type,
+            screenshots=screenshots,
+            has_marketplace_metadata=metadata_path is not None,
         )
 
     def publish_package(
@@ -97,9 +130,19 @@ class OfficialSmartAppPublisher:
         return smart_app_marketplace_service.publish_official_package(
             db,
             package=built.package,
-            summary=str(built.metadata["summary"]),
-            description_md=str(built.metadata["descriptionMd"]),
-            tags=list(built.metadata["tags"]),
+            summary=(
+                str(built.metadata["summary"])
+                if built.has_marketplace_metadata
+                else None
+            ),
+            description_md=(
+                str(built.metadata["descriptionMd"])
+                if built.has_marketplace_metadata
+                else None
+            ),
+            tags=(
+                list(built.metadata["tags"]) if built.has_marketplace_metadata else None
+            ),
             icon=built.icon,
             icon_content_type=built.icon_content_type,
             screenshots=built.screenshots,
@@ -135,6 +178,63 @@ class OfficialSmartAppPublisher:
         return sorted(files, key=lambda path: path.relative_to(root).as_posix())
 
     @staticmethod
+    def _marketplace_metadata_path(archive: zipfile.ZipFile) -> str | None:
+        candidates = [
+            value
+            for value in archive.namelist()
+            if PurePosixPath(value).name == "smart-app-marketplace.json"
+            and len(PurePosixPath(value).parts) <= 2
+        ]
+        if len(candidates) > 1:
+            raise ValueError(
+                "Official Smart app ZIP contains multiple smart-app-marketplace.json files"
+            )
+        return candidates[0] if candidates else None
+
+    @staticmethod
+    def _validate_metadata(metadata: Any) -> None:
+        if not isinstance(metadata, dict):
+            raise ValueError("smart-app-marketplace.json must contain an object")
+        for field in ("summary", "descriptionMd", "tags", "icon"):
+            if not metadata.get(field):
+                raise ValueError(f"Official Smart app metadata requires {field}")
+        if not isinstance(metadata["tags"], list) or not all(
+            isinstance(value, str) and value.strip() for value in metadata["tags"]
+        ):
+            raise ValueError("Official Smart app tags must be a string array")
+        screenshots = metadata.get("screenshots", [])
+        if not isinstance(screenshots, list) or not all(
+            isinstance(value, str) and value.strip() for value in screenshots
+        ):
+            raise ValueError("Official Smart app screenshots must be a string array")
+        if len(screenshots) > 5:
+            raise ValueError("Official Smart app supports at most five screenshots")
+
+    @staticmethod
+    def _archive_asset_path(root: PurePosixPath, relative: str) -> str:
+        path = PurePosixPath(relative)
+        if path.is_absolute() or ".." in path.parts:
+            raise ValueError(f"Marketplace asset must stay inside the ZIP: {relative}")
+        return (root / path).as_posix()
+
+    def _archive_screenshots(
+        self,
+        archive: zipfile.ZipFile,
+        root: PurePosixPath,
+        metadata: dict[str, Any],
+    ) -> list[tuple[bytes, str]]:
+        screenshots = []
+        for relative in metadata.get("screenshots", []):
+            path = self._archive_asset_path(root, relative)
+            screenshots.append(
+                (
+                    archive.read(path),
+                    self._image_content_type(PurePosixPath(path), icon=False),
+                )
+            )
+        return screenshots
+
+    @staticmethod
     def _asset_path(root: Path, relative: str) -> Path:
         path = (root / relative).resolve()
         if root not in path.parents or not path.is_file():
@@ -142,7 +242,7 @@ class OfficialSmartAppPublisher:
         return path
 
     @staticmethod
-    def _image_content_type(path: Path, *, icon: bool) -> str:
+    def _image_content_type(path: Path | PurePosixPath, *, icon: bool) -> str:
         content_type = {
             ".png": "image/png",
             ".webp": "image/webp",

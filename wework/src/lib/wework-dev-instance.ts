@@ -18,18 +18,23 @@ function envValue(key: keyof ImportMetaEnv): string | undefined {
   return import.meta.env[key]?.trim() || undefined
 }
 
+function queryValue(key: string): string | undefined {
+  if (typeof window === 'undefined') return undefined
+  return new URLSearchParams(window.location.search).get(key)?.trim() || undefined
+}
+
 export function getWeworkDevTitle(): string | null {
   return getWeworkDevInstanceInfo()?.title ?? null
 }
 
 export function getWeworkDevInstanceInfo(): WeworkDevInstanceInfo | null {
-  const title = envValue('VITE_WEWORK_DEV_TITLE')
+  const title = envValue('VITE_WEWORK_DEV_TITLE') || queryValue('weworkDevTitle')
   if (!title) return null
 
   return {
     title,
     port: envValue('VITE_WEWORK_DEV_PORT'),
-    worktree: envValue('VITE_WEWORK_DEV_WORKTREE'),
+    worktree: envValue('VITE_WEWORK_DEV_WORKTREE') || queryValue('weworkDevWorktree'),
     branch: envValue('VITE_WEWORK_DEV_BRANCH'),
     parentTitle: envValue('VITE_WEWORK_PARENT_TITLE'),
     parentProject: envValue('VITE_WEWORK_PARENT_PROJECT'),

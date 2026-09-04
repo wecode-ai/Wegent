@@ -11,10 +11,28 @@ import { normalizeCodeFontSize, normalizeUiFontSize } from './typography'
 
 const STORAGE_KEY = 'wework.appearance'
 const APPEARANCE_MODES = new Set(['light', 'dark', 'system'])
-const LEGACY_DEFAULT_SIDEBARS = {
-  light: '229 229 231 / 0.72',
-  dark: '31 35 41 / 0.82',
-} as const
+const LEGACY_DARK_PALETTE: ThemePalette = {
+  bgBase: '17 19 22',
+  bgSurface: '28 31 36',
+  bgMuted: '38 42 48',
+  bgHover: '96 165 250 / 0.12',
+  sidebar: '40 40 40 / 0.92',
+  sidebarActive: '52 58 66',
+  sidebarHover: '255 255 255 / 0.08',
+  sidebarTextPrimary: '232 238 246',
+  sidebarTextSecondary: '181 191 205',
+  sidebarTextMuted: '126 138 153',
+  mobileDrawer: '24 39 58',
+  border: '55 61 70',
+  textPrimary: '241 245 249',
+  textSecondary: '203 213 225',
+  textMuted: '148 163 184',
+  primary: '96 165 250',
+  primaryContrast: '11 18 20',
+  popover: '28 31 36',
+  codeBg: '15 23 42',
+}
+const LEGACY_DEFAULT_SIDEBARS = new Set(['229 229 231 / 0.72', '31 35 41 / 0.82'])
 
 function normalizeBackgroundVisibility(value: unknown): number {
   if (typeof value !== 'number' || !Number.isFinite(value)) {
@@ -50,12 +68,18 @@ function mergeBackground(
 function mergePalette(
   base: ThemePalette,
   update: unknown,
-  legacyDefaultSidebar: string
+  legacyPalette?: ThemePalette
 ): ThemePalette {
   if (!update || typeof update !== 'object') return base
   const next = { ...base, ...(update as Partial<ThemePalette>) }
 
-  if (next.sidebar === legacyDefaultSidebar) {
+  for (const key of Object.keys(base) as Array<keyof ThemePalette>) {
+    if (legacyPalette && next[key] === legacyPalette[key]) {
+      next[key] = base[key]
+    }
+  }
+
+  if (LEGACY_DEFAULT_SIDEBARS.has(next.sidebar)) {
     next.sidebar = base.sidebar
   }
 
@@ -135,8 +159,8 @@ export function mergeAppearance(update: AppearanceUpdate): AppearanceConfig {
       ...update.darkBackground,
       imagePath: update.darkBackground?.imagePath ?? legacyUpdate.darkBackgroundImagePath ?? null,
     }),
-    light: mergePalette(defaultAppearance.light, update.light, LEGACY_DEFAULT_SIDEBARS.light),
-    dark: mergePalette(defaultAppearance.dark, update.dark, LEGACY_DEFAULT_SIDEBARS.dark),
+    light: mergePalette(defaultAppearance.light, update.light),
+    dark: mergePalette(defaultAppearance.dark, update.dark, LEGACY_DARK_PALETTE),
   }
 }
 

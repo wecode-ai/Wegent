@@ -1,10 +1,15 @@
 import { createServer } from 'node:net'
+import { resolve } from 'node:path'
 import type { HostPipeServer } from '../host/host-pipe.js'
 import { prepareCoreDshLaunch } from './core-dsh-runtime.js'
 import { resolveDesktopDeviceId } from './desktop-device-id.js'
 import { resolveDesktopDeviceName } from './desktop-device-name.js'
-import { CoreDshPluginManager, type CoreDshPlugin } from './core-dsh-plugin-manager.js'
-import { DshRuntime } from './dsh-runtime.js'
+import {
+  CoreDshPluginManager,
+  type CoreDshDevelopmentPlugin,
+  type CoreDshPlugin,
+} from './core-dsh-plugin-manager.js'
+import { DshRuntime, type DshRuntimeOptions } from './dsh-runtime.js'
 import { ManagedExecutorRuntime, managedExecutorHome } from './managed-executor-runtime.js'
 import {
   WorkbenchRuntimeManager,
@@ -21,6 +26,14 @@ export interface DesktopRuntimeOptions {
   logDirectory: string
   hostPipe: HostPipeServer
   onExecutorEvent?: (event: string, payload: Record<string, unknown>) => void
+  createCoreDsh?: (options: DshRuntimeOptions) => CoreDshHandle
+}
+
+export interface CoreDshHandle {
+  start(timeoutMs?: number): Promise<void>
+  stop(): Promise<void>
+  url(): string
+  pid(): number | null
 }
 
 export interface DesktopRuntimeState {
@@ -32,28 +45,46 @@ export interface DesktopRuntimeState {
 
 export interface DesktopRuntimeDiagnostics {
   coreDshPid: number | null
+  developmentPlugin: CoreDshDevelopmentPlugin | null
   executorPid: number | null
   workbenchRuntimes: WorkbenchRuntimeSnapshot[]
 }
 
 export class DesktopRuntime {
   private executor: ManagedExecutorRuntime | null = null
-  private coreDsh: DshRuntime | null = null
+  private coreDsh: CoreDshHandle | null = null
   private coreDshPlugins: CoreDshPluginManager | null = null
   private coreDshPort: number | null = null
+  private developmentPlugin: CoreDshDevelopmentPlugin | null = null
   private readonly workbench = new WorkbenchRuntimeManager()
   private started = false
+  private lifecycleGeneration = 0
+  private startOperation: { generation: number; promise: Promise<void> } | null = null
+  private restartOperation: { generation: number; promise: Promise<void> } | null = null
 
   constructor(private readonly options: DesktopRuntimeOptions) {}
 
-  async start(): Promise<void> {
-    if (this.started) return
+  start(): Promise<void> {
+    if (this.started) return Promise.resolve()
+    const generation = this.lifecycleGeneration
+    const current = this.startOperation
+    if (current?.generation === generation) return current.promise
+    const promise = this.performStart(generation).finally(() => {
+      if (this.startOperation?.promise === promise) this.startOperation = null
+    })
+    this.startOperation = { generation, promise }
+    return promise
+  }
+
+  private async performStart(generation: number): Promise<void> {
     try {
       await this.startExecutor()
+      if (this.lifecycleGeneration !== generation) return
       await this.startCoreDsh()
+      if (this.lifecycleGeneration !== generation) return
       this.started = true
     } catch (error) {
-      await this.stop()
+      if (this.lifecycleGeneration === generation) await this.stop()
       throw error
     }
   }
@@ -80,6 +111,7 @@ export class DesktopRuntime {
   diagnostics(): DesktopRuntimeDiagnostics {
     return {
       coreDshPid: this.coreDsh?.pid() ?? null,
+      developmentPlugin: this.developmentPlugin,
       executorPid: this.executor?.pid() ?? null,
       workbenchRuntimes: this.workbench.list(),
     }
@@ -123,21 +155,37 @@ export class DesktopRuntime {
     return this.workbench.close(tabId)
   }
 
-  async restartCoreDsh(): Promise<void> {
+  restartCoreDsh(): Promise<void> {
     if (!this.started) throw new Error('Core desktop runtime is not ready')
+    const generation = this.lifecycleGeneration
+    const current = this.restartOperation
+    if (current?.generation === generation) return current.promise
+    const promise = this.performRestartCoreDsh().finally(() => {
+      // Clear only this operation's registration: a stale generation's
+      // settled flight must never drop a newer generation's authority.
+      if (this.restartOperation?.promise === promise) this.restartOperation = null
+    })
+    this.restartOperation = { generation, promise }
+    return promise
+  }
+
+  private async performRestartCoreDsh(): Promise<void> {
+    const generation = this.lifecycleGeneration
     const previous = this.coreDsh
     this.coreDsh = null
     this.coreDshPlugins = null
     await previous?.stop()
+    if (this.lifecycleGeneration !== generation) return
     try {
       await this.startCoreDsh()
     } catch (error) {
-      this.coreDsh = null
+      if (this.lifecycleGeneration === generation) this.coreDsh = null
       throw error
     }
   }
 
   async stop(): Promise<void> {
+    this.lifecycleGeneration += 1
     this.started = false
     const coreDsh = this.coreDsh
     const executor = this.executor
@@ -150,15 +198,18 @@ export class DesktopRuntime {
   private async startExecutor(): Promise<void> {
     const executorPath = this.options.environment.WEWORK_EXECUTOR_PATH?.trim()
     if (!executorPath) return
+    const generation = this.lifecycleGeneration
     const deviceId = await resolveDesktopDeviceId({
       environment: this.options.environment,
       dataDirectory: this.options.dataDirectory,
       executorHome: managedExecutorHome(this.options),
     })
+    if (this.lifecycleGeneration !== generation) return
     const deviceName = await resolveDesktopDeviceName({
       environment: this.options.environment,
     })
-    this.executor = new ManagedExecutorRuntime({
+    if (this.lifecycleGeneration !== generation) return
+    const executor = new ManagedExecutorRuntime({
       command: executorPath,
       args: jsonArrayEnvironment(this.options.environment, 'WEWORK_EXECUTOR_ARGS_JSON'),
       environment: this.options.environment,
@@ -168,20 +219,34 @@ export class DesktopRuntime {
       deviceName,
       onEvent: this.options.onExecutorEvent,
     })
-    await this.executor.start()
+    this.executor = executor
+    try {
+      await executor.start()
+      if (this.lifecycleGeneration !== generation) {
+        await executor.stop().catch(() => {})
+        if (this.executor === executor) this.executor = null
+        return
+      }
+    } catch (error) {
+      if (this.executor === executor) this.executor = null
+      throw error
+    }
   }
 
   private async startCoreDsh(): Promise<void> {
+    const generation = this.lifecycleGeneration
     const externalDshUrl = this.options.environment.WEWORK_CORE_DSH_URL?.trim()
     const dshCommand = this.options.environment.WEWORK_CORE_DSH_COMMAND?.trim()
     const managedRoot = this.options.environment.WEWORK_HARNESS_RUNTIME_ROOT?.trim()
     const port = externalDshUrl ? null : await freePort(this.coreDshPort)
+    if (this.lifecycleGeneration !== generation) return
     const dshUrl = externalDshUrl || `http://127.0.0.1:${port as number}`
     let command = dshCommand
     let args = jsonArrayEnvironment(this.options.environment, 'WEWORK_CORE_DSH_ARGS_JSON')
     let cwd: string | undefined
     let dshHome: string | undefined
     let runtimeEnvironment = this.options.environment
+    let plugins: CoreDshPluginManager | null = null
     if (!externalDshUrl && !dshCommand) {
       if (!managedRoot) {
         throw new Error(
@@ -194,20 +259,27 @@ export class DesktopRuntime {
         environment: this.options.environment,
         port: port as number,
       })
+      if (this.lifecycleGeneration !== generation) return
       command = launch.command
       args = launch.args
       cwd = launch.cwd
       dshHome = launch.dshHome
       runtimeEnvironment = launch.environment
-      this.coreDshPlugins = new CoreDshPluginManager({
+      plugins = new CoreDshPluginManager({
         dshHome: launch.dshHome,
         runtimeRoot: launch.cwd,
         dshEntry: launch.entry,
         nodeCommand: launch.command,
         environment: launch.environment,
       })
+      const developmentRoot = this.options.environment.WEWORK_PLUGIN_DEVELOPMENT_ROOT?.trim()
+      if (developmentRoot && this.developmentPlugin?.sourceRoot !== resolve(developmentRoot)) {
+        const developmentPlugin = await plugins.ensureDevelopmentPlugin(developmentRoot)
+        if (this.lifecycleGeneration !== generation) return
+        this.developmentPlugin = developmentPlugin
+      }
     }
-    const runtime = new DshRuntime({
+    const runtime = this.createCoreDsh({
       name: 'dsh-core',
       url: dshUrl,
       probeUrls: [
@@ -230,16 +302,30 @@ export class DesktopRuntime {
       },
       hostPipe: this.options.hostPipe,
     })
+    if (this.lifecycleGeneration !== generation) return
     this.coreDsh = runtime
+    if (plugins) this.coreDshPlugins = plugins
     try {
       await runtime.start()
+      if (this.lifecycleGeneration !== generation) {
+        await runtime.stop().catch(() => {})
+        if (this.coreDsh === runtime) this.coreDsh = null
+        if (this.coreDshPlugins === plugins) this.coreDshPlugins = null
+        return
+      }
       this.coreDshPort = port
     } catch (error) {
       if (this.coreDsh === runtime) this.coreDsh = null
-      this.coreDshPlugins = null
+      if (this.coreDshPlugins === plugins) this.coreDshPlugins = null
       await runtime.stop().catch(() => {})
       throw error
     }
+  }
+
+  private createCoreDsh(options: DshRuntimeOptions): CoreDshHandle {
+    return this.options.createCoreDsh
+      ? this.options.createCoreDsh(options)
+      : new DshRuntime(options)
   }
 
   private requiredCoreDshPlugins(): CoreDshPluginManager {

@@ -35,6 +35,7 @@ import { getRecognizedLink } from '@/lib/link-preview'
 import { requestEmbeddedBrowserOpen } from '@/lib/embedded-browser'
 import { readElectronLocalFile } from '@/lib/electron-local-file'
 import { isElectronRuntime } from '@/lib/runtime-environment'
+import { navigateTo } from '@/lib/navigation'
 import type { WorkspaceFileOpenOptions } from '@/types/workspace-files'
 import type { TurnFileChangesSummary } from '@/types/api'
 import { Tooltip } from '@/components/ui/tooltip'
@@ -709,6 +710,20 @@ function AssistantMarkdownLink({
           ) : null}
         </button>
       </Tooltip>
+    )
+  }
+
+  if (target.kind === 'internal') {
+    return (
+      <button
+        type="button"
+        className={ASSISTANT_MARKDOWN_LINK_CLASS}
+        data-testid="assistant-markdown-link"
+        onClick={() => navigateTo(target.path)}
+      >
+        {icon}
+        <span className="min-w-0 whitespace-normal [overflow-wrap:anywhere]">{children}</span>
+      </button>
     )
   }
 

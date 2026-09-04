@@ -986,6 +986,8 @@ mod tests {
         assert_eq!(sol["supports_parallel_tool_calls"], false);
         assert_eq!(sol["supports_search_tool"], true);
         assert_eq!(sol["visibility"], "none");
+        assert_eq!(sol["context_window"], 272_000);
+        assert_eq!(sol["max_context_window"], Value::Null);
     }
 
     #[test]
@@ -1005,6 +1007,7 @@ mod tests {
             assert_eq!(model["visibility"], "list");
             assert_eq!(model["priority"], priority);
             assert_eq!(model["supports_search_tool"], true);
+            assert_eq!(model["max_context_window"], 272_000);
         }
 
         for slug in [

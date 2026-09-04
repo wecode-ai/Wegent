@@ -135,7 +135,12 @@ def _request_context_fields(request_body: str) -> tuple[object, object, object]:
 
 
 def _should_capture_http_body(path: str) -> bool:
-    return path not in SENSITIVE_HTTP_BODY_PATHS
+    if path in SENSITIVE_HTTP_BODY_PATHS:
+        return False
+    return not (
+        path.startswith(f"{settings.API_PREFIX}/sites/")
+        and "/environment-variables" in path
+    )
 
 
 def _load_system_initialization_state(logger: logging.Logger) -> None:
