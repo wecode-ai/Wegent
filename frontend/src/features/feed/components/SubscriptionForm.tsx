@@ -283,6 +283,13 @@ const getPreferredDevice = (devices: DeviceInfo[]): SubscriptionDeviceInfo | nul
   return sortedDevices[0] || null
 }
 
+/**
+ * Create or edit a subscription.
+ *
+ * On update, the payload always sends the current `knowledge_base_refs`,
+ * `skill_refs`, and `notification_webhooks` arrays so that clearing all
+ * items is persisted (an omitted field would keep the old values).
+ */
 export function SubscriptionForm({
   open,
   onOpenChange,
