@@ -2,7 +2,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-import { expect, test, type Page } from '@playwright/test'
+import { expect, test, type APIRequestContext, type Page } from '@playwright/test'
 
 import { ADMIN_USER } from '../config/test-users'
 import { DataBuilders } from '../fixtures/data-builders'
@@ -26,13 +26,39 @@ interface MarketplaceTagsResponse {
   }>
 }
 
+interface AdminMarketplaceResourceResponse {
+  items: Array<{
+    id: number
+    name: string
+    is_system: boolean
+  }>
+}
+
+async function ensureRecommendedSystemAgent(request: APIRequestContext) {
+  const apiClient = createApiClient(request)
+  expect((await apiClient.login(ADMIN_USER.username, ADMIN_USER.password)).status).toBe(200)
+  const response = await apiClient.get<AdminMarketplaceResourceResponse>(
+    '/api/admin/marketplace-resources?resource_type=agent&limit=200'
+  )
+  const agent = response.data?.items.find(item => item.is_system && item.name === 'wegent-chat')
+  expect(agent, 'The Wegent Chat system agent must exist').toBeTruthy()
+  expect(
+    (
+      await apiClient.put(`/api/admin/marketplace-resources/${agent!.id}`, {
+        recommendation_score: 80,
+      })
+    ).status
+  ).toBe(200)
+}
+
 async function clickListingAction(page: Page, listingId: number) {
   await page.getByTestId(`resource-listing-card-${listingId}`).hover()
   await page.getByTestId(`install-resource-${listingId}-button`).click()
 }
 
 test.describe('Capability Center', () => {
-  test('switches between focused discovery and My Capabilities', async ({ page }) => {
+  test('switches between focused discovery and My Capabilities', async ({ page, request }) => {
+    await ensureRecommendedSystemAgent(request)
     await page.goto('/resource-library?type=agent')
 
     await expect(page.getByTestId('resource-library-view-toggle')).toBeVisible()
@@ -105,7 +131,11 @@ test.describe('Capability Center', () => {
     )
   })
 
-  test('uses a system agent directly without creating a personal install', async ({ page }) => {
+  test('uses a system agent directly without creating a personal install', async ({
+    page,
+    request,
+  }) => {
+    await ensureRecommendedSystemAgent(request)
     const listingsResponse = page.waitForResponse(
       response =>
         response.url().includes('/api/resource-library/listings') &&
