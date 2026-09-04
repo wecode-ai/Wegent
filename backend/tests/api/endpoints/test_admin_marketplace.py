@@ -271,7 +271,7 @@ def test_new_system_public_agent_is_not_recommended_by_default(
         headers=_headers(test_admin_token),
     )
     marketplace_response = test_client.get(
-        "/api/admin/marketplace-resources?resource_type=agent",
+        "/api/admin/marketplace-resources?resource_type=agent&limit=200",
         headers=_headers(test_admin_token),
     )
 
