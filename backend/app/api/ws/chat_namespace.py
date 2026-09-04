@@ -291,18 +291,13 @@ def _resolve_existing_task_team(
         bound_team = _resolve_task_bound_team(db, existing_task, client_team)
     except ValueError as exc:
         logger.exception(
-            "[WS] chat:send failed to resolve task %s bound agent: %s",
-            task_id,
-            exc,
+            f"[WS] chat:send failed to resolve task {task_id} bound agent: {exc}"
         )
         return None, None, {"error": str(exc)}
     if bound_team.id != client_team.id:
         logger.warning(
-            "[WS] chat:send re-binding task %s to its agent team %s "
-            "(client sent team_id=%s)",
-            task_id,
-            bound_team.id,
-            client_team.id,
+            f"[WS] chat:send re-binding task {task_id} to its agent team {bound_team.id} "
+            f"(client sent team_id={client_team.id})"
         )
     return existing_task, bound_team, None
 
