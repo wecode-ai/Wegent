@@ -10,6 +10,12 @@ $EXECUTOR_ISOLATION = $false
 $ELECTRON_ARGS = @()
 $ISOLATED_EXECUTOR_HOME = ''
 $MANAGED_SOURCE_EXECUTOR = $false
+$MANAGED_DWS_BINARY = $false
+$MANAGED_HARNESS_RUNTIME = $false
+$MANAGED_SOURCE_EXECUTOR_BINARY = ''
+$EXECUTOR_BINARY_TEMP = ''
+$WATCH_PROCESS = $null
+$WATCH_READY_FILE = ''
 
 function Show-Usage {
   @'
@@ -22,20 +28,24 @@ Options:
   -h, --help                Show this help message.
 
 Environment:
-  VITE_WEGENT_BACKEND_URL   Backend URL. Defaults to WEWORK_HOST/BACKEND_PORT.
-  WEWORK_EXECUTOR_PATH      Executor command. Defaults to the source sidecar.
-  WEWORK_DEV_CODEX_BINARY   Codex binary. Defaults to the repository-locked binary.
-  WEWORK_DEV_DWS_BINARY     DWS binary. Defaults to the repository-prepared binary.
-  WEWORK_DEV_CACHE_ROOT     Root for the materialized dev runtimes. Defaults to
-                            %LOCALAPPDATA%\wegent\wework-dev.
+  VITE_WEGENT_BACKEND_URL          Backend URL. Defaults to WEWORK_HOST/BACKEND_PORT.
+  WEWORK_DEV_USER_DATA_DIR         Override Electron user data for this launch.
+  WEWORK_DEV_APP_IDENTIFIER        Override the application identity for this launch.
+  WEWORK_DEV_EXECUTOR_PATH         Executor command. Defaults to the source sidecar.
+  WEWORK_DEV_CACHE_ROOT            Shared immutable dev cache. Defaults to
+                                   %LOCALAPPDATA%\wegent\wework-dev.
+  WEWORK_DEV_HARNESS_RUNTIME_ROOT  Harness runtime. Defaults to the worktree runtime.
+  WEWORK_DEV_COMPONENT_RESOURCES   Component links. Defaults to the worktree dependency cache.
+  WEWORK_DEV_CODEX_BINARY          Codex binary. Defaults to the repository-locked binary.
+  WEWORK_DEV_DWS_BINARY            DWS binary. Defaults to the repository-prepared binary.
   WEWORK_HARNESS_RUNTIME_CACHE_ROOT
-                            Harness runtime asset and dev materialization root.
-  CARGO_TARGET_DIR          Explicit Cargo target directory. Overrides auto cache.
-  WEGENT_CARGO_TARGET_ROOT  Root containing shared Cargo targets.
+                                   Harness runtime asset cache root.
+  CARGO_TARGET_DIR                 Explicit Cargo target directory. Overrides auto cache.
+  WEGENT_CARGO_TARGET_ROOT         Root containing shared Cargo targets.
   WEGENT_DISABLE_SHARED_CARGO_TARGET
-                            Set to 1 to keep Cargo's default per-worktree target.
-  WEGENT_DISABLE_SCCACHE    Set to 1 to disable automatic sccache detection.
-  WEWORK_DRY_RUN=1          Print the resolved launch configuration without starting.
+                                   Set to 1 to keep Cargo's default per-worktree target.
+  WEGENT_DISABLE_SCCACHE           Set to 1 to disable automatic sccache detection.
+  WEWORK_DRY_RUN=1                 Print the resolved launch configuration without starting.
 '@
 }
 
@@ -66,6 +76,24 @@ function Get-DevTitle {
     return $env:WEWORK_DEV_BRANCH
   }
   return Split-Path $PROJECT_DIR -Leaf
+}
+
+function Get-DevIdentityFields {
+  $identityPath = Join-Path $SCRIPT_DIR 'resolve-dev-instance-identity.mjs'
+  $output = & node $identityPath $PROJECT_DIR $env:WEWORK_DEV_BRANCH
+  if ($LASTEXITCODE -ne 0 -or -not $output) {
+    return @()
+  }
+  return @($output -split "`r?`n")
+}
+
+function Get-DevUserDataDirectory {
+  $resolverPath = Join-Path $SCRIPT_DIR 'resolve-dev-user-data.mjs'
+  $output = & node $resolverPath $PROJECT_DIR $env:WEWORK_DEV_USER_DATA_DIR
+  if ($LASTEXITCODE -ne 0) {
+    return ''
+  }
+  return "$output".Trim()
 }
 
 function Get-WindowsTarget {
@@ -270,7 +298,28 @@ Require-Command cargo
 $WINDOWS_TARGET = Get-WindowsTarget
 $env:WEWORK_DEV_WORKTREE = $PROJECT_DIR
 $env:WEWORK_DEV_BRANCH = Get-GitBranchName
-$env:WEWORK_DEV_TITLE = Get-DevTitle
+$DEV_IDENTITY_FIELDS = Get-DevIdentityFields
+if ($DEV_IDENTITY_FIELDS.Count -ne 6) {
+  Fail 'Error: failed to resolve the development instance identity.'
+}
+$env:WEWORK_PARENT_TITLE = $DEV_IDENTITY_FIELDS[0]
+$env:WEWORK_DEV_TITLE = $DEV_IDENTITY_FIELDS[1]
+$env:WEWORK_DEV_INSTANCE_ID = $DEV_IDENTITY_FIELDS[2]
+$env:WEWORK_DEV_INSTANCE_LABEL = $DEV_IDENTITY_FIELDS[3]
+$env:WEWORK_DEV_DOCK_TITLE = $DEV_IDENTITY_FIELDS[4]
+$env:WEWORK_DEV_EXECUTABLE_NAME = $DEV_IDENTITY_FIELDS[5]
+$env:WEWORK_APP_IDENTIFIER = if ($env:WEWORK_DEV_APP_IDENTIFIER) {
+  $env:WEWORK_DEV_APP_IDENTIFIER
+} else {
+  "io.wecode.wework.dev.$env:WEWORK_DEV_INSTANCE_ID"
+}
+$USER_DATA_OUTPUT = Get-DevUserDataDirectory
+if (-not $USER_DATA_OUTPUT) {
+  Fail 'Error: failed to resolve the development user data directory.'
+}
+$env:WEWORK_USER_DATA_DIR = $USER_DATA_OUTPUT
+Remove-Item Env:WEWORK_DEV_APP_IDENTIFIER -ErrorAction SilentlyContinue
+Remove-Item Env:WEWORK_DEV_USER_DATA_DIR -ErrorAction SilentlyContinue
 $env:VITE_WEWORK_DEV_TITLE = $env:WEWORK_DEV_TITLE
 $env:VITE_WEWORK_DEV_WORKTREE = $env:WEWORK_DEV_WORKTREE
 $env:VITE_WEWORK_DEV_BRANCH = $env:WEWORK_DEV_BRANCH
@@ -282,7 +331,10 @@ $env:VITE_WEWORK_RELEASE_CHANNEL = if ($env:VITE_WEWORK_RELEASE_CHANNEL) { $env:
 $env:VITE_WEWORK_RUNTIME_MODE = if ($env:VITE_WEWORK_RUNTIME_MODE) { $env:VITE_WEWORK_RUNTIME_MODE } else { 'local-first' }
 $env:ELECTRON_GET_USE_PROXY = if ($env:ELECTRON_GET_USE_PROXY) { $env:ELECTRON_GET_USE_PROXY } else { 'true' }
 
-if (-not $env:WEWORK_EXECUTOR_PATH) {
+Remove-Item Env:WEGENT_EXECUTOR_BINARY -ErrorAction SilentlyContinue
+if ($env:WEWORK_DEV_EXECUTOR_PATH) {
+  $env:WEWORK_EXECUTOR_PATH = $env:WEWORK_DEV_EXECUTOR_PATH
+} else {
   $env:WEWORK_EXECUTOR_PATH = Join-Path $SCRIPT_DIR 'dev-executor-sidecar.cmd'
   $MANAGED_SOURCE_EXECUTOR = $true
   if (-not $env:WEGENT_DISABLE_SHARED_CARGO_TARGET -and -not $env:CARGO_TARGET_DIR) {
@@ -295,7 +347,9 @@ if (-not $env:WEWORK_EXECUTOR_PATH) {
     New-Item -ItemType Directory -Force -Path $env:CARGO_TARGET_DIR | Out-Null
     Configure-Sccache $PROJECT_DIR $env:CARGO_TARGET_DIR
   }
-  $env:WEGENT_EXECUTOR_BINARY = Get-ExecutorBinaryPath
+  $MANAGED_SOURCE_EXECUTOR_BINARY = Get-ExecutorBinaryPath
+  $env:WEGENT_EXECUTOR_BINARY = Join-Path $WEWORK_DIR 'node_modules\.cache\wework-executor-dev\wegent-executor.exe'
+  $env:WEGENT_EXECUTOR_DEV_BUILD_ID = $env:WEWORK_DEV_INSTANCE_ID
 }
 
 $DEV_CACHE_ROOT = if ($env:WEWORK_DEV_CACHE_ROOT) {
@@ -312,11 +366,23 @@ $env:WEWORK_HARNESS_RUNTIME_CACHE_ROOT = if ($env:WEWORK_HARNESS_RUNTIME_CACHE_R
 } else {
   Join-Path $DEV_CACHE_ROOT 'harness-runtime'
 }
-$env:WEWORK_HARNESS_RUNTIME_ROOT = if ($env:WEWORK_HARNESS_RUNTIME_ROOT) {
-  $env:WEWORK_HARNESS_RUNTIME_ROOT
+$env:WEWORK_HARNESS_RUNTIME_ASSET_CACHE_ROOT = if ($env:WEWORK_HARNESS_RUNTIME_ASSET_CACHE_ROOT) {
+  $env:WEWORK_HARNESS_RUNTIME_ASSET_CACHE_ROOT.TrimEnd('\')
 } else {
-  Join-Path $env:WEWORK_HARNESS_RUNTIME_CACHE_ROOT 'harness-runtime-dev'
+  $env:WEWORK_HARNESS_RUNTIME_CACHE_ROOT
 }
+if ($env:WEWORK_DEV_HARNESS_RUNTIME_ROOT) {
+  $env:WEWORK_HARNESS_RUNTIME_ROOT = $env:WEWORK_DEV_HARNESS_RUNTIME_ROOT
+} else {
+  $env:WEWORK_HARNESS_RUNTIME_ROOT = Join-Path $WEWORK_DIR 'node_modules\.cache\harness-runtime-dev'
+  $MANAGED_HARNESS_RUNTIME = $true
+}
+$env:WEWORK_COMPONENT_RESOURCES_ROOT = if ($env:WEWORK_DEV_COMPONENT_RESOURCES) {
+  $env:WEWORK_DEV_COMPONENT_RESOURCES
+} else {
+  Join-Path $WEWORK_DIR 'node_modules\.cache\wework-electron-dev-resources'
+}
+$env:WEWORK_CORE_PLUGIN_ROOT = Join-Path $env:WEWORK_COMPONENT_RESOURCES_ROOT 'wework-core-plugins'
 # Serve the freshly built Wework app and auto-reload when it changes, matching
 # dev-mac-app.sh. Dev loads the UI plugin from the packaged core plugin root,
 # which the dev flow does not rebuild; pointing the plugin at the current Vite
@@ -333,6 +399,7 @@ if ($env:WEWORK_DEV_DWS_BINARY) {
   $env:DWS_BINARY_PATH = $env:WEWORK_DEV_DWS_BINARY
 } else {
   $env:DWS_BINARY_PATH = Join-Path $WEWORK_DIR "resources\binaries\dws-$WINDOWS_TARGET.exe"
+  $MANAGED_DWS_BINARY = $true
 }
 
 if ($EXECUTOR_ISOLATION) {
@@ -345,14 +412,22 @@ function Print-Configuration {
   Write-Host 'Starting Wework Windows app'
   Write-Host "  WEWORK_DEV_TITLE=$env:WEWORK_DEV_TITLE"
   Write-Host "  WEWORK_DEV_WORKTREE=$env:WEWORK_DEV_WORKTREE"
-  Write-Host "  WEWORK_DEV_BRANCH=$env:WEWORK_DEV_BRANCH"
+  Write-Host "  WEWORK_DEV_BRANCH=$(if ($env:WEWORK_DEV_BRANCH) { $env:WEWORK_DEV_BRANCH } else { '<detached>' })"
+  Write-Host "  WEWORK_DEV_INSTANCE_LABEL=$env:WEWORK_DEV_INSTANCE_LABEL"
+  Write-Host "  WEWORK_DEV_DOCK_TITLE=$env:WEWORK_DEV_DOCK_TITLE"
+  Write-Host "  WEWORK_DEV_EXECUTABLE_NAME=$env:WEWORK_DEV_EXECUTABLE_NAME"
+  Write-Host "  WEWORK_APP_IDENTIFIER=$env:WEWORK_APP_IDENTIFIER"
+  Write-Host "  WEWORK_USER_DATA_DIR=$env:WEWORK_USER_DATA_DIR"
   Write-Host "  VITE_WEGENT_BACKEND_URL=$env:VITE_WEGENT_BACKEND_URL"
   Write-Host "  WEWORK_EXECUTOR_PATH=$env:WEWORK_EXECUTOR_PATH"
-  Write-Host "  WEGENT_EXECUTOR_BINARY=$env:WEGENT_EXECUTOR_BINARY"
+  Write-Host "  WEGENT_EXECUTOR_BINARY=$(if ($env:WEGENT_EXECUTOR_BINARY) { $env:WEGENT_EXECUTOR_BINARY } else { '<managed by command>' })"
+  Write-Host "  WEGENT_EXECUTOR_HOME=$(if ($env:WEGENT_EXECUTOR_HOME) { $env:WEGENT_EXECUTOR_HOME } else { '<release app default>' })"
   Write-Host "  CARGO_TARGET_DIR=$env:CARGO_TARGET_DIR"
   Write-Host "  RUSTC_WRAPPER=$env:RUSTC_WRAPPER"
-  Write-Host "  WEGENT_EXECUTOR_HOME=$env:WEGENT_EXECUTOR_HOME"
+  Write-Host "  WEWORK_HARNESS_RUNTIME_ASSET_CACHE_ROOT=$env:WEWORK_HARNESS_RUNTIME_ASSET_CACHE_ROOT"
   Write-Host "  WEWORK_HARNESS_RUNTIME_ROOT=$env:WEWORK_HARNESS_RUNTIME_ROOT"
+  Write-Host "  WEWORK_COMPONENT_RESOURCES_ROOT=$env:WEWORK_COMPONENT_RESOURCES_ROOT"
+  Write-Host "  WEWORK_CORE_PLUGIN_ROOT=$env:WEWORK_CORE_PLUGIN_ROOT"
   Write-Host "  WEWORK_APP_HOT_RELOAD=$env:WEWORK_APP_HOT_RELOAD"
   Write-Host "  WEWORK_APP_WEB_ROOT=$env:WEWORK_APP_WEB_ROOT"
   Write-Host "  CODEX_BINARY_PATH=$env:CODEX_BINARY_PATH"
@@ -367,9 +442,9 @@ if ($env:WEWORK_DRY_RUN -eq '1') {
 try {
   Push-Location $WEWORK_DIR
   try {
-    pnpm run prepare:electron
+    node (Join-Path $SCRIPT_DIR 'prepare-dev-dependencies.mjs')
     if ($LASTEXITCODE -ne 0) {
-      Fail 'Error: failed to prepare the Electron workspace.'
+      Fail 'Error: failed to prepare development dependencies.'
     }
     New-Item -ItemType Directory -Force -Path 'electron\resources' | Out-Null
     foreach ($resource in @('icons', 'bundled-plugins')) {
@@ -388,11 +463,15 @@ try {
     $prepareJobs = @()
     if (-not $env:WEWORK_DEV_CODEX_BINARY) {
       $env:WEWORK_CODEX_TARGET = $WINDOWS_TARGET
-      $prepareJobs += Start-PrepareStep 'codex' 'pnpm run prepare:codex'
+      $prepareJobs += Start-PrepareStep 'codex' 'node scripts/prepare-codex-binary.mjs'
     }
-    $env:WEWORK_DWS_TARGET = $WINDOWS_TARGET
-    $prepareJobs += Start-PrepareStep 'dws' 'pnpm run prepare:dws'
-    $prepareJobs += Start-PrepareStep 'harness-runtime' 'pnpm run prepare:harness-runtime -- --materialize'
+    if ($MANAGED_DWS_BINARY) {
+      $env:WEWORK_DWS_TARGET = $WINDOWS_TARGET
+      $prepareJobs += Start-PrepareStep 'dws' 'node scripts/prepare-dws-binary.mjs'
+    }
+    if ($MANAGED_HARNESS_RUNTIME) {
+      $prepareJobs += Start-PrepareStep 'harness-runtime' 'node scripts/prepare-harness-runtime.mjs --materialize'
+    }
     foreach ($job in $prepareJobs) {
       Wait-PrepareStep $job
       Write-Host "Prepared $($job.Name)"
@@ -402,6 +481,11 @@ try {
       if ($LASTEXITCODE -ne 0) {
         Fail 'Error: failed to build the wegent executor.'
       }
+      New-Item -ItemType Directory -Force -Path (Split-Path $env:WEGENT_EXECUTOR_BINARY -Parent) | Out-Null
+      $EXECUTOR_BINARY_TEMP = "$($env:WEGENT_EXECUTOR_BINARY).tmp.$PID"
+      Copy-Item -LiteralPath $MANAGED_SOURCE_EXECUTOR_BINARY -Destination $EXECUTOR_BINARY_TEMP -Force
+      Move-Item -LiteralPath $EXECUTOR_BINARY_TEMP -Destination $env:WEGENT_EXECUTOR_BINARY -Force
+      $EXECUTOR_BINARY_TEMP = ''
     }
     if (-not (Test-Path $env:WEWORK_EXECUTOR_PATH)) {
       Fail "Error: Executor command is not available: $env:WEWORK_EXECUTOR_PATH"
@@ -411,6 +495,15 @@ try {
     }
     if (-not (Test-Path $env:DWS_BINARY_PATH)) {
       Fail "Error: DWS binary is not available: $env:DWS_BINARY_PATH"
+    }
+    node (Join-Path $SCRIPT_DIR 'prepare-dev-component-resources.mjs')
+    if ($LASTEXITCODE -ne 0) {
+      Fail 'Error: failed to prepare development component resources.'
+    }
+    $componentsManifest = Get-Content -LiteralPath (Join-Path $env:WEWORK_COMPONENT_RESOURCES_ROOT 'components.json') -Raw | ConvertFrom-Json
+    $env:WEWORK_CORE_PLUGINS_SHA256 = $componentsManifest.components.weworkCorePlugins.sha256
+    if (-not $env:WEWORK_CORE_PLUGINS_SHA256) {
+      Fail 'Error: Failed to read core plugin checksum from component resources.'
     }
     $WATCH_READY_FILE = Join-Path $env:TEMP ("wework-app-watch-" + [guid]::NewGuid().ToString('N') + ".ready")
     $WATCH_OUT_LOG = Join-Path $env:TEMP "wework-app-watch-$PID.out.log"
@@ -435,10 +528,21 @@ try {
       Get-Content -LiteralPath $WATCH_ERR_LOG -Tail 20 -ErrorAction SilentlyContinue | ForEach-Object { Write-Host "    $_" }
       Fail 'Error: Wework application build watcher did not become ready.'
     }
+    Remove-Item Env:ELECTRON_RUN_AS_NODE -ErrorAction SilentlyContinue
+    Remove-Item Env:WEWORK_NODE_PATH -ErrorAction SilentlyContinue
+    Remove-Item Env:WEWORK_NODE_RUNTIME_KIND -ErrorAction SilentlyContinue
+    pnpm --dir electron run build
+    if ($LASTEXITCODE -ne 0) {
+      Fail 'Error: failed to build the Electron application.'
+    }
+    $ELECTRON_BINARY = Join-Path $WEWORK_DIR 'electron\node_modules\electron\dist\electron.exe'
     if ($ELECTRON_ARGS.Count -gt 0) {
-      pnpm --dir electron dev -- $ELECTRON_ARGS
+      & $ELECTRON_BINARY (Join-Path $WEWORK_DIR 'electron') @ELECTRON_ARGS
     } else {
-      pnpm --dir electron dev
+      & $ELECTRON_BINARY (Join-Path $WEWORK_DIR 'electron')
+    }
+    if ($LASTEXITCODE -ne 0) {
+      exit $LASTEXITCODE
     }
   } finally {
     Pop-Location
@@ -452,5 +556,8 @@ try {
   }
   if ($ISOLATED_EXECUTOR_HOME) {
     Remove-Item -LiteralPath $ISOLATED_EXECUTOR_HOME -Recurse -Force -ErrorAction SilentlyContinue
+  }
+  if ($EXECUTOR_BINARY_TEMP -and (Test-Path $EXECUTOR_BINARY_TEMP)) {
+    Remove-Item -LiteralPath $EXECUTOR_BINARY_TEMP -Force -ErrorAction SilentlyContinue
   }
 }

@@ -21,4 +21,30 @@ describe('resolveDevUserDataDirectory', () => {
       resolveDevUserDataDirectory('/worktrees/first', './custom-user-data', '/Users/example')
     ).toBe(resolve('./custom-user-data'))
   })
+
+  test('uses the platform application-data directory', () => {
+    const environment = {
+      APPDATA: 'C:\\Users\\example\\AppData\\Roaming',
+      XDG_CONFIG_HOME: '/home/example/.config',
+    }
+
+    expect(
+      resolveDevUserDataDirectory(
+        String.raw`D:\worktrees\first`,
+        '',
+        String.raw`C:\Users\example`,
+        'win32',
+        environment
+      )
+    ).toMatch(/io\.wecode\.wework\.dev[\\/][a-f0-9]{16}$/)
+    expect(
+      resolveDevUserDataDirectory(
+        '/home/example/worktrees/first',
+        '',
+        '/home/example',
+        'linux',
+        environment
+      )
+    ).toMatch(/\/io\.wecode\.wework\.dev\/[a-f0-9]{16}$/)
+  })
 })
