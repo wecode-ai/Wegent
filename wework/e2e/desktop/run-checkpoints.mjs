@@ -433,6 +433,9 @@ async function runParallelCheckpoints(checkpoints) {
       const env = checkpointScenarioEnv({ ...sharedEnv }, checkpoint)
       delete env.WEWORK_E2E_CONTROL_SERVER_PORT
       delete env.WEWORK_E2E_MODEL_SERVER_PORT
+      const { controlServerPort, modelServerPort } = await resolveServerPorts(env)
+      env.WEWORK_E2E_CONTROL_SERVER_PORT = String(controlServerPort)
+      env.WEWORK_E2E_MODEL_SERVER_PORT = String(modelServerPort)
       console.log(`\n[desktop-e2e] START ${checkpoint}`)
       const result = await runTaskFlow(parallelCheckpointArgs(checkpoint), env, checkpoint)
       if (result.code === 0) {
