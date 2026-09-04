@@ -32,6 +32,7 @@ describe('scaffoldSmartApp', () => {
     const contract = JSON.parse(await readFile(join(root, 'smart-app.verify.json'), 'utf8'))
     const packageManifest = JSON.parse(await readFile(join(root, 'package.json'), 'utf8'))
     const bundleManifest = JSON.parse(await readFile(join(bundle, 'package.json'), 'utf8'))
+    const bundlePatch = await readFile(join(bundle, 'cordis.patch.yml'), 'utf8')
     const files = await listFiles(root)
 
     expect(contract).toMatchObject({
@@ -80,11 +81,14 @@ describe('scaffoldSmartApp', () => {
       expect(client).toContain("name: 'root'")
       expect(client).toContain('data-testid')
       expect(client).toContain('smart-app-ready')
+      expect(bundlePatch).toContain('id: ui-conversation\n  disabled: true')
+      expect(bundlePatch).toContain('id: ui-sidebar\n  disabled: true')
     } else {
       expect(bundleManifest.exports).not.toHaveProperty('./client')
       expect(bundleManifest.dsh).not.toHaveProperty('client')
       expect(files).not.toContain('packages/bundle/contract-app/src/client.js')
       expect(files).not.toContain('packages/bundle/contract-app/client.js')
+      expect(bundlePatch).not.toContain('id: ui-conversation')
     }
 
     if (capabilities.host) {

@@ -4,6 +4,7 @@ import { join } from 'node:path'
 import { afterEach, describe, expect, test, vi } from 'vitest'
 import {
   runSmartAppProjectScripts,
+  runSmartAppRuntimeProbe,
   type SmartAppScriptCommandRunner,
 } from './smart-app-project-script-runner.js'
 
@@ -113,6 +114,33 @@ describe('runSmartAppProjectScripts', () => {
     expect(environment).toMatchObject({ PATH: '/managed/bin', LANG: 'zh_CN.UTF-8' })
     expect(environment).not.toHaveProperty('DSH_HOME')
     expect(environment).not.toHaveProperty('WEWORK_HARNESS_CONTEXT_TOKEN')
+  })
+
+  test('gives a runtime probe only the runtime URL in addition to managed process state', async () => {
+    const root = await projectRoot()
+    const run = vi.fn<SmartAppScriptCommandRunner>().mockResolvedValue({
+      exitCode: 0,
+      stdout: '',
+      stderr: '',
+    })
+
+    const result = await runSmartAppRuntimeProbe({
+      ...options(root),
+      script: 'runtime:probe',
+      baseUrl: 'http://127.0.0.1:41001/',
+      environment: {
+        PATH: '/managed/bin',
+        DSH_HOME: '/personal/dsh',
+        WEWORK_HARNESS_CONTEXT_TOKEN: 'secret',
+      },
+      run,
+    })
+
+    expect(result).toEqual({ issues: [] })
+    expect(run.mock.calls[0]?.[2].env).toEqual({
+      PATH: '/managed/bin',
+      SMART_APP_BASE_URL: 'http://127.0.0.1:41001/',
+    })
   })
 })
 

@@ -49,6 +49,7 @@ export interface PrepareWorkbenchDshOptions {
 
 export interface WorkbenchDshLaunch {
   command: string
+  entry: string
   args: string[]
   cwd: string
   dshHome: string
@@ -150,6 +151,7 @@ export async function prepareWorkbenchDshLaunch(
   }
   return {
     command: nodeCommand,
+    entry: runtime.entry,
     args: runtimeNodeArgs(environment, [
       runtime.entry,
       '--profile',

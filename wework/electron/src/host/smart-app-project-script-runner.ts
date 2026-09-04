@@ -72,6 +72,14 @@ export interface RunSmartAppProjectScriptsOptions {
   run?: SmartAppScriptCommandRunner
 }
 
+export interface RunSmartAppRuntimeProbeOptions extends Omit<
+  RunSmartAppProjectScriptsOptions,
+  'scripts'
+> {
+  script: string
+  baseUrl: string
+}
+
 export async function runSmartAppProjectScripts(
   options: RunSmartAppProjectScriptsOptions
 ): Promise<SmartAppProjectScriptsResult> {
@@ -107,6 +115,56 @@ export async function runSmartAppProjectScripts(
     }
   }
   return { scripts, issues: [] }
+}
+
+export async function runSmartAppRuntimeProbe(
+  options: RunSmartAppRuntimeProbeOptions
+): Promise<{ issues: SmartAppVerificationIssue[] }> {
+  if (!SCRIPT_NAME.test(options.script)) {
+    return {
+      issues: [
+        {
+          ...invalidScriptIssue('test', options.script),
+          code: 'SA-RUNTIME-PROBE-NAME',
+          stage: 'runtime',
+          message: 'The runtime probe script name is invalid',
+        },
+      ],
+    }
+  }
+  const resolveCommand = options.resolveCommand ?? resolveWorkbenchProjectPnpmCommand
+  const command = await resolveCommand({
+    runtimeRoot: options.runtimeRoot,
+    environment: options.environment,
+  })
+  const environment = {
+    ...sanitizedEnvironment(command.environment),
+    SMART_APP_BASE_URL: options.baseUrl,
+  }
+  const run = options.run ?? runCommand
+  const result = await run(command.command, [...command.argsPrefix, 'run', options.script], {
+    cwd: options.projectRoot,
+    env: environment,
+    shell: false,
+  })
+  const log = join(options.projectRoot, 'test-results', 'smart-app', 'logs', 'runtime-probe.log')
+  await mkdir(join(log, '..'), { recursive: true, mode: 0o700 })
+  await writeFile(log, scriptLog(command.command, options.script, result), { mode: 0o600 })
+  if (result.exitCode === 0) return { issues: [] }
+  return {
+    issues: [
+      {
+        code: 'SA-RUNTIME-PROBE',
+        stage: 'runtime',
+        file: relative(options.projectRoot, log).split(sep).join('/'),
+        message: 'Smart App runtime probe failed',
+        expected: 'exit code 0',
+        actual: result.exitCode === null ? 'spawn error' : `exit code ${result.exitCode}`,
+        blocking: true,
+        hint: 'Inspect the runtime probe log',
+      },
+    ],
+  }
 }
 
 function sanitizedEnvironment(environment: NodeJS.ProcessEnv): NodeJS.ProcessEnv {

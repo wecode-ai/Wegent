@@ -148,7 +148,7 @@ async function writeBundle(
   })
   await writeFile(
     join(bundle, 'cordis.patch.yml'),
-    `- insert:\n    - id: ${input.name}\n      name: '${packageName}'\n`
+    `${capabilities.client ? disabledDefaultWebModules() : ''}- insert:\n    - id: ${input.name}\n      name: '${packageName}'\n`
   )
   const indexSource = capabilities.host
     ? `import { applyHost } from './host.js'\n\nexport const name = '${input.name}'\nexport const inject = []\nexport const apply = applyHost\n`
@@ -173,6 +173,18 @@ async function writeBundle(
     await writeFile(join(bundle, 'src', 'client.js'), clientSource)
     await writeFile(join(bundle, 'client.js'), clientSource)
   }
+}
+
+function disabledDefaultWebModules(): string {
+  return [
+    'ui-conversation',
+    'ui-sidebar',
+    'ui-settings-general',
+    'ui-settings-models',
+    'ui-settings-plugin-inventory',
+  ]
+    .map(id => `- id: ${id}\n  disabled: true\n`)
+    .join('')
 }
 
 async function writeProjectTools(
