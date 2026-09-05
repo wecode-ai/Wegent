@@ -1201,7 +1201,37 @@ async function main() {
       ])
       return child
     }
+    const launchSecondDesktopAppInstance = async () => {
+      const child = spawn(appBinary, electronLaunchArguments, {
+        cwd: weworkDir,
+        env: appEnvironment,
+        stdio: 'ignore',
+      })
+      await new Promise((resolvePromise, reject) => {
+        const timeout = setTimeout(() => {
+          child.kill('SIGKILL')
+          reject(new Error('The second Wework instance did not exit after transferring focus'))
+        }, DEFAULT_STEP_TIMEOUT_MS)
+        child.once('error', error => {
+          clearTimeout(timeout)
+          reject(error)
+        })
+        child.once('exit', (code, signal) => {
+          clearTimeout(timeout)
+          if (code === 0) {
+            resolvePromise()
+            return
+          }
+          reject(
+            new Error(
+              `The second Wework instance exited with ${code ?? `signal ${signal ?? 'unknown'}`}`
+            )
+          )
+        })
+      })
+    }
     app = await startDesktopAppProcess()
+    desktopScenario?.setLaunchSecondInstance?.(launchSecondDesktopAppInstance)
     const restartDesktopApp = async (options = null) => {
       const beforeStart = typeof options === 'function' ? options : options?.afterStop
       const desktopDeviceIdPath = join(resultDir, 'electron-user-data', 'desktop-device-id')

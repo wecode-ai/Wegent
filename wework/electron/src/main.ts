@@ -307,10 +307,9 @@ app.on('second-instance', (_event, _argv, _workingDirectory, additionalData) => 
   if (workspaceOpenRequest) queueWorkspaceOpenRequest(workspaceOpenRequest)
   if (keepE2EWindowInBackground) return
   if (focusStartupSplashIfActive()) return
-  if (!mainWindow) return
-  if (mainWindow.isMinimized()) mainWindow.restore()
-  mainWindow.show()
-  mainWindow.focus()
+  void reactivateMainWindow().catch(error => {
+    console.error('[window] failed to reactivate main window from second instance', error)
+  })
 })
 
 function normalizedWorkspaceOpenRequest(value: unknown): LocalWorkspaceOpenRequest | null {
@@ -1020,11 +1019,10 @@ async function reactivateMainWindow(): Promise<void> {
     e2eForegroundActivationAllowed = true
     app.setActivationPolicy('regular')
   }
+  if (process.platform === 'darwin') app.show()
+  presentWindow(target)
   await setDockVisible(true)
   await loadPrimaryDshView()
-  if (target.isMinimized()) target.restore()
-  target.show()
-  target.focus()
 }
 
 function dispatchTrayAction(action: TrayAction): void {
