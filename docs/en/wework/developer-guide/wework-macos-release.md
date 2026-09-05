@@ -203,6 +203,15 @@ The guard handles only `EPIPE`; other stream errors still fail and expose their
 root cause. A configured external Node executable keeps native Node error
 handling and does not load this Electron-specific guard.
 
+The Electron main process may also be launched through pipes by a terminal,
+development script, or automation runner and remain resident after that parent
+exits. Before loading other Electron modules, the main process must install the
+same strict `EPIPE` guard on its own `stdout` and `stderr`, preventing later
+Node warnings or diagnostic logs from becoming uncaught-exception dialogs
+after the consumer closes. This path must neither exit the main process nor
+ignore errors other than `EPIPE`; the desktop window and local runtime do not
+share the log consumer's lifecycle.
+
 ## Bundled sidecars and resources
 
 Prepare Codex and DWS before packaging:
