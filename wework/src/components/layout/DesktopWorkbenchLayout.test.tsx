@@ -9947,11 +9947,27 @@ describe('DesktopWorkbenchLayout', () => {
     )
     expect(scopedPanel.getByTestId('environment-push-button')).toHaveTextContent('推送')
 
-    await userEvent.click(scopedPanel.getByTestId('environment-commit-and-push-button'))
+    await userEvent.type(screen.getByTestId('environment-commit-message-input'), 'keep this')
+    await userEvent.click(screen.getByTestId('environment-cancel-commit-button'))
+    expect(screen.queryByTestId('environment-commit-form')).not.toBeInTheDocument()
+    expect(commitMenuButton).toHaveFocus()
+
+    await userEvent.click(commitMenuButton)
+    expect(screen.getByTestId('environment-commit-message-input')).toHaveValue('keep this')
+    await userEvent.keyboard('{Escape}')
+    expect(screen.queryByTestId('environment-commit-form')).not.toBeInTheDocument()
+    expect(commitMenuButton).toHaveFocus()
+
+    await userEvent.click(commitMenuButton)
+    fireEvent.pointerDown(document.body)
+    expect(screen.queryByTestId('environment-commit-form')).not.toBeInTheDocument()
+
+    await userEvent.click(commitMenuButton)
+    await userEvent.click(screen.getByTestId('environment-commit-and-push-button'))
     await waitFor(() =>
       expect(onCommitAndPushEnvironmentChanges).toHaveBeenCalledWith(
         null,
-        '',
+        'keep this',
         activeProjectRuntimeTarget
       )
     )
