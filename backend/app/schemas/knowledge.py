@@ -304,6 +304,10 @@ class KnowledgeBaseCreate(MultimodalAnalysisFieldsMixin):
         default="read",
         description="Minimum capability required for direct knowledge base access",
     )
+    allow_document_download: Optional[bool] = Field(
+        default=None,
+        description="Whether readers may download original knowledge documents",
+    )
     kb_type: KnowledgeBaseType = Field(
         KnowledgeBaseType.NOTEBOOK,
         description=(
@@ -414,6 +418,10 @@ class KnowledgeBaseUpdate(MultimodalAnalysisFieldsMixin):
     direct_access_requirement: Optional[Literal["read", "edit"]] = Field(
         default=None,
         description="Minimum capability required for direct knowledge base access",
+    )
+    allow_document_download: Optional[bool] = Field(
+        default=None,
+        description="Whether readers may download original knowledge documents",
     )
     retrieval_config: Optional[RetrievalConfigUpdate] = Field(
         None,
@@ -847,6 +855,7 @@ class KnowledgeBaseResponse(MultimodalAnalysisResponseFieldsMixin):
     user_id: int
     namespace: str
     direct_access_requirement: Literal["read", "edit"] = "read"
+    allow_document_download: Optional[bool] = None
     source: Optional[Dict[str, Any]] = Field(
         None,
         description=(
@@ -973,6 +982,7 @@ class KnowledgeBaseResponse(MultimodalAnalysisResponseFieldsMixin):
             user_id=kind.user_id,
             namespace=kind.namespace,
             direct_access_requirement=spec.get("directAccessRequirement", "read"),
+            allow_document_download=spec.get("allowDocumentDownload"),
             kb_type=kb_type,
             source=source,
             language=language,
@@ -999,6 +1009,13 @@ class KnowledgeBaseResponse(MultimodalAnalysisResponseFieldsMixin):
 
     class Config:
         from_attributes = True
+
+
+class DocumentProtectionResponse(BaseModel):
+    """Effective document-export capability for a knowledge-base reader."""
+
+    original_download_allowed: bool
+    watermark_text: Optional[str] = None
 
 
 class KnowledgeBaseListResponse(BaseModel):

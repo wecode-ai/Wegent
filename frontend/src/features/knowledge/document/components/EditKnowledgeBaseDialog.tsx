@@ -66,6 +66,7 @@ export function EditKnowledgeBaseDialog({
   const [description, setDescription] = useState('')
   const [directAccessRequirement, setDirectAccessRequirement] =
     useState<DirectAccessRequirement>('read')
+  const [allowDocumentDownload, setAllowDocumentDownload] = useState<boolean | undefined>()
   const [summaryEnabled, setSummaryEnabled] = useState(false)
   const [summaryModelRef, setSummaryModelRef] = useState<SummaryModelRef | null>(null)
   // Editable so a wiki created before the field existed can be given a model. Left
@@ -160,6 +161,7 @@ export function EditKnowledgeBaseDialog({
       setName(kb.name)
       setDescription(kb.description || '')
       setDirectAccessRequirement(kb.direct_access_requirement ?? 'read')
+      setAllowDocumentDownload(kb.allow_document_download)
       setSummaryEnabled(kb.summary_enabled || false)
       setSummaryModelRef(kb.summary_model_ref || null)
       setExecutionModelRef(kb.execution_model_ref || null)
@@ -235,6 +237,7 @@ export function EditKnowledgeBaseDialog({
         name: name.trim(),
         description: description.trim(), // Allow empty string to clear description
         direct_access_requirement: directAccessRequirement,
+        allow_document_download: allowDocumentDownload,
         summary_enabled: summaryEnabled,
         summary_model_ref: summaryEnabled ? summaryModelRef : null,
         ...buildMultimodalSubmitFields(),
@@ -400,6 +403,8 @@ export function EditKnowledgeBaseDialog({
                   onDescriptionChange={value => setDescription(value)}
                   directAccessRequirement={directAccessRequirement}
                   onDirectAccessRequirementChange={setDirectAccessRequirement}
+                  allowDocumentDownload={allowDocumentDownload}
+                  onAllowDocumentDownloadChange={setAllowDocumentDownload}
                   summaryEnabled={summaryEnabled}
                   onSummaryEnabledChange={checked => {
                     setSummaryEnabled(checked)

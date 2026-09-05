@@ -361,6 +361,8 @@ export interface KnowledgeBase {
   user_id: number
   namespace: string
   direct_access_requirement?: DirectAccessRequirement
+  /** Whether readers may download original documents from this knowledge base. */
+  allow_document_download?: boolean
   document_count: number
   is_active: boolean
   retrieval_config?: RetrievalConfig
@@ -413,6 +415,8 @@ export interface KnowledgeBaseCreate {
   description?: string
   namespace?: string
   direct_access_requirement?: DirectAccessRequirement
+  /** Defaults to true for a new knowledge base. */
+  allow_document_download?: boolean
   retrieval_config?: RetrievalConfigDraft
   rag_config_mode?: RagConfigMode
   summary_enabled?: boolean
@@ -467,6 +471,7 @@ export interface KnowledgeBaseUpdate {
   name?: string
   description?: string
   direct_access_requirement?: DirectAccessRequirement
+  allow_document_download?: boolean
   retrieval_config?: RetrievalConfigUpdate
   summary_enabled?: boolean
   summary_model_ref?: SummaryModelRef | null
@@ -488,6 +493,11 @@ export interface KnowledgeBaseUpdate {
   multimodal_analysis_video_prompt?: string | null
   /** Custom image analysis prompt; null/empty = use system default */
   multimodal_analysis_image_prompt?: string | null
+}
+
+export interface DocumentProtection {
+  original_download_allowed: boolean
+  watermark_text?: string | null
 }
 
 export interface KnowledgeBaseListResponse {

@@ -17,8 +17,7 @@ import { createPortal } from 'react-dom'
 import { ZoomIn, ZoomOut, RotateCw, X } from 'lucide-react'
 import { Spinner } from '@/components/ui/spinner'
 import { Button } from '@/components/ui/button'
-import { isImageExtension, getAttachmentPreviewUrl } from '@/apis/attachments'
-import { getToken } from '@/apis/user'
+import { isImageExtension, getAttachmentPlayback } from '@/apis/attachments'
 
 /**
  * Detect if a document is an image-type multimodal document.
@@ -58,10 +57,11 @@ function useImageBlob(
       setIsLoading(true)
       setError(false)
       try {
-        const token = getToken()
-        const response = await fetch(getAttachmentPreviewUrl(attachmentId), {
-          headers: { ...(token && { Authorization: `Bearer ${token}` }) },
-        })
+        // The playback URL carries a server-issued playback-purpose token,
+        // which the download policy exempts for images of protected knowledge
+        // bases; a plain download URL would be rejected with 403 there.
+        const { playback_url } = await getAttachmentPlayback(attachmentId)
+        const response = await fetch(playback_url)
         if (!response.ok) throw new Error(`Failed to fetch image: ${response.status}`)
         const blob = await response.blob()
         if (isMounted) {

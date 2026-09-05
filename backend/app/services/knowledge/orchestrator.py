@@ -1049,6 +1049,7 @@ class KnowledgeOrchestrator:
         name: Optional[str] = None,
         description: Optional[str] = None,
         direct_access_requirement: Optional[Literal["read", "edit"]] = None,
+        allow_document_download: Optional[bool] = None,
         retrieval_config: Optional[Dict[str, Any]] = None,
         summary_enabled: Optional[bool] = None,
         summary_model_ref: Optional[Dict[str, str]] = None,
@@ -1099,6 +1100,8 @@ class KnowledgeOrchestrator:
             update_fields["description"] = description
         if direct_access_requirement is not None:
             update_fields["direct_access_requirement"] = direct_access_requirement
+        if allow_document_download is not None:
+            update_fields["allow_document_download"] = allow_document_download
         if retrieval_config is not None:
             update_fields["retrieval_config"] = retrieval_config
         if summary_enabled is not None:
@@ -1146,6 +1149,7 @@ class KnowledgeOrchestrator:
         description: Optional[str] = None,
         namespace: str = "default",
         direct_access_requirement: Literal["read", "edit"] = "read",
+        allow_document_download: Optional[bool] = None,
         summary_enabled: bool = False,
         rag_config_mode: Literal["auto", "disabled"] = "auto",
         # REST API scenario: pass complete config
@@ -1247,6 +1251,7 @@ class KnowledgeOrchestrator:
             description=description,
             namespace=namespace,
             direct_access_requirement=direct_access_requirement,
+            allow_document_download=allow_document_download,
             kb_type=KnowledgeBaseType(kb_type),
             source=source.to_spec() if source else None,
             language=language or None,
@@ -1295,6 +1300,7 @@ class KnowledgeOrchestrator:
         description: Optional[str] = None,
         namespace: str = "default",
         direct_access_requirement: Literal["read", "edit"] = "read",
+        allow_document_download: Optional[bool] = None,
         kb_type: str = KnowledgeBaseType.NOTEBOOK.value,
         summary_enabled: bool = False,
         rag_config_mode: Literal["auto", "disabled"] = "auto",
@@ -1370,6 +1376,7 @@ class KnowledgeOrchestrator:
             description=description,
             namespace=namespace,
             direct_access_requirement=direct_access_requirement,
+            allow_document_download=allow_document_download,
             summary_enabled=summary_enabled,
             rag_config_mode=rag_config_mode,
             retrieval_config=retrieval_config,
@@ -1397,6 +1404,7 @@ class KnowledgeOrchestrator:
         description: Optional[str] = None,
         namespace: str = "default",
         direct_access_requirement: Literal["read", "edit"] = "read",
+        allow_document_download: Optional[bool] = None,
         # Empty is not "English", it is "fall back to the deployment default", which
         # is also what a wiki created before this field existed does.
         language: str = "",
@@ -1437,6 +1445,7 @@ class KnowledgeOrchestrator:
             description=description,
             namespace=namespace,
             direct_access_requirement=direct_access_requirement,
+            allow_document_download=allow_document_download,
             summary_enabled=summary_enabled,
             rag_config_mode=rag_config_mode,
             retrieval_config=retrieval_config,

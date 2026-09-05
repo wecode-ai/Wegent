@@ -290,6 +290,7 @@ def create_code_wiki(
             # is what silently dropped the summary settings and left the retrieval
             # config to be auto-resolved rather than taken from the form.
             direct_access_requirement=data.direct_access_requirement,
+            allow_document_download=data.allow_document_download,
             summary_enabled=data.summary_enabled,
             summary_model_ref=data.summary_model_ref,
             execution_model_ref=data.execution_model_ref,

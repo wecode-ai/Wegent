@@ -19,6 +19,7 @@ from fastapi import (
     Depends,
     HTTPException,
     Query,
+    Response,
     status,
 )
 from sqlalchemy.exc import IntegrityError
@@ -48,6 +49,7 @@ from app.schemas.knowledge import (
     DocumentContentUpdate,
     DocumentDetailResponse,
     DocumentMoveRequest,
+    DocumentProtectionResponse,
     ExternalDocumentBatchImportRequest,
     ExternalDocumentBatchImportResponse,
     ExternalDocumentImportRequest,
@@ -78,6 +80,9 @@ from app.services.knowledge import (
     KnowledgeFolderService,
     KnowledgeService,
     knowledge_base_qa_service,
+)
+from app.services.knowledge.document_download_policy import (
+    is_original_download_allowed,
 )
 from app.services.knowledge.external_document_import import (
     ExternalDocumentImportError,
@@ -476,6 +481,7 @@ def create_knowledge_base(
             description=data.description,
             namespace=data.namespace or "default",
             direct_access_requirement=data.direct_access_requirement,
+            allow_document_download=data.allow_document_download,
             kb_type=data.kb_type or "notebook",
             summary_enabled=data.summary_enabled,
             rag_config_mode=data.rag_config_mode,
@@ -509,6 +515,36 @@ def create_knowledge_base(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=str(e),
         )
+
+
+@router.get(
+    "/{knowledge_base_id}/document-protection",
+    response_model=DocumentProtectionResponse,
+)
+def get_document_protection(
+    knowledge_base_id: int,
+    response: Response,
+    current_user: User = Depends(security.get_current_user),
+    db: Session = Depends(get_db),
+) -> DocumentProtectionResponse:
+    """Return UI-only protection state; file exits still authorize independently."""
+    knowledge_base, has_access = KnowledgeService.get_knowledge_base(
+        db=db,
+        knowledge_base_id=knowledge_base_id,
+        user_id=current_user.id,
+    )
+    if not knowledge_base or not has_access:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Knowledge base not found",
+        )
+
+    download_allowed = is_original_download_allowed(db, knowledge_base)
+    response.headers["Cache-Control"] = "private, no-store"
+    return DocumentProtectionResponse(
+        original_download_allowed=download_allowed,
+        watermark_text=None if download_allowed else current_user.user_name,
+    )
 
 
 @router.get("/{knowledge_base_id}", response_model=KnowledgeBaseResponse)
@@ -563,6 +599,7 @@ def update_knowledge_base(
             name=data.name,
             description=data.description,
             direct_access_requirement=data.direct_access_requirement,
+            allow_document_download=data.allow_document_download,
             retrieval_config=_dump_retrieval_config_for_api(data.retrieval_config),
             summary_enabled=data.summary_enabled,
             summary_model_ref=data.summary_model_ref,

@@ -317,6 +317,8 @@ class KnowledgeService:
             "retrievalConfig": _to_json_dict(data.retrieval_config),
             "summaryEnabled": data.summary_enabled,
         }
+        if data.allow_document_download is not None:
+            spec_kwargs["allowDocumentDownload"] = data.allow_document_download
         # A code wiki records the repository it is generated from, and the language
         # its pages are written in. Both are omitted entirely when absent rather than
         # stored empty: absent means "fall back to the deployment default", which is
@@ -352,6 +354,8 @@ class KnowledgeService:
 
         # Build resource data
         resource_data = kb_crd.model_dump()
+        if data.allow_document_download is None:
+            resource_data["spec"].pop("allowDocumentDownload", None)
         if "status" not in resource_data or resource_data["status"] is None:
             resource_data["status"] = {"state": "Available"}
 
@@ -879,6 +883,9 @@ class KnowledgeService:
 
         if data.direct_access_requirement is not None:
             spec["directAccessRequirement"] = data.direct_access_requirement
+
+        if "allow_document_download" in data.model_fields_set:
+            spec["allowDocumentDownload"] = data.allow_document_download
 
         # Update retrieval config if provided (only allowed fields)
         if data.retrieval_config is not None:

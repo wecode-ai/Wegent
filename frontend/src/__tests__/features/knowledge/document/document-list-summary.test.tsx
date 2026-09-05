@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import '@testing-library/jest-dom'
-import { fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 
 import { DocumentList } from '@/features/knowledge/document/components/DocumentList'
 import type { KnowledgeBase, KnowledgeDocument, KnowledgeFolder } from '@/types/knowledge'
@@ -11,12 +11,15 @@ import type { KnowledgeBase, KnowledgeDocument, KnowledgeFolder } from '@/types/
 let mockDocuments: KnowledgeDocument[] = []
 let mockFolders: KnowledgeFolder[] = []
 const mockFolderTree = jest.fn()
+const mockKnowledgeDocumentTreeGrid = jest.fn()
 const mockCreateWebDocument = jest.fn()
 const mockRefreshDocuments = jest.fn()
+const mockGetDocumentProtection = jest.fn()
 
 jest.mock('@/apis/knowledge', () => ({
   ...jest.requireActual('@/apis/knowledge'),
   createWebDocument: (...args: unknown[]) => mockCreateWebDocument(...args),
+  getDocumentProtection: (...args: unknown[]) => mockGetDocumentProtection(...args),
 }))
 
 jest.mock('@/hooks/useTranslation', () => ({
@@ -144,31 +147,30 @@ jest.mock('@/features/knowledge/document/components/FolderTree', () => ({
   },
 }))
 jest.mock('@/features/knowledge/document/components/knowledge-document-tree-grid', () => ({
-  KnowledgeDocumentTreeGrid: ({
-    documents,
-    showSelectionColumn,
-    canSelect,
-    onSelect,
-  }: {
+  KnowledgeDocumentTreeGrid: (props: {
     documents: KnowledgeDocument[]
     showSelectionColumn: boolean
     canSelect?: (document: KnowledgeDocument) => boolean
     onSelect?: (document: KnowledgeDocument, selected: boolean) => void
-  }) => (
-    <div>
-      {documents.map(document => (
-        <button
-          key={document.id}
-          type="button"
-          data-testid={`select-document-${document.id}`}
-          disabled={!showSelectionColumn || !canSelect?.(document)}
-          onClick={() => onSelect?.(document, true)}
-        >
-          {document.name}
-        </button>
-      ))}
-    </div>
-  ),
+    allowDownload?: boolean
+  }) => {
+    mockKnowledgeDocumentTreeGrid(props)
+    return (
+      <div>
+        {props.documents.map(document => (
+          <button
+            key={document.id}
+            type="button"
+            data-testid={`select-document-${document.id}`}
+            disabled={!props.showSelectionColumn || !props.canSelect?.(document)}
+            onClick={() => props.onSelect?.(document, true)}
+          >
+            {document.name}
+          </button>
+        ))}
+      </div>
+    )
+  },
 }))
 jest.mock('@/features/knowledge/document/components/CreateFolderDialog', () => ({
   CreateFolderDialog: () => null,
@@ -252,8 +254,10 @@ describe('DocumentList summary header', () => {
     mockDocuments = []
     mockFolders = []
     mockFolderTree.mockClear()
+    mockKnowledgeDocumentTreeGrid.mockClear()
     mockCreateWebDocument.mockReset()
     mockRefreshDocuments.mockReset()
+    mockGetDocumentProtection.mockReturnValue(new Promise(() => {}))
   })
 
   it('refreshes added web documents without closing the source dialog from the parent', async () => {
@@ -266,6 +270,56 @@ describe('DocumentList summary header', () => {
     expect(screen.getByTestId('upload-dialog')).toBeInTheDocument()
     fireEvent.click(screen.getByTestId('close-upload'))
     expect(screen.queryByTestId('upload-dialog')).not.toBeInTheDocument()
+  })
+
+  it('fails closed while a new knowledge base protection policy is loading', async () => {
+    mockDocuments = [createDocument()]
+    let resolveProtectedKnowledgeBase: (value: {
+      original_download_allowed: boolean
+      watermark_text: string | null
+    }) => void
+    const protectedKnowledgeBase = new Promise<{
+      original_download_allowed: boolean
+      watermark_text: string | null
+    }>(resolve => {
+      resolveProtectedKnowledgeBase = resolve
+    })
+    mockGetDocumentProtection
+      .mockResolvedValueOnce({
+        original_download_allowed: true,
+        watermark_text: null,
+      })
+      .mockReturnValueOnce(protectedKnowledgeBase)
+
+    const { rerender } = render(<DocumentList knowledgeBase={createKnowledgeBase()} />)
+
+    await waitFor(() => {
+      expect(mockKnowledgeDocumentTreeGrid).toHaveBeenLastCalledWith(
+        expect.objectContaining({ allowDownload: true })
+      )
+    })
+
+    rerender(<DocumentList knowledgeBase={createKnowledgeBase({ id: 2 })} />)
+
+    await waitFor(() => {
+      expect(mockGetDocumentProtection).toHaveBeenLastCalledWith(2)
+      expect(mockKnowledgeDocumentTreeGrid).toHaveBeenLastCalledWith(
+        expect.objectContaining({ allowDownload: false })
+      )
+    })
+
+    await act(async () => {
+      resolveProtectedKnowledgeBase!({
+        original_download_allowed: true,
+        watermark_text: null,
+      })
+    })
+
+    await waitFor(() => {
+      expect(mockKnowledgeDocumentTreeGrid).toHaveBeenLastCalledWith(
+        expect.objectContaining({ allowDownload: true })
+      )
+    })
   })
 
   it.each([
