@@ -13,6 +13,7 @@ const mocks = vi.hoisted(() => ({
   ensureLocalExecutorStarted: vi.fn(),
   ensureBundledPluginMarketplaceRegistered: vi.fn(),
   getInitializedBundledPluginMarketplace: vi.fn(() => null),
+  knownDeviceId: 'local-device' as string | null,
   runtime: {
     desktop: true,
     electron: true,
@@ -28,6 +29,7 @@ vi.mock('@/desktop/localExecutor', () => ({
   ensureLocalExecutorStarted: () => mocks.ensureLocalExecutorStarted(),
   ensureBundledPluginMarketplaceRegistered: () => mocks.ensureBundledPluginMarketplaceRegistered(),
   getInitializedBundledPluginMarketplace: () => mocks.getInitializedBundledPluginMarketplace(),
+  getKnownLocalExecutorDeviceId: () => mocks.knownDeviceId,
   requestLocalExecutor: (...args: unknown[]) => mocks.requestLocalExecutor(...args),
 }))
 
@@ -86,6 +88,7 @@ describe('local codex plugin readState cache', () => {
     clearLocalCodexPluginsReadStateCache()
     mocks.runtime.desktop = true
     mocks.runtime.electron = true
+    mocks.knownDeviceId = 'local-device'
     mocks.requestLocalExecutor.mockReset()
     mocks.ensureLocalExecutorStarted.mockReset()
     mocks.ensureBundledPluginMarketplaceRegistered.mockReset()
@@ -913,6 +916,41 @@ describe('local codex plugin readState cache', () => {
     expect(peekLocalCodexPluginsReadState({ mergeAllMarketplaces: true })?.deviceId).toBe(
       'local-device'
     )
+  })
+
+  test('does not hydrate a plugin snapshot from another executor home', async () => {
+    await createLocalCodexPluginApi().readState({ mergeAllMarketplaces: true })
+    const raw = window.localStorage.getItem('wework.plugins.codexReadState.v2')
+    expect(raw).toBeTruthy()
+    clearLocalCodexPluginsReadStateCache()
+    window.localStorage.setItem('wework.plugins.codexReadState.v2', raw!)
+
+    mocks.knownDeviceId = 'other-executor-device'
+
+    expect(peekLocalCodexPluginsReadState({ mergeAllMarketplaces: true })).toBeNull()
+  })
+
+  test('drops an in-memory plugin snapshot when the executor home changes', async () => {
+    await createLocalCodexPluginApi().readState({ mergeAllMarketplaces: true })
+    expect(peekLocalCodexPluginsReadState({ mergeAllMarketplaces: true })?.deviceId).toBe(
+      'local-device'
+    )
+
+    mocks.knownDeviceId = 'other-executor-device'
+
+    expect(peekLocalCodexPluginsReadState({ mergeAllMarketplaces: true })).toBeNull()
+  })
+
+  test('does not expose a durable plugin snapshot before the executor scope is known', async () => {
+    await createLocalCodexPluginApi().readState({ mergeAllMarketplaces: true })
+    const raw = window.localStorage.getItem('wework.plugins.codexReadState.v2')
+    expect(raw).toBeTruthy()
+    clearLocalCodexPluginsReadStateCache()
+    window.localStorage.setItem('wework.plugins.codexReadState.v2', raw!)
+
+    mocks.knownDeviceId = null
+
+    expect(peekLocalCodexPluginsReadState({ mergeAllMarketplaces: true })).toBeNull()
   })
 
   test('migrates yesterday durable v1 peek into v2 without forcing a cold plugin/list', async () => {

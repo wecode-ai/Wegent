@@ -6,6 +6,7 @@ import {
 } from './conversation-layout.mjs'
 
 import { sendPrompt } from './conversation-navigation.mjs'
+import { waitForBlankConversation } from './memory-tool-flows.mjs'
 
 import {
   ACTIVE_COMPOSER_SELECTOR,
@@ -268,22 +269,26 @@ async function initializeBlankCodexHome({ codexHome, control }) {
   )
 }
 
-async function waitForBundledMarketplaceRegistration(codexHome) {
+async function waitForBundledMarketplaceRegistration(codexHome, expectedSource) {
   const configPath = join(codexHome, 'config.toml')
+  const expectedSourceLine = expectedSource ? `source = ${JSON.stringify(expectedSource)}` : null
   const startedAt = Date.now()
   while (Date.now() - startedAt < WORKBENCH_READY_TIMEOUT_MS) {
     if (await pathExists(configPath)) {
       const config = await readFile(configPath, 'utf8')
       if (
         config.includes('[marketplaces.wework-personal]') &&
-        config.includes('source_type = "local"')
+        config.includes('source_type = "local"') &&
+        (!expectedSourceLine || config.includes(expectedSourceLine))
       ) {
         return
       }
     }
     await new Promise(resolvePromise => setTimeout(resolvePromise, 50))
   }
-  throw new Error('The bundled local plugin marketplace was not registered in the background')
+  throw new Error(
+    `The bundled local plugin marketplace was not registered from ${expectedSource ?? 'the expected local source'}`
+  )
 }
 
 async function verifyStartupIgnoresBlockedCodexNetwork({
@@ -1156,9 +1161,7 @@ async function verifyMarketplacePluginLifecycle({
   await captureVerificationScreenshot(control, 'marketplace-plugins-05-uninstalled.png')
 
   await control.command('click', '[data-testid="new-chat-button"]')
-  await control.command('waitFor', ACTIVE_COMPOSER_SELECTOR, {
-    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
-  })
+  await waitForBlankConversation(control, ACTIVE_COMPOSER_SELECTOR)
   await control.command('click', '[data-testid="composer-plugin-picker-button"]')
   await control.command('waitFor', '[data-testid="composer-plugin-picker"]', {
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
@@ -1186,6 +1189,7 @@ async function verifySkillMentionRendering({ control, fixture }) {
   const qualifiedSkillName = `${OFFICIAL_PLUGIN_NAME}:${OFFICIAL_PLUGIN_SKILL_NAME}`
   const qualifiedSkillTestId = qualifiedSkillName.replace(/[^a-zA-Z0-9_-]/g, '-')
   await control.command('click', '[data-testid="new-chat-button"]')
+  await waitForBlankConversation(control, ACTIVE_COMPOSER_SELECTOR)
   control.setScenario('skill_mention_display')
   await control.command('fill', ACTIVE_COMPOSER_SELECTOR, {
     value: `[$${qualifiedSkillName}](${fixture.skillPath}) ${QUALIFIED_SKILL_MENTION_PROMPT}`,

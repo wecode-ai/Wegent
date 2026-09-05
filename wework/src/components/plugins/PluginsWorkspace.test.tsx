@@ -27,9 +27,19 @@ const telemetryMocks = vi.hoisted(() => ({
 }))
 const localExecutorMocks = vi.hoisted(() => ({
   ensureStarted: vi.fn(),
+  knownDeviceId: 'current-device' as string | null,
   request: vi.fn(),
 }))
 const desktopHostMock = vi.hoisted(() => vi.fn())
+
+function mockKnownExecutorDevice(deviceId: string): void {
+  localExecutorMocks.knownDeviceId = deviceId
+  localExecutorMocks.ensureStarted.mockResolvedValue({
+    running: true,
+    ready: true,
+    deviceId,
+  })
+}
 
 async function installPluginFromMarketCard(testId: string) {
   await userEvent.click(screen.getByTestId(testId))
@@ -40,6 +50,7 @@ async function installPluginFromMarketCard(testId: string) {
 vi.mock('@/desktop/localExecutor', async importOriginal => ({
   ...(await importOriginal<typeof import('@/desktop/localExecutor')>()),
   ensureLocalExecutorStarted: localExecutorMocks.ensureStarted,
+  getKnownLocalExecutorDeviceId: () => localExecutorMocks.knownDeviceId,
   requestLocalExecutor: localExecutorMocks.request,
 }))
 vi.mock('@/api/dsh/desktopHost', () => ({
@@ -220,11 +231,7 @@ function mockCodexAppServerInvoke(
     }
   } = {}
 ) {
-  localExecutorMocks.ensureStarted.mockResolvedValue({
-    running: true,
-    ready: true,
-    deviceId: options.deviceId,
-  })
+  mockKnownExecutorDevice(options.deviceId ?? 'current-device')
   const marketplaces = [...(options.marketplaces ?? [])]
   const installedPluginNames = new Set(options.installedPluginNames ?? [])
   const pluginEnabledById = new Map<string, boolean>()
@@ -1325,6 +1332,7 @@ function seedDurableOpenAiGithubPeek(options?: {
   includeGmailInstall?: boolean
   includeGithubConnector?: boolean
 }) {
+  mockKnownExecutorDevice('local-device')
   const githubComponents = options?.includeGithubConnector
     ? { ...emptyPluginComponents, connectors: [githubConnectorComponent()] }
     : emptyPluginComponents
@@ -1507,11 +1515,7 @@ describe('PluginsWorkspace', () => {
     telemetryMocks.track.mockClear()
     desktopHostMock.mockReset()
     localExecutorMocks.ensureStarted.mockReset()
-    localExecutorMocks.ensureStarted.mockResolvedValue({
-      running: true,
-      ready: true,
-      deviceId: 'current-device',
-    })
+    mockKnownExecutorDevice('current-device')
     vi.mocked(requestLocalExecutor).mockReset()
     vi.mocked(requestLocalExecutor).mockImplementation(method => {
       if (method === 'executor.plugins.personal.list') {
@@ -2114,6 +2118,7 @@ describe('PluginsWorkspace', () => {
 
   test('paints OpenAI durable peek even when the account cache only has cloud rows', async () => {
     window.__WEWORK_RUNTIME_CONFIG__ = { desktopHost: 'electron' }
+    mockKnownExecutorDevice('local-device')
     setPluginMarketplaceCache({
       cacheKey: '|anon',
       marketplaceItems: [],
@@ -2258,6 +2263,7 @@ describe('PluginsWorkspace', () => {
 
   test('keeps OpenAI official installed strip from durable peek when plugin/installed omits it', async () => {
     window.__WEWORK_RUNTIME_CONFIG__ = { desktopHost: 'electron' }
+    mockKnownExecutorDevice('local-device')
     setPluginMarketplaceCache({
       cacheKey: '|anon',
       marketplaceItems: [],
@@ -2619,6 +2625,7 @@ describe('PluginsWorkspace', () => {
 
   test('keeps the warm catalog painted while live plugin/installed is still pending', async () => {
     window.__WEWORK_RUNTIME_CONFIG__ = { desktopHost: 'electron' }
+    mockKnownExecutorDevice('local-device')
     setPluginMarketplaceCache({
       cacheKey: '|anon',
       marketplaceItems: [],
