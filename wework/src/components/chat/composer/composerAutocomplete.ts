@@ -26,6 +26,10 @@ export interface SlashCommand {
   testId: string
   skill?: LocalDeviceSkill
   app?: LocalDeviceApp
+  extensionCommand?: {
+    command: string
+    menuId: string
+  }
   onSelect?: () => void
 }
 

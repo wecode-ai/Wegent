@@ -295,14 +295,16 @@ async function writeCodexConfig(
   codexHome,
   modelServerUrl,
   scenarioConfigToml = '',
-  upstreamApiFormat = 'openai-responses'
+  upstreamApiFormat = 'openai-responses',
+  providerConfigToml = '',
+  providerAuthToml = 'env_key = "WEWORK_E2E_MODEL_API_KEY"'
 ) {
   await mkdir(codexHome, { recursive: true })
   const configPath = join(codexHome, 'config.toml')
   const temporaryConfigPath = join(codexHome, `config.toml.${randomUUID()}.tmp`)
   await writeFile(
     temporaryConfigPath,
-    `model_provider = "${MODEL_PROVIDER_ID}"\nmodel = "${DEFAULT_MODEL_ID}"\napproval_policy = "never"\nsandbox_mode = "danger-full-access"\n${scenarioConfigToml}\n[model_providers.${MODEL_PROVIDER_ID}]\nname = "Wework Desktop E2E"\nbase_url = "${modelServerUrl}/v1"\nenv_key = "WEWORK_E2E_MODEL_API_KEY"\nwire_api = "responses"\nupstream_api_format = "${upstreamApiFormat}"\n`,
+    `model_provider = "${MODEL_PROVIDER_ID}"\nmodel = "${DEFAULT_MODEL_ID}"\napproval_policy = "never"\nsandbox_mode = "danger-full-access"\n${scenarioConfigToml}\n[model_providers.${MODEL_PROVIDER_ID}]\nname = "Wework Desktop E2E"\nbase_url = "${modelServerUrl}/v1"\n${providerAuthToml}\nwire_api = "responses"\nupstream_api_format = "${upstreamApiFormat}"\n${providerConfigToml}`,
     'utf8'
   )
   await rename(temporaryConfigPath, configPath)
@@ -315,11 +317,13 @@ function toolDetailsMcpConfigToml() {
     '[mcp_servers.node_repl]',
     `command = ${command}`,
     `args = [${server}, "node_repl"]`,
+    'env = { ELECTRON_RUN_AS_NODE = "1" }',
     'default_tools_approval_mode = "approve"',
     '',
     '[mcp_servers."github__issues"]',
     `command = ${command}`,
     `args = [${server}, "github__issues"]`,
+    'env = { ELECTRON_RUN_AS_NODE = "1" }',
     'default_tools_approval_mode = "approve"',
     '',
   ].join('\n')
@@ -333,6 +337,7 @@ function mcpElicitationConfigToml(evidencePath) {
     '[mcp_servers.wegent_sites_interactions]',
     `command = ${command}`,
     `args = [${server}, ${evidence}]`,
+    'env = { ELECTRON_RUN_AS_NODE = "1" }',
     'default_tools_approval_mode = "prompt"',
     '',
   ].join('\n')

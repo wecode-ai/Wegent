@@ -1,6 +1,5 @@
 import {
   Check,
-  ChevronDown,
   CircleDot,
   CornerDownLeft,
   GitBranch,
@@ -9,8 +8,9 @@ import {
   LoaderCircle,
   Square,
   Upload,
+  X,
 } from 'lucide-react'
-import { useState, type FormEvent } from 'react'
+import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react'
 import { createPortal } from 'react-dom'
 
 import { BranchSelector } from '@/components/common/BranchSelector'
@@ -61,12 +61,50 @@ export default function GitEnvironmentSection({
   const [commitStatus, setCommitStatus] = useState<'idle' | 'committing' | 'success'>('idle')
   const [commitProgressLabel, setCommitProgressLabel] = useState('')
   const [commitError, setCommitError] = useState<string | null>(null)
+  const commitButtonRef = useRef<HTMLButtonElement>(null)
+  const commitFormRef = useRef<HTMLFormElement>(null)
   const gitRepositoryAvailable = info.isGitRepository !== false
   const hasGitInfo = gitRepositoryAvailable && Boolean(info.branchName?.trim())
   const canShowBranchSelector = Boolean(
     gitRepositoryAvailable && onListBranches && onCheckoutBranch
   )
   const hasDiffStats = gitRepositoryAvailable && Boolean(info.additions || info.deletions)
+
+  const closeCommitForm = useCallback(() => {
+    setCommitFormOpen(false)
+    setCommitError(null)
+  }, [])
+
+  useEffect(() => {
+    if (!commitFormOpen) return
+
+    const handlePointerDown = (event: PointerEvent) => {
+      const target = event.target
+      if (
+        !(target instanceof Node) ||
+        commitFormRef.current?.contains(target) ||
+        commitButtonRef.current?.contains(target)
+      ) {
+        return
+      }
+      closeCommitForm()
+    }
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape') return
+      event.preventDefault()
+      event.stopPropagation()
+      closeCommitForm()
+      commitButtonRef.current?.focus()
+    }
+
+    document.addEventListener('pointerdown', handlePointerDown)
+    document.addEventListener('keydown', handleKeyDown, true)
+    return () => {
+      document.removeEventListener('pointerdown', handlePointerDown)
+      document.removeEventListener('keydown', handleKeyDown, true)
+    }
+  }, [closeCommitForm, commitFormOpen])
+
   if (!hasDiffStats && !hasGitInfo && !canShowBranchSelector) return null
 
   const additions = info.additions || '+0'
@@ -190,9 +228,11 @@ export default function GitEnvironmentSection({
               </div>
             ) : (
               <button
+                ref={commitButtonRef}
                 type="button"
                 data-testid="environment-commit-button"
                 disabled={!onCommitChanges && !onCommitAndPushChanges && !onPushChanges}
+                aria-expanded={commitFormOpen}
                 onClick={() => {
                   setCommitFormOpen(open => !open)
                   setCommitError(null)
@@ -271,6 +311,7 @@ export default function GitEnvironmentSection({
       {commitFormOpen && typeof document !== 'undefined'
         ? createPortal(
             <form
+              ref={commitFormRef}
               data-testid="environment-commit-form"
               className="fixed left-1/2 top-[36vh] z-system-popover w-[430px] max-w-[calc(100vw-2rem)] -translate-x-1/2 overflow-hidden rounded-xl border border-border bg-background text-text-primary shadow-[0_18px_48px_rgba(0,0,0,0.20)]"
               onSubmit={handleSubmitCommit}
@@ -278,11 +319,22 @@ export default function GitEnvironmentSection({
               <div className="flex h-10 items-center gap-2 px-4 text-sm leading-[18px] text-text-secondary">
                 <GitBranch className="h-4 w-4 shrink-0" />
                 <span className="min-w-0 flex-1 truncate font-medium">{branchLabel}</span>
-                <ChevronDown className="h-4 w-4 shrink-0" />
                 <span className="ml-3 flex shrink-0 gap-1.5 font-medium">
                   <span className="text-green-500">{additions}</span>
                   <span className="text-red-500">{deletions}</span>
                 </span>
+                <button
+                  type="button"
+                  data-testid="environment-cancel-commit-button"
+                  onClick={() => {
+                    closeCommitForm()
+                    commitButtonRef.current?.focus()
+                  }}
+                  aria-label={t('common.close', '关闭')}
+                  className="-mr-2 ml-1 flex h-7 w-7 shrink-0 items-center justify-center rounded-lg text-text-muted hover:bg-hover hover:text-text-primary"
+                >
+                  <X className="h-4 w-4" aria-hidden="true" />
+                </button>
               </div>
               <textarea
                 data-testid="environment-commit-message-input"
@@ -350,17 +402,6 @@ export default function GitEnvironmentSection({
                   <span className="min-w-0 flex-1 truncate">
                     {t('workbench.environment_push', '推送')}
                   </span>
-                </button>
-                <button
-                  type="button"
-                  data-testid="environment-cancel-commit-button"
-                  onClick={() => {
-                    setCommitFormOpen(false)
-                    setCommitError(null)
-                  }}
-                  className="hidden"
-                >
-                  {t('workbench.environment_commit_cancel', '取消')}
                 </button>
               </div>
             </form>,

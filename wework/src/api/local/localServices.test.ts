@@ -17,6 +17,7 @@ import { createDefaultLocalModelCatalogEntry } from '@/features/model-settings/l
 import type { TurnFileChangesSummary, User } from '@/types/api'
 
 const OFFICIAL_CODEX_MODEL_DEFINITIONS: Array<[string, string, string, string[]]> = [
+  ['gpt-6-astra', 'GPT-6-Astra', 'low', ['low', 'medium', 'high', 'xhigh', 'max', 'ultra']],
   ['gpt-5.6-sol', 'GPT-5.6-Sol', 'low', ['low', 'medium', 'high', 'xhigh', 'max', 'ultra']],
   ['gpt-5.6-terra', 'GPT-5.6-Terra', 'medium', ['low', 'medium', 'high', 'xhigh', 'max', 'ultra']],
   ['gpt-5.6-luna', 'GPT-5.6-Luna', 'medium', ['low', 'medium', 'high', 'xhigh', 'max']],
@@ -27,11 +28,12 @@ const OFFICIAL_CODEX_MODEL_DEFINITIONS: Array<[string, string, string, string[]]
 ]
 
 const OFFICIAL_CODEX_MODELS = OFFICIAL_CODEX_MODEL_DEFINITIONS.map(
-  ([model, displayName, defaultReasoningEffort, efforts], index) => ({
+  ([model, displayName, defaultReasoningEffort, efforts]) => ({
     id: model,
     model,
     displayName,
-    isDefault: index === 0,
+    hidden: model === 'gpt-6-astra',
+    isDefault: model === 'gpt-5.6-sol',
     defaultReasoningEffort,
     supportedReasoningEfforts: efforts.map(reasoningEffort => ({ reasoningEffort })),
   })
@@ -126,6 +128,12 @@ describe('createLocalAppServices', () => {
     expect(models).toEqual({
       data: expect.arrayContaining([
         expect.objectContaining({
+          name: 'gpt-6-astra',
+          type: 'runtime',
+          modelId: 'gpt-6-astra',
+          runtime: { family: 'openai.openai-responses', provider: 'local' },
+        }),
+        expect.objectContaining({
           name: 'gpt-5.6-sol',
           type: 'runtime',
           modelId: 'gpt-5.6-sol',
@@ -150,6 +158,7 @@ describe('createLocalAppServices', () => {
     const modelIds = models.data.map(model => model.modelId)
     expect(modelIds).toEqual(
       expect.arrayContaining([
+        'gpt-6-astra',
         'gpt-5.6-sol',
         'gpt-5.6-terra',
         'gpt-5.6-luna',

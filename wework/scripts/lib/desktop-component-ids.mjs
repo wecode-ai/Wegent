@@ -1,6 +1,7 @@
 export const desktopComponentIds = Object.freeze([
   'coreDsh',
   'weworkCorePlugins',
+  'weworkAppStatic',
   'bundledPlugins',
   'executor',
   'codex',

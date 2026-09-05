@@ -47,22 +47,13 @@ async function registrationsOf(packageName) {
       },
     },
     wework: {
-      ui: {
-        register(contributionCtx, slotName, descriptor, component = () => null) {
-          Object.defineProperty(component, 'wework', {
-            value: Object.freeze({ ...descriptor }),
+      contributions: {
+        register(_owner, slotName, descriptor) {
+          registrations.push({
+            descriptor,
+            options: { name: slotName, id: descriptor.id },
           })
-          const { id, label, order, priority } = descriptor
-          return contributionCtx.slots.register(
-            {
-              name: slotName,
-              id,
-              ...(label !== undefined ? { label } : {}),
-              ...(order !== undefined ? { order } : {}),
-              ...(priority !== undefined ? { priority } : {}),
-            },
-            component
-          )
+          return () => {}
         },
       },
     },
@@ -86,18 +77,18 @@ test('core apps are contributed through wework.app', async () => {
     registrations.map(entry => entry.options.id),
     ['wework', 'todo', 'wegent']
   )
-  assert.equal(registrations[0].component.wework.module, 'plugins/wework-ui-core-apps.js')
-  assert.equal(registrations[1].component.wework.module, 'plugins/wework-ui-core-apps.js')
-  assert.equal(registrations[2].component.wework.urlSource, 'cloud-web')
+  assert.equal(registrations[0].descriptor.module, 'plugins/wework-ui-core-apps.js')
+  assert.equal(registrations[1].descriptor.module, 'plugins/wework-ui-core-apps.js')
+  assert.equal(registrations[2].descriptor.urlSource, 'cloud-web')
 })
 
 test('core settings are metadata-driven DSH pages', async () => {
   const { injections, registrations } = await registrationsOf('ui-core-settings')
   assert.deepEqual(injections, ['wework.settings.page'])
   assert.equal(registrations.length, 18)
-  assert.equal(registrations[0].component.wework.path, '/settings')
-  assert.equal(registrations[0].component.wework.module, 'plugins/wework-ui-core-settings.js')
-  assert.equal(registrations.at(-1).component.wework.module, 'plugins/wework-ui-core-settings.js')
+  assert.equal(registrations[0].descriptor.path, '/settings')
+  assert.equal(registrations[0].descriptor.module, 'plugins/wework-ui-core-settings.js')
+  assert.equal(registrations.at(-1).descriptor.module, 'plugins/wework-ui-core-settings.js')
   assert.equal('path' in registrations[0].options, false)
   assert.equal('module' in registrations[0].options, false)
 })
@@ -121,22 +112,20 @@ test('first-party route packages own their routes and sidebar navigation', async
   )
   const actions = registrations.filter(entry => entry.options.name === 'wework.action')
   assert.deepEqual(
-    routes.map(entry => entry.component.wework.path),
+    routes.map(entry => entry.descriptor.path),
     ['/plugins', '/plugins/create', '/plugins/manage', '/sites', '/automations', '/cloud-work']
   )
   assert.deepEqual(
-    navigation.map(entry => entry.component.wework.path),
+    navigation.map(entry => entry.descriptor.path),
     ['/plugins', '/sites', '/automations', '/cloud-work']
   )
   assert.equal(injections.filter(slot => slot === 'wework.sidebar.navigation').length, 4)
-  assert.ok(actions.some(entry => entry.component.wework.id === 'plugin-center.open'))
-  assert.ok(
-    routes.every(entry => /^plugins\/wework-ui-[a-z-]+\.js$/.test(entry.component.wework.module))
-  )
-  assert.ok(routes.every(entry => typeof entry.component.wework.icon === 'string'))
-  assert.ok(routes.every(entry => entry.component.wework.restorePolicy === 'session'))
-  assert.ok(routes.every(entry => typeof entry.component.wework.title === 'string'))
-  assert.ok(routes.every(entry => !('component' in entry.component.wework)))
+  assert.ok(actions.some(entry => entry.descriptor.id === 'plugin-center.open'))
+  assert.ok(routes.every(entry => /^plugins\/wework-ui-[a-z-]+\.js$/.test(entry.descriptor.module)))
+  assert.ok(routes.every(entry => typeof entry.descriptor.icon === 'string'))
+  assert.ok(routes.every(entry => entry.descriptor.restorePolicy === 'session'))
+  assert.ok(routes.every(entry => typeof entry.descriptor.title === 'string'))
+  assert.ok(routes.every(entry => !('component' in entry.descriptor)))
   assert.ok(registrations.every(entry => !('path' in entry.options)))
 })
 

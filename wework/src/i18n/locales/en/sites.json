@@ -69,6 +69,7 @@
   "plugin_device_unavailable": "Select an online, compatible device before creating an application.",
   "plugin_installing": "Installing the application plugin. The chat will open when it finishes...",
   "plugin_device_sync_failed": "The application plugin could not be synchronized to the target device. Check the device and try again.",
+  "plugin_inspection_failed": "Could not check plugin installation on the target device. Try again.",
   "plugin_install_failed": "Failed to install the application plugin. Try again.",
   "open_plugins": "View plugins",
   "more_actions": "More actions",
