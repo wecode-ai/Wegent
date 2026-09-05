@@ -158,6 +158,7 @@ export const HOST_CAPABILITIES = [
   'window.openWorkspace',
   'window.showPopout',
   'window.toggleMaximize',
+  'weworkSync.request',
 ] as const
 
 export type HostCapability = (typeof HOST_CAPABILITIES)[number]

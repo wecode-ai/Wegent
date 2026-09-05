@@ -1,0 +1,21 @@
+{
+  "name": "@wegent/dsh-transcript-sync",
+  "displayName": "Wework 云同步",
+  "description": "Synchronizes finalized Wework transcript turns and portable preferences.",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "index.js",
+  "exports": {
+    ".": "./index.js",
+    "./package.json": "./package.json"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  },
+  "peerDependencies": {
+    "@deepseek-ai/cordis": "^4.0.1"
+  }
+}

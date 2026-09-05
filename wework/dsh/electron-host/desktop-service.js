@@ -50,11 +50,18 @@ export function createWeworkDesktopService(client) {
       set: (key, value) => invoke('secureStorage.set', { key, value }),
       delete: key => invoke('secureStorage.delete', { key }),
     }),
+    preferences: Object.freeze({
+      get: () => invoke('preferences.get'),
+      update: patch => invoke('preferences.update', { patch }),
+    }),
     rendererHealth: Object.freeze({
       getState: () => invoke('rendererHealth.getState'),
     }),
     runtime: Object.freeze({
       restartCoreDsh: () => invoke('runtime.restartCoreDsh'),
+    }),
+    weworkSync: Object.freeze({
+      request: request => invoke('weworkSync.request', request),
     }),
     shell: Object.freeze({
       openExternal: url => invoke('shell.openExternal', { url }),

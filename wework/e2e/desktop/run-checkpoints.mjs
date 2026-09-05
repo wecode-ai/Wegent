@@ -33,6 +33,7 @@ const CHECKPOINT_SCENARIO_MODULES = {
   'runtime-task-queue': './scenarios/runtime-task-queue.scenario.mjs',
   'runtime-terminal-convergence': './scenarios/runtime-terminal-convergence.scenario.mjs',
   'executor-stream-recovery': './scenarios/executor-stream-recovery.scenario.mjs',
+  'transcript-sync': './scenarios/transcript-sync.scenario.mjs',
   'running-conversation-history': './scenarios/running-conversation-history.scenario.mjs',
   'codex-notification-isolation': './scenarios/codex-notification-isolation.scenario.mjs',
   'context-compaction': './scenarios/context-compaction.scenario.mjs',
@@ -68,6 +69,7 @@ const SCENARIO_ONLY_CHECKPOINTS = new Set([
   'runtime-task-queue',
   'runtime-terminal-convergence',
   'executor-stream-recovery',
+  'transcript-sync',
   'running-conversation-history',
   'codex-notification-isolation',
   'context-compaction',
@@ -431,6 +433,9 @@ async function runParallelCheckpoints(checkpoints) {
       const env = checkpointScenarioEnv({ ...sharedEnv }, checkpoint)
       delete env.WEWORK_E2E_CONTROL_SERVER_PORT
       delete env.WEWORK_E2E_MODEL_SERVER_PORT
+      const { controlServerPort, modelServerPort } = await resolveServerPorts(env)
+      env.WEWORK_E2E_CONTROL_SERVER_PORT = String(controlServerPort)
+      env.WEWORK_E2E_MODEL_SERVER_PORT = String(modelServerPort)
       console.log(`\n[desktop-e2e] START ${checkpoint}`)
       const result = await runTaskFlow(parallelCheckpointArgs(checkpoint), env, checkpoint)
       if (result.code === 0) {

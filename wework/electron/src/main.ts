@@ -107,6 +107,11 @@ import {
 import { SecureValueStore } from './host/secure-value-store.js'
 import { resolveDevelopmentDockIdentity } from './host/development-dock-identity.js'
 import { isEffectivePackagedApplication } from './host/application-packaging-mode.js'
+import {
+  createWeworkSyncRequestSignal,
+  normalizeWeworkSyncApiBaseUrl,
+  normalizeWeworkSyncPath,
+} from './host/wework-sync-request.js'
 
 const packageRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const packageMetadata = createRequire(import.meta.url)('../package.json') as {
@@ -1364,6 +1369,30 @@ async function configureDesktopRuntime(): Promise<void> {
           secureStorage,
           takePendingWorkspaceOpenRequests,
           updatePreferences: updateDesktopPreferences,
+          weworkSyncRequest: async request => {
+            const apiBaseUrl = normalizeWeworkSyncApiBaseUrl(request.apiBaseUrl)
+            const path = normalizeWeworkSyncPath(request.path)
+            const credential = await requiredCloudCredentials().refreshAccessToken(apiBaseUrl)
+            const response = await fetch(`${apiBaseUrl}${path}`, {
+              method: request.method,
+              signal: createWeworkSyncRequestSignal(),
+              headers: {
+                authorization: `${credential.tokenType} ${credential.accessToken}`,
+                ...(request.body === undefined ? {} : { 'content-type': 'application/json' }),
+              },
+              ...(request.body === undefined ? {} : { body: JSON.stringify(request.body) }),
+            })
+            const text = await response.text()
+            let body: unknown = null
+            if (text) {
+              try {
+                body = JSON.parse(text)
+              } catch {
+                body = text
+              }
+            }
+            return { status: response.status, body }
+          },
         },
         {
           captureTarget: windowLabel =>

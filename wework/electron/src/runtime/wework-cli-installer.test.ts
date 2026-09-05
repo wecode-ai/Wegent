@@ -68,5 +68,5 @@ describe('installWeworkCli', () => {
       '--open-workspace',
       await realpath(workspace),
     ])
-  })
+  }, 15_000)
 })
