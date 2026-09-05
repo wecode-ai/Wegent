@@ -33,12 +33,13 @@ Planner + Section Writer 方案在一次真实仓库生成中带来了明确收�
 不得把策略继续编码进 `Team.spec.collaborationModel`，也不得从 Team 成员是否恰好包含 Reviewer 来反推
 策略。`collaborationModel=coordinate` 只是 Team 的通用执行能力，不是 Code Wiki 的生成协议。
 
-首批内建三种策略：
+首批内建四种策略：
 
 | 策略 ID                | 写作方式                                                 | Reviewer / QA | 定位                     |
 | ---------------------- | -------------------------------------------------------- | ------------- | ------------------------ |
 | `coordinator_adaptive` | Coordinator 按范围决定自己写或委派 Writer                | 无            | 新的默认候选             |
 | `coordinator_reviewed` | Coordinator + Section Writer，保留原 Coordinate 评审流程 | 有            | 质量基线与回归对照       |
+| `coordinator_solo`     | Coordinator 自己研究并写完全部页面，不启动子 agent       | 无            | 写作规范改进的单人基线   |
 | `planner_writer`       | Planner 不写页，全部交给 Writer                          | 无            | 09-03 方案的质量上界参照 |
 
 策略 ID 表达稳定的执行方案，`revision` 表达该方案的实现版本。Prompt、阈值或 handoff 格式等兼容演进
@@ -89,6 +90,10 @@ backend 定义一个有类型的 `CodeWikiGenerationPolicy`，作为部署中唯
       "teamRef": { "namespace": "default", "name": "code-wiki-team" }
     },
     "coordinator_reviewed": {
+      "enabled": true,
+      "teamRef": { "namespace": "default", "name": "code-wiki-team" }
+    },
+    "coordinator_solo": {
       "enabled": true,
       "teamRef": { "namespace": "default", "name": "code-wiki-team" }
     },
@@ -285,7 +290,7 @@ PR-1 不改 prompt，先建立选择、持久化和回放边界。PR-2 只做最
 
 `RunMode` (`full`, `incremental`, `skip`) remains the rebuild-scope decision. A new first-class
 `GenerationStrategy` describes how a full rebuild is orchestrated. The initial built-in strategies are
-`coordinator_adaptive`, `coordinator_reviewed`, and `planner_writer`. Stable IDs name execution
+`coordinator_adaptive`, `coordinator_reviewed`, `coordinator_solo`, and `planner_writer`. Stable IDs name execution
 semantics while a separate `revision` tracks compatible implementation changes. They are finite,
 versioned profiles rather than a user-defined workflow DSL.
 
@@ -300,6 +305,10 @@ does shallow discovery and either writes a scope itself or delegates one complet
 Work Package to one Section Writer. Writers cannot delegate. Coordinator-written pages use the same
 quality contract and are re-anchored to their `purpose`, `Must explain`, seed paths, dependencies, and
 source citations before writing.
+
+The solo strategy keeps the same writing contract but makes the Coordinator the only researcher and
+author for the full run. It does not create review state or delegate a subagent, making it a controlled
+baseline for comparing the writing improvements independently from orchestration.
 
 Rollout first adds the registry and durable snapshot without changing behavior, then adds the adaptive
 no-review protocol, then UI selection and history, and only then runs controlled same-repository

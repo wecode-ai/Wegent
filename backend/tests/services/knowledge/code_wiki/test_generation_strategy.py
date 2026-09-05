@@ -14,7 +14,9 @@ from app.core.wiki_config import (
 from app.services.knowledge.code_wiki.generation_strategy import (
     COORDINATOR_ADAPTIVE,
     COORDINATOR_REVIEWED,
+    COORDINATOR_SOLO,
     LEGACY,
+    selectable_strategies,
     strategy_for_new_wiki,
     strategy_for_run,
 )
@@ -73,6 +75,31 @@ def test_adaptive_is_selectable_only_when_deployment_enables_it(monkeypatch) -> 
     assert resolved.strategy_id == COORDINATOR_ADAPTIVE
     assert resolved.requires_section_writer is True
     assert resolved.requires_plan_review(collaboration_model="coordinate") is False
+
+
+def test_solo_is_selectable_without_reviewer_or_writer_requirements(
+    monkeypatch,
+) -> None:
+    policy = CodeWikiGenerationPolicy(
+        defaultStrategy=COORDINATOR_SOLO,
+        legacyFallbackStrategy=LEGACY,
+        strategies={
+            COORDINATOR_SOLO: CodeWikiStrategyBinding(
+                teamRef=CodeWikiTeamRef(name="code-wiki-team")
+            ),
+            LEGACY: CodeWikiStrategyBinding(teamRef=CodeWikiTeamRef(name="old-team")),
+        },
+    )
+    monkeypatch.setattr(wiki_settings, "CODE_WIKI_GENERATION_POLICY", policy)
+
+    resolved = strategy_for_run(strategy_for_new_wiki())
+
+    assert resolved.strategy_id == COORDINATOR_SOLO
+    assert resolved.requires_section_writer is False
+    assert resolved.requires_plan_review(collaboration_model="coordinate") is False
+    assert tuple(item.strategy_id for item in selectable_strategies()) == (
+        COORDINATOR_SOLO,
+    )
 
 
 def test_an_unknown_or_internal_strategy_cannot_be_selected(monkeypatch) -> None:

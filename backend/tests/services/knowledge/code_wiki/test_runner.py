@@ -419,6 +419,49 @@ def test_adaptive_full_run_requires_writer_without_creating_review_state(
     assert "review-open" not in tasks.prompt
 
 
+def test_solo_full_run_needs_no_team_roles_or_review_state(
+    monkeypatch,
+    test_db: Session,
+    knowledge_base: Kind,
+    test_user: User,
+    tasks: FakeTasks,
+) -> None:
+    from app.core.wiki_config import (
+        CodeWikiGenerationPolicy,
+        CodeWikiStrategyBinding,
+        CodeWikiTeamRef,
+        wiki_settings,
+    )
+
+    _set_spec(test_db, knowledge_base, generationStrategy="coordinator_solo")
+    monkeypatch.setattr(
+        wiki_settings,
+        "CODE_WIKI_GENERATION_POLICY",
+        CodeWikiGenerationPolicy(
+            defaultStrategy="coordinator_solo",
+            legacyFallbackStrategy="legacy",
+            strategies={
+                "coordinator_solo": CodeWikiStrategyBinding(
+                    teamRef=CodeWikiTeamRef(name="code-wiki-team")
+                ),
+                "legacy": CodeWikiStrategyBinding(
+                    teamRef=CodeWikiTeamRef(name="code-wiki-team")
+                ),
+            },
+        ),
+    )
+
+    started = start_run(
+        test_db, knowledge_base=knowledge_base, user=test_user, head_commit=HEAD
+    )
+
+    assert started.strategy_id == "coordinator_solo"
+    assert "qualityReview" not in started.generation.ext
+    assert "Strategy: `coordinator_solo`" in tasks.prompt
+    assert "Do not call the Claude Code `Task` or `Agent` tool" in tasks.prompt
+    assert "review-open" not in tasks.prompt
+
+
 def test_a_strategy_override_requires_a_forced_full_rebuild(
     test_db: Session, knowledge_base: Kind, test_user: User, tasks: FakeTasks
 ) -> None:

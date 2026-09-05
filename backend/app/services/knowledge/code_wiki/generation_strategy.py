@@ -20,6 +20,7 @@ GENERATION_STRATEGY_EXT_KEY = "generationStrategy"
 
 COORDINATOR_ADAPTIVE = "coordinator_adaptive"
 COORDINATOR_REVIEWED = "coordinator_reviewed"
+COORDINATOR_SOLO = "coordinator_solo"
 LEGACY = "legacy"
 
 
@@ -94,6 +95,13 @@ _DEFINITIONS = {
         display_name="Reviewed coordinator",
         description="Coordinator follows the persisted plan review before writing.",
         review_protocol=ReviewProtocol.PLAN_ONLY,
+    ),
+    COORDINATOR_SOLO: GenerationStrategyDefinition(
+        strategy_id=COORDINATOR_SOLO,
+        revision=1,
+        display_name="Solo coordinator",
+        description="Coordinator researches and writes every page without subagents or review.",
+        review_protocol=ReviewProtocol.NONE,
     ),
     # Existing wikis did infer review behaviour from collaborationModel. Keeping
     # that rule under a non-selectable strategy preserves them without making it a

@@ -24,7 +24,10 @@ alongside the mode is what keeps the two from being merged as duplicates later.
 from dataclasses import dataclass
 from typing import Optional, Sequence
 
-from app.services.knowledge.code_wiki.generation_strategy import COORDINATOR_ADAPTIVE
+from app.services.knowledge.code_wiki.generation_strategy import (
+    COORDINATOR_ADAPTIVE,
+    COORDINATOR_SOLO,
+)
 
 
 @dataclass(frozen=True)
@@ -48,6 +51,8 @@ def build_full_prompt(context: WikiRunContext) -> str:
     """Instructions for rebuilding a wiki from nothing."""
     if context.strategy_id == COORDINATOR_ADAPTIVE:
         return _build_adaptive_full_prompt(context)
+    if context.strategy_id == COORDINATOR_SOLO:
+        return _build_solo_full_prompt(context)
     return f"""\
 Document the repository **{context.project_name}**, from scratch.
 
@@ -153,6 +158,48 @@ deriving those facts from source again.
 Write or delegate every planned page, then call `complete` with every resulting path in
 the intended reading order. Follow the existing wiki_submit completion and Mermaid
 feedback rules. Incremental-only shortcuts do not apply to this run.\
+"""
+
+
+def _build_solo_full_prompt(context: WikiRunContext) -> str:
+    """A full rebuild whose Coordinator is the only researcher and author."""
+    return f"""\
+Document the repository **{context.project_name}**, from scratch.
+
+## This run
+
+- Generation: `{context.generation_id}`
+- Commit: `{context.head_commit or "current HEAD"}`
+- Language: {context.language}
+- Strategy: `coordinator_solo`
+- This is a **full rebuild**: the wiki is being written from scratch.
+
+Your version begins empty. You are the sole author, so write every planned page,
+including pages an earlier run already covered. Declaring a removal does nothing here,
+because there is nothing to remove from.
+
+## Solo Coordinator protocol
+
+Do not call the Claude Code `Task` or `Agent` tool and do not delegate research,
+writing, review, or QA. Do not open Plan, QA, Recheck, or other Reviewer phases. This
+strategy deliberately has no subagent or review loop.
+
+First build one ordered page plan. For every page record its path, purpose, concrete
+`Must explain` questions, seed paths, and prerequisite pages. Then inspect the source
+needed to answer those questions and write every page yourself. Work through related
+areas in a dependency-aware order so that later pages reuse facts established in
+earlier pages instead of rediscovering them.
+
+Before writing each page, reread that page's purpose, `Must explain` questions, seed
+paths, and prerequisite pages. Every page must meet the same engineering contract:
+explain mechanisms, state changes, boundaries, failure or recovery behaviour, practical
+change guidance, and resolvable source citations where the source supports them. Do not
+replace this with a directory inventory or a thin overview merely because the repository
+is large.
+
+Write every planned page, then call `complete` with every resulting path in the intended
+reading order. Follow the existing wiki_submit completion and Mermaid feedback rules.
+Incremental-only shortcuts do not apply to this run.\
 """
 
 
