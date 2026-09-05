@@ -30,6 +30,7 @@ import {
   parseTelemetryPayload,
   readRawRequestBody,
   readRequestBody,
+  requestAdvertisesProgrammaticExec,
   requestAdvertisesShellTool,
   requestAdvertisesViewImageTool,
   requestContainsToolOutput,
@@ -41,10 +42,12 @@ import {
   selectConvertedTool,
   selectMcpTool,
   selectOfficialPluginMcpTool,
+  selectProgrammaticExec,
   selectShellTool,
   selectShellToolCommand,
   selectTool,
   selectToolSearch,
+  serializedOutputReportsSuccess,
   toolSearchResponseEvents,
   selectViewImageTool,
   streamingMarkdownReport,
@@ -2132,7 +2135,8 @@ class DesktopE2EServer {
     if (
       this.scenario === 'embedded_browser_setup' &&
       !this.embeddedBrowserSetupToolLessPrewarmHandled &&
-      !requestAdvertisesShellTool(body)
+      !requestAdvertisesShellTool(body) &&
+      !requestAdvertisesProgrammaticExec(body)
     ) {
       this.embeddedBrowserSetupToolLessPrewarmHandled = true
       this.writeSse(response, [responseCreated(responseId), responseCompleted(responseId)])
@@ -2359,10 +2363,45 @@ class DesktopE2EServer {
       )
 
       if (requestNumber === 1) {
+        if (requestAdvertisesProgrammaticExec(body)) {
+          const browserUrl = new URL('/embedded-browser-agent-fixture', this.url).href
+          const program = [
+            "const browserOpen = ALL_TOOLS.find(tool => tool.name === 'browser_open' || (tool.name.includes('wework_browser') && tool.name.endsWith('browser_open')))",
+            "if (!browserOpen) throw new Error('Wework browser_open unavailable')",
+            `await tools[browserOpen.name](${JSON.stringify({ url: browserUrl })})`,
+            'text(JSON.stringify({ ok: true }))',
+          ].join('\n')
+          const exec = selectProgrammaticExec(body, program)
+          this.writeSse(response, [
+            responseCreated(responseId),
+            customToolCall(EMBEDDED_BROWSER_SETUP_OPEN_ID, exec.name, exec.input),
+            responseCompleted(responseId),
+          ])
+          return
+        }
         const search = selectToolSearch(body, 'Wework browser open')
         this.writeSse(response, [
           responseCreated(responseId),
           ...toolSearchResponseEvents(EMBEDDED_BROWSER_SETUP_SEARCH_ID, search),
+          responseCompleted(responseId),
+        ])
+        return
+      }
+
+      if (requestAdvertisesProgrammaticExec(body)) {
+        assert.equal(requestNumber, 2, `Unexpected embedded-browser setup request ${requestNumber}`)
+        assert.equal(
+          requestContainsToolOutput(body, EMBEDDED_BROWSER_SETUP_OPEN_ID),
+          true,
+          'The embedded-browser programmatic exec output did not return to the model'
+        )
+        assert.ok(
+          findNestedString(body, serializedOutputReportsSuccess),
+          'The programmatic Wework browser_open call did not complete successfully'
+        )
+        this.writeSse(response, [
+          responseCreated(responseId),
+          assistantMessage(EMBEDDED_BROWSER_SETUP_COMPLETION_TEXT),
           responseCompleted(responseId),
         ])
         return

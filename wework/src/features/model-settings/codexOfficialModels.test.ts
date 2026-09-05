@@ -36,6 +36,7 @@ describe('codexOfficialModels', () => {
       'gpt-5.6-terra',
       'gpt-5.6-sol',
       'gpt-5.5',
+      'gpt-6-astra',
     ]
     const result = normalizeCodexOfficialModelList({
       providers: [
@@ -56,6 +57,7 @@ describe('codexOfficialModels', () => {
     })
 
     expect(result.models.map(model => codexModelPickerLabel(model.modelId))).toEqual([
+      'GPT-6 Astra',
       'GPT 5.6 Sol',
       'GPT 5.6 Terra',
       'GPT 5.6 Luna',
@@ -77,10 +79,12 @@ describe('codexOfficialModels', () => {
         { model: 'gpt-5.6-luna' },
         { model: 'gpt-5.6-terra' },
         { model: 'gpt-5.6-sol' },
+        { model: 'gpt-6-astra', hidden: true },
       ],
     })
 
     expect(result.models.map(model => model.modelId)).toEqual([
+      'gpt-6-astra',
       'gpt-5.6-sol',
       'gpt-5.6-terra',
       'gpt-5.6-luna',

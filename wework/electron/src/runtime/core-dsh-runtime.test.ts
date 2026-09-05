@@ -82,6 +82,7 @@ describe('core DSH runtime', () => {
         PATH: '/usr/bin',
         WEWORK_CORE_PLUGIN_ROOT: runtime.pluginsRoot,
         WEWORK_CORE_PLUGINS_SHA256: 'f'.repeat(64),
+        WEWORK_APP_WEB_ROOT: join(root.path, 'source-app-web'),
         WEWORK_NODE_PATH: '/managed/node',
       },
       port: 3080,
@@ -102,10 +103,13 @@ describe('core DSH runtime', () => {
     expect(first.args).toContain('3080')
     expect(first.environment).toMatchObject({
       DSH_HOME: join(dataDirectory, 'dsh-core'),
-      WEWORK_APP_WEB_ROOT: join(runtime.pluginRoots['@wegent/dsh-app-wework'], 'web'),
+      WEWORK_APP_WEB_ROOT: join(root.path, 'source-app-web'),
       WEWORK_HARNESS_API_KEY: 'wework-local-router',
     })
     expect(second.args).toContain('3081')
+    expect(second.environment.WEWORK_APP_WEB_ROOT).toBe(
+      join(runtime.pluginRoots['@wegent/dsh-app-wework'], 'web')
+    )
     expect(
       JSON.parse(
         await readFile(
