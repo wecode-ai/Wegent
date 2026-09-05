@@ -139,26 +139,49 @@ fn initialize_bundled_plugin_marketplace_from_paths_with_recovery(
 }
 
 fn legacy_personal_marketplace_roots(executor_home: &Path) -> Result<Vec<PathBuf>, String> {
-    let apps_root = executor_home.join("apps");
+    let wework_root = shared_wework_root(executor_home);
+    let mut roots = Vec::new();
+    let unscoped_root = personal_marketplace_root(&wework_root.join("codex"));
+    if unscoped_root.is_dir() {
+        roots.push(unscoped_root);
+    }
+
+    let apps_root = wework_root.join("apps");
     let apps = match fs::read_dir(&apps_root) {
         Ok(apps) => apps,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(roots),
         Err(error) => return Err(format!("Failed to read {}: {error}", apps_root.display())),
     };
-    let mut roots = apps
-        .collect::<Result<Vec<_>, _>>()
-        .map_err(|error| format!("Failed to read {}: {error}", apps_root.display()))?
-        .into_iter()
-        .map(|entry| {
-            entry
-                .path()
-                .join("codex/plugins/marketplaces")
-                .join(MARKETPLACE_ID)
-        })
-        .filter(|path| path.is_dir())
-        .collect::<Vec<_>>();
+    for entry in apps {
+        let entry =
+            entry.map_err(|error| format!("Failed to read {}: {error}", apps_root.display()))?;
+        let file_type = entry
+            .file_type()
+            .map_err(|error| format!("Failed to inspect {}: {error}", entry.path().display()))?;
+        if !file_type.is_dir() {
+            continue;
+        }
+        let root = personal_marketplace_root(&entry.path().join("codex"));
+        if root.is_dir() {
+            roots.push(root);
+        }
+    }
     roots.sort();
+    roots.dedup();
     Ok(roots)
+}
+
+fn shared_wework_root(executor_home: &Path) -> PathBuf {
+    executor_home
+        .parent()
+        .filter(|parent| parent.file_name().is_some_and(|name| name == "apps"))
+        .and_then(Path::parent)
+        .map(Path::to_path_buf)
+        .unwrap_or_else(|| executor_home.to_path_buf())
+}
+
+fn personal_marketplace_root(codex_home: &Path) -> PathBuf {
+    codex_home.join("plugins/marketplaces").join(MARKETPLACE_ID)
 }
 
 fn preserve_personal_plugins(
@@ -893,6 +916,65 @@ mod tests {
             marketplace_plugin_names(&destination.join(".agents/plugins/marketplace.json"))
                 .unwrap(),
             vec!["personal-tool".to_owned()]
+        );
+    }
+
+    #[test]
+    fn recovers_unscoped_personal_plugin_for_branded_executor_home() {
+        let root = tempfile::tempdir().unwrap();
+        let wework_root = root.path().join(".wework");
+        let executor_home = wework_root.join("apps/com.weibo.wework");
+        let source = root.path().join("source");
+        let destination = executor_home.join("capabilities/bundled-marketplaces/wework-personal");
+        let legacy = wework_root.join("codex/plugins/marketplaces/wework-personal");
+        fs::create_dir_all(source.join(".agents/plugins")).unwrap();
+        fs::create_dir_all(source.join(".claude-plugin")).unwrap();
+        fs::write(
+            source.join(".agents/plugins/marketplace.json"),
+            r#"{"plugins":[]}"#,
+        )
+        .unwrap();
+        fs::write(
+            source.join(".claude-plugin/marketplace.json"),
+            r#"{"plugins":[]}"#,
+        )
+        .unwrap();
+        fs::create_dir_all(legacy.join(".agents/plugins")).unwrap();
+        fs::create_dir_all(legacy.join(".claude-plugin")).unwrap();
+        fs::create_dir_all(legacy.join("plugins/local-ip/.codex-plugin")).unwrap();
+        fs::write(
+            legacy.join(".agents/plugins/marketplace.json"),
+            r#"{"plugins":[{"name":"local-ip","source":{"source":"local","path":"./plugins/local-ip"}}]}"#,
+        )
+        .unwrap();
+        fs::write(
+            legacy.join(".claude-plugin/marketplace.json"),
+            r#"{"plugins":[{"name":"local-ip","source":"./plugins/local-ip"}]}"#,
+        )
+        .unwrap();
+        fs::write(
+            legacy.join("plugins/local-ip/.codex-plugin/plugin.json"),
+            r#"{"name":"local-ip","version":"1.0.0"}"#,
+        )
+        .unwrap();
+
+        let legacy_roots = legacy_personal_marketplace_roots(&executor_home).unwrap();
+        initialize_bundled_plugin_marketplace_from_paths_with_recovery(
+            &source,
+            &destination,
+            None,
+            &legacy_roots,
+        )
+        .unwrap();
+
+        assert_eq!(legacy_roots, vec![legacy]);
+        assert!(destination
+            .join("plugins/local-ip/.codex-plugin/plugin.json")
+            .is_file());
+        assert_eq!(
+            marketplace_plugin_names(&destination.join(".agents/plugins/marketplace.json"))
+                .unwrap(),
+            vec!["local-ip".to_owned()]
         );
     }
 
