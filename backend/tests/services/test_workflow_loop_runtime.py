@@ -323,6 +323,99 @@ def test_loop_end_completes_loop():
     assert by_id["loop1"]["exit_reason"] == "loop_end"
 
 
+def test_multi_platform_loop_resumes_and_supports_all_exit_nodes():
+    definition = ProjectWorkflowDefinition(
+        stage_mode="dag",
+        advancement_policy="manual",
+        nodes=[
+            WorkflowNodeDefinition(
+                id="start", name="触发", node_type="event", role="start"
+            ),
+            WorkflowNodeDefinition(
+                id="loop1",
+                name="修复循环",
+                node_type="loop",
+                depends_on=["start"],
+                body_node_ids=["ls", "br", "fix", "github-end", "gitlab-end"],
+                loop_config={"max_attempts": 5},
+            ),
+            WorkflowNodeDefinition(id="after", name="发布", depends_on=["loop1"]),
+            WorkflowNodeDefinition(
+                id="ls", name="循环开始", node_type="loop_start", loop_id="loop1"
+            ),
+            WorkflowNodeDefinition(
+                id="br",
+                name="分支",
+                node_type="branch",
+                loop_id="loop1",
+                depends_on=["ls"],
+                event_wait={"collection_mode": "poll"},
+                branch_conditions=[
+                    {
+                        "source_type": "gitlab",
+                        "event_type": "change_request.comment_created",
+                        "handler_node_ids": ["fix"],
+                    },
+                    {
+                        "source_type": "gitlab",
+                        "event_type": "change_request.merged",
+                        "handler_node_ids": ["gitlab-end"],
+                    },
+                    {
+                        "source_type": "github",
+                        "event_type": "change_request.merged",
+                        "handler_node_ids": ["github-end"],
+                    },
+                ],
+            ),
+            WorkflowNodeDefinition(
+                id="fix",
+                name="处理评论",
+                loop_id="loop1",
+                depends_on=["br"],
+                execution_mode="robot",
+            ),
+            WorkflowNodeDefinition(
+                id="github-end",
+                name="GitHub结束",
+                node_type="loop_end",
+                loop_id="loop1",
+                depends_on=["br"],
+            ),
+            WorkflowNodeDefinition(
+                id="gitlab-end",
+                name="GitLab结束",
+                node_type="loop_end",
+                loop_id="loop1",
+                depends_on=["br"],
+            ),
+        ],
+    )
+    nodes = [
+        node.model_dump(mode="json") for node in instantiate_workflow(definition).nodes
+    ]
+    by_id = _by_id(nodes)
+
+    by_id["br"]["status"] = "reacting"
+    by_id["br"]["active_condition"] = "gitlab:change_request.comment_created"
+    advance_loops(nodes)
+    by_id["fix"]["status"] = "completed"
+    advance_loops(nodes)
+
+    assert by_id["github-end"]["status"] == "blocked"
+    assert by_id["gitlab-end"]["status"] == "blocked"
+    assert by_id["loop1"]["attempts"] == 1
+    assert by_id["loop1"]["loop_state"] == "active"
+    assert by_id["fix"]["status"] == "blocked"
+
+    by_id["br"]["status"] = "reacting"
+    by_id["br"]["active_condition"] = "gitlab:change_request.merged"
+    advance_loops(nodes)
+    assert by_id["gitlab-end"]["status"] == "completed"
+    assert by_id["loop1"]["loop_state"] == "completed"
+    assert by_id["loop1"]["exit_reason"] == "loop_end"
+
+
 def test_max_attempts_completes_loop():
     nodes = [node.model_dump(mode="json") for node in _instance(max_attempts=1).nodes]
     by_id = _by_id(nodes)

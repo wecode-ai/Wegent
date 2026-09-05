@@ -267,7 +267,7 @@ async def test_webhook_event_routes_to_armed_loop(test_db, monkeypatch):
     test_db.refresh(item)
     by_id = {node["id"]: node for node in item.metadata_json["workflow"]["nodes"]}
     assert by_id["br"]["status"] == "reacting"
-    assert by_id["br"]["active_condition"] == "change_request.checks_failed"
+    assert by_id["br"]["active_condition"] == "github:change_request.checks_failed"
     assert by_id["fix1"]["status"] == "ready"
     run_for_workflow_node.assert_awaited_once()
     assert run_for_workflow_node.await_args.args[4] == "fix1"
@@ -447,5 +447,5 @@ def test_loop_catches_up_events_received_before_arming(test_db, collection_mode)
     test_db.refresh(item)
     by_id = {node["id"]: node for node in item.metadata_json["workflow"]["nodes"]}
     assert by_id["br"]["status"] == "reacting"
-    assert by_id["br"]["active_condition"] == "change_request.checks_failed"
+    assert by_id["br"]["active_condition"] == "github:change_request.checks_failed"
     assert by_id["fix1"]["status"] == "ready"

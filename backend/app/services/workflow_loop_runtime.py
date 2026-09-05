@@ -143,6 +143,40 @@ def _release_handlers(branch: dict, nodes: list[dict], handler_ids: set[str]) ->
             node["trigger_event"] = snapshot
 
 
+def _skip_sibling_handlers(branch: dict, body: list[dict]) -> None:
+    """Skip alternative handlers after the active condition completes."""
+
+    sibling_ids = {
+        str(handler_id)
+        for condition in branch.get("branch_conditions") or []
+        if isinstance(condition, dict)
+        for handler_id in condition.get("handler_node_ids") or []
+    }
+    for sibling in body:
+        if (
+            sibling.get("node_type") == "task"
+            and sibling.get("id") in sibling_ids
+            and sibling.get("status") not in COMPLETED
+        ):
+            sibling["status"] = "completed"
+
+
+def _branch_released_end(branch: dict, end: Mapping[str, Any]) -> bool:
+    """Return whether this loop_end was released by the active condition."""
+
+    active = branch.get("active_condition")
+    for condition in branch.get("branch_conditions") or []:
+        if not isinstance(condition, dict):
+            continue
+        key = _condition_key(condition.get("source_type"), condition.get("event_type"))
+        if key != active:
+            continue
+        return str(end.get("id")) in {
+            str(handler_id) for handler_id in condition.get("handler_node_ids") or []
+        }
+    return False
+
+
 def _consume_pending(branch: dict) -> None:
     pending = branch.get("pending_events")
     if not isinstance(pending, list) or not pending:
@@ -279,7 +313,7 @@ def _advance_loop(
     body = body_nodes(nodes, loop)
     branch = branch_node(nodes, loop)
     start = next((node for node in body if node.get("node_type") == "loop_start"), None)
-    end = next((node for node in body if node.get("node_type") == "loop_end"), None)
+    ends = [node for node in body if node.get("node_type") == "loop_end"]
     max_attempts = int((loop.get("loop_config") or {}).get("max_attempts") or 0)
 
     # A bounded sweep keeps one call advancing until the body must wait on a
@@ -341,6 +375,10 @@ def _advance_loop(
                     if handlers and all(
                         node.get("status") in COMPLETED for node in handlers
                     ):
+                        # One reaction fires one condition. Other conditions are
+                        # alternative outcomes, so skip their handlers instead of
+                        # requiring every platform-specific branch to run.
+                        _skip_sibling_handlers(branch, body)
                         branch["status"] = "waiting"
                         branch["active_condition"] = None
 
@@ -350,11 +388,12 @@ def _advance_loop(
             if node.get("status") in COMPLETED and node.get("id")
         }
 
-        # A completed loop_end is a terminal exit (event-driven or sequential).
-        if end is not None:
-            if end.get("status") == "ready":
+        # Any released loop_end is a terminal exit. A multi-platform branch can
+        # have one loop_end per provider, so all of them must be considered.
+        for end in ends:
+            if end.get("status") == "ready" and _branch_released_end(branch, end):
                 end["status"] = "completed"
-            if end.get("status") in COMPLETED:
+            if end.get("status") in COMPLETED and _branch_released_end(branch, end):
                 _complete_loop(loop, nodes, exit_reason="loop_end")
                 return
 
