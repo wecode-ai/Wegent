@@ -480,20 +480,23 @@ async def lifespan(app: FastAPI):
     finally:
         db.close()
 
-    logger.info("Recovering in-progress video jobs...")
-    try:
-        from app.services.execution.agents.video.recovery import (
-            recover_video_jobs,
-            recover_video_jobs_after_stale_delay,
-        )
+    if settings.SCHEDULED_TASKS_ENABLED:
+        logger.info("Recovering in-progress video jobs...")
+        try:
+            from app.services.execution.agents.video.recovery import (
+                recover_video_jobs,
+                recover_video_jobs_after_stale_delay,
+            )
 
-        recovered_count = await recover_video_jobs()
-        logger.info("✓ Recovered %d in-progress video job(s)", recovered_count)
-        app.state.video_recovery_task = asyncio.create_task(
-            recover_video_jobs_after_stale_delay()
-        )
-    except Exception as e:
-        logger.warning("Failed to recover video jobs: %s", e, exc_info=True)
+            recovered_count = await recover_video_jobs()
+            logger.info("✓ Recovered %d in-progress video job(s)", recovered_count)
+            app.state.video_recovery_task = asyncio.create_task(
+                recover_video_jobs_after_stale_delay()
+            )
+        except Exception as e:
+            logger.warning("Failed to recover video jobs: %s", e, exc_info=True)
+    else:
+        logger.info("Scheduled tasks are disabled; skipping video job recovery")
 
     logger.info("=" * 60)
     logger.info("Application startup completed successfully!")
