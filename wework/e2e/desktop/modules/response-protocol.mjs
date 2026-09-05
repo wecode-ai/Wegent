@@ -418,6 +418,34 @@ function requestAdvertisesShellTool(request) {
   return tools.some(tool => tool?.name === 'exec_command' || tool?.name === 'shell_command')
 }
 
+function programmaticExecTools(request) {
+  const input = Array.isArray(request.input) ? request.input : []
+  return input
+    .filter(item => item?.type === 'additional_tools')
+    .flatMap(item => (Array.isArray(item.tools) ? item.tools : []))
+    .filter(namespace => namespace?.type === 'namespace' && namespace.name === 'functions')
+    .flatMap(namespace => (Array.isArray(namespace.tools) ? namespace.tools : []))
+    .filter(tool => tool?.type === 'custom' && tool.name === 'exec')
+}
+
+function serializedOutputReportsSuccess(value) {
+  return typeof value === 'string' && /\\*"ok\\*"\s*:\s*true/u.test(value)
+}
+
+function requestAdvertisesProgrammaticExec(request) {
+  return programmaticExecTools(request).length > 0
+}
+
+function selectProgrammaticExec(request, input) {
+  const tools = programmaticExecTools(request)
+  assert.equal(
+    tools.length,
+    1,
+    `Real Codex did not advertise exactly one programmatic exec tool: ${tools.length}`
+  )
+  return { name: tools[0].name, input }
+}
+
 function requestAdvertisesViewImageTool(request) {
   const tools = Array.isArray(request.tools) ? request.tools : []
   return tools.some(tool => tool?.name === 'view_image')
@@ -693,8 +721,11 @@ export {
   json,
   cors,
   requestContainsToolOutput,
+  requestAdvertisesProgrammaticExec,
+  serializedOutputReportsSuccess,
   requestAdvertisesShellTool,
   requestAdvertisesViewImageTool,
+  selectProgrammaticExec,
   selectTool,
   selectOfficialPluginMcpTool,
   selectMcpTool,
