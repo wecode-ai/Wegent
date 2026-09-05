@@ -261,17 +261,12 @@ export default function ExportSelectModal({
       .map(msg => msg.messageId)
       .filter((id): id is number => typeof id === 'number')
 
-    const blob = await taskApis.exportTaskDocx(taskId, messageIds)
+    const url = await taskApis.getTaskDocxExportUrl(taskId, messageIds)
 
-    // Trigger download
-    const url = window.URL.createObjectURL(blob)
-    const link = document.createElement('a')
-    link.href = url
-    link.download = `${taskName || 'Chat_Export'}_${new Date().toISOString().split('T')[0]}.docx`
-    document.body.appendChild(link)
-    link.click()
-    document.body.removeChild(link)
-    window.URL.revokeObjectURL(url)
+    // Navigate to the real download URL so the browser (including Safari, which
+    // ignores client-side blob download filenames) applies the server-provided
+    // Content-Disposition filename.
+    window.location.assign(url)
   }
 
   /**
