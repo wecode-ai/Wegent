@@ -10,6 +10,7 @@ import { fileURLToPath } from 'node:url'
 import { create } from 'tar'
 
 import { wrapWindowsScriptCommand } from './child-process-command.mjs'
+import { hashComponentPath } from './lib/component-content-hash.mjs'
 import { componentReleaseScope } from './desktop-component-release.mjs'
 import identityModule from '../electron/scripts/build-identity.cjs'
 
@@ -151,29 +152,6 @@ async function prepareComponentAssets() {
 async function sha256(path) {
   const hash = createHash('sha256')
   await pipeline(createReadStream(path), hash)
-  return hash.digest('hex')
-}
-
-async function hashComponentPath(path) {
-  const metadata = await stat(path)
-  if (metadata.isFile()) return sha256(path)
-  if (!metadata.isDirectory()) throw new Error(`Unsupported component entry: ${path}`)
-  return hashTree(path)
-}
-
-async function hashTree(root, relative = '') {
-  const hash = createHash('sha256')
-  const entries = await readdir(join(root, relative), { withFileTypes: true })
-  for (const entry of entries.sort((left, right) => left.name.localeCompare(right.name))) {
-    const child = join(relative, entry.name)
-    if (entry.isDirectory()) {
-      hash.update(`directory:${child}\0${await hashTree(root, child)}\0`)
-    } else if (entry.isFile()) {
-      hash.update(`file:${child}\0${await sha256(join(root, child))}\0`)
-    } else {
-      throw new Error(`Unsupported component entry: ${child}`)
-    }
-  }
   return hash.digest('hex')
 }
 
