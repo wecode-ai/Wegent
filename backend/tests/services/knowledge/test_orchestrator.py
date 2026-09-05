@@ -1312,6 +1312,39 @@ class TestKnowledgeOrchestrator:
                         document_id=1,
                     )
 
+    def test_reindex_document_rejects_unknown_source_type(
+        self, orchestrator, mock_db, mock_user
+    ):
+        """Legacy rows with a removed source type cannot be reindexed."""
+        mock_document = MagicMock()
+        mock_document.id = 1
+        mock_document.source_type = "table"  # removed live-table ingestion path
+        mock_document.file_extension = "txt"
+        mock_document.file_size = 100
+
+        with patch.object(mock_db, "query") as mock_query:
+            mock_query.return_value.filter.return_value.first.return_value = (
+                mock_document
+            )
+            with (
+                patch(
+                    "app.services.knowledge.orchestrator.KnowledgeService.get_knowledge_base",
+                    return_value=(MagicMock(id=1), True),
+                ),
+                patch(
+                    "app.services.knowledge.orchestrator.KnowledgeService.can_manage_knowledge_document",
+                    return_value=True,
+                ),
+            ):
+                with pytest.raises(
+                    ValueError, match="Unsupported document source type"
+                ):
+                    orchestrator.reindex_document(
+                        db=mock_db,
+                        user=mock_user,
+                        document_id=1,
+                    )
+
     def test_reindex_document_checks_access_before_content_origin(
         self, orchestrator, mock_db, mock_user
     ):
@@ -1863,18 +1896,9 @@ class TestIndexingPolicy:
 
     def test_excel_documents_within_size_limit_are_allowed(self):
         """Test Excel extensions within 2MB size limit are allowed for RAG indexing."""
-        reason = get_rag_indexing_skip_reason("file", "xlsx")
+        reason = get_rag_indexing_skip_reason("xlsx", 1 * 1024 * 1024)
 
         assert reason is None
-
-    def test_table_documents_are_skipped(self):
-        """Test table source types are excluded from RAG indexing."""
-        reason = get_rag_indexing_skip_reason("table", "txt")
-
-        assert (
-            reason
-            == "Table documents are queried in real-time and do not support RAG indexing"
-        )
 
 
 class TestListDocumentsCreatedBy:

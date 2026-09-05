@@ -60,7 +60,6 @@ class DocumentSourceType(str, Enum):
 
     FILE = "file"
     TEXT = "text"
-    TABLE = "table"
     WEB = "web"
     ATTACHMENT = "attachment"
     # Source file indexed for retrieval rather than a browsable document. Declared so
@@ -1037,7 +1036,7 @@ class KnowledgeDocumentCreate(MultimodalDocumentPromptMixin):
     _no_internal_source = field_validator("source_type")(reject_internal_source_type)
     source_config: dict = Field(
         default_factory=dict,
-        description="Source configuration (e.g., {'url': '...'} for table)",
+        description="Source configuration (e.g., {'url': '...'} for web)",
     )
 
 
@@ -1512,32 +1511,6 @@ class PersonalKnowledgeBaseGroup(BaseModel):
 
     created_by_me: list[KnowledgeBaseResponse]
     shared_with_me: list[KnowledgeBaseResponse]
-
-
-# ============== Table URL Validation Schemas ==============
-
-
-class TableUrlValidationRequest(BaseModel):
-    """Schema for table URL validation request."""
-
-    url: str = Field(..., min_length=1, description="The table URL to validate")
-
-
-class TableUrlValidationResponse(BaseModel):
-    """Schema for table URL validation response."""
-
-    valid: bool = Field(..., description="Whether the URL is valid")
-    provider: Optional[str] = Field(
-        None, description="Detected table provider (e.g., 'dingtalk')"
-    )
-    base_id: Optional[str] = Field(None, description="Extracted base ID from URL")
-    sheet_id: Optional[str] = Field(None, description="Extracted sheet ID from URL")
-    error_code: Optional[str] = Field(
-        None, description="Error code if validation failed"
-    )
-    error_message: Optional[str] = Field(
-        None, description="Error message if validation failed"
-    )
 
 
 # ============== Document Detail Schemas ==============

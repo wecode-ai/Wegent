@@ -55,7 +55,6 @@ from app.api.endpoints import (
     smart_apps,
     subtasks,
     system_skills,
-    tables,
     token_issuers,
     users,
     utils,
@@ -114,7 +113,6 @@ from app.api.endpoints.internal import robot_queue as internal_robot_queue
 from app.api.endpoints.internal import (
     services_router,
     skills_router,
-    tables_router,
     workspace_archives_router,
 )
 
@@ -316,7 +314,6 @@ api_router.include_router(
 )
 # Unified share endpoints (Team, Task, KnowledgeBase)
 api_router.include_router(share.router, prefix="/share", tags=["share"])
-api_router.include_router(tables.router, prefix="/tables", tags=["tables"])
 api_router.include_router(
     dingtalk_docs.router, prefix="/dingtalk-docs", tags=["dingtalk-docs"]
 )
@@ -394,7 +391,6 @@ api_router.include_router(
     knowledge_router, prefix="/internal", tags=["internal-knowledge"]
 )
 api_router.include_router(skills_router, prefix="/internal", tags=["internal-skills"])
-api_router.include_router(tables_router, prefix="/internal", tags=["internal-tables"])
 api_router.include_router(
     internal_bots_router, prefix="/internal", tags=["internal-bots"]
 )

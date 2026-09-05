@@ -22,7 +22,7 @@ from sqlalchemy.orm.attributes import flag_modified
 
 from app.core.config import settings
 from app.models.kind import Kind
-from app.models.knowledge import DocumentSourceType, KnowledgeDocument
+from app.models.knowledge import KnowledgeDocument
 from app.schemas.summary import DocumentSummary, KnowledgeBaseSummary
 from app.services.background_chat_executor import (
     BackgroundChatExecutor,
@@ -345,15 +345,7 @@ class SummaryService:
             logger.warning(f"[SummaryService] Document not found: {document_id}")
             return None
 
-        # 2. Check document type (only FILE and TEXT supported)
-        if document.source_type == DocumentSourceType.TABLE.value:
-            logger.info(
-                f"[SummaryService] Skipping TABLE type document: "
-                f"document_id={document_id}, name={document.name}"
-            )
-            return None
-
-        # 3. Check if document is active
+        # 2. Check if document is active
         if not document.is_active:
             logger.info(
                 f"[SummaryService] Document not active yet: "
@@ -361,7 +353,7 @@ class SummaryService:
             )
             return None
 
-        # 4. Get knowledge base to retrieve model configuration
+        # 3. Get knowledge base to retrieve model configuration
         kb = (
             self.db.query(Kind)
             .filter(
@@ -377,7 +369,7 @@ class SummaryService:
             )
             return None
 
-        # 5. Get model configuration from knowledge base
+        # 4. Get model configuration from knowledge base
         model_config = self._get_model_config_from_kb(kb, user_id, user_name)
         if not model_config:
             logger.warning(
@@ -400,7 +392,7 @@ class SummaryService:
         existing_summary = dict(document.summary or {})
 
         try:
-            # 6. Update status to generating
+            # 5. Update status to generating
             summary_data = existing_summary
             summary_data["status"] = "generating"
             summary_data["updated_at"] = datetime.now().isoformat()
@@ -412,7 +404,7 @@ class SummaryService:
                 f"document_id={document_id}"
             )
 
-            # 7. Get document content
+            # 6. Get document content
             content = await self._get_document_content(document_id)
             if not content:
                 logger.info(
@@ -431,7 +423,7 @@ class SummaryService:
                 content, "Document summary"
             )
 
-            # 8. Execute summary generation
+            # 7. Execute summary generation
             logger.info(
                 f"[SummaryService] Starting summary generation: document_id={document_id}"
             )
@@ -449,7 +441,7 @@ class SummaryService:
                 parse_json=True,
             )
 
-            # 9. Update document summary
+            # 8. Update document summary
             if result.success and result.parsed_content:
                 summary_data = {
                     **result.parsed_content,

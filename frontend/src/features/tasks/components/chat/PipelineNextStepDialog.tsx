@@ -5,7 +5,7 @@
 'use client'
 
 import { useEffect, useMemo, useState } from 'react'
-import { Database, FileText, Loader2, MessageSquare, Table2 } from 'lucide-react'
+import { Database, FileText, Loader2, MessageSquare } from 'lucide-react'
 
 import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
@@ -47,10 +47,6 @@ function getStructuredTestId(item: PipelineNextStepStructuredItem) {
 function getStructuredIcon(item: PipelineNextStepStructuredItem) {
   if (item.context.context_type === 'knowledge_base') {
     return <Database className={CONTEXT_ICON_CLASS} />
-  }
-
-  if (item.context.context_type === 'table') {
-    return <Table2 className={CONTEXT_ICON_CLASS} />
   }
 
   return <FileText className={CONTEXT_ICON_CLASS} />

@@ -41,7 +41,7 @@ export interface PipelineNextStepDraft {
 }
 
 export interface PipelineNextStepBackendContext {
-  type: 'knowledge_base' | 'table' | 'external_knowledge'
+  type: 'knowledge_base' | 'external_knowledge'
   data: Record<string, unknown>
 }
 
@@ -107,10 +107,6 @@ function getStructuredItemId(context: SubtaskContextBrief): string | null {
           .join(',')}:${String(context.include_subfolders ?? true)}`
       : 'all'
     return `knowledge_base:${context.knowledge_id}:${scopeKey}`
-  }
-
-  if (context.context_type === 'table' && context.document_id) {
-    return `table:${context.document_id}`
   }
 
   if (isExplicitExternalKnowledgeContext(context)) {
@@ -316,21 +312,6 @@ function toBackendContext(
         folder_names: context.folder_names,
         include_subfolders: context.include_subfolders,
         scope_restricted: context.scope_restricted,
-      },
-    }
-  }
-
-  if (context.context_type === 'table') {
-    if (!context.document_id) {
-      return undefined
-    }
-
-    return {
-      type: 'table',
-      data: {
-        document_id: context.document_id,
-        name: context.name,
-        source_config: context.source_config,
       },
     }
   }

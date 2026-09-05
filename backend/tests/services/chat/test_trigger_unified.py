@@ -1046,8 +1046,6 @@ class TestProcessContextsAttachments:
         )
         ctx = ChatContextsResult(
             final_message="processed",
-            has_table_context=False,
-            table_contexts=[],
             kb=KnowledgeBaseToolsResult(
                 extra_tools=[],
                 enhanced_system_prompt="base + restricted guidance",
@@ -1092,8 +1090,6 @@ class TestProcessContextsAttachments:
         )
         ctx = ChatContextsResult(
             final_message="processed",
-            has_table_context=False,
-            table_contexts=[],
             kb=KnowledgeBaseToolsResult(
                 extra_tools=[],
                 enhanced_system_prompt="base + legacy guidance",
@@ -1163,8 +1159,6 @@ class TestProcessContextsAttachments:
 
         ctx = ChatContextsResult(
             final_message="processed",
-            has_table_context=False,
-            table_contexts=[],
             kb=KnowledgeBaseToolsResult(
                 extra_tools=[],
                 enhanced_system_prompt="enhanced",
@@ -1226,8 +1220,6 @@ class TestProcessContextsAttachments:
         )
         ctx = ChatContextsResult(
             final_message="processed",
-            has_table_context=False,
-            table_contexts=[],
             kb=KnowledgeBaseToolsResult(
                 extra_tools=[],
                 enhanced_system_prompt="enhanced",
@@ -1276,8 +1268,6 @@ class TestProcessContextsAttachments:
 
         ctx = ChatContextsResult(
             final_message="processed",
-            has_table_context=False,
-            table_contexts=[],
             kb=KnowledgeBaseToolsResult(
                 extra_tools=[],
                 enhanced_system_prompt="enhanced",
@@ -1318,8 +1308,6 @@ class TestProcessContextsAttachments:
         )
         ctx = ChatContextsResult(
             final_message="processed",
-            has_table_context=False,
-            table_contexts=[],
             kb=KnowledgeBaseToolsResult(
                 extra_tools=[],
                 enhanced_system_prompt="enhanced",
@@ -1361,8 +1349,6 @@ class TestProcessContextsAttachments:
 
         ctx = ChatContextsResult(
             final_message="processed",
-            has_table_context=False,
-            table_contexts=[],
             kb=KnowledgeBaseToolsResult(
                 extra_tools=[],
                 enhanced_system_prompt="enhanced",
@@ -1415,8 +1401,6 @@ class TestProcessContextsAttachments:
         )
         ctx = ChatContextsResult(
             final_message="processed",
-            has_table_context=False,
-            table_contexts=[],
             kb=KnowledgeBaseToolsResult(
                 extra_tools=[],
                 enhanced_system_prompt="enhanced",
@@ -1473,8 +1457,6 @@ class TestProcessContextsAttachments:
         )
         ctx = ChatContextsResult(
             final_message="processed",
-            has_table_context=False,
-            table_contexts=[],
             kb=KnowledgeBaseToolsResult(
                 extra_tools=[],
                 enhanced_system_prompt="enhanced",
@@ -1526,8 +1508,6 @@ class TestProcessContextsAttachments:
 
         ctx = ChatContextsResult(
             final_message="processed",
-            has_table_context=False,
-            table_contexts=[],
             kb=KnowledgeBaseToolsResult(
                 extra_tools=[],
                 enhanced_system_prompt="enhanced",

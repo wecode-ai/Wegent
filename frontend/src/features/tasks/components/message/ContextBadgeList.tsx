@@ -5,7 +5,7 @@
 'use client'
 
 import React, { ReactNode } from 'react'
-import { Database, Loader2, Table2 } from 'lucide-react'
+import { Database, Loader2 } from 'lucide-react'
 import AttachmentPreview from '../input/AttachmentPreview'
 import ImageGallery from './ImageGallery'
 import type { SubtaskContextBrief, Attachment } from '@/types/api'
@@ -64,8 +64,6 @@ function ContextPreviewBase({
 interface ContextBadgeListProps {
   /** List of contexts to display */
   contexts?: SubtaskContextBrief[]
-  /** Optional callback when user wants to re-select a context */
-  onContextReselect?: (context: SubtaskContextBrief) => void
   /** Share token for public access (no login required) */
   shareToken?: string
   /** Render image attachments as generated media instead of compact input badges */
@@ -126,12 +124,10 @@ export function groupMessageContexts(contexts: SubtaskContextBrief[]): MessageCo
  * It renders different badges based on context_type:
  * - attachment: Uses AttachmentPreview component (reuse existing logic)
  * - knowledge_base: Displays KB name with document count
- * - table: Displays table name with clickable link to view/reselect
  * - external_knowledge: Displays external KB name with provider metadata
  */
 export function ContextBadgeList({
   contexts,
-  onContextReselect,
   shareToken,
   displayGeneratedMedia = false,
 }: ContextBadgeListProps) {
@@ -147,7 +143,6 @@ export function ContextBadgeList({
           context={group.context}
           folderCount={group.folderCount}
           documentCount={group.documentCount}
-          onReselect={onContextReselect}
           shareToken={shareToken}
           displayGeneratedMedia={displayGeneratedMedia}
         />
@@ -163,14 +158,12 @@ function ContextBadgeItem({
   context,
   folderCount,
   documentCount,
-  onReselect,
   shareToken,
   displayGeneratedMedia,
 }: {
   context: SubtaskContextBrief
   folderCount: number
   documentCount: number
-  onReselect?: (context: SubtaskContextBrief) => void
   shareToken?: string
   displayGeneratedMedia: boolean
 }) {
@@ -193,8 +186,6 @@ function ContextBadgeItem({
           documentCount={documentCount}
         />
       )
-    case 'table':
-      return <TableBadge context={context} _onReselect={onReselect} />
     default:
       return null
   }
@@ -363,64 +354,6 @@ function ExternalKnowledgeBadge({
         title={context.name}
         subtitle={scopeLabel}
         sourceLabel={sourceLabel}
-      />
-    </div>
-  )
-}
-
-/**
- * Table badge - displays table name and source URL
- *
- * Uses ContextPreviewBase for consistent styling with other context types
- * Click to open table URL in new window
- */
-function TableBadge({
-  context,
-  _onReselect,
-}: {
-  context: SubtaskContextBrief
-  _onReselect?: (context: SubtaskContextBrief) => void
-}) {
-  const { t } = useTranslation('knowledge')
-  let subtitle: string | undefined
-
-  // Extract hostname from source_config URL if available
-  if (context.source_config?.url) {
-    try {
-      const url = new URL(context.source_config.url)
-      subtitle = url.hostname
-    } catch {
-      // If URL parsing fails, use the full URL
-      subtitle = context.source_config.url
-    }
-  }
-
-  // Handle click - open table URL in new window
-  const handleClick = (e: React.MouseEvent) => {
-    if (context.source_config?.url) {
-      e.preventDefault()
-      window.open(context.source_config.url, '_blank', 'noopener,noreferrer')
-    }
-  }
-
-  const isClickable = !!context.source_config?.url
-  const title = context.source_config?.url
-    ? t('knowledge:table.openLink') || 'Click to view table'
-    : undefined
-
-  return (
-    <div
-      onClick={isClickable ? handleClick : undefined}
-      className={isClickable ? 'cursor-pointer' : undefined}
-      role={isClickable ? 'button' : undefined}
-      tabIndex={isClickable ? 0 : undefined}
-      title={title}
-    >
-      <ContextPreviewBase
-        icon={<Table2 className="text-blue-500" />}
-        title={context.name}
-        subtitle={subtitle}
-        className={isClickable ? 'hover:shadow-md hover:border-blue-500/50 transition-all' : ''}
       />
     </div>
   )

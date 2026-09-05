@@ -61,7 +61,7 @@ def test_prepare_contexts_creates_internal_and_external_contexts() -> None:
         ),
     ]
 
-    kb_contexts, table_contexts, selected_docs_contexts, external_contexts = (
+    kb_contexts, selected_docs_contexts, external_contexts = (
         _prepare_contexts_for_creation(
             contexts=contexts,
             subtask_id=166,
@@ -69,7 +69,6 @@ def test_prepare_contexts_creates_internal_and_external_contexts() -> None:
         )
     )
 
-    assert table_contexts == []
     assert selected_docs_contexts == []
     assert len(kb_contexts) == 1
     assert kb_contexts[0].type_data == {

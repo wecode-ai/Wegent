@@ -136,7 +136,6 @@ class ExecutionRequest:
     external_knowledge_refs: Optional[list[dict]] = None
     selected_knowledge_prompt: str = ""
     provider_native_knowledge: bool = False
-    table_contexts: list = field(default_factory=list)
     is_user_selected_kb: bool = True
     kb_tool_access_mode: str = KnowledgeBaseToolAccessMode.FULL
 

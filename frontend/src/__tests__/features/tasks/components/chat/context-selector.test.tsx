@@ -74,12 +74,6 @@ jest.mock('@/apis/task-knowledge-base', () => ({
   },
 }))
 
-jest.mock('@/apis/table', () => ({
-  tableApi: {
-    list: jest.fn().mockResolvedValue({ items: [] }),
-  },
-}))
-
 jest.mock('@/apis/dingtalk-doc', () => ({
   dingtalkDocApi: {
     getDocs: (...args: unknown[]) => mockGetDingTalkDocs(...args),
@@ -329,7 +323,7 @@ describe('ContextSelector organization grouping', () => {
     expect(screen.getByTestId('context-selector-popover')).toHaveAttribute('data-side', 'top')
   })
 
-  it('uses a bottom drawer on mobile while preserving knowledge and table access', async () => {
+  it('uses a bottom drawer on mobile while preserving knowledge access', async () => {
     mockIsMobile = true
     const onOpenChange = jest.fn()
 
@@ -358,10 +352,6 @@ describe('ContextSelector organization grouping', () => {
     await waitFor(() => {
       expect(screen.getByTestId('context-selector-drawer')).toBeInTheDocument()
     })
-    expect(screen.getByTestId('context-selector-knowledge-tab').querySelector('svg')).toHaveClass(
-      'lucide-book-open'
-    )
-    expect(screen.getByTestId('context-selector-table-tab')).toBeInTheDocument()
     expect(screen.getByTestId('context-selector-selected-count')).toHaveTextContent(
       'knowledge:picker.selectedCount:1'
     )
@@ -414,9 +404,6 @@ describe('ContextSelector organization grouping', () => {
       await waitFor(() => {
         expect(screen.getByTestId('knowledge-picker-kb-1')).toBeInTheDocument()
       })
-      expect(
-        screen.getByRole('button', { name: 'knowledge:title' }).querySelector('svg')
-      ).toHaveClass('lucide-book-open', 'w-3.5', 'h-3.5')
       expect(screen.getByTestId('knowledge-picker-kb-1').querySelector('svg')).toHaveClass(
         icon,
         color,
