@@ -68,6 +68,29 @@ spec:
 | `spec.mcpServers`    | object | No       | MCP server configuration defining agent's tool capabilities                      |
 | `spec.skills`        | array  | No       | List of Skill names to associate with this Ghost, e.g., `["skill-1", "skill-2"]` |
 
+### Business MCP Server Identity
+
+When `spec.mcpServers` points to a remote MCP server hosted by a business
+partner, you can enable `inject_wegent_token: true` on that server. Wegent
+then mints a token bound to the current task user before each call and sends
+it as `Authorization: Bearer <token>`:
+
+```yaml
+spec:
+  mcpServers:
+    business:
+      type: streamable-http
+      url: https://mcp.business.example.com/mcp
+      inject_wegent_token: true
+```
+
+The option is enabled per server (opt-in) so the token is never leaked to
+servers that do not need it. The business side can validate the token by
+calling `GET /api/mcp-identity/me`, which returns the current user's basic
+information (`id`, `user_name`, `email`) and never exposes git credentials.
+Token lifetime follows the Skill identity token setting
+(`SKILL_IDENTITY_TOKEN_EXPIRE_MINUTES`).
+
 ---
 
 ## ✨ Skill

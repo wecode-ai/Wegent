@@ -15,6 +15,10 @@ from app.core.config import settings
 
 logger = logging.getLogger(__name__)
 
+# Runtime type used when a Wegent identity token is minted for an outbound
+# MCP server call (Ghost mcpServers with ``inject_wegent_token`` enabled).
+MCP_IDENTITY_RUNTIME_TYPE = "mcp"
+
 
 @dataclass
 class SkillIdentityTokenInfo:

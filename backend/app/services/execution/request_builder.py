@@ -26,7 +26,10 @@ from app.schemas.kind import Bot, Ghost, Shell
 from app.schemas.kind import Skill as SkillCRD
 from app.schemas.kind import Team, TeamMember
 from app.schemas.project import ProjectConfig
-from app.services.auth import create_skill_identity_token
+from app.services.auth import (
+    MCP_IDENTITY_RUNTIME_TYPE,
+    create_skill_identity_token,
+)
 from app.services.execution.git_credentials import (
     build_execution_git_user_info,
     classify_git_auth_transport,
@@ -2132,6 +2135,8 @@ Response template:
                     # Convert "headers" to "auth" for chat_shell compatibility
                     if "headers" in server_config:
                         server_entry["auth"] = server_config["headers"]
+                    if server_config.get("inject_wegent_token"):
+                        server_entry["inject_wegent_token"] = True
                     servers_list.append(server_entry)
 
             if servers_list:
@@ -2236,6 +2241,8 @@ Response template:
                             # Convert "headers" to "auth" for chat_shell compatibility
                             if "headers" in server_config:
                                 server_entry["auth"] = server_config["headers"]
+                            if server_config.get("inject_wegent_token"):
+                                server_entry["inject_wegent_token"] = True
                             # Include stdio-specific fields (command, args, env)
                             if "command" in server_config:
                                 server_entry["command"] = server_config["command"]
@@ -2275,7 +2282,58 @@ Response template:
                 [s["name"] for s in merged_servers],
             )
 
-        return merged_servers
+        return self._inject_wegent_identity_tokens(merged_servers, user)
+
+    @staticmethod
+    def _inject_wegent_identity_tokens(servers: list[dict], user: Any) -> list[dict]:
+        """Inject per-call Wegent identity tokens into opted-in MCP servers.
+
+        A Ghost ``mcpServers`` entry can opt in with
+        ``inject_wegent_token: true``. When enabled, the business MCP server
+        receives a freshly signed Wegent identity token in the
+        ``Authorization`` header so it can resolve the current user through
+        ``GET /mcp-identity/me``. The option is consumed here and never
+        forwarded to the executor.
+
+        Args:
+            servers: Merged MCP server configuration list
+            user: User the identity token should represent
+
+        Returns:
+            The same list, with opted-in servers carrying an Authorization
+            header bound to a freshly issued identity token
+        """
+        for server in servers:
+            if not isinstance(server, dict) or not server.pop(
+                "inject_wegent_token", False
+            ):
+                continue
+            if server.get("type") == "stdio":
+                logger.warning(
+                    "[TaskRequestBuilder] inject_wegent_token is not supported "
+                    "for stdio MCP server '%s'; skipping",
+                    server.get("name", "server"),
+                )
+                continue
+            server_name = server.get("name") or "server"
+            token = create_skill_identity_token(
+                user_id=user.id,
+                user_name=user.user_name,
+                runtime_type=MCP_IDENTITY_RUNTIME_TYPE,
+                runtime_name=server_name,
+            )
+            auth = server.get("auth")
+            if not isinstance(auth, dict):
+                auth = {}
+                server["auth"] = auth
+            auth["Authorization"] = f"Bearer {token}"
+            logger.info(
+                "[TaskRequestBuilder] Injected Wegent identity token into MCP "
+                "server '%s' for user %s",
+                server_name,
+                user.id,
+            )
+        return servers
 
     @staticmethod
     def _extract_prompt_text(message: Union[str, list]) -> str:
