@@ -30,6 +30,13 @@ export async function createDesktopScenario({
 
   const resourcesRoot = resolve(appBinary, '..', '..', 'Resources')
   const releaseRoot = resolve(resourcesRoot, '..', '..', '..', '..')
+  const packagedComponents = JSON.parse(
+    await readFile(join(resourcesRoot, 'components.json'), 'utf8')
+  )
+  assert.ok(
+    packagedComponents.channel === 'stable' || packagedComponents.channel === 'beta',
+    `Packaged component channel is invalid: ${packagedComponents.channel}`
+  )
   const releaseAssets = await readdir(releaseRoot)
   const oldZipName = findSingle(
     releaseAssets,
@@ -93,6 +100,13 @@ export async function createDesktopScenario({
       ].join('\n')
       response.setHeader('content-type', 'text/yaml')
       response.end(manifest)
+      return
+    }
+    if (path === `/components-${packagedComponents.channel}-macos-arm64.json`) {
+      response.setHeader('content-type', 'application/json')
+      response.end(
+        JSON.stringify(componentManifestForTarget(packagedComponents, targetVersion, origin))
+      )
       return
     }
     if (path === `/${targetZipName}.blockmap`) {
@@ -183,7 +197,19 @@ export async function createDesktopScenario({
         timeoutMs: Math.max(uiTimeoutMs, 120_000),
       })
 
+      const componentState = JSON.parse(
+        await readFile(join(electronUserDataDirectory, 'managed-components', 'state.json'), 'utf8')
+      )
+      assert.equal(componentState.pending?.appVersion, targetVersion)
+      assert.equal(componentState.pending?.stagedFromAppVersion, currentVersion)
+
       const zipRequests = requests.filter(request => request.path === `/${targetZipName}`)
+      assert.ok(
+        requests.some(
+          request => request.path === `/components-${packagedComponents.channel}-macos-arm64.json`
+        ),
+        'The target app component manifest was never requested'
+      )
       assert.ok(zipRequests.length > 0, 'The target ZIP was never requested')
       assert.ok(
         zipRequests.some(request => request.range),
@@ -222,6 +248,31 @@ export async function createDesktopScenario({
         appUpdateRequests: requests,
       }
     },
+  }
+}
+
+function componentManifestForTarget(packaged, targetVersion, origin) {
+  return {
+    schemaVersion: 1,
+    appVersion: targetVersion,
+    channel: packaged.channel,
+    platform: 'macos',
+    arch: 'arm64',
+    components: Object.fromEntries(
+      Object.entries(packaged.components)
+        .filter(([id]) => id !== 'electron')
+        .map(([id, component]) => [
+          id,
+          {
+            version: component.version,
+            contentSha256: component.sha256,
+            archiveSha256: component.sha256,
+            archiveBytes: 1,
+            downloadUrl: `${origin}/unused-${id}.tar.gz`,
+            entryPath: '.',
+          },
+        ])
+    ),
   }
 }
 
