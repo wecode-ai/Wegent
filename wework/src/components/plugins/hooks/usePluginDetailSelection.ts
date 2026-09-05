@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useMemo, useRef, type Dispatch, type SetStateAction } from 'react'
+import { isPersonalMarketplaceId } from '@/features/plugins/builtinPlugins'
 import type { PluginReference } from '@/features/plugins/pluginNavigation'
 import { isWegentCloudMarketplace } from '@/features/plugins/pluginNavigation'
 import type { PluginMarketplaceItem } from '@/types/api'
-import { marketplaceItemMarketplaceId } from '../pluginDistribution'
+import { marketplaceItemMarketplaceId, marketplacePluginDistribution } from '../pluginDistribution'
 import type { InstalledPluginItem } from '../PluginManagementRows'
 import { marketplaceItemOwnsLocalCreatedPackage } from '../pluginOwnerLocalPackage'
 import type { PluginMarketplaceState } from '../workspace/marketplaceWorkspaceHelpers'
@@ -16,11 +17,16 @@ export function findMarketplaceItemForPluginReference(
   if (!pluginName || !marketplaceName) return null
 
   const normalizedMarketplaceName = marketplaceName.toLowerCase()
+  const referencesPersonalMarketplace = isPersonalMarketplaceId(normalizedMarketplaceName)
   return (
     items.find(item => {
       if (item.name !== pluginName) return false
       const marketplaceId = marketplaceItemMarketplaceId(item)?.toLowerCase()
-      if (!marketplaceId) return isWegentCloudMarketplace(marketplaceName)
+      if (!marketplaceId) {
+        const personalListing = marketplacePluginDistribution(item) === 'personal'
+        if (referencesPersonalMarketplace) return personalListing
+        return isWegentCloudMarketplace(marketplaceName) && !personalListing
+      }
       return (
         marketplaceId === normalizedMarketplaceName ||
         (isWegentCloudMarketplace(marketplaceId) && isWegentCloudMarketplace(marketplaceName))

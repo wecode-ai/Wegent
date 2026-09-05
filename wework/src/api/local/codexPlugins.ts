@@ -8,6 +8,7 @@ import {
   ensureBundledPluginMarketplaceRegistered,
   ensureLocalExecutorStarted,
   getInitializedBundledPluginMarketplace,
+  getKnownLocalExecutorDeviceId,
   requestLocalExecutor,
 } from '@/desktop/localExecutor'
 import type {
@@ -444,6 +445,7 @@ let cachedStateGeneration = 0
 let nextReadStateGeneration = 1
 let cachedStateAt = 0
 let cachedStateParamsKey = ''
+let activeReadStateDeviceId: string | null = null
 const inflightReadState = new Map<string, Promise<LocalCodexPluginsState>>()
 let inflightPluginInstalled: Promise<{
   marketplaces: CodexPluginMarketplaceEntry[]
@@ -469,6 +471,7 @@ export function clearLocalCodexPluginsReadStateCache(): void {
   cachedStateGeneration = 0
   cachedStateAt = 0
   cachedStateParamsKey = ''
+  activeReadStateDeviceId = null
   inflightReadState.clear()
   inflightPluginInstalled = null
   inflightWegentStoreList = null
@@ -802,7 +805,28 @@ function persistReadStateSnapshot(
   writePersistedReadStateStore(store)
 }
 
-function hydrateReadStateCacheFromSession(): void {
+function readStateMatchesDevice(
+  state: LocalCodexPluginsState | null | undefined,
+  deviceId: string
+): state is LocalCodexPluginsState {
+  return Boolean(state && deviceId && state.deviceId.trim() === deviceId)
+}
+
+function resetInMemoryReadStateForDevice(deviceId: string): void {
+  if (activeReadStateDeviceId === deviceId) return
+  activeReadStateDeviceId = deviceId
+  cachedState = null
+  cachedStateGeneration = 0
+  cachedStateAt = 0
+  cachedStateParamsKey = ''
+  inflightReadState.clear()
+  inflightPluginInstalled = null
+  inflightWegentStoreList = null
+  didHydrateReadStateSession = false
+  warmupReadStatePromise = null
+}
+
+function hydrateReadStateCacheFromSession(deviceId: string): void {
   if (didHydrateReadStateSession) return
   didHydrateReadStateSession = true
   if (cachedState) return
@@ -812,6 +836,7 @@ function hydrateReadStateCacheFromSession(): void {
   )[0]
   if (!entry) return
   if (Date.now() - entry.cachedAt > READ_STATE_DURABLE_TTL_MS) return
+  if (!readStateMatchesDevice(entry.state, deviceId)) return
   cachedState = entry.state
   cachedStateAt = entry.cachedAt
   cachedStateParamsKey = entry.paramsKey
@@ -823,6 +848,8 @@ function rememberReadStateSnapshot(
   state: LocalCodexPluginsState,
   generation: number
 ): void {
+  const deviceId = getKnownLocalExecutorDeviceId()?.trim() ?? ''
+  if (!readStateMatchesDevice(state, deviceId)) return
   if (generation < cachedStateGeneration) return
   cachedState = state
   cachedStateGeneration = generation
@@ -838,12 +865,18 @@ export function peekLocalCodexPluginsReadState(
     mergeAllMarketplaces?: boolean
   } = {}
 ): LocalCodexPluginsState | null {
-  hydrateReadStateCacheFromSession()
+  const deviceId = getKnownLocalExecutorDeviceId()?.trim() ?? ''
+  if (!deviceId) return null
+  resetInMemoryReadStateForDevice(deviceId)
+  hydrateReadStateCacheFromSession(deviceId)
   const paramsKey = readStateParamsKey(params)
-  if (cachedState && cachedStateParamsKey === paramsKey) return cachedState
+  if (readStateMatchesDevice(cachedState, deviceId) && cachedStateParamsKey === paramsKey) {
+    return cachedState
+  }
   const persisted = readPersistedReadStateStore().entries[paramsKey]
   if (!persisted) return null
   if (Date.now() - persisted.cachedAt > READ_STATE_DURABLE_TTL_MS) return null
+  if (!readStateMatchesDevice(persisted.state, deviceId)) return null
   cachedState = persisted.state
   cachedStateAt = persisted.cachedAt
   cachedStateParamsKey = paramsKey
@@ -2368,7 +2401,10 @@ async function readState(
   } = {}
 ): Promise<LocalCodexPluginsState> {
   if (!isDesktopRuntime()) return emptyState
-  hydrateReadStateCacheFromSession()
+  const executorStatus = await ensureLocalExecutorStarted()
+  const deviceId = executorStatus.deviceId?.trim() ?? ''
+  resetInMemoryReadStateForDevice(deviceId)
+  hydrateReadStateCacheFromSession(deviceId)
   const paramsKey = readStateParamsKey(params)
   if (
     !params.refresh &&
@@ -2497,10 +2533,16 @@ async function loadReadStateSnapshot(
     deviceId: executorStatus.deviceId?.trim() ?? '',
   }
   const state = retainOpenAiOfficialCatalog(
-    cachedStateParamsKey === paramsKey ? cachedState : null,
+    cachedStateParamsKey === paramsKey && readStateMatchesDevice(cachedState, loadedState.deviceId)
+      ? cachedState
+      : null,
     loadedState
   )
-  if (generation < cachedStateGeneration && cachedStateParamsKey === paramsKey && cachedState) {
+  if (
+    generation < cachedStateGeneration &&
+    cachedStateParamsKey === paramsKey &&
+    readStateMatchesDevice(cachedState, loadedState.deviceId)
+  ) {
     return cachedState
   }
   if (generation >= cachedStateGeneration) {
