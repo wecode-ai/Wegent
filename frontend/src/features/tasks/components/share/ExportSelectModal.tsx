@@ -270,7 +270,9 @@ export default function ExportSelectModal({
     iframe.style.display = 'none'
     iframe.src = url
     document.body.appendChild(iframe)
-    setTimeout(() => iframe.remove(), 60_000)
+    // Keep the iframe alive beyond the download token lifetime (5 minutes) so
+    // slow DOCX generation cannot be aborted by removing the download target.
+    setTimeout(() => iframe.remove(), 330_000)
   }
 
   /**
