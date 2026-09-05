@@ -1,3 +1,5 @@
+import './host/process-output-bootstrap.js'
+
 import {
   app,
   BrowserWindow,
