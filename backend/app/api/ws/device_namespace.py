@@ -87,8 +87,10 @@ from app.services.device.capability_sync_service import device_capability_sync_s
 from app.services.device.remote_control_policy import (
     remote_control_is_enabled,
 )
+from app.services.device.terminal_metrics import record_terminal_event
 from app.services.device.terminal_session_service import (
     TerminalSessionRecord,
+    normalize_terminal_session_id,
     terminal_session_service,
 )
 from app.services.device_service import (
@@ -154,6 +156,33 @@ RUNTIME_TASK_NON_REPLY_TERMINAL_STATUSES = {
     "cancelled",
     "canceled",
 }
+DEVICE_TRACE_EXCLUDED_EVENTS = {
+    "connect",
+    "terminal:output",
+}
+TERMINAL_CONSUMER_ID_MAX_LENGTH = 128
+
+
+def _get_positive_terminal_sequence(data: dict) -> Optional[int]:
+    value = data.get("sequence") if isinstance(data, dict) else None
+    return value if type(value) is int and value > 0 else None
+
+
+def _get_terminal_consumer_id(data: dict) -> str:
+    value = data.get("consumer_id") if isinstance(data, dict) else None
+    if not isinstance(value, str):
+        return ""
+    consumer_id = value.strip()
+    if (
+        not consumer_id
+        or len(consumer_id) > TERMINAL_CONSUMER_ID_MAX_LENGTH
+        or not all(
+            character.isascii() and (character.isalnum() or character in {"_", "-"})
+            for character in consumer_id
+        )
+    ):
+        return ""
+    return consumer_id
 
 
 @dataclass(frozen=True)
@@ -1396,7 +1425,7 @@ class DeviceNamespace(socketio.AsyncNamespace):
         return self._runtime_event_locks[sid]
 
     @trace_websocket_event(
-        exclude_events={"connect"},
+        exclude_events=DEVICE_TRACE_EXCLUDED_EVENTS,
         extract_event_data=True,
     )
     async def trigger_event(self, event: str, sid: str, *args):
@@ -1727,6 +1756,7 @@ class DeviceNamespace(socketio.AsyncNamespace):
             logger.error(f"[Device WS] Error in disconnect handler: {e}")
         finally:
             self._runtime_event_locks.pop(sid, None)
+            terminal_session_service.invalidate_socket(sid)
 
     # ============================================================
     # Device Registration and Heartbeat Events
@@ -2400,37 +2430,64 @@ class DeviceNamespace(socketio.AsyncNamespace):
 
     async def on_terminal_output(self, sid: str, data: dict) -> dict:
         """Forward executor PTY output to the browser terminal namespace."""
+        sequence = _get_positive_terminal_sequence(data)
+        if sequence is None:
+            return {"error": "Invalid terminal sequence"}
+        output = data.get("data") if isinstance(data, dict) else None
+        if not isinstance(output, str):
+            return {"error": "Invalid terminal output"}
+        consumer_id = _get_terminal_consumer_id(data)
+        if not consumer_id:
+            return {"error": "Invalid terminal consumer"}
+
         record, error = await self._authorize_terminal_event(sid, data)
         if error:
             return error
 
-        payload = dict(data)
-        payload["session_id"] = record.session_id
+        payload = {
+            "session_id": record.session_id,
+            "consumer_id": consumer_id,
+            "sequence": sequence,
+            "data": output,
+        }
         await get_sio().emit(
             "terminal:output",
             payload,
             room=f"terminal:{record.session_id}",
             namespace="/terminal",
         )
+        record_terminal_event(source="device", event="output")
         return {"success": True}
 
     async def on_terminal_exit(self, sid: str, data: dict) -> dict:
         """Forward executor PTY exit and remove the terminal session record."""
+        consumer_id = _get_terminal_consumer_id(data)
+        if not consumer_id:
+            return {"error": "Invalid terminal consumer"}
         record, error = await self._authorize_terminal_event(sid, data)
         if error:
+            session_id = normalize_terminal_session_id(
+                data.get("session_id") if isinstance(data, dict) else None
+            )
+            if (
+                error.get("error") == "Terminal session not found"
+                and session_id
+                and await terminal_session_service.is_durably_revoked(session_id)
+            ):
+                return {"success": True}
             return error
 
         payload = dict(data)
         payload["session_id"] = record.session_id
-        try:
-            await get_sio().emit(
-                "terminal:exit",
-                payload,
-                room=f"terminal:{record.session_id}",
-                namespace="/terminal",
-            )
-        finally:
-            await terminal_session_service.delete(record.session_id)
+        payload["consumer_id"] = consumer_id
+        await get_sio().emit(
+            "terminal:exit",
+            payload,
+            room=f"terminal:{record.session_id}",
+            namespace="/terminal",
+        )
+        await terminal_session_service.delete(record.session_id)
+        record_terminal_event(source="device", event="exit")
         return {"success": True}
 
     async def _authorize_terminal_event(
@@ -2445,19 +2502,30 @@ class DeviceNamespace(socketio.AsyncNamespace):
         if not user_id or not device_id:
             return None, {"error": "Not authenticated or not registered"}
 
-        session_id = data.get("session_id") if isinstance(data, dict) else None
-        if not isinstance(session_id, str) or not session_id.strip():
+        session_id = normalize_terminal_session_id(
+            data.get("session_id") if isinstance(data, dict) else None
+        )
+        if not session_id:
             return None, {"error": "Missing session_id"}
 
-        record = await terminal_session_service.get(session_id.strip())
+        record = await terminal_session_service.get(session_id)
         if not record:
             return None, {"error": "Terminal session not found"}
-        if (
-            record.user_id != user_id
-            or record.device_id != device_id
-            or record.socket_id != sid
-        ):
+        if record.is_expired():
+            return None, {"error": "Terminal session expired"}
+        if record.user_id != user_id or record.device_id != device_id:
             return None, {"error": "Terminal session does not belong to this device"}
+        if record.socket_id != sid:
+            online_info = await device_service.get_device_online_info(
+                user_id, device_id
+            )
+            if not online_info or online_info.get("socket_id") != sid:
+                return None, {
+                    "error": "Terminal session belongs to a stale device socket"
+                }
+            record = await terminal_session_service.rebind_socket(record, sid)
+            if not record:
+                return None, {"error": "Terminal session could not be rebound"}
         return record, None
 
     # ============================================================

@@ -101,6 +101,8 @@ import {
 } from './workspace-flows.mjs'
 
 const REMOTE_TERMINAL_SIZE_MARKER = 'WEWORK_DESKTOP_E2E_REMOTE_TERMINAL_SIZE'
+const REMOTE_TERMINAL_BURST_END_MARKER = 'WEWORK_DESKTOP_E2E_REMOTE_TERMINAL_BURST_END'
+const REMOTE_TERMINAL_AFTER_BURST_MARKER = 'WEWORK_DESKTOP_E2E_REMOTE_TERMINAL_AFTER_BURST'
 const REMOTE_TERMINAL_SELECTOR = '[data-testid="remote-terminal"]'
 
 async function verifyRemoteTerminalUsesPanelWidth(control) {
@@ -129,6 +131,24 @@ async function verifyRemoteTerminalUsesPanelWidth(control) {
   throw new Error(
     `The remote PTY did not reach the fitted panel width; last size: ${lastReportedSize}; terminal: ${terminalText.slice(-2000)}`
   )
+}
+
+async function verifyRemoteTerminalRemainsResponsiveAfterOutputBurst(control) {
+  await control.command('terminalInput', REMOTE_TERMINAL_SELECTOR, {
+    value: `yes 'WEWORK_REMOTE_TERMINAL_BURST_0123456789abcdefghijklmnopqrstuvwxyz' | head -n 12000; printf '\\n${REMOTE_TERMINAL_BURST_END_MARKER}\\n'\r`,
+  })
+  await control.command('waitFor', REMOTE_TERMINAL_SELECTOR, {
+    text: REMOTE_TERMINAL_BURST_END_MARKER,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+
+  await control.command('terminalInput', REMOTE_TERMINAL_SELECTOR, {
+    value: `printf '${REMOTE_TERMINAL_AFTER_BURST_MARKER}\\n'\r`,
+  })
+  await control.command('waitFor', REMOTE_TERMINAL_SELECTOR, {
+    text: REMOTE_TERMINAL_AFTER_BURST_MARKER,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
 }
 
 async function waitForSingleProjectByTitle(
@@ -1041,6 +1061,7 @@ async function verifyCloudProjectFlow(
   await selectE2EModel(control, DEFAULT_MODEL_ID, DEFAULT_MODEL_LABEL)
   await openBottomWorkspaceTerminal(control, 'The new cloud task')
   await verifyRemoteTerminalUsesPanelWidth(control)
+  await verifyRemoteTerminalRemainsResponsiveAfterOutputBurst(control)
   await captureVerificationScreenshot(control, 'cloud-04b-new-task-terminal-open.png')
   await control.command('click', '[data-testid="close-bottom-workspace-tab-button"]')
   await waitForSnapshot(

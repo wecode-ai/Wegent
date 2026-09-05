@@ -96,23 +96,6 @@ export function applyTerminalTheme(
   return appliedTheme
 }
 
-export function createTerminalThemeScheduler(
-  terminal: Terminal,
-  container: HTMLElement,
-  transparentBackground = false
-): () => void {
-  let frameId: number | null = null
-
-  return () => {
-    if (frameId != null) return
-
-    frameId = window.requestAnimationFrame(() => {
-      frameId = null
-      applyTerminalTheme(terminal, container, getTerminalTheme(), transparentBackground)
-    })
-  }
-}
-
 export function observeTerminalTheme(onChange: (theme: ITheme) => void): () => void {
   if (typeof document === 'undefined' || typeof MutationObserver === 'undefined') {
     return () => undefined

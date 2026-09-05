@@ -279,6 +279,8 @@ class Settings(BaseSettings):
 
     # Redis configuration
     REDIS_URL: str = "redis://127.0.0.1:6379/0"
+    TERMINAL_SESSION_CACHE_MAX_ENTRIES: int = 8192
+    TERMINAL_SESSION_CACHE_TTL_SECONDS: float = 5.0
     TASK_RUN_METRICS_RETENTION_DAYS: int = 32
 
     # Public base URL of this backend, reachable from executor devices. The

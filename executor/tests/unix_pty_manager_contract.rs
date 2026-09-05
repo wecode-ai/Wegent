@@ -7,10 +7,40 @@
 use std::{
     fs,
     path::PathBuf,
+    sync::Arc,
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
+use tokio::sync::Notify;
 use wegent_executor::local::pty::UnixPtyManager;
+
+#[tokio::test]
+async fn unix_pty_manager_notifies_when_output_is_ready() {
+    let manager = UnixPtyManager::new();
+    let mut process = manager
+        .spawn(
+            &["/bin/sh", "-lc", "sleep 0.05; printf ready; exit 0"],
+            Some(&unique_dir("pty-notify")),
+            &[],
+            24,
+            80,
+        )
+        .unwrap();
+    let notifier = Arc::new(Notify::new());
+    process.set_event_notifier(Arc::clone(&notifier));
+
+    tokio::time::timeout(Duration::from_secs(1), notifier.notified())
+        .await
+        .expect("PTY output should notify the event loop");
+
+    let output = read_until_contains(&mut process, "ready", Duration::from_secs(1));
+    assert!(output.contains("ready"));
+    assert_eq!(
+        process.wait_timeout(Duration::from_secs(1)).unwrap(),
+        Some(0)
+    );
+    process.close();
+}
 
 #[test]
 fn unix_pty_manager_spawns_process_with_term_env_cwd_and_bounded_read() {
@@ -66,6 +96,31 @@ fn unix_pty_manager_spawn_uses_single_session_creation_strategy() {
         process.wait_timeout(Duration::from_secs(2)).unwrap(),
         Some(0)
     );
+    process.close();
+}
+
+#[test]
+fn unix_pty_manager_observes_shell_exit_while_background_process_holds_pty() {
+    let manager = UnixPtyManager::new();
+    let mut process = manager
+        .spawn(
+            &["/bin/sh", "-lc", "sleep 30 & exit 0"],
+            Some(&unique_dir("pty-background-child")),
+            &[],
+            24,
+            80,
+        )
+        .unwrap();
+
+    assert_eq!(
+        process.wait_timeout(Duration::from_secs(2)).unwrap(),
+        Some(0)
+    );
+    let deadline = Instant::now() + Duration::from_secs(2);
+    while !process.output_closed() && Instant::now() < deadline {
+        let _ = process.read_available(Duration::from_millis(50));
+    }
+    assert!(process.output_closed());
     process.close();
 }
 
