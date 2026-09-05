@@ -468,6 +468,17 @@ async function installOfficialPluginFixture({
     'The official plugin was not shown as installed after the real app-server request',
     WORKBENCH_READY_TIMEOUT_MS
   )
+  await control.command('waitFor', '[data-testid="plugin-operation-notice"]', {
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  assert.match(
+    await control.command('getAttribute', '[data-testid="plugin-operation-notice"]', {
+      value: 'class',
+    }),
+    /electron-titlebar-interactive-region/,
+    'The plugin operation notice remained inside the native titlebar drag region'
+  )
+  await control.command('click', '[data-testid="plugin-operation-notice-dismiss"]')
   await openMarketplacePluginActions(control, {
     pluginId,
     marketplaceName: OFFICIAL_PLUGIN_MARKETPLACE_NAME,

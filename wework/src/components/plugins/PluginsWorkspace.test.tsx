@@ -1565,6 +1565,7 @@ describe('PluginsWorkspace', () => {
     const notice = await screen.findByTestId('plugin-operation-notice')
     expect(notice).toHaveTextContent('当前设备未连接到云端，暂时无法安装插件。请恢复连接后重试。')
     expect(notice).toHaveAttribute('data-notice-kind', 'error')
+    expect(notice).toHaveClass('electron-titlebar-interactive-region')
     expect(
       vi
         .mocked(fetch)

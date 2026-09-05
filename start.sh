@@ -1069,6 +1069,14 @@ clean_frontend_cache() {
     fi
 }
 
+# Return success when an interface should not advertise local development services.
+is_virtual_network_interface() {
+    case "$1" in
+        ""|lo|lo0|utun*|tun*|tap*|ppp*|ipsec*|wg*|docker*|br-*|veth*) return 0 ;;
+        *) return 1 ;;
+    esac
+}
+
 # Get local IP address (defined early as it's used by default values)
 get_local_ip() {
     # Try to get the local IP address, fallback to localhost if not available
@@ -1082,7 +1090,9 @@ get_local_ip() {
         # Try macOS style
         if command -v route &> /dev/null; then
             default_iface=$(route -n get default 2>/dev/null | grep "interface:" | awk '{print $2}')
-            if [ -n "$default_iface" ] && command -v ifconfig &> /dev/null; then
+            if [ -n "$default_iface" ] && \
+                ! is_virtual_network_interface "$default_iface" && \
+                command -v ifconfig &> /dev/null; then
                 ip=$(ifconfig "$default_iface" 2>/dev/null | grep "inet " | grep -v 127.0.0.1 | awk '{print $2}' | head -1)
             fi
         fi
@@ -1090,7 +1100,7 @@ get_local_ip() {
         # Try Linux style with ip command
         if [ -z "$ip" ] && command -v ip &> /dev/null; then
             default_iface=$(ip route 2>/dev/null | grep default | awk '{print $5}' | head -1)
-            if [ -n "$default_iface" ]; then
+            if [ -n "$default_iface" ] && ! is_virtual_network_interface "$default_iface"; then
                 ip=$(ip addr show "$default_iface" 2>/dev/null | grep "inet " | awk '{print $2}' | cut -d/ -f1 | head -1)
             fi
         fi
