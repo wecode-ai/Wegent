@@ -216,6 +216,28 @@ describe('core DSH runtime', () => {
     await root.remove()
   })
 
+  test('preserves an explicitly configured Wework application web root', async () => {
+    const root = await temporaryDirectory('core-dsh-web-root-')
+    const runtime = await writeRuntime(root.path, CORE_DSH_VERSION, 'a')
+    const configuredWebRoot = join(root.path, 'development-web')
+
+    const launch = await prepareCoreDshLaunch({
+      runtimeRoot: runtime.root,
+      dataDirectory: join(root.path, 'data'),
+      environment: {
+        PATH: '/usr/bin',
+        WEWORK_APP_WEB_ROOT: configuredWebRoot,
+        WEWORK_CORE_PLUGIN_ROOT: runtime.pluginsRoot,
+        WEWORK_CORE_PLUGINS_SHA256: 'f'.repeat(64),
+        WEWORK_NODE_PATH: '/managed/node',
+      },
+      port: 3080,
+    })
+
+    expect(launch.environment.WEWORK_APP_WEB_ROOT).toBe(configuredWebRoot)
+    await root.remove()
+  })
+
   test('refreshes the profile when only the host fingerprint changes', async () => {
     const root = await temporaryDirectory('core-dsh-host-change-')
     const firstRuntime = await writeRuntime(root.path, CORE_DSH_VERSION, 'a')

@@ -137,7 +137,9 @@ export async function prepareCoreDshLaunch(options: PrepareCoreDshOptions): Prom
     environment: {
       ...options.environment,
       DSH_HOME: dshHome,
-      WEWORK_APP_WEB_ROOT: join(runtime.pluginRoots['@wegent/dsh-app-wework'], 'web'),
+      WEWORK_APP_WEB_ROOT:
+        options.environment.WEWORK_APP_WEB_ROOT?.trim() ||
+        join(runtime.pluginRoots['@wegent/dsh-app-wework'], 'web'),
       WEWORK_HARNESS_API_KEY: 'wework-local-router',
     },
     profile: PROFILE_NAME,
