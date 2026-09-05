@@ -2,7 +2,15 @@ import { createHash } from 'node:crypto'
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { afterEach, describe, expect, test } from 'vitest'
+import { afterEach, describe, expect, test, vi } from 'vitest'
+
+vi.mock('node:fs/promises', async importOriginal => {
+  const actual = await importOriginal()
+  return {
+    ...actual,
+    readdir: async (...args) => (await actual.readdir(...args)).reverse(),
+  }
+})
 
 import { hashComponentPath } from './component-content-hash.mjs'
 
