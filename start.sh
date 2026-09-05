@@ -1071,10 +1071,36 @@ clean_frontend_cache() {
 
 # Return success when an interface should not advertise local development services.
 is_virtual_network_interface() {
-    case "$1" in
+    local interface_name="${1%%@*}"
+
+    case "$interface_name" in
         ""|lo|lo0|utun*|tun*|tap*|ppp*|ipsec*|wg*|docker*|br-*|veth*) return 0 ;;
         *) return 1 ;;
     esac
+}
+
+get_interface_ipv4() {
+    local interface_name="${1%%@*}"
+    local ip=""
+
+    if is_virtual_network_interface "$interface_name"; then
+        return 1
+    fi
+
+    if command -v ip &> /dev/null; then
+        ip=$(ip -o -4 addr show dev "$interface_name" scope global 2>/dev/null | awk '{print $4}' | cut -d/ -f1 | head -1)
+    fi
+
+    if [ -z "$ip" ] && command -v ifconfig &> /dev/null; then
+        ip=$(ifconfig "$interface_name" 2>/dev/null | awk '$1 == "inet" { sub(/^addr:/, "", $2); if ($2 != "127.0.0.1") { print $2; exit } }')
+    fi
+
+    if [ -n "$ip" ]; then
+        echo "$ip"
+        return 0
+    fi
+
+    return 1
 }
 
 # Get local IP address (defined early as it's used by default values)
@@ -1090,40 +1116,50 @@ get_local_ip() {
         # Try macOS style
         if command -v route &> /dev/null; then
             default_iface=$(route -n get default 2>/dev/null | grep "interface:" | awk '{print $2}')
-            if [ -n "$default_iface" ] && \
-                ! is_virtual_network_interface "$default_iface" && \
-                command -v ifconfig &> /dev/null; then
-                ip=$(ifconfig "$default_iface" 2>/dev/null | grep "inet " | grep -v 127.0.0.1 | awk '{print $2}' | head -1)
+            if [ -n "$default_iface" ]; then
+                ip=$(get_interface_ipv4 "$default_iface" || true)
             fi
         fi
 
         # Try Linux style with ip command
         if [ -z "$ip" ] && command -v ip &> /dev/null; then
             default_iface=$(ip route 2>/dev/null | grep default | awk '{print $5}' | head -1)
-            if [ -n "$default_iface" ] && ! is_virtual_network_interface "$default_iface"; then
-                ip=$(ip addr show "$default_iface" 2>/dev/null | grep "inet " | awk '{print $2}' | cut -d/ -f1 | head -1)
+            if [ -n "$default_iface" ]; then
+                ip=$(get_interface_ipv4 "$default_iface" || true)
             fi
         fi
     fi
 
-    # Method 2: Try hostname -I (works on some Linux, gets first non-loopback IP)
-    if [ -z "$ip" ] && command -v hostname &> /dev/null; then
-        ip=$(hostname -I 2>/dev/null | awk '{print $1}')
+    # Method 2: Enumerate Linux interface/address pairs so virtual interfaces stay filtered.
+    if [ -z "$ip" ] && command -v ip &> /dev/null; then
+        while read -r candidate_iface candidate_address; do
+            if ! is_virtual_network_interface "$candidate_iface"; then
+                ip="${candidate_address%%/*}"
+                break
+            fi
+        done < <(ip -o -4 addr show scope global 2>/dev/null | awk '{print $2, $4}')
     fi
 
-    # Method 3: Try macOS/BSD ifconfig with common interface patterns
-    # Filter out docker/bridge interfaces (br-, docker, veth)
+    # Method 3: Enumerate macOS/BSD interface/address pairs with the same filter.
     if [ -z "$ip" ] && command -v ifconfig &> /dev/null; then
-        # First try en0 (most common default on macOS)
-        ip=$(ifconfig en0 2>/dev/null | grep "inet " | grep -v 127.0.0.1 | awk '{print $2}' | head -1)
-        # Then try en/eth interfaces
-        if [ -z "$ip" ]; then
-            ip=$(ifconfig | grep -A 1 "^en\|^eth" | grep "inet " | grep -v 127.0.0.1 | awk '{print $2}' | head -1)
-        fi
-        # If no en/eth interface, try any non-docker interface
-        if [ -z "$ip" ]; then
-            ip=$(ifconfig | grep -v "^br-\|^docker\|^veth" | grep "inet " | grep -v 127.0.0.1 | awk '{print $2}' | head -1)
-        fi
+        while read -r candidate_iface candidate_address; do
+            if ! is_virtual_network_interface "$candidate_iface"; then
+                ip="$candidate_address"
+                break
+            fi
+        done < <(ifconfig 2>/dev/null | awk '
+            /^[[:alnum:]_.:@-]+:/ {
+                interface_name = $1
+                sub(/:$/, "", interface_name)
+            }
+            $1 == "inet" {
+                address = $2
+                sub(/^addr:/, "", address)
+                if (address != "127.0.0.1") {
+                    print interface_name, address
+                }
+            }
+        ')
     fi
 
     # Fallback to localhost if no IP found
