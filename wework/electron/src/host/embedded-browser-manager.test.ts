@@ -301,6 +301,53 @@ describe('EmbeddedBrowserManager lifecycle', () => {
     await rm(directory, { recursive: true, force: true })
   })
 
+  test('ignores aborted load rejections instead of recording a navigation error', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'wework-browser-manager-'))
+    const manager = new EmbeddedBrowserManager(directory)
+    const contents = new FakeWebContents()
+    contents.loadURL.mockRejectedValue(
+      new Error('ERR_ABORTED (-3) loading "https://example.test/"')
+    )
+    manager.attach('workspace-browser', contents as unknown as WebContents)
+
+    const state = await manager.open({
+      label: 'workspace-browser',
+      url: 'https://example.test/',
+      bounds: { x: 0, y: 0, width: 800, height: 600 },
+      visible: true,
+      navigateExisting: true,
+    })
+
+    expect(state.navigationError).toBeNull()
+    expect(manager.state('workspace-browser').navigationError).toBeNull()
+    await rm(directory, { recursive: true, force: true })
+  })
+
+  test('clears a stale navigation error when a main-frame navigation commits', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'wework-browser-manager-'))
+    const manager = new EmbeddedBrowserManager(directory)
+    const contents = new FakeWebContents()
+    contents.loadURL.mockImplementation(async url => {
+      contents.commitUrl(url)
+    })
+    manager.attach('workspace-browser', contents as unknown as WebContents)
+    await manager.open({
+      label: 'workspace-browser',
+      url: 'https://example.test/',
+      bounds: { x: 0, y: 0, width: 800, height: 600 },
+      visible: true,
+      navigateExisting: true,
+    })
+
+    contents.emit('did-fail-load', {}, -105, 'ERR_NAME_NOT_RESOLVED', 'https://example.test/', true)
+    expect(manager.state('workspace-browser').navigationError).toMatchObject({ code: -105 })
+
+    contents.commitUrl('https://example.test/')
+    contents.emit('did-navigate', {}, 'https://example.test/')
+    expect(manager.state('workspace-browser').navigationError).toBeNull()
+    await rm(directory, { recursive: true, force: true })
+  })
+
   test('keeps the host cursor visible briefly between adjacent agent actions', async () => {
     vi.useFakeTimers()
     const directory = await mkdtemp(join(tmpdir(), 'wework-browser-manager-'))
