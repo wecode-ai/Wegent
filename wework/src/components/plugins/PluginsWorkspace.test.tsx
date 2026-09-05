@@ -1572,6 +1572,12 @@ describe('PluginsWorkspace', () => {
     ).toBe(false)
     expect(window.location.pathname).toBe('/')
 
+    await userEvent.click(screen.getByTestId('plugin-operation-notice-dismiss'))
+    expect(screen.queryByTestId('plugin-operation-notice')).not.toBeInTheDocument()
+
+    await userEvent.click(await screen.findByTestId('plugin-marketplace-install-101'))
+    expect(await screen.findByTestId('plugin-operation-notice')).toBeInTheDocument()
+
     await userEvent.click(screen.getByTestId('plugin-operation-notice-action'))
 
     expect(window.location.pathname).toBe('/settings/connections')
