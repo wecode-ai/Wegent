@@ -286,6 +286,34 @@ describe('FolderTree query/result separation', () => {
 })
 
 describe('DocumentItem table grid', () => {
+  it.each([
+    [true, 42, ' .xlsx ', 'XLSX'],
+    [false, 42, 'pptx', 'PPTX'],
+    [true, 42, 'md', 'MD'],
+    [false, 42, '', null],
+    [true, 0, 'md', null],
+    [false, null, 'md', null],
+  ] as const)(
+    'shows external format only after attachment creation (compact=%s, attachment=%s, extension=%s)',
+    (compact, attachmentId, extension, expectedFormat) => {
+      const document = createDocument({
+        name: 'Imported title',
+        source_type: 'external',
+        attachment_id: attachmentId,
+        file_extension: extension,
+      })
+      render(<DocumentItem document={document} compact={compact} canManage={false} />)
+
+      expect(screen.getByText('Imported title')).toBeInTheDocument()
+      expect(screen.getByText('document.document.type.external')).toBeInTheDocument()
+      if (expectedFormat) {
+        expect(screen.getByText(expectedFormat)).toBeInTheDocument()
+      } else {
+        expect(screen.queryByText('MD')).not.toBeInTheDocument()
+      }
+    }
+  )
+
   it.each([false, true])('shows the document format in compact=%s mode', compact => {
     const { container } = render(
       <DocumentItem document={createDocument({ file_extension: '.xlsx' })} compact={compact} />

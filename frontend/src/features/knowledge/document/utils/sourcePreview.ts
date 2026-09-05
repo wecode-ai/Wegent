@@ -16,7 +16,7 @@ export function isKnowledgeSourcePreviewSupported(
   document: Pick<KnowledgeDocument, 'source_type' | 'attachment_id' | 'file_extension'>
 ): boolean {
   return (
-    document.source_type === 'file' &&
+    (document.source_type === 'file' || document.source_type === 'external') &&
     Boolean(document.attachment_id) &&
     SUPPORTED_SOURCE_PREVIEW_EXTENSIONS.has(
       normalizeSourcePreviewExtension(document.file_extension ?? '')

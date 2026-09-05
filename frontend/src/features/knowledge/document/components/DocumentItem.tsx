@@ -392,7 +392,7 @@ export function DocumentItem({
                   {t('knowledge:document.document.type.web')}
                 </Badge>
               ) : isExternal ? (
-                <ExternalDocumentBadge className="text-[9px] px-1 py-0" />
+                <ExternalDocumentBadge document={document} className="text-[9px] px-1 py-0" />
               ) : (
                 <span className="text-[9px] text-text-muted uppercase">
                   {document.file_extension}
@@ -647,7 +647,7 @@ export function DocumentItem({
             {t('knowledge:document.document.type.web')}
           </Badge>
         ) : isExternal ? (
-          <ExternalDocumentBadge />
+          <ExternalDocumentBadge document={document} />
         ) : (
           <span className="text-xs text-text-muted uppercase">{document.file_extension}</span>
         )}
