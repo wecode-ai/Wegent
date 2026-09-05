@@ -11,6 +11,7 @@ interface WeworkDshContributionEntry extends WeworkDshSlotEntry {
 
 interface DshContributionSlotSurfaceProps {
   attachedClassName?: string
+  entryId?: string
   props?: object
   slot: WeworkDshSlotName
 }
@@ -47,16 +48,18 @@ function DshContributionModuleLoader({ module, props }: { module: string; props:
 
 export function DshContributionSlotSurface({
   attachedClassName,
+  entryId,
   props = {},
   slot,
 }: DshContributionSlotSurfaceProps) {
   const entries = useDshSlotEntries<WeworkDshContributionEntry>(slot)
+  const visibleEntries = entryId ? entries.filter(entry => entry.id === entryId) : entries
 
-  if (entries.length === 0) return null
+  if (visibleEntries.length === 0) return null
 
   return (
     <Fragment>
-      {entries.map(entry =>
+      {visibleEntries.map(entry =>
         entry.module ? (
           <DshContributionModuleLoader
             key={`${entry.id}:${entry.module}`}

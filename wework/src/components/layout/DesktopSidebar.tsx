@@ -4321,7 +4321,7 @@ export function DesktopSidebar({
                 <section>
                   <div>
                     <DesktopSidebarSectionHeader
-                      title={t('workbench.projects', '项目')}
+                      title={t('workbench.sidebar_project_spaces', '项目空间')}
                       expanded={displayedProjectsExpanded}
                       hasContent={sidebarProjects.length > 0 || gitCloneOperations.length > 0}
                       toggleTestId="projects-section-toggle"

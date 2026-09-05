@@ -495,6 +495,7 @@
     "priority_filter_archive_title": "归档 {{count}} 个优先级任务？",
     "priority_filter_archive_description": "只会归档“优先级”分组中的任务，不会归档最近任务",
     "projects": "项目",
+    "sidebar_project_spaces": "项目空间",
     "project": "项目",
     "pin_project": "置顶项目",
     "unpin_project": "取消置顶项目",

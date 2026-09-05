@@ -235,6 +235,7 @@ describe('desktop resource migration', () => {
 
     expect(source).toContain("process.platform === 'win32' ? 'pnpm.cmd' : 'pnpm'")
     expect(source).toContain('wrapWindowsScriptCommand(command, args)')
+    expect(source).toContain("WEWORK_ONLINE_UPDATE_BUILD: 'true'")
   })
 
   test('collects the electron-builder Linux x64 artifact name', async () => {
@@ -247,6 +248,7 @@ describe('desktop resource migration', () => {
       "const installerArchitecture = platform === 'linux' && arch === 'x64' ? 'x86_64' : arch"
     )
     expect(source).toContain('linux_${installerArchitecture}\\\\.AppImage')
+    expect(source).toContain('WeWorkHostUpdate_${escape(version)}_linux_')
   })
 
   test('creates macOS component archives from the requested packaged application', async () => {
@@ -261,6 +263,8 @@ describe('desktop resource migration', () => {
     )
     expect(source).toContain("join(packagedComponentResourcesRoot, 'components.json')")
     expect(source).toContain('join(packagedComponentResourcesRoot, component.path)')
+    expect(source).toContain('contentSha256 = await hashComponentPath(sourcePath)')
+    expect(source).toContain('releaseScope: componentReleaseScope(id)')
     expect(source).not.toContain('async function findDirectory')
   })
 
@@ -270,8 +274,7 @@ describe('desktop resource migration', () => {
       'utf8'
     )
 
-    expect(source).toContain('const blockmap = `${zip}.blockmap`')
-    expect(source).toContain('const blockmap = `${installer}.blockmap`')
+    expect(source).toContain('const blockmap = `${path}.blockmap`')
     expect(source).toContain('await requireFile(blockmap)')
     expect(source).not.toContain('if (await isFile(blockmap))')
   })
@@ -299,6 +302,12 @@ describe('desktop resource migration', () => {
     expect(source).toContain("corePluginsRoot: join(packagedResourcesRoot, 'wework-core-plugins')")
     expect(source).toContain('harnessRuntimeRoot: runtimeRoot')
     expect(source).not.toContain("['prepare:harness-runtime', '--materialize']")
+  })
+
+  test('packages split Wework app static resources for local Electron verification', async () => {
+    const source = await readFile(join(weworkRoot, 'electron/scripts/package-app.mjs'), 'utf8')
+
+    expect(source).toContain("join(electronRoot, 'resources', 'wework-app-static')")
   })
 
   test('prepares AI verification source mode without packaged Node resources', async () => {

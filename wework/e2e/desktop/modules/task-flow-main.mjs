@@ -1061,7 +1061,10 @@ async function main() {
           DESKTOP_SEGMENT === 'permission-modes'
             ? mcpElicitationConfigToml(join(resultDir, 'mcp-elicitation-result.jsonl'))
             : ''
-        }`
+        }`,
+        'openai-responses',
+        desktopScenario?.modelProviderConfigToml,
+        desktopScenario?.modelProviderAuthToml
       )
       await writeFile(
         join(codexHome, 'auth.json'),
@@ -1749,7 +1752,7 @@ last_updated = "2026-07-30T00:00:00Z"`
       }
       if (shouldRunPluginSegment('sites-plugin-auto-install')) {
         phase = 'sites-plugin-auto-install'
-        await verifySitesPluginAutoInstall(control)
+        await verifySitesPluginAutoInstall(control, executorHome)
       }
       if (officialPluginFixture) {
         phase = 'plugin-uninstall'

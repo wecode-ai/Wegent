@@ -548,6 +548,7 @@ export const ProjectChatComposer = forwardRef<ComposerTextareaHandle, ProjectCha
             onSubmit={options => onSubmit(composerRef.current?.getValue() ?? value, options)}
             leadingContext={toolbarLeadingContext}
             onListLocalApps={onListLocalApps}
+            workspaceTarget={workspaceTarget}
           />
         </form>
       </div>

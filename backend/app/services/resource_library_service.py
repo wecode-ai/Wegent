@@ -79,7 +79,7 @@ def _resource_json_text(db: Session, path: str):
 def _system_marketplace_recommendation_score_expression(db: Session):
     score = _resource_json_text(db, "$.spec.capability.marketplace.recommendationScore")
     return case(
-        (score == "", FEATURED_RECOMMENDATION_SCORE),
+        (score == "", 0),
         else_=cast(score, Integer),
     )
 
@@ -101,7 +101,7 @@ def _marketplace_config(source: Kind) -> dict[str, Any]:
 def _marketplace_recommendation_score(source: Kind) -> int:
     configured = _marketplace_config(source).get("recommendationScore")
     if configured is None:
-        return FEATURED_RECOMMENDATION_SCORE if source.user_id == 0 else 0
+        return 0
     try:
         return max(0, min(100, int(configured)))
     except (TypeError, ValueError):

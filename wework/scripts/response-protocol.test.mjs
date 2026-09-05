@@ -2,8 +2,11 @@ import { describe, expect, test } from 'vitest'
 import {
   cors,
   mcpToolRequestEvents,
+  requestAdvertisesProgrammaticExec,
+  serializedOutputReportsSuccess,
   selectMcpTool,
   selectMcpToolRequest,
+  selectProgrammaticExec,
 } from '../e2e/desktop/modules/response-protocol.mjs'
 
 function searchResult(...tools) {
@@ -37,6 +40,54 @@ describe('cors', () => {
     expect(headers.get('Access-Control-Allow-Methods')).toBe(
       'GET, POST, PUT, PATCH, DELETE, OPTIONS'
     )
+  })
+})
+
+describe('programmatic exec', () => {
+  const request = {
+    input: [
+      {
+        type: 'additional_tools',
+        tools: [
+          {
+            type: 'namespace',
+            name: 'functions',
+            tools: [
+              { type: 'custom', name: 'exec' },
+              { type: 'function', name: 'wait' },
+            ],
+          },
+        ],
+      },
+    ],
+  }
+
+  test('recognizes and selects the Codex additional_tools exec tool', () => {
+    expect(requestAdvertisesProgrammaticExec(request)).toBe(true)
+    expect(selectProgrammaticExec(request, 'text("ok")')).toEqual({
+      name: 'exec',
+      input: 'text("ok")',
+    })
+  })
+
+  test('rejects requests without exactly one exec tool', () => {
+    expect(requestAdvertisesProgrammaticExec({ input: [] })).toBe(false)
+    expect(() => selectProgrammaticExec({ input: [] }, 'text("ok")')).toThrow(
+      'Real Codex did not advertise exactly one programmatic exec tool: 0'
+    )
+
+    const duplicateExecRequest = { input: [request.input[0], request.input[0]] }
+    expect(requestAdvertisesProgrammaticExec(duplicateExecRequest)).toBe(true)
+    expect(() => selectProgrammaticExec(duplicateExecRequest, 'text("ok")')).toThrow(
+      'Real Codex did not advertise exactly one programmatic exec tool: 2'
+    )
+  })
+
+  test('recognizes compact, formatted, and escaped success output', () => {
+    expect(serializedOutputReportsSuccess('{"ok":true}')).toBe(true)
+    expect(serializedOutputReportsSuccess('{"ok": true}')).toBe(true)
+    expect(serializedOutputReportsSuccess('{\\"ok\\":true}')).toBe(true)
+    expect(serializedOutputReportsSuccess('{"ok":false}')).toBe(false)
   })
 })
 

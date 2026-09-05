@@ -69,6 +69,7 @@
   "plugin_device_unavailable": "请选择一个在线且版本兼容的设备后再创建应用",
   "plugin_installing": "正在安装应用插件，完成后将进入会话...",
   "plugin_device_sync_failed": "应用插件未能同步到目标设备，请检查设备后重试",
+  "plugin_inspection_failed": "无法确认目标设备的插件安装状态，请重试",
   "plugin_install_failed": "应用插件安装失败，请重试",
   "open_plugins": "查看插件",
   "more_actions": "更多操作",

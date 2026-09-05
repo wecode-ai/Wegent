@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { mkdir, writeFile } from 'node:fs/promises'
+import { mkdir, readdir, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 
 const ACTIVE_WORKBENCH_SELECTOR =
@@ -42,6 +42,10 @@ const LONG_CODE_REASONING = Array.from(
 const VISUALIZATION_PROMPT = 'WEWORK_DESKTOP_E2E_ABSOLUTE_VISUALIZATION'
 const VISUALIZATION_TITLE = 'Absolute visualization E2E'
 const VISUALIZATION_MARKER = 'WEWORK_DESKTOP_E2E_VISUALIZATION_VISIBLE'
+const GENERATED_IMAGE_PROMPT = 'WEWORK_DESKTOP_E2E_GENERATED_IMAGE'
+const GENERATED_IMAGE_COMPLETION = 'WEWORK_DESKTOP_E2E_GENERATED_IMAGE_COMPLETE'
+const GENERATED_IMAGE_CALL_ID = 'wework-generated-image'
+const GENERATED_IMAGE_REVISED_PROMPT = 'A small generated image used by the desktop regression test'
 const WINDOWS_LINK_PROMPT = 'WEWORK_DESKTOP_E2E_WINDOWS_DRIVE_LINK'
 const WINDOWS_LINK_LABEL = 'wegent'
 const WINDOWS_LINK_COMPLETION = '[wegent](C:/projects/example-app/wegent)'
@@ -181,6 +185,13 @@ function functionCall(callId, name, argumentsValue) {
       },
     },
   ]
+}
+
+function namespacedFunctionCall(callId, namespace, name, argumentsValue) {
+  return functionCall(callId, name, argumentsValue).map(event => ({
+    ...event,
+    item: { ...event.item, namespace },
+  }))
 }
 
 function reasoningEvents(itemId, text, deltaChunkSize = text.length) {
@@ -385,6 +396,10 @@ function requestContainsVisualizationPrompt(body) {
   return JSON.stringify(body.input ?? []).includes(VISUALIZATION_PROMPT)
 }
 
+function requestContainsGeneratedImagePrompt(body) {
+  return JSON.stringify(body.input ?? []).includes(GENERATED_IMAGE_PROMPT)
+}
+
 function requestContainsWindowsLinkPrompt(body) {
   return JSON.stringify(body.input ?? []).includes(WINDOWS_LINK_PROMPT)
 }
@@ -406,6 +421,12 @@ function orderFollowUpNumber(body) {
 
 function requestContainsToolOutput(body) {
   return JSON.stringify(body.input ?? []).includes('function_call_output')
+}
+
+function requestContainsToolOutputForCall(body, callId) {
+  return (Array.isArray(body.input) ? body.input : []).some(
+    item => item?.type === 'function_call_output' && item.call_id === callId
+  )
 }
 
 async function waitForRuntimePaneReadyToSend(control, timeoutMs) {
@@ -465,6 +486,37 @@ function selectShellTool(body, workspacePath, command = 'pwd', timeoutMs = 1_000
       workdir: workspacePath,
       timeout_ms: timeoutMs,
     },
+  }
+}
+
+function selectImageGenerationTool(body) {
+  const tools = Array.isArray(body.tools) ? body.tools : []
+  const namespace = tools.find(tool => tool?.type === 'namespace' && tool.name === 'image_gen')
+  const tool = namespace?.tools?.find(
+    candidate => candidate?.type === 'function' && candidate.name === 'imagegen'
+  )
+  if (tool) {
+    return {
+      namespace: namespace.name,
+      name: tool.name,
+      arguments: { prompt: GENERATED_IMAGE_REVISED_PROMPT },
+    }
+  }
+  const flattenedTool = tools.find(
+    candidate =>
+      candidate?.type === 'function' &&
+      (candidate.name === 'image_gen__imagegen' || candidate.name === 'image_genimagegen')
+  )
+  assert.ok(
+    flattenedTool,
+    `Real Codex did not advertise image_gen.imagegen: ${tools
+      .map(candidate => `${candidate?.type ?? 'unknown'}:${candidate?.name ?? 'unnamed'}`)
+      .join(', ')}`
+  )
+  return {
+    namespace: null,
+    name: flattenedTool.name,
+    arguments: { prompt: GENERATED_IMAGE_REVISED_PROMPT },
   }
 }
 
@@ -537,8 +589,7 @@ async function waitForToolDuration(control, minimumSeconds, timeoutMs) {
   return duration
 }
 
-async function completedToolDuration(control, timeoutMs) {
-  const selector = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="tool-block-duration"]`
+async function expandCompletedProcessing(control, timeoutMs) {
   const finalToggle = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="final-processing-toggle"]`
   await control.command('waitFor', finalToggle, { timeoutMs })
   if ((await control.command('getAttribute', finalToggle, { value: 'aria-expanded' })) !== 'true') {
@@ -551,6 +602,11 @@ async function completedToolDuration(control, timeoutMs) {
   ) {
     await control.command('click', summaryToggle)
   }
+}
+
+async function completedToolDuration(control, timeoutMs) {
+  const selector = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="tool-block-duration"]`
+  await expandCompletedProcessing(control, timeoutMs)
   await control.command('waitFor', selector, { timeoutMs })
   const text = await control.command('getText', selector)
   const duration = toolDurationSeconds(text)
@@ -756,6 +812,7 @@ export function createDesktopScenario({
 }) {
   const capture = (control, name) => captureScreenshot(control, name, ACTIVE_WORKBENCH_SELECTOR)
   let active = false
+  let generatedImageStage = 'initial'
   let toolRegressionStage = 'initial'
   let timerStage = 'initial'
   let releaseAppend
@@ -989,8 +1046,37 @@ export function createDesktopScenario({
   }
 
   return {
+    modelProviderAuthToml: '',
+    modelProviderConfigToml:
+      'http_headers = { Authorization = "Bearer wework-e2e-test-key", "x-openai-actor-authorization" = "wework-desktop-e2e" }\n',
+    appEnvironment: {
+      WEWORK_E2E_SEED_LOCAL_MODELS: 'false',
+    },
+
     async handleHttp(request, response, url) {
       if (!active) return false
+      if (
+        request.method === 'POST' &&
+        ['/v1/images/generations', '/images/generations'].includes(url.pathname)
+      ) {
+        assert.equal(
+          generatedImageStage,
+          'awaiting-image-api',
+          `Unexpected generated-image API stage: ${generatedImageStage}`
+        )
+        const body = await readJson(request)
+        assert.equal(body.prompt, GENERATED_IMAGE_REVISED_PROMPT)
+        assert.equal(body.model, 'gpt-image-2')
+        generatedImageStage = 'awaiting-tool-output'
+        response.writeHead(200, { 'Content-Type': 'application/json' })
+        response.end(
+          JSON.stringify({
+            created: Math.floor(Date.now() / 1000),
+            data: [{ b64_json: ATTACHMENT_BASE64 }],
+          })
+        )
+        return true
+      }
       if (request.method !== 'POST' || !['/v1/responses', '/responses'].includes(url.pathname)) {
         return false
       }
@@ -999,6 +1085,21 @@ export function createDesktopScenario({
       const responseId = `wework-streaming-text-${Date.now()}`
       const latestInput = latestModelInputText(body)
       const followUpNumber = orderFollowUpNumber(body)
+      if (
+        generatedImageStage === 'awaiting-tool-output' &&
+        requestContainsToolOutputForCall(body, GENERATED_IMAGE_CALL_ID)
+      ) {
+        generatedImageStage = 'complete'
+        response.writeHead(200, { 'Content-Type': 'text/event-stream; charset=utf-8' })
+        response.end(
+          sse([
+            responseCreated(responseId),
+            assistantMessage(GENERATED_IMAGE_COMPLETION),
+            responseCompleted(responseId),
+          ])
+        )
+        return true
+      }
       if (latestInput.includes(LONG_CODE_PROMPT)) {
         const stream = streamingEvents(responseId, LONG_CODE_COMPLETION, 'final_answer')
         response.writeHead(200, {
@@ -1208,6 +1309,29 @@ export function createDesktopScenario({
         return true
       }
 
+      if (requestContainsGeneratedImagePrompt(body)) {
+        assert.equal(
+          generatedImageStage,
+          'initial',
+          `Unexpected generated-image model stage: ${generatedImageStage}`
+        )
+        const tool = selectImageGenerationTool(body)
+        generatedImageStage = 'awaiting-image-api'
+        const toolCallEvents = tool.namespace
+          ? namespacedFunctionCall(
+              GENERATED_IMAGE_CALL_ID,
+              tool.namespace,
+              tool.name,
+              tool.arguments
+            )
+          : functionCall(GENERATED_IMAGE_CALL_ID, tool.name, tool.arguments)
+        response.writeHead(200, { 'Content-Type': 'text/event-stream; charset=utf-8' })
+        response.end(
+          sse([responseCreated(responseId), ...toolCallEvents, responseCompleted(responseId)])
+        )
+        return true
+      }
+
       if (requestContainsWindowsLinkPrompt(body)) {
         response.writeHead(200, { 'Content-Type': 'text/event-stream; charset=utf-8' })
         response.end(
@@ -1308,6 +1432,48 @@ export function createDesktopScenario({
       )
       await capture(control, 'streaming-text-00-absolute-visualization.png')
       if (process.env.WEWORK_E2E_VISUALIZATION_ONLY === 'true') {
+        active = false
+        return
+      }
+
+      await control.command('click', '[data-testid="new-chat-button"]')
+      await control.command('waitFor', COMPOSER_SELECTOR, { timeoutMs: uiTimeoutMs })
+      await control.command('fill', COMPOSER_SELECTOR, { value: GENERATED_IMAGE_PROMPT })
+      await control.command('press', COMPOSER_SELECTOR, { key: 'Enter' })
+      await control.command('waitFor', '[data-testid="generated-image"]', {
+        timeoutMs: uiTimeoutMs,
+      })
+      await control.command('waitFor', ASSISTANT_CONTENT_SELECTOR, {
+        text: GENERATED_IMAGE_COMPLETION,
+        timeoutMs: uiTimeoutMs,
+      })
+      assert.match(
+        await control.command('getAttribute', '[data-testid="generated-image"]', {
+          value: 'src',
+        }),
+        /^blob:/,
+        'The generated image was not loaded from its workspace artifact'
+      )
+      const generatedImageDirectory = join(workspacePath, 'outputs', 'generated-images')
+      assert.ok(
+        (await readdir(generatedImageDirectory)).some(name => name.endsWith('.png')),
+        'The Executor did not materialize the generated image in the task workspace'
+      )
+      await expandCompletedProcessing(control, uiTimeoutMs)
+      const generatedImageSnapshot = JSON.parse(
+        await control.command('snapshot', ACTIVE_WORKBENCH_SELECTOR)
+      )
+      assert.ok(
+        generatedImageSnapshot.text.includes('图片已生成'),
+        'The generated image tool did not expose its completed status'
+      )
+      assert.equal(
+        generatedImageSnapshot.text.includes('工具未返回内容'),
+        false,
+        'The generated image tool exposed an empty generic tool result'
+      )
+      await capture(control, 'streaming-text-00-generated-image.png')
+      if (process.env.WEWORK_E2E_GENERATED_IMAGE_ONLY === 'true') {
         active = false
         return
       }

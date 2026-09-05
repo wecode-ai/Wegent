@@ -13,17 +13,20 @@ file:/absolute/path/to/ui-extension-demo
 ```
 
 Restart Core DSH after installation. The plugin adds a `DSH Demo` sidebar item,
-surface app, settings page, workspace tab, and global overlay. Disabling or
-uninstalling the package and restarting removes every contribution through the
-same DSH lifecycle.
+surface app, settings page, workspace tab, and global overlay. It also registers
+one command shared by the Composer, workspace toolbar, and `Command+Shift+D`
+(`Ctrl+Shift+D` on Windows/Linux), including context enablement, configuration,
+and persisted state. Disabling or uninstalling the package and restarting
+removes every contribution through the same DSH lifecycle.
 
 Key files:
 
 - `package.json` declares the DSH bundle, client dependencies, and web platform.
 - `cordis.patch.yml` inserts the plugin into the DSH Loader tree.
 - `index.js` is the host entry; a UI-only plugin can keep it empty.
-- `client.js` registers UI through `slots.inject` and
-  `ctx.wework.ui.register`.
+- `client.js` registers commands, menus, keybindings, configuration, and state
+  through `ctx.wework`, host metadata through `ctx.wework.contributions`, and
+  custom UI through native `ctx.slots.register`.
 - The `DSH Demo` sidebar entry uses the public `workspaceTab` route parameter
   to create a dedicated tab once and select it on later clicks without
   replacing the user's current tab.

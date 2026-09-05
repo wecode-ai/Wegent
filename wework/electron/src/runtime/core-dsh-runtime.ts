@@ -15,6 +15,7 @@ const CORE_PLUGIN_PACKAGES = [
   ['@wegent/dsh-executor-runtime', 'wework-executor-runtime'],
   ['@wegent/dsh-terminal-runtime', 'wework-terminal-runtime'],
   ['@wegent/dsh-transcript-sync', 'wework-transcript-sync'],
+  ['@wegent/dsh-plugin-runtime', 'wework-plugin-runtime'],
   ['@wegent/dsh-ui-core-apps', 'wework-ui-core-apps'],
   ['@wegent/dsh-ui-core-settings', 'wework-ui-core-settings'],
   ['@wegent/dsh-ui-plugin-center', 'wework-ui-plugin-center'],
@@ -25,7 +26,7 @@ const CORE_PLUGIN_PACKAGES = [
   ['@wegent/dsh-ui-git', 'wework-ui-git'],
 ] as const
 type CorePluginPackage = (typeof CORE_PLUGIN_PACKAGES)[number][0]
-const CORE_UI_DEPENDENCIES = CORE_PLUGIN_PACKAGES.slice(7).map(([packageName]) => packageName)
+const CORE_UI_DEPENDENCIES = CORE_PLUGIN_PACKAGES.slice(8).map(([packageName]) => packageName)
 const REMOVED_CORE_DEPENDENCIES = ['@wegent/dsh-sidebar-example'] as const
 const CORE_HOST_BUNDLES = [
   '@deepseek-ai/dsh-base',
@@ -33,6 +34,7 @@ const CORE_HOST_BUNDLES = [
   '@wegent/dsh-browser-runtime',
   '@wegent/dsh-secure-storage',
   '@wegent/dsh-terminal-runtime',
+  '@wegent/dsh-plugin-runtime',
   '@wegent/dsh-app-wework',
   '@deepseek-ai/dsh-web-app',
   '@wegent/dsh-executor-runtime',
@@ -137,6 +139,9 @@ export async function prepareCoreDshLaunch(options: PrepareCoreDshOptions): Prom
     environment: {
       ...options.environment,
       DSH_HOME: dshHome,
+      WEWORK_APP_WEB_ROOT:
+        options.environment.WEWORK_APP_WEB_ROOT?.trim() ||
+        join(runtime.pluginRoots['@wegent/dsh-app-wework'], 'web'),
       WEWORK_HARNESS_API_KEY: 'wework-local-router',
     },
     profile: PROFILE_NAME,
