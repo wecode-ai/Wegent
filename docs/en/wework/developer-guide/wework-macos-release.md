@@ -90,6 +90,11 @@ application itself continues to update through `electron-updater`; the other
 seven components use independent
 `components-<channel>-<platform>-<arch>.json` manifests.
 
+The content SHA-256 values in a published component manifest must be computed
+from the final application resources after Electron Builder finishes signing.
+macOS code signing can rewrite nested executables, so publication must not
+reuse the pre-package content hashes from `components.json`.
+
 Component archives are named by their archive SHA-256 and stored as immutable
 assets. Repository-built Wework core plugin/UI, application static asset,
 bundled plugin, and Executor archives live in their corresponding version

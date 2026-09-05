@@ -79,6 +79,10 @@ SHA-512 校验。
 SHA-256。Electron 应用本身仍通过 `electron-updater` 升级；其余七个组件使用
 `components-<channel>-<platform>-<arch>.json` 独立升级。
 
+发布组件清单中的内容 SHA-256 必须从 Electron Builder 完成签名后的最终应用资源
+计算。macOS 代码签名可能重写嵌套可执行文件，因此不得直接复用打包前
+`components.json` 中的内容哈希。
+
 组件压缩包以压缩包 SHA-256 命名并作为不可变资产保存。本项目源码构建的 Wework
 核心插件及 UI、应用静态资源、内置插件和 Executor 压缩包存放在对应的版本
 Release；外部 Core DSH、Codex 和 DWS 压缩包集中存放在 `wework-updater`，供
