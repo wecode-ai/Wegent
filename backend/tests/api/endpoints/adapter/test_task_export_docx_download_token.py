@@ -3,7 +3,9 @@
 # SPDX-License-Identifier: Apache-2.0
 
 import io
+import time
 from types import SimpleNamespace
+from typing import Optional
 from unittest.mock import Mock
 from urllib.parse import parse_qs, urlparse
 
@@ -23,7 +25,9 @@ def _fake_task() -> SimpleNamespace:
     )
 
 
-def _patch_task_access(monkeypatch, task=None) -> Mock:
+def _patch_task_access(
+    monkeypatch: pytest.MonkeyPatch, task: Optional[SimpleNamespace] = None
+) -> Mock:
     from app.api.endpoints.adapter import tasks
 
     is_member = Mock(return_value=True)
@@ -52,7 +56,9 @@ def _chain_query_user(user_id: int = 1) -> Mock:
 
 
 @pytest.mark.asyncio
-async def test_create_download_url_rejects_non_member(monkeypatch) -> None:
+async def test_create_download_url_rejects_non_member(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     from app.api.endpoints.adapter import tasks
 
     _patch_task_access(monkeypatch)
@@ -71,7 +77,9 @@ async def test_create_download_url_rejects_non_member(monkeypatch) -> None:
 
 
 @pytest.mark.asyncio
-async def test_create_download_url_returns_tokenized_url(monkeypatch) -> None:
+async def test_create_download_url_returns_tokenized_url(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     from app.api.endpoints.adapter import tasks
 
     _patch_task_access(monkeypatch)
@@ -96,10 +104,15 @@ async def test_create_download_url_returns_tokenized_url(monkeypatch) -> None:
     assert token_info is not None
     assert token_info.task_id == 42
     assert token_info.user_id == 7
+    assert token_info.expire_at is not None
+    # Token must expire within the advertised window, allowing clock drift.
+    assert 240 < token_info.expire_at - int(time.time()) <= 300
 
 
 @pytest.mark.asyncio
-async def test_export_docx_with_download_token_streams_file(monkeypatch) -> None:
+async def test_export_docx_with_download_token_streams_file(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     from app.api.endpoints.adapter import tasks
 
     _patch_task_access(monkeypatch)
@@ -129,7 +142,9 @@ async def test_export_docx_with_download_token_streams_file(monkeypatch) -> None
 
 
 @pytest.mark.asyncio
-async def test_export_docx_rejects_token_for_other_task(monkeypatch) -> None:
+async def test_export_docx_rejects_token_for_other_task(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     from app.api.endpoints.adapter import tasks
 
     _patch_task_access(monkeypatch)
@@ -153,7 +168,7 @@ async def test_export_docx_rejects_token_for_other_task(monkeypatch) -> None:
 
 @pytest.mark.asyncio
 async def test_export_docx_rejects_token_for_other_message_filter(
-    monkeypatch,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     from app.api.endpoints.adapter import tasks
 
@@ -178,7 +193,9 @@ async def test_export_docx_rejects_token_for_other_message_filter(
 
 
 @pytest.mark.asyncio
-async def test_export_docx_requires_auth_without_download_token(monkeypatch) -> None:
+async def test_export_docx_requires_auth_without_download_token(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     from app.api.endpoints.adapter import tasks
 
     _patch_task_access(monkeypatch)

@@ -9,6 +9,7 @@ import logging
 import re
 from datetime import datetime
 from typing import Annotated, Literal, Optional
+from urllib.parse import quote
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, status
 from fastapi.responses import StreamingResponse
@@ -873,7 +874,7 @@ async def export_task_docx(
             raise HTTPException(status_code=401, detail="Invalid download token")
         current_user = (
             db.query(User)
-            .filter(User.id == token_info.user_id, User.is_active == True)
+            .filter(User.id == token_info.user_id, User.is_active.is_(True))
             .first()
         )
         if current_user is None:
@@ -952,7 +953,7 @@ async def create_task_docx_export_download_url(
     ),
     db: Session = Depends(get_db),
     current_user: User = Depends(security.get_current_user),
-):
+) -> dict:
     """
     Create a short-lived DOCX export download URL for browser-native downloads.
 
@@ -988,9 +989,9 @@ async def create_task_docx_export_download_url(
         expires_delta_minutes=5,
     )
 
-    url = f"/api/tasks/{task_id}/export/docx?download_token={token}"
+    url = f"/api/tasks/{task_id}/export/docx?download_token={quote(token, safe='')}"
     if message_ids:
-        url += f"&message_ids={message_ids}"
+        url += f"&message_ids={quote(message_ids, safe='')}"
 
     return {"download_url": url, "expires_in": 300}
 

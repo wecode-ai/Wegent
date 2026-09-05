@@ -263,10 +263,14 @@ export default function ExportSelectModal({
 
     const url = await taskApis.getTaskDocxExportUrl(taskId, messageIds)
 
-    // Navigate to the real download URL so the browser (including Safari, which
+    // Download through a hidden iframe so the browser (including Safari, which
     // ignores client-side blob download filenames) applies the server-provided
-    // Content-Disposition filename.
-    window.location.assign(url)
+    // Content-Disposition filename without navigating the current page away.
+    const iframe = document.createElement('iframe')
+    iframe.style.display = 'none'
+    iframe.src = url
+    document.body.appendChild(iframe)
+    setTimeout(() => iframe.remove(), 60_000)
   }
 
   /**
