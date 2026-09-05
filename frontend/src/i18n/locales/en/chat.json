@@ -352,6 +352,7 @@
     "model_protocol_error": "Model protocol mismatch: Current model does not support this request format. Please switch to a compatible model",
     "invalid_role": "Model parameter error: Message role format is incompatible. Please switch to a different model",
     "permission_denied": "No permission to use this model. Please switch to a model you have access to",
+    "history_restore_failed": "Unable to restore conversation history. Please try again later",
     "error_details": "Error Details",
     "copy_diagnostic": "Copy diagnostic info for developer",
     "copy_diagnostic_success": "Diagnostic info copied to clipboard",
