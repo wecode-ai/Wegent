@@ -127,6 +127,47 @@ describe('local codex plugin readState cache', () => {
     vi.restoreAllMocks()
   })
 
+  test('strict membership reads reject store failures instead of returning an incomplete list', async () => {
+    const original = mocks.requestLocalExecutor.getMockImplementation()!
+    mocks.requestLocalExecutor.mockImplementation(async (method, params) => {
+      if (method === 'executor.plugins.store.list') throw new Error('Store unavailable')
+      return original(method, params)
+    })
+    await expect(
+      createLocalCodexPluginApi().listInstalledPlugins({ requireComplete: true })
+    ).rejects.toThrow('Store unavailable')
+  })
+
+  test('membership summaries preserve managed plugins default prompts', async () => {
+    const original = mocks.requestLocalExecutor.getMockImplementation()!
+    mocks.requestLocalExecutor.mockImplementation(async (method, params) => {
+      if (method === 'executor.plugins.store.list')
+        return {
+          storePath: '/tmp/store/plugins',
+          plugins: [
+            {
+              name: 'wegent-sites',
+              packageId: 'wegent-sites@wegent',
+              marketplace: 'wegent',
+              enabled: true,
+              pluginPath: '/tmp/store/plugins/wegent-sites@wegent',
+              defaultPrompt: ['Build a website'],
+            },
+          ],
+        }
+      return original(method, params)
+    })
+    const result = await createLocalCodexPluginApi().listInstalledPlugins({ requireComplete: true })
+    expect(result.deviceId).toBe('local-device')
+    expect(
+      result.items.find(item => item.spec.source.pluginKey === 'wegent-sites')?.spec.interface
+        ?.defaultPrompt
+    ).toEqual(['Build a website'])
+    expect(
+      mocks.requestLocalExecutor.mock.calls.some(([, params]) => params?.method === 'plugin/list')
+    ).toBe(false)
+  })
+
   test('loads Codex marketplaces through Executor in Electron desktop runtime', async () => {
     const state = await createLocalCodexPluginApi().readState({
       mergeAllMarketplaces: true,

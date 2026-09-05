@@ -185,11 +185,13 @@ export function ComposerMentionMenu({
                     ? `${
                         candidate.kind === 'app'
                           ? 'local-app'
-                          : candidate.kind === 'cloud'
-                            ? 'cloud-reference'
-                            : candidate.kind === 'conversation'
-                              ? 'conversation-reference'
-                              : 'local-skill'
+                          : candidate.kind === 'extension'
+                            ? 'extension-reference'
+                            : candidate.kind === 'cloud'
+                              ? 'cloud-reference'
+                              : candidate.kind === 'conversation'
+                                ? 'conversation-reference'
+                                : 'local-skill'
                       }-option-${candidate.testId}`
                     : pathItem
                       ? `workspace-mention-option-${index}`

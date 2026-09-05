@@ -13,7 +13,10 @@ import {
 import type { Attachment } from '@/types/api'
 import { readElectronLocalFile } from '@/lib/electron-local-file'
 import { isElectronRuntime } from '@/lib/runtime-environment'
+import { readWorkspaceFileBytes } from '@/lib/workspace-file-bytes'
 import { useAttachmentDownload } from './AttachmentDownloadContext'
+import { acquireCachedImagePreview } from './imagePreviewCache'
+import { useWorkspaceFileReader } from './WorkspaceFileReaderContext'
 import {
   localPathFromMarkdownImageSrc,
   resolveDirectMarkdownImageSrc,
@@ -31,6 +34,7 @@ interface AttachmentImagePreviewProps {
   disableLightbox?: boolean
   galleryAttachments?: Attachment[]
   galleryIndex?: number
+  resolveDownloadFilename?: (attachment: Attachment, index: number) => string
   hideOnError?: boolean
 }
 
@@ -50,28 +54,79 @@ function clampIndex(value: number, length: number): number {
 }
 
 function attachmentPreviewIdentity(attachment: Attachment): string {
-  return `${attachment.id}:${attachment.local_preview_url ?? attachment.local_path ?? ''}`
+  const workspaceFile = attachment.workspace_file
+  return `${attachment.id}:${attachment.local_preview_url ?? attachment.local_path ?? ''}:${
+    workspaceFile
+      ? `${workspaceFile.device_id}:${workspaceFile.workspace_path}:${workspaceFile.path}`
+      : ''
+  }`
+}
+
+function attachmentAspectRatio(attachment: Attachment): number | undefined {
+  const width = attachment.image_width
+  const height = attachment.image_height
+  if (
+    typeof width !== 'number' ||
+    !Number.isFinite(width) ||
+    width <= 0 ||
+    typeof height !== 'number' ||
+    !Number.isFinite(height) ||
+    height <= 0
+  ) {
+    return undefined
+  }
+  return width / height
+}
+
+function workspaceImageCacheKey(attachment: Attachment): string {
+  const reference = attachment.workspace_file
+  if (!reference) return ''
+  return [
+    'workspace',
+    reference.device_id,
+    reference.workspace_path,
+    reference.path,
+    attachment.mime_type,
+    attachment.file_size,
+  ].join(':')
 }
 
 async function loadElectronLocalImage(
   path: string,
   mimeType: string
-): Promise<{ url: string; objectUrl: string }> {
+): Promise<{ url: string; release: () => void }> {
   const objectUrl = URL.createObjectURL(
     new Blob([await readElectronLocalFile(path)], { type: mimeType })
   )
-  return { url: objectUrl, objectUrl }
+  return {
+    url: objectUrl,
+    release: () => URL.revokeObjectURL(objectUrl),
+  }
 }
 
 async function loadAttachmentImageUrl(
   attachment: Attachment,
-  fetchAttachmentBlob: (attachmentId: number) => Promise<Blob>
-): Promise<{ url: string; objectUrl: string | null }> {
+  fetchAttachmentBlob: (attachmentId: number) => Promise<Blob>,
+  readWorkspaceFileChunk: ReturnType<typeof useWorkspaceFileReader>
+): Promise<{ url: string; release: (() => void) | null }> {
+  const workspaceFile = attachment.workspace_file
+  if (workspaceFile) {
+    if (!readWorkspaceFileChunk) {
+      throw new Error('Workspace file reader is unavailable')
+    }
+    return acquireCachedImagePreview(workspaceImageCacheKey(attachment), async () => {
+      const bytes = await readWorkspaceFileBytes(workspaceFile, readWorkspaceFileChunk)
+      return new Blob([bytes], {
+        type: attachment.mime_type || 'application/octet-stream',
+      })
+    })
+  }
+
   const localPreviewUrl = attachment.local_preview_url ?? attachment.local_path
   if (localPreviewUrl) {
     const cachedLocalPreviewUrl = resolvedLocalAttachmentPreviewUrls.get(localPreviewUrl)
     if (cachedLocalPreviewUrl) {
-      return { url: cachedLocalPreviewUrl, objectUrl: null }
+      return { url: cachedLocalPreviewUrl, release: null }
     }
 
     if (failedAttachmentPreviewUrls.has(localPreviewUrl)) {
@@ -87,7 +142,7 @@ async function loadAttachmentImageUrl(
       throw new Error('Failed to resolve local attachment preview')
     }
     resolvedLocalAttachmentPreviewUrls.set(localPreviewUrl, resolvedLocalPreviewUrl)
-    return { url: resolvedLocalPreviewUrl, objectUrl: null }
+    return { url: resolvedLocalPreviewUrl, release: null }
   }
 
   const blob = await fetchAttachmentBlob(attachment.id)
@@ -96,7 +151,10 @@ async function loadAttachmentImageUrl(
   }
 
   const objectUrl = URL.createObjectURL(blob)
-  return { url: objectUrl, objectUrl }
+  return {
+    url: objectUrl,
+    release: () => URL.revokeObjectURL(objectUrl),
+  }
 }
 
 function rememberFailedAttachmentPreview(attachment: Attachment) {
@@ -144,7 +202,7 @@ function getDownloadableLocalPath(value?: string): string | null {
   return null
 }
 
-async function downloadAttachmentImage(attachment: Attachment, imageUrl: string) {
+async function downloadAttachmentImage(attachment: Attachment, imageUrl: string, filename: string) {
   const sourcePath = getDownloadableLocalPath(attachment.local_preview_url ?? attachment.local_path)
   if (sourcePath && isElectronRuntime()) {
     const objectUrl = URL.createObjectURL(
@@ -152,12 +210,12 @@ async function downloadAttachmentImage(attachment: Attachment, imageUrl: string)
         type: attachment.mime_type || 'application/octet-stream',
       })
     )
-    triggerDownload(objectUrl, attachment.filename)
+    triggerDownload(objectUrl, filename)
     window.setTimeout(() => URL.revokeObjectURL(objectUrl), 0)
     return
   }
 
-  await downloadImage(imageUrl, attachment.filename)
+  await downloadImage(imageUrl, filename)
 }
 
 export function AttachmentImagePreview({
@@ -172,9 +230,11 @@ export function AttachmentImagePreview({
   disableLightbox = false,
   galleryAttachments,
   galleryIndex = 0,
+  resolveDownloadFilename,
   hideOnError = false,
 }: AttachmentImagePreviewProps) {
   const fetchAttachmentBlob = useAttachmentDownload()
+  const readWorkspaceFileChunk = useWorkspaceFileReader()
   const [previewUrl, setPreviewUrl] = useState<string | null>(null)
   const [hasError, setHasError] = useState(false)
   const [isLightboxOpen, setIsLightboxOpen] = useState(false)
@@ -187,6 +247,9 @@ export function AttachmentImagePreview({
   const [shouldLoadPreview, setShouldLoadPreview] = useState(loadsPreviewImmediately)
   const previewContainerRef = useRef<HTMLElement | null>(null)
   const previewIdentity = attachmentPreviewIdentity(attachment)
+  const previewAspectRatio = attachmentAspectRatio(attachment)
+  const previewContainerStyle =
+    previewAspectRatio === undefined ? undefined : { aspectRatio: previewAspectRatio }
   const attachmentRef = useRef(attachment)
   const setPreviewContainerRef = useCallback((element: HTMLElement | null) => {
     previewContainerRef.current = element
@@ -198,7 +261,8 @@ export function AttachmentImagePreview({
     () => (galleryAttachments?.length ? galleryAttachments : [attachment]),
     [attachment, galleryAttachments]
   )
-  const currentLightboxAttachment = gallery[clampIndex(lightboxIndex, gallery.length)] ?? attachment
+  const currentLightboxIndex = clampIndex(lightboxIndex, gallery.length)
+  const currentLightboxAttachment = gallery[currentLightboxIndex] ?? attachment
   const canNavigateLightbox = gallery.length > 1
   const previewLocalPath = getDownloadableLocalPath(
     attachment.local_preview_url ?? attachment.local_path
@@ -241,7 +305,7 @@ export function AttachmentImagePreview({
     if (!shouldLoadPreview) return undefined
 
     let isMounted = true
-    let objectUrl: string | null = null
+    let releasePreview: (() => void) | null = null
     const targetAttachment = attachmentRef.current
 
     async function loadPreview() {
@@ -252,12 +316,16 @@ export function AttachmentImagePreview({
       setZoom(1)
 
       try {
-        const loaded = await loadAttachmentImageUrl(targetAttachment, fetchAttachmentBlob)
-        objectUrl = loaded.objectUrl
+        const loaded = await loadAttachmentImageUrl(
+          targetAttachment,
+          fetchAttachmentBlob,
+          readWorkspaceFileChunk
+        )
+        releasePreview = loaded.release
         if (isMounted) {
           setPreviewUrl(loaded.url)
-        } else if (objectUrl) {
-          URL.revokeObjectURL(objectUrl)
+        } else {
+          releasePreview?.()
         }
       } catch {
         if (isMounted) {
@@ -271,17 +339,15 @@ export function AttachmentImagePreview({
 
     return () => {
       isMounted = false
-      if (objectUrl) {
-        URL.revokeObjectURL(objectUrl)
-      }
+      releasePreview?.()
     }
-  }, [fetchAttachmentBlob, previewIdentity, shouldLoadPreview])
+  }, [fetchAttachmentBlob, previewIdentity, readWorkspaceFileChunk, shouldLoadPreview])
 
   useEffect(() => {
     if (!isLightboxOpen || disableLightbox) return
 
     let isMounted = true
-    let objectUrl: string | null = null
+    let releaseLightboxPreview: (() => void) | null = null
     const nextIndex = clampIndex(lightboxIndex, gallery.length)
     const currentAttachment = attachmentRef.current
     const selectedAttachment = gallery[nextIndex] ?? currentAttachment
@@ -304,13 +370,17 @@ export function AttachmentImagePreview({
       setLightboxUrl(null)
 
       try {
-        const loaded = await loadAttachmentImageUrl(selectedAttachment, fetchAttachmentBlob)
-        objectUrl = loaded.objectUrl
+        const loaded = await loadAttachmentImageUrl(
+          selectedAttachment,
+          fetchAttachmentBlob,
+          readWorkspaceFileChunk
+        )
+        releaseLightboxPreview = loaded.release
         if (isMounted) {
           setLightboxUrl(loaded.url)
           setIsLightboxLoading(false)
-        } else if (objectUrl) {
-          URL.revokeObjectURL(objectUrl)
+        } else {
+          releaseLightboxPreview?.()
         }
       } catch {
         if (isMounted) {
@@ -325,9 +395,7 @@ export function AttachmentImagePreview({
 
     return () => {
       isMounted = false
-      if (objectUrl) {
-        URL.revokeObjectURL(objectUrl)
-      }
+      releaseLightboxPreview?.()
     }
   }, [
     disableLightbox,
@@ -337,6 +405,7 @@ export function AttachmentImagePreview({
     lightboxIndex,
     previewIdentity,
     previewUrl,
+    readWorkspaceFileChunk,
   ])
 
   useEffect(() => {
@@ -403,7 +472,14 @@ export function AttachmentImagePreview({
                   onClick={event => {
                     event.stopPropagation()
                     if (lightboxUrl) {
-                      void downloadAttachmentImage(currentLightboxAttachment, lightboxUrl)
+                      void downloadAttachmentImage(
+                        currentLightboxAttachment,
+                        lightboxUrl,
+                        resolveDownloadFilename?.(
+                          currentLightboxAttachment,
+                          currentLightboxIndex
+                        ) ?? currentLightboxAttachment.filename
+                      )
                     }
                   }}
                   disabled={!lightboxUrl}
@@ -527,6 +603,7 @@ export function AttachmentImagePreview({
           ref={setPreviewContainerRef}
           data-testid={buttonTestId}
           className={buttonClassName}
+          style={previewContainerStyle}
           aria-label={attachment.filename}
         >
           <img
@@ -554,6 +631,7 @@ export function AttachmentImagePreview({
           type="button"
           data-testid={buttonTestId}
           className={buttonClassName}
+          style={previewContainerStyle}
           onClick={openLightbox}
           aria-label={attachment.filename}
         >
@@ -586,6 +664,7 @@ export function AttachmentImagePreview({
       ref={setPreviewContainerRef}
       data-testid={hasError ? errorTestId : loadingTestId}
       className={placeholderClassName}
+      style={previewContainerStyle}
       aria-label={attachment.filename}
     >
       {hasError ? <FileText className="h-5 w-5" /> : <Loader2 className="h-5 w-5 animate-spin" />}

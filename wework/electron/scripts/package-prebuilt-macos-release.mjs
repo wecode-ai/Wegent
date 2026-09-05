@@ -60,6 +60,28 @@ await run(
     WEWORK_PREPACKAGED_MACOS_RELEASE: 'true',
   }
 )
+await run(
+  nodeRuntime,
+  [
+    electronBuilderCli,
+    '--config',
+    'electron-builder.config.cjs',
+    '--mac',
+    'zip',
+    `--${arch}`,
+    '--prepackaged',
+    appPath,
+    '--publish',
+    'never',
+  ],
+  electronRoot,
+  {
+    ...process.env,
+    WEWORK_PREPACKAGED_MACOS_RELEASE: 'true',
+    WEWORK_ONLINE_UPDATE_BUILD: 'true',
+    WEWORK_ONLINE_UPDATE_INCLUDE_COMPONENTS: 'true',
+  }
+)
 
 async function verifyApplicationIdentity(path) {
   const identity = resolveBuildIdentity()

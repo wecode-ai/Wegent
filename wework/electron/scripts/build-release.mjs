@@ -43,9 +43,31 @@ await run(
   electronRoot
 )
 
-function run(command, args, cwd) {
+if (!directoryOnly)
+  await run(
+    nodeRuntime,
+    [
+      electronBuilderCli,
+      '--config',
+      'electron-builder.config.cjs',
+      platformFlag,
+      `--${arch}`,
+      '--publish',
+      'never',
+    ],
+    electronRoot,
+    {
+      WEWORK_ONLINE_UPDATE_BUILD: 'true',
+    }
+  )
+
+function run(command, args, cwd, environment = {}) {
   return new Promise((resolvePromise, reject) => {
-    const child = spawn(command, args, { cwd, stdio: 'inherit' })
+    const child = spawn(command, args, {
+      cwd,
+      env: { ...process.env, ...environment },
+      stdio: 'inherit',
+    })
     child.once('error', reject)
     child.once('exit', code => {
       if (code === 0) resolvePromise()

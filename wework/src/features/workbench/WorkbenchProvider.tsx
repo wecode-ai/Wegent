@@ -41,6 +41,7 @@ import {
   replaceComposerApps,
 } from '@/components/chat/composer/composerAppsSnapshot'
 import { AttachmentDownloadProvider } from '@/components/chat/AttachmentDownloadProvider'
+import { WorkspaceFileReaderProvider } from '@/components/chat/WorkspaceFileReaderProvider'
 import { isSystemApplicationConnectorSlug } from '@/features/plugins/builtinPlugins'
 import { overlayMarketplaceLogosOnComposerApps } from '@/features/plugins/composerPluginMetadata'
 import { loadComposerPluginApps } from '@/features/plugins/loadComposerPluginApps'
@@ -2997,16 +2998,20 @@ export function WorkbenchProvider({
       <AttachmentDownloadProvider
         fetchAttachmentBlob={resolvedServices.attachmentApi?.fetchAttachmentBlob}
       >
-        <WorkbenchContext.Provider value={value}>
-          <WorkbenchPaneContext.Provider value={paneValue}>
-            <CoreDshModelSync
-              enabled={syncCoreDshModels}
-              models={conversationModels}
-              services={resolvedServices}
-            />
-            {children}
-          </WorkbenchPaneContext.Provider>
-        </WorkbenchContext.Provider>
+        <WorkspaceFileReaderProvider
+          readWorkspaceFileChunk={workspaceFileApi.readWorkspaceFileChunk}
+        >
+          <WorkbenchContext.Provider value={value}>
+            <WorkbenchPaneContext.Provider value={paneValue}>
+              <CoreDshModelSync
+                enabled={syncCoreDshModels}
+                models={conversationModels}
+                services={resolvedServices}
+              />
+              {children}
+            </WorkbenchPaneContext.Provider>
+          </WorkbenchContext.Provider>
+        </WorkspaceFileReaderProvider>
       </AttachmentDownloadProvider>
     </RuntimeTaskLifecycleProvider>
   )

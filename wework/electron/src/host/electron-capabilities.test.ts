@@ -22,7 +22,6 @@ import {
 import { HOST_CAPABILITIES } from './capability-router.js'
 import type { AppUpdateService } from './app-update-service.js'
 import type { FeedbackBundleManager } from './feedback-bundle-manager.js'
-import type { WorkbenchPluginManager } from './workbench-plugin-manager.js'
 import type { RendererStorageStore } from './renderer-storage-store.js'
 
 describe('cpuLoadRatioBetween', () => {
@@ -403,13 +402,6 @@ describe('registerDesktopServiceCapabilities', () => {
       preview: vi.fn(async () => ({ stagingId: 'stage-1' })),
       submit: vi.fn(async () => ({ report_id: 'WF-1', item_id: 'FEEDBACK-1' })),
     } as unknown as FeedbackBundleManager
-    const plugins = {
-      authorizeCapability: vi.fn(async () => true),
-      list: vi.fn(async () => []),
-      request: vi.fn(async () => ({ ok: true })),
-      start: vi.fn(async () => undefined),
-      stop: vi.fn(async () => undefined),
-    } as unknown as WorkbenchPluginManager
     const coreDshPlugins = {
       listCoreDshPlugins: vi.fn(async () => []),
       installCoreDshPlugin: vi.fn(async () => []),
@@ -431,16 +423,11 @@ describe('registerDesktopServiceCapabilities', () => {
       'developer.openDevTools',
       'maintenance.cleanupTemporaryImages',
       'maintenance.getSystemPressure',
-      'plugins.list',
-      'plugins.start',
-      'plugins.stop',
-      'plugins.request',
-      'plugins.authorizeCapability',
     ] as const
 
     registerDesktopServiceCapabilities(
       router,
-      { cleanupStaleTemporaryImages, coreDshPlugins: () => coreDshPlugins, feedback, plugins },
+      { cleanupStaleTemporaryImages, coreDshPlugins: () => coreDshPlugins, feedback },
       developer
     )
 
@@ -483,25 +470,6 @@ describe('registerDesktopServiceCapabilities', () => {
       },
       { principal: 'test' }
     )
-    await handlers.get('plugins.authorizeCapability')?.(
-      { pluginRoot: '/plugins/example', capability: 'files.read' },
-      { principal: 'test' }
-    )
-    await handlers.get('plugins.start')?.(
-      { pluginId: 'example', pluginRoot: '/plugins/example' },
-      { principal: 'test' }
-    )
-    await handlers.get('plugins.request')?.(
-      {
-        pluginId: 'example',
-        capability: 'files.read',
-        method: 'files/read',
-        params: { path: '/tmp/a' },
-      },
-      { principal: 'test' }
-    )
-    await handlers.get('plugins.stop')?.({ pluginId: 'example' }, { principal: 'test' })
-    await handlers.get('plugins.list')?.({}, { principal: 'test' })
     await handlers.get('maintenance.cleanupTemporaryImages')?.({}, { principal: 'test' })
     await handlers.get('developer.openLogDirectory')?.({}, { principal: 'test' })
     await handlers.get('developer.openDevTools')?.({}, { principal: 'test' })
@@ -517,13 +485,6 @@ describe('registerDesktopServiceCapabilities', () => {
         stagingId: 'stage-1',
       })
     )
-    expect(plugins.authorizeCapability).toHaveBeenCalledWith('/plugins/example', 'files.read')
-    expect(plugins.start).toHaveBeenCalledWith('example', '/plugins/example')
-    expect(plugins.request).toHaveBeenCalledWith('example', 'files.read', 'files/read', {
-      path: '/tmp/a',
-    })
-    expect(plugins.stop).toHaveBeenCalledWith('example')
-    expect(plugins.list).toHaveBeenCalledOnce()
     expect(cleanupStaleTemporaryImages).toHaveBeenCalledOnce()
     expect(developer.openLogDirectory).toHaveBeenCalledOnce()
     expect(developer.openDevTools).toHaveBeenCalledOnce()
@@ -549,7 +510,6 @@ describe('registerCoreDshPluginCapabilities', () => {
       cleanupStaleTemporaryImages: vi.fn(async () => undefined),
       coreDshPlugins: () => coreDshPlugins,
       feedback: {} as FeedbackBundleManager,
-      plugins: {} as WorkbenchPluginManager,
     }
 
     registerCoreDshPluginCapabilities(router, services)

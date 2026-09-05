@@ -34,6 +34,7 @@ import {
 } from '@/lib/keybindings'
 import { cn } from '@/lib/utils'
 import { LocalWorkspaceOpenerIcon, LocalWorkspaceOpenerPicker } from './LocalWorkspaceOpenerMenu'
+import { WorkspaceToolbarExtensions } from './WorkspaceToolbarExtensions'
 import type { DeviceInfo, ProjectWithTasks, RuntimeSupervisorState } from '@/types/api'
 import type { EnvironmentInfo } from '@/types/environment'
 import type { WorkspaceTarget } from '@/types/workspace-files'
@@ -297,6 +298,13 @@ export const WorkspacePanelActions = memo(function WorkspacePanelActions({
 
   return (
     <>
+      {mode === 'all' && (
+        <WorkspaceToolbarExtensions
+          currentProject={currentProject}
+          environmentInfo={environmentInfo}
+          workspaceTarget={workspaceTarget}
+        />
+      )}
       {showEnvironmentInfo && (
         <EnvironmentInfoPopover
           key={environmentInfoDocked ? 'docked' : 'floating'}

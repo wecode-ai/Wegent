@@ -2251,7 +2251,7 @@ fn request_mode(request: &ExecutionRequest) -> Option<String> {
         .map(str::to_ascii_lowercase)
 }
 
-fn workspace_root() -> PathBuf {
+pub(crate) fn workspace_root() -> PathBuf {
     if let Some(root) = env::var_os("WORKSPACE_ROOT")
         .map(PathBuf::from)
         .or_else(|| env::var_os("WEGENT_WORKSPACE_ROOT").map(PathBuf::from))

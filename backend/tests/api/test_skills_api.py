@@ -1435,6 +1435,18 @@ tags: ["public", "api", "test"]
         assert data["version"] == "2.0.0"
         assert data["is_public"] is True
 
+        marketplace_response = test_client.get(
+            "/api/admin/marketplace-resources?resource_type=skill&limit=200",
+            headers={"Authorization": f"Bearer {test_admin_token}"},
+        )
+        assert marketplace_response.status_code == 200
+        marketplace_skill = next(
+            item
+            for item in marketplace_response.json()["items"]
+            if item["id"] == skill_id
+        )
+        assert marketplace_skill["recommendation_score"] == 0
+
     def test_update_public_skill_metadata_persists_visibility(
         self, test_client: TestClient, test_admin_token: str
     ):

@@ -169,6 +169,7 @@ async function assertReleasePackageResources() {
     readFile(join(resourcesRoot, 'harness-runtime', 'runtimes.json')),
     readFile(join(resourcesRoot, 'codex', 'WEGENT_CODEX_BINARY.json')),
     readFile(join(resourcesRoot, 'wework-core-plugins', 'wework-app', 'package.json')),
+    readFile(join(resourcesRoot, 'wework-app-static', 'wasm', 'data', 'sql-wasm.wasm')),
     readFile(
       join(
         resourcesRoot,
@@ -194,6 +195,7 @@ async function assertReleasePackageResources() {
     'dws',
     'electron',
     'executor',
+    'weworkAppStatic',
     'weworkCorePlugins',
   ])
   for (const component of Object.values(components.components)) {

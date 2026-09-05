@@ -241,6 +241,8 @@ export interface LocalCodexPluginApi {
     refresh?: boolean
     /** Start a new membership read when a newer refresh supersedes a pending one. */
     shareInflight?: boolean
+    /** Read current membership and reject partial inventory instead of assuming absence. */
+    requireComplete?: boolean
   }): Promise<InstalledPluginListResponse & { deviceId?: string }>
   listSkills(params?: { cwds?: string[]; forceReload?: boolean }): Promise<LocalDeviceSkill[]>
   listApps(params?: {
@@ -1322,6 +1324,7 @@ type PersonalMarketplaceListResult = {
 }
 
 type WegentStorePluginSummary = {
+  defaultPrompt?: PluginInterface['defaultPrompt']
   name: string
   packageId: string
   marketplace: string
@@ -1895,6 +1898,7 @@ function toWegentStoreInstalledPlugin(
         path: plugin.pluginPath,
       },
       interface: {
+        defaultPrompt: plugin.defaultPrompt,
         displayName: plugin.displayName?.trim() || plugin.name,
         shortDescription: plugin.description ?? null,
         logo: plugin.logo ?? null,
@@ -1908,37 +1912,42 @@ function toWegentStoreInstalledPlugin(
  * Lists packages referenced by the active capability manifest. Avoids Codex
  * plugin/list so installed enterprise ZIPs can paint without scanning caches.
  */
-export async function listWegentStorePluginsFromDisk(): Promise<InstalledPlugin[]> {
+export async function listWegentStorePluginsFromDisk(
+  requireComplete = false
+): Promise<InstalledPlugin[]> {
   if (!isElectronRuntime()) return []
-  if (inflightWegentStoreList) return inflightWegentStoreList
-  const pending = requestLocalExecutor<WegentStoreListResult>('executor.plugins.store.list')
-    .catch(error => {
-      console.warn('[Wework] list wegent store plugins from disk failed', error)
-      return null
-    })
-    .then(listed => {
-      if (!listed?.plugins?.length) {
-        if (listed) {
+  const pending =
+    inflightWegentStoreList ??
+    requestLocalExecutor<WegentStoreListResult>('executor.plugins.store.list')
+      .then(listed => {
+        if (!listed || !Array.isArray(listed.plugins))
+          throw new Error('Invalid local plugin inventory')
+        if (!listed.plugins.length) {
           console.info('[Wework] wegent store disk list empty', {
             storePath: listed.storePath || null,
           })
+          return [] as InstalledPlugin[]
         }
-        return [] as InstalledPlugin[]
-      }
-      console.info('[Wework] wegent store disk list', {
-        storePath: listed.storePath || null,
-        count: listed.plugins.length,
-        names: listed.plugins.map(plugin => plugin.name),
+        console.info('[Wework] wegent store disk list', {
+          storePath: listed.storePath || null,
+          count: listed.plugins.length,
+          names: listed.plugins.map(plugin => plugin.name),
+        })
+        return listed.plugins.map(plugin =>
+          toWegentStoreInstalledPlugin(plugin, listed.storePath || plugin.pluginPath)
+        )
       })
-      return listed.plugins.map(plugin =>
-        toWegentStoreInstalledPlugin(plugin, listed.storePath || plugin.pluginPath)
-      )
-    })
-    .finally(() => {
-      if (inflightWegentStoreList === pending) inflightWegentStoreList = null
-    })
+      .finally(() => {
+        if (inflightWegentStoreList === pending) inflightWegentStoreList = null
+      })
   inflightWegentStoreList = pending
-  return pending
+  try {
+    return await pending
+  } catch (error) {
+    if (requireComplete) throw error
+    console.warn('[Wework] list wegent store plugins from disk failed', error)
+    return []
+  }
 }
 
 function toInstalledPlugin(
@@ -2667,7 +2676,9 @@ async function readDetailForInstalledPlugin(plugin: InstalledPlugin): Promise<In
   return detailed
 }
 
-async function loadInstalledPluginsOnly(options: { shareInflight?: boolean } = {}): Promise<{
+async function loadInstalledPluginsOnly(
+  options: { shareInflight?: boolean; requireComplete?: boolean } = {}
+): Promise<{
   installedPlugins: InstalledPlugin[]
   deviceId: string
 }> {
@@ -2675,7 +2686,7 @@ async function loadInstalledPluginsOnly(options: { shareInflight?: boolean } = {
   await ensureBundledPluginMarketplaceRegistered()
   const [installedResponse, storePlugins] = await Promise.all([
     requestPluginInstalled({ shareInflight: options.shareInflight }),
-    listWegentStorePluginsFromDisk(),
+    listWegentStorePluginsFromDisk(options.requireComplete),
   ])
   const bundled = getInitializedBundledPluginMarketplace()
   const personalPath =
@@ -3059,7 +3070,7 @@ export function createLocalCodexPluginApi(): LocalCodexPluginApi {
       const peeked = peekLocalCodexPluginsReadState(mergeParams) || peekLocalCodexPluginsReadState()
       // Auto-sync / device inventory must bypass peek. Durable snapshots and a
       // fresh readState cache can both lag behind plugin/installed.
-      if (!options?.refresh) {
+      if (!options?.refresh && !options?.requireComplete) {
         // Only trust a non-empty install list while the readState snapshot is still
         // fresh. Durable localStorage can keep installs for days after uninstall.
         const peekedIsFresh =
@@ -3069,7 +3080,10 @@ export function createLocalCodexPluginApi(): LocalCodexPluginApi {
           return { items: peeked.installedPlugins, deviceId: peeked.deviceId }
         }
       }
-      const loaded = await loadInstalledPluginsOnly({ shareInflight: options?.shareInflight })
+      const loaded = await loadInstalledPluginsOnly({
+        shareInflight: options?.shareInflight,
+        requireComplete: options?.requireComplete,
+      })
       const installedPlugins = loaded.installedPlugins
       if (cachedState) {
         cachedState = {
