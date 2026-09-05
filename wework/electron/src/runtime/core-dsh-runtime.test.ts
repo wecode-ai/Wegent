@@ -220,26 +220,37 @@ describe('core DSH runtime', () => {
     await root.remove()
   })
 
-  test('preserves an explicitly configured Wework application web root', async () => {
+  test('resolves configured and bundled Wework application web roots', async () => {
     const root = await temporaryDirectory('core-dsh-web-root-')
-    const runtime = await writeRuntime(root.path, CORE_DSH_VERSION, 'a')
-    const configuredWebRoot = join(root.path, 'development-web')
+    try {
+      const runtime = await writeRuntime(root.path, CORE_DSH_VERSION, 'a')
+      const configuredWebRoot = join(root.path, 'development-web')
+      const bundledWebRoot = join(runtime.pluginRoots['@wegent/dsh-app-wework'], 'web')
+      const cases = [
+        { value: `  ${configuredWebRoot}  `, expected: configuredWebRoot },
+        { value: '', expected: bundledWebRoot },
+        { value: '   ', expected: bundledWebRoot },
+      ]
 
-    const launch = await prepareCoreDshLaunch({
-      runtimeRoot: runtime.root,
-      dataDirectory: join(root.path, 'data'),
-      environment: {
-        PATH: '/usr/bin',
-        WEWORK_APP_WEB_ROOT: configuredWebRoot,
-        WEWORK_CORE_PLUGIN_ROOT: runtime.pluginsRoot,
-        WEWORK_CORE_PLUGINS_SHA256: 'f'.repeat(64),
-        WEWORK_NODE_PATH: '/managed/node',
-      },
-      port: 3080,
-    })
+      for (const [index, testCase] of cases.entries()) {
+        const launch = await prepareCoreDshLaunch({
+          runtimeRoot: runtime.root,
+          dataDirectory: join(root.path, `data-${index}`),
+          environment: {
+            PATH: '/usr/bin',
+            WEWORK_APP_WEB_ROOT: testCase.value,
+            WEWORK_CORE_PLUGIN_ROOT: runtime.pluginsRoot,
+            WEWORK_CORE_PLUGINS_SHA256: 'f'.repeat(64),
+            WEWORK_NODE_PATH: '/managed/node',
+          },
+          port: 3080 + index,
+        })
 
-    expect(launch.environment.WEWORK_APP_WEB_ROOT).toBe(configuredWebRoot)
-    await root.remove()
+        expect(launch.environment.WEWORK_APP_WEB_ROOT).toBe(testCase.expected)
+      }
+    } finally {
+      await root.remove()
+    }
   })
 
   test('refreshes the profile when only the host fingerprint changes', async () => {

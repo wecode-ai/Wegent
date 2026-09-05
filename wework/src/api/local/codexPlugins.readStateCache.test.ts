@@ -627,6 +627,69 @@ describe('local codex plugin readState cache', () => {
     ).toBe(1)
   })
 
+  test('does not reuse an in-flight plugin list after the executor device changes', async () => {
+    let activeDevice = 'device-a'
+    let pluginListRequestCount = 0
+    let resolveDeviceAList: ((value: unknown) => void) | null = null
+    mocks.knownDeviceId = activeDevice
+    mocks.ensureLocalExecutorStarted.mockImplementation(async () => ({ deviceId: activeDevice }))
+    mocks.requestLocalExecutor.mockImplementation(
+      async (method: string, params: { method?: string }) => {
+        if (method === 'executor.plugins.store.list') {
+          return { storePath: '/tmp/store/plugins', plugins: [] }
+        }
+        if (method !== 'codex.app_server_request') {
+          throw new Error(`Unexpected executor method ${method}`)
+        }
+        if (params.method === 'plugin/installed') return { marketplaces: [] }
+        if (params.method === 'plugin/list') {
+          pluginListRequestCount += 1
+          if (pluginListRequestCount === 1) {
+            return await new Promise(resolve => {
+              resolveDeviceAList = resolve
+            })
+          }
+          return {
+            marketplaces: [
+              {
+                ...personalMarketplace,
+                plugins: [{ name: 'device-b-plugin', version: '1.0.0' }],
+              },
+            ],
+          }
+        }
+        throw new Error(`Unexpected app-server method ${params.method}`)
+      }
+    )
+
+    const api = createLocalCodexPluginApi()
+    const deviceARead = api.readState({ mergeAllMarketplaces: true })
+    await vi.waitFor(() => expect(pluginListRequestCount).toBe(1))
+
+    activeDevice = 'device-b'
+    mocks.knownDeviceId = activeDevice
+    const deviceBState = await api.readState({ mergeAllMarketplaces: true })
+
+    expect(pluginListRequestCount).toBe(2)
+    expect(deviceBState.deviceId).toBe('device-b')
+    expect(deviceBState.marketplaceItems.map(item => item.name)).toEqual(['device-b-plugin'])
+
+    resolveDeviceAList?.({
+      marketplaces: [
+        {
+          ...personalMarketplace,
+          plugins: [{ name: 'device-a-plugin', version: '1.0.0' }],
+        },
+      ],
+    })
+    const deviceAState = await deviceARead
+    expect(deviceAState.deviceId).toBe('device-a')
+    expect(deviceAState.marketplaceItems.map(item => item.name)).toEqual(['device-a-plugin'])
+    expect(peekLocalCodexPluginsReadState({ mergeAllMarketplaces: true })?.deviceId).toBe(
+      'device-b'
+    )
+  })
+
   test('stale readState returns cache immediately and refreshes plugin/list in background', async () => {
     const api = createLocalCodexPluginApi()
     const warm = await api.readState({ mergeAllMarketplaces: true })

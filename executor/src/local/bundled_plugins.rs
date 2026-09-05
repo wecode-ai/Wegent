@@ -15,6 +15,8 @@ use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use toml_edit::DocumentMut;
 
+use crate::logging::log_executor_event;
+
 pub const BUNDLED_PLUGIN_MARKETPLACE_SOURCE_ENV: &str = "WEGENT_BUNDLED_PLUGIN_MARKETPLACE_DIR";
 const EXECUTOR_HOME_ENV: &str = "WEGENT_EXECUTOR_HOME";
 const CODEX_HOME_ENV: &str = "WEGENT_CODEX_HOME";
@@ -89,25 +91,6 @@ fn initialize_bundled_plugin_marketplace_from_paths_with_recovery(
     let default_plugin_names = marketplace_default_plugin_names(&codex_manifest)?;
     let content_hash = directory_content_hash(source)?;
 
-    if destination.is_dir()
-        && fs::read_to_string(destination.join(CONTENT_HASH_FILE))
-            .is_ok_and(|stored| stored.trim() == content_hash)
-    {
-        for legacy_root in legacy_personal_marketplaces {
-            preserve_personal_plugins(legacy_root, destination, &codex_plugins)?;
-        }
-        if let Some(codex_home) = codex_home {
-            recover_configured_personal_plugins(destination, codex_home, &codex_plugins)?;
-        }
-        return Ok(BundledPluginMarketplace {
-            id: MARKETPLACE_ID.to_owned(),
-            path: destination.display().to_string(),
-            plugin_count: codex_plugins.len(),
-            default_plugin_names,
-            content_hash,
-        });
-    }
-
     let parent = destination.parent().ok_or_else(|| {
         format!(
             "Bundled plugin marketplace destination has no parent: {}",
@@ -118,25 +101,32 @@ fn initialize_bundled_plugin_marketplace_from_paths_with_recovery(
         .map_err(|error| format!("Failed to create {}: {error}", parent.display()))?;
     let staging = parent.join(format!(".{MARKETPLACE_ID}-{}-staging", std::process::id()));
     remove_existing_path(&staging)?;
-    if let Err(error) = copy_directory_recursive(source, &staging) {
+
+    let content_matches = destination.is_dir()
+        && fs::read_to_string(destination.join(CONTENT_HASH_FILE))
+            .is_ok_and(|stored| stored.trim() == content_hash);
+    let staging_result = (|| {
+        copy_directory_recursive(if content_matches { destination } else { source }, &staging)?;
+        if !content_matches && destination.is_dir() {
+            preserve_personal_plugins(destination, &staging, &codex_plugins)?;
+        }
+        for legacy_root in legacy_personal_marketplaces {
+            preserve_personal_plugins(legacy_root, &staging, &codex_plugins)?;
+        }
+        if let Some(codex_home) = codex_home {
+            recover_configured_personal_plugins(&staging, codex_home, &codex_plugins)?;
+        }
+        fs::write(staging.join(CONTENT_HASH_FILE), format!("{content_hash}\n")).map_err(|error| {
+            format!(
+                "Failed to write bundled marketplace content hash in {}: {error}",
+                staging.display()
+            )
+        })
+    })();
+    if let Err(error) = staging_result {
         let _ = remove_existing_path(&staging);
         return Err(error);
     }
-    if destination.is_dir() {
-        preserve_personal_plugins(destination, &staging, &codex_plugins)?;
-    }
-    for legacy_root in legacy_personal_marketplaces {
-        preserve_personal_plugins(legacy_root, &staging, &codex_plugins)?;
-    }
-    if let Some(codex_home) = codex_home {
-        recover_configured_personal_plugins(&staging, codex_home, &codex_plugins)?;
-    }
-    fs::write(staging.join(CONTENT_HASH_FILE), format!("{content_hash}\n")).map_err(|error| {
-        format!(
-            "Failed to write bundled marketplace content hash in {}: {error}",
-            staging.display()
-        )
-    })?;
     activate_staged_marketplace(&staging, destination)?;
 
     Ok(BundledPluginMarketplace {
@@ -468,15 +458,28 @@ fn activate_staged_marketplace(staging: &Path, destination: &Path) -> Result<(),
         })?;
     }
     if let Err(error) = fs::rename(staging, destination) {
-        if backup.exists() {
-            let _ = fs::rename(&backup, destination);
-        }
+        let rollback = if backup.exists() {
+            fs::rename(&backup, destination)
+                .err()
+                .map(|rollback_error| {
+                    format!("; restoring the backup also failed: {rollback_error}")
+                })
+                .unwrap_or_default()
+        } else {
+            String::new()
+        };
         return Err(format!(
-            "Failed to activate bundled plugin marketplace {}: {error}",
-            destination.display()
+            "Failed to activate bundled plugin marketplace {}: {error}{rollback}",
+            destination.display(),
         ));
     }
-    remove_existing_path(&backup)
+    if let Err(error) = remove_existing_path(&backup) {
+        log_executor_event(
+            "bundled plugin marketplace backup cleanup failed",
+            &[("error", error)],
+        );
+    }
+    Ok(())
 }
 
 fn directory_content_hash(root: &Path) -> Result<String, String> {
@@ -891,6 +894,70 @@ mod tests {
                 .unwrap(),
             vec!["personal-tool".to_owned()]
         );
+    }
+
+    #[test]
+    fn leaves_a_hash_matched_marketplace_unchanged_when_recovery_fails() {
+        let root = tempfile::tempdir().unwrap();
+        let source = root.path().join("source");
+        let destination = root.path().join("destination/wework-personal");
+        let legacy = root.path().join("legacy/wework-personal");
+        let codex_home = root.path().join("codex");
+        for marketplace_root in [&source, &legacy] {
+            fs::create_dir_all(marketplace_root.join(".agents/plugins")).unwrap();
+            fs::create_dir_all(marketplace_root.join(".claude-plugin")).unwrap();
+        }
+        fs::write(
+            source.join(".agents/plugins/marketplace.json"),
+            r#"{"plugins":[]}"#,
+        )
+        .unwrap();
+        fs::write(
+            source.join(".claude-plugin/marketplace.json"),
+            r#"{"plugins":[]}"#,
+        )
+        .unwrap();
+        initialize_bundled_plugin_marketplace_from_paths(&source, &destination).unwrap();
+
+        fs::create_dir_all(legacy.join("plugins/personal-tool/.codex-plugin")).unwrap();
+        fs::write(
+            legacy.join("plugins/personal-tool/.codex-plugin/plugin.json"),
+            r#"{"name":"personal-tool","version":"1.0.0"}"#,
+        )
+        .unwrap();
+        fs::write(
+            legacy.join(".agents/plugins/marketplace.json"),
+            r#"{"plugins":[{"name":"personal-tool","source":{"source":"local","path":"./plugins/personal-tool"}}]}"#,
+        )
+        .unwrap();
+        fs::write(
+            legacy.join(".claude-plugin/marketplace.json"),
+            r#"{"plugins":[{"name":"personal-tool","source":"./plugins/personal-tool"}]}"#,
+        )
+        .unwrap();
+        fs::create_dir_all(&codex_home).unwrap();
+        fs::write(codex_home.join("config.toml"), "not valid toml = [").unwrap();
+
+        let error = initialize_bundled_plugin_marketplace_from_paths_with_recovery(
+            &source,
+            &destination,
+            Some(&codex_home),
+            std::slice::from_ref(&legacy),
+        )
+        .unwrap_err();
+
+        assert!(error.contains("Failed to parse"));
+        assert!(!destination.join("plugins/personal-tool").exists());
+        assert!(
+            marketplace_plugin_names(&destination.join(".agents/plugins/marketplace.json"))
+                .unwrap()
+                .is_empty()
+        );
+        assert!(!destination
+            .parent()
+            .unwrap()
+            .join(format!(".{MARKETPLACE_ID}-{}-staging", std::process::id()))
+            .exists());
     }
 
     #[test]

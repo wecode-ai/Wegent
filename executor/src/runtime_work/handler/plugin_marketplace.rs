@@ -65,7 +65,10 @@ impl RuntimeWorkRpcHandler {
             }));
         }
 
-        if existing_marketplace_present {
+        if should_remove_existing_marketplace(
+            existing_marketplace_present,
+            existing_source.as_deref(),
+        ) {
             self.codex_app_server
                 .request(
                     "marketplace/remove",
@@ -158,6 +161,13 @@ fn marketplace_source(marketplace: &Value) -> Option<String> {
         .map(str::trim)
         .filter(|source| !source.is_empty())
         .map(str::to_owned)
+}
+
+fn should_remove_existing_marketplace(
+    existing_marketplace_present: bool,
+    existing_source: Option<&str>,
+) -> bool {
+    existing_marketplace_present && existing_source.is_some()
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -316,6 +326,11 @@ mod tests {
         let marketplace = marketplace_entry(&response, WEWORK_PERSONAL_MARKETPLACE_ID)
             .expect("the registered marketplace should be detected");
         assert_eq!(marketplace_source(marketplace), None);
+        assert!(!should_remove_existing_marketplace(true, None));
+        assert!(should_remove_existing_marketplace(
+            true,
+            Some("/plugins/personal")
+        ));
     }
 
     #[test]

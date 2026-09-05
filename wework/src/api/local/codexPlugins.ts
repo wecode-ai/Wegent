@@ -445,6 +445,7 @@ let cachedStateGeneration = 0
 let nextReadStateGeneration = 1
 let cachedStateAt = 0
 let cachedStateParamsKey = ''
+let activeReadStateDeviceId: string | null = null
 const inflightReadState = new Map<string, Promise<LocalCodexPluginsState>>()
 let inflightPluginInstalled: Promise<{
   marketplaces: CodexPluginMarketplaceEntry[]
@@ -470,6 +471,7 @@ export function clearLocalCodexPluginsReadStateCache(): void {
   cachedStateGeneration = 0
   cachedStateAt = 0
   cachedStateParamsKey = ''
+  activeReadStateDeviceId = null
   inflightReadState.clear()
   inflightPluginInstalled = null
   inflightWegentStoreList = null
@@ -811,7 +813,8 @@ function readStateMatchesDevice(
 }
 
 function resetInMemoryReadStateForDevice(deviceId: string): void {
-  if (!cachedState || readStateMatchesDevice(cachedState, deviceId)) return
+  if (activeReadStateDeviceId === deviceId) return
+  activeReadStateDeviceId = deviceId
   cachedState = null
   cachedStateGeneration = 0
   cachedStateAt = 0
@@ -2530,10 +2533,16 @@ async function loadReadStateSnapshot(
     deviceId: executorStatus.deviceId?.trim() ?? '',
   }
   const state = retainOpenAiOfficialCatalog(
-    cachedStateParamsKey === paramsKey ? cachedState : null,
+    cachedStateParamsKey === paramsKey && readStateMatchesDevice(cachedState, loadedState.deviceId)
+      ? cachedState
+      : null,
     loadedState
   )
-  if (generation < cachedStateGeneration && cachedStateParamsKey === paramsKey && cachedState) {
+  if (
+    generation < cachedStateGeneration &&
+    cachedStateParamsKey === paramsKey &&
+    readStateMatchesDevice(cachedState, loadedState.deviceId)
+  ) {
     return cachedState
   }
   if (generation >= cachedStateGeneration) {
