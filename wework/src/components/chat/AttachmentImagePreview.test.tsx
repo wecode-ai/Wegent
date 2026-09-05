@@ -2,6 +2,8 @@ import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 import type { Attachment } from '@/types/api'
 import { AttachmentImagePreview } from './AttachmentImagePreview'
+import { clearImagePreviewCache } from './imagePreviewCache'
+import { WorkspaceFileReaderProvider } from './WorkspaceFileReaderProvider'
 
 const runtimeMock = vi.hoisted(() => ({
   electron: false,
@@ -40,6 +42,25 @@ function localPathAttachment(id: number, localPath: string): Attachment {
     file_extension: '.png',
     created_at: '2026-08-07T00:00:00.000Z',
     local_path: localPath,
+  }
+}
+
+function workspaceFileAttachment(id: number): Attachment {
+  return {
+    id,
+    filename: `image-${id}.png`,
+    file_size: 15,
+    mime_type: 'image/png',
+    status: 'ready',
+    file_extension: '.png',
+    created_at: '2026-08-07T00:00:00.000Z',
+    workspace_file: {
+      device_id: 'device-1',
+      workspace_path: '/workspace',
+      path: 'outputs/generated-images/image.png',
+    },
+    image_width: 1200,
+    image_height: 800,
   }
 }
 
@@ -82,6 +103,7 @@ describe('AttachmentImagePreview', () => {
   })
 
   afterEach(() => {
+    clearImagePreviewCache()
     URL.createObjectURL = originalCreateObjectUrl
     vi.unstubAllGlobals()
     vi.restoreAllMocks()
@@ -239,5 +261,104 @@ describe('AttachmentImagePreview', () => {
         length: 512 * 1024,
       }
     )
+  })
+
+  test('lazy loads a generated image through workspace file chunks', async () => {
+    const observe = vi.fn()
+    let intersect: ((entries: IntersectionObserverEntry[]) => void) | null = null
+    vi.stubGlobal(
+      'IntersectionObserver',
+      class {
+        constructor(callback: IntersectionObserverCallback) {
+          intersect = entries => callback(entries, this as unknown as IntersectionObserver)
+        }
+        observe = observe
+        disconnect = vi.fn()
+      }
+    )
+    const payload = Buffer.from('workspace-image')
+    const readWorkspaceFileChunk = vi
+      .fn()
+      .mockResolvedValueOnce({
+        path: '/workspace/outputs/generated-images/image.png',
+        name: 'image.png',
+        contentBase64: payload.subarray(0, 7).toString('base64'),
+        offset: 0,
+        eof: false,
+        size: payload.length,
+      })
+      .mockResolvedValueOnce({
+        path: '/workspace/outputs/generated-images/image.png',
+        name: 'image.png',
+        contentBase64: payload.subarray(7).toString('base64'),
+        offset: 7,
+        eof: true,
+        size: payload.length,
+      })
+
+    render(
+      <WorkspaceFileReaderProvider readWorkspaceFileChunk={readWorkspaceFileChunk}>
+        {previewElement(workspaceFileAttachment(8))}
+      </WorkspaceFileReaderProvider>
+    )
+
+    expect(screen.getByTestId('preview-loading')).toHaveStyle({ aspectRatio: '1.5' })
+    expect(readWorkspaceFileChunk).not.toHaveBeenCalled()
+    act(() => {
+      intersect?.([{ isIntersecting: true } as IntersectionObserverEntry])
+    })
+
+    await waitFor(() => {
+      expect(screen.getByTestId('preview-image')).toHaveAttribute('src', 'blob:attachment-preview')
+    })
+    expect(screen.getByTestId('preview-button')).toHaveStyle({ aspectRatio: '1.5' })
+    expect(readWorkspaceFileChunk).toHaveBeenNthCalledWith(
+      1,
+      'device-1',
+      '/workspace/outputs/generated-images/image.png',
+      0,
+      '/workspace'
+    )
+    expect(readWorkspaceFileChunk).toHaveBeenNthCalledWith(
+      2,
+      'device-1',
+      '/workspace/outputs/generated-images/image.png',
+      7,
+      '/workspace'
+    )
+  })
+
+  test('reuses a workspace image after virtualization unmounts and remounts it', async () => {
+    const payload = Buffer.from('workspace-image')
+    const readWorkspaceFileChunk = vi.fn().mockResolvedValue({
+      path: '/workspace/outputs/generated-images/image.png',
+      name: 'image.png',
+      contentBase64: payload.toString('base64'),
+      offset: 0,
+      eof: true,
+      size: payload.length,
+    })
+    const renderPreview = () =>
+      render(
+        <WorkspaceFileReaderProvider readWorkspaceFileChunk={readWorkspaceFileChunk}>
+          {previewElement(workspaceFileAttachment(9))}
+        </WorkspaceFileReaderProvider>
+      )
+
+    const first = renderPreview()
+    await waitFor(() => {
+      expect(screen.getByTestId('preview-image')).toHaveAttribute('src', 'blob:attachment-preview')
+    })
+    first.unmount()
+
+    const second = renderPreview()
+    await waitFor(() => {
+      expect(screen.getByTestId('preview-image')).toHaveAttribute('src', 'blob:attachment-preview')
+    })
+
+    expect(readWorkspaceFileChunk).toHaveBeenCalledTimes(1)
+    expect(URL.createObjectURL).toHaveBeenCalledTimes(1)
+    expect(URL.revokeObjectURL).not.toHaveBeenCalled()
+    second.unmount()
   })
 })

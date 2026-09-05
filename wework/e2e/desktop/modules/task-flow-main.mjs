@@ -1061,7 +1061,10 @@ async function main() {
           DESKTOP_SEGMENT === 'permission-modes'
             ? mcpElicitationConfigToml(join(resultDir, 'mcp-elicitation-result.jsonl'))
             : ''
-        }`
+        }`,
+        'openai-responses',
+        desktopScenario?.modelProviderConfigToml,
+        desktopScenario?.modelProviderAuthToml
       )
       await writeFile(
         join(codexHome, 'auth.json'),

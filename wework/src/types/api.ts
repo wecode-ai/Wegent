@@ -2888,6 +2888,12 @@ export interface SkillRef {
 
 export type AttachmentStatus = 'uploading' | 'parsing' | 'ready' | 'failed'
 
+export interface RuntimeWorkspaceFileReference {
+  device_id: string
+  workspace_path: string
+  path: string
+}
+
 export interface Attachment {
   id: number
   filename: string
@@ -2904,6 +2910,9 @@ export interface Attachment {
   created_at: string
   local_preview_url?: string
   local_path?: string
+  workspace_file?: RuntimeWorkspaceFileReference
+  image_width?: number
+  image_height?: number
   ui_group_id?: string
   ui_group_role?: 'primary' | 'companion'
   ui_kind?: 'appshot'

@@ -5,6 +5,8 @@ import type { Attachment } from '@/types/api'
 import type { ProcessingBlock, WorkbenchMessage } from '@/types/workbench'
 import { MessageList } from './MessageList'
 import { AttachmentDownloadProvider } from './AttachmentDownloadProvider'
+import { clearImagePreviewCache } from './imagePreviewCache'
+import { WorkspaceFileReaderProvider } from './WorkspaceFileReaderProvider'
 import '@/i18n'
 
 const desktopHostMock = vi.hoisted(() => ({
@@ -414,6 +416,19 @@ describe('MessageList', () => {
   })
 
   test('renders generated image artifacts and opens an enlarged preview', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response('image', {
+        status: 200,
+        headers: { 'Content-Type': 'image/png' },
+      })
+    )
+    vi.stubGlobal('fetch', fetchMock)
+    vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:generated-image-download')
+    let downloadedFilename = ''
+    vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(function () {
+      downloadedFilename = this.download
+    })
+
     render(
       <MessageList
         messages={[
@@ -431,6 +446,7 @@ describe('MessageList', () => {
                 toolName: 'image_generation',
                 renderPayload: {
                   kind: 'image_generation',
+                  mimeType: 'image/webp',
                   imageBase64:
                     'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M/wHwAF/gL+XwY7WQAAAABJRU5ErkJggg==',
                   revisedPrompt: 'Minimal dashboard concept',
@@ -447,7 +463,7 @@ describe('MessageList', () => {
     const image = await screen.findByTestId('generated-image')
     expect(image).toHaveAttribute(
       'src',
-      'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M/wHwAF/gL+XwY7WQAAAABJRU5ErkJggg=='
+      'data:image/webp;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M/wHwAF/gL+XwY7WQAAAABJRU5ErkJggg=='
     )
     expect(image).toHaveAttribute('alt', 'Minimal dashboard concept')
 
@@ -456,11 +472,19 @@ describe('MessageList', () => {
     expect(await screen.findByTestId('attachment-image-lightbox')).toBeInTheDocument()
     expect(await screen.findByTestId('attachment-image-lightbox-image')).toHaveAttribute(
       'src',
-      'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M/wHwAF/gL+XwY7WQAAAABJRU5ErkJggg=='
+      'data:image/webp;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M/wHwAF/gL+XwY7WQAAAABJRU5ErkJggg=='
     )
     expect(screen.getByTestId('attachment-image-lightbox-image')).toHaveAttribute(
       'alt',
       'Minimal dashboard concept'
+    )
+
+    await userEvent.click(screen.getByTestId('attachment-image-download'))
+    await waitFor(() => {
+      expect(downloadedFilename).toBe('generated-image-1.webp')
+    })
+    expect(fetchMock).toHaveBeenCalledWith(
+      'data:image/webp;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M/wHwAF/gL+XwY7WQAAAABJRU5ErkJggg=='
     )
 
     await userEvent.click(screen.getByTestId('attachment-image-zoom-in'))
@@ -469,6 +493,118 @@ describe('MessageList', () => {
     fireEvent.pointerEnter(screen.getByTestId('message-hover-region'))
 
     expect(screen.getByTestId('attachment-image-zoom-value')).toHaveTextContent('125%')
+  })
+
+  test('uses the translated fallback when a generated image has no revised prompt', async () => {
+    render(
+      <MessageList
+        messages={[
+          {
+            id: 'assistant-image-without-prompt',
+            role: 'assistant',
+            content: '',
+            status: 'done',
+            createdAt: '2026-09-04T10:00:01Z',
+            blocks: [
+              {
+                id: 'ig-without-prompt',
+                subtaskId: '1',
+                type: 'tool',
+                toolName: 'image_generation',
+                renderPayload: {
+                  kind: 'image_generation',
+                  imageBase64:
+                    'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M/wHwAF/gL+XwY7WQAAAABJRU5ErkJggg==',
+                },
+                status: 'done',
+                createdAt: Date.now(),
+              },
+            ],
+          },
+        ]}
+      />
+    )
+
+    expect(await screen.findByTestId('generated-image')).toHaveAttribute('alt', '生成的图片')
+    expect(screen.getByTestId('generated-image-preview-button')).toHaveAttribute(
+      'aria-label',
+      '生成的图片'
+    )
+  })
+
+  test('renders generated images from task workspace references', async () => {
+    const createObjectUrl = vi
+      .spyOn(URL, 'createObjectURL')
+      .mockReturnValue('blob:generated-workspace-image')
+    const revokeObjectUrl = vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => undefined)
+    const readWorkspaceFileChunk = vi.fn().mockResolvedValue({
+      path: '/workspace/outputs/generated-images/image.png',
+      name: 'image.png',
+      contentBase64: 'aW1hZ2U=',
+      offset: 0,
+      eof: true,
+      size: 5,
+    })
+
+    const { unmount } = render(
+      <WorkspaceFileReaderProvider readWorkspaceFileChunk={readWorkspaceFileChunk}>
+        <MessageList
+          messages={[
+            {
+              id: 'assistant-workspace-image',
+              role: 'assistant',
+              content: 'Generated.',
+              status: 'done',
+              createdAt: '2026-09-02T10:00:01Z',
+              blocks: [
+                {
+                  id: 'ig-workspace-1',
+                  subtaskId: '1',
+                  type: 'tool',
+                  toolName: 'image_generation',
+                  renderPayload: {
+                    kind: 'image_generation',
+                    mimeType: 'image/png',
+                    size: 5,
+                    width: 1536,
+                    height: 1024,
+                    revisedPrompt: 'Workspace image',
+                    source: {
+                      type: 'workspace_file',
+                      deviceId: 'device-1',
+                      workspacePath: '/workspace',
+                      path: 'outputs/generated-images/image.png',
+                    },
+                  },
+                  status: 'done',
+                  createdAt: Date.now(),
+                },
+              ],
+            },
+          ]}
+        />
+      </WorkspaceFileReaderProvider>
+    )
+
+    expect(await screen.findByTestId('generated-image')).toHaveAttribute(
+      'src',
+      'blob:generated-workspace-image'
+    )
+    expect(screen.getByTestId('generated-image-preview-button')).toHaveStyle({
+      aspectRatio: '1.5',
+    })
+    expect(readWorkspaceFileChunk).toHaveBeenCalledWith(
+      'device-1',
+      '/workspace/outputs/generated-images/image.png',
+      0,
+      '/workspace'
+    )
+    expect(createObjectUrl).toHaveBeenCalledWith(expect.any(Blob))
+
+    unmount()
+    expect(revokeObjectUrl).not.toHaveBeenCalled()
+    clearImagePreviewCache()
+    expect(revokeObjectUrl).toHaveBeenCalledWith('blob:generated-workspace-image')
   })
 
   test('does not render viewed images as final message artifacts', () => {
@@ -1854,6 +1990,7 @@ describe('MessageList', () => {
   const originalRevokeObjectUrl = URL.revokeObjectURL
 
   afterEach(() => {
+    clearImagePreviewCache()
     vi.unstubAllGlobals()
     vi.restoreAllMocks()
     runtimeMock.electron = false
