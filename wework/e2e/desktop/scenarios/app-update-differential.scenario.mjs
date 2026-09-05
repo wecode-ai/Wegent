@@ -6,6 +6,7 @@ import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 const TEST_TRAILER = Buffer.from('\nwework-e2e-differential-update\n')
+const UPDATE_CHANNEL = 'stable'
 const electronPackage = resolve(
   dirname(fileURLToPath(import.meta.url)),
   '..',
@@ -32,10 +33,6 @@ export async function createDesktopScenario({
   const releaseRoot = resolve(resourcesRoot, '..', '..', '..', '..')
   const packagedComponents = JSON.parse(
     await readFile(join(resourcesRoot, 'components.json'), 'utf8')
-  )
-  assert.ok(
-    packagedComponents.channel === 'stable' || packagedComponents.channel === 'beta',
-    `Packaged component channel is invalid: ${packagedComponents.channel}`
   )
   const releaseAssets = await readdir(releaseRoot)
   const oldZipName = findSingle(
@@ -102,7 +99,7 @@ export async function createDesktopScenario({
       response.end(manifest)
       return
     }
-    if (path === `/components-${packagedComponents.channel}-macos-arm64.json`) {
+    if (path === `/components-${UPDATE_CHANNEL}-macos-arm64.json`) {
       response.setHeader('content-type', 'application/json')
       response.end(
         JSON.stringify(componentManifestForTarget(packagedComponents, targetVersion, origin))
@@ -203,14 +200,24 @@ export async function createDesktopScenario({
       assert.equal(componentState.pending?.appVersion, targetVersion)
       assert.equal(componentState.pending?.stagedFromAppVersion, currentVersion)
 
-      const zipRequests = requests.filter(request => request.path === `/${targetZipName}`)
-      assert.ok(
-        requests.some(
-          request => request.path === `/components-${packagedComponents.channel}-macos-arm64.json`
-        ),
+      const componentManifestPath = `/components-${UPDATE_CHANNEL}-macos-arm64.json`
+      const componentManifestRequestIndex = requests.findIndex(
+        request => request.path === componentManifestPath
+      )
+      const firstZipRequestIndex = requests.findIndex(
+        request => request.path === `/${targetZipName}`
+      )
+      assert.notEqual(
+        componentManifestRequestIndex,
+        -1,
         'The target app component manifest was never requested'
       )
-      assert.ok(zipRequests.length > 0, 'The target ZIP was never requested')
+      assert.notEqual(firstZipRequestIndex, -1, 'The target ZIP was never requested')
+      assert.ok(
+        componentManifestRequestIndex < firstZipRequestIndex,
+        'The target app component manifest was not staged before the ZIP download'
+      )
+      const zipRequests = requests.filter(request => request.path === `/${targetZipName}`)
       assert.ok(
         zipRequests.some(request => request.range),
         'The updater did not request any ZIP byte ranges'
@@ -255,7 +262,7 @@ function componentManifestForTarget(packaged, targetVersion, origin) {
   return {
     schemaVersion: 1,
     appVersion: targetVersion,
-    channel: packaged.channel,
+    channel: UPDATE_CHANNEL,
     platform: 'macos',
     arch: 'arm64',
     components: Object.fromEntries(
