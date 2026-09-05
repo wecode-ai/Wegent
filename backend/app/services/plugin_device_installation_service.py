@@ -6,6 +6,7 @@
 
 from datetime import datetime
 
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.core.constants import PLUGIN_AUTO_UPDATE_FAILURE_LIMIT
@@ -332,49 +333,84 @@ class PluginDeviceInstallationService:
         normalized_device_id = device_id.strip()
         if not normalized_device_id:
             return 0
+        try:
+            return self._ensure_pending_for_device_once(
+                db,
+                user_id=user_id,
+                device_id=normalized_device_id,
+                manual_retry=manual_retry,
+            )
+        except IntegrityError as exc:
+            db.rollback()
+            if not self._is_device_install_conflict(exc):
+                raise
+            return self._ensure_pending_for_device_once(
+                db,
+                user_id=user_id,
+                device_id=normalized_device_id,
+                manual_retry=manual_retry,
+            )
+
+    def _ensure_pending_for_device_once(
+        self,
+        db: Session,
+        *,
+        user_id: int,
+        device_id: str,
+        manual_retry: bool,
+    ) -> int:
         changed = 0
-        for installed in self._desired_installs(db, user_id):
-            release_id = installed.json.get("spec", {}).get("releaseId")
-            if not isinstance(release_id, int):
-                continue
-            row = self._device_row(db, installed.id, normalized_device_id)
-            if not row:
-                db.add(
-                    PluginDeviceInstallation(
-                        installed_kind_id=installed.id,
-                        user_id=user_id,
-                        device_id=normalized_device_id,
-                        desired_release_id=release_id,
-                        state="pending",
+        with db.no_autoflush:
+            for installed in self._desired_installs(db, user_id):
+                release_id = installed.json.get("spec", {}).get("releaseId")
+                if not isinstance(release_id, int):
+                    continue
+                row = self._device_row(db, installed.id, device_id)
+                if not row:
+                    db.add(
+                        PluginDeviceInstallation(
+                            installed_kind_id=installed.id,
+                            user_id=user_id,
+                            device_id=device_id,
+                            desired_release_id=release_id,
+                            state="pending",
+                        )
                     )
-                )
+                    changed += 1
+                    continue
+                desired_changed = row.desired_release_id != release_id
+                row.desired_release_id = release_id
+                if desired_changed or manual_retry:
+                    row.attempt_count = 0
+                if row.state == "installed" and row.actual_release_id == release_id:
+                    continue
+                # Never interrupt an in-flight uninstall; the Kind may still be
+                # active for a brief window before account uninstall completes.
+                if row.state == "uninstalling":
+                    continue
+                if self._auto_update_blocked(row) and not manual_retry:
+                    continue
+                if (
+                    row.state == "pending"
+                    and not row.error_code
+                    and not row.error_message
+                    and row.actual_release_id in {0, release_id}
+                ):
+                    continue
+                row.state = "pending"
+                row.error_code = ""
+                row.error_message = ""
                 changed += 1
-                continue
-            desired_changed = row.desired_release_id != release_id
-            row.desired_release_id = release_id
-            if desired_changed or manual_retry:
-                row.attempt_count = 0
-            if row.state == "installed" and row.actual_release_id == release_id:
-                continue
-            # Never interrupt an in-flight uninstall; the Kind may still be
-            # active for a brief window before account uninstall completes.
-            if row.state == "uninstalling":
-                continue
-            if self._auto_update_blocked(row) and not manual_retry:
-                continue
-            if (
-                row.state == "pending"
-                and not row.error_code
-                and not row.error_message
-                and row.actual_release_id in {0, release_id}
-            ):
-                continue
-            row.state = "pending"
-            row.error_code = ""
-            row.error_message = ""
-            changed += 1
         db.commit()
         return changed
+
+    @staticmethod
+    def _is_device_install_conflict(exc: IntegrityError) -> bool:
+        message = str(exc.orig)
+        return "uniq_plugin_device_installation" in message or (
+            "plugin_device_installations.installed_kind_id" in message
+            and "plugin_device_installations.device_id" in message
+        )
 
     def auto_update_blocked_release_id(
         self,
