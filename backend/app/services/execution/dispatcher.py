@@ -65,6 +65,40 @@ _FRONTEND_ERROR_EMITTED_ATTR = "_frontend_error_emitted"
 _SSE_CANCEL_POLL_INTERVAL_SECONDS = 1.0
 
 
+@trace_async("execution.executor_pod_missing", "execution.dispatch")
+async def _executor_pod_missing(
+    executor_name: str,
+    executor_namespace: Optional[str],
+) -> bool:
+    """Return True only when executor_manager confirms the pod is missing."""
+    from app.services.remote_workspace_service import remote_workspace_service
+
+    try:
+        alive = await asyncio.to_thread(
+            remote_workspace_service.executor_alive,
+            executor_name,
+            executor_namespace,
+        )
+    except Exception as exc:
+        logger.warning(
+            "[ExecutionDispatcher] Executor liveness check failed "
+            "executor=%s/%s error=%s",
+            executor_namespace,
+            executor_name,
+            exc,
+        )
+        add_span_event(
+            "execution.executor_pod_missing.check_failed",
+            {
+                "executor_name": executor_name,
+                "executor_namespace": executor_namespace or "",
+                "error": str(exc),
+            },
+        )
+        return False
+    return not alive
+
+
 class InvalidToolCallEventError(ValueError):
     """Raised when a Responses API tool event is missing its correlation ID."""
 
@@ -898,8 +932,34 @@ class ExecutionDispatcher:
             current_subtask = subtask
 
             restore_fork_workspace = self._has_fork_workspace_archive(request)
-            if not subtask.executor_deleted_at and not restore_fork_workspace:
-                return
+            recovery_reason = "fork_workspace_archive"
+            if subtask.executor_deleted_at:
+                recovery_reason = "deleted_executor"
+            elif not restore_fork_workspace:
+                executor_name = subtask.executor_name or request.executor_name
+                executor_namespace = (
+                    subtask.executor_namespace or request.executor_namespace
+                )
+                is_device_executor = bool(device_id) or bool(
+                    executor_name and executor_name.startswith("device-")
+                )
+                if (
+                    not executor_name
+                    or is_device_executor
+                    or not await _executor_pod_missing(
+                        executor_name,
+                        executor_namespace,
+                    )
+                ):
+                    return
+
+                recovery_reason = "missing_executor"
+                subtask_store.update_fields(
+                    db,
+                    subtask=subtask,
+                    executor_deleted_at=True,
+                )
+                db.commit()
 
             task = task_store.get_by_id(db, task_id=request.task_id)
             if not task:
@@ -913,11 +973,7 @@ class ExecutionDispatcher:
                 request.task_id,
                 request.subtask_id,
                 subtask.executor_name,
-                (
-                    "deleted_executor"
-                    if subtask.executor_deleted_at
-                    else "fork_workspace_archive"
-                ),
+                recovery_reason,
             )
 
             recovered_info = await recovery_service.recover(

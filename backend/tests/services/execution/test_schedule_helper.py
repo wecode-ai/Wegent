@@ -93,8 +93,8 @@ async def test_scheduled_task_dispatch_uses_task_model_override() -> None:
 
 
 @pytest.mark.asyncio
-async def test_scheduled_task_dispatch_skips_pod_check_for_device_executor() -> None:
-    """Device executors are not executor-manager pods and must not be recovered."""
+async def test_scheduled_task_dispatch_forwards_device_executor_id() -> None:
+    """Scheduled dispatch should identify and forward a device executor."""
     db = MagicMock()
     task = SimpleNamespace(
         id=571,
@@ -145,15 +145,10 @@ async def test_scheduled_task_dispatch_skips_pod_check_for_device_executor() -> 
             return_value="continue",
         ),
         patch(
-            "app.services.execution.schedule_helper._executor_pod_missing",
-            new=AsyncMock(return_value=True),
-        ) as pod_missing_mock,
-        patch(
             "app.services.execution.dispatcher.execution_dispatcher.dispatch",
             new=dispatch_mock,
         ),
     ):
         await _dispatch_task_async(task.id)
 
-    pod_missing_mock.assert_not_awaited()
     dispatch_mock.assert_awaited_once_with(request, device_id="local-1")
