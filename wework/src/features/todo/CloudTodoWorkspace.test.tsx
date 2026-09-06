@@ -2858,10 +2858,18 @@ describe('CloudTodoWorkspace', () => {
       />
     )
 
+    await userEvent.click(await screen.findByTestId('cloud-sidebar-project-11'))
     expect(screen.getByTestId('cloud-todo-sidebar-chrome-controls')).toHaveClass('gap-1')
     await userEvent.click(screen.getByTestId('cloud-todo-collapse-sidebar'))
     expect(screen.queryByTestId('cloud-todo-collapsed-app-current')).not.toBeInTheDocument()
-    expect(screen.getByTestId('cloud-todo-collapsed-chrome-controls')).toHaveClass('left-2')
+    expect(screen.getByTestId('cloud-todo-collapsed-chrome-controls')).toHaveClass(
+      'electron-titlebar-interactive-region',
+      'pointer-events-auto',
+      'left-2'
+    )
+    expect(
+      screen.getByTestId('cloud-project-header').querySelector('.electron-titlebar-drag-region')
+    ).toHaveClass('left-12')
 
     await userEvent.click(screen.getByTestId('cloud-todo-expand-sidebar'))
     expect(screen.queryByTestId('cloud-todo-collapsed-chrome-controls')).not.toBeInTheDocument()
