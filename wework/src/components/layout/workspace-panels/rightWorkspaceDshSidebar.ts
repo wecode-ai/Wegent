@@ -35,7 +35,9 @@ export interface WeworkWorkspaceSidebarTabDescriptor {
   id: string
   title: string
   titleKey?: string
+  mode?: 'component' | 'iframe'
   order?: number
+  url?: string
   when?: {
     projectKinds?: readonly ('standard' | 'wework-core-dsh-plugin')[]
     codexPluginKeys?: readonly string[]
@@ -164,11 +166,15 @@ export const rightWorkspaceDshSidebar: RightWorkspaceSidebarService = {
         ? (when.codexPluginKeys as string[])
         : undefined
       const titleKey = typeof entry.labelKey === 'string' ? entry.labelKey : undefined
+      const mode = entry.mode === 'iframe' ? 'iframe' : undefined
+      const url = typeof entry.url === 'string' ? entry.url : undefined
       return {
         id: entry.id,
         title: entry.label ?? entry.id,
         titleKey,
+        mode,
         order: entry.order,
+        url,
         when:
           projectKinds || codexPluginKeys
             ? {

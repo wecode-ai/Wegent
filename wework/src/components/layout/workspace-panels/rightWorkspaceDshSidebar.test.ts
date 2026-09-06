@@ -12,8 +12,10 @@ describe('rightWorkspaceDshSidebar', () => {
     const listener = vi.fn()
     const descriptor = {
       id: 'test:inspector',
+      mode: 'iframe' as const,
       title: 'Inspector',
       order: 10,
+      url: 'https://example.com/',
     }
     const subscribe = vi.fn(() => () => undefined)
     window.__WEWORK_DSH_UI__ = {

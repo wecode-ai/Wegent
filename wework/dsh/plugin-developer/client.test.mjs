@@ -14,8 +14,8 @@ test('publishes a cache-invalidating official Codex plugin version', async () =>
     await readFile(new URL('.codex-plugin/plugin.json', codexPluginRoot), 'utf8')
   )
 
-  assert.equal(outerManifest.version, '0.1.8')
-  assert.equal(codexManifest.version, '0.1.8')
+  assert.equal(outerManifest.version, '0.1.9')
+  assert.equal(codexManifest.version, '0.1.9')
   assert.deepEqual(Object.keys(codexManifest), [
     'name',
     'version',
@@ -184,6 +184,7 @@ test('keeps Skill resources independent from a machine plugin cache path', async
       'assets/reference-plugins/README.md',
       'assets/reference-plugins/prompt-library-demo/README.md',
       'assets/reference-plugins/focus-board-demo/README.md',
+      'assets/reference-plugins/sidebar-browser-panel-demo/README.md',
       'assets/reference-plugins/endpoint-watch-demo/README.md',
       'assets/ui-extension-demo/README.md',
       'assets/ui-extension-demo/README.en.md',
@@ -202,8 +203,13 @@ test('keeps Skill resources independent from a machine plugin cache path', async
   assert.match(contents, /\[assets\/reference-plugins]\(assets\/reference-plugins\)/)
 })
 
-test('ships three executable reference plugin packages', async () => {
-  const directories = ['prompt-library-demo', 'focus-board-demo', 'endpoint-watch-demo']
+test('ships focused executable reference plugin packages', async () => {
+  const directories = [
+    'prompt-library-demo',
+    'focus-board-demo',
+    'sidebar-browser-panel-demo',
+    'endpoint-watch-demo',
+  ]
 
   for (const directory of directories) {
     const root = new URL(`assets/reference-plugins/${directory}/`, pluginRoot)
@@ -216,6 +222,20 @@ test('ships three executable reference plugin packages', async () => {
     assert.match(patch, /@wegent\/dsh-/)
     assert.match(client, /window\.__ModuleLoader__\.load/)
   }
+})
+
+test('ships a minimal website panel reference without an unrelated nested Codex plugin', async () => {
+  const root = new URL('assets/reference-plugins/sidebar-browser-panel-demo/', pluginRoot)
+  const manifest = JSON.parse(await readFile(new URL('package.json', root), 'utf8'))
+  const client = await readFile(new URL('client.js', root), 'utf8')
+
+  assert.equal(manifest.wework, undefined)
+  assert.deepEqual(manifest.files, ['README.md', 'client.js', 'cordis.patch.yml', 'index.js'])
+  assert.match(client, /'wework\.workspace\.sidebar\.tab'/)
+  assert.match(client, /'wework\.sidebar\.navigation'/)
+  assert.match(client, /mode:\s*'iframe'/)
+  assert.match(client, /workspaceSidebarTab:\s*PANEL_ID/)
+  assert.doesNotMatch(client, /'wework\.app'/)
 })
 
 test('ships three product-oriented showcase plugin packages', async () => {
