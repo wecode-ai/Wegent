@@ -5,6 +5,8 @@ const { join, resolve } = require('node:path')
 
 const { resolveBuildIdentity } = require('./build-identity.cjs')
 
+const NOTARYTOOL_PROCESS_TIMEOUT_MS = 35 * 60 * 1000
+
 async function notarizeMacos(context) {
   if (context.electronPlatformName !== 'darwin') return
 
@@ -51,7 +53,12 @@ async function submitArchive(archivePath, environment) {
   for (let attempt = 1; attempt <= attempts; attempt += 1) {
     try {
       console.log(`Apple notarization upload attempt ${attempt}/${attempts}`)
-      const result = JSON.parse(await run('xcrun', args))
+      const result = JSON.parse(
+        await run('xcrun', args, {
+          streamOutput: true,
+          timeoutMs: NOTARYTOOL_PROCESS_TIMEOUT_MS,
+        })
+      )
       console.log(
         `Apple notarization attempt ${attempt}/${attempts} completed: ${result.status || 'unknown'}`
       )
@@ -139,7 +146,7 @@ function delay(milliseconds) {
   return new Promise(resolvePromise => setTimeout(resolvePromise, milliseconds))
 }
 
-function run(command, args) {
+function run(command, args, options = {}) {
   return new Promise((resolvePromise, reject) => {
     const child = spawn(command, args, {
       env: process.env,
@@ -147,16 +154,39 @@ function run(command, args) {
     })
     let stdout = ''
     let stderr = ''
+    let timedOut = false
+    let forceKillTimer
+    const timeoutTimer = options.timeoutMs
+      ? setTimeout(() => {
+          timedOut = true
+          child.kill('SIGTERM')
+          forceKillTimer = setTimeout(() => child.kill('SIGKILL'), 5000)
+        }, options.timeoutMs)
+      : undefined
+    const clearTimers = () => {
+      if (timeoutTimer) clearTimeout(timeoutTimer)
+      if (forceKillTimer) clearTimeout(forceKillTimer)
+    }
     child.stdout.setEncoding('utf8')
     child.stderr.setEncoding('utf8')
     child.stdout.on('data', chunk => {
       stdout += chunk
+      if (options.streamOutput) process.stdout.write(chunk)
     })
     child.stderr.on('data', chunk => {
       stderr += chunk
+      if (options.streamOutput) process.stderr.write(chunk)
     })
-    child.once('error', reject)
+    child.once('error', error => {
+      clearTimers()
+      reject(error)
+    })
     child.once('exit', (code, signal) => {
+      clearTimers()
+      if (timedOut) {
+        reject(new Error(`${command} timed out after ${options.timeoutMs}ms`))
+        return
+      }
       if (code === 0) {
         resolvePromise(stdout)
       } else {
@@ -189,4 +219,5 @@ module.exports.authorizationArgs = authorizationArgs
 module.exports.isTransientNotaryFailure = isTransientNotaryFailure
 module.exports.notarizeApp = notarizeApp
 module.exports.retryAttempts = retryAttempts
+module.exports.run = run
 module.exports.s3AccelerationArgs = s3AccelerationArgs

@@ -10,6 +10,7 @@ const {
   authorizationArgs,
   isTransientNotaryFailure,
   retryAttempts,
+  run,
   s3AccelerationArgs,
 } = require('../scripts/notarize-macos.cjs')
 const electronRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..')
@@ -104,9 +105,16 @@ test('retries only transient notarization transport failures', () => {
   expect(isTransientNotaryFailure(new Error('HTTPClientError.connectTimeout'))).toBe(true)
   expect(isTransientNotaryFailure(new Error('HTTPClientError.deadlineExceeded'))).toBe(true)
   expect(isTransientNotaryFailure(new Error('abortedUpload after connection reset'))).toBe(true)
+  expect(isTransientNotaryFailure(new Error('xcrun timed out after 2100000ms'))).toBe(true)
   expect(
     isTransientNotaryFailure(new Error('Apple notarization failed with status: Invalid'))
   ).toBe(false)
+})
+
+test('terminates commands that exceed their process timeout', async () => {
+  await expect(
+    run(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { timeoutMs: 100 })
+  ).rejects.toThrow('timed out after 100ms')
 })
 
 test('limits notarization upload attempts', () => {
