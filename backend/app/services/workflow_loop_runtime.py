@@ -101,9 +101,17 @@ def _activate_loop(loop: dict, nodes: list[dict]) -> None:
 
 def _start_reaction(branch: dict, event: Mapping[str, Any]) -> None:
     branch["status"] = "reacting"
-    branch["active_condition"] = _condition_key(
-        event.get("source"), event["event_type"]
+    source = (
+        event.source
+        if isinstance(event, ProjectAutomationEvent)
+        else event.get("source")
     )
+    event_type = (
+        event.event_type
+        if isinstance(event, ProjectAutomationEvent)
+        else event["event_type"]
+    )
+    branch["active_condition"] = _condition_key(source, event_type)
     branch["last_event"] = _event_snapshot(event)
 
 
@@ -120,13 +128,40 @@ def _event_snapshot(event: Mapping[str, Any]) -> dict[str, Any]:
         event_type = event.get("event_type")
         event_id = event.get("event_id")
         subject_id = event.get("subject_id")
+    payload = dict(payload) if isinstance(payload, Mapping) else {}
     return {
         "source": source or "github",
         "event_type": event_type,
         "event_id": event_id or "",
         "subject_id": subject_id or "",
-        "payload": dict(payload) if isinstance(payload, Mapping) else {},
+        "payload": _compact_event_payload(payload),
     }
+
+
+def _compact_event_payload(payload: dict[str, Any]) -> dict[str, Any]:
+    """Keep handler context small while raw events stay in the event table.
+
+    Provider payloads contain deeply nested repository/application metadata that
+    can exceed queue storage limits when copied into immutable runtime intents.
+    Handlers can use the event id and provider CLI to read authoritative data.
+    """
+
+    subject = payload.get("subject")
+    subject = dict(subject) if isinstance(subject, dict) else {}
+    resource = payload.get("resource")
+    resource = dict(resource) if isinstance(resource, dict) else {}
+    compact: dict[str, Any] = {
+        "subject": subject,
+        "resource": resource,
+    }
+    for event_type in ("check", "pipeline", "review", "comment", "note"):
+        value = payload.get(event_type)
+        if isinstance(value, dict):
+            compact[event_type] = value
+    for key in ("action", "raw_event", "conclusion", "merge_status", "merged_at"):
+        if key in payload:
+            compact[key] = payload[key]
+    return compact
 
 
 def _release_handlers(branch: dict, nodes: list[dict], handler_ids: set[str]) -> None:

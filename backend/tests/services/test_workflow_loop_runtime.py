@@ -22,6 +22,7 @@ from app.schemas.issue_workflow import (
 from app.services.project_automation_domain import ProjectAutomationEvent
 from app.services.project_automation_execution import ProjectAutomationProcessor
 from app.services.workflow_loop_runtime import (
+    _start_reaction,
     advance_loops,
     advance_root_branches,
     route_event_to_workflow_loop,
@@ -745,6 +746,48 @@ def test_route_event_matches_platform_specific_condition(test_db):
     assert by_id["fix1"]["trigger_event"]["payload"]["subject"]["number"] == 7
     assert by_id["le"]["status"] == "blocked"
     assert by_id["fix1"].get("automation_run_id") is None
+
+
+def test_trigger_event_payload_excludes_large_provider_metadata():
+    event = ProjectAutomationEvent(
+        event_type="change_request.checks_failed",
+        project_id="project-1",
+        subject_id="acme/app#1",
+        source="github",
+        actor_user_id=1,
+        payload={
+            "subject": {
+                "id": "acme/app#1",
+                "number": 1,
+                "repository": "acme/app",
+                "url": "https://github.example/acme/app/pull/1",
+            },
+            "resource": {"path": "acme/app"},
+            "check": {"id": 1, "conclusion": "failure", "name": "CI"},
+            "raw_event": "check_run",
+            "action": "completed",
+            "provider_metadata": {"nested": {"blob": "x" * 100_000}},
+        },
+        event_id="event-1",
+        subscription_id="subscription-1",
+    )
+
+    nodes = [node.model_dump(mode="json") for node in _instance().nodes]
+    by_id = _by_id(nodes)
+    by_id["br"]["status"] = "waiting"
+
+    snapshot = by_id["br"]
+    _start_reaction(snapshot, event)
+
+    payload = snapshot["last_event"]["payload"]
+    assert set(payload) == {
+        "subject",
+        "resource",
+        "check",
+        "raw_event",
+        "action",
+    }
+    assert "provider_metadata" not in payload
 
 
 def test_scan_loop_timeouts_completes_expired_loop(test_db):

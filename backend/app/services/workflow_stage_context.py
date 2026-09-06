@@ -136,7 +136,7 @@ def _trigger_event_section(trigger_event: dict[str, Any]) -> str:
         lines.append("- 建议命令：如需查看 PR、评论或 CI，请使用 gh。")
     elif provider == "gitlab":
         lines.append("- 建议命令：如需查看 MR、评论或 pipeline，请使用 glab。")
-    lines.extend(["", "### 原始事件 Payload", "", _json_block(payload)])
+    lines.extend(["", "### 触发事件数据", "", _json_block(payload)])
     return "\n".join(lines)
 
 
