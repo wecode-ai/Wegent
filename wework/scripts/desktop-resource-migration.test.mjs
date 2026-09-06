@@ -236,6 +236,7 @@ describe('desktop resource migration', () => {
     expect(source).toContain("process.platform === 'win32' ? 'pnpm.cmd' : 'pnpm'")
     expect(source).toContain('wrapWindowsScriptCommand(command, args)')
     expect(source).toContain("WEWORK_ONLINE_UPDATE_BUILD: 'true'")
+    expect(source).toContain('WEWORK_ONLINE_UPDATE_INCLUDE_COMPONENTS')
   })
 
   test('collects the electron-builder Linux x64 artifact name', async () => {
@@ -246,6 +247,9 @@ describe('desktop resource migration', () => {
 
     expect(source).toContain(
       "const installerArchitecture = platform === 'linux' && arch === 'x64' ? 'x86_64' : arch"
+    )
+    expect(source).toContain(
+      "const useComponentizedHostUpdate = process.env.WEWORK_USE_COMPONENTIZED_HOST_UPDATE === 'true'"
     )
     expect(source).toContain('linux_${installerArchitecture}\\\\.AppImage')
     expect(source).toContain('WeWorkHostUpdate_${escape(version)}_linux_')

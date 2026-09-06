@@ -217,6 +217,9 @@ jobs:
         with:
           targets: ${{ matrix.cargo_target }}
 
+      - name: Set up compiler cache
+        uses: ./.github/actions/setup-sccache
+
       - name: Set up pnpm
         uses: pnpm/action-setup@0e279bb959325dab635dd2c09392533439d90093
 
@@ -370,6 +373,7 @@ jobs:
           name: wework-${{ needs.prepare-release.outputs.version }}-${{ matrix.platform }}-${{ matrix.arch }}
           path: ${{ runner.temp }}/wework-release-assets/*
           if-no-files-found: error
+          compression-level: 0
 
   publish:
     name: Publish release and update channels
