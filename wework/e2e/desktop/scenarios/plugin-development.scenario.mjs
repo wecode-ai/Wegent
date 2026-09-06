@@ -348,7 +348,6 @@ export async function createDesktopScenario({
         'waitFor',
         '[data-testid="plugin-development-browser-navigation"]',
         {
-          timeoutMs: workbenchReadyTimeoutMs,
           visible: true,
         }
       )
@@ -380,7 +379,6 @@ export async function createDesktopScenario({
         'waitFor',
         '[data-testid="right-workspace-extension-panel-plugin-development-browser"]',
         {
-          timeoutMs: workbenchReadyTimeoutMs,
           visible: true,
         }
       )
@@ -389,7 +387,6 @@ export async function createDesktopScenario({
         'waitFor',
         '[data-testid="app-iframe-workspace-sidebar-plugin-development-browser"]',
         {
-          timeoutMs: workbenchReadyTimeoutMs,
           visible: true,
         }
       )

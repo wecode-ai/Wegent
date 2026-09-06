@@ -233,7 +233,7 @@ ctx.slots.inject('wework.workspace.sidebar.tab', function* () {
 })
 ```
 
-Use the exhaustive Demo for API coverage and the three reference plugins for
+Use the exhaustive Demo for API coverage and the reference plugins for
 product-oriented patterns instead of expanding this snippet into guessed APIs.
 
 ## Debug

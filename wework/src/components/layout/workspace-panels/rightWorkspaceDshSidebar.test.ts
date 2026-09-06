@@ -129,6 +129,47 @@ describe('rightWorkspaceDshSidebar', () => {
     delete window.__WEWORK_DSH_UI__
   })
 
+  test('does not expose iframe tabs without a usable URL', () => {
+    window.__WEWORK_DSH_UI__ = {
+      getEntries: () => [
+        {
+          id: 'valid-iframe',
+          label: 'Valid iframe',
+          mode: 'iframe',
+          url: ' https://example.com/ ',
+        },
+        { id: 'missing-url', label: 'Missing URL', mode: 'iframe' },
+        { id: 'empty-url', label: 'Empty URL', mode: 'iframe', url: '   ' },
+        { id: 'invalid-url', label: 'Invalid URL', mode: 'iframe', url: 42 },
+        { id: 'component-tab', label: 'Component tab' },
+      ],
+      subscribe: vi.fn(() => () => undefined),
+      attach: vi.fn(),
+    }
+
+    expect(rightWorkspaceDshSidebar.getTabs()).toEqual([
+      {
+        id: 'valid-iframe',
+        title: 'Valid iframe',
+        titleKey: undefined,
+        mode: 'iframe',
+        order: undefined,
+        url: 'https://example.com/',
+        when: undefined,
+      },
+      {
+        id: 'component-tab',
+        title: 'Component tab',
+        titleKey: undefined,
+        mode: undefined,
+        order: undefined,
+        url: undefined,
+        when: undefined,
+      },
+    ])
+    delete window.__WEWORK_DSH_UI__
+  })
+
   test('does not expose the removed Better Sidebar compatibility globals', () => {
     expect(window).not.toHaveProperty('__WEWORK_DSH_HOST__')
     expect(window).not.toHaveProperty('__WEWORK_DSH_EXTENSIONS__')
