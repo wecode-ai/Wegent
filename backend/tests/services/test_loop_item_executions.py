@@ -5923,3 +5923,60 @@ def test_enqueue_automation_manager_normalizes_ambiguous_app_device_id(
 
     assert execution.execution_device_id == "local-device"
     assert execution.execution_environment == "local"
+
+
+def test_enqueue_generic_robot_normalizes_app_device_id(
+    test_db: Session, test_user: User
+) -> None:
+    """Workflow robot queue rows persist the canonical logical device id."""
+
+    project = _make_project(test_db, test_user)
+    item = _make_item(test_db, project, test_user)
+    device = _ensure_device(test_db, test_user, "local-device", device_type="app")
+    spec = dict(device.json["spec"])
+    spec["deviceId"] = "local-device"
+    spec["appDeviceId"] = "electron-app-1"
+    device.json = {"spec": spec}
+    test_db.commit()
+
+    rule = ProjectAutomationRule(
+        id="generic-device-rule",
+        cloud_project_id=project.id,
+        title="Generic device rule",
+        description="Handle this task",
+        status="enabled",
+        created_by_user_id=test_user.id,
+        metadata_json=_automation_metadata(action="execute"),
+    )
+    run = ProjectAutomationRun(
+        cloud_project_id=project.id,
+        parent_id=rule.id,
+        task_id=item.id,
+        status="queued",
+        created_by_user_id=test_user.id,
+        metadata_json={
+            "trigger": "workflow",
+            "workflow_node_id": "node-1",
+            "instruction_override": "Handle this task",
+        },
+    )
+    test_db.add_all([rule, run])
+    test_db.flush()
+
+    execution = loop_item_execution_service.enqueue_generic_robot(
+        test_db,
+        loop_item_id=item.id,
+        cloud_project_id=str(project.id),
+        runtime_subject_user_id=test_user.id,
+        runtime_profile=None,
+        execution_device_id="electron-app-1",
+        model="test-model",
+        model_type="runtime",
+        model_options={},
+        assigner_user_id=test_user.id,
+        priority="medium",
+        automation_context={"runtime_source": "runtime_user", "run_id": str(run.id)},
+    )
+
+    assert execution.execution_device_id == "local-device"
+    assert execution.execution_environment == "local"
