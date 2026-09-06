@@ -3,14 +3,21 @@ import { gunzipSync, strFromU8 } from 'fflate'
 import { io, type Socket } from 'socket.io-client'
 
 import type { RuntimeStreamEvent } from '@/domain/chatReducer'
-import type { RuntimeTaskAddress, RuntimeTranscriptResponse } from '@/types/runtime'
+import { adaptRuntimeWorkListResponse } from '@/domain/runtimeWorkAdapter'
+import type {
+  RuntimeTaskAddress,
+  RuntimeTranscriptResponse,
+  RuntimeWorkListResponse,
+} from '@/types/runtime'
 import type { RuntimeSessionConfig } from './backendConfig'
 
 const RUNTIME_NAMESPACE = '/wework-runtime'
 const RUNTIME_EVENT = 'runtime:event'
 const REQUEST_EVENT = 'runtime:request'
 const TRANSCRIPT_TIMEOUT_MS = 15_000
-const TRANSCRIPT_PAGE_SIZE = 50
+const LIST_TIMEOUT_MS = 75_000
+export const TRANSCRIPT_PAGE_SIZE = 5
+const TRANSCRIPT_PAYLOAD_LIMIT_PAGE_SIZE = 1
 const COMPRESSED_ENCODING = 'gzip+base64+json'
 
 type Listener = (event: RuntimeStreamEvent) => void
@@ -84,13 +91,26 @@ export class RuntimeStream {
     }
   }
 
-  getTranscript(address: RuntimeTaskAddress): Promise<RuntimeTranscriptResponse> {
-    return this.request(
-      'runtime.tasks.transcript',
-      { ...address, limit: TRANSCRIPT_PAGE_SIZE },
-      address.deviceId,
-      TRANSCRIPT_TIMEOUT_MS
+  async getTranscript(
+    address: RuntimeTaskAddress,
+    options: { beforeCursor?: string } = {}
+  ): Promise<RuntimeTranscriptResponse> {
+    try {
+      return await this.requestTranscript(address, options, TRANSCRIPT_PAGE_SIZE)
+    } catch (error) {
+      if (!isTranscriptPayloadLimitError(error)) throw error
+      return this.requestTranscript(address, options, TRANSCRIPT_PAYLOAD_LIMIT_PAGE_SIZE)
+    }
+  }
+
+  async listWork(deviceId: string, deviceName?: string): Promise<RuntimeWorkListResponse> {
+    const response = await this.request<unknown>(
+      'runtime.tasks.list',
+      {},
+      deviceId,
+      LIST_TIMEOUT_MS
     )
+    return adaptRuntimeWorkListResponse(response, deviceId, deviceName)
   }
 
   dispose(): void {
@@ -159,6 +179,23 @@ export class RuntimeStream {
       )
     })
   }
+
+  private requestTranscript(
+    address: RuntimeTaskAddress,
+    options: { beforeCursor?: string },
+    limit: number
+  ): Promise<RuntimeTranscriptResponse> {
+    return this.request(
+      'runtime.tasks.transcript',
+      {
+        ...address,
+        limit,
+        ...(options.beforeCursor && { beforeCursor: options.beforeCursor }),
+      },
+      address.deviceId,
+      TRANSCRIPT_TIMEOUT_MS
+    )
+  }
 }
 
 function decodeRuntimeResult<T>(result: T | undefined): T {
@@ -181,6 +218,15 @@ function runtimeRequestError(ack: RuntimeRequestAck<unknown>): string {
   const code = ack.error?.code?.trim()
   const message = ack.error?.message?.trim() || 'Runtime 请求失败'
   return code ? `${code}: ${message}` : message
+}
+
+function isTranscriptPayloadLimitError(error: unknown): boolean {
+  if (!(error instanceof Error)) return false
+  const message = error.message.toLowerCase()
+  return (
+    message.includes('response exceeded the transport payload limit') ||
+    message.includes('runtime_rpc_response_too_large')
+  )
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

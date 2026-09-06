@@ -6,7 +6,7 @@ import { mkdir, readFile, stat, writeFile } from 'node:fs/promises'
 import { resolve } from 'node:path'
 import { pipeline } from 'node:stream/promises'
 
-import { sharedDesktopComponentIds } from './lib/desktop-component-ids.mjs'
+import { componentReleaseScope } from './desktop-component-release.mjs'
 
 const [
   assetsDirectory,
@@ -52,7 +52,7 @@ const sharedComponentBaseUrl = (
   process.env.WEWORK_COMPONENT_BASE_URL?.trim() ||
   `https://github.com/${repository}/releases/download/wework-updater`
 ).replace(/\/+$/, '')
-const sharedComponentIds = new Set(sharedDesktopComponentIds)
+const useComponentizedHostUpdate = process.env.WEWORK_USE_COMPONENTIZED_HOST_UPDATE === 'true'
 const requestedTargets = new Set(
   (process.env.WEWORK_RELEASE_TARGETS?.trim() || 'macos-arm64,macos-x64,windows-x64')
     .split(',')
@@ -75,11 +75,11 @@ await mkdir(output, { recursive: true })
 const macAssets = []
 for (const [target, platform] of macosReleasePlatforms) {
   if (requestedTargets.has(target)) {
-    macAssets.push(await asset(`WeWork_${version}_${platform}.zip`))
+    macAssets.push(await updateAsset(`${platform}.zip`))
   }
 }
 const windows = requestedTargets.has('windows-x64')
-  ? await asset(`WeWork_${version}_windows-x64-setup.exe`)
+  ? await updateAsset(`windows-x64-setup.exe`)
   : null
 await Promise.all(
   [...macAssets, ...(windows ? [windows] : [])].map(file => requireAsset(`${file.name}.blockmap`))
@@ -166,6 +166,12 @@ for (const [platform, architecture] of hasComponentRelease ? componentTargets : 
   }
   const components = {}
   for (const [id, component] of Object.entries(source.components ?? {})) {
+    const releaseScope = componentReleaseScope(id)
+    if (component.releaseScope !== releaseScope) {
+      throw new Error(
+        `Component release scope mismatch for ${id}: expected ${releaseScope}, received ${component.releaseScope}`
+      )
+    }
     const archivePath = resolve(assets, component.assetName)
     const archive = await localAsset(component.assetName)
     const archiveSha256 = await sha256(archivePath)
@@ -179,7 +185,7 @@ for (const [platform, architecture] of hasComponentRelease ? componentTargets : 
       contentSha256: component.contentSha256,
       archiveSha256,
       archiveBytes: archive.size,
-      downloadUrl: `${sharedComponentIds.has(id) ? sharedComponentBaseUrl : releaseBaseUrl}/${encodeURIComponent(component.assetName)}`,
+      downloadUrl: `${releaseScope === 'shared' ? sharedComponentBaseUrl : releaseBaseUrl}/${encodeURIComponent(component.assetName)}`,
       entryPath: component.entryPath,
     }
   }
@@ -195,6 +201,9 @@ for (const [platform, architecture] of hasComponentRelease ? componentTargets : 
           platform,
           arch: architecture,
           releaseDate,
+          capabilities: {
+            componentizedHostUpdate: 1,
+          },
           components,
         },
         null,
@@ -211,6 +220,11 @@ async function asset(name) {
     ...local,
     url: `${releaseBaseUrl}/${encodeURIComponent(name)}`,
   }
+}
+
+async function updateAsset(suffix) {
+  const prefix = useComponentizedHostUpdate ? 'WeWorkHostUpdate' : 'WeWork'
+  return asset(`${prefix}_${version}_${suffix}`)
 }
 
 async function localAsset(name) {

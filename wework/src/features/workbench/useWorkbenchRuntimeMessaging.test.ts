@@ -1,5 +1,6 @@
 import { describe, expect, test, vi } from 'vitest'
 import type { Attachment, DeviceInfo } from '@/types/api'
+import i18n from '@/i18n'
 import {
   buildRuntimeTaskCreateHandle,
   friendlyTitleForTask,
@@ -7,10 +8,19 @@ import {
   prepareRuntimeAttachmentsForDevice,
   resolveRuntimeTaskCreateWorkspacePath,
   runtimeExecutablePathForTarget,
+  runtimeSendError,
   resolveTemporaryChatSource,
   runtimeThreadId,
   titleModelForGeneration,
 } from './useWorkbenchRuntimeMessaging'
+
+describe('runtimeSendError', () => {
+  test('localizes an unsupported remote Team backend', () => {
+    expect(runtimeSendError(new Error('REMOTE_TEAM_BACKEND_UNSUPPORTED'), 'fallback')).toBe(
+      i18n.t('workbench.remote_team_backend_unsupported')
+    )
+  })
+})
 
 describe('buildRuntimeTaskCreateHandle', () => {
   test('keeps board ownership in the optimistic runtime address', () => {

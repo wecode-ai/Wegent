@@ -28,7 +28,6 @@ import {
   type PluginPublicationStatus,
 } from '@/apis/admin-plugin-publications'
 import { Button } from '@/components/ui/button'
-import { Card } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import {
@@ -381,13 +380,20 @@ export default function PluginPublicationReviewQueue() {
     }
 
     return (
-      <div className="space-y-3" data-testid="plugin-publication-review-list">
+      <div data-testid="plugin-publication-review-list">
+        <div className="hidden grid-cols-[minmax(13rem,1.5fr)_minmax(8rem,1fr)_minmax(11rem,1fr)_minmax(11rem,1fr)_minmax(9rem,1fr)_1.5rem] gap-4 border-b border-border bg-surface/60 px-4 py-2.5 text-xs font-medium text-text-muted xl:grid">
+          <span>{t('marketplace_management.plugin_publications.queue.columns.plugin')}</span>
+          <span>{t('marketplace_management.plugin_publications.queue.columns.submitter')}</span>
+          <span>{t('marketplace_management.plugin_publications.queue.columns.review')}</span>
+          <span>{t('marketplace_management.plugin_publications.queue.columns.submitted')}</span>
+          <span>{t('marketplace_management.plugin_publications.queue.columns.gitlab')}</span>
+          <span />
+        </div>
         {items.map(item => (
-          <Card
+          <button
             key={item.id}
-            role="button"
-            tabIndex={0}
-            className="group cursor-pointer p-4 transition-colors hover:border-primary/40 hover:bg-primary/5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+            type="button"
+            className="group grid w-full gap-3 border-b border-border px-4 py-3 text-left transition-colors last:border-b-0 hover:bg-primary/5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-primary xl:grid-cols-[minmax(13rem,1.5fr)_minmax(8rem,1fr)_minmax(11rem,1fr)_minmax(11rem,1fr)_minmax(9rem,1fr)_1.5rem] xl:items-center xl:gap-4"
             onClick={() => openRequest(item.id)}
             onKeyDown={event => {
               if (event.key === 'Enter' || event.key === ' ') {
@@ -401,56 +407,47 @@ export default function PluginPublicationReviewQueue() {
             })}
             data-testid={`plugin-publication-review-row-${item.id}`}
           >
-            <div className="flex items-start gap-4">
-              <div className="min-w-0 flex-1">
-                <div className="flex flex-wrap items-center gap-2">
-                  <h3 className="truncate font-semibold text-text-primary">{item.pluginName}</h3>
-                  <span className="text-sm text-text-muted">
-                    v{item.requestedVersion} · Revision {item.currentRevision}
-                  </span>
-                  <PluginPublicationStatusTag status={item.status} />
-                  <PluginPublicationRiskTag riskLevel={item.riskLevel} />
-                </div>
-                <p className="mt-1 truncate font-mono text-xs text-text-muted">{item.pluginSlug}</p>
-                <div className="mt-3 grid gap-x-5 gap-y-2 text-xs text-text-muted sm:grid-cols-2 xl:grid-cols-3">
-                  <span className="flex min-w-0 items-center gap-1.5">
-                    <UserRound className="h-3.5 w-3.5 shrink-0" aria-hidden />
-                    <span className="truncate">{item.submitter.userName}</span>
-                  </span>
-                  <span>
-                    {t('marketplace_management.plugin_publications.queue.stage', {
-                      stage: stageLabel(item),
-                    })}
-                  </span>
-                  <span>
-                    {t('marketplace_management.plugin_publications.queue.findings', {
-                      blockers: item.blockerCount,
-                      warnings: item.warningCount,
-                    })}
-                  </span>
-                  <span>
-                    {t('marketplace_management.plugin_publications.queue.submitted_at', {
-                      time: formatUTC8DateTime(item.submittedAt),
-                    })}
-                  </span>
-                  <span className="flex items-center gap-1.5">
-                    <Clock3 className="h-3.5 w-3.5 shrink-0" aria-hidden />
-                    {t('marketplace_management.plugin_publications.queue.waiting', {
-                      duration: waitingDuration(item, t),
-                    })}
-                  </span>
-                  <span className="flex min-w-0 items-center gap-1.5">
-                    <GitMerge className="h-3.5 w-3.5 shrink-0" aria-hidden />
-                    <span className="truncate">{gitLabStatus(item, t)}</span>
-                  </span>
-                </div>
-              </div>
-              <ChevronRight
-                className="mt-1 h-5 w-5 shrink-0 text-text-muted transition-transform group-hover:translate-x-0.5 group-hover:text-primary"
-                aria-hidden
-              />
-            </div>
-          </Card>
+            <span className="min-w-0">
+              <span className="block truncate font-medium text-text-primary">
+                {item.pluginName}
+              </span>
+              <span className="mt-0.5 block truncate font-mono text-xs text-text-muted">
+                {item.pluginSlug} · v{item.requestedVersion} · Revision {item.currentRevision}
+              </span>
+            </span>
+            <span className="flex min-w-0 items-center gap-1.5 text-xs text-text-muted">
+              <UserRound className="h-3.5 w-3.5 shrink-0" aria-hidden />
+              <span className="truncate">{item.submitter.userName}</span>
+            </span>
+            <span className="flex flex-wrap items-center gap-1.5">
+              <PluginPublicationStatusTag status={item.status} />
+              <PluginPublicationRiskTag riskLevel={item.riskLevel} />
+              <span className="text-xs text-text-muted">{stageLabel(item)}</span>
+              <span className="text-xs text-text-muted">
+                {t('marketplace_management.plugin_publications.queue.findings', {
+                  blockers: item.blockerCount,
+                  warnings: item.warningCount,
+                })}
+              </span>
+            </span>
+            <span className="text-xs text-text-muted">
+              <span className="block">{formatUTC8DateTime(item.submittedAt)}</span>
+              <span className="mt-1 flex items-center gap-1.5">
+                <Clock3 className="h-3.5 w-3.5 shrink-0" aria-hidden />
+                {t('marketplace_management.plugin_publications.queue.waiting', {
+                  duration: waitingDuration(item, t),
+                })}
+              </span>
+            </span>
+            <span className="flex min-w-0 items-center gap-1.5 text-xs text-text-muted">
+              <GitMerge className="h-3.5 w-3.5 shrink-0" aria-hidden />
+              <span className="truncate">{gitLabStatus(item, t)}</span>
+            </span>
+            <ChevronRight
+              className="hidden h-4 w-4 text-text-muted transition-transform group-hover:translate-x-0.5 group-hover:text-primary xl:block"
+              aria-hidden
+            />
+          </button>
         ))}
       </div>
     )
@@ -467,187 +464,191 @@ export default function PluginPublicationReviewQueue() {
         </p>
       </div>
 
-      <Card className="space-y-3 p-4" data-testid="plugin-publication-review-filters">
-        <div className="grid gap-3 lg:grid-cols-[minmax(240px,1fr)_180px_180px]">
-          <div className="relative min-w-0">
-            <Search
-              className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-text-muted"
-              aria-hidden
-            />
+      <div className="overflow-hidden rounded-xl border border-border bg-base">
+        <div
+          className="space-y-2 border-b border-border bg-surface/40 p-3"
+          data-testid="plugin-publication-review-filters"
+        >
+          <div className="grid gap-2 lg:grid-cols-[minmax(240px,1fr)_180px_180px]">
+            <div className="relative min-w-0">
+              <Search
+                className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-text-muted"
+                aria-hidden
+              />
+              <Input
+                value={search}
+                onChange={event => setSearch(event.target.value)}
+                placeholder={t('marketplace_management.plugin_publications.filters.search')}
+                className="h-11 pl-10"
+                data-testid="plugin-publication-review-filter-search"
+              />
+            </div>
             <Input
-              value={search}
-              onChange={event => setSearch(event.target.value)}
-              placeholder={t('marketplace_management.plugin_publications.filters.search')}
-              className="h-11 pl-10"
-              data-testid="plugin-publication-review-filter-search"
+              value={submitter}
+              onChange={event => setSubmitter(event.target.value)}
+              placeholder={t('marketplace_management.plugin_publications.filters.submitter')}
+              className="h-11"
+              data-testid="plugin-publication-review-filter-submitter"
             />
-          </div>
-          <Input
-            value={submitter}
-            onChange={event => setSubmitter(event.target.value)}
-            placeholder={t('marketplace_management.plugin_publications.filters.submitter')}
-            className="h-11"
-            data-testid="plugin-publication-review-filter-submitter"
-          />
-          <Select
-            value={statusFilter}
-            onValueChange={value => {
-              const nextStatus = value as PluginPublicationStatus | 'all'
-              setPage(1)
-              setStatusFilter(nextStatus)
-              replaceUrlParams({
-                page: null,
-                status: nextStatus === DEFAULT_STATUS ? null : nextStatus,
-              })
-            }}
-          >
-            <SelectTrigger className="h-11" data-testid="plugin-publication-review-filter-status">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              {STATUS_FILTERS.map(status => (
-                <SelectItem key={status} value={status}>
-                  {status === 'all'
-                    ? t('marketplace_management.plugin_publications.filters.all_statuses')
-                    : t(`marketplace_management.plugin_publications.statuses.${status}`)}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        </div>
-
-        <div className="grid gap-3 lg:grid-cols-[180px_minmax(240px,1fr)_44px] lg:items-end">
-          <Select
-            value={riskFilter}
-            onValueChange={value => {
-              const nextRisk = value as PluginPublicationRiskLevel | 'all'
-              setPage(1)
-              setRiskFilter(nextRisk)
-              replaceUrlParams({
-                page: null,
-                risk: nextRisk === 'all' ? null : nextRisk,
-              })
-            }}
-          >
-            <SelectTrigger className="h-11" data-testid="plugin-publication-review-filter-risk">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              {RISK_FILTERS.map(risk => (
-                <SelectItem key={risk} value={risk}>
-                  {risk === 'all'
-                    ? t('marketplace_management.plugin_publications.filters.all_risks')
-                    : t(`marketplace_management.plugin_publications.risks.${risk}`)}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-
-          <div className="grid gap-2 sm:grid-cols-[auto_1fr_auto_1fr] sm:items-center">
-            <Label
-              htmlFor="plugin-publication-submitted-after"
-              className="flex items-center gap-1.5 text-xs text-text-muted"
-            >
-              <CalendarRange className="h-3.5 w-3.5" aria-hidden />
-              {t('marketplace_management.plugin_publications.filters.submitted_after')}
-            </Label>
-            <Input
-              id="plugin-publication-submitted-after"
-              type="date"
-              value={submittedAfter}
-              max={submittedBefore || undefined}
-              onChange={event => {
+            <Select
+              value={statusFilter}
+              onValueChange={value => {
+                const nextStatus = value as PluginPublicationStatus | 'all'
                 setPage(1)
-                setSubmittedAfter(event.target.value)
+                setStatusFilter(nextStatus)
                 replaceUrlParams({
                   page: null,
-                  submittedAfter: event.target.value || null,
+                  status: nextStatus === DEFAULT_STATUS ? null : nextStatus,
                 })
               }}
-              className="h-11"
-              data-testid="plugin-publication-review-filter-submitted-after"
-            />
-            <Label
-              htmlFor="plugin-publication-submitted-before"
-              className="text-xs text-text-muted"
             >
-              {t('marketplace_management.plugin_publications.filters.submitted_before')}
-            </Label>
-            <Input
-              id="plugin-publication-submitted-before"
-              type="date"
-              value={submittedBefore}
-              min={submittedAfter || undefined}
-              onChange={event => {
-                setPage(1)
-                setSubmittedBefore(event.target.value)
-                replaceUrlParams({
-                  page: null,
-                  submittedBefore: event.target.value || null,
-                })
-              }}
-              className="h-11"
-              data-testid="plugin-publication-review-filter-submitted-before"
-            />
+              <SelectTrigger className="h-11" data-testid="plugin-publication-review-filter-status">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {STATUS_FILTERS.map(status => (
+                  <SelectItem key={status} value={status}>
+                    {status === 'all'
+                      ? t('marketplace_management.plugin_publications.filters.all_statuses')
+                      : t(`marketplace_management.plugin_publications.statuses.${status}`)}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
           </div>
 
-          <Button
-            type="button"
-            variant="outline"
-            size="icon"
-            className="h-11 w-11 shrink-0"
-            onClick={() => setRefreshVersion(current => current + 1)}
-            disabled={loading}
-            aria-label={t('marketplace_management.plugin_publications.actions.refresh')}
-            data-testid="plugin-publication-review-refresh"
-          >
-            <RefreshCw className={loading ? 'h-4 w-4 animate-spin' : 'h-4 w-4'} aria-hidden />
-          </Button>
-        </div>
-      </Card>
+          <div className="grid gap-2 lg:grid-cols-[180px_minmax(240px,1fr)_44px] lg:items-end">
+            <Select
+              value={riskFilter}
+              onValueChange={value => {
+                const nextRisk = value as PluginPublicationRiskLevel | 'all'
+                setPage(1)
+                setRiskFilter(nextRisk)
+                replaceUrlParams({
+                  page: null,
+                  risk: nextRisk === 'all' ? null : nextRisk,
+                })
+              }}
+            >
+              <SelectTrigger className="h-11" data-testid="plugin-publication-review-filter-risk">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {RISK_FILTERS.map(risk => (
+                  <SelectItem key={risk} value={risk}>
+                    {risk === 'all'
+                      ? t('marketplace_management.plugin_publications.filters.all_risks')
+                      : t(`marketplace_management.plugin_publications.risks.${risk}`)}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
 
-      <div className="flex items-center justify-between gap-4 text-sm text-text-muted">
-        <span>
-          {t('marketplace_management.plugin_publications.queue.total', {
-            count: total,
-          })}
-        </span>
-        <span>
-          {t('marketplace_management.plugin_publications.pagination', {
-            page,
-            totalPages,
-          })}
-        </span>
+            <div className="grid gap-2 sm:grid-cols-[auto_1fr_auto_1fr] sm:items-center">
+              <Label
+                htmlFor="plugin-publication-submitted-after"
+                className="flex items-center gap-1.5 text-xs text-text-muted"
+              >
+                <CalendarRange className="h-3.5 w-3.5" aria-hidden />
+                {t('marketplace_management.plugin_publications.filters.submitted_after')}
+              </Label>
+              <Input
+                id="plugin-publication-submitted-after"
+                type="date"
+                value={submittedAfter}
+                max={submittedBefore || undefined}
+                onChange={event => {
+                  setPage(1)
+                  setSubmittedAfter(event.target.value)
+                  replaceUrlParams({
+                    page: null,
+                    submittedAfter: event.target.value || null,
+                  })
+                }}
+                className="h-11"
+                data-testid="plugin-publication-review-filter-submitted-after"
+              />
+              <Label
+                htmlFor="plugin-publication-submitted-before"
+                className="text-xs text-text-muted"
+              >
+                {t('marketplace_management.plugin_publications.filters.submitted_before')}
+              </Label>
+              <Input
+                id="plugin-publication-submitted-before"
+                type="date"
+                value={submittedBefore}
+                min={submittedAfter || undefined}
+                onChange={event => {
+                  setPage(1)
+                  setSubmittedBefore(event.target.value)
+                  replaceUrlParams({
+                    page: null,
+                    submittedBefore: event.target.value || null,
+                  })
+                }}
+                className="h-11"
+                data-testid="plugin-publication-review-filter-submitted-before"
+              />
+            </div>
+
+            <Button
+              type="button"
+              variant="outline"
+              size="icon"
+              className="h-11 w-11 shrink-0"
+              onClick={() => setRefreshVersion(current => current + 1)}
+              disabled={loading}
+              aria-label={t('marketplace_management.plugin_publications.actions.refresh')}
+              data-testid="plugin-publication-review-refresh"
+            >
+              <RefreshCw className={loading ? 'h-4 w-4 animate-spin' : 'h-4 w-4'} aria-hidden />
+            </Button>
+          </div>
+        </div>
+
+        {queueContent}
+
+        <div className="flex items-center justify-between gap-3 border-t border-border px-4 py-3 text-sm text-text-muted">
+          <span>
+            {t('marketplace_management.plugin_publications.queue.total', {
+              count: total,
+            })}
+          </span>
+          <div className="flex items-center gap-2">
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon"
+              className="h-9 w-9"
+              disabled={page <= 1 || loading || loadFailed}
+              onClick={() => handlePageChange(page - 1)}
+              aria-label={t('marketplace_management.previous')}
+              data-testid="plugin-publication-review-previous-page"
+            >
+              <ChevronLeft className="h-4 w-4" aria-hidden />
+            </Button>
+            <span>
+              {t('marketplace_management.plugin_publications.pagination', {
+                page,
+                totalPages,
+              })}
+            </span>
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon"
+              className="h-9 w-9"
+              disabled={page >= totalPages || loading || loadFailed}
+              onClick={() => handlePageChange(page + 1)}
+              aria-label={t('marketplace_management.next')}
+              data-testid="plugin-publication-review-next-page"
+            >
+              <ChevronRight className="h-4 w-4" aria-hidden />
+            </Button>
+          </div>
+        </div>
       </div>
-
-      {queueContent}
-
-      {!loading && !loadFailed && totalPages > 1 ? (
-        <div className="flex items-center justify-center gap-3">
-          <Button
-            type="button"
-            variant="outline"
-            className="h-11"
-            disabled={page <= 1}
-            onClick={() => handlePageChange(page - 1)}
-            data-testid="plugin-publication-review-previous-page"
-          >
-            <ChevronLeft className="h-4 w-4" aria-hidden />
-            {t('marketplace_management.previous')}
-          </Button>
-          <Button
-            type="button"
-            variant="outline"
-            className="h-11"
-            disabled={page >= totalPages}
-            onClick={() => handlePageChange(page + 1)}
-            data-testid="plugin-publication-review-next-page"
-          >
-            {t('marketplace_management.next')}
-            <ChevronRight className="h-4 w-4" aria-hidden />
-          </Button>
-        </div>
-      ) : null}
 
       <PluginPublicationReviewDrawer
         requestId={selectedRequestId}

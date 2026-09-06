@@ -44,6 +44,7 @@ import type {
   RuntimeTaskCancelResponse,
   RuntimeTaskCreateRequest,
   RuntimeTaskCreateResponse,
+  RuntimeTaskMaterializeResponse,
   RuntimeTaskForkRequest,
   RuntimeTaskForkResponse,
   RuntimeTaskQueueReorderRequest,
@@ -86,6 +87,8 @@ import type {
 } from '@/types/api'
 import type { HttpClient, HttpRequestOptions } from './http'
 import type { KeybindingOverride } from '@/lib/keybindings'
+
+export const REMOTE_TEAM_BACKEND_UNSUPPORTED = 'REMOTE_TEAM_BACKEND_UNSUPPORTED'
 
 export function createRuntimeWorkApi(client: HttpClient) {
   return {
@@ -359,6 +362,11 @@ export function createRuntimeWorkApi(client: HttpClient) {
     },
     createRuntimeTask(data: RuntimeTaskCreateRequest): Promise<RuntimeTaskCreateResponse> {
       return client.post('/runtime-work/create', data)
+    },
+    materializeRuntimeTask(
+      data: RuntimeTaskCreateRequest
+    ): Promise<RuntimeTaskMaterializeResponse> {
+      return client.post('/runtime-work/materialize', data)
     },
     forkRuntimeTask(data: RuntimeTaskForkRequest): Promise<RuntimeTaskForkResponse> {
       return client.post('/runtime-work/fork', data)

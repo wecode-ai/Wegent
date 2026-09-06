@@ -290,12 +290,21 @@ const version = process.env.RELEASE_VERSION
 const channel = process.env.RELEASE_CHANNEL
 const output = resolve('wework/electron/release-minio')
 const installerName = `WeWork_${version}_windows-x64-setup.exe`
+const hostUpdateName = `WeWorkHostUpdate_${version}_windows-x64-setup.exe`
 const installer = resolve(output, installerName)
 const signaturePath = `${installer}.sig`
 const channelManifest = resolve(output, `${channel}-windows-x86_64.json`)
 const electronManifest = resolve(output, `${channel === 'stable' ? 'latest' : 'beta'}.yml`)
 
-for (const path of [installer, signaturePath, channelManifest, electronManifest]) {
+for (const path of [
+  installer,
+  `${installer}.blockmap`,
+  resolve(output, hostUpdateName),
+  resolve(output, `${hostUpdateName}.blockmap`),
+  signaturePath,
+  channelManifest,
+  electronManifest,
+]) {
   const file = await stat(path).catch(() => null)
   if (!file?.isFile() || file.size === 0) {
     throw new Error(`Required Windows release artifact is missing or empty: ${path}`)
@@ -312,8 +321,8 @@ if (!bridge || bridge.signature !== signature || !bridge.url.endsWith(installerN
 }
 
 const electron = await readFile(electronManifest, 'utf8')
-if (!electron.includes(installerName)) {
-  throw new Error('The Electron Windows updater manifest does not reference the installer.')
+if (!electron.includes(installerName) && !electron.includes(hostUpdateName)) {
+  throw new Error('The Electron Windows updater manifest does not reference an update package.')
 }
 
 console.log(`Verified Windows Tauri-to-Electron bridge for ${version} (${channel}).`)

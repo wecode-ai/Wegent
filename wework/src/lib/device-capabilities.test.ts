@@ -8,6 +8,7 @@ import {
   isVersionAtLeast,
   supportsCloudSessions,
   supportsLocalTerminalLaunch,
+  supportsRemoteCodeServerSessions,
   supportsRemoteTerminalSessions,
 } from './device-capabilities'
 
@@ -93,6 +94,23 @@ describe('device-capabilities', () => {
     expect(supportsRemoteTerminalSessions({ ...claudeDevice, device_type: 'local' })).toBe(false)
     expect(supportsRemoteTerminalSessions({ ...claudeDevice, device_type: 'cloud' })).toBe(true)
     expect(supportsRemoteTerminalSessions({ ...claudeDevice, device_type: 'remote' })).toBe(true)
+    expect(
+      supportsRemoteTerminalSessions({
+        ...claudeDevice,
+        device_type: 'remote',
+        runtime_features: {
+          schemaVersion: 3,
+          interactiveSessions: { terminal: false },
+        },
+      })
+    ).toBe(false)
+    expect(
+      supportsRemoteTerminalSessions({
+        ...claudeDevice,
+        device_type: 'remote',
+        status: 'offline',
+      })
+    ).toBe(false)
     const mergedDevice = {
       ...claudeDevice,
       device_type: 'local',
@@ -125,5 +143,25 @@ describe('device-capabilities', () => {
         bind_shell: 'openclaw',
       })
     ).toBe(false)
+  })
+
+  test('supports remote code-server only when the online runtime enables it', () => {
+    const remoteDevice = {
+      device_type: 'remote',
+      bind_shell: 'claudecode',
+      status: 'online',
+    }
+
+    expect(supportsRemoteCodeServerSessions(remoteDevice)).toBe(true)
+    expect(
+      supportsRemoteCodeServerSessions({
+        ...remoteDevice,
+        runtime_features: {
+          schemaVersion: 3,
+          interactiveSessions: { codeServer: false },
+        },
+      })
+    ).toBe(false)
+    expect(supportsRemoteCodeServerSessions({ ...remoteDevice, status: 'offline' })).toBe(false)
   })
 })

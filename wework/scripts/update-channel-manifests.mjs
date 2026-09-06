@@ -63,6 +63,10 @@ export function hasCompleteChannelAssets(assetNames, channel) {
   return expectedChannelAssetNames(channel).every(name => availableAssets.has(name))
 }
 
+export function supportsComponentizedHostUpdate(manifest) {
+  return manifest?.capabilities?.componentizedHostUpdate === 1
+}
+
 export async function generateChannelManifests({ sourcePath, outputDirectory, channel }) {
   if (channel !== 'stable' && channel !== 'beta') {
     throw new Error(`Unsupported Wework update channel: ${channel}`)
@@ -124,6 +128,22 @@ async function main() {
     return
   }
 
+  if (command === 'supports-componentized-host-update') {
+    const [manifestPath] = args
+    if (!manifestPath) {
+      throw new Error(
+        'Usage: update-channel-manifests.mjs supports-componentized-host-update <manifest-json|->'
+      )
+    }
+    try {
+      const source = await readText(manifestPath)
+      process.exitCode = supportsComponentizedHostUpdate(JSON.parse(source)) ? 0 : 1
+    } catch {
+      process.exitCode = 1
+    }
+    return
+  }
+
   if (command === 'generate') {
     const [sourcePath, outputDirectory, channel] = args
     if (!sourcePath || !outputDirectory || !channel) {
@@ -135,7 +155,17 @@ async function main() {
     return
   }
 
-  throw new Error('Expected command: is-newer, has-complete-channel-assets, or generate')
+  throw new Error(
+    'Expected command: is-newer, has-complete-channel-assets, supports-componentized-host-update, or generate'
+  )
+}
+
+async function readText(path) {
+  if (path !== '-') return readFile(path, 'utf8')
+  process.stdin.setEncoding('utf8')
+  let source = ''
+  for await (const chunk of process.stdin) source += chunk
+  return source
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) {

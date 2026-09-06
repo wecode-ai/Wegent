@@ -38,7 +38,6 @@ import {
   type FeedbackExportRequest,
   type FeedbackSubmitRequest,
 } from './feedback-bundle-manager.js'
-import { WorkbenchPluginManager } from './workbench-plugin-manager.js'
 import { captureWebContentsDataUrl } from './web-contents-capture.js'
 import type { TrayActivation, TrayMenuState, TraySnapshot } from './tray-manager.js'
 import type { StartupSplashSnapshot } from './startup-splash.js'
@@ -73,7 +72,6 @@ export interface ElectronDesktopServices {
   events: DesktopHostEventBroker
   feedback: FeedbackBundleManager
   openRuntimeTask: (taskAddressId: string) => void
-  plugins: WorkbenchPluginManager
   vnc?: VncSessionManager
   secureStorage: SecureValueStore
   cleanupStaleTemporaryImages: () => Promise<void>
@@ -148,6 +146,7 @@ export interface ElectronE2EHost {
   }) => Promise<void>
   dismissPopout: () => void
   dismissSystemDragPanel: () => void
+  focusMainWindow: () => void | Promise<void>
   focusWindow: (windowLabel: string) => void
   hideMainWindow: () => Promise<void>
   dockVisible: () => boolean
@@ -205,6 +204,7 @@ export function createElectronCapabilityRouter(
     completeSystemDragDrop: () => Promise.reject(new Error('System drag is unavailable')),
     dismissPopout: () => undefined,
     dismissSystemDragPanel: () => undefined,
+    focusMainWindow: () => undefined,
     focusWindow: () => undefined,
     hideMainWindow: () => Promise.reject(new Error('Main window backgrounding is unavailable')),
     dockVisible: () => true,
@@ -494,7 +494,8 @@ export function createElectronCapabilityRouter(
   router.register('e2e.activateRuntimeTaskNotification', params => {
     desktopServices.openRuntimeTask(stringParam(params, 'taskAddressId'))
   })
-  router.register('e2e.focusMainWindow', () => {
+  router.register('e2e.focusMainWindow', async () => {
+    await e2eHost.focusMainWindow()
     const target = requiredWindow(window)
     if (target.isMinimized()) target.restore()
     target.show()
@@ -870,17 +871,6 @@ export function registerDesktopServiceCapabilities(
   router.register('feedback.submitBundle', params =>
     services.feedback.submit(feedbackSubmitRequestParam(params))
   )
-  router.register('plugins.list', () => services.plugins.list())
-  router.register('plugins.authorizeCapability', params =>
-    services.plugins.authorizeCapability(
-      stringParam(params, 'pluginRoot'),
-      stringParam(params, 'capability')
-    )
-  )
-  router.register('plugins.start', params =>
-    services.plugins.start(stringParam(params, 'pluginId'), stringParam(params, 'pluginRoot'))
-  )
-  router.register('plugins.stop', params => services.plugins.stop(stringParam(params, 'pluginId')))
   router.register('vnc.externalBridgeUrl', () => requiredVnc(services.vnc).externalBridgeUrl())
   router.register('vnc.prepareSession', params =>
     requiredVnc(services.vnc).prepareSession({
@@ -888,14 +878,6 @@ export function registerDesktopServiceCapabilities(
       wsUrl: stringParam(params, 'wsUrl'),
       token: stringParam(params, 'token'),
     })
-  )
-  router.register('plugins.request', params =>
-    services.plugins.request(
-      stringParam(params, 'pluginId'),
-      stringParam(params, 'capability'),
-      stringParam(params, 'method'),
-      params.params ?? {}
-    )
   )
 }
 

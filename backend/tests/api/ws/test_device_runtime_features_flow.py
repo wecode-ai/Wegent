@@ -39,7 +39,11 @@ class _MemoryDeviceCache:
 
 def _runtime_features(*, managed: bool) -> dict:
     return {
-        "schemaVersion": 1,
+        "schemaVersion": 3,
+        "interactiveSessions": {
+            "codeServer": False,
+            "terminal": True,
+        },
         "worktrees": {
             "version": 1,
             "managed": managed,

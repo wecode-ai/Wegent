@@ -10,12 +10,15 @@ import { fileURLToPath } from 'node:url'
 import { create } from 'tar'
 
 import { wrapWindowsScriptCommand } from './child-process-command.mjs'
+import { hashComponentPath } from './lib/component-content-hash.mjs'
+import { componentReleaseScope } from './desktop-component-release.mjs'
 import { desktopComponentIds } from './lib/desktop-component-ids.mjs'
 import identityModule from '../electron/scripts/build-identity.cjs'
 
 const { resolveBuildIdentity } = identityModule
 const weworkRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const installerRoot = join(weworkRoot, 'electron', 'release-installer')
+const onlineUpdateRoot = join(weworkRoot, 'electron', 'release-online-update')
 const componentResourcesRoot = join(weworkRoot, 'electron', 'resources')
 const pnpmCommand = process.platform === 'win32' ? 'pnpm.cmd' : 'pnpm'
 const [platform, arch, version, outputDirectory] = process.argv.slice(2)
@@ -61,24 +64,36 @@ if (platform === 'macos') {
     cp(zip, releaseZip),
     cp(blockmap, `${releaseZip}.blockmap`),
   ])
+  const updateZip = await findFile(
+    onlineUpdateRoot,
+    new RegExp(`^WeWorkHostUpdate_${escape(version)}_macos_${arch}\\.zip$`)
+  )
+  const updateReleaseZip = join(output, `WeWorkHostUpdate_${version}_${releasePlatform}.zip`)
+  await requireFile(`${updateZip}.blockmap`)
+  await cp(updateZip, updateReleaseZip)
+  await cp(`${updateZip}.blockmap`, `${updateReleaseZip}.blockmap`)
   await signBridge(bridge)
 } else if (platform === 'windows') {
   const installer = await findFile(
     installerRoot,
     new RegExp(`^WeWork_${escape(version)}_windows-${arch}-setup\\.exe$`)
   )
-  const target = join(output, basename(installer))
-  const blockmap = `${installer}.blockmap`
-  await requireFile(blockmap)
-  await cp(installer, target)
-  await cp(blockmap, `${target}.blockmap`)
-  await signBridge(target)
+  const updateInstaller = await findFile(
+    onlineUpdateRoot,
+    new RegExp(`^WeWorkHostUpdate_${escape(version)}_windows-${arch}-setup\\.exe$`)
+  )
+  await copyUpdateArtifacts([installer, updateInstaller])
+  await signBridge(join(output, basename(installer)))
 } else if (platform === 'linux') {
   const appImage = await findFile(
     installerRoot,
     new RegExp(`^WeWork_${escape(version)}_linux_${installerArchitecture}\\.AppImage$`)
   )
-  await cp(appImage, join(output, basename(appImage)))
+  const updateAppImage = await findFile(
+    onlineUpdateRoot,
+    new RegExp(`^WeWorkHostUpdate_${escape(version)}_linux_${installerArchitecture}\\.AppImage$`)
+  )
+  await copyUpdateArtifacts([appImage, updateAppImage], false)
 } else {
   throw new Error(`Unsupported desktop release platform: ${platform}`)
 }
@@ -96,6 +111,7 @@ async function prepareComponentAssets() {
     }
     const sourcePath = join(packagedComponentResourcesRoot, component.path)
     const source = await stat(sourcePath)
+    const contentSha256 = await hashComponentPath(sourcePath)
     const temporaryAssetPath = join(output, `.component-${id}.tar.gz`)
     const archiveOptions = {
       cwd: source.isDirectory() ? sourcePath : dirname(sourcePath),
@@ -116,9 +132,10 @@ async function prepareComponentAssets() {
     await rename(temporaryAssetPath, join(output, assetName))
     componentAssets[id] = {
       version: component.version,
-      contentSha256: component.sha256,
+      contentSha256,
       archiveSha256,
       assetName,
+      releaseScope: componentReleaseScope(id),
       entryPath: source.isDirectory() ? '.' : basename(sourcePath),
     }
   }
@@ -153,6 +170,16 @@ async function signBridge(path) {
     ['--dir', join(weworkRoot, 'electron'), 'exec', 'tauri', 'signer', 'sign', path],
     weworkRoot
   )
+}
+
+async function copyUpdateArtifacts(paths, includeBlockmap = true) {
+  for (const path of new Set(paths)) {
+    await cp(path, join(output, basename(path)))
+    if (!includeBlockmap) continue
+    const blockmap = `${path}.blockmap`
+    await requireFile(blockmap)
+    await cp(blockmap, join(output, basename(blockmap)))
+  }
 }
 
 async function findFile(root, pattern) {

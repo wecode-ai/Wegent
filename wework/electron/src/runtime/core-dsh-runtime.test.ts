@@ -82,6 +82,7 @@ describe('core DSH runtime', () => {
         PATH: '/usr/bin',
         WEWORK_CORE_PLUGIN_ROOT: runtime.pluginsRoot,
         WEWORK_CORE_PLUGINS_SHA256: 'f'.repeat(64),
+        WEWORK_APP_WEB_ROOT: join(root.path, 'source-app-web'),
         WEWORK_NODE_PATH: '/managed/node',
       },
       port: 3080,
@@ -102,9 +103,13 @@ describe('core DSH runtime', () => {
     expect(first.args).toContain('3080')
     expect(first.environment).toMatchObject({
       DSH_HOME: join(dataDirectory, 'dsh-core'),
+      WEWORK_APP_WEB_ROOT: join(root.path, 'source-app-web'),
       WEWORK_HARNESS_API_KEY: 'wework-local-router',
     })
     expect(second.args).toContain('3081')
+    expect(second.environment.WEWORK_APP_WEB_ROOT).toBe(
+      join(runtime.pluginRoots['@wegent/dsh-app-wework'], 'web')
+    )
     expect(
       JSON.parse(
         await readFile(
@@ -120,6 +125,7 @@ describe('core DSH runtime', () => {
         '@wegent/dsh-executor-runtime': expect.stringContaining('wework-executor-runtime'),
         '@wegent/dsh-secure-storage': expect.stringContaining('wework-secure-storage'),
         '@wegent/dsh-terminal-runtime': expect.stringContaining('wework-terminal-runtime'),
+        '@wegent/dsh-plugin-runtime': expect.stringContaining('wework-plugin-runtime'),
         '@wegent/dsh-ui-core-apps': expect.stringContaining('wework-ui-core-apps'),
         '@wegent/dsh-ui-core-settings': expect.stringContaining('wework-ui-core-settings'),
         '@wegent/dsh-ui-plugin-center': expect.stringContaining('wework-ui-plugin-center'),
@@ -137,6 +143,7 @@ describe('core DSH runtime', () => {
             '@wegent/dsh-browser-runtime',
             '@wegent/dsh-secure-storage',
             '@wegent/dsh-terminal-runtime',
+            '@wegent/dsh-plugin-runtime',
             '@wegent/dsh-app-wework',
             '@deepseek-ai/dsh-web-app',
             '@wegent/dsh-executor-runtime',
@@ -187,6 +194,9 @@ describe('core DSH runtime', () => {
       readFile(join(profileModules, 'dsh-terminal-runtime', 'package.json'), 'utf8')
     ).resolves.toBe('{}')
     await expect(
+      readFile(join(profileModules, 'dsh-plugin-runtime', 'package.json'), 'utf8')
+    ).resolves.toBe('{}')
+    await expect(
       readFile(join(profileModules, 'dsh-ui-core-apps', 'package.json'), 'utf8')
     ).resolves.toBe('{}')
     await expect(
@@ -208,6 +218,39 @@ describe('core DSH runtime', () => {
       readFile(join(profileModules, 'dsh-ui-git', 'package.json'), 'utf8')
     ).resolves.toBe('{}')
     await root.remove()
+  })
+
+  test('resolves configured and bundled Wework application web roots', async () => {
+    const root = await temporaryDirectory('core-dsh-web-root-')
+    try {
+      const runtime = await writeRuntime(root.path, CORE_DSH_VERSION, 'a')
+      const configuredWebRoot = join(root.path, 'development-web')
+      const bundledWebRoot = join(runtime.pluginRoots['@wegent/dsh-app-wework'], 'web')
+      const cases = [
+        { value: `  ${configuredWebRoot}  `, expected: configuredWebRoot },
+        { value: '', expected: bundledWebRoot },
+        { value: '   ', expected: bundledWebRoot },
+      ]
+
+      for (const [index, testCase] of cases.entries()) {
+        const launch = await prepareCoreDshLaunch({
+          runtimeRoot: runtime.root,
+          dataDirectory: join(root.path, `data-${index}`),
+          environment: {
+            PATH: '/usr/bin',
+            WEWORK_APP_WEB_ROOT: testCase.value,
+            WEWORK_CORE_PLUGIN_ROOT: runtime.pluginsRoot,
+            WEWORK_CORE_PLUGINS_SHA256: 'f'.repeat(64),
+            WEWORK_NODE_PATH: '/managed/node',
+          },
+          port: 3080 + index,
+        })
+
+        expect(launch.environment.WEWORK_APP_WEB_ROOT).toBe(testCase.expected)
+      }
+    } finally {
+      await root.remove()
+    }
   })
 
   test('refreshes the profile when only the host fingerprint changes', async () => {
@@ -493,6 +536,7 @@ describe('core DSH runtime', () => {
       '@wegent/dsh-secure-storage',
       '@wegent/dsh-executor-runtime',
       '@wegent/dsh-terminal-runtime',
+      '@wegent/dsh-plugin-runtime',
     ])
     expect(manifest.dsh.profile.bundles).toEqual([
       '@deepseek-ai/dsh-base',
@@ -500,6 +544,7 @@ describe('core DSH runtime', () => {
       '@wegent/dsh-browser-runtime',
       '@wegent/dsh-secure-storage',
       '@wegent/dsh-terminal-runtime',
+      '@wegent/dsh-plugin-runtime',
       '@wegent/dsh-app-wework',
       '@deepseek-ai/dsh-web-app',
       '@wegent/dsh-executor-runtime',
@@ -747,6 +792,7 @@ async function writeRuntime(
       ['@wegent/dsh-secure-storage', 'wework-secure-storage'],
       ['@wegent/dsh-executor-runtime', 'wework-executor-runtime'],
       ['@wegent/dsh-terminal-runtime', 'wework-terminal-runtime'],
+      ['@wegent/dsh-plugin-runtime', 'wework-plugin-runtime'],
       ['@wegent/dsh-ui-core-apps', 'wework-ui-core-apps'],
       ['@wegent/dsh-ui-core-settings', 'wework-ui-core-settings'],
       ['@wegent/dsh-ui-plugin-center', 'wework-ui-plugin-center'],

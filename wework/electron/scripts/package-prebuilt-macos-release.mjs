@@ -16,6 +16,8 @@ const electronRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const electronBuilderCli = resolve(electronRoot, 'node_modules/electron-builder/cli.js')
 const nodeRuntime = resolveNodeRuntime()
 const [requestedAppPath, arch] = process.argv.slice(2)
+const onlineUpdateIncludesComponents =
+  process.env.WEWORK_ONLINE_UPDATE_INCLUDE_COMPONENTS?.trim() || 'true'
 
 if (!requestedAppPath || !['arm64', 'x64'].includes(arch)) {
   throw new Error(
@@ -58,6 +60,28 @@ await run(
   {
     ...process.env,
     WEWORK_PREPACKAGED_MACOS_RELEASE: 'true',
+  }
+)
+await run(
+  nodeRuntime,
+  [
+    electronBuilderCli,
+    '--config',
+    'electron-builder.config.cjs',
+    '--mac',
+    'zip',
+    `--${arch}`,
+    '--prepackaged',
+    appPath,
+    '--publish',
+    'never',
+  ],
+  electronRoot,
+  {
+    ...process.env,
+    WEWORK_PREPACKAGED_MACOS_RELEASE: 'true',
+    WEWORK_ONLINE_UPDATE_BUILD: 'true',
+    WEWORK_ONLINE_UPDATE_INCLUDE_COMPONENTS: onlineUpdateIncludesComponents,
   }
 )
 

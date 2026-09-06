@@ -24,30 +24,36 @@
 
 Wework 自身按 `ui-core-apps`、`ui-core-settings`、`ui-plugin-center`、
 `ui-applications`、`ui-automations` 和 `ui-cloud-work` 等 DSH 插件组合运行。
-第三方插件通过 `ctx.slots.inject(...)` 与宿主提供的 `wework` service
-注入同一批扩展点：
+扩展点不是全部平铺在 `root` 下，而是分为 catalog、workspace 和 shell 三个
+DSH 子树。工作区和 Composer 扩展使用 `session-maybe` scope；全局目录和 shell
+使用 `root` scope。第三方插件通过 `ctx.slots.inject(...)` 注入扩展点：
 
 ```js
 const inject = ['slots', 'wework']
 
-ctx.slots.inject('wework.workspace.tab', () =>
-  ctx.wework.ui.register(
-    ctx,
-    'wework.workspace.tab',
+ctx.slots.inject('wework.workspace.tab', function* () {
+  const descriptor = {
+    id: 'quality-dashboard',
+    label: '质量看板',
+    order: 20,
+  }
+  yield ctx.wework.contributions.register(ctx, 'wework.workspace.tab', descriptor)
+  yield ctx.slots.register(
     {
-      id: 'quality-dashboard',
-      label: '质量看板',
-      order: 20,
+      name: 'wework.workspace.tab',
+      id: descriptor.id,
+      label: descriptor.label,
+      order: descriptor.order,
     },
     QualityDashboard
   )
-)
+})
 ```
 
-`wework` 是 Wework 的宿主 service，UI 扩展 API 位于 `ctx.wework.ui`。DSH Slot
-只保留通用的身份与排序 options；该 API 将 Wework 描述附着到
-标准 DSH component，再调用 `ctx.slots.register(...)`；插件发现、渲染与释放仍完全
-由 DSH 管理，不存在第二套注册表。
+`ctx.wework.contributions` 只保存宿主需要读取的 label、icon、path、module 等描述；
+组件本身直接通过原生 `ctx.slots.register(...)` 注册，因此 DSH 的 kind、scope、
+子 slot、store 和 inject 语义不会被抹平。`ctx.wework.chat`、`testing` 和
+`environments` 提供对应领域的 Provider 注册点。
 
 Electron 只承载一个主 DSH `WebContentsView`。Wework 内置浏览器、文件选择器、
 原生窗口和系统菜单等宿主能力继续由 Electron 实现；本插件后续只通过受限
@@ -55,6 +61,10 @@ desktop capability 调用这些能力。
 
 该包必须显式导出 `./package.json`。DSH client module registry 通过这个子路径读取
 `dsh.client` 声明；缺少导出会导致插件不进入 browser boot graph。
+
+独立插件不能导入 Wework 私有的 React Hook。用户可见文本应通过
+`ctx.wework.localization.translate({ en: '...', 'zh-CN': '...' })` 本地化；
+`getLocale()` 可用于确实需要语言代码的格式化逻辑。
 
 “Wework 插件开发”Skill 携带的可安装示例位于
 [`../plugin-developer/codex-plugin/skills/develop-wework-plugin/assets/ui-extension-demo`](../plugin-developer/codex-plugin/skills/develop-wework-plugin/assets/ui-extension-demo)，

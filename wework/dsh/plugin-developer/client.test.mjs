@@ -14,8 +14,8 @@ test('publishes a cache-invalidating official Codex plugin version', async () =>
     await readFile(new URL('.codex-plugin/plugin.json', codexPluginRoot), 'utf8')
   )
 
-  assert.equal(outerManifest.version, '0.1.4')
-  assert.equal(codexManifest.version, '0.1.4')
+  assert.equal(outerManifest.version, '0.1.8')
+  assert.equal(codexManifest.version, '0.1.8')
   assert.deepEqual(Object.keys(codexManifest), [
     'name',
     'version',
@@ -62,16 +62,31 @@ test('registers translated plugin development actions through the Wework service
     }
   })
   const contributions = []
+  const descriptors = new Map()
   const context = {
     slots: {
       inject(_slot, register) {
-        register()
+        const result = register()
+        if (result && Symbol.iterator in result) {
+          for (const _disposer of result) {
+            // Consume generator registrations like the DSH runtime.
+          }
+        }
+      },
+      register(options, component) {
+        contributions.push({
+          component,
+          descriptor: descriptors.get(`${options.name}:${options.id}`),
+          slot: options.name,
+        })
+        return () => {}
       },
     },
     wework: {
-      ui: {
-        register(_ctx, slot, descriptor, component) {
-          contributions.push({ component, descriptor, slot })
+      contributions: {
+        register(_ctx, slot, descriptor) {
+          descriptors.set(`${slot}:${descriptor.id}`, descriptor)
+          return () => {}
         },
       },
     },
@@ -114,16 +129,20 @@ test('documents and demonstrates every extension point declared by the Wework ho
   const skill = await readFile(new URL('SKILL.md', pluginRoot), 'utf8')
   const catalog = await readFile(new URL('references/extension-points.md', pluginRoot), 'utf8')
   const demo = await readFile(new URL('assets/ui-extension-demo/client.js', pluginRoot), 'utf8')
-  const declarationBlock = hostSource.match(/const SLOT_DECLARATIONS = \{(?<body>[\s\S]*?)\n    \}/)
-    ?.groups?.body
+  const declarationBlock = hostSource.match(
+    /const SLOT_GROUPS = \{(?<body>[\s\S]*?)\n    \}\n    const SLOT_DECLARATIONS/
+  )?.groups?.body
   assert.ok(declarationBlock, 'The Wework host slot declarations could not be read')
 
-  const extensionPoints = [...declarationBlock.matchAll(/'(wework\.[^']+)':/g)].map(
-    match => match[1]
-  )
+  const extensionPoints = [...declarationBlock.matchAll(/'(wework\.[^']+)':/g)]
+    .map(match => match[1])
+    .filter(name => !name.startsWith('wework.internal.'))
   assert.ok(extensionPoints.length > 0, 'The Wework host does not declare any extension points')
   assert.match(skill, /references\/extension-points\.md/)
   assert.match(skill, /assets\/ui-extension-demo/)
+  assert.match(skill, /assets\/reference-plugins/)
+  assert.match(skill, /assets\/showcase-plugins/)
+  assert.match(skill, /invocation\.composer/)
   assert.match(skill, /Never edit files inside an installed plugin cache/)
   assert.match(skill, /official `\.codex-plugin\/plugin\.json` format/)
   assert.match(skill, /wework desktop inspect --project \./)
@@ -162,6 +181,10 @@ test('keeps Skill resources independent from a machine plugin cache path', async
     [
       'SKILL.md',
       'references/extension-points.md',
+      'assets/reference-plugins/README.md',
+      'assets/reference-plugins/prompt-library-demo/README.md',
+      'assets/reference-plugins/focus-board-demo/README.md',
+      'assets/reference-plugins/endpoint-watch-demo/README.md',
       'assets/ui-extension-demo/README.md',
       'assets/ui-extension-demo/README.en.md',
       'assets/ui-extension-demo/client.js',
@@ -176,4 +199,36 @@ test('keeps Skill resources independent from a machine plugin cache path', async
   assert.doesNotMatch(contents, /plugins\/cache\/(?:wework|wework-personal)/)
   assert.match(contents, /\[references\/extension-points\.md]\(references\/extension-points\.md\)/)
   assert.match(contents, /\[assets\/ui-extension-demo]\(assets\/ui-extension-demo\)/)
+  assert.match(contents, /\[assets\/reference-plugins]\(assets\/reference-plugins\)/)
+})
+
+test('ships three executable reference plugin packages', async () => {
+  const directories = ['prompt-library-demo', 'focus-board-demo', 'endpoint-watch-demo']
+
+  for (const directory of directories) {
+    const root = new URL(`assets/reference-plugins/${directory}/`, pluginRoot)
+    const manifest = JSON.parse(await readFile(new URL('package.json', root), 'utf8'))
+    const patch = await readFile(new URL('cordis.patch.yml', root), 'utf8')
+    const client = await readFile(new URL('client.js', root), 'utf8')
+
+    assert.match(manifest.name, /^@wegent\/dsh-/)
+    assert.equal(manifest.dsh.bundle.patch, './cordis.patch.yml')
+    assert.match(patch, /@wegent\/dsh-/)
+    assert.match(client, /window\.__ModuleLoader__\.load/)
+  }
+})
+
+test('ships three product-oriented showcase plugin packages', async () => {
+  const directories = ['workspace-copilot-demo', 'quality-guardian-demo', 'runtime-doctor-demo']
+
+  for (const directory of directories) {
+    const root = new URL(`assets/showcase-plugins/${directory}/`, pluginRoot)
+    const manifest = JSON.parse(await readFile(new URL('package.json', root), 'utf8'))
+    const backend = await readFile(new URL('index.js', root), 'utf8')
+    const client = await readFile(new URL('client.js', root), 'utf8')
+
+    assert.match(manifest.name, /^@wegent\/dsh-/)
+    assert.match(backend, /weworkPluginRuntime\.register/)
+    assert.match(client, /ctx\.wework\.backend\.scope/)
+  }
 })

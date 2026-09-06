@@ -4,6 +4,24 @@ async function readWindowState(control) {
   return JSON.parse(await control.command('getNativeWindowState', 'body'))
 }
 
+async function waitForReadyAfter(control, readyCount, timeoutMs) {
+  let timeout
+  const reconnectTimeout = new Promise((_, reject) => {
+    timeout = setTimeout(
+      () =>
+        reject(
+          new Error('Restoring the main window from Tray did not reconnect the desktop controller')
+        ),
+      timeoutMs
+    )
+  })
+  try {
+    await Promise.race([control.awaitReadyAfter(readyCount), reconnectTimeout])
+  } finally {
+    clearTimeout(timeout)
+  }
+}
+
 async function waitForWindowState(control, predicate, message, timeoutMs) {
   const deadline = Date.now() + timeoutMs
   let latest = null
@@ -75,7 +93,7 @@ export async function createDesktopScenario({ captureScreenshot, uiTimeoutMs }) 
       await control.command('activateTray', 'body', {
         value: JSON.stringify({ type: 'click' }),
       })
-      await control.awaitReadyAfter(readyCountBeforeClose)
+      await waitForReadyAfter(control, readyCountBeforeClose, uiTimeoutMs)
       const restored = await waitForWindowState(
         control,
         state => state.visible && !state.minimized,

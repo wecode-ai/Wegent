@@ -17,7 +17,9 @@ use sha2::{Digest, Sha256};
 use super::command::CommandResult;
 
 const MAX_TEXT_FILE_BYTES: usize = 256 * 1024;
-const MAX_BINARY_CHUNK_BYTES: usize = 1024 * 1024;
+const MAX_BINARY_CHUNK_BYTES: usize = 512 * 1024;
+#[cfg(test)]
+const SOCKET_IO_MAX_PAYLOAD_BYTES: usize = 1_000_000;
 pub const WORKSPACE_ROOTS_ENV: &str = "WEGENT_WORKSPACE_ROOTS";
 
 pub fn is_workspace_file_command(command_key: &str) -> bool {
@@ -445,6 +447,32 @@ mod tests {
         assert_eq!(
             fs::read_to_string(target).expect("read original file"),
             "hello"
+        );
+    }
+
+    #[test]
+    fn binary_chunks_fit_the_socket_io_payload_limit_after_base64_encoding() {
+        let directory = tempfile::tempdir().expect("create workspace");
+        let target = directory.path().join("image.png");
+        fs::write(&target, vec![0_u8; MAX_BINARY_CHUNK_BYTES + 1]).expect("seed binary file");
+
+        let chunk = execute_blocking(
+            "workspace_read_file_chunk",
+            directory.path().to_str(),
+            &["image.png".to_owned(), "0".to_owned()],
+            &allowed_env(directory.path()),
+            None,
+        )
+        .expect("read binary chunk");
+
+        assert_eq!(
+            chunk["content_base64"].as_str().unwrap().len(),
+            MAX_BINARY_CHUNK_BYTES.div_ceil(3) * 4
+        );
+        assert_eq!(chunk["eof"], false);
+        assert!(
+            serde_json::to_vec(&chunk).unwrap().len() < SOCKET_IO_MAX_PAYLOAD_BYTES,
+            "encoded chunk must fit within the backend Socket.IO payload limit"
         );
     }
 }
