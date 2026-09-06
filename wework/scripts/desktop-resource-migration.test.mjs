@@ -252,6 +252,9 @@ describe('desktop resource migration', () => {
     expect(source).toContain('resolveNodeRuntime()')
     expect(source).toContain('install --frozen-lockfile')
     expect(source).toContain("'--prepackaged'")
+    expect(source).toContain(
+      'WEWORK_ONLINE_UPDATE_INCLUDE_COMPONENTS: onlineUpdateIncludesComponents'
+    )
   })
 
   test('keeps macOS release build caches outside the disposable workspace', async () => {

@@ -10,6 +10,8 @@ PROJECT_DIR="$(cd "$WEWORK_DIR/.." && pwd)"
 source "$SCRIPT_DIR/lib/wework-updater-signing.sh"
 # shellcheck source=lib/wework-release-notes.sh
 source "$SCRIPT_DIR/lib/wework-release-notes.sh"
+# shellcheck source=lib/wework-update-channel.sh
+source "$SCRIPT_DIR/lib/wework-update-channel.sh"
 
 EXPLICIT_VITE_API_BASE_URL="${VITE_API_BASE_URL+x}"
 EXPLICIT_VITE_API_BASE_URL_VALUE="${VITE_API_BASE_URL:-}"
@@ -64,6 +66,7 @@ WINDOWS_BUILD_TARGET="${WINDOWS_BUILD_TARGET:-x86_64-pc-windows-msvc}"
 BRAND_CONFIG="${WEWORK_BRAND_CONFIG:-$WEWORK_DIR/branding/weibo.json}"
 UPLOAD="false"
 UNSIGNED="false"
+COMPONENTIZED_HOST_UPDATE="false"
 
 usage() {
   cat <<'EOF'
@@ -153,6 +156,9 @@ verify_uploaded_artifacts() {
   [ "$CHANNEL" = "stable" ] && electron_channel="latest"
   for url in \
     "$UPDATE_BASE_URL/WeWork_${VERSION}_windows-x64-setup.exe" \
+    "$UPDATE_BASE_URL/WeWork_${VERSION}_windows-x64-setup.exe.blockmap" \
+    "$UPDATE_BASE_URL/WeWorkHostUpdate_${VERSION}_windows-x64-setup.exe" \
+    "$UPDATE_BASE_URL/WeWorkHostUpdate_${VERSION}_windows-x64-setup.exe.blockmap" \
     "$UPDATE_BASE_URL/$electron_channel.yml" \
     "$UPDATE_BASE_URL/$CHANNEL-windows-x86_64.json"; do
     if ! curl -fsSI -o /dev/null "$url"; then
@@ -255,7 +261,18 @@ fi
 require_command node
 require_command pnpm
 require_command uv
+require_command curl
 wework_configure_internal_updater_key "$PROJECT_DIR" "$UPDATER_KEY_PATH"
+COMPONENTIZED_HOST_UPDATE="$(
+  wework_resolve_componentized_host_update \
+    "$UPDATE_BASE_URL/components-$CHANNEL-windows-x64.json"
+)"
+if [ "$COMPONENTIZED_HOST_UPDATE" = "true" ]; then
+  export WEWORK_ONLINE_UPDATE_INCLUDE_COMPONENTS=false
+else
+  export WEWORK_ONLINE_UPDATE_INCLUDE_COMPONENTS=true
+fi
+echo "Componentized Host update enabled: $COMPONENTIZED_HOST_UPDATE"
 if [ "$UNSIGNED" = "true" ]; then
   export CSC_IDENTITY_AUTO_DISCOVERY=false
   unset WIN_CSC_LINK
@@ -284,6 +301,7 @@ notes_path="$OUTPUT_DIR/WeWork_${VERSION}_windows-x64.md"
 printf '%s\n' "$RELEASE_NOTES" > "$notes_path"
 WEWORK_RELEASE_BASE_URL="$UPDATE_BASE_URL" \
 WEWORK_COMPONENT_BASE_URL="$COMPONENT_BASE_URL" \
+WEWORK_USE_COMPONENTIZED_HOST_UPDATE="$COMPONENTIZED_HOST_UPDATE" \
 WEWORK_RELEASE_TARGETS=windows-x64 \
   node "$SCRIPT_DIR/generate-desktop-update-manifests.mjs" \
     "$OUTPUT_DIR" "$OUTPUT_DIR" "$VERSION" "$CHANNEL" \

@@ -12,6 +12,8 @@ source "$SCRIPT_DIR/lib/wework-updater-signing.sh"
 source "$SCRIPT_DIR/lib/wework-release-notes.sh"
 # shellcheck source=lib/wework-macos-signing.sh
 source "$SCRIPT_DIR/lib/wework-macos-signing.sh"
+# shellcheck source=lib/wework-update-channel.sh
+source "$SCRIPT_DIR/lib/wework-update-channel.sh"
 # shellcheck source=../../scripts/lib/cargo-cache.sh
 source "$PROJECT_DIR/scripts/lib/cargo-cache.sh"
 
@@ -71,6 +73,7 @@ UPLOAD="false"
 RESUME_SIGNED_APP=""
 SIGNED_APP_ONLY="false"
 UPLOAD_EXISTING="false"
+COMPONENTIZED_HOST_UPDATE="false"
 
 configure_release_sccache() {
   local sccache_port=""
@@ -275,6 +278,9 @@ verify_uploaded_artifacts() {
   for url in \
     "$UPDATE_BASE_URL/WeWork_${VERSION}_$(release_platform).dmg" \
     "$UPDATE_BASE_URL/WeWork_${VERSION}_$(release_platform).zip" \
+    "$UPDATE_BASE_URL/WeWork_${VERSION}_$(release_platform).zip.blockmap" \
+    "$UPDATE_BASE_URL/WeWorkHostUpdate_${VERSION}_$(release_platform).zip" \
+    "$UPDATE_BASE_URL/WeWorkHostUpdate_${VERSION}_$(release_platform).zip.blockmap" \
     "$UPDATE_BASE_URL/$electron_channel-mac.yml" \
     "$UPDATE_MANIFEST_BASE_URL/$platform_manifest"; do
     if ! curl -fsSI -o /dev/null "$url"; then
@@ -422,7 +428,18 @@ fi
 require_command pnpm
 configure_release_build_cache
 if [ "$SIGNED_APP_ONLY" != "true" ]; then
+  require_command curl
   wework_configure_internal_updater_key "$PROJECT_DIR" "$UPDATER_KEY_PATH"
+  COMPONENTIZED_HOST_UPDATE="$(
+    wework_resolve_componentized_host_update \
+      "$UPDATE_BASE_URL/components-$CHANNEL-macos-$arch.json"
+  )"
+  if [ "$COMPONENTIZED_HOST_UPDATE" = "true" ]; then
+    export WEWORK_ONLINE_UPDATE_INCLUDE_COMPONENTS=false
+  else
+    export WEWORK_ONLINE_UPDATE_INCLUDE_COMPONENTS=true
+  fi
+  echo "Componentized Host update enabled: $COMPONENTIZED_HOST_UPDATE"
 fi
 
 export APPLE_APP_SPECIFIC_PASSWORD="${APPLE_APP_SPECIFIC_PASSWORD:-${APPLE_PASSWORD:-}}"
@@ -487,6 +504,7 @@ notes_path="$OUTPUT_DIR/WeWork_${VERSION}_$(release_platform).md"
 printf '%s\n' "$RELEASE_NOTES" > "$notes_path"
 WEWORK_RELEASE_BASE_URL="$UPDATE_BASE_URL" \
 WEWORK_COMPONENT_BASE_URL="$COMPONENT_BASE_URL" \
+WEWORK_USE_COMPONENTIZED_HOST_UPDATE="$COMPONENTIZED_HOST_UPDATE" \
 WEWORK_RELEASE_TARGETS="macos-$arch" \
   node "$SCRIPT_DIR/generate-desktop-update-manifests.mjs" \
     "$OUTPUT_DIR" "$OUTPUT_DIR" "$VERSION" "$CHANNEL" \

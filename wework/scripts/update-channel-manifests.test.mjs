@@ -8,6 +8,7 @@ import {
   hasCompleteChannelAssets,
   isNewerWeworkVersion,
   parseWeworkVersion,
+  supportsComponentizedHostUpdate,
 } from './update-channel-manifests.mjs'
 
 const temporaryDirectories = []
@@ -67,6 +68,20 @@ describe('Wework update channel manifests', () => {
         'beta'
       )
     ).toBe(true)
+  })
+
+  test('only enables componentized Host updates for an explicit channel capability', () => {
+    expect(
+      supportsComponentizedHostUpdate({
+        capabilities: { componentizedHostUpdate: 1 },
+      })
+    ).toBe(true)
+    expect(
+      supportsComponentizedHostUpdate({
+        capabilities: { componentizedHostUpdate: true },
+      })
+    ).toBe(false)
+    expect(supportsComponentizedHostUpdate({})).toBe(false)
   })
 
   test('creates architecture-specific manifests for a custom channel target', async () => {
