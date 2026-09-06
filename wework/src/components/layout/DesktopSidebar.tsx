@@ -75,6 +75,7 @@ import type { CloudConnectionStatus } from '@/features/cloud-connection/cloudCon
 import { useOptionalCloudConnection } from '@/features/cloud-connection/useCloudConnection'
 import { DshSidebarNavigationSurface } from '@/features/dsh-runtime/DshSidebarNavigationSurface'
 import { prefetchDshSidebarNavigation } from '@/features/dsh-runtime/dshSidebarNavigation'
+import { rightWorkspaceDshSidebar } from './workspace-panels/rightWorkspaceDshSidebar'
 import { useExperimentalFeaturesEnabled } from '@/features/experimental-features/useExperimentalFeaturesEnabled'
 import {
   StandaloneFolderProjectDialog,
@@ -4092,7 +4093,13 @@ export function DesktopSidebar({
                     label={t(item.labelKey ?? item.id, item.label)}
                     testId={item.testId ?? `dsh-sidebar-navigation-${item.id}`}
                     selected={activeItem === (item.activeItem ?? item.id)}
-                    onClick={() => navigateTo(item.path)}
+                    onClick={() => {
+                      if (item.workspaceSidebarTab) {
+                        rightWorkspaceDshSidebar.openTab({ type: item.workspaceSidebarTab })
+                        return
+                      }
+                      if (item.path) navigateTo(item.path)
+                    }}
                     onPointerEnter={
                       item.prefetch ? () => prefetchDshSidebarNavigation(item) : undefined
                     }

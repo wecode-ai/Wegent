@@ -32,6 +32,10 @@ export function parseCliArgs(argv) {
   const options = {}
   for (let index = 0; index < rest.length; index += 1) {
     const argument = rest[index]
+    if (argument === '-h' || argument === '--help') {
+      options.help = true
+      continue
+    }
     if (!argument.startsWith('--')) throw new Error(`Unexpected argument: ${argument}`)
     const name = argument.slice(2)
     const value = rest[index + 1]
@@ -183,7 +187,7 @@ function actionRequest(command, options) {
 
 async function main() {
   const { namespace, command, options } = parseCliArgs(process.argv.slice(2))
-  if (namespace === 'desktop' && ['-h', '--help'].includes(command)) {
+  if (namespace === 'desktop' && (['-h', '--help'].includes(command) || options.help === true)) {
     usage()
     return
   }

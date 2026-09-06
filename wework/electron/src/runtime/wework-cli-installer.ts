@@ -8,6 +8,24 @@ export interface WeworkCliInstallOptions {
   nodeCommand: string[]
 }
 
+export interface UserWeworkCliInstallOptions {
+  environment: NodeJS.ProcessEnv
+  packagedApplication: boolean
+  pluginDevelopmentInstance: boolean
+}
+
+export function shouldInstallUserWeworkCli(
+  platform: NodeJS.Platform,
+  options: UserWeworkCliInstallOptions
+): boolean {
+  return (
+    platform === 'darwin' &&
+    options.packagedApplication &&
+    !options.pluginDevelopmentInstance &&
+    !options.environment.WEWORK_E2E_CONTROL_URL?.trim()
+  )
+}
+
 export async function installWeworkCli(
   runtimeBin: string,
   sourcePath: string,
@@ -70,6 +88,7 @@ if [ ! -d "$TARGET_PATH" ]; then
   exit 1
 fi
 ABSOLUTE_PATH="$(cd "$TARGET_PATH" && pwd -P)"
+unset ELECTRON_RUN_AS_NODE
 exec ${appCommand} --open-workspace "$ABSOLUTE_PATH"
 `
 }
@@ -93,6 +112,7 @@ if not exist "%TARGET_PATH%\\NUL" (\r
   echo wework: path is not a directory: %TARGET_PATH% 1>&2\r
   exit /b 1\r
 )\r
+set "ELECTRON_RUN_AS_NODE="\r
 ${appCommand} --open-workspace "%TARGET_PATH%"\r
 exit /b %errorlevel%\r
 :usage\r

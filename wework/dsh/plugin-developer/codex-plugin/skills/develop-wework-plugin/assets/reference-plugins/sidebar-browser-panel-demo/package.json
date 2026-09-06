@@ -1,8 +1,8 @@
 {
-  "name": "@wegent/dsh-wework-plugin-developer",
-  "displayName": "Wework 插件开发",
-  "description": "Creates and debugs Wework Core DSH plugins.",
-  "version": "0.1.9",
+  "name": "@wegent/dsh-sidebar-browser-panel-demo",
+  "displayName": "Sidebar Browser Panel",
+  "description": "Opens a website beside the current Wework workspace.",
+  "version": "0.1.0",
   "private": true,
   "type": "module",
   "main": "index.js",
@@ -10,9 +10,6 @@
     ".": "./index.js",
     "./client": "./client.js",
     "./package.json": "./package.json"
-  },
-  "wework": {
-    "codexPlugin": "./codex-plugin"
   },
   "dsh": {
     "bundle": {
@@ -26,6 +23,12 @@
       "platform": "web"
     }
   },
+  "files": [
+    "README.md",
+    "client.js",
+    "cordis.patch.yml",
+    "index.js"
+  ],
   "peerDependencies": {
     "@deepseek-ai/cordis": "^4.0.1",
     "@deepseek-ai/dsh-client-runtime": "0.1.1-rc.2"
