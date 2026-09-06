@@ -101,10 +101,11 @@ let activeKeybindings = mergeKeybindings([])
 
 export function mergeKeybindings(
   overrides: KeybindingOverride[],
-  platform = getPlatform()
+  platform = getPlatform(),
+  contributions: readonly KeybindingCommand[] = []
 ): Record<string, string | null> {
   const merged = new Map<string, string | null>(
-    getDefaultKeybindings(platform).map(item => [
+    [...getDefaultKeybindings(platform), ...contributions].map(item => [
       item.command,
       normalizeKeybinding(item.defaultKey),
     ])
@@ -150,9 +151,10 @@ export function keybindingFromKeyboardEvent(event: KeyboardEvent): string {
 }
 
 export function setActiveKeybindings(
-  overrides: KeybindingOverride[]
+  overrides: KeybindingOverride[],
+  contributions: readonly KeybindingCommand[] = []
 ): Record<string, string | null> {
-  activeKeybindings = mergeKeybindings(overrides)
+  activeKeybindings = mergeKeybindings(overrides, getPlatform(), contributions)
   window.dispatchEvent(new CustomEvent(ACTIVE_KEYBINDINGS_CHANGED_EVENT))
   return activeKeybindings
 }
@@ -235,6 +237,30 @@ export function dispatchStepFontSizeShortcut(delta: -1 | 1) {
 
 export function dispatchResetFontSizeShortcut() {
   window.dispatchEvent(new CustomEvent(WEWORK_RESET_FONT_SIZE_EVENT))
+}
+
+const BUILTIN_SHORTCUT_HANDLERS: Readonly<Record<string, () => void>> = {
+  [OPEN_TERMINAL_COMMAND]: dispatchOpenTerminalShortcut,
+  [OPEN_SETTINGS_COMMAND]: dispatchOpenSettingsShortcut,
+  [GO_BACK_COMMAND]: dispatchGoBackShortcut,
+  [GO_FORWARD_COMMAND]: dispatchGoForwardShortcut,
+  [TOGGLE_SIDEBAR_COMMAND]: dispatchToggleSidebarShortcut,
+  [TOGGLE_SIDE_PANEL_COMMAND]: dispatchToggleSidePanelShortcut,
+  [TOGGLE_MODEL_SELECTOR_COMMAND]: dispatchToggleModelSelectorShortcut,
+  [INCREASE_FONT_SIZE_COMMAND]: () => dispatchStepFontSizeShortcut(1),
+  [DECREASE_FONT_SIZE_COMMAND]: () => dispatchStepFontSizeShortcut(-1),
+  [RESET_FONT_SIZE_COMMAND]: dispatchResetFontSizeShortcut,
+}
+
+export function isBuiltinShortcutCommand(command: string): boolean {
+  return command in BUILTIN_SHORTCUT_HANDLERS
+}
+
+export function dispatchBuiltinShortcutCommand(command: string): boolean {
+  const handler = BUILTIN_SHORTCUT_HANDLERS[command]
+  if (!handler) return false
+  handler()
+  return true
 }
 
 export function shortcutsAvailable(): boolean {

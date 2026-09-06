@@ -28,6 +28,11 @@ const PATCH_APPLY_TOOLS = new Set(['apply_patch', 'functions.apply_patch'])
 const GUIDANCE_TOOLS = new Set(['conversation_guidance', 'user_guidance'])
 const CONTEXT_COMPACTION_TOOLS = new Set(['context_compaction', 'contextcompaction'])
 const IMAGE_VIEW_TOOLS = new Set(['view_image', 'image_view', 'imageview'])
+const IMAGE_GENERATION_TOOLS = new Set([
+  'image_generation',
+  'imagegeneration',
+  'image_generation_call',
+])
 
 function normalizeToolName(name: string): string {
   return name.trim().toLowerCase()
@@ -85,6 +90,10 @@ export function isContextCompactionToolName(name: string): boolean {
 
 export function isImageViewToolName(name: string): boolean {
   return matchesToolName(name, IMAGE_VIEW_TOOLS)
+}
+
+export function isImageGenerationToolName(name: string): boolean {
+  return matchesToolName(name, IMAGE_GENERATION_TOOLS)
 }
 
 export function getInputField(block: Pick<ToolBlock, 'toolInput'>, ...keys: string[]) {

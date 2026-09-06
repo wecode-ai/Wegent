@@ -178,7 +178,7 @@ window.__ModuleLoader__.load({
       apply(ctx) {
         ctx.slots.inject('wework.settings.page', function* () {
           for (const page of pages) {
-            yield ctx.wework.ui.register(ctx, 'wework.settings.page', {
+            yield ctx.wework.contributions.register(ctx, 'wework.settings.page', {
               order: 100,
               ...page,
               module: 'plugins/wework-ui-core-settings.js',

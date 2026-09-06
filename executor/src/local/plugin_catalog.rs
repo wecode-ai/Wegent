@@ -48,6 +48,7 @@ pub struct WegentStorePluginSummary {
     logo: Option<String>,
     category: Option<String>,
     plugin_path: String,
+    default_prompt: Option<Value>,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -179,6 +180,9 @@ fn wegent_store_plugin_summary(
         logo: optional_trimmed_string(interface.and_then(|value| value.get("logo"))),
         category: optional_trimmed_string(interface.and_then(|value| value.get("category"))),
         plugin_path: plugin_root.display().to_string(),
+        default_prompt: interface
+            .and_then(|value| value.get("defaultPrompt"))
+            .cloned(),
     })
 }
 
@@ -663,7 +667,8 @@ mod tests {
                 "interface": {
                     "displayName": "Example Plugin",
                     "logo": "./icon.png",
-                    "category": "Productivity"
+                    "category": "Productivity",
+                    "defaultPrompt": ["Build an example"]
                 },
                 "connectors": connectors
             }),
@@ -707,6 +712,10 @@ mod tests {
         assert_eq!(listed.plugins[0].marketplace, "wegent");
         assert!(!listed.plugins[0].enabled);
         assert_eq!(listed.plugins[0].version.as_deref(), Some("1.2.3"));
+        assert_eq!(
+            listed.plugins[0].default_prompt,
+            Some(json!(["Build an example"]))
+        );
     }
 
     #[test]

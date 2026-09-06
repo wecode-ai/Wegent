@@ -15,6 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import Session
 
 from app.api.dependencies import get_db, with_task_telemetry
+from app.api.endpoints.adapter.attachments import _build_content_disposition
 from app.core import security
 from app.core.config import settings
 from app.core.constants import (
@@ -904,7 +905,7 @@ async def export_task_docx(
         return StreamingResponse(
             io.BytesIO(docx_buffer.getvalue()),
             media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-            headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+            headers={"Content-Disposition": _build_content_disposition(filename)},
         )
     except Exception as e:
         logger.error(f"Failed to export task {task_id} to DOCX: {str(e)}")

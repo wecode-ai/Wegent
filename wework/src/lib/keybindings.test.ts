@@ -53,6 +53,11 @@ describe('keybindings', () => {
     expect(
       mergeKeybindings([{ command: OPEN_TERMINAL_COMMAND, key: null }])[OPEN_TERMINAL_COMMAND]
     ).toBeNull()
+    expect(
+      mergeKeybindings([], 'mac', [{ command: 'extension.run', defaultKey: 'Command+Shift+E' }])[
+        'extension.run'
+      ]
+    ).toBe('Shift+Command+E')
   })
 
   it('creates keybindings from keyboard events', () => {

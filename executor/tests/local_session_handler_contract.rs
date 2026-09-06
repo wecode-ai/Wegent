@@ -646,6 +646,74 @@ fn disabled_session_gateway_rejects_code_server_session() {
 }
 
 #[test]
+fn disabled_code_server_capability_rejects_session_before_creating_path() {
+    let root = temp_root("code-server-capability-disabled");
+    let missing = root.join("missing");
+    let pty_manager = Arc::new(RecordingPtyManager::new(Arc::new(Mutex::new(
+        RecordingTerminal::default(),
+    ))));
+    let mut handler =
+        LocalSessionHandler::new("http://localhost:17888", true, 18080, root, pty_manager)
+            .with_interactive_sessions(false, true);
+
+    let result = handler.handle_start_session(SessionStartRequest {
+        session_type: SessionType::CodeServer,
+        session_id: "code-disabled".to_owned(),
+        project_id: 123,
+        path: missing.display().to_string(),
+        access_token: "secret".to_owned(),
+        rows: None,
+        cols: None,
+        create_if_missing: true,
+        ttl_seconds: None,
+    });
+
+    assert!(!result.success);
+    assert_eq!(
+        result.error.as_deref(),
+        Some("Code-server sessions are disabled on this device")
+    );
+    assert!(!missing.exists());
+    assert!(!handler.sessions.contains_key("code-disabled"));
+}
+
+#[test]
+fn disabled_terminal_capability_rejects_session_before_spawning_pty() {
+    let root = temp_root("terminal-capability-disabled");
+    let pty_manager = Arc::new(RecordingPtyManager::new(Arc::new(Mutex::new(
+        RecordingTerminal::default(),
+    ))));
+    let mut handler = LocalSessionHandler::new(
+        "http://localhost:17888",
+        true,
+        18080,
+        root.clone(),
+        pty_manager.clone(),
+    )
+    .with_interactive_sessions(true, false);
+
+    let result = handler.handle_start_session(SessionStartRequest {
+        session_type: SessionType::Terminal,
+        session_id: "terminal-disabled".to_owned(),
+        project_id: 123,
+        path: root.display().to_string(),
+        access_token: "secret".to_owned(),
+        rows: None,
+        cols: None,
+        create_if_missing: false,
+        ttl_seconds: None,
+    });
+
+    assert!(!result.success);
+    assert_eq!(
+        result.error.as_deref(),
+        Some("Terminal sessions are disabled on this device")
+    );
+    assert!(pty_manager.spawned.lock().unwrap().is_empty());
+    assert!(!handler.sessions.contains_key("terminal-disabled"));
+}
+
+#[test]
 fn start_session_rejects_missing_project_path() {
     let root = temp_root("missing-project-root");
     let missing = root.join("missing");

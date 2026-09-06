@@ -749,6 +749,18 @@ impl CodexNotificationEventMapper {
                 emit_context.request.cwd().unwrap_or_default(),
                 Some("done"),
             );
+            if let Some(render_payload) = block
+                .as_ref()
+                .filter(|block| {
+                    block.get("tool_name").and_then(Value::as_str) == Some("image_generation")
+                })
+                .and_then(|block| block.get("render_payload"))
+                .cloned()
+            {
+                if let Some(object) = updates.as_object_mut() {
+                    object.insert("render_payload".to_owned(), render_payload);
+                }
+            }
             emit_response_event(
                 emit_context.event_tx,
                 emit_context.device_id,

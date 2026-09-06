@@ -189,6 +189,32 @@ describe('ModelSelector desktop layout', () => {
     expect(left).toBeLessThanOrEqual(SHELL_LEFT - 16)
   })
 
+  test('keeps a menu opened inside the right workspace panel over the panel', async () => {
+    const shell = createShellElement()
+
+    render(
+      <ModelSelector
+        models={[SAMPLE_MODEL]}
+        selectedModel={SAMPLE_MODEL}
+        selectedModelOptions={{}}
+        disabled={false}
+        onSelectModel={vi.fn()}
+        onSelectModelOption={vi.fn()}
+      />,
+      { container: shell }
+    )
+
+    const button = screen.getByTestId('model-selector-button')
+    setButtonRect(button, WINDOW_INNER_WIDTH - 20)
+    fireEvent.click(button)
+
+    const menu = await waitFor(() => screen.getByTestId('model-selector-menu'))
+    const wrapper = menu.parentElement
+    expect(wrapper).not.toBeNull()
+    const left = parseInt(wrapper!.style.left, 10)
+    expect(left).toBeGreaterThanOrEqual(SHELL_LEFT)
+  })
+
   test('expands model options directly when there is only one family', async () => {
     createShellElement({ hidden: true })
 

@@ -38,6 +38,7 @@ export interface WorkspaceAddMenuItem {
   testId?: string
   disabled?: boolean
   shortcut?: string
+  title?: string
 }
 
 interface WorkspaceAddMenuProps {
@@ -190,6 +191,7 @@ export function WorkspaceAddMenu({
                 role="menuitem"
                 data-testid={item.testId}
                 disabled={item.disabled}
+                title={item.title}
                 onClick={() => void selectItem(item)}
                 className="flex h-8 w-full items-center gap-2.5 rounded-lg px-2.5 text-left text-sm font-normal leading-5 text-text-primary transition-colors hover:bg-muted disabled:cursor-not-allowed disabled:opacity-45 disabled:hover:bg-transparent"
               >

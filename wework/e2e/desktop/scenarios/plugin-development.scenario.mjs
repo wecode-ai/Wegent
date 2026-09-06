@@ -7,9 +7,11 @@ import { promisify } from 'node:util'
 
 const STATUS = '[data-testid="wework-plugin-development-sidebar-status"]'
 const execFileAsync = promisify(execFile)
-const weworkCliPath = resolve(
-  dirname(fileURLToPath(import.meta.url)),
-  '../../../electron/src/cli/wework-cli.mjs'
+const scenarioDirectory = dirname(fileURLToPath(import.meta.url))
+const weworkCliPath = resolve(scenarioDirectory, '../../../electron/src/cli/wework-cli.mjs')
+const bundledMarketplaceManifestPath = resolve(
+  scenarioDirectory,
+  '../../../resources/bundled-plugins/wework-personal/.claude-plugin/marketplace.json'
 )
 
 async function runWeworkCli(args, projectRoot, registryDirectory) {
@@ -47,12 +49,24 @@ async function waitForFile(path, timeoutMs) {
   throw new Error(`Timed out waiting for generated plugin file: ${path}`)
 }
 
+async function readBundledPluginVersion(pluginName) {
+  const marketplace = JSON.parse(await readFile(bundledMarketplaceManifestPath, 'utf8'))
+  const plugin = marketplace.plugins?.find(candidate => candidate.name === pluginName)
+  assert.equal(
+    typeof plugin?.version,
+    'string',
+    `Bundled marketplace is missing a version for ${pluginName}`
+  )
+  return plugin.version
+}
+
 export async function createDesktopScenario({
   captureScreenshot,
   resultDir,
   uiTimeoutMs,
   workbenchReadyTimeoutMs,
 }) {
+  const developerPluginVersion = await readBundledPluginVersion('wework-plugin-developer')
   const pluginRoot = join(resultDir, 'plugin-development-project')
   const controlRegistry = join(resultDir, 'desktop-control-instances')
   await mkdir(pluginRoot, { recursive: true })
@@ -211,7 +225,7 @@ export async function createDesktopScenario({
         'cache',
         'wework-personal',
         'wework-plugin-developer',
-        '0.1.4',
+        developerPluginVersion,
         '.codex-plugin',
         'plugin.json'
       )

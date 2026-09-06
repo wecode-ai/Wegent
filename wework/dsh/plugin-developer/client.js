@@ -878,14 +878,18 @@ window.__ModuleLoader__.load({
       inject: ['slots', 'wework'],
       apply(ctx) {
         for (const contribution of contributions) {
-          ctx.slots.inject(contribution.slot, () =>
-            ctx.wework.ui.register(
-              ctx,
-              contribution.slot,
-              contribution.descriptor,
+          ctx.slots.inject(contribution.slot, function* () {
+            yield ctx.wework.contributions.register(ctx, contribution.slot, contribution.descriptor)
+            yield ctx.slots.register(
+              {
+                name: contribution.slot,
+                id: contribution.descriptor.id,
+                label: contribution.descriptor.label,
+                order: contribution.descriptor.order,
+              },
               contribution.component
             )
-          )
+          })
         }
       },
     }
