@@ -1,11 +1,11 @@
 import assert from 'node:assert/strict'
 import { spawn } from 'node:child_process'
 import { createHash } from 'node:crypto'
-import { createReadStream } from 'node:fs'
-import { cp, mkdir, readFile, readdir, rm, writeFile } from 'node:fs/promises'
+import { cp, mkdir, readFile, rm, writeFile } from 'node:fs/promises'
 import { createServer } from 'node:http'
 import { join, resolve } from 'node:path'
-import { pipeline } from 'node:stream/promises'
+
+import { hashComponentPath } from '../../../scripts/lib/component-content-hash.mjs'
 
 const MARKER_NAME = 'e2e-component-update.marker'
 
@@ -34,7 +34,7 @@ export async function createDesktopScenario({
   await createTarArchive(source, archive)
   const archiveBytes = await readFile(archive)
   const archiveSha256 = sha256(archiveBytes)
-  const contentSha256 = await hashTree(source)
+  const contentSha256 = await hashComponentPath(source)
   const target = componentTarget(process.platform, process.arch)
   const assetName = `WeworkComponent_weworkCorePlugins_${archiveSha256}_${target.platform}_${target.arch}.tar.gz`
   let origin = ''
@@ -190,28 +190,6 @@ async function waitFor(predicate, message, timeoutMs = 30_000) {
 
 async function readJson(path) {
   return JSON.parse(await readFile(path, 'utf8'))
-}
-
-async function hashTree(root, relative = '') {
-  const hash = createHash('sha256')
-  const entries = await readdir(join(root, relative), { withFileTypes: true })
-  for (const entry of entries.sort((left, right) => left.name.localeCompare(right.name))) {
-    const child = join(relative, entry.name)
-    if (entry.isDirectory()) {
-      hash.update(`directory:${child}\0${await hashTree(root, child)}\0`)
-    } else if (entry.isFile()) {
-      hash.update(`file:${child}\0${await fileSha256(join(root, child))}\0`)
-    } else {
-      throw new Error(`Unsupported component entry: ${child}`)
-    }
-  }
-  return hash.digest('hex')
-}
-
-async function fileSha256(path) {
-  const hash = createHash('sha256')
-  await pipeline(createReadStream(path), hash)
-  return hash.digest('hex')
 }
 
 function sha256(bytes) {

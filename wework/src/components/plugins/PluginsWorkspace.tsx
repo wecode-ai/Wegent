@@ -156,6 +156,7 @@ import {
   localMarketplaceIdFromItem,
   localMarketplaceKey,
   marketplaceComponentCount,
+  marketplacePluginDetailSelectionKey,
   mergeWarmInstalledPlugins,
   mergeWarmMarketplaceItems,
   mergeWarmMarketplaceOptions,
@@ -3806,7 +3807,7 @@ export function PluginsWorkspace({
   const installedPluginsForDetailRef = useRef(installedPlugins)
   installedPluginsForDetailRef.current = installedPlugins
   const selectedMarketplaceDetailKey = selectedMarketplacePlugin
-    ? `${localMarketplaceIdFromItem(selectedMarketplacePlugin) ?? ''}::${selectedMarketplacePlugin.name}`
+    ? marketplacePluginDetailSelectionKey(selectedMarketplacePlugin)
     : ''
 
   useEffect(() => {
@@ -3833,16 +3834,12 @@ export function PluginsWorkspace({
     const shouldFetchLocalDetail = Boolean(marketplaceId)
 
     if (!shouldFetchLocalDetail) {
-      setSelectedMarketplacePluginDetail(previous =>
-        keepRicherMarketplacePluginDetail(previous, baseDetail)
-      )
+      setSelectedMarketplacePluginDetail(baseDetail)
       return
     }
 
     let disposed = false
-    setSelectedMarketplacePluginDetail(previous =>
-      keepRicherMarketplacePluginDetail(previous, baseDetail)
-    )
+    setSelectedMarketplacePluginDetail(baseDetail)
     void localPluginApi
       .readMarketplacePluginDetail(marketplaceId!, selected.name)
       .then(detail => {

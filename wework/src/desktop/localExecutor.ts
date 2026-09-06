@@ -149,45 +149,16 @@ async function reconcileBundledPluginMarketplace(
     marketplace.contentHash,
   ].join(':')
   if (reconciledBundledPluginMarketplaceKey === reconciliationKey) return
-
-  const addMarketplace = () =>
-    requestLocalExecutor<{ marketplaceName: string }>('codex.app_server_request', {
-      method: 'marketplace/add',
-      params: {
-        source: marketplace.path,
-        refName: null,
-        sparsePaths: null,
-      },
-    })
-
-  let added: { marketplaceName: string }
-  try {
-    added = await addMarketplace()
-  } catch (addError) {
-    const available = await requestLocalExecutor<{
-      marketplaces: Array<{ name: string; path?: string | null }>
-    }>('codex.app_server_request', {
-      method: 'plugin/list',
-      params: {
-        cwds: null,
-        marketplaceKinds: ['local'],
-      },
-    })
-    const existing = available.marketplaces.find(candidate => candidate.name === marketplace.id)
-    if (!existing) {
-      throw new Error(`Bundled plugin marketplace ${marketplace.id} could not be registered`, {
-        cause: addError,
-      })
+  const reconciled = await requestLocalExecutor<{ marketplaceName: string; action: string }>(
+    'runtime.codex.plugin.reconcile_bundled_marketplace',
+    {
+      marketplaceId: marketplace.id,
+      source: marketplace.path,
     }
-    await requestLocalExecutor('codex.app_server_request', {
-      method: 'marketplace/remove',
-      params: { marketplaceName: marketplace.id },
-    })
-    added = await addMarketplace()
-  }
-  if (added.marketplaceName !== marketplace.id) {
+  )
+  if (reconciled.marketplaceName !== marketplace.id) {
     throw new Error(
-      `Bundled plugin marketplace resolved to ${added.marketplaceName || 'an unknown name'}`
+      `Bundled plugin marketplace resolved to ${reconciled.marketplaceName || 'an unknown name'}`
     )
   }
   await installBundledMarketplaceDefaults(marketplace)
@@ -240,6 +211,14 @@ export async function ensureBundledPluginInstalled(pluginName: string): Promise<
 
 export function getInitializedBundledPluginMarketplace(): BundledPluginMarketplace | null {
   return initializedBundledPluginMarketplace
+}
+
+export function getKnownLocalExecutorDeviceId(): string | null {
+  return (
+    initializedLocalExecutorStatus?.deviceId?.trim() ||
+    availableLocalExecutorStatus?.deviceId?.trim() ||
+    null
+  )
 }
 
 export function ensureLocalExecutorAvailable(): Promise<LocalExecutorStatus> {

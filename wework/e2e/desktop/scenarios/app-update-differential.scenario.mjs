@@ -5,7 +5,10 @@ import { createRequire } from 'node:module'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
+import { hashComponentPath } from '../../../scripts/lib/component-content-hash.mjs'
+
 const TEST_TRAILER = Buffer.from('\nwework-e2e-differential-update\n')
+const UPDATE_CHANNEL = 'stable'
 const electronPackage = resolve(
   dirname(fileURLToPath(import.meta.url)),
   '..',
@@ -32,10 +35,6 @@ export async function createDesktopScenario({
   const releaseRoot = resolve(resourcesRoot, '..', '..', '..', '..')
   const packagedComponents = JSON.parse(
     await readFile(join(resourcesRoot, 'components.json'), 'utf8')
-  )
-  assert.ok(
-    packagedComponents.channel === 'stable' || packagedComponents.channel === 'beta',
-    `Packaged component channel is invalid: ${packagedComponents.channel}`
   )
   const releaseAssets = await readdir(releaseRoot)
   const oldZipName = findSingle(
@@ -71,6 +70,7 @@ export async function createDesktopScenario({
 
   let origin = ''
   let rejectManifest = true
+  let targetComponentManifest
   const requests = []
   const server = createServer((request, response) => {
     const url = new URL(request.url ?? '/', origin)
@@ -102,11 +102,9 @@ export async function createDesktopScenario({
       response.end(manifest)
       return
     }
-    if (path === `/components-${packagedComponents.channel}-macos-arm64.json`) {
+    if (path === `/components-${UPDATE_CHANNEL}-macos-arm64.json`) {
       response.setHeader('content-type', 'application/json')
-      response.end(
-        JSON.stringify(componentManifestForTarget(packagedComponents, targetVersion, origin))
-      )
+      response.end(JSON.stringify(targetComponentManifest))
       return
     }
     if (path === `/${targetZipName}.blockmap`) {
@@ -149,6 +147,12 @@ export async function createDesktopScenario({
   const address = server.address()
   assert.ok(address && typeof address !== 'string')
   origin = `http://127.0.0.1:${address.port}`
+  targetComponentManifest = await componentManifestForTarget(
+    packagedComponents,
+    resourcesRoot,
+    targetVersion,
+    origin
+  )
 
   return {
     usesReleasePackageRuntimeAssets: true,
@@ -203,14 +207,29 @@ export async function createDesktopScenario({
       assert.equal(componentState.pending?.appVersion, targetVersion)
       assert.equal(componentState.pending?.stagedFromAppVersion, currentVersion)
 
-      const zipRequests = requests.filter(request => request.path === `/${targetZipName}`)
-      assert.ok(
-        requests.some(
-          request => request.path === `/components-${packagedComponents.channel}-macos-arm64.json`
-        ),
+      const componentManifestPath = `/components-${UPDATE_CHANNEL}-macos-arm64.json`
+      const componentManifestRequestIndex = requests.findIndex(
+        request => request.path === componentManifestPath
+      )
+      const firstZipRequestIndex = requests.findIndex(
+        request => request.path === `/${targetZipName}`
+      )
+      assert.notEqual(
+        componentManifestRequestIndex,
+        -1,
         'The target app component manifest was never requested'
       )
-      assert.ok(zipRequests.length > 0, 'The target ZIP was never requested')
+      assert.notEqual(firstZipRequestIndex, -1, 'The target ZIP was never requested')
+      assert.ok(
+        componentManifestRequestIndex < firstZipRequestIndex,
+        'The target app component manifest was not staged before the ZIP download'
+      )
+      assert.equal(
+        requests.some(request => request.path.startsWith('/unused-')),
+        false,
+        'The updater downloaded an unchanged packaged component'
+      )
+      const zipRequests = requests.filter(request => request.path === `/${targetZipName}`)
       assert.ok(
         zipRequests.some(request => request.range),
         'The updater did not request any ZIP byte ranges'
@@ -251,28 +270,32 @@ export async function createDesktopScenario({
   }
 }
 
-function componentManifestForTarget(packaged, targetVersion, origin) {
-  return {
-    schemaVersion: 1,
-    appVersion: targetVersion,
-    channel: packaged.channel,
-    platform: 'macos',
-    arch: 'arm64',
-    components: Object.fromEntries(
-      Object.entries(packaged.components)
-        .filter(([id]) => id !== 'electron')
-        .map(([id, component]) => [
+async function componentManifestForTarget(packaged, resourcesRoot, targetVersion, origin) {
+  const components = await Promise.all(
+    Object.entries(packaged.components)
+      .filter(([id]) => id !== 'electron')
+      .map(async ([id, component]) => {
+        const contentSha256 = await hashComponentPath(join(resourcesRoot, component.path))
+        return [
           id,
           {
             version: component.version,
-            contentSha256: component.sha256,
-            archiveSha256: component.sha256,
+            contentSha256,
+            archiveSha256: contentSha256,
             archiveBytes: 1,
             downloadUrl: `${origin}/unused-${id}.tar.gz`,
             entryPath: '.',
           },
-        ])
-    ),
+        ]
+      })
+  )
+  return {
+    schemaVersion: 1,
+    appVersion: targetVersion,
+    channel: UPDATE_CHANNEL,
+    platform: 'macos',
+    arch: 'arm64',
+    components: Object.fromEntries(components),
   }
 }
 

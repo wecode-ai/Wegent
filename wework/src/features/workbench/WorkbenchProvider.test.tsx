@@ -94,6 +94,7 @@ const localExecutorMocks = vi.hoisted(() => ({
   ensureBundledPluginMarketplaceRegistered: vi.fn().mockResolvedValue(undefined),
   ensureLocalExecutorStarted: vi.fn(),
   getInitializedBundledPluginMarketplace: vi.fn().mockReturnValue(null),
+  getKnownLocalExecutorDeviceId: vi.fn().mockReturnValue('local-device'),
   requestLocalExecutor: vi.fn(),
   subscribeLocalExecutorEvents: vi.fn(),
 }))
@@ -120,6 +121,7 @@ vi.mock('@/desktop/localExecutor', () => ({
     localExecutorMocks.ensureBundledPluginMarketplaceRegistered,
   ensureLocalExecutorStarted: localExecutorMocks.ensureLocalExecutorStarted,
   getInitializedBundledPluginMarketplace: localExecutorMocks.getInitializedBundledPluginMarketplace,
+  getKnownLocalExecutorDeviceId: localExecutorMocks.getKnownLocalExecutorDeviceId,
   requestLocalExecutor: localExecutorMocks.requestLocalExecutor,
   subscribeLocalExecutorEvents: localExecutorMocks.subscribeLocalExecutorEvents,
 }))
