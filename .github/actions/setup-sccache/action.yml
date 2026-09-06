@@ -6,6 +6,10 @@ inputs:
     description: The sccache release to install.
     required: false
     default: v0.16.0
+  save-cache:
+    description: Whether this job may populate the shared compiler cache.
+    required: false
+    default: "false"
 
 runs:
   using: composite
@@ -40,6 +44,6 @@ runs:
           echo "SCCACHE_GHA_VERSION=wegent-sccache-v1-$RUNNER_OS-$RUNNER_ARCH"
         } >> "$GITHUB_ENV"
 
-        if [[ "$GITHUB_REF" != "refs/heads/main" ]]; then
+        if [[ "${{ inputs.save-cache }}" != "true" && "$GITHUB_REF" != "refs/heads/main" ]]; then
           echo "SCCACHE_GHA_RW_MODE=READ_ONLY" >> "$GITHUB_ENV"
         fi

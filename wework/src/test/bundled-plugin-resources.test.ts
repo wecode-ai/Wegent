@@ -318,9 +318,10 @@ describe('bundled plugin resources', () => {
     )
 
     expect(workflow).toContain('macos-14')
-    expect(workflow).toContain('macos-15-intel')
+    expect(workflow).not.toContain('macos-15-intel')
     expect(workflow).not.toContain('Install Rosetta 2')
     expect(workflow).not.toContain('node_arch')
+    expect(workflow).toContain('WEWORK_ELECTRON_DEPENDENCIES_READY: "true"')
     expect(workflow).toContain('windows-latest')
     expect(workflow).toContain('ubuntu-latest')
     expect(workflow).toContain('macOS arm64')

@@ -123,6 +123,7 @@ describe('desktop resource migration', () => {
     expect(prepareElectron).toContain('acquireProcessLock(electronToolchainLockPath)')
     expect(packageApp).toContain('acquireProcessLock(electronToolchainLockPath)')
     expect(prepareElectron).toContain("['--dir', 'electron', 'install', '--frozen-lockfile']")
+    expect(prepareElectron).toContain("WEWORK_ELECTRON_DEPENDENCIES_READY !== 'true'")
     expect(packageApp).toContain('await releaseToolchainLock()')
     const noAsar = packageApp.indexOf('process.noAsar = true')
     const outputCleanup = packageApp.indexOf('rm(output')
