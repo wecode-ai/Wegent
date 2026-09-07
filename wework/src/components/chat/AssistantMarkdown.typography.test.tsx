@@ -25,6 +25,22 @@ test('uses document typography for every Markdown heading level', () => {
   expect(screen.getByRole('heading', { level: 6 })).toHaveClass('text-sm')
 })
 
+test('shows the horizontal scrollbar for completed code blocks in document previews', () => {
+  render(
+    <AssistantMarkdown
+      content={[
+        '```sql',
+        "SELECT 'a completed document preview line that is wider than its code block';",
+        '```',
+      ].join('\n')}
+      variant="document"
+    />
+  )
+
+  expect(screen.getByTestId('markdown-code-scroll-container')).toHaveClass('overflow-x-auto')
+  expect(screen.getByTestId('markdown-code-horizontal-scrollbar')).toBeInTheDocument()
+})
+
 test('allows long Markdown links to wrap within narrow message cards', () => {
   const url =
     'http://127.0.0.1:58617/v1/codex-router/task-3fd8b50e7d269add73aff1114746a4a9fab19a10b9b97e19/result'
