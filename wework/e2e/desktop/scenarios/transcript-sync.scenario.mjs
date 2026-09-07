@@ -25,6 +25,8 @@ const DEVICE_B_OFFLINE_PROMPT = 'WEWORK_DESKTOP_E2E_TRANSCRIPT_SYNC_DEVICE_B_OFF
 const DEVICE_B_SECOND_OFFLINE_PROMPT = 'WEWORK_DESKTOP_E2E_TRANSCRIPT_SYNC_DEVICE_B_SECOND_OFFLINE'
 const FOURTH_PROMPT = 'WEWORK_DESKTOP_E2E_TRANSCRIPT_SYNC_MAINLINE_AFTER_BRANCH'
 const FOURTH_COMPLETION = 'WEWORK_DESKTOP_E2E_TRANSCRIPT_SYNC_MAINLINE_AFTER_BRANCH_COMPLETE'
+const FIFTH_PROMPT = 'WEWORK_DESKTOP_E2E_TRANSCRIPT_SYNC_DISABLED_LOCAL_CONTINUATION'
+const FIFTH_COMPLETION = 'WEWORK_DESKTOP_E2E_TRANSCRIPT_SYNC_DISABLED_LOCAL_CONTINUATION_COMPLETE'
 const SYNC_POLL_INTERVAL_MS = 5_000
 
 function json(response, status, body) {
@@ -473,17 +475,19 @@ export function createDesktopScenario({ electronUserDataDirectory, uiTimeoutMs, 
         const parsedBody = await requestBody(request)
         modelRequests.push(structuredClone(parsedBody))
         const body = JSON.stringify(parsedBody)
-        const completion = body.includes(FOURTH_PROMPT)
-          ? FOURTH_COMPLETION
-          : body.includes(THIRD_PROMPT)
-            ? THIRD_COMPLETION
-            : body.includes(SECOND_PROMPT)
-              ? SECOND_COMPLETION
-              : body.includes(DEVICE_B_PROMPT)
-                ? DEVICE_B_COMPLETION
-                : body.includes(FIRST_PROMPT)
-                  ? FIRST_COMPLETION
-                  : null
+        const completion = body.includes(FIFTH_PROMPT)
+          ? FIFTH_COMPLETION
+          : body.includes(FOURTH_PROMPT)
+            ? FOURTH_COMPLETION
+            : body.includes(THIRD_PROMPT)
+              ? THIRD_COMPLETION
+              : body.includes(SECOND_PROMPT)
+                ? SECOND_COMPLETION
+                : body.includes(DEVICE_B_PROMPT)
+                  ? DEVICE_B_COMPLETION
+                  : body.includes(FIRST_PROMPT)
+                    ? FIRST_COMPLETION
+                    : null
         if (!completion) return false
         modelSequence += 1
         const responseId = `wework-transcript-sync-${modelSequence}`
@@ -826,6 +830,98 @@ export function createDesktopScenario({ electronUserDataDirectory, uiTimeoutMs, 
           `Post-branch model request was polluted by device B branch history: ${excluded}`
         )
       }
+
+      await waitFor(
+        () => activeTranscript().turns.length === 5 && sqliteOutboxCount(outboxPath) === 0,
+        uiTimeoutMs + SYNC_POLL_INTERVAL_MS,
+        'Device A did not synchronize its final mainline turn before disabling cloud sync'
+      )
+      await control.command('click', '[data-testid="settings-button"]')
+      await control.command('click', '[data-testid="settings-menu-button"]')
+      await control.command('click', '[data-testid="settings-nav-connections"]')
+      await control.command('waitFor', '[data-testid="transcript-sync-enabled-status"]', {
+        text: '同步已开启',
+        timeoutMs: uiTimeoutMs,
+      })
+      await control.command('click', '[data-testid="transcript-sync-enabled-checkbox"]')
+      await control.command('waitFor', '[data-testid="transcript-sync-enabled-status"]', {
+        text: '同步已关闭',
+        timeoutMs: uiTimeoutMs,
+      })
+      const syncRequestsAfterDisable = requestLog.filter(
+        value =>
+          value.includes('/api/wework-transcripts') || value.includes('/api/v1/dsh-plugin-storage/')
+      ).length
+      await control.command('click', '[data-testid="settings-back-button"]')
+      await control.command('fill', ACTIVE_COMPOSER_SELECTOR, { value: FIFTH_PROMPT })
+      await control.command('press', ACTIVE_COMPOSER_SELECTOR, { key: 'Enter' })
+      await control.command('waitFor', '[data-testid="message-assistant"]', {
+        text: FIFTH_COMPLETION,
+        timeoutMs: uiTimeoutMs,
+      })
+      await new Promise(resolve => setTimeout(resolve, SYNC_POLL_INTERVAL_MS + 500))
+      assert.equal(
+        requestLog.filter(
+          value =>
+            value.includes('/api/wework-transcripts') ||
+            value.includes('/api/v1/dsh-plugin-storage/')
+        ).length,
+        syncRequestsAfterDisable,
+        'Disabled transcript sync still contacted the backend'
+      )
+      assert.equal(
+        sqliteOutboxCount(outboxPath),
+        1,
+        'Disabled transcript sync did not retain the native turn locator for later synchronization'
+      )
+      const disabledModelRequest = modelRequests.find(request =>
+        JSON.stringify(request).includes(FIFTH_PROMPT)
+      )
+      assert.ok(
+        disabledModelRequest,
+        'The disabled-sync local continuation did not reach the model'
+      )
+      const disabledModelTexts = modelInputTexts(disabledModelRequest)
+      for (const expected of [
+        ...expectedMainlineHistory,
+        THIRD_PROMPT,
+        THIRD_COMPLETION,
+        FOURTH_PROMPT,
+        FOURTH_COMPLETION,
+        FIFTH_PROMPT,
+      ]) {
+        assert.equal(
+          modelInputMessageCount(disabledModelTexts, expected),
+          1,
+          `Disabled sync changed the native history sent to the model: ${expected}`
+        )
+      }
+      for (const excluded of [DEVICE_B_OFFLINE_PROMPT, DEVICE_B_SECOND_OFFLINE_PROMPT]) {
+        assert.equal(
+          modelInputContains(disabledModelTexts, excluded),
+          false,
+          `Disabled-sync model request was polluted by branch history: ${excluded}`
+        )
+      }
+
+      await control.command('click', '[data-testid="settings-button"]')
+      await control.command('click', '[data-testid="settings-menu-button"]')
+      await control.command('click', '[data-testid="settings-nav-connections"]')
+      await control.command('waitFor', '[data-testid="transcript-sync-enabled-status"]', {
+        text: '同步已关闭',
+        timeoutMs: uiTimeoutMs,
+      })
+      await control.command('click', '[data-testid="transcript-sync-enabled-checkbox"]')
+      await control.command('waitFor', '[data-testid="transcript-sync-enabled-status"]', {
+        text: '同步已开启',
+        timeoutMs: uiTimeoutMs,
+      })
+      await control.command('click', '[data-testid="settings-back-button"]')
+      await waitFor(
+        () => activeTranscript().turns.length === 6 && sqliteOutboxCount(outboxPath) === 0,
+        uiTimeoutMs + SYNC_POLL_INTERVAL_MS,
+        'Re-enabled transcript sync did not upload the queued native turn'
+      )
       await control.command('waitFor', ACTIVE_WORKBENCH_SELECTOR, { timeoutMs: uiTimeoutMs })
     },
 

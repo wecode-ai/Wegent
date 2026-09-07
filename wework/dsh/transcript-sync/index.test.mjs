@@ -290,6 +290,70 @@ test('keeps offline turns queued and discovers a cloud connection later', async 
   assert.equal(requests[0].apiBaseUrl, 'https://cloud.example.com/api')
 })
 
+test('queues local turns without cloud requests while synchronization is disabled', async () => {
+  const requests = []
+  const outbox = new MemorySyncOutbox()
+  const source = createTurnSource()
+  const state = {
+    value: { version: 4, enabled: false, transcripts: {}, preferencesHash: null },
+    saves: 0,
+    async save() {
+      this.saves += 1
+    },
+  }
+  const desktop = {
+    preferences: {
+      async get() {
+        return {}
+      },
+      async update() {},
+    },
+    weworkSync: {
+      async request(request) {
+        requests.push(request)
+        if (request.path.endsWith('/lease')) {
+          return { status: 200, body: { fencingToken: 4, currentSequence: 0 } }
+        }
+        if (request.path === '/wework-transcripts?includeArchived=true') {
+          return { status: 200, body: { items: [] } }
+        }
+        if (request.path.includes('/load?')) {
+          return { status: 200, body: { global: null } }
+        }
+        return { status: 200, body: { currentSequence: 1, appended: 1 } }
+      },
+    },
+  }
+  const sync = new WeworkSync({
+    apiBaseUrl: 'https://cloud.example.com/api',
+    clientId: 'client-disabled',
+    desktop,
+    outbox,
+    source,
+    state,
+    target: createTranscriptTarget(),
+  })
+  const turn = completedTurn()
+  source.add(turn)
+
+  await sync.start()
+  await sync.enqueue(turn)
+  await sync.flush()
+
+  assert.equal(sync.service().status().enabled, false)
+  assert.equal(outbox.count(), 1)
+  assert.equal(requests.length, 0)
+
+  await sync.setEnabled(true)
+  await sync.flush()
+
+  assert.equal(sync.service().status().enabled, true)
+  assert.equal(state.value.enabled, true)
+  assert.equal(outbox.count(), 0)
+  assert.ok(requests.length > 0)
+  sync.stop()
+})
+
 test('forks an offline device turn when another device commits from the same causal head', async () => {
   const requests = []
   const pending = completedTurn({

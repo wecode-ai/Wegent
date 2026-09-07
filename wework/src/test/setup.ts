@@ -239,6 +239,7 @@ function installDefaultDshUiTestRuntime() {
     [WEWORK_DSH_SLOTS.projectWorkSection, []],
     [WEWORK_DSH_SLOTS.runtimeProfileWorkspacePolicy, []],
     [WEWORK_DSH_SLOTS.settingsPage, testSettings],
+    [WEWORK_DSH_SLOTS.settingsSection, []],
     [WEWORK_DSH_SLOTS.route, []],
     [WEWORK_DSH_SLOTS.sidebarNavigation, testSidebarNavigation],
     [WEWORK_DSH_SLOTS.shellAfter, []],

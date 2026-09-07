@@ -6,6 +6,7 @@ import { SqliteSyncOutbox } from './outbox.js'
 export const name = 'wework-transcript-sync'
 export const inject = [
   'weworkDesktop',
+  'weworkPluginRuntime',
   'weworkSecureStorage',
   'weworkTranscriptSource',
   'weworkTranscriptTarget',
@@ -51,6 +52,13 @@ export async function apply(ctx) {
     state,
     target: ctx.weworkTranscriptTarget,
   })
+  ctx.weworkPluginRuntime.register(ctx, {
+    id: name,
+    methods: {
+      getSettings: () => ({ enabled: sync.enabled }),
+      setEnabled: ({ enabled }) => sync.setEnabled(enabled),
+    },
+  })
   const unsubscribe = ctx.weworkTranscriptSource.subscribe(turn => {
     void sync.enqueue(turn).catch(error => {
       console.error('[wework-transcript-sync] failed to persist transcript turn', error)
@@ -88,6 +96,7 @@ export class WeworkSync {
     this.state = state
     this.target = target
     this.pollIntervalMs = pollIntervalMs
+    this.enabled = state.value.enabled !== false
     this.active = false
     this.processing = null
     this.timer = null
@@ -97,6 +106,7 @@ export class WeworkSync {
 
   async start() {
     this.active = true
+    if (!this.enabled) return
     await this.flush()
   }
 
@@ -111,28 +121,52 @@ export class WeworkSync {
       status: () => ({
         clientId: this.clientId,
         configured: Boolean(this.apiBaseUrl),
+        enabled: this.enabled,
         pendingTurns: this.outbox.count(),
         transcripts: Object.keys(this.state.value.transcripts).length,
         lastError: this.lastError,
       }),
       list: () => structuredClone(Object.values(this.state.value.transcripts)),
       flush: () => this.flush(),
+      setEnabled: enabled => this.setEnabled(enabled),
     })
+  }
+
+  async setEnabled(enabled) {
+    if (typeof enabled !== 'boolean')
+      throw new Error('Transcript synchronization requires a boolean')
+    if (this.enabled === enabled) return { enabled }
+    this.enabled = enabled
+    this.state.value.enabled = enabled
+    await this.state.save()
+    if (!enabled) {
+      clearTimeout(this.timer)
+      this.timer = null
+      return { enabled }
+    }
+    this.lastError = null
+    this.schedule(0)
+    return { enabled }
   }
 
   async enqueue(turn) {
     const target = this.outbox.target(turn)
     const knownSequence = this.state.value.transcripts[target]?.currentSequence ?? 0
     this.outbox.enqueue(turn, knownSequence)
-    this.schedule(0)
+    if (this.enabled) this.schedule(0)
   }
 
   flush() {
+    if (!this.enabled) return Promise.resolve()
     if (this.processing) return this.processing
     const operation = async () => {
+      if (!this.enabled) return
       if (!(await this.ensureApiBaseUrl())) return
+      if (!this.enabled) return
       await this.flushPending()
+      if (!this.enabled) return
       await this.pullTranscripts()
+      if (!this.enabled) return
       await this.syncPreferences()
     }
     this.processing = operation()
@@ -155,7 +189,7 @@ export class WeworkSync {
 
   async flushPending() {
     let pending
-    while ((pending = this.outbox.first())) {
+    while (this.enabled && (pending = this.outbox.first())) {
       const turn = await this.source.read(pending)
       const lease = await this.request(
         `/wework-transcripts/${encodeURIComponent(turn.transcriptId)}/lease`,
@@ -269,8 +303,10 @@ export class WeworkSync {
   }
 
   async pullTranscripts() {
+    if (!this.enabled) return
     const response = await this.request('/wework-transcripts?includeArchived=true')
     for (const transcript of response.items ?? []) {
+      if (!this.enabled) return
       const current = this.state.value.transcripts[transcript.transcriptId]
       this.state.value.transcripts[transcript.transcriptId] = {
         ...transcript,
@@ -286,6 +322,7 @@ export class WeworkSync {
           .map(archive => archive.id)
       )
       for (const archive of transcript.archives ?? []) {
+        if (!this.enabled) return
         if (downloadedArchiveIds.has(archive.id)) continue
         if (archive.toSequence <= after) {
           downloadedArchiveIds.add(archive.id)
@@ -293,6 +330,7 @@ export class WeworkSync {
         }
         let archiveAfter = archive.fromSequence - 1
         while (archiveAfter < archive.toSequence) {
+          if (!this.enabled) return
           const page = await this.request(
             `/wework-transcripts/${encodeURIComponent(transcript.transcriptId)}/archives/${archive.id}/turns?after=${archiveAfter}&limit=1000`
           )
@@ -306,6 +344,7 @@ export class WeworkSync {
         if (archiveAfter >= archive.toSequence) downloadedArchiveIds.add(archive.id)
       }
       while (after < transcript.currentSequence) {
+        if (!this.enabled) return
         const page = await this.request(
           `/wework-transcripts/${encodeURIComponent(transcript.transcriptId)}/turns?after=${after}&limit=500`
         )
@@ -336,6 +375,7 @@ export class WeworkSync {
   }
 
   async syncPreferences() {
+    if (!this.enabled) return
     const path = `/v1/dsh-plugin-storage/units/${PREFERENCES_UNIT}/load?package=${encodeURIComponent(PACKAGE_NAME)}`
     const descriptor = { version: 1, tables: [], has_global: true }
     const remote = await this.request(path, 'POST', descriptor)
@@ -371,6 +411,7 @@ export class WeworkSync {
   }
 
   async request(path, method = 'GET', body) {
+    if (!this.enabled) throw new Error('Transcript synchronization is disabled')
     if (!this.apiBaseUrl) throw new Error('Cloud backend is not configured')
     const response = await this.desktop.weworkSync.request({
       apiBaseUrl: this.apiBaseUrl,
@@ -407,7 +448,7 @@ export class WeworkSync {
   }
 
   schedule(delayMs = this.pollIntervalMs) {
-    if (!this.active || this.timer || this.processing) return
+    if (!this.active || !this.enabled || this.timer || this.processing) return
     this.timer = setTimeout(() => {
       this.timer = null
       void this.flush().catch(() => {})
@@ -427,15 +468,16 @@ class SyncRequestError extends Error {
 class SyncState {
   constructor(path) {
     this.path = path
-    this.value = { version: 3, transcripts: {}, preferencesHash: null }
+    this.value = { version: 4, enabled: true, transcripts: {}, preferencesHash: null }
   }
 
   async load() {
     try {
       const value = JSON.parse(await readFile(this.path, 'utf8'))
-      if (value?.version === 2 || value?.version === 3) {
+      if (value?.version === 2 || value?.version === 3 || value?.version === 4) {
         this.value = {
-          version: 3,
+          version: 4,
+          enabled: value.enabled !== false,
           transcripts: Object.fromEntries(
             Object.entries(value.transcripts ?? {}).map(([transcriptId, transcript]) => {
               const { turns: _obsoleteTurns, ...metadata } = transcript
@@ -443,9 +485,9 @@ class SyncState {
                 transcriptId,
                 {
                   ...metadata,
-                  downloadedThrough: value.version === 3 ? (transcript.downloadedThrough ?? 0) : 0,
+                  downloadedThrough: value.version >= 3 ? (transcript.downloadedThrough ?? 0) : 0,
                   downloadedArchiveIds:
-                    value.version === 3 ? (transcript.downloadedArchiveIds ?? []) : [],
+                    value.version >= 3 ? (transcript.downloadedArchiveIds ?? []) : [],
                 },
               ]
             })
