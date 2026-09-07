@@ -2299,7 +2299,7 @@ Response template:
         ``inject_wegent_token: true``. When enabled, the business MCP server
         receives a freshly signed Wegent identity token in the ``auth`` and
         ``headers`` maps (Authorization header) when building the task request,
-        so it can resolve the current user through ``GET /mcp-identity/verify``.
+        so it can resolve the current user through ``GET /mcp-identity/userinfo``.
         Tokens are only injected over https or loopback http URLs to avoid
         replay over cleartext channels. The option is consumed here and never
         forwarded to the executor.
