@@ -152,8 +152,8 @@ await writeFile(
         },
         codex: {
           version: codexRuntime.codexVersion,
-          path: `codex/${codexRuntime.binaryPath}`,
-          sha256: await sha256(join(codexResources, codexRuntime.binaryPath)),
+          path: 'codex',
+          sha256: await hashTree(codexResources),
         },
         dws: {
           version: weworkPackage.devDependencies['dingtalk-workspace-cli'],
