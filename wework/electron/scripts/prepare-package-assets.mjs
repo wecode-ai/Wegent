@@ -12,6 +12,10 @@ import {
   targetExecutableName,
 } from '../../scripts/lib/desktop-package-target.mjs'
 import {
+  executorPackageBinaryPath,
+  resolveExecutorPackageTargetDirectory,
+} from '../../scripts/lib/executor-package-target.mjs'
+import {
   CORE_PLUGIN_DIRECTORIES,
   corePluginTarget,
 } from '../../scripts/lib/core-plugin-resources.mjs'
@@ -29,6 +33,7 @@ const sharedResourcesRoot = join(weworkRoot, 'resources')
 const executorProfile = resolveExecutorProfile()
 const pnpmCommand = process.platform === 'win32' ? 'pnpm.cmd' : 'pnpm'
 const packageTargets = resolveDesktopPackageTargets(process.env)
+const executorTargetDirectory = resolveExecutorPackageTargetDirectory(process.env, executorRoot)
 const packageEnvironment = {
   ...process.env,
   CARGO_BUILD_TARGET: packageTargets.cargoTarget,
@@ -43,7 +48,7 @@ const configuredExecutorPath = process.env.WEWORK_EXECUTOR_PATH?.trim()
 const [executorPath] = await Promise.all([
   configuredExecutorPath
     ? Promise.resolve(resolve(configuredExecutorPath))
-    : buildExecutor(executorProfile, packageTargets.cargoTarget),
+    : buildExecutor(executorProfile, packageTargets.cargoTarget, executorTargetDirectory),
   run(pnpmCommand, ['prepare:codex', '--materialize'], weworkRoot, packageEnvironment),
   run(pnpmCommand, ['prepare:dws'], weworkRoot, packageEnvironment),
   run(pnpmCommand, ['prepare:harness-runtime', '--materialize'], weworkRoot, packageEnvironment),
@@ -207,7 +212,7 @@ async function hashTree(root, relative = '') {
   return hash.digest('hex')
 }
 
-async function buildExecutor(profile, target) {
+async function buildExecutor(profile, target, targetDirectory) {
   const buildArgs = [
     'build',
     '--manifest-path',
@@ -217,27 +222,11 @@ async function buildExecutor(profile, target) {
     'wegent-executor',
   ]
   if (target) buildArgs.push('--target', target)
-  await run('cargo', buildArgs, repositoryRoot)
-  const metadata = JSON.parse(
-    await capture(
-      'cargo',
-      [
-        'metadata',
-        '--manifest-path',
-        join(executorRoot, 'Cargo.toml'),
-        '--format-version',
-        '1',
-        '--no-deps',
-      ],
-      repositoryRoot
-    )
-  )
-  return join(
-    metadata.target_directory,
-    ...(target ? [target] : []),
-    profile,
-    targetExecutableName(target, 'wegent-executor')
-  )
+  await run('cargo', buildArgs, repositoryRoot, {
+    ...process.env,
+    CARGO_TARGET_DIR: targetDirectory,
+  })
+  return executorPackageBinaryPath(targetDirectory, target, profile)
 }
 
 function run(command, args, cwd, environment = process.env) {
