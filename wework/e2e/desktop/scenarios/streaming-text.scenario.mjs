@@ -2,6 +2,8 @@ import assert from 'node:assert/strict'
 import { mkdir, readdir, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 
+import { DEFAULT_MODEL_ID, DEFAULT_MODEL_LABEL, selectE2EModel } from '../modules/shared.mjs'
+
 const ACTIVE_WORKBENCH_SELECTOR =
   '[data-testid="desktop-workbench-main"][data-active-workbench-pane="true"]'
 const COMPOSER_SELECTOR = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="chat-message-input"][contenteditable="true"]`
@@ -1438,6 +1440,12 @@ export function createDesktopScenario({
 
       await control.command('click', '[data-testid="new-chat-button"]')
       await control.command('waitFor', COMPOSER_SELECTOR, { timeoutMs: uiTimeoutMs })
+      await selectE2EModel(
+        control,
+        DEFAULT_MODEL_ID,
+        DEFAULT_MODEL_LABEL,
+        ACTIVE_WORKBENCH_SELECTOR
+      )
       await control.command('fill', COMPOSER_SELECTOR, { value: GENERATED_IMAGE_PROMPT })
       await control.command('press', COMPOSER_SELECTOR, { key: 'Enter' })
       await control.command('waitFor', '[data-testid="generated-image"]', {
