@@ -89,8 +89,9 @@ server URL 必须使用 `https`（本地开发允许 loopback `http`），避免
 token 通过明文通道发送。内部测试环境可以通过
 `MCP_IDENTITY_ALLOW_INSECURE_HTTP=true` 显式允许明文 http，生产环境请保持
 关闭。业务方收到请求后，可用请求头里的 token 调用
-`GET /api/mcp-identity/me` 校验并获取当前用户基本信息（`id`、
-`user_name`、`email`）；该接口不会返回 git 凭据。token 有效期与 Skill
+`GET /api/mcp-identity/verify` 校验并获取当前用户基本信息（`id`、
+`user_name`、`email`，响应为 `{"matched": true, "user": {...}}`）；该接口
+不会返回 git 凭据。token 有效期与 Skill
 identity token 独立，由 `MCP_IDENTITY_TOKEN_EXPIRE_MINUTES` 控制（默认 1 天）。
 
 ---

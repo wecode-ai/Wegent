@@ -305,7 +305,7 @@ class Settings(BaseSettings):
     RATE_LIMIT_GET_RESPONSE: str = "120/minute"  # GET /api/v1/responses/{id}
     RATE_LIMIT_CANCEL_RESPONSE: str = "30/minute"  # POST /api/v1/responses/{id}/cancel
     RATE_LIMIT_DELETE_RESPONSE: str = "30/minute"  # DELETE /api/v1/responses/{id}
-    RATE_LIMIT_MCP_IDENTITY: str = "60/minute"  # GET /api/mcp-identity/me
+    RATE_LIMIT_MCP_IDENTITY: str = "60/minute"  # GET /api/mcp-identity/verify
 
     # External knowledge MCP configuration
     # Disabled by default because this endpoint is intended for trusted integrations.

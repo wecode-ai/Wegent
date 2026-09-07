@@ -90,8 +90,9 @@ is allowed for local development) so the bearer token is not sent over
 cleartext channels. Internal test environments can opt into plain http with
 `MCP_IDENTITY_ALLOW_INSECURE_HTTP=true`; keep it disabled in production.
 The business side can validate the token by calling
-`GET /api/mcp-identity/me`, which returns the current user's basic
-information (`id`, `user_name`, `email`) and never exposes git credentials.
+`GET /api/mcp-identity/verify`, which returns the current user's basic
+information (`matched` plus a `user` object with `id`, `user_name`, `email`)
+and never exposes git credentials.
 Token lifetime is controlled by `MCP_IDENTITY_TOKEN_EXPIRE_MINUTES`
 (default 1 day) and is independent of the Skill identity token setting.
 

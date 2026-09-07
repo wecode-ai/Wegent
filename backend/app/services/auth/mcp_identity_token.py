@@ -6,7 +6,7 @@
 
 These tokens are signed for outbound business MCP servers that opt in with
 ``inject_wegent_token`` in their Ghost ``mcpServers`` configuration. The
-business server verifies the token by calling ``GET /mcp-identity/me`` with
+business server verifies the token by calling ``GET /mcp-identity/verify`` with
 it as a bearer token.
 """
 

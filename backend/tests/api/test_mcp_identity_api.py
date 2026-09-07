@@ -37,15 +37,18 @@ def test_get_mcp_identity_user_returns_basic_info(
     token = _mcp_identity_token(test_user.id, test_user.user_name)
 
     response = test_client.get(
-        "/api/mcp-identity/me",
+        "/api/mcp-identity/verify",
         headers={"Authorization": f"Bearer {token}"},
     )
 
     assert response.status_code == 200
     assert response.json() == {
-        "id": test_user.id,
-        "user_name": test_user.user_name,
-        "email": test_user.email,
+        "matched": True,
+        "user": {
+            "id": test_user.id,
+            "user_name": test_user.user_name,
+            "email": test_user.email,
+        },
     }
 
 
@@ -56,24 +59,24 @@ def test_get_mcp_identity_user_never_exposes_git_credentials(
     token = _mcp_identity_token(test_user.id, test_user.user_name)
 
     response = test_client.get(
-        "/api/mcp-identity/me",
+        "/api/mcp-identity/verify",
         headers={"Authorization": f"Bearer {token}"},
     )
 
-    payload = response.json()
+    payload = response.json()["user"]
     assert "git_info" not in payload
     assert "git_token" not in payload
 
 
 def test_get_mcp_identity_user_rejects_missing_token(test_client) -> None:
-    response = test_client.get("/api/mcp-identity/me")
+    response = test_client.get("/api/mcp-identity/verify")
 
     assert response.status_code == 401
 
 
 def test_get_mcp_identity_user_rejects_invalid_token(test_client) -> None:
     response = test_client.get(
-        "/api/mcp-identity/me",
+        "/api/mcp-identity/verify",
         headers={"Authorization": "Bearer not-a-valid-jwt"},
     )
 
@@ -87,7 +90,7 @@ def test_get_mcp_identity_user_rejects_non_mcp_token_type(
     token = _skill_identity_token(test_user.id, test_user.user_name)
 
     response = test_client.get(
-        "/api/mcp-identity/me",
+        "/api/mcp-identity/verify",
         headers={"Authorization": f"Bearer {token}"},
     )
 

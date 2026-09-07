@@ -32,14 +32,21 @@ class McpIdentityUserInfo(BaseModel):
     email: Optional[str] = None
 
 
-@router.get("/me", response_model=McpIdentityUserInfo)
+class McpIdentityVerifyResponse(BaseModel):
+    """Result of verifying an injected MCP identity token."""
+
+    matched: bool
+    user: McpIdentityUserInfo
+
+
+@router.get("/verify", response_model=McpIdentityVerifyResponse)
 @limiter.limit(settings.RATE_LIMIT_MCP_IDENTITY)
-def read_mcp_identity_user(
+def verify_mcp_identity_user(
     request: Request,
     authorization: Optional[str] = Header(default=None),
     db: Session = Depends(get_db),
-) -> McpIdentityUserInfo:
-    """Return the Wegent user bound to an injected MCP identity token.
+) -> McpIdentityVerifyResponse:
+    """Verify an injected MCP identity token and return the bound user.
 
     Business MCP servers receive this token in the ``Authorization`` header
     of inbound calls when their Ghost ``mcpServers`` entry enables
@@ -66,8 +73,11 @@ def read_mcp_identity_user(
             status_code=status.HTTP_404_NOT_FOUND, detail="User not found"
         )
 
-    return McpIdentityUserInfo(
-        id=user.id,
-        user_name=user.user_name,
-        email=user.email,
+    return McpIdentityVerifyResponse(
+        matched=True,
+        user=McpIdentityUserInfo(
+            id=user.id,
+            user_name=user.user_name,
+            email=user.email,
+        ),
     )
