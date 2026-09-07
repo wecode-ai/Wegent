@@ -2,12 +2,14 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
+import hashlib
 import io
 import json
 import logging
 import re
 from datetime import datetime
 from typing import Annotated, Literal, Optional
+from urllib.parse import quote
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, status
 from fastapi.responses import StreamingResponse
@@ -839,8 +841,16 @@ async def export_task_docx(
         None,
         description="Comma-separated list of message IDs to export. If not provided, exports all messages.",
     ),
+    download_token: Optional[str] = Query(
+        None,
+        description=(
+            "Short-lived token issued by the export DOCX download URL endpoint. "
+            "Lets browsers download with the server-provided filename "
+            "without sending an Authorization header."
+        ),
+    ),
     db: Session = Depends(get_db),
-    current_user: User = Depends(security.get_current_user),
+    current_user: Optional[User] = Depends(security.get_current_user_optional),
 ):
     """
     Export task conversation history to DOCX format.
@@ -851,7 +861,26 @@ async def export_task_docx(
     - Formatted markdown content
     - Embedded images and attachment info
     """
+    from app.services.auth.docx_export_download_token import (
+        verify_docx_export_download_token,
+    )
     from app.services.task_member_service import task_member_service
+
+    if download_token:
+        token_info = verify_docx_export_download_token(
+            download_token, task_id=task_id, message_ids=message_ids
+        )
+        if token_info is None:
+            raise HTTPException(status_code=401, detail="Invalid download token")
+        current_user = (
+            db.query(User)
+            .filter(User.id == token_info.user_id, User.is_active.is_(True))
+            .first()
+        )
+        if current_user is None:
+            raise HTTPException(status_code=401, detail="Invalid download token")
+    elif current_user is None:
+        raise HTTPException(status_code=401, detail="Not authenticated")
 
     # Check if user has access to the task (owner or group chat member)
     if not task_member_service.is_member(db, task_id, current_user.id):
@@ -910,6 +939,61 @@ async def export_task_docx(
     except Exception as e:
         logger.error(f"Failed to export task {task_id} to DOCX: {str(e)}")
         raise HTTPException(status_code=500, detail="Failed to generate DOCX document")
+
+
+@router.post(
+    "/{task_id}/export/docx/download-url",
+    summary="Create a DOCX export download URL",
+)
+async def create_task_docx_export_download_url(
+    task_id: int,
+    message_ids: Optional[str] = Query(
+        None,
+        description="Comma-separated list of message IDs to export. If not provided, exports all messages.",
+    ),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(security.get_current_user),
+) -> dict:
+    """
+    Create a short-lived DOCX export download URL for browser-native downloads.
+
+    Blob downloads with client-side filenames are unreliable in Safari and
+    in-app browsers, which may ignore the ``download`` attribute and name the
+    file after the page origin. The returned URL carries a short-lived token so
+    the browser can navigate directly to the export endpoint and apply the
+    server-provided ``Content-Disposition`` filename.
+    """
+    from app.services.auth.docx_export_download_token import (
+        create_docx_export_download_token,
+    )
+    from app.services.task_member_service import task_member_service
+
+    if not task_member_service.is_member(db, task_id, current_user.id):
+        raise HTTPException(status_code=404, detail="Task not found")
+
+    from app.models.task import TaskResource
+
+    task = task_store.get_task_by_states(
+        db,
+        task_id=task_id,
+        states=TaskResource.is_active_query(),
+    )
+    if not task:
+        raise HTTPException(status_code=404, detail="Task not found")
+
+    token = create_docx_export_download_token(
+        task_id=task_id,
+        user_id=current_user.id,
+        user_name=current_user.user_name,
+        message_ids=message_ids,
+        expires_delta_minutes=5,
+    )
+
+    url = f"/api/tasks/{task_id}/export/docx?download_token={quote(token, safe='')}"
+    if message_ids:
+        url += f"&message_ids={quote(message_ids, safe='')}"
+
+    return {"download_url": url, "expires_in": 300}
 
 
 @router.get("/{task_id}/services", response_model=ServiceResponse)

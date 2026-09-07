@@ -273,7 +273,7 @@ import {
   stopHarnessAppDevelopmentRuntime,
 } from '@/features/harness-apps/harnessAppDevelopmentRuntime'
 import { consumeSmartAppDevelopmentPreview } from '@/features/harness-apps/smartAppDevelopmentPreview'
-import { harnessAppsApi, type HarnessAppVerificationReport } from '@/api/local/harnessApps'
+import { harnessAppsApi } from '@/api/local/harnessApps'
 import { getErrorMessage } from '@/lib/error-message'
 
 let legacyEmbeddedBrowserOpenRequestSequence = 0
@@ -319,19 +319,6 @@ function isConversationPasteShortcut(event: KeyboardEvent) {
   const primaryPressed =
     getPlatform() === 'mac' ? event.metaKey && !event.ctrlKey : event.ctrlKey && !event.metaKey
   return primaryPressed && !event.altKey && event.key.toLowerCase() === 'v'
-}
-
-type SmartAppDevelopmentVerificationStatus =
-  | 'unverified'
-  | 'running'
-  | 'passed'
-  | 'failed'
-  | 'stale'
-
-function smartAppDevelopmentVerificationStatus(
-  report: HarnessAppVerificationReport | null
-): SmartAppDevelopmentVerificationStatus {
-  return report?.status ?? 'unverified'
 }
 
 interface SelectedAssistantPlan {
@@ -1183,6 +1170,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     associateRuntimeTaskWithExistingItem,
     associateRuntimeTaskWithNewItem,
     boundCloudItem,
+    boundCloudItemStatusOverride,
     boundCloudProject,
     boundProjectSpaceApi,
     clearCloudActionNotice,
@@ -2975,6 +2963,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
         integrated
         project={boundCloudProject}
         item={boundCloudItem}
+        statusOverride={boundCloudItemStatusOverride}
         api={boundProjectSpaceApi}
         currentTask={currentProjectSpaceRuntimeTask}
         projects={availableWorkItemProjects}
@@ -3120,7 +3109,6 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
           workspaceTabId:
             browserStatesRef.current[tab]?.developmentPreview?.workspaceTabId ?? workspaceTabId,
           status: reload ? 'reloading' : 'starting',
-          verificationStatus: 'unverified',
         },
       })
       try {
@@ -3159,13 +3147,6 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
           })
           return
         }
-        const verificationReport = await harnessAppsApi
-          .inspectVerification(installationId)
-          .catch(error => {
-            console.error('Failed to inspect Smart app verification report:', error)
-            return null
-          })
-        if (smartAppDevelopmentPreviewRequestsRef.current.get(tab) !== requestId) return
         updateBrowserState(tab, {
           openRequest: {
             id: `smart-app-development-preview-${installationId}-${Date.now()}`,
@@ -3183,8 +3164,6 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
             workspaceTabId:
               browserStatesRef.current[tab]?.developmentPreview?.workspaceTabId ?? workspaceTabId,
             status: 'ready',
-            verificationStatus: smartAppDevelopmentVerificationStatus(verificationReport),
-            verificationReport,
           },
         })
       } catch (error) {
@@ -3199,7 +3178,6 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
             workspaceTabId:
               browserStatesRef.current[tab]?.developmentPreview?.workspaceTabId ?? workspaceTabId,
             status: 'error',
-            verificationStatus: 'unverified',
             error: getErrorMessage(
               error,
               t('workbench.smart_app_preview_failed', 'DSH 开发预览启动失败')
@@ -3239,7 +3217,6 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
           workspaceTabId:
             browserStatesRef.current[tab]?.developmentPreview?.workspaceTabId ?? workspaceTabId,
           status: 'reloading',
-          verificationStatus: 'unverified',
         },
       })
       try {
@@ -3256,7 +3233,6 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
             workspaceTabId:
               browserStatesRef.current[tab]?.developmentPreview?.workspaceTabId ?? workspaceTabId,
             status: 'ready',
-            verificationStatus: 'unverified',
           },
         })
         throw error
@@ -3270,48 +3246,6 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
       updateBrowserState,
       workspaceTabId,
     ]
-  )
-  const verifySmartAppDevelopmentPreview = useCallback(
-    (tab: RightWorkspaceBrowserTab, installationId: string) => {
-      const preview = browserStatesRef.current[tab]?.developmentPreview
-      if (!preview || preview.status !== 'ready') return
-      updateBrowserState(tab, {
-        developmentPreview: {
-          ...preview,
-          verificationStatus: 'running',
-          verificationError: undefined,
-        },
-      })
-      void harnessAppsApi
-        .verify(installationId)
-        .then(verificationReport => {
-          const current = browserStatesRef.current[tab]?.developmentPreview
-          if (!current || current.installationId !== installationId) return
-          updateBrowserState(tab, {
-            developmentPreview: {
-              ...current,
-              verificationStatus: smartAppDevelopmentVerificationStatus(verificationReport),
-              verificationReport,
-              verificationError: undefined,
-            },
-          })
-        })
-        .catch(error => {
-          const current = browserStatesRef.current[tab]?.developmentPreview
-          if (!current || current.installationId !== installationId) return
-          updateBrowserState(tab, {
-            developmentPreview: {
-              ...current,
-              verificationStatus: 'failed',
-              verificationError: getErrorMessage(
-                error,
-                t('workbench.smart_app_preview_verification_failed')
-              ),
-            },
-          })
-        })
-    },
-    [t, updateBrowserState]
   )
   useEffect(() => {
     const previewRequests = smartAppDevelopmentPreviewRequestsRef.current
@@ -3411,7 +3345,6 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
         displayName: preview.displayName,
         workspaceTabId,
         status: 'starting',
-        verificationStatus: 'unverified',
       },
     })
     void loadSmartAppDevelopmentPreview(tab, preview.installationId, false, preview.displayName)
@@ -5330,7 +5263,6 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
               onBrowserStateChange={updateBrowserState}
               onReloadSmartAppDevelopmentPreview={reloadSmartAppDevelopmentPreview}
               onAddSmartAppDevelopmentPlugin={addSmartAppDevelopmentPlugin}
-              onVerifySmartAppDevelopmentPreview={verifySmartAppDevelopmentPreview}
               codeCommentCount={paneSession.codeCommentContexts.length}
               codeCommentContexts={paneSession.codeCommentContexts}
               browserAnnotationCommand={paneSession.browserAnnotationCommand}

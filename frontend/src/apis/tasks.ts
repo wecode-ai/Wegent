@@ -402,41 +402,26 @@ export const taskApis = {
   },
 
   /**
-   * Export task to DOCX format
+   * Create a DOCX export download URL that works with browser-native downloads.
+   *
+   * Returns a URL carrying a short-lived token. Browsers such as Safari ignore
+   * blob downloads with client-side filenames, so the caller should navigate to
+   * this URL directly and let the server Content-Disposition name the file.
    * @param taskId - Task ID to export
    * @param messageIds - Optional array of message IDs to filter export (if not provided, exports all messages)
    */
-  exportTaskDocx: async (taskId: number, messageIds?: number[]): Promise<Blob> => {
-    const token = getToken()
-    const url = new URL(`/api/tasks/${taskId}/export/docx`, window.location.origin)
-
-    // Add message_ids as query parameter if provided
+  getTaskDocxExportUrl: async (taskId: number, messageIds?: number[]): Promise<string> => {
+    const params = new URLSearchParams()
     if (messageIds && messageIds.length > 0) {
-      url.searchParams.set('message_ids', messageIds.join(','))
+      params.set('message_ids', messageIds.join(','))
     }
 
-    const response = await fetch(url.toString(), {
-      method: 'GET',
-      headers: {
-        ...(token && { Authorization: `Bearer ${token}` }),
-      },
-    })
+    const { download_url: downloadUrl } = await apiClient.post<{
+      download_url: string
+      expires_in: number
+    }>(`/tasks/${taskId}/export/docx/download-url${params.size > 0 ? `?${params.toString()}` : ''}`)
 
-    if (!response.ok) {
-      const errorText = await response.text()
-      let errorMsg = errorText
-      try {
-        const json = JSON.parse(errorText)
-        if (json && typeof json.detail === 'string') {
-          errorMsg = json.detail
-        }
-      } catch {
-        // Not JSON, use original text
-      }
-      throw new Error(errorMsg)
-    }
-
-    return response.blob()
+    return new URL(downloadUrl, window.location.origin).toString()
   },
 
   /**
