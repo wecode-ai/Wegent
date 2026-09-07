@@ -4553,7 +4553,6 @@ export function CloudTodoWorkspace({
                   api={selectedProjectApi}
                   projectChatAgentApi={selectedProjectAgentApi}
                   projectAutomationApi={selectedProjectServices?.projectAutomationApi}
-                  projectIncomingHookApi={selectedProjectServices?.projectIncomingHookApi}
                   runtimeProfileApi={selectedProjectServices?.runtimeProfileApi}
                   executionApi={automationExecutionApi}
                   deviceApi={selectedProjectServices.deviceApi}
@@ -4590,6 +4589,7 @@ export function CloudTodoWorkspace({
                   api={selectedProjectApi}
                   aitableApi={aitableApi}
                   dwsApi={services.dwsApi}
+                  incomingHookApi={selectedProjectServices?.projectIncomingHookApi}
                   project={selectedProject}
                   boardCardDisplay={boardCardDisplay}
                   onProjectUpdated={updated => replaceProject(selectedProject, updated)}
