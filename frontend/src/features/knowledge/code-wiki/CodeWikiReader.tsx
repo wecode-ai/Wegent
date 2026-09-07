@@ -36,7 +36,6 @@ import { failureText } from './failureText'
 import { GenerationProgress } from './GenerationProgress'
 import { WikiNavigation } from './WikiNavigation'
 import { WikiPageContent } from './WikiPageContent'
-import { GenerationStrategySelect } from './GenerationStrategySelect'
 
 interface CodeWikiReaderProps {
   /** The code wiki being read, as the knowledge page already resolved it. */
@@ -178,9 +177,6 @@ export function CodeWikiReader({ wiki, canConfigure = false, onConfigure }: Code
   // is asked for twice. The first run after creation is not: creating the wiki was
   // the request, and confirming it again would be asking about work already agreed.
   const [confirmingRegenerate, setConfirmingRegenerate] = useState(false)
-  // Empty means this one run follows the Wiki's durable default. It does not alter
-  // that default; choosing a strategy here is deliberately an override for this run.
-  const [regenerateStrategy, setRegenerateStrategy] = useState('')
   const [confirmingCancel, setConfirmingCancel] = useState(false)
   const [scrollHost, setScrollHost] = useState<HTMLElement | null>(null)
   // Whether the chat is still showing its empty state, reported by the page body as
@@ -309,7 +305,7 @@ export function CodeWikiReader({ wiki, canConfigure = false, onConfigure }: Code
     setConfirmingRegenerate(false)
     setRegenerating(true)
     try {
-      const result = await codeWikiApi.regenerate(wiki.id, regenerateStrategy || undefined)
+      const result = await codeWikiApi.regenerate(wiki.id)
       runStatus.refresh()
       // "Nothing to do" is the answer the caller asked for, not a failure: the
       // repository has not moved since the published version.
@@ -319,7 +315,7 @@ export function CodeWikiReader({ wiki, canConfigure = false, onConfigure }: Code
     } finally {
       setRegenerating(false)
     }
-  }, [wiki.id, regenerateStrategy, t, runStatus])
+  }, [wiki.id, t, runStatus])
 
   const handleCancel = useCallback(async () => {
     const generationId = runStatus.status?.generation_id
@@ -426,7 +422,6 @@ export function CodeWikiReader({ wiki, canConfigure = false, onConfigure }: Code
             variant="outline"
             size="sm"
             onClick={() => {
-              setRegenerateStrategy('')
               setConfirmingRegenerate(true)
             }}
             disabled={control.disabled}
@@ -448,17 +443,6 @@ export function CodeWikiReader({ wiki, canConfigure = false, onConfigure }: Code
               <AlertDialogDescription>
                 {t('codeWiki.reader.regenerateConfirmBody')}
               </AlertDialogDescription>
-              <div className="pt-2">
-                <p className="mb-1.5 text-sm font-medium text-text-secondary">
-                  {t('codeWiki.strategy.label')}
-                </p>
-                <GenerationStrategySelect
-                  value={regenerateStrategy}
-                  onChange={setRegenerateStrategy}
-                  emptyOption="wiki"
-                  testId="code-wiki-regenerate-strategy"
-                />
-              </div>
             </AlertDialogHeader>
             <AlertDialogFooter>
               <AlertDialogCancel>{t('common:actions.cancel')}</AlertDialogCancel>

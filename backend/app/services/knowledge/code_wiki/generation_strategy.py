@@ -8,12 +8,15 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Optional
 
+from sqlalchemy.orm import Session
+
 from app.core.wiki_config import (
     CodeWikiGenerationPolicy,
     CodeWikiTeamRef,
     default_code_wiki_generation_policy,
     wiki_settings,
 )
+from app.models.system_config import SystemConfig
 
 GENERATION_STRATEGY_SPEC_KEY = "generationStrategy"
 GENERATION_STRATEGY_EXT_KEY = "generationStrategy"
@@ -22,6 +25,7 @@ COORDINATOR_ADAPTIVE = "coordinator_adaptive"
 COORDINATOR_REVIEWED = "coordinator_reviewed"
 COORDINATOR_SOLO = "coordinator_solo"
 LEGACY = "legacy"
+SYSTEM_CONFIG_KEY = "code_wiki_generation_policy"
 
 
 class ReviewProtocol(str, Enum):
@@ -117,19 +121,29 @@ _DEFINITIONS = {
 }
 
 
-def configured_policy() -> CodeWikiGenerationPolicy:
-    """Return the explicit multi-strategy policy or its single-Team equivalent."""
+def configured_policy(db: Optional[Session] = None) -> CodeWikiGenerationPolicy:
+    """Return the administrator-managed policy, or the deployment compatibility fallback."""
 
+    if db is not None:
+        config = (
+            db.query(SystemConfig)
+            .filter(SystemConfig.config_key == SYSTEM_CONFIG_KEY)
+            .first()
+        )
+        if config is not None:
+            return CodeWikiGenerationPolicy.model_validate(config.config_value)
     return (
         wiki_settings.CODE_WIKI_GENERATION_POLICY
         or default_code_wiki_generation_policy(wiki_settings.CODE_WIKI_TEAM_NAME)
     )
 
 
-def strategy_for_new_wiki(requested_id: Optional[str] = None) -> str:
+def strategy_for_new_wiki(
+    requested_id: Optional[str] = None, *, db: Optional[Session] = None
+) -> str:
     """Choose and validate the strategy persisted on a newly created Code Wiki."""
 
-    policy = configured_policy()
+    policy = configured_policy(db)
     strategy_id = (requested_id or policy.default_strategy).strip()
     resolved = _resolve(policy, strategy_id)
     if requested_id and not resolved.definition.selectable:
@@ -137,9 +151,11 @@ def strategy_for_new_wiki(requested_id: Optional[str] = None) -> str:
     return resolved.strategy_id
 
 
-def selectable_strategies() -> tuple[ResolvedGenerationStrategy, ...]:
+def selectable_strategies(
+    db: Optional[Session] = None,
+) -> tuple[ResolvedGenerationStrategy, ...]:
     """The policy-enabled strategies a caller may choose for a Code Wiki."""
-    policy = configured_policy()
+    policy = configured_policy(db)
     return tuple(
         resolved
         for strategy_id in _DEFINITIONS
@@ -148,27 +164,31 @@ def selectable_strategies() -> tuple[ResolvedGenerationStrategy, ...]:
     )
 
 
-def selectable_default_strategy() -> Optional[str]:
-    """Deployment default when it is a strategy an API caller may choose."""
-    strategy_id = configured_policy().default_strategy
-    return (
-        strategy_id
-        if any(item.strategy_id == strategy_id for item in selectable_strategies())
-        else None
+def strategy_for_run(
+    stored_id: Optional[str], *, db: Optional[Session] = None
+) -> ResolvedGenerationStrategy:
+    """Resolve the Wiki default, or the legacy fallback for an older Wiki."""
+
+    policy = configured_policy(db)
+    strategy_id = (stored_id or policy.legacy_fallback_strategy).strip()
+    return _resolve(policy, strategy_id)
+
+
+def selectable_definitions() -> tuple[GenerationStrategyDefinition, ...]:
+    """Stable selectable strategy definitions for the administrator configuration UI."""
+
+    return tuple(
+        definition for definition in _DEFINITIONS.values() if definition.selectable
     )
 
 
-def strategy_for_run(
-    stored_id: Optional[str], requested_id: Optional[str] = None
-) -> ResolvedGenerationStrategy:
-    """Resolve a run override, the Wiki default, or the legacy fallback."""
+def definition_for(strategy_id: str) -> GenerationStrategyDefinition:
+    """Return one registered strategy definition for administrator validation."""
 
-    policy = configured_policy()
-    strategy_id = (requested_id or stored_id or policy.legacy_fallback_strategy).strip()
-    resolved = _resolve(policy, strategy_id)
-    if requested_id and not resolved.definition.selectable:
-        raise ValueError(f"Code Wiki generation strategy '{strategy_id}' is internal")
-    return resolved
+    definition = _DEFINITIONS.get(strategy_id)
+    if definition is None:
+        raise ValueError(f"Unknown Code Wiki generation strategy '{strategy_id}'")
+    return definition
 
 
 def _resolve(

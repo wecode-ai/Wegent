@@ -1200,16 +1200,30 @@
     },
     "strategy": {
       "label": "生成策略",
-      "createDescription": "选择这个 Wiki 的生成方式；留空则使用部署默认策略。",
+      "createDescription": "选择这个 Wiki 后续生成的方式；不选择则使用系统默认。",
       "settingsDescription": "仅影响后续生成，已有版本不会变化。",
       "loading": "正在加载可用策略…",
-      "deploymentDefault": "部署默认策略",
-      "deploymentDefaultNamed": "使用部署默认策略：{{strategy}}。",
-      "deploymentDefaultLegacy": "使用部署配置的历史兼容策略。",
-      "wikiDefault": "使用此 Wiki 的默认策略",
-      "wikiDefaultDescription": "使用该 Wiki 设置中保存的策略。",
-      "legacy": "历史兼容策略",
-      "unavailable": "当前策略在此部署中不可用"
+      "loadFailed": "加载策略失败，请稍后重试",
+      "noneAvailable": "当前没有可用的生成策略",
+      "systemRecommended": "系统默认：{{strategy}}",
+      "systemRecommendedDescription": "系统默认使用 {{strategy}}；可在高级设置中单独调整。",
+      "legacyTitle": "历史兼容方式",
+      "legacyDescription": "保持升级前 Wiki 的生成方式。",
+      "unavailable": "当前策略在系统配置中不可用",
+      "options": {
+        "coordinator_adaptive": {
+          "title": "按需协作生成",
+          "description": "主 AI 负责整体，遇到复杂区域时才交由其他 AI 深入处理。"
+        },
+        "coordinator_reviewed": {
+          "title": "审核式生成",
+          "description": "先检查文档计划，再开始写作；通常更稳，但耗时更长。"
+        },
+        "coordinator_solo": {
+          "title": "单代理完整生成",
+          "description": "由一个 AI 完成调研和写作，适合小项目或作为效果对照。"
+        }
+      }
     },
     "reader": {
       "regenerate": "重新生成",

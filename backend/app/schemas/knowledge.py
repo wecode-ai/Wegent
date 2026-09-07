@@ -741,19 +741,6 @@ class CodeWikiRunCreate(BaseModel):
             "Intended for an explicit manual regeneration, not scheduled runs."
         ),
     )
-    strategy_id: Optional[str] = Field(
-        None,
-        min_length=1,
-        max_length=64,
-        pattern=r"^[a-z][a-z0-9_]*$",
-        description="One-run strategy override, allowed only for a forced full rebuild",
-    )
-
-    @model_validator(mode="after")
-    def strategy_requires_full_rebuild(self) -> "CodeWikiRunCreate":
-        if self.strategy_id and not self.force_full:
-            raise ValueError("strategy_id requires force_full=true")
-        return self
 
 
 class CodeWikiGenerationStrategyOption(BaseModel):
@@ -768,9 +755,9 @@ class CodeWikiGenerationStrategyOption(BaseModel):
 class CodeWikiGenerationStrategyCapabilities(BaseModel):
     """Deployment policy projected into the choices a Code Wiki UI needs."""
 
-    # None means the deployment is still on an internal legacy default. The UI leaves
-    # creation unset in that case rather than displaying a strategy users cannot pick.
-    default_strategy: Optional[str] = None
+    # This may be the internal ``legacy`` compatibility strategy. It remains
+    # non-selectable, but callers still need it to explain the actual default.
+    default_strategy: str
     strategies: List[CodeWikiGenerationStrategyOption] = Field(default_factory=list)
 
 

@@ -1200,16 +1200,30 @@
     },
     "strategy": {
       "label": "Generation strategy",
-      "createDescription": "Choose how this wiki is generated, or leave the deployment default.",
+      "createDescription": "Choose how this wiki is generated in the future, or use the system default.",
       "settingsDescription": "Applies to future generations. Existing versions are unchanged.",
       "loading": "Loading available strategies…",
-      "deploymentDefault": "Deployment default",
-      "deploymentDefaultNamed": "Uses the deployment default: {{strategy}}.",
-      "deploymentDefaultLegacy": "Uses the deployment's legacy compatibility strategy.",
-      "wikiDefault": "Use this wiki's default",
-      "wikiDefaultDescription": "Uses the strategy saved in this wiki's settings.",
-      "legacy": "Legacy compatibility strategy",
-      "unavailable": "Current strategy is unavailable in this deployment"
+      "loadFailed": "Could not load strategies. Try again later.",
+      "noneAvailable": "No generation strategies are available",
+      "systemRecommended": "System default: {{strategy}}",
+      "systemRecommendedDescription": "The system uses {{strategy}} by default. You can override it in Advanced settings.",
+      "legacyTitle": "Legacy compatibility mode",
+      "legacyDescription": "Keeps the generation behaviour used before strategy selection was added.",
+      "unavailable": "This strategy is unavailable in the system configuration",
+      "options": {
+        "coordinator_adaptive": {
+          "title": "Adaptive collaboration",
+          "description": "One AI owns the whole wiki and delegates only complex areas for deeper work."
+        },
+        "coordinator_reviewed": {
+          "title": "Reviewed generation",
+          "description": "The documentation plan is checked before writing. It is usually steadier, but slower."
+        },
+        "coordinator_solo": {
+          "title": "Single-agent generation",
+          "description": "One AI researches and writes the whole wiki. Good for smaller projects and comparisons."
+        }
+      }
     },
     "reader": {
       "regenerate": "Regenerate",

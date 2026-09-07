@@ -151,7 +151,6 @@ def start_run(
     changed_paths: Optional[Sequence[ChangedPath]] = None,
     total_source_files: Optional[int] = None,
     force_full: bool = False,
-    strategy_id: Optional[str] = None,
 ) -> StartedRun:
     """Start a run for ``knowledge_base`` and hand its instructions to a task.
 
@@ -175,14 +174,12 @@ def start_run(
         GenerationInFlight: Propagated from the version store.
         GenerationWikiNotFound: If the wiki is deleted before the run starts.
     """
-    if strategy_id and not force_full:
-        raise CodeWikiRunError("strategy_id requires force_full=true")
     source = source_of(knowledge_base)
     stored_strategy = ((knowledge_base.json or {}).get("spec") or {}).get(
         GENERATION_STRATEGY_SPEC_KEY
     )
     try:
-        strategy = strategy_for_run(stored_strategy, strategy_id)
+        strategy = strategy_for_run(stored_strategy, db=db)
     except ValueError as error:
         raise CodeWikiRunError(str(error)) from error
     team, task_user = _resolve_execution_context(

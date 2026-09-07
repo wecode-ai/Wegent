@@ -41,7 +41,9 @@ describe('generation strategy selector', () => {
     )
 
     expect(
-      await screen.findByText('codeWiki.strategy.deploymentDefaultNamed:Adaptive coordinator')
+      await screen.findByText(
+        'codeWiki.strategy.systemRecommended:codeWiki.strategy.options.coordinator_adaptive.title'
+      )
     ).toBeInTheDocument()
     expect(codeWikiApi.strategies).toHaveBeenCalledTimes(1)
   })

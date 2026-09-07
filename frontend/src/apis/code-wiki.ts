@@ -112,10 +112,9 @@ export const codeWikiApi = {
   /**
    * Regenerate the complete wiki now, without waiting for a schedule or a new commit.
    */
-  regenerate: async (knowledgeBaseId: number, strategyId?: string): Promise<CodeWikiRunResponse> =>
+  regenerate: async (knowledgeBaseId: number): Promise<CodeWikiRunResponse> =>
     client.post<CodeWikiRunResponse>(`/knowledge-bases/${knowledgeBaseId}/code-wiki/generations`, {
       force_full: true,
-      ...(strategyId ? { strategy_id: strategyId } : {}),
     }),
 
   /** Stop the currently running version without changing the published wiki. */

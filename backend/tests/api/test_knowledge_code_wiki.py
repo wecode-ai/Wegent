@@ -142,8 +142,8 @@ def test_generation_strategy_capabilities_hide_unready_deployment_wiring(
             return_value=(adaptive, reviewed),
         ),
         patch(
-            "app.api.endpoints.knowledge_code_wiki.selectable_default_strategy",
-            return_value="coordinator_adaptive",
+            "app.api.endpoints.knowledge_code_wiki.configured_policy",
+            return_value=SimpleNamespace(default_strategy="coordinator_adaptive"),
         ),
         patch(
             "app.api.endpoints.knowledge_code_wiki.strategy_team_readiness",
@@ -154,7 +154,7 @@ def test_generation_strategy_capabilities_hide_unready_deployment_wiring(
 
     assert response.status_code == 200, response.text
     assert response.json() == {
-        "default_strategy": None,
+        "default_strategy": "coordinator_adaptive",
         "strategies": [
             {
                 "id": "coordinator_reviewed",

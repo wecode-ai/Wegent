@@ -4,11 +4,16 @@
 
 """Admin system configuration endpoints."""
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 
 from app.api.dependencies import get_db
 from app.core.security import get_admin_user
+from app.core.wiki_config import (
+    CodeWikiGenerationPolicy,
+    CodeWikiStrategyBinding,
+    CodeWikiTeamRef,
+)
 from app.models.system_config import SystemConfig
 from app.models.user import User
 from app.schemas.admin import (
@@ -17,6 +22,9 @@ from app.schemas.admin import (
     ChatSloganTipsResponse,
     ChatSloganTipsUpdate,
     ChatTipItem,
+    CodeWikiGenerationPolicyConfigResponse,
+    CodeWikiGenerationPolicyConfigUpdate,
+    CodeWikiGenerationStrategyPolicyItem,
     SystemConfigResponse,
     SystemConfigUpdate,
 )
@@ -29,6 +37,19 @@ from app.schemas.quick_launch import (
     QuickLaunchFunctionsResponse,
     QuickLaunchFunctionsUpdate,
 )
+from app.services.knowledge.code_wiki.generation_strategy import (
+    LEGACY,
+)
+from app.services.knowledge.code_wiki.generation_strategy import (
+    SYSTEM_CONFIG_KEY as CODE_WIKI_GENERATION_POLICY_CONFIG_KEY,
+)
+from app.services.knowledge.code_wiki.generation_strategy import (
+    ResolvedGenerationStrategy,
+    configured_policy,
+    definition_for,
+    selectable_definitions,
+)
+from app.services.knowledge.code_wiki.runner import strategy_team_readiness
 from app.services.knowledge.retrieval_profile import get_profile, save_profile
 from app.services.marketplace_tag_service import marketplace_tag_service
 
@@ -124,6 +145,144 @@ def update_knowledge_base_retrieval_profile(
         retrieval_config=retrieval_config,
         health=health,
     )
+
+
+def _code_wiki_generation_policy_response(
+    db: Session,
+) -> CodeWikiGenerationPolicyConfigResponse:
+    """Expose registered strategies while keeping the legacy compatibility binding internal."""
+
+    stored = (
+        db.query(SystemConfig)
+        .filter(SystemConfig.config_key == CODE_WIKI_GENERATION_POLICY_CONFIG_KEY)
+        .first()
+    )
+    policy = configured_policy(db)
+    fallback_binding = policy.strategies[LEGACY]
+    strategies = []
+    for definition in selectable_definitions():
+        binding = policy.strategies.get(definition.strategy_id)
+        if binding is None:
+            binding = CodeWikiStrategyBinding(
+                enabled=False,
+                teamRef=fallback_binding.team_ref,
+            )
+        strategies.append(
+            CodeWikiGenerationStrategyPolicyItem(
+                id=definition.strategy_id,
+                enabled=binding.enabled,
+                team_name=binding.team_ref.name,
+                team_namespace=binding.team_ref.namespace,
+                display_name=definition.display_name,
+                description=definition.description,
+            )
+        )
+    return CodeWikiGenerationPolicyConfigResponse(
+        version=stored.version if stored is not None else 0,
+        configured=stored is not None,
+        default_strategy=policy.default_strategy,
+        strategies=strategies,
+    )
+
+
+@router.get(
+    "/system-config/code-wiki-generation-policy",
+    response_model=CodeWikiGenerationPolicyConfigResponse,
+)
+def get_code_wiki_generation_policy(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_admin_user),
+) -> CodeWikiGenerationPolicyConfigResponse:
+    """Return the administrator-managed Code Wiki strategy policy."""
+
+    del current_user
+    return _code_wiki_generation_policy_response(db)
+
+
+@router.put(
+    "/system-config/code-wiki-generation-policy",
+    response_model=CodeWikiGenerationPolicyConfigResponse,
+)
+def update_code_wiki_generation_policy(
+    policy_input: CodeWikiGenerationPolicyConfigUpdate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_admin_user),
+) -> CodeWikiGenerationPolicyConfigResponse:
+    """Persist only known strategies after validating their selected Team resources."""
+
+    definitions = {item.strategy_id: item for item in selectable_definitions()}
+    provided = {item.id: item for item in policy_input.strategies}
+    if len(provided) != len(policy_input.strategies) or set(provided) != set(
+        definitions
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Every registered Code Wiki generation strategy must be configured",
+        )
+    if policy_input.default_strategy not in definitions:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="The default Code Wiki generation strategy is unknown",
+        )
+    if not provided[policy_input.default_strategy].enabled:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="The default Code Wiki generation strategy must be enabled",
+        )
+
+    bindings = {
+        strategy_id: CodeWikiStrategyBinding(
+            enabled=item.enabled,
+            teamRef=CodeWikiTeamRef(
+                name=item.team_name,
+                namespace=item.team_namespace,
+            ),
+        )
+        for strategy_id, item in provided.items()
+    }
+    current_policy = configured_policy(db)
+    legacy_binding = current_policy.strategies[LEGACY]
+    policy = CodeWikiGenerationPolicy(
+        defaultStrategy=policy_input.default_strategy,
+        legacyFallbackStrategy=LEGACY,
+        strategies={**bindings, LEGACY: legacy_binding},
+    )
+    for strategy_id, binding in bindings.items():
+        if not binding.enabled:
+            continue
+        reason = strategy_team_readiness(
+            db,
+            current_user,
+            ResolvedGenerationStrategy(
+                definition=definition_for(strategy_id),
+                team_ref=binding.team_ref,
+            ),
+        )
+        if reason:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=f"{strategy_id}: {reason}",
+            )
+
+    stored = (
+        db.query(SystemConfig)
+        .filter(SystemConfig.config_key == CODE_WIKI_GENERATION_POLICY_CONFIG_KEY)
+        .first()
+    )
+    if stored is None:
+        stored = SystemConfig(
+            config_key=CODE_WIKI_GENERATION_POLICY_CONFIG_KEY,
+            config_value=policy.model_dump(by_alias=True),
+            version=1,
+            updated_by=current_user.id,
+        )
+        db.add(stored)
+    else:
+        stored.config_value = policy.model_dump(by_alias=True)
+        stored.version += 1
+        stored.updated_by = current_user.id
+    db.commit()
+    return _code_wiki_generation_policy_response(db)
 
 
 @router.get(

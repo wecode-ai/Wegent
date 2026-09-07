@@ -69,7 +69,7 @@ from app.services.knowledge.code_wiki.generation import (
     run_history,
 )
 from app.services.knowledge.code_wiki.generation_strategy import (
-    selectable_default_strategy,
+    configured_policy,
     selectable_strategies,
 )
 from app.services.knowledge.code_wiki.navigation import page_tree
@@ -121,7 +121,7 @@ def get_code_wiki_generation_strategies(
     small interface is all a create or settings form needs to render a safe choice.
     """
     options = []
-    for strategy in selectable_strategies():
+    for strategy in selectable_strategies(db):
         reason = strategy_team_readiness(db, current_user, strategy)
         if reason:
             logger.warning(
@@ -140,13 +140,8 @@ def get_code_wiki_generation_strategies(
             )
         )
 
-    configured_default = selectable_default_strategy()
-    policy_default = next(
-        (option.id for option in options if option.id == configured_default),
-        None,
-    )
     return CodeWikiGenerationStrategyCapabilities(
-        default_strategy=policy_default,
+        default_strategy=configured_policy(db).default_strategy,
         strategies=options,
     )
 
@@ -696,7 +691,6 @@ def start_code_wiki_run(
                 ]
             ),
             force_full=data.force_full,
-            strategy_id=data.strategy_id,
         )
     except GenerationWikiNotFound as e:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e)) from e

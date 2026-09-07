@@ -40,7 +40,7 @@ Planner + Section Writer 方案在一次真实仓库生成中带来了明确收�
 | `coordinator_adaptive` | Coordinator 按范围决定自己写或委派 Writer                | 无            | 新的默认候选             |
 | `coordinator_reviewed` | Coordinator + Section Writer，保留原 Coordinate 评审流程 | 有            | 质量基线与回归对照       |
 | `coordinator_solo`     | Coordinator 自己研究并写完全部页面，不启动子 agent       | 无            | 写作规范改进的单人基线   |
-| `planner_writer`       | Planner 不写页，全部交给 Writer                          | 无            | 09-03 方案的质量上界参照 |
+| `planner_writer`       | Planner 不写页，全部交给 Writer                          | 无            | 09-03 方案的参考实现，暂未注册为可选策略 |
 
 策略 ID 表达稳定的执行方案，`revision` 表达该方案的实现版本。Prompt、阈值或 handoff 格式等兼容演进
 只递增 `revision`；只有执行语义发生根本变化并且新旧方案必须同时存在时才新增 ID，优先使用描述性名称，
@@ -51,14 +51,12 @@ Planner + Section Writer 方案在一次真实仓库生成中带来了明确收�
 
 策略选择分为创建与运行两个时点：
 
-1. 创建 Code Wiki 时，使用请求显式选择的策略，否则使用部署默认策略，并把结果写入 Wiki；
-2. 启动 generation 时，优先使用手动 `FULL` 请求的一次性覆盖，否则使用 Wiki 自身保存的策略；
-3. 历史 Wiki 没有该字段时使用与上线前行为一致的 legacy fallback，而不是动态继承部署默认值。
+1. 创建 Code Wiki 时，使用请求显式选择的策略，否则使用系统默认策略，并把结果写入 Wiki；
+2. 启动 generation 时始终使用 Wiki 自身保存的策略；
+3. 历史 Wiki 没有该字段时使用与上线前行为一致的 legacy fallback，而不是动态继承系统默认值。
 
-手动覆盖只对当次 generation 生效，不暗改 Wiki 默认值。定时任务与自动触发不带覆盖，使用 Wiki 默认
-策略。修改部署默认值只影响之后新建的 Wiki，不批量改变存量 Wiki 的行为。第一阶段策略只作用于
-`FULL`；请求携带 `strategyId` 时必须同时显式要求 full rebuild，避免用户选择的方案被一次 incremental
-静默忽略。
+Wiki 的策略在创建或其高级设置中保存；定时、自动与手动 generation 都使用这个值。修改系统默认值
+只影响之后新建的 Wiki，不批量改变存量 Wiki 的行为。第一阶段策略只作用于 `FULL`。
 
 生成创建时必须把解析结果快照到 `WikiGeneration.ext`：
 
@@ -97,13 +95,6 @@ backend 定义一个有类型的 `CodeWikiGenerationPolicy`，作为部署中唯
       "enabled": true,
       "teamRef": { "namespace": "default", "name": "code-wiki-team" }
     },
-    "planner_writer": {
-      "enabled": true,
-      "teamRef": {
-        "namespace": "default",
-        "name": "code-wiki-planner-writer-team"
-      }
-    },
     "legacy": {
       "enabled": true,
       "teamRef": { "namespace": "default", "name": "code-wiki-team" }
@@ -131,8 +122,8 @@ Policy 首版放在 backend 的 Code Wiki 配置中，通过一个结构化配�
 显式配置 Policy 后，新 Wiki 固化其正式默认策略，旧 Team 配置不再参与解析。
 
 每个新 Wiki 把最终选择写入 `spec.generationStrategy`。这才是“当前 Wiki 用哪一种”的权威来源；全局
-`defaultStrategy` 只是创建默认值。这样可以让不同 Wiki 同时跑不同策略，也可以对同一 Wiki 做一次性
-FULL 对照，而不因全局配置调整影响全部定时任务。
+`defaultStrategy` 只是创建默认值。这样可以让不同 Wiki 同时跑不同策略，而不因全局配置调整影响全部
+定时任务。
 
 ### 4. Team 与 gateway 都显式支持策略
 
@@ -227,7 +218,8 @@ v1 把选择权交给 Coordinator，但给出少量可审计原则，不实现�
 - 人工抽查少量核心页的机制完整性、跨模块链路、运维和测试内容。
 
 对比时固定 repository、commit、模型、语言和 RunMode，至少各运行一次
-`coordinator_adaptive` 与 `planner_writer`。一次体感结果只用于发现问题，不直接决定默认策略。
+`coordinator_adaptive` 与 `coordinator_solo`（需要时另行启用 09-03 参考实现）。一次体感结果只用于
+发现问题，不直接决定默认策略。
 
 ### PR-2 不新增质量阈值
 
@@ -263,7 +255,7 @@ overview 与 Mermaid 校验）；不在 PR-2 新增“大仓判定”“单页�
 | ---- | ----------------------------------------------------------------------- | -------------------------------------------------------------------- |
 | PR-1 | strategy registry、配置、解析与 generation 快照；保留当前行为           | 不选择策略时行为不变；API / DB / 单测可辨识策略                      |
 | PR-2 | `coordinator_adaptive` prompt、无 Reviewer/QA gateway 路径、Team 初始化 | Coordinator 可混合自写与委派；无伪造 review 阶段；现有策略测试不退化 |
-| PR-3 | 创建/设置/手动 FULL 选择器与历史展示                                    | 默认值和单次覆盖可区分；不可用策略不能选择；运行阶段准确             |
+| PR-3 | 创建/设置高级选择器、系统策略配置与历史展示                              | 默认值可见；不可用策略不能选择；运行阶段准确                         |
 | PR-4 | 复用现有 generation / task / content 数据做同仓对比，再决定默认迁移     | 形成可复现对照结果，不引入新的 executor 观测依赖                     |
 
 PR-1 不改 prompt，先建立选择、持久化和回放边界。PR-2 只做最小自适应协议，不同时引入 repo-map、
@@ -290,12 +282,13 @@ PR-1 不改 prompt，先建立选择、持久化和回放边界。PR-2 只做最
 
 `RunMode` (`full`, `incremental`, `skip`) remains the rebuild-scope decision. A new first-class
 `GenerationStrategy` describes how a full rebuild is orchestrated. The initial built-in strategies are
-`coordinator_adaptive`, `coordinator_reviewed`, `coordinator_solo`, and `planner_writer`. Stable IDs name execution
+`coordinator_adaptive`, `coordinator_reviewed`, and `coordinator_solo`. The older `planner_writer` work remains a
+reference implementation rather than a registered selectable strategy. Stable IDs name execution
 semantics while a separate `revision` tracks compatible implementation changes. They are finite,
 versioned profiles rather than a user-defined workflow DSL.
 
-The selected strategy is resolved from a one-run override, the wiki default, the deployment default,
-and finally a legacy-compatible default. Its ID, revision, and Team are snapshotted on every generation.
+The selected strategy is resolved from the wiki default, the system default at Wiki creation time, and finally a
+legacy-compatible default. Its ID, revision, and Team are snapshotted on every generation.
 The Team supplies role capabilities; the Code Wiki gateway owns strategy resolution and protocol state.
 Strategies must never be inferred from `collaborationModel` or from the accidental presence of a
 Reviewer.

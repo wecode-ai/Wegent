@@ -3,6 +3,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 import pytest
+from sqlalchemy.orm import Session
 
 from app.core.wiki_config import (
     CodeWikiGenerationPolicy,
@@ -11,11 +12,13 @@ from app.core.wiki_config import (
     WikiSettings,
     wiki_settings,
 )
+from app.models.system_config import SystemConfig
 from app.services.knowledge.code_wiki.generation_strategy import (
     COORDINATOR_ADAPTIVE,
     COORDINATOR_REVIEWED,
     COORDINATOR_SOLO,
     LEGACY,
+    SYSTEM_CONFIG_KEY,
     selectable_strategies,
     strategy_for_new_wiki,
     strategy_for_run,
@@ -55,6 +58,47 @@ def test_explicit_policy_owns_the_team_mapping(monkeypatch) -> None:
         "revision": 1,
         "teamRef": {"name": "reviewed-team", "namespace": "system"},
     }
+
+
+def test_database_policy_overrides_the_environment_fallback(
+    test_db: Session, monkeypatch
+) -> None:
+    environment_policy = CodeWikiGenerationPolicy(
+        defaultStrategy=COORDINATOR_REVIEWED,
+        legacyFallbackStrategy=LEGACY,
+        strategies={
+            COORDINATOR_REVIEWED: CodeWikiStrategyBinding(
+                teamRef=CodeWikiTeamRef(name="environment-team")
+            ),
+            LEGACY: CodeWikiStrategyBinding(teamRef=CodeWikiTeamRef(name="old-team")),
+        },
+    )
+    database_policy = CodeWikiGenerationPolicy(
+        defaultStrategy=COORDINATOR_SOLO,
+        legacyFallbackStrategy=LEGACY,
+        strategies={
+            COORDINATOR_SOLO: CodeWikiStrategyBinding(
+                teamRef=CodeWikiTeamRef(name="database-team")
+            ),
+            LEGACY: CodeWikiStrategyBinding(teamRef=CodeWikiTeamRef(name="old-team")),
+        },
+    )
+    monkeypatch.setattr(
+        wiki_settings, "CODE_WIKI_GENERATION_POLICY", environment_policy
+    )
+    test_db.add(
+        SystemConfig(
+            config_key=SYSTEM_CONFIG_KEY,
+            config_value=database_policy.model_dump(by_alias=True),
+            version=1,
+        )
+    )
+    test_db.commit()
+
+    assert strategy_for_new_wiki(db=test_db) == COORDINATOR_SOLO
+    assert (
+        strategy_for_run(COORDINATOR_SOLO, db=test_db).team_ref.name == "database-team"
+    )
 
 
 def test_adaptive_is_selectable_only_when_deployment_enables_it(monkeypatch) -> None:
@@ -111,12 +155,12 @@ def test_an_unknown_or_internal_strategy_cannot_be_selected(monkeypatch) -> None
         strategy_for_new_wiki(LEGACY)
 
 
-def test_a_run_override_wins_without_changing_the_stored_choice(monkeypatch) -> None:
+def test_a_run_always_uses_the_stored_choice(monkeypatch) -> None:
     monkeypatch.setattr(wiki_settings, "CODE_WIKI_GENERATION_POLICY", None)
 
-    resolved = strategy_for_run(LEGACY, COORDINATOR_REVIEWED)
+    resolved = strategy_for_run(LEGACY)
 
-    assert resolved.strategy_id == COORDINATOR_REVIEWED
+    assert resolved.strategy_id == LEGACY
 
 
 def test_policy_defaults_must_name_enabled_bindings() -> None:

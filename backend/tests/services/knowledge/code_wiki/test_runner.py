@@ -499,21 +499,6 @@ def test_strategy_team_readiness_resolves_a_solo_team(
     )
 
 
-def test_a_strategy_override_requires_a_forced_full_rebuild(
-    test_db: Session, knowledge_base: Kind, test_user: User, tasks: FakeTasks
-) -> None:
-    with pytest.raises(CodeWikiRunError, match="force_full"):
-        start_run(
-            test_db,
-            knowledge_base=knowledge_base,
-            user=test_user,
-            head_commit=HEAD,
-            strategy_id="coordinator_reviewed",
-        )
-
-    assert tasks.created == []
-
-
 def test_the_prompt_carries_the_generation_the_agent_must_write_into(
     test_db: Session, knowledge_base: Kind, test_user: User, tasks: FakeTasks
 ):

@@ -1120,7 +1120,7 @@ class KnowledgeOrchestrator:
             if generation_strategy is None:
                 raise ValueError("A code wiki generation strategy cannot be cleared")
             update_fields["generation_strategy"] = strategy_for_new_wiki(
-                generation_strategy
+                generation_strategy, db=db
             )
         if guided_questions is not None:
             update_fields["guided_questions"] = guided_questions
@@ -1448,7 +1448,7 @@ class KnowledgeOrchestrator:
         )
         from app.services.knowledge.code_wiki.registry import claim_repository
 
-        generation_strategy = strategy_for_new_wiki(generation_strategy)
+        generation_strategy = strategy_for_new_wiki(generation_strategy, db=db)
 
         kb_id = self._create(
             db,

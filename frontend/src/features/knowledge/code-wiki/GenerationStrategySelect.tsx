@@ -17,12 +17,17 @@ import { useTranslation } from '@/hooks/useTranslation'
 import type { CodeWikiGenerationStrategyCapabilities } from '@/types/code-wiki'
 
 const DEFAULT_OPTION = '__generation_strategy_default__'
+const BUILTIN_STRATEGY_IDS = new Set([
+  'coordinator_adaptive',
+  'coordinator_reviewed',
+  'coordinator_solo',
+])
 
 interface GenerationStrategySelectProps {
   value?: string | null
   onChange: (strategyId: string) => void
   /** What an empty selection resolves to in this particular form. */
-  emptyOption?: 'deployment' | 'wiki'
+  emptyOption?: 'deployment'
   testId: string
 }
 
@@ -42,16 +47,20 @@ export function GenerationStrategySelect({
   const [capabilities, setCapabilities] = useState<CodeWikiGenerationStrategyCapabilities | null>(
     null
   )
+  const [loadState, setLoadState] = useState<'loading' | 'ready' | 'error'>('loading')
 
   useEffect(() => {
     let active = true
     void codeWikiApi
       .strategies()
       .then(next => {
-        if (active) setCapabilities(next)
+        if (active) {
+          setCapabilities(next)
+          setLoadState('ready')
+        }
       })
       .catch(() => {
-        if (active) setCapabilities({ default_strategy: null, strategies: [] })
+        if (active) setLoadState('error')
       })
     return () => {
       active = false
@@ -61,13 +70,37 @@ export function GenerationStrategySelect({
   const choices = capabilities?.strategies ?? []
   const selected = value || (emptyOption ? DEFAULT_OPTION : '')
   const legacy = Boolean(value && !choices.some(item => item.id === value))
-  const disabled = capabilities === null || choices.length === 0
-  const deploymentDefaultDescription = capabilities?.default_strategy
-    ? t('codeWiki.strategy.deploymentDefaultNamed', {
-        strategy:
-          choices.find(item => item.id === capabilities.default_strategy)?.display_name ?? '',
-      })
-    : t('codeWiki.strategy.deploymentDefaultLegacy')
+  const disabled = loadState !== 'ready' || choices.length === 0
+  const optionFor = (id: string) => choices.find(item => item.id === id)
+  const displayName = (id: string, fallback: string) =>
+    BUILTIN_STRATEGY_IDS.has(id) ? t(`codeWiki.strategy.options.${id}.title`) : fallback
+  const description = (id: string, fallback: string) =>
+    BUILTIN_STRATEGY_IDS.has(id) ? t(`codeWiki.strategy.options.${id}.description`) : fallback
+  const defaultId = capabilities?.default_strategy ?? 'legacy'
+  const defaultOption = optionFor(defaultId)
+  const defaultName =
+    defaultId === 'legacy'
+      ? t('codeWiki.strategy.legacyTitle')
+      : displayName(defaultId, defaultOption?.display_name ?? defaultId)
+  const currentOption = optionFor(selected)
+  const triggerLabel =
+    loadState === 'loading'
+      ? t('codeWiki.strategy.loading')
+      : loadState === 'error'
+        ? t('codeWiki.strategy.loadFailed')
+        : choices.length === 0
+          ? t('codeWiki.strategy.noneAvailable')
+          : selected === DEFAULT_OPTION
+            ? t('codeWiki.strategy.systemRecommended', { strategy: defaultName })
+            : currentOption
+              ? displayName(currentOption.id, currentOption.display_name)
+              : legacy
+                ? t(
+                    value === 'legacy'
+                      ? 'codeWiki.strategy.legacyTitle'
+                      : 'codeWiki.strategy.unavailable'
+                  )
+                : t('codeWiki.strategy.systemRecommended', { strategy: defaultName })
 
   return (
     <div className="space-y-1.5">
@@ -81,42 +114,42 @@ export function GenerationStrategySelect({
           data-testid={testId}
           aria-label={t('codeWiki.strategy.label')}
         >
-          <SelectValue placeholder={t('codeWiki.strategy.loading')} />
+          <SelectValue>{triggerLabel}</SelectValue>
         </SelectTrigger>
         <SelectContent>
           {emptyOption && (
             <SelectItem value={DEFAULT_OPTION}>
-              {t(
-                emptyOption === 'deployment'
-                  ? 'codeWiki.strategy.deploymentDefault'
-                  : 'codeWiki.strategy.wikiDefault'
-              )}
+              {t('codeWiki.strategy.systemRecommended', { strategy: defaultName })}
             </SelectItem>
           )}
           {legacy && (
             <SelectItem value={value!} disabled>
-              {t(value === 'legacy' ? 'codeWiki.strategy.legacy' : 'codeWiki.strategy.unavailable')}
+              {t(
+                value === 'legacy'
+                  ? 'codeWiki.strategy.legacyTitle'
+                  : 'codeWiki.strategy.unavailable'
+              )}
             </SelectItem>
           )}
           {choices.map(option => (
             <SelectItem key={option.id} value={option.id}>
-              {option.display_name}
+              {displayName(option.id, option.display_name)}
             </SelectItem>
           ))}
         </SelectContent>
       </Select>
       {emptyOption && selected === DEFAULT_OPTION ? (
         <p className="text-xs text-text-muted">
-          {emptyOption === 'deployment'
-            ? deploymentDefaultDescription
-            : t('codeWiki.strategy.wikiDefaultDescription')}
+          {defaultId === 'legacy'
+            ? t('codeWiki.strategy.legacyDescription')
+            : t('codeWiki.strategy.systemRecommendedDescription', { strategy: defaultName })}
         </p>
       ) : (
         choices
           .filter(option => option.id === selected)
           .map(option => (
             <p key={option.id} className="text-xs text-text-muted">
-              {option.description}
+              {description(option.id, option.description)}
             </p>
           ))
       )}

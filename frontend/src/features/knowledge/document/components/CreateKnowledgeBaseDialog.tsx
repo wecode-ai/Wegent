@@ -39,6 +39,7 @@ import type {
   RagConfigMode,
 } from '@/types/knowledge'
 import { GenerationTaskRow } from '@/features/knowledge/code-wiki/GenerationTaskRow'
+import { GenerationStrategySelect } from '@/features/knowledge/code-wiki/GenerationStrategySelect'
 import { getKnowledgeBaseRetrievalProfile } from '@/apis/knowledge'
 import { KnowledgeBaseForm } from './KnowledgeBaseForm'
 import { createDefaultRetrievalConfig } from './retrievalConfig'
@@ -407,10 +408,25 @@ export function CreateKnowledgeBaseDialog({
           <KnowledgeBaseForm
             advancedExtras={
               kind === 'code' ? (
-                <GenerationTaskRow
-                  checked={source.show_generation_task}
-                  onChange={checked => setSource({ ...source, show_generation_task: checked })}
-                />
+                <>
+                  <SimpleConfigRow
+                    label={t('knowledge:codeWiki.strategy.label')}
+                    description={t('knowledge:codeWiki.strategy.createDescription')}
+                  >
+                    <GenerationStrategySelect
+                      value={source.generation_strategy}
+                      onChange={generation_strategy =>
+                        setSource({ ...source, generation_strategy })
+                      }
+                      emptyOption="deployment"
+                      testId="code-wiki-generation-strategy"
+                    />
+                  </SimpleConfigRow>
+                  <GenerationTaskRow
+                    checked={source.show_generation_task}
+                    onChange={checked => setSource({ ...source, show_generation_task: checked })}
+                  />
+                </>
               ) : undefined
             }
             nameRequired={kind !== 'code'}

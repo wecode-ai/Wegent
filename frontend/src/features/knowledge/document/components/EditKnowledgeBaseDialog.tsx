@@ -393,31 +393,28 @@ export function EditKnowledgeBaseDialog({
                   </div>
                 )}
 
-                {isCodeWiki && (
-                  <div className="mb-4">
-                    <SimpleConfigRow
-                      label={tKnowledge('codeWiki.strategy.label')}
-                      description={tKnowledge('codeWiki.strategy.settingsDescription')}
-                    >
-                      <GenerationStrategySelect
-                        value={generationStrategy}
-                        onChange={strategy => {
-                          setGenerationStrategy(strategy)
-                          setGenerationStrategyTouched(true)
-                        }}
-                        testId="code-wiki-generation-strategy"
-                      />
-                    </SimpleConfigRow>
-                  </div>
-                )}
-
                 <KnowledgeBaseForm
                   advancedExtras={
                     isCodeWiki ? (
-                      <GenerationTaskRow
-                        checked={showGenerationTask}
-                        onChange={setShowGenerationTask}
-                      />
+                      <>
+                        <SimpleConfigRow
+                          label={tKnowledge('codeWiki.strategy.label')}
+                          description={tKnowledge('codeWiki.strategy.settingsDescription')}
+                        >
+                          <GenerationStrategySelect
+                            value={generationStrategy}
+                            onChange={strategy => {
+                              setGenerationStrategy(strategy)
+                              setGenerationStrategyTouched(true)
+                            }}
+                            testId="code-wiki-generation-strategy"
+                          />
+                        </SimpleConfigRow>
+                        <GenerationTaskRow
+                          checked={showGenerationTask}
+                          onChange={setShowGenerationTask}
+                        />
+                      </>
                     ) : undefined
                   }
                   name={name}
