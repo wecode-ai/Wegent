@@ -319,6 +319,7 @@ def get_knowledge_config():
     """
     return {
         "chunk_storage_enabled": settings.CHUNK_STORAGE_ENABLED,
+        "external_batch_import_max": settings.KNOWLEDGE_EXTERNAL_BATCH_IMPORT_MAX,
     }
 
 

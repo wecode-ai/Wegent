@@ -498,6 +498,7 @@ export async function resetKnowledgeBaseSummary(
  */
 export interface KnowledgeConfig {
   chunk_storage_enabled: boolean
+  external_batch_import_max: number
 }
 
 /**

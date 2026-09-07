@@ -20,6 +20,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 from sqlalchemy.orm.exc import ObjectDeletedError
 
+from app.core.config import settings
 from app.models.knowledge import (
     DocumentIndexStatus,
     KnowledgeDocument,
@@ -49,8 +50,6 @@ from shared.telemetry.decorators import set_span_attribute
 
 logger = logging.getLogger(__name__)
 
-# Maximum external documents a single batch import may create.
-MAX_EXTERNAL_BATCH_IMPORT = 50
 MAX_DOCUMENT_NAME_LENGTH = 255
 
 
@@ -196,10 +195,10 @@ class ExternalDocumentImportService:
 
         # Deduplicate by external identity while preserving request order.
         resource_ids = list(dict.fromkeys(external_resource_ids))
-        if len(resource_ids) > MAX_EXTERNAL_BATCH_IMPORT:
+        max_batch = settings.KNOWLEDGE_EXTERNAL_BATCH_IMPORT_MAX
+        if len(resource_ids) > max_batch:
             raise ExternalDocumentImportError(
-                f"At most {MAX_EXTERNAL_BATCH_IMPORT} documents can be imported "
-                "in one batch"
+                f"At most {max_batch} documents can be imported in one batch"
             )
 
         resolved, refreshable, processing = self._resolve_batch_items(

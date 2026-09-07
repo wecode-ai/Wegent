@@ -751,6 +751,35 @@ class TestImportDocuments:
         assert exc_info.value.status_code == 400
         assert dispatched == []
 
+    def test_batch_cap_reads_from_settings(
+        self,
+        test_db: Session,
+        test_user: User,
+        configured_dingtalk: None,
+        dispatched: list[int],
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        from app.core.config import settings
+
+        monkeypatch.setattr(settings, "KNOWLEDGE_EXTERNAL_BATCH_IMPORT_MAX", 2)
+        kb_id = _create_kb(test_db, test_user.id)
+        resource_ids = [f"cap-{index:03d}" for index in range(3)]
+        for resource_id in resource_ids:
+            _create_synced_node(test_db, test_user.id, resource_id)
+
+        with pytest.raises(ExternalDocumentImportError) as exc_info:
+            external_document_import_service.import_documents(
+                db=test_db,
+                user=test_user,
+                knowledge_base_id=kb_id,
+                provider_id="dingtalk",
+                external_resource_ids=resource_ids,
+            )
+
+        assert exc_info.value.status_code == 400
+        assert "At most 2 documents" in str(exc_info.value)
+        assert dispatched == []
+
     def test_updates_settled_documents_and_imports_new_ones(
         self,
         test_db: Session,

@@ -487,6 +487,9 @@ class Settings(BaseSettings):
     KNOWLEDGE_INDEX_STALE_INDEXING_SECONDS: int = 2700  # 45 min
     KNOWLEDGE_ARTIFACT_STALL_SECONDS: int = 600  # 10 min
 
+    # Maximum external documents a single batch import may create
+    KNOWLEDGE_EXTERNAL_BATCH_IMPORT_MAX: int = 50
+
     # --- Document Conversion Configuration ---
 
     # [Retained] Master switch: when False, all files indexed directly

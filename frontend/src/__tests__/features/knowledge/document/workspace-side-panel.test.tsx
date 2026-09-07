@@ -44,6 +44,55 @@ describe('WorkspaceSidePanel', () => {
     expect(localStorage.getItem('test-left-panel-collapsed')).toBe('false')
   })
 
+  it('uses the configured default only when no stored preference exists', () => {
+    const { container, unmount } = render(
+      <WorkspaceSidePanel
+        side="right"
+        storageKey="test-default-collapsed-panel"
+        defaultWidth={360}
+        minWidth={280}
+        maxWidth={520}
+        defaultCollapsed
+        collapsedWidth={72}
+        mobileVisible={false}
+        expandLabel="expand"
+        collapseLabel="collapse"
+        resizeLabel="resize"
+        expandTestId="expand-panel"
+        collapseTestId="collapse-panel"
+      >
+        <div data-testid="panel-content" />
+      </WorkspaceSidePanel>
+    )
+
+    expect(container.firstChild).toHaveStyle({ width: '72px' })
+    expect(screen.getByTestId('expand-panel')).toBeInTheDocument()
+
+    unmount()
+    localStorage.setItem('test-default-collapsed-panel-collapsed', 'false')
+    render(
+      <WorkspaceSidePanel
+        side="right"
+        storageKey="test-default-collapsed-panel"
+        defaultWidth={360}
+        minWidth={280}
+        maxWidth={520}
+        defaultCollapsed
+        collapsedWidth={72}
+        mobileVisible={false}
+        expandLabel="expand"
+        collapseLabel="collapse"
+        resizeLabel="resize"
+        expandTestId="expand-panel"
+        collapseTestId="collapse-panel"
+      >
+        <div data-testid="panel-content" />
+      </WorkspaceSidePanel>
+    )
+
+    expect(screen.getByTestId('collapse-panel')).toBeInTheDocument()
+  })
+
   it('uses the configured width and the correct border for each side', () => {
     const { container, rerender } = renderPanel('left')
     expect(container.firstChild).toHaveStyle({ width: '300px' })
