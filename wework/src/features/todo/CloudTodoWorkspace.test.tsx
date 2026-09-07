@@ -4374,7 +4374,7 @@ describe('CloudTodoWorkspace', () => {
     expect(screen.getByTestId('my-work-group-action-runtime-standalone')).toBeVisible()
   })
 
-  it('refreshes an open My Tasks board when runtime execution status changes', async () => {
+  it('projects an active runtime task when persisted board status lags behind', async () => {
     const defaultProject = {
       ...project,
       id: 'default-work-items',
@@ -4412,9 +4412,9 @@ describe('CloudTodoWorkspace', () => {
       chats: [],
       totalTasks: 1,
     }
+    let currentRuntimeWork = runtimeWork
     const lifecycleStore = new RuntimeTaskLifecycleStore(1)
     lifecycleStore.syncRuntimeWork(runtimeWork)
-    let persistedStatus: 'in_review' | 'in_progress' = 'in_review'
     const trackedIssue = {
       ...item,
       cloud_project_id: defaultProject.id,
@@ -4425,7 +4425,7 @@ describe('CloudTodoWorkspace', () => {
       items: [defaultProject],
     })
     workbenchServices.deliveryApi!.getBoardSnapshot = vi.fn(async () => ({
-      items: [{ ...trackedIssue, status: persistedStatus }],
+      items: [{ ...trackedIssue, status: 'in_review' }],
       task_bindings: [
         {
           id: 1,
@@ -4449,7 +4449,7 @@ describe('CloudTodoWorkspace', () => {
       <CloudTodoWorkspace
         user={{ id: 1, user_name: 'local', email: 'local@example.com' } as User}
         localProjects={[{ id: 91, name: 'Project A', tasks: [] }]}
-        runtimeWork={runtimeWork}
+        runtimeWork={currentRuntimeWork}
         runtimeTaskLifecycle={lifecycleSnapshot}
         services={workbenchServices}
         embedded
@@ -4467,7 +4467,17 @@ describe('CloudTodoWorkspace', () => {
     const initialSnapshotRequests = vi.mocked(workbenchServices.deliveryApi!.getBoardSnapshot).mock
       .calls.length
 
-    persistedStatus = 'in_progress'
+    currentRuntimeWork = {
+      ...runtimeWork,
+      projects: runtimeWork.projects.map(projectWork => ({
+        ...projectWork,
+        deviceWorkspaces: projectWork.deviceWorkspaces.map(workspace => ({
+          ...workspace,
+          tasks: [],
+        })),
+      })),
+      totalTasks: 0,
+    }
     act(() => lifecycleStore.executorStarted(address))
     rendered.rerender(workspace(lifecycleStore.getSnapshot()))
 

@@ -761,9 +761,6 @@ function AppShell() {
     socketBaseUrl: cloudConnection.socketBaseUrl,
     isConnected: cloudConnection.isConnected,
     token: cloudConnection.token,
-    registrationDeviceType: appPreferences?.preferences.remoteControlEnabled
-      ? ('remote' as const)
-      : ('app' as const),
   }
   const { activeAppKey, navigateToApp } = useChromeTabs(path)
   const isElectron = isElectronRuntime()
@@ -1113,7 +1110,6 @@ function AppShell() {
             isConnected={cloudConnection.isConnected}
             token={cloudConnection.token}
             preferencesLoaded={appPreferences?.loaded ?? false}
-            remoteControlEnabled={appPreferences?.preferences.remoteControlEnabled ?? false}
           />
         ) : null}
         {isMainWindow && isElectron ? (

@@ -139,6 +139,10 @@ async def _resolve_dispatch_device_id(
         raise DeviceCommandError(REMOTE_CONTROL_DISABLED_MESSAGE)
 
     if device_type in LOCAL_COMMAND_DEVICE_TYPES:
+        if device_type == DeviceType.APP:
+            from app.services.device.identity import record_route_id
+
+            return record_route_id(device_kind)
         return submitted_device_id
 
     if device_type not in {DeviceType.CLOUD, DeviceType.REMOTE}:
