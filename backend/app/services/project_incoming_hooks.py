@@ -125,11 +125,6 @@ class ProjectIncomingHookService:
             BaseRole.Maintainer,
         )
         definition = event_source(values.source_type)
-        if values.credential_ref in {"machine-cli", "local-cli"}:
-            raise HTTPException(
-                status.HTTP_422_UNPROCESSABLE_CONTENT,
-                "Machine CLI credentials are reserved for branch collectors",
-            )
         if values.collection_mode not in definition.collection_modes:
             raise HTTPException(
                 status.HTTP_422_UNPROCESSABLE_CONTENT,
@@ -219,11 +214,6 @@ class ProjectIncomingHookService:
         collection_mode = values.collection_mode or str(
             hook_metadata.get("collection_mode") or "webhook"
         )
-        if values.credential_ref in {"machine-cli", "local-cli"}:
-            raise HTTPException(
-                status.HTTP_422_UNPROCESSABLE_CONTENT,
-                "Machine CLI credentials are reserved for branch collectors",
-            )
         if collection_mode not in definition.collection_modes:
             raise HTTPException(
                 status.HTTP_422_UNPROCESSABLE_CONTENT,

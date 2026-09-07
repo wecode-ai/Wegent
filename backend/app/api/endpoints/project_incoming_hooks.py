@@ -6,7 +6,7 @@
 from datetime import datetime
 from typing import Any, get_args
 
-from fastapi import APIRouter, Depends, Query, Request, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from sqlalchemy.orm import Session
 
 from app.api.dependencies import get_db
@@ -34,6 +34,7 @@ router = APIRouter()
 public_router = APIRouter()
 
 
+MACHINE_CLI_CREDENTIALS = frozenset({"machine-cli", "local-cli"})
 _EVENT_SOURCE_TYPES = frozenset(get_args(EventSourceType))
 _EVENT_COLLECTION_MODES = frozenset(get_args(EventCollectionMode))
 _RESOURCE_TYPE_FALLBACK = {
@@ -55,6 +56,16 @@ def _normalized_source_type(value: object) -> str:
     """Coerce a stored source type into a valid catalog value for the view."""
     text = str(value or "").strip()
     return text if text in _EVENT_SOURCE_TYPES else "generic"
+
+
+def _reject_machine_cli_credential(
+    values: ProjectIncomingHookCreate | ProjectIncomingHookUpdate,
+) -> None:
+    if values.credential_ref in MACHINE_CLI_CREDENTIALS:
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_CONTENT,
+            "Machine CLI credentials are reserved for branch collectors",
+        )
 
 
 def _normalized_collection_mode(value: object) -> str:
@@ -190,6 +201,7 @@ def create_incoming_hook(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> ProjectIncomingHookView:
+    _reject_machine_cli_credential(values)
     hook, webhook_secret = project_incoming_hook_service.create(
         db,
         project_id,
@@ -211,6 +223,7 @@ def update_incoming_hook(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> ProjectIncomingHookView:
+    _reject_machine_cli_credential(values)
     hook, webhook_secret = project_incoming_hook_service.update(
         db,
         project_id,
