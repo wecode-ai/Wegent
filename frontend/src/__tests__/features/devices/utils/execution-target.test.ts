@@ -9,6 +9,7 @@ import {
   getSelectableDevices,
   isDeviceAtCapacity,
   resolveTaskExecutionDeviceId,
+  resolveDeviceSelectionId,
 } from '@/features/devices/utils/execution-target'
 
 function createDevice(overrides: Partial<DeviceInfo>): DeviceInfo {
@@ -31,6 +32,23 @@ function createDevice(overrides: Partial<DeviceInfo>): DeviceInfo {
 }
 
 describe('execution target utils', () => {
+  it('resolves unique historical IDs without guessing between installations', () => {
+    const first = createDevice({
+      device_type: 'app',
+      device_id: 'app-record-1',
+      registered_device_id: 'local-device',
+    })
+    const second = createDevice({
+      id: 2,
+      device_type: 'app',
+      device_id: 'app-record-2',
+      registered_device_id: 'local-device',
+    })
+    expect(resolveDeviceSelectionId([first], 'local-device')).toBe('app-record-1')
+    expect(resolveDeviceSelectionId([first, second], 'local-device')).toBe('local-device')
+    expect(resolveDeviceSelectionId([first, second], 'app-record-2')).toBe('app-record-2')
+    expect(resolveDeviceSelectionId([first], 'missing')).toBe('missing')
+  })
   it('keeps the account default target exact without availability fallback', () => {
     expect(getAccountDefaultDeviceId('configured-offline-device')).toBe('configured-offline-device')
     expect(getAccountDefaultDeviceId('cloud')).toBeNull()

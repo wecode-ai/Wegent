@@ -34,12 +34,8 @@ function runtimeAuthRefreshDelayMs(expiresInSeconds: number) {
   return Math.max(1_000, (expiresInSeconds - leadSeconds) * 1_000)
 }
 
-type LocalExecutorCloudBridgeProps = Omit<
-  LocalExecutorCloudConnection,
-  'registrationDeviceType'
-> & {
+type LocalExecutorCloudBridgeProps = LocalExecutorCloudConnection & {
   preferencesLoaded: boolean
-  remoteControlEnabled: boolean
 }
 
 export function LocalExecutorCloudBridge({
@@ -49,7 +45,6 @@ export function LocalExecutorCloudBridge({
   isConnected,
   token,
   preferencesLoaded,
-  remoteControlEnabled,
 }: LocalExecutorCloudBridgeProps) {
   const connectionGenerationRef = useRef(0)
   const [connectorRefreshRevision, setConnectorRefreshRevision] = useState(0)
@@ -107,7 +102,6 @@ export function LocalExecutorCloudBridge({
             socketBaseUrl,
             isConnected,
             token,
-            registrationDeviceType: remoteControlEnabled ? 'remote' : 'app',
           },
           { isCurrent: isCurrentConnectionAttempt }
         )
@@ -155,15 +149,7 @@ export function LocalExecutorCloudBridge({
       if (statusTimer) clearTimeout(statusTimer)
       setLocalExecutorCloudConnectionStatus({ apiBaseUrl: apiBaseUrl || '', connected: false })
     }
-  }, [
-    apiBaseUrl,
-    configuredBackendUrl,
-    isConnected,
-    preferencesLoaded,
-    remoteControlEnabled,
-    socketBaseUrl,
-    token,
-  ])
+  }, [apiBaseUrl, configuredBackendUrl, isConnected, preferencesLoaded, socketBaseUrl, token])
 
   useEffect(() => {
     if (!isCloudConnectionUiAvailable()) return

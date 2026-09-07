@@ -137,6 +137,14 @@ append_unique_file() {
     WEWORK_FOCUSED_TEST_FILES+=("$candidate")
 }
 
+format_worker_count() {
+    if [ "$1" = "1" ]; then
+        printf '1 worker'
+    else
+        printf '%s workers' "$1"
+    fi
+}
+
 collect_wework_renderer_tests() {
     local source_file
     local base_path
@@ -183,23 +191,26 @@ collect_wework_renderer_tests() {
 
 run_wework_unit_tests() {
     local test_exit=0
+    local test_workers
 
     : > "$TEMP_DIR/wework_test.log"
 
     if [ "$WEWORK_RENDERER_CHANGED" -eq 1 ]; then
         if [ "$WEWORK_RENDERER_FULL_TESTS" -eq 1 ]; then
-            echo -e "   Running full renderer unit tests with $WEWORK_TEST_WORKERS workers..."
-            if ! VITEST_MAX_WORKERS="$WEWORK_TEST_WORKERS" \
-                pnpm --filter wework exec vitest run --dir src --pool=threads \
+            test_workers="${WEWORK_PRE_PUSH_TEST_WORKERS:-1}"
+            echo -e "   Running full renderer unit tests with $(format_worker_count "$test_workers")..."
+            if ! pnpm --filter wework exec vitest run --dir src --pool=threads \
+                --maxWorkers "$test_workers" \
                 >> "$TEMP_DIR/wework_test.log" 2>&1; then
                 test_exit=1
             fi
         else
             collect_wework_renderer_tests
             if [ "${#WEWORK_FOCUSED_TEST_FILES[@]}" -gt 0 ]; then
-                echo -e "   Running focused renderer unit tests with $WEWORK_TEST_WORKERS workers..."
-                if ! VITEST_MAX_WORKERS="$WEWORK_TEST_WORKERS" \
-                    pnpm --filter wework exec vitest run --pool=threads \
+                test_workers="${WEWORK_PRE_PUSH_TEST_WORKERS:-2}"
+                echo -e "   Running focused renderer unit tests with $(format_worker_count "$test_workers")..."
+                if ! pnpm --filter wework exec vitest run --pool=threads \
+                    --maxWorkers "$test_workers" \
                     "${WEWORK_FOCUSED_TEST_FILES[@]}" \
                     >> "$TEMP_DIR/wework_test.log" 2>&1; then
                     test_exit=1
@@ -616,7 +627,6 @@ if [ "$WEWORK_COUNT" -gt 0 ] 2>/dev/null; then
             fi
         fi
 
-        WEWORK_TEST_WORKERS="${WEWORK_PRE_PUSH_TEST_WORKERS:-2}"
         run_wework_unit_tests &
         WEWORK_TEST_PID=$!
 

@@ -182,12 +182,12 @@ def test_upsert_persistent_device_pins_first_runtime_instance(
 
 
 @pytest.mark.parametrize("device_type", [DeviceType.LOCAL, DeviceType.APP])
-def test_upsert_local_and_app_devices_keep_runtime_instance_update_behavior(
+def test_upsert_local_and_app_devices_reject_runtime_replacement(
     test_db: Session,
     test_user,
     device_type: DeviceType,
 ):
-    """Local and app registrations may continue updating their Runtime ID."""
+    """Desktop registrations cannot take over another Runtime's device ID."""
     device_id = f"{device_type.value}-replaceable-runtime"
     device = Kind(
         user_id=test_user.id,
@@ -210,16 +210,19 @@ def test_upsert_local_and_app_devices_keep_runtime_instance_update_behavior(
     test_db.add(device)
     test_db.commit()
 
-    updated = device_service.upsert_device_crd(
-        test_db,
-        test_user.id,
-        device_id,
-        "Updated Runtime",
-        device_type=device_type.value,
-        runtime_instance_id="runtime-after",
-    )
+    with pytest.raises(RuntimeInstanceMismatchError):
+        device_service.upsert_device_crd(
+            test_db,
+            test_user.id,
+            device_id,
+            "Updated Runtime",
+            device_type=device_type.value,
+            runtime_instance_id="runtime-after",
+            app_device_id="electron-app" if device_type == DeviceType.APP else None,
+        )
 
-    assert updated.json["spec"]["runtimeInstanceId"] == "runtime-after"
+    test_db.refresh(device)
+    assert device.json["spec"]["runtimeInstanceId"] == "runtime-before"
 
 
 def test_upsert_app_device_uses_app_type_without_becoming_default(
@@ -235,6 +238,7 @@ def test_upsert_app_device_uses_app_type_without_becoming_default(
         device_type=DeviceType.APP.value,
         bind_shell="claudecode",
         app_device_id="app-device",
+        runtime_instance_id="runtime-app",
     )
 
     assert updated.json["spec"]["deviceType"] == DeviceType.APP.value
@@ -242,23 +246,14 @@ def test_upsert_app_device_uses_app_type_without_becoming_default(
     assert updated.json["spec"]["isDefault"] is False
 
 
-def test_upsert_switches_app_remote_exposure_without_duplicate_device(
+def test_upsert_restores_legacy_remote_wework_device_as_app_without_duplicate(
     test_db: Session,
     test_user,
 ):
     device_id = "desktop-runtime-device"
     runtime_instance_id = "runtime-stable"
 
-    app_device = device_service.upsert_device_crd(
-        test_db,
-        test_user.id,
-        device_id,
-        "MacBook App",
-        device_type=DeviceType.APP.value,
-        runtime_instance_id=runtime_instance_id,
-        app_device_id=device_id,
-    )
-    remote_device = device_service.upsert_device_crd(
+    legacy_remote_device = device_service.upsert_device_crd(
         test_db,
         test_user.id,
         device_id,
@@ -287,7 +282,7 @@ def test_upsert_switches_app_remote_exposure_without_duplicate_device(
         )
         .all()
     )
-    assert app_device.id == remote_device.id == restored_app_device.id
+    assert legacy_remote_device.id == restored_app_device.id
     assert len(persisted) == 1
     assert persisted[0].json["spec"]["deviceType"] == DeviceType.APP.value
     assert persisted[0].json["spec"]["runtimeInstanceId"] == runtime_instance_id

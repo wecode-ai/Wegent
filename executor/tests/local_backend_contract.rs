@@ -34,6 +34,37 @@ use wegent_executor::{
 static ENV_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 
 #[tokio::test]
+async fn local_backend_rejects_missing_persistent_identity_before_registration() {
+    for missing_runtime in [false, true] {
+        let transport = RecordingTransport::default();
+        let mut config = local_backend_config();
+        if missing_runtime {
+            config.runtime_instance_id.clear();
+        } else {
+            config.device_id.clear();
+        }
+        let client = LocalBackendClient::with_capability_reporter(
+            config,
+            transport.clone(),
+            StaticCapabilityReporter,
+        );
+        let error = client
+            .register_device(Duration::from_secs(2))
+            .await
+            .unwrap_err();
+        assert!(error.contains("persistent device and Runtime identities are required"));
+        assert!(transport.calls().is_empty());
+    }
+}
+
+#[test]
+fn local_backend_config_does_not_invent_shared_identity_fallbacks() {
+    let config = LocalBackendConfig::from_device_config(DeviceConfig::default());
+    assert!(config.device_id.is_empty());
+    assert!(config.runtime_instance_id.is_empty());
+}
+
+#[tokio::test]
 async fn local_backend_registers_device_with_python_compatible_payload() {
     let transport = RecordingTransport::with_responses(vec![json!({"success": true})]);
     let config = local_backend_config();
@@ -783,6 +814,7 @@ async fn local_backend_replays_runtime_events_after_reconnecting() {
 fn local_backend_config_uses_device_config_and_normalizes_token() {
     let mut device = DeviceConfig {
         device_id: "device-1".to_owned(),
+        runtime_instance_id: "runtime-persisted".to_owned(),
         device_name: "Device One".to_owned(),
         device_type: "local".to_owned(),
         bind_shell: "claudecode".to_owned(),
@@ -803,7 +835,7 @@ fn local_backend_config_uses_device_config_and_normalizes_token() {
     assert_eq!(config.auth_token, "wg-token");
     assert_eq!(config.runtime_auth_token, "runtime-wg-token");
     assert_eq!(config.device_id, "device-1");
-    assert_eq!(config.runtime_instance_id, "runtime-local");
+    assert_eq!(config.runtime_instance_id, "runtime-persisted");
     assert_eq!(config.device_name, "Device One");
     assert_eq!(config.device_type, "local");
     assert_eq!(config.bind_shell, "claudecode");

@@ -21,35 +21,33 @@ bundle; never modify the DeepSeek Harness source tree to add the app.
   `INSTALL.zh-CN.md`, the profile bundle `cordis.patch.yml`, source, and built output.
 - Installation into Wework always ends with the native preview and model-selection
   confirmation. Do not bypass that confirmation by editing Wework data files.
+- For a Wework-linked project, Wework Host is the only authority for Smart app
+  inspection, verification, and distributable ZIP creation. Do not replace it with
+  local manifest checks, ad-hoc DSH commands, or a fallback packer.
 
 ## Workflow
 
-1. Establish the app purpose, input/output, workspace directory, and target DSH
-   version. Default to the DSH version bundled by the current Wework build. If the
-   directory already contains `plugin-manifest.json`, read the existing package,
-   dependencies, source, and `cordis.patch.yml` before proposing changes.
-2. Run the bundled helper's `doctor` command. Fix missing Node 22+ or Corepack/pnpm
-   before creating files.
-3. Search the DSH ecosystem with the helper's `search` command and, when visual
-   inspection helps, use the Wework built-in browser to inspect the `dsh-plugin`
-   GitHub topic and candidate repositories. Record chosen package names and exact
-   versions.
-4. Create the external package workspace only when it does not already exist.
-   Wework's blank Web preset is already a valid profile bundle. Reuse compatible
-   DSH plugins where possible; add them incrementally to the package declarations
-   and `cordis.patch.yml`, and write only the capability-specific Host/Web code
-   that is still missing.
-5. Build and test the package. Use the DSH CLI to install the local profile bundle,
-   inspect `--dump-config`, and launch the profile on an available loopback port.
-6. Open that loopback URL in the Wework built-in browser. Verify the primary flow,
-   one invalid-input path, and recovery. Save screenshots when the user requests
-   evidence.
-7. Run the helper's `validate` command after every change. Use `pack` only when the
-   user needs a distributable ZIP. Never package `node_modules`, credentials,
-   `.env`, test output, or VCS metadata.
-8. For a Wework-linked directory, return to **应用 → 智能工作台 → 我的** and
-   refresh; the same workbench remains linked to the edited folder. For a ZIP-only
-   workflow, use the native preview and model-selection confirmation before install.
+Use this state machine: **inspect → contract → doctor → verify → preview → pack**.
+
+1. Run `inspect` first. If it returns `stale`, `failed`, or no report, read the
+   structured error code and fix that exact boundary; do not guess from UI text.
+2. Read `plugin-manifest.json`, `smart-app.verify.json`, the package declarations,
+   source, built output, and `cordis.patch.yml`. Keep capabilities minimal and
+   declare each new Host, Client, or Remote capability in the contract.
+3. Run `doctor`, then use `search` only when an additional DSH plugin is needed.
+   Record chosen package names and exact compatible versions.
+4. Implement the smallest capability-specific change. Do not inject `harness`,
+   `llm`, filesystem, or network services unless the app declares and uses them.
+5. Run `verify` after every meaningful edit. It performs the managed project checks,
+   artifact checks, isolated DSH cold start, ready-selector probe, and Remote probe
+   when declared. Fix the structured error code, then verify again until `passed`.
+6. Use the Wework built-in preview for the primary path, one invalid-input path,
+   and recovery. Save screenshots only when the user requests evidence.
+7. Run `pack` only after the current report passes. It creates and re-verifies the
+   ZIP; it excludes credentials, `.env`, `node_modules`, VCS metadata, test output,
+   and the development verification contract.
+8. For a linked directory, refresh **应用 → 智能工作台 → 我的**. For ZIP-only
+   delivery, use the native preview and model-selection confirmation before install.
 
 ## Commands
 
@@ -58,18 +56,11 @@ Resolve this plugin root from the selected skill path, then run:
 ```bash
 node <plugin-root>/scripts/smart-app-tool.mjs doctor
 node <plugin-root>/scripts/smart-app-tool.mjs search "<keywords>"
-node <plugin-root>/scripts/smart-app-tool.mjs validate <smart-app-directory>
+node <plugin-root>/scripts/smart-app-tool.mjs inspect <smart-app-directory>
+node <plugin-root>/scripts/smart-app-tool.mjs verify <smart-app-directory>
 node <plugin-root>/scripts/smart-app-tool.mjs pack <smart-app-directory> [output.zip]
 ```
 
-For a local bundle:
-
-```bash
-corepack pnpm dlx @deepseek-ai/dsh@<version> plugin --profile <profile> add file:<bundle-directory>
-corepack pnpm dlx @deepseek-ai/dsh@<version> --profile <profile> --dump-config
-corepack pnpm dlx @deepseek-ai/dsh@<version> --profile <profile> --port <port>
-```
-
-If the DSH package or a selected plugin changed its compatibility contract, stop and
-show the exact version conflict. Do not silently widen version ranges or copy code
+If the Host returns a DSH or plugin compatibility error, show its exact structured
+error code. Do not silently widen version ranges, bypass verification, or copy code
 from the DSH source tree.

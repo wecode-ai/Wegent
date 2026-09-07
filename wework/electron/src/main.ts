@@ -102,7 +102,11 @@ import {
   pluginDevelopmentElectronArguments,
 } from './runtime/plugin-development-manager.js'
 import { PluginDevelopmentChildRuntime } from './runtime/plugin-development-child-runtime.js'
-import { canReplaceWeworkCli, installWeworkCli } from './runtime/wework-cli-installer.js'
+import {
+  canReplaceWeworkCli,
+  installWeworkCli,
+  shouldInstallUserWeworkCli,
+} from './runtime/wework-cli-installer.js'
 import {
   parseLocalWorkspaceOpenRequest,
   type LocalWorkspaceOpenRequest,
@@ -1294,6 +1298,7 @@ async function configureDesktopRuntime(): Promise<void> {
     projectRoot: process.env.WEWORK_PLUGIN_DEVELOPMENT_ROOT?.trim() || null,
     registryDirectory: desktopControlRegistryDirectory(),
     window: () => mainWindow,
+    smartApps: () => smartApps,
   })
   await desktopControlBridge.start()
   computerUse = new ComputerUseService(
@@ -1726,7 +1731,13 @@ async function desktopEnvironment(): Promise<NodeJS.ProcessEnv> {
       nodeCommand: [nodeRuntime.status.path],
     }
   )
-  if (packagedApplication && !pluginDevelopmentInstance && process.platform === 'darwin') {
+  if (
+    shouldInstallUserWeworkCli(process.platform, {
+      environment: process.env,
+      packagedApplication,
+      pluginDevelopmentInstance,
+    })
+  ) {
     const userCliBin = join(app.getPath('home'), '.local', 'bin')
     const userCliPath = join(userCliBin, 'wework')
     if (await canReplaceWeworkCli(userCliPath)) {

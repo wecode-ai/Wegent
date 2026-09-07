@@ -410,7 +410,15 @@ export function useWorkbenchPaneEnvironment({
   ])
 
   const loadCurrentEnvironmentInfo = useCallback(
-    async ({ force, showLoading }: { force: boolean; showLoading: boolean }) => {
+    async ({
+      force,
+      showLoading,
+      shareInflight,
+    }: {
+      force: boolean
+      showLoading: boolean
+      shareInflight?: boolean
+    }) => {
       const requestId = environmentInfoRequestSequence.current + 1
       environmentInfoRequestSequence.current = requestId
       const startedAt = performance.now()
@@ -550,6 +558,7 @@ export function useWorkbenchPaneEnvironment({
           latestActiveWorkspaceTarget,
           {
             ...(force ? { force: true } : {}),
+            ...(shareInflight === false ? { shareInflight: false } : {}),
             changeRequestStatusEnabled,
             onPartialInfo: partialInfo => applyEnvironmentInfo(partialInfo, true),
           }
@@ -585,7 +594,7 @@ export function useWorkbenchPaneEnvironment({
 
   const refreshEnvironmentInfo = useCallback(async () => {
     await Promise.all([
-      loadCurrentEnvironmentInfo({ force: true, showLoading: true }),
+      loadCurrentEnvironmentInfo({ force: true, showLoading: true, shareInflight: false }),
       changeRequestStatusEnabled
         ? changeRequestMonitor?.refresh({ shareInflight: false })
         : undefined,

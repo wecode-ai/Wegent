@@ -623,6 +623,7 @@ export function AutomationRulesView({
   const executionCatalogRequestRef = useRef(null)
   const executionPluginRequestRef = useRef(null)
   const runsRequestRef = useRef(null)
+  const toastTimerRef = useRef(null)
 
   const dirty = JSON.stringify(draft) !== savedSnapshot
 
@@ -648,6 +649,15 @@ export function AutomationRulesView({
     setExecutionCatalog(initialExecutionCatalog)
   }, [initialExecutionCatalog])
 
+  useEffect(
+    () => () => {
+      if (toastTimerRef.current !== null) {
+        window.clearTimeout(toastTimerRef.current)
+      }
+    },
+    []
+  )
+
   const visibleRules = useMemo(() => {
     const normalized = query.trim().toLowerCase()
     return rules.filter(rule => {
@@ -662,8 +672,14 @@ export function AutomationRulesView({
   }, [filter, query, rules])
 
   const notify = message => {
+    if (toastTimerRef.current !== null) {
+      window.clearTimeout(toastTimerRef.current)
+    }
     setToast(message)
-    window.setTimeout(() => setToast(''), 2200)
+    toastTimerRef.current = window.setTimeout(() => {
+      toastTimerRef.current = null
+      setToast('')
+    }, 2200)
   }
 
   const loadExecutionCatalog = async () => {

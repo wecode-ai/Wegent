@@ -537,6 +537,8 @@ export function DesktopWorkbenchLayout({
   const [sidebarResizing, setSidebarResizing] = useState(false)
   const [settingsOpen, setSettingsOpen] = useState(() => isSettingsRoute(initialPath))
   const settingsReturnPathRef = useRef(initialPath === '/todo' ? '/todo' : '/')
+  const routeActiveRef = useRef(routeActive)
+  routeActiveRef.current = routeActive
   const activeTabRouteRef = useRef(
     ownedWorkspaceTab?.contentRoute ??
       `${stripAppBasePath(window.location.pathname)}${window.location.search}`
@@ -582,7 +584,7 @@ export function DesktopWorkbenchLayout({
     const handlePopState = () => {
       const path = stripAppBasePath(window.location.pathname)
       const enteringSettings = isSettingsRoute(path) && !isSettingsRoute(previousPath)
-      if (enteringSettings) {
+      if (enteringSettings && routeActiveRef.current) {
         settingsReturnPathRef.current = activeTabRouteRef.current
         writeSettingsReturnPath(activeTabRouteRef.current)
       }
