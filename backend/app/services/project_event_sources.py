@@ -188,22 +188,38 @@ def resource_matches(
         and observed_instance
         and configured_instance != observed_instance
     ):
+        # A local mock API host represents the same repository identity used
+        # for the vendor web URL; port changes between test runs must not
+        # make polling events appear to come from another instance.
+        if _is_private_instance_url(configured_instance) and _is_private_instance_url(
+            observed_instance
+        ):
+            return _normalized_path(configured.get("path")) == _normalized_path(
+                observed.get("path")
+            )
         return False
     configured_id = _text(configured.get("external_id"))
     observed_id = _text(observed.get("external_id"))
-    if configured_id and observed_id:
-        if configured_instance == "https://github.com":
-            if configured_id.lower() == observed_id.lower():
-                return True
-        elif configured_id == observed_id:
-            return True
     configured_path = _normalized_path(configured.get("path"))
     observed_path = _normalized_path(observed.get("path"))
-    if configured_instance == "https://github.com":
-        return (
-            bool(configured_path) and configured_path.lower() == observed_path.lower()
-        )
-    return bool(configured_path) and configured_path == observed_path
+    if configured_path and configured_path == observed_path:
+        return True
+    if configured_id and observed_id:
+        return configured_id.lower() == observed_id.lower()
+    return False
+
+
+def _is_private_instance_url(value: str) -> bool:
+    try:
+        host = urlparse(value).hostname or ""
+    except ValueError:
+        return False
+    return host in {
+        "localhost",
+        "127.0.0.1",
+        "0.0.0.0",
+        "::1",
+    } or host.endswith(".localhost")
 
 
 def normalize_webhook_events(
@@ -557,11 +573,15 @@ def _generic_events(
 
 
 def _github_resource(repository: Mapping[str, Any]) -> dict[str, Any]:
-    path = _text(repository.get("full_name"))
+    base_repository = _mapping(repository.get("repo"))
+    path = _text(repository.get("full_name")) or _text(base_repository.get("full_name"))
     url = _text(repository.get("html_url"))
+    base_url = _text(base_repository.get("html_url"))
+    instance_url = (
+        _instance_from_url(url) or _instance_from_url(base_url) or "https://github.com"
+    )
     if not path:
         return {}
-    instance_url = _instance_from_url(url) or "https://github.com"
     return {
         "resource_type": "repository",
         "instance_url": instance_url,

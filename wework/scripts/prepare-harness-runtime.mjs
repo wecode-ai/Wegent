@@ -193,7 +193,15 @@ async function ensurePublishedAsset(descriptor, runtime) {
   }
   if (valid) return
 
-  const response = await fetch(descriptor.downloadUrl)
+  let response
+  if (skipRemoteReuse) {
+    response = null
+  } else {
+    response = await fetch(descriptor.downloadUrl)
+  }
+  if (!response) {
+    throw new Error(`Published Harness runtime asset is unavailable: ${runtime.assetPath}`)
+  }
   if (!response.ok || !response.body) {
     throw new Error(`Failed to fetch published Harness runtime asset: ${response.status}`)
   }

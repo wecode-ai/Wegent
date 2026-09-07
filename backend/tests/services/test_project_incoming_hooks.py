@@ -269,6 +269,42 @@ def test_observed_resource_matches_vendor_numeric_identity_by_path() -> None:
     assert resource_matches(configured, observed)
 
 
+def test_observed_resource_rejects_different_instance() -> None:
+    configured = normalize_observed_resource(
+        "github",
+        {
+            "resource_type": "repository",
+            "url": "https://github.example/acme/app",
+        },
+    )
+    observed = {
+        "resource_type": "repository",
+        "instance_url": "https://other-github.example",
+        "external_id": "42",
+        "path": "acme/app",
+    }
+
+    assert not resource_matches(configured, observed)
+
+
+def test_local_mock_instance_matches_vendor_web_instance_by_path() -> None:
+    configured = normalize_observed_resource(
+        "github",
+        {
+            "resource_type": "repository",
+            "url": "http://127.0.0.1:54321/acme/app",
+        },
+    )
+    observed = {
+        "resource_type": "repository",
+        "instance_url": "https://github.localhost",
+        "external_id": "acme/app",
+        "path": "acme/app",
+    }
+
+    assert resource_matches(configured, observed)
+
+
 def test_parse_json_object() -> None:
     assert parse_incoming_body(
         json.dumps({"event_type": "document.changed"}).encode(),

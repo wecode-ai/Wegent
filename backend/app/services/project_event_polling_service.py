@@ -180,7 +180,7 @@ class ProjectEventPollingService:
                 )
                 cursor = page.next_cursor
                 if page.complete:
-                    self._record_success(db, hook_id, discovered)
+                    await self._record_success(db, hook_id, discovered)
                     return discovered
             self._schedule_continuation(db, hook_id)
             return discovered
@@ -323,7 +323,7 @@ class ProjectEventPollingService:
             ) from exc
         return created
 
-    def _record_success(self, db: Session, hook_id: str, discovered: int) -> None:
+    async def _record_success(self, db: Session, hook_id: str, discovered: int) -> None:
         hook = db.get(ProjectIncomingHook, hook_id)
         if hook is None:
             return
@@ -348,6 +348,12 @@ class ProjectEventPollingService:
         hook.due_at = utcnow() + timedelta(seconds=self._jittered_interval(hook, poll))
         hook.version += 1
         db.commit()
+        if discovered:
+            from app.services.project_incoming_hooks import (
+                project_incoming_hook_service,
+            )
+
+            await project_incoming_hook_service.check_pending(db)
 
     def _schedule_continuation(self, db: Session, hook_id: str) -> None:
         hook = db.get(ProjectIncomingHook, hook_id)

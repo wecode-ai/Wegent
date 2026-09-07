@@ -345,7 +345,7 @@ async def test_polled_event_routes_to_armed_loop(test_db, test_user, monkeypatch
         .filter(ProjectIncomingEvent.parent_id == str(hook.id))
         .all()
     )
-    assert persisted and persisted[0].status == "received"
+    assert persisted and persisted[0].status == "processed"
     await project_incoming_hook_service.process_event(test_db, str(persisted[0].id))
 
     test_db.refresh(item)

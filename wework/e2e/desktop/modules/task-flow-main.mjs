@@ -1031,6 +1031,7 @@ async function main() {
       await desktopScenario?.prepareCloud?.({
         authToken: cloudEnvironment.authToken,
         backendUrl: cloudEnvironment.backendUrl,
+        databasePath: cloudEnvironment.databasePath,
         publishOfficialSmartApp: sourcePath => cloudEnvironment.publishOfficialSmartApp(sourcePath),
       })
     } else {
@@ -1352,6 +1353,22 @@ last_updated = "2026-07-30T00:00:00Z"`
         'utf8'
       )
       console.log(`Wework desktop project-automation checkpoint passed. Evidence: ${resultDir}`)
+      return
+    }
+
+    if (DESKTOP_SEGMENT === 'project-event-sources') {
+      phase = 'project-event-sources-scenario'
+      assert.ok(
+        desktopScenario,
+        'The project-event-sources checkpoint requires WEWORK_E2E_DESKTOP_SCENARIO_MODULE'
+      )
+      await desktopScenario.verify(control)
+      await writeFile(
+        join(resultDir, 'model-requests.json'),
+        `${JSON.stringify(control.modelRequests, null, 2)}\n`,
+        'utf8'
+      )
+      console.log(`Wework desktop project-event-sources checkpoint passed. Evidence: ${resultDir}`)
       return
     }
 

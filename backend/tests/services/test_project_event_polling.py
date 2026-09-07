@@ -162,7 +162,7 @@ async def test_due_poll_persists_each_page_and_advances_cursor(
         .all()
     )
     assert len(events) == 2
-    assert all(event.status == "received" for event in events)
+    assert all(event.status == "processed" for event in events)
     test_db.refresh(hook)
     assert hook.metadata_json["poll"]["cursor"] == {
         "watermark": "2026-08-27T00:00:00Z",

@@ -8,6 +8,7 @@ export const DESKTOP_CHECKPOINTS = [
   'external-content-import',
   'automation-lifecycle',
   'project-automation',
+  'project-event-sources',
   'project-assignment-notification',
   'offline-local-project-space',
   'cloud-context-resilience',
