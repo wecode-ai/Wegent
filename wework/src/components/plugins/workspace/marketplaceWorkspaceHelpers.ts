@@ -436,6 +436,16 @@ export function localMarketplaceIdFromItem(item: PluginMarketplaceItem): string 
   return marketplaceItemMarketplaceId(item)
 }
 
+export function marketplacePluginDetailSelectionKey(item: PluginMarketplaceItem): string {
+  return [
+    marketplaceItemMarketplaceId(item) ?? 'cloud',
+    String(item.id),
+    item.name,
+    item.version ?? '',
+    item.latestReleaseId == null ? '' : String(item.latestReleaseId),
+  ].join('::')
+}
+
 export function isMarketplaceSourceValid(value: string): boolean {
   const source = value.trim()
   return (

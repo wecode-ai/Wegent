@@ -77,7 +77,8 @@ assert_invalid_cloud_shards_rejected() {
 assert_invalid_desktop_shards_rejected
 assert_invalid_cloud_shards_rejected
 
-if ! grep -Fq -- '--segment app-update-differential' "$wework_app_workflow"; then
+if ! grep -Eq -- '--(segment|parallel-segments)[[:space:]][^[:space:]]*app-update-differential' \
+  "$wework_app_workflow"; then
   printf 'The formal release workflow must invoke app-update-differential\n' >&2
   exit 1
 fi

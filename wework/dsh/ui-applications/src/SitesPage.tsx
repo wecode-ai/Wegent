@@ -23,21 +23,20 @@ import { useExperimentalFeaturesState } from '@/features/experimental-features/u
 import { useWorkbench } from '@/features/workbench/useWorkbench'
 import { useIsMobile } from '@/hooks/useIsMobile'
 import { useTranslation } from '@/hooks/useTranslation'
-import { managedMarketplaceName } from '@/features/plugins/pluginMarketplaceIdentity'
+import { createLocalCodexPluginApi } from '@/api/local/codexPlugins'
+import {
+  ApplicationPluginSyncConfirmationError,
+  PluginInstallationInspectionError,
+  applicationPluginReferenceName,
+  preparePluginTrial,
+} from '@/features/plugins/preparePluginTrial'
 import { notifyLocalPluginSkillsChanged, queuePluginTrial } from '@/features/plugins/pluginTrial'
 import { getPreferredStandaloneDeviceId } from '@/lib/device-selection'
 import { buildRuntimeTaskRoute, navigateTo } from '@/lib/navigation'
 import { isElectronRuntime } from '@/lib/runtime-environment'
 import { isLocalFirstAppRuntime } from '@/lib/runtime-mode'
-import type {
-  DeviceCapabilityItemResult,
-  DeviceCapabilitySyncResponse,
-  InstalledPlugin,
-  RuntimeTaskAddress,
-} from '@/types/api'
+import type { InstalledPlugin, RuntimeTaskAddress } from '@/types/api'
 import { SmartAppsMarketplacePage } from './SmartAppsMarketplacePage'
-
-class ApplicationPluginSyncConfirmationError extends Error {}
 
 interface PreparedApplicationPlugin {
   plugin: InstalledPlugin
@@ -65,145 +64,6 @@ function buildSiteContinueDevelopmentInput(
   return `[${label}](wegent-sites-project://${encodeURIComponent(projectId)})${
     normalizedSuffix ? ` ${normalizedSuffix}` : ''
   }`
-}
-
-function installedPluginId(plugin: InstalledPlugin): string | null {
-  const labels =
-    plugin.metadata.labels && typeof plugin.metadata.labels === 'object'
-      ? (plugin.metadata.labels as Record<string, unknown>)
-      : null
-  const value = labels?.id
-  return typeof value === 'string' || typeof value === 'number' ? String(value) : null
-}
-
-function pluginSourcePayload(plugin: InstalledPlugin): Record<string, unknown> {
-  const payload = plugin.spec.sourcePayload
-  return payload && typeof payload === 'object' ? payload : {}
-}
-
-function installedPluginMarketplaces(plugin: InstalledPlugin): string[] {
-  const payload = pluginSourcePayload(plugin)
-  const metadataNamespace =
-    typeof plugin.metadata.namespace === 'string' && plugin.metadata.namespace !== 'default'
-      ? plugin.metadata.namespace
-      : null
-  return [
-    typeof payload.marketplaceName === 'string' ? payload.marketplaceName : null,
-    managedMarketplaceName(plugin),
-    plugin.spec.source.marketplace,
-    metadataNamespace,
-  ]
-    .map(candidate => String(candidate ?? '').trim())
-    .filter(
-      (candidate, index, candidates) =>
-        candidate.length > 0 && candidates.indexOf(candidate) === index
-    )
-}
-
-function installedPluginMatches(
-  plugin: InstalledPlugin,
-  pluginName: string,
-  marketplaceName: string
-): boolean {
-  const manifestName = plugin.spec.manifest?.name
-  const payload = pluginSourcePayload(plugin)
-  const nameCandidates = [
-    plugin.spec.source.pluginKey,
-    payload.pluginName,
-    payload.remotePluginId,
-    plugin.metadata.name,
-    manifestName,
-  ]
-  const nameMatches = nameCandidates.some(
-    candidate => String(candidate ?? '').trim() === pluginName
-  )
-  const marketplaceMatches = installedPluginMarketplaces(plugin).some(
-    candidate => candidate === marketplaceName
-  )
-  return nameMatches && marketplaceMatches
-}
-
-function applicationPluginReferenceName(plugin: InstalledPlugin, fallback: string): string {
-  const manifestName = plugin.spec.manifest?.name
-  const payload = pluginSourcePayload(plugin)
-  const candidates = [
-    plugin.spec.displayName,
-    plugin.spec.interface?.displayName,
-    plugin.spec.source.pluginKey,
-    payload.pluginName,
-    payload.remotePluginId,
-    plugin.metadata.name,
-    manifestName,
-    fallback,
-  ]
-  return (
-    candidates
-      .map(candidate => String(candidate ?? '').trim())
-      .find(candidate => candidate.length > 0) ?? fallback
-  )
-}
-
-function isPluginInstalledOnDevice(plugin: InstalledPlugin, deviceId: string): boolean {
-  const accountInstalled = plugin.spec.installState === 'installed'
-  if (!accountInstalled || !plugin.spec.enabled) return false
-  return (
-    plugin.status.devices?.some(
-      device => device.deviceId === deviceId && device.state === 'installed'
-    ) ?? false
-  )
-}
-
-function findInstalledApplicationPlugin(
-  plugins: readonly InstalledPlugin[],
-  pluginName: string,
-  marketplaceName: string,
-  deviceId: string
-): InstalledPlugin | null {
-  return (
-    plugins.find(
-      plugin =>
-        installedPluginMatches(plugin, pluginName, marketplaceName) &&
-        isPluginInstalledOnDevice(plugin, deviceId)
-    ) ?? null
-  )
-}
-
-function syncedPluginItemMatches(
-  item: DeviceCapabilityItemResult,
-  pluginName: string,
-  pluginId: string | null
-): boolean {
-  if (item.status !== 'synced') return false
-  return (
-    String(item.name ?? '').trim() === pluginName ||
-    (pluginId !== null && String(item.id ?? '') === pluginId)
-  )
-}
-
-function isApplicationPluginSyncConfirmed(
-  sync: DeviceCapabilitySyncResponse | null | undefined,
-  plugin: InstalledPlugin,
-  pluginName: string,
-  deviceId: string
-): boolean {
-  if (!sync) return false
-  const pluginId = installedPluginId(plugin)
-  const targetResult = Array.isArray(sync.results)
-    ? sync.results.find(result => result.device_id === deviceId)
-    : null
-  if (targetResult) {
-    return (
-      targetResult.success &&
-      targetResult.plugins.some(item => syncedPluginItemMatches(item, pluginName, pluginId))
-    )
-  }
-  return (
-    sync.success &&
-    sync.failed === 0 &&
-    sync.skipped === 0 &&
-    (sync.device_id === deviceId || !sync.device_id) &&
-    sync.plugins.some(item => syncedPluginItemMatches(item, pluginName, pluginId))
-  )
 }
 
 interface SitesPageProps {
@@ -288,6 +148,7 @@ export function SitesPage({ onNavigate, search = window.location.search }: Sites
     cloudConnection.token,
     isLocalFirst,
   ])
+  const localPluginApi = useMemo(() => createLocalCodexPluginApi(), [])
   const pluginApi = useMemo(() => {
     if (!isLocalFirst) {
       return createPluginApi(createHttpClient({ baseUrl: apiBaseUrl }), apiBaseUrl)
@@ -383,49 +244,36 @@ export function SitesPage({ onNavigate, search = window.location.search }: Sites
       return null
     }
 
-    const installedPlugins = await pluginApi.listInstalledPlugins(targetDeviceId).catch(error => {
-      console.warn('[Wework Applications] failed to inspect local plugin installation', error)
-      return { items: [] }
+    const plugin = await preparePluginTrial({
+      pluginName: createStrategy.pluginName,
+      marketplaceName: createStrategy.marketplaceName,
+      deviceId: targetDeviceId,
+      readLocalInstalledPlugins: isDesktop
+        ? () =>
+            localPluginApi.listInstalledPlugins({
+              refresh: true,
+              shareInflight: true,
+              requireComplete: true,
+            })
+        : undefined,
+      listInstalledPlugins: deviceId => pluginApi.listInstalledPlugins(deviceId),
+      ensureInstalled: (pluginName, deviceId) =>
+        pluginApi.ensureBuiltinPluginInstalled(pluginName, { deviceId }),
+      onInstalling: () =>
+        setCreateNotice(t('plugin_installing', '正在安装应用插件，完成后将进入会话...')),
     })
-    const locallyInstalledPlugin = findInstalledApplicationPlugin(
-      installedPlugins.items,
-      createStrategy.pluginName,
-      createStrategy.marketplaceName,
-      targetDeviceId
-    )
-    const plugin = locallyInstalledPlugin
-    if (!plugin) {
-      setCreateNotice(t('plugin_installing', '正在安装应用插件，完成后将进入会话...'))
-    }
-    const prepared = plugin
-      ? { plugin, sync: null }
-      : await pluginApi.ensureBuiltinPluginInstalled(createStrategy.pluginName, {
-          deviceId: targetDeviceId,
-        })
-    const syncConfirmed =
-      locallyInstalledPlugin !== null ||
-      isPluginInstalledOnDevice(prepared.plugin, targetDeviceId) ||
-      isApplicationPluginSyncConfirmed(
-        prepared.sync,
-        prepared.plugin,
-        createStrategy.pluginName,
-        targetDeviceId
-      )
-    if (!syncConfirmed) {
-      throw new ApplicationPluginSyncConfirmationError(
-        'The Backend did not confirm application plugin synchronization to the target device'
-      )
-    }
     return {
-      plugin: prepared.plugin,
+      plugin,
       pluginName: createStrategy.pluginName,
       marketplaceName: createStrategy.marketplaceName,
     }
   }
 
   const handleApplicationPluginError = (error: unknown) => {
-    console.error('[Wework Applications] cloud plugin preparation failed', error)
-    if (error instanceof ApiError && error.status === 404) {
+    console.error('[Wework Applications] plugin preparation failed', error)
+    if (error instanceof PluginInstallationInspectionError) {
+      setCreateError(t('plugin_inspection_failed', '无法确认目标设备的插件安装状态，请重试'))
+    } else if (error instanceof ApiError && error.status === 404) {
       setCreateError(
         t(
           'plugin_backend_upgrade_required',

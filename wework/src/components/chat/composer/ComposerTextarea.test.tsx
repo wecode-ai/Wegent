@@ -83,6 +83,88 @@ const MOBILE_PROJECT: CloudProject = {
   description: '',
 }
 
+function installDshExtensionHost() {
+  const execute = vi.fn().mockResolvedValue(undefined)
+  const listeners = new Set<() => void>()
+  window.__WEWORK_DSH_EXTENSIONS__ = {
+    getRevision: () => 1,
+    subscribe(listener) {
+      listeners.add(listener)
+      return () => listeners.delete(listener)
+    },
+    commands: {
+      execute,
+      get: id =>
+        id === 'quality.run'
+          ? {
+              description: 'Run the contributed quality check',
+              id,
+              title: 'Run quality check',
+            }
+          : null,
+      list: () => [],
+      register: vi.fn(),
+      subscribe: () => () => {},
+    },
+    composer: {
+      references: {
+        list: () => [
+          {
+            enabled: true,
+            id: 'quality.report',
+            metaLabel: 'Quality',
+            reference: '[$Quality](quality://report)',
+            searchAliases: ['report'],
+            title: 'Quality report',
+          },
+        ],
+        register: vi.fn(),
+        subscribe: () => () => {},
+      },
+    },
+    configuration: {
+      get: () => null,
+      getDefinition: () => null,
+      register: vi.fn(),
+      subscribe: () => () => {},
+      update: vi.fn(),
+    },
+    context: {
+      entries: () => ({}),
+      get: () => undefined,
+      matches: () => true,
+      set: vi.fn(),
+      subscribe: () => () => {},
+    },
+    keybindings: {
+      list: () => [],
+      register: vi.fn(),
+      subscribe: () => () => {},
+    },
+    menus: {
+      list: location =>
+        location === 'composer.slash'
+          ? [
+              {
+                command: 'quality.run',
+                enabled: true,
+                id: 'quality.run.slash',
+              },
+            ]
+          : [],
+      register: vi.fn(),
+      subscribe: () => () => {},
+    },
+    secrets: {
+      scope: vi.fn(),
+    },
+    storage: {
+      scope: vi.fn(),
+    },
+  }
+  return { execute }
+}
+
 function cloudProjectCandidate(project: CloudProject): ComposerCloudMentionCandidate {
   return {
     kind: 'cloud',
@@ -109,6 +191,7 @@ describe('ComposerTextarea', () => {
     })
     resetComposerAppsMemory()
     clearComposerAppsSnapshot()
+    delete window.__WEWORK_DSH_EXTENSIONS__
   })
 
   test('inserts plugin picker references without replacing the current draft', async () => {
@@ -387,6 +470,79 @@ describe('ComposerTextarea', () => {
     expect(onSubmit).not.toHaveBeenCalled()
     await waitFor(() => expect(editor.value).toBe(''))
     await waitFor(() => expect(screen.queryByTestId('slash-command-menu')).not.toBeInTheDocument())
+  })
+
+  test('executes a contributed command from the slash menu', async () => {
+    const textareaRef = createRef<HTMLElement>()
+    const { execute } = installDshExtensionHost()
+
+    function Harness() {
+      const [value, setValue] = useState('')
+      return (
+        <ComposerTextarea
+          value={value}
+          onChange={setValue}
+          onSubmit={vi.fn()}
+          canSend={false}
+          placeholder="Message"
+          rows={2}
+          textareaRef={textareaRef}
+          className="min-h-12"
+        />
+      )
+    }
+
+    render(<Harness />)
+    const editor = screen.getByTestId('chat-message-input') as HTMLElement & { value: string }
+
+    act(() => {
+      editor.value = '/quality'
+      editor.focus()
+    })
+    fireEvent.click(await screen.findByTestId('slash-command-option-dsh-command-quality.run.slash'))
+
+    await waitFor(() => expect(execute).toHaveBeenCalled())
+    const invocation = execute.mock.calls[0]?.[2]
+    expect(invocation).toMatchObject({
+      menuId: 'quality.run.slash',
+      menuLocation: 'composer.slash',
+      source: 'slash',
+    })
+    expect(invocation.composer.getValue()).toBe('')
+    act(() => invocation.composer.insertText('Review this change:\n'))
+    expect(editor.value).toBe('Review this change:\n')
+  })
+
+  test('inserts a contributed reference from the mention menu', async () => {
+    const textareaRef = createRef<HTMLElement>()
+    installDshExtensionHost()
+
+    function Harness() {
+      const [value, setValue] = useState('')
+      return (
+        <ComposerTextarea
+          value={value}
+          onChange={setValue}
+          onSubmit={vi.fn()}
+          canSend={false}
+          placeholder="Message"
+          rows={2}
+          textareaRef={textareaRef}
+          className="min-h-12"
+        />
+      )
+    }
+
+    render(<Harness />)
+    const editor = screen.getByTestId('chat-message-input') as HTMLElement & { value: string }
+
+    act(() => {
+      editor.value = '@quality'
+      editor.focus()
+    })
+    fireEvent.click(await screen.findByTestId('extension-reference-option-quality.report'))
+
+    await waitFor(() => expect(editor.value).toBe('[$Quality](quality://report) '))
   })
 
   test('does not confirm via Tab while Shift is held', async () => {

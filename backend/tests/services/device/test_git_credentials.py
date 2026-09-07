@@ -6,6 +6,7 @@
 
 import json
 import os
+import shlex
 import shutil
 import stat
 import subprocess
@@ -445,22 +446,23 @@ def test_device_command_reports_cli_outcome_without_affecting_git_auth(
     assert applied.returncode == 0, applied.stderr
     assert token not in applied.stdout
     result = json.loads(applied.stdout)
-    assert result["cli"] == [
-        {
-            "provider": "gh" if provider == "github" else "glab",
-            "domain": f"{provider}.example.com",
-            "status": expected_status,
-            "reason_code": (
-                None
-                if expected_status == "configured"
-                else (
-                    "cli_auth_failed"
-                    if expected_status == "failed"
-                    else "cli_not_installed"
-                )
-            ),
-        }
-    ]
+    expected_cli_result = {
+        "provider": "gh" if provider == "github" else "glab",
+        "domain": f"{provider}.example.com",
+        "status": expected_status,
+        "reason_code": (
+            None
+            if expected_status == "configured"
+            else (
+                "cli_auth_failed"
+                if expected_status == "failed"
+                else "cli_not_installed"
+            )
+        ),
+    }
+    if expected_status == "failed":
+        expected_cli_result["detail"] = f"exit={tool_exit_code}"
+    assert result["cli"] == [expected_cli_result]
 
     environment = os.environ.copy()
     environment["HOME"] = str(home)
@@ -479,3 +481,128 @@ def test_device_command_reports_cli_outcome_without_affecting_git_auth(
     assert f"password={token}" in credential.stdout
     env_file = home / ".wecode" / "git-auth" / "env.sh"
     assert env_file.exists() is (expected_status == "configured")
+
+
+def _recording_tool_path(
+    tmp_path: Path,
+    *,
+    tool: str,
+    help_text: str,
+    reject_flag: str | None = None,
+) -> tuple[str, Path]:
+    bin_path = tmp_path / "bin"
+    bin_path.mkdir()
+    for command in ("git", "python3", "sh"):
+        executable = shutil.which(command)
+        assert executable is not None
+        (bin_path / command).symlink_to(executable)
+    args_log = tmp_path / "tool-args.log"
+    script = (
+        "#!/bin/sh\n"
+        'if [ "$1" = "auth" ] && [ "$2" = "login" ] && [ "$3" = "--help" ]; then\n'
+        f"  printf '%s\\n' {shlex.quote(help_text)}\n"
+        "  exit 0\n"
+        "fi\n"
+        f"printf '%s\\n' \"$*\" >> {shlex.quote(str(args_log))}\n"
+    )
+    if reject_flag:
+        script += f'case " $* " in *" {reject_flag} "*) exit 1;; esac\n'
+    script += "read -r credential\nexit 0\n"
+    executable = bin_path / tool
+    executable.write_text(script, encoding="utf-8")
+    executable.chmod(0o700)
+    return str(bin_path), args_log
+
+
+def test_device_command_redacts_token_from_cli_failure_detail(tmp_path):
+    home = tmp_path / "home"
+    home.mkdir()
+    bin_path = tmp_path / "bin"
+    bin_path.mkdir()
+    for command in ("git", "python3", "sh"):
+        executable = shutil.which(command)
+        assert executable is not None
+        (bin_path / command).symlink_to(executable)
+    token = "leaky-glab-secret"
+    glab = bin_path / "glab"
+    glab.write_text(
+        "#!/bin/sh\nread -r credential\n"
+        f'echo "login failed for token {token}" >&2\n'
+        "exit 1\n",
+        encoding="utf-8",
+    )
+    glab.chmod(0o700)
+    account = {
+        "domain": "gitlab.example.com",
+        "host": "gitlab.example.com",
+        "provider": "gitlab",
+        "token": token,
+        "username": "alice",
+        "identity_name": "Alice",
+        "identity_email": "alice@example.com",
+    }
+
+    applied = _run_sync_command(home, [account], command_path=str(bin_path))
+
+    assert applied.returncode == 0, applied.stderr
+    cli_result = json.loads(applied.stdout)["cli"][0]
+    assert cli_result["status"] == "failed"
+    assert "login failed for token ***" in cli_result["detail"]
+    assert token not in applied.stdout
+
+
+@pytest.mark.parametrize("supports_insecure_storage", [True, False])
+@pytest.mark.parametrize("supports_git_protocol", [True, False])
+def test_device_command_only_passes_supported_login_flags(
+    tmp_path,
+    supports_insecure_storage,
+    supports_git_protocol,
+):
+    # Executor images ship different glab generations: some reject
+    # --insecure-storage, others (e.g. glab 1.2x) reject --git-protocol.
+    # Unknown flags make `auth login` exit non-zero, so the sync must probe
+    # for support and only pass the flags the installed CLI advertises.
+    home = tmp_path / "home"
+    home.mkdir()
+    help_text = "Usage: glab auth login --hostname <host> --stdin"
+    if supports_insecure_storage:
+        help_text += " --insecure-storage"
+    if supports_git_protocol:
+        help_text += " --git-protocol"
+    reject_flag = None
+    if not supports_git_protocol:
+        reject_flag = "--git-protocol"
+    elif not supports_insecure_storage:
+        reject_flag = "--insecure-storage"
+    command_path, args_log = _recording_tool_path(
+        tmp_path,
+        tool="glab",
+        help_text=help_text,
+        reject_flag=reject_flag,
+    )
+    account = {
+        "domain": "gitlab.example.com",
+        "host": "gitlab.example.com",
+        "provider": "gitlab",
+        "token": "cli-probe-secret",
+        "username": "alice",
+        "identity_name": "Alice",
+        "identity_email": "alice@example.com",
+    }
+
+    applied = _run_sync_command(home, [account], command_path=command_path)
+
+    assert applied.returncode == 0, applied.stderr
+    result = json.loads(applied.stdout)
+    assert result["cli"][0]["status"] == "configured"
+    invocations = args_log.read_text(encoding="utf-8").splitlines()
+    login_invocations = [line for line in invocations if "--hostname" in line]
+    assert len(login_invocations) == 1
+    assert (
+        "--insecure-storage" in login_invocations[0]
+    ) is supports_insecure_storage
+    assert ("--git-protocol" in login_invocations[0]) is supports_git_protocol
+    config_set_invocations = [
+        line for line in invocations if line.startswith("config set git_protocol")
+    ]
+    assert len(config_set_invocations) == (0 if supports_git_protocol else 1)
