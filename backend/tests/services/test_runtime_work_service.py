@@ -1843,10 +1843,12 @@ async def test_unarchive_conversation_dispatches_to_owned_device(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("runtime_turn_id", [None, "2001"])
 async def test_cancel_runtime_task_dispatches_to_owned_device_without_task_rows(
     test_db,
     test_user,
     monkeypatch,
+    runtime_turn_id,
 ):
     from app.schemas.runtime_work import RuntimeTaskAddress
     from app.services import runtime_work_service
@@ -1873,6 +1875,7 @@ async def test_cancel_runtime_task_dispatches_to_owned_device_without_task_rows(
             deviceId="device-1",
             localTaskId="codex-1",
         ),
+        runtime_turn_id=runtime_turn_id,
     )
 
     assert response.accepted is True
@@ -1884,6 +1887,7 @@ async def test_cancel_runtime_task_dispatches_to_owned_device_without_task_rows(
         payload={
             "deviceId": "device-1",
             "taskId": "codex-1",
+            **({"subtask_id": 2001} if runtime_turn_id else {}),
         },
         timeout_seconds=30,
     )

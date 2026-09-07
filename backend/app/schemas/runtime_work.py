@@ -169,11 +169,15 @@ class NormalizedRuntimeMessage(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
     id: str
+    client_user_message_id: Optional[str] = Field(
+        default=None, alias="clientUserMessageId"
+    )
+    turn_id: Optional[str] = Field(default=None, alias="turnId")
     role: Literal["user", "assistant", "system", "tool"]
     content: str = ""
     subtask_id: Optional[int] = Field(default=None, alias="subtaskId")
     status: Optional[str] = None
-    created_at: Optional[str] = Field(default=None, alias="createdAt")
+    created_at: Optional[str | int] = Field(default=None, alias="createdAt")
     source: Optional[RuntimeMessageSource] = None
     attachments: list[dict[str, Any]] = Field(default_factory=list)
     blocks: list[dict[str, Any]] = Field(default_factory=list)
