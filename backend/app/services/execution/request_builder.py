@@ -2338,16 +2338,12 @@ Response template:
                 server_name=server_name,
             )
             authorization = f"Bearer {token}"
-            auth = server.setdefault("auth", {})
-            if not isinstance(auth, dict):
-                auth = {}
-                server["auth"] = auth
-            auth["Authorization"] = authorization
-            headers = server.setdefault("headers", {})
-            if not isinstance(headers, dict):
-                headers = {}
-                server["headers"] = headers
-            headers["Authorization"] = authorization
+            TaskRequestBuilder._set_identity_authorization(
+                server, "auth", authorization, server_name
+            )
+            TaskRequestBuilder._set_identity_authorization(
+                server, "headers", authorization, server_name
+            )
             logger.info(
                 "[TaskRequestBuilder] Injected Wegent identity token into MCP "
                 "server '%s' for user %s",
@@ -2355,6 +2351,43 @@ Response template:
                 user.id,
             )
         return servers
+
+    @staticmethod
+    def _set_identity_authorization(
+        server: dict, field: str, authorization: str, server_name: str
+    ) -> None:
+        """Write the identity Authorization value into a server header map.
+
+        The injected token takes precedence over a statically configured
+        Authorization header when ``inject_wegent_token`` is enabled, and a
+        non-dict ``field`` value (an invalid config) is replaced.
+
+        Args:
+            server: MCP server configuration dict (modified in place)
+            field: Header map field name (``auth`` or ``headers``)
+            authorization: Full Authorization header value
+            server_name: MCP server name for log context
+        """
+        existing = server.get(field)
+        if isinstance(existing, dict):
+            if "Authorization" in existing:
+                logger.warning(
+                    "[TaskRequestBuilder] inject_wegent_token overrides the "
+                    "statically configured Authorization in '%s' of MCP "
+                    "server '%s'",
+                    field,
+                    server_name,
+                )
+            existing["Authorization"] = authorization
+            return
+        if existing is not None:
+            logger.warning(
+                "[TaskRequestBuilder] inject_wegent_token replaces the invalid "
+                "non-dict '%s' value of MCP server '%s'",
+                field,
+                server_name,
+            )
+        server[field] = {"Authorization": authorization}
 
     @staticmethod
     def _is_safe_identity_url(url: str) -> bool:

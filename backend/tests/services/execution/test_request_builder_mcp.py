@@ -508,6 +508,74 @@ class TestBuildMcpServers:
         assert server["headers"]["Authorization"] == server["auth"]["Authorization"]
         assert "inject_wegent_token" not in server
 
+    @patch(
+        "app.services.execution.request_builder.kindReader.get_by_name_and_namespace"
+    )
+    @patch("app.services.execution.request_builder.settings.CHAT_MCP_SERVERS", "{}")
+    def test_inject_wegent_token_overrides_static_authorization(
+        self, mock_get_kind, mocker
+    ) -> None:
+        mock_log = mocker.patch("app.services.execution.request_builder.logger.warning")
+        builder = TaskRequestBuilder.__new__(TaskRequestBuilder)
+        builder.db = SimpleNamespace()
+        mock_get_kind.return_value = _ghost_kind_with_mcp(
+            {
+                "business-server": {
+                    "type": "streamable-http",
+                    "url": "https://business.example.com/mcp",
+                    "headers": {"Authorization": "Bearer static-token"},
+                    "inject_wegent_token": True,
+                },
+            }
+        )
+
+        result = builder._build_mcp_servers(
+            _bot_kind_with_ghost(user_id=1),
+            SimpleNamespace(user_id=1, name="user-agent"),
+            user=SimpleNamespace(id=7, user_name="alice"),
+        )
+
+        server = result[0]
+        assert server["auth"]["Authorization"].startswith("Bearer ")
+        assert server["auth"]["Authorization"] != "Bearer static-token"
+        assert server["headers"]["Authorization"] == server["auth"]["Authorization"]
+        # One warning per header map that already had an Authorization entry
+        assert any(
+            "overrides" in str(call.args[0]) and "Authorization" in str(call.args[0])
+            for call in mock_log.call_args_list
+        )
+
+    @patch(
+        "app.services.execution.request_builder.kindReader.get_by_name_and_namespace"
+    )
+    @patch("app.services.execution.request_builder.settings.CHAT_MCP_SERVERS", "{}")
+    def test_inject_wegent_token_replaces_invalid_auth_value(
+        self, mock_get_kind, mocker
+    ) -> None:
+        mock_log = mocker.patch("app.services.execution.request_builder.logger.warning")
+        builder = TaskRequestBuilder.__new__(TaskRequestBuilder)
+        builder.db = SimpleNamespace()
+        mock_get_kind.return_value = _ghost_kind_with_mcp(
+            {
+                "business-server": {
+                    "type": "streamable-http",
+                    "url": "https://business.example.com/mcp",
+                    "headers": "not-a-dict",
+                    "inject_wegent_token": True,
+                },
+            }
+        )
+
+        result = builder._build_mcp_servers(
+            _bot_kind_with_ghost(user_id=1),
+            SimpleNamespace(user_id=1, name="user-agent"),
+            user=SimpleNamespace(id=7, user_name="alice"),
+        )
+
+        server = result[0]
+        assert server["auth"]["Authorization"].startswith("Bearer ")
+        assert any("invalid" in str(call.args[0]) for call in mock_log.call_args_list)
+
 
 def test_board_task_auto_injects_mcp_for_chat_and_code_shell_contracts(test_db, mocker):
     builder = TaskRequestBuilder(test_db)
