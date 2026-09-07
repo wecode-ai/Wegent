@@ -14,8 +14,15 @@ from app.core.auth_utils import verify_api_key
 from app.core.config import settings
 from app.core.rate_limit import get_limiter
 from app.models.user import User
-from app.schemas.wework_api import WeworkResponseCreate, WeworkResponseObject
+from app.schemas.wework_api import (
+    WeworkDevice,
+    WeworkDeviceList,
+    WeworkResponseCreate,
+    WeworkResponseObject,
+)
+from app.services.device_service import device_service
 from app.services.wework_api import models, native, service
+from shared.telemetry.decorators import trace_async
 
 router = APIRouter(prefix="/v1/api/wework", tags=["wework-api"])
 bearer = HTTPBearer(auto_error=False)
@@ -43,6 +50,16 @@ def _stream(response: service.LiveResponse) -> StreamingResponse:
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
         background=BackgroundTask(response.close),
     )
+
+
+@router.get("/devices", response_model=WeworkDeviceList)
+@trace_async("wework_api.devices", "wework.api")
+async def list_devices(
+    db: Session = Depends(get_db),
+    user: User = Depends(current_api_user),
+) -> WeworkDeviceList:
+    devices = await device_service.get_all_devices(db, user.id)
+    return WeworkDeviceList(data=[WeworkDevice(**device) for device in devices])
 
 
 @router.get("/conversations")

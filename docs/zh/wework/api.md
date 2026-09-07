@@ -20,6 +20,7 @@ API 前缀为 `/v1/api/wework`，直接挂载在 backend 根路径，不再附�
 
 | 方法与路径（省略前缀） | 用途 |
 | --- | --- |
+| `GET /devices` | 当前用户的设备列表（含离线设备） |
 | `GET /conversations?limit=20&after=...` | 当前在线设备上的独立会话列表 |
 | `GET /conversations/{id}?limit=20&before=...` | 分页消息历史及 `latest_response` |
 | `POST /responses` | 创建新对话或继续已有对话 |
@@ -34,7 +35,24 @@ PC、手机版创建的会话也可查询。会话详情中的 `latest_response.
 
 ## 创建任务
 
-先调用 `/models` 获取 `id`。首次创建还需提供设备 ID，可使用现有会话列表返回的 `device_id`，或 Wework 设备信息中的 ID。
+先调用 `/devices` 选择设备，再调用 `/models` 获取模型 `id`。设备列表使用相同的个人 API Key，返回格式如下：
+
+```json
+{
+  "object": "list",
+  "data": [
+    {
+      "device_id": "your-device-id",
+      "name": "My Wework",
+      "status": "online",
+      "device_type": "local",
+      "is_default": true
+    }
+  ]
+}
+```
+
+`status` 为 `online`、`offline` 或 `busy`；无设备时 `data` 为空数组。新建会话将选中的 `device_id` 放入 `wework_options.device_id`。`is_default` 仅供参考，不会自动选择设备。设备在线不代表一定能接受任务，执行时仍会校验远程控制权限和 Runtime 能力。
 
 ```bash
 curl -N 'https://example.com/v1/api/wework/responses' \
@@ -86,6 +104,7 @@ curl -N 'https://example.com/v1/api/wework/responses' \
 ```mermaid
 flowchart LR
     Client[API Client] --> Auth[个人 API Key 鉴权]
+    Auth --> Devices[Device list / existing device service]
     Auth --> Adapter[Responses 协议适配]
     Adapter --> RPC[现有 Runtime RPC]
     RPC --> Runtime[设备 Runtime 会话与消息]

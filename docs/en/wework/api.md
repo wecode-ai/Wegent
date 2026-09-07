@@ -20,6 +20,7 @@ The base path is `/v1/api/wework`, mounted directly on Backend without an additi
 
 | Method and path (relative to the base path) | Purpose |
 | --- | --- |
+| `GET /devices` | Current user devices, including offline devices |
 | `GET /conversations?limit=20&after=...` | Independent conversations on online devices |
 | `GET /conversations/{id}?limit=20&before=...` | Paginated transcript and `latest_response` |
 | `POST /responses` | Create or continue a conversation |
@@ -34,7 +35,24 @@ PC/mobile conversations are accessible too. Use `latest_response.id` from conver
 
 ## Create a task
 
-Get a model `id` from `/models`. A new conversation also requires a device ID, available from an existing conversation's `device_id` or Wework device information.
+Call `/devices` to select a device, then `/models` to get a model `id`. The device list uses the same personal API key and returns:
+
+```json
+{
+  "object": "list",
+  "data": [
+    {
+      "device_id": "your-device-id",
+      "name": "My Wework",
+      "status": "online",
+      "device_type": "local",
+      "is_default": true
+    }
+  ]
+}
+```
+
+`status` is `online`, `offline`, or `busy`; `data` is empty when no devices exist. Pass the selected `device_id` as `wework_options.device_id` for a new conversation. `is_default` is informational and does not select a device automatically. Online status does not guarantee task acceptance; execution still validates remote control permission and Runtime capabilities.
 
 ```bash
 curl -N 'https://example.com/v1/api/wework/responses' \
@@ -86,6 +104,7 @@ The owning device must be online and allow remote control. Offline device conver
 ```mermaid
 flowchart LR
     Client[API Client] --> Auth[Personal API key authentication]
+    Auth --> Devices[Device list / existing device service]
     Auth --> Adapter[Responses adapter]
     Adapter --> RPC[Existing Runtime RPC]
     RPC --> Runtime[Device Runtime conversations and transcripts]

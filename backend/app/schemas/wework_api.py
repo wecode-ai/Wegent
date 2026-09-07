@@ -7,7 +7,21 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from app.schemas.device import DeviceStatusEnum, DeviceType
 from app.schemas.openapi_response import ResponseObject
+
+
+class WeworkDevice(BaseModel):
+    device_id: str
+    name: str
+    status: DeviceStatusEnum
+    device_type: DeviceType = DeviceType.LOCAL
+    is_default: bool = False
+
+
+class WeworkDeviceList(BaseModel):
+    object: Literal["list"] = "list"
+    data: list[WeworkDevice]
 
 
 class InputText(BaseModel):

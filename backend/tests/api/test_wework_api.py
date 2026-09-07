@@ -238,19 +238,21 @@ def test_background_submission_only_uses_runtime_and_returns_native_handle(api):
     assert "must-never" not in api.client.get(f"{PREFIX}/models").text
 
 
+@pytest.mark.parametrize("endpoint", ["models", "devices"])
 @pytest.mark.parametrize("header", [None, "Bearer bogus", "Bearer eyJ.jwt.token"])
-def test_rejects_missing_invalid_or_jwt_auth(api, header):
+def test_rejects_missing_invalid_or_jwt_auth(api, header, endpoint):
     api.client.headers.pop("Authorization")
     assert (
         api.client.get(
-            f"{PREFIX}/models", headers={"Authorization": header} if header else {}
+            f"{PREFIX}/{endpoint}", headers={"Authorization": header} if header else {}
         ).status_code
         == 401
     )
 
 
+@pytest.mark.parametrize("endpoint", ["models", "devices"])
 @pytest.mark.parametrize("change", ["expired", "revoked", "service", "inactive_user"])
-def test_rejects_unusable_personal_keys(api, change):
+def test_rejects_unusable_personal_keys(api, change, endpoint):
     if change == "expired":
         api.key.expires_at = datetime.utcnow() - timedelta(seconds=1)
     elif change == "revoked":
@@ -260,7 +262,7 @@ def test_rejects_unusable_personal_keys(api, change):
     else:
         api.user.is_active = False
     api.db.commit()
-    assert api.client.get(f"{PREFIX}/models").status_code == 401
+    assert api.client.get(f"{PREFIX}/{endpoint}").status_code == 401
 
 
 def test_query_is_turn_scoped_and_old_response_cannot_cancel_new_turn(api):
@@ -485,3 +487,40 @@ def test_cancelled_before_first_output_is_not_reported_as_queued(api):
     snapshot = api.client.get(f"{PREFIX}/responses/{identity.id}").json()
     assert snapshot["status"] == "cancelled"
     assert snapshot["output"] == []
+
+
+@pytest.mark.parametrize("statuses", [[], ["online", "offline", "busy"]])
+def test_devices_are_user_scoped_and_expose_only_public_fields(
+    api, monkeypatch, statuses
+):
+    devices = [
+        {
+            "device_id": f"device-{index}",
+            "name": f"Machine {index}",
+            "status": status,
+            "is_default": index == 0,
+            "client_ip": "private-address",
+            "internal_metadata": "private",
+        }
+        for index, status in enumerate(statuses)
+    ]
+    listing = AsyncMock(return_value=devices)
+    monkeypatch.setattr(wework_api.device_service, "get_all_devices", listing)
+
+    result = api.client.get(f"{PREFIX}/devices")
+
+    assert result.status_code == 200
+    listing.assert_awaited_once_with(api.db, api.user.id)
+    assert result.json() == {
+        "object": "list",
+        "data": [
+            {
+                "device_id": device["device_id"],
+                "name": device["name"],
+                "status": device["status"],
+                "is_default": device["is_default"],
+                "device_type": "local",
+            }
+            for device in devices
+        ],
+    }
