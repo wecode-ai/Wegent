@@ -21,6 +21,10 @@ const SECOND_PROMPT = 'WEWORK_DESKTOP_E2E_TRANSCRIPT_SYNC_LEASE_AND_FENCING_RACE
 const SECOND_COMPLETION = 'WEWORK_DESKTOP_E2E_TRANSCRIPT_SYNC_LEASE_AND_FENCING_RACE_COMPLETE'
 const THIRD_PROMPT = 'WEWORK_DESKTOP_E2E_TRANSCRIPT_SYNC_A_CONTINUES_WHILE_B_FAILED'
 const THIRD_COMPLETION = 'WEWORK_DESKTOP_E2E_TRANSCRIPT_SYNC_A_CONTINUES_WHILE_B_FAILED_COMPLETE'
+const DEVICE_B_OFFLINE_PROMPT = 'WEWORK_DESKTOP_E2E_TRANSCRIPT_SYNC_DEVICE_B_OFFLINE'
+const DEVICE_B_SECOND_OFFLINE_PROMPT = 'WEWORK_DESKTOP_E2E_TRANSCRIPT_SYNC_DEVICE_B_SECOND_OFFLINE'
+const FOURTH_PROMPT = 'WEWORK_DESKTOP_E2E_TRANSCRIPT_SYNC_MAINLINE_AFTER_BRANCH'
+const FOURTH_COMPLETION = 'WEWORK_DESKTOP_E2E_TRANSCRIPT_SYNC_MAINLINE_AFTER_BRANCH_COMPLETE'
 const SYNC_POLL_INTERVAL_MS = 5_000
 
 function json(response, status, body) {
@@ -69,6 +73,14 @@ function modelInputTexts(request) {
 
 function modelInputContains(texts, expected) {
   return texts.some(text => text.includes(expected))
+}
+
+function modelInputMessageIndex(texts, expected) {
+  return texts.findIndex(text => text === expected || text.endsWith(`\n\n${expected}`))
+}
+
+function modelInputMessageCount(texts, expected) {
+  return texts.filter(text => text === expected || text.endsWith(`\n\n${expected}`)).length
 }
 
 async function requestBody(request) {
@@ -461,15 +473,17 @@ export function createDesktopScenario({ electronUserDataDirectory, uiTimeoutMs, 
         const parsedBody = await requestBody(request)
         modelRequests.push(structuredClone(parsedBody))
         const body = JSON.stringify(parsedBody)
-        const completion = body.includes(THIRD_PROMPT)
-          ? THIRD_COMPLETION
-          : body.includes(SECOND_PROMPT)
-            ? SECOND_COMPLETION
-            : body.includes(DEVICE_B_PROMPT)
-              ? DEVICE_B_COMPLETION
-              : body.includes(FIRST_PROMPT)
-                ? FIRST_COMPLETION
-                : null
+        const completion = body.includes(FOURTH_PROMPT)
+          ? FOURTH_COMPLETION
+          : body.includes(THIRD_PROMPT)
+            ? THIRD_COMPLETION
+            : body.includes(SECOND_PROMPT)
+              ? SECOND_COMPLETION
+              : body.includes(DEVICE_B_PROMPT)
+                ? DEVICE_B_COMPLETION
+                : body.includes(FIRST_PROMPT)
+                  ? FIRST_COMPLETION
+                  : null
         if (!completion) return false
         modelSequence += 1
         const responseId = `wework-transcript-sync-${modelSequence}`
@@ -589,16 +603,18 @@ export function createDesktopScenario({ electronUserDataDirectory, uiTimeoutMs, 
       )
       assert.ok(secondModelRequest, 'Device A continuation did not reach the model')
       const secondModelTexts = modelInputTexts(secondModelRequest)
-      assert.ok(
-        secondModelTexts.includes(DEVICE_B_PROMPT) &&
-          secondModelTexts.includes(DEVICE_B_COMPLETION),
-        'Device A model request did not contain the turn imported from device B'
-      )
-      assert.equal(
-        secondModelTexts.filter(text => text === DEVICE_B_PROMPT).length,
-        1,
-        'Device B user message was duplicated in the native Codex history'
-      )
+      for (const expected of [
+        FIRST_PROMPT,
+        FIRST_COMPLETION,
+        DEVICE_B_PROMPT,
+        DEVICE_B_COMPLETION,
+      ]) {
+        assert.equal(
+          modelInputMessageCount(secondModelTexts, expected),
+          1,
+          `Response-loss recovery did not reach the model exactly once: ${expected}`
+        )
+      }
       assert.ok(
         secondModelTexts.indexOf(DEVICE_B_PROMPT) < secondModelTexts.indexOf(DEVICE_B_COMPLETION) &&
           secondModelTexts.indexOf(DEVICE_B_COMPLETION) <
@@ -657,7 +673,10 @@ export function createDesktopScenario({ electronUserDataDirectory, uiTimeoutMs, 
         sequence: 2,
         turnId: 'device-b-turn-2',
         sessionId: 'device-b-session',
-        payload: { assistantMessage: 'Device B pending while offline' },
+        payload: {
+          userMessages: [{ id: 'device-b-user-2', text: DEVICE_B_OFFLINE_PROMPT }],
+          assistantMessage: 'Device B pending while offline',
+        },
       })
       await assert.rejects(deviceB.sync.flush(), /Device B lost its network/u)
       await deviceB.enqueue({
@@ -667,7 +686,10 @@ export function createDesktopScenario({ electronUserDataDirectory, uiTimeoutMs, 
         sequence: 3,
         turnId: 'device-b-turn-3',
         sessionId: 'device-b-session',
-        payload: { assistantMessage: 'Device B second offline continuation' },
+        payload: {
+          userMessages: [{ id: 'device-b-user-3', text: DEVICE_B_SECOND_OFFLINE_PROMPT }],
+          assistantMessage: 'Device B second offline continuation',
+        },
       })
       assert.equal(deviceB.outbox.count(), 2, 'Device B lost its offline outbox chain')
 
@@ -682,19 +704,28 @@ export function createDesktopScenario({ electronUserDataDirectory, uiTimeoutMs, 
       )
       assert.ok(thirdModelRequest, 'Device A offline-race continuation did not reach the model')
       const thirdModelTexts = modelInputTexts(thirdModelRequest)
-      for (const expected of [
+      const expectedMainlineHistory = [
         FIRST_PROMPT,
         FIRST_COMPLETION,
         DEVICE_B_PROMPT,
         DEVICE_B_COMPLETION,
         SECOND_PROMPT,
         SECOND_COMPLETION,
-      ]) {
-        assert.ok(
-          modelInputContains(thirdModelTexts, expected),
-          `Device A model request lost synchronized native history: ${expected}`
+      ]
+      for (const expected of expectedMainlineHistory) {
+        assert.equal(
+          modelInputMessageCount(thirdModelTexts, expected),
+          1,
+          `Lease/fencing recovery did not reach the model exactly once: ${expected}`
         )
       }
+      assert.deepEqual(
+        expectedMainlineHistory.map(expected => modelInputMessageIndex(thirdModelTexts, expected)),
+        expectedMainlineHistory
+          .map(expected => modelInputMessageIndex(thirdModelTexts, expected))
+          .toSorted((left, right) => left - right),
+        'Lease/fencing recovery changed the causal order sent to the model'
+      )
       await waitFor(
         () => activeTranscript().turns.length === 4 && lease === null,
         uiTimeoutMs + SYNC_POLL_INTERVAL_MS,
@@ -770,6 +801,31 @@ export function createDesktopScenario({ electronUserDataDirectory, uiTimeoutMs, 
         0,
         'Device B branch was injected into device A mainline without a local branch binding'
       )
+      await control.command('fill', ACTIVE_COMPOSER_SELECTOR, { value: FOURTH_PROMPT })
+      await control.command('press', ACTIVE_COMPOSER_SELECTOR, { key: 'Enter' })
+      await control.command('waitFor', '[data-testid="message-assistant"]', {
+        text: FOURTH_COMPLETION,
+        timeoutMs: uiTimeoutMs,
+      })
+      const fourthModelRequest = modelRequests.find(request =>
+        JSON.stringify(request).includes(FOURTH_PROMPT)
+      )
+      assert.ok(fourthModelRequest, 'Device A post-branch continuation did not reach the model')
+      const fourthModelTexts = modelInputTexts(fourthModelRequest)
+      for (const expected of [...expectedMainlineHistory, THIRD_PROMPT, THIRD_COMPLETION]) {
+        assert.equal(
+          modelInputMessageCount(fourthModelTexts, expected),
+          1,
+          `Post-branch model request lost or duplicated mainline history: ${expected}`
+        )
+      }
+      for (const excluded of [DEVICE_B_OFFLINE_PROMPT, DEVICE_B_SECOND_OFFLINE_PROMPT]) {
+        assert.equal(
+          modelInputContains(fourthModelTexts, excluded),
+          false,
+          `Post-branch model request was polluted by device B branch history: ${excluded}`
+        )
+      }
       await control.command('waitFor', ACTIVE_WORKBENCH_SELECTOR, { timeoutMs: uiTimeoutMs })
     },
 

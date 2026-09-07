@@ -41,9 +41,9 @@ impl RuntimeWorkRpcHandler {
             return Ok(sync_status(
                 &local_task_id,
                 &transcript_id,
-                false,
+                true,
                 imported_through(&link),
-                "thread_missing",
+                "thread_pending",
             ));
         }
         if self.is_busy_local_task(&local_task_id) {
@@ -124,13 +124,20 @@ impl RuntimeWorkRpcHandler {
                 "ready",
             ));
         }
-        let thread_id = link.thread_id.clone().ok_or_else(|| {
-            AppIpcError::new("thread_missing", "runtime task session is not ready")
-        })?;
-        let resumed_thread_id = self
-            .resume_codex_thread_for_action(&link, &thread_id)
-            .await
-            .map_err(|error| AppIpcError::new("thread_resume_failed", error))?;
+        let resumed_thread_id = if let Some(thread_id) = link.thread_id.clone() {
+            self.resume_codex_thread_for_action(&link, &thread_id)
+                .await
+                .map_err(|error| AppIpcError::new("thread_resume_failed", error))?
+        } else {
+            let request = runtime_event_request_from_link(&link);
+            let thread_id = start_codex_app_server_thread(&self.codex_app_server, &request)
+                .await
+                .map_err(|error| AppIpcError::new("thread_start_failed", error))?;
+            self.record_local_task_thread(&local_task_id, &thread_id);
+            self.register_codex_thread_workspace_root(&thread_id, &request);
+            link.thread_id = Some(thread_id.clone());
+            thread_id
+        };
         if !items.is_empty() {
             self.call_codex_thread_method(
                 "thread/inject_items",
