@@ -67,6 +67,7 @@ async def _target(
                 422, "Creating responses currently requires a Codex conversation"
             )
         return item["_address"], False
+    await native.ensure_device_online(user_id, body.wework_options.device_id)
     return (
         RuntimeTaskAddress(
             deviceId=body.wework_options.device_id, taskId=str(uuid.uuid4())

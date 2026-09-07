@@ -17,6 +17,7 @@ from app.schemas.runtime_work import (
 )
 from app.schemas.wework_api import WeworkResponseObject
 from app.services import runtime_work_service as runtime
+from app.services.device.runtime_route import RuntimeRouteError, runtime_route_resolver
 from app.services.wework_api.identity import (
     ResponseIdentity,
     conversation_address,
@@ -60,8 +61,10 @@ def public_conversation(item: dict) -> dict:
 
 
 @trace_async("wework_api.conversations", "wework.api")
-async def conversations(db: Session, user_id: int) -> list[dict]:
-    work = await runtime.list_runtime_work(db=db, user_id=user_id)
+async def conversations(
+    db: Session, user_id: int, device_id: str | None = None
+) -> list[dict]:
+    work = await runtime.list_runtime_work(db=db, user_id=user_id, device_id=device_id)
     items = []
     for workspace in work.chats:
         for task in workspace.tasks:
@@ -93,9 +96,22 @@ async def conversations(db: Session, user_id: int) -> list[dict]:
     )
 
 
+async def ensure_device_online(user_id: int, device_id: str) -> None:
+    try:
+        await runtime_route_resolver.resolve(
+            user_id=user_id, submitted_device_id=device_id
+        )
+    except RuntimeRouteError as exc:
+        raise HTTPException(
+            404 if exc.code == "device_not_found" else 503,
+            {"code": exc.code, "message": str(exc)},
+        ) from exc
+
+
 async def find_conversation(db: Session, user_id: int, identifier: str) -> dict:
-    conversation_address(identifier)
-    for item in await conversations(db, user_id):
+    device_id, _ = conversation_address(identifier)
+    await ensure_device_online(user_id, device_id)
+    for item in await conversations(db, user_id, device_id):
         if item["id"] == identifier:
             return item
     raise HTTPException(

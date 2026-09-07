@@ -175,7 +175,7 @@ class NormalizedRuntimeMessage(BaseModel):
     turn_id: Optional[str] = Field(default=None, alias="turnId")
     role: Literal["user", "assistant", "system", "tool"]
     content: str = ""
-    subtask_id: Optional[int] = Field(default=None, alias="subtaskId")
+    subtask_id: Optional[str | int] = Field(default=None, alias="subtaskId")
     status: Optional[str] = None
     created_at: Optional[str | int] = Field(default=None, alias="createdAt")
     source: Optional[RuntimeMessageSource] = None

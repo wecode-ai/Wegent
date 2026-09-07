@@ -127,7 +127,7 @@ def api(test_db, test_user, monkeypatch):
         harness.tasks[request.address.local_task_id]["status"] = "pending"
         return SimpleNamespace(accepted=True)
 
-    async def work(*, db, user_id):
+    async def work(*, db, user_id, device_id=None):
         tasks = list(harness.tasks.values()) if user_id == test_user.id else []
         return RuntimeWorkListResponse(
             chats=[
@@ -172,6 +172,7 @@ def api(test_db, test_user, monkeypatch):
         AsyncMock(return_value=SimpleNamespace(accepted=True)),
     )
     harness.client = TestClient(app)
+    monkeypatch.setattr(native.runtime_route_resolver, "resolve", AsyncMock())
     harness.client.headers["Authorization"] = f"Bearer {token}"
     return harness
 
@@ -291,11 +292,14 @@ def test_unowned_device_handle_does_not_authorize_rpc(api):
     service.runtime.cancel_runtime_task.assert_not_awaited()
 
 
-def test_existing_pc_conversation_exposes_response_without_registration(api):
+@pytest.mark.parametrize("turn_id", [101, "01a07b7f-715c-7023-a043-fe6067a7b5ed"])
+def test_existing_pc_conversation_exposes_response_without_registration(api, turn_id):
     first = submit(api).json()
     identity = ResponseIdentity.parse(first["id"])
     api.messages[identity.task_id][0]["clientUserMessageId"] = "pc-message-1"
     finish(api, first["id"], "PC is working", "streaming")
+    for message in api.messages[identity.task_id]:
+        message["subtaskId"] = turn_id
     detail = api.client.get(f"{PREFIX}/conversations/{identity.conversation_id}").json()
     latest = detail["latest_response"]
     assert ResponseIdentity.parse(latest["id"]).message_id == "pc-message-1"
@@ -305,10 +309,9 @@ def test_existing_pc_conversation_exposes_response_without_registration(api):
     cancelled = api.client.post(f"{PREFIX}/responses/{latest['id']}/cancel").json()
     assert cancelled["cancellation_requested"] is True
     assert cancelled["status"] == "in_progress"
-    assert (
-        service.runtime.cancel_runtime_task.await_args.kwargs["runtime_turn_id"]
-        == "101"
-    )
+    assert service.runtime.cancel_runtime_task.await_args.kwargs[
+        "runtime_turn_id"
+    ] == str(turn_id)
 
 
 def test_conversation_paging_always_exposes_latest_turn(api):
@@ -524,3 +527,56 @@ def test_devices_are_user_scoped_and_expose_only_public_fields(
             for device in devices
         ],
     }
+
+
+@pytest.mark.parametrize("operation", ["response", "conversation", "cancel", "create"])
+@pytest.mark.parametrize(
+    "code, status", [("device_offline", 503), ("device_not_found", 404)]
+)
+def test_unavailable_device_fails_before_listing_or_dispatch(
+    api, monkeypatch, operation, code, status
+):
+    from app.services.device.runtime_route import RuntimeRouteError
+
+    identity = ResponseIdentity("device-1", "task-1", "message-1")
+    resolver = AsyncMock(side_effect=RuntimeRouteError(code, "Device unavailable"))
+    monkeypatch.setattr(native.runtime_route_resolver, "resolve", resolver)
+    listing = AsyncMock()
+    monkeypatch.setattr(native.runtime, "list_runtime_work", listing)
+    if operation == "create":
+        result = submit(api)
+    elif operation == "cancel":
+        result = api.client.post(f"{PREFIX}/responses/{identity.id}/cancel")
+    else:
+        path = (
+            f"responses/{identity.id}"
+            if operation == "response"
+            else f"conversations/{identity.conversation_id}"
+        )
+        result = api.client.get(f"{PREFIX}/{path}")
+    assert result.status_code == status
+    assert result.json()["detail"]["code"] == code
+    listing.assert_not_awaited()
+    assert "create" not in api.calls
+    resolver.assert_awaited_once_with(
+        user_id=api.user.id, submitted_device_id="device-1"
+    )
+
+
+async def test_runtime_work_filters_devices_before_rpc(monkeypatch):
+    listing = AsyncMock(return_value={})
+    monkeypatch.setattr(
+        native.runtime.device_service,
+        "get_all_devices",
+        AsyncMock(
+            return_value=[
+                {"device_id": "target", "status": "online"},
+                {"device_id": "unrelated", "status": "online"},
+            ]
+        ),
+    )
+    monkeypatch.setattr(native.runtime, "_list_online_runtime_workspaces", listing)
+    await native.runtime.list_runtime_work(db=None, user_id=1, device_id="target")
+    listing.assert_awaited_once_with(
+        user_id=1, devices=[{"device_id": "target", "status": "online"}]
+    )

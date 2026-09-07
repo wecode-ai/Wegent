@@ -115,3 +115,5 @@ flowchart LR
 ```
 
 Redis 仅转发在线订阅事件，不写入键、事件日志或 response 状态；异步任务由 Runtime 执行，backend 不启动独立任务执行器。
+
+设备定向操作在 RPC 前校验归属和在线路由：离线返回 HTTP 503，`detail.code` 为 `device_offline`；无权访问或设备不存在返回 404。查询单个会话或 response 只请求目标设备。断网尚未被心跳检测到时，RPC 仍可能等待超时。

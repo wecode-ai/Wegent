@@ -115,3 +115,5 @@ flowchart LR
 ```
 
 Redis only forwards live events; it stores no keys, event journal, or response state. Runtime owns asynchronous execution; Backend does not introduce a separate task executor.
+
+Device-specific operations validate ownership and the online route before RPC. Offline devices return HTTP 503 with `detail.code: device_offline`; missing or inaccessible devices return 404. Individual conversation/response lookups query only the target device. A connection loss not yet detected by heartbeats may still require an RPC timeout.

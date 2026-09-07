@@ -367,10 +367,13 @@ async def list_runtime_work(
     *,
     db: Session,
     user_id: int,
+    device_id: str | None = None,
 ) -> RuntimeWorkListResponse:
     """Return runtime-native work grouped by executor workspace."""
 
     devices = await device_service.get_all_devices(db, user_id)
+    if device_id is not None:
+        devices = [device for device in devices if device.get("device_id") == device_id]
     devices_by_id = {str(device.get("device_id")): device for device in devices}
     runtime_workspaces = await _list_online_runtime_workspaces(
         user_id=user_id,
