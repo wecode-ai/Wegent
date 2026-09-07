@@ -4,6 +4,8 @@ import { createServer } from 'node:http'
 import { DatabaseSync } from 'node:sqlite'
 
 const PROJECT_NAME = '外部事件源矩阵验收'
+const CLOUD_DEVICE_ID = 'wework-e2e-cloud-device'
+const CLOUD_MODEL_NAME = 'desktop-e2e-public-model'
 const GITHUB_EVENT_TYPES = [
   'change_request.checks_failed',
   'change_request.merge_conflict',
@@ -440,6 +442,52 @@ export function createDesktopScenario({ uiTimeoutMs }) {
     })
   }
 
+  async function createTriggerRule(hook, sourceType) {
+    const profileName = `External ${sourceType} automation Runtime`
+    const profiles = await request('/api/v1/runtime-profiles')
+    let profile = profiles.find(candidate => candidate.name === profileName)
+    if (!profile) {
+      profile = await request('/api/v1/runtime-profiles', {
+        method: 'POST',
+        body: JSON.stringify({
+          name: profileName,
+          executionEnvironment: 'cloud',
+          executionDeviceId: CLOUD_DEVICE_ID,
+          model: CLOUD_MODEL_NAME,
+          modelType: 'public',
+          modelOptions: {
+            weworkCloudModelNamespace: 'default',
+            weworkCloudModelResourceUserId: '0',
+            weworkCloudModelUpstreamApiFormat: 'openai-responses',
+          },
+          workspacePolicy: 'project',
+        }),
+      })
+    }
+    await request(`/api/v1/cloud-projects/${project.id}/runtime-default`, {
+      method: 'PUT',
+      body: JSON.stringify({ runtimeProfileId: profile.id }),
+    })
+    return request(`/api/v1/cloud-projects/${project.id}/automations`, {
+      method: 'POST',
+      body: JSON.stringify({
+        name: `External ${sourceType} trigger ${hook.id}`,
+        prompt: `Report the failed ${sourceType} checks for this change request.`,
+        triggerType: 'event',
+        eventType: 'change_request.checks_failed',
+        eventConfig: {
+          subscription_id: hook.id,
+          execution_target: 'create_issue',
+        },
+        assignmentMode: 'manual',
+        roleSource: 'generic',
+        runtimeSource: 'runtime_user',
+        runtimeUserId: Number((await request('/api/users/me')).id),
+        enabled: true,
+      }),
+    })
+  }
+
   async function createConnectorCredential(sourceType) {
     const slug = `e2e-${sourceType}`
     const currentUser = await request('/api/users/me')
@@ -521,6 +569,36 @@ export function createDesktopScenario({ uiTimeoutMs }) {
       [...expectedTypes].sort(),
       `${sourceType} ${mode} did not normalize every event type`
     )
+  }
+
+  async function assertTriggerRun(rule, sourceType, mode, expectedTaskCount) {
+    const runs = await waitForValue(
+      () => request(`/api/v1/cloud-projects/${project.id}/automations/${rule.id}/runs`),
+      items => items.filter(run => run.status === 'succeeded').length >= 1,
+      `External ${sourceType} ${mode} trigger did not create a completed automation run`
+    )
+    assert.equal(runs.length, 1, `External ${sourceType} ${mode} trigger created duplicate runs`)
+    const board = await request(`/api/v1/cloud-projects/${project.id}/loop-items`)
+    const triggeredTasks = board.items.filter(item => item.title === runs[0].taskTitle)
+    assert.equal(
+      triggeredTasks.length,
+      expectedTaskCount,
+      `External ${sourceType} ${mode} trigger did not create exactly one Issue`
+    )
+    const execution = await waitForValue(
+      () => request(`/api/v1/cloud-projects/${project.id}/executions?status=completed`),
+      items =>
+        items.items.some(
+          item => item.loopItemId === runs[0].taskId && item.executorType === 'generic_robot'
+        ),
+      `External ${sourceType} ${mode} trigger did not execute its generic robot`
+    ).then(items =>
+      items.items.find(
+        item => item.loopItemId === runs[0].taskId && item.executorType === 'generic_robot'
+      )
+    )
+    assert.equal(execution.automationRunId, runs[0].id)
+    assert.equal(execution.executionDeviceId, CLOUD_DEVICE_ID)
   }
 
   async function deliverWebhook(hook, sourceType, eventType, sequence) {
@@ -694,21 +772,31 @@ export function createDesktopScenario({ uiTimeoutMs }) {
       await createConnectorCredential('github')
       await createConnectorCredential('gitlab')
       for (const sourceType of ['github', 'gitlab']) {
+        const rule = await createTriggerRule(hooks[`${sourceType}-webhook`], sourceType)
         const expectedTypes = sourceType === 'github' ? GITHUB_EVENT_TYPES : GITLAB_EVENT_TYPES
         const webhook = hooks[`${sourceType}-webhook`]
-        for (const eventType of expectedTypes) {
+        for (const eventType of expectedTypes.filter(
+          eventType => eventType !== 'change_request.checks_failed' || sourceType !== 'github'
+        )) {
           sequence += 1
           await deliverWebhook(webhook, sourceType, eventType, sequence)
         }
         const processed = await waitForProcessedEvents(webhook.id, expectedTypes.length)
         assertEventTypeCoverage(processed, sourceType, expectedTypes, 'webhook')
+        if (sourceType === 'github') {
+          sequence += 1
+          await deliverWebhook(webhook, 'github', 'change_request.checks_failed', sequence)
+          await assertTriggerRun(rule, 'github', 'webhook', 1)
+        }
       }
 
       const githubPoll = await createHook('github', 'poll')
       const gitlabPoll = await createHook('gitlab', 'poll')
       currentGithubFixture = githubPollingFixture(GITHUB_EVENT_TYPES)
       currentGitlabFixture = gitlabPollingFixture(GITLAB_EVENT_TYPES)
+      const githubPollRule = await createTriggerRule(githubPoll, 'github')
       await armPollingHook(githubPoll, 'github', GITHUB_EVENT_TYPES)
+      await assertTriggerRun(githubPollRule, 'github', 'poll', 2)
       await armPollingHook(gitlabPoll, 'gitlab', GITLAB_EVENT_TYPES)
     },
 
