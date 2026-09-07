@@ -217,10 +217,11 @@ describe('GeneralSettingsPage', () => {
 
     const focusButton = await screen.findByTestId('general-workbench-mode-focus-button')
     await waitFor(() => expect(focusButton).toBeEnabled())
-    expect(screen.getByTestId('general-workbench-mode-developer-button')).toHaveAttribute(
-      'aria-pressed',
-      'true'
-    )
+    const developerButton = screen.getByTestId('general-workbench-mode-developer-button')
+    expect(developerButton).toHaveAttribute('aria-pressed', 'true')
+
+    await userEvent.click(developerButton)
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
 
     await userEvent.click(focusButton)
     expect(changeWorkbenchModeMock).not.toHaveBeenCalled()

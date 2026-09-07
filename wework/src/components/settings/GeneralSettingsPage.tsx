@@ -319,7 +319,11 @@ export function GeneralSettingsPage() {
   }
 
   const confirmWorkbenchModeChange = async () => {
-    if (!pendingWorkbenchMode || pendingWorkbenchMode === preferences.workbenchMode) return
+    if (!pendingWorkbenchMode) return
+    if (pendingWorkbenchMode === preferences.workbenchMode) {
+      setPendingWorkbenchMode(null)
+      return
+    }
 
     const previousMode = preferences.workbenchMode
     const nextMode = pendingWorkbenchMode
@@ -483,7 +487,9 @@ export function GeneralSettingsPage() {
                       disabled={loading || saving}
                       title={t(`workbench.general_settings_mode_${mode}_description`)}
                       aria-pressed={active}
-                      onClick={() => setPendingWorkbenchMode(mode)}
+                      onClick={() => {
+                        if (!active) setPendingWorkbenchMode(mode)
+                      }}
                       className={[
                         'flex min-w-0 items-center justify-center rounded-[5px] px-2 text-sm font-medium leading-[18px] transition-colors disabled:cursor-not-allowed disabled:opacity-60',
                         active

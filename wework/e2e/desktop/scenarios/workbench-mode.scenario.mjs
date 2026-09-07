@@ -71,6 +71,13 @@ export async function createDesktopScenario() {
         1,
         'Developer mode did not restore Git settings'
       )
+      assert.equal(
+        Number(
+          await control.command('getElementCount', '[data-testid="settings-nav-git-hosting"]')
+        ),
+        1,
+        'Developer mode did not restore code-hosting settings'
+      )
     },
 
     diagnostics() {
