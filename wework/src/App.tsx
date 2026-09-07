@@ -118,6 +118,7 @@ import { harnessAppRoute, resolveRunningHarnessApp } from '@/features/harness-ap
 import type { User } from '@/types/api'
 import { TelemetryBridge } from '@/telemetry/TelemetryBridge'
 import { track, useTelemetryEnabled } from '@/telemetry/client'
+import { telemetryFeatureForLocation } from '@/telemetry/routes'
 import { WorkspaceTabPortalOwner } from '@/components/topnav/TitlebarActionsPortal'
 import { setActiveWorkspaceTabPortalOwner } from '@/components/topnav/workspaceTabPortalOwnership'
 import { DshAppSurface } from '@/features/dsh-runtime/DshAppSurface'
@@ -180,17 +181,6 @@ function useCurrentLocation() {
   }, [])
 
   return location
-}
-
-function telemetryFeatureForPath(path: string) {
-  if (path === '/login' || path === '/login/oidc') return 'login' as const
-  const pluginRoute = resolveDshRoute(path)
-  if (pluginRoute) return pluginRoute.telemetryFeature
-  if (path.startsWith('/app/')) return 'apps' as const
-  if (path.startsWith('/settings')) return 'settings' as const
-  if (path.startsWith('/project-space')) return 'project_space' as const
-  if (path === '/') return 'workbench' as const
-  return 'unknown' as const
 }
 
 interface AppRoutesProps {
@@ -501,7 +491,7 @@ export function WorkspaceTabSurface({
 }
 
 function AppRoutes({ onWorkbenchStartupReadyChange, onOpenWeworkForAppshot }: AppRoutesProps = {}) {
-  const path = useCurrentPath()
+  const { pathname: path, search } = useCurrentLocation()
   useDshSlotEntries(WEWORK_DSH_SLOTS.route)
   const isPopoutWindow = isPopoutWindowRuntime()
   const { user, isLoading } = useAuth()
@@ -580,9 +570,9 @@ function AppRoutes({ onWorkbenchStartupReadyChange, onOpenWeworkForAppshot }: Ap
 
   useEffect(() => {
     track('feature_opened', {
-      feature: isPopoutWindow ? 'popout' : telemetryFeatureForPath(path),
+      feature: isPopoutWindow ? 'popout' : telemetryFeatureForLocation(path, search),
     })
-  }, [isPopoutWindow, path, telemetryEnabled])
+  }, [isPopoutWindow, path, search, telemetryEnabled])
   const nextNativeWorkbenchKinds = new Map(
     [...mountedTabs.nativeWorkbenchKinds].filter(([id]) =>
       workspaceTabs?.tabs.some(tab => tab.id === id)
