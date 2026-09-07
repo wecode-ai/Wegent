@@ -32,6 +32,7 @@ import {
 } from 'lucide-react'
 import { useTranslation } from '@/hooks/useTranslation'
 import { automationClass } from './automationStyles'
+import { canvasNodeIdToSelection, setCanvasEventBus, useCanvasEventBus } from './canvasEventBus'
 import { eventTypeLabel } from './eventTypeLabel'
 import {
   DYNAMIC_NODE_WIDTH,
@@ -84,6 +85,24 @@ const HorizontalHandles = ({ hidden = true }) => (
     />
   </>
 )
+
+function withCanvasNodeSelection(Component) {
+  const SelectionSyncedNode = memo(function SelectionSyncedNode(props) {
+    const { selected, id } = props
+    const selectNode = useCanvasEventBus(eventBus => eventBus.selectNode)
+    const selectionId = useMemo(() => canvasNodeIdToSelection(id), [id])
+
+    useEffect(() => {
+      if (selected) selectNode(selectionId)
+    }, [selected, selectNode, selectionId])
+
+    return <Component {...props} />
+  })
+  SelectionSyncedNode.displayName = `SelectionSyncedNode(${
+    Component.displayName || Component.name || 'CanvasNode'
+  })`
+  return SelectionSyncedNode
+}
 
 const WorkflowNodeInsertControl = memo(function WorkflowNodeInsertControl({
   nodeId,
@@ -235,6 +254,7 @@ const TriggerCanvasNode = memo(function TriggerCanvasNode({ data, selected }) {
     </article>
   )
 })
+const SelectionSyncedTriggerCanvasNode = withCanvasNodeSelection(TriggerCanvasNode)
 
 function executionSummary(environment, model) {
   const normalizedEnvironment = /^(Local Executor|本机执行器)(\s*·.*)?$/i.test(environment)
@@ -274,6 +294,7 @@ const ExecutionCanvasNode = memo(function ExecutionCanvasNode({ data, selected }
     </article>
   )
 })
+const SelectionSyncedExecutionCanvasNode = withCanvasNodeSelection(ExecutionCanvasNode)
 
 const DynamicCanvasNode = memo(function DynamicCanvasNode({ data, selected }) {
   return (
@@ -313,6 +334,7 @@ const DynamicCanvasNode = memo(function DynamicCanvasNode({ data, selected }) {
     </article>
   )
 })
+const SelectionSyncedDynamicCanvasNode = withCanvasNodeSelection(DynamicCanvasNode)
 
 const DynamicGroupCanvasNode = memo(function DynamicGroupCanvasNode({ data, selected }) {
   return (
@@ -347,6 +369,7 @@ const DynamicGroupCanvasNode = memo(function DynamicGroupCanvasNode({ data, sele
     </section>
   )
 })
+const SelectionSyncedDynamicGroupCanvasNode = withCanvasNodeSelection(DynamicGroupCanvasNode)
 
 const DagStageCanvasNode = memo(function DagStageCanvasNode({ data, selected }) {
   return (
@@ -410,6 +433,7 @@ const DagStageCanvasNode = memo(function DagStageCanvasNode({ data, selected }) 
     </article>
   )
 })
+const SelectionSyncedDagStageCanvasNode = withCanvasNodeSelection(DagStageCanvasNode)
 
 const BranchConditionRows = memo(function BranchConditionRows({ step }) {
   const { t } = useTranslation('common')
@@ -507,6 +531,7 @@ const BranchCanvasNode = memo(function BranchCanvasNode({ data, selected }) {
     </article>
   )
 })
+const SelectionSyncedBranchCanvasNode = withCanvasNodeSelection(BranchCanvasNode)
 
 const LoopBranchCanvasNode = memo(function LoopBranchCanvasNode({ data, selected }) {
   const { step, onSelect, onAddBranchHandler } = data
@@ -533,6 +558,7 @@ const LoopBranchCanvasNode = memo(function LoopBranchCanvasNode({ data, selected
     </article>
   )
 })
+const SelectionSyncedLoopBranchCanvasNode = withCanvasNodeSelection(LoopBranchCanvasNode)
 
 const LoopMarkerCanvasNode = memo(function LoopMarkerCanvasNode({ data, selected }) {
   const { step, onSelect, onInsert } = data
@@ -564,6 +590,7 @@ const LoopMarkerCanvasNode = memo(function LoopMarkerCanvasNode({ data, selected
     </article>
   )
 })
+const SelectionSyncedLoopMarkerCanvasNode = withCanvasNodeSelection(LoopMarkerCanvasNode)
 
 const LoopBodyCanvasNode = memo(function LoopBodyCanvasNode({ data, selected }) {
   const { step, onSelect, onInsert } = data
@@ -598,6 +625,7 @@ const LoopBodyCanvasNode = memo(function LoopBodyCanvasNode({ data, selected }) 
     </article>
   )
 })
+const SelectionSyncedLoopBodyCanvasNode = withCanvasNodeSelection(LoopBodyCanvasNode)
 
 const LoopGroupCanvasNode = memo(function LoopGroupCanvasNode({ id, data, selected }) {
   const { step, onSelect, onInsert } = data
@@ -644,6 +672,7 @@ const LoopGroupCanvasNode = memo(function LoopGroupCanvasNode({ id, data, select
     </section>
   )
 })
+const SelectionSyncedLoopGroupCanvasNode = withCanvasNodeSelection(LoopGroupCanvasNode)
 
 const DifyStyleEdge = memo(function DifyStyleEdge({
   id,
@@ -707,16 +736,16 @@ const DifyConnectionLine = memo(function DifyConnectionLine({ fromX, fromY, toX,
 })
 
 const nodeTypes = {
-  trigger: TriggerCanvasNode,
-  execution: ExecutionCanvasNode,
-  dynamic: DynamicCanvasNode,
-  dynamicGroup: DynamicGroupCanvasNode,
-  dagStage: DagStageCanvasNode,
-  branch: BranchCanvasNode,
-  loopGroup: LoopGroupCanvasNode,
-  loopBranch: LoopBranchCanvasNode,
-  loopMarker: LoopMarkerCanvasNode,
-  loopBody: LoopBodyCanvasNode,
+  trigger: SelectionSyncedTriggerCanvasNode,
+  execution: SelectionSyncedExecutionCanvasNode,
+  dynamic: SelectionSyncedDynamicCanvasNode,
+  dynamicGroup: SelectionSyncedDynamicGroupCanvasNode,
+  dagStage: SelectionSyncedDagStageCanvasNode,
+  branch: SelectionSyncedBranchCanvasNode,
+  loopGroup: SelectionSyncedLoopGroupCanvasNode,
+  loopBranch: SelectionSyncedLoopBranchCanvasNode,
+  loopMarker: SelectionSyncedLoopMarkerCanvasNode,
+  loopBody: SelectionSyncedLoopBodyCanvasNode,
 }
 
 const edgeTypes = {
@@ -816,6 +845,12 @@ export function AutomationWorkflowCanvas({
   onDeleteNode,
 }) {
   const [interactionMode, setInteractionMode] = useState('hand')
+  const onSelectNodeRef = useRef(onSelectNode)
+  onSelectNodeRef.current = onSelectNode
+
+  useEffect(() => {
+    setCanvasEventBus({ selectNode: selection => onSelectNodeRef.current(selection) })
+  }, [])
 
   const graph = useMemo(() => {
     const nodes = []
@@ -1158,6 +1193,7 @@ export function AutomationWorkflowCanvas({
   const onNodeDragStop = useCallback(
     (_, node) => {
       if (node.type === 'dagStage') {
+        node.data.onSelect?.()
         const { stepId, stage } = node.data
         onMoveDagStage(
           stepId,
@@ -1168,6 +1204,7 @@ export function AutomationWorkflowCanvas({
         return
       }
       if (node.type === 'loopBody' || node.type === 'loopBranch' || node.type === 'loopMarker') {
+        node.data.onSelect?.()
         const { loopId, step } = node.data
         onMoveLoopBodyNode(
           loopId,
@@ -1184,6 +1221,7 @@ export function AutomationWorkflowCanvas({
         node.type === 'loopGroup' ||
         node.type === 'branch'
       ) {
+        node.data.onSelect?.()
         onMoveStep(node.id, Math.round(node.position.x), Math.round(node.position.y))
       }
     },

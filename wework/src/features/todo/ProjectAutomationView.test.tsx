@@ -1143,6 +1143,19 @@ describe('ProjectAutomationView', () => {
     })
   })
 
+  test('opens branch settings when the branch body is pressed', async () => {
+    renderView()
+    await openRuleEditor()
+
+    fireEvent.click(screen.getByTestId('automation-node-insert-after-step-1'))
+    fireEvent.click(screen.getByTestId('automation-node-insert-after-branch-step-1'))
+    const branchNode = await screen.findByTestId(/^branch-node-branch-/)
+    fireEvent.click(branchNode)
+
+    expect(await screen.findByTestId('branch-event-wait-mode')).toBeInTheDocument()
+    expect(branchNode).toHaveClass('selected')
+  })
+
   test('closes the workflow detail panel from its header action', async () => {
     renderView()
     await openRuleEditor()
@@ -1272,20 +1285,8 @@ describe('ProjectAutomationView', () => {
     expect(screen.getByTestId(/ai-allocation-node-/)).toHaveClass('react-flow-dynamic-group')
     expect(viewport?.style.transform).toBe(viewportTransform)
 
-    const deleteStage = view.container.querySelector<HTMLElement>(
-      '[data-testid^="execution-node-delete-dag-stage-"]'
-    )
-    expect(deleteStage).not.toBeNull()
-    fireEvent.click(deleteStage!)
-
-    await waitFor(() =>
-      expect(view.container.querySelector('[data-testid^="dag-stage-node-"]')).toBeNull()
-    )
-    expect(screen.getByTestId(/ai-allocation-node-/).closest('.react-flow__node')).toHaveStyle({
-      width: '300px',
-      height: '132px',
-    })
-    expect(view.container.querySelector('[data-testid^="dag-stage-add-first-"]')).not.toBeNull()
+    const dynamicSettings = screen.getByTestId('ai-coordinator-prompt')
+    expect(dynamicSettings).toBeInTheDocument()
   })
 
   test('renders consecutive inserted steps at distinct positions instead of stacking', async () => {

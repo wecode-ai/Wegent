@@ -21,7 +21,6 @@ export const BRANCH_HEADER_HEIGHT = 46
 export const BRANCH_ROW_HEIGHT = 30
 export const BRANCH_FOOTER_HEIGHT = 32
 export const BRANCH_VERTICAL_PADDING = 12
-export const BRANCH_NEW_HEIGHT = 34
 // Vertical gap between branch condition handlers stacked in a single column.
 export const BRANCH_HANDLER_ROW_GAP = 28
 
@@ -41,7 +40,6 @@ export function branchNodeHeight(
   const conditionRows = Math.max(1, (step.branchConditions ?? []).length)
   return (
     BRANCH_HEADER_HEIGHT +
-    BRANCH_NEW_HEIGHT +
     conditionRows * BRANCH_ROW_HEIGHT +
     BRANCH_VERTICAL_PADDING +
     (footer ? BRANCH_FOOTER_HEIGHT : 0)

@@ -39,9 +39,7 @@ from app.schemas.project_incoming_hook import (
 from app.services.cloud_projects.access import require_cloud_project_role
 from app.services.project_automation_domain import ProjectAutomationEvent, utcnow
 from app.services.project_event_polling import EventPollingError
-from app.services.project_event_polling_service import (
-    project_event_polling_service,
-)
+from app.services.project_event_polling_service import project_event_polling_service
 from app.services.project_event_sources import (
     event_source,
     normalize_observed_resource,
