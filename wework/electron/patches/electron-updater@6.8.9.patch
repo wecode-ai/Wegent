@@ -11,7 +11,7 @@ index 449df368fa281f97fd6f9954fab49151db51b56b..621e790b002bf085b92f0eb43b8ae47b
      login: (info: AuthInfo, callback: LoginCallback) => void;
      "checking-for-update": () => void;
 diff --git a/out/AppUpdater.js b/out/AppUpdater.js
-index d6d5debc7943011135e97124b755a41268199313..1eb03c6007ef4d10b018c79a32887fcb936ea0ec 100644
+index d6d5debc7943011135e97124b755a41268199313..dbf56b765cd034eb143eeaf4c522cc3ab8ae437c 100644
 --- a/out/AppUpdater.js
 +++ b/out/AppUpdater.js
 @@ -667,6 +667,7 @@ class AppUpdater extends events_1.EventEmitter {
@@ -55,7 +55,7 @@ index d6d5debc7943011135e97124b755a41268199313..1eb03c6007ef4d10b018c79a32887fcb
              if (this._testOnlyOptions != null) {
                  // test mode
 diff --git a/out/MacUpdater.js b/out/MacUpdater.js
-index 78b89a7ac91d2158583f642f6c608cbef8d5e711..1ff3b0d5d068e5d0e68d9b6847ce43fee340ab00 100644
+index 78b89a7ac91d2158583f642f6c608cbef8d5e711..f9a23dccc57c920cbc073affc6eb4669b8e44be1 100644
 --- a/out/MacUpdater.js
 +++ b/out/MacUpdater.js
 @@ -10,6 +10,7 @@ const AppUpdater_1 = require("./AppUpdater");
@@ -66,7 +66,7 @@ index 78b89a7ac91d2158583f642f6c608cbef8d5e711..1ff3b0d5d068e5d0e68d9b6847ce43fe
  class MacUpdater extends AppUpdater_1.AppUpdater {
      constructor(options, app) {
          super(options, app);
-@@ -89,31 +90,33 @@ class MacUpdater extends AppUpdater_1.AppUpdater {
+@@ -89,30 +90,54 @@ class MacUpdater extends AppUpdater_1.AppUpdater {
              fileInfo: zipFileInfo,
              downloadUpdateOptions,
              task: async (destinationFile, downloadOptions) => {
@@ -75,20 +75,36 @@ index 78b89a7ac91d2158583f642f6c608cbef8d5e711..1ff3b0d5d068e5d0e68d9b6847ce43fe
 -                    if (!(0, fs_extra_1.pathExistsSync)(cachedUpdateFilePath)) {
 -                        log.info("Unable to locate previous update.zip for differential download (is this first install?), falling back to full download");
 -                        return false;
--                    }
++                const cacheRoot = this.downloadedUpdateHelper.cacheDir;
++                this.weworkBaseline = null;
++                this.weworkTargetBlockmap = null;
++                let preparationError = null;
++                if (!downloadUpdateOptions.disableDifferentialDownload) {
++                    try {
++                        this.weworkBaseline = await baseline.readBaseline(cacheRoot, isArm64Mac ? 'arm64' : 'x64');
++                    }
++                    catch (error) {
++                        preparationError = error;
++                        this._logger.warn(`Unable to read the differential update baseline: ${error.message}`);
++                    }
++                    try {
++                        const mapUrl = new URL(zipFileInfo.url.href);
++                        mapUrl.pathname += '.blockmap';
++                        this.weworkTargetBlockmap = await this.httpExecutor.downloadToBuffer(mapUrl, downloadOptions);
+                     }
 -                    return !downloadUpdateOptions.disableDifferentialDownload;
 -                };
 -                let differentialDownloadFailed = true;
 -                if (canDifferentialDownload()) {
-+                const cacheRoot = this.downloadedUpdateHelper.cacheDir;
-+                this.weworkBaseline = await baseline.readBaseline(cacheRoot, isArm64Mac ? 'arm64' : 'x64');
-+                const mapUrl = new URL(zipFileInfo.url.href);
-+                mapUrl.pathname += '.blockmap';
-+                this.weworkTargetBlockmap = await this.httpExecutor.downloadToBuffer(mapUrl, downloadOptions);
-+                const canDifferential = !downloadUpdateOptions.disableDifferentialDownload && this.weworkBaseline !== null;
++                    catch (error) {
++                        preparationError = error;
++                        this._logger.warn(`Unable to download the target blockmap: ${error.message}`);
++                    }
++                }
++                const canDifferential = this.weworkBaseline !== null && this.weworkTargetBlockmap !== null;
 +                this.emit('wework-download-phase', {
 +                    mode: canDifferential ? 'differential' : 'full',
-+                    reason: canDifferential ? undefined : 'unverified-baseline',
++                    reason: canDifferential ? undefined : (preparationError ? 'baseline-unavailable' : 'unverified-baseline'),
 +                    totalBytes: canDifferential ? undefined : zipFileInfo.info.size,
 +                });
 +                let differentialDownloadFailed = !canDifferential;
@@ -102,22 +118,22 @@ index 78b89a7ac91d2158583f642f6c608cbef8d5e711..1ff3b0d5d068e5d0e68d9b6847ce43fe
              },
              done: async (event) => {
 -                if (!downloadUpdateOptions.disableDifferentialDownload) {
--                    try {
++                if (this.weworkTargetBlockmap) {
+                     try {
 -                        const cachedUpdateFilePath = path.join(this.downloadedUpdateHelper.cacheDir, CURRENT_MAC_APP_ZIP_FILE_NAME);
 -                        await (0, fs_extra_1.copyFile)(event.downloadedFile, cachedUpdateFilePath);
--                    }
--                    catch (error) {
++                        await baseline.saveBaseline(this.downloadedUpdateHelper.cacheDir, event.downloadedFile, this.weworkTargetBlockmap, {
++                            version: downloadUpdateOptions.updateInfoAndProvider.info.version,
++                            arch: isArm64Mac ? 'arm64' : 'x64', url: zipFileInfo.url.href,
++                            sha512: zipFileInfo.info.sha512,
++                        });
+                     }
+                     catch (error) {
 -                        this._logger.warn(`Unable to copy file for caching for future differential downloads: ${error.message}`);
--                    }
-+                if (this.weworkTargetBlockmap) {
-+                    await baseline.saveBaseline(this.downloadedUpdateHelper.cacheDir, event.downloadedFile, this.weworkTargetBlockmap, {
-+                        version: downloadUpdateOptions.updateInfoAndProvider.info.version,
-+                        arch: isArm64Mac ? 'arm64' : 'x64', url: zipFileInfo.url.href,
-+                        sha512: zipFileInfo.info.sha512,
-+                    });
++                        this._logger.warn(`Unable to persist the differential update baseline: ${error.message}`);
+                     }
                  }
                  return this.updateDownloaded(zipFileInfo, event);
-             },
 diff --git a/out/WeworkUpdateBaseline.js b/out/WeworkUpdateBaseline.js
 new file mode 100644
 index 0000000000000000000000000000000000000000..e036bb24a45910bcae74218b484705b5ed2d4283

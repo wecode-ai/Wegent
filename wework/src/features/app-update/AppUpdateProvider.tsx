@@ -152,6 +152,7 @@ export function AppUpdateProvider({ children }: { children: ReactNode }) {
 
   const startBackgroundDownload = useCallback(
     (update: WeworkUpdateInfo, channel: WeworkUpdateChannel) => {
+      setError(null)
       setStatus('downloading')
       setDownloadProgress({ downloadedBytes: 0, totalBytes: null, phase: 'preparing' })
       void downloadUpdate(update, setDownloadProgress)

@@ -106,9 +106,11 @@ export class AppUpdateService {
       throw error
     }
     if (!result?.isUpdateAvailable || !result.updateInfo) {
-      this.pendingVersion = null
-      this.pendingChannel = null
-      this.pendingUpdate = null
+      if (this.downloadedVersion !== this.pendingVersion) {
+        this.pendingVersion = null
+        this.pendingChannel = null
+        this.pendingUpdate = null
+      }
       return null
     }
 

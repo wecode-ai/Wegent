@@ -154,6 +154,48 @@ describe('AppUpdateService', () => {
     await expect(appUpdate.download()).rejects.toThrow('No pending Wework update')
   })
 
+  test('preserves a downloaded update when another channel has no update', async () => {
+    const updater = new FakeUpdater()
+    const available = {
+      updateInfo: {
+        version: '0.2.7',
+        files: [],
+        path: 'stable',
+        sha512: 'sha',
+        releaseDate: '2026-08-25T00:00:00Z',
+      },
+      cancellationToken: {} as never,
+      downloadPromise: null,
+      isUpdateAvailable: true,
+    }
+    updater.checkForUpdates
+      .mockResolvedValueOnce(available)
+      .mockResolvedValueOnce({
+        updateInfo: {
+          version: '0.2.6',
+          files: [],
+          path: 'beta-current',
+          sha512: 'sha',
+          releaseDate: '2026-08-25T00:00:00Z',
+        },
+        cancellationToken: {} as never,
+        downloadPromise: null,
+        isUpdateAvailable: false,
+      })
+      .mockResolvedValueOnce(available)
+    updater.downloadUpdate.mockResolvedValue(['update'])
+
+    const appUpdate = service(updater)
+    await appUpdate.check('stable')
+    await appUpdate.download()
+    await expect(appUpdate.check('beta')).resolves.toBeNull()
+    expect(() => appUpdate.createInstallAction()).not.toThrow()
+
+    await expect(appUpdate.check('stable')).resolves.toMatchObject({ version: '0.2.7' })
+    await appUpdate.download()
+    expect(updater.downloadUpdate).toHaveBeenCalledTimes(1)
+  })
+
   test('treats a missing channel manifest as no available update', async () => {
     const updater = new FakeUpdater()
     updater.checkForUpdates.mockRejectedValue(
