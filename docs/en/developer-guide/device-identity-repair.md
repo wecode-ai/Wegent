@@ -40,10 +40,14 @@ HTTP success or an old installed state alone is insufficient. Desktop uninstall
 immediately refreshes detail installation state. Both backend and desktop must
 be released; publishing only a plugin package cannot fix host state management.
 
-The desktop `plugin-auto-update` checkpoint covers historical Sites upgrade,
+The desktop `plugin-auto-update` checkpoint covers upgrades using generated minimal plugin packages,
 cancellation, catalog refresh, uninstall, reinstall and six-plugin background
 updates. macOS idle tasks include reclaimable file cache in available memory to
 avoid indefinitely deferring updates despite sufficient memory.
+
+Each generated test package contains a manifest and two skill text files. Real
+publication and installation verify changed, added and removed skills, plus old
+version directory cleanup, without historical business packages or binary archives.
 
 ## QA and CI
 

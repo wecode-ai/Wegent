@@ -1,10 +1,19 @@
 import assert from 'node:assert/strict'
-import { access, mkdir, readFile, writeFile } from 'node:fs/promises'
-import { join, resolve } from 'node:path'
-import { commandOutputAsync, fetchJson, repoDir, resultDir } from './shared.mjs'
+import { access, readFile, writeFile } from 'node:fs/promises'
+import { join } from 'node:path'
+import { fetchJson, resultDir } from './shared.mjs'
 import { captureVerificationScreenshot } from './workspace-flows.mjs'
 
-export async function verifySitesUpgrade({ cloudEnvironment: env, control, codexHome, setPhase }) {
+const pluginKey = 'desktop-e2e-upgrade'
+const oldVersion = '0.1.1'
+const newVersion = '0.3.1'
+const sharedSkill = 'upgrade-check'
+const retiredSkill = 'retired-check'
+const addedSkill = 'added-check'
+const oldContent = 'Old release upgrade marker'
+const newContent = 'New release upgrade marker'
+
+export async function verifyPluginUpgrade({ cloudEnvironment: env, control, codexHome, setPhase }) {
   const deviceId = (
     await readFile(join(resultDir, 'electron-user-data/desktop-device-id'), 'utf8')
   ).trim()
@@ -20,91 +29,72 @@ export async function verifySitesUpgrade({ cloudEnvironment: env, control, codex
     const installed = await request(`/plugins/installed?device_id=${deviceId}`)
     const market = await request(`/plugins/marketplace?device_id=${deviceId}`)
     const snapshot = JSON.parse(await control.command('snapshot', 'body'))
-    const item = market.items.find(item => item.name === 'wegent-sites')
+    const item = market.items.find(item => item.name === pluginKey)
     evidence.push({
       label,
       time: new Date().toISOString(),
       item,
-      installed: installed.items.filter(item => item.spec.source.pluginKey === 'wegent-sites'),
+      installed: installed.items.filter(item => item.spec.source.pluginKey === pluginKey),
       snapshot,
     })
     await writeFile(
-      join(resultDir, 'sites-upgrade-evidence.json'),
+      join(resultDir, 'plugin-upgrade-evidence.json'),
       JSON.stringify(evidence, null, 2)
     )
-    await captureVerificationScreenshot(control, `sites-${label}.png`)
+    await captureVerificationScreenshot(control, `plugin-upgrade-${label}.png`)
     console.log(
-      `[sites-repro] ${label}: ${JSON.stringify({ version: item?.version, update: item?.updateAvailable, device: item?.currentDeviceInstallation })}`
+      `[plugin-upgrade] ${label}: ${JSON.stringify({ version: item?.version, update: item?.updateAvailable, device: item?.currentDeviceInstallation })}`
     )
     return { item, snapshot }
   }
-  const archiveRoot = resolve(import.meta.dirname, '../fixtures/sites-upgrade')
-  const fixtureRoot = join(resultDir, 'sites-upgrade-fixtures')
-  for (const version of ['old', 'new']) {
-    const cwd = join(fixtureRoot, version)
-    await mkdir(cwd, { recursive: true })
-    await commandOutputAsync(
-      'uv',
-      [
-        'run',
-        'python',
-        '-c',
-        'import sys, tarfile; archive = tarfile.open(sys.argv[1]); archive.extractall(sys.argv[2], filter="data"); archive.close()',
-        join(archiveRoot, `${version}.tar.gz`),
-        cwd,
-      ],
-      { cwd: join(repoDir, 'backend') }
-    )
-  }
-  setPhase('sites-old-install')
+  const cacheRoot = join(codexHome, 'plugins/cache/wegent', pluginKey)
+  const oldRoot = join(cacheRoot, oldVersion)
+  const newRoot = join(cacheRoot, newVersion)
+  setPhase('plugin-upgrade-old-install')
   const old = await env.publishPluginRelease({
-    slug: 'wegent-sites',
-    version: '0.1.1+20260804',
-    packageRoot: join(fixtureRoot, 'old'),
+    slug: pluginKey,
+    version: oldVersion,
+    skills: { [sharedSkill]: oldContent, [retiredSkill]: 'Retired skill marker' },
   })
   await request(`/plugins/marketplace/${old.pluginId}/install?device_id=${deviceId}`, 'POST')
   const installs = await request(`/plugins/installed?device_id=${deviceId}`)
   const installed = installs.items.find(item => item.spec.pluginId === old.pluginId)
-  assert.ok(installed, 'Old sites install is missing')
+  assert.ok(installed, 'Old fixture install is missing')
   const installedId = installed.metadata.labels.id
   await request(`/plugins/installed/${installedId}?device_id=${deviceId}`, 'PUT', {
     updatePolicy: 'manual',
   })
   assert.equal(
-    JSON.parse(
-      await readFile(
-        join(
-          codexHome,
-          'plugins/cache/wegent/wegent-sites/0.1.1+20260804/.codex-plugin/plugin.json'
-        ),
-        'utf8'
-      )
-    ).version,
-    '0.1.1+20260804'
+    JSON.parse(await readFile(join(oldRoot, '.codex-plugin/plugin.json'), 'utf8')).version,
+    oldVersion
   )
+  assert.ok(
+    (await readFile(join(oldRoot, 'skills', sharedSkill, 'SKILL.md'), 'utf8')).includes(oldContent)
+  )
+  await access(join(oldRoot, 'skills', retiredSkill, 'SKILL.md'))
   await control.command('click', '[data-testid="plugins-button"]')
   await control.command('waitFor', `[data-testid="plugin-marketplace-row-${old.pluginId}"]`, {
     timeoutMs: 30000,
   })
   await control.command('click', `[data-testid="plugin-marketplace-row-${old.pluginId}"]`)
   await capture('01-old-installed')
-  setPhase('sites-publish-current')
+  setPhase('plugin-upgrade-publish-current')
   await env.publishPluginRelease({
-    slug: 'wegent-sites',
-    version: '0.3.1',
-    packageRoot: join(fixtureRoot, 'new'),
+    slug: pluginKey,
+    version: newVersion,
+    skills: { [sharedSkill]: newContent, [addedSkill]: 'Added skill marker' },
   })
   // The product revalidates the marketplace every sixty seconds.
-  console.log('[sites-repro] Waiting for the normal sixty-second catalog refresh')
+  console.log('[plugin-upgrade] Waiting for the normal sixty-second catalog refresh')
   await control.command('waitFor', '[data-testid^="plugin-detail-toggle-"]', {
     text: '更新',
     timeoutMs: 75000,
   })
   await capture('02-update-offered')
-  setPhase('sites-click-update')
+  setPhase('plugin-upgrade-click-update')
   await control.command('click', '[data-testid^="plugin-detail-toggle-"]')
   await control.command('waitFor', '[data-testid="plugin-update-confirm-button"]')
-  await captureVerificationScreenshot(control, 'sites-update-confirmation.png')
+  await captureVerificationScreenshot(control, 'plugin-upgrade-update-confirmation.png')
   await control.command('click', '[data-testid="plugin-update-confirm-button-cancel-button"]')
   const cancelled = await capture('02b-update-cancelled')
   assert.equal(cancelled.item.currentDeviceInstallation.actualReleaseId, old.releaseId)
@@ -116,20 +106,23 @@ export async function verifySitesUpgrade({ cloudEnvironment: env, control, codex
     timeoutMs: 30000,
   })
   await capture('03-after-update-click')
-  console.log('[sites-repro] Observing update and its next catalog refresh')
+  console.log('[plugin-upgrade] Observing update and its next catalog refresh')
   await new Promise(resolve => setTimeout(resolve, 65000))
   const refreshed = await capture('04-after-refresh')
-  const currentManifestPath = join(
-    codexHome,
-    'plugins/cache/wegent/wegent-sites/0.3.1/.codex-plugin/plugin.json'
-  )
+  const currentManifestPath = join(newRoot, '.codex-plugin/plugin.json')
   const currentManifest = JSON.parse(await readFile(currentManifestPath, 'utf8'))
-  assert.equal(currentManifest.version, '0.3.1')
+  assert.equal(currentManifest.version, newVersion)
+  const updatedSkill = await readFile(join(newRoot, 'skills', sharedSkill, 'SKILL.md'), 'utf8')
+  assert.ok(updatedSkill.includes(newContent))
+  assert.ok(!updatedSkill.includes(oldContent))
+  await access(join(newRoot, 'skills', addedSkill, 'SKILL.md'))
+  await assert.rejects(access(join(newRoot, 'skills', retiredSkill)), { code: 'ENOENT' })
+  await assert.rejects(access(oldRoot), { code: 'ENOENT' })
   await writeFile(
-    join(resultDir, 'sites-actual-manifest-after-update.json'),
+    join(resultDir, 'plugin-upgrade-actual-manifest-after-update.json'),
     JSON.stringify(currentManifest, null, 2)
   )
-  setPhase('sites-uninstall')
+  setPhase('plugin-upgrade-uninstall')
   await control.command('click', `[data-testid="plugin-detail-actions-${installedId}"]`)
   await control.command('waitFor', `[data-testid="plugin-detail-uninstall-${installedId}"]`)
   await control.command('click', `[data-testid="plugin-detail-uninstall-${installedId}"]`)
@@ -148,7 +141,8 @@ export async function verifySitesUpgrade({ cloudEnvironment: env, control, codex
     'Uninstall left the cloud install active'
   )
   await assert.rejects(access(currentManifestPath), { code: 'ENOENT' })
-  setPhase('sites-reinstall')
+  await assert.rejects(access(newRoot), { code: 'ENOENT' })
+  setPhase('plugin-upgrade-reinstall')
   await control.command('click', '[data-testid="plugin-detail-back-button"]')
   await control.command('waitFor', `[data-testid="plugin-marketplace-row-${old.pluginId}"]`)
   await control.command('click', `[data-testid="plugin-marketplace-row-${old.pluginId}"]`)
@@ -163,19 +157,14 @@ export async function verifySitesUpgrade({ cloudEnvironment: env, control, codex
     timeoutMs: 30000,
   })
   await capture('07-reinstalled')
-  assert.equal(
-    JSON.parse(
-      await readFile(
-        join(codexHome, 'plugins/cache/wegent/wegent-sites/0.3.1/.codex-plugin/plugin.json'),
-        'utf8'
-      )
-    ).version,
-    '0.3.1'
+  assert.equal(JSON.parse(await readFile(currentManifestPath, 'utf8')).version, newVersion)
+  assert.ok(
+    (await readFile(join(newRoot, 'skills', sharedSkill, 'SKILL.md'), 'utf8')).includes(newContent)
   )
   assert.equal(
     refreshed.item.updateAvailable,
     false,
-    'Reproduced: successfully installed 0.3.1 still offers update after refresh'
+    'Successfully updated plugin must not offer another update after refresh'
   )
   // The next checkpoint section verifies release notifications outside this page.
   await control.command('click', '[data-testid="new-chat-button"]')

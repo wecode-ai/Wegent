@@ -1,5 +1,5 @@
 import { access } from 'node:fs/promises'
-import { verifySitesUpgrade } from './sites-upgrade-repro.mjs'
+import { verifyPluginUpgrade } from './plugin-upgrade-flow.mjs'
 import { basename } from 'node:path'
 
 import { verifyShortConversationLayout } from './conversation-layout.mjs'
@@ -598,7 +598,7 @@ async function verifyCloudCheckpoint({
   }
 
   if (checkpoint === 'plugin-auto-update') {
-    await verifySitesUpgrade({ cloudEnvironment, control, codexHome, setPhase })
+    await verifyPluginUpgrade({ cloudEnvironment, control, codexHome, setPhase })
     setPhase('cloud-plugin-auto-update-disable-codex-rpc')
     await cloudEnvironment.restartCloudExecutorWithoutCodexPluginRpc()
     setPhase('cloud-plugin-auto-update-fixtures')
