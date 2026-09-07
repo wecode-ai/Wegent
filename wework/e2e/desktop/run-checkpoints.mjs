@@ -52,6 +52,7 @@ const CHECKPOINT_SCENARIO_MODULES = {
   'plugin-development': './scenarios/plugin-development.scenario.mjs',
   'task-attachments': './scenarios/task-attachments.scenario.mjs',
   'external-content-import': './scenarios/external-content-import.scenario.mjs',
+  'workbench-mode': './scenarios/workbench-mode.scenario.mjs',
 }
 const SCENARIO_ONLY_CHECKPOINTS = new Set([
   'cloud-space-mention',
@@ -85,6 +86,7 @@ const SCENARIO_ONLY_CHECKPOINTS = new Set([
   'browser-annotation-anchors',
   'browser-annotation-design',
   'external-content-import',
+  'workbench-mode',
 ])
 const CLOUD_ONLY_CHECKPOINTS = new Set([
   'plugin-auto-update',

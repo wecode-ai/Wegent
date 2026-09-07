@@ -33,6 +33,7 @@ import {
   type AppPreferences,
   type AppPreferencesPatch,
   type FixedWorkspaceTabPreference,
+  type WorkbenchMode,
 } from '@/desktop/appPreferences'
 import { keybindingFromKeyboardEvent, normalizeKeybinding } from '@/lib/keybindings'
 import { getWegentUsageDisplay } from '@/api/wegentUsage'
@@ -41,6 +42,7 @@ import { useAppPreferencesState } from '@/features/app-preferences/useAppPrefere
 import { WorkbenchContext } from '@/features/workbench/useWorkbench'
 import { selectedModelExecutionFields } from '@/features/workbench/runtimeModelSelection'
 import { harnessAppsApi, type HarnessAppInstallation } from '@/api/local/harnessApps'
+import { changeWorkbenchMode } from '@/features/workbench-mode/workbenchMode'
 
 type BooleanPreferenceKey = {
   [Key in keyof AppPreferencesPatch]-?: AppPreferencesPatch[Key] extends boolean | undefined
@@ -314,6 +316,24 @@ export function GeneralSettingsPage() {
     }
   }
 
+  const handleWorkbenchModeChange = async (workbenchMode: WorkbenchMode) => {
+    if (workbenchMode === preferences.workbenchMode) return
+
+    const previousMode = preferences.workbenchMode
+    setPreferences(current => ({ ...current, workbenchMode }))
+    setSaving(true)
+    setError(null)
+    try {
+      setPreferences(await changeWorkbenchMode(previousMode, workbenchMode))
+    } catch (saveError) {
+      console.error('[Wework] Failed to update workbench mode', saveError)
+      setPreferences(current => ({ ...current, workbenchMode: previousMode }))
+      setError(t('workbench.general_settings_mode_save_failed'))
+    } finally {
+      setSaving(false)
+    }
+  }
+
   const saveFixedWorkspaceTabs = async (
     fixedWorkspaceTabs: FixedWorkspaceTabPreference[],
     startupWorkspaceTabId = preferences.startupWorkspaceTabId ??
@@ -435,6 +455,40 @@ export function GeneralSettingsPage() {
           {t('workbench.general_settings_title')}
         </div>
         <SettingsGroup className="rounded-xl !bg-background">
+          <SettingsRow
+            label={t('workbench.general_settings_mode')}
+            description={t('workbench.general_settings_mode_description')}
+            className={GENERAL_ROW_CLASS_NAME}
+            labelClassName={GENERAL_ROW_LABEL_CLASS_NAME}
+            control={
+              <div className="grid h-8 w-full shrink-0 grid-cols-2 rounded-md border border-border bg-background p-0.5 md:w-[300px]">
+                {(['focus', 'developer'] as const).map(mode => {
+                  const active = preferences.workbenchMode === mode
+                  return (
+                    <button
+                      key={mode}
+                      type="button"
+                      data-testid={`general-workbench-mode-${mode}-button`}
+                      disabled={loading || saving}
+                      title={t(`workbench.general_settings_mode_${mode}_description`)}
+                      aria-pressed={active}
+                      onClick={() => void handleWorkbenchModeChange(mode)}
+                      className={[
+                        'flex min-w-0 items-center justify-center rounded-[5px] px-2 text-sm font-medium leading-[18px] transition-colors disabled:cursor-not-allowed disabled:opacity-60',
+                        active
+                          ? 'bg-text-primary text-background shadow-sm'
+                          : 'text-text-secondary hover:bg-muted hover:text-text-primary',
+                      ].join(' ')}
+                    >
+                      <span className="truncate">
+                        {t(`workbench.general_settings_mode_${mode}`)}
+                      </span>
+                    </button>
+                  )
+                })}
+              </div>
+            }
+          />
           <SettingsRow
             label={t('workbench.general_settings_language_preference')}
             description={t('workbench.general_settings_language_description')}

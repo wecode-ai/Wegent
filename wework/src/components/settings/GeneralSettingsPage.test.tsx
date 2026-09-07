@@ -8,6 +8,7 @@ import type { WorkbenchContextValue } from '@/features/workbench/workbenchContex
 import { GeneralSettingsPage } from './GeneralSettingsPage'
 
 const defaultPreferences: AppPreferences = {
+  workbenchMode: 'developer',
   closeToTrayEnabled: true,
   showMainWindowOnLaunch: true,
   fixedWorkspaceTabs: [
@@ -62,6 +63,7 @@ const getWegentUsageDisplayMock = vi.hoisted(() => vi.fn())
 const getRuntimeSettingsMock = vi.hoisted(() => vi.fn())
 const updateRuntimeSettingsMock = vi.hoisted(() => vi.fn())
 const refreshWorkListsMock = vi.hoisted(() => vi.fn())
+const changeWorkbenchModeMock = vi.hoisted(() => vi.fn())
 
 vi.mock('@/hooks/useTranslation', () => ({
   useTranslation: () => ({
@@ -71,6 +73,7 @@ vi.mock('@/hooks/useTranslation', () => ({
 
 vi.mock('@/desktop/appPreferences', () => ({
   defaultAppPreferences: {
+    workbenchMode: 'developer',
     closeToTrayEnabled: true,
     showMainWindowOnLaunch: true,
     fixedWorkspaceTabs: [
@@ -109,6 +112,10 @@ vi.mock('@/desktop/appPreferences', () => ({
   },
   getAppPreferences: getAppPreferencesMock,
   updateAppPreferences: updateAppPreferencesMock,
+}))
+
+vi.mock('@/features/workbench-mode/workbenchMode', () => ({
+  changeWorkbenchMode: changeWorkbenchModeMock,
 }))
 
 vi.mock('@/i18n/languagePreference', () => ({
@@ -164,6 +171,7 @@ describe('GeneralSettingsPage', () => {
     getRuntimeSettingsMock.mockReset()
     updateRuntimeSettingsMock.mockReset()
     refreshWorkListsMock.mockReset()
+    changeWorkbenchModeMock.mockReset()
     importExternalContentMock.mockResolvedValue({
       source: 'codex',
       sourcePath: '/Users/test/.codex',
@@ -176,6 +184,9 @@ describe('GeneralSettingsPage', () => {
     refreshWorkListsMock.mockResolvedValue(undefined)
     updateAppPreferencesMock.mockImplementation(patch =>
       Promise.resolve({ ...defaultPreferences, ...patch })
+    )
+    changeWorkbenchModeMock.mockImplementation((_currentMode, workbenchMode) =>
+      Promise.resolve({ ...defaultPreferences, workbenchMode })
     )
     applyLanguagePreferenceMock.mockResolvedValue('zh-CN')
     getWegentUsageDisplayMock.mockResolvedValue({
@@ -199,6 +210,24 @@ describe('GeneralSettingsPage', () => {
     expect(await screen.findByTestId('general-language-system-button')).toBeInTheDocument()
     expect(screen.getByTestId('general-language-zh-CN-button')).toBeInTheDocument()
     expect(screen.getByTestId('general-language-en-button')).toBeInTheDocument()
+  })
+
+  test('switches from developer mode to focus mode', async () => {
+    render(<GeneralSettingsPage />)
+
+    const focusButton = await screen.findByTestId('general-workbench-mode-focus-button')
+    await waitFor(() => expect(focusButton).toBeEnabled())
+    expect(screen.getByTestId('general-workbench-mode-developer-button')).toHaveAttribute(
+      'aria-pressed',
+      'true'
+    )
+
+    await userEvent.click(focusButton)
+
+    await waitFor(() => {
+      expect(changeWorkbenchModeMock).toHaveBeenCalledWith('developer', 'focus')
+    })
+    expect(focusButton).toHaveAttribute('aria-pressed', 'true')
   })
 
   test('loads and updates the maximum parallel task count', async () => {
