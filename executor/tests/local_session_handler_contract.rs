@@ -481,20 +481,7 @@ fn terminal_input_and_resize_return_errors_when_pty_is_gone() {
         fail_resize: true,
         ..RecordingTerminal::default()
     }));
-    let pty_manager = Arc::new(RecordingPtyManager::new(Arc::clone(&terminal)));
-    let mut handler =
-        LocalSessionHandler::new("http://localhost:17888", true, 18080, root, pty_manager);
-    handler.sessions.insert(
-        "terminal-1".to_owned(),
-        LocalSession::terminal(
-            "terminal-1",
-            "secret",
-            123,
-            PathBuf::from("/workspace"),
-            Box::new(SharedTerminal(Arc::clone(&terminal))),
-            9999999999,
-        ),
-    );
+    let mut handler = terminal_handler(root, &terminal);
 
     assert!(
         handler
@@ -524,20 +511,7 @@ fn terminal_events_drain_output_before_exit_and_remove_finished_session() {
         exit_code: Some(0),
         ..RecordingTerminal::default()
     }));
-    let pty_manager = Arc::new(RecordingPtyManager::new(Arc::clone(&terminal)));
-    let mut handler =
-        LocalSessionHandler::new("http://localhost:17888", true, 18080, root, pty_manager);
-    handler.sessions.insert(
-        "terminal-1".to_owned(),
-        LocalSession::terminal(
-            "terminal-1",
-            "secret",
-            123,
-            PathBuf::from("/workspace"),
-            Box::new(SharedTerminal(Arc::clone(&terminal))),
-            9999999999,
-        ),
-    );
+    let mut handler = terminal_handler(root, &terminal);
 
     assert!(handler.drain_terminal_events().is_empty());
     assert_eq!(terminal.lock().unwrap().output.len(), 2);
@@ -552,7 +526,7 @@ fn terminal_events_drain_output_before_exit_and_remove_finished_session() {
         events,
         vec![TerminalEvent::Output {
             session_id: "terminal-1".to_owned(),
-            consumer_id: TERMINAL_CONSUMER_ID.to_owned(),
+            consumer_id: Some(TERMINAL_CONSUMER_ID.to_owned()),
             sequence: 1,
             data: "hello world�".to_owned(),
         }]
@@ -565,7 +539,7 @@ fn terminal_events_drain_output_before_exit_and_remove_finished_session() {
     );
     let exit_events = vec![TerminalEvent::Exit {
         session_id: "terminal-1".to_owned(),
-        consumer_id: TERMINAL_CONSUMER_ID.to_owned(),
+        consumer_id: Some(TERMINAL_CONSUMER_ID.to_owned()),
         exit_code: Some(0),
         error: None,
     }];
@@ -574,7 +548,7 @@ fn terminal_events_drain_output_before_exit_and_remove_finished_session() {
         handler.drain_terminal_events(),
         vec![TerminalEvent::Exit {
             session_id: "terminal-1".to_owned(),
-            consumer_id: TERMINAL_CONSUMER_ID.to_owned(),
+            consumer_id: Some(TERMINAL_CONSUMER_ID.to_owned()),
             exit_code: Some(0),
             error: None,
         }]
@@ -597,24 +571,7 @@ fn terminal_output_preserves_chinese_characters_split_across_pty_chunks() {
         ]),
         ..RecordingTerminal::default()
     }));
-    let mut handler = LocalSessionHandler::new(
-        "http://localhost:17888",
-        true,
-        18080,
-        temp_root("terminal-utf8-pty-chunks"),
-        Arc::new(RecordingPtyManager::new(Arc::clone(&terminal))),
-    );
-    handler.sessions.insert(
-        "terminal-1".to_owned(),
-        LocalSession::terminal(
-            "terminal-1",
-            "secret",
-            123,
-            PathBuf::from("/workspace"),
-            Box::new(SharedTerminal(terminal)),
-            9999999999,
-        ),
-    );
+    let mut handler = terminal_handler(temp_root("terminal-utf8-pty-chunks"), &terminal);
     assert!(
         handler
             .handle_terminal_attach("terminal-1", TERMINAL_CONSUMER_ID, 0)
@@ -625,7 +582,7 @@ fn terminal_output_preserves_chinese_characters_split_across_pty_chunks() {
         handler.drain_terminal_events(),
         vec![TerminalEvent::Output {
             session_id: "terminal-1".to_owned(),
-            consumer_id: TERMINAL_CONSUMER_ID.to_owned(),
+            consumer_id: Some(TERMINAL_CONSUMER_ID.to_owned()),
             sequence: 1,
             data: "中文".to_owned(),
         }]
@@ -638,24 +595,7 @@ fn terminal_output_preserves_chinese_character_split_across_drains() {
         output: VecDeque::from([vec![0xe4]]),
         ..RecordingTerminal::default()
     }));
-    let mut handler = LocalSessionHandler::new(
-        "http://localhost:17888",
-        true,
-        18080,
-        temp_root("terminal-utf8-drains"),
-        Arc::new(RecordingPtyManager::new(Arc::clone(&terminal))),
-    );
-    handler.sessions.insert(
-        "terminal-1".to_owned(),
-        LocalSession::terminal(
-            "terminal-1",
-            "secret",
-            123,
-            PathBuf::from("/workspace"),
-            Box::new(SharedTerminal(Arc::clone(&terminal))),
-            9999999999,
-        ),
-    );
+    let mut handler = terminal_handler(temp_root("terminal-utf8-drains"), &terminal);
     assert!(
         handler
             .handle_terminal_attach("terminal-1", TERMINAL_CONSUMER_ID, 0)
@@ -669,7 +609,7 @@ fn terminal_output_preserves_chinese_character_split_across_drains() {
         handler.drain_terminal_events(),
         vec![TerminalEvent::Output {
             session_id: "terminal-1".to_owned(),
-            consumer_id: TERMINAL_CONSUMER_ID.to_owned(),
+            consumer_id: Some(TERMINAL_CONSUMER_ID.to_owned()),
             sequence: 1,
             data: "中".to_owned(),
         }]
@@ -686,24 +626,7 @@ fn terminal_output_replaces_invalid_utf8_without_losing_valid_bytes() {
         ]),
         ..RecordingTerminal::default()
     }));
-    let mut handler = LocalSessionHandler::new(
-        "http://localhost:17888",
-        true,
-        18080,
-        temp_root("terminal-invalid-utf8"),
-        Arc::new(RecordingPtyManager::new(Arc::clone(&terminal))),
-    );
-    handler.sessions.insert(
-        "terminal-1".to_owned(),
-        LocalSession::terminal(
-            "terminal-1",
-            "secret",
-            123,
-            PathBuf::from("/workspace"),
-            Box::new(SharedTerminal(terminal)),
-            9999999999,
-        ),
-    );
+    let mut handler = terminal_handler(temp_root("terminal-invalid-utf8"), &terminal);
     assert!(
         handler
             .handle_terminal_attach("terminal-1", TERMINAL_CONSUMER_ID, 0)
@@ -714,7 +637,7 @@ fn terminal_output_replaces_invalid_utf8_without_losing_valid_bytes() {
         handler.drain_terminal_events(),
         vec![TerminalEvent::Output {
             session_id: "terminal-1".to_owned(),
-            consumer_id: TERMINAL_CONSUMER_ID.to_owned(),
+            consumer_id: Some(TERMINAL_CONSUMER_ID.to_owned()),
             sequence: 1,
             data: "valid�(�(tail".to_owned(),
         }]
@@ -728,24 +651,7 @@ fn terminal_output_flushes_incomplete_utf8_at_eof_before_exit() {
         exit_code: Some(0),
         ..RecordingTerminal::default()
     }));
-    let mut handler = LocalSessionHandler::new(
-        "http://localhost:17888",
-        true,
-        18080,
-        temp_root("terminal-incomplete-utf8-eof"),
-        Arc::new(RecordingPtyManager::new(Arc::clone(&terminal))),
-    );
-    handler.sessions.insert(
-        "terminal-1".to_owned(),
-        LocalSession::terminal(
-            "terminal-1",
-            "secret",
-            123,
-            PathBuf::from("/workspace"),
-            Box::new(SharedTerminal(terminal)),
-            9999999999,
-        ),
-    );
+    let mut handler = terminal_handler(temp_root("terminal-incomplete-utf8-eof"), &terminal);
     assert!(
         handler
             .handle_terminal_attach("terminal-1", TERMINAL_CONSUMER_ID, 0)
@@ -757,7 +663,7 @@ fn terminal_output_flushes_incomplete_utf8_at_eof_before_exit() {
         output,
         vec![TerminalEvent::Output {
             session_id: "terminal-1".to_owned(),
-            consumer_id: TERMINAL_CONSUMER_ID.to_owned(),
+            consumer_id: Some(TERMINAL_CONSUMER_ID.to_owned()),
             sequence: 1,
             data: "tail�".to_owned(),
         }]
@@ -772,7 +678,7 @@ fn terminal_output_flushes_incomplete_utf8_at_eof_before_exit() {
         handler.drain_terminal_events(),
         vec![TerminalEvent::Exit {
             session_id: "terminal-1".to_owned(),
-            consumer_id: TERMINAL_CONSUMER_ID.to_owned(),
+            consumer_id: Some(TERMINAL_CONSUMER_ID.to_owned()),
             exit_code: Some(0),
             error: None,
         }]
@@ -787,24 +693,7 @@ fn terminal_exit_waits_until_pending_output_is_closed() {
         output_open: true,
         ..RecordingTerminal::default()
     }));
-    let mut handler = LocalSessionHandler::new(
-        "http://localhost:17888",
-        true,
-        18080,
-        temp_root("terminal-exit-order"),
-        Arc::new(RecordingPtyManager::new(Arc::clone(&terminal))),
-    );
-    handler.sessions.insert(
-        "terminal-1".to_owned(),
-        LocalSession::terminal(
-            "terminal-1",
-            "secret",
-            123,
-            PathBuf::from("/workspace"),
-            Box::new(SharedTerminal(Arc::clone(&terminal))),
-            9999999999,
-        ),
-    );
+    let mut handler = terminal_handler(temp_root("terminal-exit-order"), &terminal);
     assert!(
         handler
             .handle_terminal_attach("terminal-1", TERMINAL_CONSUMER_ID, 0)
@@ -816,7 +705,7 @@ fn terminal_exit_waits_until_pending_output_is_closed() {
         output_events,
         vec![TerminalEvent::Output {
             session_id: "terminal-1".to_owned(),
-            consumer_id: TERMINAL_CONSUMER_ID.to_owned(),
+            consumer_id: Some(TERMINAL_CONSUMER_ID.to_owned()),
             sequence: 1,
             data: "last output".to_owned(),
         }]
@@ -837,7 +726,7 @@ fn terminal_exit_waits_until_pending_output_is_closed() {
         handler.drain_terminal_events(),
         vec![TerminalEvent::Exit {
             session_id: "terminal-1".to_owned(),
-            consumer_id: TERMINAL_CONSUMER_ID.to_owned(),
+            consumer_id: Some(TERMINAL_CONSUMER_ID.to_owned()),
             exit_code: Some(0),
             error: None,
         }]
@@ -854,24 +743,7 @@ fn terminal_output_is_retried_until_transport_delivery_succeeds() {
         output: VecDeque::from([b"retry".to_vec()]),
         ..RecordingTerminal::default()
     }));
-    let mut handler = LocalSessionHandler::new(
-        "http://localhost:17888",
-        true,
-        18080,
-        temp_root("terminal-delivery-retry"),
-        Arc::new(RecordingPtyManager::new(Arc::clone(&terminal))),
-    );
-    handler.sessions.insert(
-        "terminal-1".to_owned(),
-        LocalSession::terminal(
-            "terminal-1",
-            "secret",
-            123,
-            PathBuf::from("/workspace"),
-            Box::new(SharedTerminal(terminal)),
-            9999999999,
-        ),
-    );
+    let mut handler = terminal_handler(temp_root("terminal-delivery-retry"), &terminal);
     assert!(
         handler
             .handle_terminal_attach("terminal-1", TERMINAL_CONSUMER_ID, 0)
@@ -883,7 +755,7 @@ fn terminal_output_is_retried_until_transport_delivery_succeeds() {
         first_attempt,
         vec![TerminalEvent::Output {
             session_id: "terminal-1".to_owned(),
-            consumer_id: TERMINAL_CONSUMER_ID.to_owned(),
+            consumer_id: Some(TERMINAL_CONSUMER_ID.to_owned()),
             sequence: 1,
             data: "retry".to_owned(),
         }]
@@ -900,24 +772,7 @@ fn terminal_ack_can_arrive_while_backend_delivery_call_is_in_flight() {
         output: VecDeque::from([b"race".to_vec()]),
         ..RecordingTerminal::default()
     }));
-    let mut handler = LocalSessionHandler::new(
-        "http://localhost:17888",
-        true,
-        18080,
-        temp_root("terminal-ack-race"),
-        Arc::new(RecordingPtyManager::new(Arc::clone(&terminal))),
-    );
-    handler.sessions.insert(
-        "terminal-1".to_owned(),
-        LocalSession::terminal(
-            "terminal-1",
-            "secret",
-            123,
-            PathBuf::from("/workspace"),
-            Box::new(SharedTerminal(terminal)),
-            9999999999,
-        ),
-    );
+    let mut handler = terminal_handler(temp_root("terminal-ack-race"), &terminal);
     assert!(
         handler
             .handle_terminal_attach("terminal-1", TERMINAL_CONSUMER_ID, 0)
@@ -941,24 +796,7 @@ fn terminal_backend_reconnect_replays_every_unacknowledged_delivery() {
         output: VecDeque::from([b"reconnect".to_vec()]),
         ..RecordingTerminal::default()
     }));
-    let mut handler = LocalSessionHandler::new(
-        "http://localhost:17888",
-        true,
-        18080,
-        temp_root("terminal-backend-reconnect"),
-        Arc::new(RecordingPtyManager::new(Arc::clone(&terminal))),
-    );
-    handler.sessions.insert(
-        "terminal-1".to_owned(),
-        LocalSession::terminal(
-            "terminal-1",
-            "secret",
-            123,
-            PathBuf::from("/workspace"),
-            Box::new(SharedTerminal(terminal)),
-            9999999999,
-        ),
-    );
+    let mut handler = terminal_handler(temp_root("terminal-backend-reconnect"), &terminal);
     assert!(
         handler
             .handle_terminal_attach("terminal-1", TERMINAL_CONSUMER_ID, 0)
@@ -980,24 +818,7 @@ fn terminal_reconnect_accepts_output_consumed_before_ack_reached_executor() {
         output: VecDeque::from([b"consumed".to_vec()]),
         ..RecordingTerminal::default()
     }));
-    let mut handler = LocalSessionHandler::new(
-        "http://localhost:17888",
-        true,
-        18080,
-        temp_root("terminal-reconnect-lost-ack"),
-        Arc::new(RecordingPtyManager::new(Arc::clone(&terminal))),
-    );
-    handler.sessions.insert(
-        "terminal-1".to_owned(),
-        LocalSession::terminal(
-            "terminal-1",
-            "secret",
-            123,
-            PathBuf::from("/workspace"),
-            Box::new(SharedTerminal(terminal)),
-            9999999999,
-        ),
-    );
+    let mut handler = terminal_handler(temp_root("terminal-reconnect-lost-ack"), &terminal);
     assert!(
         handler
             .handle_terminal_attach("terminal-1", TERMINAL_CONSUMER_ID, 0)
@@ -1022,24 +843,7 @@ fn terminal_consumer_takeover_rejects_stale_ack_and_relabels_replay() {
         output: VecDeque::from([b"takeover".to_vec()]),
         ..RecordingTerminal::default()
     }));
-    let mut handler = LocalSessionHandler::new(
-        "http://localhost:17888",
-        true,
-        18080,
-        temp_root("terminal-consumer-takeover"),
-        Arc::new(RecordingPtyManager::new(Arc::clone(&terminal))),
-    );
-    handler.sessions.insert(
-        "terminal-1".to_owned(),
-        LocalSession::terminal(
-            "terminal-1",
-            "secret",
-            123,
-            PathBuf::from("/workspace"),
-            Box::new(SharedTerminal(terminal)),
-            9999999999,
-        ),
-    );
+    let mut handler = terminal_handler(temp_root("terminal-consumer-takeover"), &terminal);
     assert!(
         handler
             .handle_terminal_attach("terminal-1", "consumer-old", 0)
@@ -1063,7 +867,7 @@ fn terminal_consumer_takeover_rejects_stale_ack_and_relabels_replay() {
         handler.drain_terminal_events(),
         vec![TerminalEvent::Output {
             session_id: "terminal-1".to_owned(),
-            consumer_id: "consumer-new".to_owned(),
+            consumer_id: Some("consumer-new".to_owned()),
             sequence: 1,
             data: "takeover".to_owned(),
         }]
@@ -1101,24 +905,7 @@ fn expired_terminal_sessions_are_reaped_and_close_the_pty() {
 #[tokio::test]
 async fn terminal_output_notification_wakes_without_periodic_polling() {
     let terminal = Arc::new(Mutex::new(RecordingTerminal::default()));
-    let mut handler = LocalSessionHandler::new(
-        "http://localhost:17888",
-        true,
-        18080,
-        temp_root("terminal-notification"),
-        Arc::new(RecordingPtyManager::new(Arc::clone(&terminal))),
-    );
-    handler.sessions.insert(
-        "terminal-1".to_owned(),
-        LocalSession::terminal(
-            "terminal-1",
-            "secret",
-            123,
-            PathBuf::from("/workspace"),
-            Box::new(SharedTerminal(Arc::clone(&terminal))),
-            9999999999,
-        ),
-    );
+    let mut handler = terminal_handler(temp_root("terminal-notification"), &terminal);
     let event_notifier = handler.terminal_event_notifier();
 
     assert!(
@@ -1140,7 +927,7 @@ async fn terminal_output_notification_wakes_without_periodic_polling() {
         handler.drain_terminal_events(),
         vec![TerminalEvent::Output {
             session_id: "terminal-1".to_owned(),
-            consumer_id: TERMINAL_CONSUMER_ID.to_owned(),
+            consumer_id: Some(TERMINAL_CONSUMER_ID.to_owned()),
             sequence: 1,
             data: "prompt$ ".to_owned(),
         }]
@@ -1249,24 +1036,7 @@ async fn terminal_event_drain_preserves_continuous_large_output() {
         output: VecDeque::from(vec![chunk; 64]),
         ..RecordingTerminal::default()
     }));
-    let mut handler = LocalSessionHandler::new(
-        "http://localhost:17888",
-        true,
-        18080,
-        temp_root("terminal-large-output"),
-        Arc::new(RecordingPtyManager::new(Arc::clone(&terminal))),
-    );
-    handler.sessions.insert(
-        "terminal-1".to_owned(),
-        LocalSession::terminal(
-            "terminal-1",
-            "secret",
-            123,
-            PathBuf::from("/workspace"),
-            Box::new(SharedTerminal(terminal)),
-            9999999999,
-        ),
-    );
+    let mut handler = terminal_handler(temp_root("terminal-large-output"), &terminal);
     assert!(
         handler
             .handle_terminal_attach("terminal-1", TERMINAL_CONSUMER_ID, 0)
@@ -1302,24 +1072,7 @@ fn terminal_reconnect_replays_only_output_after_last_acknowledged_sequence() {
         output: VecDeque::from([b"one".to_vec()]),
         ..RecordingTerminal::default()
     }));
-    let mut handler = LocalSessionHandler::new(
-        "http://localhost:17888",
-        true,
-        18080,
-        temp_root("terminal-replay"),
-        Arc::new(RecordingPtyManager::new(Arc::clone(&terminal))),
-    );
-    handler.sessions.insert(
-        "terminal-1".to_owned(),
-        LocalSession::terminal(
-            "terminal-1",
-            "secret",
-            123,
-            PathBuf::from("/workspace"),
-            Box::new(SharedTerminal(Arc::clone(&terminal))),
-            9999999999,
-        ),
-    );
+    let mut handler = terminal_handler(temp_root("terminal-replay"), &terminal);
     assert!(
         handler
             .handle_terminal_attach("terminal-1", TERMINAL_CONSUMER_ID, 0)
@@ -1331,7 +1084,7 @@ fn terminal_reconnect_replays_only_output_after_last_acknowledged_sequence() {
         initial,
         vec![TerminalEvent::Output {
             session_id: "terminal-1".to_owned(),
-            consumer_id: TERMINAL_CONSUMER_ID.to_owned(),
+            consumer_id: Some(TERMINAL_CONSUMER_ID.to_owned()),
             sequence: 1,
             data: "one".to_owned(),
         }]
@@ -1343,7 +1096,7 @@ fn terminal_reconnect_replays_only_output_after_last_acknowledged_sequence() {
         second,
         vec![TerminalEvent::Output {
             session_id: "terminal-1".to_owned(),
-            consumer_id: TERMINAL_CONSUMER_ID.to_owned(),
+            consumer_id: Some(TERMINAL_CONSUMER_ID.to_owned()),
             sequence: 2,
             data: "two".to_owned(),
         }]
@@ -1364,7 +1117,7 @@ fn terminal_reconnect_replays_only_output_after_last_acknowledged_sequence() {
         handler.drain_terminal_events(),
         vec![TerminalEvent::Output {
             session_id: "terminal-1".to_owned(),
-            consumer_id: TERMINAL_CONSUMER_ID.to_owned(),
+            consumer_id: Some(TERMINAL_CONSUMER_ID.to_owned()),
             sequence: 2,
             data: "two".to_owned(),
         }]
@@ -1377,24 +1130,7 @@ fn terminal_rejects_unavailable_replay_and_unsent_acknowledgement() {
         output: VecDeque::from([b"one".to_vec()]),
         ..RecordingTerminal::default()
     }));
-    let mut handler = LocalSessionHandler::new(
-        "http://localhost:17888",
-        true,
-        18080,
-        temp_root("terminal-invalid-sequence"),
-        Arc::new(RecordingPtyManager::new(Arc::clone(&terminal))),
-    );
-    handler.sessions.insert(
-        "terminal-1".to_owned(),
-        LocalSession::terminal(
-            "terminal-1",
-            "secret",
-            123,
-            PathBuf::from("/workspace"),
-            Box::new(SharedTerminal(terminal)),
-            9999999999,
-        ),
-    );
+    let mut handler = terminal_handler(temp_root("terminal-invalid-sequence"), &terminal);
     assert!(
         handler
             .handle_terminal_attach("terminal-1", TERMINAL_CONSUMER_ID, 0)
@@ -1429,24 +1165,7 @@ async fn terminal_acknowledgement_resumes_pty_drain_below_low_watermark() {
         output: VecDeque::from(vec![chunk; 50]),
         ..RecordingTerminal::default()
     }));
-    let mut handler = LocalSessionHandler::new(
-        "http://localhost:17888",
-        true,
-        18080,
-        temp_root("terminal-backpressure"),
-        Arc::new(RecordingPtyManager::new(Arc::clone(&terminal))),
-    );
-    handler.sessions.insert(
-        "terminal-1".to_owned(),
-        LocalSession::terminal(
-            "terminal-1",
-            "secret",
-            123,
-            PathBuf::from("/workspace"),
-            Box::new(SharedTerminal(Arc::clone(&terminal))),
-            9999999999,
-        ),
-    );
+    let mut handler = terminal_handler(temp_root("terminal-backpressure"), &terminal);
     let notifier = handler.terminal_event_notifier();
     assert!(
         handler
@@ -1831,6 +1550,31 @@ fn start_session_resolves_relative_default_path() {
     assert_eq!(pty_manager.spawned.lock().unwrap()[0].cwd, expected_path);
 }
 
+fn terminal_handler(
+    root: PathBuf,
+    terminal: &Arc<Mutex<RecordingTerminal>>,
+) -> LocalSessionHandler {
+    let mut handler = LocalSessionHandler::new(
+        "http://localhost:17888",
+        true,
+        18080,
+        root,
+        Arc::new(RecordingPtyManager::new(Arc::clone(terminal))),
+    );
+    handler.sessions.insert(
+        "terminal-1".to_owned(),
+        LocalSession::terminal(
+            "terminal-1",
+            "secret",
+            123,
+            PathBuf::from("/workspace"),
+            Box::new(SharedTerminal(Arc::clone(terminal))),
+            9999999999,
+        ),
+    );
+    handler
+}
+
 fn code_session(session_id: &str) -> LocalSession {
     LocalSession::code_server(
         session_id,
@@ -1971,7 +1715,7 @@ fn mark_output_events_delivered(handler: &mut LocalSessionHandler, events: &[Ter
         } = event
         {
             assert!(handler
-                .begin_terminal_output_delivery(session_id, consumer_id, *sequence)
+                .begin_terminal_output_delivery(session_id, consumer_id.as_deref(), *sequence)
                 .unwrap());
         }
     }

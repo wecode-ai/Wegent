@@ -5,7 +5,6 @@
 """Browser terminal Socket.IO namespace."""
 
 import logging
-import re
 import uuid
 from datetime import datetime
 from typing import Any, Dict, Optional
@@ -15,9 +14,16 @@ from socketio.exceptions import ConnectionRefusedError
 
 from app.api.ws.connection_utils import enter_connect_room, save_connect_session
 from app.api.ws.decorators import trace_websocket_event
+from app.core.config import settings
 from app.core.socketio import get_sio
 from app.services.chat.access import get_token_expiry, verify_jwt_token
 from app.services.device.terminal_metrics import record_terminal_event
+from app.services.device.terminal_protocol import (
+    TerminalAttachRequest,
+    get_consumer_id,
+    get_protocol_version,
+    get_sequence,
+)
 from app.services.device.terminal_session_service import (
     TerminalSessionRecord,
     normalize_terminal_session_id,
@@ -25,14 +31,13 @@ from app.services.device.terminal_session_service import (
 )
 from app.services.device_service import device_service
 from shared.telemetry.context import set_request_context, set_user_context
+from shared.telemetry.decorators import trace_async
 
 logger = logging.getLogger(__name__)
 
 TERMINAL_NAMESPACE = "/terminal"
 DEVICE_NAMESPACE = "/local-executor"
 TERMINAL_ATTACH_TIMEOUT_SECONDS = 5
-TERMINAL_CONSUMER_ID_MAX_LENGTH = 128
-TERMINAL_CONSUMER_ID_PATTERN = re.compile(r"^[A-Za-z0-9_-]+$")
 TERMINAL_TRACE_EXCLUDED_EVENTS = {
     "connect",
     "terminal:ack",
@@ -102,6 +107,7 @@ class TerminalNamespace(socketio.AsyncNamespace):
                 "auth_token": token,
                 "terminal_session_id": None,
                 "terminal_consumer_id": None,
+                "terminal_protocol_version": None,
                 "terminal_authorization": None,
             },
             logger=logger,
@@ -120,6 +126,7 @@ class TerminalNamespace(socketio.AsyncNamespace):
 
         logger.info("[Terminal WS] Connected user=%s sid=%s", user.id, sid)
 
+    @trace_async(span_name="terminal.attach", tracer_name=__name__)
     async def on_terminal_attach(self, sid: str, data: dict) -> dict:
         """Attach a browser socket to an existing backend-created terminal session."""
         session = await self.get_session(sid)
@@ -133,16 +140,21 @@ class TerminalNamespace(socketio.AsyncNamespace):
         session_id = _get_session_id(data)
         if not session_id:
             return {"error": "Missing session_id"}
-        consumer_id = _get_consumer_id(data)
-        if not consumer_id:
-            return {"error": "Invalid consumer_id"}
-
-        last_acked_sequence = _get_non_negative_sequence(
-            data,
-            "last_acked_sequence",
+        previous_session_id = session.get("terminal_session_id")
+        pinned = (
+            session.get("terminal_protocol_version")
+            or (2 if session.get("terminal_consumer_id") else 1)
+            if previous_session_id == session_id
+            else None
         )
-        if last_acked_sequence is None:
-            return {"error": "Invalid last_acked_sequence"}
+        try:
+            request = TerminalAttachRequest.parse(data)
+            offered = request.offer(
+                v2_enabled=settings.TERMINAL_PROTOCOL_V2_ENABLED,
+                pinned=pinned,
+            )
+        except ValueError as exc:
+            return {"error": str(exc)}
 
         record = await terminal_session_service.authorize(
             session_id,
@@ -152,7 +164,6 @@ class TerminalNamespace(socketio.AsyncNamespace):
         if not record:
             return {"error": "Terminal session not found or access denied"}
 
-        previous_session_id = session.get("terminal_session_id")
         executor_socket_id = await _active_executor_socket(record)
         if not executor_socket_id:
             return {"error": "Terminal executor is offline"}
@@ -160,17 +171,14 @@ class TerminalNamespace(socketio.AsyncNamespace):
         try:
             attach_result = await get_sio().call(
                 "terminal:attach",
-                {
-                    "session_id": record.session_id,
-                    "consumer_id": consumer_id,
-                    "last_acked_sequence": last_acked_sequence,
-                },
+                request.payload(record.session_id, offered),
                 to=executor_socket_id,
                 namespace=DEVICE_NAMESPACE,
                 timeout=TERMINAL_ATTACH_TIMEOUT_SECONDS,
             )
         except Exception as exc:
-            await self.leave_room(sid, _terminal_room(session_id))
+            if previous_session_id != session_id:
+                await self.leave_room(sid, _terminal_room(session_id))
             logger.warning(
                 "[Terminal WS] Executor attach failed session=%s device=%s: %s",
                 record.session_id,
@@ -179,8 +187,12 @@ class TerminalNamespace(socketio.AsyncNamespace):
             )
             return {"error": "Failed to attach terminal executor"}
 
-        if not isinstance(attach_result, dict) or not attach_result.get("success"):
-            await self.leave_room(sid, _terminal_room(session_id))
+        if (
+            not isinstance(attach_result, dict)
+            or attach_result.get("success") is not True
+        ):
+            if previous_session_id != session_id:
+                await self.leave_room(sid, _terminal_room(session_id))
             error = (
                 attach_result.get("error")
                 if isinstance(attach_result, dict)
@@ -188,13 +200,21 @@ class TerminalNamespace(socketio.AsyncNamespace):
             )
             return {"error": str(error or "Failed to attach terminal executor")}
 
+        try:
+            selected = request.select(attach_result, offered, pinned)
+        except ValueError as exc:
+            if previous_session_id != session_id:
+                await self.leave_room(sid, _terminal_room(session_id))
+            return {"error": str(exc)}
+
         if executor_socket_id != record.socket_id:
             rebound = await terminal_session_service.rebind_socket(
                 record,
                 executor_socket_id,
             )
             if not rebound:
-                await self.leave_room(sid, _terminal_room(session_id))
+                if previous_session_id != session_id:
+                    await self.leave_room(sid, _terminal_room(session_id))
                 return {"error": "Terminal session could not be rebound"}
             record = rebound
 
@@ -206,13 +226,15 @@ class TerminalNamespace(socketio.AsyncNamespace):
             await self.leave_room(sid, _terminal_room(previous_session_id))
 
         session["terminal_session_id"] = session_id
-        session["terminal_consumer_id"] = consumer_id
+        session["terminal_protocol_version"] = selected
+        session["terminal_consumer_id"] = request.consumer_id if selected == 2 else None
         session["terminal_authorization"] = record
         await self.save_session(sid, session)
         record_terminal_event(source="browser", event="attach")
 
         return {
             "success": True,
+            "protocol_version": selected,
             "session_id": record.session_id,
             "device_id": record.device_id,
             "project_id": record.project_id,
@@ -225,7 +247,9 @@ class TerminalNamespace(socketio.AsyncNamespace):
         if error:
             return error
 
-        sequence = _get_positive_sequence(data, "sequence")
+        if not consumer_id:
+            return {"error": "Terminal ACK requires protocol v2"}
+        sequence = get_sequence(data, "sequence")
         if sequence is None:
             return {"error": "Invalid terminal sequence"}
         try:
@@ -270,8 +294,7 @@ class TerminalNamespace(socketio.AsyncNamespace):
         await get_sio().emit(
             "terminal:input",
             {
-                "session_id": record.session_id,
-                "consumer_id": consumer_id,
+                **_control_payload(record.session_id, consumer_id),
                 "data": text,
             },
             to=record.socket_id,
@@ -293,8 +316,7 @@ class TerminalNamespace(socketio.AsyncNamespace):
         await get_sio().emit(
             "terminal:resize",
             {
-                "session_id": record.session_id,
-                "consumer_id": consumer_id,
+                **_control_payload(record.session_id, consumer_id),
                 "rows": rows,
                 "cols": cols,
             },
@@ -313,10 +335,7 @@ class TerminalNamespace(socketio.AsyncNamespace):
         try:
             close_result = await get_sio().call(
                 "terminal:close",
-                {
-                    "session_id": record.session_id,
-                    "consumer_id": consumer_id,
-                },
+                _control_payload(record.session_id, consumer_id),
                 to=record.socket_id,
                 namespace=DEVICE_NAMESPACE,
                 timeout=TERMINAL_ATTACH_TIMEOUT_SECONDS,
@@ -350,6 +369,7 @@ class TerminalNamespace(socketio.AsyncNamespace):
         if session.get("terminal_session_id") == record.session_id:
             session["terminal_session_id"] = None
             session["terminal_consumer_id"] = None
+            session["terminal_protocol_version"] = None
             session["terminal_authorization"] = None
             await self.save_session(sid, session)
         record_terminal_event(source="browser", event="close")
@@ -374,9 +394,27 @@ class TerminalNamespace(socketio.AsyncNamespace):
 
         if session.get("terminal_session_id") != session_id:
             return None, "", {"error": "Terminal session is not attached"}
-        consumer_id = session.get("terminal_consumer_id")
-        if not isinstance(consumer_id, str) or not consumer_id:
-            return None, "", {"error": "Terminal consumer is no longer active"}
+        protocol_version = session.get("terminal_protocol_version")
+        if type(protocol_version) is not int or protocol_version not in (1, 2):
+            return None, "", {"error": "Terminal session must be reattached"}
+        if (
+            "protocol_version" in data
+            and get_protocol_version(data) != protocol_version
+        ):
+            return None, "", {"error": "Terminal protocol does not match attachment"}
+        consumer_id = ""
+        if protocol_version == 2:
+            consumer_id = get_consumer_id(
+                {"consumer_id": session.get("terminal_consumer_id")}
+            )
+            if not consumer_id:
+                return None, "", {"error": "Terminal consumer is no longer active"}
+            if "consumer_id" in data and get_consumer_id(data) != consumer_id:
+                return (
+                    None,
+                    "",
+                    {"error": "Terminal consumer does not match attachment"},
+                )
 
         record_data = session.get("terminal_authorization")
         if not isinstance(record_data, TerminalSessionRecord):
@@ -433,28 +471,11 @@ def _get_positive_int(data: dict, key: str) -> Optional[int]:
     return parsed if parsed > 0 else None
 
 
-def _get_non_negative_sequence(data: dict, key: str) -> Optional[int]:
-    value = data.get(key) if isinstance(data, dict) else None
-    return value if type(value) is int and value >= 0 else None
-
-
-def _get_positive_sequence(data: dict, key: str) -> Optional[int]:
-    value = data.get(key) if isinstance(data, dict) else None
-    return value if type(value) is int and value > 0 else None
-
-
-def _get_consumer_id(data: dict) -> str:
-    value = data.get("consumer_id") if isinstance(data, dict) else None
-    if not isinstance(value, str):
-        return ""
-    consumer_id = value.strip()
-    if (
-        not consumer_id
-        or len(consumer_id) > TERMINAL_CONSUMER_ID_MAX_LENGTH
-        or not TERMINAL_CONSUMER_ID_PATTERN.fullmatch(consumer_id)
-    ):
-        return ""
-    return consumer_id
+def _control_payload(session_id: str, consumer_id: str) -> dict:
+    payload = {"session_id": session_id}
+    if consumer_id:
+        payload["consumer_id"] = consumer_id
+    return payload
 
 
 def _terminal_room(session_id: str) -> str:

@@ -351,6 +351,23 @@ wework_desktop_other_e2e='
   fi
 }
 
+for terminal_path in \
+  wework/e2e/desktop/modules/terminal-compatibility-flows.mjs \
+  backend/app/api/ws/terminal_namespace.py \
+  backend/app/services/device/terminal_protocol.py \
+  backend/app/services/device/terminal_session_record.py \
+  backend/app/services/device/terminal_session_service.py; do
+  assert_desktop_case "terminal compatibility is included in cloud core-task-flow: $terminal_path" \
+    'wework_desktop_e2e=true
+wework_desktop_core_e2e=false
+wework_desktop_core_e2e_matrix={"include":[]}
+wework_desktop_cloud_e2e=true
+wework_desktop_cloud_e2e_matrix={"include":[{"id":"cloud-1","name":"Cloud / shard 1","segments":"core-task-flow"}]}
+wework_desktop_other_e2e=false
+wework_desktop_other_e2e_matrix={"include":[]}' \
+    "$terminal_path"
+done
+
 assert_desktop_case "conversation cache selects guidance and conversation segments" \
   'wework_desktop_e2e=true
 wework_desktop_core_e2e=true

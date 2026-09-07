@@ -10,6 +10,7 @@ import { applyTerminalTheme, getTerminalTheme, observeTerminalTheme } from '@/li
 import { appendRuntimeTerminalContext } from '@/lib/runtime-terminal-context'
 import { focusTerminalUnlessComposerFocusRequested } from '@/lib/workbenchComposerFocus'
 import { defaultAppearance, useOptionalAppearance } from '@/features/appearance'
+import { useTranslation } from '@/hooks/useTranslation'
 import { createXtermWebLinksAddon } from './xtermLinks'
 import { installXtermInputFallback, type XtermInputFallbackController } from './xtermInputFallback'
 import { installXtermMacKeybindings } from './xtermMacKeybindings'
@@ -77,6 +78,8 @@ export function RemoteTerminal({
   testIdsEnabled = true,
   showWorkbenchBackground = false,
 }: RemoteTerminalProps) {
+  const { t } = useTranslation()
+  const translateRef = useRef(t)
   const appearance = useOptionalAppearance()?.appearance ?? defaultAppearance
   const containerRef = useRef<HTMLDivElement | null>(null)
   const terminalRef = useRef<Terminal | null>(null)
@@ -90,6 +93,10 @@ export function RemoteTerminal({
   const appearanceRef = useRef(appearance)
   const resourceRef = useRef<RemoteTerminalResource | null>(null)
   const cleanupTimerRef = useRef<number | null>(null)
+
+  useEffect(() => {
+    translateRef.current = t
+  }, [t])
 
   useEffect(() => {
     appearanceRef.current = appearance
@@ -182,6 +189,10 @@ export function RemoteTerminal({
     let attachGeneration = 0
     let lastConsumedSequence = 0
     let lastAcknowledgedSequence = 0
+    let legacyOutput = false
+    let outputFailed = false
+    let exitReceived = false
+    let exitReported = false
     let writingSequence: number | null = null
     let pendingOutputCharacters = 0
     let acknowledgeTimer: number | null = null
@@ -347,6 +358,11 @@ export function RemoteTerminal({
       const nextSequence = lastConsumedSequence + 1
       const nextOutput = pendingOutputs.get(nextSequence)
       if (!nextOutput) {
+        if (exitReceived && !exitReported && pendingOutputs.size === 0) {
+          exitReported = true
+          onExitRef.current?.()
+          return
+        }
         updateOutputGapRecovery()
         return
       }
@@ -356,7 +372,29 @@ export function RemoteTerminal({
       writeTerminalOutput(nextOutput.sequence, nextOutput.data)
     }
 
+    const failLegacyOutput = () => {
+      outputFailed = true
+      setDetached()
+      clearOutputGapTimer()
+      pendingOutputs.clear()
+      pendingOutputCharacters = 0
+      terminal.writeln(
+        `\r\n[${translateRef.current('common:workbench.remote_terminal_legacy_overflow')}]`
+      )
+      void client
+        .close()
+        .catch(error => {
+          console.error('Failed to close overloaded legacy terminal:', error)
+        })
+        .finally(() => client.dispose())
+    }
+
     const receiveTerminalOutput = (sequence: number, data: string) => {
+      if (outputFailed) return
+      if (legacyOutput && data.length > MAX_PENDING_OUTPUT_CHARACTERS) {
+        failLegacyOutput()
+        return
+      }
       if (!Number.isSafeInteger(sequence) || sequence <= 0) {
         console.error('Ignored remote terminal output with invalid sequence:', sequence)
         return
@@ -378,6 +416,10 @@ export function RemoteTerminal({
         pendingOutputs.size >= MAX_PENDING_OUTPUT_CHUNKS ||
         pendingOutputCharacters + data.length > MAX_PENDING_OUTPUT_CHARACTERS
       ) {
+        if (legacyOutput) {
+          failLegacyOutput()
+          return
+        }
         outputReplayRequiredThroughSequence = Math.max(
           outputReplayRequiredThroughSequence ?? 0,
           sequence
@@ -397,6 +439,7 @@ export function RemoteTerminal({
       dispose: () => undefined,
     }
     const writeTerminalInput = (data: string) => {
+      if (outputFailed) return
       inputFallback.noteData(data)
       if (pendingInputCharacters + data.length > MAX_PENDING_INPUT_CHARACTERS) {
         console.error('Remote terminal input buffer limit exceeded; input was discarded.')
@@ -409,6 +452,7 @@ export function RemoteTerminal({
     const dataDisposable = terminal.onData(writeTerminalInput)
     const unsubscribeOutput = client.onOutput(payload => {
       if (!disposed && payload.session_id === sessionId && typeof payload.data === 'string') {
+        legacyOutput = payload.protocol_version === 1
         receiveTerminalOutput(payload.sequence, payload.data)
       }
     })
@@ -416,8 +460,9 @@ export function RemoteTerminal({
       onTitleChangeRef.current?.(title)
     })
     const unsubscribeExit = client.onExit(payload => {
-      if (!disposed && payload.session_id === sessionId) {
-        onExitRef.current?.()
+      if (!disposed && !outputFailed && payload.session_id === sessionId) {
+        exitReceived = true
+        drainPendingOutputs()
       }
     })
 
@@ -542,7 +587,7 @@ export function RemoteTerminal({
         return false
       }
 
-      if (disposed || generation !== attachGeneration) return false
+      if (disposed || outputFailed || generation !== attachGeneration) return false
       attached = true
       hasAttachedOnce = true
       attachedClientRef.current = client

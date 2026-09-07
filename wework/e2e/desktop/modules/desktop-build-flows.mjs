@@ -91,6 +91,10 @@ import {
 
 import { waitForTaskRowByText } from './task-state-flows.mjs'
 import { remoteDeviceE2EExtension } from '../remote-device-extension.mjs'
+import {
+  verifyRemoteTerminalRemainsResponsiveAfterOutputBurst,
+  verifyTerminalWireCompatibility,
+} from './terminal-compatibility-flows.mjs'
 
 import {
   captureVerificationScreenshot,
@@ -102,8 +106,6 @@ import {
 } from './workspace-flows.mjs'
 
 const REMOTE_TERMINAL_SIZE_MARKER = 'WEWORK_DESKTOP_E2E_REMOTE_TERMINAL_SIZE'
-const REMOTE_TERMINAL_BURST_END_MARKER = 'WEWORK_DESKTOP_E2E_REMOTE_TERMINAL_BURST_END'
-const REMOTE_TERMINAL_AFTER_BURST_MARKER = 'WEWORK_DESKTOP_E2E_REMOTE_TERMINAL_AFTER_BURST'
 const REMOTE_TERMINAL_SELECTOR = '[data-testid="remote-terminal"]'
 
 async function verifyRemoteTerminalUsesPanelWidth(control) {
@@ -134,22 +136,42 @@ async function verifyRemoteTerminalUsesPanelWidth(control) {
   )
 }
 
-async function verifyRemoteTerminalRemainsResponsiveAfterOutputBurst(control) {
-  await control.command('terminalInput', REMOTE_TERMINAL_SELECTOR, {
-    value: `yes 'WEWORK_REMOTE_TERMINAL_BURST_0123456789abcdefghijklmnopqrstuvwxyz' | head -n 12000; printf '\\n${REMOTE_TERMINAL_BURST_END_MARKER}\\n'\r`,
-  })
-  await control.command('waitFor', REMOTE_TERMINAL_SELECTOR, {
-    text: REMOTE_TERMINAL_BURST_END_MARKER,
-    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
-  })
+async function closeRemoteTerminal(control) {
+  await control.command('click', '[data-testid="close-bottom-workspace-tab-button"]')
+  await waitForSnapshot(
+    control,
+    value =>
+      !value.testIds.includes('workspace-tool-launcher') &&
+      !value.testIds.includes('workspace-terminal-window'),
+    'The cloud task terminal and bottom panel did not close cleanly',
+    DEFAULT_STEP_TIMEOUT_MS,
+    ACTIVE_WORKBENCH_SELECTOR
+  )
+}
 
-  await control.command('terminalInput', REMOTE_TERMINAL_SELECTOR, {
-    value: `printf '${REMOTE_TERMINAL_AFTER_BURST_MARKER}\\n'\r`,
-  })
-  await control.command('waitFor', REMOTE_TERMINAL_SELECTOR, {
-    text: REMOTE_TERMINAL_AFTER_BURST_MARKER,
-    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
-  })
+async function verifyCloudTerminalCompatibility(control, cloudEnvironment) {
+  for (const requestedVersion of [undefined, 1, 2]) {
+    await verifyTerminalWireCompatibility(cloudEnvironment, {
+      requestedVersion,
+      expectedVersion: requestedVersion ?? 1,
+      name: `wire-request-${requestedVersion ?? 'absent'}`,
+    })
+  }
+  try {
+    await cloudEnvironment.restartBackendWithTerminalProtocolV2(false)
+    await verifyTerminalWireCompatibility(cloudEnvironment, {
+      requestedVersion: 2,
+      expectedVersion: 1,
+      name: 'wire-v2-disabled',
+    })
+    await openBottomWorkspaceTerminal(control, 'The cloud task with terminal v2 disabled')
+    await verifyRemoteTerminalUsesPanelWidth(control)
+    await verifyRemoteTerminalRemainsResponsiveAfterOutputBurst(control, 'renderer-v1')
+    await captureVerificationScreenshot(control, 'cloud-04c-legacy-terminal-rendered.png')
+    await closeRemoteTerminal(control)
+  } finally {
+    await cloudEnvironment.restartBackendWithTerminalProtocolV2(true)
+  }
 }
 
 async function waitForSingleProjectByTitle(
@@ -1031,18 +1053,10 @@ async function verifyCloudProjectFlow(
   await selectE2EModel(control, DEFAULT_MODEL_ID, DEFAULT_MODEL_LABEL)
   await openBottomWorkspaceTerminal(control, 'The new cloud task')
   await verifyRemoteTerminalUsesPanelWidth(control)
-  await verifyRemoteTerminalRemainsResponsiveAfterOutputBurst(control)
+  await verifyRemoteTerminalRemainsResponsiveAfterOutputBurst(control, 'renderer-v2')
   await captureVerificationScreenshot(control, 'cloud-04b-new-task-terminal-open.png')
-  await control.command('click', '[data-testid="close-bottom-workspace-tab-button"]')
-  await waitForSnapshot(
-    control,
-    value =>
-      !value.testIds.includes('workspace-tool-launcher') &&
-      !value.testIds.includes('workspace-terminal-window'),
-    'The new cloud task terminal and bottom panel did not close cleanly',
-    DEFAULT_STEP_TIMEOUT_MS,
-    ACTIVE_WORKBENCH_SELECTOR
-  )
+  await closeRemoteTerminal(control)
+  await verifyCloudTerminalCompatibility(control, cloudEnvironment)
 
   control.setScenario('cloud_initial')
   await sendPrompt(control, composerSelector, CLOUD_TASK_PROMPT)

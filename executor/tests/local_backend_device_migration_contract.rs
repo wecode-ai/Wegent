@@ -39,6 +39,9 @@ use wegent_executor::{
 
 const TEST_PROCESS_TIMEOUT_SECONDS: u64 = 3600;
 
+#[path = "support/terminal_protocol_compatibility.rs"]
+mod terminal_protocol_compatibility;
+
 struct EnvLockGuard {
     _guard: MutexGuard<'static, ()>,
 }
@@ -405,6 +408,7 @@ async fn session_events_start_terminal_and_route_terminal_controls() {
     assert_eq!(ack["transport"], "socketio");
 
     let invalid_attach = transport.handler("terminal:attach").unwrap()(json!({
+        "protocol_version": 2,
         "session_id": "terminal-1",
         "consumer_id": "consumer-1",
         "last_acked_sequence": "0"
@@ -412,6 +416,7 @@ async fn session_events_start_terminal_and_route_terminal_controls() {
     .await
     .unwrap();
     let attach = transport.handler("terminal:attach").unwrap()(json!({
+        "protocol_version": 2,
         "session_id": "terminal-1",
         "consumer_id": "consumer-1",
         "last_acked_sequence": 0
@@ -508,8 +513,10 @@ async fn connected_runner_relays_terminal_output_and_exit_events() {
     );
 
     let attach = transport.handler("terminal:attach").unwrap()(json!({
+        "protocol_version": 2,
         "session_id": "terminal-relay",
-        "consumer_id": "consumer-1"
+        "consumer_id": "consumer-1",
+        "last_acked_sequence": 0
     }))
     .await
     .unwrap();
@@ -573,73 +580,6 @@ async fn connected_runner_relays_terminal_output_and_exit_events() {
         })
     );
     assert!(terminal.lock().unwrap().closed);
-}
-
-#[tokio::test]
-async fn slow_terminal_delivery_does_not_pause_device_heartbeats() {
-    let transport = RecordingTransport::with_terminal_call_delay(Duration::from_millis(200));
-    let terminal = Arc::new(Mutex::new(RecordingTerminal {
-        output: VecDeque::from([b"slow delivery".to_vec()]),
-        ..RecordingTerminal::default()
-    }));
-    let mut config = local_backend_config();
-    config.heartbeat_interval = Duration::from_millis(20);
-    config.heartbeat_timeout = Duration::from_millis(10);
-    let runner = LocalBackendRunner::with_task_runner(
-        config,
-        transport.clone(),
-        RecordingTaskRunner::default(),
-    )
-    .with_session_handler(test_session_handler_with_terminal(terminal));
-    let runner_task = tokio::spawn(runner.run_forever());
-    wait_until(|| transport.handler("device:start_terminal_session").is_some()).await;
-
-    let started = transport.handler("device:start_terminal_session").unwrap()(json!({
-        "type": "terminal",
-        "session_id": "terminal-slow-delivery",
-        "project_id": 123,
-        "path": ".",
-        "access_token": "secret",
-        "rows": 24,
-        "cols": 80,
-        "create_if_missing": true
-    }))
-    .await
-    .unwrap();
-    assert_eq!(started["success"], true, "{started}");
-    let attached = transport.handler("terminal:attach").unwrap()(json!({
-        "session_id": "terminal-slow-delivery",
-        "consumer_id": "consumer-1"
-    }))
-    .await
-    .unwrap();
-    assert_eq!(attached["success"], true, "{attached}");
-    wait_until(|| {
-        transport
-            .calls()
-            .iter()
-            .any(|call| call.event == "terminal:output")
-    })
-    .await;
-
-    let heartbeats_before = transport
-        .emits()
-        .iter()
-        .filter(|emit| emit.event == "device:heartbeat")
-        .count();
-    tokio::time::sleep(Duration::from_millis(80)).await;
-    let heartbeats_after = transport
-        .emits()
-        .iter()
-        .filter(|emit| emit.event == "device:heartbeat")
-        .count();
-
-    runner_task.abort();
-    let _ = runner_task.await;
-    assert!(
-        heartbeats_after >= heartbeats_before + 2,
-        "heartbeats stalled during terminal delivery: before={heartbeats_before}, after={heartbeats_after}"
-    );
 }
 
 #[tokio::test]
@@ -1125,20 +1065,15 @@ struct RecordingTransport {
     emits: Arc<Mutex<Vec<RecordedCall>>>,
     responses: Arc<Mutex<VecDeque<Value>>>,
     handlers: Arc<Mutex<Vec<(String, EventHandler)>>>,
-    terminal_call_delay: Duration,
+    terminal_responses: Arc<Mutex<VecDeque<Result<Value, String>>>>,
+    terminal_completion_count: Arc<Mutex<usize>>,
+    terminal_call_gate: Arc<Mutex<Option<Arc<tokio::sync::Notify>>>>,
 }
 
 impl RecordingTransport {
     fn with_responses(responses: Vec<Value>) -> Self {
         Self {
             responses: Arc::new(Mutex::new(responses.into())),
-            ..Self::default()
-        }
-    }
-
-    fn with_terminal_call_delay(delay: Duration) -> Self {
-        Self {
-            terminal_call_delay: delay,
             ..Self::default()
         }
     }
@@ -1185,7 +1120,18 @@ impl LocalBackendTransport for RecordingTransport {
                 payload,
             });
             if event == "terminal:output" || event == "terminal:exit" {
-                tokio::time::sleep(self.terminal_call_delay).await;
+                let gate = self.terminal_call_gate.lock().unwrap().clone();
+                if let Some(gate) = gate {
+                    gate.notified().await;
+                }
+                let response = self
+                    .terminal_responses
+                    .lock()
+                    .unwrap()
+                    .pop_front()
+                    .unwrap_or_else(|| Ok(json!({"success": true})));
+                *self.terminal_completion_count.lock().unwrap() += 1;
+                return response;
             }
             Ok(self
                 .responses

@@ -274,6 +274,10 @@ classify_wework_path() {
   local path="$1"
 
   case "$path" in
+    wework/e2e/desktop/modules/terminal-compatibility-flows.mjs)
+      select_target "cloud:core-task-flow"
+      return
+      ;;
     # Documentation does not change the packaged desktop application.
     wework/*.md)
       return
@@ -698,6 +702,12 @@ classify_path() {
   local path="$1"
 
   case "$path" in
+    backend/app/api/ws/terminal_namespace.py | \
+      backend/app/services/device/terminal_protocol.py | \
+      backend/app/services/device/terminal_session_record.py | \
+      backend/app/services/device/terminal_session_service.py)
+      select_target "cloud:core-task-flow"
+      ;;
     executor/src/local/app_ipc.rs | \
       executor/src/local/codex_home.rs | \
       executor/tests/local_app_ipc_contract.rs)

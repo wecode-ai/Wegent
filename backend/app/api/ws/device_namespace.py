@@ -88,6 +88,7 @@ from app.services.device.capability_sync_service import device_capability_sync_s
 from app.services.device.identity import record_route_id
 from app.services.device.record_operations import app_identity_lock
 from app.services.device.terminal_metrics import record_terminal_event
+from app.services.device.terminal_protocol import parse_terminal_event
 from app.services.device.terminal_session_service import (
     TerminalSessionRecord,
     normalize_terminal_session_id,
@@ -161,29 +162,6 @@ DEVICE_TRACE_EXCLUDED_EVENTS = {
     "connect",
     "terminal:output",
 }
-TERMINAL_CONSUMER_ID_MAX_LENGTH = 128
-
-
-def _get_positive_terminal_sequence(data: dict) -> Optional[int]:
-    value = data.get("sequence") if isinstance(data, dict) else None
-    return value if type(value) is int and value > 0 else None
-
-
-def _get_terminal_consumer_id(data: dict) -> str:
-    value = data.get("consumer_id") if isinstance(data, dict) else None
-    if not isinstance(value, str):
-        return ""
-    consumer_id = value.strip()
-    if (
-        not consumer_id
-        or len(consumer_id) > TERMINAL_CONSUMER_ID_MAX_LENGTH
-        or not all(
-            character.isascii() and (character.isalnum() or character in {"_", "-"})
-            for character in consumer_id
-        )
-    ):
-        return ""
-    return consumer_id
 
 
 @dataclass(frozen=True)
@@ -2451,26 +2429,16 @@ class DeviceNamespace(socketio.AsyncNamespace):
 
     async def on_terminal_output(self, sid: str, data: dict) -> dict:
         """Forward executor PTY output to the browser terminal namespace."""
-        sequence = _get_positive_terminal_sequence(data)
-        if sequence is None:
-            return {"error": "Invalid terminal sequence"}
-        output = data.get("data") if isinstance(data, dict) else None
-        if not isinstance(output, str):
-            return {"error": "Invalid terminal output"}
-        consumer_id = _get_terminal_consumer_id(data)
-        if not consumer_id:
-            return {"error": "Invalid terminal consumer"}
+        try:
+            payload = parse_terminal_event(data, output=True)
+        except ValueError as exc:
+            return {"error": str(exc)}
 
         record, error = await self._authorize_terminal_event(sid, data)
         if error:
             return error
 
-        payload = {
-            "session_id": record.session_id,
-            "consumer_id": consumer_id,
-            "sequence": sequence,
-            "data": output,
-        }
+        payload["session_id"] = record.session_id
         await get_sio().emit(
             "terminal:output",
             payload,
@@ -2482,9 +2450,10 @@ class DeviceNamespace(socketio.AsyncNamespace):
 
     async def on_terminal_exit(self, sid: str, data: dict) -> dict:
         """Forward executor PTY exit and remove the terminal session record."""
-        consumer_id = _get_terminal_consumer_id(data)
-        if not consumer_id:
-            return {"error": "Invalid terminal consumer"}
+        try:
+            payload = parse_terminal_event(data, output=False)
+        except ValueError as exc:
+            return {"error": str(exc)}
         record, error = await self._authorize_terminal_event(sid, data)
         if error:
             session_id = normalize_terminal_session_id(
@@ -2498,9 +2467,7 @@ class DeviceNamespace(socketio.AsyncNamespace):
                 return {"success": True}
             return error
 
-        payload = dict(data)
         payload["session_id"] = record.session_id
-        payload["consumer_id"] = consumer_id
         await get_sio().emit(
             "terminal:exit",
             payload,

@@ -95,7 +95,6 @@ struct SessionState {
     max_replay_bytes: usize,
     output_events: usize,
     pending_acks: VecDeque<PendingAck>,
-    high_watermark_reached: bool,
     backpressure_observed: bool,
     waiting_for_resume: bool,
     resumed_after_low_watermark: bool,
@@ -114,7 +113,6 @@ impl SessionState {
             max_replay_bytes: 0,
             output_events: 0,
             pending_acks: VecDeque::new(),
-            high_watermark_reached: false,
             backpressure_observed: false,
             waiting_for_resume: false,
             resumed_after_low_watermark: false,
@@ -298,7 +296,9 @@ fn deliver_single_output(
             consumer_id: actual_consumer_id,
             sequence,
             data,
-        }] if actual_session_id == session_id && actual_consumer_id == consumer_id => {
+        }] if actual_session_id == session_id
+            && actual_consumer_id.as_deref() == Some(consumer_id) =>
+        {
             (*sequence, data.clone())
         }
         _ => return Err("replay validation did not emit one matching output batch".to_owned()),
@@ -436,9 +436,9 @@ fn run_load(config: Config) -> Result<LoadReport, String> {
                 .get(&session_id)
                 .ok_or_else(|| format!("received output for unknown session {session_id}"))?;
             let state = &mut states[index];
-            if consumer_id != state.consumer_id {
+            if consumer_id.as_deref() != Some(state.consumer_id.as_str()) {
                 return Err(format!(
-                    "{} consumer mismatch: expected {}, received {consumer_id}",
+                    "{} consumer mismatch: expected {}, received {consumer_id:?}",
                     state.session_id, state.consumer_id
                 ));
             }
@@ -459,7 +459,7 @@ fn run_load(config: Config) -> Result<LoadReport, String> {
             }
 
             let started = handler
-                .begin_terminal_output_delivery(&session_id, &consumer_id, sequence)
+                .begin_terminal_output_delivery(&session_id, consumer_id.as_deref(), sequence)
                 .map_err(|error| format!("{session_id} delivery failed: {error}"))?;
             if !started {
                 return Err(format!("{session_id} closed during delivery"));
@@ -480,10 +480,6 @@ fn run_load(config: Config) -> Result<LoadReport, String> {
                 state.resumed_after_low_watermark = true;
                 state.waiting_for_resume = false;
             }
-            let remaining = state.remaining_bytes.load(Ordering::Relaxed);
-            if remaining > 0 && state.replay_bytes >= REPLAY_HIGH_WATERMARK_BYTES {
-                state.high_watermark_reached = true;
-            }
             if state.replay_bytes > REPLAY_LIMIT_BYTES {
                 return Err(format!(
                     "{} replay reached {} bytes, above the {} byte limit",
@@ -494,10 +490,7 @@ fn run_load(config: Config) -> Result<LoadReport, String> {
 
         for (index, state) in states.iter_mut().enumerate() {
             let remaining = state.remaining_bytes.load(Ordering::Relaxed);
-            if !emitted[index]
-                && remaining > 0
-                && state.high_watermark_reached
-                && state.replay_bytes >= REPLAY_HIGH_WATERMARK_BYTES
+            if !emitted[index] && remaining > 0 && state.replay_bytes >= REPLAY_HIGH_WATERMARK_BYTES
             {
                 state.backpressure_observed = true;
             }

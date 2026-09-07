@@ -44,6 +44,7 @@ def _attached_session(
         "token_exp": 9999999999,
         "terminal_session_id": authorization.session_id,
         "terminal_consumer_id": "consumer-1",
+        "terminal_protocol_version": 2,
         "terminal_authorization": authorization,
     }
 
@@ -110,7 +111,9 @@ async def test_attach_enters_terminal_room_when_owner_matches(monkeypatch):
     get_session = AsyncMock(return_value={"user_id": 7, "token_exp": 9999999999})
     save_session = AsyncMock()
     enter_room = AsyncMock()
-    sio = SimpleNamespace(call=AsyncMock(return_value={"success": True}))
+    sio = SimpleNamespace(
+        call=AsyncMock(return_value={"success": True, "protocol_version": 2})
+    )
     monkeypatch.setattr(terminal_namespace, "terminal_session_service", service)
     monkeypatch.setattr(terminal_namespace, "get_sio", lambda: sio)
     monkeypatch.setattr(namespace, "get_session", get_session)
@@ -121,6 +124,7 @@ async def test_attach_enters_terminal_room_when_owner_matches(monkeypatch):
         "browser-sid",
         {
             "session_id": "terminal-1",
+            "protocol_version": 2,
             "consumer_id": "consumer-1",
             "last_acked_sequence": 7,
         },
@@ -128,6 +132,7 @@ async def test_attach_enters_terminal_room_when_owner_matches(monkeypatch):
 
     assert result == {
         "success": True,
+        "protocol_version": 2,
         "session_id": "terminal-1",
         "device_id": "device-abc",
         "project_id": 123,
@@ -143,6 +148,7 @@ async def test_attach_enters_terminal_room_when_owner_matches(monkeypatch):
         "terminal:attach",
         {
             "session_id": "terminal-1",
+            "protocol_version": 2,
             "consumer_id": "consumer-1",
             "last_acked_sequence": 7,
         },
@@ -170,7 +176,9 @@ async def test_attach_leaves_previous_terminal_room_when_switching(monkeypatch):
     save_session = AsyncMock()
     enter_room = AsyncMock()
     leave_room = AsyncMock()
-    sio = SimpleNamespace(call=AsyncMock(return_value={"success": True}))
+    sio = SimpleNamespace(
+        call=AsyncMock(return_value={"success": True, "protocol_version": 2})
+    )
     monkeypatch.setattr(terminal_namespace, "terminal_session_service", service)
     monkeypatch.setattr(terminal_namespace, "get_sio", lambda: sio)
     monkeypatch.setattr(namespace, "get_session", get_session)
@@ -182,6 +190,7 @@ async def test_attach_leaves_previous_terminal_room_when_switching(monkeypatch):
         "browser-sid",
         {
             "session_id": "terminal-1",
+            "protocol_version": 2,
             "consumer_id": "consumer-1",
             "last_acked_sequence": 0,
         },
@@ -203,7 +212,9 @@ async def test_attach_targets_and_rebinds_the_current_executor_socket(monkeypatc
         authorize=AsyncMock(return_value=record),
         rebind_socket=AsyncMock(return_value=rebound),
     )
-    sio = SimpleNamespace(call=AsyncMock(return_value={"success": True}))
+    sio = SimpleNamespace(
+        call=AsyncMock(return_value={"success": True, "protocol_version": 2})
+    )
     monkeypatch.setattr(terminal_namespace, "terminal_session_service", service)
     monkeypatch.setattr(terminal_namespace, "get_sio", lambda: sio)
     monkeypatch.setattr(
@@ -227,6 +238,7 @@ async def test_attach_targets_and_rebinds_the_current_executor_socket(monkeypatc
         "browser-sid",
         {
             "session_id": "terminal-1",
+            "protocol_version": 2,
             "consumer_id": "consumer-1",
             "last_acked_sequence": 0,
         },
@@ -265,6 +277,7 @@ async def test_attach_leaves_room_when_executor_attach_fails(monkeypatch):
         "browser-sid",
         {
             "session_id": "terminal-1",
+            "protocol_version": 2,
             "consumer_id": "consumer-1",
             "last_acked_sequence": 0,
         },
@@ -292,6 +305,7 @@ async def test_attach_rejects_sessions_owned_by_other_users(monkeypatch):
         "browser-sid",
         {
             "session_id": "terminal-1",
+            "protocol_version": 2,
             "consumer_id": "consumer-1",
             "last_acked_sequence": 0,
         },
@@ -323,6 +337,7 @@ async def test_attach_rejects_invalid_last_acked_sequence_without_redis(
         "browser-sid",
         {
             "session_id": "terminal-1",
+            "protocol_version": 2,
             "consumer_id": "consumer-1",
             "last_acked_sequence": last_acked_sequence,
         },
@@ -339,7 +354,9 @@ async def test_terminal_ack_relays_with_bound_authorization_without_redis(monkey
         authorize=AsyncMock(),
         is_revoked=Mock(return_value=False),
     )
-    sio = SimpleNamespace(call=AsyncMock(return_value={"success": True}))
+    sio = SimpleNamespace(
+        call=AsyncMock(return_value={"success": True, "protocol_version": 2})
+    )
     metric = Mock()
     monkeypatch.setattr(terminal_namespace, "terminal_session_service", service)
     monkeypatch.setattr(terminal_namespace, "get_sio", lambda: sio)
@@ -378,7 +395,9 @@ async def test_terminal_ack_rejects_unattached_session_without_redis(monkeypatch
         authorize=AsyncMock(),
         is_revoked=Mock(return_value=False),
     )
-    sio = SimpleNamespace(call=AsyncMock(return_value={"success": True}))
+    sio = SimpleNamespace(
+        call=AsyncMock(return_value={"success": True, "protocol_version": 2})
+    )
     monkeypatch.setattr(terminal_namespace, "terminal_session_service", service)
     monkeypatch.setattr(terminal_namespace, "get_sio", lambda: sio)
     monkeypatch.setattr(
@@ -411,7 +430,9 @@ async def test_terminal_ack_rejects_cross_session_without_redis(monkeypatch):
         authorize=AsyncMock(),
         is_revoked=Mock(return_value=False),
     )
-    sio = SimpleNamespace(call=AsyncMock(return_value={"success": True}))
+    sio = SimpleNamespace(
+        call=AsyncMock(return_value={"success": True, "protocol_version": 2})
+    )
     monkeypatch.setattr(terminal_namespace, "terminal_session_service", service)
     monkeypatch.setattr(terminal_namespace, "get_sio", lambda: sio)
     monkeypatch.setattr(
@@ -435,7 +456,9 @@ async def test_terminal_ack_rejects_cross_session_without_redis(monkeypatch):
 async def test_terminal_ack_rejects_invalid_sequence(monkeypatch, sequence):
     namespace = TerminalNamespace()
     service = _service(is_revoked=Mock(return_value=False))
-    sio = SimpleNamespace(call=AsyncMock(return_value={"success": True}))
+    sio = SimpleNamespace(
+        call=AsyncMock(return_value={"success": True, "protocol_version": 2})
+    )
     monkeypatch.setattr(terminal_namespace, "terminal_session_service", service)
     monkeypatch.setattr(terminal_namespace, "get_sio", lambda: sio)
     monkeypatch.setattr(
@@ -696,7 +719,9 @@ async def test_terminal_close_relays_and_deletes_session(monkeypatch):
         is_revoked=Mock(return_value=False),
         delete=AsyncMock(),
     )
-    sio = SimpleNamespace(call=AsyncMock(return_value={"success": True}))
+    sio = SimpleNamespace(
+        call=AsyncMock(return_value={"success": True, "protocol_version": 2})
+    )
     session = _attached_session()
     get_session = AsyncMock(return_value=session)
     save_session = AsyncMock()

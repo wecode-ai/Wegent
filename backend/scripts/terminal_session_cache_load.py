@@ -14,18 +14,17 @@ import subprocess
 import tempfile
 import time
 import uuid
-from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Any, Awaitable, Callable, Iterable, Optional, TypeVar
 
 from redis.asyncio import Redis
 
+from app.services.device.terminal_session_record import TerminalSessionRecord
 from app.services.device.terminal_session_service import (
     TERMINAL_SESSION_KEY_PREFIX,
     RedisTerminalSessionClientProvider,
     RedisTerminalSessionInvalidationListener,
     RedisTerminalSessionStore,
-    TerminalSessionRecord,
     TerminalSessionService,
 )
 
@@ -99,41 +98,16 @@ class IsolatedRedis:
             self._directory = None
 
 
-@dataclass
-class StoreCounters:
-    """Count production store operations issued by one simulated Backend."""
-
-    sets: int = 0
-    gets: int = 0
-    deletes: int = 0
-
-    def reset(self) -> None:
-        self.sets = 0
-        self.gets = 0
-        self.deletes = 0
-
-
 class CountingRedisTerminalSessionStore(RedisTerminalSessionStore):
-    """Run the production Redis store while exposing operation counts."""
+    """Run the production Redis store while counting exact-key reads."""
 
     def __init__(self, client_factory: RedisClientFactory) -> None:
-        super().__init__(
-            client_factory,
-            close_client_after_operation=False,
-        )
-        self.counters = StoreCounters()
-
-    async def set(self, record: TerminalSessionRecord, ttl_seconds: int) -> None:
-        self.counters.sets += 1
-        await super().set(record, ttl_seconds)
+        super().__init__(client_factory)
+        self.gets = 0
 
     async def get(self, session_id: str) -> TerminalSessionRecord | None:
-        self.counters.gets += 1
+        self.gets += 1
         return await super().get(session_id)
-
-    async def delete(self, session_id: str) -> None:
-        self.counters.deletes += 1
-        await super().delete(session_id)
 
 
 def parse_args() -> argparse.Namespace:
@@ -261,12 +235,11 @@ async def wait_for_revocation(
     services: list[TerminalSessionService],
     session_id: str,
     timeout_seconds: float,
-) -> float:
-    started_at = time.perf_counter()
-    deadline = started_at + timeout_seconds
+) -> None:
+    deadline = time.perf_counter() + timeout_seconds
     while time.perf_counter() < deadline:
         if all(service.is_revoked(session_id) for service in services):
-            return (time.perf_counter() - started_at) * 1000
+            return
         await asyncio.sleep(0.001)
     raise TimeoutError(
         f"Session {session_id} was not invalidated on every Backend instance"
@@ -325,7 +298,6 @@ async def run(
             cache_max_entries=args.cache_entries,
             invalidation_listener=RedisTerminalSessionInvalidationListener(
                 client_factory,
-                close_client_after_stop=False,
             ),
         )
         for store, client_factory in zip(stores, client_factories)
@@ -370,7 +342,7 @@ async def run(
         attach_seconds = time.perf_counter() - attach_started_at
 
         for store in stores:
-            store.counters.reset()
+            store.gets = 0
 
         total_hot_events = args.sessions * args.rounds
 
@@ -393,7 +365,7 @@ async def run(
             authorize_hot,
         )
         hot_seconds = time.perf_counter() - hot_started_at
-        hot_store_gets = sum(store.counters.gets for store in stores)
+        hot_store_gets = sum(store.gets for store in stores)
 
         revoked_session_ids = session_ids[: args.revocations]
 

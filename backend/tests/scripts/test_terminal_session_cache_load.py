@@ -3,14 +3,18 @@
 # SPDX-License-Identifier: Apache-2.0
 
 import argparse
+from types import SimpleNamespace
+from unittest.mock import AsyncMock, Mock
 
 import pytest
 
+from scripts import terminal_session_cache_load
 from scripts.terminal_session_cache_load import (
     command_delta,
     percentile,
     redis_counter_failures,
     validate_args,
+    wait_for_revocation,
 )
 
 
@@ -89,3 +93,26 @@ def test_shared_redis_server_counters_are_informational() -> None:
         )
         == []
     )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("revoked", [True, False])
+async def test_wait_for_revocation_requires_every_instance(monkeypatch, revoked):
+    first = SimpleNamespace(is_revoked=Mock(return_value=True))
+    second = SimpleNamespace(is_revoked=Mock(side_effect=[False, revoked]))
+    clock = SimpleNamespace(perf_counter=Mock(side_effect=[0.0, 0.0, 0.5, 1.0]))
+    monkeypatch.setattr(terminal_session_cache_load, "time", clock)
+    sleep = AsyncMock()
+    monkeypatch.setattr(
+        terminal_session_cache_load, "asyncio", SimpleNamespace(sleep=sleep)
+    )
+
+    if revoked:
+        await wait_for_revocation([first, second], "terminal-1", 1.0)
+    else:
+        with pytest.raises(TimeoutError, match="not invalidated on every Backend"):
+            await wait_for_revocation([first, second], "terminal-1", 1.0)
+
+    assert first.is_revoked.call_count == second.is_revoked.call_count == 2
+    second.is_revoked.assert_called_with("terminal-1")
+    assert sleep.await_count == (1 if revoked else 2)

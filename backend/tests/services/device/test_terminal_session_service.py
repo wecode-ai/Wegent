@@ -6,21 +6,24 @@
 
 import asyncio
 from datetime import datetime, timedelta, timezone
+from types import SimpleNamespace
 from typing import Any, Callable
+from unittest.mock import AsyncMock, Mock
 
 import orjson
 import pytest
 
+from app.core.cache import RedisCache
 from app.services.device import terminal_session_service
+from app.services.device.terminal_session_record import TerminalSessionRecord
 from app.services.device.terminal_session_service import (
     REBIND_TERMINAL_SESSION_SCRIPT,
     REVOKE_TERMINAL_SESSION_SCRIPT,
     TERMINAL_SESSION_REVOCATION_PAYLOAD,
-    InMemoryTerminalSessionStore,
     RedisTerminalSessionStore,
-    TerminalSessionRecord,
     TerminalSessionService,
 )
+from tests.services.device.terminal_session_fakes import InMemoryTerminalSessionStore
 
 
 class FailingTerminalSessionStore:
@@ -195,6 +198,7 @@ class FakeRedisClient:
         self.values = values or {}
         self.subscriber_count = subscriber_count
         self.get_calls: list[str] = []
+        self.delete_calls: list[str] = []
         self.set_calls: list[tuple[str, bytes, int]] = []
         self.eval_calls: list[tuple[Any, ...]] = []
         self.close_calls = 0
@@ -207,6 +211,10 @@ class FakeRedisClient:
         self.set_calls.append((key, payload, ex))
         self.values[key] = payload
         return True
+
+    async def delete(self, key: str) -> int:
+        self.delete_calls.append(key)
+        return int(self.values.pop(key, None) is not None)
 
     async def eval(self, *args: Any) -> Any:
         self.eval_calls.append(args)
@@ -725,6 +733,82 @@ async def test_redis_terminal_session_store_uses_exact_session_keys():
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("writer", ["legacy", "new"])
+async def test_redis_metadata_round_trips_between_old_and_new_backends(
+    monkeypatch, writer
+):
+    record = _record()
+    client = FakeRedisClient()
+    legacy = RedisCache("redis://unused")
+    monkeypatch.setattr(legacy, "_get_client", lambda: _async_value(client))
+    store = RedisTerminalSessionStore(client_factory=lambda: _async_value(client))
+    key = "terminal_session:terminal-1"
+    if writer == "legacy":
+        assert await legacy.set(key, record.to_dict(), 60)
+    else:
+        await store.set(record, 60)
+
+    assert client.values[key] == orjson.dumps(record.to_dict())
+    assert await legacy.get(key) == record.to_dict()
+    assert await store.get(record.session_id) == record
+    rebound = await store.rebind_socket(record, "new-socket")
+    assert rebound is not None
+    assert (await legacy.get(key))["socket_id"] == "new-socket"
+    assert set(await legacy.get(key)) == {
+        "session_id",
+        "user_id",
+        "device_id",
+        "socket_id",
+        "project_id",
+        "path",
+        "expires_at",
+    }
+    await store.delete(record.session_id)
+    assert await store.get(record.session_id) is None
+    # The original Backend's from_dict catches missing required fields and returns None.
+    revoked = await legacy.get(key)
+    assert revoked == {"revoked": True}
+    with pytest.raises(KeyError):
+        TerminalSessionRecord.from_dict(revoked)
+    assert set(client.values) == {key}
+    assert set(client.get_calls) == {key}
+    assert all(command[1:3] == (1, key) for command in client.eval_calls)
+
+
+@pytest.mark.asyncio
+async def test_legacy_delete_without_publish_is_observed_within_five_seconds(
+    monkeypatch,
+):
+    clock = 100.0
+    monkeypatch.setattr(terminal_session_service.time, "monotonic", lambda: clock)
+    monkeypatch.setattr(
+        terminal_session_service.settings, "TERMINAL_PROTOCOL_V2_ENABLED", False
+    )
+    record = _record()
+    client = FakeRedisClient()
+    legacy = RedisCache("redis://unused")
+    monkeypatch.setattr(legacy, "_get_client", lambda: _async_value(client))
+    store = RedisTerminalSessionStore(client_factory=lambda: _async_value(client))
+    # Even a longer configured TTL must not extend mixed-Backend authorization.
+    service = TerminalSessionService(store=store, cache_ttl_seconds=30)
+    key = "terminal_session:terminal-1"
+    assert await legacy.set(key, record.to_dict(), 60)
+    authorization = await service.authorize("terminal-1", user_id=7)
+    assert authorization is not None
+    assert authorization.authorization_valid_until <= clock + 5
+    assert await legacy.delete(key)
+    assert not client.eval_calls
+    assert service.is_authorization_current(authorization)
+
+    clock += 5
+    assert not service.is_authorization_current(authorization)
+    assert await service.get("terminal-1") is None
+    assert await service.authorize("terminal-1", user_id=7, refresh=True) is None
+    assert client.delete_calls == [key]
+    assert set(client.get_calls) == {key}
+
+
+@pytest.mark.asyncio
 async def test_redis_terminal_session_store_reuses_process_owned_client():
     cached_record = _record()
     client = FakeRedisClient(
@@ -734,9 +818,9 @@ async def test_redis_terminal_session_store_reuses_process_owned_client():
     )
     store = RedisTerminalSessionStore(
         client_factory=lambda: _async_value(client),
-        close_client_after_operation=False,
     )
 
+    await store.set(cached_record, 60)
     assert await store.get("terminal-1") == cached_record
     assert await store.get("terminal-1") == cached_record
 
@@ -744,39 +828,100 @@ async def test_redis_terminal_session_store_reuses_process_owned_client():
         "terminal_session:terminal-1",
         "terminal_session:terminal-1",
     ]
+    rebound = await store.rebind_socket(cached_record, "new-socket")
+    assert rebound is not None and rebound.socket_id == "new-socket"
+    await store.delete("terminal-1")
+    assert await store.is_revoked("terminal-1")
     assert client.close_calls == 0
 
 
 @pytest.mark.asyncio
-async def test_terminal_session_redis_pool_has_no_terminal_specific_connection_limit(
-    monkeypatch,
+@pytest.mark.parametrize("close_error", [None, RuntimeError("pubsub close failed")])
+async def test_terminal_session_redis_resources_follow_provider_ownership(
+    monkeypatch, caplog, close_error
 ):
-    captured_options: dict[str, Any] = {}
-    pool = object()
-    client = object()
+    messages: asyncio.Queue = asyncio.Queue()
 
-    class FakeConnectionPool:
-        @classmethod
-        def from_url(cls, _redis_url: str, **options: Any) -> object:
-            captured_options.update(options)
-            return pool
+    async def receive_message(**_kwargs: Any) -> Any:
+        return await messages.get()
 
-    def fake_redis(**options: Any) -> object:
-        assert options["connection_pool"] is pool
-        return client
-
+    pubsub = SimpleNamespace(
+        subscribe=AsyncMock(),
+        get_message=receive_message,
+        aclose=AsyncMock(side_effect=close_error),
+    )
+    client = SimpleNamespace(pubsub=Mock(return_value=pubsub), aclose=AsyncMock())
+    pool = SimpleNamespace(aclose=AsyncMock())
+    pool_factory = Mock(return_value=pool)
     monkeypatch.setattr(
-        terminal_session_service,
-        "ConnectionPool",
-        FakeConnectionPool,
+        terminal_session_service.ConnectionPool, "from_url", pool_factory
     )
-    monkeypatch.setattr(terminal_session_service, "Redis", fake_redis)
-    provider = terminal_session_service.RedisTerminalSessionClientProvider(
-        "redis://example",
-    )
+    redis_factory = Mock(return_value=client)
+    monkeypatch.setattr(terminal_session_service, "Redis", redis_factory)
+    service = TerminalSessionService()
+    try:
+        await service.start()
+        listener = service._invalidation_listener
+        assert listener is not None and listener.is_coherent
+        await listener.stop()
+        assert not listener.is_coherent
+        pubsub.aclose.assert_awaited_once_with()
+        client.aclose.assert_not_awaited()
+        pool.aclose.assert_not_awaited()
+        provider = service._owned_redis_client_provider
+        assert provider is not None and await provider.get_client() is client
+        pool_factory.assert_called_once()
+        assert "max_connections" not in pool_factory.call_args.kwargs
+        redis_factory.assert_called_once_with(
+            connection_pool=pool, auto_close_connection_pool=False
+        )
+        if close_error:
+            assert "Failed to close terminal session Redis resource" in caplog.text
+    finally:
+        await service.stop()
+    await service.stop()
+    client.aclose.assert_awaited_once_with(close_connection_pool=False)
+    pool.aclose.assert_awaited_once_with()
 
-    assert await provider.get_client() is client
-    assert "max_connections" not in captured_options
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("failure", ["factory", "command"])
+@pytest.mark.parametrize(
+    "method, operation",
+    [
+        ("set", "set"),
+        ("get", "get"),
+        ("delete", "delete"),
+        ("rebind_socket", "rebind"),
+        ("is_revoked", "revocation"),
+    ],
+)
+async def test_terminal_store_errors_preserve_metrics(
+    monkeypatch, failure, method, operation
+):
+    error = RuntimeError("Redis unavailable")
+    client = SimpleNamespace(
+        set=AsyncMock(side_effect=error),
+        get=AsyncMock(side_effect=error),
+        eval=AsyncMock(side_effect=error),
+        aclose=AsyncMock(),
+    )
+    factory = AsyncMock(
+        return_value=client, side_effect=error if failure == "factory" else None
+    )
+    metric = Mock()
+    monkeypatch.setattr(
+        terminal_session_service, "record_terminal_session_store_operation", metric
+    )
+    store = RedisTerminalSessionStore(factory)
+    args = {"set": (_record(), 60), "rebind_socket": (_record(), "new-socket")}
+    with pytest.raises(RuntimeError, match="Redis unavailable"):
+        await getattr(store, method)(*args.get(method, ("terminal-1",)))
+    metric.assert_called_once()
+    assert metric.call_args.kwargs["operation"] == operation
+    assert metric.call_args.kwargs["result"] == "error"
+    assert metric.call_args.kwargs["duration_seconds"] >= 0
+    client.aclose.assert_not_awaited()
 
 
 @pytest.mark.asyncio

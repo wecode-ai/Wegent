@@ -19,6 +19,7 @@
   },
   "workbench": {
     "brand": "Wework",
+    "remote_terminal_legacy_overflow": "Terminal closed because output exceeded the legacy connection buffer. Upgrade the device and open a new terminal.",
     "app_wework": "Wework",
     "app_wework_label": "Task",
     "app_weloop_label": "Project spaces",

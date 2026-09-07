@@ -955,6 +955,7 @@ async def test_device_terminal_output_forwards_to_browser_terminal_room(monkeypa
         "device-sid",
         {
             "session_id": "terminal-1",
+            "protocol_version": 2,
             "consumer_id": "consumer-1",
             "sequence": 8,
             "data": "hello",
@@ -966,6 +967,7 @@ async def test_device_terminal_output_forwards_to_browser_terminal_room(monkeypa
         "terminal:output",
         {
             "session_id": "terminal-1",
+            "protocol_version": 2,
             "consumer_id": "consumer-1",
             "sequence": 8,
             "data": "hello",
@@ -1006,6 +1008,7 @@ async def test_device_terminal_output_rejects_invalid_sequence(
         "device-sid",
         {
             "session_id": "terminal-1",
+            "protocol_version": 2,
             "sequence": sequence,
             "data": "hello",
         },
@@ -1030,7 +1033,12 @@ async def test_device_terminal_output_rejects_invalid_data_before_redis(
 
     result = await namespace.on_terminal_output(
         "device-sid",
-        {"session_id": "terminal-1", "sequence": 1, "data": output},
+        {
+            "session_id": "terminal-1",
+            "protocol_version": 2,
+            "sequence": 1,
+            "data": output,
+        },
     )
 
     assert result == {"error": "Invalid terminal output"}
@@ -1062,6 +1070,7 @@ async def test_device_terminal_output_rejects_mismatched_device(monkeypatch):
         "device-sid",
         {
             "session_id": "terminal-1",
+            "protocol_version": 2,
             "consumer_id": "consumer-1",
             "sequence": 1,
             "data": "hello",
@@ -1095,6 +1104,7 @@ async def test_device_terminal_output_rejects_cross_user_session(monkeypatch):
         "device-sid",
         {
             "session_id": "terminal-1",
+            "protocol_version": 2,
             "consumer_id": "consumer-1",
             "sequence": 1,
             "data": "hello",
@@ -1133,6 +1143,7 @@ async def test_device_terminal_exit_forwards_and_deletes_session(monkeypatch):
         "device-sid",
         {
             "session_id": "terminal-1",
+            "protocol_version": 2,
             "consumer_id": "consumer-1",
             "exit_code": 0,
         },
@@ -1143,6 +1154,7 @@ async def test_device_terminal_exit_forwards_and_deletes_session(monkeypatch):
         "terminal:exit",
         {
             "session_id": "terminal-1",
+            "protocol_version": 2,
             "consumer_id": "consumer-1",
             "exit_code": 0,
         },
@@ -1182,6 +1194,7 @@ async def test_device_terminal_exit_keeps_session_when_forwarding_fails(monkeypa
             "device-sid",
             {
                 "session_id": "terminal-1",
+                "protocol_version": 2,
                 "consumer_id": "consumer-1",
                 "exit_code": 0,
             },
@@ -1210,6 +1223,7 @@ async def test_device_terminal_exit_accepts_duplicate_after_durable_revocation(
         "device-sid",
         {
             "session_id": "terminal-1",
+            "protocol_version": 2,
             "consumer_id": "consumer-1",
             "exit_code": 0,
         },
@@ -1243,6 +1257,7 @@ async def test_device_terminal_output_rejects_expired_session(monkeypatch):
         "device-sid",
         {
             "session_id": "terminal-1",
+            "protocol_version": 2,
             "consumer_id": "consumer-1",
             "sequence": 1,
             "data": "hello",

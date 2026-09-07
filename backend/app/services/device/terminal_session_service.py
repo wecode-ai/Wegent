@@ -5,16 +5,13 @@
 """Browser terminal session ownership records."""
 
 import asyncio
-import inspect
 import logging
 import re
 import time
 import zlib
 from collections import OrderedDict
-from contextlib import asynccontextmanager
-from dataclasses import dataclass, field, replace
-from datetime import datetime, timezone
-from typing import Any, AsyncIterator, Awaitable, Callable, Optional, Protocol
+from dataclasses import dataclass, replace
+from typing import Any, Awaitable, Callable, Optional, Protocol
 
 import orjson
 from redis.asyncio import ConnectionPool, Redis
@@ -25,6 +22,7 @@ from app.services.device.terminal_metrics import (
     record_terminal_session_cache_request,
     record_terminal_session_store_operation,
 )
+from app.services.device.terminal_session_record import TerminalSessionRecord
 
 logger = logging.getLogger(__name__)
 
@@ -33,6 +31,7 @@ TERMINAL_SESSION_INVALIDATION_CHANNEL = "terminal_session:invalidations"
 TERMINAL_SESSION_CACHE_MAX_ENTRIES = settings.TERMINAL_SESSION_CACHE_MAX_ENTRIES
 TERMINAL_SESSION_MAX_LIFETIME_SECONDS = 60 * 60
 TERMINAL_SESSION_CACHE_TTL_SECONDS = settings.TERMINAL_SESSION_CACHE_TTL_SECONDS
+TERMINAL_SESSION_LEGACY_CACHE_MAX_TTL_SECONDS = 5.0
 TERMINAL_SESSION_REVOCATION_MAX_ENTRIES = 32768
 TERMINAL_SESSION_INVALIDATION_READY_TIMEOUT_SECONDS = 5.0
 TERMINAL_SESSION_INVALIDATION_RECONNECT_MAX_SECONDS = 5.0
@@ -114,69 +113,6 @@ class RedisTerminalSessionClientProvider:
             await pool.aclose()
 
 
-@dataclass(frozen=True)
-class TerminalSessionRecord:
-    """Backend-owned terminal session routing metadata."""
-
-    session_id: str
-    user_id: int
-    device_id: str
-    socket_id: str
-    project_id: int
-    path: str
-    expires_at: Optional[datetime] = None
-    authorization_epoch: int = field(default=0, compare=False, repr=False)
-    authorization_valid_until: float = field(default=0.0, compare=False, repr=False)
-
-    def is_expired(self, now: Optional[datetime] = None) -> bool:
-        """Return whether the session's absolute expiration has passed."""
-        if self.expires_at is None:
-            return True
-        current = now or datetime.now(timezone.utc)
-        expires_at = self.expires_at
-        if current.tzinfo is None:
-            current = current.replace(tzinfo=timezone.utc)
-        if expires_at.tzinfo is None:
-            expires_at = expires_at.replace(tzinfo=timezone.utc)
-        return current.astimezone(timezone.utc) >= expires_at.astimezone(timezone.utc)
-
-    def authorization_is_fresh(self, now: Optional[float] = None) -> bool:
-        """Return whether socket-bound authorization is within its refresh window."""
-        current = time.monotonic() if now is None else now
-        return current < self.authorization_valid_until
-
-    def to_dict(self) -> dict[str, Any]:
-        """Serialize the record for Redis storage."""
-        return {
-            "session_id": self.session_id,
-            "user_id": self.user_id,
-            "device_id": self.device_id,
-            "socket_id": self.socket_id,
-            "project_id": self.project_id,
-            "path": self.path,
-            "expires_at": self.expires_at.isoformat() if self.expires_at else None,
-        }
-
-    @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> "TerminalSessionRecord":
-        """Deserialize a record loaded from Redis."""
-        expires_at = data.get("expires_at")
-        if isinstance(expires_at, str) and expires_at:
-            expires_at_value = datetime.fromisoformat(expires_at)
-        else:
-            expires_at_value = None
-
-        return cls(
-            session_id=str(data["session_id"]),
-            user_id=int(data["user_id"]),
-            device_id=str(data["device_id"]),
-            socket_id=str(data["socket_id"]),
-            project_id=int(data.get("project_id") or 0),
-            path=str(data.get("path") or ""),
-            expires_at=expires_at_value,
-        )
-
-
 class TerminalSessionStore(Protocol):
     """Storage interface for terminal session records."""
 
@@ -201,36 +137,21 @@ class TerminalSessionStore(Protocol):
 
 
 class RedisTerminalSessionStore:
-    """Redis-backed exact-key store with durable revocation publication."""
+    """Exact-key store borrowing the provider-owned Redis client."""
 
-    def __init__(
-        self,
-        client_factory: RedisClientFactory,
-        *,
-        close_client_after_operation: bool = True,
-    ) -> None:
+    def __init__(self, client_factory: RedisClientFactory) -> None:
         self._client_factory = client_factory
-        self._close_client_after_operation = close_client_after_operation
-
-    @asynccontextmanager
-    async def _exact_key_client(self) -> AsyncIterator[Any]:
-        client = await self._client_factory()
-        try:
-            yield client
-        finally:
-            if self._close_client_after_operation:
-                await _close_redis_resource(client)
 
     async def set(self, record: TerminalSessionRecord, ttl_seconds: int) -> None:
         started_at = time.perf_counter()
         ttl = max(1, int(ttl_seconds))
         try:
-            async with self._exact_key_client() as client:
-                result = await client.set(
-                    _record_key(record.session_id),
-                    orjson.dumps(record.to_dict()),
-                    ex=ttl,
-                )
+            client = await self._client_factory()
+            result = await client.set(
+                _record_key(record.session_id),
+                orjson.dumps(record.to_dict()),
+                ex=ttl,
+            )
         except Exception:
             record_terminal_session_store_operation(
                 operation="set",
@@ -254,8 +175,8 @@ class RedisTerminalSessionStore:
     async def get(self, session_id: str) -> Optional[TerminalSessionRecord]:
         started_at = time.perf_counter()
         try:
-            async with self._exact_key_client() as client:
-                data = await client.get(_record_key(session_id))
+            client = await self._client_factory()
+            data = await client.get(_record_key(session_id))
         except Exception:
             record_terminal_session_store_operation(
                 operation="get",
@@ -299,16 +220,16 @@ class RedisTerminalSessionStore:
     async def delete(self, session_id: str) -> None:
         started_at = time.perf_counter()
         try:
-            async with self._exact_key_client() as client:
-                subscriber_count = await client.eval(
-                    REVOKE_TERMINAL_SESSION_SCRIPT,
-                    1,
-                    _record_key(session_id),
-                    TERMINAL_SESSION_REVOCATION_PAYLOAD,
-                    TERMINAL_SESSION_MAX_LIFETIME_SECONDS,
-                    TERMINAL_SESSION_INVALIDATION_CHANNEL,
-                    _invalidation_message("revoke", session_id),
-                )
+            client = await self._client_factory()
+            subscriber_count = await client.eval(
+                REVOKE_TERMINAL_SESSION_SCRIPT,
+                1,
+                _record_key(session_id),
+                TERMINAL_SESSION_REVOCATION_PAYLOAD,
+                TERMINAL_SESSION_MAX_LIFETIME_SECONDS,
+                TERMINAL_SESSION_INVALIDATION_CHANNEL,
+                _invalidation_message("revoke", session_id),
+            )
         except Exception:
             record_terminal_session_store_operation(
                 operation="delete",
@@ -341,17 +262,17 @@ class RedisTerminalSessionStore:
         """Move a session to the current executor socket without scanning Redis."""
         started_at = time.perf_counter()
         try:
-            async with self._exact_key_client() as client:
-                payload = await client.eval(
-                    REBIND_TERMINAL_SESSION_SCRIPT,
-                    1,
-                    _record_key(record.session_id),
-                    str(record.user_id),
-                    record.device_id,
-                    socket_id,
-                    TERMINAL_SESSION_INVALIDATION_CHANNEL,
-                    _invalidation_message("invalidate", record.session_id),
-                )
+            client = await self._client_factory()
+            payload = await client.eval(
+                REBIND_TERMINAL_SESSION_SCRIPT,
+                1,
+                _record_key(record.session_id),
+                str(record.user_id),
+                record.device_id,
+                socket_id,
+                TERMINAL_SESSION_INVALIDATION_CHANNEL,
+                _invalidation_message("invalidate", record.session_id),
+            )
         except Exception:
             record_terminal_session_store_operation(
                 operation="rebind",
@@ -387,8 +308,8 @@ class RedisTerminalSessionStore:
         """Read one exact key to distinguish revocation from a missing session."""
         started_at = time.perf_counter()
         try:
-            async with self._exact_key_client() as client:
-                data = await client.get(_record_key(session_id))
+            client = await self._client_factory()
+            data = await client.get(_record_key(session_id))
         except Exception:
             record_terminal_session_store_operation(
                 operation="revocation",
@@ -407,54 +328,6 @@ class RedisTerminalSessionStore:
             duration_seconds=time.perf_counter() - started_at,
         )
         return revoked
-
-
-class InMemoryTerminalSessionStore:
-    """In-memory terminal session store for tests."""
-
-    def __init__(self) -> None:
-        self._records: dict[str, tuple[TerminalSessionRecord, float | None]] = {}
-        self._revoked: set[str] = set()
-
-    async def set(self, record: TerminalSessionRecord, ttl_seconds: int) -> None:
-        expires_at = time.monotonic() + ttl_seconds if ttl_seconds > 0 else None
-        self._records[record.session_id] = (record, expires_at)
-        self._revoked.discard(record.session_id)
-
-    async def get(self, session_id: str) -> Optional[TerminalSessionRecord]:
-        item = self._records.get(session_id)
-        if not item:
-            return None
-
-        record, expires_at = item
-        if expires_at is not None and time.monotonic() >= expires_at:
-            self._records.pop(session_id, None)
-            return None
-        return record
-
-    async def delete(self, session_id: str) -> None:
-        self._records.pop(session_id, None)
-        self._revoked.add(session_id)
-
-    async def rebind_socket(
-        self,
-        record: TerminalSessionRecord,
-        socket_id: str,
-    ) -> Optional[TerminalSessionRecord]:
-        current = await self.get(record.session_id)
-        if (
-            not current
-            or current.user_id != record.user_id
-            or current.device_id != record.device_id
-        ):
-            return None
-        rebound = replace(current, socket_id=socket_id)
-        expires_at = self._records[record.session_id][1]
-        self._records[record.session_id] = (rebound, expires_at)
-        return rebound
-
-    async def is_revoked(self, session_id: str) -> bool:
-        return session_id in self._revoked
 
 
 class TerminalSessionInvalidationListener(Protocol):
@@ -476,19 +349,17 @@ class TerminalSessionInvalidationListener(Protocol):
 
 
 class RedisTerminalSessionInvalidationListener:
-    """One bounded Redis Pub/Sub listener per Backend process."""
+    """Own one Pub/Sub subscription, borrowing the provider-owned Redis client."""
 
     def __init__(
         self,
         client_factory: RedisClientFactory,
         *,
-        close_client_after_stop: bool = True,
         ready_timeout_seconds: float = (
             TERMINAL_SESSION_INVALIDATION_READY_TIMEOUT_SECONDS
         ),
     ) -> None:
         self._client_factory = client_factory
-        self._close_client_after_stop = close_client_after_stop
         self._ready_timeout_seconds = max(0.1, ready_timeout_seconds)
         self._task: Optional[asyncio.Task[None]] = None
         self._ready = asyncio.Event()
@@ -566,7 +437,6 @@ class RedisTerminalSessionInvalidationListener:
     async def _listen_forever(self) -> None:
         reconnect_delay = 0.1
         while not self._stopping:
-            client = None
             pubsub = None
             self._coherent = False
             try:
@@ -599,8 +469,6 @@ class RedisTerminalSessionInvalidationListener:
             finally:
                 self._coherent = False
                 await _close_redis_resource(pubsub)
-                if self._close_client_after_stop:
-                    await _close_redis_resource(client)
 
             if not self._stopping:
                 await asyncio.sleep(reconnect_delay)
@@ -776,16 +644,19 @@ class TerminalSessionService:
             self._owned_redis_client_provider = RedisTerminalSessionClientProvider()
             store = RedisTerminalSessionStore(
                 self._owned_redis_client_provider.get_client,
-                close_client_after_operation=False,
             )
         self._invalidation_listener = invalidation_listener
         if self._owned_redis_client_provider and invalidation_listener is None:
             self._invalidation_listener = RedisTerminalSessionInvalidationListener(
                 self._owned_redis_client_provider.get_client,
-                close_client_after_stop=False,
             )
         self._store = store
         self._authorization_epoch = 0
+        if not settings.TERMINAL_PROTOCOL_V2_ENABLED:
+            # Original Backend replicas delete exact keys without publishing invalidations.
+            cache_ttl_seconds = min(
+                cache_ttl_seconds, TERMINAL_SESSION_LEGACY_CACHE_MAX_TTL_SECONDS
+            )
         self._cache_ttl_seconds = max(0.1, cache_ttl_seconds)
         self._inflight_loads: dict[
             str,
@@ -1066,15 +937,8 @@ def _parse_invalidation_message(message: Any) -> Optional[tuple[str, str]]:
 async def _close_redis_resource(resource: Any) -> None:
     if resource is None:
         return
-    close = getattr(resource, "aclose", None)
-    if close is None:
-        close = getattr(resource, "close", None)
-    if close is None:
-        return
     try:
-        result = close()
-        if inspect.isawaitable(result):
-            await result
+        await resource.aclose()
     except Exception:
         logger.warning("Failed to close terminal session Redis resource", exc_info=True)
 

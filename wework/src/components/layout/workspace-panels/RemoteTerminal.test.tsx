@@ -13,6 +13,7 @@ interface OutputPayload {
   session_id: string
   sequence: number
   data: string
+  protocol_version?: 1 | 2
 }
 
 const testState = vi.hoisted(() => ({
@@ -720,6 +721,61 @@ describe('RemoteTerminal', () => {
     unmount()
     await waitFor(() => expect(unsubscribeReconnect).toHaveBeenCalledTimes(1))
   })
+
+  test('waits for final xterm consumption before reporting an early legacy exit', async () => {
+    const client = createClient()
+    const onExit = vi.fn()
+    render(
+      <RemoteTerminal
+        sessionId="terminal-1"
+        clientFactory={() => client}
+        active={false}
+        onExit={onExit}
+      />
+    )
+    await waitFor(() => expect(client.attach).toHaveBeenCalledTimes(1))
+    const output = client.onOutput.mock.calls[0][0] as (payload: OutputPayload) => void
+    const exit = client.onExit.mock.calls[0][0] as (payload: { session_id: string }) => void
+    output({ session_id: 'terminal-1', sequence: 1, data: 'first', protocol_version: 1 })
+    output({ session_id: 'terminal-1', sequence: 2, data: 'final', protocol_version: 1 })
+    exit({ session_id: 'terminal-1' })
+    expect(onExit).not.toHaveBeenCalled()
+    const terminal = testState.terminalInstances[0]
+    terminal.completeNextWrite()
+    expect(onExit).not.toHaveBeenCalled()
+    expect(terminal.write).toHaveBeenLastCalledWith('final', expect.any(Function))
+    terminal.completeNextWrite()
+    expect(onExit).toHaveBeenCalledTimes(1)
+    exit({ session_id: 'terminal-1' })
+    expect(onExit).toHaveBeenCalledTimes(1)
+  })
+
+  test.each(['queue', 'chunk'])(
+    'closes an overflowing legacy %s with a visible error instead of requesting replay',
+    async bound => {
+      const client = createClient()
+      render(<RemoteTerminal sessionId="terminal-1" clientFactory={() => client} active={false} />)
+      await waitFor(() => expect(client.attach).toHaveBeenCalledTimes(1))
+      const output = client.onOutput.mock.calls[0][0] as (payload: OutputPayload) => void
+      const count = bound === 'queue' ? 258 : 1
+      for (let index = 1; index <= count; index++) {
+        output({
+          session_id: 'terminal-1',
+          sequence: index,
+          data: bound === 'chunk' ? 'x'.repeat(1024 * 1024 + 1) : 'line',
+          protocol_version: 1,
+        })
+      }
+      const terminal = testState.terminalInstances[0]
+      expect(terminal.writeln).toHaveBeenCalledWith(expect.stringMatching(/legacy|旧版/))
+      await waitFor(() => expect(client.dispose).toHaveBeenCalledTimes(1))
+      expect(client.close).toHaveBeenCalledTimes(1)
+      terminal.emitData('should not send\r')
+      expect(client.write).not.toHaveBeenCalled()
+      expect(client.attach).toHaveBeenCalledTimes(1)
+      if (bound === 'chunk') expect(terminal.write).not.toHaveBeenCalled()
+    }
+  )
 
   test('calls exit handler without writing process exited text', () => {
     let exitHandler: ((payload: { session_id: string }) => void) | null = null
