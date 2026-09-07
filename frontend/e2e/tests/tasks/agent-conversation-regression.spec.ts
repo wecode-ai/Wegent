@@ -462,9 +462,9 @@ test.describe('Agent conversation regression', () => {
     await ensureMessageInputReady(page)
     const deviceSelector = page.getByTestId('device-chat-target-select')
     await expect(deviceSelector).toHaveValue(targetId)
-    await expect(
-      page.getByTestId('wework-device-options').locator(`option[value="${targetId}"]`)
-    ).toContainText('E2E ClaudeCode Device')
+    await expect(page.getByTestId(`device-chat-option-${targetId}`)).toContainText(
+      'E2E ClaudeCode Device'
+    )
     await selectModel(page, DEVICE_CLAUDE_MODEL_NAME)
 
     await sendMessage(page, firstPrompt)

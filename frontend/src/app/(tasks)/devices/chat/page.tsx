@@ -192,8 +192,6 @@ export default function DeviceChatPage() {
 
   // Check if selected device is OpenClaw type
   const isOpenClaw = selectedDevice ? isOpenClawDevice(selectedDevice) : false
-  const weworkDevices = conversationDevices.filter(device => device.device_type === 'app')
-  const otherDevices = conversationDevices.filter(device => device.device_type !== 'app')
 
   return (
     <div className="flex smart-h-screen bg-base text-text-primary box-border">
@@ -243,36 +241,22 @@ export default function DeviceChatPage() {
               <option value="" disabled>
                 {t('select_device')}
               </option>
-              {weworkDevices.length > 0 ? (
-                <optgroup data-testid="wework-device-options" label={t('wework_devices_section')}>
-                  {weworkDevices.map(device => (
-                    <option key={device.device_id} value={device.device_id}>
-                      {device.name} (
-                      {device.status === 'online'
-                        ? t('status_online')
-                        : device.status === 'busy'
-                          ? t('status_busy')
-                          : t('status_offline')}
-                      )
-                    </option>
-                  ))}
-                </optgroup>
-              ) : null}
-              {otherDevices.length > 0 ? (
-                <optgroup label={t('other_devices_section')}>
-                  {otherDevices.map(device => (
-                    <option key={device.device_id} value={device.device_id}>
-                      {device.name} (
-                      {device.status === 'online'
-                        ? t('status_online')
-                        : device.status === 'busy'
-                          ? t('status_busy')
-                          : t('status_offline')}
-                      )
-                    </option>
-                  ))}
-                </optgroup>
-              ) : null}
+              {conversationDevices.map(device => (
+                <option
+                  key={device.device_id}
+                  value={device.device_id}
+                  data-testid={`device-chat-option-${device.device_id}`}
+                >
+                  {device.device_type === 'app' ? t('wework_device_prefix') : ''}
+                  {device.name} (
+                  {device.status === 'online'
+                    ? t('status_online')
+                    : device.status === 'busy'
+                      ? t('status_busy')
+                      : t('status_offline')}
+                  )
+                </option>
+              ))}
             </select>
           </div>
           {isMobile ? <ThemeToggle /> : <GithubStarButton />}

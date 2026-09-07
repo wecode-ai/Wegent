@@ -134,6 +134,14 @@ function DeviceCard({
         <span className="font-medium text-sm text-text-primary break-all line-clamp-2">
           {device.name}
         </span>
+        {device.device_type === 'app' && (
+          <span
+            data-testid={`wework-device-badge-${device.device_id}`}
+            className="px-1.5 py-0.5 rounded text-[10px] text-primary bg-primary/10 flex-shrink-0 mt-0.5"
+          >
+            {t('wework_device_badge')}
+          </span>
+        )}
       </div>
 
       {/* Status and slots / default button */}
@@ -319,13 +327,7 @@ export function DeviceSelectorTab({
   const totalDeviceCount = visibleDevices.length
 
   const localDevices = useMemo(() => {
-    return displayDevices.filter(
-      device => device.device_type !== 'cloud' && device.device_type !== 'app'
-    )
-  }, [displayDevices])
-
-  const weworkDevices = useMemo(() => {
-    return displayDevices.filter(device => device.device_type === 'app')
+    return displayDevices.filter(device => device.device_type !== 'cloud')
   }, [displayDevices])
 
   const cloudDevices = useMemo(() => {
@@ -640,30 +642,6 @@ export function DeviceSelectorTab({
                   </div>
                   <div className="grid grid-cols-2 gap-2">
                     {localDevices.map(device => (
-                      <DeviceCard
-                        key={device.device_id}
-                        device={device}
-                        isSelected={selectedTargetDeviceId === device.device_id}
-                        isDefault={resolvedDefaultDeviceId === device.device_id}
-                        disabled={disabled || isLoading}
-                        onSelect={() => handleDeviceSelect(device.device_id)}
-                        onSetDefault={e => void handleSetDefaultTarget(e, device.device_id)}
-                      />
-                    ))}
-                  </div>
-                </div>
-              )}
-
-              {/* Wework devices section */}
-              {weworkDevices.length > 0 && (
-                <div className="space-y-2" data-testid="wework-device-section">
-                  <div className="flex items-center gap-2 text-xs font-medium text-text-muted">
-                    <AppWindow className="w-3.5 h-3.5" />
-                    {t('wework_devices_section')}
-                    <span className="text-text-muted/60">({weworkDevices.length})</span>
-                  </div>
-                  <div className="grid grid-cols-2 gap-2">
-                    {weworkDevices.map(device => (
                       <DeviceCard
                         key={device.device_id}
                         device={device}
