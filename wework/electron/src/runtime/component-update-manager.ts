@@ -402,10 +402,37 @@ export class ComponentUpdateManager {
       weworkCorePlugins: composedCorePlugins,
       bundledPlugins: paths.bundledPlugins,
       executor: paths.executor,
-      codex: paths.codex,
+      codex: await this.resolveCodexBinary(paths.codex),
       dws: paths.dws,
       contentSha256: fingerprints,
     }
+  }
+
+  private async resolveCodexBinary(componentPath: string): Promise<string> {
+    const componentMetadata = await stat(componentPath)
+    let binaryPath = componentPath
+    if (componentMetadata.isDirectory()) {
+      const manifestPath = join(componentPath, 'WEGENT_CODEX_BINARY.json')
+      const manifest = JSON.parse(await readFile(manifestPath, 'utf8')) as unknown
+      if (!isRecord(manifest) || !isSafeRelativePath(manifest.binaryPath)) {
+        throw new Error(`Codex runtime metadata is invalid: ${manifestPath}`)
+      }
+      binaryPath = join(componentPath, manifest.binaryPath)
+    } else if (!componentMetadata.isFile()) {
+      throw new Error(`Codex runtime component is invalid: ${componentPath}`)
+    }
+
+    const binaryMetadata = await stat(binaryPath)
+    if (!binaryMetadata.isFile()) {
+      throw new Error(`Codex executable is invalid: ${binaryPath}`)
+    }
+    const hostName = this.platform === 'win32' ? 'codex-code-mode-host.exe' : 'codex-code-mode-host'
+    const hostPath = join(dirname(binaryPath), hostName)
+    const hostMetadata = await stat(hostPath)
+    if (!hostMetadata.isFile()) {
+      throw new Error(`Codex code-mode host is invalid: ${hostPath}`)
+    }
+    return binaryPath
   }
 
   private async resolveComponents(

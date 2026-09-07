@@ -83,6 +83,12 @@ SHA-256。Electron 应用本身仍通过 `electron-updater` 升级；其余七�
 计算。macOS 代码签名可能重写嵌套可执行文件，因此不得直接复用打包前
 `components.json` 中的内容哈希。
 
+Codex 组件的发布边界是完整的 `codex/` 运行时目录，不是单独的 `codex` 可执行
+文件。组件必须包含 `WEGENT_CODEX_BINARY.json`、目标架构的 `codex` 与
+`codex-code-mode-host`、`codex-path` 工具和 legal 资源。客户端从运行时描述中的
+`binaryPath` 解析主程序，并在激活组件前校验同目录的 code-mode host；发布脚本不得
+把 `components.json` 中的 Codex 路径指向主程序或只归档主程序。
+
 组件压缩包以压缩包 SHA-256 命名并作为不可变资产保存。本项目源码构建的 Wework
 核心插件及 UI、应用静态资源、内置插件和 Executor 压缩包存放在对应的版本
 Release；外部 Core DSH、Codex 和 DWS 压缩包集中存放在 `wework-updater`，供
@@ -182,7 +188,7 @@ Codex 下载包按 `wework/codex-binaries.lock.json` 固定并校验 SHA-512。�
 `wework/electron/scripts/prepare-package-assets.mjs` 会把 sidecar、插件、图标和运行时
 描述复制到应用资源目录。不要重新建立第二份桌面资源目录或资源清单。
 
-当前固定版本为 Codex `0.152.1`。Codex `0.152` 开始默认关闭
+当前固定版本为 Codex `0.153.3`。Codex `0.152` 开始默认关闭
 `tools.update_plan.enabled`，但 Wework 会消费对应的计划事件并渲染计划块，因此
 Executor 启动 Codex 时必须显式启用该工具。桌面 E2E 默认验证锁文件中的二进制；
 只有专用的 `WEWORK_E2E_CODEX_BIN` 可以覆盖它，不能继承通用 `CODEX_BIN`，否则
