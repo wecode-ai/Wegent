@@ -4,12 +4,6 @@ import { join, resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { expect, test, vi } from 'vitest'
 
-// The native wire harness is unrelated to this restart helper unit test.
-vi.mock('../../e2e/desktop/modules/terminal-compatibility-flows.mjs', () => ({
-  verifyRemoteTerminalRemainsResponsiveAfterOutputBurst: vi.fn(),
-  verifyTerminalWireCompatibility: vi.fn(),
-}))
-
 interface CloudEnvironment {
   backend: null
   backendEnv: Record<string, string>

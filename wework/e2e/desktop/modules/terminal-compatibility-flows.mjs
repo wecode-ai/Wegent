@@ -12,9 +12,6 @@ import {
   writeFile,
 } from './shared.mjs'
 
-const { io } = createRequire(
-  new URL('../../../../packages/chat-core/package.json', import.meta.url)
-)('socket.io-client')
 const TERMINAL_SELECTOR = '[data-testid="remote-terminal"]'
 const BURST_LINE_COUNT = 12_000
 const BURST_LINE_PREFIX = 'WEWORK_BURST_'
@@ -127,6 +124,10 @@ export async function verifyTerminalWireCompatibility(
   cloudEnvironment,
   { requestedVersion, expectedVersion, name }
 ) {
+  // Prebuilt CI shards have no workspace node_modules; use their bundled client.
+  const { io } = createRequire(
+    new URL('../../../../packages/chat-core/package.json', import.meta.url)
+  )(process.env.WEWORK_E2E_SOCKET_IO_CLIENT || 'socket.io-client')
   const created = await fetchJson(
     `${cloudEnvironment.backendUrl}/api/devices/${encodeURIComponent(CLOUD_DEVICE_ID)}/terminal`,
     {

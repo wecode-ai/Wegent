@@ -152,13 +152,13 @@ Run each row for at least 30 minutes with real Backend, Redis, Executor PTY, and
 | 9000     | 1 KiB/s            | 50ms      | Over-capacity eviction        |
 | 1000     | 100 KiB/s          | 1000ms    | Forced backpressure           |
 
-For each row, disconnect a random 10% of clients and reconnect after 3 seconds. Include delayed/lost ACKs, 10 MiB bursts, five parallel terminals, theme changes, and hide/reactivate. Also test Backend restart, Redis invalidation failure, stale-consumer controls, invalid handshakes, and rejection of protocol changes on existing sessions. Verify session identity and output markers; a recovered screen alone does not prove lossless recovery. Clean up test sessions and isolated resources afterward.
+For each row, disconnect a random 10% of clients for 3 seconds, then restore connectivity and reattach within 1 second of connection recovery, verifying that v2 replay begins. Include delayed/lost ACKs, 10 MiB bursts, five parallel terminals, theme changes, and hide/reactivate. Also test Backend restart, Redis invalidation failure, stale-consumer controls, invalid handshakes, and rejection of protocol changes on existing sessions. Verify session identity and output markers; a recovered screen alone does not prove lossless recovery. Clean up test sessions and isolated resources afterward.
 
 Acceptance targets, not measured local-script performance claims:
 
 - v2 sequence gaps, duplicate writes, and silent loss are zero. Check basic I/O and reconnection for v1, without imposing lossless replay guarantees that v1 does not provide.
 - Executor replay stays within 512 KiB, pauses reads at 384 KiB, and resumes at or below 128 KiB. Memory plateaus over 30 minutes instead of growing with total output.
-- Same-region input echo P95 ≤ 50ms; path P95 after subtracting network RTT ≤ 20ms. Ctrl-C stops continuous `yes` output at P95 ≤ 200ms.
+- Same-region input echo P95 ≤ 50ms; RTT-adjusted path P95 ≤ 20ms. For each sample, compute `echo latency - paired RTT`, sort the residuals, and select the `ceil(0.95 × sample count)`-th value (the Backend load script's nearest-rank estimator); do not subtract two P95 values. Ctrl-C stops continuous `yes` output at P95 ≤ 200ms.
 - After a 3-second outage, reattach within 1 second of connection recovery and begin v2 replay. After a 10 MiB burst, the Renderer remains interactive and displays the completion marker and subsequent commands.
 - Isolated Redis command increments show `SCAN=0` and `KEYS=0`. For shared Redis, inspect code and exact-key operation counts instead of attributing global counters to the run.
 
