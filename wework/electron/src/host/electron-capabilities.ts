@@ -13,7 +13,8 @@ import {
   type SaveDialogOptions,
 } from 'electron'
 import { stat } from 'node:fs/promises'
-import { cpus, freemem, totalmem } from 'node:os'
+import { cpus } from 'node:os'
+import { availableMemoryRatio } from './maintenance-memory.js'
 import { join, resolve } from 'node:path'
 import {
   HOST_CAPABILITIES,
@@ -937,10 +938,9 @@ export async function systemPressureSnapshot(): Promise<{
   const cpuBefore = cpuTimeSample()
   await new Promise(resolve => setTimeout(resolve, 100))
   const cpuAfter = cpuTimeSample()
-  const totalMemory = totalmem()
   return {
     cpuLoadRatio: cpuLoadRatioBetween(cpuBefore, cpuAfter),
-    freeMemoryRatio: totalMemory > 0 ? freemem() / totalMemory : 0,
+    freeMemoryRatio: availableMemoryRatio(process.getSystemMemoryInfo(), process.platform),
     userIdleSeconds: powerMonitor.getSystemIdleTime(),
   }
 }

@@ -366,15 +366,18 @@ class RealCloudEnvironment {
     }
   }
 
-  async publishPluginRelease({ slug, version }) {
-    const packageRoot = join(resultDir, 'plugin-auto-update-fixtures', `${slug}-${version}`)
-    const manifestDir = join(packageRoot, '.codex-plugin')
-    await mkdir(manifestDir, { recursive: true })
-    await writeFile(
-      join(manifestDir, 'plugin.json'),
-      `${JSON.stringify({ name: slug, version, description: `Desktop E2E ${slug}` }, null, 2)}\n`,
-      'utf8'
-    )
+  async publishPluginRelease({ slug, version, packageRoot: sourceRoot }) {
+    const packageRoot =
+      sourceRoot ?? join(resultDir, 'plugin-auto-update-fixtures', `${slug}-${version}`)
+    if (!sourceRoot) {
+      const manifestDir = join(packageRoot, '.codex-plugin')
+      await mkdir(manifestDir, { recursive: true })
+      await writeFile(
+        join(manifestDir, 'plugin.json'),
+        `${JSON.stringify({ name: slug, version, description: `Desktop E2E ${slug}` }, null, 2)}\n`,
+        'utf8'
+      )
+    }
     const output = await commandOutputAsync(
       'uv',
       [
