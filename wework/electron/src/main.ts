@@ -260,8 +260,10 @@ const appUpdates = new AppUpdateService({
   updater: autoUpdater,
   currentVersion: () => app.getVersion(),
   isPackaged: () => packagedApplication,
-  prepareUpdate: async (version, channel) => {
-    await componentUpdates?.stageUpdateForApp(version, channel)
+  log: event => appUpdateLogger.info(event),
+  prepareUpdate: async (version, channel, onProgress) => {
+    if (!componentUpdates) throw new Error('Component update manager is not initialized.')
+    await componentUpdates.stageUpdateForApp(version, channel, false, onProgress)
   },
   prepareInstall: async () => {
     await prepareApplicationShutdown()
@@ -1685,6 +1687,7 @@ async function desktopEnvironment(): Promise<NodeJS.ProcessEnv> {
   const preparedComponents = await prepareDesktopComponents({
     isPackaged: packagedApplication,
     managerOptions: {
+      log: event => appUpdateLogger.info(event),
       resourcesRoot: componentResourcesRoot,
       dataDirectory: app.getPath('userData'),
       updateBaseUrl,

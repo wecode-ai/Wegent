@@ -95,9 +95,13 @@ describe('AppUpdateService', () => {
     await install()
 
     expect(updater.channel).toBe('beta')
-    expect(prepareUpdate).toHaveBeenCalledWith('0.3.0-beta.1', 'beta')
+    expect(prepareUpdate).toHaveBeenCalledWith('0.3.0-beta.1', 'beta', expect.any(Function))
     expect(updater.downloadUpdate).toHaveBeenCalledTimes(1)
-    expect(appUpdate.downloadProgress()).toEqual({ downloadedBytes: 40, totalBytes: 100 })
+    expect(appUpdate.downloadProgress()).toEqual({
+      downloadedBytes: 40,
+      totalBytes: 100,
+      phase: 'ready',
+    })
     expect(prepareInstall).toHaveBeenCalledTimes(1)
     expect(updater.quitAndInstall).toHaveBeenCalledWith(false, true)
   })
@@ -171,4 +175,68 @@ describe('AppUpdateService', () => {
 
     await expect(service(updater).check('stable')).rejects.toThrow('GitHub is unavailable')
   })
+})
+
+test('preserves an active download across repeated checks and accumulates failed differential bytes', async () => {
+  const updater = new FakeUpdater()
+  const updateInfo = {
+    version: '0.4.2',
+    files: [],
+    path: 'host.zip',
+    sha512: 'sha',
+    releaseDate: '',
+  }
+  updater.checkForUpdates.mockResolvedValue({
+    isUpdateAvailable: true,
+    updateInfo,
+  } as UpdateCheckResult)
+  let release!: () => void
+  const gate = new Promise<void>(resolve => {
+    release = resolve
+  })
+  updater.downloadUpdate.mockImplementation(async () => {
+    updater.emit('wework-download-phase', { mode: 'differential', totalBytes: 20 })
+    updater.emit('download-progress', { transferred: 20, total: 20 })
+    await gate
+    updater.emit('wework-download-phase', {
+      mode: 'full',
+      reason: 'differential-failed',
+      totalBytes: 100,
+    })
+    updater.emit('download-progress', { transferred: 100, total: 100 })
+    return []
+  })
+  const appUpdate = new AppUpdateService({
+    updater: updater as unknown as AppUpdater,
+    currentVersion: () => '0.4.1',
+    isPackaged: () => true,
+    prepareUpdate: async (_version, _channel, onProgress) => {
+      onProgress({
+        downloadedBytes: 50,
+        totalBytes: 50,
+        completedComponents: 1,
+        totalComponents: 1,
+      })
+    },
+    prepareInstall: async () => undefined,
+    updateBaseUrl: 'https://example.test',
+  })
+  await appUpdate.check('stable')
+  const download = appUpdate.download()
+  await Promise.resolve()
+  await appUpdate.check('stable')
+  const duplicate = appUpdate.download()
+  expect(updater.checkForUpdates).toHaveBeenCalledTimes(1)
+  expect(updater.downloadUpdate).toHaveBeenCalledTimes(1)
+  release()
+  await Promise.all([download, duplicate])
+  expect(appUpdate.downloadProgress()).toMatchObject({
+    downloadedBytes: 170,
+    totalBytes: 170,
+    phase: 'ready',
+    reason: 'differential-failed',
+  })
+  await appUpdate.check('stable')
+  await appUpdate.download()
+  expect(updater.downloadUpdate).toHaveBeenCalledTimes(1)
 })

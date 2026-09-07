@@ -1,9 +1,7 @@
+import { hashComponentPath } from '../../scripts/lib/component-content-hash.mjs'
 import { spawn } from 'node:child_process'
-import { createHash } from 'node:crypto'
-import { createReadStream } from 'node:fs'
-import { chmod, cp, mkdir, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises'
+import { chmod, cp, mkdir, readFile, rm, stat, writeFile } from 'node:fs/promises'
 import { dirname, join, resolve } from 'node:path'
-import { pipeline } from 'node:stream/promises'
 import { fileURLToPath } from 'node:url'
 
 import { wrapWindowsScriptCommand } from '../../scripts/child-process-command.mjs'
@@ -93,7 +91,7 @@ const executorName = targetExecutableName(packageTargets.cargoTarget, 'wegent-ex
 const packagedExecutor = join(resourcesRoot, 'bin', executorName)
 await cp(executorPath, packagedExecutor)
 if (process.platform !== 'win32') await chmod(packagedExecutor, 0o755)
-const executorSha256 = await sha256(packagedExecutor)
+const executorSha256 = await hashComponentPath(packagedExecutor)
 const dwsName = targetExecutableName(packageTargets.dwsTarget, 'dws')
 const packagedDws = join(resourcesRoot, 'bin', dwsName)
 const dwsSourceName = targetExecutableName(
@@ -128,22 +126,22 @@ await writeFile(
         coreDsh: {
           version: packagedRuntimes.find(runtime => runtime.role === 'core')?.dshVersion,
           path: 'harness-runtime',
-          sha256: await hashTree(harnessResources),
+          sha256: await hashComponentPath(harnessResources),
         },
         weworkCorePlugins: {
           version: weworkRuntimeVersion,
           path: 'wework-core-plugins',
-          sha256: await hashTree(corePluginsRoot),
+          sha256: await hashComponentPath(corePluginsRoot),
         },
         weworkAppStatic: {
           version: weworkRuntimeVersion,
           path: 'wework-app-static',
-          sha256: await hashTree(weworkAppStaticRoot),
+          sha256: await hashComponentPath(weworkAppStaticRoot),
         },
         bundledPlugins: {
           version: weworkRuntimeVersion,
           path: 'bundled-plugins',
-          sha256: await hashTree(join(resourcesRoot, 'bundled-plugins')),
+          sha256: await hashComponentPath(join(resourcesRoot, 'bundled-plugins')),
         },
         executor: {
           version: weworkRuntimeVersion,
@@ -153,12 +151,12 @@ await writeFile(
         codex: {
           version: codexRuntime.codexVersion,
           path: 'codex',
-          sha256: await hashTree(codexResources),
+          sha256: await hashComponentPath(codexResources),
         },
         dws: {
           version: weworkPackage.devDependencies['dingtalk-workspace-cli'],
           path: `bin/${dwsName}`,
-          sha256: await sha256(packagedDws),
+          sha256: await hashComponentPath(packagedDws),
         },
       },
     },
@@ -185,26 +183,6 @@ async function buildDshApp() {
     manifestPath,
     `${JSON.stringify(normalizeFileViewerAssetManifest(manifest, output), null, 2)}\n`
   )
-}
-
-async function sha256(path) {
-  const hash = createHash('sha256')
-  await pipeline(createReadStream(path), hash)
-  return hash.digest('hex')
-}
-
-async function hashTree(root, relative = '') {
-  const hash = createHash('sha256')
-  const entries = await readdir(join(root, relative), { withFileTypes: true })
-  for (const entry of entries.sort((left, right) => left.name.localeCompare(right.name))) {
-    const child = join(relative, entry.name)
-    if (entry.isDirectory()) {
-      hash.update(`directory:${child}\0${await hashTree(root, child)}\0`)
-    } else if (entry.isFile()) {
-      hash.update(`file:${child}\0${await sha256(join(root, child))}\0`)
-    }
-  }
-  return hash.digest('hex')
 }
 
 async function buildExecutor(profile, target) {

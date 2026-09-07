@@ -212,7 +212,7 @@ describe('desktop resource migration', () => {
     expect(source).toContain('sourceSha,')
     expect(source).toContain('path: `bin/${dwsName}`')
     expect(source).toContain("path: 'codex'")
-    expect(source).toContain('sha256: await hashTree(codexResources)')
+    expect(source).toContain('sha256: await hashComponentPath(codexResources)')
     expect(source).not.toContain('path: `codex/${codexRuntime.binaryPath}`')
     expect(source).toContain("version: weworkPackage.devDependencies['dingtalk-workspace-cli']")
     expect(source).not.toContain('prepare:execution-runtime')
@@ -259,16 +259,14 @@ describe('desktop resource migration', () => {
     expect(source).toContain('WeWorkHostUpdate_${escape(version)}_linux_')
   })
 
-  test('creates macOS component archives from the requested packaged application', async () => {
+  test('creates component archives from immutable prepared resources', async () => {
     const source = await readFile(
       join(weworkRoot, 'scripts/prepare-desktop-release-assets.mjs'),
       'utf8'
     )
 
     expect(source).toContain("arch === 'arm64' ? 'mac-arm64' : 'mac'")
-    expect(source).toContain(
-      "packagedComponentResourcesRoot = join(appPath, 'Contents', 'Resources')"
-    )
+    expect(source).toContain('const packagedComponentResourcesRoot = componentResourcesRoot')
     expect(source).toContain("join(packagedComponentResourcesRoot, 'components.json')")
     expect(source).toContain('join(packagedComponentResourcesRoot, component.path)')
     expect(source).toContain('contentSha256 = await hashComponentPath(sourcePath)')

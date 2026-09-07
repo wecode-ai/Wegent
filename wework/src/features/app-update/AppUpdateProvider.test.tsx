@@ -239,7 +239,7 @@ describe('AppUpdateProvider', () => {
     await act(async () => {
       await appUpdate?.checkNow()
     })
-    act(() => {
+    await act(async () => {
       appUpdate?.setAutoUpdateEnabled(true)
     })
 

@@ -600,3 +600,49 @@ async function writePackagedManifest(fixture: Fixture, targetAppVersion: string)
 function sha256(bytes: Uint8Array): string {
   return createHash('sha256').update(bytes).digest('hex')
 }
+
+test('shares a staging task and bounds component downloads to three while reporting every byte', async () => {
+  const fixture = await createFixture()
+  const ids: ManagedComponentId[] = ['executor', 'dws', 'bundledPlugins', 'coreDsh']
+  const updates = await Promise.all(
+    ids.map(id => createExecutorUpdate(fixture.root, `changed-${id}`))
+  )
+  const manifest = structuredClone(updates[0]!.manifest)
+  const assets = new Map<string, Buffer>()
+  for (let i = 0; i < ids.length; i++) {
+    const update = updates[i]!
+    manifest.components[ids[i]!] = update.manifest.components.executor
+    assets.set(`${updateBaseUrl}/${update.assetName}`, update.archive)
+  }
+  let active = 0
+  let maximum = 0
+  let requests = 0
+  let unlock!: () => void
+  const gate = new Promise<void>(resolve => {
+    unlock = resolve
+  })
+  const manager = createManager(fixture, async input => {
+    const url = String(input)
+    if (url.endsWith('.json')) return Response.json(manifest)
+    const bytes = assets.get(url)
+    if (!bytes) throw new Error(`Unexpected request: ${url}`)
+    requests++
+    active++
+    maximum = Math.max(maximum, active)
+    if (active === 3) unlock()
+    await gate
+    active--
+    return new Response(new Uint8Array(bytes))
+  })
+  const reports: number[] = []
+  const first = manager.stageUpdateForApp(appVersion, 'beta', false, p =>
+    reports.push(p.downloadedBytes)
+  )
+  const duplicate = manager.stageUpdateForApp(appVersion, 'beta')
+  await Promise.all([first, duplicate])
+  expect(maximum).toBe(3)
+  expect(requests).toBe(4)
+  expect(reports.at(-1)).toBe([...assets.values()].reduce((sum, bytes) => sum + bytes.length, 0))
+  await manager.stageUpdateForApp(appVersion, 'beta')
+  expect(requests).toBe(4)
+})
