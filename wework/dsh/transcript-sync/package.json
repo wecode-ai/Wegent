@@ -26,7 +26,8 @@
   "files": [
     "client.js",
     "cordis.patch.yml",
-    "index.js"
+    "index.js",
+    "outbox.js"
   ],
   "peerDependencies": {
     "@deepseek-ai/cordis": "^4.0.1",

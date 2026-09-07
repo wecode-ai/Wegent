@@ -1,7 +1,22 @@
 import assert from 'node:assert/strict'
+import { readFile } from 'node:fs/promises'
 import test from 'node:test'
 import { WeworkSync, portablePreferences, resolveApiBaseUrl } from './index.js'
 import { MemorySyncOutbox } from './outbox.js'
+
+test('ships every local runtime module imported by the plugin entrypoint', async () => {
+  const [manifestSource, entrypointSource] = await Promise.all([
+    readFile(new URL('./package.json', import.meta.url), 'utf8'),
+    readFile(new URL('./index.js', import.meta.url), 'utf8'),
+  ])
+  const manifest = JSON.parse(manifestSource)
+  const localImports = [...entrypointSource.matchAll(/from ['"]\.\/([^'"]+)['"]/g)].map(
+    match => match[1]
+  )
+
+  assert.deepEqual(localImports, ['outbox.js'])
+  assert.ok(manifest.files.includes('outbox.js'))
+})
 
 function createTurnSource(turns = []) {
   const payloads = new Map(turns.map(turn => [turn.turnId, structuredClone(turn.payload)]))
