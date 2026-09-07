@@ -57,7 +57,7 @@ async def test_registered_device_pulls_work_with_socket_identity(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_app_only_executor_cannot_pull_backend_work(monkeypatch):
+async def test_app_executor_pulls_backend_work_for_its_stable_target(monkeypatch):
     namespace = DeviceNamespace()
     namespace.get_session = AsyncMock(
         return_value={
@@ -90,7 +90,21 @@ async def test_app_only_executor_cannot_pull_backend_work(monkeypatch):
     )
 
     assert result == {"success": True, "task": None}
-    assert calls == []
+    assert calls == [
+        {
+            "owner_user_id": 17,
+            "execution_target_id": "electron-app-device",
+            "runtime_device_id": "executor-runtime-device",
+            "runtime_instance_id": "runtime-1",
+            "environment": "local",
+            "runtime_capacity": {
+                "limit": 1,
+                "active": 0,
+                "active_task_ids": [],
+                "queued": 0,
+            },
+        }
+    ]
 
 
 @pytest.mark.asyncio

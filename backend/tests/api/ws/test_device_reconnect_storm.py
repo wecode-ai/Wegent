@@ -3,6 +3,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 import asyncio
+from contextlib import asynccontextmanager
 from unittest.mock import AsyncMock
 
 import pytest
@@ -10,6 +11,18 @@ import pytest
 from app.api.ws import device_namespace
 from app.api.ws.device_namespace import DeviceNamespace
 from app.schemas.device import DeviceType
+
+
+@pytest.fixture(autouse=True)
+def isolate_execution_reconciliation(monkeypatch):
+    """Keep unrelated task recovery and its first import outside timing assertions."""
+    from app.tasks import robot_queue_tasks
+
+    monkeypatch.setattr(robot_queue_tasks, "reconcile_device_executions", AsyncMock())
+    @asynccontextmanager
+    async def identity_lock(user_id):
+        yield
+    monkeypatch.setattr(device_namespace, 'app_identity_lock', identity_lock)
 
 
 @pytest.mark.asyncio
@@ -25,7 +38,7 @@ async def test_device_register_does_not_wait_for_capability_sync(monkeypatch):
         }
 
     async def fake_run_sync_in_executor(func, *args):
-        return True, "MacBook", None
+        return True, "MacBook", None, "device-1"
 
     async def slow_capability_sync(*, user_id, device_id):
         sync_started.set()
@@ -84,7 +97,7 @@ async def test_device_register_debounces_repeated_db_upserts(monkeypatch):
 
     async def fake_run_sync_in_executor(func, *args):
         upsert_calls.append((func, args))
-        return True, "MacBook", None
+        return True, "MacBook", None, "device-1"
 
     save_session = AsyncMock()
     enter_room = AsyncMock()
@@ -148,7 +161,7 @@ async def test_device_register_does_not_mark_online_when_session_disappears(
         }
 
     async def fake_run_sync_in_executor(func, *args):
-        return True, "MacBook", None
+        return True, "MacBook", None, "device-1"
 
     set_device_online = AsyncMock(return_value=True)
 
@@ -185,7 +198,6 @@ async def test_device_register_does_not_mark_online_when_session_disappears(
             "executor_version": "1.8.0",
         },
     )
-
     assert result == {"error": "Client disconnected during device registration"}
     set_device_online.assert_not_awaited()
     namespace.enter_room.assert_not_awaited()
@@ -206,7 +218,7 @@ async def test_local_device_register_does_not_match_cloud_device_by_ip(monkeypat
 
     async def fake_run_sync_in_executor(func, *args):
         upsert_calls.append((func, args))
-        return True, "MacBook", None
+        return True, "MacBook", None, "device-1"
 
     monkeypatch.setattr(namespace, "get_session", fake_get_session)
     monkeypatch.setattr(namespace, "save_session", AsyncMock())
@@ -259,7 +271,7 @@ async def test_device_register_uses_tcp_client_ip_not_reported_payload(monkeypat
 
     async def fake_run_sync_in_executor(func, *args):
         upsert_calls.append((func, args))
-        return True, "MacBook", None
+        return True, "MacBook", None, "device-1"
 
     monkeypatch.setattr(namespace, "get_session", fake_get_session)
     monkeypatch.setattr(namespace, "save_session", AsyncMock())
@@ -316,7 +328,7 @@ async def test_device_register_passes_app_device_type_and_app_device_id(monkeypa
 
     async def fake_run_sync_in_executor(func, *args):
         upsert_calls.append((func, args))
-        return True, "MacBook", None
+        return True, "MacBook", None, "app-record-70"
 
     monkeypatch.setattr(namespace, "get_session", fake_get_session)
     monkeypatch.setattr(namespace, "save_session", save_session)
@@ -355,6 +367,8 @@ async def test_device_register_passes_app_device_type_and_app_device_id(monkeypa
             "app_device_id": "local-app-device",
         },
     )
+    if namespace._background_tasks:
+        await asyncio.gather(*tuple(namespace._background_tasks))
 
     assert result == {"success": True, "device_id": "local-app-device"}
     assert len(upsert_calls) == 1
@@ -369,7 +383,12 @@ async def test_device_register_passes_app_device_type_and_app_device_id(monkeypa
         "sid-app",
         "execution-target:7:local-app-device",
     )
-    reconcile.assert_not_awaited()
+    reconcile.assert_awaited_once_with(
+        user_id=7,
+        device_id="app-record-70",
+    )
+    assert saved_session['device_id'] == 'app-record-70'
+    assert saved_session['reported_device_id'] == 'local-app-device'
 
 
 @pytest.mark.asyncio

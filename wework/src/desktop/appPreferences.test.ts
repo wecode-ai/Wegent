@@ -90,7 +90,6 @@ const mergedDefaultPreferences = {
       permissionMode: 'default',
     },
   ],
-  remoteControlEnabled: false,
   cloudConnection: null,
 }
 
@@ -130,20 +129,6 @@ describe('appPreferences', () => {
       ...mergedDefaultPreferences,
       cloudConnection,
     })
-  })
-
-  test('normalizes the remote control preference and defaults it off', async () => {
-    invokeMock.mockResolvedValue({ remoteControlEnabled: true })
-
-    const { getAppPreferences } = await import('./appPreferences')
-
-    await expect(getAppPreferences()).resolves.toEqual({
-      ...mergedDefaultPreferences,
-      remoteControlEnabled: true,
-    })
-
-    invokeMock.mockResolvedValue({ remoteControlEnabled: 'yes' })
-    await expect(getAppPreferences()).resolves.toEqual(mergedDefaultPreferences)
   })
 
   test('falls back to the default language for invalid stored language values', async () => {

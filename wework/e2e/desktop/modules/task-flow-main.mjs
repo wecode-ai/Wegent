@@ -52,7 +52,7 @@ import {
   verifyCloudProjectFlow,
   verifyConnectedModelsOnLocalExecution,
   verifyDisabledRemoteSessionCapabilities,
-  verifyLocalRemoteControlFlow,
+  verifyWeworkAppDeviceRegistrationFlow,
   verifyModelProtocolMatrix,
   verifyRemoteDockerCommandFlow,
   verifyRetryFailureRestoration,
@@ -1112,7 +1112,6 @@ async function main() {
       WEWORK_EXECUTOR_ISOLATION_OVERRIDE: 'false',
       WEGENT_EXECUTOR_LOG_DIR: resultDir,
       WEGENT_EXECUTOR_LOG_FILE: 'executor.log',
-      DEVICE_ID: `wework-e2e-device-${process.pid}`,
       DEVICE_SESSION_GATEWAY_HOST: '127.0.0.1',
       DEVICE_SESSION_GATEWAY_PORT: '0',
       VITE_WEWORK_E2E: 'true',
@@ -1156,6 +1155,7 @@ async function main() {
         : {}),
     }
     for (const key of [
+      'DEVICE_ID',
       'ELECTRON_RUN_AS_NODE',
       'WEGENT_APP_IPC_DEVICE_ID',
       'WEGENT_APP_IPC_ENDPOINT',
@@ -1374,7 +1374,7 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
 
     if (DESKTOP_SEGMENT === 'remote-device-onboarding') {
       phase = 'remote-device-onboarding'
-      await verifyLocalRemoteControlFlow(control, cloudEnvironment)
+      await verifyWeworkAppDeviceRegistrationFlow(control, cloudEnvironment)
       const generatedDevice = await verifyRemoteDockerCommandFlow(control, cloudEnvironment, {
         interactiveSessions: { codeServer: false, terminal: false },
       })

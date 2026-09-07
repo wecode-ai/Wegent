@@ -2,7 +2,7 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-from contextlib import contextmanager
+from contextlib import contextmanager, asynccontextmanager
 from unittest.mock import AsyncMock
 
 import pytest
@@ -12,6 +12,65 @@ from app.api.ws import device_namespace
 from app.api.ws.device_namespace import DeviceNamespace, DeviceRegistrationFingerprint
 from app.models.kind import Kind
 from app.schemas.device import DeviceType
+
+
+@pytest.mark.asyncio
+async def test_app_runtime_conflict_rejects_before_session_or_online_writes(
+    test_db,
+    test_user,
+    monkeypatch,
+):
+    from app.services.device_service import device_service
+
+    @asynccontextmanager
+    async def identity_lock(user_id):
+        yield
+
+    monkeypatch.setattr(device_namespace, "app_identity_lock", identity_lock)
+
+    device_service.upsert_device_crd(
+        test_db,
+        test_user.id,
+        "app-route",
+        "Wework",
+        device_type="app",
+        runtime_instance_id="runtime-original",
+        app_device_id="electron-original",
+    )
+
+    @contextmanager
+    def db_session():
+        yield test_db
+
+    async def run_inline(func, *args):
+        return func(*args)
+
+    namespace = DeviceNamespace()
+    monkeypatch.setattr(device_namespace, "_db_session", db_session)
+    monkeypatch.setattr(device_namespace, "run_sync_in_executor", run_inline)
+    monkeypatch.setattr(
+        namespace, "get_session", AsyncMock(return_value={"user_id": test_user.id})
+    )
+    save_session, enter_room, set_online = AsyncMock(), AsyncMock(), AsyncMock()
+    monkeypatch.setattr(namespace, "save_session", save_session)
+    monkeypatch.setattr(namespace, "enter_room", enter_room)
+    monkeypatch.setattr(device_service, "set_device_online", set_online)
+
+    result = await namespace.on_device_register(
+        "impostor",
+        {
+            "device_id": "app-route",
+            "name": "Other Wework",
+            "device_type": "app",
+            "runtime_instance_id": "runtime-other",
+            "app_device_id": "electron-other",
+        },
+    )
+
+    assert "Runtime instance ID mismatch" in result["error"]
+    save_session.assert_not_awaited()
+    enter_room.assert_not_awaited()
+    set_online.assert_not_awaited()
 
 
 def test_register_device_reads_display_name_before_session_closes(
@@ -32,13 +91,15 @@ def test_register_device_reads_display_name_before_session_closes(
     device_id = "device-detached-registration"
 
     try:
-        success, persisted_display_name, error = device_namespace._register_device(
-            user_id=user_id,
-            device_id=device_id,
-            name="Windows-Device-detached",
-            client_ip="127.0.0.1",
-            device_type=DeviceType.LOCAL.value,
-            bind_shell="claudecode",
+        success, persisted_display_name, error, route_id = (
+            device_namespace._register_device(
+                user_id=user_id,
+                device_id=device_id,
+                name="Windows-Device-detached",
+                client_ip="127.0.0.1",
+                device_type=DeviceType.LOCAL.value,
+                bind_shell="claudecode",
+            )
         )
     finally:
         cleanup_db = expiring_session_local()

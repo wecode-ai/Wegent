@@ -65,6 +65,17 @@ export function getAccountDefaultDeviceId(
   return target && target !== 'cloud' ? target : null
 }
 
+/** Resolve a historical ID only when it identifies exactly one registration. */
+export function resolveDeviceSelectionId(
+  devices: DeviceInfo[],
+  deviceId: string | null | undefined
+): string | null {
+  if (!deviceId) return null
+  if (devices.some(device => device.device_id === deviceId)) return deviceId
+  const matches = devices.filter(device => device.registered_device_id === deviceId)
+  return matches.length === 1 ? matches[0].device_id : deviceId
+}
+
 export function resolveTaskExecutionDeviceId({
   taskId,
   persistedTaskDeviceId,

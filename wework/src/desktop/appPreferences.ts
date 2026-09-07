@@ -53,7 +53,6 @@ export interface AppPreferences {
   changeRequestStatusEnabled: boolean
   quickPhrases: QuickPhrase[]
   localHarnesses: LocalHarnessPreference[]
-  remoteControlEnabled: boolean
   cloudConnection: Record<string, unknown> | null
 }
 
@@ -141,7 +140,6 @@ export interface AppPreferencesPatch {
   changeRequestStatusEnabled?: boolean
   quickPhrases?: QuickPhrase[]
   localHarnesses?: LocalHarnessPreference[]
-  remoteControlEnabled?: boolean
   cloudConnection?: Record<string, unknown> | null
 }
 
@@ -206,7 +204,6 @@ export const defaultAppPreferences: AppPreferences = {
   changeRequestStatusEnabled: true,
   quickPhrases: defaultQuickPhrases,
   localHarnesses: defaultLocalHarnessPreferences,
-  remoteControlEnabled: false,
   cloudConnection: null,
 }
 
@@ -407,10 +404,6 @@ function mergeAppPreferences(value: unknown): AppPreferences {
           .filter(item => !isExpiredQuickPhraseStash(item))
       : defaultAppPreferences.quickPhrases,
     localHarnesses: normalizeLocalHarnessPreferences(record.localHarnesses),
-    remoteControlEnabled:
-      typeof record.remoteControlEnabled === 'boolean'
-        ? record.remoteControlEnabled
-        : defaultAppPreferences.remoteControlEnabled,
     cloudConnection:
       record.cloudConnection &&
       typeof record.cloudConnection === 'object' &&
