@@ -34,6 +34,7 @@ from app.services.knowledge.code_wiki.runner import (
     is_code_wiki_generation,
     source_of,
     start_run,
+    strategy_team_readiness,
 )
 from app.services.knowledge.code_wiki.version_store import set_page_path
 
@@ -460,6 +461,42 @@ def test_solo_full_run_needs_no_team_roles_or_review_state(
     assert "Strategy: `coordinator_solo`" in tasks.prompt
     assert "Do not call the Claude Code `Task` or `Agent` tool" in tasks.prompt
     assert "review-open" not in tasks.prompt
+
+
+def test_strategy_team_readiness_resolves_a_solo_team(
+    monkeypatch, test_db: Session, test_user: User, tasks: FakeTasks
+) -> None:
+    from app.core.wiki_config import (
+        CodeWikiGenerationPolicy,
+        CodeWikiStrategyBinding,
+        CodeWikiTeamRef,
+        wiki_settings,
+    )
+    from app.services.knowledge.code_wiki.generation_strategy import strategy_for_run
+
+    monkeypatch.setattr(
+        wiki_settings,
+        "CODE_WIKI_GENERATION_POLICY",
+        CodeWikiGenerationPolicy(
+            defaultStrategy="coordinator_solo",
+            legacyFallbackStrategy="legacy",
+            strategies={
+                "coordinator_solo": CodeWikiStrategyBinding(
+                    teamRef=CodeWikiTeamRef(name="code-wiki-team")
+                ),
+                "legacy": CodeWikiStrategyBinding(
+                    teamRef=CodeWikiTeamRef(name="code-wiki-team")
+                ),
+            },
+        ),
+    )
+
+    assert (
+        strategy_team_readiness(
+            test_db, test_user, strategy_for_run("coordinator_solo")
+        )
+        == ""
+    )
 
 
 def test_a_strategy_override_requires_a_forced_full_rebuild(

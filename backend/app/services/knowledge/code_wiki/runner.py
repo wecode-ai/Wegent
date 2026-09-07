@@ -453,6 +453,8 @@ def strategy_team_readiness(
     still resolves independently because deployment resources can change after a form
     opened.
     """
+    from app.services.adapters.team_kinds import team_kinds_service
+
     team = team_kinds_service.get_team_by_name_and_namespace(
         db=db,
         team_name=strategy.team_ref.name,
