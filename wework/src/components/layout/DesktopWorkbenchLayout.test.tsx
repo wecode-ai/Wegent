@@ -96,9 +96,11 @@ const desktopHostMocks = vi.hoisted(() => ({
 }))
 const harnessAppMocks = vi.hoisted(() => ({
   addPlugin: vi.fn(),
+  inspectVerification: vi.fn(),
   list: vi.fn(),
   start: vi.fn(),
   stop: vi.fn(),
+  verify: vi.fn(),
 }))
 const harnessAppTabMocks = vi.hoisted(() => ({
   register: vi.fn(),
@@ -163,9 +165,11 @@ vi.mock('@/api/local/harnessApps', async importOriginal => {
     harnessAppsApi: {
       ...actual.harnessAppsApi,
       addPlugin: harnessAppMocks.addPlugin,
+      inspectVerification: harnessAppMocks.inspectVerification,
       list: harnessAppMocks.list,
       start: harnessAppMocks.start,
       stop: harnessAppMocks.stop,
+      verify: harnessAppMocks.verify,
     },
   }
 })
@@ -745,8 +749,10 @@ describe('DesktopWorkbenchLayout', () => {
     }))
     harnessAppMocks.list.mockResolvedValue([])
     harnessAppMocks.addPlugin.mockReset()
+    harnessAppMocks.inspectVerification.mockReset().mockResolvedValue(null)
     harnessAppMocks.start.mockReset()
     harnessAppMocks.stop.mockReset().mockResolvedValue(undefined)
+    harnessAppMocks.verify.mockReset()
     embeddedBrowserMocks.closeEmbeddedBrowser.mockClear()
     embeddedBrowserMocks.setEmbeddedBrowserActiveTab.mockClear()
     harnessAppTabMocks.takeProxyToken.mockResolvedValue(null)
@@ -11299,6 +11305,44 @@ describe('DesktopWorkbenchLayout', () => {
     expect(screen.getByTestId('smart-app-development-preview-add-plugins')).toBeEnabled()
     expect(screen.getByTestId('smart-app-development-preview-refresh')).toBeEnabled()
     expect(harnessAppMocks.start).toHaveBeenCalledWith(installed.id, null)
+    expect(
+      screen.getByTestId('smart-app-development-preview-verification-unverified')
+    ).toHaveTextContent('尚未验证')
+
+    const verification = createDeferred<{
+      status: 'passed'
+      issues: []
+      stages: []
+      schemaVersion: 1
+      projectRoot: string
+      inputFingerprint: string
+      deliverableFingerprint: string
+      startedAt: string
+      finishedAt: string
+    }>()
+    harnessAppMocks.verify.mockImplementationOnce(() => verification.promise)
+    await userEvent.click(screen.getByTestId('smart-app-development-preview-verify'))
+    expect(harnessAppMocks.verify).toHaveBeenCalledWith(installed.id)
+    expect(
+      screen.getByTestId('smart-app-development-preview-verification-running')
+    ).toBeInTheDocument()
+
+    verification.resolve({
+      status: 'passed',
+      issues: [],
+      stages: [],
+      schemaVersion: 1,
+      projectRoot: installed.packagePath,
+      inputFingerprint: 'input',
+      deliverableFingerprint: 'deliverable',
+      startedAt: '2026-09-04T00:00:00.000Z',
+      finishedAt: '2026-09-04T00:00:01.000Z',
+    })
+    await waitFor(() =>
+      expect(
+        screen.getByTestId('smart-app-development-preview-verification-passed')
+      ).toHaveTextContent('验证通过')
+    )
 
     await userEvent.click(screen.getByTestId('smart-app-development-preview-add-plugins'))
 
@@ -11342,6 +11386,108 @@ describe('DesktopWorkbenchLayout', () => {
       )
     )
     expect(screen.queryByTestId('smart-app-development-preview')).not.toBeInTheDocument()
+  })
+
+  test('shows actionable failed and stale verification states in the Smart app preview', async () => {
+    const { propsForTask, taskA } = createLocalRuntimeTaskPanelFixture()
+    const installed = {
+      id: 'verification-workbench',
+      manifest: {
+        name: 'verification-workbench',
+        displayName: '验证工作台',
+        version: '0.1.0',
+        type: 'deepseek-harness-plugin-bundle' as const,
+        description: 'Verification fixture',
+        entry: { installPackage: 'packages/bundle/web-app', profile: 'verification-workbench' },
+        requirements: { dsh: '0.1.0-rc.8', node: '>=22' },
+      },
+      packagePath: '/tmp/verification-workbench',
+      sha256: 'd'.repeat(64),
+      modelKey: null,
+      resident: false,
+      runtimeVersion: null,
+      state: 'installed' as const,
+      webUrl: null,
+      error: null,
+      source: 'linked' as const,
+    }
+    const running = {
+      ...installed,
+      state: 'running' as const,
+      webUrl: 'http://127.0.0.1:43126/',
+    }
+    harnessAppMocks.list.mockResolvedValue([running])
+    harnessAppMocks.start.mockResolvedValue(running)
+    harnessAppMocks.inspectVerification.mockResolvedValue({
+      schemaVersion: 1,
+      status: 'failed',
+      projectRoot: installed.packagePath,
+      inputFingerprint: 'input',
+      deliverableFingerprint: null,
+      startedAt: '2026-09-04T00:00:00.000Z',
+      finishedAt: '2026-09-04T00:00:01.000Z',
+      stages: [],
+      issues: [
+        {
+          code: 'runtime_selector_missing',
+          stage: 'runtime',
+          file: 'smart-app.contract.json',
+          message: 'The ready selector was not found',
+          expected: '[data-testid="app-ready"]',
+          actual: null,
+          blocking: true,
+          hint: 'Add the stable ready selector to the client root.',
+        },
+        {
+          code: 'artifact_missing',
+          stage: 'artifacts',
+          file: 'dist/client.js',
+          message: 'Missing client artifact',
+          expected: null,
+          actual: null,
+          blocking: true,
+          hint: 'Run the declared build script.',
+        },
+      ],
+    })
+    queueSmartAppDevelopmentPreview({
+      installationId: installed.id,
+      displayName: installed.manifest.displayName,
+    })
+
+    render(<DesktopWorkbenchLayout {...propsForTask(taskA)} />)
+
+    await waitFor(() =>
+      expect(
+        screen.getByTestId('smart-app-development-preview-verification-failed')
+      ).toHaveTextContent('runtime_selector_missing')
+    )
+    expect(
+      screen.getByTestId('smart-app-development-preview-verification-failed')
+    ).toHaveTextContent('smart-app.contract.json')
+    expect(
+      screen.getByTestId('smart-app-development-preview-verification-failed')
+    ).toHaveTextContent('Add the stable ready selector to the client root.')
+    await userEvent.click(screen.getByTestId('smart-app-development-preview-verification-details'))
+    expect(screen.getByText('artifact_missing')).toBeInTheDocument()
+
+    harnessAppMocks.inspectVerification.mockResolvedValue({
+      schemaVersion: 1,
+      status: 'stale',
+      projectRoot: installed.packagePath,
+      inputFingerprint: 'changed-input',
+      deliverableFingerprint: 'previous-delivery',
+      startedAt: '2026-09-04T00:00:00.000Z',
+      finishedAt: '2026-09-04T00:00:01.000Z',
+      stages: [],
+      issues: [],
+    })
+    await userEvent.click(screen.getByTestId('smart-app-development-preview-reload'))
+    await waitFor(() =>
+      expect(
+        screen.getByTestId('smart-app-development-preview-verification-stale')
+      ).toHaveTextContent('验证已过期')
+    )
   })
 
   test('keeps an inactive Smart app preview from reclaiming the browser after switching tasks', async () => {

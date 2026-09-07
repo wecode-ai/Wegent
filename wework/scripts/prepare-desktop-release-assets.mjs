@@ -10,6 +10,7 @@ import { fileURLToPath } from 'node:url'
 import { create } from 'tar'
 
 import { wrapWindowsScriptCommand } from './child-process-command.mjs'
+import { hashComponentPath } from './lib/component-content-hash.mjs'
 import { componentReleaseScope } from './desktop-component-release.mjs'
 import identityModule from '../electron/scripts/build-identity.cjs'
 
@@ -31,6 +32,7 @@ if (!platform || !arch || !version || !outputDirectory) {
 
 const output = resolve(outputDirectory)
 const installerArchitecture = platform === 'linux' && arch === 'x64' ? 'x86_64' : arch
+const useComponentizedHostUpdate = process.env.WEWORK_USE_COMPONENTIZED_HOST_UPDATE === 'true'
 await rm(output, { recursive: true, force: true })
 await mkdir(output, { recursive: true })
 
@@ -49,36 +51,59 @@ if (platform === 'macos') {
     installerRoot,
     new RegExp(`^WeWork_${escape(version)}_macos_${arch}\\.zip$`)
   )
-  const updateZip = await findFile(
-    onlineUpdateRoot,
-    new RegExp(`^WeWorkHostUpdate_${escape(version)}_macos_${arch}\\.zip$`)
-  )
   const bridge = join(output, `WeWork_${version}_macos_${arch}.app.tar.gz`)
   await create({ cwd: appDirectory, file: bridge, gzip: true, portable: true }, [appName])
   await cp(dmg, join(output, basename(dmg)))
-  await copyUpdateArtifacts([installerZip, updateZip])
+  await copyUpdateArtifacts([
+    installerZip,
+    ...(useComponentizedHostUpdate
+      ? [
+          await findFile(
+            onlineUpdateRoot,
+            new RegExp(`^WeWorkHostUpdate_${escape(version)}_macos_${arch}\\.zip$`)
+          ),
+        ]
+      : []),
+  ])
   await signBridge(bridge)
 } else if (platform === 'windows') {
   const installer = await findFile(
     installerRoot,
     new RegExp(`^WeWork_${escape(version)}_windows_${arch}-setup\\.exe$`)
   )
-  const updateInstaller = await findFile(
-    onlineUpdateRoot,
-    new RegExp(`^WeWorkHostUpdate_${escape(version)}_windows_${arch}-setup\\.exe$`)
-  )
-  await copyUpdateArtifacts([installer, updateInstaller])
+  await copyUpdateArtifacts([
+    installer,
+    ...(useComponentizedHostUpdate
+      ? [
+          await findFile(
+            onlineUpdateRoot,
+            new RegExp(`^WeWorkHostUpdate_${escape(version)}_windows_${arch}-setup\\.exe$`)
+          ),
+        ]
+      : []),
+  ])
   await signBridge(join(output, basename(installer)))
 } else if (platform === 'linux') {
   const appImage = await findFile(
     installerRoot,
     new RegExp(`^WeWork_${escape(version)}_linux_${installerArchitecture}\\.AppImage$`)
   )
-  const updateAppImage = await findFile(
-    onlineUpdateRoot,
-    new RegExp(`^WeWorkHostUpdate_${escape(version)}_linux_${installerArchitecture}\\.AppImage$`)
+  await copyUpdateArtifacts(
+    [
+      appImage,
+      ...(useComponentizedHostUpdate
+        ? [
+            await findFile(
+              onlineUpdateRoot,
+              new RegExp(
+                `^WeWorkHostUpdate_${escape(version)}_linux_${installerArchitecture}\\.AppImage$`
+              )
+            ),
+          ]
+        : []),
+    ],
+    false
   )
-  await copyUpdateArtifacts([appImage, updateAppImage], false)
 } else {
   throw new Error(`Unsupported desktop release platform: ${platform}`)
 }
@@ -151,29 +176,6 @@ async function prepareComponentAssets() {
 async function sha256(path) {
   const hash = createHash('sha256')
   await pipeline(createReadStream(path), hash)
-  return hash.digest('hex')
-}
-
-async function hashComponentPath(path) {
-  const metadata = await stat(path)
-  if (metadata.isFile()) return sha256(path)
-  if (!metadata.isDirectory()) throw new Error(`Unsupported component entry: ${path}`)
-  return hashTree(path)
-}
-
-async function hashTree(root, relative = '') {
-  const hash = createHash('sha256')
-  const entries = await readdir(join(root, relative), { withFileTypes: true })
-  for (const entry of entries.sort((left, right) => left.name.localeCompare(right.name))) {
-    const child = join(relative, entry.name)
-    if (entry.isDirectory()) {
-      hash.update(`directory:${child}\0${await hashTree(root, child)}\0`)
-    } else if (entry.isFile()) {
-      hash.update(`file:${child}\0${await sha256(join(root, child))}\0`)
-    } else {
-      throw new Error(`Unsupported component entry: ${child}`)
-    }
-  }
   return hash.digest('hex')
 }
 

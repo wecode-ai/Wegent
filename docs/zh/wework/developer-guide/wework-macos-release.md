@@ -79,6 +79,10 @@ SHA-512 校验。
 SHA-256。Electron 应用本身仍通过 `electron-updater` 升级；其余七个组件使用
 `components-<channel>-<platform>-<arch>.json` 独立升级。
 
+发布组件清单中的内容 SHA-256 必须从 Electron Builder 完成签名后的最终应用资源
+计算。macOS 代码签名可能重写嵌套可执行文件，因此不得直接复用打包前
+`components.json` 中的内容哈希。
+
 组件压缩包以压缩包 SHA-256 命名并作为不可变资产保存。本项目源码构建的 Wework
 核心插件及 UI、应用静态资源、内置插件和 Executor 压缩包存放在对应的版本
 Release；外部 Core DSH、Codex 和 DWS 压缩包集中存放在 `wework-updater`，供
@@ -156,6 +160,12 @@ Electron，并设置 `ELECTRON_RUN_AS_NODE=1`。因此 Core DSH 以及 Codex ski
 `stdout` 断开则表示调用方已经离开，子进程应正常退出。保护只处理 `EPIPE`，
 其他标准流错误仍保持失败并暴露根因。自定义 Node 可执行文件使用原生 Node
 错误处理，不加载这段 Electron 专用逻辑。
+
+Electron 主进程也可能由终端、开发脚本或自动化 runner 通过管道启动，并在这些
+父进程结束后继续驻留。主进程必须在加载其他 Electron 模块前为自身的 `stdout`
+和 `stderr` 安装同样严格的 `EPIPE` 保护，避免后续 Node warning 或诊断日志因
+接收端已经关闭而触发未捕获异常弹窗。这里不能退出主进程，也不能吞掉 `EPIPE`
+以外的错误；桌面窗口和本地运行时的生命周期不属于日志消费者。
 
 ## Bundled sidecars 与资源
 

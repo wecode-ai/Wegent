@@ -90,6 +90,11 @@ application itself continues to update through `electron-updater`; the other
 seven components use independent
 `components-<channel>-<platform>-<arch>.json` manifests.
 
+The content SHA-256 values in a published component manifest must be computed
+from the final application resources after Electron Builder finishes signing.
+macOS code signing can rewrite nested executables, so publication must not
+reuse the pre-package content hashes from `components.json`.
+
 Component archives are named by their archive SHA-256 and stored as immutable
 assets. Repository-built Wework core plugin/UI, application static asset,
 bundled plugin, and Executor archives live in their corresponding version
@@ -202,6 +207,15 @@ protocol `stdout` means the caller has gone away, so the child exits normally.
 The guard handles only `EPIPE`; other stream errors still fail and expose their
 root cause. A configured external Node executable keeps native Node error
 handling and does not load this Electron-specific guard.
+
+The Electron main process may also be launched through pipes by a terminal,
+development script, or automation runner and remain resident after that parent
+exits. Before loading other Electron modules, the main process must install the
+same strict `EPIPE` guard on its own `stdout` and `stderr`, preventing later
+Node warnings or diagnostic logs from becoming uncaught-exception dialogs
+after the consumer closes. This path must neither exit the main process nor
+ignore errors other than `EPIPE`; the desktop window and local runtime do not
+share the log consumer's lifecycle.
 
 ## Bundled sidecars and resources
 

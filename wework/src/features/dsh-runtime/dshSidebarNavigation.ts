@@ -5,23 +5,45 @@ import type { CloudWorkStatus } from '@/types/workbench'
 import { importDshUiModule } from './dshUiModules'
 import { getDshSlotEntries, WEWORK_DSH_SLOTS, type WeworkDshSlotEntry } from './dshUiSlots'
 
-export interface WeworkDshSidebarNavigationItem extends WeworkDshSlotEntry {
+interface WeworkDshSidebarNavigationItemBase extends WeworkDshSlotEntry {
   activeItem?: string
   experimental?: boolean
   icon?: string
   label: string
   labelKey?: string
-  module?: string
-  path: string
   prefetch?: boolean
-  surface?: 'item' | 'module'
   testId?: string
 }
+
+export type WeworkDshSidebarNavigationItem =
+  | (WeworkDshSidebarNavigationItemBase & {
+      module: string
+      path: string
+      surface: 'module'
+      workspaceSidebarTab?: never
+    })
+  | (WeworkDshSidebarNavigationItemBase & {
+      module?: never
+      path: string
+      surface?: 'item'
+      workspaceSidebarTab?: never
+    })
+  | (WeworkDshSidebarNavigationItemBase & {
+      module?: never
+      path?: never
+      surface?: 'item'
+      workspaceSidebarTab: string
+    })
+
+type WeworkDshSidebarNavigationModuleItem = Extract<
+  WeworkDshSidebarNavigationItem,
+  { surface: 'module' }
+>
 
 export interface WeworkDshSidebarNavigationModuleProps {
   cloudWorkStatus?: CloudWorkStatus
   devices: DeviceInfo[]
-  item: WeworkDshSidebarNavigationItem
+  item: WeworkDshSidebarNavigationModuleItem
   onAddRemoteDevice: () => void
   onNavigate: (path: string) => void
   onOpenSettings: (page: string) => void

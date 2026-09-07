@@ -22,9 +22,11 @@ product-oriented showcase plugins:
   low-level UI contribution.
 - Inspect [assets/reference-plugins](assets/reference-plugins) for runnable,
   independently installable examples of Composer augmentation, persistent
-  workflow UI, and typed desktop-host integration. Copy only the closest
-  example into the user's writable project, then delete every contribution the
-  plugin does not need.
+  workflow UI, website navigation, and typed desktop-host integration. For a
+  left-navigation button that opens a website in the Wework built-in browser,
+  start from `sidebar-browser-panel-demo`. Copy only the closest example into
+  the user's writable project, then delete every contribution the plugin does
+  not need.
 - Start with [assets/showcase-plugins](assets/showcase-plugins) when the user
   wants a product-quality example. Workspace Copilot, Test Explorer, and Dev
   Environments represent popular AI-assistant, testing, and
@@ -79,6 +81,10 @@ The boundaries are strict:
 
 - `package.json`, `cordis.patch.yml`, `index.js`, and `client.js` belong to the
   outer Wework package.
+- New projects contain only the outer Wework package by default. Add
+  `wework.codexPlugin` and a nested Codex plugin only when the requested product
+  capability actually includes Codex Skills, MCP servers, agents, or other
+  official Codex plugin resources.
 - A nested Codex plugin uses the official `.codex-plugin/plugin.json` format
   and official Codex folders only. Do not add Wework-only keys or files to its
   manifest.
@@ -123,6 +129,12 @@ Start from the user-visible outcome, then select the narrowest matching slot:
 
 Do not build a parallel navigation, panel, or settings system when a public
 slot already owns that surface.
+
+When a left-navigation item should open a website beside the current workspace,
+register a descriptor-only `wework.workspace.sidebar.tab` with
+`mode: 'iframe'` and `url`, then point the navigation descriptor's
+`workspaceSidebarTab` to that tab id. Do not register `wework.app` or create a
+top-level workspace tab for this interaction.
 
 ## Open a route in its own workspace tab
 
@@ -221,7 +233,7 @@ ctx.slots.inject('wework.workspace.sidebar.tab', function* () {
 })
 ```
 
-Use the exhaustive Demo for API coverage and the three reference plugins for
+Use the exhaustive Demo for API coverage and the reference plugins for
 product-oriented patterns instead of expanding this snippet into guessed APIs.
 
 ## Debug
