@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use super::*;
+use std::collections::HashMap;
 
 impl<T, R> LocalBackendRunner<T, R>
 where
@@ -28,24 +29,7 @@ where
             .lock()
             .expect("session handler lock")
             .drain_terminal_events();
-        let mut session_batches: Vec<Vec<TerminalEvent>> = Vec::new();
-        for event in events {
-            let session_id = terminal_event_session_id(&event);
-            if session_batches
-                .last()
-                .and_then(|batch| batch.last())
-                .is_some_and(|last| terminal_event_session_id(last) == session_id)
-            {
-                session_batches
-                    .last_mut()
-                    .expect("checked terminal session batch")
-                    .push(event);
-            } else {
-                session_batches.push(vec![event]);
-            }
-        }
-
-        stream::iter(session_batches)
+        stream::iter(group_terminal_events(events))
             .map(|events| self.forward_terminal_session_events(handler, events))
             .buffer_unordered(TERMINAL_SESSION_DELIVERY_CONCURRENCY)
             .try_collect::<Vec<_>>()
@@ -151,6 +135,21 @@ where
     }
 }
 
+fn group_terminal_events(events: Vec<TerminalEvent>) -> Vec<Vec<TerminalEvent>> {
+    let mut batch_index: HashMap<String, usize> = HashMap::new();
+    let mut session_batches: Vec<Vec<TerminalEvent>> = Vec::new();
+    for event in events {
+        let session_id = terminal_event_session_id(&event);
+        if let Some(&index) = batch_index.get(session_id) {
+            session_batches[index].push(event);
+        } else {
+            batch_index.insert(session_id.to_owned(), session_batches.len());
+            session_batches.push(vec![event]);
+        }
+    }
+    session_batches
+}
+
 fn terminal_event_session_id(event: &TerminalEvent) -> &str {
     match event {
         TerminalEvent::Output { session_id, .. } | TerminalEvent::Exit { session_id, .. } => {
@@ -163,5 +162,43 @@ async fn wait_for_terminal_event(notifier: Option<&Notify>) {
     match notifier {
         Some(notifier) => notifier.notified().await,
         None => pending::<()>().await,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn groups_interleaved_output_and_exit_in_first_seen_session_order() {
+        let output = |session_id: &str, sequence| TerminalEvent::Output {
+            session_id: session_id.to_owned(),
+            consumer_id: Some("consumer-1".to_owned()),
+            sequence,
+            data: format!("{session_id}-{sequence}"),
+        };
+        let exit = |session_id: &str| TerminalEvent::Exit {
+            session_id: session_id.to_owned(),
+            consumer_id: Some("consumer-1".to_owned()),
+            exit_code: Some(0),
+            error: None,
+        };
+
+        assert!(group_terminal_events(Vec::new()).is_empty());
+        assert_eq!(
+            group_terminal_events(vec![
+                output("z", 1),
+                output("a", 1),
+                output("z", 2),
+                exit("b"),
+                exit("a"),
+                exit("z"),
+            ]),
+            vec![
+                vec![output("z", 1), output("z", 2), exit("z")],
+                vec![output("a", 1), exit("a")],
+                vec![exit("b")],
+            ],
+        );
     }
 }

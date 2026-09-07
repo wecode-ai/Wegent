@@ -34,6 +34,7 @@ import {
   spawn,
   stopProcess,
   stopProcessGroup,
+  waitForLogPattern,
   waitForUrl,
   weworkDir,
   writeFile,
@@ -339,11 +340,19 @@ class RealCloudEnvironment {
     assert.equal(typeof enabled, 'boolean')
     assert.ok(this.backendEnv, 'The cloud backend environment is not initialized')
     await stopProcessGroup(this.backend)
+    const fromOffset = (await readFile(this.backendLogPath, 'utf8')).length
     this.backendEnv = {
       ...this.backendEnv,
       TERMINAL_PROTOCOL_V2_ENABLED: String(enabled),
     }
     await this.launchBackend()
+    await waitForLogPattern(
+      this.backendLogPath,
+      new RegExp(
+        `\\[Device WS\\] Device registered: user=\\d+, device=${CLOUD_DEVICE_ID}(?:\\r?\\n|$)`
+      ),
+      { fromOffset, timeoutMs: WORKBENCH_READY_TIMEOUT_MS }
+    )
     await this.waitForDevice(CLOUD_DEVICE_ID, this.remoteExecutorLogPath)
   }
 

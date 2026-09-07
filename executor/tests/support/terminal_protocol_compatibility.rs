@@ -500,6 +500,120 @@ async fn legacy_backend_rejection_and_transport_failure_retry_output_and_exit() 
 }
 
 #[tokio::test]
+async fn terminal_delivery_is_sequential_per_session_and_concurrent_across_sessions() {
+    let (mut handler, terminal) = fixture(VecDeque::from([b"first".to_vec()]));
+    assert!(
+        handler
+            .handle_legacy_terminal_attach("terminal-compat")
+            .success
+    );
+    assert_eq!(handler.drain_terminal_events().len(), 1);
+    assert!(handler
+        .begin_terminal_output_delivery("terminal-compat", None, 1)
+        .unwrap());
+    {
+        let mut terminal = terminal.lock().unwrap();
+        terminal.output.push_back(b"second".to_vec());
+        terminal.exit_code = Some(0);
+    }
+    assert_eq!(handler.drain_terminal_events().len(), 1);
+    // Reconnect will replay both unacknowledged outputs in one session batch.
+    handler.prepare_terminal_reconnect();
+    let independent = Arc::new(Mutex::new(RecordingTerminal {
+        output: VecDeque::from([b"independent".to_vec()]),
+        exit_code: Some(0),
+        ..RecordingTerminal::default()
+    }));
+    handler.sessions.insert(
+        "terminal-independent".to_owned(),
+        LocalSession::terminal(
+            "terminal-independent",
+            "test-token",
+            1,
+            handler.workspace_root.clone(),
+            Box::new(SharedTerminal(independent)),
+            u64::MAX,
+        ),
+    );
+    assert!(
+        handler
+            .handle_legacy_terminal_attach("terminal-independent")
+            .success
+    );
+    let transport = RecordingTransport::default();
+    let gate = Arc::new(tokio::sync::Notify::new());
+    *transport.terminal_call_gate.lock().unwrap() = Some(Arc::clone(&gate));
+    let mut config = local_backend_config();
+    config.heartbeat_interval = Duration::from_millis(10);
+    let runner = LocalBackendRunner::with_task_runner(
+        config,
+        transport.clone(),
+        RecordingTaskRunner::default(),
+    )
+    .with_session_handler(handler);
+    let task = tokio::spawn(runner.run_forever());
+    let terminal_calls = || {
+        transport
+            .calls()
+            .into_iter()
+            .filter(|call| call.event == "terminal:output" || call.event == "terminal:exit")
+            .map(|call| (call.event, call.payload))
+            .collect::<Vec<_>>()
+    };
+
+    wait_until(|| terminal_calls().len() >= 2).await;
+    let heartbeats = || {
+        transport
+            .emits()
+            .iter()
+            .filter(|call| call.event == "device:heartbeat")
+            .count()
+    };
+    let before = heartbeats();
+    wait_until(|| heartbeats() >= before + 2).await;
+    assert_eq!(*transport.terminal_completion_count.lock().unwrap(), 0);
+    assert_eq!(
+        terminal_calls(),
+        vec![
+            ("terminal:output".to_owned(), json!({"session_id": "terminal-compat", "data": "first"})),
+            ("terminal:output".to_owned(), json!({"session_id": "terminal-independent", "data": "independent"})),
+        ],
+        "independent output must start while the first session waits, but its second output and exits must wait for ACK",
+    );
+
+    *transport.terminal_call_gate.lock().unwrap() = None;
+    gate.notify_waiters();
+    wait_until(|| *transport.terminal_completion_count.lock().unwrap() == 5).await;
+    task.abort();
+    let _ = task.await;
+    for (session_id, output) in [
+        ("terminal-compat", vec!["first", "second"]),
+        ("terminal-independent", vec!["independent"]),
+    ] {
+        let mut expected = output
+            .into_iter()
+            .map(|data| {
+                (
+                    "terminal:output".to_owned(),
+                    json!({"session_id": session_id, "data": data}),
+                )
+            })
+            .collect::<Vec<_>>();
+        expected.push((
+            "terminal:exit".to_owned(),
+            json!({"session_id": session_id, "exit_code": 0}),
+        ));
+        assert_eq!(
+            terminal_calls()
+                .into_iter()
+                .filter(|(_, payload)| payload["session_id"] == session_id)
+                .collect::<Vec<_>>(),
+            expected,
+        );
+    }
+}
+
+#[tokio::test]
 async fn slow_terminal_delivery_keeps_heartbeats_running_until_backend_ack() {
     for version in [None, Some(1), Some(2)] {
         let output = if version == Some(2) {

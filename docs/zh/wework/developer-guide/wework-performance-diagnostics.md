@@ -134,7 +134,7 @@ pnpm --filter wework e2e:desktop -- --cloud-only --segment core-task-flow
 - 只有显式保留 `TERMINAL_LOAD_REDIS_URL` 才连接指定 Redis；应使用专用测试实例。脚本只清理本轮已知的精确 session key，不扫描或清空 Redis；共享实例的 `INFO` 包含其他流量，不能归因于本轮测试。
 - `baseline` 覆盖 3 个 Backend / 1000 会话；`capacity` 和 `over-capacity` 覆盖单 Backend 的 8192 / 9000 会话，用于验证不均匀分布、缓存容量和淘汰。
 - Backend 脚本验证 session store/cache 与跨实例失效；Executor 脚本使用生产 `LocalSessionHandler` 和内存 PTY，验证序号、消费 ACK、consumer 接管、回放及背压。它们不包含完整 Socket.IO、真实网络或 xterm，吞吐不能当作端到端容量。
-- 真实 Electron E2E 覆盖 v1/v2 渲染、缺省/v1/v2 attach、关闭 v2 后协商、超过 512 KiB 的输出、resize、重连、协议固定和关闭；v1 不发送消费 ACK。证据位于 `wework/test-results/desktop-e2e/<run>/terminal-compatibility-*.json`。桌面构建共用资源目录，不能并行执行。
+- 真实 Electron E2E 覆盖 v1/v2 渲染、缺省/v1/v2 attach、关闭 v2 后协商、超过 512 KiB 的输出、resize、重连、协议固定和关闭；v1 不发送消费 ACK。Backend 重启后先等待本次进程的目标设备注册日志，再检查在线状态，避免 Redis 残留记录造成误判。证据位于 `wework/test-results/desktop-e2e/<run>/terminal-compatibility-*.json`。桌面构建共用资源目录，不能并行执行。
 
 ### 上线验收门禁
 
