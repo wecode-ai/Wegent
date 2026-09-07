@@ -15,6 +15,7 @@ use crate::agents::replace_config;
 const EXECUTOR_HOME_ENV: &str = "WEGENT_EXECUTOR_HOME";
 const CODEX_HOME_ENV: &str = "WEGENT_CODEX_HOME";
 const E2E_NATIVE_CODEX_HOME_ENV: &str = "WEWORK_E2E_NATIVE_CODEX_HOME";
+const WEWORK_PERSONAL_MARKETPLACE_ID: &str = "wework-personal";
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -237,8 +238,8 @@ fn set_remote_apps_enabled(content: &str, enabled: bool) -> Result<String, Strin
 fn copy_initialization_files(source: &Path, destination: &Path) -> Result<(), String> {
     fs::create_dir_all(destination)
         .map_err(|error| format!("Failed to create {}: {error}", destination.display()))?;
+    copy_codex_config_for_wework(&source.join("config.toml"), destination)?;
     for entry in [
-        "config.toml",
         "auth.json",
         "AGENTS.md",
         "models_cache.json",
@@ -289,7 +290,11 @@ fn import_external_content_from_paths(
         if !entry_path.exists() {
             continue;
         }
-        copy_entry(&entry_path, &destination.join(destination_entry))?;
+        if source == "codex" && *source_entry == "config.toml" {
+            copy_codex_config_for_wework(&entry_path, destination)?;
+        } else {
+            copy_entry(&entry_path, &destination.join(destination_entry))?;
+        }
         imported_entries.push((*source_entry).to_owned());
     }
     if imported_entries.is_empty() {
@@ -305,6 +310,40 @@ fn import_external_content_from_paths(
         destination_path: destination.display().to_string(),
         imported_entries,
     })
+}
+
+fn copy_codex_config_for_wework(source: &Path, destination: &Path) -> Result<(), String> {
+    if !source.exists() {
+        return Ok(());
+    }
+    let content = fs::read_to_string(source)
+        .map_err(|error| format!("Failed to read {}: {error}", source.display()))?;
+    let sanitized = remove_wework_managed_marketplace(&content).map_err(|error| {
+        format!(
+            "Failed to parse Codex config {} before importing it: {error}",
+            source.display()
+        )
+    })?;
+    fs::create_dir_all(destination)
+        .map_err(|error| format!("Failed to create {}: {error}", destination.display()))?;
+    replace_config(&destination.join("config.toml"), sanitized)
+}
+
+fn remove_wework_managed_marketplace(content: &str) -> Result<String, String> {
+    let mut config = content
+        .parse::<DocumentMut>()
+        .map_err(|error| error.to_string())?;
+    let remove_marketplaces_table = config
+        .get_mut("marketplaces")
+        .and_then(|item| item.as_table_like_mut())
+        .is_some_and(|marketplaces| {
+            marketplaces.remove(WEWORK_PERSONAL_MARKETPLACE_ID);
+            marketplaces.is_empty()
+        });
+    if remove_marketplaces_table {
+        config.remove("marketplaces");
+    }
+    Ok(config.to_string())
 }
 
 fn copy_entry(source: &Path, destination: &Path) -> Result<(), String> {
@@ -408,6 +447,49 @@ mod tests {
         assert_eq!(
             fs::read_to_string(wework_home.join("skills/example/SKILL.md")).unwrap(),
             "example"
+        );
+    }
+
+    #[test]
+    fn migration_drops_the_wework_managed_marketplace_but_keeps_plugin_settings() {
+        let root = tempfile::tempdir().unwrap();
+        let native_home = root.path().join("native");
+        let wework_home = root.path().join("wework");
+        fs::create_dir_all(&native_home).unwrap();
+        fs::write(
+            native_home.join("config.toml"),
+            concat!(
+                "model = \"native\"\n\n",
+                "[marketplaces.wework-personal]\n",
+                "source = \"/old/app/capabilities/wework-personal\"\n\n",
+                "[marketplaces.team]\n",
+                "source = \"https://example.com/team.git\"\n\n",
+                "[plugins.\"my-plugin@wework-personal\"]\n",
+                "enabled = true\n",
+            ),
+        )
+        .unwrap();
+
+        initialize_codex_home_from_paths(
+            &wework_home,
+            &native_home,
+            CodexHomeInitializeRequest {
+                migrate_native_home: true,
+                remote_apps_enabled: true,
+            },
+        )
+        .unwrap();
+
+        let config = fs::read_to_string(wework_home.join("config.toml")).unwrap();
+        let parsed = config.parse::<DocumentMut>().unwrap();
+        assert!(parsed["marketplaces"].get("wework-personal").is_none());
+        assert_eq!(
+            parsed["marketplaces"]["team"]["source"].as_str(),
+            Some("https://example.com/team.git")
+        );
+        assert_eq!(
+            parsed["plugins"]["my-plugin@wework-personal"]["enabled"].as_bool(),
+            Some(true)
         );
     }
 
@@ -537,6 +619,35 @@ mod tests {
             "example"
         );
         assert_eq!(result.imported_entries, vec!["config.toml", "skills"]);
+    }
+
+    #[test]
+    fn importing_codex_content_drops_a_stale_wework_marketplace_registration() {
+        let root = tempfile::tempdir().unwrap();
+        let home = root.path().join("home");
+        let destination = root.path().join("destination");
+        fs::create_dir_all(home.join(".codex")).unwrap();
+        fs::create_dir_all(&destination).unwrap();
+        fs::write(
+            home.join(".codex/config.toml"),
+            concat!(
+                "[marketplaces.wework-personal]\n",
+                "source = \"/another-build/wework-personal\"\n\n",
+                "[plugins.\"kept@wework-personal\"]\n",
+                "enabled = false\n",
+            ),
+        )
+        .unwrap();
+
+        import_external_content_from_paths("codex", &home, &destination).unwrap();
+
+        let config = fs::read_to_string(destination.join("config.toml")).unwrap();
+        let parsed = config.parse::<DocumentMut>().unwrap();
+        assert!(parsed.get("marketplaces").is_none());
+        assert_eq!(
+            parsed["plugins"]["kept@wework-personal"]["enabled"].as_bool(),
+            Some(false)
+        );
     }
 
     #[test]

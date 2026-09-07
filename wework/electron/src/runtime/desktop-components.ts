@@ -8,6 +8,7 @@ export interface DesktopComponentUpdateController {
   confirmStartup(): Promise<void>
   rollbackStartup(): Promise<boolean>
   stageAvailableUpdate(): Promise<boolean>
+  stageUpdateForApp(appVersion: string, channel: string): Promise<boolean>
 }
 
 interface PrepareDesktopComponentsOptions {

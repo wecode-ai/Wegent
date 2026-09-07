@@ -39,16 +39,29 @@ should_run_full_tests() {
     [ "${AI_PUSH_FULL_TESTS:-0}" = "1" ]
 }
 
-collect_wework_test_scope() {
+collect_wework_check_scope() {
     WEWORK_RENDERER_CHANGED=0
     WEWORK_RENDERER_FULL_TESTS=0
     WEWORK_ELECTRON_CHANGED=0
     WEWORK_DSH_CHANGED=0
     WEWORK_SCRIPTS_CHANGED=0
+    WEWORK_LINT_FULL=0
+    WEWORK_LINT_FILES=()
     WEWORK_RELATED_FILES=()
 
     while IFS= read -r changed_file; do
         [ -z "$changed_file" ] && continue
+
+        case "$changed_file" in
+            wework/package.json|wework/eslint.config.*)
+                WEWORK_LINT_FULL=1
+                ;;
+            wework/*.[cm]ts|wework/*.[cm]tsx|wework/*.ts|wework/*.tsx)
+                if [ -f "$changed_file" ]; then
+                    WEWORK_LINT_FILES+=("${changed_file#wework/}")
+                fi
+                ;;
+        esac
 
         case "$changed_file" in
             wework/electron/*)
@@ -78,6 +91,35 @@ collect_wework_test_scope() {
                 ;;
         esac
     done < <(printf '%s\n' "$CHANGED_FILES")
+}
+
+run_wework_lint() {
+    : > "$TEMP_DIR/wework_eslint.log"
+
+    if [ "$WEWORK_LINT_FULL" -eq 1 ]; then
+        pnpm --filter wework lint > "$TEMP_DIR/wework_eslint.log" 2>&1
+        return $?
+    fi
+
+    if [ "${#WEWORK_LINT_FILES[@]}" -gt 0 ]; then
+        if ! pnpm --filter wework exec eslint \
+            "${WEWORK_LINT_FILES[@]}" >> "$TEMP_DIR/wework_eslint.log" 2>&1; then
+            return 1
+        fi
+    fi
+
+    if [ "$WEWORK_RENDERER_CHANGED" -eq 1 ]; then
+        if ! pnpm --filter wework run lint:typography \
+            >> "$TEMP_DIR/wework_eslint.log" 2>&1; then
+            return 1
+        fi
+        if ! pnpm --filter wework run lint:task-lifecycle \
+            >> "$TEMP_DIR/wework_eslint.log" 2>&1; then
+            return 1
+        fi
+    fi
+
+    return 0
 }
 
 collect_node_test_files() {
@@ -547,10 +589,10 @@ if [ "$WEWORK_COUNT" -gt 0 ] 2>/dev/null; then
         echo -e "   ${YELLOW}   Run 'pnpm install' from the repository root to install dependencies${NC}"
         WARNINGS+=("Wework: node_modules not found, checks skipped")
     else
-        collect_wework_test_scope
+        collect_wework_check_scope
         echo -e "   Running static checks and unit tests in parallel..."
 
-        pnpm --filter wework lint > "$TEMP_DIR/wework_eslint.log" 2>&1 &
+        run_wework_lint &
         ESLINT_PID=$!
 
         TSC_PID=""
@@ -574,7 +616,7 @@ if [ "$WEWORK_COUNT" -gt 0 ] 2>/dev/null; then
             fi
         fi
 
-        WEWORK_TEST_WORKERS="${WEWORK_PRE_PUSH_TEST_WORKERS:-4}"
+        WEWORK_TEST_WORKERS="${WEWORK_PRE_PUSH_TEST_WORKERS:-2}"
         run_wework_unit_tests &
         WEWORK_TEST_PID=$!
 

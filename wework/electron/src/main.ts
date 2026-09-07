@@ -1,3 +1,5 @@
+import './host/process-output-bootstrap.js'
+
 import {
   app,
   BrowserWindow,
@@ -54,7 +56,6 @@ import { desktopWindowFrameOptions } from './host/window-layout.js'
 import { createSingleFlight, presentWindow } from './host/window-presentation.js'
 import { DesktopRuntime } from './runtime/desktop-runtime.js'
 import { FeedbackBundleManager } from './host/feedback-bundle-manager.js'
-import { WorkbenchPluginManager } from './host/workbench-plugin-manager.js'
 import {
   resolveStartupSplashTheme,
   StartupSplash,
@@ -100,7 +101,11 @@ import {
   pluginDevelopmentElectronArguments,
 } from './runtime/plugin-development-manager.js'
 import { PluginDevelopmentChildRuntime } from './runtime/plugin-development-child-runtime.js'
-import { canReplaceWeworkCli, installWeworkCli } from './runtime/wework-cli-installer.js'
+import {
+  canReplaceWeworkCli,
+  installWeworkCli,
+  shouldInstallUserWeworkCli,
+} from './runtime/wework-cli-installer.js'
 import {
   parseLocalWorkspaceOpenRequest,
   type LocalWorkspaceOpenRequest,
@@ -179,7 +184,6 @@ let embeddedBrowserBridge: EmbeddedBrowserBridge | null = null
 let desktopControlBridge: WeworkDesktopControlBridge | null = null
 let browserAnnotations: BrowserAnnotationController | null = null
 let computerUse: ComputerUseService | null = null
-let workbenchPlugins: WorkbenchPluginManager | null = null
 let systemDragWindow: BrowserWindow | null = null
 let pendingSystemDragWindow: BrowserWindow | null = null
 let systemDragWindowCreationPromise: Promise<BrowserWindow> | null = null
@@ -256,6 +260,9 @@ const appUpdates = new AppUpdateService({
   updater: autoUpdater,
   currentVersion: () => app.getVersion(),
   isPackaged: () => packagedApplication,
+  prepareUpdate: async (version, channel) => {
+    await componentUpdates?.stageUpdateForApp(version, channel)
+  },
   prepareInstall: async () => {
     await prepareApplicationShutdown()
     await appUpdateLogger
@@ -1180,8 +1187,6 @@ async function shutdown(): Promise<void> {
   popoutShortcut?.dispose()
   popoutShortcut = null
   embeddedBrowser?.stop()
-  const plugins = workbenchPlugins
-  workbenchPlugins = null
   browserAnnotations = null
   const browserBridge = embeddedBrowserBridge
   embeddedBrowserBridge = null
@@ -1195,7 +1200,6 @@ async function shutdown(): Promise<void> {
     browserBridge?.stop(),
     controlBridge?.stop(),
     computerUseService?.stop(),
-    plugins?.shutdown(),
     development?.stop(),
     desktopRuntime?.stop(),
   ])
@@ -1250,7 +1254,6 @@ async function configureDesktopRuntime(): Promise<void> {
   }
   if (!preferences) throw new Error('Desktop preferences are unavailable')
   if (!rendererStorage) throw new Error('Renderer storage is unavailable')
-  workbenchPlugins = new WorkbenchPluginManager()
   const feedback = new FeedbackBundleManager({
     appVersion: () => app.getVersion(),
     cacheDirectory: join(app.getPath('userData'), 'cache'),
@@ -1285,6 +1288,7 @@ async function configureDesktopRuntime(): Promise<void> {
     projectRoot: process.env.WEWORK_PLUGIN_DEVELOPMENT_ROOT?.trim() || null,
     registryDirectory: desktopControlRegistryDirectory(),
     window: () => mainWindow,
+    smartApps: () => smartApps,
   })
   await desktopControlBridge.start()
   computerUse = new ComputerUseService(
@@ -1364,7 +1368,6 @@ async function configureDesktopRuntime(): Promise<void> {
               source: 'notification',
               taskId: taskAddressId,
             }),
-          plugins: workbenchPlugins,
           secureStorage,
           takePendingWorkspaceOpenRequests,
           updatePreferences: updateDesktopPreferences,
@@ -1717,7 +1720,13 @@ async function desktopEnvironment(): Promise<NodeJS.ProcessEnv> {
       nodeCommand: [nodeRuntime.status.path],
     }
   )
-  if (packagedApplication && !pluginDevelopmentInstance && process.platform === 'darwin') {
+  if (
+    shouldInstallUserWeworkCli(process.platform, {
+      environment: process.env,
+      packagedApplication,
+      pluginDevelopmentInstance,
+    })
+  ) {
     const userCliBin = join(app.getPath('home'), '.local', 'bin')
     const userCliPath = join(userCliBin, 'wework')
     if (await canReplaceWeworkCli(userCliPath)) {

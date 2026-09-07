@@ -899,6 +899,7 @@ async function main() {
   const codexHome = join(executorHome, 'codex')
   const codexSqliteHome = join(tmpdir(), 'wework-desktop-e2e', String(process.pid), 'codex-sqlite')
   const nativeCodexHome = join(resultDir, 'native-codex')
+  const staleBundledMarketplacePath = join(resultDir, 'stale-wework-personal')
   const pluginMarketplacePath = join(resultDir, 'plugin-marketplace')
   const marketplacePluginPath = join(resultDir, 'marketplace-plugin')
   const officialPluginRepositoryPath = join(resultDir, 'openai-plugins')
@@ -945,6 +946,11 @@ async function main() {
       await createCoreDshPluginFixture(resultDir)
     }
     await mkdir(nativeCodexHome, { recursive: true })
+    await mkdir(join(staleBundledMarketplacePath, '.agents', 'plugins'), { recursive: true })
+    await writeFile(
+      join(staleBundledMarketplacePath, '.agents', 'plugins', 'marketplace.json'),
+      `${JSON.stringify({ name: 'wework-personal', plugins: [] }, null, 2)}\n`
+    )
     await writeFile(
       join(nativeCodexHome, 'config.toml'),
       '# desktop-e2e-native-home-marker\nmodel = "native-model-that-must-not-migrate"\n'
@@ -1062,7 +1068,10 @@ async function main() {
           DESKTOP_SEGMENT === 'permission-modes'
             ? mcpElicitationConfigToml(join(resultDir, 'mcp-elicitation-result.jsonl'))
             : ''
-        }`
+        }`,
+        'openai-responses',
+        desktopScenario?.modelProviderConfigToml,
+        desktopScenario?.modelProviderAuthToml
       )
       await writeFile(
         join(codexHome, 'auth.json'),
@@ -1278,7 +1287,11 @@ plugins = true
 [marketplaces.${STARTUP_NETWORK_PROBE_MARKETPLACE_NAME}]
 source_type = "git"
 source = "${STARTUP_NETWORK_PROBE_MARKETPLACE_URL}"
-last_updated = "2026-07-30T00:00:00Z"`
+last_updated = "2026-07-30T00:00:00Z"
+
+[marketplaces.wework-personal]
+source_type = "local"
+source = ${JSON.stringify(staleBundledMarketplacePath)}`
         )
       await verifyStartupIgnoresBlockedCodexNetwork({
         blockingNetworkProxy,
@@ -1286,7 +1299,10 @@ last_updated = "2026-07-30T00:00:00Z"`
         control,
         restartDesktopApp,
       })
-      await waitForBundledMarketplaceRegistration(codexHome)
+      await waitForBundledMarketplaceRegistration(
+        codexHome,
+        join(executorHome, 'capabilities', 'bundled-marketplaces', 'wework-personal')
+      )
     }
     if (SYSTEM_DRAG_PANEL_ONLY) {
       phase = 'system-drag-panel-layout'
@@ -1766,7 +1782,7 @@ last_updated = "2026-07-30T00:00:00Z"`
       }
       if (shouldRunPluginSegment('sites-plugin-auto-install')) {
         phase = 'sites-plugin-auto-install'
-        await verifySitesPluginAutoInstall(control)
+        await verifySitesPluginAutoInstall(control, executorHome)
       }
       if (officialPluginFixture) {
         phase = 'plugin-uninstall'

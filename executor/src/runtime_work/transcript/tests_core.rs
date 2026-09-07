@@ -415,20 +415,26 @@ fn transcript_marks_image_view_without_status_as_done() {
 
 #[test]
 fn image_generation_blocks_preserve_renderable_image_data() {
+    let workspace = tempfile::tempdir().expect("workspace");
+    let source_directory = tempfile::tempdir().expect("source directory");
+    let source = source_directory.path().join("ig-1.png");
+    image::RgbaImage::from_pixel(4, 2, image::Rgba([0, 0, 0, 255]))
+        .save(&source)
+        .expect("generated image");
     let item = json!({
         "id": "ig-1",
         "type": "imageGeneration",
         "status": "completed",
-        "result": "aW1hZ2U=",
+        "result": "a".repeat(1_800_000),
         "revisedPrompt": "A minimal blue circle",
-        "savedPath": "/tmp/ig-1.png"
+        "savedPath": source
     });
 
     let block = workbench_block_from_codex_item(
         &item,
         "turn-1",
         "device-1",
-        "/tmp",
+        workspace.path().to_str().expect("workspace path"),
         1,
         TranscriptBuildOptions::truncated(),
     )
@@ -436,12 +442,51 @@ fn image_generation_blocks_preserve_renderable_image_data() {
 
     assert_eq!(block["tool_name"], "image_generation");
     assert_eq!(block["render_payload"]["kind"], "image_generation");
-    assert_eq!(block["render_payload"]["imageBase64"], "aW1hZ2U=");
+    assert_eq!(block["render_payload"]["source"]["type"], "workspace_file");
+    assert_eq!(block["render_payload"]["source"]["deviceId"], "device-1");
+    assert_eq!(block["render_payload"]["width"], 4);
+    assert_eq!(block["render_payload"]["height"], 2);
+    assert!(block["render_payload"].get("imageBase64").is_none());
+    assert!(block.get("tool_output").is_none());
+    assert!(
+        serde_json::to_vec(&block).unwrap().len() < 1_000_000,
+        "projected image block must fit within the Socket.IO payload limit"
+    );
     assert_eq!(
         block["render_payload"]["revisedPrompt"],
         "A minimal blue circle"
     );
-    assert_eq!(block["render_payload"]["savedPath"], "/tmp/ig-1.png");
+    let relative_path = block["render_payload"]["source"]["path"]
+        .as_str()
+        .expect("relative image path");
+    assert!(workspace.path().join(relative_path).exists());
+}
+
+#[test]
+fn image_generation_updates_do_not_inline_base64_without_an_artifact() {
+    let params = json!({
+        "item": {
+            "id": "ig-live-1",
+            "type": "imageGeneration",
+            "status": "completed",
+            "result": "aW1hZ2U="
+        }
+    });
+
+    let block = workbench_block_from_notification(
+        &params,
+        "turn-1",
+        "device-1",
+        "/missing-workspace",
+        None,
+    )
+    .expect("live image generation block");
+    let (_, updates) =
+        tool_update_from_notification(&params).expect("live image generation update");
+
+    assert!(block["render_payload"].get("imageBase64").is_none());
+    assert!(updates.get("render_payload").is_none());
+    assert!(updates.get("tool_output").is_none());
 }
 
 #[test]

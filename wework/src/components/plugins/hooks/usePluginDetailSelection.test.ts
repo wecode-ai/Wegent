@@ -63,6 +63,37 @@ describe('findMarketplaceItemForPluginReference', () => {
       })
     ).toBeNull()
   })
+
+  test('selects the personal listing when cloud rows share a name and omit marketplaceId', () => {
+    const enterprise = {
+      ...documentsItem(),
+      id: 22,
+      name: 'ip-location',
+      visibility: 'workspace' as const,
+      accessRole: 'catalog' as const,
+      sourceProvider: 'wegent' as const,
+    }
+    const personal = {
+      ...enterprise,
+      id: 21,
+      visibility: 'personal' as const,
+      accessRole: 'owner' as const,
+      sourceProvider: 'user' as const,
+    }
+
+    expect(
+      findMarketplaceItemForPluginReference([enterprise, personal], {
+        pluginName: 'ip-location',
+        marketplaceName: 'wework-personal',
+      })?.id
+    ).toBe(21)
+    expect(
+      findMarketplaceItemForPluginReference([personal, enterprise], {
+        pluginName: 'ip-location',
+        marketplaceName: 'wegent',
+      })?.id
+    ).toBe(22)
+  })
 })
 
 describe('usePluginDetailSelection', () => {

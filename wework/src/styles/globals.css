@@ -1416,8 +1416,8 @@ button:disabled {
 
 button.plugin-operation-notice-dismiss {
   display: grid;
-  width: 28px;
-  height: 28px;
+  width: 36px;
+  height: 36px;
   flex-shrink: 0;
   place-items: center;
   border: 0;

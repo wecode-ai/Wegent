@@ -214,4 +214,28 @@ describe('ActionMenu', () => {
     expect(zoomIn).toHaveBeenCalledOnce()
     expect(screen.getByTestId('more-actions-menu')).toBeInTheDocument()
   })
+
+  test('exposes checked items with checkbox menu semantics', () => {
+    render(
+      <ActionMenu
+        ariaLabel="More actions"
+        testId="more-actions"
+        items={[
+          {
+            label: 'Show offline devices',
+            testId: 'show-offline-devices',
+            checked: true,
+            onSelect: vi.fn(),
+          },
+        ]}
+      />
+    )
+
+    fireEvent.click(screen.getByTestId('more-actions'))
+
+    const item = screen.getByTestId('show-offline-devices')
+    expect(item).toHaveAttribute('role', 'menuitemcheckbox')
+    expect(item).toHaveAttribute('aria-checked', 'true')
+    expect(item.querySelector('svg')).toBeInTheDocument()
+  })
 })

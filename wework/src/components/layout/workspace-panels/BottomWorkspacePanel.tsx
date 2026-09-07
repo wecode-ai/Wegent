@@ -11,10 +11,19 @@ import { useResizableBottomPanel } from './useResizableWorkspacePanel'
 import { WorkspaceAddMenu, type WorkspaceAddMenuItem } from './WorkspaceAddMenu'
 import { WorkspacePanelCards } from './WorkspacePanelCards'
 import type { WorkspacePanelMenuActions } from './workspace-panel-tools'
+import { DshContributionSlotSurface } from '@/features/dsh-runtime/DshContributionSlotSurface'
+import { WEWORK_DSH_SLOTS, type WeworkDshSlotEntry } from '@/features/dsh-runtime/dshUiSlots'
+import { useDshSlotEntries } from '@/features/dsh-runtime/useDshSlotEntries'
+import { DshIcon } from '@/features/dsh-runtime/DshIcon'
 
 interface BottomWorkspacePanelTab {
   id: string
   title: string
+}
+
+interface BottomWorkspaceExtensionTab extends WeworkDshSlotEntry {
+  icon?: string
+  label: string
 }
 
 interface BottomWorkspacePanelProps {
@@ -65,8 +74,16 @@ export const BottomWorkspacePanel = memo(function BottomWorkspacePanel({
   const [menuActionsByTab, setMenuActionsByTab] = useState<
     Record<string, WorkspacePanelMenuActions>
   >({})
-  const activeTab = tabs.find(tab => tab.id === activeTabId) ?? tabs[0] ?? null
-  const activeMenuActions = activeTab ? menuActionsByTab[activeTab.id] : undefined
+  const extensionTabs = useDshSlotEntries<BottomWorkspaceExtensionTab>(
+    WEWORK_DSH_SLOTS.workspaceBottomPanelTab
+  )
+  const resolvedActiveTabId =
+    tabs.some(tab => tab.id === activeTabId) || extensionTabs.some(tab => tab.id === activeTabId)
+      ? activeTabId
+      : (tabs[0]?.id ?? extensionTabs[0]?.id ?? '')
+  const activeTerminalTab = tabs.find(tab => tab.id === resolvedActiveTabId) ?? null
+  const activeExtensionTab = extensionTabs.find(tab => tab.id === resolvedActiveTabId) ?? null
+  const activeMenuActions = activeTerminalTab ? menuActionsByTab[activeTerminalTab.id] : undefined
   const renderContent = open || preserveContent
   const panelActive = active && open
   const contentTestIdsEnabled = testIdsEnabled && open
@@ -216,10 +233,21 @@ export const BottomWorkspacePanel = memo(function BottomWorkspacePanel({
                 <BottomWorkspaceTitleTab
                   key={tab.id}
                   testIdsEnabled={contentTestIdsEnabled}
-                  active={activeTab?.id === tab.id}
+                  active={activeTerminalTab?.id === tab.id}
                   label={tab.title}
                   onSelect={() => setActiveTabId(tab.id)}
                   onClose={() => closeTab(tab.id)}
+                />
+              ))}
+              {extensionTabs.map(tab => (
+                <BottomWorkspaceExtensionTitleTab
+                  key={tab.id}
+                  active={activeExtensionTab?.id === tab.id}
+                  icon={tab.icon}
+                  id={tab.id}
+                  label={tab.label}
+                  testIdsEnabled={contentTestIdsEnabled}
+                  onSelect={() => setActiveTabId(tab.id)}
                 />
               ))}
             </div>
@@ -236,7 +264,7 @@ export const BottomWorkspacePanel = memo(function BottomWorkspacePanel({
               <BottomWorkspaceTabContent
                 key={tab.id}
                 tab={tab}
-                active={activeTab?.id === tab.id}
+                active={activeTerminalTab?.id === tab.id}
                 showWorkbenchBackground={showWorkbenchBackground}
                 currentProject={currentProject}
                 devices={devices}
@@ -251,12 +279,83 @@ export const BottomWorkspacePanel = memo(function BottomWorkspacePanel({
                 onMenuActionsChange={handleMenuActionsChange}
               />
             ))}
+            {extensionTabs.map(tab => {
+              const extensionActive = activeExtensionTab?.id === tab.id
+              return (
+                <div
+                  key={tab.id}
+                  hidden={!extensionActive}
+                  className="absolute inset-0 min-h-0 w-full"
+                  data-testid={
+                    contentTestIdsEnabled
+                      ? `bottom-workspace-extension-content-${tab.id}`
+                      : undefined
+                  }
+                >
+                  <DshContributionSlotSurface
+                    attachedClassName="h-full"
+                    entryId={tab.id}
+                    props={{
+                      active: panelActive && extensionActive,
+                      currentProject,
+                      devices,
+                      visible: extensionActive,
+                      workspaceTarget,
+                    }}
+                    slot={WEWORK_DSH_SLOTS.workspaceBottomPanelTab}
+                  />
+                </div>
+              )
+            })}
           </div>
         </>
       )}
     </section>
   )
 })
+
+function BottomWorkspaceExtensionTitleTab({
+  testIdsEnabled,
+  active,
+  icon,
+  id,
+  label,
+  onSelect,
+}: {
+  testIdsEnabled: boolean
+  active: boolean
+  icon?: string
+  id: string
+  label: string
+  onSelect: () => void
+}) {
+  const handleKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
+    if (event.key !== 'Enter' && event.key !== ' ') return
+    event.preventDefault()
+    onSelect()
+  }
+
+  return (
+    <div
+      data-testid={testIdsEnabled ? `bottom-workspace-extension-tab-${id}` : undefined}
+      role="tab"
+      aria-selected={active}
+      tabIndex={0}
+      title={label}
+      onClick={onSelect}
+      onKeyDown={handleKeyDown}
+      className={cn(
+        'flex h-8 min-w-0 max-w-[200px] cursor-pointer items-center gap-1.5 overflow-hidden rounded-xl px-2 py-1 text-left text-xs font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40',
+        active
+          ? 'bg-muted text-text-primary'
+          : 'bg-background text-text-secondary hover:bg-muted hover:text-text-primary'
+      )}
+    >
+      <DshIcon name={icon} className="h-3.5 w-3.5 shrink-0 text-text-secondary" />
+      <span className="min-w-0 flex-1 truncate">{label}</span>
+    </div>
+  )
+}
 
 function BottomWorkspaceTabContent({
   tab,

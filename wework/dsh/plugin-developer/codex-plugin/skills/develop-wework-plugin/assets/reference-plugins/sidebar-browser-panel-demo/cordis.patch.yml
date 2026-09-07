@@ -1,0 +1,3 @@
+- insert:
+    - id: sidebar-browser-panel-demo
+      name: '@wegent/dsh-sidebar-browser-panel-demo'

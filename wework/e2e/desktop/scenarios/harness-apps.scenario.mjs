@@ -715,6 +715,30 @@ export async function createDesktopScenario({ captureScreenshot, resultDir, uiTi
           }
         )
       }
+      await control.command(
+        'waitFor',
+        '[data-testid="smart-app-development-preview-verification-unverified"]',
+        {
+          text: '尚未验证',
+          timeoutMs: uiTimeoutMs,
+        }
+      )
+      await control.command(
+        'clickWhenEnabled',
+        '[data-testid="smart-app-development-preview-verify"]',
+        {
+          timeoutMs: uiTimeoutMs,
+        }
+      )
+      await control.command(
+        'waitFor',
+        '[data-testid="smart-app-development-preview-verification-passed"]',
+        {
+          text: '验证通过',
+          timeoutMs: 120_000,
+        }
+      )
+      await captureScreenshot(control, 'harness-apps-03b2-verification-passed.png', 'body')
       await control.command('click', `[data-testid="workspace-tab-close-${secondTaskTabId}"]`)
       await captureScreenshot(control, 'harness-apps-03b2-dsh-reloaded.png', 'body')
       await control.command(
@@ -754,6 +778,14 @@ export async function createDesktopScenario({ captureScreenshot, resultDir, uiTi
         stableMs: 500,
         timeoutMs: 120_000,
       })
+      await control.command(
+        'waitFor',
+        '[data-testid="smart-app-development-preview-verification-stale"]',
+        {
+          text: '验证已过期',
+          timeoutMs: uiTimeoutMs,
+        }
+      )
       assert.deepEqual(linkedManifest.plugins, [
         {
           spec: 'file:plugins/wework-e2e-local-dsh-plugin',
@@ -768,6 +800,22 @@ export async function createDesktopScenario({ captureScreenshot, resultDir, uiTi
         )
       )
       await captureScreenshot(control, 'harness-apps-03b4-plugin-reloaded.png', 'body')
+      await control.command(
+        'clickWhenEnabled',
+        '[data-testid="smart-app-development-preview-verify"]',
+        {
+          timeoutMs: uiTimeoutMs,
+        }
+      )
+      await control.command(
+        'waitFor',
+        '[data-testid="smart-app-development-preview-verification-passed"]',
+        {
+          text: '验证通过',
+          timeoutMs: 120_000,
+        }
+      )
+      await captureScreenshot(control, 'harness-apps-03b4-verification-refreshed.png', 'body')
       const developmentWorkspaceTabId = await control.command(
         'getAttribute',
         '[data-workspace-tab-content][aria-hidden="false"]',
@@ -827,7 +875,7 @@ export async function createDesktopScenario({ captureScreenshot, resultDir, uiTi
       )
       await control.command('waitFor', '[data-testid="smart-app-export-success"]', {
         text: '安装包已导出到下载目录',
-        timeoutMs: uiTimeoutMs,
+        timeoutMs: 120_000,
       })
       await captureScreenshot(control, 'harness-apps-03f-linked-exported.png', 'body')
       await control.command('click', `[data-testid="smart-app-actions-${CREATED_INSTALLATION_ID}"]`)

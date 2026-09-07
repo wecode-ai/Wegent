@@ -512,6 +512,48 @@ describe('ProjectAutomationView', () => {
     expect(screen.getByTestId('automation-workflow-canvas')).toBeInTheDocument()
   })
 
+  test('creates a new board automation enabled by default', async () => {
+    const { projectAutomationApi } = renderView()
+    projectAutomationApi.create = vi.fn().mockImplementation((_projectId, input) =>
+      Promise.resolve({
+        ...rule,
+        id: 'rule-created',
+        name: input.name,
+        prompt: input.prompt,
+        enabled: input.enabled,
+        eventConfig: input.eventConfig,
+      })
+    )
+    await screen.findByTestId('automation-card-rule-1')
+
+    fireEvent.click(screen.getByTestId('automation-create-blank'))
+    fireEvent.click(screen.getByTestId('automation-save'))
+
+    await waitFor(() => expect(projectAutomationApi.create).toHaveBeenCalledOnce())
+    expect(vi.mocked(projectAutomationApi.create).mock.calls[0][1].enabled).toBe(true)
+  })
+
+  test('clears a pending automation notification when the view unmounts', async () => {
+    vi.useFakeTimers()
+    try {
+      const view = render(<AutomationRulesView rules={[]} runs={[]} />)
+      fireEvent.click(screen.getByTestId('automation-create-blank'))
+
+      await act(async () => {
+        fireEvent.click(screen.getByTestId('automation-save'))
+        await Promise.resolve()
+      })
+
+      expect(screen.getByText('自动化已保存')).toBeInTheDocument()
+      expect(vi.getTimerCount()).toBe(1)
+
+      view.unmount()
+
+      expect(vi.getTimerCount()).toBe(0)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
   test('opens a backend rule as a horizontal draggable React Flow workflow', async () => {
     const { view } = renderView()
     await openRuleEditor()

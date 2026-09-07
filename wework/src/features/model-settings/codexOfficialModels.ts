@@ -35,6 +35,7 @@ export const CODEX_RUNTIME_MODEL_ID = 'gpt-5.6-sol'
 export const CODEX_OFFICIAL_UNAVAILABLE_MODEL_NAME = 'codex-official-unavailable'
 
 const CODEX_PICKER_MODELS = [
+  { modelId: 'gpt-6-astra', label: 'GPT-6 Astra' },
   { modelId: 'gpt-5.6-sol', label: 'GPT 5.6 Sol' },
   { modelId: 'gpt-5.6-terra', label: 'GPT 5.6 Terra' },
   { modelId: 'gpt-5.6-luna', label: 'GPT 5.6 Luna' },

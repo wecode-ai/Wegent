@@ -275,9 +275,13 @@ jobs:
 
       - name: Set up Rust
         uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8
+        with:
+          targets: aarch64-apple-darwin,x86_64-apple-darwin
 
       - name: Set up sccache
         uses: ./.github/actions/setup-sccache
+        with:
+          save-cache: "true"
 
       - name: Set up pnpm
         uses: pnpm/action-setup@0e279bb959325dab635dd2c09392533439d90093
@@ -340,6 +344,12 @@ jobs:
           pnpm --filter wework ai:verify:electron:build
           test -x wework/electron/release/WeWork-darwin-arm64/WeWork.app/Contents/MacOS/WeWork
           test -x wework/electron/release/WeWork-darwin-arm64/WeWork.app/Contents/Resources/bin/wegent-executor
+
+      - name: Warm macOS release executor compiler cache
+        working-directory: ./executor
+        run: |
+          cargo build --release --locked --target aarch64-apple-darwin --bin wegent-executor
+          cargo build --release --locked --target x86_64-apple-darwin --bin wegent-executor
 
       - name: Save shared Wework Electron build dependencies
         if: steps.wework-cargo-sources-cache.outputs.cache-hit != 'true'
