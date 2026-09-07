@@ -3775,7 +3775,10 @@ export function createLocalAppServices(deps: LocalAppServicesDeps = {}): Workben
     }),
     userApi: {
       updateCurrentUser: async (data: { preferences?: User['preferences'] }) =>
-        saveLocalUserPreferences(data.preferences ?? LOCAL_USER.preferences),
+        saveLocalUserPreferences({
+          ...getLocalUser().preferences,
+          ...(data.preferences ?? {}),
+        }),
       getRuntimeConfig: () => cloudConnectionRequired('getRuntimeConfig'),
       updateRuntimeConfig: () => cloudConnectionRequired('updateRuntimeConfig'),
       getProxyConfig: () => cloudConnectionRequired('getProxyConfig'),

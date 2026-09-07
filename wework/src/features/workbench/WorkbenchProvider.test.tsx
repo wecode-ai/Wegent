@@ -2070,6 +2070,7 @@ function RuntimeModelCompatibilityProbe() {
 function RuntimeModelSelectionProbe() {
   const workbench = useWorkbench()
   const mimoModel = workbench.projectChat.models.find(model => model.name === 'local-model:mimo')
+  const gptModel = workbench.projectChat.models.find(model => model.name === 'gpt-5.5')
   const backgroundTaskModel = workbench.projectChat.resolveRuntimeTaskModelSelection({
     deviceId: 'device-1',
     workspacePath: '/workspace/project-alpha',
@@ -2096,6 +2097,15 @@ function RuntimeModelSelectionProbe() {
         }}
       >
         select mimo
+      </button>
+      <button
+        type="button"
+        data-testid="select-gpt-model"
+        onClick={() => {
+          if (gptModel) workbench.projectChat.setSelectedModel(gptModel)
+        }}
+      >
+        select gpt
       </button>
       <button
         type="button"
@@ -5537,6 +5547,68 @@ describe('WorkbenchProvider runtime tasks', () => {
     )
   })
 
+  test('serializes blank new chat model selection saves', async () => {
+    const models: UnifiedModel[] = [
+      {
+        name: 'gpt-5.5',
+        type: 'runtime',
+        provider: 'local',
+        config: {
+          weworkModelKind: 'codex-provider',
+          ui: { family: 'codex-provider', controls: ['collaborationMode'] },
+        },
+        runtime: { family: 'openai.openai-responses' },
+      },
+      {
+        name: 'local-model:mimo',
+        type: 'runtime',
+        provider: 'local',
+        config: {
+          weworkModelKind: 'model-interface',
+          ui: { family: 'model-interface', controls: ['collaborationMode'] },
+        },
+        runtime: { family: 'openai.openai-responses' },
+      },
+    ]
+    const firstSave = deferred<unknown>()
+    const updateCurrentUser = vi
+      .fn()
+      .mockImplementationOnce(() => firstSave.promise)
+      .mockResolvedValue({})
+    const services = createWorkbenchServices({
+      deviceApi: {
+        listDevices: vi.fn().mockResolvedValue([createDevice({ device_type: 'local' })]),
+      } as Partial<WorkbenchServices['deviceApi']> as WorkbenchServices['deviceApi'],
+      modelApi: {
+        listModels: vi.fn().mockResolvedValue({ data: models }),
+      },
+      userApi: {
+        updateCurrentUser,
+      } as Partial<WorkbenchServices['userApi']> as WorkbenchServices['userApi'],
+    } as Partial<WorkbenchServices>)
+
+    renderWorkbench(<RuntimeModelSelectionProbe />, services)
+
+    await waitFor(() => expect(screen.getByTestId('selected-model')).toHaveTextContent('gpt-5.5'))
+    await userEvent.click(screen.getByText('select mimo'))
+    await waitFor(() => expect(updateCurrentUser).toHaveBeenCalledTimes(1))
+
+    await userEvent.click(screen.getByText('select gpt'))
+    expect(updateCurrentUser).toHaveBeenCalledTimes(1)
+
+    firstSave.resolve({})
+
+    await waitFor(() => expect(updateCurrentUser).toHaveBeenCalledTimes(2))
+    expect(updateCurrentUser).toHaveBeenLastCalledWith({
+      preferences: {
+        wework_new_chat_model_selection: expect.objectContaining({
+          modelName: 'gpt-5.5',
+          modelType: 'runtime',
+        }),
+      },
+    })
+  })
+
   test('restores a configured model for a cloud runtime task', async () => {
     const models: UnifiedModel[] = [
       {
@@ -7353,7 +7425,7 @@ describe('WorkbenchProvider runtime tasks', () => {
     )
   })
 
-  test('remembers a local project task model and reasoning for the next task', async () => {
+  test('restores the local project default after a task-specific model override', async () => {
     const runtimeWorkApi = createRuntimeWorkApiMock({
       listRuntimeWork: vi.fn().mockResolvedValue(
         createRuntimeWork({
@@ -7459,9 +7531,9 @@ describe('WorkbenchProvider runtime tasks', () => {
     await userEvent.click(screen.getByText('start new project chat'))
 
     await waitFor(() =>
-      expect(screen.getByTestId('project-selected-model')).toHaveTextContent('override-model')
+      expect(screen.getByTestId('project-selected-model')).toHaveTextContent('project-model')
     )
-    expect(screen.getByTestId('project-reasoning-effort')).toHaveTextContent('high')
+    expect(screen.getByTestId('project-reasoning-effort')).toHaveTextContent('medium')
   })
 
   test('stores one canonical model identity for selection and execution', async () => {

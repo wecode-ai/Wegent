@@ -50,6 +50,7 @@ export interface EnvironmentInfoLoadOptions {
   changeRequestStatusEnabled?: boolean
   force?: boolean
   onPartialInfo?: (info: EnvironmentInfo) => void
+  shareInflight?: boolean
 }
 
 const ENVIRONMENT_DIFF_COMMANDS: Record<EnvironmentDiffMode, string> = {
@@ -999,9 +1000,14 @@ export async function loadProjectEnvironment(
   const now = Date.now()
   const environmentInfoCache = getEnvironmentInfoCache(api)
   const cached = environmentInfoCache.get(cacheKey)
-  // Forced polling must still share an in-flight load. Replacing a slow request
-  // on every poll prevents any result from settling the environment loading state.
-  if (cached && (!cached.settled || (!options.force && cached.expiresAt > now))) {
+  const shouldShareInflight = !options.force || options.shareInflight !== false
+  // Background polling shares an in-flight load so slow requests can settle.
+  // Explicit refreshes may supersede it to observe state that changed meanwhile.
+  if (
+    cached &&
+    ((!cached.settled && shouldShareInflight) ||
+      (cached.settled && !options.force && cached.expiresAt > now))
+  ) {
     logEnvironmentLoad(diagnostics, cached.settled ? 'cache_hit' : 'cache_joined', {
       force: Boolean(options.force),
       expiresInMs: cached.expiresAt - now,
