@@ -89,7 +89,7 @@ server URL 必须使用 `https`（本地开发允许 loopback `http`），避免
 token 通过明文通道发送。业务方收到请求后，可用请求头里的 token 调用
 `GET /api/mcp-identity/me` 校验并获取当前用户基本信息（`id`、
 `user_name`、`email`）；该接口不会返回 git 凭据。token 有效期与 Skill
-identity token 一致，由 `SKILL_IDENTITY_TOKEN_EXPIRE_MINUTES` 控制。
+identity token 独立，由 `MCP_IDENTITY_TOKEN_EXPIRE_MINUTES` 控制（默认 1 天）。
 
 ---
 

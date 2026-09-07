@@ -12,7 +12,7 @@ filtering work correctly when preparing MCP servers for Claude Code executor.
 from types import SimpleNamespace
 from unittest.mock import patch
 
-from app.services.auth import verify_skill_identity_token
+from app.services.auth import verify_mcp_identity_token
 from app.services.execution.request_builder import TaskRequestBuilder
 from shared.models.execution import ExecutionRequest
 from shared.models.openai_converter import OpenAIRequestConverter
@@ -445,12 +445,11 @@ class TestBuildMcpServers:
         authorization = business["auth"]["Authorization"]
         assert business["headers"]["Authorization"] == authorization
         assert authorization.startswith("Bearer ")
-        token_info = verify_skill_identity_token(authorization.removeprefix("Bearer "))
+        token_info = verify_mcp_identity_token(authorization.removeprefix("Bearer "))
         assert token_info is not None
         assert token_info.user_id == 7
         assert token_info.user_name == "alice"
-        assert token_info.runtime_type == "mcp"
-        assert token_info.runtime_name == "business-server"
+        assert token_info.server_name == "business-server"
 
         plain = servers["plain-server"]
         assert "auth" not in plain

@@ -164,6 +164,7 @@ class Settings(BaseSettings):
     WEWORK_ACCESS_TOKEN_EXPIRE_MINUTES: int = 60
     WEWORK_REFRESH_TOKEN_EXPIRE_MINUTES: int = 365 * 24 * 60
     SKILL_IDENTITY_TOKEN_EXPIRE_MINUTES: int = 10 * 24 * 60  # 10 days in minutes
+    MCP_IDENTITY_TOKEN_EXPIRE_MINUTES: int = 24 * 60  # 1 day in minutes
 
     # OIDC state configuration
     OIDC_STATE_SECRET_KEY: str = "test"
@@ -293,6 +294,7 @@ class Settings(BaseSettings):
     RATE_LIMIT_GET_RESPONSE: str = "120/minute"  # GET /api/v1/responses/{id}
     RATE_LIMIT_CANCEL_RESPONSE: str = "30/minute"  # POST /api/v1/responses/{id}/cancel
     RATE_LIMIT_DELETE_RESPONSE: str = "30/minute"  # DELETE /api/v1/responses/{id}
+    RATE_LIMIT_MCP_IDENTITY: str = "60/minute"  # GET /api/mcp-identity/me
 
     # External knowledge MCP configuration
     # Disabled by default because this endpoint is intended for trusted integrations.

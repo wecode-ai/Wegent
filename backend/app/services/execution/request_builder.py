@@ -28,7 +28,7 @@ from app.schemas.kind import Skill as SkillCRD
 from app.schemas.kind import Team, TeamMember
 from app.schemas.project import ProjectConfig
 from app.services.auth import (
-    MCP_IDENTITY_RUNTIME_TYPE,
+    create_mcp_identity_token,
     create_skill_identity_token,
 )
 from app.services.execution.git_credentials import (
@@ -2332,11 +2332,10 @@ Response template:
                     server_name,
                 )
                 continue
-            token = create_skill_identity_token(
+            token = create_mcp_identity_token(
                 user_id=user.id,
                 user_name=user.user_name,
-                runtime_type=MCP_IDENTITY_RUNTIME_TYPE,
-                runtime_name=server_name,
+                server_name=server_name,
             )
             authorization = f"Bearer {token}"
             auth = server.setdefault("auth", {})

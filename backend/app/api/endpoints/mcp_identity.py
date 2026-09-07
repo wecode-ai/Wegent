@@ -6,19 +6,22 @@
 
 from typing import Optional
 
-from fastapi import APIRouter, Depends, Header, HTTPException, status
+from fastapi import APIRouter, Depends, Header, HTTPException, Request, status
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from app.api.dependencies import get_db
+from app.core.config import settings
+from app.core.rate_limit import get_limiter
 from app.models.user import User
 from app.services.auth import (
-    MCP_IDENTITY_RUNTIME_TYPE,
     extract_token_from_header,
-    verify_skill_identity_token,
+    verify_mcp_identity_token,
 )
 
 router = APIRouter(prefix="/mcp-identity", tags=["mcp-identity"])
+
+limiter = get_limiter()
 
 
 class McpIdentityUserInfo(BaseModel):
@@ -30,7 +33,9 @@ class McpIdentityUserInfo(BaseModel):
 
 
 @router.get("/me", response_model=McpIdentityUserInfo)
+@limiter.limit(settings.RATE_LIMIT_MCP_IDENTITY)
 def read_mcp_identity_user(
+    request: Request,
     authorization: Optional[str] = Header(default=None),
     db: Session = Depends(get_db),
 ) -> McpIdentityUserInfo:
@@ -43,8 +48,8 @@ def read_mcp_identity_user(
     credentials.
     """
     token = extract_token_from_header(authorization or "")
-    token_info = verify_skill_identity_token(token or "")
-    if token_info is None or token_info.runtime_type != MCP_IDENTITY_RUNTIME_TYPE:
+    token_info = verify_mcp_identity_token(token or "")
+    if token_info is None:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid Wegent MCP identity token",

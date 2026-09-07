@@ -90,8 +90,8 @@ is allowed for local development) so the bearer token is not sent over
 cleartext channels. The business side can validate the token by calling
 `GET /api/mcp-identity/me`, which returns the current user's basic
 information (`id`, `user_name`, `email`) and never exposes git credentials.
-Token lifetime follows the Skill identity token setting
-(`SKILL_IDENTITY_TOKEN_EXPIRE_MINUTES`).
+Token lifetime is controlled by `MCP_IDENTITY_TOKEN_EXPIRE_MINUTES`
+(default 1 day) and is independent of the Skill identity token setting.
 
 ---
 

@@ -3,7 +3,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 from app.services.auth import (
-    MCP_IDENTITY_RUNTIME_TYPE,
+    create_mcp_identity_token,
     create_skill_identity_token,
 )
 
@@ -11,13 +11,21 @@ from app.services.auth import (
 def _mcp_identity_token(
     user_id: int,
     user_name: str,
-    *,
-    runtime_type: str = MCP_IDENTITY_RUNTIME_TYPE,
 ) -> str:
+    """Create an MCP identity token for tests."""
+    return create_mcp_identity_token(
+        user_id=user_id,
+        user_name=user_name,
+        server_name="business-server",
+    )
+
+
+def _skill_identity_token(user_id: int, user_name: str) -> str:
+    """Create a Skill identity token (wrong token type) for tests."""
     return create_skill_identity_token(
         user_id=user_id,
         user_name=user_name,
-        runtime_type=runtime_type,
+        runtime_type="executor",
         runtime_name="business-server",
     )
 
@@ -72,15 +80,11 @@ def test_get_mcp_identity_user_rejects_invalid_token(test_client) -> None:
     assert response.status_code == 401
 
 
-def test_get_mcp_identity_user_rejects_non_mcp_runtime_token(
+def test_get_mcp_identity_user_rejects_non_mcp_token_type(
     test_client,
     test_user,
 ) -> None:
-    token = _mcp_identity_token(
-        test_user.id,
-        test_user.user_name,
-        runtime_type="executor",
-    )
+    token = _skill_identity_token(test_user.id, test_user.user_name)
 
     response = test_client.get(
         "/api/mcp-identity/me",
