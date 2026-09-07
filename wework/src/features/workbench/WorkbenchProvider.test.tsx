@@ -2100,6 +2100,7 @@ function RuntimeModelSelectionProbe() {
       </button>
       <button
         type="button"
+        data-testid="select-gpt-model"
         onClick={() => {
           if (gptModel) workbench.projectChat.setSelectedModel(gptModel)
         }}
