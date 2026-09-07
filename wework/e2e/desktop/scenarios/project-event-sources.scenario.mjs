@@ -415,6 +415,35 @@ export function createDesktopScenario({ uiTimeoutMs }) {
     }
   }
 
+  async function ensureRuntimeProfile() {
+    const profileName = 'External event workflow Runtime'
+    const profiles = await request('/api/v1/runtime-profiles')
+    let profile = profiles.find(candidate => candidate.name === profileName)
+    if (!profile) {
+      profile = await request('/api/v1/runtime-profiles', {
+        method: 'POST',
+        body: JSON.stringify({
+          name: profileName,
+          executionEnvironment: 'cloud',
+          executionDeviceId: CLOUD_DEVICE_ID,
+          model: CLOUD_MODEL_NAME,
+          modelType: 'public',
+          modelOptions: {
+            weworkCloudModelNamespace: 'default',
+            weworkCloudModelResourceUserId: '0',
+            weworkCloudModelUpstreamApiFormat: 'openai-responses',
+          },
+          workspacePolicy: 'project',
+        }),
+      })
+    }
+    await request(`/api/v1/cloud-projects/${project.id}/runtime-default`, {
+      method: 'PUT',
+      body: JSON.stringify({ runtimeProfileId: profile.id }),
+    })
+    return profile
+  }
+
   async function createHook(sourceType, mode) {
     const isGithub = sourceType === 'github'
     const base =
@@ -443,31 +472,7 @@ export function createDesktopScenario({ uiTimeoutMs }) {
   }
 
   async function createTriggerRule(hook, sourceType) {
-    const profileName = `External ${sourceType} automation Runtime`
-    const profiles = await request('/api/v1/runtime-profiles')
-    let profile = profiles.find(candidate => candidate.name === profileName)
-    if (!profile) {
-      profile = await request('/api/v1/runtime-profiles', {
-        method: 'POST',
-        body: JSON.stringify({
-          name: profileName,
-          executionEnvironment: 'cloud',
-          executionDeviceId: CLOUD_DEVICE_ID,
-          model: CLOUD_MODEL_NAME,
-          modelType: 'public',
-          modelOptions: {
-            weworkCloudModelNamespace: 'default',
-            weworkCloudModelResourceUserId: '0',
-            weworkCloudModelUpstreamApiFormat: 'openai-responses',
-          },
-          workspacePolicy: 'project',
-        }),
-      })
-    }
-    await request(`/api/v1/cloud-projects/${project.id}/runtime-default`, {
-      method: 'PUT',
-      body: JSON.stringify({ runtimeProfileId: profile.id }),
-    })
+    await ensureRuntimeProfile()
     return request(`/api/v1/cloud-projects/${project.id}/automations`, {
       method: 'POST',
       body: JSON.stringify({
@@ -486,6 +491,250 @@ export function createDesktopScenario({ uiTimeoutMs }) {
         enabled: true,
       }),
     })
+  }
+
+  function workflowHandlerRunNodeIds(itemId) {
+    return withDatabase(database =>
+      database
+        .prepare(
+          `select metadata
+             from project_automation_runs
+            where task_id = ?
+            order by created_at, id`
+        )
+        .all(itemId)
+        .map(row => JSON.parse(row.metadata ?? '{}').workflow_node_id)
+        .filter(Boolean)
+    )
+  }
+
+  function branchWaitRefs(hookId) {
+    return withDatabase(database => {
+      const row = database.prepare('select metadata from loop_items where id = ?').get(hookId)
+      const metadata = JSON.parse(row?.metadata ?? '{}')
+      return metadata.branch_wait_refs ?? {}
+    })
+  }
+
+  async function createMultiPlatformWorkflowFixture(githubHook, gitlabHook) {
+    const profile = await ensureRuntimeProfile()
+    const issue = await request(`/api/v1/cloud-projects/${project.id}/loop-items`, {
+      method: 'POST',
+      body: JSON.stringify({
+        title: '同一分支路由 GitHub 与 GitLab 事件',
+        description: '验证同一循环分支按事件来源精确触发 handler，并释放 collector。',
+        status: 'in_progress',
+        priority: 'high',
+        tags: ['multi-platform-branch-e2e'],
+      }),
+    })
+    const binding = await request(`/api/v1/loop-items/${issue.id}/tasks`, {
+      method: 'POST',
+      body: JSON.stringify({
+        deviceId: CLOUD_DEVICE_ID,
+        taskId: `multi-platform-branch-${issue.id}`,
+        taskTitle: issue.title,
+      }),
+    })
+    const githubSequence = 1700
+    const gitlabSequence = 1701
+    await request(`/api/v1/loop-items/${issue.id}/tasks/${binding.id}/change-requests`, {
+      method: 'POST',
+      body: JSON.stringify({
+        provider: 'github',
+        url: `https://github.localhost/acme/app/pull/${100 + githubSequence}`,
+        number: 100 + githubSequence,
+        head_branch: 'feature/e2e',
+        base_branch: 'main',
+        head_commit: `github-head-${githubSequence}`,
+        source: 'runtime',
+      }),
+    })
+    await request(`/api/v1/loop-items/${issue.id}/tasks/${binding.id}/change-requests`, {
+      method: 'POST',
+      body: JSON.stringify({
+        provider: 'gitlab',
+        url: `https://gitlab.localhost/acme/app/-/merge_requests/${200 + gitlabSequence}`,
+        number: 200 + gitlabSequence,
+        head_branch: 'feature/e2e',
+        base_branch: 'main',
+        head_commit: `gitlab-head-${gitlabSequence}`,
+        source: 'runtime',
+      }),
+    })
+    const activatedAt = new Date().toISOString()
+    await request(`/api/v1/loop-items/${issue.id}`, {
+      method: 'PATCH',
+      body: JSON.stringify({
+        version: issue.version,
+        workflow: {
+          version: 1,
+          definition_version: 1,
+          stage_mode: 'dag',
+          advancement_policy: 'manual',
+          approval_policy: 'automatic',
+          coordinator_prompt: '',
+          ai_automation_rule_id: null,
+          execution_config: {
+            runtime_profile_id: profile.id,
+            execution_device_id: CLOUD_DEVICE_ID,
+            model: CLOUD_MODEL_NAME,
+            model_type: 'public',
+            model_options: {
+              weworkCloudModelNamespace: 'default',
+              weworkCloudModelResourceUserId: '0',
+              weworkCloudModelUpstreamApiFormat: 'openai-responses',
+            },
+            workspace_binding: { type: 'standalone' },
+          },
+          nodes: [
+            {
+              id: 'start',
+              name: '开始',
+              node_type: 'event',
+              role: 'start',
+              status: 'completed',
+              depends_on: [],
+            },
+            {
+              id: 'repair-loop',
+              name: '多平台修复循环',
+              node_type: 'loop',
+              status: 'running',
+              loop_state: 'active',
+              attempts: 0,
+              activated_at: activatedAt,
+              depends_on: ['start'],
+              body_node_ids: ['loop-start', 'event-branch', 'github-handler', 'gitlab-handler'],
+              loop_config: { max_attempts: 2 },
+            },
+            {
+              id: 'loop-start',
+              name: '循环开始',
+              node_type: 'loop_start',
+              loop_id: 'repair-loop',
+              status: 'completed',
+              depends_on: [],
+            },
+            {
+              id: 'event-branch',
+              name: '按平台路由',
+              node_type: 'branch',
+              loop_id: 'repair-loop',
+              status: 'waiting',
+              catch_up_done: true,
+              depends_on: ['loop-start'],
+              event_wait: {
+                subject_source: 'upstream_pull_request',
+                collection_mode: 'webhook',
+              },
+              branch_conditions: [
+                {
+                  source_type: 'github',
+                  event_type: 'change_request.checks_failed',
+                  handler_node_ids: ['github-handler'],
+                },
+                {
+                  source_type: 'gitlab',
+                  event_type: 'change_request.comment_created',
+                  handler_node_ids: ['gitlab-handler'],
+                },
+              ],
+            },
+            {
+              id: 'github-handler',
+              name: '处理 GitHub CI 失败',
+              prompt: '处理 GitHub pull request 的 CI 失败。',
+              node_type: 'task',
+              loop_id: 'repair-loop',
+              status: 'blocked',
+              execution_mode: 'robot',
+              workspace_policy: 'none',
+              depends_on: ['event-branch'],
+            },
+            {
+              id: 'gitlab-handler',
+              name: '处理 GitLab 评论',
+              prompt: '处理 GitLab merge request 的新评论。',
+              node_type: 'task',
+              loop_id: 'repair-loop',
+              status: 'blocked',
+              execution_mode: 'robot',
+              workspace_policy: 'none',
+              depends_on: ['event-branch'],
+            },
+          ],
+        },
+      }),
+    })
+    const armed = await waitForValue(
+      () => request(`/api/v1/loop-items/${issue.id}`),
+      item => {
+        const branch = item.workflow?.nodes?.find(node => node.id === 'event-branch')
+        return (
+          branch?.collectors?.github?.collector_id === githubHook.id &&
+          branch?.collectors?.gitlab?.collector_id === gitlabHook.id
+        )
+      },
+      'The multi-platform branch did not attach both event collectors',
+      uiTimeoutMs * 3
+    )
+    assert.deepEqual(branchWaitRefs(githubHook.id)[issue.id], ['event-branch'])
+    assert.deepEqual(branchWaitRefs(gitlabHook.id)[issue.id], ['event-branch'])
+    return { issue: armed, githubSequence, gitlabSequence }
+  }
+
+  async function assertMultiPlatformWorkflowRouting(githubHook, gitlabHook) {
+    const { issue, githubSequence, gitlabSequence } = await createMultiPlatformWorkflowFixture(
+      githubHook,
+      gitlabHook
+    )
+
+    await deliverWebhook(githubHook, 'github', 'change_request.checks_failed', githubSequence)
+    const afterGithub = await waitForValue(
+      () => request(`/api/v1/loop-items/${issue.id}`),
+      item => {
+        const loop = item.workflow?.nodes?.find(node => node.id === 'repair-loop')
+        const branch = item.workflow?.nodes?.find(node => node.id === 'event-branch')
+        return loop?.attempts === 1 && branch?.status === 'waiting'
+      },
+      'The GitHub event did not complete exactly one workflow loop iteration',
+      uiTimeoutMs * 3
+    )
+    assert.deepEqual(workflowHandlerRunNodeIds(issue.id), ['github-handler'])
+    const githubBranch = afterGithub.workflow.nodes.find(node => node.id === 'event-branch')
+    assert.equal(githubBranch.collectors.github.collector_id, githubHook.id)
+    assert.equal(githubBranch.collectors.gitlab.collector_id, gitlabHook.id)
+
+    await deliverWebhook(gitlabHook, 'gitlab', 'change_request.comment_created', gitlabSequence)
+    const completed = await waitForValue(
+      () => request(`/api/v1/loop-items/${issue.id}`),
+      item => {
+        const loop = item.workflow?.nodes?.find(node => node.id === 'repair-loop')
+        return (
+          item.status === 'in_review' &&
+          loop?.status === 'completed' &&
+          loop?.exit_reason === 'max_attempts'
+        )
+      },
+      'The GitLab event did not complete the second workflow loop iteration',
+      uiTimeoutMs * 3
+    )
+    assert.deepEqual(workflowHandlerRunNodeIds(issue.id), ['github-handler', 'gitlab-handler'])
+    assert.equal(
+      completed.workflow.nodes.every(node => node.status === 'completed'),
+      true
+    )
+    await waitForValue(
+      () =>
+        Promise.resolve({
+          github: branchWaitRefs(githubHook.id),
+          gitlab: branchWaitRefs(gitlabHook.id),
+        }),
+      refs => refs.github[issue.id] === undefined && refs.gitlab[issue.id] === undefined,
+      'The terminal workflow did not release both branch collector references',
+      uiTimeoutMs
+    )
   }
 
   async function createConnectorCredential(sourceType) {
@@ -767,6 +1016,7 @@ export function createDesktopScenario({ uiTimeoutMs }) {
       for (const sourceType of ['github', 'gitlab']) {
         hooks[`${sourceType}-webhook`] = await createHook(sourceType, 'webhook')
       }
+      await assertMultiPlatformWorkflowRouting(hooks['github-webhook'], hooks['gitlab-webhook'])
 
       let sequence = 0
       await createConnectorCredential('github')
