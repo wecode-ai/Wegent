@@ -18,6 +18,7 @@ core_segments=(
   project-ai-settings
   model-routing
   permission-modes
+  workbench-mode
   computer-use
   task-status-sync
   task-board-association
@@ -137,7 +138,7 @@ core_shards=(
   rendering-extensions
   runtime-task-queue,release-package-startup,component-update,native-window-startup,renderer-storage,external-content-import
   local-harness,running-conversation-history,native-window-chrome
-  codex-notification-isolation,core-dsh-plugin-management,plugin-development,executor-stream-recovery,transcript-sync
+  codex-notification-isolation,core-dsh-plugin-management,plugin-development,workbench-mode,executor-stream-recovery,transcript-sync
   model-routing,computer-use
 )
 
@@ -303,6 +304,14 @@ classify_wework_path() {
       ;;
     wework/e2e/utils/mcp-elicitation-server.mjs)
       select_target "core:permission-modes"
+      return
+      ;;
+
+    # Workbench mode owns the managed Git plugin state and settings flow.
+    wework/e2e/desktop/scenarios/workbench-mode.scenario.mjs | \
+      wework/electron/src/runtime/workbench-mode* | \
+      wework/src/features/workbench-mode/*)
+      select_target "core:workbench-mode"
       return
       ;;
 

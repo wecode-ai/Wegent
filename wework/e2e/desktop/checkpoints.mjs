@@ -6,6 +6,7 @@ export const DESKTOP_CHECKPOINTS = [
   'priority-filter',
   'telemetry-consent',
   'external-content-import',
+  'workbench-mode',
   'automation-lifecycle',
   'project-automation',
   'project-assignment-notification',
