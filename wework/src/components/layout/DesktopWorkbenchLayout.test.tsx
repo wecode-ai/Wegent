@@ -1809,6 +1809,52 @@ describe('DesktopWorkbenchLayout', () => {
     expect(screen.getByTestId('cloud-todo-workspace')).toBeVisible()
   })
 
+  test('keeps the active task return route when an inactive project space is retained', () => {
+    const taskTab = {
+      id: 'task-existing',
+      kind: 'task' as const,
+      title: '当前任务',
+      contentRoute: '/runtime-tasks?deviceId=local-device&taskId=runtime-1',
+    }
+    const boardTab = {
+      id: 'board-existing',
+      kind: 'board' as const,
+      title: '项目空间',
+      contentRoute: '/todo?projectId=project-1',
+    }
+    const workspaceTabs = (activeTab: typeof taskTab | typeof boardTab) =>
+      ({
+        tabs: [taskTab, boardTab],
+        activeTabId: activeTab.id,
+        activeTab,
+        openTab: vi.fn(),
+        selectTab: vi.fn(),
+        closeTab: vi.fn(),
+        closeOtherTabs: vi.fn(),
+        restoreClosedTab: vi.fn(),
+        moveTab: vi.fn(),
+        updateActiveTab: vi.fn(),
+      }) as unknown as WorkspaceTabsContextValue
+
+    window.sessionStorage.clear()
+    window.history.pushState({}, '', taskTab.contentRoute)
+
+    render(
+      <>
+        <WorkspaceTabsContext.Provider value={workspaceTabs(taskTab)}>
+          <DesktopWorkbenchLayout {...baseProps} routeActive />
+        </WorkspaceTabsContext.Provider>
+        <WorkspaceTabsContext.Provider value={workspaceTabs(boardTab)}>
+          <DesktopWorkbenchLayout {...baseProps} routeActive={false} surfaceKind="board" />
+        </WorkspaceTabsContext.Provider>
+      </>
+    )
+
+    act(() => navigateTo('/settings'))
+
+    expect(window.sessionStorage.getItem('wework.settingsReturnPath')).toBe(taskTab.contentRoute)
+  })
+
   test('returns to the active workspace tab when the URL is out of sync', async () => {
     deliveryApiMock.available = true
     const boardTab = {
