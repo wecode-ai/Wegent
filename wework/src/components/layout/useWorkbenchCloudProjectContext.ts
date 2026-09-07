@@ -1,6 +1,11 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { ComposerCloudMentionCandidate } from '@/components/chat/composer/composerMentionCandidates'
-import type { CloudLoopItem, CloudProject, TaskExecutionStatus } from '@/api/deliveries'
+import {
+  nextTaskTrackingStatus,
+  type CloudLoopItem,
+  type CloudProject,
+  type TaskExecutionStatus,
+} from '@/api/deliveries'
 import {
   findProjectSpaceContextForTask,
   isDefaultWorkItemProject,
@@ -336,8 +341,21 @@ export function useWorkbenchCloudProjectContext({
     candidates: ComposerCloudMentionCandidate[]
   } | null>(null)
 
+  const boundCloudItemStatusOverride = useMemo(() => {
+    if (!boundCloudItem) return null
+    const executionStatus = normalizeTaskExecutionStatus(
+      runtimeTaskExecutionStatus,
+      runtimeTaskRunning ?? false,
+      runtimeTaskExecutionKnown ?? false
+    )
+    return executionStatus ? nextTaskTrackingStatus(boundCloudItem.status, executionStatus) : null
+  }, [boundCloudItem, runtimeTaskExecutionKnown, runtimeTaskExecutionStatus, runtimeTaskRunning])
+  const projectedBoundCloudItem =
+    boundCloudItem && boundCloudItemStatusOverride
+      ? { ...boundCloudItem, status: boundCloudItemStatusOverride }
+      : boundCloudItem
   const composerCloudProject = contextRuntimeTask ? boundCloudProject : pendingCloudProject
-  const composerTodoItem = contextRuntimeTask ? boundCloudItem : pendingTodoItem
+  const composerTodoItem = contextRuntimeTask ? projectedBoundCloudItem : pendingTodoItem
   const defaultCloudProjectSelectionKey = `${paneKey}:${currentProjectId ?? 'none'}`
   const defaultWorkItemProject = useMemo(
     () => cloudProjects.find(isDefaultWorkItemProject) ?? null,
@@ -1102,7 +1120,8 @@ export function useWorkbenchCloudProjectContext({
 
   return {
     activeDeliveryItem,
-    boundCloudItem,
+    boundCloudItem: projectedBoundCloudItem,
+    boundCloudItemStatusOverride,
     boundCloudProject,
     boundProjectSpaceApi,
     clearCloudActionNotice,
