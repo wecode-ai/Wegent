@@ -339,7 +339,8 @@ jobs:
           WEWORK_E2E_REQUIRE_RELEASE_PACKAGE: "1"
         run: |
           pnpm --filter wework e2e:desktop -- \
-            --parallel-segments release-package-startup,component-update,app-update-differential,app-update-baseline
+            --parallel-segments release-package-startup,component-update,app-update-differential
+          pnpm --filter wework e2e:desktop -- --segment app-update-baseline
 
       - name: Prepare installer and legacy bridge assets
         shell: bash
