@@ -49,7 +49,6 @@ export interface PrepareWorkbenchDshOptions {
 
 export interface WorkbenchDshLaunch {
   command: string
-  entry: string
   args: string[]
   cwd: string
   dshHome: string
@@ -58,37 +57,6 @@ export interface WorkbenchDshLaunch {
   url: string
   version: string
   sourceFingerprint: string
-}
-
-export interface WorkbenchProjectPnpmCommand {
-  command: string
-  argsPrefix: string[]
-  environment: NodeJS.ProcessEnv
-}
-
-export interface ResolveWorkbenchProjectPnpmOptions {
-  runtimeRoot: string
-  environment: NodeJS.ProcessEnv
-  versionRequirement?: string
-}
-
-export async function resolveWorkbenchProjectPnpmCommand(
-  options: ResolveWorkbenchProjectPnpmOptions
-): Promise<WorkbenchProjectPnpmCommand> {
-  const runtime = await selectBundledDshRuntimeMatching(
-    options.runtimeRoot,
-    'workbench',
-    options.versionRequirement ?? WORKBENCH_DSH_VERSION
-  )
-  const nodeCommand = options.environment.WEWORK_NODE_PATH?.trim() || 'node'
-  const pnpmEntry = join(runtime.root, 'node_modules', 'pnpm', 'bin', 'pnpm.cjs')
-  await readFile(pnpmEntry)
-  const environment = withRuntimePath(options.environment, runtime.root, nodeCommand)
-  return {
-    command: nodeCommand,
-    argsPrefix: runtimeNodeArgs(environment, [pnpmEntry]),
-    environment,
-  }
 }
 
 export async function prepareWorkbenchDshLaunch(
@@ -151,7 +119,6 @@ export async function prepareWorkbenchDshLaunch(
   }
   return {
     command: nodeCommand,
-    entry: runtime.entry,
     args: runtimeNodeArgs(environment, [
       runtime.entry,
       '--profile',
@@ -441,24 +408,17 @@ function runtimeEnvironment(
   nodeCommand: string,
   options: PrepareWorkbenchDshOptions
 ): NodeJS.ProcessEnv {
+  const pathEntries = [join(runtimeRoot, 'node_modules', '.bin')]
+  if (isAbsolute(nodeCommand)) pathEntries.push(dirname(nodeCommand))
+  if (environment.PATH) pathEntries.push(environment.PATH)
   return {
-    ...withRuntimePath(environment, runtimeRoot, nodeCommand),
+    ...environment,
     DSH_HOME: dshHome,
+    PATH: pathEntries.join(delimiter),
     ...(options.modelBaseUrl ? { WEWORK_HARNESS_API_KEY: 'wework-local-router' } : {}),
     ...(options.contextBaseUrl ? { WEWORK_HARNESS_CONTEXT_BASE_URL: options.contextBaseUrl } : {}),
     ...(options.contextToken ? { WEWORK_HARNESS_CONTEXT_TOKEN: options.contextToken } : {}),
   }
-}
-
-function withRuntimePath(
-  environment: NodeJS.ProcessEnv,
-  runtimeRoot: string,
-  nodeCommand: string
-): NodeJS.ProcessEnv {
-  const pathEntries = [join(runtimeRoot, 'node_modules', '.bin')]
-  if (isAbsolute(nodeCommand)) pathEntries.push(dirname(nodeCommand))
-  if (environment.PATH) pathEntries.push(environment.PATH)
-  return { ...environment, PATH: pathEntries.join(delimiter) }
 }
 
 function runCommand(
