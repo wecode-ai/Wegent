@@ -343,9 +343,7 @@ function normalizeStoredStep(
         : null,
     branchConditions: recordArray(item.branchConditions).map(condition => ({
       sourceType:
-        normalizeBranchSourceType(condition.sourceType ?? condition.source_type) ||
-        normalizeBranchSourceType(item.eventWait?.sourceType ?? item.eventWait?.source_type) ||
-        'github',
+        normalizeBranchSourceType(condition.sourceType ?? condition.source_type) || 'github',
       eventType: typeof condition.eventType === 'string' ? condition.eventType : '',
       handlerNodeIds: stringArray(condition.handlerNodeIds),
     })),
@@ -699,10 +697,7 @@ function workflowNodesFromLegacy(
           }
         : null,
       branchConditions: (node.branch_conditions ?? []).map(condition => ({
-        sourceType:
-          normalizeBranchSourceType(condition.source_type) ||
-          normalizeBranchSourceType(node.event_wait?.source_type) ||
-          'github',
+        sourceType: normalizeBranchSourceType(condition.source_type) || 'github',
         eventType: condition.event_type,
         handlerNodeIds: [...(condition.handler_node_ids ?? [])],
       })),

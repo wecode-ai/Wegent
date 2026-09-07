@@ -444,7 +444,6 @@ export interface WorkflowNodeDefinition {
     event_type: string
     handler_node_ids: string[]
     subscription_id?: string | null
-    source_type?: string | null
     collection_mode?: string | null
   }>
   event_wait?: {
