@@ -93,7 +93,6 @@ const testSidebarNavigation = [
   {
     id: 'applications.navigation',
     activeItem: 'sites',
-    experimental: true,
     icon: 'applications',
     labelKey: 'workbench.sites',
     label: '应用',
