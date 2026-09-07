@@ -96,7 +96,13 @@ export interface AnalyticsEventMap {
       | 'settings'
       | 'login'
       | 'popout'
+      | 'smart_apps_marketplace'
+      | 'smart_apps_owned'
+      | 'smart_app'
       | 'unknown'
+  }
+  smart_app_installed: {
+    install_source: 'marketplace' | 'zip_import'
   }
   project_created: {
     kind: 'standard' | 'git'
@@ -168,6 +174,10 @@ export interface AnalyticsEventMap {
       | 'attachment_action'
       | 'workspace_file_action'
       | 'conversation_archive'
+      | 'smart_app_marketplace_download'
+      | 'smart_app_marketplace_install'
+      | 'smart_app_marketplace_update'
+      | 'smart_app_zip_import'
   }
   feature_action_completed: {
     action:
@@ -222,6 +232,7 @@ export interface AnalyticsEventMap {
       | 'attachment'
       | 'workspace_file'
       | 'conversation'
+      | 'smart_app'
   }
   workspace_panel_added: {
     panel: 'review' | 'terminal' | 'browser' | 'chat' | 'files' | 'desktop' | 'other'
@@ -303,6 +314,7 @@ export const ANALYTICS_EVENT_PROPERTY_KEYS: {
   plugin_enabled_changed: ['enabled', 'scope', 'source'],
   plugin_uninstalled: ['source'],
   feature_opened: ['feature'],
+  smart_app_installed: ['install_source'],
   project_created: ['kind'],
   project_removed: ['source'],
   automation_action_completed: ['action'],
@@ -411,9 +423,13 @@ export const ANALYTICS_EVENT_VALUE_CONSTRAINTS: {
       'settings',
       'login',
       'popout',
+      'smart_apps_marketplace',
+      'smart_apps_owned',
+      'smart_app',
       'unknown',
     ],
   },
+  smart_app_installed: { install_source: ['marketplace', 'zip_import'] },
   project_created: { kind: ['standard', 'git'] },
   project_removed: { source: ['local', 'cloud', 'unknown'] },
   automation_action_completed: {
@@ -467,6 +483,10 @@ export const ANALYTICS_EVENT_VALUE_CONSTRAINTS: {
       'attachment_action',
       'workspace_file_action',
       'conversation_archive',
+      'smart_app_marketplace_download',
+      'smart_app_marketplace_install',
+      'smart_app_marketplace_update',
+      'smart_app_zip_import',
     ],
   },
   feature_action_completed: {
@@ -523,6 +543,7 @@ export const ANALYTICS_EVENT_VALUE_CONSTRAINTS: {
       'attachment',
       'workspace_file',
       'conversation',
+      'smart_app',
     ],
   },
   workspace_panel_added: {
