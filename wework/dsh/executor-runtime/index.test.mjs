@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 
-import { readExecutorTurn } from './index.js'
+import { createTranscriptTarget, readExecutorTurn } from './index.js'
 
 const locator = {
   transcriptId: 'task-1',
@@ -101,4 +101,45 @@ test('resolves a legacy sequence locator only after collecting all transcript pa
   })
 
   assert.equal(turn.payload.assistantMessage, 'Second turn')
+})
+
+test('routes downloaded and acknowledged turns into the Executor native transcript APIs', async () => {
+  const requests = []
+  const client = {
+    async request(method, params) {
+      requests.push({ method, params })
+      return { available: true, importedThrough: params.sequence ?? 2 }
+    },
+  }
+  const target = createTranscriptTarget(client)
+  const transcript = { transcriptId: 'shared-transcript', taskId: 'local-task' }
+  const turns = [{ turnId: 'turn-2', sequence: 2, payload: { assistantMessage: 'Done' } }]
+
+  await target.status(transcript)
+  await target.import(transcript, turns)
+  await target.acknowledge({
+    ...transcript,
+    cloudSequence: 3,
+    parentTranscriptId: 'mainline',
+  })
+
+  assert.deepEqual(requests, [
+    {
+      method: 'runtime.tasks.transcript.sync_status',
+      params: { transcriptId: 'shared-transcript', taskId: 'local-task' },
+    },
+    {
+      method: 'runtime.tasks.transcript.import',
+      params: { transcriptId: 'shared-transcript', taskId: 'local-task', turns },
+    },
+    {
+      method: 'runtime.tasks.transcript.acknowledge',
+      params: {
+        transcriptId: 'shared-transcript',
+        taskId: 'local-task',
+        sequence: 3,
+        parentTranscriptId: 'mainline',
+      },
+    },
+  ])
 })

@@ -17,6 +17,29 @@ function createTurnSource(turns = []) {
   }
 }
 
+function createTranscriptTarget() {
+  const acknowledgements = []
+  const imports = []
+  let importedThrough = 0
+  return {
+    acknowledgements,
+    imports,
+    async status() {
+      return { available: true, importedThrough }
+    },
+    async import(transcript, turns) {
+      imports.push({ transcript: structuredClone(transcript), turns: structuredClone(turns) })
+      importedThrough = Math.max(importedThrough, turns.at(-1)?.sequence ?? importedThrough)
+      return { available: true, importedThrough }
+    },
+    async acknowledge(turn) {
+      acknowledgements.push(structuredClone(turn))
+      importedThrough = Math.max(importedThrough, turn.cloudSequence)
+      return { available: true, importedThrough }
+    },
+  }
+}
+
 function completedTurn(overrides = {}) {
   return {
     transcriptId: 'task-1',
@@ -99,6 +122,7 @@ test('persists only a finalized turn locator before uploading it with a writer l
     outbox,
     source,
     state,
+    target: createTranscriptTarget(),
   })
   const turn = completedTurn()
   source.add(turn)
@@ -109,7 +133,7 @@ test('persists only a finalized turn locator before uploading it with a writer l
   await sync.flush()
 
   assert.equal(outbox.count(), 0)
-  assert.equal(state.saves, 2)
+  assert.equal(state.saves, 3)
   const uploadRequests = requests.filter(request => request.path.includes('/task-1/'))
   assert.equal(uploadRequests.length, 3)
   assert.equal(uploadRequests[1].body.baseSequence, 0)
@@ -120,7 +144,17 @@ test('persists only a finalized turn locator before uploading it with a writer l
 
 test('restores archived turns before the resumed hot tail', async () => {
   const state = {
-    value: { version: 2, transcripts: {}, preferencesHash: null },
+    value: {
+      version: 3,
+      transcripts: {
+        'shared-transcript': {
+          transcriptId: 'shared-transcript',
+          downloadedThrough: 3,
+          downloadedArchiveIds: [4],
+        },
+      },
+      preferencesHash: null,
+    },
     async save() {},
   }
   const desktop = {
@@ -182,15 +216,13 @@ test('restores archived turns before the resumed hot tail', async () => {
     outbox: new MemorySyncOutbox(),
     source: createTurnSource(),
     state,
+    target: createTranscriptTarget(),
   })
 
   await sync.flush()
 
   const restored = state.value.transcripts['shared-transcript']
-  assert.deepEqual(
-    restored.turns.map(turn => turn.sequence),
-    [1, 2, 3]
-  )
+  assert.equal(Object.hasOwn(restored, 'turns'), false)
   assert.deepEqual(restored.downloadedArchiveIds, [4])
   assert.equal(restored.downloadedThrough, 3)
 })
@@ -234,6 +266,7 @@ test('keeps offline turns queued and discovers a cloud connection later', async 
     outbox,
     source,
     state,
+    target: createTranscriptTarget(),
   })
   const turn = {
     transcriptId: 'offline-transcript',
@@ -317,6 +350,7 @@ test('forks an offline device turn when another device commits from the same cau
     outbox,
     source: createTurnSource([pending]),
     state,
+    target: createTranscriptTarget(),
   })
 
   await sync.flushPending()

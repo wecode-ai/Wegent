@@ -373,6 +373,21 @@ test('marks failed executor responses as interrupted error turns', () => {
   })
 })
 
+test('does not enqueue internal context compaction as a portable conversation turn', () => {
+  const completed = []
+  const projector = new ExecutorSessionProjector(new SessionStoreFixture(), {
+    onTurnCompleted: turn => completed.push(turn),
+  })
+
+  projector.handle(
+    executorEvent(1, 'response.completed', {}, 'task-1', 'runtime-task-1-context-compact')
+  )
+  projector.handle(executorEvent(2, 'response.completed', {}, 'task-1', 'user-turn-2'))
+
+  assert.equal(completed.length, 1)
+  assert.equal(completed[0].executorTurnId, 'user-turn-2')
+})
+
 class SessionStoreFixture {
   constructor() {
     this.values = new Map()

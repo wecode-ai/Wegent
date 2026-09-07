@@ -32,6 +32,11 @@ export async function apply(ctx) {
     () => ctx.reflect.provide('weworkTranscriptSource', transcriptSource),
     'wework-executor-runtime: transcript source'
   )
+  const transcriptTarget = createTranscriptTarget(client)
+  ctx.effect(
+    () => ctx.reflect.provide('weworkTranscriptTarget', transcriptTarget),
+    'wework-executor-runtime: transcript target'
+  )
   const projectionStream = new ExecutorSessionProjectionStream(projector, {
     onError: error => {
       console.error('[wework-executor-runtime] DSH session projection failed', error)
@@ -44,6 +49,32 @@ export async function apply(ctx) {
   register(ctx, BASE_PATH, (req, res) => describe(req, res, client))
   register(ctx, `${BASE_PATH}/rpc`, (req, res) => handleExecutorRpc(req, res, client))
   register(ctx, `${BASE_PATH}/events`, (req, res) => handleExecutorEvents(req, res))
+}
+
+export function createTranscriptTarget(client) {
+  return Object.freeze({
+    status(transcript) {
+      return client.request('runtime.tasks.transcript.sync_status', {
+        transcriptId: transcript.transcriptId,
+        ...(transcript.taskId ? { taskId: transcript.taskId } : {}),
+      })
+    },
+    import(transcript, turns) {
+      return client.request('runtime.tasks.transcript.import', {
+        transcriptId: transcript.transcriptId,
+        ...(transcript.taskId ? { taskId: transcript.taskId } : {}),
+        turns,
+      })
+    },
+    acknowledge(turn) {
+      return client.request('runtime.tasks.transcript.acknowledge', {
+        transcriptId: turn.transcriptId,
+        taskId: turn.taskId,
+        sequence: turn.cloudSequence,
+        ...(turn.parentTranscriptId ? { parentTranscriptId: turn.parentTranscriptId } : {}),
+      })
+    },
+  })
 }
 
 export async function readExecutorTurn(client, turn) {

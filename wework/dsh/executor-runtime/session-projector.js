@@ -271,15 +271,17 @@ export class ExecutorSessionProjector {
       turn: state.turn,
       reason: turnEndReason(event, data),
     })
-    this.onTurnCompleted({
-      transcriptId: state.transcriptId,
-      taskId: state.taskId,
-      title: state.title,
-      sequence: state.turn,
-      turnId: syncTurnId(state),
-      sessionId: state.session.id,
-      executorTurnId: state.subtaskId,
-    })
+    if (syncableExecutorTurn(state.subtaskId)) {
+      this.onTurnCompleted({
+        transcriptId: state.transcriptId,
+        taskId: state.taskId,
+        title: state.title,
+        sequence: state.turn,
+        turnId: syncTurnId(state),
+        sessionId: state.session.id,
+        executorTurnId: state.subtaskId,
+      })
+    }
     state.open = false
   }
 
@@ -297,6 +299,10 @@ function syncTurnId(state) {
   return createHash('sha256')
     .update(`${state.deviceId}\u0000${state.taskId}\u0000${state.subtaskId ?? state.turn}`)
     .digest('base64url')
+}
+
+function syncableExecutorTurn(subtaskId) {
+  return !subtaskId?.endsWith('-context-compact')
 }
 
 export function executorSessionId(deviceId, taskId) {

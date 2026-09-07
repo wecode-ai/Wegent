@@ -124,6 +124,7 @@ mod sidebar;
 mod supervisor;
 mod system;
 mod tasks;
+mod transcript_sync;
 mod turns;
 mod workspaces;
 
@@ -871,6 +872,9 @@ impl RuntimeWorkRpcHandler {
             "runtime.tasks.running_count" => Ok(self.running_task_count()),
             "runtime.tasks.search" => self.search_tasks(payload).await,
             "runtime.tasks.transcript" => self.transcript(payload).await,
+            "runtime.tasks.transcript.sync_status" => self.transcript_sync_status(payload),
+            "runtime.tasks.transcript.import" => self.import_transcript_turns(payload).await,
+            "runtime.tasks.transcript.acknowledge" => self.acknowledge_transcript_turn(payload),
             "runtime.tasks.create" => self.create_task(payload).await,
             "runtime.text.generate" => self.generate_text(payload).await,
             "runtime.tasks.fork_at_turn" => self.fork_task_at_turn(payload).await,

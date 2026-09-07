@@ -4,7 +4,12 @@ import { createHash, randomUUID } from 'node:crypto'
 import { SqliteSyncOutbox } from './outbox.js'
 
 export const name = 'wework-transcript-sync'
-export const inject = ['weworkDesktop', 'weworkSecureStorage', 'weworkTranscriptSource']
+export const inject = [
+  'weworkDesktop',
+  'weworkSecureStorage',
+  'weworkTranscriptSource',
+  'weworkTranscriptTarget',
+]
 
 const PACKAGE_NAME = '@wegent/dsh-transcript-sync'
 const PREFERENCES_UNIT = 'portable_preferences'
@@ -44,6 +49,7 @@ export async function apply(ctx) {
     outbox,
     source: ctx.weworkTranscriptSource,
     state,
+    target: ctx.weworkTranscriptTarget,
   })
   const unsubscribe = ctx.weworkTranscriptSource.subscribe(turn => {
     void sync.enqueue(turn).catch(error => {
@@ -64,13 +70,23 @@ export async function apply(ctx) {
 }
 
 export class WeworkSync {
-  constructor({ apiBaseUrl, clientId, desktop, outbox, source, state, pollIntervalMs = 5000 }) {
+  constructor({
+    apiBaseUrl,
+    clientId,
+    desktop,
+    outbox,
+    source,
+    state,
+    target,
+    pollIntervalMs = 5000,
+  }) {
     this.apiBaseUrl = apiBaseUrl
     this.clientId = clientId
     this.desktop = desktop
     this.outbox = outbox
     this.source = source
     this.state = state
+    this.target = target
     this.pollIntervalMs = pollIntervalMs
     this.active = false
     this.processing = null
@@ -163,6 +179,7 @@ export class WeworkSync {
         const delivered = await this.reconcilePendingTurn(turn)
         await this.releaseLease(turn, lease)
         if (delivered) {
+          await this.acknowledgeNativeTurn(turn)
           this.outbox.acknowledge(turn)
         } else {
           this.forkPendingTurn(turn)
@@ -176,6 +193,7 @@ export class WeworkSync {
         const delivered = await this.reconcilePendingTurn(turn)
         await this.releaseLease(turn, lease)
         if (delivered) {
+          await this.acknowledgeNativeTurn(turn)
           this.outbox.acknowledge(turn)
         } else {
           this.forkPendingTurn(turn)
@@ -183,8 +201,19 @@ export class WeworkSync {
         continue
       }
       await this.releaseLease(turn, lease)
+      await this.acknowledgeNativeTurn(turn)
       this.outbox.acknowledge(turn)
     }
+  }
+
+  async acknowledgeNativeTurn(turn) {
+    await this.target.acknowledge(turn)
+    this.recordTranscriptCursor(turn.transcriptId, turn.cloudSequence, {
+      parentTranscriptId: turn.parentTranscriptId ?? null,
+      forkedAtSequence: turn.forkedAtSequence ?? null,
+      title: turn.title || '',
+    })
+    await this.state.save()
   }
 
   appendPendingTurn(turn, lease) {
@@ -243,40 +272,67 @@ export class WeworkSync {
     const response = await this.request('/wework-transcripts?includeArchived=true')
     for (const transcript of response.items ?? []) {
       const current = this.state.value.transcripts[transcript.transcriptId]
-      const downloadedArchiveIds = new Set(current?.downloadedArchiveIds ?? [])
-      const turns = [...(current?.turns ?? [])]
+      this.state.value.transcripts[transcript.transcriptId] = {
+        ...transcript,
+        downloadedThrough: current?.downloadedThrough ?? 0,
+        downloadedArchiveIds: current?.downloadedArchiveIds ?? [],
+      }
+      const targetStatus = await this.target.status(transcript)
+      if (!targetStatus?.available) continue
+      let after = targetStatus.importedThrough ?? 0
+      const downloadedArchiveIds = new Set(
+        (transcript.archives ?? [])
+          .filter(archive => archive.toSequence <= after)
+          .map(archive => archive.id)
+      )
       for (const archive of transcript.archives ?? []) {
         if (downloadedArchiveIds.has(archive.id)) continue
+        if (archive.toSequence <= after) {
+          downloadedArchiveIds.add(archive.id)
+          continue
+        }
         let archiveAfter = archive.fromSequence - 1
         while (archiveAfter < archive.toSequence) {
           const page = await this.request(
             `/wework-transcripts/${encodeURIComponent(transcript.transcriptId)}/archives/${archive.id}/turns?after=${archiveAfter}&limit=1000`
           )
           if (!page.turns?.length) break
-          turns.push(...page.turns)
-          archiveAfter = page.turns.at(-1).sequence
+          const imported = await this.target.import(transcript, page.turns)
+          if (!imported?.available) break
+          archiveAfter = imported.importedThrough
+          after = Math.max(after, archiveAfter)
           if (!page.hasMore) break
         }
         if (archiveAfter >= archive.toSequence) downloadedArchiveIds.add(archive.id)
       }
-      let after = Math.max(current?.downloadedThrough ?? 0, transcript.archivedThroughSequence ?? 0)
       while (after < transcript.currentSequence) {
         const page = await this.request(
           `/wework-transcripts/${encodeURIComponent(transcript.transcriptId)}/turns?after=${after}&limit=500`
         )
         if (!page.turns?.length) break
-        turns.push(...page.turns)
-        after = page.turns.at(-1).sequence
+        const imported = await this.target.import(transcript, page.turns)
+        if (!imported?.available) break
+        after = imported.importedThrough
         if (!page.hasMore) break
       }
       this.state.value.transcripts[transcript.transcriptId] = {
         ...transcript,
         downloadedThrough: after,
         downloadedArchiveIds: [...downloadedArchiveIds],
-        turns: dedupeTurns(turns),
       }
     }
     await this.state.save()
+  }
+
+  recordTranscriptCursor(transcriptId, downloadedThrough, metadata) {
+    const current = this.state.value.transcripts[transcriptId] ?? {}
+    this.state.value.transcripts[transcriptId] = {
+      ...current,
+      ...metadata,
+      transcriptId,
+      downloadedThrough: Math.max(current.downloadedThrough ?? 0, downloadedThrough),
+      downloadedArchiveIds: current.downloadedArchiveIds ?? [],
+    }
   }
 
   async syncPreferences() {
@@ -371,16 +427,29 @@ class SyncRequestError extends Error {
 class SyncState {
   constructor(path) {
     this.path = path
-    this.value = { version: 2, transcripts: {}, preferencesHash: null }
+    this.value = { version: 3, transcripts: {}, preferencesHash: null }
   }
 
   async load() {
     try {
       const value = JSON.parse(await readFile(this.path, 'utf8'))
-      if (value?.version === 2) {
+      if (value?.version === 2 || value?.version === 3) {
         this.value = {
-          version: 2,
-          transcripts: value.transcripts ?? {},
+          version: 3,
+          transcripts: Object.fromEntries(
+            Object.entries(value.transcripts ?? {}).map(([transcriptId, transcript]) => {
+              const { turns: _obsoleteTurns, ...metadata } = transcript
+              return [
+                transcriptId,
+                {
+                  ...metadata,
+                  downloadedThrough: value.version === 3 ? (transcript.downloadedThrough ?? 0) : 0,
+                  downloadedArchiveIds:
+                    value.version === 3 ? (transcript.downloadedArchiveIds ?? []) : [],
+                },
+              ]
+            })
+          ),
           preferencesHash: value.preferencesHash ?? null,
         }
       }
@@ -456,11 +525,5 @@ function isSequenceConflict(error) {
   return (
     error instanceof SyncRequestError &&
     (error.code === 'sequence_conflict' || error.code === 'turn_conflict')
-  )
-}
-
-function dedupeTurns(turns) {
-  return [...new Map(turns.map(turn => [turn.sequence, turn])).values()].sort(
-    (left, right) => left.sequence - right.sequence
   )
 }

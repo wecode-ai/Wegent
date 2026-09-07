@@ -13,9 +13,10 @@ import {
 import { WeworkSync } from '../../../dsh/transcript-sync/index.js'
 import { MemorySyncOutbox } from '../../../dsh/transcript-sync/outbox.js'
 
-const ARCHIVE_TRANSCRIPT_ID = 'desktop-e2e-archived-transcript'
 const FIRST_PROMPT = 'WEWORK_DESKTOP_E2E_TRANSCRIPT_SYNC_COMMIT_RESPONSE_LOST'
 const FIRST_COMPLETION = 'WEWORK_DESKTOP_E2E_TRANSCRIPT_SYNC_COMMIT_RESPONSE_LOST_COMPLETE'
+const DEVICE_B_PROMPT = 'WEWORK_DESKTOP_E2E_TRANSCRIPT_SYNC_DEVICE_B_CONTINUES'
+const DEVICE_B_COMPLETION = 'WEWORK_DESKTOP_E2E_TRANSCRIPT_SYNC_DEVICE_B_CONTINUES_COMPLETE'
 const SECOND_PROMPT = 'WEWORK_DESKTOP_E2E_TRANSCRIPT_SYNC_LEASE_AND_FENCING_RACE'
 const SECOND_COMPLETION = 'WEWORK_DESKTOP_E2E_TRANSCRIPT_SYNC_LEASE_AND_FENCING_RACE_COMPLETE'
 const THIRD_PROMPT = 'WEWORK_DESKTOP_E2E_TRANSCRIPT_SYNC_A_CONTINUES_WHILE_B_FAILED'
@@ -57,6 +58,17 @@ function completedResponse(id, text) {
       },
     },
   ]
+}
+
+function modelInputTexts(request) {
+  return (Array.isArray(request?.input) ? request.input : [])
+    .flatMap(item => (Array.isArray(item?.content) ? item.content : []))
+    .map(content => content?.text)
+    .filter(text => typeof text === 'string')
+}
+
+function modelInputContains(texts, expected) {
+  return texts.some(text => text.includes(expected))
 }
 
 async function requestBody(request) {
@@ -131,8 +143,26 @@ function createSimulatedDevice(apiBaseUrl, clientId) {
       return { ...turn, payload: structuredClone(payload) }
     },
   }
+  const importedThrough = new Map()
+  const target = {
+    async status(transcript) {
+      return {
+        available: true,
+        importedThrough: importedThrough.get(transcript.transcriptId) ?? 0,
+      }
+    },
+    async import(transcript, turns) {
+      const sequence = turns.at(-1)?.sequence ?? importedThrough.get(transcript.transcriptId) ?? 0
+      importedThrough.set(transcript.transcriptId, sequence)
+      return { available: true, importedThrough: sequence }
+    },
+    async acknowledge(turn) {
+      importedThrough.set(turn.transcriptId, turn.cloudSequence)
+      return { available: true, importedThrough: turn.cloudSequence }
+    },
+  }
   const state = {
-    value: { version: 2, transcripts: {}, preferencesHash: null },
+    value: { version: 3, transcripts: {}, preferencesHash: null },
     async save() {},
   }
   const desktop = {
@@ -166,6 +196,7 @@ function createSimulatedDevice(apiBaseUrl, clientId) {
     outbox,
     source,
     state,
+    target,
     pollIntervalMs: 60_000,
   })
   return {
@@ -196,6 +227,7 @@ export function createDesktopScenario({ electronUserDataDirectory, uiTimeoutMs, 
 
   const transcripts = new Map()
   const requestLog = []
+  const modelRequests = []
   const appendAttempts = []
   let modelSequence = 0
   let preferenceValue = null
@@ -258,52 +290,11 @@ export function createDesktopScenario({ electronUserDataDirectory, uiTimeoutMs, 
 
       if (request.method === 'GET' && url.pathname === '/api/wework-transcripts') {
         const items = [
-          transcriptSummary(ARCHIVE_TRANSCRIPT_ID, 3, [
-            {
-              id: 41,
-              fromSequence: 1,
-              toSequence: 2,
-              sha256: 'desktop-e2e-archive',
-              sizeBytes: 1,
-              format: 'jsonl.zst',
-              downloadUrl: null,
-              createdAt: '2026-09-04T00:00:00.000Z',
-            },
-          ]),
           ...[...transcripts.entries()].map(([transcriptId, transcript]) =>
             transcriptSummary(transcriptId, transcript.turns.length, [], transcript)
           ),
         ]
         json(response, 200, { items })
-        return true
-      }
-
-      if (
-        request.method === 'GET' &&
-        url.pathname === `/api/wework-transcripts/${ARCHIVE_TRANSCRIPT_ID}/archives/41/turns`
-      ) {
-        json(response, 200, {
-          turns: [
-            { turnId: 'archive-turn-1', sequence: 1, payload: { assistantMessage: 'archive-1' } },
-            { turnId: 'archive-turn-2', sequence: 2, payload: { assistantMessage: 'archive-2' } },
-          ],
-          currentSequence: 3,
-          archivedThroughSequence: 2,
-          hasMore: false,
-        })
-        return true
-      }
-
-      if (
-        request.method === 'GET' &&
-        url.pathname === `/api/wework-transcripts/${ARCHIVE_TRANSCRIPT_ID}/turns`
-      ) {
-        json(response, 200, {
-          turns: [{ turnId: 'hot-turn-3', sequence: 3, payload: { assistantMessage: 'hot-3' } }],
-          currentSequence: 3,
-          archivedThroughSequence: 2,
-          hasMore: false,
-        })
         return true
       }
 
@@ -467,14 +458,18 @@ export function createDesktopScenario({ electronUserDataDirectory, uiTimeoutMs, 
       }
 
       if (request.method === 'POST' && ['/responses', '/v1/responses'].includes(url.pathname)) {
-        const body = JSON.stringify(await requestBody(request))
+        const parsedBody = await requestBody(request)
+        modelRequests.push(structuredClone(parsedBody))
+        const body = JSON.stringify(parsedBody)
         const completion = body.includes(THIRD_PROMPT)
           ? THIRD_COMPLETION
           : body.includes(SECOND_PROMPT)
             ? SECOND_COMPLETION
-            : body.includes(FIRST_PROMPT)
-              ? FIRST_COMPLETION
-              : null
+            : body.includes(DEVICE_B_PROMPT)
+              ? DEVICE_B_COMPLETION
+              : body.includes(FIRST_PROMPT)
+                ? FIRST_COMPLETION
+                : null
         if (!completion) return false
         modelSequence += 1
         const responseId = `wework-transcript-sync-${modelSequence}`
@@ -493,37 +488,6 @@ export function createDesktopScenario({ electronUserDataDirectory, uiTimeoutMs, 
         'dsh-core',
         'wework-transcript-sync-outbox.sqlite3'
       )
-      const restoredState = await waitFor(
-        async () => {
-          try {
-            const state = JSON.parse(await readFile(statePath, 'utf8'))
-            return state.transcripts?.[ARCHIVE_TRANSCRIPT_ID]?.downloadedThrough === 3
-              ? state
-              : null
-          } catch (error) {
-            if (error?.code === 'ENOENT') return null
-            throw error
-          }
-        },
-        uiTimeoutMs,
-        'Core DSH did not restore the archived transcript and resumed hot tail'
-      )
-      assert.deepEqual(
-        restoredState.transcripts[ARCHIVE_TRANSCRIPT_ID].turns.map(turn => turn.sequence),
-        [1, 2, 3],
-        'Archive and hot-tail turns were not restored contiguously'
-      )
-      const archiveRequestIndex = requestLog.findIndex(value =>
-        value.includes('/archives/41/turns')
-      )
-      const hotRequestIndex = requestLog.findIndex(
-        value => value.includes(`/${ARCHIVE_TRANSCRIPT_ID}/turns`) && !value.includes('/archives/')
-      )
-      assert.ok(
-        archiveRequestIndex >= 0 && archiveRequestIndex < hotRequestIndex,
-        'Core DSH requested the hot tail before restoring archived turns'
-      )
-
       await createSingleRootLocalProject(control, workspacePath, 'transcript-sync')
       await control.command('waitFor', ACTIVE_COMPOSER_SELECTOR, { timeoutMs: uiTimeoutMs })
       await control.command('fill', ACTIVE_COMPOSER_SELECTOR, { value: FIRST_PROMPT })
@@ -578,10 +542,10 @@ export function createDesktopScenario({ electronUserDataDirectory, uiTimeoutMs, 
       const transcriptId = activeTranscriptId
       assert.ok(transcriptId, 'Device A did not establish the shared transcript')
       await deviceB.sync.flush()
-      assert.deepEqual(
-        deviceB.state.value.transcripts[transcriptId].turns.map(turn => turn.sequence),
-        [1],
-        'Device B did not pull device A transcript before continuing'
+      assert.equal(
+        deviceB.state.value.transcripts[transcriptId].downloadedThrough,
+        1,
+        'Device B did not import device A transcript before continuing'
       )
       await deviceB.enqueue({
         transcriptId,
@@ -590,7 +554,11 @@ export function createDesktopScenario({ electronUserDataDirectory, uiTimeoutMs, 
         sequence: 1,
         turnId: 'device-b-turn-1',
         sessionId: 'device-b-session',
-        payload: { assistantMessage: 'Device B continuation' },
+        payload: {
+          userMessages: [{ id: 'device-b-user-1', text: DEVICE_B_PROMPT }],
+          assistantMessage: DEVICE_B_COMPLETION,
+          completion: { kind: 'completed' },
+        },
       })
       await deviceB.sync.flush()
       assert.deepEqual(
@@ -616,6 +584,27 @@ export function createDesktopScenario({ electronUserDataDirectory, uiTimeoutMs, 
         text: SECOND_COMPLETION,
         timeoutMs: uiTimeoutMs,
       })
+      const secondModelRequest = modelRequests.find(request =>
+        JSON.stringify(request).includes(SECOND_PROMPT)
+      )
+      assert.ok(secondModelRequest, 'Device A continuation did not reach the model')
+      const secondModelTexts = modelInputTexts(secondModelRequest)
+      assert.ok(
+        secondModelTexts.includes(DEVICE_B_PROMPT) &&
+          secondModelTexts.includes(DEVICE_B_COMPLETION),
+        'Device A model request did not contain the turn imported from device B'
+      )
+      assert.equal(
+        secondModelTexts.filter(text => text === DEVICE_B_PROMPT).length,
+        1,
+        'Device B user message was duplicated in the native Codex history'
+      )
+      assert.ok(
+        secondModelTexts.indexOf(DEVICE_B_PROMPT) < secondModelTexts.indexOf(DEVICE_B_COMPLETION) &&
+          secondModelTexts.indexOf(DEVICE_B_COMPLETION) <
+            secondModelTexts.findIndex(text => text.includes(SECOND_PROMPT)),
+        'Device A model request did not preserve the imported B turn before its continuation'
+      )
       await waitFor(
         () => {
           const transcript = activeTranscript()
@@ -655,9 +644,9 @@ export function createDesktopScenario({ electronUserDataDirectory, uiTimeoutMs, 
       )
 
       await deviceB.sync.flush()
-      assert.deepEqual(
-        deviceB.state.value.transcripts[transcriptId].turns.map(turn => turn.sequence),
-        [1, 2, 3],
+      assert.equal(
+        deviceB.state.value.transcripts[transcriptId].downloadedThrough,
+        3,
         'Device B did not observe the A→B→A continuation before going offline'
       )
       failNextDeviceBAppend = true
@@ -688,6 +677,24 @@ export function createDesktopScenario({ electronUserDataDirectory, uiTimeoutMs, 
         text: THIRD_COMPLETION,
         timeoutMs: uiTimeoutMs,
       })
+      const thirdModelRequest = modelRequests.find(request =>
+        JSON.stringify(request).includes(THIRD_PROMPT)
+      )
+      assert.ok(thirdModelRequest, 'Device A offline-race continuation did not reach the model')
+      const thirdModelTexts = modelInputTexts(thirdModelRequest)
+      for (const expected of [
+        FIRST_PROMPT,
+        FIRST_COMPLETION,
+        DEVICE_B_PROMPT,
+        DEVICE_B_COMPLETION,
+        SECOND_PROMPT,
+        SECOND_COMPLETION,
+      ]) {
+        assert.ok(
+          modelInputContains(thirdModelTexts, expected),
+          `Device A model request lost synchronized native history: ${expected}`
+        )
+      }
       await waitFor(
         () => activeTranscript().turns.length === 4 && lease === null,
         uiTimeoutMs + SYNC_POLL_INTERVAL_MS,
@@ -725,10 +732,12 @@ export function createDesktopScenario({ electronUserDataDirectory, uiTimeoutMs, 
       await waitFor(
         async () => {
           const state = JSON.parse(await readFile(statePath, 'utf8'))
-          return state.transcripts[branchTranscriptId]?.downloadedThrough === 2 ? state : null
+          return state.transcripts[branchTranscriptId]?.parentTranscriptId === transcriptId
+            ? state
+            : null
         },
         uiTimeoutMs + SYNC_POLL_INTERVAL_MS,
-        'Device A did not pull device B automatic branch'
+        'Device A did not discover device B automatic branch'
       )
       const finalState = JSON.parse(await readFile(statePath, 'utf8'))
       assert.equal(
@@ -736,20 +745,30 @@ export function createDesktopScenario({ electronUserDataDirectory, uiTimeoutMs, 
         0,
         'Successfully synchronized turns remained in the SQLite outbox'
       )
-      assert.deepEqual(
-        finalState.transcripts[transcriptId].turns.map(turn => turn.sequence),
-        [1, 2, 3, 4],
-        'Device A mainline mirror changed after device B branched'
+      assert.equal(
+        finalState.transcripts[transcriptId].downloadedThrough,
+        4,
+        'Device A native mainline cursor changed after device B branched'
+      )
+      assert.equal(
+        Object.hasOwn(finalState.transcripts[transcriptId], 'turns'),
+        false,
+        'Transcript sync state duplicated native Codex message bodies'
       )
       assert.equal(
         finalState.transcripts[branchTranscriptId].parentTranscriptId,
         transcriptId,
         'Device A mirror lost the automatic branch parent'
       )
-      assert.deepEqual(
-        finalState.transcripts[branchTranscriptId].turns.map(turn => turn.sequence),
-        [1, 2],
-        'Device A branch mirror did not converge after device B recovered'
+      assert.equal(
+        Object.hasOwn(finalState.transcripts[branchTranscriptId], 'turns'),
+        false,
+        'Automatic branch bodies were duplicated outside the native transcript'
+      )
+      assert.equal(
+        finalState.transcripts[branchTranscriptId].downloadedThrough,
+        0,
+        'Device B branch was injected into device A mainline without a local branch binding'
       )
       await control.command('waitFor', ACTIVE_WORKBENCH_SELECTOR, { timeoutMs: uiTimeoutMs })
     },
@@ -765,6 +784,7 @@ export function createDesktopScenario({ electronUserDataDirectory, uiTimeoutMs, 
         deviceBAppendFailed,
         deviceBPending: deviceB.outbox.list(),
         firstCommitResponseDropped,
+        modelRequests,
         requestLog,
         secondFencingRejected,
         secondLeaseRejected,
