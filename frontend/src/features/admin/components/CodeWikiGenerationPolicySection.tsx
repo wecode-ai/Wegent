@@ -28,7 +28,7 @@ function strategyName(
   strategy: Pick<CodeWikiGenerationPolicyStrategy, 'id' | 'display_name'>,
   t: (key: string) => string
 ) {
-  const key = `code_wiki_generation_strategy_${strategy.id}_title`
+  const key = `system_config.code_wiki_generation_strategy_${strategy.id}_title`
   const translated = t(key)
   return translated === key ? strategy.display_name : translated
 }
@@ -37,7 +37,7 @@ function strategyDescription(
   strategy: Pick<CodeWikiGenerationPolicyStrategy, 'id' | 'description'>,
   t: (key: string) => string
 ) {
-  const key = `code_wiki_generation_strategy_${strategy.id}_description`
+  const key = `system_config.code_wiki_generation_strategy_${strategy.id}_description`
   const translated = t(key)
   return translated === key ? strategy.description : translated
 }
