@@ -7536,6 +7536,120 @@ describe('WorkbenchProvider runtime tasks', () => {
     expect(screen.getByTestId('project-reasoning-effort')).toHaveTextContent('medium')
   })
 
+  test('updates the global new-task model from a follow-global local project', async () => {
+    const runtimeWorkApi = createRuntimeWorkApiMock({
+      listRuntimeWork: vi.fn().mockResolvedValue(
+        createRuntimeWork({
+          projects: [
+            {
+              project: {
+                id: 7,
+                key: 'project-7',
+                name: 'Wegent',
+                source: 'local_project',
+                aiSettings: {
+                  modelSelection: null,
+                },
+              },
+              deviceWorkspaces: [
+                {
+                  deviceId: 'device-1',
+                  deviceName: 'Project Device',
+                  deviceStatus: 'online',
+                  workspacePath: '/workspace/project-alpha',
+                  mapped: true,
+                  available: true,
+                  tasks: [],
+                },
+              ],
+            },
+          ],
+          totalTasks: 0,
+        })
+      ),
+    })
+    const models: UnifiedModel[] = [
+      {
+        name: 'global-model',
+        type: 'runtime',
+        provider: 'local',
+        config: {
+          weworkModelKind: 'codex-provider',
+          ui: {
+            family: 'codex-provider',
+            reasoningEfforts: ['low', 'medium', 'high'],
+          },
+        },
+      },
+      {
+        name: 'override-model',
+        type: 'runtime',
+        provider: 'local',
+        config: {
+          weworkModelKind: 'codex-provider',
+          ui: {
+            family: 'codex-provider',
+            reasoningEfforts: ['low', 'medium', 'high'],
+          },
+        },
+      },
+    ]
+    const updateCurrentUser = vi.fn().mockResolvedValue({})
+    const services = createWorkbenchServices({
+      modelApi: {
+        listModels: vi.fn().mockResolvedValue({ data: models }),
+      },
+      runtimeWorkApi: runtimeWorkApi as WorkbenchServices['runtimeWorkApi'],
+      userApi: {
+        updateCurrentUser,
+      } as Partial<WorkbenchServices['userApi']> as WorkbenchServices['userApi'],
+    } as Partial<WorkbenchServices>)
+
+    renderWorkbenchForUser(
+      <ProjectSendProbe />,
+      {
+        id: 1,
+        user_name: 'alice',
+        email: 'a@b.c',
+        preferences: {
+          wework_new_chat_model_selection: {
+            modelName: 'global-model',
+            modelType: 'runtime',
+            options: { reasoning: 'medium' },
+          },
+        },
+      },
+      services
+    )
+
+    await userEvent.click(await screen.findByText('select project'))
+    await waitFor(() =>
+      expect(screen.getByTestId('project-selected-model')).toHaveTextContent('global-model')
+    )
+
+    await userEvent.click(screen.getByText('select override model'))
+    await userEvent.click(screen.getByText('set high reasoning'))
+
+    await waitFor(() =>
+      expect(updateCurrentUser).toHaveBeenLastCalledWith({
+        preferences: {
+          wework_new_chat_model_selection: {
+            modelName: 'override-model',
+            modelType: 'runtime',
+            options: expect.objectContaining({ reasoning: 'high' }),
+          },
+        },
+      })
+    )
+
+    await userEvent.click(screen.getByText('start new project chat'))
+
+    await waitFor(() =>
+      expect(screen.getByTestId('project-selected-model')).toHaveTextContent('override-model')
+    )
+    expect(screen.getByTestId('project-reasoning-effort')).toHaveTextContent('high')
+  })
+
   test('stores one canonical model identity for selection and execution', async () => {
     const runtimeWorkApi = createRuntimeWorkApiMock({
       createRuntimeTask: vi.fn(async request => ({
