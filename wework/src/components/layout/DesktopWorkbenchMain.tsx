@@ -242,7 +242,6 @@ import { HarnessSessionPickerDialog } from './HarnessSessionPickerDialog'
 import { DesktopEmptyTaskLauncher } from './DesktopEmptyTaskLauncher'
 import { WorkbenchHarnessModelSelector } from './WorkbenchHarnessModelSelector'
 import { WorkbenchHarnessSelector } from './WorkbenchHarnessSelector'
-import { WorkbenchTeamSelector } from './WorkbenchTeamSelector'
 import type {
   LocalHarnessSessionRegistrationOptions,
   LocalHarnessWorkbenchSession,
@@ -5091,29 +5090,23 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
                           projectWorkBarMiddleContext={projectSpaceContext}
                           projectWorkBarTrailingContext={
                             experimentalFeaturesEnabled ? (
-                              <div className="flex items-center gap-1">
-                                {activeNewChatRuntime === 'codex' && (
-                                  <WorkbenchTeamSelector
-                                    teams={wegentTeams}
-                                    selectedTeamId={activeTeam?.id ?? null}
-                                    loading={teamsLoading}
-                                    onTeamChange={selectWegentTeam}
-                                  />
+                              <WorkbenchHarnessSelector
+                                runtime={activeNewChatRuntime}
+                                harnesses={localHarnesses}
+                                enabledHarnesses={enabledLocalHarnesses.map(
+                                  preference => preference.id
                                 )}
-                                <WorkbenchHarnessSelector
-                                  runtime={activeNewChatRuntime}
-                                  harnesses={localHarnesses}
-                                  enabledHarnesses={enabledLocalHarnesses.map(
-                                    preference => preference.id
-                                  )}
-                                  loading={localHarnessesLoading}
-                                  detectionFailed={localHarnessDetectionFailed}
-                                  onRuntimeChange={runtime => {
-                                    setCentralHarnessError(null)
-                                    setNewChatRuntime(runtime)
-                                  }}
-                                />
-                              </div>
+                                loading={localHarnessesLoading}
+                                detectionFailed={localHarnessDetectionFailed}
+                                onRuntimeChange={runtime => {
+                                  setCentralHarnessError(null)
+                                  setNewChatRuntime(runtime)
+                                }}
+                                teams={wegentTeams}
+                                selectedTeamId={activeTeam?.id ?? null}
+                                teamsLoading={teamsLoading}
+                                onTeamChange={selectWegentTeam}
+                              />
                             ) : undefined
                           }
                           modelSelectorOverride={
