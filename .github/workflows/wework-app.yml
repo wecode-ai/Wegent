@@ -188,7 +188,7 @@ jobs:
             cargo_target: aarch64-apple-darwin
             codex_target: aarch64-apple-darwin
           - name: macOS x64
-            runner: macos-15-intel
+            runner: macos-14
             platform: macos
             arch: x64
             cargo_target: x86_64-apple-darwin
@@ -216,6 +216,11 @@ jobs:
         uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8
         with:
           targets: ${{ matrix.cargo_target }}
+
+      - name: Set up compiler cache
+        uses: ./.github/actions/setup-sccache
+        with:
+          save-cache: "true"
 
       - name: Set up pnpm
         uses: pnpm/action-setup@0e279bb959325dab635dd2c09392533439d90093
@@ -304,6 +309,7 @@ jobs:
           VITE_WEWORK_RUNTIME_MODE: local-first
           WEWORK_CODEX_TARGET: ${{ matrix.codex_target }}
           WEWORK_DWS_TARGET: ${{ matrix.cargo_target }}
+          WEWORK_ELECTRON_DEPENDENCIES_READY: "true"
           WEWORK_CUSTOM_MACOS_NOTARIZATION: ${{ matrix.platform == 'macos' && 'true' || '' }}
           WEWORK_RELEASE_ARCH: ${{ matrix.arch }}
           WEWORK_RELEASE_PLATFORM: ${{ matrix.platform }}
@@ -313,32 +319,18 @@ jobs:
           WIN_CSC_LINK: ${{ secrets.WIN_CSC_LINK }}
         run: pnpm --filter wework build:release
 
-      - name: Verify formal release package startup
+      - name: Verify formal release package
         if: matrix.platform == 'macos' && matrix.arch == 'arm64'
         env:
           CODEX_BIN: ${{ github.workspace }}/wework/resources/binaries/codex/${{ matrix.codex_target }}/vendor/${{ matrix.codex_target }}/bin/codex
           WEWORK_E2E_APP_BIN: ${{ github.workspace }}/wework/electron/release-installer/mac-arm64/WeWork.app/Contents/MacOS/WeWork
           WEWORK_E2E_EXECUTOR_BIN: ${{ github.workspace }}/wework/electron/release-installer/mac-arm64/WeWork.app/Contents/Resources/bin/wegent-executor
+          WEWORK_E2E_PARALLEL_CHECKPOINTS: "3"
+          WEWORK_E2E_PARALLEL_SCOPE: core
           WEWORK_E2E_REQUIRE_RELEASE_PACKAGE: "1"
-        run: pnpm --filter wework e2e:desktop -- --segment release-package-startup
-
-      - name: Verify formal release component update
-        if: matrix.platform == 'macos' && matrix.arch == 'arm64'
-        env:
-          CODEX_BIN: ${{ github.workspace }}/wework/resources/binaries/codex/${{ matrix.codex_target }}/vendor/${{ matrix.codex_target }}/bin/codex
-          WEWORK_E2E_APP_BIN: ${{ github.workspace }}/wework/electron/release-installer/mac-arm64/WeWork.app/Contents/MacOS/WeWork
-          WEWORK_E2E_EXECUTOR_BIN: ${{ github.workspace }}/wework/electron/release-installer/mac-arm64/WeWork.app/Contents/Resources/bin/wegent-executor
-          WEWORK_E2E_REQUIRE_RELEASE_PACKAGE: "1"
-        run: pnpm --filter wework e2e:desktop -- --segment component-update
-
-      - name: Verify formal release differential app update
-        if: matrix.platform == 'macos' && matrix.arch == 'arm64'
-        env:
-          CODEX_BIN: ${{ github.workspace }}/wework/resources/binaries/codex/${{ matrix.codex_target }}/vendor/${{ matrix.codex_target }}/bin/codex
-          WEWORK_E2E_APP_BIN: ${{ github.workspace }}/wework/electron/release-installer/mac-arm64/WeWork.app/Contents/MacOS/WeWork
-          WEWORK_E2E_EXECUTOR_BIN: ${{ github.workspace }}/wework/electron/release-installer/mac-arm64/WeWork.app/Contents/Resources/bin/wegent-executor
-          WEWORK_E2E_REQUIRE_RELEASE_PACKAGE: "1"
-        run: pnpm --filter wework e2e:desktop -- --segment app-update-differential
+        run: |
+          pnpm --filter wework e2e:desktop -- \
+            --parallel-segments release-package-startup,component-update,app-update-differential
 
       - name: Prepare installer and legacy bridge assets
         shell: bash
@@ -370,6 +362,7 @@ jobs:
           name: wework-${{ needs.prepare-release.outputs.version }}-${{ matrix.platform }}-${{ matrix.arch }}
           path: ${{ runner.temp }}/wework-release-assets/*
           if-no-files-found: error
+          compression-level: 0
 
   publish:
     name: Publish release and update channels

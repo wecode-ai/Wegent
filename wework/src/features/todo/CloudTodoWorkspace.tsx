@@ -4130,7 +4130,7 @@ export function CloudTodoWorkspace({
           {!embedded && sidebarCollapsed && (
             <div
               data-testid="cloud-todo-collapsed-chrome-controls"
-              className="absolute left-2 top-0 z-20 flex h-[38px] items-center gap-1"
+              className="electron-titlebar-interactive-region pointer-events-auto absolute left-2 top-0 z-20 flex h-[38px] items-center gap-1"
             >
               <DesktopWindowControls
                 sidebarCollapsed
@@ -4244,7 +4244,12 @@ export function CloudTodoWorkspace({
                 )}
               >
                 {!embedded && (
-                  <MacOSTitleBarDragRegion className="absolute inset-0 z-0 h-full w-full" />
+                  <MacOSTitleBarDragRegion
+                    className={cn(
+                      'absolute right-0 top-0 z-0 h-full',
+                      sidebarCollapsed ? 'left-12' : 'left-0'
+                    )}
+                  />
                 )}
                 <div
                   ref={projectHeaderContentRef}

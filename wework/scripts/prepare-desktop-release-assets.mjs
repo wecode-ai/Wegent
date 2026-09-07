@@ -32,6 +32,7 @@ if (!platform || !arch || !version || !outputDirectory) {
 
 const output = resolve(outputDirectory)
 const installerArchitecture = platform === 'linux' && arch === 'x64' ? 'x86_64' : arch
+const useComponentizedHostUpdate = process.env.WEWORK_USE_COMPONENTIZED_HOST_UPDATE === 'true'
 await rm(output, { recursive: true, force: true })
 await mkdir(output, { recursive: true })
 
@@ -50,36 +51,59 @@ if (platform === 'macos') {
     installerRoot,
     new RegExp(`^WeWork_${escape(version)}_macos_${arch}\\.zip$`)
   )
-  const updateZip = await findFile(
-    onlineUpdateRoot,
-    new RegExp(`^WeWorkHostUpdate_${escape(version)}_macos_${arch}\\.zip$`)
-  )
   const bridge = join(output, `WeWork_${version}_macos_${arch}.app.tar.gz`)
   await create({ cwd: appDirectory, file: bridge, gzip: true, portable: true }, [appName])
   await cp(dmg, join(output, basename(dmg)))
-  await copyUpdateArtifacts([installerZip, updateZip])
+  await copyUpdateArtifacts([
+    installerZip,
+    ...(useComponentizedHostUpdate
+      ? [
+          await findFile(
+            onlineUpdateRoot,
+            new RegExp(`^WeWorkHostUpdate_${escape(version)}_macos_${arch}\\.zip$`)
+          ),
+        ]
+      : []),
+  ])
   await signBridge(bridge)
 } else if (platform === 'windows') {
   const installer = await findFile(
     installerRoot,
     new RegExp(`^WeWork_${escape(version)}_windows_${arch}-setup\\.exe$`)
   )
-  const updateInstaller = await findFile(
-    onlineUpdateRoot,
-    new RegExp(`^WeWorkHostUpdate_${escape(version)}_windows_${arch}-setup\\.exe$`)
-  )
-  await copyUpdateArtifacts([installer, updateInstaller])
+  await copyUpdateArtifacts([
+    installer,
+    ...(useComponentizedHostUpdate
+      ? [
+          await findFile(
+            onlineUpdateRoot,
+            new RegExp(`^WeWorkHostUpdate_${escape(version)}_windows_${arch}-setup\\.exe$`)
+          ),
+        ]
+      : []),
+  ])
   await signBridge(join(output, basename(installer)))
 } else if (platform === 'linux') {
   const appImage = await findFile(
     installerRoot,
     new RegExp(`^WeWork_${escape(version)}_linux_${installerArchitecture}\\.AppImage$`)
   )
-  const updateAppImage = await findFile(
-    onlineUpdateRoot,
-    new RegExp(`^WeWorkHostUpdate_${escape(version)}_linux_${installerArchitecture}\\.AppImage$`)
+  await copyUpdateArtifacts(
+    [
+      appImage,
+      ...(useComponentizedHostUpdate
+        ? [
+            await findFile(
+              onlineUpdateRoot,
+              new RegExp(
+                `^WeWorkHostUpdate_${escape(version)}_linux_${installerArchitecture}\\.AppImage$`
+              )
+            ),
+          ]
+        : []),
+    ],
+    false
   )
-  await copyUpdateArtifacts([appImage, updateAppImage], false)
 } else {
   throw new Error(`Unsupported desktop release platform: ${platform}`)
 }

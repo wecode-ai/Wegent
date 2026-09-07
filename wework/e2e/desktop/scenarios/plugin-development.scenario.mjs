@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import { execFile } from 'node:child_process'
 import { access, mkdir, readFile, writeFile } from 'node:fs/promises'
+import { createServer } from 'node:http'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { promisify } from 'node:util'
@@ -70,6 +71,17 @@ export async function createDesktopScenario({
   const pluginRoot = join(resultDir, 'plugin-development-project')
   const controlRegistry = join(resultDir, 'desktop-control-instances')
   await mkdir(pluginRoot, { recursive: true })
+  const website = createServer((_request, response) => {
+    response.setHeader('content-type', 'text/html; charset=utf-8')
+    response.end('<!doctype html><title>Plugin website</title><h1>Plugin website loaded</h1>')
+  })
+  await new Promise((resolvePromise, reject) => {
+    website.once('error', reject)
+    website.listen(0, '127.0.0.1', resolvePromise)
+  })
+  const websiteAddress = website.address()
+  assert.ok(websiteAddress && typeof websiteAddress !== 'string')
+  const websiteUrl = `http://127.0.0.1:${websiteAddress.port}/`
 
   return {
     appEnvironment: {
@@ -113,23 +125,10 @@ export async function createDesktopScenario({
       })
       const marker = JSON.parse(await readFile(markerPath, 'utf8'))
       const manifest = JSON.parse(await readFile(join(pluginRoot, 'package.json'), 'utf8'))
-      const codexManifest = JSON.parse(
-        await readFile(join(pluginRoot, 'codex-plugin', '.codex-plugin', 'plugin.json'), 'utf8')
-      )
       assert.deepEqual(marker, { schemaVersion: 1, kind: 'wework-core-dsh-plugin' })
       assert.equal(manifest.name, '@wework/plugin-development-project')
-      assert.deepEqual(manifest.wework, { codexPlugin: './codex-plugin' })
-      assert.equal(codexManifest.name, 'plugin-development-project')
-      assert.deepEqual(Object.keys(codexManifest), [
-        'name',
-        'version',
-        'description',
-        'author',
-        'skills',
-        'interface',
-      ])
-      assert.equal(codexManifest.wework, undefined)
-      assert.equal(codexManifest.dsh, undefined)
+      assert.equal(manifest.wework, undefined)
+      assert.deepEqual(manifest.files, ['client.js', 'cordis.patch.yml', 'index.js'])
 
       await control.command('waitFor', '[data-testid="wework-plugin-development-sidebar"]', {
         timeoutMs: workbenchReadyTimeoutMs,
@@ -303,7 +302,24 @@ export async function createDesktopScenario({
       const changedClient = client.replace(
         '    apply() {},',
         [
-          '    apply() {',
+          '    apply(ctx) {',
+          "      ctx.slots.inject('wework.workspace.sidebar.tab', () =>",
+          "        ctx.wework.contributions.register(ctx, 'wework.workspace.sidebar.tab', {",
+          "          id: 'plugin-development-browser',",
+          "          label: 'Plugin website',",
+          "          mode: 'iframe',",
+          `          url: ${JSON.stringify(websiteUrl)},`,
+          '        })',
+          '      )',
+          "      ctx.slots.inject('wework.sidebar.navigation', () =>",
+          "        ctx.wework.contributions.register(ctx, 'wework.sidebar.navigation', {",
+          "          id: 'plugin-development-browser.navigation',",
+          "          icon: 'globe',",
+          "          label: 'Plugin website',",
+          "          testId: 'plugin-development-browser-navigation',",
+          "          workspaceSidebarTab: 'plugin-development-browser',",
+          '        })',
+          '      )',
           "      const marker = document.createElement('button')",
           "      marker.dataset.testid = 'plugin-development-hmr-behavior'",
           "      marker.textContent = 'Plugin HMR behavior loaded'",
@@ -326,6 +342,68 @@ export async function createDesktopScenario({
           timeoutMs: workbenchReadyTimeoutMs,
           visible: true,
         }
+      )
+      await control.commandForWindow(
+        isolatedWindowLabel,
+        'waitFor',
+        '[data-testid="plugin-development-browser-navigation"]',
+        {
+          visible: true,
+        }
+      )
+      const dshSlots = JSON.parse(
+        await control.commandForWindow(
+          isolatedWindowLabel,
+          'getAttribute',
+          '[data-testid="wework-dsh-root"]',
+          { value: 'data-wework-dsh-slots' }
+        )
+      )
+      assert.ok(
+        dshSlots['wework.sidebar.navigation']?.includes('plugin-development-browser.navigation'),
+        'The reloaded Wework shell did not expose the plugin navigation contribution'
+      )
+      assert.ok(
+        dshSlots['wework.workspace.sidebar.tab']?.includes('plugin-development-browser'),
+        'The reloaded Wework shell did not expose the plugin workspace sidebar contribution'
+      )
+      const routeBeforeSidebarOpen = await control.commandForWindow(isolatedWindowLabel, 'getRoute')
+      await control.commandForWindow(
+        isolatedWindowLabel,
+        'click',
+        '[data-testid="plugin-development-browser-navigation"]',
+        { visible: true }
+      )
+      await control.commandForWindow(
+        isolatedWindowLabel,
+        'waitFor',
+        '[data-testid="right-workspace-extension-panel-plugin-development-browser"]',
+        {
+          visible: true,
+        }
+      )
+      await control.commandForWindow(
+        isolatedWindowLabel,
+        'waitFor',
+        '[data-testid="app-iframe-workspace-sidebar-plugin-development-browser"]',
+        {
+          visible: true,
+        }
+      )
+      assert.equal(
+        await control.commandForWindow(isolatedWindowLabel, 'getRoute'),
+        routeBeforeSidebarOpen,
+        'Opening a workspace sidebar iframe changed the active workspace route'
+      )
+      assert.equal(
+        await control.commandForWindow(
+          isolatedWindowLabel,
+          'getAttribute',
+          '[data-testid="app-iframe-workspace-sidebar-plugin-development-browser"]',
+          { value: 'data-src' }
+        ),
+        websiteUrl,
+        'The workspace sidebar iframe did not use the contributed URL'
       )
       control.activateWindow(isolatedWindowLabel)
       await captureScreenshot(control, 'plugin-development-06-hmr-behavior.png', 'body')
@@ -425,6 +503,10 @@ export async function createDesktopScenario({
       )
       await waitForStatus(control, '未运行 · HMR 1', workbenchReadyTimeoutMs)
       await captureScreenshot(control, 'plugin-development-10-debug-stopped-after-hmr.png', 'body')
+    },
+
+    async cleanup() {
+      await new Promise(resolvePromise => website.close(resolvePromise))
     },
   }
 }
