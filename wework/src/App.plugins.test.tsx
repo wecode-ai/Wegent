@@ -1126,6 +1126,33 @@ describe('App plugins route', () => {
     )
   })
 
+  test('does not track a generic sites page again when only query state changes', async () => {
+    window.history.pushState(
+      {},
+      '',
+      '/sites?app_type=web&view=environment-variables&project_id=project-1'
+    )
+    renderApp()
+
+    await waitFor(() =>
+      expect(telemetryMocks.track).toHaveBeenCalledWith('feature_opened', {
+        feature: 'sites',
+      })
+    )
+    const openedFeatureCount = telemetryMocks.track.mock.calls.filter(
+      ([event]) => event === 'feature_opened'
+    ).length
+
+    await act(async () => {
+      window.history.pushState({}, '', '/sites?app_type=web')
+      window.dispatchEvent(new PopStateEvent('popstate'))
+    })
+
+    expect(
+      telemetryMocks.track.mock.calls.filter(([event]) => event === 'feature_opened')
+    ).toHaveLength(openedFeatureCount)
+  })
+
   test('does not dispatch application shortcuts from editable targets', async () => {
     window.history.pushState({}, '', '/')
     renderApp()

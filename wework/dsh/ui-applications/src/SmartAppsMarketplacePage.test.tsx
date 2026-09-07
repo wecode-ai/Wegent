@@ -301,6 +301,11 @@ describe('SmartAppsMarketplacePage', () => {
   })
 
   test('tracks a marketplace installation only after the installation succeeds', async () => {
+    let resolveInstallation: (installation: typeof importedInstallation) => void = () => undefined
+    const installationPromise = new Promise<typeof importedInstallation>(resolve => {
+      resolveInstallation = resolve
+    })
+    installPackage.mockReturnValueOnce(installationPromise)
     render(<SmartAppsMarketplacePage api={api()} />)
 
     fireEvent.click(await screen.findByTestId('smart-app-marketplace-install-7'))
@@ -310,6 +315,8 @@ describe('SmartAppsMarketplacePage', () => {
     fireEvent.click(screen.getByTestId('harness-app-install-confirm'))
 
     await waitFor(() => expect(installPackage).toHaveBeenCalledOnce())
+    expect(trackMock).not.toHaveBeenCalled()
+    resolveInstallation(importedInstallation)
     await waitFor(() =>
       expect(trackMock).toHaveBeenCalledWith('smart_app_installed', {
         install_source: 'marketplace',
@@ -327,17 +334,25 @@ describe('SmartAppsMarketplacePage', () => {
         releaseId: 16,
       },
     ])
-    installPackage.mockResolvedValue({
+    const updatedInstallation = {
       ...importedInstallation,
       id: 'market-7',
       smartAppId: 7,
       releaseId: 17,
+    }
+    let resolveInstallation: (installation: typeof updatedInstallation) => void = () => undefined
+    const installationPromise = new Promise<typeof updatedInstallation>(resolve => {
+      resolveInstallation = resolve
     })
+    installPackage.mockReturnValueOnce(installationPromise)
     render(<SmartAppsMarketplacePage api={api()} />)
 
     fireEvent.click(await screen.findByTestId('smart-app-marketplace-install-7'))
     fireEvent.click(await screen.findByTestId('harness-app-install-confirm'))
 
+    await waitFor(() => expect(installPackage).toHaveBeenCalledOnce())
+    expect(trackMock).not.toHaveBeenCalled()
+    resolveInstallation(updatedInstallation)
     await waitFor(() =>
       expect(trackMock).toHaveBeenCalledWith('feature_action_completed', {
         domain: 'smart_app',
@@ -359,11 +374,18 @@ describe('SmartAppsMarketplacePage', () => {
       manifest: importedInstallation.manifest,
       issues: [],
     })
+    let resolveInstallation: (installation: typeof importedInstallation) => void = () => undefined
+    const installationPromise = new Promise<typeof importedInstallation>(resolve => {
+      resolveInstallation = resolve
+    })
+    installPackage.mockReturnValueOnce(installationPromise)
     render(<SmartAppsMarketplacePage api={api([])} mode="owned" />)
 
     fireEvent.click(await screen.findByTestId('smart-apps-import-button'))
 
     await waitFor(() => expect(installPackage).toHaveBeenCalledOnce())
+    expect(trackMock).not.toHaveBeenCalled()
+    resolveInstallation(importedInstallation)
     await waitFor(() =>
       expect(trackMock).toHaveBeenCalledWith('smart_app_installed', {
         install_source: 'zip_import',

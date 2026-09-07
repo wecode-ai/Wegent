@@ -568,11 +568,13 @@ function AppRoutes({ onWorkbenchStartupReadyChange, onOpenWeworkForAppshot }: Ap
     }
   }, [])
 
+  const telemetryFeature = isPopoutWindow ? 'popout' : telemetryFeatureForLocation(path, search)
+
   useEffect(() => {
     track('feature_opened', {
-      feature: isPopoutWindow ? 'popout' : telemetryFeatureForLocation(path, search),
+      feature: telemetryFeature,
     })
-  }, [isPopoutWindow, path, search, telemetryEnabled])
+  }, [path, telemetryEnabled, telemetryFeature])
   const nextNativeWorkbenchKinds = new Map(
     [...mountedTabs.nativeWorkbenchKinds].filter(([id]) =>
       workspaceTabs?.tabs.some(tab => tab.id === id)
