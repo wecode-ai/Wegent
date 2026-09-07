@@ -391,10 +391,18 @@ async function startHarness({
   expectedAssistantText = 'Local harness CLI reply',
   responseTimeoutMs = timeoutMs,
 }) {
-  await control.command(
-    'click',
-    `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="workbench-harness-selector"]`
+  const executionSelector = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="workbench-harness-selector"]`
+  assert.equal(
+    Number(await control.command('getElementCount', executionSelector)),
+    1,
+    'The workbench must expose exactly one execution selector'
   )
+  await control.command('click', executionSelector)
+  await control.command('waitFor', '[data-testid="workbench-cloud-agent-heading"]', {
+    text: '云端智能体',
+    visible: true,
+    timeoutMs,
+  })
   await control.command('waitFor', `[data-testid="workbench-harness-option-${harnessId}"]`, {
     visible: true,
     timeoutMs,

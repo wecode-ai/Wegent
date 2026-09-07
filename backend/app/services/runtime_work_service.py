@@ -4056,7 +4056,18 @@ def _build_team_runtime_execution_request(
     from app.services.project_automation_domain import runnable_wegent_team
 
     user = _get_user(db, user_id)
-    team = runnable_wegent_team(db, user_id, team_id)
+    runtime_model_config, override_model_name, force_override = _runtime_model_override(
+        db,
+        user_id,
+        request,
+    )
+    team = runnable_wegent_team(
+        db,
+        user_id,
+        team_id,
+        override_model_name=request.model_id or override_model_name,
+        force_override=bool(request.model_id) or force_override,
+    )
     task_id, subtask_id = _runtime_execution_ids()
     title = _runtime_task_title(request)
     message = _message_with_application_context(
@@ -4090,6 +4101,9 @@ def _build_team_runtime_execution_request(
         new_session=getattr(request, "new_session", True),
         preload_skills=list(request.additional_skills),
         attachments=_runtime_create_attachment_payloads(db, user_id, request),
+        override_model_name=override_model_name,
+        force_override=force_override,
+        runtime_model_config=runtime_model_config,
     )
     _apply_runtime_task_target(execution_request, target)
     _apply_runtime_create_request(execution_request, request)
