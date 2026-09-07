@@ -1651,20 +1651,20 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
       timeoutMs: uiTimeoutMs,
       visible: true,
     })
-    await control.command('click', '[data-testid="automation-editor-section-menu"]')
-    await control.command('fill', '[aria-label="自动化名称"]', {
+    await control.command('click', '[data-testid="automation-editor-name"]')
+    await control.command('fill', '[data-testid="automation-editor-name-input"]', {
       value: '统一自动化回归',
+    })
+    await control.command('press', '[data-testid="automation-editor-name-input"]', {
+      key: 'Enter',
     })
     await control.command('click', '[data-testid="automation-node-insert-after-trigger"]')
     await control.command('click', '[data-testid="automation-node-insert-after-task-trigger"]')
     await control.command('waitFor', '[data-testid^="execution-node-name-"]', {
       timeoutMs: uiTimeoutMs,
     })
-    await control.command('clickWhenEnabled', '[data-testid="automation-save"]', {
-      timeoutMs: uiTimeoutMs,
-    })
-    await control.command('waitFor', 'body', {
-      text: '请填写所有执行节点名称',
+    await control.command('waitFor', '[data-testid="automation-editor-global-actions"]', {
+      text: '等待补全',
       timeoutMs: uiTimeoutMs,
     })
     await control.command('fill', '[data-testid^="execution-node-name-"]', {
@@ -1761,7 +1761,8 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
     )
     await captureScreenshot(control, 'project-automation-node-insert-hover.png')
     await captureScreenshot(control, 'project-automation-00-unified-editor.png')
-    await control.command('clickWhenEnabled', '[data-testid="automation-save"]', {
+    await control.command('waitFor', '[data-testid="automation-editor-global-actions"]', {
+      text: '已保存',
       timeoutMs: uiTimeoutMs,
     })
     const unifiedRule = await waitForValue(
@@ -1823,10 +1824,6 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
       visible: true,
     })
     await control.command('fill', executionPrompt, { value: unsavedPrompt })
-    await control.command('waitFor', 'body', {
-      text: '有未保存更改',
-      timeoutMs: uiTimeoutMs,
-    })
     await control.command('click', '[data-testid="workspace-tab-select-fixed-task"]')
     await control.command('waitFor', '[data-testid="desktop-empty-composer-frame"]', {
       timeoutMs: uiTimeoutMs,
@@ -2170,7 +2167,6 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
     await control.command('waitFor', '[data-testid="automation-run"][disabled]', {
       visible: true,
     })
-    await control.command('clickWhenEnabled', '[data-testid="automation-save"]')
     await control.command('waitFor', '[data-testid="automation-editor-global-actions"]', {
       text: '已保存',
     })
@@ -4027,9 +4023,12 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
       await control.command('waitFor', '[data-testid="automation-rule-editor"]', {
         timeoutMs: uiTimeoutMs,
       })
-      await control.command('click', '[data-testid="automation-editor-section-menu"]')
-      await control.command('fill', '[aria-label="自动化名称"]', {
+      await control.command('click', '[data-testid="automation-editor-name"]')
+      await control.command('fill', '[data-testid="automation-editor-name-input"]', {
         value: '统一自动化回归',
+      })
+      await control.command('press', '[data-testid="automation-editor-name-input"]', {
+        key: 'Enter',
       })
       await control.command('fill', '[data-testid="automation-rule-description"]', {
         value: '验证统一触发规则、执行节点和 DAG 持久化。',
@@ -4112,7 +4111,8 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
         visible: true,
       })
       await captureScreenshot(control, 'project-automation-00-unified-editor.png')
-      await control.command('clickWhenEnabled', '[data-testid="automation-save"]', {
+      await control.command('waitFor', '[data-testid="automation-editor-global-actions"]', {
+        text: '已保存',
         timeoutMs: uiTimeoutMs,
       })
       const createdAutomation = createdPayloads.find(payload => payload.name === '统一自动化回归')
@@ -4134,9 +4134,6 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
       )
       assert.equal(createdGraphNodes?.[1].kind, 'dynamic')
       assert.equal(createdGraphNodes?.[1].subgraph.nodes.length, 1)
-      await control.command('click', '[data-testid="automation-editor-section-menu"]', {
-        visible: true,
-      })
       await control.command('click', '[data-testid="open-current-automation-runs"]', {
         visible: true,
       })

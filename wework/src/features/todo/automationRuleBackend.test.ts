@@ -58,6 +58,9 @@ function uiRule(): AutomationUiRule {
     description: '创建后完成开发流程',
     enabled: true,
     updatedAt: '尚未发布',
+    nextRunAt: null,
+    lastRunAt: null,
+    lastRunStatus: null,
     trigger: {
       type: 'event',
       source: 'issue',

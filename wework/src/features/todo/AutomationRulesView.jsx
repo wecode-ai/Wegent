@@ -18,6 +18,7 @@ import {
   Laptop,
   LayoutGrid,
   MoreHorizontal,
+  Pencil,
   Play,
   Plus,
   Puzzle,
@@ -43,7 +44,11 @@ const ACTIVE_RUN_STATUSES = new Set([
   'waiting_device',
   'running',
 ])
+const AUTO_SAVE_DELAY_MS = 600
 const EMPTY_EXECUTION_CATALOG = { environments: [], models: [], plugins: [] }
+const AUTOMATION_PANEL_GAP = 12
+const AUTOMATION_RIGHT_PANEL_WIDTH = 400
+const AUTOMATION_RIGHT_PANEL_TOP = 64
 const DELIVERABLE_TYPE_OPTIONS = [
   { value: 'text', label: '文本' },
   { value: 'file', label: '文件' },
@@ -535,6 +540,33 @@ function cloneRule(rule) {
   }
 }
 
+function validateRule(rule) {
+  if (!rule.name.trim()) return '请填写自动化名称'
+
+  const hasUnnamedNode = nodes =>
+    nodes.some(
+      node =>
+        !node.name.trim() || (node.kind === 'dynamic' && hasUnnamedNode(node.subgraph?.nodes ?? []))
+    )
+
+  return hasUnnamedNode(rule.steps) ? '请填写所有执行节点名称' : ''
+}
+
+function mergeSavedIdentity(rule, saved) {
+  return {
+    ...rule,
+    id: saved.id,
+    persisted: saved.persisted,
+    origin: saved.origin,
+    version: saved.version,
+    updatedAt: saved.updatedAt,
+    nextRunAt: saved.nextRunAt,
+    lastRunAt: saved.lastRunAt,
+    lastRunStatus: saved.lastRunStatus,
+    legacyDefinition: saved.legacyDefinition,
+  }
+}
+
 function makeRule() {
   return {
     id: `draft-${crypto.randomUUID()}`,
@@ -545,6 +577,9 @@ function makeRule() {
     description: '',
     enabled: true,
     updatedAt: '尚未保存',
+    nextRunAt: null,
+    lastRunAt: null,
+    lastRunStatus: null,
     trigger: {
       type: 'event',
       source: 'issue',
@@ -643,8 +678,16 @@ export function AutomationRulesView({
   const [panelTab, setPanelTab] = useState('settings')
   const [templateStoreOpen, setTemplateStoreOpen] = useState(false)
   const [toast, setToast] = useState('')
-  const [saving, setSaving] = useState(false)
+  const [saveState, setSaveState] = useState('saved')
+  const [saveError, setSaveError] = useState('')
   const [runsLoading, setRunsLoading] = useState(false)
+  const draftRef = useRef(draft)
+  const savedSnapshotRef = useRef('')
+  const saveTimerRef = useRef(null)
+  const saveRequestRef = useRef(null)
+  const flushAutoSaveRef = useRef(null)
+  const failedSnapshotRef = useRef('')
+  const leavingEditorRef = useRef(false)
   const executionCatalogRequestRef = useRef(null)
   const executionPluginRequestRef = useRef(null)
   const runsRequestRef = useRef(null)
@@ -660,10 +703,15 @@ export function AutomationRulesView({
     if (!draft.persisted || JSON.stringify(draft) !== savedSnapshot) return
     const refreshed = backendRules.find(rule => rule.id === draft.id)
     if (!refreshed) return
+    if (refreshed.version <= draft.version) return
     const refreshedSnapshot = JSON.stringify(refreshed)
     if (refreshedSnapshot === savedSnapshot) return
-    setDraft(cloneRule(refreshed))
+    const nextDraft = cloneRule(refreshed)
+    draftRef.current = nextDraft
+    savedSnapshotRef.current = refreshedSnapshot
+    setDraft(nextDraft)
     setSavedSnapshot(refreshedSnapshot)
+    setSaveState('saved')
   }, [backendRules, draft, savedSnapshot])
 
   useEffect(() => {
@@ -678,6 +726,9 @@ export function AutomationRulesView({
     () => () => {
       if (toastTimerRef.current !== null) {
         window.clearTimeout(toastTimerRef.current)
+      }
+      if (saveTimerRef.current !== null) {
+        window.clearTimeout(saveTimerRef.current)
       }
     },
     []
@@ -753,8 +804,15 @@ export function AutomationRulesView({
   }
 
   const openRule = rule => {
-    setDraft(cloneRule(rule))
-    setSavedSnapshot(JSON.stringify(rule))
+    const nextDraft = cloneRule(rule)
+    const nextSnapshot = JSON.stringify(rule)
+    draftRef.current = nextDraft
+    savedSnapshotRef.current = nextSnapshot
+    failedSnapshotRef.current = ''
+    setDraft(nextDraft)
+    setSavedSnapshot(nextSnapshot)
+    setSaveState('saved')
+    setSaveError('')
     setEditorSection('workflow')
     setSelectedNode({ type: 'trigger' })
     setPanelTab('settings')
@@ -764,8 +822,14 @@ export function AutomationRulesView({
 
   const createRule = () => {
     const rule = makeRule()
+    const nextSnapshot = JSON.stringify(rule)
+    draftRef.current = rule
+    savedSnapshotRef.current = nextSnapshot
+    failedSnapshotRef.current = ''
     setDraft(rule)
-    setSavedSnapshot('')
+    setSavedSnapshot(nextSnapshot)
+    setSaveState('pending')
+    setSaveError('')
     setEditorSection('workflow')
     setSelectedNode({ type: 'trigger' })
     setPanelTab('settings')
@@ -775,9 +839,14 @@ export function AutomationRulesView({
 
   const applyTemplate = template => {
     const rule = makeRuleFromTemplate(template, executionCatalog)
+    draftRef.current = rule
+    savedSnapshotRef.current = ''
+    failedSnapshotRef.current = ''
     setTemplateStoreOpen(false)
     setDraft(rule)
     setSavedSnapshot('')
+    setSaveState('pending')
+    setSaveError('')
     setEditorSection('workflow')
     setSelectedNode({ type: 'trigger' })
     setPanelTab('settings')
@@ -822,45 +891,149 @@ export function AutomationRulesView({
   }
 
   const updateDraft = updater => {
-    setDraft(current => (typeof updater === 'function' ? updater(current) : updater))
+    const nextDraft = typeof updater === 'function' ? updater(draftRef.current) : updater
+    draftRef.current = nextDraft
+    setDraft(nextDraft)
   }
 
-  const saveRule = async () => {
-    if (!draft.name.trim()) {
-      notify('请填写自动化名称')
+  const flushAutoSave = async ({ retryFailed = false } = {}) => {
+    if (saveTimerRef.current !== null) {
+      window.clearTimeout(saveTimerRef.current)
+      saveTimerRef.current = null
+    }
+    if (saveRequestRef.current) {
+      return saveRequestRef.current
+    }
+
+    const candidate = cloneRule(draftRef.current)
+    const candidateSnapshot = JSON.stringify(candidate)
+    if (candidateSnapshot === savedSnapshotRef.current) {
+      setSaveState(candidate.persisted ? 'saved' : 'pending')
+      return candidate
+    }
+
+    const validationError = validateRule(candidate)
+    if (validationError) {
+      setSaveState('invalid')
+      setSaveError(validationError)
       return null
     }
-    const hasUnnamedNode = nodes =>
-      nodes.some(
-        node =>
-          !node.name.trim() ||
-          (node.kind === 'dynamic' && hasUnnamedNode(node.subgraph?.nodes ?? []))
-      )
-    if (hasUnnamedNode(draft.steps)) {
-      notify('请填写所有执行节点名称')
+    if (failedSnapshotRef.current === candidateSnapshot && !retryFailed) {
+      setSaveState('error')
       return null
     }
-    setSaving(true)
+
+    failedSnapshotRef.current = ''
+    setSaveState('saving')
+    setSaveError('')
+    const request = (async () => {
+      try {
+        const saved = onSaveRule ? await onSaveRule(candidate) : candidate
+        const nextSavedSnapshot = JSON.stringify(saved)
+        savedSnapshotRef.current = nextSavedSnapshot
+        setSavedSnapshot(nextSavedSnapshot)
+        setRules(current => [
+          saved,
+          ...current.filter(rule => rule.id !== candidate.id && rule.id !== saved.id),
+        ])
+        const currentDraft = draftRef.current
+        const nextDraft =
+          JSON.stringify(currentDraft) === candidateSnapshot
+            ? cloneRule(saved)
+            : mergeSavedIdentity(currentDraft, saved)
+        draftRef.current = nextDraft
+        setDraft(nextDraft)
+        setSaveState(JSON.stringify(draftRef.current) === nextSavedSnapshot ? 'saved' : 'pending')
+        return saved
+      } catch (requestError) {
+        failedSnapshotRef.current = candidateSnapshot
+        setSaveError(requestError instanceof Error ? requestError.message : String(requestError))
+        setSaveState('error')
+        return null
+      } finally {
+        saveRequestRef.current = null
+        const latestSnapshot = JSON.stringify(draftRef.current)
+        const latestValidationError = validateRule(draftRef.current)
+        const shouldContinue =
+          latestSnapshot !== savedSnapshotRef.current &&
+          latestSnapshot !== failedSnapshotRef.current &&
+          !latestValidationError
+        if (shouldContinue) {
+          setSaveState('pending')
+          queueMicrotask(() => flushAutoSaveRef.current?.())
+        } else if (latestValidationError) {
+          setSaveError(latestValidationError)
+          setSaveState('invalid')
+        }
+      }
+    })()
+    saveRequestRef.current = request
+    return request
+  }
+  flushAutoSaveRef.current = flushAutoSave
+
+  useEffect(() => {
+    if (view !== 'editor') return undefined
+    const currentSnapshot = JSON.stringify(draft)
+    if (currentSnapshot === savedSnapshot) {
+      if (!saveRequestRef.current) setSaveState(draft.persisted ? 'saved' : 'pending')
+      return undefined
+    }
+
+    const validationError = validateRule(draft)
+    if (validationError) {
+      setSaveError(validationError)
+      setSaveState('invalid')
+      return undefined
+    }
+    if (saveRequestRef.current) {
+      return undefined
+    }
+    if (failedSnapshotRef.current === currentSnapshot) {
+      setSaveState('error')
+      return undefined
+    }
+
+    setSaveError('')
+    setSaveState('pending')
+    saveTimerRef.current = window.setTimeout(() => {
+      saveTimerRef.current = null
+      void flushAutoSaveRef.current?.()
+    }, AUTO_SAVE_DELAY_MS)
+    return () => {
+      if (saveTimerRef.current !== null) {
+        window.clearTimeout(saveTimerRef.current)
+        saveTimerRef.current = null
+      }
+    }
+  }, [draft, savedSnapshot, view])
+
+  const leaveEditor = async () => {
+    if (leavingEditorRef.current) return
+    leavingEditorRef.current = true
     try {
-      const candidate = cloneRule(draft)
-      const saved = onSaveRule ? await onSaveRule(candidate) : candidate
-      setDraft(cloneRule(saved))
-      setRules(current => {
-        const withoutDraft = current.filter(rule => rule.id !== draft.id)
-        const exists = withoutDraft.some(rule => rule.id === saved.id)
-        return exists
-          ? withoutDraft.map(rule => (rule.id === saved.id ? saved : rule))
-          : [saved, ...withoutDraft]
-      })
-      setSavedSnapshot(JSON.stringify(saved))
-      notify('自动化已保存')
-      return saved
-    } catch (saveError) {
-      notify(saveError instanceof Error ? saveError.message : String(saveError))
-      return null
+      while (true) {
+        if (saveRequestRef.current) await saveRequestRef.current
+        if (JSON.stringify(draftRef.current) === savedSnapshotRef.current) break
+        const validationError = validateRule(draftRef.current)
+        if (validationError) {
+          setSaveError(validationError)
+          setSaveState('invalid')
+          notify(validationError)
+          return
+        }
+        const saved = await flushAutoSaveRef.current?.({ retryFailed: true })
+        if (!saved) return
+      }
+      setView('home')
     } finally {
-      setSaving(false)
+      leavingEditorRef.current = false
     }
+  }
+
+  const retryAutoSave = () => {
+    failedSnapshotRef.current = ''
+    void flushAutoSaveRef.current?.({ retryFailed: true })
   }
 
   const duplicateRule = async rule => {
@@ -1021,21 +1194,22 @@ export function AutomationRulesView({
           runs={runs.filter(run => run.ruleId === draft.id)}
           runsLoading={runsLoading}
           dirty={dirty}
+          saveState={saveState}
+          saveError={saveError}
           editorSection={editorSection}
           selectedNode={selectedNode}
           panelTab={panelTab}
-          saving={saving}
           canRun={canManage && Boolean(onRunRule)}
           running={runningIds.has(draft.id)}
           onRun={() => runRule(draft)}
           projectTags={projectTags}
           executionCatalog={executionCatalog}
-          onBack={() => setView('home')}
+          onBack={leaveEditor}
           onEditorSectionChange={changeEditorSection}
           onSelectNode={setSelectedNode}
           onPanelTabChange={changePanelTab}
           onDraftChange={updateDraft}
-          onSave={saveRule}
+          onRetrySave={retryAutoSave}
           onAddStep={addStep}
           onRemoveStep={removeSelectedStep}
           onOpenPluginMenu={preparePluginMenu}
@@ -1502,13 +1676,22 @@ function AutomationCard({
   running,
 }) {
   const { t } = useTranslation()
-  const [menuOpen, setMenuOpen] = useState(false)
   const trigger = triggerPresentation(rule.trigger, t)
   const TriggerIcon = rule.trigger.type === 'schedule' ? Clock3 : Webhook
+  const statusText = running
+    ? t('workbench.board_automation_running')
+    : rule.enabled
+      ? rule.nextRunAt
+        ? `运行中 · 下次 ${formatCardTime(rule.nextRunAt)}`
+        : '运行中'
+      : '已停用'
+  const lastRunText = rule.lastRunAt
+    ? `${formatCardTimestamp(rule.lastRunAt)}${rule.lastRunStatus ? ` · ${runStatusPresentation(rule.lastRunStatus).label}` : ''}`
+    : '尚未运行'
 
   return (
     <article
-      className={automationClass('automation-card')}
+      className={automationClass(`automation-card ${rule.enabled ? 'enabled' : ''}`)}
       data-testid={`automation-card-${rule.id}`}
       onClick={event => {
         if (event.target.closest('button')) return
@@ -1519,79 +1702,118 @@ function AutomationCard({
         <span className={automationClass('automation-icon')}>
           <Zap size={19} />
         </span>
-        <div>
+        <div className={automationClass('card-title')}>
           <h3>{rule.name}</h3>
-          <p>{rule.description}</p>
+          <span className={automationClass('card-status')}>
+            <i />
+            {statusText}
+          </span>
         </div>
         <div className={automationClass('card-menu-anchor')}>
-          <button
-            className={automationClass('icon-button')}
-            onClick={event => {
-              event.stopPropagation()
-              setMenuOpen(value => !value)
-            }}
-            aria-label="更多操作"
+          <PopupMenu
+            testId={`automation-menu-${rule.id}`}
+            menuWidth={144}
+            triggerClassName={automationClass('icon-button')}
+            ariaLabel="更多操作"
+            trigger={<MoreHorizontal size={17} />}
           >
-            <MoreHorizontal size={17} />
-          </button>
-          {menuOpen ? (
-            <div
-              className={automationClass('card-menu')}
-              onClick={event => event.stopPropagation()}
-            >
-              <button onClick={onDuplicate}>
-                <Copy size={14} />
-                创建独立副本
-              </button>
-              <button className={automationClass('danger')} onClick={onDelete}>
-                <Trash2 size={14} />
-                删除
-              </button>
-            </div>
-          ) : null}
+            {close => (
+              <>
+                <button
+                  className={automationClass('card-menu-action')}
+                  onClick={() => {
+                    close()
+                    onDuplicate()
+                  }}
+                >
+                  <Copy size={14} />
+                  创建独立副本
+                </button>
+                <button
+                  className={automationClass('card-menu-action danger')}
+                  onClick={() => {
+                    close()
+                    onDelete()
+                  }}
+                >
+                  <Trash2 size={14} />
+                  删除
+                </button>
+              </>
+            )}
+          </PopupMenu>
         </div>
       </div>
 
       <div className={automationClass('trigger-summary')}>
-        <span>
-          <TriggerIcon size={14} />
-          触发规则
-        </span>
-        <strong>{trigger.label}</strong>
-        <small>{trigger.detail}</small>
+        <TriggerIcon className={automationClass('trigger-summary-icon')} size={18} />
+        <div className={automationClass('trigger-summary-copy')}>
+          <span>触发规则</span>
+          <strong>{trigger.label}</strong>
+          <small>{trigger.detail}</small>
+        </div>
       </div>
 
       <div className={automationClass('card-footer')}>
-        <span>{rule.updatedAt}</span>
-        {rule.trigger.type === 'schedule' && onRun ? (
+        <div className={automationClass('card-last-run')}>
+          <span>上次运行</span>
+          <strong>{lastRunText}</strong>
+        </div>
+        <div className={automationClass('card-actions')}>
+          {rule.trigger.type === 'schedule' && onRun ? (
+            <button
+              className={automationClass('card-run-action')}
+              data-testid={`automation-run-${rule.id}`}
+              disabled={!canManage || running}
+              onClick={event => {
+                event.stopPropagation()
+                onRun()
+              }}
+            >
+              <Play size={14} />
+              {t(running ? 'workbench.board_automation_running' : 'workbench.board_automation_run')}
+            </button>
+          ) : null}
           <button
-            className={automationClass('project-secondary-action')}
-            data-testid={`automation-run-${rule.id}`}
-            disabled={!canManage || running}
+            role="switch"
+            aria-checked={rule.enabled}
+            aria-label={rule.enabled ? '停用自动化' : '启用自动化'}
+            data-testid={`automation-toggle-${rule.id}`}
+            disabled={!canManage}
+            className={automationClass(`switch ${rule.enabled ? 'on' : ''}`)}
             onClick={event => {
               event.stopPropagation()
-              onRun()
+              onToggle()
             }}
           >
-            <Play size={16} />
-            {t(running ? 'workbench.board_automation_running' : 'workbench.board_automation_run')}
+            <span>
+              <i />
+            </span>
           </button>
-        ) : null}
-        <button
-          role="switch"
-          aria-checked={rule.enabled}
-          disabled={!canManage}
-          className={automationClass(`switch ${rule.enabled ? 'on' : ''}`)}
-          onClick={event => {
-            event.stopPropagation()
-            onToggle()
-          }}
-        >
-          <i />
-        </button>
+        </div>
       </div>
     </article>
   )
+}
+
+function formatCardTimestamp(value) {
+  return new Intl.DateTimeFormat('zh-CN', {
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    timeZone: 'Asia/Shanghai',
+  }).format(new Date(value))
+}
+
+function formatCardTime(value) {
+  return new Intl.DateTimeFormat('zh-CN', {
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+    timeZone: 'Asia/Shanghai',
+  }).format(new Date(value))
 }
 
 function WorkflowEditor({
@@ -1599,10 +1821,11 @@ function WorkflowEditor({
   runs,
   runsLoading,
   dirty,
+  saveState,
+  saveError,
   editorSection,
   selectedNode,
   panelTab,
-  saving,
   canRun,
   running,
   onRun,
@@ -1612,7 +1835,7 @@ function WorkflowEditor({
   onSelectNode,
   onPanelTabChange,
   onDraftChange,
-  onSave,
+  onRetrySave,
   onAddStep,
   onRemoveStep,
   onOpenPluginMenu,
@@ -1621,6 +1844,9 @@ function WorkflowEditor({
   const { t } = useTranslation()
   const [runStatus, setRunStatus] = useState('all')
   const [selectedRunId, setSelectedRunId] = useState(runs[0]?.id ?? null)
+  const [renaming, setRenaming] = useState(false)
+  const [renameValue, setRenameValue] = useState(draft.name)
+  const renameInputRef = useRef(null)
   const needsSave = dirty || !draft.persisted
   const trigger = triggerPresentation(draft.trigger, t)
   const TriggerIcon = draft.trigger.type === 'schedule' ? Clock3 : Webhook
@@ -1640,6 +1866,15 @@ function WorkflowEditor({
   const hasSelectedNode = selectedNode.type !== 'none'
   const showRightPanel = editorSection === 'runs' || hasSelectedNode
 
+  useEffect(() => {
+    if (renaming) {
+      renameInputRef.current?.focus()
+      renameInputRef.current?.select()
+      return
+    }
+    setRenameValue(draft.name)
+  }, [draft.name, renaming])
+
   const updateTrigger = (key, value) => {
     onDraftChange(current => ({
       ...current,
@@ -1649,6 +1884,23 @@ function WorkflowEditor({
 
   const updateRule = (key, value) => {
     onDraftChange(current => ({ ...current, [key]: value }))
+  }
+
+  const startRenaming = () => {
+    setRenameValue(draft.name)
+    setRenaming(true)
+  }
+
+  const commitRename = () => {
+    const value = renameValue.trim()
+    setRenameValue(value || draft.name)
+    setRenaming(false)
+    if (value && value !== draft.name) updateRule('name', value)
+  }
+
+  const cancelRename = () => {
+    setRenameValue(draft.name)
+    setRenaming(false)
   }
 
   const updateStep = (key, value) => {
@@ -1892,35 +2144,39 @@ function WorkflowEditor({
       className={automationClass('editor-global-actions')}
       data-testid="automation-editor-global-actions"
     >
-      <span
-        className={automationClass(
-          `editor-save-state ${saving ? 'saving' : needsSave ? 'dirty' : 'saved'}`
-        )}
-      >
-        <i />
-        {saving ? '保存中' : dirty ? '有未保存更改' : !draft.persisted ? '待保存' : '已保存'}
-      </span>
+      {saveState === 'error' ? (
+        <button
+          type="button"
+          className={automationClass('editor-save-state error')}
+          data-testid="automation-save-retry"
+          title={saveError}
+          onClick={onRetrySave}
+        >
+          <i />
+          保存失败，点击重试
+        </button>
+      ) : (
+        <span className={automationClass(`editor-save-state ${saveState}`)} title={saveError}>
+          <i />
+          {saveState === 'saving'
+            ? '保存中'
+            : saveState === 'invalid'
+              ? '等待补全'
+              : saveState === 'pending' || needsSave
+                ? '待保存'
+                : '已保存'}
+        </span>
+      )}
       {draft.trigger.type === 'schedule' ? (
         <button
           className={automationClass('dark-secondary')}
           data-testid="automation-run"
-          disabled={!canRun || needsSave || saving || running}
+          disabled={!canRun || needsSave || saveState !== 'saved' || running}
           title={needsSave ? t('workbench.board_automation_save_first') : undefined}
           onClick={onRun}
         >
           <Play size={16} />
           {t(running ? 'workbench.board_automation_running' : 'workbench.board_automation_run')}
-        </button>
-      ) : null}
-      {needsSave ? (
-        <button
-          className={automationClass('dark-secondary')}
-          data-testid="automation-save"
-          onClick={onSave}
-          disabled={saving}
-        >
-          <Check size={15} />
-          保存
         </button>
       ) : null}
     </div>
@@ -1931,9 +2187,11 @@ function WorkflowEditor({
       className={automationClass('editor-shell')}
       data-testid="automation-rule-editor"
       style={{
-        '--automation-panel-gap': '12px',
-        '--automation-right-panel-width': showRightPanel ? '400px' : '0px',
-        '--automation-right-panel-top': '64px',
+        '--automation-panel-gap': `${AUTOMATION_PANEL_GAP}px`,
+        '--automation-right-panel-width': showRightPanel
+          ? `${AUTOMATION_RIGHT_PANEL_WIDTH}px`
+          : '0px',
+        '--automation-right-panel-top': `${AUTOMATION_RIGHT_PANEL_TOP}px`,
       }}
     >
       <div className={automationClass('editor-body')}>
@@ -1941,69 +2199,87 @@ function WorkflowEditor({
           className={automationClass('editor-navigation-actions')}
           data-testid="automation-editor-navigation"
         >
-          <button
-            className={automationClass('floating-icon-button')}
-            data-testid="automation-editor-back"
-            onClick={onBack}
-            aria-label="返回"
+          <div
+            className={automationClass('editor-object-bar')}
+            data-testid="automation-editor-object-bar"
           >
-            <ArrowLeft size={17} />
-          </button>
-          <PopupMenu
-            testId="automation-editor-section-menu"
-            keepOpen
-            menuWidth={220}
-            trigger={
-              <span className={automationClass('editor-section-trigger')}>
-                {editorSection === 'workflow' ? <GitBranch size={16} /> : <History size={16} />}
-                <span>{editorSection === 'workflow' ? '编排' : '运行记录'}</span>
-                <ChevronDown size={14} />
-              </span>
-            }
-          >
-            {close => (
-              <div className={automationClass('editor-section-menu')}>
-                <label>
-                  <span>自动化名称</span>
-                  <input
-                    value={draft.name}
-                    onChange={event =>
-                      onDraftChange(current => ({ ...current, name: event.target.value }))
-                    }
-                    aria-label="自动化名称"
-                  />
-                </label>
-                <div>
-                  <button
-                    type="button"
-                    className={editorSection === 'workflow' ? 'active' : ''}
-                    data-testid="editor-nav-workflow"
-                    onClick={() => {
-                      onEditorSectionChange('workflow')
-                      close()
-                    }}
-                  >
-                    <GitBranch size={16} />
-                    <span>编排</span>
-                    {editorSection === 'workflow' ? <Check size={15} /> : null}
-                  </button>
-                  <button
-                    type="button"
-                    className={editorSection === 'runs' ? 'active' : ''}
-                    data-testid="open-current-automation-runs"
-                    onClick={() => {
-                      onEditorSectionChange('runs')
-                      close()
-                    }}
-                  >
-                    <History size={16} />
-                    <span>运行记录</span>
-                    {editorSection === 'runs' ? <Check size={15} /> : null}
-                  </button>
-                </div>
-              </div>
+            <button
+              className={automationClass('editor-back-button')}
+              data-testid="automation-editor-back"
+              onClick={onBack}
+              aria-label="返回"
+            >
+              <ArrowLeft size={16} />
+            </button>
+            <span className={automationClass('editor-object-divider')} />
+            {renaming ? (
+              <input
+                ref={renameInputRef}
+                className={automationClass('editor-name-input')}
+                data-testid="automation-editor-name-input"
+                value={renameValue}
+                onChange={event => setRenameValue(event.target.value)}
+                onBlur={commitRename}
+                onKeyDown={event => {
+                  if (event.key === 'Enter') {
+                    event.preventDefault()
+                    commitRename()
+                  }
+                  if (event.key === 'Escape') {
+                    event.preventDefault()
+                    cancelRename()
+                  }
+                }}
+                aria-label="自动化名称"
+                spellCheck={false}
+              />
+            ) : (
+              <button
+                type="button"
+                className={automationClass('editor-name-button')}
+                data-testid="automation-editor-name"
+                title={draft.name}
+                aria-label={`重命名自动化：${draft.name}`}
+                onClick={startRenaming}
+              >
+                <span>{draft.name}</span>
+                <Pencil size={16} />
+              </button>
             )}
-          </PopupMenu>
+          </div>
+
+          <div
+            className={automationClass('editor-view-tabs')}
+            data-testid="automation-editor-section-menu"
+            role="tablist"
+            aria-label="自动化视图"
+          >
+            <button
+              type="button"
+              role="tab"
+              aria-selected={editorSection === 'workflow'}
+              className={automationClass(
+                'editor-view-tab',
+                editorSection === 'workflow' && 'active'
+              )}
+              data-testid="editor-nav-workflow"
+              onClick={() => onEditorSectionChange('workflow')}
+            >
+              <GitBranch size={16} />
+              <span>编排</span>
+            </button>
+            <button
+              type="button"
+              role="tab"
+              aria-selected={editorSection === 'runs'}
+              className={automationClass('editor-view-tab', editorSection === 'runs' && 'active')}
+              data-testid="open-current-automation-runs"
+              onClick={() => onEditorSectionChange('runs')}
+            >
+              <History size={16} />
+              <span>运行记录</span>
+            </button>
+          </div>
         </div>
 
         {editorSection === 'workflow' ? (
@@ -2012,6 +2288,9 @@ function WorkflowEditor({
               draft={draft}
               trigger={trigger}
               selectedNode={selectedNode}
+              rightPanelInset={
+                showRightPanel ? AUTOMATION_RIGHT_PANEL_WIDTH + AUTOMATION_PANEL_GAP : 0
+              }
               onSelectNode={onSelectNode}
               onInsertNode={insertNode}
               onAddDagStage={addDagStage}

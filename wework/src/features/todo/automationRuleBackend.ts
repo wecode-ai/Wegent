@@ -81,6 +81,9 @@ export interface AutomationUiRule {
   description: string
   enabled: boolean
   updatedAt: string
+  nextRunAt: string | null
+  lastRunAt: string | null
+  lastRunStatus: ProjectAutomationRun['status'] | null
   trigger: AutomationUiTrigger
   steps: AutomationUiStep[]
   legacyDefinition: ProjectWorkflowDefinition | null
@@ -437,6 +440,9 @@ export function automationRuleFromBackend(rule: ProjectAutomationRule): Automati
     description: flow?.description ?? rule.prompt,
     enabled: rule.enabled,
     updatedAt: formatAutomationTimestamp(rule.updatedAt),
+    nextRunAt: rule.nextRunAt,
+    lastRunAt: rule.lastRunAt,
+    lastRunStatus: rule.lastRunStatus,
     trigger: {
       type: rule.triggerType === 'schedule' ? 'schedule' : 'event',
       source: 'issue',
@@ -638,6 +644,9 @@ export function automationRuleFromLegacyWorkflow(
         : 'Issue 进入处理状态后按照预设 DAG 推进'),
     enabled: stageMode === 'dag' || advancementPolicy === 'ai',
     updatedAt: formatAutomationTimestamp(project.updated_at),
+    nextRunAt: null,
+    lastRunAt: null,
+    lastRunStatus: null,
     trigger: {
       type: 'event',
       source: 'issue',
