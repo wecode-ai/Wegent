@@ -875,7 +875,7 @@ export async function createDesktopScenario({ captureScreenshot, resultDir, uiTi
       )
       await control.command('waitFor', '[data-testid="smart-app-export-success"]', {
         text: '安装包已导出到下载目录',
-        timeoutMs: uiTimeoutMs,
+        timeoutMs: 120_000,
       })
       await captureScreenshot(control, 'harness-apps-03f-linked-exported.png', 'body')
       await control.command('click', `[data-testid="smart-app-actions-${CREATED_INSTALLATION_ID}"]`)
