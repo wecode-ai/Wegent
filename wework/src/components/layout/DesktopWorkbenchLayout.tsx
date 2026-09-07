@@ -1,14 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { PointerEventHandler } from 'react'
-import { DEFAULT_WORK_ITEM_PROJECT_ID } from '@/api/deliveries'
 import type { ProjectCreateMode } from '@/components/chat/ChatInput'
 import { useWorkbench } from '@/features/workbench/useWorkbench'
 import { useAuth } from '@/features/auth/useAuth'
-import {
-  projectSpaceRefFromRoute,
-  projectSpaceRouteParam,
-  projectSpaceRouteRequestsDefaultProject,
-} from '@/features/todo/projectSpaceRoute'
 import type {
   CloneGitRepositoryInput,
   GitCloneProjectOperation,
@@ -45,7 +39,14 @@ import { EMPTY_RUNTIME_TASK_REMINDERS } from '@/features/workbench/runtimeTaskRe
 import { useRuntimeTaskLifecycleStoreSnapshot } from '@/features/workbench/runtimeTaskLifecycle'
 import { CloudTodoWorkspace } from '@/features/todo/CloudTodoWorkspace'
 import { resolveLocalTodoProjects } from '@/features/todo/localTodoProjects'
-import { projectSpaceApis } from '@/features/todo/projectSpaceSelection'
+import { projectSpaceApis, projectSpaceRef } from '@/features/todo/projectSpaceSelection'
+import {
+  defaultProjectSpaceContentRoute,
+  projectSpaceContentRoute,
+  projectSpaceRefFromRoute,
+  projectSpaceRouteParam,
+  projectSpaceRouteRequestsDefaultProject,
+} from '@/features/todo/projectSpaceRoute'
 import { WorkbenchBackground } from '@/features/appearance'
 import { useResizableSidebar } from './useResizableSidebar'
 import { useOptionalWorkspaceTabs } from '@/features/workspace-tabs/workspaceTabsContextValue'
@@ -416,7 +417,6 @@ export function DesktopWorkbenchLayout({
   const openRuntimeTaskOutsideHarness = useCallback(
     async (address: RuntimeTaskAddress) => {
       setActiveLocalHarnessSessionId(null)
-      requestWorkbenchComposerFocus(getRuntimeTaskChatScopeKey(address))
       activateSplitPane(
         getWorkbenchPaneKey({
           currentRuntimeTask: address,
@@ -426,6 +426,7 @@ export function DesktopWorkbenchLayout({
       if (!(currentPath === '/' && isSameRuntimeTask(state.currentRuntimeTask, address))) {
         await onOpenRuntimeTask(address)
       }
+      requestWorkbenchComposerFocus(getRuntimeTaskChatScopeKey(address))
     },
     [activateSplitPane, currentPath, onOpenRuntimeTask, state.currentRuntimeTask]
   )
@@ -687,7 +688,6 @@ export function DesktopWorkbenchLayout({
   )
 
   const openCloudDeviceSettings = useCallback(() => {
-    settingsReturnPathRef.current = '/'
     setAutoOpenAddCloudDeviceDialog(true)
     setSettingsOpen(true)
     navigateTo('/settings/connections')
@@ -1020,7 +1020,7 @@ export function DesktopWorkbenchLayout({
       onDismissGitCloneOperation={dismissGitCloneOperation}
       projectSpaceApis={availableProjectSpaceApis}
       models={projectChat.models}
-      onOpenSettings={openSettings}
+      onOpenSettings={options => openSettings(options)}
       onLogout={onLogout}
     />
   )
@@ -1097,7 +1097,7 @@ export function DesktopWorkbenchLayout({
                 onCloneGitRepository={onCloneGitRepository}
                 onOpenRuntimeTask={openProjectSpaceRuntimeTask}
                 onArchiveRuntimeTask={onArchiveRuntimeTask}
-                onOpenSettings={openSettings}
+                onOpenSettings={options => openSettings(options)}
                 onLogout={onLogout}
                 activeProjectRef={
                   ownedWorkspaceTab?.kind === 'board'
@@ -1125,15 +1125,12 @@ export function DesktopWorkbenchLayout({
                   const defaultProjectRequested = projectSpaceRouteRequestsDefaultProject(
                     ownedWorkspaceTab.contentRoute
                   )
-                  const params = new URLSearchParams()
-                  if (projectRef) {
-                    params.set('projectStore', projectRef.projectStore)
-                    params.set('projectId', projectRef.projectId)
-                  } else if (defaultProjectRequested) {
-                    params.set('projectId', DEFAULT_WORK_ITEM_PROJECT_ID)
-                  }
                   workspaceTabs.updateActiveTab({
-                    contentRoute: `/todo${params.size ? `?${params.toString()}` : ''}`,
+                    contentRoute: projectRef
+                      ? projectSpaceContentRoute(projectRef)
+                      : defaultProjectRequested
+                        ? defaultProjectSpaceContentRoute()
+                        : '/todo',
                   })
                 }}
                 onActiveProjectChange={project => {
@@ -1151,12 +1148,9 @@ export function DesktopWorkbenchLayout({
                     })
                     return
                   }
-                  const params = new URLSearchParams()
-                  params.set('projectStore', project.project_store)
-                  params.set('projectId', project.id)
                   workspaceTabs.updateActiveTab({
                     title: project.name,
-                    contentRoute: `/todo?${params.toString()}`,
+                    contentRoute: projectSpaceContentRoute(projectSpaceRef(project)),
                   })
                 }}
               />
