@@ -1319,3 +1319,104 @@ describe('ProjectAutomationView', () => {
     expect(projectAutomationApi.listRuns).toHaveBeenCalledWith('21', 'root-rule')
   })
 })
+
+test('runs a paused schedule from the card and editor and shows the returned run', async () => {
+  const scheduled = {
+    ...rule,
+    triggerType: 'schedule' as const,
+    cronExpression: '17 * * * *',
+    enabled: false,
+  }
+  const { projectAutomationApi } = renderView({ listedRules: [scheduled], listedRuns: [] })
+  vi.mocked(projectAutomationApi.runNow).mockResolvedValue({
+    ...run,
+    id: 'manual-new',
+    trigger: 'manual',
+  })
+  fireEvent.click(await screen.findByTestId('automation-run-rule-1'))
+  await waitFor(() => expect(projectAutomationApi.runNow).toHaveBeenCalledWith('11', 'rule-1'))
+  expect(screen.queryByTestId('automation-rule-editor')).not.toBeInTheDocument()
+  fireEvent.click(screen.getByTestId('automation-card-rule-1'))
+  await waitFor(() => expect(screen.getByTestId('automation-run')).toBeEnabled())
+  fireEvent.click(screen.getByTestId('automation-run'))
+  await waitFor(() => expect(projectAutomationApi.runNow).toHaveBeenCalledTimes(2))
+  vi.mocked(projectAutomationApi.listRuns).mockResolvedValue([
+    { ...run, id: 'manual-new', trigger: 'manual' },
+  ])
+  fireEvent.click(screen.getByTestId('automation-editor-section-menu'))
+  fireEvent.click(screen.getByTestId('open-current-automation-runs'))
+  expect(await screen.findByTestId('current-run-manual-new')).toBeInTheDocument()
+})
+
+test('edits hourly minutes and requires saving before running', async () => {
+  const scheduled = automationRuleFromBackend({
+    ...rule,
+    triggerType: 'schedule',
+    cronExpression: '0 * * * *',
+  })
+  const onRunRule = vi.fn()
+  const onSaveRule = vi.fn().mockImplementation(async value => value)
+  render(
+    <AutomationRulesView
+      rules={[scheduled]}
+      runs={[]}
+      onRunRule={onRunRule}
+      onSaveRule={onSaveRule}
+    />
+  )
+  fireEvent.click(screen.getByTestId('automation-card-rule-1'))
+  expect(screen.getByTestId('automation-trigger-frequency')).toHaveValue('hourly')
+  fireEvent.change(screen.getByTestId('automation-trigger-minute'), { target: { value: '59' } })
+  expect(screen.getByTestId('automation-run')).toBeDisabled()
+  fireEvent.click(screen.getByTestId('automation-save'))
+  await waitFor(() => expect(screen.getByTestId('automation-run')).toBeEnabled())
+  expect(onSaveRule.mock.calls[0][0].trigger.schedule.time).toBe('00:59')
+})
+
+test('prevents duplicate starts and recovers after a run failure', async () => {
+  const scheduled = automationRuleFromBackend({
+    ...rule,
+    triggerType: 'schedule',
+    cronExpression: '0 * * * *',
+  })
+  let rejectRun!: (reason: Error) => void
+  const onRunRule = vi
+    .fn()
+    .mockImplementationOnce(
+      () =>
+        new Promise<void>((_resolve, reject) => {
+          rejectRun = reject
+        })
+    )
+    .mockResolvedValue(undefined)
+  render(<AutomationRulesView rules={[scheduled]} runs={[]} onRunRule={onRunRule} />)
+  const button = screen.getByTestId('automation-run-rule-1')
+  fireEvent.click(button)
+  fireEvent.click(button)
+  expect(onRunRule).toHaveBeenCalledTimes(1)
+  expect(button).toBeDisabled()
+  await act(async () => rejectRun(new Error('Run unavailable')))
+  expect(screen.getByText('Run unavailable')).toBeInTheDocument()
+  expect(button).toBeEnabled()
+  fireEvent.click(button)
+  await waitFor(() => expect(onRunRule).toHaveBeenCalledTimes(2))
+})
+
+test('hides event run actions and disables scheduled runs without management permission', () => {
+  const scheduled = automationRuleFromBackend({
+    ...rule,
+    id: 'scheduled',
+    triggerType: 'schedule',
+    cronExpression: '0 * * * *',
+  })
+  render(
+    <AutomationRulesView
+      rules={[automationRuleFromBackend(rule), scheduled]}
+      runs={[]}
+      canManage={false}
+      onRunRule={vi.fn()}
+    />
+  )
+  expect(screen.queryByTestId('automation-run-rule-1')).not.toBeInTheDocument()
+  expect(screen.getByTestId('automation-run-scheduled')).toBeDisabled()
+})

@@ -18,6 +18,7 @@ import {
   Laptop,
   LayoutGrid,
   MoreHorizontal,
+  Play,
   Plus,
   Puzzle,
   Search,
@@ -30,6 +31,7 @@ import {
   XCircle,
   Zap,
 } from 'lucide-react'
+import { useTranslation } from '@/hooks/useTranslation'
 import { PopupMenu } from '@/components/common/MenuSelect'
 import { AutomationWorkflowCanvas } from './AutomationWorkflowCanvas.jsx'
 import { automationClass } from './automationStyles'
@@ -461,7 +463,7 @@ const weekdayLabels = {
   sunday: '周日',
 }
 
-function triggerPresentation(trigger) {
+function triggerPresentation(trigger, t) {
   if (trigger.type === 'schedule') {
     const schedule = trigger.schedule
     const frequency =
@@ -469,7 +471,12 @@ function triggerPresentation(trigger) {
         ? `每周${weekdayLabels[schedule.weekday]}`
         : frequencyLabels[schedule.frequency]
     return {
-      label: `${frequency} ${schedule.time}`,
+      label:
+        schedule.frequency === 'hourly'
+          ? t('workbench.board_automation_hourly_summary', {
+              minute: Number(schedule.time.split(':')[1]),
+            })
+          : `${frequency} ${schedule.time}`,
       detail: `按计划执行 · ${schedule.timezone}`,
     }
   }
@@ -599,11 +606,29 @@ export function AutomationRulesView({
   onLoadExecutionCatalog,
   onLoadExecutionPlugins,
   onLoadRuns,
+  onRunRule,
   onSaveRule,
   onToggleRule,
   onDuplicateRule,
   onDeleteRule,
 }) {
+  const { t } = useTranslation()
+  const runningRef = useRef(new Set())
+  const [runningIds, setRunningIds] = useState(new Set())
+  const runRule = async rule => {
+    if (!onRunRule || !canManage || !rule.persisted || runningRef.current.has(rule.id)) return
+    runningRef.current.add(rule.id)
+    setRunningIds(new Set(runningRef.current))
+    try {
+      await onRunRule(rule)
+      notify(t('workbench.board_automation_run_started'))
+    } catch (error) {
+      notify(error instanceof Error ? error.message : String(error))
+    } finally {
+      runningRef.current.delete(rule.id)
+      setRunningIds(new Set(runningRef.current))
+    }
+  }
   const [view, setView] = useState('home')
   const [homeTab, setHomeTab] = useState('rules')
   const [filter, setFilter] = useState('all')
@@ -663,13 +688,13 @@ export function AutomationRulesView({
     return rules.filter(rule => {
       const matchesStatus =
         filter === 'all' || (filter === 'enabled' ? rule.enabled : !rule.enabled)
-      const trigger = triggerPresentation(rule.trigger)
+      const trigger = triggerPresentation(rule.trigger, t)
       const matchesQuery =
         !normalized ||
         `${rule.name} ${rule.description} ${trigger.label}`.toLowerCase().includes(normalized)
       return matchesStatus && matchesQuery
     })
-  }, [filter, query, rules])
+  }, [filter, query, rules, t])
 
   const notify = message => {
     if (toastTimerRef.current !== null) {
@@ -1000,6 +1025,9 @@ export function AutomationRulesView({
           selectedNode={selectedNode}
           panelTab={panelTab}
           saving={saving}
+          canRun={canManage && Boolean(onRunRule)}
+          running={runningIds.has(draft.id)}
+          onRun={() => runRule(draft)}
           projectTags={projectTags}
           executionCatalog={executionCatalog}
           onBack={() => setView('home')}
@@ -1138,6 +1166,8 @@ export function AutomationRulesView({
                   key={rule.id}
                   rule={rule}
                   onOpen={() => openRule(rule)}
+                  onRun={onRunRule ? () => runRule(rule) : undefined}
+                  running={runningIds.has(rule.id)}
                   canManage={canManage}
                   onToggle={async () => {
                     try {
@@ -1213,6 +1243,7 @@ export function AutomationRulesView({
 }
 
 function TemplateStore({ templates, onClose, onApply }) {
+  const { t } = useTranslation()
   const [query, setQuery] = useState('')
   const [category, setCategory] = useState('all')
   const [selectedId, setSelectedId] = useState(templates[0]?.id)
@@ -1375,7 +1406,7 @@ function TemplateStore({ templates, onClose, onApply }) {
                   </span>
                   <div>
                     <small>触发规则</small>
-                    <strong>{triggerPresentation(selectedTemplate.trigger).label}</strong>
+                    <strong>{triggerPresentation(selectedTemplate.trigger, t).label}</strong>
                   </div>
                 </div>
                 <div className={automationClass('template-preview-steps')}>
@@ -1409,7 +1440,8 @@ function TemplateStore({ templates, onClose, onApply }) {
 }
 
 function TemplateCard({ template, selected, onSelect, onApply }) {
-  const trigger = triggerPresentation(template.trigger)
+  const { t } = useTranslation()
+  const trigger = triggerPresentation(template.trigger, t)
   return (
     <article className={automationClass(`template-card ${selected ? 'selected' : ''}`)}>
       <button
@@ -1459,16 +1491,29 @@ function TemplateIcon({ type }) {
   )
 }
 
-function AutomationCard({ rule, canManage, onOpen, onToggle, onDuplicate, onDelete }) {
+function AutomationCard({
+  rule,
+  canManage,
+  onOpen,
+  onToggle,
+  onDuplicate,
+  onDelete,
+  onRun,
+  running,
+}) {
+  const { t } = useTranslation()
   const [menuOpen, setMenuOpen] = useState(false)
-  const trigger = triggerPresentation(rule.trigger)
+  const trigger = triggerPresentation(rule.trigger, t)
   const TriggerIcon = rule.trigger.type === 'schedule' ? Clock3 : Webhook
 
   return (
     <article
       className={automationClass('automation-card')}
       data-testid={`automation-card-${rule.id}`}
-      onClick={onOpen}
+      onClick={event => {
+        if (event.target.closest('button')) return
+        onOpen()
+      }}
     >
       <div className={automationClass('card-head')}>
         <span className={automationClass('automation-icon')}>
@@ -1518,6 +1563,20 @@ function AutomationCard({ rule, canManage, onOpen, onToggle, onDuplicate, onDele
 
       <div className={automationClass('card-footer')}>
         <span>{rule.updatedAt}</span>
+        {rule.trigger.type === 'schedule' && onRun ? (
+          <button
+            className={automationClass('project-secondary-action')}
+            data-testid={`automation-run-${rule.id}`}
+            disabled={!canManage || running}
+            onClick={event => {
+              event.stopPropagation()
+              onRun()
+            }}
+          >
+            <Play size={16} />
+            {t(running ? 'workbench.board_automation_running' : 'workbench.board_automation_run')}
+          </button>
+        ) : null}
         <button
           role="switch"
           aria-checked={rule.enabled}
@@ -1544,6 +1603,9 @@ function WorkflowEditor({
   selectedNode,
   panelTab,
   saving,
+  canRun,
+  running,
+  onRun,
   projectTags,
   executionCatalog,
   onBack,
@@ -1556,10 +1618,11 @@ function WorkflowEditor({
   onOpenPluginMenu,
   onEditorSectionChange,
 }) {
+  const { t } = useTranslation()
   const [runStatus, setRunStatus] = useState('all')
   const [selectedRunId, setSelectedRunId] = useState(runs[0]?.id ?? null)
   const needsSave = dirty || !draft.persisted
-  const trigger = triggerPresentation(draft.trigger)
+  const trigger = triggerPresentation(draft.trigger, t)
   const TriggerIcon = draft.trigger.type === 'schedule' ? Clock3 : Webhook
   const visibleRuns = runs.filter(run => runMatchesFilter(run.status, runStatus))
   const selectedRun = visibleRuns.find(run => run.id === selectedRunId) ?? visibleRuns[0] ?? null
@@ -1837,6 +1900,18 @@ function WorkflowEditor({
         <i />
         {saving ? '保存中' : dirty ? '有未保存更改' : !draft.persisted ? '待保存' : '已保存'}
       </span>
+      {draft.trigger.type === 'schedule' ? (
+        <button
+          className={automationClass('dark-secondary')}
+          data-testid="automation-run"
+          disabled={!canRun || needsSave || saving || running}
+          title={needsSave ? t('workbench.board_automation_save_first') : undefined}
+          onClick={onRun}
+        >
+          <Play size={16} />
+          {t(running ? 'workbench.board_automation_running' : 'workbench.board_automation_run')}
+        </button>
+      ) : null}
       {needsSave ? (
         <button
           className={automationClass('dark-secondary')}
@@ -2264,8 +2339,9 @@ function RunStatus({ status }) {
 }
 
 function TriggerSettings({ draft, projectTags, onChange, onRuleChange }) {
+  const { t } = useTranslation()
   const trigger = draft.trigger
-  const presentation = triggerPresentation(trigger)
+  const presentation = triggerPresentation(trigger, t)
   const TriggerIcon = trigger.type === 'schedule' ? Clock3 : Webhook
   const startMode = trigger.startMode ?? 'immediate'
 
@@ -2326,6 +2402,7 @@ function TriggerSettings({ draft, projectTags, onChange, onRuleChange }) {
               value={trigger.schedule.frequency}
               onChange={event => updateSchedule('frequency', event.target.value)}
             >
+              <option value="hourly">{t('workbench.board_automation_hourly')}</option>
               <option value="daily">每天</option>
               <option value="weekdays">工作日</option>
               <option value="weekly">每周</option>
@@ -2355,14 +2432,32 @@ function TriggerSettings({ draft, projectTags, onChange, onRuleChange }) {
               <i className={automationClass('cascade-index')}>
                 {trigger.schedule.frequency === 'weekly' ? '4' : '3'}
               </i>
-              执行时间
+              {trigger.schedule.frequency === 'hourly'
+                ? t('workbench.board_automation_minute')
+                : '执行时间'}
             </span>
-            <input
-              type="time"
-              data-testid="automation-trigger-time"
-              value={trigger.schedule.time}
-              onChange={event => updateSchedule('time', event.target.value)}
-            />
+            {trigger.schedule.frequency === 'hourly' ? (
+              <select
+                data-testid="automation-trigger-minute"
+                value={Number(trigger.schedule.time.split(':')[1])}
+                onChange={event =>
+                  updateSchedule('time', `00:${event.target.value.padStart(2, '0')}`)
+                }
+              >
+                {Array.from({ length: 60 }, (_, minute) => (
+                  <option key={minute} value={minute}>
+                    {String(minute).padStart(2, '0')}
+                  </option>
+                ))}
+              </select>
+            ) : (
+              <input
+                type="time"
+                data-testid="automation-trigger-time"
+                value={trigger.schedule.time}
+                onChange={event => updateSchedule('time', event.target.value)}
+              />
+            )}
           </label>
           <label className={automationClass('panel-field')}>
             <span>

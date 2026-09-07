@@ -2144,10 +2144,71 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
       agentId: cloudAgent.id,
       enabled: true,
     })
-    const queuedScheduleRun = await cloudRequest(
-      `/api/v1/cloud-projects/${projectId}/automations/${scheduleRule.id}/run`,
-      { method: 'POST' }
+    const readyCount = control.readyCount
+    await control.command('reloadMainWindow', 'body')
+    await withTimeout(
+      control.awaitReadyAfter(readyCount),
+      uiTimeoutMs * 3,
+      'The board did not reconnect for hourly automation verification'
     )
+    const scheduleProjectSelector = `[data-testid="cloud-sidebar-project-${projectId}"]`
+    await control.command('waitFor', scheduleProjectSelector, { visible: true })
+    await control.command('click', scheduleProjectSelector, { visible: true })
+    await control.command('waitFor', '[data-testid="cloud-project-automation-view"]', {
+      visible: true,
+    })
+    await control.command('click', '[data-testid="cloud-project-automation-view"]', {
+      visible: true,
+    })
+    const scheduleCard = `[data-testid="automation-card-${scheduleRule.id}"]`
+    await control.command('waitFor', scheduleCard, { visible: true })
+    await control.command('click', scheduleCard, { visible: true })
+    await control.command('select', '[data-testid="automation-trigger-frequency"]', {
+      value: 'hourly',
+    })
+    await control.command('select', '[data-testid="automation-trigger-minute"]', { value: '59' })
+    await control.command('waitFor', '[data-testid="automation-run"][disabled]', {
+      visible: true,
+    })
+    await control.command('clickWhenEnabled', '[data-testid="automation-save"]')
+    await control.command('waitFor', '[data-testid="automation-editor-global-actions"]', {
+      text: '已保存',
+    })
+    const persistedSchedule = await cloudRequest(
+      `/api/v1/cloud-projects/${projectId}/automations`
+    ).then(items => items.find(item => item.id === scheduleRule.id))
+    assert.equal(persistedSchedule.cronExpression, '59 * * * *')
+    assert.equal(persistedSchedule.timezone, 'Asia/Shanghai')
+    await control.command('clickWhenEnabled', '[data-testid="automation-run"]')
+    const queuedScheduleRun = await waitForValue(
+      () => cloudRequest(`/api/v1/cloud-projects/${projectId}/automations/${scheduleRule.id}/runs`),
+      items => items.some(item => item.trigger === 'manual'),
+      'Editor run did not reach the real backend',
+      uiTimeoutMs
+    ).then(items => items.find(item => item.trigger === 'manual'))
+    await control.command('click', '[data-testid="automation-editor-back"]')
+    await control.command('waitFor', scheduleCard, { text: '59', visible: true })
+    await control.command('clickWhenEnabled', `[data-testid="automation-run-${scheduleRule.id}"]`)
+    const cardRun = await waitForValue(
+      () => cloudRequest(`/api/v1/cloud-projects/${projectId}/automations/${scheduleRule.id}/runs`),
+      items => items.some(item => item.trigger === 'manual' && item.id !== queuedScheduleRun.id),
+      'Card run did not reach the real backend',
+      uiTimeoutMs
+    ).then(items =>
+      items.find(item => item.trigger === 'manual' && item.id !== queuedScheduleRun.id)
+    )
+    await control.command('waitFor', scheduleCard, { visible: true })
+    await control.command('click', scheduleCard)
+    assert.equal(
+      await control.command('getValue', '[data-testid="automation-trigger-frequency"]'),
+      'hourly'
+    )
+    assert.equal(
+      await control.command('getValue', '[data-testid="automation-trigger-minute"]'),
+      '59'
+    )
+    await captureScreenshot(control, 'project-automation-hourly-manual-run.png')
+    await waitForSucceededRun(projectId, scheduleRule.id, cardRun.taskId, uiTimeoutMs * 6)
     assert.ok(queuedScheduleRun.taskId, 'Run-now did not create its board task')
     const scheduleRun = await waitForSucceededRun(
       projectId,
@@ -2158,11 +2219,17 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
     const scheduleExecution = await waitForCompletedExecution(
       projectId,
       scheduleRun.taskId,
-      'project_robot'
+      'generic_robot'
     )
-    assert.equal(scheduleExecution.automationRunId, scheduleRun.id)
-
     const boardItems = await cloudRequest(`/api/v1/cloud-projects/${projectId}/loop-items`)
+    const scheduledTask = boardItems.items.find(item => item.id === scheduleRun.taskId)
+    assert.ok(scheduledTask, 'Scheduled task was not projected back to the board')
+    assert.equal(scheduledTask.workflow.nodes[0].status, 'completed')
+    assert.equal(
+      scheduleExecution.automationRunId,
+      scheduledTask.workflow.nodes[0].automation_run_id
+    )
+    await disableRule(projectId, persistedSchedule)
     for (const task of [directTeamTask, manualEventTask, customManagerTask, wegentManagerTask]) {
       assert.ok(
         boardItems.items.some(item => item.id === task.id),
