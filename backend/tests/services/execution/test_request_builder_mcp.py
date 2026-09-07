@@ -399,7 +399,9 @@ class TestBuildMcpServers:
         "app.services.execution.request_builder.kindReader.get_by_name_and_namespace"
     )
     @patch("app.services.execution.request_builder.settings.CHAT_MCP_SERVERS", "{}")
-    def test_inject_wegent_token_adds_identity_authorization(self, mock_get_kind):
+    def test_inject_wegent_token_adds_identity_authorization(
+        self, mock_get_kind
+    ) -> None:
         builder = TaskRequestBuilder.__new__(TaskRequestBuilder)
         builder.db = SimpleNamespace()
         mock_get_kind.return_value = _ghost_kind_with_mcp(
@@ -463,6 +465,7 @@ class TestBuildMcpServers:
 
         loopback = servers["loopback-server"]
         assert loopback["auth"]["Authorization"].startswith("Bearer ")
+        assert loopback["headers"]["Authorization"] == loopback["auth"]["Authorization"]
         assert "inject_wegent_token" not in loopback
 
         stdio = servers["stdio-server"]
