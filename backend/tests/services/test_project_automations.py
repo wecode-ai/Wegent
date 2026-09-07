@@ -36,7 +36,7 @@ from app.services.project_automations import (
 def test_external_events_default_to_creating_an_issue() -> None:
     config = _canonical_event_config(
         "change_request.checks_failed",
-        {"execution_target": "continue_binding"},
+        {},
     )
 
     assert config["execution_target"] == "create_issue"

@@ -15,7 +15,7 @@ from fastapi import (
 from sqlalchemy.orm import Session
 
 from app.api.dependencies import get_db
-from app.core.security import get_current_user
+from app.core.security import get_current_user, get_current_user_jwt_apikey_tasktoken
 from app.models.delivery import (
     ProjectAutomationRun,
 )
@@ -209,7 +209,7 @@ def assign_from_ai_manager(
     values: ProjectAutomationManagerAssign,
     background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(get_current_user_jwt_apikey_tasktoken),
 ) -> LoopItemResponse:
     """Apply the assignment selected by a Wework MCP manager."""
 

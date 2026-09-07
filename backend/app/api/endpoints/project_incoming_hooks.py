@@ -6,7 +6,7 @@
 from datetime import datetime
 from typing import Any, get_args
 
-from fastapi import APIRouter, BackgroundTasks, Depends, Query, Request, status
+from fastapi import APIRouter, Depends, Query, Request, status
 from sqlalchemy.orm import Session
 
 from app.api.dependencies import get_db
@@ -28,10 +28,7 @@ from app.schemas.project_incoming_hook import (
     ProjectIncomingReceipt,
 )
 from app.services.project_event_sources import event_source_catalog
-from app.services.project_incoming_hooks import (
-    process_project_incoming_event_sync,
-    project_incoming_hook_service,
-)
+from app.services.project_incoming_hooks import project_incoming_hook_service
 
 router = APIRouter()
 public_router = APIRouter()
@@ -291,7 +288,6 @@ def list_incoming_events(
 async def receive_project_incoming_hook(
     token: str,
     request: Request,
-    background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
 ) -> ProjectIncomingReceipt:
     result = await project_incoming_hook_service.receive(
@@ -301,9 +297,4 @@ async def receive_project_incoming_hook(
         request.headers.get("content-type", ""),
         request.headers,
     )
-    if result["status"] == "accepted":
-        background_tasks.add_task(
-            process_project_incoming_event_sync,
-            str(result["event_id"]),
-        )
     return ProjectIncomingReceipt.model_validate(result)
