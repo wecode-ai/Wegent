@@ -61,4 +61,23 @@ describe('workbenchMode', () => {
       [{ workbenchMode: 'developer' }],
     ])
   })
+
+  test('propagates both restart and preference rollback failures', async () => {
+    const restartError = new Error('restart failed')
+    const rollbackError = new Error('rollback failed')
+    const actions = dependencies({
+      restartPlugins: vi.fn().mockRejectedValue(restartError),
+      updatePreferences: vi
+        .fn()
+        .mockResolvedValueOnce({ ...defaultAppPreferences, workbenchMode: 'focus' })
+        .mockRejectedValueOnce(rollbackError),
+    })
+
+    const failure = await changeWorkbenchMode('developer', 'focus', actions).catch(
+      error => error as AggregateError
+    )
+
+    expect(failure).toBeInstanceOf(AggregateError)
+    expect(failure.errors).toEqual([restartError, rollbackError])
+  })
 })

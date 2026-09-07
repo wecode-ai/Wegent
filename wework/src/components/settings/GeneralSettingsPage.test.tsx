@@ -230,6 +230,27 @@ describe('GeneralSettingsPage', () => {
     expect(focusButton).toHaveAttribute('aria-pressed', 'true')
   })
 
+  test('refreshes the persisted mode when a failed switch cannot confirm rollback', async () => {
+    getAppPreferencesMock
+      .mockResolvedValueOnce(defaultPreferences)
+      .mockResolvedValueOnce({ ...defaultPreferences, workbenchMode: 'focus' })
+    changeWorkbenchModeMock.mockRejectedValue(
+      new AggregateError([new Error('restart failed'), new Error('rollback failed')])
+    )
+    render(<GeneralSettingsPage />)
+
+    const focusButton = await screen.findByTestId('general-workbench-mode-focus-button')
+    await waitFor(() => expect(focusButton).toBeEnabled())
+    await userEvent.click(focusButton)
+
+    await waitFor(() => expect(getAppPreferencesMock).toHaveBeenCalledTimes(2))
+    expect(focusButton).toHaveAttribute('aria-pressed', 'true')
+    expect(screen.getByTestId('general-workbench-mode-developer-button')).toHaveAttribute(
+      'aria-pressed',
+      'false'
+    )
+  })
+
   test('loads and updates the maximum parallel task count', async () => {
     getRuntimeSettingsMock.mockResolvedValue({ maxConcurrentTasks: 5 })
     render(

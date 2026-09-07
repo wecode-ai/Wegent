@@ -4,9 +4,7 @@ const WORKBENCH_READY_TIMEOUT_MS = 120_000
 
 async function openGeneralSettings(control) {
   await control.command('navigate', 'body', { value: '/settings' })
-  await control.command('waitFor', '[data-testid="general-settings-page"]', {
-    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
-  })
+  await control.command('waitFor', '[data-testid="general-settings-page"]')
 }
 
 async function switchMode(control, mode) {

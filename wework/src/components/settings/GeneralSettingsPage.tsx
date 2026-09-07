@@ -327,7 +327,14 @@ export function GeneralSettingsPage() {
       setPreferences(await changeWorkbenchMode(previousMode, workbenchMode))
     } catch (saveError) {
       console.error('[Wework] Failed to update workbench mode', saveError)
-      setPreferences(current => ({ ...current, workbenchMode: previousMode }))
+      try {
+        setPreferences(await getAppPreferences())
+      } catch (refreshError) {
+        console.error(
+          '[Wework] Failed to refresh workbench mode after update failure',
+          refreshError
+        )
+      }
       setError(t('workbench.general_settings_mode_save_failed'))
     } finally {
       setSaving(false)

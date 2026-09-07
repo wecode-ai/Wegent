@@ -31,7 +31,15 @@ export async function changeWorkbenchMode(
     await dependencies.restartPlugins()
     return preferences
   } catch (error) {
-    await dependencies.updatePreferences({ workbenchMode: currentMode }).catch(() => undefined)
+    try {
+      await dependencies.updatePreferences({ workbenchMode: currentMode })
+    } catch (rollbackError) {
+      throw new AggregateError(
+        [error, rollbackError],
+        'Failed to restart the plugin runtime and restore the previous workbench mode',
+        { cause: rollbackError }
+      )
+    }
     throw error
   }
 }
