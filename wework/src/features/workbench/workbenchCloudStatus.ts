@@ -559,11 +559,15 @@ function mergeRuntimeDeviceRecord(existing: DeviceInfo, incoming: DeviceInfo): D
 }
 
 function preferDeviceRecord(existing: DeviceInfo, incoming: DeviceInfo): DeviceInfo {
-  return deviceRoutePriority(incoming) <= deviceRoutePriority(existing) ? incoming : existing
+  return deviceRecordPriority(incoming) <= deviceRecordPriority(existing) ? incoming : existing
 }
 
-function deviceRoutePriority(device: DeviceInfo): number {
-  return runtimeRoutePriority(runtimeRouteKind(device))
+function deviceRecordPriority(device: DeviceInfo): number {
+  const routeKind = runtimeRouteKind(device)
+  if (routeKind === 'local-ipc') return 0
+  if (routeKind === 'app-ipc') return 1
+  if (routeKind === 'cloud-relay') return 2
+  return 3
 }
 
 function devicesShareRuntimeIdentity(left: DeviceInfo, right: DeviceInfo): boolean {

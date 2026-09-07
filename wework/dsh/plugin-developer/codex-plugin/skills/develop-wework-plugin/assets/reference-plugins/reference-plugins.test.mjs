@@ -34,6 +34,7 @@ async function loadPlugin(directory) {
 function createRuntime() {
   const commands = []
   const configurations = new Map()
+  const descriptors = []
   const keybindings = []
   const menus = []
   const references = []
@@ -75,7 +76,8 @@ function createRuntime() {
         },
       },
       contributions: {
-        register() {
+        register(_owner, slot, descriptor) {
+          descriptors.push({ descriptor, slot })
           return () => {}
         },
       },
@@ -129,6 +131,11 @@ function createRuntime() {
           return () => {}
         },
       },
+      localization: {
+        translate(messages) {
+          return messages.en
+        },
+      },
       menus: {
         register(_owner, location, contribution) {
           menus.push({ contribution, location })
@@ -154,6 +161,7 @@ function createRuntime() {
     commands,
     configurations,
     ctx,
+    descriptors,
     keybindings,
     menus,
     notifications,
@@ -205,6 +213,30 @@ test('Focus Board persists work and inserts a live Markdown summary', async () =
 
   const Page = componentFor(runtime, 'wework.route')
   assert.match(renderToStaticMarkup(React.createElement(Page)), /data-testid="focus-board-page"/)
+})
+
+test('Sidebar Browser Panel opens one website beside the current workspace', async () => {
+  const plugin = await loadPlugin('sidebar-browser-panel-demo')
+  const runtime = createRuntime()
+  plugin.apply(runtime.ctx)
+
+  const panel = runtime.descriptors.find(
+    entry => entry.slot === 'wework.workspace.sidebar.tab'
+  )?.descriptor
+  assert.deepEqual(JSON.parse(JSON.stringify(panel)), {
+    id: 'reference-website',
+    label: 'Reference website',
+    description: 'Open the reference website beside the current workspace',
+    mode: 'iframe',
+    url: 'https://example.com/',
+  })
+
+  const navigation = runtime.descriptors.find(
+    entry => entry.slot === 'wework.sidebar.navigation'
+  )?.descriptor
+  assert.equal(navigation.workspaceSidebarTab, 'reference-website')
+  assert.equal(navigation.path, undefined)
+  assert.equal(navigation.testId, 'sidebar-browser-panel-navigation-button')
 })
 
 test('Endpoint Watch performs a typed background-browser health check', async () => {

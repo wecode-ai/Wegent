@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, test, vi } from 'vitest'
-import { getLocalUser, LOCAL_USER } from './localSession'
+import { getLocalUser, LOCAL_USER, saveLocalUserPreferences } from './localSession'
 import {
   createAutomationApiFromIpc,
   createLocalAppServices,
@@ -203,6 +203,48 @@ describe('createLocalAppServices', () => {
       totalTasks: 0,
     })
     expect(request).toHaveBeenCalledWith('runtime.tasks.list', {})
+  })
+
+  test('merges partial local user preference updates', async () => {
+    saveLocalUserPreferences({
+      wework_project_work_preferences: {
+        'project:7': {
+          executionMode: 'git_worktree',
+          worktreeBranch: 'feature/alpha',
+        },
+      },
+    })
+    const services = createLocalAppServices({
+      request: vi.fn().mockResolvedValue({}),
+      subscribe: vi.fn(),
+    })
+
+    await expect(
+      services.userApi?.updateCurrentUser({
+        preferences: {
+          wework_new_chat_model_selection: {
+            modelName: 'gpt-5.5',
+            modelType: 'runtime',
+            options: { reasoning: 'high' },
+          },
+        },
+      })
+    ).resolves.toEqual({
+      ...LOCAL_USER,
+      preferences: {
+        wework_project_work_preferences: {
+          'project:7': {
+            executionMode: 'git_worktree',
+            worktreeBranch: 'feature/alpha',
+          },
+        },
+        wework_new_chat_model_selection: {
+          modelName: 'gpt-5.5',
+          modelType: 'runtime',
+          options: { reasoning: 'high' },
+        },
+      },
+    })
   })
 
   test('materializes a selected Team locally without extending the Executor protocol', async () => {

@@ -33,6 +33,7 @@ if (!platform || !arch || !version || !outputDirectory) {
 
 const output = resolve(outputDirectory)
 const installerArchitecture = platform === 'linux' && arch === 'x64' ? 'x86_64' : arch
+const useComponentizedHostUpdate = process.env.WEWORK_USE_COMPONENTIZED_HOST_UPDATE === 'true'
 await rm(output, { recursive: true, force: true })
 await mkdir(output, { recursive: true })
 
@@ -89,11 +90,22 @@ if (platform === 'macos') {
     installerRoot,
     new RegExp(`^WeWork_${escape(version)}_linux_${installerArchitecture}\\.AppImage$`)
   )
-  const updateAppImage = await findFile(
-    onlineUpdateRoot,
-    new RegExp(`^WeWorkHostUpdate_${escape(version)}_linux_${installerArchitecture}\\.AppImage$`)
+  await copyUpdateArtifacts(
+    [
+      appImage,
+      ...(useComponentizedHostUpdate
+        ? [
+            await findFile(
+              onlineUpdateRoot,
+              new RegExp(
+                `^WeWorkHostUpdate_${escape(version)}_linux_${installerArchitecture}\\.AppImage$`
+              )
+            ),
+          ]
+        : []),
+    ],
+    false
   )
-  await copyUpdateArtifacts([appImage, updateAppImage], false)
 } else {
   throw new Error(`Unsupported desktop release platform: ${platform}`)
 }

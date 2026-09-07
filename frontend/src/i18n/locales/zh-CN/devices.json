@@ -1,4 +1,8 @@
 {
+  "device_actions": "设备操作",
+  "delete_confirm_title": "移除离线设备？",
+  "delete_confirm_description": "确定从列表中移除 {{name}} 吗？历史对话和本地文件会保留。设备再次连接后会重新出现。",
+  "delete_cancel": "取消",
   "title": "AI 设备",
   "beta": "测试版",
   "my_devices": "设备",
@@ -120,6 +124,7 @@
   "cloud_devices_section": "云端设备",
   "remote_devices_section": "远程设备",
   "local_device_prefix": "个人设备：",
+  "wework_device_prefix": "Wework：",
   "cloud_device_prefix": "云主机：",
   "no_local_devices": "暂无个人设备连接。请点击上方添加设备按钮。",
   "no_remote_devices": "暂无远程设备。请使用上方按钮生成 Docker 启动命令。",
@@ -161,5 +166,6 @@
     "updateAvailable": "有新版本可用",
     "clickToUpgrade": "点击升级",
     "openclawNotSupported": "OpenClaw 设备不支持自动升级"
-  }
+  },
+  "wework_device_badge": "Wework"
 }

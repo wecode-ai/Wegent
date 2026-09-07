@@ -22,7 +22,7 @@
       "name": "wework-plugin-developer",
       "description": "Creates and debugs Wework Core DSH plugins and their Codex Skills.",
       "source": "./plugins/wework-plugin-developer",
-      "version": "0.1.8"
+      "version": "0.1.9"
     }
   ]
 }

@@ -1,6 +1,6 @@
 {
   "name": "wework-plugin-developer",
-  "version": "0.1.8",
+  "version": "0.1.9",
   "description": "创建、扩展和调试 Wework Core DSH 插件。",
   "author": {
     "name": "Wework"

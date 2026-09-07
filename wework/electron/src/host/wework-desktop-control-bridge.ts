@@ -1,7 +1,7 @@
 import { randomBytes } from 'node:crypto'
 import { createServer, type Server } from 'node:http'
 import { chmod, mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises'
-import { dirname, join } from 'node:path'
+import { dirname, isAbsolute, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 const MAX_BODY_BYTES = 1024 * 1024
@@ -44,6 +44,13 @@ export interface WeworkDesktopControlBridgeOptions {
   projectRoot: string | null
   registryDirectory: string
   window: () => DesktopWindow | null
+  smartApps?: () => SmartAppControlService | null
+}
+
+export interface SmartAppControlService {
+  inspectProject(projectRoot: string): Promise<unknown>
+  verifyProject(projectRoot: string): Promise<unknown>
+  packProject(projectRoot: string, outputPath: string): Promise<unknown>
 }
 
 interface RuntimeRecord {
@@ -133,15 +140,40 @@ export class WeworkDesktopControlBridge {
         writeResponse(response, 200, { ok: true, data: this.status() })
         return
       }
+      if (request.method === 'POST' && request.url === '/smart-app') {
+        const input = await readJsonBody(request)
+        writeResponse(response, 200, { ok: true, data: await this.dispatchSmartApp(input) })
+        return
+      }
       if (request.method !== 'POST' || request.url !== '/desktop') {
         writeResponse(response, 404, { ok: false, error: 'Unknown Wework desktop endpoint' })
         return
       }
       const input = await readJsonBody(request)
-      writeResponse(response, 200, { ok: true, data: await this.dispatch(input) })
+      writeResponse(response, 200, {
+        ok: true,
+        data: await this.dispatch(input as unknown as DesktopControlRequest),
+      })
     } catch (error) {
       writeResponse(response, 200, { ok: false, error: errorMessage(error) })
     }
+  }
+
+  private async dispatchSmartApp(input: Record<string, unknown>): Promise<unknown> {
+    const allowed = new Set(['action', 'projectRoot', 'outputPath'])
+    const unknown = Object.keys(input).find(field => !allowed.has(field))
+    if (unknown) throw new Error(`Unknown Smart App request field: ${unknown}`)
+    const action = input.action
+    const projectRoot = requiredAbsolutePath(input.projectRoot, 'projectRoot')
+    const smartApps = this.options.smartApps?.()
+    if (!smartApps) throw new Error('Smart App verification is unavailable')
+    if (action === 'inspect') return smartApps.inspectProject(projectRoot)
+    if (action === 'verify') return smartApps.verifyProject(projectRoot)
+    if (action === 'pack') {
+      const outputPath = requiredAbsolutePath(input.outputPath, 'outputPath')
+      return smartApps.packProject(projectRoot, outputPath)
+    }
+    throw new Error('Unknown Smart App request action')
   }
 
   private status(): Record<string, unknown> {
@@ -281,7 +313,7 @@ async function writeRuntimeRecord(path: string, record: RuntimeRecord): Promise<
 
 async function readJsonBody(
   request: import('node:http').IncomingMessage
-): Promise<DesktopControlRequest> {
+): Promise<Record<string, unknown>> {
   const chunks: Buffer[] = []
   let bytes = 0
   for await (const chunk of request) {
@@ -294,7 +326,14 @@ async function readJsonBody(
   if (!value || typeof value !== 'object' || Array.isArray(value)) {
     throw new Error('Wework desktop request must be an object')
   }
-  return value as DesktopControlRequest
+  return value as Record<string, unknown>
+}
+
+function requiredAbsolutePath(value: unknown, field: string): string {
+  if (typeof value !== 'string' || !value.trim() || !isAbsolute(value)) {
+    throw new Error(`Smart App ${field} must be an absolute path`)
+  }
+  return value
 }
 
 function writeResponse(
