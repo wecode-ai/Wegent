@@ -10,6 +10,7 @@ async function openGeneralSettings(control) {
 async function switchMode(control, mode) {
   const readyCount = control.readyCount
   await control.command('clickWhenEnabled', `[data-testid="general-workbench-mode-${mode}-button"]`)
+  await control.command('clickWhenEnabled', '[data-testid="general-workbench-mode-confirm-button"]')
 
   let timeout
   const reconnectTimeout = new Promise((_, reject) => {

@@ -15,6 +15,7 @@ import {
   type LucideIcon,
 } from 'lucide-react'
 import { KeyboardShortcut } from '@/components/common/KeyboardShortcut'
+import { ConfirmDialog } from '@/components/common/ConfirmDialog'
 import { useTranslation } from '@/hooks/useTranslation'
 import {
   SettingsGroup,
@@ -98,6 +99,7 @@ export function GeneralSettingsPage() {
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [showImportDialog, setShowImportDialog] = useState(false)
+  const [pendingWorkbenchMode, setPendingWorkbenchMode] = useState<WorkbenchMode | null>(null)
   const [recordingPopoutShortcut, setRecordingPopoutShortcut] = useState(false)
   const [maxConcurrentTasks, setMaxConcurrentTasks] = useState(DEFAULT_MAX_CONCURRENT_TASKS)
   const [installedSmartApps, setInstalledSmartApps] = useState<HarnessAppInstallation[]>([])
@@ -316,15 +318,16 @@ export function GeneralSettingsPage() {
     }
   }
 
-  const handleWorkbenchModeChange = async (workbenchMode: WorkbenchMode) => {
-    if (workbenchMode === preferences.workbenchMode) return
+  const confirmWorkbenchModeChange = async () => {
+    if (!pendingWorkbenchMode || pendingWorkbenchMode === preferences.workbenchMode) return
 
     const previousMode = preferences.workbenchMode
-    setPreferences(current => ({ ...current, workbenchMode }))
+    const nextMode = pendingWorkbenchMode
+    setPreferences(current => ({ ...current, workbenchMode: nextMode }))
     setSaving(true)
     setError(null)
     try {
-      setPreferences(await changeWorkbenchMode(previousMode, workbenchMode))
+      setPreferences(await changeWorkbenchMode(previousMode, nextMode))
     } catch (saveError) {
       console.error('[Wework] Failed to update workbench mode', saveError)
       try {
@@ -337,6 +340,7 @@ export function GeneralSettingsPage() {
       }
       setError(t('workbench.general_settings_mode_save_failed'))
     } finally {
+      setPendingWorkbenchMode(null)
       setSaving(false)
     }
   }
@@ -479,7 +483,7 @@ export function GeneralSettingsPage() {
                       disabled={loading || saving}
                       title={t(`workbench.general_settings_mode_${mode}_description`)}
                       aria-pressed={active}
-                      onClick={() => void handleWorkbenchModeChange(mode)}
+                      onClick={() => setPendingWorkbenchMode(mode)}
                       className={[
                         'flex min-w-0 items-center justify-center rounded-[5px] px-2 text-sm font-medium leading-[18px] transition-colors disabled:cursor-not-allowed disabled:opacity-60',
                         active
@@ -974,6 +978,25 @@ export function GeneralSettingsPage() {
       {showImportDialog && (
         <ExternalContentImportDialog onClose={() => setShowImportDialog(false)} />
       )}
+      <ConfirmDialog
+        open={pendingWorkbenchMode !== null}
+        title={
+          pendingWorkbenchMode
+            ? t(`workbench.general_settings_mode_${pendingWorkbenchMode}_confirm_title`)
+            : ''
+        }
+        description={
+          pendingWorkbenchMode
+            ? t(`workbench.general_settings_mode_${pendingWorkbenchMode}_confirm_description`)
+            : ''
+        }
+        cancelLabel={t('common.cancel', '取消')}
+        confirmLabel={t('workbench.general_settings_mode_confirm_action')}
+        confirmTestId="general-workbench-mode-confirm-button"
+        pending={saving}
+        onClose={() => setPendingWorkbenchMode(null)}
+        onConfirm={() => void confirmWorkbenchModeChange()}
+      />
     </SettingsPage>
   )
 }

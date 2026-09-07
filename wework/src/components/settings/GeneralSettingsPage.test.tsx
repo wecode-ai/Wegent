@@ -223,11 +223,32 @@ describe('GeneralSettingsPage', () => {
     )
 
     await userEvent.click(focusButton)
+    expect(changeWorkbenchModeMock).not.toHaveBeenCalled()
+    expect(screen.getByRole('dialog')).toHaveTextContent(
+      'workbench.general_settings_mode_focus_confirm_title'
+    )
+    await userEvent.click(screen.getByTestId('general-workbench-mode-confirm-button'))
 
     await waitFor(() => {
       expect(changeWorkbenchModeMock).toHaveBeenCalledWith('developer', 'focus')
     })
     expect(focusButton).toHaveAttribute('aria-pressed', 'true')
+  })
+
+  test('keeps developer mode when a mode switch is cancelled', async () => {
+    render(<GeneralSettingsPage />)
+
+    const focusButton = await screen.findByTestId('general-workbench-mode-focus-button')
+    await waitFor(() => expect(focusButton).toBeEnabled())
+    await userEvent.click(focusButton)
+    await userEvent.click(screen.getByTestId('general-workbench-mode-confirm-button-cancel-button'))
+
+    expect(changeWorkbenchModeMock).not.toHaveBeenCalled()
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+    expect(screen.getByTestId('general-workbench-mode-developer-button')).toHaveAttribute(
+      'aria-pressed',
+      'true'
+    )
   })
 
   test('refreshes the persisted mode when a failed switch cannot confirm rollback', async () => {
@@ -242,6 +263,7 @@ describe('GeneralSettingsPage', () => {
     const focusButton = await screen.findByTestId('general-workbench-mode-focus-button')
     await waitFor(() => expect(focusButton).toBeEnabled())
     await userEvent.click(focusButton)
+    await userEvent.click(screen.getByTestId('general-workbench-mode-confirm-button'))
 
     await waitFor(() => expect(getAppPreferencesMock).toHaveBeenCalledTimes(2))
     expect(focusButton).toHaveAttribute('aria-pressed', 'true')
