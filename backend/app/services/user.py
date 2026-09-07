@@ -502,23 +502,39 @@ class UserService(BaseService[User, UserUpdate, UserUpdate]):
         return user_list
 
     def decrypt_user_git_info(self, user: User) -> User:
+        """Return a decrypted view of *user* without touching session state.
+
+        Decrypted tokens must never land on the session-attached ORM object:
+        a getter that mutates tracked state leaves plaintext in the identity
+        map, one refactor away from being persisted by an unrelated commit.
+        The plaintext view is therefore built on a detached copy of the row;
+        the session-attached instance keeps ciphertext.
+
+        Callers only read attributes (user.id, user.git_info values), so the
+        copy is transparent to them. Nobody may re-attach or commit the
+        returned object: it is a read view, not a persistent instance.
+        """
         if user is None:
             return user
 
-        # Check if git_info is None or empty
         if user.git_info is None:
             return user
 
-        decrypt_git_info = []
-
+        decrypted_items = []
         for git_item in user.git_info:
-            plain_token = git_item["git_token"]
-            if is_token_encrypted(plain_token):
-                git_item["git_token"] = decrypt_git_token(plain_token)
+            token = git_item.get("git_token")
+            if token and is_token_encrypted(token):
+                decrypted_items.append(
+                    {**git_item, "git_token": decrypt_git_token(token)}
+                )
+            else:
+                decrypted_items.append(dict(git_item))
 
-            decrypt_git_info.append(git_item)
-        user.git_info = decrypt_git_info
-        return user
+        plain_view = User()
+        for column in user.__table__.columns:
+            setattr(plain_view, column.name, getattr(user, column.name))
+        plain_view.git_info = decrypted_items
+        return plain_view
 
 
 user_service = UserService(User)
