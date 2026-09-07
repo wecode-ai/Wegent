@@ -95,7 +95,7 @@ export function useDeviceHandlers(): DeviceHandlers {
   const handleDeleteDevice = useCallback(
     async (device: DeviceInfo) => {
       try {
-        await deleteDevice(device.device_id)
+        await deleteDevice(device.id)
         toast.success(t('delete_success', { name: device.name }))
       } catch {
         toast.error(t('delete_error'))

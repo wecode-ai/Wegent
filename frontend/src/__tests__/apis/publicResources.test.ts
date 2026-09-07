@@ -70,6 +70,7 @@ const publicVideoModel: AdminPublicModel = {
     },
   },
   is_active: true,
+  is_visible: true,
   is_advanced: false,
   created_at: '2026-01-01T00:00:00Z',
   updated_at: '2026-01-01T00:00:00Z',

@@ -25,6 +25,8 @@ import type {
 import { sha256Hex } from './fileHash'
 import type { HttpClient } from './http'
 import { resolveApiUrl } from './resolveApiUrl'
+import { accessTargetsExtension } from '@extensions/access-targets'
+import type { DepartmentAccessTarget } from '@/extensions/access-targets-contract'
 
 export interface PluginShareUserSearchItem {
   id: number
@@ -32,11 +34,7 @@ export interface PluginShareUserSearchItem {
   email?: string | null
 }
 
-export interface PluginShareGroupSearchItem {
-  id: number
-  name: string
-  display_name?: string | null
-}
+export type PluginShareDepartmentSearchItem = DepartmentAccessTarget
 
 function idempotencyOptions(key: string) {
   return { headers: { 'Idempotency-Key': key } }
@@ -194,12 +192,8 @@ export function createPluginApi(client: HttpClient, apiBaseUrl = '') {
     ): Promise<{ users: PluginShareUserSearchItem[]; total: number }> {
       return client.get(`/users/search?q=${encodeURIComponent(query)}&limit=20`)
     },
-    searchPluginShareGroups(
-      query: string
-    ): Promise<{ items: PluginShareGroupSearchItem[]; total: number }> {
-      return client.get(
-        `/groups/search?q=${encodeURIComponent(query)}&limit=20&include_organization=true`
-      )
+    async searchPluginShareDepartments(query: string): Promise<PluginShareDepartmentSearchItem[]> {
+      return accessTargetsExtension.searchDepartments(client, query)
     },
     listPublicationRequests(
       params: { sourcePluginId?: number; activeOnly?: boolean; page?: number; limit?: number } = {}

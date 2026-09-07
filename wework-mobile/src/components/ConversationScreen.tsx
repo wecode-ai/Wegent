@@ -59,8 +59,10 @@ interface ConversationScreenProps {
   devices: DeviceInfo[]
   entryRevision: number
   gitRef: string | null
+  hasMoreMessagesBefore: boolean
   isNew: boolean
   loading: boolean
+  loadingMoreMessagesBefore: boolean
   messages: ChatMessage[]
   model: UnifiedModel | null
   modelOptions: ModelOptions
@@ -74,6 +76,7 @@ interface ConversationScreenProps {
   workspaces: ConversationWorkspaceChoice[]
   onBack: () => void
   onLoadApps: () => Promise<RuntimeComposerApp[]>
+  onLoadMoreMessagesBefore: () => Promise<void>
   onMore: () => void
   onNewConversation: () => void
   onOpenAdvancedModel: () => void
@@ -244,8 +247,11 @@ export function ConversationScreen(props: ConversationScreenProps) {
           bottomInset={messageBottomInset}
           conversationId={conversationKey}
           entryRevision={props.entryRevision}
+          hasMoreBefore={props.hasMoreMessagesBefore}
           loading={props.loading}
+          loadingMoreBefore={props.loadingMoreMessagesBefore}
           messages={props.messages}
+          onLoadMoreBefore={props.onLoadMoreMessagesBefore}
           topInset={messageTopInset}
         />
       )}

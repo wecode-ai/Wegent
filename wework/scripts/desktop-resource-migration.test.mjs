@@ -123,6 +123,7 @@ describe('desktop resource migration', () => {
     expect(prepareElectron).toContain('acquireProcessLock(electronToolchainLockPath)')
     expect(packageApp).toContain('acquireProcessLock(electronToolchainLockPath)')
     expect(prepareElectron).toContain("['--dir', 'electron', 'install', '--frozen-lockfile']")
+    expect(prepareElectron).toContain("WEWORK_ELECTRON_DEPENDENCIES_READY !== 'true'")
     expect(packageApp).toContain('await releaseToolchainLock()')
     const noAsar = packageApp.indexOf('process.noAsar = true')
     const outputCleanup = packageApp.indexOf('rm(output')
@@ -201,9 +202,11 @@ describe('desktop resource migration', () => {
     expect(source).toContain('WEWORK_DWS_TARGET: packageTargets.dwsTarget')
     expect(source).toContain("path: 'bundled-plugins'")
     expect(source).toContain(
+      "materializeBundledPluginResources(weworkRoot, join(resourcesRoot, 'bundled-plugins'))"
+    )
+    expect(source).not.toContain(
       "cp(join(sharedResourcesRoot, 'bundled-plugins'), join(resourcesRoot, 'bundled-plugins')"
     )
-    expect(source).not.toContain("join(sharedResourcesRoot, 'bundled-plugins', 'wework-personal')")
     expect(source).toContain('const weworkRuntimeVersion = `wework-${sourceSha.slice(0, 12)}`')
     expect(source).toContain('version: weworkRuntimeVersion')
     expect(source).toContain('sourceSha,')
@@ -228,15 +231,13 @@ describe('desktop resource migration', () => {
     expect(builderConfig).not.toContain('resources/node-runtime')
   })
 
-  test('launches the package-owned electron-builder CLI directly', async () => {
+  test('launches the release builder through the Windows command interpreter', async () => {
     const source = await readFile(join(weworkRoot, 'electron/scripts/build-release.mjs'), 'utf8')
 
-    expect(source).toContain("'node_modules/electron-builder/cli.js'")
-    expect(source).toContain('resolveNodeRuntime()')
-    expect(source).toContain('WEWORK_RELEASE_DIR_ONLY')
-    expect(source).toContain("...(directoryOnly ? ['--dir'] : [])")
-    expect(source).not.toContain("'pnpm'")
-    expect(source).not.toContain('wrapWindowsScriptCommand')
+    expect(source).toContain("process.platform === 'win32' ? 'pnpm.cmd' : 'pnpm'")
+    expect(source).toContain('wrapWindowsScriptCommand(command, args)')
+    expect(source).toContain("WEWORK_ONLINE_UPDATE_BUILD: 'true'")
+    expect(source).toContain('WEWORK_ONLINE_UPDATE_INCLUDE_COMPONENTS')
   })
 
   test('prebuilt macOS packaging requires the installed Electron workspace toolchain', async () => {
@@ -249,6 +250,9 @@ describe('desktop resource migration', () => {
     expect(source).toContain('resolveNodeRuntime()')
     expect(source).toContain('install --frozen-lockfile')
     expect(source).toContain("'--prepackaged'")
+    expect(source).toContain(
+      'WEWORK_ONLINE_UPDATE_INCLUDE_COMPONENTS: onlineUpdateIncludesComponents'
+    )
   })
 
   test('keeps macOS release build caches outside the disposable workspace', async () => {
@@ -277,7 +281,11 @@ describe('desktop resource migration', () => {
     expect(source).toContain(
       "const installerArchitecture = platform === 'linux' && arch === 'x64' ? 'x86_64' : arch"
     )
+    expect(source).toContain(
+      "const useComponentizedHostUpdate = process.env.WEWORK_USE_COMPONENTIZED_HOST_UPDATE === 'true'"
+    )
     expect(source).toContain('linux_${installerArchitecture}\\\\.AppImage')
+    expect(source).toContain('WeWorkHostUpdate_${escape(version)}_linux_')
   })
 
   test('creates macOS component archives from the requested packaged application', async () => {
@@ -292,6 +300,8 @@ describe('desktop resource migration', () => {
     )
     expect(source).toContain("join(packagedComponentResourcesRoot, 'components.json')")
     expect(source).toContain('join(packagedComponentResourcesRoot, component.path)')
+    expect(source).toContain('contentSha256 = await hashComponentPath(sourcePath)')
+    expect(source).toContain('releaseScope: componentReleaseScope(id)')
     expect(source).not.toContain('async function findDirectory')
   })
 
@@ -304,7 +314,7 @@ describe('desktop resource migration', () => {
     expect(source).toContain('const blockmap = `${zip}.blockmap`')
     expect(source).toContain('const releaseBaseName = `WeWork_${version}_${releasePlatform}`')
     expect(source).toContain('cp(blockmap, `${releaseZip}.blockmap`)')
-    expect(source).toContain('const blockmap = `${installer}.blockmap`')
+    expect(source).toContain('const blockmap = `${path}.blockmap`')
     expect(source).toContain('await requireFile(blockmap)')
     expect(source).not.toContain('if (await isFile(blockmap))')
   })
@@ -332,6 +342,12 @@ describe('desktop resource migration', () => {
     expect(source).toContain("corePluginsRoot: join(packagedResourcesRoot, 'wework-core-plugins')")
     expect(source).toContain('harnessRuntimeRoot: runtimeRoot')
     expect(source).not.toContain("['prepare:harness-runtime', '--materialize']")
+  })
+
+  test('packages split Wework app static resources for local Electron verification', async () => {
+    const source = await readFile(join(weworkRoot, 'electron/scripts/package-app.mjs'), 'utf8')
+
+    expect(source).toContain("join(electronRoot, 'resources', 'wework-app-static')")
   })
 
   test('prepares AI verification source mode without packaged Node resources', async () => {

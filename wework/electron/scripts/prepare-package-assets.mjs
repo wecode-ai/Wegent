@@ -15,8 +15,10 @@ import {
   CORE_PLUGIN_DIRECTORIES,
   corePluginTarget,
 } from '../../scripts/lib/core-plugin-resources.mjs'
+import { materializeBundledPluginResources } from '../../scripts/lib/bundled-plugin-resources.mjs'
 import { resolveHarnessRuntimeCachePaths } from '../../scripts/lib/harness-runtime-cache.mjs'
 import { normalizeFileViewerAssetManifest } from '../../scripts/lib/harness-runtime-metadata.mjs'
+import { extractWeworkAppStaticResources } from '../../scripts/lib/wework-app-component-resources.mjs'
 import appUpdateConfigModule from './app-update-config.cjs'
 import releaseVersionModule from './release-version.cjs'
 
@@ -74,9 +76,7 @@ await writeFile(
   `${JSON.stringify({ runtimes: packagedRuntimes }, null, 2)}\n`,
   { mode: 0o600 }
 )
-await cp(join(sharedResourcesRoot, 'bundled-plugins'), join(resourcesRoot, 'bundled-plugins'), {
-  recursive: true,
-})
+await materializeBundledPluginResources(weworkRoot, join(resourcesRoot, 'bundled-plugins'))
 await cp(join(sharedResourcesRoot, 'bundled-hooks'), join(resourcesRoot, 'bundled-hooks'), {
   recursive: true,
 })
@@ -91,6 +91,8 @@ for (const directory of CORE_PLUGIN_DIRECTORIES) {
     filter: source => !source.endsWith('.test.mjs'),
   })
 }
+const weworkAppStaticRoot = join(resourcesRoot, 'wework-app-static')
+await extractWeworkAppStaticResources(corePluginsRoot, weworkAppStaticRoot)
 const codexTarget = packageTargets.codexTarget
 const codexSource = join(sharedResourcesRoot, 'binaries', 'codex', codexTarget)
 const codexResources = join(resourcesRoot, 'codex')
@@ -149,6 +151,11 @@ await writeFile(
           version: weworkRuntimeVersion,
           path: 'wework-core-plugins',
           sha256: await hashTree(corePluginsRoot),
+        },
+        weworkAppStatic: {
+          version: weworkRuntimeVersion,
+          path: 'wework-app-static',
+          sha256: await hashTree(weworkAppStaticRoot),
         },
         bundledPlugins: {
           version: weworkRuntimeVersion,

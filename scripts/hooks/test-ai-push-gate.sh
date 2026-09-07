@@ -175,6 +175,20 @@ if ! grep -qE '^pnpm --filter wework typecheck$' "$CALL_LOG"; then
     exit 1
 fi
 
+if ! grep -qE '^pnpm --filter wework exec eslint src/features/workbench/WorkbenchProvider.test.tsx src/features/workbench/runtimeModelSelection.test.ts src/features/workbench/runtimeModelSelection.ts$' "$CALL_LOG"; then
+    echo "Expected Wework changes to lint only changed TypeScript files."
+    echo "Calls:"
+    cat "$CALL_LOG"
+    exit 1
+fi
+
+if grep -qE '^pnpm --filter wework lint$' "$CALL_LOG"; then
+    echo "Expected ordinary Wework changes to avoid the full lint suite."
+    echo "Calls:"
+    cat "$CALL_LOG"
+    exit 1
+fi
+
 if ! grep -qE '^pnpm --filter wework exec vitest run --pool=threads src/features/workbench/WorkbenchProvider.test.tsx src/features/workbench/runtimeModelSelection.test.ts$' "$CALL_LOG"; then
     echo "Expected renderer source changes to run changed and sibling test files."
     echo "Calls:"
@@ -189,14 +203,14 @@ if grep -qE '^pnpm --filter wework test$' "$CALL_LOG"; then
     exit 1
 fi
 
-if ! grep -qE 'Running focused renderer unit tests with 4 workers' "$WEWORK_TEST_OUT"; then
-    echo "Expected focused Wework pre-push tests to use four workers by default."
+if ! grep -qE 'Running focused renderer unit tests with 2 workers' "$WEWORK_TEST_OUT"; then
+    echo "Expected focused Wework pre-push tests to use two workers by default."
     cat "$WEWORK_TEST_OUT"
     exit 1
 fi
 
 STATIC_CHECK_LINE=$(grep -n 'Running static checks and unit tests in parallel' "$WEWORK_TEST_OUT" | cut -d: -f1)
-UNIT_TEST_LINE=$(grep -n 'Running focused renderer unit tests with 4 workers' "$WEWORK_TEST_OUT" | cut -d: -f1)
+UNIT_TEST_LINE=$(grep -n 'Running focused renderer unit tests with 2 workers' "$WEWORK_TEST_OUT" | cut -d: -f1)
 if [ -z "$STATIC_CHECK_LINE" ] || [ -z "$UNIT_TEST_LINE" ] ||
     [ "$STATIC_CHECK_LINE" -ge "$UNIT_TEST_LINE" ]; then
     echo "Expected Wework static checks to be reported before unit tests."
@@ -234,8 +248,8 @@ if ! grep -qE '^pnpm --filter wework exec vitest run --dir src --pool=threads$' 
     exit 1
 fi
 
-if ! grep -qE 'Running full renderer unit tests with 4 workers' "$WEWORK_FULL_TEST_OUT"; then
-    echo "Expected full Wework renderer tests to use four workers by default."
+if ! grep -qE 'Running full renderer unit tests with 2 workers' "$WEWORK_FULL_TEST_OUT"; then
+    echo "Expected full Wework renderer tests to use two workers by default."
     cat "$WEWORK_FULL_TEST_OUT"
     exit 1
 fi
@@ -322,6 +336,13 @@ EOF
 
 if ! grep -qE '^pnpm --filter wework exec vitest run --pool=threads src/api/changeRequests.test.ts$' "$CALL_LOG"; then
     echo "Expected merge-like Wework changes to run only the related renderer test."
+    echo "Calls:"
+    cat "$CALL_LOG"
+    exit 1
+fi
+
+if ! grep -qE '^pnpm --filter wework lint$' "$CALL_LOG"; then
+    echo "Expected Wework package metadata changes to run the full lint suite."
     echo "Calls:"
     cat "$CALL_LOG"
     exit 1

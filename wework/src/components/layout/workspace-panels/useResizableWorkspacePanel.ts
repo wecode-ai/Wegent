@@ -10,6 +10,7 @@ import { DEFAULT_CODE_FONT_SIZE } from '@/features/appearance/typography'
 import { setPanelResizeShieldActive } from '@/lib/panel-resize-shield'
 
 const RIGHT_SPLIT_CHAT_DEFAULT_WIDTH = 420
+export const RIGHT_WORKSPACE_COMPACT_PANEL_DEFAULT_WIDTH = 420
 const RIGHT_SPLIT_CHAT_MIN_WIDTH = 360
 const RIGHT_SPLIT_CHAT_MAX_WIDTH = 620
 export const RIGHT_SPLIT_PANEL_MIN_WIDTH = 260

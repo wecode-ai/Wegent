@@ -72,6 +72,7 @@ from app.api.endpoints import (
     wiki,
     wizard,
     work_queue,
+    xiaoxin_knowledge_sync,
 )
 from app.api.endpoints.dingtalk_wikispace import router as dingtalk_wikispace_router
 from app.core.config import settings
@@ -338,6 +339,11 @@ api_router.include_router(
     dingtalk_wikispace_router,
     prefix="/dingtalk-wikispace",
     tags=["dingtalk-wikispace"],
+)
+api_router.include_router(
+    xiaoxin_knowledge_sync.router,
+    prefix="/integrations/xiaoxin",
+    tags=["xiaoxin-knowledge-sync"],
 )
 
 # Work queue endpoints (message forwarding and inbox)

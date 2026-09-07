@@ -82,3 +82,33 @@ test('injects Electron auxiliary window labels', () => {
     assert.ok(html.includes(`"desktopWindowLabel":"${label}"`))
   }
 })
+
+test('keeps automation disabled for normal plugin development instances', () => {
+  const html = injectRuntimeConfig(
+    '<html><head></head><body></body></html>',
+    {
+      WEWORK_E2E_CONTROL_URL: 'http://127.0.0.1:43111',
+      WEWORK_INSTANCE_MODE: 'core-dsh-plugin-development',
+    },
+    'main'
+  )
+
+  assert.ok(html.includes('"disabled":true'))
+})
+
+test('allows plugin development E2E to use an isolated control label', () => {
+  const html = injectRuntimeConfig(
+    '<html><head></head><body></body></html>',
+    {
+      WEWORK_E2E_CONTROL_URL: 'http://127.0.0.1:43111',
+      WEWORK_INSTANCE_MODE: 'core-dsh-plugin-development',
+      WEWORK_PLUGIN_DEVELOPMENT_E2E: '1',
+      WEWORK_PLUGIN_DEVELOPMENT_E2E_WINDOW_LABEL: 'plugin-development-example',
+    },
+    'main'
+  )
+
+  assert.ok(html.includes('"controlUrl":"http://127.0.0.1:43111"'))
+  assert.ok(html.includes('"windowLabel":"plugin-development-example"'))
+  assert.ok(!html.includes('"disabled":true'))
+})

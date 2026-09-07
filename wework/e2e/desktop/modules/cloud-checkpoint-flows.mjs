@@ -439,7 +439,7 @@ async function verifyPluginWorkspacePublication({ cloudEnvironment, control }) {
     await control.command('getElementMetrics', '[data-testid="plugin-share-dialog"]')
   )
   await control.command('fill', '[data-testid="plugin-share-search"]', {
-    value: 'admin',
+    value: 'Wework E2E ERP Department',
   })
   await control.command('waitFor', '[data-testid="plugin-share-search-results"]', {
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
@@ -455,6 +455,15 @@ async function verifyPluginWorkspacePublication({ cloudEnvironment, control }) {
   assert.ok(
     Math.abs(shareDialogAfterSearch.height - shareDialogBeforeSearch.height) <= 1,
     `Member search changed the dialog height from ${shareDialogBeforeSearch.height}px to ${shareDialogAfterSearch.height}px`
+  )
+  await control.command(
+    'clickWhenEnabled',
+    '[data-testid="plugin-share-department-wework-e2e-erp-department"]'
+  )
+  await control.command(
+    'waitFor',
+    '[data-testid="plugin-share-target-remove-org_department-wework-e2e-erp-department"]',
+    { timeoutMs: DEFAULT_STEP_TIMEOUT_MS }
   )
   await control.command('click', '[data-testid="plugin-share-back"]')
   await control.command('waitFor', '[data-testid="plugin-share-intent-dialog"]', {
@@ -744,6 +753,7 @@ async function verifyCloudCheckpoint({
       const otherTaskRowTestId = await verifyShortConversationLayout({
         composerSelector,
         control,
+        restartDesktopApp,
       })
       setPhase('cloud-background-completion-restore')
       await verifyBackgroundCompletionRestore({

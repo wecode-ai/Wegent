@@ -10,6 +10,17 @@ type CommonTranslate = ReturnType<typeof useTranslation>['t']
 
 export type ComposerMentionCandidate =
   | {
+      kind: 'extension'
+      key: string
+      title: string
+      description?: string
+      metaLabel: string
+      testId: string
+      enabled: boolean
+      reference: string
+      searchAliases: string[]
+    }
+  | {
       kind: 'skill'
       key: string
       title: string

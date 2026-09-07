@@ -72,6 +72,23 @@ describe('createDeliveryApi queue and assignment routes', () => {
     expect(client.get).toHaveBeenCalledWith('/v1/cloud-projects/123/board-snapshot')
   })
 
+  it('loads one external board column page without requesting issue details', async () => {
+    const client = {
+      get: vi.fn(async () => ({ items: [], task_bindings: [], next_cursor: null })),
+    } as unknown as HttpClient
+    const api = createDeliveryApi(client)
+
+    await api.listLoopItemsPage(123, {
+      status: 'in_progress',
+      parentId: 'GH-7',
+      cursor: 'next-page',
+    })
+
+    expect(client.get).toHaveBeenCalledWith(
+      '/v1/cloud-projects/123/loop-item-pages?status=in_progress&limit=10&parent_id=GH-7&cursor=next-page'
+    )
+  })
+
   it('lists robot executions through the cloud executions route', async () => {
     const client = {
       get: vi.fn(async () => ({

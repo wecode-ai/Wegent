@@ -920,17 +920,9 @@ class TaskRequestBuilder:
             return None
 
         try:
-            device = (
-                self.db.query(Kind)
-                .filter(
-                    Kind.user_id == user_id,
-                    Kind.kind == "Device",
-                    Kind.namespace == "default",
-                    Kind.name == device_id,
-                    Kind.is_active,
-                )
-                .first()
-            )
+            from app.services.device.identity import owned_active_device
+
+            device = owned_active_device(self.db, user_id, device_id)
         except Exception as e:
             logger.warning(
                 "[TaskRequestBuilder] Failed to resolve device type for %s: %s",

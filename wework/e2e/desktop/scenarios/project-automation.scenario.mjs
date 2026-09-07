@@ -4,6 +4,7 @@ import { join } from 'node:path'
 import { ensureExperimentalFeaturesEnabled } from '../modules/preferences-automation-flows.mjs'
 
 import {
+  AUTOMATION_SCHEDULE_TIMEOUT_MS,
   CHECKPOINT_TASK_COMPLETION_TEXT,
   CHECKPOINT_TASK_PROMPT,
   DEFAULT_MODEL_ID,
@@ -305,6 +306,12 @@ function assertExecutionTruthContract(execution) {
 }
 
 export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspacePath }) {
+  // Cloud executions are claimed asynchronously. Keep the assertion budget
+  // beyond one complete claim window so a commit at the boundary is observed.
+  const automationRuntimeTimeoutMs = Math.max(
+    uiTimeoutMs * 6,
+    AUTOMATION_SCHEDULE_TIMEOUT_MS + 10_000
+  )
   const rules = [RULE]
   const runs = [
     {
@@ -394,7 +401,7 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
     projectId,
     taskId,
     executorType,
-    timeoutMs = uiTimeoutMs * 3
+    timeoutMs = automationRuntimeTimeoutMs
   ) {
     const execution = await waitForValue(
       () => allExecutions(projectId),
@@ -425,7 +432,7 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
     projectId,
     ruleId,
     taskId = null,
-    timeoutMs = uiTimeoutMs * 3
+    timeoutMs = automationRuntimeTimeoutMs
   ) {
     return waitForValue(
       () => cloudRequest(`/api/v1/cloud-projects/${projectId}/automations/${ruleId}/runs`),
@@ -1099,6 +1106,75 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
       'The private Runtime handle escaped the cloud projection boundary'
     )
 
+    await control.command('drag', moonshotOverrideCard, {
+      target: `${activeBoard} [data-testid="cloud-todo-column-dropzone-in_review"]`,
+    })
+    await waitForValue(
+      () => cloudRequest(`/api/v1/loop-items/${moonshotOverrideIssue.id}`),
+      item => item.status === 'in_review',
+      'The completed Issue did not reach the review state required for board follow-up',
+      uiTimeoutMs
+    )
+    await control.command(
+      'waitFor',
+      `${activeBoard} [data-testid="cloud-todo-card-tasks-${moonshotOverrideIssue.id}"]`,
+      {
+        timeoutMs: uiTimeoutMs,
+        visible: true,
+      }
+    )
+    const moonshotProgressPopup = `[data-testid="cloud-todo-card-progress-popup-${moonshotOverrideIssue.id}"]`
+    const moonshotPopupConversation = `${moonshotProgressPopup} [data-testid="cloud-todo-card-popup-conversation-${moonshotOverrideIssue.id}"]`
+    const moonshotPopupModelSelector = `${moonshotPopupConversation} [data-testid="model-selector-button"]`
+    const moonshotPopupInput = `${moonshotPopupConversation} [data-testid="chat-message-input"]`
+    const moonshotPopupSend = `${moonshotPopupConversation} [data-testid="send-message-button"]`
+    await control.command('scrollIntoView', moonshotOverrideCard, { visible: true })
+    await control.command('hover', moonshotOverrideCard, { visible: true })
+    await control.command('waitFor', moonshotProgressPopup, {
+      timeoutMs: uiTimeoutMs,
+      visible: true,
+    })
+    const followUpRequestOffset = upstreamResponseRequests.length
+    await control.command('click', moonshotPopupInput, { visible: true })
+    await waitForValue(
+      () =>
+        control.command(
+          'getAttribute',
+          `${moonshotPopupConversation} [data-testid="project-chat-composer-form"]`,
+          { value: 'data-short-expanded' }
+        ),
+      value => value === 'true',
+      'The board popup composer did not expand after focusing its input',
+      uiTimeoutMs
+    )
+    await control.command('fill', moonshotPopupInput, {
+      value: MOONSHOT_OVERRIDE_FOLLOW_UP,
+    })
+    const popupModelLabel = await control.command('getText', moonshotPopupModelSelector)
+    assert.equal(
+      popupModelLabel,
+      `公网:${CLOUD_MODEL_UPSTREAM_ID}`,
+      'The board popup displayed the global GPT default instead of the task model'
+    )
+    assert.ok(!popupModelLabel.includes(DEFAULT_MODEL_LABEL))
+    await control.command('click', moonshotPopupSend, { visible: true })
+    const followUpRequests = await waitForValue(
+      () => Promise.resolve(upstreamResponseRequests.slice(followUpRequestOffset)),
+      requests =>
+        requests.some(request => JSON.stringify(request).includes(MOONSHOT_OVERRIDE_FOLLOW_UP)),
+      'The board popup follow-up did not reach the task model service',
+      uiTimeoutMs
+    )
+    const routedFollowUp = followUpRequests.find(request =>
+      JSON.stringify(request).includes(MOONSHOT_OVERRIDE_FOLLOW_UP)
+    )
+    assert.equal(
+      routedFollowUp?.model,
+      CLOUD_MODEL_UPSTREAM_ID,
+      'The board popup follow-up used the global default instead of the task model'
+    )
+    await control.command('press', 'body', { key: 'Escape' })
+
     await control.command('waitFor', `${activeBoard} [data-testid="cloud-project-board-view"]`, {
       timeoutMs: uiTimeoutMs,
       visible: true,
@@ -1740,6 +1816,41 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
     )
     assert.equal(unifiedGraphNodes[1].kind, 'dynamic')
     assert.equal(unifiedGraphNodes[1].subgraph.nodes.length, 1)
+
+    const executionPrompt = '[data-testid^="execution-node-prompt-"]'
+    const unsavedPrompt = '尚未保存的自动化输入必须保留。'
+    await control.command('click', '[data-testid^="execution-node-step-"]', {
+      visible: true,
+    })
+    await control.command('fill', executionPrompt, { value: unsavedPrompt })
+    await control.command('waitFor', 'body', {
+      text: '有未保存更改',
+      timeoutMs: uiTimeoutMs,
+    })
+    await control.command('click', '[data-testid="workspace-tab-select-fixed-task"]')
+    await control.command('waitFor', '[data-testid="desktop-empty-composer-frame"]', {
+      timeoutMs: uiTimeoutMs,
+      visible: true,
+    })
+    await control.command('click', boardWorkspaceTabSelector)
+    await control.command('waitFor', executionPrompt, {
+      timeoutMs: uiTimeoutMs,
+      visible: true,
+    })
+    assert.equal(
+      await control.command('getValue', executionPrompt),
+      unsavedPrompt,
+      'Automation editor lost unsaved input after its parent workspace rerendered'
+    )
+    await captureScreenshot(control, 'project-automation-unsaved-draft-preserved.png')
+    await control.command('fill', executionPrompt, {
+      value: '根据 Issue 修改代码并运行相关测试。',
+    })
+    await control.command('waitFor', '[data-testid="automation-editor-global-actions"]', {
+      text: '已保存',
+      timeoutMs: uiTimeoutMs,
+      visible: true,
+    })
 
     await disableRule(projectId, unifiedRule)
     const projectWithWorkflow = await cloudRequest(`/api/v1/cloud-projects/${projectId}`)

@@ -55,6 +55,7 @@ from app.services.device.capability_sync_service import (
     DeviceCapabilitySyncService,
     device_capability_sync_service,
 )
+from app.services.external_entity_resolver import register_entity_resolver
 from app.services.installed_plugin_service import installed_plugin_service
 from app.services.official_plugin_publisher import OfficialPluginPublisher
 from app.services.plugin_device_installation_service import (
@@ -72,6 +73,7 @@ from app.services.plugin_package_storage import (
     PluginPackageStorageError,
     plugin_package_storage,
 )
+from tests.utils.mock_resolver import MockDepartmentResolver, cleanup_resolvers
 
 GITHUB_UPSTREAM_SKILL_PATHS = (
     "skills/gh-address-comments/SKILL.md",
@@ -1306,6 +1308,52 @@ def test_plugin_visibility_requires_an_approved_grant(test_db, test_user):
     ] == [plugin.id]
 
 
+def test_list_plugins_orders_by_recommendation_score_descending(test_db, test_user):
+    plugins: list[Plugin] = []
+    for index, score in enumerate((90, 91, 90, -5, 0)):
+        plugin = Plugin(
+            catalog_namespace="wework-official",
+            slug=f"ranked-{index}",
+            name=f"ranked-{index}",
+            display_name=f"Ranked {index}",
+            keywords_json=[],
+            interface_json={},
+            visibility="public",
+            status="published",
+            featured_rank=score,
+        )
+        test_db.add(plugin)
+        test_db.flush()
+        release = PluginRelease(
+            plugin_id=plugin.id,
+            version="1.0.0",
+            manifest_json={"name": plugin.name, "version": "1.0.0"},
+            interface_json={},
+            storage_key=f"plugins/{plugin.slug}.zip",
+            sha256=f"{index + 1:064d}",
+            size_bytes=10,
+            status="ready",
+            scan_status="passed",
+            scan_report_json={},
+        )
+        test_db.add(release)
+        test_db.flush()
+        plugin.latest_release_id = release.id
+        plugins.append(plugin)
+    test_db.commit()
+
+    items = PluginMarketplaceService().list_plugins(test_db, user_id=test_user.id).items
+
+    assert [item.id for item in items] == [
+        plugins[1].id,
+        plugins[2].id,
+        plugins[0].id,
+        plugins[3].id,
+        plugins[4].id,
+    ]
+    assert [item.featured for item in items[-2:]] == [True, False]
+
+
 def test_list_plugins_batches_grant_lookups_instead_of_per_plugin_queries(
     test_db: Session, test_user: User
 ) -> None:
@@ -1473,6 +1521,94 @@ def test_restricted_submission_is_owner_only_until_access_is_granted(
     assert [item.id for item in shared] == [plugin.id]
     assert shared[0].accessRole == "recipient"
     assert shared[0].allowCopy is True
+
+
+def test_restricted_org_department_grant_uses_external_membership(
+    test_db, test_user, monkeypatch, cleanup_resolvers
+):
+    service = PluginMarketplaceService()
+    package = _plugin_zip()
+    digest = hashlib.sha256(package).hexdigest()
+    stored_packages: dict[str, bytes] = {}
+    _mock_package_storage(monkeypatch, stored_packages)
+    recipient = User(
+        user_name="erp-department-recipient",
+        password_hash=test_user.password_hash,
+        email="erp-department-recipient@example.com",
+        is_active=True,
+        git_info=None,
+    )
+    outsider = User(
+        user_name="erp-department-outsider",
+        password_hash=test_user.password_hash,
+        email="erp-department-outsider@example.com",
+        is_active=True,
+        git_info=None,
+    )
+    test_db.add_all([recipient, outsider])
+    test_db.commit()
+    register_entity_resolver(
+        "org_department",
+        lambda: MockDepartmentResolver(
+            {recipient.id: {"dept-1001"}},
+            entity_type="org_department",
+        ),
+    )
+
+    initialized = service.init_submission(
+        test_db,
+        user_id=test_user.id,
+        request=PluginSubmissionInitRequest(
+            slug="erp-department-plugin",
+            displayName="ERP Department Plugin",
+            version="1.0.0",
+            filename="erp-department-plugin.zip",
+            sha256=digest,
+            sizeBytes=len(package),
+            purpose="restricted_share",
+        ),
+    )
+    _upload_submission(
+        service,
+        test_db,
+        user_id=test_user.id,
+        submission_id=initialized.submissionId,
+        package=package,
+    )
+    service.complete_submission(
+        test_db,
+        user_id=test_user.id,
+        submission_id=initialized.submissionId,
+    )
+
+    access, revoked = service.update_plugin_access(
+        test_db,
+        plugin_id=initialized.pluginId,
+        user_id=test_user.id,
+        request=PluginAccessUpdateRequest(
+            scope="restricted",
+            targets=[
+                PluginAccessTarget(
+                    entityType="org_department",
+                    entityId="dept-1001",
+                    displayName="Client department name",
+                )
+            ],
+        ),
+    )
+
+    assert revoked == []
+    assert access.targets == [
+        PluginAccessTarget(
+            entityType="org_department",
+            entityId="dept-1001",
+            displayName="Dept-dept-1001",
+        )
+    ]
+    recipient_items = service.list_plugins(test_db, user_id=recipient.id).items
+    assert [item.id for item in recipient_items] == [initialized.pluginId]
+    assert recipient_items[0].grantNamespaceCount == 1
+    assert service.list_plugins(test_db, user_id=outsider.id).items == []
 
 
 def test_restricted_access_replacement_revokes_original_install_and_copy(

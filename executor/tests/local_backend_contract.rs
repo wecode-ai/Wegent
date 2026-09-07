@@ -34,6 +34,37 @@ use wegent_executor::{
 static ENV_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 
 #[tokio::test]
+async fn local_backend_rejects_missing_persistent_identity_before_registration() {
+    for missing_runtime in [false, true] {
+        let transport = RecordingTransport::default();
+        let mut config = local_backend_config();
+        if missing_runtime {
+            config.runtime_instance_id.clear();
+        } else {
+            config.device_id.clear();
+        }
+        let client = LocalBackendClient::with_capability_reporter(
+            config,
+            transport.clone(),
+            StaticCapabilityReporter,
+        );
+        let error = client
+            .register_device(Duration::from_secs(2))
+            .await
+            .unwrap_err();
+        assert!(error.contains("persistent device and Runtime identities are required"));
+        assert!(transport.calls().is_empty());
+    }
+}
+
+#[test]
+fn local_backend_config_does_not_invent_shared_identity_fallbacks() {
+    let config = LocalBackendConfig::from_device_config(DeviceConfig::default());
+    assert!(config.device_id.is_empty());
+    assert!(config.runtime_instance_id.is_empty());
+}
+
+#[tokio::test]
 async fn local_backend_registers_device_with_python_compatible_payload() {
     let transport = RecordingTransport::with_responses(vec![json!({"success": true})]);
     let config = local_backend_config();
@@ -113,15 +144,17 @@ async fn local_backend_accepts_socketio_wrapped_registration_ack() {
 #[tokio::test]
 async fn local_backend_heartbeat_reports_running_tasks_capabilities_and_auth_files() {
     let _lock = ENV_LOCK.lock().await;
-    let _codex_home = EnvGuard::set("CODEX_HOME", "");
-    let home = temp_home("auth-report");
-    std::fs::create_dir_all(home.join(".codex")).unwrap();
-    std::fs::write(home.join(".codex/auth.json"), "{}").unwrap();
-    let expected_auth_path = home.join(".codex/auth.json").display().to_string();
+    let executor_home = temp_home("auth-report");
+    let _executor_home =
+        EnvGuard::set("WEGENT_EXECUTOR_HOME", &executor_home.display().to_string());
+    let _codex_home = EnvGuard::set("WEGENT_CODEX_HOME", "");
+    let codex_home = executor_home.join("codex");
+    std::fs::create_dir_all(&codex_home).unwrap();
+    std::fs::write(codex_home.join("auth.json"), "{}").unwrap();
+    let expected_auth_path = codex_home.join("auth.json").display().to_string();
 
     let transport = RecordingTransport::with_responses(vec![json!({"success": true})]);
-    let mut config = local_backend_config();
-    config.runtime_auth_home = home;
+    let config = local_backend_config();
     let client = LocalBackendClient::with_capability_reporter(
         config,
         transport.clone(),
@@ -781,6 +814,7 @@ async fn local_backend_replays_runtime_events_after_reconnecting() {
 fn local_backend_config_uses_device_config_and_normalizes_token() {
     let mut device = DeviceConfig {
         device_id: "device-1".to_owned(),
+        runtime_instance_id: "runtime-persisted".to_owned(),
         device_name: "Device One".to_owned(),
         device_type: "local".to_owned(),
         bind_shell: "claudecode".to_owned(),
@@ -801,7 +835,7 @@ fn local_backend_config_uses_device_config_and_normalizes_token() {
     assert_eq!(config.auth_token, "wg-token");
     assert_eq!(config.runtime_auth_token, "runtime-wg-token");
     assert_eq!(config.device_id, "device-1");
-    assert_eq!(config.runtime_instance_id, "runtime-local");
+    assert_eq!(config.runtime_instance_id, "runtime-persisted");
     assert_eq!(config.device_name, "Device One");
     assert_eq!(config.device_type, "local");
     assert_eq!(config.bind_shell, "claudecode");
@@ -810,12 +844,10 @@ fn local_backend_config_uses_device_config_and_normalizes_token() {
 
 #[tokio::test]
 async fn local_backend_auth_file_report_and_ip_filter_follow_runtime_paths() {
-    let _lock = ENV_LOCK.lock().await;
-    let _codex_home = EnvGuard::set("CODEX_HOME", "");
-    let home = temp_home("missing-auth-report");
-    let expected_auth_path = home.join(".codex/auth.json").display().to_string();
+    let codex_home = temp_home("missing-auth-report").join("codex");
+    let expected_auth_path = codex_home.join("auth.json").display().to_string();
     assert_eq!(
-        build_runtime_auth_file_report(&home),
+        build_runtime_auth_file_report(&codex_home),
         json!({"codex": {"target_path": expected_auth_path, "exists": false}})
     );
 
@@ -1031,7 +1063,6 @@ fn local_backend_config() -> LocalBackendConfig {
         reconnect_delay: Duration::from_secs(1),
         reconnect_delay_max: Duration::from_secs(30),
         configured_capabilities: Vec::new(),
-        runtime_auth_home: temp_home("runtime-auth"),
         local_workspace_root: temp_home("workspace"),
         update: UpdateConfig::default(),
     }

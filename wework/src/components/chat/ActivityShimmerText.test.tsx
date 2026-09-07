@@ -4,24 +4,25 @@ import { describe, expect, it } from 'vitest'
 import { ActivityShimmerText } from './ActivityShimmerText'
 
 describe('ActivityShimmerText', () => {
-  it('renders one bounded highlight band per grapheme without copying the full text', () => {
+  it('uses a fixed number of composited layers regardless of text length', () => {
     const text = 'W'.repeat(120)
     const { container } = render(<ActivityShimmerText variant="tool">{text}</ActivityShimmerText>)
 
-    const bands = container.querySelectorAll('.activity-shimmer-band')
-
-    expect(bands).toHaveLength(96)
-    expect(bands[0]).toHaveAttribute('data-grapheme', 'W')
-    expect(container.querySelector('[data-text]')).not.toBeInTheDocument()
+    expect(container.querySelectorAll('.activity-shimmer-sweep')).toHaveLength(1)
+    expect(container.querySelectorAll('.activity-shimmer-band')).toHaveLength(1)
+    expect(container.querySelector('.activity-shimmer-band')).toHaveAttribute('data-text', text)
+    expect(container.querySelector('[data-grapheme]')).not.toBeInTheDocument()
   })
 
-  it('keeps proportional graphemes in independent inline bands', () => {
+  it('keeps the accessible base text separate from the visual highlight copy', () => {
     const { container } = render(<ActivityShimmerText variant="thinking">Wi</ActivityShimmerText>)
 
-    expect(
-      Array.from(container.querySelectorAll('.activity-shimmer-band'), band =>
-        band.getAttribute('data-grapheme')
-      )
-    ).toEqual(['W', 'i'])
+    const shimmer = container.querySelector('.activity-shimmer-text')
+    const highlight = container.querySelector('.activity-shimmer-highlight')
+
+    expect(shimmer).toHaveTextContent('Wi')
+    expect(highlight).toHaveAttribute('aria-hidden', 'true')
+    expect(highlight).not.toHaveTextContent('Wi')
+    expect(highlight?.querySelector('.activity-shimmer-band')).toHaveAttribute('data-text', 'Wi')
   })
 })

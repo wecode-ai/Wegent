@@ -1,0 +1,3 @@
+- insert:
+    - id: focus-board-demo
+      name: '@wegent/dsh-focus-board-demo'

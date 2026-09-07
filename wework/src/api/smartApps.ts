@@ -1,7 +1,8 @@
 import type { HttpClient } from './http'
-import type { PluginShareGroupSearchItem, PluginShareUserSearchItem } from './plugins'
+import type { PluginShareUserSearchItem } from './plugins'
 import { sha256Hex } from './fileHash'
 import { resolveApiUrl } from './resolveApiUrl'
+import { accessTargetsExtension } from '@extensions/access-targets'
 
 export interface SmartAppMarketplaceTag {
   id: string
@@ -12,7 +13,7 @@ export interface SmartAppMarketplaceTag {
 }
 
 export interface SmartAppAccessTarget {
-  entityType: 'user' | 'namespace'
+  entityType: 'user' | 'namespace' | 'org_department'
   entityId: string
   displayName: string
 }
@@ -26,7 +27,8 @@ export interface SmartAppMarketplaceItem {
   sourceType: 'official' | 'user'
   ownerUserId: number
   ownerDisplayName: string
-  accessRole: 'official' | 'owner' | 'recipient'
+  accessRole: 'official' | 'owner' | 'public' | 'recipient'
+  visibility: 'private' | 'restricted' | 'public'
   tags: string[]
   iconUrl: string
   screenshotUrls: string[]
@@ -56,12 +58,14 @@ export interface SmartAppDownloadDescriptor {
 
 export interface SmartAppAccess {
   smartAppId: number
-  scope: 'private' | 'restricted'
+  scope: 'private' | 'restricted' | 'public'
   targets: SmartAppAccessTarget[]
+  isListed: boolean
+  latestReleaseId: number
+  version: string
 }
 
-export interface SmartAppSubmissionMetadata {
-  smartAppId?: number
+interface SmartAppSubmissionMetadataBase {
   name: string
   displayName: string
   version: string
@@ -75,6 +79,20 @@ export interface SmartAppSubmissionMetadata {
   releaseExtensions?: Record<string, unknown>
   targets: SmartAppAccessTarget[]
 }
+
+export interface SmartAppNewSubmissionMetadata extends SmartAppSubmissionMetadataBase {
+  smartAppId?: never
+  scope: 'restricted' | 'public'
+}
+
+export interface SmartAppExistingSubmissionMetadata extends SmartAppSubmissionMetadataBase {
+  smartAppId: number
+  scope?: 'private' | 'restricted' | 'public'
+}
+
+export type SmartAppSubmissionMetadata =
+  | SmartAppNewSubmissionMetadata
+  | SmartAppExistingSubmissionMetadata
 
 interface SmartAppSubmissionInitResponse {
   submissionId: number
@@ -146,11 +164,8 @@ export function createSmartAppsApi(client: HttpClient, apiBaseUrl = '') {
       )
       return response.users
     },
-    async searchGroups(query: string) {
-      const response = await client.get<{ items: PluginShareGroupSearchItem[] }>(
-        `/groups/search?q=${encodeURIComponent(query)}&limit=20`
-      )
-      return response.items
+    async searchDepartments(query: string) {
+      return accessTargetsExtension.searchDepartments(client, query)
     },
     getItem(id: number) {
       return client.get<SmartAppMarketplaceItem>(`/smart-apps/marketplace/${id}`)
@@ -167,7 +182,7 @@ export function createSmartAppsApi(client: HttpClient, apiBaseUrl = '') {
     getAccess(id: number) {
       return client.get<SmartAppAccess>(`/smart-apps/${id}/access`)
     },
-    updateAccess(id: number, access: Omit<SmartAppAccess, 'smartAppId'>) {
+    updateAccess(id: number, access: Pick<SmartAppAccess, 'scope' | 'targets'>) {
       return client.put<SmartAppAccess>(`/smart-apps/${id}/access`, access)
     },
     initSubmission,

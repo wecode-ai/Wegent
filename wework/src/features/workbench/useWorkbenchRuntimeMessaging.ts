@@ -2,6 +2,7 @@ import { useCallback } from 'react'
 import type { Dispatch } from 'react'
 import { ApiError } from '@/api/http'
 import type { ExecutorClient } from '@/api/executorAccess'
+import { REMOTE_TEAM_BACKEND_UNSUPPORTED } from '@/api/runtimeWork'
 import i18n from '@/i18n'
 import { appendCodeCommentContexts } from '@/lib/code-comment-context'
 import { getPreferredStandaloneDeviceId } from '@/lib/device-selection'
@@ -59,11 +60,7 @@ import type {
   RuntimePaneGuidanceResult,
   SendCurrentInputOptions,
 } from './workbenchContextTypes'
-import {
-  DEVICE_STATUS_LABELS,
-  getRuntimeTaskChatScopeKey,
-  normalizeGuidanceError,
-} from './workbenchProviderHelpers'
+import { DEVICE_STATUS_LABELS, normalizeGuidanceError } from './workbenchProviderHelpers'
 import type { WorkbenchAction } from './workbenchReducer'
 import {
   EMPTY_MESSAGE_TASK_TITLE,
@@ -102,7 +99,7 @@ export function buildRuntimeTaskCreateHandle(
   }
 }
 
-interface PreparedRuntimeTaskIntent {
+export interface PreparedRuntimeTaskIntent {
   projectId: number | null
   message: string
   title?: string
@@ -114,6 +111,7 @@ interface PreparedRuntimeTaskIntent {
   attachments?: Attachment[]
   execution?: RuntimeTaskCreateRequest['execution']
 }
+
 import { getDesktopE2ERuntimeConfig } from '@/e2e/runtime-config'
 import type { WorkbenchServices } from './workbenchServices'
 import { track } from '@/telemetry/client'
@@ -258,8 +256,11 @@ interface UseWorkbenchRuntimeMessagingOptions {
   refreshWorkLists: () => Promise<void>
 }
 
-function runtimeSendError(error: unknown, fallback: string): string {
+export function runtimeSendError(error: unknown, fallback: string): string {
   const message = error instanceof Error ? error.message : fallback
+  if (message === REMOTE_TEAM_BACKEND_UNSUPPORTED) {
+    return i18n.t('workbench.remote_team_backend_unsupported')
+  }
   return isRuntimeTaskBusyError(message)
     ? i18n.t('workbench.runtime_task_running_message')
     : message
@@ -295,23 +296,23 @@ export function resolveTemporaryChatSource(
 export function resolveRuntimeTaskCreateWorkspacePath({
   sourcePath,
   responsePath,
-  requestedWorktree,
+  requestedManagedWorkspace,
 }: {
   sourcePath?: string
   responsePath?: string
-  requestedWorktree: boolean
+  requestedManagedWorkspace: boolean
 }): string | undefined {
   const normalizedResponsePath = responsePath?.trim()
-  if (!requestedWorktree) return normalizedResponsePath || sourcePath
+  if (!requestedManagedWorkspace) return normalizedResponsePath || sourcePath
   if (!normalizedResponsePath) {
-    throw new Error('Worktree task creation did not return a planned workspace path')
+    throw new Error('Managed workspace creation did not return a planned workspace path')
   }
   if (
     sourcePath &&
     normalizeRuntimeWorkspacePath(normalizedResponsePath) ===
       normalizeRuntimeWorkspacePath(sourcePath)
   ) {
-    throw new Error('Worktree task creation returned the base workspace path')
+    throw new Error('Managed workspace creation returned the base workspace path')
   }
   return normalizedResponsePath
 }
@@ -847,11 +848,11 @@ export function useWorkbenchRuntimeMessaging({
       const selectedModelOptions =
         modelSelection.getSelectedModelOptions?.() ?? modelSelection.selectedModelOptions
 
-      if (activeProject && projectExecutionMode === 'git_worktree') {
+      if (activeProject && projectExecutionMode !== 'current_workspace') {
         const branch = projectWorktreeBranch?.trim()
         intent.execution = {
           workspace: {
-            source: 'git_worktree',
+            source: projectExecutionMode,
             ...(branch ? { branch } : {}),
           },
         }
@@ -931,6 +932,7 @@ export function useWorkbenchRuntimeMessaging({
         | 'runtimeExecutablePath'
         | 'runtimePermissionMode'
         | 'modelSelection'
+        | 'wegentTeamId'
       > & {
         collaborationMode?: 'default' | 'plan'
         deliveryId?: string
@@ -949,7 +951,7 @@ export function useWorkbenchRuntimeMessaging({
       const launchStartedAt = options?.launchStartedAt ?? runtimeLaunchNowMs()
       const sourceBlankChatKey = state.currentRuntimeTask ? null : state.standaloneChatKey
       const projectId = intent.projectId
-      const requestedWorktree = intent.execution?.workspace?.source === 'git_worktree'
+      const requestedManagedWorkspace = Boolean(intent.execution?.workspace)
       const hasOverrideSelection = Boolean(
         options && Object.prototype.hasOwnProperty.call(options, 'modelSelection')
       )
@@ -1058,7 +1060,7 @@ export function useWorkbenchRuntimeMessaging({
         }
       }
 
-      if (requestedWorktree) {
+      if (requestedManagedWorkspace) {
         const worktreeProject =
           state.projects.find(project => project.id === projectId) ??
           (state.currentProject?.id === projectId ? state.currentProject : null)
@@ -1176,6 +1178,7 @@ export function useWorkbenchRuntimeMessaging({
         ...(options?.runtimePermissionMode
           ? { runtimePermissionMode: options.runtimePermissionMode }
           : {}),
+        ...(options?.wegentTeamId ? { wegentTeamId: options.wegentTeamId } : {}),
         message: runtimeCreateMessage(intent),
         ...(clientUserMessageId ? { clientUserMessageId } : {}),
         title: buildRuntimeTaskTitle(displayMessage, intent.title),
@@ -1232,7 +1235,7 @@ export function useWorkbenchRuntimeMessaging({
         deviceId: optimisticDeviceId,
         taskId,
         runtime,
-        workspacePath: requestedWorktree ? undefined : sourceWorkspacePath,
+        workspacePath: requestedManagedWorkspace ? undefined : sourceWorkspacePath,
         ...(createRuntimeHandle ? { runtimeHandle: createRuntimeHandle } : {}),
       }
       const seedOptimisticUserMessage = (address: RuntimeTaskAddress) => {
@@ -1244,12 +1247,7 @@ export function useWorkbenchRuntimeMessaging({
           message: options.optimisticUserMessage,
         })
       }
-      modelSelection.setSelectionForScope?.(
-        getRuntimeTaskChatScopeKey(optimisticAddress),
-        selectedModel,
-        selectedModelOptions
-      )
-      const optimisticWorkspacePath = requestedWorktree
+      const optimisticWorkspacePath = requestedManagedWorkspace
         ? undefined
         : (sourceWorkspacePath ?? selectedProjectWorkspace?.workspacePath)
       const optimisticWorkspace =
@@ -1284,7 +1282,9 @@ export function useWorkbenchRuntimeMessaging({
         optimisticWorkspacePath: optimisticWorkspacePath ?? null,
       })
       lifecycleStore.sendRequested(optimisticAddress, {
-        ...(requestedWorktree ? { workspaceCreationKind: 'worktree' } : {}),
+        ...(requestedManagedWorkspace
+          ? { workspaceCreationKind: intent.execution?.workspace?.source }
+          : {}),
       })
       if (options?.initialGoal) {
         lifecycleStore.goalStatusReceived(optimisticAddress, options.initialGoal.status ?? 'active')
@@ -1303,7 +1303,7 @@ export function useWorkbenchRuntimeMessaging({
             0
         )
         if (
-          intent.execution?.workspace?.source === 'git_worktree' &&
+          intent.execution?.workspace &&
           Number.isFinite(worktreeCreationDelayMs) &&
           worktreeCreationDelayMs > 0
         ) {
@@ -1375,7 +1375,7 @@ export function useWorkbenchRuntimeMessaging({
         const resolvedCreateWorkspacePath = resolveRuntimeTaskCreateWorkspacePath({
           sourcePath: sourceWorkspacePath,
           responsePath: response.workspacePath,
-          requestedWorktree,
+          requestedManagedWorkspace,
         })
         const address: RuntimeTaskAddress = {
           deviceId: response.deviceId || optimisticAddress.deviceId,
@@ -1414,8 +1414,7 @@ export function useWorkbenchRuntimeMessaging({
               deviceId: address.deviceId,
               workspacePath: resolvedWorkspacePath,
               projectId,
-              workspaceKind:
-                intent.execution?.workspace?.source === 'git_worktree' ? 'worktree' : undefined,
+              workspaceKind: intent.execution?.workspace?.source,
             }),
             task: buildOptimisticRuntimeTask({
               taskId: address.taskId,
@@ -1424,19 +1423,13 @@ export function useWorkbenchRuntimeMessaging({
               runtime,
               status: response.status ?? 'running',
               queuePosition: response.queuePosition,
-              workspaceKind:
-                intent.execution?.workspace?.source === 'git_worktree' ? 'worktree' : undefined,
+              workspaceKind: intent.execution?.workspace?.source,
               modelSelection: createModelSelection,
             }),
           })
         }
         if (!resolvedSameIdentity) {
           lifecycleStore.rename(optimisticAddress, address)
-          modelSelection.setSelectionForScope?.(
-            getRuntimeTaskChatScopeKey(address),
-            selectedModel,
-            selectedModelOptions
-          )
           debugRuntimeCreateFlow('create-final-open', {
             taskId: address.taskId,
             runtime,
@@ -1508,7 +1501,7 @@ export function useWorkbenchRuntimeMessaging({
           deviceId: optimisticAddress.deviceId,
           error: runtimeLaunchErrorName(error),
         })
-        const message = error instanceof Error ? error.message : '发送失败'
+        const message = runtimeSendError(error, '发送失败')
         if (rollbackPreparedRuntimeTask) {
           try {
             await rollbackPreparedRuntimeTask()
@@ -1531,8 +1524,7 @@ export function useWorkbenchRuntimeMessaging({
               title: createRequest.title ?? buildRuntimeTaskTitle(displayMessage, intent.title),
               runtime,
               status: 'failed',
-              workspaceKind:
-                intent.execution?.workspace?.source === 'git_worktree' ? 'worktree' : undefined,
+              workspaceKind: intent.execution?.workspace?.source,
               error: message,
             }),
           })
@@ -1709,6 +1701,7 @@ export function useWorkbenchRuntimeMessaging({
           ...(options?.runtimePermissionMode
             ? { runtimePermissionMode: options.runtimePermissionMode }
             : {}),
+          ...(options?.wegentTeamId ? { wegentTeamId: options.wegentTeamId } : {}),
           ...(options && Object.prototype.hasOwnProperty.call(options, 'modelSelection')
             ? { modelSelection: options.modelSelection }
             : {}),

@@ -88,6 +88,7 @@ async function replaceIssueDescription(value: string) {
   range.selectNodeContents(editor)
   selection?.removeAllRanges()
   selection?.addRange(range)
+  document.dispatchEvent(new Event('selectionchange'))
   await user.keyboard('{Backspace}')
   await waitFor(() => expect(editor).not.toHaveTextContent(/\S/))
   if (value) {

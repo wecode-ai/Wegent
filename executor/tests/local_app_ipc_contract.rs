@@ -1359,6 +1359,45 @@ async fn app_ipc_resolves_configured_device_command() {
 }
 
 #[tokio::test]
+async fn app_ipc_runtime_auth_status_uses_executor_codex_home() {
+    let _lock = env_lock().await;
+    let root = tempfile::tempdir().unwrap();
+    let executor_home = root.path().join("executor-home");
+    let codex_home = executor_home.join("codex");
+    fs::create_dir_all(&codex_home).unwrap();
+    fs::write(codex_home.join("auth.json"), "{}").unwrap();
+    let _executor_home =
+        EnvGuard::set("WEGENT_EXECUTOR_HOME", &executor_home.display().to_string());
+    let _codex_home = EnvGuard::set("WEGENT_CODEX_HOME", "");
+    let _native_codex_home = EnvGuard::set("CODEX_HOME", "");
+
+    let response = AppIpcServer::new()
+        .handle_line(
+            &json!({
+                "type": "request",
+                "id": "req-runtime-auth-status",
+                "method": "device.execute_command",
+                "params": {
+                    "command_key": "runtime_auth_status",
+                    "timeout_seconds": 10,
+                    "max_output_bytes": 4096
+                }
+            })
+            .to_string(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response["ok"], true);
+    assert_eq!(response["result"]["success"], true);
+    assert_eq!(
+        response["result"]["stdout"]["target_path"],
+        json!(codex_home.join("auth.json").display().to_string())
+    );
+    assert_eq!(response["result"]["stdout"]["exists"], true);
+}
+
+#[tokio::test]
 async fn app_ipc_lists_and_reads_workspace_files_locally() {
     let workspace = unique_dir("workspace-files");
     fs::create_dir_all(workspace.join("src")).unwrap();
@@ -1636,8 +1675,13 @@ async fn app_ipc_resolves_review_and_git_device_commands() {
 
     assert_eq!(git_response["ok"], true);
     assert_eq!(
-        seen_request.lock().unwrap().as_ref().unwrap().argv[0],
-        "bash"
+        seen_request
+            .lock()
+            .unwrap()
+            .as_ref()
+            .map(|request| request.argv[0].clone()),
+        None,
+        "git_diff must run through the native handler instead of a shell"
     );
 
     let worktree_response = server
@@ -1657,12 +1701,10 @@ async fn app_ipc_resolves_review_and_git_device_commands() {
         .unwrap();
 
     assert_eq!(worktree_response["ok"], true);
-    let request = seen_request.lock().unwrap().clone().unwrap();
-    assert_eq!(request.argv[0], "sh");
-    assert_eq!(request.argv[3], "--");
-    assert_eq!(request.argv[4], "/tmp/project");
-    assert_eq!(request.argv[5], "/tmp/worktrees/1/project");
-    assert_eq!(request.argv.len(), 6);
+    assert!(
+        seen_request.lock().unwrap().is_none(),
+        "git_worktree_add must run through the native handler instead of a shell"
+    );
 
     let selected_branch_worktree_response = server
         .handle_line(
@@ -1681,12 +1723,10 @@ async fn app_ipc_resolves_review_and_git_device_commands() {
         .unwrap();
 
     assert_eq!(selected_branch_worktree_response["ok"], true);
-    let request = seen_request.lock().unwrap().clone().unwrap();
-    assert_eq!(request.argv[0], "sh");
-    assert_eq!(request.argv[3], "--");
-    assert_eq!(request.argv[4], "/tmp/project");
-    assert_eq!(request.argv[5], "/tmp/worktrees/2/project");
-    assert_eq!(request.argv[6], "main");
+    assert!(
+        seen_request.lock().unwrap().is_none(),
+        "git_worktree_add with a branch must run through the native handler"
+    );
 
     let remove_worktree_response = server
         .handle_line(
@@ -1705,12 +1745,10 @@ async fn app_ipc_resolves_review_and_git_device_commands() {
         .unwrap();
 
     assert_eq!(remove_worktree_response["ok"], true);
-    let request = seen_request.lock().unwrap().clone().unwrap();
-    assert_eq!(request.argv[0], "sh");
-    assert_eq!(request.argv[3], "--");
-    assert_eq!(request.argv[4], "/tmp/worktrees/2/project");
-    assert_eq!(request.argv[5], "/tmp/worktrees/2/project");
-    assert_eq!(request.argv.len(), 6);
+    assert!(
+        seen_request.lock().unwrap().is_none(),
+        "git_worktree_remove must run through the native handler instead of a shell"
+    );
 
     let review_response = server
         .handle_line(
@@ -1730,11 +1768,10 @@ async fn app_ipc_resolves_review_and_git_device_commands() {
         .unwrap();
 
     assert_eq!(review_response["ok"], true);
-    let request = seen_request.lock().unwrap().clone().unwrap();
-    assert_eq!(request.argv[0], "python3");
-    assert_eq!(request.argv[3], "review");
-    assert_eq!(request.argv[4], "turn-file-changes/0/1");
-    let review_request = request;
+    assert!(
+        seen_request.lock().unwrap().is_none(),
+        "turn_file_changes_review must run through the native handler"
+    );
 
     let commit_message_response = server
         .handle_line(
@@ -1760,7 +1797,7 @@ async fn app_ipc_resolves_review_and_git_device_commands() {
     );
     assert_eq!(
         seen_request.lock().unwrap().as_ref(),
-        Some(&review_request),
+        None,
         "native commit message generation must not dispatch through the generic command handler"
     );
     let push_response = server
@@ -1780,12 +1817,9 @@ async fn app_ipc_resolves_review_and_git_device_commands() {
         .unwrap();
 
     assert_eq!(push_response["ok"], true);
-    let request = seen_request.lock().unwrap().clone().unwrap();
-    assert_eq!(request.argv[0], "sh");
-    assert!(!request.argv[2].contains("@{u}"));
     assert!(
-        request.argv[2].contains("exec git push -u origin \"$branch\""),
-        "push must publish the current branch under the same remote branch name"
+        seen_request.lock().unwrap().is_none(),
+        "git_push must run through the native handler instead of a shell"
     );
 }
 

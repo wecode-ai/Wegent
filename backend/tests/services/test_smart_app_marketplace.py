@@ -17,16 +17,22 @@ from sqlalchemy import inspect
 from app.core.security import get_password_hash
 from app.models.namespace import Namespace
 from app.models.resource_member import MemberStatus, ResourceMember
-from app.models.smart_app_marketplace import SmartApp, SmartAppRelease
+from app.models.smart_app_marketplace import (
+    SmartApp,
+    SmartAppRelease,
+    SmartAppSubmission,
+)
 from app.models.user import User
 from app.schemas.smart_app import (
     SmartAppAccessTarget,
     SmartAppAccessUpdateRequest,
     SmartAppSubmissionInitRequest,
 )
+from app.services.external_entity_resolver import register_entity_resolver
 from app.services.marketplace_artifact_storage import marketplace_artifact_storage
 from app.services.smart_app_download_link import verify_smart_app_download_token
 from app.services.smart_app_marketplace_service import smart_app_marketplace_service
+from tests.utils.mock_resolver import MockDepartmentResolver, cleanup_resolvers
 
 
 def _package(name: str = "research-desk", version: str = "1.0.0") -> bytes:
@@ -119,6 +125,7 @@ def _submission(
     target: User,
     *,
     version: str = "1.0.0",
+    scope: str = "restricted",
     extensions: dict | None = None,
     release_extensions: dict | None = None,
 ):
@@ -135,11 +142,18 @@ def _submission(
         iconDataUrl=_image_data_url(),
         extensions=extensions or {},
         releaseExtensions=release_extensions or {},
-        targets=[
-            SmartAppAccessTarget(
-                entityType="user", entityId=str(target.id), displayName=target.user_name
-            )
-        ],
+        scope=scope,
+        targets=(
+            [
+                SmartAppAccessTarget(
+                    entityType="user",
+                    entityId=str(target.id),
+                    displayName=target.user_name,
+                )
+            ]
+            if scope == "restricted"
+            else []
+        ),
     )
 
 
@@ -191,6 +205,12 @@ def test_user_publication_is_visible_only_to_owner_and_recipient(
 
     assert completed.item is not None
     assert completed.item.accessRole == "owner"
+    assert (
+        smart_app_marketplace_service.list_marketplace(
+            test_db, user_id=test_user.id
+        ).items
+        == []
+    )
     recipient_items = smart_app_marketplace_service.list_marketplace(
         test_db, user_id=recipient.id
     ).items
@@ -203,6 +223,160 @@ def test_user_publication_is_visible_only_to_owner_and_recipient(
         ).items
         == []
     )
+
+
+def test_public_app_is_immediately_visible_and_keeps_scope_for_new_versions(
+    test_db, test_user, monkeypatch
+):
+    unrelated_user = _user(test_db, "public-smart-app-user")
+    package = _package()
+    _mock_storage(monkeypatch)
+
+    initialized = smart_app_marketplace_service.init_submission(
+        test_db,
+        user_id=test_user.id,
+        request=_submission(package, unrelated_user, scope="public"),
+    )
+    _upload_submission(
+        test_db,
+        submission_id=initialized.submissionId,
+        user_id=test_user.id,
+        package=package,
+    )
+    completed = smart_app_marketplace_service.complete_submission(
+        test_db, submission_id=initialized.submissionId, user_id=test_user.id
+    )
+
+    assert completed.item is not None
+    assert completed.item.visibility == "public"
+    public_items = smart_app_marketplace_service.list_marketplace(
+        test_db, user_id=unrelated_user.id, source="public"
+    ).items
+    assert [(item.id, item.accessRole) for item in public_items] == [
+        (completed.item.id, "public")
+    ]
+    owner_items = smart_app_marketplace_service.list_marketplace(
+        test_db, user_id=test_user.id, source="public"
+    ).items
+    assert [(item.id, item.accessRole) for item in owner_items] == [
+        (completed.item.id, "owner")
+    ]
+    assert (
+        smart_app_marketplace_service.list_marketplace(
+            test_db, user_id=unrelated_user.id, source="shared"
+        ).items
+        == []
+    )
+
+    public_app = test_db.get(SmartApp, completed.item.id)
+    assert public_app is not None
+    public_app.is_listed = False
+    test_db.commit()
+    assert (
+        smart_app_marketplace_service.list_marketplace(
+            test_db, user_id=unrelated_user.id, source="public"
+        ).items
+        == []
+    )
+    assert [
+        item.id
+        for item in smart_app_marketplace_service.list_owned(
+            test_db, user_id=test_user.id
+        ).items
+    ] == [completed.item.id]
+    hidden_access = smart_app_marketplace_service.get_access(
+        test_db, smart_app_id=completed.item.id, user_id=test_user.id
+    )
+    assert hidden_access.isListed is False
+    assert hidden_access.latestReleaseId == completed.item.latestReleaseId
+    assert hidden_access.version == "1.0.0"
+    public_app.is_listed = True
+    test_db.commit()
+
+    official_package = _package(name="official-unpinned")
+    _mock_storage(monkeypatch)
+    official_app, _, _ = smart_app_marketplace_service.publish_official_package(
+        test_db,
+        package=official_package,
+        summary="Official unpinned app",
+        description_md="# Official unpinned app",
+        tags=["data_analysis"],
+        icon=b"png-image",
+        icon_content_type="image/png",
+        screenshots=[],
+    )
+    official_app.updated_at = datetime(2025, 1, 1)
+    public_app.updated_at = datetime(2026, 1, 1)
+    public_app.featured_rank = 0
+    test_db.commit()
+    equally_ranked_items = smart_app_marketplace_service.list_marketplace(
+        test_db, user_id=unrelated_user.id
+    ).items
+    assert [item.id for item in equally_ranked_items[:2]] == [
+        official_app.id,
+        completed.item.id,
+    ]
+
+    public_app.featured_rank = 50
+    test_db.commit()
+    filtered_public_items = smart_app_marketplace_service.list_marketplace(
+        test_db, user_id=test_user.id, source="public"
+    ).items
+    assert [item.id for item in filtered_public_items] == [completed.item.id]
+    assert (
+        smart_app_marketplace_service.list_marketplace(
+            test_db, user_id=unrelated_user.id
+        )
+        .items[0]
+        .id
+        == completed.item.id
+    )
+
+    next_package = _package(version="1.1.0")
+    _mock_storage(monkeypatch)
+    next_request = _submission(
+        next_package, unrelated_user, version="1.1.0", scope="public"
+    )
+    next_request.smartAppId = completed.item.id
+    next_request.scope = None
+    next_version = smart_app_marketplace_service.init_submission(
+        test_db, user_id=test_user.id, request=next_request
+    )
+    legacy_submission = test_db.get(SmartAppSubmission, next_version.submissionId)
+    assert legacy_submission is not None
+    legacy_submission.metadata_json = {
+        key: value
+        for key, value in (legacy_submission.metadata_json or {}).items()
+        if key != "scope"
+    }
+    test_db.commit()
+    _upload_submission(
+        test_db,
+        submission_id=next_version.submissionId,
+        user_id=test_user.id,
+        package=next_package,
+    )
+    smart_app_marketplace_service.complete_submission(
+        test_db, submission_id=next_version.submissionId, user_id=test_user.id
+    )
+
+    refreshed = smart_app_marketplace_service.list_marketplace(
+        test_db, user_id=unrelated_user.id
+    ).items[0]
+    assert refreshed.version == "1.1.0"
+    assert refreshed.visibility == "public"
+
+    private_access = smart_app_marketplace_service.update_access(
+        test_db,
+        smart_app_id=completed.item.id,
+        user_id=test_user.id,
+        request=SmartAppAccessUpdateRequest(scope="private", targets=[]),
+    )
+    assert private_access.scope == "private"
+    remaining_items = smart_app_marketplace_service.list_marketplace(
+        test_db, user_id=unrelated_user.id
+    ).items
+    assert [item.id for item in remaining_items] == [official_app.id]
 
 
 def test_publication_persists_versioned_extensions_and_preserves_unknown_app_fields(
@@ -366,6 +540,70 @@ def test_department_grant_allows_member_download(test_db, test_user, monkeypatch
     assert claims.smart_app_id == item.id
     assert claims.release_id == item.latestReleaseId
     assert claims.user_id == member.id
+
+
+def test_erp_department_grant_allows_only_department_members(
+    test_db, test_user, monkeypatch, cleanup_resolvers
+):
+    member = _user(test_db, "erp-smart-app-member")
+    outsider = _user(test_db, "erp-smart-app-outsider")
+    register_entity_resolver(
+        "org_department",
+        lambda: MockDepartmentResolver(
+            {member.id: {"dept-2001"}},
+            entity_type="org_department",
+        ),
+    )
+    package = _package()
+    _mock_storage(monkeypatch)
+    request = _submission(package, member)
+    request.targets = [
+        SmartAppAccessTarget(
+            entityType="org_department",
+            entityId="dept-2001",
+            displayName="Client department name",
+        )
+    ]
+    initialized = smart_app_marketplace_service.init_submission(
+        test_db, user_id=test_user.id, request=request
+    )
+    _upload_submission(
+        test_db,
+        submission_id=initialized.submissionId,
+        user_id=test_user.id,
+        package=package,
+    )
+    completed = smart_app_marketplace_service.complete_submission(
+        test_db,
+        submission_id=initialized.submissionId,
+        user_id=test_user.id,
+    )
+
+    assert completed.item is not None
+    access = smart_app_marketplace_service.get_access(
+        test_db,
+        smart_app_id=completed.item.id,
+        user_id=test_user.id,
+    )
+    assert access.targets == [
+        SmartAppAccessTarget(
+            entityType="org_department",
+            entityId="dept-2001",
+            displayName="Dept-dept-2001",
+        )
+    ]
+    assert [
+        item.id
+        for item in smart_app_marketplace_service.list_marketplace(
+            test_db, user_id=member.id
+        ).items
+    ] == [completed.item.id]
+    assert (
+        smart_app_marketplace_service.list_marketplace(
+            test_db, user_id=outsider.id
+        ).items
+        == []
+    )
 
 
 def test_revocation_blocks_future_download_but_does_not_track_local_copy(

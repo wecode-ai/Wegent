@@ -250,16 +250,25 @@ describe('BufferedChatInput', () => {
     function Harness() {
       const [value, setValue] = useState('accepted message')
       return (
-        <BufferedChatInput value={value} onChange={setValue} onSubmit={onSubmit} disabled={false} />
+        <BufferedChatInput
+          value={value}
+          onChange={setValue}
+          onSubmit={onSubmit}
+          disabled={false}
+          variant="desktop"
+        />
       )
     }
 
     render(<Harness />)
+    const input = screen.getByTestId('chat-message-input')
+    await userEvent.click(input)
     await userEvent.click(screen.getByTestId('send-message-button'))
     resolveSubmission(true)
 
     await waitFor(() => {
-      expect(screen.getByTestId('chat-message-input')).toHaveValue('')
+      expect(input).toHaveValue('')
+      expect(input).toHaveFocus()
     })
   })
 

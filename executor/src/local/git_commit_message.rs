@@ -22,6 +22,7 @@ use tokio::{io::AsyncWriteExt, process::Command, time};
 use crate::{
     agents::{resolve_codex_binary, resolve_codex_binary_path},
     local::command::{build_env, CommandResult},
+    local::native_git::{owned_args, run_git_capture},
 };
 
 const MAX_DIFF_BYTES: usize = 200_000;
@@ -105,36 +106,22 @@ async fn run_git(
     env: &HashMap<String, String>,
     max_bytes: usize,
 ) -> Result<(String, bool), String> {
-    let mut command = Command::new("git");
-    crate::process::hide_windows_console(&mut command);
-    command.args(args);
-    command.env_clear();
-    command.envs(env);
-    if let Some(cwd) = cwd {
-        command.current_dir(cwd);
-    }
-    command.stdin(Stdio::null());
-    command.stdout(Stdio::piped());
-    command.stderr(Stdio::piped());
-    command.kill_on_drop(true);
-
-    let child = command.spawn().map_err(|error| error.to_string())?;
-    let output = match time::timeout(GIT_TIMEOUT, child.wait_with_output()).await {
-        Ok(Ok(output)) => output,
-        Ok(Err(error)) => return Err(error.to_string()),
-        Err(_) => return Err("Git command timed out".to_owned()),
-    };
-
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_owned();
+    let args = owned_args(args);
+    let capture = run_git_capture(&args, cwd.map(Path::new), env, GIT_TIMEOUT, max_bytes)
+        .await
+        .map_err(|error| error.message)?;
+    if !capture.success {
+        let stderr = capture.stderr.trim().to_owned();
         return Err(if stderr.is_empty() {
             "Git command failed".to_owned()
         } else {
             stderr
         });
     }
-
-    Ok(truncate_utf8(&output.stdout, max_bytes))
+    Ok((
+        String::from_utf8_lossy(&capture.stdout).into_owned(),
+        capture.truncated,
+    ))
 }
 
 async fn run_codex(
@@ -258,12 +245,6 @@ fn clean_candidate(line: &str) -> String {
     result.trim_matches(['"', '\'', '`']).trim().to_owned()
 }
 
-fn truncate_utf8(data: &[u8], max_bytes: usize) -> (String, bool) {
-    let truncated = data.len() > max_bytes;
-    let slice = if truncated { &data[..max_bytes] } else { data };
-    (String::from_utf8_lossy(slice).into_owned(), truncated)
-}
-
 fn temp_output_path() -> PathBuf {
     static COUNTER: AtomicU64 = AtomicU64::new(0);
     let counter = COUNTER.fetch_add(1, Ordering::Relaxed);
@@ -352,17 +333,6 @@ mod tests {
     fn sanitize_message_truncates_to_max_chars() {
         let long = "x".repeat(MAX_MESSAGE_CHARS + 50);
         assert_eq!(sanitize_message(&long).chars().count(), MAX_MESSAGE_CHARS);
-    }
-
-    #[test]
-    fn truncate_utf8_flags_truncation() {
-        let (value, truncated) = truncate_utf8(b"hello world", 5);
-        assert_eq!(value, "hello");
-        assert!(truncated);
-
-        let (value, truncated) = truncate_utf8(b"hi", 5);
-        assert_eq!(value, "hi");
-        assert!(!truncated);
     }
 
     #[test]

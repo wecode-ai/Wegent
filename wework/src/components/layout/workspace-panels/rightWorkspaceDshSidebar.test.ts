@@ -2,7 +2,9 @@ import { describe, expect, test, vi } from 'vitest'
 import {
   attachRightWorkspaceSidebarController,
   encodeRightWorkspaceExtensionTabId,
+  isWeworkWorkspaceSidebarTabAvailable,
   rightWorkspaceDshSidebar,
+  shouldCloseUnavailableWeworkWorkspaceSidebarTab,
 } from './rightWorkspaceDshSidebar'
 
 describe('rightWorkspaceDshSidebar', () => {
@@ -10,8 +12,10 @@ describe('rightWorkspaceDshSidebar', () => {
     const listener = vi.fn()
     const descriptor = {
       id: 'test:inspector',
+      mode: 'iframe' as const,
       title: 'Inspector',
       order: 10,
+      url: 'https://example.com/',
     }
     const subscribe = vi.fn(() => () => undefined)
     window.__WEWORK_DSH_UI__ = {
@@ -83,6 +87,87 @@ describe('rightWorkspaceDshSidebar', () => {
     expect(encodeRightWorkspaceExtensionTabId('native-plugin:panel')).toBe(
       'dsh:native-plugin%3Apanel'
     )
+  })
+
+  test('filters conditional tabs from cached project context without filesystem access', () => {
+    const descriptor = {
+      id: 'plugin-debug',
+      title: '插件调试',
+      when: {
+        projectKinds: ['wework-core-dsh-plugin'] as const,
+      },
+    }
+
+    expect(isWeworkWorkspaceSidebarTabAvailable(descriptor, 'standard')).toBe(false)
+    expect(isWeworkWorkspaceSidebarTabAvailable(descriptor, 'unresolved')).toBe(false)
+    expect(isWeworkWorkspaceSidebarTabAvailable(descriptor, 'wework-core-dsh-plugin')).toBe(true)
+    expect(shouldCloseUnavailableWeworkWorkspaceSidebarTab(descriptor, 'unresolved', false)).toBe(
+      false
+    )
+    expect(shouldCloseUnavailableWeworkWorkspaceSidebarTab(descriptor, 'standard', false)).toBe(
+      true
+    )
+  })
+
+  test('preserves plugin-only conditions from DSH descriptors', () => {
+    window.__WEWORK_DSH_UI__ = {
+      getEntries: () => [
+        {
+          id: 'plugin-only',
+          label: 'Plugin only',
+          when: { codexPluginKeys: ['plugin-a'] },
+        },
+      ],
+      subscribe: vi.fn(() => () => undefined),
+      attach: vi.fn(),
+    }
+
+    expect(rightWorkspaceDshSidebar.getTab('plugin-only')?.when).toEqual({
+      projectKinds: undefined,
+      codexPluginKeys: ['plugin-a'],
+    })
+    delete window.__WEWORK_DSH_UI__
+  })
+
+  test('does not expose iframe tabs without a usable URL', () => {
+    window.__WEWORK_DSH_UI__ = {
+      getEntries: () => [
+        {
+          id: 'valid-iframe',
+          label: 'Valid iframe',
+          mode: 'iframe',
+          url: ' https://example.com/ ',
+        },
+        { id: 'missing-url', label: 'Missing URL', mode: 'iframe' },
+        { id: 'empty-url', label: 'Empty URL', mode: 'iframe', url: '   ' },
+        { id: 'invalid-url', label: 'Invalid URL', mode: 'iframe', url: 42 },
+        { id: 'component-tab', label: 'Component tab' },
+      ],
+      subscribe: vi.fn(() => () => undefined),
+      attach: vi.fn(),
+    }
+
+    expect(rightWorkspaceDshSidebar.getTabs()).toEqual([
+      {
+        id: 'valid-iframe',
+        title: 'Valid iframe',
+        titleKey: undefined,
+        mode: 'iframe',
+        order: undefined,
+        url: 'https://example.com/',
+        when: undefined,
+      },
+      {
+        id: 'component-tab',
+        title: 'Component tab',
+        titleKey: undefined,
+        mode: undefined,
+        order: undefined,
+        url: undefined,
+        when: undefined,
+      },
+    ])
+    delete window.__WEWORK_DSH_UI__
   })
 
   test('does not expose the removed Better Sidebar compatibility globals', () => {

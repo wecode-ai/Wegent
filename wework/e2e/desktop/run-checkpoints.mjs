@@ -49,6 +49,7 @@ const CHECKPOINT_SCENARIO_MODULES = {
   'project-assignment-notification': './scenarios/project-assignment-notification.scenario.mjs',
   'offline-local-project-space': './scenarios/offline-local-project-space.scenario.mjs',
   'cloud-context-resilience': './scenarios/cloud-context-resilience.scenario.mjs',
+  'plugin-development': './scenarios/plugin-development.scenario.mjs',
   'task-attachments': './scenarios/task-attachments.scenario.mjs',
   'external-content-import': './scenarios/external-content-import.scenario.mjs',
 }
@@ -61,6 +62,7 @@ const SCENARIO_ONLY_CHECKPOINTS = new Set([
   'harness-apps',
   'offline-local-project-space',
   'cloud-context-resilience',
+  'plugin-development',
   'task-attachments',
   'project-assignment-notification',
   'runtime-task-queue',
@@ -258,7 +260,7 @@ async function readFailureSummary(result) {
 
 function checkpointScenarioEnv(env, checkpoint) {
   const nextEnv = { ...env }
-  if (checkpoint === 'native-window-chrome') {
+  if (checkpoint === 'native-window-chrome' || checkpoint === 'browser-multi-tabs') {
     nextEnv.WEWORK_E2E_BACKGROUND_WINDOW = '0'
   }
   const module = CHECKPOINT_SCENARIO_MODULES[checkpoint]

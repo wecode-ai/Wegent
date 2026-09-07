@@ -116,7 +116,7 @@ describe('AppUpdateProvider', () => {
     })
 
     expect(appUpdate?.autoUpdateEnabled).toBe(true)
-    expect(downloadPendingWeworkUpdate).toHaveBeenCalledWith()
+    expect(downloadPendingWeworkUpdate).toHaveBeenCalledWith(expect.any(Function))
     expect(appUpdate?.downloadProgress).toBeNull()
     expect(appUpdate?.status).toBe('available')
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
@@ -133,15 +133,19 @@ describe('AppUpdateProvider', () => {
   test('waits for an active background download before asking for restart confirmation', async () => {
     let appUpdate: AppUpdateContextValue | null = null
     let finishDownload: (() => void) | undefined
+    let reportProgress:
+      | ((progress: { downloadedBytes: number; totalBytes: number | null }) => void)
+      | undefined
     let updateRequest: Promise<void> | undefined
     vi.mocked(checkForWeworkUpdate).mockResolvedValue({
       currentVersion: '0.1.0',
       version: '0.2.0',
     })
     vi.mocked(downloadPendingWeworkUpdate).mockImplementation(
-      () =>
+      onProgress =>
         new Promise(resolve => {
           finishDownload = resolve
+          reportProgress = onProgress
         })
     )
 
@@ -167,6 +171,11 @@ describe('AppUpdateProvider', () => {
     expect(appUpdate?.status).toBe('downloading')
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
     expect(downloadPendingWeworkUpdate).toHaveBeenCalledTimes(1)
+
+    act(() => {
+      reportProgress?.({ downloadedBytes: 50, totalBytes: 100 })
+    })
+    expect(appUpdate?.downloadProgress).toEqual({ downloadedBytes: 50, totalBytes: 100 })
 
     if (!finishDownload) {
       throw new Error('Background download resolver was not initialized')
@@ -235,7 +244,7 @@ describe('AppUpdateProvider', () => {
     })
 
     expect(localStorage.getItem(APP_UPDATE_AUTO_DOWNLOAD_KEY)).toBe('true')
-    expect(downloadPendingWeworkUpdate).toHaveBeenCalledWith()
+    expect(downloadPendingWeworkUpdate).toHaveBeenCalledWith(expect.any(Function))
     expect(appUpdate?.downloadProgress).toBeNull()
   })
 

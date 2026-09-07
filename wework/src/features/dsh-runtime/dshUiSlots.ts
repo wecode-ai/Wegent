@@ -1,14 +1,25 @@
 export const WEWORK_DSH_SLOTS = {
   action: 'wework.action',
   app: 'wework.app',
+  pluginsAction: 'wework.plugins.action',
+  boardCardStatus: 'wework.board.card.status',
+  composerAction: 'wework.composer.action',
+  environmentSection: 'wework.environment.section',
+  projectCreateSection: 'wework.project.create.section',
+  projectWorkSection: 'wework.project.work.section',
   route: 'wework.route',
+  runtimeProfileWorkspacePolicy: 'wework.runtime-profile.workspace-policy',
   settingsPage: 'wework.settings.page',
   sidebarNavigation: 'wework.sidebar.navigation',
   shellAfter: 'wework.shell.after',
   shellBefore: 'wework.shell.before',
   shellOverlay: 'wework.shell.overlay',
+  taskStatus: 'wework.task.status',
+  workspaceMenuSection: 'wework.workspace.menu.section',
+  workspaceBottomPanelTab: 'wework.workspace.bottom-panel.tab',
   workspaceSidebarTab: 'wework.workspace.sidebar.tab',
   workspaceTab: 'wework.workspace.tab',
+  workspaceToolbarAction: 'wework.workspace.toolbar.action',
 } as const
 
 export type WeworkDshSlotName = (typeof WEWORK_DSH_SLOTS)[keyof typeof WEWORK_DSH_SLOTS]

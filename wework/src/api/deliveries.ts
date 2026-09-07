@@ -116,6 +116,7 @@ export interface CloudLoopItem {
   created_by_user_name?: string | null
   can_view_detail?: boolean
   can_edit?: boolean
+  detail_loaded?: boolean
   content_revision?: number
   is_unread?: boolean
   assignee_user_id: number | null
@@ -594,6 +595,12 @@ export interface LoopItemTaskBinding {
   linked_at: string
 }
 
+export interface LoopItemPage {
+  items: CloudLoopItem[]
+  task_bindings: LoopItemTaskBinding[]
+  next_cursor: string | null
+}
+
 export interface ProjectBoardSnapshot {
   items: CloudLoopItem[]
   task_bindings: LoopItemTaskBinding[]
@@ -822,6 +829,23 @@ export function createDeliveryApi(client: HttpClient) {
       if (filters?.executionState) query.set('execution_state', filters.executionState)
       const suffix = query.toString() ? `?${query.toString()}` : ''
       return client.get(`/v1/cloud-projects/${projectId}/loop-items${suffix}`)
+    },
+    listLoopItemsPage(
+      projectId: CloudProjectIdInput,
+      options: {
+        status: CloudLoopItem['status']
+        parentId: string | null
+        cursor?: string | null
+        limit?: number
+      }
+    ): Promise<LoopItemPage> {
+      const query = new URLSearchParams({
+        status: options.status,
+        limit: String(options.limit ?? 10),
+      })
+      if (options.parentId) query.set('parent_id', options.parentId)
+      if (options.cursor) query.set('cursor', options.cursor)
+      return client.get(`/v1/cloud-projects/${projectId}/loop-item-pages?${query.toString()}`)
     },
     getBoardSnapshot(projectId: CloudProjectIdInput): Promise<ProjectBoardSnapshot> {
       return client.get(`/v1/cloud-projects/${projectId}/board-snapshot`)

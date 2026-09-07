@@ -173,7 +173,7 @@ export interface CreatedRuntimeProject extends ProjectWithTasks {
   runtimeProjectKey: string
 }
 
-export type ProjectExecutionMode = 'current_workspace' | 'git_worktree'
+export type ProjectExecutionMode = string
 
 export interface ProjectListResponse {
   total?: number
@@ -1302,13 +1302,15 @@ export interface RuntimeTaskCancelResponse {
 
 export interface RuntimeTaskExecutionConfig {
   workspace?: {
-    source: 'git_worktree'
+    source: string
     branch?: string
   }
 }
 
 export interface RuntimeTaskCreateRequest {
-  schemaVersion?: 1 | 2
+  schemaVersion?: 1 | 2 | 3
+  wegentTeamId?: number
+  newSession?: boolean
   projectId?: number
   deviceWorkspaceId?: number
   deviceId?: string
@@ -1352,6 +1354,11 @@ export interface RuntimeTaskCreateRequest {
     [key: string]: unknown
   }
   additionalContext?: RuntimeAdditionalContext
+}
+
+export interface RuntimeTaskMaterializeResponse {
+  payload: Record<string, unknown>
+  runtimeHandle?: Record<string, unknown> | null
 }
 
 export interface RuntimeTaskCreateResponse {
@@ -1708,7 +1715,7 @@ export interface ChatSendPayload {
   additional_skills?: SkillRef[]
   execution?: {
     workspace?: {
-      source: 'git_worktree'
+      source: string
       branch?: string
     }
   }
@@ -2616,7 +2623,7 @@ export interface PluginPublicationInitResponse {
 }
 
 export interface PluginAccessTarget {
-  entityType: 'user' | 'namespace'
+  entityType: 'user' | 'namespace' | 'org_department'
   entityId: string
   displayName: string
 }
@@ -2881,6 +2888,12 @@ export interface SkillRef {
 
 export type AttachmentStatus = 'uploading' | 'parsing' | 'ready' | 'failed'
 
+export interface RuntimeWorkspaceFileReference {
+  device_id: string
+  workspace_path: string
+  path: string
+}
+
 export interface Attachment {
   id: number
   filename: string
@@ -2897,6 +2910,9 @@ export interface Attachment {
   created_at: string
   local_preview_url?: string
   local_path?: string
+  workspace_file?: RuntimeWorkspaceFileReference
+  image_width?: number
+  image_height?: number
   ui_group_id?: string
   ui_group_role?: 'primary' | 'companion'
   ui_kind?: 'appshot'

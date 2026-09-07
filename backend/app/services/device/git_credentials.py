@@ -261,6 +261,8 @@ def _safe_device_result(
     device_id: str,
     result: dict[str, Any],
     duplicate_domains: list[str],
+    *,
+    user_id: int,
 ) -> dict[str, Any]:
     stdout = result.get("stdout")
     if not result.get("success") or not isinstance(stdout, dict):
@@ -274,6 +276,20 @@ def _safe_device_result(
         )
 
     cli = stdout.get("cli") if isinstance(stdout.get("cli"), list) else []
+    for item in cli:
+        if not isinstance(item, dict) or item.get("status") == "configured":
+            continue
+        logger.warning(
+            "Git credential CLI setup incomplete: user_id=%s device_id=%s "
+            "provider=%s domain=%s status=%s reason_code=%s detail=%s",
+            user_id,
+            device_id,
+            item.get("provider"),
+            item.get("domain"),
+            item.get("status"),
+            item.get("reason_code"),
+            item.get("detail"),
+        )
     identity_warnings = (
         stdout.get("identity_warning_domains")
         if isinstance(stdout.get("identity_warning_domains"), list)
@@ -361,4 +377,4 @@ async def sync_git_accounts_to_device(
             raise DeviceGitCredentialSyncError(
                 "The selected device could not receive Git credentials"
             ) from exc
-    return _safe_device_result(device_id, result, duplicate_domains)
+    return _safe_device_result(device_id, result, duplicate_domains, user_id=user.id)

@@ -7,7 +7,7 @@ import type {
 } from 'react'
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
-import { ChevronDown, ChevronRight, MoreHorizontal } from 'lucide-react'
+import { Check, ChevronDown, ChevronRight, MoreHorizontal } from 'lucide-react'
 import { KeyboardShortcut } from './KeyboardShortcut'
 
 const MENU_GAP = 8
@@ -40,6 +40,7 @@ export interface ActionMenuItem {
   testId: string
   danger?: boolean
   disabled?: boolean
+  checked?: boolean
   shortcut?: string
   children?: ActionMenuItem[]
   /** Renders a static separator row instead of an interactive item. */
@@ -468,7 +469,8 @@ export function ActionMenu({
                   ref={element => {
                     itemRefs.current[item.testId] = element
                   }}
-                  role="menuitem"
+                  role={item.checked === undefined ? 'menuitem' : 'menuitemcheckbox'}
+                  aria-checked={item.checked}
                   disabled={item.disabled}
                   aria-haspopup={item.children?.length ? 'menu' : undefined}
                   aria-expanded={item.children?.length ? openSubmenuId === item.testId : undefined}
@@ -521,6 +523,9 @@ export function ActionMenu({
                       className="ml-auto h-5 bg-muted px-1.5 text-xs text-text-secondary"
                     />
                   ) : null}
+                  {item.checked ? (
+                    <Check className="ml-auto h-4 w-4 shrink-0 text-text-secondary" />
+                  ) : null}
                   {item.children?.length ? <ChevronRight className="ml-auto h-4 w-4" /> : null}
                 </button>
               )
@@ -554,7 +559,8 @@ export function ActionMenu({
                     ref={element => {
                       submenuItemRefs.current[item.testId] = element
                     }}
-                    role="menuitem"
+                    role={item.checked === undefined ? 'menuitem' : 'menuitemcheckbox'}
+                    aria-checked={item.checked}
                     disabled={item.disabled}
                     onPointerDown={event => {
                       if (item.disabled) return
@@ -589,6 +595,9 @@ export function ActionMenu({
                         value={formatActionMenuShortcut(item.shortcut)}
                         className="ml-auto h-5 bg-muted px-1.5 text-xs text-text-secondary"
                       />
+                    ) : null}
+                    {item.checked ? (
+                      <Check className="ml-auto h-4 w-4 shrink-0 text-text-secondary" />
                     ) : null}
                   </button>
                 )

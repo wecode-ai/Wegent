@@ -19,6 +19,7 @@ function service(updater: FakeUpdater, overrides: { packaged?: boolean } = {}) {
     updater: updater as unknown as AppUpdater,
     currentVersion: () => '0.2.6',
     isPackaged: () => overrides.packaged ?? true,
+    prepareUpdate: vi.fn().mockResolvedValue(undefined),
     prepareInstall: vi.fn().mockResolvedValue(undefined),
     updateBaseUrl: 'https://example.com/wework-updater/',
   })
@@ -53,11 +54,13 @@ describe('AppUpdateService', () => {
     expect(updater.setFeedURL).toHaveBeenCalledWith({
       provider: 'generic',
       url: 'https://example.com/wework-updater',
+      useMultipleRangeRequest: false,
     })
   })
 
   test('downloads once, forwards progress, prepares shutdown, and installs', async () => {
     const updater = new FakeUpdater()
+    const prepareUpdate = vi.fn().mockResolvedValue(undefined)
     const prepareInstall = vi.fn().mockResolvedValue(undefined)
     updater.checkForUpdates.mockResolvedValue({
       updateInfo: {
@@ -79,6 +82,7 @@ describe('AppUpdateService', () => {
       updater: updater as unknown as AppUpdater,
       currentVersion: () => '0.2.6',
       isPackaged: () => true,
+      prepareUpdate,
       prepareInstall,
       updateBaseUrl: 'https://example.com',
     })
@@ -91,6 +95,7 @@ describe('AppUpdateService', () => {
     await install()
 
     expect(updater.channel).toBe('beta')
+    expect(prepareUpdate).toHaveBeenCalledWith('0.3.0-beta.1', 'beta')
     expect(updater.downloadUpdate).toHaveBeenCalledTimes(1)
     expect(appUpdate.downloadProgress()).toEqual({ downloadedBytes: 40, totalBytes: 100 })
     expect(prepareInstall).toHaveBeenCalledTimes(1)

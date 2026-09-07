@@ -3,6 +3,8 @@ import { beforeAll, beforeEach, describe, expect, test, vi } from 'vitest'
 import type { CloudProject } from '@/api/deliveries'
 import type { ProjectAutomationRule, ProjectAutomationRun } from '@/api/projectAutomations'
 import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
+import { AutomationRulesView } from './AutomationRulesView.jsx'
+import { automationRuleFromBackend } from './automationRuleBackend'
 import { ProjectAutomationView } from './ProjectAutomationView'
 
 const localExecutorMocks = vi.hoisted(() => ({
@@ -255,7 +257,9 @@ function renderView({
       },
     ]),
   }
-  const view = render(
+  const projectAutomationView = (
+    updatedCallback: ((project: CloudProject) => void) | undefined = onProjectUpdated
+  ) => (
     <ProjectAutomationView
       api={{} as NonNullable<WorkbenchServices['deliveryApi']>}
       project={viewProject}
@@ -265,15 +269,35 @@ function renderView({
       pluginApi={pluginApi}
       currentUserId={7}
       canManageAgents
-      onProjectUpdated={onProjectUpdated}
+      onProjectUpdated={updatedCallback}
     />
   )
-  return { projectAutomationApi, deviceApi, modelApi, pluginApi, view }
+  const view = render(projectAutomationView())
+  return {
+    projectAutomationApi,
+    deviceApi,
+    modelApi,
+    pluginApi,
+    view,
+    rerender: (updatedCallback?: (project: CloudProject) => void) =>
+      view.rerender(projectAutomationView(updatedCallback)),
+  }
 }
 
 async function openRuleEditor(ruleId = 'rule-1') {
   fireEvent.click(await screen.findByTestId(`automation-card-${ruleId}`))
   return screen.findByTestId('automation-rule-editor')
+}
+
+function refreshedFirstStepPrompt(
+  current: ReturnType<typeof automationRuleFromBackend>,
+  prompt: string
+) {
+  return {
+    ...current,
+    version: current.version + 1,
+    steps: current.steps.map((step, index) => (index === 0 ? { ...step, prompt } : step)),
+  }
 }
 
 describe('ProjectAutomationView', () => {
@@ -407,6 +431,55 @@ describe('ProjectAutomationView', () => {
     expect(pluginApi.listPlugins).not.toHaveBeenCalled()
   })
 
+  test('does not reload automation rules when a parent callback changes', async () => {
+    let now = Date.now()
+    const nowSpy = vi.spyOn(Date, 'now').mockImplementation(() => now)
+    try {
+      const { projectAutomationApi, rerender } = renderView({ onProjectUpdated: vi.fn() })
+      expect(await screen.findByTestId('automation-card-rule-1')).toBeInTheDocument()
+      expect(projectAutomationApi.list).toHaveBeenCalledOnce()
+
+      now += 31_000
+      rerender(vi.fn())
+      await act(async () => {
+        await Promise.resolve()
+      })
+
+      expect(projectAutomationApi.list).toHaveBeenCalledOnce()
+    } finally {
+      nowSpy.mockRestore()
+    }
+  })
+
+  test('preserves a dirty editor draft when refreshed rules arrive', async () => {
+    const initialRule = automationRuleFromBackend(rule)
+    const refreshedRule = refreshedFirstStepPrompt(initialRule, '服务端刷新内容')
+    const view = render(<AutomationRulesView rules={[initialRule]} runs={[]} />)
+    fireEvent.click(screen.getByTestId('automation-card-rule-1'))
+    fireEvent.click(screen.getByTestId('execution-node-step-1'))
+    fireEvent.change(screen.getByTestId('execution-node-prompt-step-1'), {
+      target: { value: '尚未保存的本地输入' },
+    })
+
+    view.rerender(<AutomationRulesView rules={[refreshedRule]} runs={[]} />)
+
+    expect(screen.getByTestId('execution-node-prompt-step-1')).toHaveValue('尚未保存的本地输入')
+    expect(screen.getByText('有未保存更改')).toBeInTheDocument()
+  })
+
+  test('applies a refreshed rule when the editor draft is clean', async () => {
+    const initialRule = automationRuleFromBackend(rule)
+    const refreshedRule = refreshedFirstStepPrompt(initialRule, '服务端刷新内容')
+    const view = render(<AutomationRulesView rules={[initialRule]} runs={[]} />)
+    fireEvent.click(screen.getByTestId('automation-card-rule-1'))
+    fireEvent.click(screen.getByTestId('execution-node-step-1'))
+
+    view.rerender(<AutomationRulesView rules={[refreshedRule]} runs={[]} />)
+
+    expect(screen.getByTestId('execution-node-prompt-step-1')).toHaveValue('服务端刷新内容')
+    expect(screen.queryByText('有未保存更改')).not.toBeInTheDocument()
+  })
+
   test('opens and applies an embedded template from the template store', async () => {
     const { deviceApi, modelApi, pluginApi } = renderView()
     await screen.findByTestId('automation-card-rule-1')
@@ -446,6 +519,28 @@ describe('ProjectAutomationView', () => {
 
     await waitFor(() => expect(projectAutomationApi.create).toHaveBeenCalledOnce())
     expect(vi.mocked(projectAutomationApi.create).mock.calls[0][1].enabled).toBe(true)
+  })
+
+  test('clears a pending automation notification when the view unmounts', async () => {
+    vi.useFakeTimers()
+    try {
+      const view = render(<AutomationRulesView rules={[]} runs={[]} />)
+      fireEvent.click(screen.getByTestId('automation-create-blank'))
+
+      await act(async () => {
+        fireEvent.click(screen.getByTestId('automation-save'))
+        await Promise.resolve()
+      })
+
+      expect(screen.getByText('自动化已保存')).toBeInTheDocument()
+      expect(vi.getTimerCount()).toBe(1)
+
+      view.unmount()
+
+      expect(vi.getTimerCount()).toBe(0)
+    } finally {
+      vi.useRealTimers()
+    }
   })
 
   test('opens a backend rule as a horizontal draggable React Flow workflow', async () => {
@@ -554,11 +649,18 @@ describe('ProjectAutomationView', () => {
       data: [
         {
           name: 'deepseek-v4-flash-vision-exp',
-          displayName: 'DeepSeek V4 Flash Vision',
+          displayName: 'deepseek-v4-flash-vision-exp',
           type: 'public',
           namespace: 'default',
           resourceUserId: 0,
           isActive: true,
+          config: {
+            ui: {
+              family: 'deepseek',
+              modelLabel: 'DeepSeek V4 Flash Vision',
+              region: 'public',
+            },
+          },
         },
       ],
     })
@@ -570,7 +672,7 @@ describe('ProjectAutomationView', () => {
     fireEvent.click(
       await screen.findByTestId('execution-node-environment-step-1-option-cloud-device')
     )
-    await screen.findByRole('option', { name: 'DeepSeek V4 Flash Vision' })
+    await screen.findByRole('option', { name: '公网:DeepSeek V4 Flash Vision' })
     fireEvent.change(screen.getByTestId('execution-node-model-step-1'), {
       target: { value: 'deepseek-v4-flash-vision-exp' },
     })

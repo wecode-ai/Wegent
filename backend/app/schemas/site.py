@@ -7,7 +7,7 @@
 from datetime import datetime
 from typing import Annotated, Literal
 
-from pydantic import AnyHttpUrl, BaseModel, Field
+from pydantic import AnyHttpUrl, BaseModel, ConfigDict, Field
 
 SitePublishStatus = Literal[
     "unpublished",
@@ -24,7 +24,10 @@ ApplicationCapability = Literal[
     "edit",
     "delete",
     "open_experience",
+    "configure_environment",
 ]
+EnvironmentVariableType = Literal["plain", "secret"]
+SiteAccessRole = Literal["owner", "collaborator"]
 
 
 class SiteResponse(BaseModel):
@@ -35,6 +38,8 @@ class SiteResponse(BaseModel):
     project_id: str
     taskid: str
     username: str
+    owner_username: str
+    access_role: SiteAccessRole
     name: str
     slug: str
     custom_domain_prefix: str | None = None
@@ -57,6 +62,8 @@ class MiniProgramResponse(BaseModel):
     project_id: str
     taskid: str
     username: str
+    owner_username: str
+    access_role: SiteAccessRole
     name: str
     slug: str
     app_id: str | None = None
@@ -75,13 +82,35 @@ SiteListItem = Annotated[
 
 
 class SiteListResponse(BaseModel):
-    """A page of typed applications owned by the authenticated user."""
+    """A page of typed applications accessible to the authenticated user."""
 
     items: list[SiteListItem]
     total: int
     offset: int
     limit: int
     next_cursor: str | None = None
+
+
+class SiteCollaborator(BaseModel):
+    """One Project collaborator managed by the owner."""
+
+    subject: str
+    added_by: str
+    created_at: datetime
+
+
+class SiteCollaboratorListResponse(BaseModel):
+    """All collaborators for one owned Project."""
+
+    items: list[SiteCollaborator]
+
+
+class SiteCollaboratorAddRequest(BaseModel):
+    """Add one collaborator by trusted employee subject."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    subject: str = Field(min_length=1, max_length=255)
 
 
 class ApplicationCreatePluginResponse(BaseModel):
@@ -126,3 +155,110 @@ class SiteMetadataUpdateRequest(BaseModel):
     title: str | None = Field(default=None, min_length=1, max_length=255)
     name: str | None = Field(default=None, min_length=1, max_length=255)
     custom_domain_prefix: str | None = Field(default=None, min_length=4, max_length=63)
+
+
+class PlainEnvironmentVariableMetadata(BaseModel):
+    """Readable metadata for one non-secret Project variable."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    key: str
+    type: Literal["plain"]
+    value: str
+    updated_by: str
+    updated_at: datetime
+
+
+class SecretEnvironmentVariableMetadata(BaseModel):
+    """Write-only Secret metadata; the value must never cross this boundary."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    key: str
+    type: Literal["secret"]
+    configured: Literal[True]
+    updated_by: str
+    updated_at: datetime
+
+
+EnvironmentVariableMetadata = Annotated[
+    PlainEnvironmentVariableMetadata | SecretEnvironmentVariableMetadata,
+    Field(discriminator="type"),
+]
+
+
+class EnvironmentSnapshot(BaseModel):
+    """Latest saved Project environment configuration."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    revision_id: str | None
+    project_id: str
+    revision_number: int
+    items: list[EnvironmentVariableMetadata]
+
+
+class EnvironmentRevision(BaseModel):
+    """One immutable complete Project environment revision."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    id: str
+    project_id: str
+    revision_number: int
+    variables: list[EnvironmentVariableMetadata]
+    created_by: str
+    created_at: datetime
+
+
+class EnvironmentVariablePutRequest(BaseModel):
+    """Create or replace one Project environment variable."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    type: EnvironmentVariableType
+    value: str
+    expected_revision_id: str | None = None
+
+
+class EnvironmentVariableDeleteRequest(BaseModel):
+    """Delete one variable with optional optimistic concurrency."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    expected_revision_id: str | None = None
+
+
+class EnvironmentVariableUpsertOperation(BaseModel):
+    """One upsert in an atomic environment patch."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    op: Literal["upsert"]
+    key: str
+    type: EnvironmentVariableType
+    value: str
+
+
+class EnvironmentVariableRemoveOperation(BaseModel):
+    """One removal in an atomic environment patch."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    op: Literal["remove"]
+    key: str
+
+
+EnvironmentPatchOperation = Annotated[
+    EnvironmentVariableUpsertOperation | EnvironmentVariableRemoveOperation,
+    Field(discriminator="op"),
+]
+
+
+class EnvironmentVariablesPatchRequest(BaseModel):
+    """Atomically apply one or more Project environment operations."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    expected_revision_id: str | None = None
+    operations: list[EnvironmentPatchOperation] = Field(min_length=1, max_length=128)

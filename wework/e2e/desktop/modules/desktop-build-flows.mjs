@@ -97,6 +97,7 @@ import {
   waitForControlValue,
   waitForFolderPathReady,
   waitForFolderPickerInitialized,
+  waitForWorkbenchDebugState,
   waitForWorkbenchTask,
 } from './workspace-flows.mjs'
 
@@ -295,14 +296,16 @@ async function writeCodexConfig(
   codexHome,
   modelServerUrl,
   scenarioConfigToml = '',
-  upstreamApiFormat = 'openai-responses'
+  upstreamApiFormat = 'openai-responses',
+  providerConfigToml = '',
+  providerAuthToml = 'env_key = "WEWORK_E2E_MODEL_API_KEY"'
 ) {
   await mkdir(codexHome, { recursive: true })
   const configPath = join(codexHome, 'config.toml')
   const temporaryConfigPath = join(codexHome, `config.toml.${randomUUID()}.tmp`)
   await writeFile(
     temporaryConfigPath,
-    `model_provider = "${MODEL_PROVIDER_ID}"\nmodel = "${DEFAULT_MODEL_ID}"\napproval_policy = "never"\nsandbox_mode = "danger-full-access"\n${scenarioConfigToml}\n[model_providers.${MODEL_PROVIDER_ID}]\nname = "Wework Desktop E2E"\nbase_url = "${modelServerUrl}/v1"\nenv_key = "WEWORK_E2E_MODEL_API_KEY"\nwire_api = "responses"\nupstream_api_format = "${upstreamApiFormat}"\n`,
+    `model_provider = "${MODEL_PROVIDER_ID}"\nmodel = "${DEFAULT_MODEL_ID}"\napproval_policy = "never"\nsandbox_mode = "danger-full-access"\n${scenarioConfigToml}\n[model_providers.${MODEL_PROVIDER_ID}]\nname = "Wework Desktop E2E"\nbase_url = "${modelServerUrl}/v1"\n${providerAuthToml}\nwire_api = "responses"\nupstream_api_format = "${upstreamApiFormat}"\n${providerConfigToml}`,
     'utf8'
   )
   await rename(temporaryConfigPath, configPath)
@@ -315,11 +318,13 @@ function toolDetailsMcpConfigToml() {
     '[mcp_servers.node_repl]',
     `command = ${command}`,
     `args = [${server}, "node_repl"]`,
+    'env = { ELECTRON_RUN_AS_NODE = "1" }',
     'default_tools_approval_mode = "approve"',
     '',
     '[mcp_servers."github__issues"]',
     `command = ${command}`,
     `args = [${server}, "github__issues"]`,
+    'env = { ELECTRON_RUN_AS_NODE = "1" }',
     'default_tools_approval_mode = "approve"',
     '',
   ].join('\n')
@@ -333,6 +338,7 @@ function mcpElicitationConfigToml(evidencePath) {
     '[mcp_servers.wegent_sites_interactions]',
     `command = ${command}`,
     `args = [${server}, ${evidence}]`,
+    'env = { ELECTRON_RUN_AS_NODE = "1" }',
     'default_tools_approval_mode = "prompt"',
     '',
   ].join('\n')
@@ -758,65 +764,34 @@ export async function verifyDisabledRemoteSessionCapabilities(
   await captureVerificationScreenshot(control, 'cloud-00-disabled-session-project.png')
 }
 
-export async function verifyLocalRemoteControlFlow(control, cloudEnvironment) {
-  await control.command('setAppPreferences', 'body', {
-    value: JSON.stringify({ remoteControlEnabled: false }),
-  })
+export async function verifyWeworkAppDeviceRegistrationFlow(control, cloudEnvironment) {
   await control.command('navigate', 'body', { value: '/settings/connections' })
-  await control.command('waitFor', '[data-testid="remote-control-toggle"]', {
-    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
-  })
-  assert.equal(
-    await control.command('getAttribute', '[data-testid="remote-control-toggle"]', {
-      value: 'aria-checked',
-    }),
-    'false',
-    'Remote control should default to disabled'
-  )
 
-  const initialDevice = await cloudEnvironment.waitForConnectedAppDevice()
-  assert.ok(initialDevice.runtime_instance_id, 'The app device did not expose a Runtime identity')
-  assert.ok(initialDevice.app_device_id, 'The app device did not expose its physical app identity')
-
-  await control.command('click', '[data-testid="remote-control-toggle"]')
-  const remoteDevice = await cloudEnvironment.waitForDeviceType(initialDevice.device_id, 'remote')
-  assert.equal(remoteDevice.device_id, initialDevice.device_id)
-  assert.equal(remoteDevice.runtime_instance_id, initialDevice.runtime_instance_id)
-  assert.equal(remoteDevice.app_device_id, initialDevice.app_device_id)
-  assert.equal(
-    await control.command('getAttribute', '[data-testid="remote-control-toggle"]', {
-      value: 'aria-checked',
-    }),
-    'true',
-    'Remote control switch did not stay enabled'
+  const appDevice = await cloudEnvironment.waitForConnectedAppDevice()
+  assert.match(
+    appDevice.device_id,
+    /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i,
+    'A fresh Wework installation must register its persisted UUID'
   )
-  const runtimeSettings = await cloudEnvironment.runtimeSettings(initialDevice.device_id)
-  assert.equal(runtimeSettings.device_id, initialDevice.device_id)
-  await captureVerificationScreenshot(control, 'cloud-00-local-remote-control-enabled.png')
-
-  await control.command('click', '[data-testid="remote-control-toggle"]')
-  const appDevice = await cloudEnvironment.waitForDeviceType(initialDevice.device_id, 'app')
-  assert.equal(appDevice.device_id, initialDevice.device_id)
-  assert.equal(appDevice.runtime_instance_id, initialDevice.runtime_instance_id)
-  assert.equal(appDevice.app_device_id, initialDevice.app_device_id)
-  assert.equal(
-    (await cloudEnvironment.devices()).filter(
-      device => device.device_id === initialDevice.device_id
-    ).length,
-    1,
-    'Toggling remote control created a duplicate device registration'
+  assert.equal(appDevice.execution_target_id, `app-record-${appDevice.id}`)
+  assert.ok(appDevice.runtime_instance_id, 'The app device did not expose a Runtime identity')
+  assert.ok(appDevice.app_device_id, 'The app device did not expose its physical app identity')
+  const devices = await cloudEnvironment.devices()
+  for (const identity of ['device_id', 'runtime_instance_id', 'app_device_id']) {
+    assert.equal(
+      devices.filter(
+        device => device.device_type === 'app' && device[identity] === appDevice[identity]
+      ).length,
+      1,
+      `Wework created a duplicate app device registration for ${identity}`
+    )
+  }
+  const snapshot = JSON.parse(await control.command('snapshot', 'body'))
+  assert.ok(
+    !snapshot.testIds.includes('remote-control-toggle'),
+    'Wework app registration should not depend on a remote-control switch'
   )
-  assert.equal(
-    await control.command('getAttribute', '[data-testid="remote-control-toggle"]', {
-      value: 'aria-checked',
-    }),
-    'false',
-    'Remote control switch did not stay disabled'
-  )
-  await assert.rejects(
-    () => cloudEnvironment.runtimeSettings(initialDevice.device_id),
-    /Remote control is disabled for this app device/
-  )
+  await captureVerificationScreenshot(control, 'cloud-00-wework-app-device.png')
   await control.command('navigate', 'body', { value: '/' })
 }
 
@@ -869,7 +844,7 @@ async function verifyCloudProjectFlow(
   await control.command('waitFor', '[data-testid="projects-create-button"]', {
     timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
   })
-  await verifyLocalRemoteControlFlow(control, cloudEnvironment)
+  await verifyWeworkAppDeviceRegistrationFlow(control, cloudEnvironment)
   await verifyRemoteDockerCommandFlow(control, cloudEnvironment)
   await control.command('waitFor', '[data-testid="projects-create-button"]', {
     timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
@@ -1358,8 +1333,14 @@ async function verifyRetryFailureRestoration(control, composerSelector) {
     true,
     'Retry removed the failed attempt instead of preserving the conversation history'
   )
-  const successfulRetryDebugSnapshot = JSON.parse(
-    await control.command('getWorkbenchDebugSnapshot', 'body')
+  const successfulRetryDebugSnapshot = await waitForWorkbenchDebugState(
+    control,
+    snapshot =>
+      Number(snapshot.pane?.messageSummary?.byRole?.assistant ?? 0) ===
+        assistantCountBeforeRetry + 1 &&
+      Number(snapshot.pane?.messageSummary?.byRole?.user ?? 0) === userCountBeforeRetry + 1 &&
+      snapshot.pane?.messageSummary?.activeAssistantMessage === null,
+    'Retry response rendered before the completed continuation was committed to conversation state'
   )
   const successfulRetryAssistantCount = Number(
     successfulRetryDebugSnapshot.pane?.messageSummary?.byRole?.assistant ?? 0
@@ -1407,8 +1388,13 @@ async function verifyRetryFailureRestoration(control, composerSelector) {
     true,
     'Reopening the conversation lost the preserved failed attempt'
   )
-  const reopenedRetryDebugSnapshot = JSON.parse(
-    await control.command('getWorkbenchDebugSnapshot', 'body')
+  const reopenedRetryDebugSnapshot = await waitForWorkbenchDebugState(
+    control,
+    snapshot =>
+      Number(snapshot.pane?.messageSummary?.byRole?.assistant ?? 0) ===
+        successfulRetryAssistantCount &&
+      Number(snapshot.pane?.messageSummary?.byRole?.user ?? 0) === successfulRetryUserCount,
+    'Reopened retry conversation did not restore the completed continuation counts'
   )
   assert.equal(
     Number(reopenedRetryDebugSnapshot.pane?.messageSummary?.byRole?.assistant ?? 0),

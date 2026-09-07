@@ -8,6 +8,7 @@ import {
   useState,
   type ReactNode,
 } from 'react'
+import { createPortal } from 'react-dom'
 import {
   DndContext,
   DragOverlay,
@@ -50,6 +51,7 @@ import type {
   CloudProjectMember,
   DeliveryFulfillment,
   PullRequestAutoRepairStatus,
+  WorkflowExecutionConfig,
 } from '@/api/deliveries'
 import type { TaskChangeRequestSnapshot } from '@/api/changeRequests'
 import { isDefaultWorkItemProject } from '@/api/deliveries'
@@ -72,6 +74,9 @@ import type {
   ArchiveRuntimeTaskOptions,
   ArchiveRuntimeTaskResult,
 } from '@/features/workbench/workbenchContextTypes'
+import { useAppPreferencesState } from '@/features/app-preferences/useAppPreferencesState'
+import { WEWORK_DSH_SLOTS } from '@/features/dsh-runtime/dshUiSlots'
+import { useDshSlotAvailable } from '@/features/dsh-runtime/useDshSlotAvailable'
 import type {
   DeliveryApi,
   ProjectSpaceLocation,
@@ -105,7 +110,11 @@ import {
 } from '@/features/workbench/runtimeTaskLifecycle/projection'
 import { createRuntimeUserMessage } from '@/features/workbench/runtimeUserMessage'
 import type { RuntimeTaskLifecycleStoreSnapshot } from '@/features/workbench/runtimeTaskLifecycle'
-import { hydrateRuntimeTaskAddress } from '@/features/workbench/workbenchRuntimeHelpers'
+import { getRuntimeTaskLifecycleKey } from '@/features/workbench/runtimeTaskLifecycle'
+import {
+  findRuntimeTask,
+  hydrateRuntimeTaskAddress,
+} from '@/features/workbench/workbenchRuntimeHelpers'
 import { AITableView } from '@/features/todo/AITableView'
 import {
   AutomationSelectionDialog,
@@ -114,6 +123,7 @@ import {
 import type {
   CloneGitRepositoryInput,
   CreatedRuntimeProject,
+  ModelSelectionConfig,
   ProjectWithTasks,
   RuntimeProjectSpaceRef,
   RuntimeTaskAddress,
@@ -125,7 +135,10 @@ import type {
 import { CloudTodoModal as Modal } from './CloudTodoModal'
 import { CloudMyWorkView } from './CloudMyWorkView'
 import { stopLocalRobotQueueExecution } from './localRobotQueueDispatcher'
-import { itemNeedsExecutionConfiguration } from './workflowExecutionConfig'
+import {
+  effectiveWorkflowNodeExecutionConfig,
+  itemNeedsExecutionConfiguration,
+} from './workflowExecutionConfig'
 import {
   CloudTodoBoardCard,
   CloudTodoCardContent,
@@ -327,6 +340,8 @@ const nativeBoardStatusColors: Record<
   in_review: 'purple',
   completed: 'green',
 }
+const externalBoardStatuses = ['inbox', 'pending', 'in_progress', 'in_review', 'completed'] as const
+const externalBoardColumnPageSize = 10
 
 function aitableCellLabels(value: unknown): string[] {
   if (value === null || value === undefined || value === '') return []
@@ -355,7 +370,10 @@ function AITableGroupFieldPicker({
   searchPlaceholder?: string
 }) {
   const rootRef = useRef<HTMLDivElement>(null)
+  const triggerRef = useRef<HTMLButtonElement>(null)
+  const menuRef = useRef<HTMLDivElement>(null)
   const [open, setOpen] = useState(false)
+  const [menuPosition, setMenuPosition] = useState({ left: 0, top: 0 })
   const [query, setQuery] = useState('')
   const selected = fields.find(field => field.id === value)
   const visibleFields = fields
@@ -369,64 +387,112 @@ function AITableGroupFieldPicker({
   useEffect(() => {
     if (!open) return
     const close = (event: MouseEvent) => {
-      if (!rootRef.current?.contains(event.target as Node)) setOpen(false)
+      const target = event.target
+      if (
+        target instanceof Node &&
+        !rootRef.current?.contains(target) &&
+        !menuRef.current?.contains(target)
+      ) {
+        setOpen(false)
+      }
+    }
+    const closeOnScroll = (event: Event) => {
+      const target = event.target
+      if (target instanceof Node && menuRef.current?.contains(target)) return
+      setOpen(false)
+    }
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setOpen(false)
     }
     document.addEventListener('mousedown', close)
-    return () => document.removeEventListener('mousedown', close)
+    document.addEventListener('scroll', closeOnScroll, true)
+    document.addEventListener('keydown', closeOnEscape)
+    return () => {
+      document.removeEventListener('mousedown', close)
+      document.removeEventListener('scroll', closeOnScroll, true)
+      document.removeEventListener('keydown', closeOnEscape)
+    }
   }, [open])
 
+  const openMenu = () => {
+    const trigger = triggerRef.current
+    if (!trigger) return
+    const rect = trigger.getBoundingClientRect()
+    const menuWidth = 256
+    const margin = 8
+    const estimatedHeight = 320
+    const left = Math.max(margin, Math.min(rect.left, window.innerWidth - menuWidth - margin))
+    const below = Math.round(rect.bottom + 4)
+    const top =
+      below + estimatedHeight <= window.innerHeight - margin
+        ? below
+        : Math.max(margin, Math.round(rect.top - 4 - estimatedHeight))
+    setMenuPosition({ left: Math.round(left), top })
+    setOpen(true)
+    setQuery('')
+  }
+
   return (
-    <div ref={rootRef} className="relative shrink-0">
+    <div ref={rootRef} className="shrink-0">
       <button
+        ref={triggerRef}
         type="button"
         data-testid={`${testIdPrefix}-by`}
-        onClick={() => setOpen(current => !current)}
+        onClick={openMenu}
         className="flex h-8 min-w-32 items-center justify-between gap-2 rounded-lg border border-border bg-background px-3 text-xs text-text-secondary hover:bg-muted"
         aria-expanded={open}
       >
         <span className="max-w-32 truncate">{selected?.name ?? '选择分组字段'}</span>
         <ChevronDown className="h-3 w-3 shrink-0" />
       </button>
-      {open ? (
-        <div className="absolute left-0 top-9 z-40 w-64 overflow-hidden rounded-xl border border-border bg-background p-1.5 shadow-lg">
-          <label className="flex h-8 items-center gap-2 rounded-lg bg-muted px-2.5 text-text-muted">
-            <Search className="h-3.5 w-3.5" />
-            <input
-              autoFocus
-              data-testid={`${testIdPrefix}-search`}
-              value={query}
-              onChange={event => setQuery(event.target.value)}
-              placeholder={searchPlaceholder}
-              className="min-w-0 flex-1 bg-transparent text-xs text-text-primary outline-none"
-            />
-          </label>
-          <div className="mt-1 max-h-72 overflow-y-auto overscroll-contain">
-            {visibleFields.map(field => (
-              <button
-                key={field.id}
-                type="button"
-                data-testid={`${testIdPrefix}-option-${field.id}`}
-                onClick={() => {
-                  onChange(field.id)
-                  setOpen(false)
-                  setQuery('')
-                }}
-                className={cn(
-                  'flex h-9 w-full items-center rounded-lg px-2.5 text-left text-sm hover:bg-muted',
-                  field.id === value && 'bg-muted font-medium'
-                )}
-              >
-                <span className="min-w-0 flex-1 truncate">{field.name}</span>
-                <span className="ml-2 shrink-0 text-xs text-text-muted">{field.type}</span>
-                {field.id === value ? <Check className="ml-2 h-3.5 w-3.5" /> : null}
-              </button>
-            ))}
-            {visibleFields.length === 0 ? (
-              <p className="px-3 py-6 text-center text-xs text-text-muted">没有匹配字段</p>
-            ) : null}
-          </div>
-        </div>
-      ) : null}
+      {open
+        ? createPortal(
+            <div
+              ref={menuRef}
+              data-testid={`${testIdPrefix}-menu`}
+              style={{ left: menuPosition.left, top: menuPosition.top }}
+              className="fixed z-system-popover w-64 overflow-hidden rounded-xl border border-border bg-background p-1.5 shadow-lg"
+            >
+              <label className="flex h-8 items-center gap-2 rounded-lg bg-muted px-2.5 text-text-muted">
+                <Search className="h-3.5 w-3.5" />
+                <input
+                  autoFocus
+                  data-testid={`${testIdPrefix}-search`}
+                  value={query}
+                  onChange={event => setQuery(event.target.value)}
+                  placeholder={searchPlaceholder}
+                  className="min-w-0 flex-1 bg-transparent text-xs text-text-primary outline-none"
+                />
+              </label>
+              <div className="mt-1 max-h-72 overflow-y-auto overscroll-contain">
+                {visibleFields.map(field => (
+                  <button
+                    key={field.id}
+                    type="button"
+                    data-testid={`${testIdPrefix}-option-${field.id}`}
+                    onClick={() => {
+                      onChange(field.id)
+                      setOpen(false)
+                      setQuery('')
+                    }}
+                    className={cn(
+                      'flex h-9 w-full items-center rounded-lg px-2.5 text-left text-sm hover:bg-muted',
+                      field.id === value && 'bg-muted font-medium'
+                    )}
+                  >
+                    <span className="min-w-0 flex-1 truncate">{field.name}</span>
+                    <span className="ml-2 shrink-0 text-xs text-text-muted">{field.type}</span>
+                    {field.id === value ? <Check className="ml-2 h-3.5 w-3.5" /> : null}
+                  </button>
+                ))}
+                {visibleFields.length === 0 ? (
+                  <p className="px-3 py-6 text-center text-xs text-text-muted">没有匹配字段</p>
+                ) : null}
+              </div>
+            </div>,
+            document.body
+          )
+        : null}
     </div>
   )
 }
@@ -441,6 +507,81 @@ type BoardReadResult = {
   task_bindings?: LoopItemTaskBinding[]
   members?: CloudProjectMember[]
   agents?: ProjectChatAgent[]
+  page_cursors?: Record<string, string | null>
+}
+
+function projectActiveRuntimeTaskStatuses(
+  items: LocatedLoopItem[],
+  bindings: LoopItemTaskBinding[],
+  lifecycleSnapshot: RuntimeTaskLifecycleStoreSnapshot | undefined
+): LocatedLoopItem[] {
+  if (!lifecycleSnapshot) return items
+  const runningItemIds = new Set<string>()
+  for (const binding of bindings) {
+    if (!binding.loop_item_id) continue
+    const lifecycle = lifecycleSnapshot.tasks.get(
+      getRuntimeTaskLifecycleKey({
+        deviceId: binding.device_id,
+        taskId: binding.task_id,
+      })
+    )
+    if (lifecycle && runtimeTaskTrackingExecutionStatus(lifecycle) === 'running') {
+      runningItemIds.add(binding.loop_item_id)
+    }
+  }
+  if (runningItemIds.size === 0) return items
+  return items.map(item =>
+    runningItemIds.has(item.id) && item.status !== 'in_progress'
+      ? { ...item, status: 'in_progress' }
+      : item
+  )
+}
+
+function modelSelectionFromExecutionConfig(
+  config: WorkflowExecutionConfig | null | undefined
+): ModelSelectionConfig | null {
+  if (!config?.model) return null
+  return {
+    modelName: config.model,
+    modelType: config.model_type,
+    options: { ...config.model_options },
+  }
+}
+
+function boardTaskModelSelection(
+  item: CloudLoopItem,
+  binding: CloudTodoBoardTaskBinding,
+  runtimeWork: RuntimeWorkListResponse | null | undefined
+): ModelSelectionConfig | null {
+  const runtimeSelection = findRuntimeTask(runtimeWork, {
+    deviceId: binding.device_id,
+    taskId: binding.task_id,
+  })?.modelSelection
+  if (runtimeSelection) return runtimeSelection
+
+  const workflowNode = item.workflow?.nodes.find(
+    node =>
+      node.id === binding.workflow_node_id ||
+      String(node.task_binding_id ?? '') === String(binding.id) ||
+      node.task_ids?.includes(binding.task_id)
+  )
+  if (item.workflow && workflowNode) {
+    return modelSelectionFromExecutionConfig(
+      effectiveWorkflowNodeExecutionConfig(item.workflow, workflowNode)
+    )
+  }
+  return modelSelectionFromExecutionConfig(item.execution_config)
+}
+
+function withBoardTaskModelSelection(
+  item: CloudLoopItem,
+  binding: CloudTodoBoardTaskBinding,
+  runtimeWork: RuntimeWorkListResponse | null | undefined
+): CloudTodoBoardTaskBinding {
+  return {
+    ...binding,
+    modelSelection: boardTaskModelSelection(item, binding, runtimeWork),
+  }
 }
 
 function ProjectChangeRequestAutoRepairObserver({
@@ -1098,9 +1239,16 @@ export function CloudTodoWorkspace({
 }: CloudTodoWorkspaceProps) {
   const { t } = useTranslation('common')
   const workbench = useContext(WorkbenchContext)
+  const taskStatusExtensionsAvailable = useDshSlotAvailable(WEWORK_DSH_SLOTS.taskStatus)
+  const preferences = useAppPreferencesState()
+  const changeRequestStatusEnabled =
+    taskStatusExtensionsAvailable && (preferences?.preferences.changeRequestStatusEnabled ?? true)
   const changeRequestMonitor = useMemo(
-    () => (services.deviceApi ? getChangeRequestMonitor(services.deviceApi) : null),
-    [services.deviceApi]
+    () =>
+      changeRequestStatusEnabled && services.deviceApi
+        ? getChangeRequestMonitor(services.deviceApi)
+        : null,
+    [changeRequestStatusEnabled, services.deviceApi]
   )
   const projectSpaceApis = useMemo(() => {
     if (services.projectSpaceApis) return services.projectSpaceApis
@@ -1192,6 +1340,8 @@ export function CloudTodoWorkspace({
   // Which project's items are currently in `items`. Anything else rendered on
   // the board would be stale, so the board shows the skeleton instead.
   const [itemsProjectKey, setItemsProjectKey] = useState<string | null>(null)
+  const [externalPageCursors, setExternalPageCursors] = useState<Record<string, string | null>>({})
+  const [externalPageLoading, setExternalPageLoading] = useState<Record<string, boolean>>({})
   const myWork = useMemo(
     () => runtimeMyWorkItems(runtimeWork, runtimeTaskLifecycle),
     [runtimeTaskLifecycle, runtimeWork]
@@ -1548,7 +1698,13 @@ export function CloudTodoWorkspace({
     }
     return result
   }, [runtimeWork])
-  const runtimeTaskKeys = useMemo(() => new Set(runtimeTasksByKey.keys()), [runtimeTasksByKey])
+  const runtimeTaskKeys = useMemo(() => {
+    const keys = new Set(runtimeTasksByKey.keys())
+    for (const lifecycle of runtimeTaskLifecycle?.tasks.values() ?? []) {
+      keys.add(runtimeConversationKey(lifecycle.address))
+    }
+    return keys
+  }, [runtimeTaskLifecycle, runtimeTasksByKey])
   const runtimeAddressesByWorkItem = useMemo(() => {
     const result = new Map<string, RuntimeTaskAddress[]>()
     const workspaces = [
@@ -1633,6 +1789,7 @@ export function CloudTodoWorkspace({
               device_id: binding.device_id,
               task_id: binding.task_id,
               task_title: binding.task_title,
+              workflow_node_id: binding.workflow_node_id,
               running: runtimeTaskRunningByAddress.get(addressKey) ?? false,
               changeRequestTarget: runtimeTask
                 ? runtimeTaskChangeRequestTarget(runtimeTask.workspace, runtimeTask.task)
@@ -1670,10 +1827,19 @@ export function CloudTodoWorkspace({
   ): Promise<void> {
     const changeRequest = snapshot.changeRequest
     if (!changeRequest || !workbench || !selectedProject) return
-    const address = hydrateRuntimeTaskAddress(runtimeWork, {
+    const hydratedAddress = hydrateRuntimeTaskAddress(runtimeWork, {
       deviceId: binding.device_id,
       taskId: binding.task_id,
     })
+    const address = binding.modelSelection
+      ? {
+          ...hydratedAddress,
+          runtimeHandle: {
+            ...(hydratedAddress.runtimeHandle ?? {}),
+            modelSelection: binding.modelSelection,
+          },
+        }
+      : hydratedAddress
     const prompt = buildChangeRequestRepairPrompt(
       changeRequest,
       binding.task_title || binding.task_id,
@@ -1761,6 +1927,8 @@ export function CloudTodoWorkspace({
   const selectedProjectSelfManagedExecution = selectedProject?.location === 'local'
   const selectedProjectLocation = selectedProject?.location
   const isAITableProject = selectedProject?.task_provider === 'dingtalk_aitable'
+  const isExternalGitBoard =
+    selectedProject?.task_provider === 'github' || selectedProject?.task_provider === 'gitlab'
   // Stable handle for the automation queue: the cloud executions API is
   // wrapped once per selected project API instead of being recreated on every
   // render, so unrelated workspace re-renders do not restart the queue load
@@ -2070,6 +2238,32 @@ export function CloudTodoWorkspace({
   }, [startupBoardReady])
   const selectedItemProject = selectedItem ? projectForItem(selectedItem) : undefined
   const selectedItemApi = apiForProject(selectedItemProject)
+  useEffect(() => {
+    if (!selectedItem || selectedItem.detail_loaded !== false || !selectedItemApi) return
+    let active = true
+    const itemId = selectedItem.id
+    const projectStore = selectedItem.project_store
+    void selectedItemApi
+      .getLoopItem(itemId)
+      .then(item => {
+        if (!active) return
+        const locatedItem = { ...item, project_store: projectStore }
+        setSelectedItem(current => (current?.id === itemId ? locatedItem : current))
+        setItems(current =>
+          current.map(candidate => (candidate.id === itemId ? locatedItem : candidate))
+        )
+      })
+      .catch(error => {
+        if (active) {
+          setBoardError(
+            error instanceof Error ? error.message : t('todo.work_item_detail_load_failed')
+          )
+        }
+      })
+    return () => {
+      active = false
+    }
+  }, [selectedItem, selectedItemApi, t])
   useEffect(() => {
     if (
       !selectedItem?.is_unread ||
@@ -2560,6 +2754,42 @@ export function CloudTodoWorkspace({
           : Promise.resolve()
       const readBoard = async (): Promise<BoardReadResult> => {
         await prepare
+        if (isExternalGitBoard) {
+          const [pages, members, agents] = await Promise.all([
+            Promise.all(
+              externalBoardStatuses.map(status =>
+                selectedProjectApi.listLoopItemsPage(selectedProjectId, {
+                  status,
+                  parentId: boardParentId,
+                  limit: externalBoardColumnPageSize,
+                })
+              )
+            ),
+            selectedProjectApi.listCloudProjectMembers(selectedProjectId),
+            selectedProjectAgentApi?.list(selectedProjectId) ?? Promise.resolve([]),
+          ])
+          console.info('[Wework project board] column pages loaded', {
+            projectSpace: selectedProjectKey,
+            parentId: boardParentId,
+            pages: pages.map((page, index) => ({
+              status: externalBoardStatuses[index],
+              itemIds: page.items.map(item => item.id),
+              nextCursor: page.next_cursor,
+            })),
+          })
+          return {
+            items: locateItems(
+              pages.flatMap(page => page.items),
+              selectedProject.project_store
+            ),
+            task_bindings: pages.flatMap(page => page.task_bindings),
+            members,
+            agents,
+            page_cursors: Object.fromEntries(
+              pages.map((page, index) => [externalBoardStatuses[index], page.next_cursor])
+            ),
+          }
+        }
         const selectedResponse: BoardReadResult =
           await selectedProjectApi.getBoardSnapshot(selectedProjectId)
         const selectedItems = locateItems(selectedResponse.items, selectedProject.project_store)
@@ -2575,9 +2805,14 @@ export function CloudTodoWorkspace({
         const activeItemIds = new Set(
           activeBindings.flatMap(binding => (binding.loop_item_id ? [binding.loop_item_id] : []))
         )
+        const activeItems = selectedItems.filter(item => activeItemIds.has(item.id))
         return {
           ...selectedResponse,
-          items: selectedItems.filter(item => activeItemIds.has(item.id)),
+          items: projectActiveRuntimeTaskStatuses(
+            activeItems,
+            activeBindings,
+            runtimeTaskLifecycle
+          ),
           task_bindings: activeBindings,
         }
       }
@@ -2592,11 +2827,30 @@ export function CloudTodoWorkspace({
                 agents: selectedProject.location === 'cloud' ? (response.agents ?? []) : [],
               }
             : undefined
-          const signature = boardSnapshotKey(selectedProjectKey, response.items, null, boardContext)
+          const snapshotSpaceKey = isExternalGitBoard
+            ? `${selectedProjectKey}:${boardParentId ?? 'root'}`
+            : selectedProjectKey
+          const signature = boardSnapshotKey(snapshotSpaceKey, response.items, null, boardContext)
           if (boardSnapshotSignatureRef.current === signature) return
           boardSnapshotSignatureRef.current = signature
           const locatedItems = response.items
-          applyBoardItems(selectedProjectKey, locatedItems, null)
+          if (isExternalGitBoard) {
+            setItems(current => {
+              const retained = current.filter(
+                item =>
+                  String(item.cloud_project_id) === String(selectedProject.id) &&
+                  item.project_store === selectedProject.project_store &&
+                  item.parent_id !== boardParentId
+              )
+              return [...retained, ...locatedItems]
+            })
+            setItemsProjectKey(selectedProjectKey)
+            setBoardError(null)
+            setExternalPageCursors(response.page_cursors ?? {})
+          } else {
+            applyBoardItems(selectedProjectKey, locatedItems, null)
+            setExternalPageCursors({})
+          }
           if (boardContext) {
             const bindingsByItem: Record<string, LoopItemTaskBinding[]> = {}
             for (const binding of boardContext.taskBindings) {
@@ -2605,7 +2859,9 @@ export function CloudTodoWorkspace({
               itemBindings.push(binding)
               bindingsByItem[binding.loop_item_id] = itemBindings
             }
-            setItemTaskBindings(bindingsByItem)
+            setItemTaskBindings(current =>
+              isExternalGitBoard ? { ...current, ...bindingsByItem } : bindingsByItem
+            )
             setItemTaskBindingsProjectKey(selectedProjectKey)
           }
           if (selectedProject.location === 'cloud' && boardContext) {
@@ -2619,7 +2875,19 @@ export function CloudTodoWorkspace({
             }))
           }
           // Keep the projects-home cache in sync with the board fetch.
-          setProjectItems(current => ({ ...current, [selectedProjectKey]: locatedItems }))
+          setProjectItems(current => ({
+            ...current,
+            [selectedProjectKey]: isExternalGitBoard
+              ? Array.from(
+                  new Map(
+                    [...(current[selectedProjectKey] ?? []), ...locatedItems].map(item => [
+                      item.id,
+                      item,
+                    ])
+                  ).values()
+                )
+              : locatedItems,
+          }))
           setProjectCounts(current => ({
             ...current,
             [selectedProjectKey]: response.items.length,
@@ -2635,7 +2903,8 @@ export function CloudTodoWorkspace({
               },
               projectSpaceRef(selectedProject)
             )
-              ? (locatedItems.find(item => item.id === current.id) ?? null)
+              ? (locatedItems.find(item => item.id === current.id) ??
+                (isExternalGitBoard ? current : null))
               : current
           )
         })
@@ -2661,10 +2930,17 @@ export function CloudTodoWorkspace({
           if (!active) return
           setDingtalkAuthPrompt(false)
           const message = error instanceof Error ? error.message : '任务加载失败'
-          const signature = boardSnapshotKey(selectedProjectKey, [], message)
+          const signature = boardSnapshotKey(
+            isExternalGitBoard
+              ? `${selectedProjectKey}:${boardParentId ?? 'root'}`
+              : selectedProjectKey,
+            [],
+            message
+          )
           if (boardSnapshotSignatureRef.current === signature) return
           boardSnapshotSignatureRef.current = signature
           applyBoardItems(selectedProjectKey, [], message)
+          setExternalPageCursors({})
           setItemTaskBindings({})
           setItemTaskBindingsProjectKey(selectedProjectKey)
           if (selectedProject.location === 'cloud') {
@@ -2685,18 +2961,92 @@ export function CloudTodoWorkspace({
     }
   }, [
     applyBoardItems,
+    boardParentId,
     boardRefreshNonce,
+    isExternalGitBoard,
     isMyTasksBoard,
     selectedProject,
     selectedProjectApi,
+    selectedProjectAgentApi,
     selectedProjectId,
     selectedProjectKey,
     locateItems,
+    runtimeTaskLifecycle,
     runtimeTaskStatusSignature,
     runtimeTaskKeys,
     services.aitableApi,
     services.dwsApi,
   ])
+
+  async function loadMoreExternalColumn(itemStatus: string): Promise<void> {
+    const cursor = externalPageCursors[itemStatus]
+    if (
+      !isExternalGitBoard ||
+      !selectedProject ||
+      !selectedProjectApi ||
+      !selectedProjectId ||
+      !selectedProjectKey ||
+      !cursor ||
+      externalPageLoading[itemStatus]
+    ) {
+      return
+    }
+    setExternalPageLoading(current => ({ ...current, [itemStatus]: true }))
+    try {
+      const page = await selectedProjectApi.listLoopItemsPage(selectedProjectId, {
+        status: itemStatus,
+        parentId: boardParentId,
+        cursor,
+        limit: externalBoardColumnPageSize,
+      })
+      const locatedItems = locateItems(page.items, selectedProject.project_store)
+      setItems(current => {
+        const currentColumnItems = current.filter(
+          item => item.status === itemStatus && item.parent_id === boardParentId
+        )
+        const existingIds = new Set(current.map(item => item.id))
+        const receivedIds = locatedItems.map(item => item.id)
+        const duplicateIds = receivedIds.filter(id => existingIds.has(id))
+        const merged = Array.from(
+          new Map([...current, ...locatedItems].map(item => [item.id, item])).values()
+        )
+        console.info('[Wework project board] column page merged', {
+          projectSpace: selectedProjectKey,
+          parentId: boardParentId,
+          status: itemStatus,
+          cursor,
+          nextCursor: page.next_cursor,
+          existingTailIds: currentColumnItems.slice(-3).map(item => item.id),
+          receivedIds,
+          duplicateIds,
+          beforeCount: current.length,
+          afterCount: merged.length,
+        })
+        return merged
+      })
+      setExternalPageCursors(current => ({
+        ...current,
+        [itemStatus]: page.next_cursor,
+      }))
+      setItemTaskBindings(current => {
+        const next = { ...current }
+        for (const binding of page.task_bindings) {
+          if (!binding.loop_item_id) continue
+          next[binding.loop_item_id] = [
+            ...(next[binding.loop_item_id] ?? []).filter(candidate => candidate.id !== binding.id),
+            binding,
+          ]
+        }
+        return next
+      })
+      setItemTaskBindingsProjectKey(selectedProjectKey)
+    } catch (error) {
+      setBoardError(error instanceof Error ? error.message : t('todo.load_more_issues_failed'))
+    } finally {
+      setExternalPageLoading(current => ({ ...current, [itemStatus]: false }))
+    }
+  }
+
   useEffect(() => {
     const refreshBoard = () => {
       setBoardRefreshNonce(value => value + 1)
@@ -3820,7 +4170,7 @@ export function CloudTodoWorkspace({
           {!embedded && sidebarCollapsed && (
             <div
               data-testid="cloud-todo-collapsed-chrome-controls"
-              className="absolute left-2 top-0 z-20 flex h-[38px] items-center gap-1"
+              className="electron-titlebar-interactive-region pointer-events-auto absolute left-2 top-0 z-20 flex h-[38px] items-center gap-1"
             >
               <DesktopWindowControls
                 sidebarCollapsed
@@ -3934,7 +4284,12 @@ export function CloudTodoWorkspace({
                 )}
               >
                 {!embedded && (
-                  <MacOSTitleBarDragRegion className="absolute inset-0 z-0 h-full w-full" />
+                  <MacOSTitleBarDragRegion
+                    className={cn(
+                      'absolute right-0 top-0 z-0 h-full',
+                      sidebarCollapsed ? 'left-12' : 'left-0'
+                    )}
+                  />
                 )}
                 <div
                   ref={projectHeaderContentRef}
@@ -4713,7 +5068,13 @@ export function CloudTodoWorkspace({
                                       processingStatus={isProcessingStatus(item.status)}
                                       taskBindings={
                                         itemTaskBindingsProjectKey === selectedProjectKey
-                                          ? (boardTaskBindings[item.id] ?? [])
+                                          ? (boardTaskBindings[item.id] ?? []).map(binding =>
+                                              withBoardTaskModelSelection(
+                                                item,
+                                                binding,
+                                                runtimeWork
+                                              )
+                                            )
                                           : []
                                       }
                                       onClick={() => {
@@ -4756,13 +5117,26 @@ export function CloudTodoWorkspace({
                                       previewDisabled={
                                         selectedItem !== null || activeDragItemId !== null
                                       }
-                                      archiveDisabled={selectedProject.task_provider !== 'local'}
+                                      archiveDisabled={isAITableProject}
                                       changeRequestMonitor={changeRequestMonitor}
                                       onContinueChangeRequestRepair={
                                         workbench ? continueChangeRequestRepair : undefined
                                       }
                                     />
                                   ))}
+                                  {isExternalGitBoard && externalPageCursors[column.status] ? (
+                                    <button
+                                      type="button"
+                                      data-testid={`cloud-todo-column-load-more-${column.key}`}
+                                      disabled={externalPageLoading[column.status]}
+                                      onClick={() => void loadMoreExternalColumn(column.status)}
+                                      className="flex h-8 w-full items-center justify-center rounded-lg border border-border bg-background text-xs font-medium text-text-secondary transition hover:bg-muted hover:text-text-primary disabled:opacity-50"
+                                    >
+                                      {externalPageLoading[column.status]
+                                        ? t('todo.loading_more_issues')
+                                        : t('todo.load_more_issues')}
+                                    </button>
+                                  ) : null}
                                   {columnItems.length === 0 && emptyHint && (
                                     <>
                                       {canCreateInColumn ? (
@@ -5033,6 +5407,7 @@ export function CloudTodoWorkspace({
             ) : null}
             {backgroundTaskItemId !== selectedItem.id &&
             selectedItem.can_view_detail !== false &&
+            selectedItem.detail_loaded !== false &&
             selectedItemApi ? (
               <TodoEditor
                 key={selectedItem.id}
@@ -5237,6 +5612,13 @@ export function CloudTodoWorkspace({
                   track('feature_action_completed', { domain: 'board_item', action: 'update' })
                 }}
               />
+            ) : selectedItem.detail_loaded === false ? (
+              <div
+                data-testid="cloud-todo-detail-loading"
+                className="flex min-h-0 flex-1 items-center justify-center text-sm text-text-muted"
+              >
+                {t('todo.loading_work_item_detail')}
+              </div>
             ) : null}
             {taskPanelOpen && aiChatProject ? (
               <AiChatModal

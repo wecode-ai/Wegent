@@ -140,6 +140,7 @@ class LoopItemResponse(BaseModel):
     created_by_user_name: str | None = None
     can_view_detail: bool = True
     can_edit: bool = True
+    detail_loaded: bool = True
     content_revision: int = 1
     is_unread: bool = False
     current_delivery_id: str | None
@@ -397,6 +398,12 @@ class LoopItemTaskBindingResponse(BaseModel):
     @classmethod
     def normalize_unlinked_at(cls, value: object) -> object:
         return LoopItemResponse.normalize_unset_datetime(value)
+
+
+class LoopItemPageResponse(BaseModel):
+    items: list[LoopItemResponse]
+    task_bindings: list[LoopItemTaskBindingResponse]
+    next_cursor: str | None = None
 
 
 class CloudTaskContextResponse(LoopItemTaskBindingResponse):

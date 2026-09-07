@@ -623,17 +623,23 @@ export function AutomationRulesView({
   const executionCatalogRequestRef = useRef(null)
   const executionPluginRequestRef = useRef(null)
   const runsRequestRef = useRef(null)
+  const toastTimerRef = useRef(null)
 
   const dirty = JSON.stringify(draft) !== savedSnapshot
 
   useEffect(() => {
     setRules(backendRules)
-    setDraft(current => {
-      if (!current.persisted) return current
-      const refreshed = backendRules.find(rule => rule.id === current.id)
-      return refreshed ? cloneRule(refreshed) : current
-    })
   }, [backendRules])
+
+  useEffect(() => {
+    if (!draft.persisted || JSON.stringify(draft) !== savedSnapshot) return
+    const refreshed = backendRules.find(rule => rule.id === draft.id)
+    if (!refreshed) return
+    const refreshedSnapshot = JSON.stringify(refreshed)
+    if (refreshedSnapshot === savedSnapshot) return
+    setDraft(cloneRule(refreshed))
+    setSavedSnapshot(refreshedSnapshot)
+  }, [backendRules, draft, savedSnapshot])
 
   useEffect(() => {
     setRuns(backendRuns)
@@ -642,6 +648,15 @@ export function AutomationRulesView({
   useEffect(() => {
     setExecutionCatalog(initialExecutionCatalog)
   }, [initialExecutionCatalog])
+
+  useEffect(
+    () => () => {
+      if (toastTimerRef.current !== null) {
+        window.clearTimeout(toastTimerRef.current)
+      }
+    },
+    []
+  )
 
   const visibleRules = useMemo(() => {
     const normalized = query.trim().toLowerCase()
@@ -657,8 +672,14 @@ export function AutomationRulesView({
   }, [filter, query, rules])
 
   const notify = message => {
+    if (toastTimerRef.current !== null) {
+      window.clearTimeout(toastTimerRef.current)
+    }
     setToast(message)
-    window.setTimeout(() => setToast(''), 2200)
+    toastTimerRef.current = window.setTimeout(() => {
+      toastTimerRef.current = null
+      setToast('')
+    }, 2200)
   }
 
   const loadExecutionCatalog = async () => {

@@ -21,9 +21,13 @@ export function primaryDshBounds({ width, height }: WindowContentSize): WindowVi
 
 export function desktopWindowFrameOptions(
   platform: NodeJS.Platform = process.platform
-): Pick<BrowserWindowConstructorOptions, 'frame' | 'titleBarStyle' | 'trafficLightPosition'> {
+): Pick<
+  BrowserWindowConstructorOptions,
+  'acceptFirstMouse' | 'frame' | 'titleBarStyle' | 'trafficLightPosition'
+> {
   if (platform === 'darwin') {
     return {
+      acceptFirstMouse: true,
       frame: true,
       titleBarStyle: 'hiddenInset',
       trafficLightPosition: { x: 14, y: 12 },

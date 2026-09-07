@@ -1,7 +1,9 @@
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { createRef, useState } from 'react'
-import { describe, expect, test, vi } from 'vitest'
+import { beforeEach, describe, expect, test, vi } from 'vitest'
+import { WEWORK_DSH_SLOTS } from '@/features/dsh-runtime/dshUiSlots'
+import { installDshUiTestContributions } from '@/test/setup'
 import type {
   Attachment,
   DeviceInfo,
@@ -166,6 +168,23 @@ function runtimeWork(
 }
 
 describe('ChatInput', () => {
+  beforeEach(async () => {
+    await installDshUiTestContributions(
+      {
+        [WEWORK_DSH_SLOTS.projectWorkSection]: [
+          {
+            id: 'git-project-work',
+            module: 'plugins/wework-ui-git-project-work-section.js',
+          },
+        ],
+      },
+      {
+        'plugins/wework-ui-git-project-work-section.js': () =>
+          import('../../../dsh/ui-git/src/project-work-section'),
+      }
+    )
+  })
+
   const originalCreateObjectUrl = URL.createObjectURL
   const originalInnerWidth = window.innerWidth
 
@@ -4420,8 +4439,8 @@ describe('ChatInput', () => {
           deviceId: 'device-1',
         },
         workspace: {
-          source: 'local_path' as const,
-          localPath: '/workspace/wegent',
+          source: 'git' as const,
+          checkoutPath: '/workspace/wegent',
         },
       },
     }
@@ -4438,7 +4457,6 @@ describe('ChatInput', () => {
           projects: [worktreeProject],
           currentProject: worktreeProject,
           currentProjectId: 7,
-          isGitProject: true,
           executionMode: 'git_worktree',
           executionModeLocked: false,
           worktreeAvailability: {

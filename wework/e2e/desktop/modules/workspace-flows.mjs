@@ -25,6 +25,12 @@ import {
   writeFile,
 } from './shared.mjs'
 
+const FIXED_BOARD_ROUTE_TAB_ID = 'fixed-board'
+const FIXED_BOARD_TAB_ID = `workspace-tab-${FIXED_BOARD_ROUTE_TAB_ID}`
+const FIXED_BOARD_TAB_SELECT_TEST_ID = `workspace-tab-select-${FIXED_BOARD_ROUTE_TAB_ID}`
+const FIXED_BOARD_TAB_CONTENT_TEST_ID = `workspace-tab-content-${FIXED_BOARD_ROUTE_TAB_ID}`
+const FIXED_BOARD_CONTENT_SELECTOR = `[data-testid="${FIXED_BOARD_TAB_CONTENT_TEST_ID}"]`
+
 async function waitForFolderPathReady(control, expectedPath) {
   const startedAt = Date.now()
   while (Date.now() - startedAt < DEFAULT_STEP_TIMEOUT_MS) {
@@ -856,12 +862,38 @@ async function verifyWorkspaceIssueCreation(control) {
   )
 }
 
-async function verifyDefaultTaskBoardAssociation(control, projectRowSelector) {
+async function verifyDefaultTaskBoardAssociation(control) {
   await ensureExperimentalFeaturesDisabled(control)
   try {
+    await control.command('click', '[data-testid="workspace-tab-select-fixed-task"]')
+    await control.command('navigate', 'body', { value: '/' })
+    await reloadMainWindow(
+      control,
+      'The Wework WebView did not reconnect before the first project-space navigation'
+    )
+    await control.command(
+      'waitFor',
+      '[data-testid="workspace-tab-select-fixed-task"][aria-selected="true"]',
+      { timeoutMs: WORKBENCH_READY_TIMEOUT_MS }
+    )
+    const startupTabs = JSON.parse(
+      await control.command('snapshot', '[data-testid="workspace-tab-strip"]')
+    )
+    assert.deepEqual(
+      workspaceTabIds(startupTabs, 'board'),
+      [FIXED_BOARD_TAB_ID],
+      'The fresh task workspace did not start with one unresolved fixed project-space tab'
+    )
+    await control.command('markElementWithText', '[data-testid^="project-row-"]', {
+      text: 'workspace',
+      value: 'default-association-project',
+      timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+    })
+    const refreshedProjectRowSelector = '[data-e2e-anchor-id="default-association-project"]'
+    await control.command('hover', refreshedProjectRowSelector, { visible: true })
     await control.command(
       'click',
-      `${projectRowSelector} [data-testid="project-new-conversation-button"]`
+      `${refreshedProjectRowSelector} [data-testid="project-new-conversation-button"]`
     )
     await control.command('waitFor', '[data-testid="project-work-button"]', {
       text: 'workspace',
@@ -888,6 +920,25 @@ async function verifyDefaultTaskBoardAssociation(control, projectRowSelector) {
   }
 }
 
+async function requireActiveFixedBoardTab(control, message) {
+  await control.command('waitFor', '[data-tab-kind="board"][aria-selected="true"]', {
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  const activeBoardTabTestId = await control.command(
+    'getAttribute',
+    '[data-tab-kind="board"][aria-selected="true"]',
+    { value: 'data-testid' }
+  )
+  assert.equal(activeBoardTabTestId, FIXED_BOARD_TAB_SELECT_TEST_ID, message)
+  const boardTabs = workspaceTabIds(JSON.parse(await control.command('snapshot', 'body')), 'board')
+  assert.deepEqual(
+    boardTabs,
+    [FIXED_BOARD_TAB_ID],
+    'Opening the bound project space created a duplicate board tab'
+  )
+  return FIXED_BOARD_CONTENT_SELECTOR
+}
+
 async function verifyTrackedTaskBoardRunningStatus(
   control,
   screenshotName = 'workspace-02-running-task-synchronized.png'
@@ -902,21 +953,10 @@ async function verifyTrackedTaskBoardRunningStatus(
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
   await control.command('click', '[data-testid="work-item-open-board-menu"]')
-  await control.command('waitFor', '[data-tab-kind="board"][aria-selected="true"]', {
-    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
-  })
-  const activeBoardTabTestId = await control.command(
-    'getAttribute',
-    '[data-tab-kind="board"][aria-selected="true"]',
-    { value: 'data-testid' }
+  const activeBoardContentSelector = await requireActiveFixedBoardTab(
+    control,
+    'The first work-item navigation did not reuse the unresolved fixed project-space tab'
   )
-  const activeBoardTabPrefix = 'workspace-tab-select-board-'
-  assert.ok(
-    activeBoardTabTestId?.startsWith(activeBoardTabPrefix),
-    'The running work-item board tab identity was unavailable'
-  )
-  const activeBoardTabSuffix = activeBoardTabTestId.slice(activeBoardTabPrefix.length)
-  const activeBoardContentSelector = `[data-testid="workspace-tab-content-board-${activeBoardTabSuffix}"]`
   const runningColumnSelector = `${activeBoardContentSelector} [data-testid="cloud-todo-column-in_progress"]`
   const reviewColumnSelector = `${activeBoardContentSelector} [data-testid="cloud-todo-column-in_review"]`
   await control.command('waitFor', runningColumnSelector, {
@@ -1011,21 +1051,10 @@ async function verifyTrackedTaskSettledStatus(control) {
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
   await control.command('click', '[data-testid="work-item-open-board-menu"]')
-  await control.command('waitFor', '[data-tab-kind="board"][aria-selected="true"]', {
-    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
-  })
-  const activeBoardTabTestId = await control.command(
-    'getAttribute',
-    '[data-tab-kind="board"][aria-selected="true"]',
-    { value: 'data-testid' }
+  const activeBoardContentSelector = await requireActiveFixedBoardTab(
+    control,
+    'The settled work-item navigation did not reuse the fixed project-space tab'
   )
-  const activeBoardTabPrefix = 'workspace-tab-select-board-'
-  assert.ok(
-    activeBoardTabTestId?.startsWith(activeBoardTabPrefix),
-    'The settled work-item board tab identity was unavailable'
-  )
-  const activeBoardTabSuffix = activeBoardTabTestId.slice(activeBoardTabPrefix.length)
-  const activeBoardContentSelector = `[data-testid="workspace-tab-content-board-${activeBoardTabSuffix}"]`
   const runningColumnSelector = `${activeBoardContentSelector} [data-testid="cloud-todo-column-in_progress"]`
   const reviewColumnSelector = `${activeBoardContentSelector} [data-testid="cloud-todo-column-in_review"]`
   await control.command('scrollIntoView', reviewColumnSelector)
@@ -1077,27 +1106,16 @@ async function verifyExplicitlyTrackedTask(control, taskTabTestId) {
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
   await control.command('click', '[data-testid="work-item-open-board"]')
-  await control.command('waitFor', '[data-tab-kind="board"][aria-selected="true"]', {
-    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
-  })
-  const activeBoardTabTestId = await control.command(
-    'getAttribute',
-    '[data-tab-kind="board"][aria-selected="true"]',
-    { value: 'data-testid' }
+  const activeBoardContentSelector = await requireActiveFixedBoardTab(
+    control,
+    'The tracked work-item navigation did not reuse the fixed project-space tab'
   )
-  const activeBoardTabPrefix = 'workspace-tab-select-board-'
-  assert.ok(
-    activeBoardTabTestId?.startsWith(activeBoardTabPrefix),
-    'The active work-item board tab identity was unavailable'
-  )
-  const activeBoardTabSuffix = activeBoardTabTestId.slice(activeBoardTabPrefix.length)
-  const activeBoardContentSelector = `[data-testid="workspace-tab-content-board-${activeBoardTabSuffix}"]`
   await waitForStableSnapshot(
     control,
     snapshot =>
-      snapshot.location.includes(`workspaceTab=board-${activeBoardTabSuffix}`) &&
+      snapshot.location.includes(`workspaceTab=${FIXED_BOARD_ROUTE_TAB_ID}`) &&
       !snapshot.location.includes('itemId=') &&
-      snapshot.testIds.includes(`workspace-tab-content-board-${activeBoardTabSuffix}`) &&
+      snapshot.testIds.includes(FIXED_BOARD_TAB_CONTENT_TEST_ID) &&
       !snapshot.testIds.includes('cloud-todo-board-loading') &&
       snapshot.text.includes('WEWORK_DESKTOP_E2E_TASK'),
     'The work-item board did not settle on the tracked task awaiting confirmation'
@@ -1191,21 +1209,10 @@ async function verifyExistingTaskBoardAssociation(
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
   await control.command('click', '[data-testid="work-item-open-board-menu"]')
-  await control.command('waitFor', '[data-tab-kind="board"][aria-selected="true"]', {
-    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
-  })
-  const activeBoardTabTestId = await control.command(
-    'getAttribute',
-    '[data-tab-kind="board"][aria-selected="true"]',
-    { value: 'data-testid' }
+  const activeBoardContentSelector = await requireActiveFixedBoardTab(
+    control,
+    'The source work-item navigation did not reuse the fixed project-space tab'
   )
-  const activeBoardTabPrefix = 'workspace-tab-select-board-'
-  assert.ok(
-    activeBoardTabTestId?.startsWith(activeBoardTabPrefix),
-    'The source board tab identity was unavailable before moving the existing task'
-  )
-  const activeBoardTabSuffix = activeBoardTabTestId.slice(activeBoardTabPrefix.length)
-  const activeBoardContentSelector = `[data-testid="workspace-tab-content-board-${activeBoardTabSuffix}"]`
   const targetProjectName = 'Existing Task Target Board'
   await control.command('click', `${activeBoardContentSelector} [data-testid="cloud-project-add"]`)
   await control.command('waitFor', '[data-testid="cloud-project-name"]', {
@@ -1304,20 +1311,10 @@ async function verifyExistingTaskBoardAssociation(
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
   await control.command('click', '[data-testid="work-item-open-board-menu"]')
-  await control.command('waitFor', '[data-tab-kind="board"][aria-selected="true"]', {
-    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
-  })
-  const movedBoardTabTestId = await control.command(
-    'getAttribute',
-    '[data-tab-kind="board"][aria-selected="true"]',
-    { value: 'data-testid' }
+  const movedBoardContentSelector = await requireActiveFixedBoardTab(
+    control,
+    'The moved work-item navigation did not continue reusing the fixed project-space tab'
   )
-  assert.ok(
-    movedBoardTabTestId?.startsWith(activeBoardTabPrefix),
-    'The target board tab identity was unavailable after moving the existing task'
-  )
-  const movedBoardTabSuffix = movedBoardTabTestId.slice(activeBoardTabPrefix.length)
-  const movedBoardContentSelector = `[data-testid="workspace-tab-content-board-${movedBoardTabSuffix}"]`
   await control.command(
     'waitFor',
     `${movedBoardContentSelector} [data-testid="cloud-project-header-title"]`,

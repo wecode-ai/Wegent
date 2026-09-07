@@ -5,12 +5,15 @@ export const CORE_PLUGIN_DIRECTORIES = [
   'executor-runtime',
   'secure-storage',
   'terminal-runtime',
+  'plugin-runtime',
   'ui-core-apps',
   'ui-core-settings',
   'ui-plugin-center',
   'ui-applications',
   'ui-automations',
   'ui-cloud-work',
+  'plugin-developer',
+  'ui-git',
 ]
 
 const CORE_PLUGIN_TARGETS = {
@@ -20,12 +23,15 @@ const CORE_PLUGIN_TARGETS = {
   'executor-runtime': 'wework-executor-runtime',
   'secure-storage': 'wework-secure-storage',
   'terminal-runtime': 'wework-terminal-runtime',
+  'plugin-runtime': 'wework-plugin-runtime',
   'ui-core-apps': 'wework-ui-core-apps',
   'ui-core-settings': 'wework-ui-core-settings',
   'ui-plugin-center': 'wework-ui-plugin-center',
   'ui-applications': 'wework-ui-applications',
   'ui-automations': 'wework-ui-automations',
   'ui-cloud-work': 'wework-ui-cloud-work',
+  'plugin-developer': 'wework-plugin-developer',
+  'ui-git': 'wework-ui-git',
 }
 
 export function corePluginTarget(directory) {

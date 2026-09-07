@@ -1,6 +1,11 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { ComposerCloudMentionCandidate } from '@/components/chat/composer/composerMentionCandidates'
-import type { CloudLoopItem, CloudProject, TaskExecutionStatus } from '@/api/deliveries'
+import {
+  nextTaskTrackingStatus,
+  type CloudLoopItem,
+  type CloudProject,
+  type TaskExecutionStatus,
+} from '@/api/deliveries'
 import {
   findProjectSpaceContextForTask,
   isDefaultWorkItemProject,
@@ -11,6 +16,10 @@ import {
   subscribeProjectSpaceTaskContextChanged,
   type ProjectSpaceApi,
 } from '@/features/todo/projectSpaceSelection'
+import {
+  projectSpaceContentRoute,
+  projectSpaceRouteMatchesProject,
+} from '@/features/todo/projectSpaceRoute'
 import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
 import { truncateRuntimeTaskTitle } from '@/features/workbench/workbenchRuntimeHelpers'
 import {
@@ -111,15 +120,6 @@ function storePendingBinding(binding: PendingTodoBinding) {
 function clearPendingBinding(binding: PendingTodoBinding) {
   pendingTodoBindingsByPane.delete(binding.paneKey)
   if (binding.target) pendingTodoBindingsByTask.delete(runtimeTaskKey(binding.target))
-}
-
-function boardTabProjectKey(contentRoute: string): string | null {
-  const searchIndex = contentRoute.indexOf('?')
-  if (searchIndex < 0) return null
-  const params = new URLSearchParams(contentRoute.slice(searchIndex + 1))
-  const projectStore = params.get('projectStore')
-  const projectId = params.get('projectId')
-  return projectStore && projectId ? `${projectStore}:${projectId}` : null
 }
 
 function pendingBindingTargetsTask(address: RuntimeTaskAddress): boolean {
@@ -341,8 +341,25 @@ export function useWorkbenchCloudProjectContext({
     candidates: ComposerCloudMentionCandidate[]
   } | null>(null)
 
+  const boundCloudItemStatusOverride = useMemo(() => {
+    if (!boundCloudItem) return null
+    const executionStatus = normalizeTaskExecutionStatus(
+      runtimeTaskExecutionStatus,
+      runtimeTaskRunning ?? false,
+      runtimeTaskExecutionKnown ?? false
+    )
+    if (!executionStatus) return null
+    return nextTaskTrackingStatus(boundCloudItem.status, executionStatus) ?? boundCloudItem.status
+  }, [boundCloudItem, runtimeTaskExecutionKnown, runtimeTaskExecutionStatus, runtimeTaskRunning])
+  const projectedBoundCloudItem = useMemo(
+    () =>
+      boundCloudItem && boundCloudItemStatusOverride
+        ? { ...boundCloudItem, status: boundCloudItemStatusOverride }
+        : boundCloudItem,
+    [boundCloudItem, boundCloudItemStatusOverride]
+  )
   const composerCloudProject = contextRuntimeTask ? boundCloudProject : pendingCloudProject
-  const composerTodoItem = contextRuntimeTask ? boundCloudItem : pendingTodoItem
+  const composerTodoItem = contextRuntimeTask ? projectedBoundCloudItem : pendingTodoItem
   const defaultCloudProjectSelectionKey = `${paneKey}:${currentProjectId ?? 'none'}`
   const defaultWorkItemProject = useMemo(
     () => cloudProjects.find(isDefaultWorkItemProject) ?? null,
@@ -935,14 +952,11 @@ export function useWorkbenchCloudProjectContext({
       : null
   const openBoundProjectSpaceTask = useCallback(() => {
     if (!boundCloudProject || !boundCloudItem) return
-    const params = new URLSearchParams()
-    params.set('projectStore', boundCloudProject.project_store)
-    params.set('projectId', String(boundCloudProject.id))
-    const contentRoute = `/todo?${params.toString()}`
+    const projectRef = projectSpaceRef(boundCloudProject)
+    const contentRoute = projectSpaceContentRoute(projectRef)
     if (workspaceTabs) {
-      const projectKey = projectSpaceKey(projectSpaceRef(boundCloudProject))
       const existingBoardTab = workspaceTabs.tabs.find(
-        tab => tab.kind === 'board' && boardTabProjectKey(tab.contentRoute) === projectKey
+        tab => tab.kind === 'board' && projectSpaceRouteMatchesProject(tab.contentRoute, projectRef)
       )
       if (existingBoardTab) {
         workspaceTabs.selectTab(existingBoardTab.id, {
@@ -1110,7 +1124,8 @@ export function useWorkbenchCloudProjectContext({
 
   return {
     activeDeliveryItem,
-    boundCloudItem,
+    boundCloudItem: projectedBoundCloudItem,
+    boundCloudItemStatusOverride,
     boundCloudProject,
     boundProjectSpaceApi,
     clearCloudActionNotice,

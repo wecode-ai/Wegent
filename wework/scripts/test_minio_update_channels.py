@@ -16,8 +16,10 @@ SCRIPT_DIR = Path(__file__).parent
 sys.path.insert(0, str(SCRIPT_DIR))
 
 from minio_release_assets import (  # noqa: E402
+    COMPONENT_RELEASE_SCOPES,
     MANAGED_COMPONENT_IDS,
     load_component_assets,
+    load_release_artifacts,
     publish_component_assets,
     publish_component_manifest,
     publish_immutable_file,
@@ -188,15 +190,18 @@ def test_windows_latest_installer_uses_canonical_release_name(tmp_path: Path) ->
     client = FakeClient()
     version = "1.2.3"
     installer = tmp_path / f"WeWork_{version}_windows-x64-setup.exe"
+    host_update = tmp_path / f"WeWorkHostUpdate_{version}_windows-x64-setup.exe"
     installer.write_bytes(b"installer")
+    host_update.write_bytes(b"host-update")
     client.objects[f"wework/windows/{installer.name}"] = installer.read_bytes()
+    client.objects[f"wework/windows/{host_update.name}"] = host_update.read_bytes()
 
     module.publish_latest_installer(
         client,
         "releases",
         "wework/windows",
         version,
-        [installer],
+        [host_update, installer],
     )
 
     assert client.objects["wework/windows/WeWork_latest_windows-x64-setup.exe"] == (
@@ -400,8 +405,8 @@ def test_channel_repair_publishes_rolling_pointer_last(
     assert repaired
     assert uploaded == [
         component_manifest,
-        electron_manifest,
         channel_manifest.name,
+        electron_manifest,
     ]
 
 
@@ -427,6 +432,7 @@ def write_component_release(
             "archiveSha256": archive_sha256,
             "archiveBytes": len(content),
             "assetName": asset_name,
+            "releaseScope": COMPONENT_RELEASE_SCOPES[component_id],
             "entryPath": ".",
         }
     (tmp_path / f"components-{platform}-{arch}.json").write_text(
@@ -451,6 +457,7 @@ def write_component_release(
                     "channel": channel,
                     "platform": platform,
                     "arch": arch,
+                    "capabilities": {"componentizedHostUpdate": 1},
                     "components": components,
                 }
             ),
@@ -476,6 +483,7 @@ def test_component_assets_split_shared_and_release_specific_storage(
 
     assert [prefix for _, prefix in uploaded] == [
         "wework/components",
+        "wework/macos",
         "wework/macos",
         "wework/macos",
         "wework/macos",
@@ -587,6 +595,23 @@ def test_versioned_release_assets_are_immutable(tmp_path: Path) -> None:
         )
 
 
+def test_release_artifacts_include_full_and_componentized_host_packages(
+    tmp_path: Path,
+) -> None:
+    version = "1.2.3"
+    expected = [
+        tmp_path / f"WeWork_{version}_darwin-aarch64.zip",
+        tmp_path / f"WeWork_{version}_darwin-aarch64.zip.blockmap",
+        tmp_path / f"WeWorkHostUpdate_{version}_darwin-aarch64.zip",
+        tmp_path / f"WeWorkHostUpdate_{version}_darwin-aarch64.zip.blockmap",
+    ]
+    for path in expected:
+        path.write_bytes(path.name.encode())
+    (tmp_path / f"Other_{version}.zip").write_bytes(b"ignored")
+
+    assert load_release_artifacts(tmp_path, version) == sorted(expected)
+
+
 def test_minio_macos_build_uses_the_electron_release_and_tauri_bridge() -> None:
     script = (SCRIPT_DIR / "build-minio-mac-release.sh").read_text(encoding="utf-8")
     preparer = (SCRIPT_DIR / "prepare-desktop-release-assets.mjs").read_text(
@@ -607,6 +632,10 @@ def test_minio_macos_build_uses_the_electron_release_and_tauri_bridge() -> None:
     assert 'WEWORK_SOURCE_SHA="$SOURCE_SHA"' in script
     assert "WeWork_${VERSION}_$(release_platform).dmg" in script
     assert "WeWork_${VERSION}_$(release_platform).zip" in script
+    assert "WeWorkHostUpdate_${VERSION}_$(release_platform).zip" in script
+    assert "WEWORK_ONLINE_UPDATE_INCLUDE_COMPONENTS" in script
+    assert 'WEWORK_USE_COMPONENTIZED_HOST_UPDATE="$COMPONENTIZED_HOST_UPDATE"' in script
+    assert "components-$CHANNEL-macos-$arch.json" in script
     assert "const releaseBaseName = `WeWork_${version}_${releasePlatform}`" in preparer
     assert "cp(dmg, join(output, basename(dmg)))" not in preparer
     assert "cp(zip, join(output, basename(zip)))" not in preparer
@@ -638,6 +667,7 @@ def test_minio_windows_build_uses_native_electron_release_and_tauri_bridge() -> 
     assert "generate-desktop-update-manifests.mjs" in script
     assert "WEWORK_RELEASE_TARGETS=windows-x64" in script
     assert "WeWork_${VERSION}_windows-x64-setup.exe" in script
+    assert "WeWorkHostUpdate_${VERSION}_windows-x64-setup.exe" in script
     assert "WeWork_${VERSION}_windows-x64.md" in script
     assert "windows_" + "x64" not in script
     assert "windows-${arch}-setup" in preparer
@@ -650,6 +680,9 @@ def test_minio_windows_build_uses_native_electron_release_and_tauri_bridge() -> 
     assert 'WEWORK_BRAND_CONFIG="$BRAND_CONFIG"' in script
     assert 'WEWORK_RELEASE_VERSION="$VERSION"' in script
     assert 'WEWORK_SOURCE_SHA="$SOURCE_SHA"' in script
+    assert "WEWORK_ONLINE_UPDATE_INCLUDE_COMPONENTS" in script
+    assert 'WEWORK_USE_COMPONENTIZED_HOST_UPDATE="$COMPONENTIZED_HOST_UPDATE"' in script
+    assert "components-$CHANNEL-windows-x64.json" in script
     assert '--unsigned) UNSIGNED="true"' in script
     assert 'if [ "$UNSIGNED" = "true" ]' in script
     assert "export CSC_IDENTITY_AUTO_DISCOVERY=false" in script
@@ -678,6 +711,7 @@ def test_windows_jenkins_pipeline_builds_unsigned_with_the_tauri_bridge() -> Non
     assert "WEWORK_UPDATER_KEY_PATH" in pipeline
     assert "Required legacy updater key file is missing or empty" in pipeline
     assert "WeWork_${version}_windows-x64-setup.exe" in pipeline
+    assert "WeWorkHostUpdate_${version}_windows-x64-setup.exe" in pipeline
     assert "windows_" + "x64" not in pipeline
     assert "windows-x86_64" in pipeline
     assert "latest.json" in pipeline
@@ -700,6 +734,7 @@ def test_minio_uploads_component_assets_without_legacy_runtime_sidecars(
     assert "upload_electron_manifest" in script
     assert "publish_component_assets" in script
     assert "publish_component_manifest" in script
+    assert "load_release_artifacts" in script
     assert "publish_runtime_asset_pairs" not in script
 
 

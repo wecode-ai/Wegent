@@ -466,6 +466,11 @@ function services(overrides: Partial<WorkbenchServices> = {}): WorkbenchServices
       })),
       reorderLoopItems: vi.fn(async () => ({ items: [item] })),
       listLoopItems: vi.fn(async () => ({ items: [item] })),
+      listLoopItemsPage: vi.fn(async () => ({
+        items: [],
+        task_bindings: [],
+        next_cursor: null,
+      })),
       listDeliveries: vi.fn(async () => ({ items: [] })),
       listLoopItemAttachments: vi.fn(async () => []),
       addLoopItemAttachment: vi.fn(async (_itemId, file) => ({
@@ -701,6 +706,78 @@ describe('CloudTodoWorkspace', () => {
     expect(workspace).toHaveAttribute('data-embedded', 'true')
     expect(workspace.querySelector('aside')).not.toBeInTheDocument()
     expect(screen.queryByTestId('cloud-todo-collapsed-chrome-controls')).not.toBeInTheDocument()
+  })
+
+  it('loads Git-backed boards by column and fetches details only after opening a card', async () => {
+    const infoSpy = vi.spyOn(console, 'info').mockImplementation(() => {})
+    const workbenchServices = services()
+    const githubProject = {
+      ...project,
+      id: String(project.id),
+      task_provider: 'github' as const,
+    }
+    const summary = {
+      ...item,
+      cloud_project_id: String(project.id),
+      status: 'pending',
+      description: '',
+      detail_loaded: false,
+    }
+    const next = { ...summary, id: 'WEG-2', sequence_number: 2, title: 'Second issue' }
+    vi.mocked(workbenchServices.deliveryApi!.listCloudProjects).mockResolvedValue({
+      items: [githubProject],
+    })
+    workbenchServices.deliveryApi!.listLoopItemsPage = vi.fn(async (_projectId, options) => ({
+      items: options.status === 'pending' ? (options.cursor ? [summary, next] : [summary]) : [],
+      task_bindings: [],
+      next_cursor: options.status === 'pending' && !options.cursor ? 'next-page' : null,
+    }))
+    workbenchServices.deliveryApi!.getLoopItem = vi.fn(async () => ({
+      ...summary,
+      description: 'Full issue body',
+      detail_loaded: true,
+    }))
+
+    render(
+      <CloudTodoWorkspace
+        user={{ id: 1, user_name: 'local', email: 'local@example.com' } as User}
+        localProjects={[]}
+        services={workbenchServices}
+        embedded
+        activeProjectRef={{ projectStore: 'backend', projectId: String(project.id) }}
+      />
+    )
+
+    await screen.findByTestId(`cloud-todo-card-${summary.id}`)
+    expect(workbenchServices.deliveryApi!.getBoardSnapshot).not.toHaveBeenCalled()
+    expect(workbenchServices.deliveryApi!.listLoopItemsPage).toHaveBeenCalledTimes(5)
+    expect(
+      vi
+        .mocked(workbenchServices.deliveryApi!.listLoopItemsPage)
+        .mock.calls.every(([, options]) => options.limit === 10)
+    ).toBe(true)
+    expect(screen.getByTestId('cloud-todo-column-load-more-pending')).toHaveTextContent('加载更多')
+
+    await userEvent.click(screen.getByTestId('cloud-todo-column-load-more-pending'))
+    await screen.findByTestId(`cloud-todo-card-${next.id}`)
+    expect(screen.getAllByTestId(`cloud-todo-card-${summary.id}`)).toHaveLength(1)
+    expect(workbenchServices.deliveryApi!.listLoopItemsPage).toHaveBeenLastCalledWith(
+      String(project.id),
+      expect.objectContaining({ status: 'pending', cursor: 'next-page', limit: 10 })
+    )
+    expect(infoSpy).toHaveBeenCalledWith(
+      '[Wework project board] column page merged',
+      expect.objectContaining({
+        status: 'pending',
+        cursor: 'next-page',
+        receivedIds: [summary.id, next.id],
+        duplicateIds: [summary.id],
+      })
+    )
+    fireEvent.click(screen.getByTestId(`cloud-todo-card-${summary.id}`))
+    await waitFor(() => {
+      expect(workbenchServices.deliveryApi!.getLoopItem).toHaveBeenCalledWith(summary.id)
+    })
   })
 
   it('refreshes the active board when a runtime task binding changes externally', async () => {
@@ -2781,10 +2858,18 @@ describe('CloudTodoWorkspace', () => {
       />
     )
 
+    await userEvent.click(await screen.findByTestId('cloud-sidebar-project-11'))
     expect(screen.getByTestId('cloud-todo-sidebar-chrome-controls')).toHaveClass('gap-1')
     await userEvent.click(screen.getByTestId('cloud-todo-collapse-sidebar'))
     expect(screen.queryByTestId('cloud-todo-collapsed-app-current')).not.toBeInTheDocument()
-    expect(screen.getByTestId('cloud-todo-collapsed-chrome-controls')).toHaveClass('left-2')
+    expect(screen.getByTestId('cloud-todo-collapsed-chrome-controls')).toHaveClass(
+      'electron-titlebar-interactive-region',
+      'pointer-events-auto',
+      'left-2'
+    )
+    expect(
+      screen.getByTestId('cloud-project-header').querySelector('.electron-titlebar-drag-region')
+    ).toHaveClass('left-12')
 
     await userEvent.click(screen.getByTestId('cloud-todo-expand-sidebar'))
     expect(screen.queryByTestId('cloud-todo-collapsed-chrome-controls')).not.toBeInTheDocument()
@@ -3891,6 +3976,14 @@ describe('CloudTodoWorkspace', () => {
     await userEvent.selectOptions(screen.getByTestId('cloud-board-group-filter'), 'in_progress')
     expect(screen.getByTestId('cloud-board-group-filter-label')).toHaveTextContent('进行中')
     await userEvent.click(screen.getByTestId('cloud-board-group-by'))
+    const groupMenu = screen.getByTestId('cloud-board-group-menu')
+    expect(groupMenu.parentElement).toBe(document.body)
+    expect(groupMenu.closest('[data-testid="cloud-board-toolbar"]')).toBeNull()
+    fireEvent.scroll(groupMenu)
+    expect(screen.getByTestId('cloud-board-group-menu')).toBeInTheDocument()
+    fireEvent.scroll(document.body)
+    expect(screen.queryByTestId('cloud-board-group-menu')).not.toBeInTheDocument()
+    await userEvent.click(screen.getByTestId('cloud-board-group-by'))
     await userEvent.click(screen.getByTestId('cloud-board-group-option-priority'))
     expect(localStorage.getItem('wework-board-group:1:11')).toBe('priority')
     expect(screen.getByTestId('cloud-todo-column-priority-high')).toBeInTheDocument()
@@ -4281,7 +4374,7 @@ describe('CloudTodoWorkspace', () => {
     expect(screen.getByTestId('my-work-group-action-runtime-standalone')).toBeVisible()
   })
 
-  it('refreshes an open My Tasks board when runtime execution status changes', async () => {
+  it('projects an active runtime task when persisted board status lags behind', async () => {
     const defaultProject = {
       ...project,
       id: 'default-work-items',
@@ -4319,9 +4412,9 @@ describe('CloudTodoWorkspace', () => {
       chats: [],
       totalTasks: 1,
     }
+    let currentRuntimeWork = runtimeWork
     const lifecycleStore = new RuntimeTaskLifecycleStore(1)
     lifecycleStore.syncRuntimeWork(runtimeWork)
-    let persistedStatus: 'in_review' | 'in_progress' = 'in_review'
     const trackedIssue = {
       ...item,
       cloud_project_id: defaultProject.id,
@@ -4332,7 +4425,7 @@ describe('CloudTodoWorkspace', () => {
       items: [defaultProject],
     })
     workbenchServices.deliveryApi!.getBoardSnapshot = vi.fn(async () => ({
-      items: [{ ...trackedIssue, status: persistedStatus }],
+      items: [{ ...trackedIssue, status: 'in_review' }],
       task_bindings: [
         {
           id: 1,
@@ -4356,7 +4449,7 @@ describe('CloudTodoWorkspace', () => {
       <CloudTodoWorkspace
         user={{ id: 1, user_name: 'local', email: 'local@example.com' } as User}
         localProjects={[{ id: 91, name: 'Project A', tasks: [] }]}
-        runtimeWork={runtimeWork}
+        runtimeWork={currentRuntimeWork}
         runtimeTaskLifecycle={lifecycleSnapshot}
         services={workbenchServices}
         embedded
@@ -4374,7 +4467,17 @@ describe('CloudTodoWorkspace', () => {
     const initialSnapshotRequests = vi.mocked(workbenchServices.deliveryApi!.getBoardSnapshot).mock
       .calls.length
 
-    persistedStatus = 'in_progress'
+    currentRuntimeWork = {
+      ...runtimeWork,
+      projects: runtimeWork.projects.map(projectWork => ({
+        ...projectWork,
+        deviceWorkspaces: projectWork.deviceWorkspaces.map(workspace => ({
+          ...workspace,
+          tasks: [],
+        })),
+      })),
+      totalTasks: 0,
+    }
     act(() => lifecycleStore.executorStarted(address))
     rendered.rerender(workspace(lifecycleStore.getSnapshot()))
 

@@ -13,12 +13,12 @@ describe('PluginShareTargetSearch', () => {
     const searchUsers = vi.fn(async () => [
       { id: 7, user_name: 'Admin', email: 'admin@example.com' },
     ])
-    const searchGroups = vi.fn(async () => [])
+    const searchDepartments = vi.fn(async () => [])
 
     render(
       <PluginShareTargetSearch
         searchUsers={searchUsers}
-        searchGroups={searchGroups}
+        searchDepartments={searchDepartments}
         onSelect={vi.fn()}
       />
     )
@@ -30,7 +30,7 @@ describe('PluginShareTargetSearch', () => {
 
     expect(screen.getByTestId('plugin-share-search-results')).toHaveClass('absolute')
     expect(searchUsers).not.toHaveBeenCalled()
-    expect(searchGroups).not.toHaveBeenCalled()
+    expect(searchDepartments).not.toHaveBeenCalled()
 
     await act(async () => {
       vi.advanceTimersByTime(179)
@@ -46,8 +46,8 @@ describe('PluginShareTargetSearch', () => {
 
     expect(searchUsers).toHaveBeenCalledTimes(1)
     expect(searchUsers).toHaveBeenCalledWith('admin')
-    expect(searchGroups).toHaveBeenCalledTimes(1)
-    expect(searchGroups).toHaveBeenCalledWith('admin')
+    expect(searchDepartments).toHaveBeenCalledTimes(1)
+    expect(searchDepartments).toHaveBeenCalledWith('admin')
     expect(screen.getByTestId('plugin-share-user-7')).toHaveTextContent('Admin')
   })
 
@@ -67,7 +67,7 @@ describe('PluginShareTargetSearch', () => {
     render(
       <PluginShareTargetSearch
         searchUsers={searchUsers}
-        searchGroups={vi.fn(async () => [])}
+        searchDepartments={vi.fn(async () => [])}
         onSelect={vi.fn()}
       />
     )
@@ -110,7 +110,7 @@ describe('PluginShareTargetSearch', () => {
         searchUsers={vi.fn(async () => {
           throw new Error('offline')
         })}
-        searchGroups={vi.fn(async () => [])}
+        searchDepartments={vi.fn(async () => [])}
         onSelect={vi.fn()}
       />
     )

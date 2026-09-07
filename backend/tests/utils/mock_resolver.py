@@ -14,6 +14,7 @@ from app.models.share_link import ResourceType
 from app.services.external_entity_resolver import (
     IExternalEntityResolver,
     _external_entity_resolvers,
+    _resolver_instances,
     register_entity_resolver,
 )
 
@@ -82,6 +83,9 @@ class MockDepartmentResolver(IExternalEntityResolver):
 def cleanup_resolvers():
     """Clean up mock resolver registrations after each test."""
     original = dict(_external_entity_resolvers)
+    original_instances = dict(_resolver_instances)
     yield
     _external_entity_resolvers.clear()
     _external_entity_resolvers.update(original)
+    _resolver_instances.clear()
+    _resolver_instances.update(original_instances)

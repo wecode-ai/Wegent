@@ -437,6 +437,12 @@ class Settings(BaseSettings):
             return _normalize_rag_runtime_mode_value(raw, label="global")
         raise ValueError(f"Unsupported RAG_RUNTIME_MODE value: {v!r}")
 
+    # Master switch for scheduled work started by this Backend process.
+    # Disable it for traffic-verification environments that share production
+    # resources but must not run maintenance, scheduling, or queue-consuming
+    # workers. Scheduled work can run on a dedicated deployment instead.
+    SCHEDULED_TASKS_ENABLED: bool = True
+
     # Scheduler backend configuration
     # Supported backends: "celery" (default), "apscheduler", "xxljob"
     SCHEDULER_BACKEND: str = "celery"
@@ -724,6 +730,15 @@ class Settings(BaseSettings):
     #          chat_shell/knowledge_runtime -> Backend internal API
     # Generate using: openssl rand -hex 32
     INTERNAL_SERVICE_TOKEN: str = ""
+    # Xiaoxin HR full-snapshot endpoint and signing secret.
+    XIAOXIN_KNOWLEDGE_PULL_URL: str = ""
+    XIAOXIN_SIGN_SECRET: str = ""
+    # Xiaoxin notification ingress and its fixed publication target. Disabled and
+    # unconfigured by default so source checkouts contain no production identity.
+    XIAOXIN_SYNC_ENABLED: bool = False
+    XIAOXIN_SYNC_TOKEN: str = ""
+    XIAOXIN_TARGET_KB_ID: int = 0
+    XIAOXIN_SYNC_USER_ID: int = 0
     # Knowledge runtime service URL for remote RAG execution
     KNOWLEDGE_RUNTIME_URL: str = "http://localhost:8200"
     # RAG data-plane execution mode

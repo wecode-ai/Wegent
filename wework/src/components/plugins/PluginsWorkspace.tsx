@@ -156,6 +156,7 @@ import {
   localMarketplaceIdFromItem,
   localMarketplaceKey,
   marketplaceComponentCount,
+  marketplacePluginDetailSelectionKey,
   mergeWarmInstalledPlugins,
   mergeWarmMarketplaceItems,
   mergeWarmMarketplaceOptions,
@@ -997,7 +998,8 @@ export function PluginsWorkspace({
                   grantUserCount: access.targets.filter(target => target.entityType === 'user')
                     .length,
                   grantNamespaceCount: access.targets.filter(
-                    target => target.entityType === 'namespace'
+                    target =>
+                      target.entityType === 'namespace' || target.entityType === 'org_department'
                   ).length,
                 }
               : item
@@ -1198,7 +1200,8 @@ export function PluginsWorkspace({
                 grantUserCount: access.targets.filter(target => target.entityType === 'user')
                   .length,
                 grantNamespaceCount: access.targets.filter(
-                  target => target.entityType === 'namespace'
+                  target =>
+                    target.entityType === 'namespace' || target.entityType === 'org_department'
                 ).length,
               }
             : item
@@ -1240,8 +1243,8 @@ export function PluginsWorkspace({
     (value: string) => pluginApi.searchPluginShareUsers(value).then(response => response.users),
     [pluginApi]
   )
-  const searchPluginShareGroups = useCallback(
-    (value: string) => pluginApi.searchPluginShareGroups(value).then(response => response.items),
+  const searchPluginShareDepartments = useCallback(
+    (value: string) => pluginApi.searchPluginShareDepartments(value),
     [pluginApi]
   )
 
@@ -3804,7 +3807,7 @@ export function PluginsWorkspace({
   const installedPluginsForDetailRef = useRef(installedPlugins)
   installedPluginsForDetailRef.current = installedPlugins
   const selectedMarketplaceDetailKey = selectedMarketplacePlugin
-    ? `${localMarketplaceIdFromItem(selectedMarketplacePlugin) ?? ''}::${selectedMarketplacePlugin.name}`
+    ? marketplacePluginDetailSelectionKey(selectedMarketplacePlugin)
     : ''
 
   useEffect(() => {
@@ -3831,16 +3834,12 @@ export function PluginsWorkspace({
     const shouldFetchLocalDetail = Boolean(marketplaceId)
 
     if (!shouldFetchLocalDetail) {
-      setSelectedMarketplacePluginDetail(previous =>
-        keepRicherMarketplacePluginDetail(previous, baseDetail)
-      )
+      setSelectedMarketplacePluginDetail(baseDetail)
       return
     }
 
     let disposed = false
-    setSelectedMarketplacePluginDetail(previous =>
-      keepRicherMarketplacePluginDetail(previous, baseDetail)
-    )
+    setSelectedMarketplacePluginDetail(baseDetail)
     void localPluginApi
       .readMarketplacePluginDetail(marketplaceId!, selected.name)
       .then(detail => {
@@ -3921,7 +3920,7 @@ export function PluginsWorkspace({
       onClose={() => setPluginShareState(null)}
       onSave={request => void savePluginShare(request)}
       searchUsers={searchPluginShareUsers}
-      searchGroups={searchPluginShareGroups}
+      searchDepartments={searchPluginShareDepartments}
     />
   ) : null
 
@@ -3976,7 +3975,7 @@ export function PluginsWorkspace({
       }}
       onPublish={request => void publishCreatedPlugin(pluginPublishTarget, request)}
       searchUsers={searchPluginShareUsers}
-      searchGroups={searchPluginShareGroups}
+      searchDepartments={searchPluginShareDepartments}
     />
   ) : null
   const openPublicationRevision = (publication: PluginPublicationRequestItem) => {

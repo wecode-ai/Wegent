@@ -381,6 +381,15 @@ impl RuntimeWorkRpcHandler {
         )
         .await
         .map_err(|error| AppIpcError::new("codex_error", error))?;
+        if let Some(workspace_path) = local_link
+            .as_ref()
+            .map(|link| link.workspace_path.as_str())
+            .filter(|path| !path.is_empty())
+        {
+            if let Some(thread) = thread.as_object_mut() {
+                thread.insert("cwd".to_owned(), Value::String(workspace_path.to_owned()));
+            }
+        }
         let presentation_page_turn_ids = thread
             .get("turns")
             .and_then(Value::as_array)
