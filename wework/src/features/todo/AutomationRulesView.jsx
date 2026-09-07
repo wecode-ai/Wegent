@@ -1847,6 +1847,7 @@ function WorkflowEditor({
   const [renaming, setRenaming] = useState(false)
   const [renameValue, setRenameValue] = useState(draft.name)
   const renameInputRef = useRef(null)
+  const deleteButtonRef = useRef(null)
   const needsSave = dirty || !draft.persisted
   const trigger = triggerPresentation(draft.trigger, t)
   const TriggerIcon = draft.trigger.type === 'schedule' ? Clock3 : Webhook
@@ -1874,6 +1875,30 @@ function WorkflowEditor({
     }
     setRenameValue(draft.name)
   }, [draft.name, renaming])
+
+  useEffect(() => {
+    const deleteSelectedNode = event => {
+      if (event.key !== 'Backspace' && event.key !== 'Delete') return
+      if (
+        event.target instanceof HTMLElement &&
+        (event.target.isContentEditable ||
+          event.target.closest(
+            'input, textarea, select, [contenteditable="true"], [role="textbox"]'
+          ))
+      ) {
+        return
+      }
+
+      const deleteButton = deleteButtonRef.current
+      if (!deleteButton) return
+      event.preventDefault()
+      event.stopImmediatePropagation()
+      deleteButton.click()
+    }
+
+    window.addEventListener('keydown', deleteSelectedNode, true)
+    return () => window.removeEventListener('keydown', deleteSelectedNode, true)
+  }, [])
 
   const updateTrigger = (key, value) => {
     onDraftChange(current => ({
@@ -2428,6 +2453,7 @@ function WorkflowEditor({
                           executionCatalog={executionCatalog}
                           onChange={updateDagStage}
                           onDelete={removeDagStage}
+                          deleteButtonRef={deleteButtonRef}
                           onOpenPluginMenu={onOpenPluginMenu}
                           constraint
                           supplemental={
@@ -2445,6 +2471,7 @@ function WorkflowEditor({
                         executionCatalog={executionCatalog}
                         onChange={updateStep}
                         onDelete={onRemoveStep}
+                        deleteButtonRef={deleteButtonRef}
                         onOpenPluginMenu={onOpenPluginMenu}
                       />
                     ) : (
@@ -2453,6 +2480,7 @@ function WorkflowEditor({
                         executionCatalog={executionCatalog}
                         onChange={updateStep}
                         onDelete={onRemoveStep}
+                        deleteButtonRef={deleteButtonRef}
                         onOpenPluginMenu={onOpenPluginMenu}
                       />
                     )}
@@ -2924,6 +2952,7 @@ function CoordinatorSettings({
   executionCatalog,
   onChange,
   onDelete,
+  deleteButtonRef,
   onOpenPluginMenu,
 }) {
   const environmentOptions = executionCatalog.environments.some(
@@ -3098,6 +3127,7 @@ function CoordinatorSettings({
       </p>
       <div className={automationClass('panel-danger-zone compact')}>
         <button
+          ref={deleteButtonRef}
           type="button"
           className={automationClass('delete-step')}
           data-testid="ai-coordinator-delete"
@@ -3172,6 +3202,7 @@ function StepSettings({
   executionCatalog,
   onChange,
   onDelete,
+  deleteButtonRef,
   onOpenPluginMenu,
   supplemental,
   constraint = false,
@@ -3529,6 +3560,7 @@ function StepSettings({
       ) : null}
       <section className={automationClass('panel-danger-zone')}>
         <button
+          ref={deleteButtonRef}
           className={automationClass('delete-step')}
           data-testid={`execution-node-delete-${step.id}`}
           onClick={onDelete}

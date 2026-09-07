@@ -898,6 +898,24 @@ describe('ProjectAutomationView', () => {
     expect(pointerMode).not.toHaveClass('active')
   })
 
+  test('deletes the selected workflow node with Backspace without intercepting text input', async () => {
+    const uiRule = automationRuleFromBackend(rule)
+    const onSaveRule = vi.fn().mockImplementation(async value => value)
+    render(<AutomationRulesView rules={[uiRule]} runs={[]} onSaveRule={onSaveRule} />)
+    fireEvent.click(screen.getByTestId('automation-card-rule-1'))
+    fireEvent.click(screen.getByTestId('execution-node-step-1'))
+
+    const nameInput = screen.getByTestId('execution-node-name-step-1')
+    fireEvent.keyDown(nameInput, { key: 'Backspace' })
+    expect(screen.getByTestId('execution-node-step-1')).toBeInTheDocument()
+
+    fireEvent.keyDown(document, { key: 'Backspace' })
+
+    expect(screen.queryByTestId('execution-node-step-1')).not.toBeInTheDocument()
+    await waitFor(() => expect(onSaveRule).toHaveBeenCalledOnce())
+    expect(onSaveRule.mock.calls[0][0].steps.map(step => step.id)).toEqual(['step-2', 'step-3'])
+  })
+
   test('selects and persists the required deliverable type', async () => {
     const { projectAutomationApi } = renderView()
     projectAutomationApi.update = vi.fn().mockResolvedValue(rule)

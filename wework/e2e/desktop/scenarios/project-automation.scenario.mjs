@@ -1667,6 +1667,21 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
       text: '等待补全',
       timeoutMs: uiTimeoutMs,
     })
+    await control.command('press', '[data-testid^="execution-node-"]', {
+      key: 'Backspace',
+    })
+    const deletedNodeSnapshot = JSON.parse(
+      await control.command('snapshot', '[data-testid="automation-rule-editor"]')
+    )
+    assert.ok(
+      !deletedNodeSnapshot.testIds.some(testId => testId.startsWith('execution-node-')),
+      'Backspace did not delete the selected workflow node'
+    )
+    await control.command('click', '[data-testid="automation-node-insert-after-trigger"]')
+    await control.command('click', '[data-testid="automation-node-insert-after-task-trigger"]')
+    await control.command('waitFor', '[data-testid^="execution-node-name-"]', {
+      timeoutMs: uiTimeoutMs,
+    })
     await control.command('fill', '[data-testid^="execution-node-name-"]', {
       value: '实现与验证',
     })
