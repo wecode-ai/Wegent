@@ -1,3 +1,4 @@
+import { useAssignmentNotificationChoice } from '@/features/notifications/useAssignmentNotificationChoice'
 import {
   useCallback,
   useContext,
@@ -1237,6 +1238,7 @@ export function CloudTodoWorkspace({
   onOpenSettings,
   onLogout,
 }: CloudTodoWorkspaceProps) {
+  const notificationChoice = useAssignmentNotificationChoice()
   const { t } = useTranslation('common')
   const workbench = useContext(WorkbenchContext)
   const taskStatusExtensionsAvailable = useDshSlotAvailable(WEWORK_DSH_SLOTS.taskStatus)
@@ -3342,6 +3344,15 @@ export function CloudTodoWorkspace({
       })
       return false
     }
+    const notifyAssignee =
+      nativeGroupBy === 'assignee' &&
+      /^[1-9]\d*$/.test(column.groupValue) &&
+      Number(column.groupValue) !== user.id &&
+      Number(column.groupValue) !== item.assignee_user_id &&
+      item.project_store === 'backend'
+        ? await notificationChoice.request()
+        : true
+    if (notifyAssignee === null) return false
     const taskBindingCount = Math.max(
       itemTaskBindings[item.id]?.length ?? 0,
       runtimeAddressesByWorkItem.get(`${item.cloud_project_id}:${item.id}`)?.length ?? 0
@@ -3418,7 +3429,21 @@ export function CloudTodoWorkspace({
                       assignee_team_id: null,
                     }
               : { tags: column.groupValue ? [column.groupValue] : [] }
-      const updated = await itemApi.updateLoopItem(item.id, { version: item.version, ...update })
+      const updated =
+        nativeGroupBy === 'assignee' &&
+        column.groupValue &&
+        typeof itemApi.assignLoopItem === 'function'
+          ? await itemApi.assignLoopItem(item.cloud_project_id, item.id, {
+              version: item.version,
+              assigneeType: column.groupValue.startsWith('agent:')
+                ? 'agent'
+                : column.groupValue.startsWith('team:')
+                  ? 'team'
+                  : 'user',
+              assigneeId: column.groupValue.replace(/^(agent|team):/, ''),
+              notifyAssignee,
+            })
+          : await itemApi.updateLoopItem(item.id, { version: item.version, ...update })
       const locatedUpdated = { ...updated, project_store: item.project_store }
       setItems(current =>
         current.map(candidate => (candidate.id === updated.id ? locatedUpdated : candidate))
@@ -3637,6 +3662,16 @@ export function CloudTodoWorkspace({
     if (!targetProject || !targetApi || issueComposerBusy) return false
     setIssueComposerBusy(true)
     setIssueComposerError(null)
+    const notifyAssignee =
+      input.assigneeUserId &&
+      input.assigneeUserId !== user.id &&
+      targetProject.project_store === 'backend'
+        ? await notificationChoice.request()
+        : true
+    if (notifyAssignee === null) {
+      setIssueComposerBusy(false)
+      return false
+    }
     try {
       const taskRuntimeProjectId = runtimeTaskProjectUiId(runtimeWork, input.taskRequest)
       const issueLocalProject =
@@ -3677,6 +3712,7 @@ export function CloudTodoWorkspace({
             version: created.version,
             assigneeType: 'user',
             assigneeId: String(input.assigneeUserId),
+            notifyAssignee,
           })
         } else {
           created = await targetApi.updateLoopItem(created.id, {
@@ -3919,6 +3955,7 @@ export function CloudTodoWorkspace({
       data-embedded={embedded}
       data-sidebar-collapsed={embedded || sidebarCollapsed}
     >
+      {notificationChoice.dialog}
       {selectedProjectKey === itemTaskBindingsProjectKey &&
       selectedProject?.pull_request_automation?.enabled &&
       changeRequestMonitor

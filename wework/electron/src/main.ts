@@ -1,4 +1,5 @@
 import './host/process-output-bootstrap.js'
+import { SchemeQueue } from './host/scheme-queue.js'
 
 import {
   app,
@@ -233,6 +234,25 @@ const pluginDevelopmentChildRuntime =
 let trayManager: ElectronTrayManager<Electron.Menu | null, Tray> | null = null
 let trayNativeStatus: TrayNativeStatusController | null = null
 const desktopHostEvents = new DesktopHostEventBroker()
+const pendingSchemes = new SchemeQueue()
+process.argv.forEach(value => pendingSchemes.enqueue(value))
+
+function queueScheme(url: string): void {
+  if (!pendingSchemes.enqueue(url)) return
+  desktopHostEvents.publish('wework-scheme-requested', {})
+}
+
+app.on('open-url', (event, url) => {
+  event.preventDefault()
+  queueScheme(url)
+  if (mainWindow?.isMinimized()) mainWindow.restore()
+  mainWindow?.show()
+  mainWindow?.focus()
+})
+
+if (app.isPackaged && !process.env.WEWORK_E2E_CONTROL_URL) {
+  app.setAsDefaultProtocolClient('wework')
+}
 const pendingWorkspaceOpenRequests: LocalWorkspaceOpenRequest[] = startupWorkspaceOpenRequest
   ? [startupWorkspaceOpenRequest]
   : []
@@ -294,7 +314,8 @@ function focusStartupSplashIfActive(): boolean {
   return true
 }
 
-app.on('second-instance', (_event, _argv, _workingDirectory, additionalData) => {
+app.on('second-instance', (_event, argv, _workingDirectory, additionalData) => {
+  argv.filter(value => value.startsWith('wework://')).forEach(queueScheme)
   const instanceData =
     additionalData && typeof additionalData === 'object'
       ? (additionalData as Record<string, unknown>)
@@ -343,12 +364,21 @@ function secureDshContents(contents: WebContents, dshUrl: string): void {
   const allowedOrigin = new URL(dshUrl).origin
   installContextMenu(contents, 'app')
   contents.setWindowOpenHandler(({ url }) => {
+    if (url.startsWith('wework://')) {
+      queueScheme(url)
+      return { action: 'deny' }
+    }
     const target = new URL(url)
     if (target.origin === allowedOrigin) return { action: 'allow' }
     void shell.openExternal(url)
     return { action: 'deny' }
   })
   contents.on('will-navigate', (event, url) => {
+    if (url.startsWith('wework://')) {
+      event.preventDefault()
+      queueScheme(url)
+      return
+    }
     if (new URL(url).origin === allowedOrigin) return
     event.preventDefault()
     void shell.openExternal(url)
@@ -1370,6 +1400,8 @@ async function configureDesktopRuntime(): Promise<void> {
             }),
           secureStorage,
           takePendingWorkspaceOpenRequests,
+          pendingSchemes,
+          openScheme: queueScheme,
           updatePreferences: updateDesktopPreferences,
         },
         {

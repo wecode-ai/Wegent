@@ -1438,6 +1438,15 @@ async fn call_backend_tool(
             .ok_or_else(|| "task_id is required".to_owned())
     };
     let request = match name {
+        "send_notification" => client
+            .post(format!("{base}/wework-notifications"))
+            .json(&json!({
+                "project_id": project_id.parse::<i64>().map_err(|_| "Notifications require a backend project".to_owned())?,
+                "item_id": arguments.get("item_id"),
+                "recipient_user_id": arguments.get("recipient_user_id"),
+                "title": arguments.get("title"),
+                "body": arguments.get("body"),
+            })),
         "list_spaces" => client.get(format!("{base}/cloud-projects")),
         "list_space_files" => {
             let mut request = client.get(format!("{base}/cloud-projects/{project_id}/files"));
@@ -1537,21 +1546,17 @@ async fn call_backend_tool(
                 "findings": arguments.get("findings").cloned().unwrap_or_else(|| json!([])),
             })),
         "assign_board_item" => {
-            let run_id = grant
-                .and_then(|grant| grant.automation_run_id.clone())
-                .ok_or_else(|| {
-                    "assign_board_item is only available to an AI-managed automation"
-                        .to_owned()
-                })?;
-            client
-                .post(format!(
-                    "{base}/cloud-projects/{project_id}/automation-runs/{}/assign",
-                    encode_segment(&run_id)
-                ))
-                .json(&json!({
-                    "assignee_type": arguments.get("assignee_type").and_then(Value::as_str).unwrap_or_default(),
-                    "assignee_id": arguments.get("assignee_id").and_then(Value::as_str).unwrap_or_default(),
-                }))
+            let notify = arguments.get("notify_assignee").and_then(Value::as_bool).unwrap_or(true);
+            if let Some(run_id) = grant.and_then(|grant| grant.automation_run_id.as_deref()) {
+                client.post(format!("{base}/cloud-projects/{project_id}/automation-runs/{}/assign", encode_segment(run_id)))
+                    .json(&json!({"assignee_type": arguments.get("assignee_type"), "assignee_id": arguments.get("assignee_id"), "notify_assignee": notify}))
+            } else {
+                let response = client.get(format!("{base}/loop-items/{}", encode_segment(task_id()?)))
+                    .bearer_auth(auth_token).send().await.map_err(|error| error.to_string())?;
+                let item = backend_json(response).await?;
+                client.post(format!("{base}/cloud-projects/{project_id}/loop-items/{}/assign", encode_segment(task_id()?)))
+                    .json(&json!({"version": item.get("version"), "notify_self": true, "assignee_type": arguments.get("assignee_type"), "assignee_id": arguments.get("assignee_id"), "notify_assignee": notify}))
+            }
         }
         "create_board_item" => client
             .post(format!("{base}/cloud-projects/{project_id}/loop-items"))
@@ -2346,6 +2351,22 @@ fn tools() -> Vec<Value> {
             }),
         ),
         tool(
+            "send_notification",
+            "Send a persistent Wework inbox notification with an Issue link; connected IM sessions also receive it. Omit recipient_user_id to notify the current user. Use for user-requested notifications and automation conditions. Human assignments already notify by default; do not send duplicates.",
+            json!({
+                "type": "object",
+                "properties": {
+                    "space_id": {"type": "string"},
+                    "item_id": {"type": "string"},
+                    "recipient_user_id": {"type": "integer", "minimum": 1},
+                    "title": {"type": "string", "minLength": 1, "maxLength": 256},
+                    "body": {"type": "string", "minLength": 1, "maxLength": 10000}
+                },
+                "required": ["title", "body"],
+                "additionalProperties": false
+            }),
+        ),
+        tool(
             "get_assignment_candidates",
             "List assignable project members and robots with their capability descriptions",
             json!({
@@ -2412,14 +2433,15 @@ fn tools() -> Vec<Value> {
         ),
         tool(
             "assign_board_item",
-            "Assign the current AI-managed board item to one project member or robot",
+            "Assign a board item to one project member or robot. Human assignees are notified by default; do not send a duplicate notification.",
             json!({
                 "type": "object",
                 "properties": {
                     "space_id": {"type": "string"},
                     "item_id": {"type": "string"},
                     "assignee_type": {"enum": ["user", "agent"]},
-                    "assignee_id": {"type": "string"}
+                    "assignee_id": {"type": "string"},
+                    "notify_assignee": {"type": "boolean", "default": true}
                 },
                 "required": ["space_id", "item_id", "assignee_type", "assignee_id"]
             }),
@@ -2805,6 +2827,7 @@ fn is_automation_manager_tool(name: &str) -> bool {
             | "get_board_item"
             | "get_assignment_candidates"
             | "submit_workflow_plan"
+            | "send_notification"
     )
 }
 
@@ -3405,8 +3428,38 @@ mod tests {
         }
     }
 
+    #[tokio::test]
+    async fn sends_notifications_through_the_authenticated_backend() {
+        use axum::{extract::Json, http::HeaderMap, routing::post, Router};
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let app = Router::new().route(
+            "/api/v1/wework-notifications",
+            post(|headers: HeaderMap, Json(body): Json<Value>| async move {
+                assert_eq!(headers.get("authorization").unwrap(), "Bearer unit-token");
+                Json(body)
+            }),
+        );
+        let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        let result = call_backend_tool(
+            &format!("http://{address}"),
+            "unit-token",
+            "12",
+            "send_notification",
+            &json!({"title": "Review", "body": "Review failed", "item_id": "ISSUE-1"}),
+            None,
+        )
+        .await
+        .unwrap();
+        assert_eq!(result["project_id"], 12);
+        assert_eq!(result["item_id"], "ISSUE-1");
+        assert_eq!(result["recipient_user_id"], Value::Null);
+        assert_eq!(result["body"], "Review failed");
+        server.abort();
+    }
+
     #[test]
-    fn automation_manager_has_only_read_and_plan_tools() {
+    fn automation_manager_has_read_plan_and_notification_tools() {
         let names = tools()
             .into_iter()
             .filter_map(|tool| tool["name"].as_str().map(ToOwned::to_owned))
@@ -3418,6 +3471,7 @@ mod tests {
             vec![
                 "get_current_context",
                 "get_board_item",
+                "send_notification",
                 "get_assignment_candidates",
                 "submit_workflow_plan",
             ]

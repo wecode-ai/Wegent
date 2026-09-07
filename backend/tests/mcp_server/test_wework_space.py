@@ -563,3 +563,27 @@ async def test_board_robot_task_can_assign_item_to_another_project_robot(
 
     assert assigned["assignee_agent_id"] == robot.id
     dispatch.assert_awaited_once()
+
+
+def test_notification_tool_uses_bound_project_and_current_user(
+    test_db, test_user, monkeypatch
+):
+    from app.models.wework_notification import WeworkNotification
+
+    project = _project(test_db, test_user, provider="internal")
+    monkeypatch.setattr(wework_space, "SessionLocal", lambda: _SessionContext(test_db))
+    monkeypatch.setattr(
+        wework_space, "_board_context", lambda *_: {"space_id": str(project.id)}
+    )
+    monkeypatch.setattr("app.core.async_utils.schedule_async_task", lambda *_: None)
+
+    result = wework_space.send_notification(
+        _token(test_user), "Review failed", "Please review"
+    )
+
+    assert result["url"] == f"wework://boards/{project.id}"
+    assert test_db.get(WeworkNotification, result["id"]).user_id == test_user.id
+    with pytest.raises(ValueError, match="Space does not match"):
+        wework_space.send_notification(
+            _token(test_user), "Review", "Wrong project", space_id="999"
+        )

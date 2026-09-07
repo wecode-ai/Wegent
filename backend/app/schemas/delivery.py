@@ -23,6 +23,7 @@ from app.schemas.tagging import normalize_tags as _normalize_tags
 
 
 class LoopItemCreate(BaseModel):
+    notify_assignee: bool = True
     title: str = Field(min_length=1, max_length=255)
     description: str = ""
     status: str | None = Field(default=None, max_length=32)
@@ -55,6 +56,7 @@ class LoopItemCreate(BaseModel):
 
 
 class LoopItemUpdate(BaseModel):
+    notify_assignee: bool = True
     version: int = Field(ge=1)
     title: str | None = Field(default=None, min_length=1, max_length=255)
     description: str | None = None

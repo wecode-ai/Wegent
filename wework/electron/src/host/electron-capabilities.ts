@@ -38,6 +38,7 @@ import { captureWebContentsDataUrl } from './web-contents-capture.js'
 import type { TrayActivation, TrayMenuState, TraySnapshot } from './tray-manager.js'
 import type { StartupSplashSnapshot } from './startup-splash.js'
 import type { AppUpdateService, WeworkUpdateChannel } from './app-update-service.js'
+import type { SchemeQueue } from './scheme-queue.js'
 import {
   listLocalWorkspaceOpeners,
   openLocalWorkspace,
@@ -71,6 +72,8 @@ export interface ElectronDesktopServices {
   cleanupStaleTemporaryImages: () => Promise<void>
   coreDshPlugins: () => CoreDshPluginService | null
   pluginDevelopment: () => PluginDevelopmentService | null
+  pendingSchemes: SchemeQueue
+  openScheme: (url: string) => void
   takePendingWorkspaceOpenRequests?: () => Array<{ path: string; label?: string }>
   updatePreferences?: (patch: Record<string, unknown>) => Promise<Record<string, unknown>>
 }
@@ -237,6 +240,11 @@ export function createElectronCapabilityRouter(
   })
   router.grant(WEWORK_APP_PRINCIPAL, HOST_CAPABILITIES)
 
+  router.register('navigation.pendingSchemes', () => desktopServices.pendingSchemes.read())
+  router.register('navigation.acknowledgeScheme', params => {
+    const id = integerParam(params, 'id')
+    if (id !== undefined) desktopServices.pendingSchemes.acknowledge(id)
+  })
   router.register('app.getVersion', () => ({ version: app.getVersion() }))
   router.register('desktop.events', params =>
     desktopServices.events.read(integerParam(params, 'after') ?? 0)
@@ -636,6 +644,10 @@ export function createElectronCapabilityRouter(
   })
   router.register('shell.openExternal', async params => {
     const url = new URL(stringParam(params, 'url'))
+    if (url.protocol === 'wework:') {
+      desktopServices.openScheme(url.toString())
+      return
+    }
     if (!['https:', 'http:', 'mailto:'].includes(url.protocol)) {
       throw new HostCapabilityError(
         'invalid_external_url',

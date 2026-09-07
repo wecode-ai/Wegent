@@ -337,6 +337,7 @@ export function WorkbenchProvider({
   useEffect(
     () =>
       resolvedServices.chatStream.subscribe({
+        onWeworkNotification: () => window.dispatchEvent(new Event('wework-notifications-changed')),
         onProjectTaskAssigned: payload => {
           void sendSystemNotification({
             title: t('workbench.project_task_assigned_notification_title'),

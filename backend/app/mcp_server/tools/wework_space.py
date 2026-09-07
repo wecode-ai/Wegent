@@ -637,12 +637,44 @@ async def report_workflow_outcome(
 
 
 @mcp_tool(server="wework_space")
+def send_notification(
+    token_info: MCPAuthInfo,
+    title: str,
+    body: str,
+    recipient_user_id: int | None = None,
+    space_id: str = "",
+    item_id: str = "",
+) -> dict[str, Any]:
+    """Send a persistent Wework notification and push to connected IM.
+
+    Omit recipient_user_id to notify the current user. Assignments already
+    notify their new human owner by default; do not send duplicate alerts.
+    """
+    from app.schemas.wework_notification import NotificationCreate, NotificationView
+    from app.services.wework_notifications import send_project_notification
+
+    with SessionLocal() as db:
+        resolved_space = _space_id(db, token_info, space_id)
+        resolved_item = item_id or _board_context(db, token_info).get("item_id")
+        values = NotificationCreate(
+            project_id=int(resolved_space),
+            item_id=resolved_item,
+            recipient_user_id=recipient_user_id,
+            title=title,
+            body=body,
+        )
+        row = send_project_notification(db, user_id=token_info.user_id, values=values)
+        return NotificationView.model_validate(row).model_dump(mode="json")
+
+
+@mcp_tool(server="wework_space")
 async def assign_board_item(
     token_info: MCPAuthInfo,
     assignee_type: str,
     assignee_id: str,
     space_id: str = "",
     item_id: str = "",
+    notify_assignee: bool = True,
 ) -> dict[str, Any]:
     """Assign a board item to a project member or user-created board robot."""
 
@@ -654,6 +686,8 @@ async def assign_board_item(
             version=int(current["version"]),
             assignee_type=assignee_type,
             assignee_id=assignee_id,
+            notify_assignee=notify_assignee,
+            notify_self=True,
         )
         context = _board_context(db, token_info)
         if context.get("source") == "project_automation":
@@ -668,6 +702,7 @@ async def assign_board_item(
                 task_id=resolved_item_id,
                 assignee_type=assignee_type,
                 assignee_id=assignee_id,
+                notify_assignee=notify_assignee,
             )
             if isinstance(result, LoopItem):
                 return _item_view(db, result, token_info.user_id)

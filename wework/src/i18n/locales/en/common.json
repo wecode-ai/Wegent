@@ -316,7 +316,6 @@
     "project_automation_skipped": "Skipped",
     "project_automation_unknown": "Status unknown",
     "project_automation_completed": "Completed",
-    "project_automation_run_details": "View run details",
     "project_automation_run_details": "Run details",
     "project_automation_run_failed_details": "Run failed, view details",
     "project_automation_run_succeeded_details": "Run succeeded, view details",
@@ -2418,7 +2417,6 @@
     "plugins_back_to_management": "Back to plugin management",
     "plugins_back_to_create_task": "Back to create task",
     "plugins_install_plugin": "Install plugin",
-    "plugins_manage_access": "Manage access",
     "plugin_detail_access_scope": "Access scope",
     "plugin_detail_access_private": "Only you can use this plugin",
     "plugin_detail_access_workspace": "Available in your organization",
@@ -4463,5 +4461,23 @@
     "minutes": "minutes",
     "hours": "hours",
     "days": "days"
+  },
+  "notifications": {
+    "title": "Notifications",
+    "refresh": "Refresh",
+    "read_all": "Mark all read",
+    "invalid_link": "This notification link is invalid",
+    "failed": "Could not update notifications. Try again.",
+    "loading": "Loading…",
+    "empty": "No notifications yet",
+    "assignment_title": "Issue assigned to you",
+    "assignment_body": "{{assigner}} assigned “{{item}}” on the “{{project}}” board to you",
+    "unread": "Unread",
+    "more": "Load more",
+    "ask_title": "Notify the assignee?",
+    "ask_body": "When you save this assignment, send an in-app notification and push to their connected IM.",
+    "without_notification": "Do not notify",
+    "with_notification": "Notify",
+    "connect": "Connect to the cloud to view notifications"
   }
 }

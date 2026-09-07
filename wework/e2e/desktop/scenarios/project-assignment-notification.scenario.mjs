@@ -49,7 +49,7 @@ async function assertNoNotification(control, message, timeoutMs) {
   }
 }
 
-export function createDesktopScenario({ uiTimeoutMs }) {
+export function createDesktopScenario({ uiTimeoutMs, captureScreenshot }) {
   let backendUrl = ''
   let ownerToken = ''
   let owner = null
@@ -150,6 +150,47 @@ export function createDesktopScenario({ uiTimeoutMs }) {
       )
       assert.equal(notifications.length, 1, 'One assignment produced duplicate notifications')
 
+      const inbox = await ownerRequest('/api/v1/wework-notifications')
+      const saved = inbox.items.find(item => item.payload.itemId === assignedTask.id)
+      assert.ok(saved, 'Assignment must persist in the Backend inbox')
+      assert.equal(
+        saved.url,
+        `wework://boards/${project.id}/issues/${encodeURIComponent(assignedTask.id)}`
+      )
+      assert.equal(saved.read_at, null)
+      await control.command('click', '[data-testid="wework-notifications-button"]')
+      await control.command('waitFor', `[data-testid="wework-notification-${saved.id}"]`, {
+        timeoutMs: uiTimeoutMs,
+      })
+      await control.command('click', `[data-testid="wework-notification-${saved.id}"]`)
+      await control.command(
+        'waitFor',
+        '[data-workspace-tab-content][aria-hidden="false"] [data-testid="cloud-todo-detail-title"]',
+        {
+          timeoutMs: uiTimeoutMs,
+        }
+      )
+      assert.equal(
+        await control.command(
+          'getValue',
+          '[data-workspace-tab-content][aria-hidden="false"] [data-testid="cloud-todo-detail-title"]'
+        ),
+        ASSIGNED_TASK_TITLE
+      )
+      const readInbox = await ownerRequest('/api/v1/wework-notifications')
+      assert.ok(
+        readInbox.items.find(item => item.id === saved.id)?.read_at,
+        'Opening a notification must persist its read state'
+      )
+      const forbiddenRead = await fetch(
+        `${backendUrl}/api/v1/wework-notifications/${saved.id}/read`,
+        {
+          method: 'POST',
+          headers: { Authorization: `Bearer ${assignerToken}` },
+        }
+      )
+      assert.equal(forbiddenRead.status, 404, 'Another user must not read the recipient inbox')
+
       await control.command('clearSystemNotifications', 'body')
       assignedTask = await assignerRequest(
         `/api/v1/cloud-projects/${project.id}/loop-items/${assignedTask.id}/assign`,
@@ -181,6 +222,73 @@ export function createDesktopScenario({ uiTimeoutMs }) {
         }
       )
       await assertNoNotification(control, 'Self-assignment produced a notification', uiTimeoutMs)
+
+      const silent = await assignerRequest(`/api/v1/cloud-projects/${project.id}/loop-items`, {
+        method: 'POST',
+        body: JSON.stringify({ title: 'Silent assignment' }),
+      })
+      await assignerRequest(`/api/v1/cloud-projects/${project.id}/loop-items/${silent.id}/assign`, {
+        method: 'POST',
+        body: JSON.stringify({
+          version: silent.version,
+          assigneeType: 'user',
+          assigneeId: String(owner.id),
+          notifyAssignee: false,
+        }),
+      })
+      const finalInbox = await ownerRequest('/api/v1/wework-notifications')
+      assert.equal(
+        finalInbox.items.filter(item => item.payload.itemId === assignedTask.id).length,
+        1
+      )
+      assert.equal(
+        finalInbox.items.some(item => item.payload.itemId === silent.id),
+        false
+      )
+      await control.command('openWeworkScheme', 'body', {
+        value: `wework://boards/${project.id}/issues/${selfAssignedTask.id}`,
+      })
+      await control.command(
+        'waitFor',
+        '[data-workspace-tab-content][aria-hidden="false"] [data-testid="cloud-todo-detail-title"]',
+        {
+          timeoutMs: uiTimeoutMs,
+        }
+      )
+      await control.command(
+        'waitFor',
+        '[data-workspace-tab-content][aria-hidden="false"] [data-testid="cloud-todo-detail-title"]',
+        {
+          text: SELF_ASSIGNED_TASK_TITLE,
+          timeoutMs: uiTimeoutMs,
+        }
+      )
+      assert.equal(
+        await control.command(
+          'getValue',
+          '[data-workspace-tab-content][aria-hidden="false"] [data-testid="cloud-todo-detail-title"]'
+        ),
+        SELF_ASSIGNED_TASK_TITLE
+      )
+      const custom = await ownerRequest('/api/v1/wework-notifications', {
+        method: 'POST',
+        body: JSON.stringify({
+          project_id: project.id,
+          item_id: assignedTask.id,
+          title: 'Review failed',
+          body: 'Please review the blocked Issue',
+        }),
+      })
+      await control.command('click', '[data-testid="wework-notifications-button"]')
+      await control.command('click', '[data-testid="wework-notifications-refresh"]')
+      await control.command('waitFor', `[data-testid="wework-notification-${custom.id}"]`, {
+        timeoutMs: uiTimeoutMs,
+      })
+      await captureScreenshot(control, 'wework-notifications-inbox.png')
+      await control.command('click', '[data-testid="wework-notifications-read-all"]')
+      await control.command('waitFor', '[data-testid="wework-notifications-popover"]', {
+        timeoutMs: uiTimeoutMs,
+      })
     },
 
     diagnostics() {

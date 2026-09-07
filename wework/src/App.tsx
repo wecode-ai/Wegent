@@ -1,3 +1,4 @@
+import { WeworkSchemeBridge } from '@/features/notifications/WeworkSchemeBridge'
 import {
   Activity,
   useCallback,
@@ -1086,6 +1087,7 @@ function AppShell() {
       restoreSessionTabs={!isMainWindow}
     >
       <ElectronWorkbenchTabBridge />
+      <WeworkSchemeBridge />
       <div
         data-testid="app-shell"
         className={cn(

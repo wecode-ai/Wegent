@@ -1546,6 +1546,9 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
       })
       return ''
     }
+    case 'openWeworkScheme':
+      await invokeDesktopHost('shell.openExternal', { url: command.value ?? '' })
+      return ''
     case 'getSystemNotifications':
       return JSON.stringify(
         (

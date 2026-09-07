@@ -449,7 +449,7 @@ class LoopItemService:
         )
         sequence = project.next_item_number
         project.next_item_number += 1
-        payload = values.model_dump()
+        payload = values.model_dump(exclude={"notify_assignee"})
         tags = payload.pop("tags")
         explicit_workflow = values.workflow
         explicit_execution_config = values.execution_config
@@ -632,6 +632,14 @@ class LoopItemService:
                     assigner_user_id=user_id,
                     priority=item.priority,
                 )
+        self._notify_updated_assignee(
+            db,
+            item=item,
+            actor_user_id=user_id,
+            target_user_id=item.assignee_user_id,
+            previous_user_id=None,
+            notify=values.notify_assignee,
+        )
         if commit:
             db.commit()
             db.refresh(item)
@@ -917,7 +925,7 @@ class LoopItemService:
         item = self.get(db, item_id, user_id)
         self._require_item_access(db, item, user_id, edit=True)
         updates = values.model_dump(
-            exclude={"version", "automation_rule_id"},
+            exclude={"version", "automation_rule_id", "notify_assignee"},
             exclude_unset=True,
         )
         meaningful_change = any(
@@ -1102,6 +1110,14 @@ class LoopItemService:
             updates["metadata_json"] = advance_content_revision(
                 metadata, actor_user_id=user_id
             )
+        self._notify_updated_assignee(
+            db,
+            item=item,
+            actor_user_id=user_id,
+            target_user_id=updates.get("assignee_user_id"),
+            previous_user_id=item.assignee_user_id,
+            notify=values.notify_assignee,
+        )
         updates = adapt_loop_node_values_for_dialect(
             updates,
             db.get_bind().dialect.name,
@@ -1132,6 +1148,40 @@ class LoopItemService:
         db.expire(item)
         db.refresh(item)
         return item
+
+    def _notify_updated_assignee(
+        self,
+        db: Session,
+        *,
+        item: LoopItem,
+        actor_user_id: int,
+        target_user_id: int | None,
+        previous_user_id: int | None,
+        notify: bool,
+    ) -> None:
+        if (
+            not target_user_id
+            or target_user_id == previous_user_id
+            or target_user_id == actor_user_id
+        ):
+            return
+        project_id = int(item.cloud_project_id)
+        if target_user_id not in self._project_member_ids(db, project_id):
+            raise HTTPException(422, "Assignee is not a member of this project")
+        if not notify:
+            return
+        project = db.get(CloudProject, project_id)
+        actor = db.get(User, actor_user_id)
+        notify_project_task_assignee(
+            db,
+            actor_user_id=actor_user_id,
+            user_id=target_user_id,
+            project_id=str(project_id),
+            project_name=project.name,
+            item_id=item.id,
+            item_title=item.title,
+            assigner_name=actor.user_name,
+        )
 
     def assign(
         self,
@@ -1300,6 +1350,28 @@ class LoopItemService:
                 status.HTTP_422_UNPROCESSABLE_ENTITY, "Unknown assignee type"
             )
 
+        if (
+            values.notify_assignee
+            and values.assignee_type == "user"
+            and (
+                target_user_id != user_id
+                or automation_context is not None
+                or values.notify_self
+            )
+            and previous_assignee_user_id != target_user_id
+        ):
+            assigner = db.get(User, user_id)
+            notify_project_task_assignee(
+                db,
+                actor_user_id=user_id,
+                user_id=target_user_id,
+                project_id=str(project_id),
+                project_name=project.name or "",
+                item_id=item.id,
+                item_title=item.title or item.id,
+                assigner_name=assigner.user_name if assigner else str(user_id),
+            )
+
         metadata = advance_content_revision(metadata, actor_user_id=user_id)
         updated = self._versioned_metadata_update(
             db, item, values.version, metadata, **assignee_updates
@@ -1318,20 +1390,6 @@ class LoopItemService:
                     project_id=str(project_id),
                     agent_id=agent.id,
                 )
-        elif (
-            values.assignee_type == "user"
-            and target_user_id != user_id
-            and previous_assignee_user_id != target_user_id
-        ):
-            assigner = db.get(User, user_id)
-            notify_project_task_assignee(
-                user_id=target_user_id,
-                project_id=str(project_id),
-                project_name=project.name or "",
-                item_id=item.id,
-                item_title=item.title or item.id,
-                assigner_name=assigner.user_name if assigner else str(user_id),
-            )
         return updated
 
     def approve_run(

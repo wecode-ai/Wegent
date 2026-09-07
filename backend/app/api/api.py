@@ -61,6 +61,7 @@ from app.api.endpoints import (
     utils,
     web_scraper,
     wework_auth,
+    wework_notifications,
     wiki,
     wizard,
     work_queue,
@@ -441,4 +442,10 @@ api_router.include_router(
     api_keys_internal_router,
     prefix="/internal",
     tags=["internal-api-keys"],
+)
+
+api_router.include_router(
+    wework_notifications.router,
+    prefix="/v1/wework-notifications",
+    tags=["wework-notifications"],
 )
