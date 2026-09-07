@@ -279,6 +279,7 @@ describe('useWorkbenchCloudProjectContext', () => {
     )
 
     await waitFor(() => expect(result.current.boundCloudItem?.status).toBe('in_progress'))
+    expect(result.current.boundCloudItemStatusOverride).toBe('in_progress')
   })
 
   test('automatically selects the configured default project space', async () => {

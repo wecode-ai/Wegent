@@ -348,12 +348,16 @@ export function useWorkbenchCloudProjectContext({
       runtimeTaskRunning ?? false,
       runtimeTaskExecutionKnown ?? false
     )
-    return executionStatus ? nextTaskTrackingStatus(boundCloudItem.status, executionStatus) : null
+    if (!executionStatus) return null
+    return nextTaskTrackingStatus(boundCloudItem.status, executionStatus) ?? boundCloudItem.status
   }, [boundCloudItem, runtimeTaskExecutionKnown, runtimeTaskExecutionStatus, runtimeTaskRunning])
-  const projectedBoundCloudItem =
-    boundCloudItem && boundCloudItemStatusOverride
-      ? { ...boundCloudItem, status: boundCloudItemStatusOverride }
-      : boundCloudItem
+  const projectedBoundCloudItem = useMemo(
+    () =>
+      boundCloudItem && boundCloudItemStatusOverride
+        ? { ...boundCloudItem, status: boundCloudItemStatusOverride }
+        : boundCloudItem,
+    [boundCloudItem, boundCloudItemStatusOverride]
+  )
   const composerCloudProject = contextRuntimeTask ? boundCloudProject : pendingCloudProject
   const composerTodoItem = contextRuntimeTask ? projectedBoundCloudItem : pendingTodoItem
   const defaultCloudProjectSelectionKey = `${paneKey}:${currentProjectId ?? 'none'}`

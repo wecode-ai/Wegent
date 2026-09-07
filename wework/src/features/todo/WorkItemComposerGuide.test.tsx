@@ -170,11 +170,12 @@ describe('WorkItemComposerGuide', () => {
 
   test('keeps a runtime status override ahead of a lagging refreshed context', async () => {
     const runningItem = { ...item, status: 'in_progress' as const }
+    const refreshedItem = { ...item, title: 'Refreshed stale item' }
     const api = {
       listTaskBindings: vi.fn().mockResolvedValue(taskBindings),
       findCloudContextForTask: vi.fn().mockResolvedValue({
         project,
-        loop_item: item,
+        loop_item: refreshedItem,
       }),
     } as unknown as ProjectSpaceApi
 
@@ -188,7 +189,11 @@ describe('WorkItemComposerGuide', () => {
       />
     )
 
-    await waitFor(() => expect(api.findCloudContextForTask).toHaveBeenCalled())
+    await waitFor(() =>
+      expect(screen.getByTestId('work-item-guide-summary-title')).toHaveTextContent(
+        'Refreshed stale item'
+      )
+    )
     expect(screen.getByTestId('work-item-guide-summary-status')).toHaveTextContent('进行中')
   })
 

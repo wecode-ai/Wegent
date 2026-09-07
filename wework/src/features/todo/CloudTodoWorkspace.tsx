@@ -1698,7 +1698,13 @@ export function CloudTodoWorkspace({
     }
     return result
   }, [runtimeWork])
-  const runtimeTaskKeys = useMemo(() => new Set(runtimeTasksByKey.keys()), [runtimeTasksByKey])
+  const runtimeTaskKeys = useMemo(() => {
+    const keys = new Set(runtimeTasksByKey.keys())
+    for (const lifecycle of runtimeTaskLifecycle?.tasks.values() ?? []) {
+      keys.add(runtimeConversationKey(lifecycle.address))
+    }
+    return keys
+  }, [runtimeTaskLifecycle, runtimeTasksByKey])
   const runtimeAddressesByWorkItem = useMemo(() => {
     const result = new Map<string, RuntimeTaskAddress[]>()
     const workspaces = [
