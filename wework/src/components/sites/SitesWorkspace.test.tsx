@@ -775,7 +775,7 @@ describe('SitesWorkspace', () => {
     render(<SitesWorkspace api={api} onCreate={vi.fn()} />)
 
     expect(await screen.findByTestId('environment-variables-dialog')).toBeInTheDocument()
-    expect(api.getEnvironmentVariables).toHaveBeenCalledWith('site-1')
+    await waitFor(() => expect(api.getEnvironmentVariables).toHaveBeenCalledWith('site-1'))
   })
 
   test('keeps the edit dialog open when metadata saving fails', async () => {

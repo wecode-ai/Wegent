@@ -592,6 +592,47 @@ describe('WorkspacePanelActions', () => {
     })
   })
 
+  test('keeps the cloud IDE action visible but disabled when the device disables code-server', async () => {
+    render(
+      <WorkspacePanelActions
+        {...baseProps}
+        currentProject={{
+          id: 7,
+          name: 'project38',
+          config: {
+            execution: {
+              targetType: 'cloud',
+              deviceId: 'device-1',
+            },
+          },
+          tasks: [],
+        }}
+        devices={[
+          {
+            id: 1,
+            device_id: 'device-1',
+            name: 'Cloud Device',
+            status: 'online',
+            is_default: false,
+            device_type: 'cloud',
+            bind_shell: 'claudecode',
+            runtime_features: {
+              schemaVersion: 3,
+              interactiveSessions: { codeServer: false, terminal: true },
+            },
+          },
+        ]}
+      />
+    )
+
+    const button = screen.getByTestId('open-code-server-titlebar-button')
+    expect(button).toBeDisabled()
+    expect(button).toHaveAttribute('title', 'workbench.project_ide_unavailable_tooltip')
+    await userEvent.click(button)
+    expect(startProjectCodeServerMock).not.toHaveBeenCalled()
+    expect(startDeviceCodeServerMock).not.toHaveBeenCalled()
+  })
+
   test('reports a missing cloud IDE URL from the titlebar action', async () => {
     startProjectCodeServerMock.mockResolvedValueOnce({
       session_id: 'ide-1',

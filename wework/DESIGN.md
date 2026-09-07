@@ -718,6 +718,9 @@ semantics for all three.
   persistent visible label.
 - Placeholder text is an example or prompt, not the only label.
 - Helper and error text sit next to the field they describe.
+- Native `select` popups must explicitly theme their `option`, `optgroup`, and
+  disabled text from Wework semantic tokens. Do not rely on the host platform
+  to inherit the WebView's light or dark colors for the expanded popup.
 - Validate format after blur or a reasonable pause; validate completeness on
   submit.
 - Preserve valid values and focus the first invalid field or an error summary.

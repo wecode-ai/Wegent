@@ -250,6 +250,39 @@ describe('MarketplaceManagement', () => {
     expect(screen.getByText('marketplace_management.unlisted')).toBeInTheDocument()
   })
 
+  it('reloads a filtered Smart App list after its listing status changes', async () => {
+    render(<MarketplaceManagement mode="smart-app" />)
+    await screen.findByText('Smart App')
+
+    fireEvent.keyDown(screen.getByTestId('marketplace-smart-app-filter-listing'), {
+      key: 'ArrowDown',
+    })
+    fireEvent.click(
+      await screen.findByRole('option', {
+        name: 'marketplace_management.smart_app_filters.listed',
+      })
+    )
+    await waitFor(() =>
+      expect(mockedAdminApis.getMarketplaceSmartApps).toHaveBeenLastCalledWith(1, 50, {
+        search: '',
+        listingStatus: 'listed',
+        source: 'all',
+      })
+    )
+
+    mockedAdminApis.getMarketplaceSmartApps.mockClear()
+    mockedAdminApis.getMarketplaceSmartApps.mockResolvedValueOnce({
+      items: [],
+      total: 0,
+      page: 1,
+      limit: 50,
+    })
+    fireEvent.click(screen.getByTestId('marketplace-listing-toggle-33'))
+
+    await waitFor(() => expect(mockedAdminApis.getMarketplaceSmartApps).toHaveBeenCalledTimes(1))
+    await waitFor(() => expect(screen.queryByText('Smart App')).not.toBeInTheDocument())
+  })
+
   it('imports an uploaded Smart App package as an official app', async () => {
     render(<MarketplaceManagement mode="smart-app" />)
     await screen.findByText('Smart App')

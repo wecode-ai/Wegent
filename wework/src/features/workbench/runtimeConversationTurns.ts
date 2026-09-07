@@ -208,6 +208,13 @@ export function reduceRuntimeConversationTurns(
         return {
           ...turn,
           items,
+          ...(!isTerminalProcessingBlockStatus(action.block.status) && {
+            status: 'streaming' as const,
+            completedAt: undefined,
+            error: undefined,
+            errorType: undefined,
+            stoppedNotice: undefined,
+          }),
           streamingThinkingContent:
             action.block.type === 'thinking' || action.block.type === 'tool'
               ? getLatestThinkingContent(processingBlocks(items))
@@ -240,6 +247,14 @@ export function reduceRuntimeConversationTurns(
         return {
           ...turn,
           items,
+          ...(action.updates.status !== undefined &&
+            !isTerminalProcessingBlockStatus(action.updates.status) && {
+              status: 'streaming' as const,
+              completedAt: undefined,
+              error: undefined,
+              errorType: undefined,
+              stoppedNotice: undefined,
+            }),
           streamingThinkingContent:
             previousBlock?.type === 'block' && previousBlock.block.type === 'thinking'
               ? getLatestThinkingContent(processingBlocks(items))

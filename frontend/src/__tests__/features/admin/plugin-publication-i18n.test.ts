@@ -18,10 +18,13 @@ describe('plugin publication review i18n', () => {
   it('keeps the complete review translation contract aligned in Chinese and English', () => {
     const en = enAdmin.marketplace_management.plugin_publications
     const zh = zhAdmin.marketplace_management.plugin_publications
+    const enPlugins = enAdmin.marketplace_management.plugins
+    const zhPlugins = zhAdmin.marketplace_management.plugins
     const enSmartAppFilters = enAdmin.marketplace_management.smart_app_filters
     const zhSmartAppFilters = zhAdmin.marketplace_management.smart_app_filters
 
     expect(collectKeys(en).sort()).toEqual(collectKeys(zh).sort())
+    expect(collectKeys(enPlugins).sort()).toEqual(collectKeys(zhPlugins).sort())
     expect(collectKeys(enSmartAppFilters).sort()).toEqual(collectKeys(zhSmartAppFilters).sort())
     expect(zh.actions.accept).toBeTruthy()
     expect(zh.actions.return).toBeTruthy()

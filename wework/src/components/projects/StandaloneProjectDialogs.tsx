@@ -849,7 +849,7 @@ export function StandaloneFolderProjectDialog({
                   setGitParentPickerOpen(false)
                   setGitError(null)
                 }}
-                className="min-w-0 flex-1 bg-transparent text-sm text-text-primary outline-none"
+                className="wework-native-select min-w-0 flex-1 bg-transparent text-sm text-text-primary outline-none"
               >
                 {!activeDevice && (
                   <option value="" disabled>

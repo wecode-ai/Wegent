@@ -42,7 +42,6 @@ pub struct LocalBackendConfig {
     pub reconnect_delay: Duration,
     pub reconnect_delay_max: Duration,
     pub configured_capabilities: Vec<String>,
-    pub runtime_auth_home: PathBuf,
     pub local_workspace_root: PathBuf,
     pub update: UpdateConfig,
 }
@@ -105,7 +104,6 @@ impl LocalBackendConfig {
                 DEFAULT_RECONNECT_MAX_DELAY_SECONDS,
             ),
             configured_capabilities: config.capabilities,
-            runtime_auth_home: home_dir(),
             local_workspace_root: config.local_workspace_root,
             update: config.update,
         }
@@ -208,10 +206,6 @@ fn default_device_name() -> String {
         .or_else(|_| env::var("COMPUTERNAME"))
         .unwrap_or_else(|_| "local".to_owned());
     format!("{} - {host}", env::consts::OS)
-}
-
-fn home_dir() -> PathBuf {
-    dirs::home_dir().unwrap_or_else(|| PathBuf::from("."))
 }
 
 #[cfg(test)]

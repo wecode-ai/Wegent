@@ -865,23 +865,19 @@ export function AutomationRulesView({
 
   const dirty = JSON.stringify(draft) !== savedSnapshot
 
-  const viewRef = useRef(view)
-  viewRef.current = view
-  const dirtyRef = useRef(dirty)
-  dirtyRef.current = dirty
-
   useEffect(() => {
     setRules(backendRules)
-    setDraft(current => {
-      if (!current.persisted) return current
-      const refreshed = backendRules.find(rule => rule.id === current.id)
-      if (!refreshed) return current
-      // Keep any unsaved work while the editor is open. The rules list can
-      // refresh in the background without clobbering the user's draft.
-      if (viewRef.current === 'editor' && dirtyRef.current) return current
-      return cloneRule(refreshed)
-    })
   }, [backendRules])
+
+  useEffect(() => {
+    if (!draft.persisted || JSON.stringify(draft) !== savedSnapshot) return
+    const refreshed = backendRules.find(rule => rule.id === draft.id)
+    if (!refreshed) return
+    const refreshedSnapshot = JSON.stringify(refreshed)
+    if (refreshedSnapshot === savedSnapshot) return
+    setDraft(cloneRule(refreshed))
+    setSavedSnapshot(refreshedSnapshot)
+  }, [backendRules, draft, savedSnapshot])
 
   useEffect(() => {
     setRuns(backendRuns)

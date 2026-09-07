@@ -28,6 +28,8 @@ fn configured_session_handler(
     public_base_url_default: &str,
 ) -> LocalSessionHandler {
     let gateway_enabled = env_bool("DEVICE_SESSION_GATEWAY_ENABLED", gateway_enabled_default);
+    let code_server_enabled = gateway_enabled && env_bool("DEVICE_CODE_SERVER_ENABLED", true);
+    let terminal_enabled = env_bool("DEVICE_TERMINAL_ENABLED", true);
     let public_base_url = env::var("DEVICE_PUBLIC_BASE_URL")
         .ok()
         .map(|value| value.trim().to_owned())
@@ -46,6 +48,7 @@ fn configured_session_handler(
         workspace_root,
         Arc::new(UnixSessionPtyManager),
     )
+    .with_interactive_sessions(code_server_enabled, terminal_enabled)
 }
 
 fn default_workspace_root() -> PathBuf {

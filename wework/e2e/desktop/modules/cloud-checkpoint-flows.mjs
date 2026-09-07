@@ -744,6 +744,7 @@ async function verifyCloudCheckpoint({
       const otherTaskRowTestId = await verifyShortConversationLayout({
         composerSelector,
         control,
+        restartDesktopApp,
       })
       setPhase('cloud-background-completion-restore')
       await verifyBackgroundCompletionRestore({

@@ -81,7 +81,7 @@ describe('localConnectorAuthGate', () => {
     expect(items[0]?.pluginKey).toBe('weibo-api-wiki')
   })
 
-  test('only preflights explicit plugin or connector auth messages', () => {
+  test('only preflights explicit plugin mentions', () => {
     expect(messageNeedsConnectorPreflight('继续分析这个问题')).toBe(false)
     expect(
       messageNeedsConnectorPreflight(
@@ -96,7 +96,12 @@ describe('localConnectorAuthGate', () => {
           connectorSlug: 'weibo-wiki',
         })
       )
-    ).toBe(true)
+    ).toBe(false)
+    expect(
+      messageNeedsConnectorPreflight(
+        'Investigate why the online Connector authentication fails before creating a task.'
+      )
+    ).toBe(false)
   })
 
   test('detects connector_auth_required payloads', () => {
