@@ -97,6 +97,7 @@ import {
   waitForControlValue,
   waitForFolderPathReady,
   waitForFolderPickerInitialized,
+  waitForWorkbenchDebugState,
   waitForWorkbenchTask,
 } from './workspace-flows.mjs'
 
@@ -1363,8 +1364,14 @@ async function verifyRetryFailureRestoration(control, composerSelector) {
     true,
     'Retry removed the failed attempt instead of preserving the conversation history'
   )
-  const successfulRetryDebugSnapshot = JSON.parse(
-    await control.command('getWorkbenchDebugSnapshot', 'body')
+  const successfulRetryDebugSnapshot = await waitForWorkbenchDebugState(
+    control,
+    snapshot =>
+      Number(snapshot.pane?.messageSummary?.byRole?.assistant ?? 0) ===
+        assistantCountBeforeRetry + 1 &&
+      Number(snapshot.pane?.messageSummary?.byRole?.user ?? 0) === userCountBeforeRetry + 1 &&
+      snapshot.pane?.messageSummary?.activeAssistantMessage === null,
+    'Retry response rendered before the completed continuation was committed to conversation state'
   )
   const successfulRetryAssistantCount = Number(
     successfulRetryDebugSnapshot.pane?.messageSummary?.byRole?.assistant ?? 0
@@ -1412,8 +1419,13 @@ async function verifyRetryFailureRestoration(control, composerSelector) {
     true,
     'Reopening the conversation lost the preserved failed attempt'
   )
-  const reopenedRetryDebugSnapshot = JSON.parse(
-    await control.command('getWorkbenchDebugSnapshot', 'body')
+  const reopenedRetryDebugSnapshot = await waitForWorkbenchDebugState(
+    control,
+    snapshot =>
+      Number(snapshot.pane?.messageSummary?.byRole?.assistant ?? 0) ===
+        successfulRetryAssistantCount &&
+      Number(snapshot.pane?.messageSummary?.byRole?.user ?? 0) === successfulRetryUserCount,
+    'Reopened retry conversation did not restore the completed continuation counts'
   )
   assert.equal(
     Number(reopenedRetryDebugSnapshot.pane?.messageSummary?.byRole?.assistant ?? 0),

@@ -713,21 +713,21 @@ async function verifyProjectAiSettings({
     'The task-specific model override dropped the project instructions'
   )
 
-  setPhase('project-ai-settings-next-task-remembers-model')
+  setPhase('project-ai-settings-next-task-restores-project-default')
   await control.command('clickWhenEnabled', newConversationSelector)
   await control.command('waitFor', composerSelector, {
     timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
   })
-  await waitForE2EModelLabel(control, [REMEMBERED_TASK_MODEL_LABEL])
+  await waitForE2EModelLabel(control, [PROJECT_AI_MODEL_LABEL])
   await control.command('click', '[data-testid="model-selector-button"]')
   assert.match(
     await control.command('getText', '[data-testid="model-control-menu-reasoning"]'),
     /High|高/,
-    'The next task did not remember the selected model and reasoning effort'
+    'The next task did not restore the project model and reasoning effort'
   )
   await captureVerificationScreenshot(
     control,
-    'project-ai-settings-11-next-task-model-remembered.png'
+    'project-ai-settings-11-next-task-project-default.png'
   )
   await control.command('press', 'body', { key: 'Escape' })
 }
