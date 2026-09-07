@@ -1,8 +1,7 @@
 import assert from 'node:assert/strict'
 import { access, mkdir, readFile, writeFile } from 'node:fs/promises'
 import { join, resolve } from 'node:path'
-import { x as extractTar } from 'tar'
-import { fetchJson, resultDir } from './shared.mjs'
+import { commandOutputAsync, fetchJson, repoDir, resultDir } from './shared.mjs'
 import { captureVerificationScreenshot } from './workspace-flows.mjs'
 
 export async function verifySitesUpgrade({ cloudEnvironment: env, control, codexHome, setPhase }) {
@@ -44,7 +43,18 @@ export async function verifySitesUpgrade({ cloudEnvironment: env, control, codex
   for (const version of ['old', 'new']) {
     const cwd = join(fixtureRoot, version)
     await mkdir(cwd, { recursive: true })
-    await extractTar({ file: join(archiveRoot, `${version}.tar.gz`), cwd })
+    await commandOutputAsync(
+      'uv',
+      [
+        'run',
+        'python',
+        '-c',
+        'import sys, tarfile; archive = tarfile.open(sys.argv[1]); archive.extractall(sys.argv[2], filter="data"); archive.close()',
+        join(archiveRoot, `${version}.tar.gz`),
+        cwd,
+      ],
+      { cwd: join(repoDir, 'backend') }
+    )
   }
   setPhase('sites-old-install')
   const old = await env.publishPluginRelease({
