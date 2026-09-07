@@ -95,6 +95,15 @@ from the final application resources after Electron Builder finishes signing.
 macOS code signing can rewrite nested executables, so publication must not
 reuse the pre-package content hashes from `components.json`.
 
+The Codex component boundary is the complete `codex/` runtime directory, not
+the standalone `codex` executable. The component must contain
+`WEGENT_CODEX_BINARY.json`, the target architecture's `codex` and
+`codex-code-mode-host` binaries, the `codex-path` tools, and legal resources.
+The client resolves the main executable from the runtime descriptor's
+`binaryPath` and verifies the sibling code-mode host before activation.
+Release scripts must not point the Codex entry in `components.json` at the main
+executable or archive that executable alone.
+
 Component archives are named by their archive SHA-256 and stored as immutable
 assets. Repository-built Wework core plugin/UI, application static asset,
 bundled plugin, and Executor archives live in their corresponding version
@@ -233,7 +242,7 @@ with SHA-512. Prepared desktop resources live under `wework/resources/`.
 icons, and runtime descriptors into the application resources. Do not maintain
 a second desktop resource tree or manifest.
 
-The current pin is Codex `0.152.1`. Codex `0.152` disables
+The current pin is Codex `0.153.3`. Codex `0.152` disables
 `tools.update_plan.enabled` by default, while Wework consumes the corresponding
 plan events to render plan blocks, so the Executor must enable the tool
 explicitly when launching Codex. Desktop E2E verifies the lockfile binary by
