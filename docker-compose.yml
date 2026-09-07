@@ -141,6 +141,8 @@ services:
       WEGENT_BACKEND_PUBLIC_URL: ${WEGENT_BACKEND_PUBLIC_URL:-http://backend:8000}
       # Knowledge Runtime URL for RAG operations
       KNOWLEDGE_RUNTIME_URL: ${KNOWLEDGE_RUNTIME_URL:-http://knowledge_runtime:8200}
+      # Maximum external documents (e.g. DingTalk docs) per single batch import
+      KNOWLEDGE_EXTERNAL_BATCH_IMPORT_MAX: ${BACKEND_KNOWLEDGE_EXTERNAL_BATCH_IMPORT_MAX:-50}
       # RAG Runtime Mode: "local" (default) or "remote" to use knowledge_runtime
       # For remote mode, set to: {"default":"remote"}
       RAG_RUNTIME_MODE: ${RAG_RUNTIME_MODE:-local}

@@ -10,11 +10,13 @@ import type { DingtalkDocNode } from '@/types/dingtalk-doc'
 
 const mockUseBatchAttachment = jest.fn()
 const mockGetExternalDocumentImportStatuses = jest.fn()
+const mockGetKnowledgeConfig = jest.fn()
 
 jest.mock('@/apis/knowledge', () => ({
   ...jest.requireActual('@/apis/knowledge'),
   getExternalDocumentImportStatuses: (...args: unknown[]) =>
     mockGetExternalDocumentImportStatuses(...args),
+  getKnowledgeConfig: () => mockGetKnowledgeConfig(),
 }))
 
 const mockGetSyncStatus = jest.fn()
@@ -70,7 +72,7 @@ jest.mock('@/hooks/useTranslation', () => ({
         'document.upload.dingtalk.searchCount': dingtalk.searchCount,
         'document.upload.dingtalk.folderDocumentCountHint':
           'Importable documents, including all descendants',
-        'document.upload.dingtalk.limitError': 'At most 50 documents can be imported at once',
+        'document.upload.dingtalk.limitError': dingtalk.limitError,
         'document.upload.dingtalk.sharedHint': dingtalk.sharedHint,
         'document.upload.dingtalk.noPermission': 'You do not have permission to add documents',
         'document.upload.dingtalk.resultCreated': 'Created {{count}}',
@@ -465,6 +467,9 @@ describe('DocumentUpload dingtalk source', () => {
     setupDocsApi()
     setupWikispaceApi()
     mockGetExternalDocumentImportStatuses.mockReset().mockResolvedValue({})
+    mockGetKnowledgeConfig
+      .mockReset()
+      .mockResolvedValue({ chunk_storage_enabled: false, external_batch_import_max: 50 })
   })
 
   it('shows current-KB import outcomes on document leaves, including collapsed descendants', async () => {
@@ -1097,6 +1102,32 @@ describe('DocumentUpload dingtalk source', () => {
     }
     expect(screen.getByTestId('dingtalk-import-limit-error')).toBeInTheDocument()
     expect(submit).toBeDisabled()
+  })
+
+  it('reads the import limit from the knowledge config', async () => {
+    mockGetKnowledgeConfig.mockResolvedValue({
+      chunk_storage_enabled: false,
+      external_batch_import_max: 2,
+    })
+    const docs = Array.from({ length: 3 }, (_, index) => docNode(`cap-${index}`, `Cap ${index}`))
+    mockGetDocs.mockResolvedValue({ nodes: docs, total_count: 3 })
+    await openDingtalkMode()
+
+    await waitFor(() =>
+      expect(screen.getByText('Up to 2 per import', { exact: false })).toBeVisible()
+    )
+
+    fireEvent.click(screen.getByTestId('dingtalk-node-select-cap-0'))
+    fireEvent.click(screen.getByTestId('dingtalk-node-select-cap-1'))
+    expect(screen.queryByTestId('dingtalk-import-limit-error')).not.toBeInTheDocument()
+
+    fireEvent.click(screen.getByTestId('dingtalk-node-select-cap-2'))
+    await waitFor(() =>
+      expect(screen.getByTestId('dingtalk-import-limit-error')).toHaveTextContent(
+        'At most 2 documents can be imported at once'
+      )
+    )
+    expect(screen.getByTestId('dingtalk-import-submit')).toBeDisabled()
   })
 
   it('defaults the target folder to the current folder selection', async () => {

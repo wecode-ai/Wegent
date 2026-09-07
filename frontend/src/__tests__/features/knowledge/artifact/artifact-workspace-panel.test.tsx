@@ -61,6 +61,7 @@ describe('ArtifactWorkspacePanel', () => {
     expect(mockWorkspaceSidePanel).toHaveBeenLastCalledWith(
       expect.objectContaining({
         side: 'right',
+        defaultCollapsed: true,
         collapsedWidth: 72,
       })
     )
