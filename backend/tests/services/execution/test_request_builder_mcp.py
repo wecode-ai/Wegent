@@ -473,6 +473,41 @@ class TestBuildMcpServers:
         assert "headers" not in stdio
         assert "inject_wegent_token" not in stdio
 
+    @patch(
+        "app.services.execution.request_builder.kindReader.get_by_name_and_namespace"
+    )
+    @patch("app.services.execution.request_builder.settings.CHAT_MCP_SERVERS", "{}")
+    def test_inject_wegent_token_allows_http_when_enabled(
+        self, mock_get_kind, mocker
+    ) -> None:
+        mocker.patch(
+            "app.services.execution.request_builder.settings."
+            "MCP_IDENTITY_ALLOW_INSECURE_HTTP",
+            True,
+        )
+        builder = TaskRequestBuilder.__new__(TaskRequestBuilder)
+        builder.db = SimpleNamespace()
+        mock_get_kind.return_value = _ghost_kind_with_mcp(
+            {
+                "insecure-server": {
+                    "type": "streamable-http",
+                    "url": "http://internal.example.com/mcp",
+                    "inject_wegent_token": True,
+                },
+            }
+        )
+
+        result = builder._build_mcp_servers(
+            _bot_kind_with_ghost(user_id=1),
+            SimpleNamespace(user_id=1, name="user-agent"),
+            user=SimpleNamespace(id=7, user_name="alice"),
+        )
+
+        server = result[0]
+        assert server["auth"]["Authorization"].startswith("Bearer ")
+        assert server["headers"]["Authorization"] == server["auth"]["Authorization"]
+        assert "inject_wegent_token" not in server
+
 
 def test_board_task_auto_injects_mcp_for_chat_and_code_shell_contracts(test_db, mocker):
     builder = TaskRequestBuilder(test_db)

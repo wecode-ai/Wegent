@@ -165,6 +165,9 @@ class Settings(BaseSettings):
     WEWORK_REFRESH_TOKEN_EXPIRE_MINUTES: int = 365 * 24 * 60
     SKILL_IDENTITY_TOKEN_EXPIRE_MINUTES: int = 10 * 24 * 60  # 10 days in minutes
     MCP_IDENTITY_TOKEN_EXPIRE_MINUTES: int = 24 * 60  # 1 day in minutes
+    # Allow identity tokens over plain http for non-loopback URLs (e.g. internal
+    # test environments). Keep disabled in production.
+    MCP_IDENTITY_ALLOW_INSECURE_HTTP: bool = False
 
     @field_validator("MCP_IDENTITY_TOKEN_EXPIRE_MINUTES")
     @classmethod

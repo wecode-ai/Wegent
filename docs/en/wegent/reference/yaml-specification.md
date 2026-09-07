@@ -87,7 +87,9 @@ spec:
 The option is enabled per server (opt-in) so the token is never leaked to
 servers that do not need it. The server URL must use `https` (loopback `http`
 is allowed for local development) so the bearer token is not sent over
-cleartext channels. The business side can validate the token by calling
+cleartext channels. Internal test environments can opt into plain http with
+`MCP_IDENTITY_ALLOW_INSECURE_HTTP=true`; keep it disabled in production.
+The business side can validate the token by calling
 `GET /api/mcp-identity/me`, which returns the current user's basic
 information (`id`, `user_name`, `email`) and never exposes git credentials.
 Token lifetime is controlled by `MCP_IDENTITY_TOKEN_EXPIRE_MINUTES`

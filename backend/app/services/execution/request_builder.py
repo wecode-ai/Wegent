@@ -2361,13 +2361,16 @@ Response template:
         """Check that a URL may carry an injected identity bearer token.
 
         Identity tokens are only sent to https endpoints or loopback http
-        endpoints so they are not exposed over cleartext channels.
+        endpoints so they are not exposed over cleartext channels. Internal
+        test environments can additionally opt into plain http through the
+        ``MCP_IDENTITY_ALLOW_INSECURE_HTTP`` setting.
 
         Args:
             url: MCP server URL
 
         Returns:
-            True when the URL is https or loopback http, False otherwise
+            True when the URL is https, loopback http, or plain http explicitly
+            allowed by configuration, False otherwise
         """
         try:
             parsed = urlparse(url)
@@ -2376,7 +2379,15 @@ Response template:
         if parsed.scheme == "https":
             return True
         if parsed.scheme == "http":
-            return parsed.hostname in {"localhost", "127.0.0.1", "::1"}
+            return (
+                parsed.hostname
+                in {
+                    "localhost",
+                    "127.0.0.1",
+                    "::1",
+                }
+                or settings.MCP_IDENTITY_ALLOW_INSECURE_HTTP
+            )
         return False
 
     @staticmethod
