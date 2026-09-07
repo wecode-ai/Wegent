@@ -3590,7 +3590,14 @@
     "feedback_report_id": "Report ID",
     "feedback_close": "Close",
     "feedback_category_report": "Problem report",
-    "feedback_category_report_description": "Your feedback and the redaction record"
+    "feedback_category_report_description": "Your feedback and the redaction record",
+    "board_automation_hourly": "Hourly",
+    "board_automation_minute": "Minute of each hour",
+    "board_automation_hourly_summary": "Every hour at minute {{minute}}",
+    "board_automation_run": "Run",
+    "board_automation_running": "Starting…",
+    "board_automation_run_started": "Run started",
+    "board_automation_save_first": "Save changes before running"
   },
   "delivery": {
     "action": "Deliver",

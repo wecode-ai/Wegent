@@ -3587,7 +3587,14 @@
     "feedback_report_id": "问题编号",
     "feedback_close": "关闭",
     "feedback_category_report": "问题说明",
-    "feedback_category_report_description": "你填写的反馈内容与脱敏处理记录"
+    "feedback_category_report_description": "你填写的反馈内容与脱敏处理记录",
+    "board_automation_hourly": "每小时",
+    "board_automation_minute": "每小时的第几分钟",
+    "board_automation_hourly_summary": "每小时第 {{minute}} 分钟",
+    "board_automation_run": "运行",
+    "board_automation_running": "启动中…",
+    "board_automation_run_started": "已启动运行",
+    "board_automation_save_first": "请先保存更改再运行"
   },
   "delivery": {
     "action": "交付",

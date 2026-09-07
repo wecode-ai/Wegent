@@ -431,6 +431,40 @@ describe('ProjectAutomationView', () => {
     expect(pluginApi.listPlugins).not.toHaveBeenCalled()
   })
 
+  test('renders schedule status and last-run metadata on the automation card', async () => {
+    const scheduled = {
+      ...rule,
+      triggerType: 'schedule' as const,
+      cronExpression: '16 * * * *',
+      nextRunAt: '2026-09-07T08:16:00Z',
+      lastRunAt: '2026-09-07T07:16:00Z',
+      lastRunStatus: 'succeeded' as const,
+    }
+
+    renderView({ listedRules: [scheduled] })
+
+    const card = await screen.findByTestId('automation-card-rule-1')
+    expect(card).toHaveTextContent('运行中 · 下次 16:16')
+    expect(card).toHaveTextContent('2026/09/07 15:16 · 成功')
+    expect(screen.getByTestId('automation-toggle-rule-1')).toHaveAttribute('aria-checked', 'true')
+  })
+
+  test('dismisses the automation card menu from outside clicks and Escape', async () => {
+    renderView()
+
+    const menuButton = await screen.findByTestId('automation-menu-rule-1')
+    fireEvent.click(menuButton)
+    expect(screen.getByTestId('automation-menu-rule-1-menu')).toBeInTheDocument()
+
+    fireEvent.pointerDown(document.body)
+    expect(screen.queryByTestId('automation-menu-rule-1-menu')).not.toBeInTheDocument()
+
+    fireEvent.click(menuButton)
+    expect(screen.getByTestId('automation-menu-rule-1-menu')).toBeInTheDocument()
+    fireEvent.keyDown(document, { key: 'Escape' })
+    expect(screen.queryByTestId('automation-menu-rule-1-menu')).not.toBeInTheDocument()
+  })
+
   test('does not reload automation rules when a parent callback changes', async () => {
     let now = Date.now()
     const nowSpy = vi.spyOn(Date, 'now').mockImplementation(() => now)
@@ -464,7 +498,7 @@ describe('ProjectAutomationView', () => {
     view.rerender(<AutomationRulesView rules={[refreshedRule]} runs={[]} />)
 
     expect(screen.getByTestId('execution-node-prompt-step-1')).toHaveValue('尚未保存的本地输入')
-    expect(screen.getByText('有未保存更改')).toBeInTheDocument()
+    expect(screen.getByText('待保存')).toBeInTheDocument()
   })
 
   test('applies a refreshed rule when the editor draft is clean', async () => {
@@ -495,8 +529,7 @@ describe('ProjectAutomationView', () => {
     expect(deviceApi.listDevices).toHaveBeenCalledOnce()
     expect(modelApi.listModels).toHaveBeenCalledOnce()
     expect(pluginApi.listPlugins).not.toHaveBeenCalled()
-    fireEvent.click(screen.getByTestId('automation-editor-section-menu'))
-    expect(screen.getByDisplayValue('每日 Issue 巡检')).toBeInTheDocument()
+    expect(screen.getByTestId('automation-editor-name')).toHaveTextContent('每日 Issue 巡检')
     expect(screen.getByTestId('automation-workflow-canvas')).toBeInTheDocument()
   })
 
@@ -515,24 +548,24 @@ describe('ProjectAutomationView', () => {
     await screen.findByTestId('automation-card-rule-1')
 
     fireEvent.click(screen.getByTestId('automation-create-blank'))
-    fireEvent.click(screen.getByTestId('automation-save'))
+    fireEvent.click(screen.getByTestId('automation-editor-name'))
+    const nameInput = screen.getByTestId('automation-editor-name-input')
+    fireEvent.change(nameInput, { target: { value: '自动保存的新规则' } })
+    fireEvent.blur(nameInput)
 
     await waitFor(() => expect(projectAutomationApi.create).toHaveBeenCalledOnce())
     expect(vi.mocked(projectAutomationApi.create).mock.calls[0][1].enabled).toBe(true)
   })
 
-  test('clears a pending automation notification when the view unmounts', async () => {
+  test('clears a pending auto-save timer when the view unmounts', () => {
     vi.useFakeTimers()
     try {
       const view = render(<AutomationRulesView rules={[]} runs={[]} />)
       fireEvent.click(screen.getByTestId('automation-create-blank'))
-
-      await act(async () => {
-        fireEvent.click(screen.getByTestId('automation-save'))
-        await Promise.resolve()
+      fireEvent.change(screen.getByTestId('automation-rule-description'), {
+        target: { value: '等待自动保存' },
       })
 
-      expect(screen.getByText('自动化已保存')).toBeInTheDocument()
       expect(vi.getTimerCount()).toBe(1)
 
       view.unmount()
@@ -555,16 +588,14 @@ describe('ProjectAutomationView', () => {
     expect(screen.queryByTestId('automation-editor-leftbar')).not.toBeInTheDocument()
     const navigation = screen.getByTestId('automation-editor-navigation')
     const backButton = screen.getByTestId('automation-editor-back')
+    const objectBar = screen.getByTestId('automation-editor-object-bar')
     const sectionMenu = screen.getByTestId('automation-editor-section-menu')
     expect(navigation).not.toHaveClass('border', 'bg-background/95', 'shadow-md')
-    expect(backButton).toHaveClass('size-8', 'border', 'bg-background/95', 'shadow-md')
-    expect(sectionMenu.firstElementChild).toHaveClass(
-      'h-8',
-      'border',
-      'bg-background/95',
-      'shadow-md'
-    )
+    expect(objectBar).toHaveClass('h-9', 'border', 'bg-background/95', 'shadow-md')
+    expect(backButton).toHaveClass('size-7')
+    expect(sectionMenu).toHaveClass('h-9', 'border', 'bg-background/95', 'shadow-md')
     expect(sectionMenu).toHaveTextContent('编排')
+    expect(screen.getByTestId('automation-editor-name')).toHaveTextContent('新 Issue 自动开发')
     expect(screen.getByTestId('automation-editor-rightbar')).not.toContainElement(
       screen.getByTestId('automation-editor-global-actions')
     )
@@ -581,6 +612,71 @@ describe('ProjectAutomationView', () => {
     expect(screen.getByTestId('automation-node-insert-after-step-2')).toBeInTheDocument()
     expect(view.container.querySelector('[data-id^="append-edge:"]')).toBeNull()
     expect(view.container.querySelector('[data-id^="insert-"]')).toBeNull()
+  })
+
+  test('renames an automation inline and supports commit or cancel keyboard actions', async () => {
+    const { projectAutomationApi } = renderView()
+    vi.mocked(projectAutomationApi.update).mockImplementation(
+      async (_projectId, _ruleId, input) => ({
+        ...rule,
+        name: input.name ?? rule.name,
+        version: input.version + 1,
+      })
+    )
+    await openRuleEditor()
+
+    fireEvent.click(screen.getByTestId('automation-editor-name'))
+    let input = screen.getByTestId('automation-editor-name-input')
+    fireEvent.change(input, { target: { value: '不保存的名称' } })
+    fireEvent.keyDown(input, { key: 'Escape' })
+
+    expect(screen.getByTestId('automation-editor-name')).toHaveTextContent('新 Issue 自动开发')
+    expect(screen.queryByTestId('automation-save')).not.toBeInTheDocument()
+    expect(projectAutomationApi.update).not.toHaveBeenCalled()
+
+    fireEvent.click(screen.getByTestId('automation-editor-name'))
+    input = screen.getByTestId('automation-editor-name-input')
+    fireEvent.change(input, { target: { value: '每日数据同步' } })
+    fireEvent.blur(input)
+
+    await waitFor(() => expect(projectAutomationApi.update).toHaveBeenCalledOnce())
+    expect(screen.getByTestId('automation-editor-name')).toHaveTextContent('每日数据同步')
+    expect(projectAutomationApi.update).toHaveBeenCalledWith(
+      '11',
+      'rule-1',
+      expect.objectContaining({ version: 2, name: '每日数据同步' })
+    )
+    expect(screen.queryByTestId('automation-save')).not.toBeInTheDocument()
+
+    fireEvent.click(screen.getByTestId('automation-editor-name'))
+    input = screen.getByTestId('automation-editor-name-input')
+    fireEvent.change(input, { target: { value: '每小时数据同步' } })
+    fireEvent.keyDown(input, { key: 'Enter' })
+
+    await waitFor(() => expect(projectAutomationApi.update).toHaveBeenCalledTimes(2))
+    expect(screen.getByTestId('automation-editor-name')).toHaveTextContent('每小时数据同步')
+  })
+
+  test('creates a new automation when its inline name is committed', async () => {
+    const { projectAutomationApi } = renderView()
+    vi.mocked(projectAutomationApi.create).mockImplementation(async (_projectId, input) => ({
+      ...rule,
+      id: 'rule-new',
+      name: input.name,
+      prompt: input.prompt,
+      eventConfig: input.eventConfig,
+    }))
+    await screen.findByTestId('automation-card-rule-1')
+    fireEvent.click(screen.getByTestId('automation-create-blank'))
+
+    fireEvent.click(screen.getByTestId('automation-editor-name'))
+    const input = screen.getByTestId('automation-editor-name-input')
+    fireEvent.change(input, { target: { value: '每日巡检' } })
+    fireEvent.keyDown(input, { key: 'Enter' })
+
+    await waitFor(() => expect(projectAutomationApi.create).toHaveBeenCalledOnce())
+    expect(screen.getByTestId('automation-editor-name')).toHaveTextContent('每日巡检')
+    expect(screen.getByText('已保存')).toBeInTheDocument()
   })
 
   test('shows understandable local and cloud execution device names', async () => {
@@ -676,7 +772,6 @@ describe('ProjectAutomationView', () => {
     fireEvent.change(screen.getByTestId('execution-node-model-step-1'), {
       target: { value: 'deepseek-v4-flash-vision-exp' },
     })
-    fireEvent.click(screen.getByTestId('automation-save'))
 
     await waitFor(() => expect(projectAutomationApi.update).toHaveBeenCalledOnce())
     const input = vi.mocked(projectAutomationApi.update).mock.calls[0][2]
@@ -709,8 +804,6 @@ describe('ProjectAutomationView', () => {
     fireEvent.change(modelSelect, { target: { value: '' } })
     expect(modelSelect).toHaveValue('')
     expect(screen.getByRole('option', { name: '不指定模型' })).not.toBeDisabled()
-
-    fireEvent.click(screen.getByTestId('automation-save'))
 
     await waitFor(() => expect(projectAutomationApi.update).toHaveBeenCalledOnce())
     const input = vi.mocked(projectAutomationApi.update).mock.calls[0][2]
@@ -778,33 +871,49 @@ describe('ProjectAutomationView', () => {
     expect(node).not.toHaveTextContent('本机 ·')
   })
 
-  test('uses hand mode by default and allows switching to pointer mode', async () => {
+  test('uses pointer mode by default and allows switching to hand mode', async () => {
     renderView()
     await openRuleEditor()
 
     const handMode = screen.getByTestId('automation-canvas-hand-mode')
     const pointerMode = screen.getByTestId('automation-canvas-pointer-mode')
     expect(handMode.parentElement).toHaveClass(
-      'h-16',
-      'w-8',
+      'w-9',
       'grid-rows-2',
-      'overflow-hidden',
       'border',
       'bg-background/95',
       'shadow-md'
     )
-    expect(handMode.parentElement).not.toHaveClass('gap-1', 'p-1')
-    expect(handMode).toHaveClass('h-full', 'w-full')
-    expect(pointerMode).toHaveClass('h-full', 'w-full')
+    expect(handMode.parentElement).toHaveClass('gap-1', 'p-1')
+    expect(handMode).toHaveClass('size-7')
+    expect(pointerMode).toHaveClass('size-7')
     expect(handMode).not.toHaveClass('border', 'shadow-md')
     expect(pointerMode).not.toHaveClass('border', 'shadow-md')
-    expect(handMode).toHaveClass('active')
-    expect(pointerMode).not.toHaveClass('active')
-
-    fireEvent.click(pointerMode)
-
     expect(pointerMode).toHaveClass('active')
     expect(handMode).not.toHaveClass('active')
+
+    fireEvent.click(handMode)
+
+    expect(handMode).toHaveClass('active')
+    expect(pointerMode).not.toHaveClass('active')
+  })
+
+  test('deletes the selected workflow node with Backspace without intercepting text input', async () => {
+    const uiRule = automationRuleFromBackend(rule)
+    const onSaveRule = vi.fn().mockImplementation(async value => value)
+    render(<AutomationRulesView rules={[uiRule]} runs={[]} onSaveRule={onSaveRule} />)
+    fireEvent.click(screen.getByTestId('automation-card-rule-1'))
+    fireEvent.click(screen.getByTestId('execution-node-step-1'))
+
+    const nameInput = screen.getByTestId('execution-node-name-step-1')
+    fireEvent.keyDown(nameInput, { key: 'Backspace' })
+    expect(screen.getByTestId('execution-node-step-1')).toBeInTheDocument()
+
+    fireEvent.keyDown(document, { key: 'Backspace' })
+
+    expect(screen.queryByTestId('execution-node-step-1')).not.toBeInTheDocument()
+    await waitFor(() => expect(onSaveRule).toHaveBeenCalledOnce())
+    expect(onSaveRule.mock.calls[0][0].steps.map(step => step.id)).toEqual(['step-2', 'step-3'])
   })
 
   test('selects and persists the required deliverable type', async () => {
@@ -818,8 +927,6 @@ describe('ProjectAutomationView', () => {
     const typeSelect = screen.getByRole('combobox', { name: /交付物类型/ })
     fireEvent.change(typeSelect, { target: { value: 'file' } })
     expect(typeSelect).toHaveValue('file')
-
-    fireEvent.click(screen.getByTestId('automation-save'))
 
     await waitFor(() => expect(projectAutomationApi.update).toHaveBeenCalledOnce())
     const input = vi.mocked(projectAutomationApi.update).mock.calls[0][2]
@@ -877,8 +984,6 @@ describe('ProjectAutomationView', () => {
     fireEvent.change(promptInput as HTMLTextAreaElement, {
       target: { value: '在动态分配前完成检查。' },
     })
-    fireEvent.click(screen.getByTestId('automation-save'))
-
     await waitFor(() => expect(projectAutomationApi.update).toHaveBeenCalledOnce())
     const input = vi.mocked(projectAutomationApi.update).mock.calls[0][2]
     const flow = input.eventConfig?.wework_flow as {
@@ -898,9 +1003,8 @@ describe('ProjectAutomationView', () => {
     fireEvent.change(screen.getByTestId('execution-node-name-step-1'), {
       target: { value: '' },
     })
-    fireEvent.click(screen.getByTestId('automation-save'))
-
-    expect(await screen.findByText('请填写所有执行节点名称')).toBeInTheDocument()
+    expect(await screen.findByText('等待补全')).toBeInTheDocument()
+    expect(screen.getByText('等待补全')).toHaveAttribute('title', '请填写所有执行节点名称')
     expect(projectAutomationApi.update).not.toHaveBeenCalled()
   })
 
@@ -912,24 +1016,24 @@ describe('ProjectAutomationView', () => {
     fireEvent.change(screen.getByTestId('automation-rule-description'), {
       target: { value: '   ' },
     })
-    fireEvent.click(screen.getByTestId('automation-save'))
-
     await waitFor(() => expect(projectAutomationApi.update).toHaveBeenCalledOnce())
     const input = vi.mocked(projectAutomationApi.update).mock.calls[0][2]
     expect(input.eventConfig?.wework_flow).toMatchObject({ description: '' })
     expect(input.prompt).not.toContain('自动化目标：')
   })
 
-  test('still requires an automation name', async () => {
+  test('keeps the current automation name when an inline rename is empty', async () => {
     const { projectAutomationApi } = renderView()
     await openRuleEditor()
-    fireEvent.click(screen.getByTestId('automation-editor-section-menu'))
-    fireEvent.change(screen.getByRole('textbox', { name: '自动化名称' }), {
+    fireEvent.click(screen.getByTestId('automation-editor-name'))
+    const input = screen.getByRole('textbox', { name: '自动化名称' })
+    fireEvent.change(input, {
       target: { value: '   ' },
     })
-    fireEvent.click(screen.getByTestId('automation-save'))
+    fireEvent.blur(input)
 
-    expect(await screen.findByText('请填写自动化名称')).toBeInTheDocument()
+    expect(screen.getByTestId('automation-editor-name')).toHaveTextContent('新 Issue 自动开发')
+    expect(screen.queryByTestId('automation-save')).not.toBeInTheDocument()
     expect(projectAutomationApi.update).not.toHaveBeenCalled()
   })
 
@@ -1041,8 +1145,6 @@ describe('ProjectAutomationView', () => {
     fireEvent.change(screen.getByTestId('ai-coordinator-model'), {
       target: { value: 'codex-runtime' },
     })
-    fireEvent.click(screen.getByTestId('automation-save'))
-
     await waitFor(() => expect(projectAutomationApi.create).toHaveBeenCalledOnce())
     const input = vi.mocked(projectAutomationApi.create).mock.calls[0][1]
     expect(input.eventConfig?.runtime_workflow_definition).toMatchObject({
@@ -1101,7 +1203,6 @@ describe('ProjectAutomationView', () => {
   test('shows backend run history inside the current automation', async () => {
     renderView()
     await openRuleEditor()
-    fireEvent.click(screen.getByTestId('automation-editor-section-menu'))
     fireEvent.click(screen.getByTestId('open-current-automation-runs'))
 
     expect(screen.getByTestId('current-automation-runs')).toBeInTheDocument()
@@ -1122,7 +1223,6 @@ describe('ProjectAutomationView', () => {
       listedRuns: [waitingRun],
     })
     await openRuleEditor()
-    fireEvent.click(screen.getByTestId('automation-editor-section-menu'))
     fireEvent.click(screen.getByTestId('open-current-automation-runs'))
 
     const row = await screen.findByTestId('current-run-run-waiting-runtime')
@@ -1146,7 +1246,6 @@ describe('ProjectAutomationView', () => {
       listedRuns: [queuedRun],
     })
     await openRuleEditor()
-    fireEvent.click(screen.getByTestId('automation-editor-section-menu'))
     fireEvent.click(screen.getByTestId('open-current-automation-runs'))
     expect(await screen.findByTestId('current-run-run-refresh')).toHaveTextContent('排队中')
     await act(async () => {
@@ -1312,10 +1411,191 @@ describe('ProjectAutomationView', () => {
 
     expect(await screen.findByTestId('automation-card-root-rule')).toBeInTheDocument()
     await openRuleEditor('root-rule')
-    fireEvent.click(screen.getByTestId('automation-editor-section-menu'))
     fireEvent.click(screen.getByTestId('open-current-automation-runs'))
     await waitFor(() => expect(projectAutomationApi.listRuns).toHaveBeenCalledTimes(1))
     expect(projectAutomationApi.listRuns).toHaveBeenCalledTimes(1)
     expect(projectAutomationApi.listRuns).toHaveBeenCalledWith('21', 'root-rule')
   })
+})
+
+test('runs a paused schedule from the card and editor and shows the returned run', async () => {
+  const scheduled = {
+    ...rule,
+    triggerType: 'schedule' as const,
+    cronExpression: '17 * * * *',
+    enabled: false,
+  }
+  const { projectAutomationApi } = renderView({ listedRules: [scheduled], listedRuns: [] })
+  vi.mocked(projectAutomationApi.runNow).mockResolvedValue({
+    ...run,
+    id: 'manual-new',
+    trigger: 'manual',
+  })
+  fireEvent.click(await screen.findByTestId('automation-run-rule-1'))
+  await waitFor(() => expect(projectAutomationApi.runNow).toHaveBeenCalledWith('11', 'rule-1'))
+  expect(screen.queryByTestId('automation-rule-editor')).not.toBeInTheDocument()
+  fireEvent.click(screen.getByTestId('automation-card-rule-1'))
+  await waitFor(() => expect(screen.getByTestId('automation-run')).toBeEnabled())
+  fireEvent.click(screen.getByTestId('automation-run'))
+  await waitFor(() => expect(projectAutomationApi.runNow).toHaveBeenCalledTimes(2))
+  vi.mocked(projectAutomationApi.listRuns).mockResolvedValue([
+    { ...run, id: 'manual-new', trigger: 'manual' },
+  ])
+  fireEvent.click(screen.getByTestId('open-current-automation-runs'))
+  expect(await screen.findByTestId('current-run-manual-new')).toBeInTheDocument()
+})
+
+test('auto-saves hourly minutes before running', async () => {
+  const scheduled = automationRuleFromBackend({
+    ...rule,
+    triggerType: 'schedule',
+    cronExpression: '0 * * * *',
+  })
+  const onRunRule = vi.fn()
+  const onSaveRule = vi.fn().mockImplementation(async value => value)
+  render(
+    <AutomationRulesView
+      rules={[scheduled]}
+      runs={[]}
+      onRunRule={onRunRule}
+      onSaveRule={onSaveRule}
+    />
+  )
+  fireEvent.click(screen.getByTestId('automation-card-rule-1'))
+  expect(screen.getByTestId('automation-trigger-frequency')).toHaveValue('hourly')
+  fireEvent.change(screen.getByTestId('automation-trigger-minute'), { target: { value: '59' } })
+  expect(screen.getByTestId('automation-run')).toBeDisabled()
+  await waitFor(() => expect(screen.getByTestId('automation-run')).toBeEnabled())
+  expect(onSaveRule.mock.calls[0][0].trigger.schedule.time).toBe('00:59')
+})
+
+test('serializes auto-saves and preserves edits made during a request', async () => {
+  const scheduled = automationRuleFromBackend({
+    ...rule,
+    triggerType: 'schedule',
+    cronExpression: '0 * * * *',
+  })
+  let resolveFirstSave!: (value: typeof scheduled) => void
+  const onSaveRule = vi
+    .fn()
+    .mockImplementationOnce(
+      () =>
+        new Promise<typeof scheduled>(resolve => {
+          resolveFirstSave = resolve
+        })
+    )
+    .mockImplementationOnce(async value => value)
+  render(<AutomationRulesView rules={[scheduled]} runs={[]} onSaveRule={onSaveRule} />)
+  fireEvent.click(screen.getByTestId('automation-card-rule-1'))
+
+  const description = screen.getByTestId('automation-rule-description')
+  fireEvent.change(description, { target: { value: '第一次修改' } })
+  await waitFor(() => expect(onSaveRule).toHaveBeenCalledOnce())
+  expect(screen.getByText('保存中')).toBeInTheDocument()
+
+  fireEvent.change(description, { target: { value: '请求期间的最新修改' } })
+  await act(async () => resolveFirstSave(onSaveRule.mock.calls[0][0]))
+
+  await waitFor(() => expect(onSaveRule).toHaveBeenCalledTimes(2))
+  expect(onSaveRule.mock.calls[1][0].description).toBe('请求期间的最新修改')
+  expect(description).toHaveValue('请求期间的最新修改')
+  await waitFor(() => expect(screen.getByText('已保存')).toBeInTheDocument())
+})
+
+test('keeps the draft after an auto-save failure and retries explicitly', async () => {
+  const scheduled = automationRuleFromBackend({
+    ...rule,
+    triggerType: 'schedule',
+    cronExpression: '0 * * * *',
+  })
+  const onSaveRule = vi
+    .fn()
+    .mockRejectedValueOnce(new Error('保存服务暂不可用'))
+    .mockImplementationOnce(async value => value)
+  render(<AutomationRulesView rules={[scheduled]} runs={[]} onSaveRule={onSaveRule} />)
+  fireEvent.click(screen.getByTestId('automation-card-rule-1'))
+
+  const description = screen.getByTestId('automation-rule-description')
+  fireEvent.change(description, { target: { value: '失败后仍需保留' } })
+
+  const retry = await screen.findByTestId('automation-save-retry')
+  expect(retry).toHaveAttribute('title', '保存服务暂不可用')
+  expect(description).toHaveValue('失败后仍需保留')
+  expect(onSaveRule).toHaveBeenCalledOnce()
+
+  fireEvent.click(retry)
+
+  await waitFor(() => expect(onSaveRule).toHaveBeenCalledTimes(2))
+  expect(onSaveRule.mock.calls[1][0].description).toBe('失败后仍需保留')
+  await waitFor(() => expect(screen.getByText('已保存')).toBeInTheDocument())
+})
+
+test('flushes a pending auto-save before leaving the editor', async () => {
+  const scheduled = automationRuleFromBackend({
+    ...rule,
+    triggerType: 'schedule',
+    cronExpression: '0 * * * *',
+  })
+  const onSaveRule = vi.fn().mockImplementation(async value => value)
+  render(<AutomationRulesView rules={[scheduled]} runs={[]} onSaveRule={onSaveRule} />)
+  fireEvent.click(screen.getByTestId('automation-card-rule-1'))
+  fireEvent.change(screen.getByTestId('automation-rule-description'), {
+    target: { value: '返回前保存' },
+  })
+
+  fireEvent.click(screen.getByTestId('automation-editor-back'))
+
+  await waitFor(() => expect(onSaveRule).toHaveBeenCalledOnce())
+  expect(onSaveRule.mock.calls[0][0].description).toBe('返回前保存')
+  await waitFor(() =>
+    expect(screen.queryByTestId('automation-rule-editor')).not.toBeInTheDocument()
+  )
+})
+
+test('prevents duplicate starts and recovers after a run failure', async () => {
+  const scheduled = automationRuleFromBackend({
+    ...rule,
+    triggerType: 'schedule',
+    cronExpression: '0 * * * *',
+  })
+  let rejectRun!: (reason: Error) => void
+  const onRunRule = vi
+    .fn()
+    .mockImplementationOnce(
+      () =>
+        new Promise<void>((_resolve, reject) => {
+          rejectRun = reject
+        })
+    )
+    .mockResolvedValue(undefined)
+  render(<AutomationRulesView rules={[scheduled]} runs={[]} onRunRule={onRunRule} />)
+  const button = screen.getByTestId('automation-run-rule-1')
+  fireEvent.click(button)
+  fireEvent.click(button)
+  expect(onRunRule).toHaveBeenCalledTimes(1)
+  expect(button).toBeDisabled()
+  await act(async () => rejectRun(new Error('Run unavailable')))
+  expect(screen.getByText('Run unavailable')).toBeInTheDocument()
+  expect(button).toBeEnabled()
+  fireEvent.click(button)
+  await waitFor(() => expect(onRunRule).toHaveBeenCalledTimes(2))
+})
+
+test('hides event run actions and disables scheduled runs without management permission', () => {
+  const scheduled = automationRuleFromBackend({
+    ...rule,
+    id: 'scheduled',
+    triggerType: 'schedule',
+    cronExpression: '0 * * * *',
+  })
+  render(
+    <AutomationRulesView
+      rules={[automationRuleFromBackend(rule), scheduled]}
+      runs={[]}
+      canManage={false}
+      onRunRule={vi.fn()}
+    />
+  )
+  expect(screen.queryByTestId('automation-run-rule-1')).not.toBeInTheDocument()
+  expect(screen.getByTestId('automation-run-scheduled')).toBeDisabled()
 })
