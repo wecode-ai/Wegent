@@ -182,7 +182,9 @@ function MarkdownCodeScrollArea({
         data-syntax-highlighted={syntaxHighlighted ? 'true' : 'false'}
         className={[
           'max-w-full select-none',
-          hideHorizontalScrollbar ? 'overflow-x-hidden' : 'overflow-x-auto',
+          hideHorizontalScrollbar
+            ? 'scrollbar-none overflow-x-hidden'
+            : 'scrollbar-soft overflow-x-auto',
         ].join(' ')}
       >
         {children}
