@@ -25,6 +25,7 @@ from typing import Any, Dict, Optional
 from pydantic import ValidationError
 from sqlalchemy.orm import Session
 
+from app.core.async_utils import run_in_threadpool_with_cleanup
 from app.db.session import SessionLocal
 from app.mcp_server.auth import TaskTokenInfo
 from app.mcp_server.tools.decorator import build_mcp_tools_dict, mcp_tool
@@ -41,6 +42,7 @@ from app.services.knowledge.orchestrator import (
     knowledge_orchestrator,
 )
 from shared.models import SearchHints
+from shared.telemetry.decorators import trace_async
 
 logger = logging.getLogger(__name__)
 
@@ -95,6 +97,7 @@ def _get_read_user_for_knowledge_base(
         "include_subfolders": "Whether folder_ids include descendant folders",
     },
 )
+@trace_async(span_name="knowledge.search", tracer_name="backend.mcp")
 async def search_knowledge_base(
     token_info: TaskTokenInfo,
     knowledge_base_id: int,
@@ -145,7 +148,11 @@ async def search_knowledge_base(
 
     db = SessionLocal()
     try:
-        user = _get_read_user_for_knowledge_base(db, token_info, knowledge_base_id)
+        # Synchronous external permission resolution may perform blocking I/O.
+        # Await each operation before reusing the session.
+        user = await run_in_threadpool_with_cleanup(
+            _get_read_user_for_knowledge_base, db, token_info, knowledge_base_id
+        )
         if not user:
             return {
                 "error": "User not found",
@@ -158,15 +165,14 @@ async def search_knowledge_base(
         scope_specified = folder_ids is not None or document_ids is not None
         resolved_document_ids = document_ids
         if scope_specified:
-            resolved_document_ids = (
-                KnowledgeFolderService.resolve_document_ids_for_scope(
-                    db=db,
-                    knowledge_base_id=knowledge_base_id,
-                    user_id=user.id,
-                    folder_ids=folder_ids,
-                    document_ids=document_ids,
-                    include_subfolders=include_subfolders,
-                )
+            resolved_document_ids = await run_in_threadpool_with_cleanup(
+                KnowledgeFolderService.resolve_document_ids_for_scope,
+                db=db,
+                knowledge_base_id=knowledge_base_id,
+                user_id=user.id,
+                folder_ids=folder_ids,
+                document_ids=document_ids,
+                include_subfolders=include_subfolders,
             )
             if not resolved_document_ids:
                 return {

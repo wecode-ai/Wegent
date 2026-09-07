@@ -27,6 +27,7 @@ from typing import Any, Dict, List, Literal, Optional
 from sqlalchemy.orm import Session
 from sqlalchemy.orm.exc import ObjectDeletedError
 
+from app.core.async_utils import run_in_threadpool_with_cleanup
 from app.core.config import settings
 from app.models.kind import Kind
 from app.models.knowledge import DocumentIndexStatus, KnowledgeDocument
@@ -63,6 +64,7 @@ from app.services.knowledge.retrieval_profile import (
 )
 from app.stores.tasks import task_store
 from shared.models import SearchHints
+from shared.telemetry.decorators import trace_async
 
 logger = logging.getLogger(__name__)
 
@@ -2974,6 +2976,7 @@ class KnowledgeOrchestrator:
                 "error_message": str(e),
             }
 
+    @trace_async(span_name="knowledge.retrieve", tracer_name="backend.services")
     async def retrieve_knowledge(
         self,
         *,
@@ -3031,7 +3034,10 @@ class KnowledgeOrchestrator:
             max_results = 50
 
         # Verify knowledge base access (single point of permission check)
-        knowledge_base, has_access = KnowledgeService.get_knowledge_base(
+        # External entity permissions may perform synchronous blocking I/O. Keep session
+        # operations sequential while allowing the event loop to serve requests.
+        knowledge_base, has_access = await run_in_threadpool_with_cleanup(
+            KnowledgeService.get_knowledge_base,
             db=db,
             knowledge_base_id=knowledge_base_id,
             user_id=user.id,
@@ -3073,7 +3079,8 @@ class KnowledgeOrchestrator:
         scope = RetrievalScope(document_ids=document_ids) if document_ids else None
 
         # Build runtime spec for gateway routing
-        runtime_spec = runtime_resolver.build_query_runtime_spec(
+        runtime_spec = await run_in_threadpool_with_cleanup(
+            runtime_resolver.build_query_runtime_spec,
             db=db,
             knowledge_base_ids=[knowledge_base_id],
             query=query,
@@ -3092,7 +3099,8 @@ class KnowledgeOrchestrator:
         )
 
         # Finalize route mode based on context budget
-        resolved_route_mode = retrieval_service.decide_route_mode_for_chat_shell(
+        resolved_route_mode = await run_in_threadpool_with_cleanup(
+            retrieval_service.decide_route_mode_for_chat_shell,
             query=query,
             knowledge_base_ids=[knowledge_base_id],
             db=db,
@@ -3111,7 +3119,8 @@ class KnowledgeOrchestrator:
 
         # Build KB configs for remote gateway if needed
         if resolved_route_mode == "rag_retrieval":
-            kb_configs = runtime_resolver.build_query_knowledge_base_configs(
+            kb_configs = await run_in_threadpool_with_cleanup(
+                runtime_resolver.build_query_knowledge_base_configs,
                 db=db,
                 knowledge_base_ids=[knowledge_base_id],
                 user_name=user.user_name,
