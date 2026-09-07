@@ -1310,7 +1310,7 @@ export function AutomationWorkflowCanvas({
       }
       onToggleStepDependency(targetNode.id, sourceNode.id)
     },
-    [draft.steps, nodes, onToggleDagDependency, onToggleStepDependency]
+    [draft.steps, nodes, onToggleDagDependency, onToggleLoopBodyDependency, onToggleStepDependency]
   )
 
   const onEdgesDelete = useCallback(
@@ -1331,7 +1331,7 @@ export function AutomationWorkflowCanvas({
         }
       })
     },
-    [onToggleDagDependency, onToggleStepDependency]
+    [onToggleDagDependency, onToggleLoopBodyDependency, onToggleStepDependency]
   )
 
   const onNodesDelete = useCallback(

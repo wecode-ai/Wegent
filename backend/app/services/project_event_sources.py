@@ -563,9 +563,9 @@ def _generic_events(
             source_type="generic",
             resource=resource,
             subject={
+                **dict(subject_value),
                 "type": _text(subject_value.get("type")) or "document",
                 "id": subject_id,
-                **dict(subject_value),
             },
             payload=dict(payload),
         )

@@ -137,10 +137,10 @@ const RuntimeStageNodeCard = memo(function RuntimeStageNodeCard({
   const collectorLabels = Object.entries(collectors).map(([platform, collector]) => {
     const platformLabel = platform === 'gitlab' ? 'GitLab' : 'GitHub'
     const stateLabel =
-      collector.status === 'needs_registration' || collector.mode === 'webhook'
-        ? t('todo.workflow_branch_collector_webhook')
-        : collector.status === 'error'
-          ? collector.error || t('todo.workflow_branch_collector_error')
+      collector.status === 'error'
+        ? collector.error || t('todo.workflow_branch_collector_error')
+        : collector.status === 'needs_registration' || collector.mode === 'webhook'
+          ? t('todo.workflow_branch_collector_webhook')
           : t('todo.workflow_branch_collector_poll')
     return `${platformLabel} ${stateLabel}`
   })
@@ -365,7 +365,12 @@ export function IssueWorkflowDag({
     : undefined
   const graph = useMemo(() => {
     const nodesById = new Map(nodes.map(node => [node.id, node]))
-    const topLevelStages = nodes.filter(node => !node.loop_id)
+    const loopIdByNodeId = new Map<string, string>()
+    nodes.forEach(node => {
+      if (node.loop_id) loopIdByNodeId.set(node.id, node.loop_id)
+      ;(node.body_node_ids ?? []).forEach(bodyId => loopIdByNodeId.set(bodyId, node.id))
+    })
+    const topLevelStages = nodes.filter(node => !loopIdByNodeId.has(node.id))
     const topLevelIds = new Set(topLevelStages.map(node => node.id))
     const edges: Edge[] = topLevelStages.flatMap(node =>
       node.depends_on.flatMap(dependencyId => {
@@ -380,10 +385,7 @@ export function IssueWorkflowDag({
       topLevelStages
         .filter(stage => stage.node_type === 'loop')
         .map(loop => {
-          const bodyIds = new Set(loop.body_node_ids ?? [])
-          const body = nodes.filter(
-            node => node.loop_id === loop.id || (bodyIds.size > 0 && bodyIds.has(node.id))
-          )
+          const body = nodes.filter(node => loopIdByNodeId.get(node.id) === loop.id)
           return [
             loop.id,
             loopBodyLayout(loop, body, tasks, effectiveSelectedStageId, selectStage),

@@ -263,6 +263,29 @@ describe('IssueWorkflowDag', () => {
     expect(screen.getByTestId('mock-flow-node-loop-end')).toHaveTextContent('流程控制')
   })
 
+  test('renders body nodes only once when only body_node_ids identifies membership', () => {
+    render(
+      <IssueWorkflowDag
+        nodes={[
+          stage('loop', {
+            node_type: 'loop',
+            body_node_ids: ['body'],
+          }),
+          stage('body', {
+            node_type: 'task',
+            depends_on: ['loop'],
+          }),
+          stage('after', { depends_on: ['loop'] }),
+        ]}
+        tasks={[]}
+      />
+    )
+
+    expect(screen.getAllByTestId('mock-flow-node-body')).toHaveLength(1)
+    expect(screen.getByTestId('mock-flow-node-body')).toHaveAttribute('data-parent-id', 'loop')
+    expect(screen.getByTestId('mock-flow-node-after')).not.toHaveAttribute('data-parent-id')
+  })
+
   test('shows the branch event collector state on the node card', () => {
     render(
       <IssueWorkflowDag
@@ -291,6 +314,32 @@ describe('IssueWorkflowDag', () => {
     expect(screen.getByTestId('mock-flow-node-branch-poll')).toHaveTextContent('轮询采集中')
     expect(screen.getByTestId('mock-flow-node-branch-poll')).toHaveTextContent('等待事件')
     expect(screen.getByTestId('mock-flow-node-branch-webhook')).toHaveTextContent('webhook 待注册')
+  })
+
+  test('prioritizes a failed collector state over webhook registration state', () => {
+    render(
+      <IssueWorkflowDag
+        nodes={[
+          stage('branch-error', {
+            node_type: 'branch',
+            status: 'waiting',
+            collectors: {
+              github: {
+                collector_id: 'hook-3',
+                mode: 'webhook',
+                status: 'error',
+                error: 'webhook registration failed',
+              },
+            },
+          }),
+        ]}
+        tasks={[]}
+      />
+    )
+
+    expect(screen.getByTestId('mock-flow-node-branch-error')).toHaveTextContent(
+      'webhook registration failed'
+    )
   })
 
   test('shows the execution failure reason in the failed stage details', () => {

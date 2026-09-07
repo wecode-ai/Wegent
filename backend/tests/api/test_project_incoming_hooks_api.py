@@ -319,6 +319,33 @@ def test_poll_subscription_requires_a_connected_credential(
     assert "not connected" in response.json()["detail"]
 
 
+def test_public_api_cannot_select_machine_cli_credentials(
+    test_client: TestClient,
+    test_token: str,
+) -> None:
+    project = _project(test_client, test_token)
+
+    response = test_client.post(
+        f"/api/v1/cloud-projects/{project['id']}/incoming-hooks",
+        headers=_auth(test_token),
+        json={
+            "name": "Machine CLI polling",
+            "source_type": "github",
+            "collection_mode": "poll",
+            "credential_ref": "machine-cli",
+            "resource": {
+                "resource_type": "repository",
+                "url": "https://example.invalid/acme/app",
+            },
+        },
+    )
+
+    assert response.status_code == 422
+    assert response.json()["detail"] == (
+        "Machine CLI credentials are reserved for branch collectors"
+    )
+
+
 def test_poll_subscription_can_switch_to_hybrid_and_exposes_webhook_credentials(
     test_client: TestClient,
     test_db: Session,

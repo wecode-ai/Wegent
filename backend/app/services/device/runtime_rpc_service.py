@@ -19,6 +19,10 @@ from socketio.exceptions import TimeoutError as SocketTimeoutError
 from app.core.socketio import get_sio
 from app.db.session import get_db_session
 from app.schemas.device import DeviceType
+from app.services.device.remote_control_policy import (
+    REMOTE_CONTROL_DISABLED_MESSAGE,
+    remote_control_is_enabled,
+)
 from app.services.device.runtime_route import (
     RuntimeRouteError,
     runtime_route_resolver,
@@ -193,6 +197,14 @@ class RuntimeRpcService:
                 retryable=exc.retryable,
                 details=exc.details,
             ) from exc
+
+        if not remote_control_is_enabled(route.device_type):
+            raise RuntimeRpcError(
+                REMOTE_CONTROL_DISABLED_MESSAGE,
+                code="remote_control_disabled",
+                retryable=False,
+                details={"deviceId": route.logical_device_id},
+            )
 
         if method == "runtime.tasks.create":
             try:

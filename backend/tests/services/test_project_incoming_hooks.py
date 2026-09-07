@@ -312,6 +312,22 @@ def test_parse_json_object() -> None:
     ) == {"event_type": "document.changed"}
 
 
+def test_normalize_generic_subject_preserves_fallback_id() -> None:
+    events = normalize_webhook_events(
+        "generic",
+        {
+            "event_type": "document.changed",
+            "resource": {"url": "https://example.invalid/docs"},
+            "subject": {"id": ""},
+            "version": "42",
+        },
+        {},
+    )
+
+    assert len(events) == 1
+    assert events[0].subject["id"] == "42"
+
+
 @pytest.mark.parametrize(
     "raw",
     [

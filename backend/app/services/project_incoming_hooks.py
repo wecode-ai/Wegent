@@ -49,6 +49,7 @@ from app.services.project_event_sources import (
 )
 
 MAX_BODY_BYTES = 1_048_576
+MAX_STORED_PAYLOAD_BYTES = 65_536
 MAX_PROCESS_ATTEMPTS = 5
 logger = logging.getLogger(__name__)
 
@@ -124,6 +125,11 @@ class ProjectIncomingHookService:
             BaseRole.Maintainer,
         )
         definition = event_source(values.source_type)
+        if values.credential_ref in {"machine-cli", "local-cli"}:
+            raise HTTPException(
+                status.HTTP_422_UNPROCESSABLE_CONTENT,
+                "Machine CLI credentials are reserved for branch collectors",
+            )
         if values.collection_mode not in definition.collection_modes:
             raise HTTPException(
                 status.HTTP_422_UNPROCESSABLE_CONTENT,
@@ -213,6 +219,11 @@ class ProjectIncomingHookService:
         collection_mode = values.collection_mode or str(
             hook_metadata.get("collection_mode") or "webhook"
         )
+        if values.credential_ref in {"machine-cli", "local-cli"}:
+            raise HTTPException(
+                status.HTTP_422_UNPROCESSABLE_CONTENT,
+                "Machine CLI credentials are reserved for branch collectors",
+            )
         if collection_mode not in definition.collection_modes:
             raise HTTPException(
                 status.HTTP_422_UNPROCESSABLE_CONTENT,
@@ -825,7 +836,11 @@ class ProjectIncomingHookService:
             "schema_version": 1,
             "collection_mode": collection_mode,
             "attempt_count": 0,
-            "payload": dict(payload),
+            **(
+                {"payload": dict(payload)}
+                if len(raw_body) <= MAX_STORED_PAYLOAD_BYTES
+                else {}
+            ),
             "payload_sha256": hashlib.sha256(raw_body).hexdigest(),
             "payload_size": len(raw_body),
             "headers": {

@@ -1836,8 +1836,11 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
     assert.equal(unifiedRule.runtimeSource, 'runtime_user')
     assert.equal(unifiedRule.eventType, 'task.created')
     assert.equal(unifiedRule.eventConfig.wework_flow.description, '')
-    const unifiedExecutionConfig =
-      unifiedRule.eventConfig.runtime_workflow_definition.nodes[0].execution_config
+    const unifiedTaskNode = unifiedRule.eventConfig.runtime_workflow_definition.nodes.find(
+      node => node.node_type === 'task'
+    )
+    assert.ok(unifiedTaskNode, 'Unified automation did not persist its execution task node')
+    const unifiedExecutionConfig = unifiedTaskNode.execution_config
     assert.equal(unifiedExecutionConfig.execution_device_id, CLOUD_DEVICE_ID)
     assert.equal(unifiedExecutionConfig.model, CLOUD_MODEL_NAME)
     assert.equal(unifiedExecutionConfig.model_type, 'public')
@@ -1859,22 +1862,19 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
         max_files: 1,
       },
     })
-    assert.deepEqual(
-      unifiedRule.eventConfig.runtime_workflow_definition.nodes[0].required_deliverables,
-      [
-        {
-          id: unifiedDeliverable.id,
-          name: '实现文件',
-          description: '',
-          value_type: 'file',
-          file_constraints: {
-            accepted_types: [],
-            min_files: 1,
-            max_files: 1,
-          },
+    assert.deepEqual(unifiedTaskNode.required_deliverables, [
+      {
+        id: unifiedDeliverable.id,
+        name: '实现文件',
+        description: '',
+        value_type: 'file',
+        file_constraints: {
+          accepted_types: [],
+          min_files: 1,
+          max_files: 1,
         },
-      ]
-    )
+      },
+    ])
     assert.equal(unifiedGraphNodes[1].kind, 'dynamic')
     assert.equal(unifiedGraphNodes[1].subgraph.nodes.length, 1)
 
