@@ -103,6 +103,15 @@ def test_appends_and_pulls_finalized_transcript_turns(
     assert response.json()["currentSequence"] == 2
     assert [turn["turnId"] for turn in response.json()["turns"]] == ["turn-2"]
 
+    transcript = test_client.get(
+        "/api/wework-transcripts/transcript-1",
+        headers=_headers(test_token),
+    )
+    assert transcript.status_code == 200
+    assert transcript.json()["parentTranscriptId"] is None
+    assert transcript.json()["forkedAtSequence"] is None
+    assert transcript.json()["archivedAt"] is None
+
 
 def test_rejects_stale_sequence_and_stale_writer(
     test_client,
@@ -201,7 +210,10 @@ def test_creates_a_linked_branch_without_copying_parent_turns(
     assert test_db.query(WeworkTranscriptTurn).count() == 2
     assert (
         test_db.query(WeworkTranscriptTurn)
-        .join(WeworkTranscript)
+        .join(
+            WeworkTranscript,
+            WeworkTranscript.id == WeworkTranscriptTurn.transcript_db_id,
+        )
         .filter(WeworkTranscript.transcript_id == "fork-device-b")
         .one()
         .turn_id
@@ -224,6 +236,19 @@ def test_rejects_an_invalid_or_redefined_branch_identity(
         },
     )
     assert missing_fork_point.status_code == 422
+
+    missing_parent = test_client.post(
+        "/api/wework-transcripts/missing-parent-branch/lease",
+        headers=_headers(test_token),
+        json={
+            "clientId": "client-b",
+            "ttlSeconds": 60,
+            "parentTranscriptId": "does-not-exist",
+            "forkedAtSequence": 0,
+        },
+    )
+    assert missing_parent.status_code == 404
+    assert missing_parent.json()["detail"]["code"] == "transcript_not_found"
 
     branch = test_client.post(
         "/api/wework-transcripts/fork-device-b/lease",
@@ -304,7 +329,9 @@ def test_archives_hot_turns_only_after_object_storage_succeeds(
     assert '"persist me"' in decoded
 
     transcript = test_db.query(WeworkTranscript).one()
-    assert transcript.writer_client_id is None
+    assert transcript.writer_client_id == ""
+    assert payload["writerClientId"] is None
+    assert payload["writerLeaseExpiresAt"] is None
     assert test_db.query(WeworkTranscriptTurn).count() == 0
     assert test_db.query(WeworkTranscriptArchive).count() == 1
 

@@ -4,13 +4,19 @@
 
 """Cross-device Wework transcript synchronization endpoints."""
 
+from datetime import datetime
+
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 
 from app.api.dependencies import get_db
 from app.core.security import get_current_user
 from app.models.user import User
-from app.models.wework_transcript import WeworkTranscript, WeworkTranscriptArchive
+from app.models.wework_transcript import (
+    EPOCH_TIME,
+    WeworkTranscript,
+    WeworkTranscriptArchive,
+)
 from app.schemas.wework_transcript import (
     TranscriptAppendResponse,
     TranscriptArchiveRequest,
@@ -291,18 +297,20 @@ def _transcript_response(
     )
     return TranscriptResponse(
         transcriptId=transcript.transcript_id,
-        parentTranscriptId=transcript.parent_transcript_id,
-        forkedAtSequence=transcript.forked_at_sequence,
+        parentTranscriptId=transcript.parent_transcript_id or None,
+        forkedAtSequence=(
+            transcript.forked_at_sequence if transcript.parent_transcript_id else None
+        ),
         title=transcript.title,
         state=transcript.state,
         currentSequence=transcript.current_sequence,
         archivedThroughSequence=transcript.archived_through_sequence,
-        writerClientId=transcript.writer_client_id,
-        writerLeaseExpiresAt=transcript.writer_lease_expires_at,
+        writerClientId=transcript.writer_client_id or None,
+        writerLeaseExpiresAt=_optional_datetime(transcript.writer_lease_expires_at),
         archives=[_archive_response(item) for item in archives],
         createdAt=transcript.created_at,
         updatedAt=transcript.updated_at,
-        archivedAt=transcript.archived_at,
+        archivedAt=_optional_datetime(transcript.archived_at),
     )
 
 
@@ -318,6 +326,10 @@ def _archive_response(
         format=archive.format,
         createdAt=archive.created_at,
     )
+
+
+def _optional_datetime(value: datetime) -> datetime | None:
+    return None if value == EPOCH_TIME else value
 
 
 def _translate(action):

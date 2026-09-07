@@ -14,6 +14,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.models.wework_transcript import (
+    EPOCH_TIME,
     WeworkTranscript,
     WeworkTranscriptArchive,
     WeworkTranscriptTurn,
@@ -83,6 +84,8 @@ def acquire_lease(
     request: TranscriptLeaseRequest,
 ) -> WeworkTranscript:
     _validate_fork_request(request)
+    parent_transcript_id = request.parent_transcript_id or ""
+    forked_at_sequence = request.forked_at_sequence or 0
     transcript = (
         db.query(WeworkTranscript)
         .filter(
@@ -95,8 +98,6 @@ def acquire_lease(
     now = utcnow()
     if transcript is None:
         if request.parent_transcript_id is not None:
-            forked_at_sequence = request.forked_at_sequence
-            assert forked_at_sequence is not None
             parent = get_transcript(
                 db,
                 user_id=user_id,
@@ -112,10 +113,8 @@ def acquire_lease(
         transcript = WeworkTranscript(
             user_id=user_id,
             transcript_id=transcript_id,
-            parent_transcript_id=request.parent_transcript_id,
-            forked_at_sequence=(
-                forked_at_sequence if request.parent_transcript_id is not None else None
-            ),
+            parent_transcript_id=parent_transcript_id,
+            forked_at_sequence=forked_at_sequence,
             title=request.title or "",
         )
         db.add(transcript)
@@ -133,18 +132,15 @@ def acquire_lease(
                 .one()
             )
     if (
-        transcript.parent_transcript_id != request.parent_transcript_id
-        or transcript.forked_at_sequence != request.forked_at_sequence
+        transcript.parent_transcript_id != parent_transcript_id
+        or transcript.forked_at_sequence != forked_at_sequence
     ):
         raise WeworkTranscriptError(
             "fork_identity_conflict",
             "Wework transcript already exists with a different parent",
         )
 
-    lease_active = (
-        transcript.writer_lease_expires_at is not None
-        and transcript.writer_lease_expires_at > now
-    )
+    lease_active = transcript.writer_lease_expires_at > now
     if lease_active and transcript.writer_client_id != request.client_id:
         raise WeworkTranscriptError(
             "lease_held",
@@ -212,8 +208,8 @@ def release_lease(
         for_update=True,
     )
     _require_lease(transcript, request.client_id, request.fencing_token)
-    transcript.writer_client_id = None
-    transcript.writer_lease_expires_at = None
+    transcript.writer_client_id = ""
+    transcript.writer_lease_expires_at = EPOCH_TIME
     transcript.updated_at = utcnow()
     db.commit()
     db.refresh(transcript)
@@ -286,7 +282,7 @@ def append_turns(
         )
     transcript.current_sequence = request.turns[-1].sequence
     transcript.state = "active"
-    transcript.archived_at = None
+    transcript.archived_at = EPOCH_TIME
     if request.title is not None:
         transcript.title = request.title
     transcript.updated_at = utcnow()
@@ -443,8 +439,8 @@ def archive_transcript(
 
     transcript.state = "archived"
     transcript.archived_at = utcnow()
-    transcript.writer_client_id = None
-    transcript.writer_lease_expires_at = None
+    transcript.writer_client_id = ""
+    transcript.writer_lease_expires_at = EPOCH_TIME
     transcript.updated_at = utcnow()
     db.commit()
     db.refresh(transcript)
@@ -461,7 +457,6 @@ def _require_lease(
     if (
         transcript.writer_client_id != client_id
         or transcript.writer_fencing_token != fencing_token
-        or transcript.writer_lease_expires_at is None
         or transcript.writer_lease_expires_at <= utcnow()
     ):
         raise WeworkTranscriptError(
