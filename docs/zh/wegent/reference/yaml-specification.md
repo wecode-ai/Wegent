@@ -73,7 +73,8 @@ spec:
 当 `spec.mcpServers` 配置的是业务方提供的远程 MCP 服务器时，可以在单个
 server 上开启 `inject_wegent_token: true`，让 Wegent 在构建任务请求时为
 该 server 签发一个绑定当前任务用户的 Wegent token，并通过
-`Authorization: Bearer <token>` 发送给业务方：
+`X-Wegent-Token` 请求头发送给业务方，业务方已有 `Authorization` 等静态
+header 不受影响：
 
 ```yaml
 spec:
@@ -85,12 +86,11 @@ spec:
 ```
 
 该选项按 server 逐个开启（opt-in），避免把 token 扩散给未配置的服务器。
-server URL 必须使用 `https`（本地开发允许 loopback `http`），避免 bearer
-token 通过明文通道发送。内部测试环境可以通过
-`MCP_IDENTITY_ALLOW_INSECURE_HTTP=true` 显式允许明文 http，生产环境请保持
-关闭。业务方收到请求后，可用请求头里的 token 调用
+业务方收到请求后，可用 `X-Wegent-Token` 头里的 token 调用
 `GET /api/mcp-identity/userinfo` 校验并获取当前用户基本信息（`id`、
-`user_name`、`email`）；该接口不会返回 git 凭据。token 有效期与 Skill
+`user_name`、`email`）；回调时 token 可用 `X-Wegent-Token` 或
+`Authorization: Bearer` 任一方式携带。该接口不会返回 git 凭据。
+token 有效期与 Skill
 identity token 独立，由 `MCP_IDENTITY_TOKEN_EXPIRE_MINUTES` 控制（默认 1 天）。
 
 ---

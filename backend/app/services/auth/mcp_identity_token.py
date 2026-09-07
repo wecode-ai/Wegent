@@ -24,6 +24,10 @@ logger = logging.getLogger(__name__)
 # Token type for Wegent identity tokens minted for outbound MCP server calls.
 MCP_IDENTITY_TOKEN_TYPE = "mcp_identity"
 
+# Header that carries the injected Wegent identity token on outbound MCP calls.
+# A dedicated header keeps the business server's own Authorization untouched.
+WEGENT_TOKEN_HEADER = "X-Wegent-Token"
+
 
 @dataclass
 class McpIdentityTokenInfo:

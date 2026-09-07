@@ -73,7 +73,8 @@ spec:
 When `spec.mcpServers` points to a remote MCP server hosted by a business
 partner, you can enable `inject_wegent_token: true` on that server. Wegent
 then mints a token bound to the current task user when building the task
-request and sends it as `Authorization: Bearer <token>`:
+request and sends it as the `X-Wegent-Token` header, leaving any statically
+configured `Authorization` header untouched:
 
 ```yaml
 spec:
@@ -85,13 +86,12 @@ spec:
 ```
 
 The option is enabled per server (opt-in) so the token is never leaked to
-servers that do not need it. The server URL must use `https` (loopback `http`
-is allowed for local development) so the bearer token is not sent over
-cleartext channels. Internal test environments can opt into plain http with
-`MCP_IDENTITY_ALLOW_INSECURE_HTTP=true`; keep it disabled in production.
-The business side can validate the token by calling
+servers that do not need it. The business side can validate the token by
+calling
 `GET /api/mcp-identity/userinfo`, which returns the current user's basic
 information (`id`, `user_name`, `email`) and never exposes git credentials.
+The token can be passed back either as the `X-Wegent-Token` header or as
+`Authorization: Bearer <token>`.
 Token lifetime is controlled by `MCP_IDENTITY_TOKEN_EXPIRE_MINUTES`
 (default 1 day) and is independent of the Skill identity token setting.
 

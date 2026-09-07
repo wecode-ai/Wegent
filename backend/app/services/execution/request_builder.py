@@ -13,7 +13,6 @@ providing complete Bot, Model, Ghost, Shell, and Skill resolution.
 import json
 import logging
 from typing import Any, List, Optional, Union
-from urllib.parse import urlparse
 
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
@@ -28,6 +27,7 @@ from app.schemas.kind import Skill as SkillCRD
 from app.schemas.kind import Team, TeamMember
 from app.schemas.project import ProjectConfig
 from app.services.auth import (
+    WEGENT_TOKEN_HEADER,
     create_mcp_identity_token,
     create_skill_identity_token,
 )
@@ -2298,18 +2298,18 @@ Response template:
         A Ghost ``mcpServers`` entry can opt in with
         ``inject_wegent_token: true``. When enabled, the business MCP server
         receives a freshly signed Wegent identity token in the ``auth`` and
-        ``headers`` maps (Authorization header) when building the task request,
-        so it can resolve the current user through ``GET /mcp-identity/userinfo``.
-        Tokens are only injected over https or loopback http URLs to avoid
-        replay over cleartext channels. The option is consumed here and never
-        forwarded to the executor.
+        ``headers`` maps under the ``X-Wegent-Token`` header when building the
+        task request, so it can resolve the current user through
+        ``GET /mcp-identity/userinfo``. A dedicated header is used so the
+        business server's own ``Authorization`` configuration is preserved.
+        The option is consumed here and never forwarded to the executor.
 
         Args:
             servers: Merged MCP server configuration list
             user: User the identity token should represent
 
         Returns:
-            The same list, with opted-in servers carrying an Authorization
+            The same list, with opted-in servers carrying an X-Wegent-Token
             header bound to a freshly issued identity token
         """
         for server in servers:
@@ -2325,24 +2325,16 @@ Response template:
                     server_name,
                 )
                 continue
-            if not TaskRequestBuilder._is_safe_identity_url(server.get("url") or ""):
-                logger.warning(
-                    "[TaskRequestBuilder] inject_wegent_token requires an https "
-                    "URL (or loopback http) for MCP server '%s'; skipping",
-                    server_name,
-                )
-                continue
             token = create_mcp_identity_token(
                 user_id=user.id,
                 user_name=user.user_name,
                 server_name=server_name,
             )
-            authorization = f"Bearer {token}"
-            TaskRequestBuilder._set_identity_authorization(
-                server, "auth", authorization, server_name
+            TaskRequestBuilder._set_identity_token_header(
+                server, "auth", token, server_name
             )
-            TaskRequestBuilder._set_identity_authorization(
-                server, "headers", authorization, server_name
+            TaskRequestBuilder._set_identity_token_header(
+                server, "headers", token, server_name
             )
             logger.info(
                 "[TaskRequestBuilder] Injected Wegent identity token into MCP "
@@ -2353,32 +2345,32 @@ Response template:
         return servers
 
     @staticmethod
-    def _set_identity_authorization(
-        server: dict, field: str, authorization: str, server_name: str
+    def _set_identity_token_header(
+        server: dict, field: str, token: str, server_name: str
     ) -> None:
-        """Write the identity Authorization value into a server header map.
+        """Write the Wegent identity token into a server header map.
 
-        The injected token takes precedence over a statically configured
-        Authorization header when ``inject_wegent_token`` is enabled, and a
-        non-dict ``field`` value (an invalid config) is replaced.
+        The token is stored under ``X-Wegent-Token`` so a statically
+        configured ``Authorization`` header is preserved. A non-dict ``field``
+        value (an invalid config) is replaced.
 
         Args:
             server: MCP server configuration dict (modified in place)
             field: Header map field name (``auth`` or ``headers``)
-            authorization: Full Authorization header value
+            token: Wegent identity token
             server_name: MCP server name for log context
         """
         existing = server.get(field)
         if isinstance(existing, dict):
-            if "Authorization" in existing:
+            if WEGENT_TOKEN_HEADER in existing:
                 logger.warning(
                     "[TaskRequestBuilder] inject_wegent_token overrides the "
-                    "statically configured Authorization in '%s' of MCP "
+                    "statically configured X-Wegent-Token in '%s' of MCP "
                     "server '%s'",
                     field,
                     server_name,
                 )
-            existing["Authorization"] = authorization
+            existing[WEGENT_TOKEN_HEADER] = token
             return
         if existing is not None:
             logger.warning(
@@ -2387,41 +2379,7 @@ Response template:
                 field,
                 server_name,
             )
-        server[field] = {"Authorization": authorization}
-
-    @staticmethod
-    def _is_safe_identity_url(url: str) -> bool:
-        """Check that a URL may carry an injected identity bearer token.
-
-        Identity tokens are only sent to https endpoints or loopback http
-        endpoints so they are not exposed over cleartext channels. Internal
-        test environments can additionally opt into plain http through the
-        ``MCP_IDENTITY_ALLOW_INSECURE_HTTP`` setting.
-
-        Args:
-            url: MCP server URL
-
-        Returns:
-            True when the URL is https, loopback http, or plain http explicitly
-            allowed by configuration, False otherwise
-        """
-        try:
-            parsed = urlparse(url)
-        except ValueError:
-            return False
-        if parsed.scheme == "https":
-            return True
-        if parsed.scheme == "http":
-            return (
-                parsed.hostname
-                in {
-                    "localhost",
-                    "127.0.0.1",
-                    "::1",
-                }
-                or settings.MCP_IDENTITY_ALLOW_INSECURE_HTTP
-            )
-        return False
+        server[field] = {WEGENT_TOKEN_HEADER: token}
 
     @staticmethod
     def _extract_prompt_text(message: Union[str, list]) -> str:

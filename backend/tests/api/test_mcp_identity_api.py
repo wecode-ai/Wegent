@@ -49,6 +49,21 @@ def test_get_mcp_identity_user_returns_basic_info(
     }
 
 
+def test_get_mcp_identity_user_accepts_x_wegent_token_header(
+    test_client,
+    test_user,
+) -> None:
+    token = _mcp_identity_token(test_user.id, test_user.user_name)
+
+    response = test_client.get(
+        "/api/mcp-identity/userinfo",
+        headers={"X-Wegent-Token": token},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["user_name"] == test_user.user_name
+
+
 def test_get_mcp_identity_user_never_exposes_git_credentials(
     test_client,
     test_user,

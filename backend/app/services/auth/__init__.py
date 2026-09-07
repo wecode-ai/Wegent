@@ -9,6 +9,7 @@ from app.services.auth.internal_service_token import (
 )
 from app.services.auth.mcp_identity_token import (
     MCP_IDENTITY_TOKEN_TYPE,
+    WEGENT_TOKEN_HEADER,
     McpIdentityTokenInfo,
     create_mcp_identity_token,
     verify_mcp_identity_token,
@@ -39,6 +40,7 @@ __all__ = [
     "SkillIdentityTokenInfo",
     "TaskTokenData",
     "TaskTokenInfo",
+    "WEGENT_TOKEN_HEADER",
     "create_mcp_identity_token",
     "create_rag_download_token",
     "create_skill_identity_token",

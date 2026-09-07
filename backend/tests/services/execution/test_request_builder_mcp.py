@@ -399,9 +399,7 @@ class TestBuildMcpServers:
         "app.services.execution.request_builder.kindReader.get_by_name_and_namespace"
     )
     @patch("app.services.execution.request_builder.settings.CHAT_MCP_SERVERS", "{}")
-    def test_inject_wegent_token_adds_identity_authorization(
-        self, mock_get_kind
-    ) -> None:
+    def test_inject_wegent_token_adds_identity_header(self, mock_get_kind) -> None:
         builder = TaskRequestBuilder.__new__(TaskRequestBuilder)
         builder.db = SimpleNamespace()
         mock_get_kind.return_value = _ghost_kind_with_mcp(
@@ -411,18 +409,19 @@ class TestBuildMcpServers:
                     "url": "https://business.example.com/mcp",
                     "inject_wegent_token": True,
                 },
+                "existing-auth-server": {
+                    "type": "streamable-http",
+                    "url": "https://auth.example.com/mcp",
+                    "headers": {"Authorization": "Bearer static-token"},
+                    "inject_wegent_token": True,
+                },
                 "plain-server": {
                     "type": "streamable-http",
                     "url": "http://plain.example.com/mcp",
                 },
-                "insecure-server": {
+                "http-server": {
                     "type": "streamable-http",
-                    "url": "http://insecure.example.com/mcp",
-                    "inject_wegent_token": True,
-                },
-                "loopback-server": {
-                    "type": "streamable-http",
-                    "url": "http://127.0.0.1:8000/mcp",
+                    "url": "http://internal.example.com/mcp",
                     "inject_wegent_token": True,
                 },
                 "stdio-server": {
@@ -444,29 +443,36 @@ class TestBuildMcpServers:
 
         business = servers["business-server"]
         assert "inject_wegent_token" not in business
-        authorization = business["auth"]["Authorization"]
-        assert business["headers"]["Authorization"] == authorization
-        assert authorization.startswith("Bearer ")
-        token_info = verify_mcp_identity_token(authorization.removeprefix("Bearer "))
+        token = business["auth"]["X-Wegent-Token"]
+        assert business["headers"]["X-Wegent-Token"] == token
+        token_info = verify_mcp_identity_token(token)
         assert token_info is not None
         assert token_info.user_id == 7
         assert token_info.user_name == "alice"
         assert token_info.server_name == "business-server"
+
+        existing_auth = servers["existing-auth-server"]
+        assert existing_auth["auth"]["Authorization"] == "Bearer static-token"
+        assert existing_auth["auth"]["X-Wegent-Token"]
+        # The identity header is injected without touching the static
+        # Authorization; "headers" only carries the injected identity header.
+        assert existing_auth["headers"] == {
+            "X-Wegent-Token": existing_auth["auth"]["X-Wegent-Token"]
+        }
+        assert "inject_wegent_token" not in existing_auth
 
         plain = servers["plain-server"]
         assert "auth" not in plain
         assert "headers" not in plain
         assert "inject_wegent_token" not in plain
 
-        insecure = servers["insecure-server"]
-        assert "auth" not in insecure
-        assert "headers" not in insecure
-        assert "inject_wegent_token" not in insecure
-
-        loopback = servers["loopback-server"]
-        assert loopback["auth"]["Authorization"].startswith("Bearer ")
-        assert loopback["headers"]["Authorization"] == loopback["auth"]["Authorization"]
-        assert "inject_wegent_token" not in loopback
+        http_server = servers["http-server"]
+        assert http_server["auth"]["X-Wegent-Token"]
+        assert (
+            http_server["headers"]["X-Wegent-Token"]
+            == http_server["auth"]["X-Wegent-Token"]
+        )
+        assert "inject_wegent_token" not in http_server
 
         stdio = servers["stdio-server"]
         assert "auth" not in stdio
@@ -477,42 +483,7 @@ class TestBuildMcpServers:
         "app.services.execution.request_builder.kindReader.get_by_name_and_namespace"
     )
     @patch("app.services.execution.request_builder.settings.CHAT_MCP_SERVERS", "{}")
-    def test_inject_wegent_token_allows_http_when_enabled(
-        self, mock_get_kind, mocker
-    ) -> None:
-        mocker.patch(
-            "app.services.execution.request_builder.settings."
-            "MCP_IDENTITY_ALLOW_INSECURE_HTTP",
-            True,
-        )
-        builder = TaskRequestBuilder.__new__(TaskRequestBuilder)
-        builder.db = SimpleNamespace()
-        mock_get_kind.return_value = _ghost_kind_with_mcp(
-            {
-                "insecure-server": {
-                    "type": "streamable-http",
-                    "url": "http://internal.example.com/mcp",
-                    "inject_wegent_token": True,
-                },
-            }
-        )
-
-        result = builder._build_mcp_servers(
-            _bot_kind_with_ghost(user_id=1),
-            SimpleNamespace(user_id=1, name="user-agent"),
-            user=SimpleNamespace(id=7, user_name="alice"),
-        )
-
-        server = result[0]
-        assert server["auth"]["Authorization"].startswith("Bearer ")
-        assert server["headers"]["Authorization"] == server["auth"]["Authorization"]
-        assert "inject_wegent_token" not in server
-
-    @patch(
-        "app.services.execution.request_builder.kindReader.get_by_name_and_namespace"
-    )
-    @patch("app.services.execution.request_builder.settings.CHAT_MCP_SERVERS", "{}")
-    def test_inject_wegent_token_overrides_static_authorization(
+    def test_inject_wegent_token_overrides_static_wegent_header(
         self, mock_get_kind, mocker
     ) -> None:
         mock_log = mocker.patch("app.services.execution.request_builder.logger.warning")
@@ -523,7 +494,7 @@ class TestBuildMcpServers:
                 "business-server": {
                     "type": "streamable-http",
                     "url": "https://business.example.com/mcp",
-                    "headers": {"Authorization": "Bearer static-token"},
+                    "headers": {"X-Wegent-Token": "static-wegent-token"},
                     "inject_wegent_token": True,
                 },
             }
@@ -536,12 +507,11 @@ class TestBuildMcpServers:
         )
 
         server = result[0]
-        assert server["auth"]["Authorization"].startswith("Bearer ")
-        assert server["auth"]["Authorization"] != "Bearer static-token"
-        assert server["headers"]["Authorization"] == server["auth"]["Authorization"]
-        # One warning per header map that already had an Authorization entry
+        assert server["auth"]["X-Wegent-Token"] != "static-wegent-token"
+        assert server["headers"]["X-Wegent-Token"] == server["auth"]["X-Wegent-Token"]
+        # One warning per header map that already had an X-Wegent-Token entry
         assert any(
-            "overrides" in str(call.args[0]) and "Authorization" in str(call.args[0])
+            "overrides" in str(call.args[0]) and "X-Wegent-Token" in str(call.args[0])
             for call in mock_log.call_args_list
         )
 
@@ -573,7 +543,7 @@ class TestBuildMcpServers:
         )
 
         server = result[0]
-        assert server["auth"]["Authorization"].startswith("Bearer ")
+        assert server["auth"]["X-Wegent-Token"]
         assert any("invalid" in str(call.args[0]) for call in mock_log.call_args_list)
 
 
