@@ -328,6 +328,13 @@ fn validate_reconnect_replay(
         return Err("replay validation initial sequence was not one".to_owned());
     }
 
+    // Backend registration resets delivery without replacing the active consumer.
+    handler.prepare_terminal_reconnect();
+    let backend_replay = deliver_single_output(handler, SESSION_ID, INITIAL_CONSUMER_ID)?;
+    if backend_replay != initial_output {
+        return Err("backend reconnect did not replay the unacknowledged output".to_owned());
+    }
+
     let reconnect = handler.handle_terminal_attach(SESSION_ID, RECONNECTED_CONSUMER_ID, 0);
     if !reconnect.success {
         return Err("failed to replace replay validation consumer".to_owned());
@@ -345,6 +352,10 @@ fn validate_reconnect_replay(
         handler.handle_terminal_ack(SESSION_ID, RECONNECTED_CONSUMER_ID, replay_output.0);
     if !replay_ack.success {
         return Err("reconnected consumer could not acknowledge replay".to_owned());
+    }
+    handler.prepare_terminal_reconnect();
+    if !handler.drain_terminal_events().is_empty() {
+        return Err("backend reconnect replayed acknowledged output".to_owned());
     }
     if !handler
         .handle_terminal_close(SESSION_ID, RECONNECTED_CONSUMER_ID)
@@ -638,4 +649,23 @@ fn load_timeout(config: Config) -> Duration {
         .saturating_mul(replay_windows.saturating_add(2))
         .saturating_mul(4);
     Duration::from_millis(ack_budget_ms.max(10_000))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn load_report_requires_reconnect_replay_validation() {
+        let report = run_load(Config {
+            sessions: 2,
+            ack_delay_ms: 0,
+            ..Config::default()
+        })
+        .expect("load validation must pass");
+
+        assert!(report.reconnect_replay_validated);
+        assert_eq!(report.status, "passed");
+        assert_eq!(report.delivered_bytes, report.total_bytes);
+    }
 }
