@@ -25,8 +25,10 @@ Cloud connections, access tokens, local Harness definitions, local attachment
 paths, absolute workspace paths, and system credentials are never uploaded as
 portable preferences. Transcript synchronization also does not copy a Git
 workspace or a model provider's native session files. To continue execution on
-another device, the execution layer still needs an available workspace and
-uses the synchronized transcript as a context source.
+another device, the execution layer still needs an available workspace.
+Executor injects downloaded finalized turns into the native Codex thread bound
+to the task, so subsequent model requests use that native conversation history
+instead of a second side-channel transcript body.
 
 ## Hot tables and cold files
 
@@ -73,13 +75,24 @@ local and cloud sequence metadata, stable `turnId`, target transcript, and
 Executor turn identifier and branch route, but never duplicates message bodies.
 Upload pages through `runtime.tasks.transcript` and reads the matching turn
 directly from the Executor's authoritative conversation store. The sync plugin
-does not persist another DSH Session body. Starting Wework without a cloud
-connection does not lose data. Polling uploads the outbox and downloads hot
-turns after a connection is established. Consecutive failures use exponential
-backoff capped at 60 seconds, and each Backend request is bounded to 30 seconds,
-so local task execution remains available. When restoring an archived
-transcript for the first time, the plugin loads archive segments before
-appending the resumed hot tail.
+does not persist another DSH Session body. During download, a task with an
+existing native thread resumes that thread before injecting increments. On a
+cold device where the task has no thread yet, Executor creates and binds a
+native Codex thread before injecting turns in cloud sequence order. The local
+`importedThrough` cursor advances only after injection succeeds, preventing
+restarts or lost responses from duplicating or reordering model history.
+Starting Wework without a cloud connection does not lose data. Polling uploads
+the outbox and downloads hot turns after a connection is established.
+Consecutive failures use exponential backoff capped at 60 seconds, and each
+Backend request is bounded to 30 seconds, so local task execution remains
+available. When restoring an archived transcript for the first time, the
+plugin loads archive segments before appending the resumed hot tail.
+
+If two devices produce different turns from the same cloud head, the
+conflicting turn is routed to an independent transcript branch. The mainline
+device does not inject that branch into its native thread. After a device binds
+to the branch, its model requests contain only history before the fork point
+and turns committed to that branch.
 
 Every Wework installation is an equal sync client. A cloud Executor is an
 execution location, not another sync device competing for the lease.
