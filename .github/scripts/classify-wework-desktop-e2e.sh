@@ -64,6 +64,7 @@ plugin_segments=(
   sites-plugin-auto-install
 )
 formal_release_segments=(
+  app-update-baseline
   app-update-differential
 )
 cloud_worktree_segments=(
