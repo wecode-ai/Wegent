@@ -1,14 +1,6 @@
 import { render, screen } from '@testing-library/react'
-import { expect, test, vi } from 'vitest'
+import { expect, test } from 'vitest'
 import { AssistantMarkdown } from './AssistantMarkdown'
-
-class ResizeObserverMock {
-  observe = vi.fn()
-  unobserve = vi.fn()
-  disconnect = vi.fn()
-}
-
-vi.stubGlobal('ResizeObserver', ResizeObserverMock)
 
 test('uses document typography for every Markdown heading level', () => {
   render(

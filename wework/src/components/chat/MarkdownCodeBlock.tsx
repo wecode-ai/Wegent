@@ -172,38 +172,29 @@ function MarkdownCodeScrollArea({
   syntaxHighlighted: boolean
   wrapLines: boolean
 }) {
-  if (wrapLines) {
-    return (
-      <div
-        data-testid="markdown-code-scroll-container"
-        data-wrap="true"
-        data-syntax-highlighted={syntaxHighlighted ? 'true' : 'false'}
-        className="max-w-full select-none overflow-x-hidden"
-      >
-        {children}
-      </div>
-    )
-  }
+  const hideHorizontalScrollbar = isStreaming || wrapLines
 
   return (
     <ScrollAreaPrimitive.Root type="always" className="relative max-w-full">
       <ScrollAreaPrimitive.Viewport
         data-testid="markdown-code-scroll-container"
-        data-wrap="false"
+        data-wrap={wrapLines ? 'true' : 'false'}
         data-syntax-highlighted={syntaxHighlighted ? 'true' : 'false'}
-        className="max-w-full select-none overflow-x-auto"
+        className={[
+          'max-w-full select-none',
+          hideHorizontalScrollbar ? 'overflow-x-hidden' : 'overflow-x-auto',
+        ].join(' ')}
       >
         {children}
       </ScrollAreaPrimitive.Viewport>
       <ScrollAreaPrimitive.Scrollbar
         orientation="horizontal"
-        data-testid={isStreaming ? undefined : 'markdown-code-horizontal-scrollbar'}
-        className={
-          isStreaming ? 'hidden' : 'flex h-2.5 touch-none select-none bg-transparent p-0.5'
-        }
+        data-testid="markdown-code-horizontal-scrollbar"
+        hidden={hideHorizontalScrollbar}
+        className="flex h-2.5 touch-none select-none bg-transparent p-0.5"
       >
         <ScrollAreaPrimitive.Thumb
-          data-testid={isStreaming ? undefined : 'markdown-code-horizontal-scrollbar-thumb'}
+          data-testid="markdown-code-horizontal-scrollbar-thumb"
           className="relative self-stretch rounded-full bg-[#aaaaaa] hover:bg-[#8c8c8c]"
         />
       </ScrollAreaPrimitive.Scrollbar>
