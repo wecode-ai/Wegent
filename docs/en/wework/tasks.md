@@ -74,7 +74,7 @@ When the composer has only one model group, the model selector displays all mode
 Wework remembers the model and reasoning effort separately for new-task defaults and active tasks:
 
 - With no task open, the composer selection belongs to the current draft and the next new task. Standalone tasks save this selection as the default for later new tasks.
-- A local project can define its own default model and reasoning effort. A temporary change in the project composer applies only to that task; starting another task restores the project default.
+- When a local project follows the global default, a project-composer selection updates the global new-task default used by later standalone tasks and other projects that follow the global default. When a project defines its own model and reasoning effort, a temporary composer change applies only to that task; starting another task restores the project default.
 - After a task starts, its model and reasoning effort belong to that task. Sending a follow-up persists the latest selection, so returning to the task restores it without changing the new-task or project default.
 
 After a conversation starts, you can still switch between official GPT/Codex models and third-party models. Wework asks for confirmation when the selected model changes, and the new model applies to the next message.
