@@ -41,6 +41,7 @@ export const DESKTOP_CHECKPOINTS = [
   'split-workbench',
   'release-package-startup',
   'app-update-differential',
+  'app-update-baseline',
   'component-update',
   'native-window-startup',
   'native-window-chrome',

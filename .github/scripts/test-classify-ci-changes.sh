@@ -82,6 +82,11 @@ if ! grep -Eq -- '--(segment|parallel-segments)[[:space:]][^[:space:]]*app-updat
   printf 'The formal release workflow must invoke app-update-differential\n' >&2
   exit 1
 fi
+if ! grep -Eq -- '--(segment|parallel-segments)[[:space:]][^[:space:]]*app-update-baseline' \
+  "$wework_app_workflow"; then
+  printf 'The formal release workflow must invoke app-update-baseline\n' >&2
+  exit 1
+fi
 
 if ! grep -Fq 'const NOISE_DELTA_COUNT = 2200' "$notification_isolation_scenario" ||
   ! grep -Fq 'const BURST_RENDER_TIMEOUT_MS = 30_000' "$notification_isolation_scenario"; then

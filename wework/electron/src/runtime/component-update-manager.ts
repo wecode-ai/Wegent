@@ -1,4 +1,4 @@
-import { createHash } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
 import { createReadStream, createWriteStream } from 'node:fs'
 import {
   cp,
@@ -13,7 +13,8 @@ import {
   writeFile,
 } from 'node:fs/promises'
 import { basename, dirname, join, resolve } from 'node:path'
-import { Readable } from 'node:stream'
+import { Readable, Transform } from 'node:stream'
+import type { ComponentDownloadProgress } from '../host/app-update-progress.js'
 import { pipeline } from 'node:stream/promises'
 import * as tar from 'tar'
 
@@ -100,6 +101,7 @@ export interface ComponentUpdateManagerOptions {
   platform?: NodeJS.Platform
   arch?: string
   fetch?: typeof fetch
+  log?: (event: Record<string, unknown>) => void
 }
 
 export class ComponentUpdateManager {
@@ -110,9 +112,18 @@ export class ComponentUpdateManager {
   private readonly platform: NodeJS.Platform
   private readonly arch: string
   private readonly fetch: typeof fetch
+  private readonly log: (event: Record<string, unknown>) => void
+  private activeStage: {
+    id: string
+    key: string
+    promise: Promise<boolean>
+    listeners: Set<(progress: ComponentDownloadProgress) => void>
+    progress?: ComponentDownloadProgress
+  } | null = null
   private packaged: PackagedComponentManifest | null = null
 
   constructor(options: ComponentUpdateManagerOptions) {
+    this.log = event => options.log?.({ stageId: this.activeStage?.id, ...event })
     this.resourcesRoot = resolve(options.resourcesRoot)
     this.root = join(resolve(options.dataDirectory), 'managed-components')
     this.updateBaseUrl = options.updateBaseUrl.replace(/\/+$/, '')
@@ -208,7 +219,47 @@ export class ComponentUpdateManager {
   async stageUpdateForApp(
     appVersion: string,
     channel: string,
-    ignoreDifferentAppVersion = false
+    ignoreDifferentAppVersion = false,
+    onProgress?: (progress: ComponentDownloadProgress) => void
+  ): Promise<boolean> {
+    const key = JSON.stringify([appVersion, channel, ignoreDifferentAppVersion])
+    if (this.activeStage) {
+      if (this.activeStage.key !== key) {
+        await this.activeStage.promise.catch(() => undefined)
+        return this.stageUpdateForApp(appVersion, channel, ignoreDifferentAppVersion, onProgress)
+      }
+      const active = this.activeStage
+      if (onProgress) {
+        active.listeners.add(onProgress)
+        if (active.progress) onProgress(active.progress)
+      }
+      try {
+        return await active.promise
+      } finally {
+        if (onProgress) active.listeners.delete(onProgress)
+      }
+    }
+    const listeners = new Set<(progress: ComponentDownloadProgress) => void>()
+    if (onProgress) listeners.add(onProgress)
+    const promise = this.performStage(appVersion, channel, ignoreDifferentAppVersion, progress => {
+      progress = { ...progress, stageId: this.activeStage?.id }
+      if (this.activeStage) this.activeStage.progress = progress
+      listeners.forEach(listener => listener(progress))
+    })
+    this.activeStage = { id: randomUUID(), key, promise, listeners }
+    this.log({ event: 'component-stage-started', appVersion, channel })
+    try {
+      return await promise
+    } finally {
+      this.activeStage = null
+    }
+  }
+
+  private async performStage(
+    appVersion: string,
+    channel: string,
+    ignoreDifferentAppVersion: boolean,
+    onProgress: (progress: ComponentDownloadProgress) => void
   ): Promise<boolean> {
     const packaged = await this.packagedManifest()
     if (channel !== 'stable' && channel !== 'beta') {
@@ -251,6 +302,7 @@ export class ComponentUpdateManager {
     ) as Record<ManagedComponentId, string>
     const stagedComponents = {} as Record<ManagedComponentId, RemoteComponent>
 
+    const downloads: Array<{ id: ManagedComponentId; component: RemoteComponent }> = []
     for (const id of MANAGED_COMPONENT_IDS) {
       const component = remote.components[id]
       const effectiveComponent = effective?.[id]
@@ -260,6 +312,7 @@ export class ComponentUpdateManager {
         appVersion === this.currentAppVersion &&
         component.contentSha256 === expectedCurrentContentSha256
       ) {
+        this.log({ event: 'component-reused', id, reason: 'current-content' })
         stagedComponents[id] =
           effectiveComponent ??
           (await this.packagedComponentDescriptor(
@@ -271,6 +324,7 @@ export class ComponentUpdateManager {
       }
       const reusableContentSha256 = await hashComponentPath(reusablePaths[id])
       if (component.contentSha256 === reusableContentSha256) {
+        this.log({ event: 'component-reused', id, reason: 'verified-installed-content' })
         const reusable =
           effectiveComponent ??
           (await this.packagedComponentDescriptor(
@@ -287,10 +341,24 @@ export class ComponentUpdateManager {
         }
         await this.ensureReusableComponent(id, stagedComponents[id], reusablePaths[id])
       } else {
-        await this.ensureComponent(id, component)
+        const target = this.componentRoot(id, component.archiveSha256)
+        const componentPath =
+          component.entryPath === '.' ? target : join(target, component.entryPath)
+        if (!(await componentMatches(componentPath, component.contentSha256))) {
+          downloads.push({ id, component })
+          this.log({
+            event: 'component-download-required',
+            id,
+            version: component.version,
+            archiveBytes: component.archiveBytes,
+          })
+        } else {
+          this.log({ event: 'component-reused', id, reason: 'verified-cache' })
+        }
         stagedComponents[id] = component
       }
     }
+    await this.downloadComponents(downloads, onProgress)
     await this.writeState({
       ...state,
       schemaVersion: 1,
@@ -546,7 +614,47 @@ export class ComponentUpdateManager {
     throw new Error(`Unsupported Wework app component entry: ${source}`)
   }
 
-  private async ensureComponent(id: ManagedComponentId, component: RemoteComponent): Promise<void> {
+  private async downloadComponents(
+    downloads: Array<{ id: ManagedComponentId; component: RemoteComponent }>,
+    onProgress: (progress: ComponentDownloadProgress) => void
+  ): Promise<void> {
+    const progress: ComponentDownloadProgress = {
+      downloadedBytes: 0,
+      totalBytes: downloads.reduce((sum, item) => sum + item.component.archiveBytes, 0),
+      completedComponents: 0,
+      totalComponents: downloads.length,
+    }
+    onProgress({ ...progress })
+    const controller = new AbortController()
+    let next = 0
+    let failure: unknown
+    const worker = async () => {
+      while (!controller.signal.aborted && next < downloads.length) {
+        const { id, component } = downloads[next++]!
+        try {
+          await this.ensureComponent(id, component, controller.signal, bytes => {
+            progress.downloadedBytes += bytes
+            onProgress({ ...progress })
+          })
+          progress.completedComponents++
+          onProgress({ ...progress })
+          this.log({ event: 'component-downloaded', id, archiveBytes: component.archiveBytes })
+        } catch (error) {
+          if (!controller.signal.aborted) failure = error
+          controller.abort()
+        }
+      }
+    }
+    await Promise.all(Array.from({ length: Math.min(3, downloads.length) }, worker))
+    if (controller.signal.aborted) throw failure
+  }
+
+  private async ensureComponent(
+    id: ManagedComponentId,
+    component: RemoteComponent,
+    signal: AbortSignal,
+    onBytes: (bytes: number) => void
+  ): Promise<void> {
     const target = this.componentRoot(id, component.archiveSha256)
     const componentPath = component.entryPath === '.' ? target : join(target, component.entryPath)
     if (await componentMatches(componentPath, component.contentSha256)) return
@@ -557,13 +665,20 @@ export class ComponentUpdateManager {
     await rm(archive, { force: true })
     await rm(temporary, { recursive: true, force: true })
     try {
-      const response = await this.fetch(component.downloadUrl, { cache: 'no-store' })
+      const response = await this.fetch(component.downloadUrl, { cache: 'no-store', signal })
       if (!response.ok || !response.body) {
         throw new Error(`Component download failed for ${id}: HTTP ${response.status}`)
       }
       await pipeline(
         Readable.fromWeb(response.body as import('node:stream/web').ReadableStream),
-        createWriteStream(archive, { mode: 0o600 })
+        new Transform({
+          transform(chunk: Buffer, _encoding, callback) {
+            onBytes(chunk.length)
+            callback(null, chunk)
+          },
+        }),
+        createWriteStream(archive, { mode: 0o600 }),
+        { signal }
       )
       const archiveMetadata = await stat(archive)
       if (archiveMetadata.size !== component.archiveBytes) {
