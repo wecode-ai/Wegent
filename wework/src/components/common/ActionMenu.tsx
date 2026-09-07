@@ -438,7 +438,7 @@ export function ActionMenu({
               visibility: menuPosition ? 'visible' : 'hidden',
             }}
             className={[
-              'fixed z-system-popover min-w-[176px] rounded-xl border border-border bg-popover p-1 text-text-primary shadow-xl',
+              'fixed z-system-popover max-h-[calc(100dvh-16px)] min-w-[176px] overflow-y-auto rounded-xl border border-border bg-popover p-1 text-text-primary shadow-xl',
               width ? `w-[${width}px]` : '',
             ].join(' ')}
           >
@@ -547,7 +547,7 @@ export function ActionMenu({
                 top: submenuPosition?.top ?? 0,
                 visibility: submenuPosition ? 'visible' : 'hidden',
               }}
-              className="fixed z-system-popover min-w-[176px] rounded-xl border border-border bg-popover p-1 text-text-primary shadow-xl"
+              className="fixed z-system-popover max-h-[calc(100dvh-16px)] min-w-[176px] overflow-y-auto rounded-xl border border-border bg-popover p-1 text-text-primary shadow-xl"
             >
               {openSubmenuItem.children.map(item => {
                 const ItemIcon = item.icon

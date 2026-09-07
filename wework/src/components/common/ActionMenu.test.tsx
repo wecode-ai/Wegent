@@ -238,4 +238,25 @@ describe('ActionMenu', () => {
     expect(item).toHaveAttribute('aria-checked', 'true')
     expect(item.querySelector('svg')).toBeInTheDocument()
   })
+
+  test('keeps long menus inside a short viewport with scrolling', () => {
+    render(
+      <ActionMenu
+        ariaLabel="Choose execution"
+        testId="execution-selector"
+        items={Array.from({ length: 20 }, (_, index) => ({
+          label: `Option ${index + 1}`,
+          testId: `option-${index + 1}`,
+          onSelect: vi.fn(),
+        }))}
+      />
+    )
+
+    fireEvent.click(screen.getByTestId('execution-selector'))
+
+    expect(screen.getByTestId('execution-selector-menu')).toHaveClass(
+      'max-h-[calc(100dvh-16px)]',
+      'overflow-y-auto'
+    )
+  })
 })
