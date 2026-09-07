@@ -5,6 +5,14 @@ import { MarkdownCodeBlock } from './MarkdownCodeBlock'
 
 const trackMock = vi.fn()
 
+class ResizeObserverMock {
+  observe = vi.fn()
+  unobserve = vi.fn()
+  disconnect = vi.fn()
+}
+
+vi.stubGlobal('ResizeObserver', ResizeObserverMock)
+
 vi.mock('@/telemetry/client', () => ({
   track: (...args: unknown[]) => trackMock(...args),
 }))
@@ -41,8 +49,8 @@ describe('MarkdownCodeBlock', () => {
     const scrollContainer = screen.getByTestId('markdown-code-scroll-container')
     const pre = scrollContainer.querySelector('pre')
     const code = scrollContainer.querySelector('code')
-    expect(scrollContainer).toHaveClass('overflow-x-auto', 'scrollbar-none')
-    expect(scrollContainer).not.toHaveClass('scrollbar-soft')
+    expect(scrollContainer).toHaveClass('overflow-x-auto')
+    expect(screen.queryByTestId('markdown-code-horizontal-scrollbar')).not.toBeInTheDocument()
     expect(pre).toHaveStyle({ overflowX: 'visible' })
 
     await waitFor(() => expect(scrollContainer).toHaveAttribute('data-syntax-highlighted', 'true'))
@@ -53,8 +61,8 @@ describe('MarkdownCodeBlock', () => {
     expect(scrollContainer.querySelector('pre')).toBe(pre)
     expect(scrollContainer.querySelector('code')).toBe(code)
     expect(scrollContainer).toHaveAttribute('data-syntax-highlighted', 'true')
-    expect(scrollContainer).toHaveClass('overflow-x-auto', 'scrollbar-soft')
-    expect(scrollContainer).not.toHaveClass('scrollbar-none')
+    expect(scrollContainer).toHaveClass('overflow-x-auto')
+    expect(screen.getByTestId('markdown-code-horizontal-scrollbar')).toBeInTheDocument()
     expect(scrollContainer.querySelector('.hljs-keyword')).toHaveTextContent('SELECT')
   })
 

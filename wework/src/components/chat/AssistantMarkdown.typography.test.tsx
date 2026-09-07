@@ -1,6 +1,14 @@
 import { render, screen } from '@testing-library/react'
-import { expect, test } from 'vitest'
+import { expect, test, vi } from 'vitest'
 import { AssistantMarkdown } from './AssistantMarkdown'
+
+class ResizeObserverMock {
+  observe = vi.fn()
+  unobserve = vi.fn()
+  disconnect = vi.fn()
+}
+
+vi.stubGlobal('ResizeObserver', ResizeObserverMock)
 
 test('uses document typography for every Markdown heading level', () => {
   render(
@@ -23,6 +31,22 @@ test('uses document typography for every Markdown heading level', () => {
   expect(screen.getByRole('heading', { level: 4 })).toHaveClass('text-lg')
   expect(screen.getByRole('heading', { level: 5 })).toHaveClass('text-base')
   expect(screen.getByRole('heading', { level: 6 })).toHaveClass('text-sm')
+})
+
+test('shows the horizontal scrollbar for completed code blocks in document previews', () => {
+  render(
+    <AssistantMarkdown
+      content={[
+        '```sql',
+        "SELECT 'a completed document preview line that is wider than its code block';",
+        '```',
+      ].join('\n')}
+      variant="document"
+    />
+  )
+
+  expect(screen.getByTestId('markdown-code-scroll-container')).toHaveClass('overflow-x-auto')
+  expect(screen.getByTestId('markdown-code-horizontal-scrollbar')).toBeInTheDocument()
 })
 
 test('allows long Markdown links to wrap within narrow message cards', () => {
