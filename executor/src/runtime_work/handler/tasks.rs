@@ -596,6 +596,7 @@ impl RuntimeWorkRpcHandler {
             if let Some(supervisor) = payload
                 .get("initialSupervisor")
                 .or_else(|| payload.get("initial_supervisor"))
+                .filter(|value| value.is_object())
             {
                 let configured = super::supervisor::configured_supervisor(supervisor, None)?;
                 self.configure_supervisor_model(&local_task_id, &configured, supervisor)?;

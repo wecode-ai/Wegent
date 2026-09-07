@@ -1749,6 +1749,7 @@ async function createLocalRuntimeTaskPayload(
   } as Record<string, unknown>
   delete payload.wegentTeamId
   delete payload.newSession
+  if (materialized) delete payload.modelConfig
   const initialSupervisor = normalizedData.initialSupervisor
   if (initialSupervisor?.modelSelection?.modelType === 'runtime') {
     payload.initialSupervisor = {
