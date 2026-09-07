@@ -152,11 +152,6 @@ def upgrade() -> None:
         mysql_engine="InnoDB",
     )
     op.create_index(
-        "ix_wework_transcripts_user_id",
-        "wework_transcripts",
-        ["user_id"],
-    )
-    op.create_index(
         "idx_wework_transcript_user_updated",
         "wework_transcripts",
         ["user_id", "updated_at"],
@@ -265,8 +260,9 @@ def upgrade() -> None:
         ),
         sa.Column(
             "storage_key",
-            sa.Text(),
+            sa.String(length=500),
             nullable=False,
+            server_default="",
             comment="Immutable object-storage key for the compressed archive",
         ),
         sa.Column(
@@ -332,10 +328,6 @@ def downgrade() -> None:
     )
     op.drop_index(
         "idx_wework_transcript_user_updated",
-        table_name="wework_transcripts",
-    )
-    op.drop_index(
-        "ix_wework_transcripts_user_id",
         table_name="wework_transcripts",
     )
     op.drop_table("wework_transcripts")

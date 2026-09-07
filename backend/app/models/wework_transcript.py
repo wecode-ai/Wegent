@@ -14,7 +14,6 @@ from sqlalchemy import (
     Index,
     Integer,
     String,
-    Text,
     UniqueConstraint,
 )
 from sqlalchemy.dialects import mysql
@@ -77,7 +76,6 @@ class WeworkTranscript(Base):
         nullable=False,
         default=0,
         server_default="0",
-        index=True,
         comment="Owner user ID",
     )
     transcript_id = Column(
@@ -295,8 +293,10 @@ class WeworkTranscriptArchive(Base):
         comment="Last turn sequence contained in the archive",
     )
     storage_key = Column(
-        Text,
+        String(500),
         nullable=False,
+        default="",
+        server_default="",
         comment="Immutable object-storage key for the compressed archive",
     )
     sha256 = Column(
