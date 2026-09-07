@@ -20,6 +20,7 @@
   },
   "workbench": {
     "brand": "Wework",
+    "remote_terminal_legacy_overflow": "输出超过旧版连接的缓冲上限，终端已关闭。请升级设备后重新打开终端。",
     "app_wework": "Wework",
     "app_wework_label": "任务",
     "app_weloop_label": "项目空间",
