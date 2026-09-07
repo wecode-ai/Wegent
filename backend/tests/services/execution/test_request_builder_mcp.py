@@ -406,12 +406,22 @@ class TestBuildMcpServers:
             {
                 "business-server": {
                     "type": "streamable-http",
-                    "url": "http://business.example.com/mcp",
+                    "url": "https://business.example.com/mcp",
                     "inject_wegent_token": True,
                 },
                 "plain-server": {
                     "type": "streamable-http",
                     "url": "http://plain.example.com/mcp",
+                },
+                "insecure-server": {
+                    "type": "streamable-http",
+                    "url": "http://insecure.example.com/mcp",
+                    "inject_wegent_token": True,
+                },
+                "loopback-server": {
+                    "type": "streamable-http",
+                    "url": "http://127.0.0.1:8000/mcp",
+                    "inject_wegent_token": True,
                 },
                 "stdio-server": {
                     "type": "stdio",
@@ -433,6 +443,7 @@ class TestBuildMcpServers:
         business = servers["business-server"]
         assert "inject_wegent_token" not in business
         authorization = business["auth"]["Authorization"]
+        assert business["headers"]["Authorization"] == authorization
         assert authorization.startswith("Bearer ")
         token_info = verify_skill_identity_token(authorization.removeprefix("Bearer "))
         assert token_info is not None
@@ -443,10 +454,21 @@ class TestBuildMcpServers:
 
         plain = servers["plain-server"]
         assert "auth" not in plain
+        assert "headers" not in plain
         assert "inject_wegent_token" not in plain
+
+        insecure = servers["insecure-server"]
+        assert "auth" not in insecure
+        assert "headers" not in insecure
+        assert "inject_wegent_token" not in insecure
+
+        loopback = servers["loopback-server"]
+        assert loopback["auth"]["Authorization"].startswith("Bearer ")
+        assert "inject_wegent_token" not in loopback
 
         stdio = servers["stdio-server"]
         assert "auth" not in stdio
+        assert "headers" not in stdio
         assert "inject_wegent_token" not in stdio
 
 

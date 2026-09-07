@@ -13,6 +13,7 @@ providing complete Bot, Model, Ghost, Shell, and Skill resolution.
 import json
 import logging
 from typing import Any, List, Optional, Union
+from urllib.parse import urlparse
 
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
@@ -2002,6 +2003,12 @@ Response template:
                         {"name": name, **config}
                         for name, config in mcp_servers_dict.items()
                     ]
+                    # Identity-token injection is applied to the top-level
+                    # ExecutionRequest MCP list, not these runtime bot copies.
+                    # Strip the opt-in flag so it never reaches the executor.
+                    for server in ghost_mcp_servers:
+                        if isinstance(server, dict):
+                            server.pop("inject_wegent_token", None)
                     ghost_skills = ghost_crd.spec.skills or []
                     ghost_skill_refs = {
                         name: ref.model_dump()
@@ -2286,13 +2293,15 @@ Response template:
 
     @staticmethod
     def _inject_wegent_identity_tokens(servers: list[dict], user: Any) -> list[dict]:
-        """Inject per-call Wegent identity tokens into opted-in MCP servers.
+        """Inject Wegent identity tokens into opted-in MCP servers.
 
         A Ghost ``mcpServers`` entry can opt in with
         ``inject_wegent_token: true``. When enabled, the business MCP server
-        receives a freshly signed Wegent identity token in the
-        ``Authorization`` header so it can resolve the current user through
-        ``GET /mcp-identity/me``. The option is consumed here and never
+        receives a freshly signed Wegent identity token in the ``auth`` and
+        ``headers`` maps (Authorization header) when building the task request,
+        so it can resolve the current user through ``GET /mcp-identity/me``.
+        Tokens are only injected over https or loopback http URLs to avoid
+        replay over cleartext channels. The option is consumed here and never
         forwarded to the executor.
 
         Args:
@@ -2308,25 +2317,38 @@ Response template:
                 "inject_wegent_token", False
             ):
                 continue
+            server_name = server.get("name") or "server"
             if server.get("type") == "stdio":
                 logger.warning(
                     "[TaskRequestBuilder] inject_wegent_token is not supported "
                     "for stdio MCP server '%s'; skipping",
-                    server.get("name", "server"),
+                    server_name,
                 )
                 continue
-            server_name = server.get("name") or "server"
+            if not TaskRequestBuilder._is_safe_identity_url(server.get("url") or ""):
+                logger.warning(
+                    "[TaskRequestBuilder] inject_wegent_token requires an https "
+                    "URL (or loopback http) for MCP server '%s'; skipping",
+                    server_name,
+                )
+                continue
             token = create_skill_identity_token(
                 user_id=user.id,
                 user_name=user.user_name,
                 runtime_type=MCP_IDENTITY_RUNTIME_TYPE,
                 runtime_name=server_name,
             )
-            auth = server.get("auth")
+            authorization = f"Bearer {token}"
+            auth = server.setdefault("auth", {})
             if not isinstance(auth, dict):
                 auth = {}
                 server["auth"] = auth
-            auth["Authorization"] = f"Bearer {token}"
+            auth["Authorization"] = authorization
+            headers = server.setdefault("headers", {})
+            if not isinstance(headers, dict):
+                headers = {}
+                server["headers"] = headers
+            headers["Authorization"] = authorization
             logger.info(
                 "[TaskRequestBuilder] Injected Wegent identity token into MCP "
                 "server '%s' for user %s",
@@ -2334,6 +2356,29 @@ Response template:
                 user.id,
             )
         return servers
+
+    @staticmethod
+    def _is_safe_identity_url(url: str) -> bool:
+        """Check that a URL may carry an injected identity bearer token.
+
+        Identity tokens are only sent to https endpoints or loopback http
+        endpoints so they are not exposed over cleartext channels.
+
+        Args:
+            url: MCP server URL
+
+        Returns:
+            True when the URL is https or loopback http, False otherwise
+        """
+        try:
+            parsed = urlparse(url)
+        except ValueError:
+            return False
+        if parsed.scheme == "https":
+            return True
+        if parsed.scheme == "http":
+            return parsed.hostname in {"localhost", "127.0.0.1", "::1"}
+        return False
 
     @staticmethod
     def _extract_prompt_text(message: Union[str, list]) -> str:
