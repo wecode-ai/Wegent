@@ -1,9 +1,15 @@
 import { render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { useState } from 'react'
-import { describe, expect, test, vi } from 'vitest'
+import { beforeEach, describe, expect, test, vi } from 'vitest'
 import '@/i18n'
+import { installDshUiTestContributions, preloadDefaultDshUiTestModules } from '@/test/setup'
+import { WEWORK_DSH_SLOTS } from '@/features/dsh-runtime/dshUiSlots'
 import { DesktopEmptyTaskLauncher } from './DesktopEmptyTaskLauncher'
+
+beforeEach(async () => {
+  await preloadDefaultDshUiTestModules(['plugins/wework-ui-home-developer.js'])
+})
 
 function LauncherHarness({
   projectName = 'Wegent',
@@ -110,6 +116,25 @@ describe('DesktopEmptyTaskLauncher', () => {
 
     expect(screen.getByRole('heading', { level: 1 })).toHaveTextContent('我们该做什么？')
     expect(screen.queryByTestId('empty-project-title-button')).not.toBeInTheDocument()
+  })
+
+  test('renders the focus-mode home without developer suggestions', async () => {
+    await installDshUiTestContributions(
+      {
+        [WEWORK_DSH_SLOTS.home]: [{ id: 'focus-home', module: 'plugins/wework-ui-home-focus.js' }],
+      },
+      {
+        'plugins/wework-ui-home-focus.js': () => import('../../../dsh/ui-home-focus/src/home'),
+      }
+    )
+
+    render(<LauncherHarness />)
+
+    expect(await screen.findByTestId('focus-home')).toBeInTheDocument()
+    expect(screen.getByRole('heading', { level: 1 })).toHaveTextContent(
+      '我们应该在 Wegent 中做些什么？'
+    )
+    expect(screen.queryByTestId('task-suggestion-categories')).not.toBeInTheDocument()
   })
 
   test('passes the title button as the project chooser anchor', async () => {

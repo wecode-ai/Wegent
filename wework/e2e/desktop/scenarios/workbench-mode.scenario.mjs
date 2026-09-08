@@ -36,6 +36,22 @@ async function assertMode(control, mode) {
   )
 }
 
+async function assertHome(control, mode) {
+  await control.command('navigate', 'body', { value: '/' })
+  const focusHomeCount = Number(
+    await control.command('getElementCount', '[data-testid="focus-home"]')
+  )
+  const developerHomeCount = Number(
+    await control.command('getElementCount', '[data-testid="task-suggestion-categories"]')
+  )
+  assert.equal(focusHomeCount, mode === 'focus' ? 1 : 0, `Unexpected focus home in ${mode} mode`)
+  assert.equal(
+    developerHomeCount,
+    mode === 'developer' ? 1 : 0,
+    `Unexpected developer home in ${mode} mode`
+  )
+}
+
 export async function createDesktopScenario() {
   return {
     async verify(control) {
@@ -46,7 +62,9 @@ export async function createDesktopScenario() {
         1,
         'Developer mode did not expose Git settings'
       )
+      await assertHome(control, 'developer')
 
+      await openGeneralSettings(control)
       await switchMode(control, 'focus')
       await openGeneralSettings(control)
       await assertMode(control, 'focus')
@@ -62,7 +80,9 @@ export async function createDesktopScenario() {
         0,
         'Focus mode still exposed code-hosting settings'
       )
+      await assertHome(control, 'focus')
 
+      await openGeneralSettings(control)
       await switchMode(control, 'developer')
       await openGeneralSettings(control)
       await assertMode(control, 'developer')
@@ -78,6 +98,7 @@ export async function createDesktopScenario() {
         1,
         'Developer mode did not restore code-hosting settings'
       )
+      await assertHome(control, 'developer')
     },
 
     diagnostics() {
