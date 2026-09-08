@@ -1063,6 +1063,25 @@
     "project_empty_title_suffix": "?",
     "change_project": "Change project",
     "project_select_placeholder": "Choose a project",
+    "focus_suggestions": {
+      "description": "Start with a common task, or describe your goal directly",
+      "research": {
+        "label": "Organize and summarize",
+        "prompt": "Help me organize and summarize the following material:"
+      },
+      "writing": {
+        "label": "Write or refine content",
+        "prompt": "Help me write or refine the following content:"
+      },
+      "analysis": {
+        "label": "Analyze and advise",
+        "prompt": "Help me analyze this problem and suggest actionable next steps:"
+      },
+      "planning": {
+        "label": "Plan and break down work",
+        "prompt": "Help me create a plan and break down the following task:"
+      }
+    },
     "task_suggestions": {
       "back": "Back to all suggestions",
       "explore": {
