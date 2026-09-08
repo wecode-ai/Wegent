@@ -640,10 +640,12 @@ describe('telemetry client', () => {
     await installTelemetry(true)
 
     track('smart_app_installed', {
+      domain: 'smart_app',
       install_source: 'marketplace',
       smart_app_id: 'private-smart-app',
       file_path: '/Users/private/Downloads/workbench.zip',
     } as {
+      domain: 'smart_app'
       install_source: 'marketplace'
       smart_app_id: string
       file_path: string
@@ -654,16 +656,17 @@ describe('telemetry client', () => {
       app_name: 'private workbench',
     } as { domain: 'smart_app'; action: 'update'; app_name: string })
     track('operation_failed', {
+      domain: 'smart_app',
       operation: 'smart_app_zip_import',
       error_message: 'private archive validation detail',
-    } as { operation: 'smart_app_zip_import'; error_message: string })
+    } as { domain: 'smart_app'; operation: 'smart_app_zip_import'; error_message: string })
 
     await flushPostHogCaptures()
 
     expect(posthogMocks.capture).toHaveBeenNthCalledWith(
       1,
       'smart_app_installed',
-      expect.objectContaining({ install_source: 'marketplace' })
+      expect.objectContaining({ domain: 'smart_app', install_source: 'marketplace' })
     )
     expect(posthogMocks.capture.mock.calls[0]?.[1]).not.toHaveProperty('smart_app_id')
     expect(posthogMocks.capture.mock.calls[0]?.[1]).not.toHaveProperty('file_path')
@@ -676,7 +679,7 @@ describe('telemetry client', () => {
     expect(posthogMocks.capture).toHaveBeenNthCalledWith(
       3,
       'operation_failed',
-      expect.objectContaining({ operation: 'smart_app_zip_import' })
+      expect.objectContaining({ domain: 'smart_app', operation: 'smart_app_zip_import' })
     )
     expect(posthogMocks.capture.mock.calls[2]?.[1]).not.toHaveProperty('error_message')
   })

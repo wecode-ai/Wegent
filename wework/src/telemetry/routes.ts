@@ -1,4 +1,17 @@
 import { resolveDshRoute } from '@/features/dsh-runtime/dshRoutes'
+import type { AnalyticsEventMap } from './events'
+
+type TelemetryFeature = AnalyticsEventMap['feature_opened']['feature']
+
+const SMART_APP_FEATURES = new Set<TelemetryFeature>([
+  'smart_apps_marketplace',
+  'smart_apps_owned',
+  'smart_app',
+])
+
+export function telemetryDomainForFeature(feature: TelemetryFeature) {
+  return SMART_APP_FEATURES.has(feature) ? ('smart_app' as const) : undefined
+}
 
 export function telemetryFeatureForLocation(pathname: string, search: string) {
   const searchParams = new URLSearchParams(search)

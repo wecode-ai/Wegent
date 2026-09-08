@@ -1109,6 +1109,7 @@ describe('App plugins route', () => {
 
     await waitFor(() =>
       expect(telemetryMocks.track).toHaveBeenCalledWith('feature_opened', {
+        domain: 'smart_app',
         feature: 'smart_apps_marketplace',
       })
     )
@@ -1120,7 +1121,21 @@ describe('App plugins route', () => {
 
     await waitFor(() =>
       expect(telemetryMocks.track).toHaveBeenLastCalledWith('feature_opened', {
+        domain: 'smart_app',
         feature: 'smart_apps_owned',
+      })
+    )
+  })
+
+  test('tracks an installed Smart App open with its domain', async () => {
+    await updateAppPreferences({ experimentalFeaturesEnabled: true })
+    window.history.pushState({}, '', '/app/harness-research-desk')
+    renderApp()
+
+    await waitFor(() =>
+      expect(telemetryMocks.track).toHaveBeenCalledWith('feature_opened', {
+        domain: 'smart_app',
+        feature: 'smart_app',
       })
     )
   })

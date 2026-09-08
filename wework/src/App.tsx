@@ -118,7 +118,7 @@ import { harnessAppRoute, resolveRunningHarnessApp } from '@/features/harness-ap
 import type { User } from '@/types/api'
 import { TelemetryBridge } from '@/telemetry/TelemetryBridge'
 import { track, useTelemetryEnabled } from '@/telemetry/client'
-import { telemetryFeatureForLocation } from '@/telemetry/routes'
+import { telemetryDomainForFeature, telemetryFeatureForLocation } from '@/telemetry/routes'
 import { WorkspaceTabPortalOwner } from '@/components/topnav/TitlebarActionsPortal'
 import { setActiveWorkspaceTabPortalOwner } from '@/components/topnav/workspaceTabPortalOwnership'
 import { DshAppSurface } from '@/features/dsh-runtime/DshAppSurface'
@@ -569,12 +569,16 @@ function AppRoutes({ onWorkbenchStartupReadyChange, onOpenWeworkForAppshot }: Ap
   }, [])
 
   const telemetryFeature = isPopoutWindow ? 'popout' : telemetryFeatureForLocation(path, search)
+  const telemetryDomain = telemetryDomainForFeature(telemetryFeature)
 
   useEffect(() => {
-    track('feature_opened', {
-      feature: telemetryFeature,
-    })
-  }, [path, telemetryEnabled, telemetryFeature])
+    track(
+      'feature_opened',
+      telemetryDomain
+        ? { domain: telemetryDomain, feature: telemetryFeature }
+        : { feature: telemetryFeature }
+    )
+  }, [path, telemetryDomain, telemetryEnabled, telemetryFeature])
   const nextNativeWorkbenchKinds = new Map(
     [...mountedTabs.nativeWorkbenchKinds].filter(([id]) =>
       workspaceTabs?.tabs.some(tab => tab.id === id)

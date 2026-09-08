@@ -4,6 +4,7 @@ export type ExecutionTarget = 'local' | 'cloud' | 'unknown'
 export type TelemetryResult = 'success' | 'cancelled' | 'failure'
 export type TelemetryFailureReason = 'network_error' | 'model_error' | 'runtime_error' | 'unknown'
 export type TelemetryDataSource = 'local' | 'cloud' | 'unknown'
+export type SmartAppTelemetryDomain = 'smart_app'
 
 export interface AnalyticsEventMap {
   $ai_trace: {
@@ -100,8 +101,10 @@ export interface AnalyticsEventMap {
       | 'smart_apps_owned'
       | 'smart_app'
       | 'unknown'
+    domain?: SmartAppTelemetryDomain
   }
   smart_app_installed: {
+    domain: SmartAppTelemetryDomain
     install_source: 'marketplace' | 'zip_import'
   }
   project_created: {
@@ -141,6 +144,7 @@ export interface AnalyticsEventMap {
     mode: 'normal' | 'plan' | 'goal'
   }
   operation_failed: {
+    domain?: SmartAppTelemetryDomain
     operation:
       | 'board_item_move'
       | 'plugin_install'
@@ -313,8 +317,8 @@ export const ANALYTICS_EVENT_PROPERTY_KEYS: {
   plugin_installed: ['source'],
   plugin_enabled_changed: ['enabled', 'scope', 'source'],
   plugin_uninstalled: ['source'],
-  feature_opened: ['feature'],
-  smart_app_installed: ['install_source'],
+  feature_opened: ['feature', 'domain'],
+  smart_app_installed: ['domain', 'install_source'],
   project_created: ['kind'],
   project_removed: ['source'],
   automation_action_completed: ['action'],
@@ -327,7 +331,7 @@ export const ANALYTICS_EVENT_PROPERTY_KEYS: {
   app_update_install_started: [],
   authentication_completed: ['method', 'result'],
   quick_phrase_used: ['mode'],
-  operation_failed: ['operation'],
+  operation_failed: ['domain', 'operation'],
   feature_action_completed: ['action', 'domain'],
   workspace_panel_added: ['panel'],
   ai_output_action_completed: ['action', 'source'],
@@ -410,6 +414,7 @@ export const ANALYTICS_EVENT_VALUE_CONSTRAINTS: {
   },
   plugin_uninstalled: { source: ['local', 'cloud', 'unknown'] },
   feature_opened: {
+    domain: ['smart_app'],
     feature: [
       'workbench',
       'project_space',
@@ -429,7 +434,10 @@ export const ANALYTICS_EVENT_VALUE_CONSTRAINTS: {
       'unknown',
     ],
   },
-  smart_app_installed: { install_source: ['marketplace', 'zip_import'] },
+  smart_app_installed: {
+    domain: ['smart_app'],
+    install_source: ['marketplace', 'zip_import'],
+  },
   project_created: { kind: ['standard', 'git'] },
   project_removed: { source: ['local', 'cloud', 'unknown'] },
   automation_action_completed: {
@@ -450,6 +458,7 @@ export const ANALYTICS_EVENT_VALUE_CONSTRAINTS: {
   },
   quick_phrase_used: { mode: ['normal', 'plan', 'goal'] },
   operation_failed: {
+    domain: ['smart_app'],
     operation: [
       'board_item_move',
       'plugin_install',

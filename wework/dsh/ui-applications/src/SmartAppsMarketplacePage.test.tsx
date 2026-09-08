@@ -319,6 +319,7 @@ describe('SmartAppsMarketplacePage', () => {
     resolveInstallation(importedInstallation)
     await waitFor(() =>
       expect(trackMock).toHaveBeenCalledWith('smart_app_installed', {
+        domain: 'smart_app',
         install_source: 'marketplace',
       })
     )
@@ -388,6 +389,7 @@ describe('SmartAppsMarketplacePage', () => {
     resolveInstallation(importedInstallation)
     await waitFor(() =>
       expect(trackMock).toHaveBeenCalledWith('smart_app_installed', {
+        domain: 'smart_app',
         install_source: 'zip_import',
       })
     )
@@ -403,6 +405,7 @@ describe('SmartAppsMarketplacePage', () => {
 
     await waitFor(() =>
       expect(trackMock).toHaveBeenCalledWith('operation_failed', {
+        domain: 'smart_app',
         operation: 'smart_app_marketplace_download',
       })
     )
@@ -418,6 +421,7 @@ describe('SmartAppsMarketplacePage', () => {
 
     await waitFor(() =>
       expect(trackMock).toHaveBeenCalledWith('operation_failed', {
+        domain: 'smart_app',
         operation: 'smart_app_marketplace_install',
       })
     )
@@ -441,6 +445,7 @@ describe('SmartAppsMarketplacePage', () => {
 
     await waitFor(() =>
       expect(trackMock).toHaveBeenCalledWith('operation_failed', {
+        domain: 'smart_app',
         operation: 'smart_app_marketplace_update',
       })
     )
@@ -465,6 +470,7 @@ describe('SmartAppsMarketplacePage', () => {
 
     await waitFor(() =>
       expect(trackMock).toHaveBeenCalledWith('operation_failed', {
+        domain: 'smart_app',
         operation: 'smart_app_zip_import',
       })
     )
