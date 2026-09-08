@@ -581,8 +581,8 @@ async def search_documents_open(
                 return {"records": []}
 
         result = await knowledge_orchestrator.retrieve_knowledge(
-            db=db,
-            user=current_user,
+            user_id=current_user.id,
+            user_name=current_user.user_name,
             knowledge_base_id=data.knowledge_base_id,
             query=data.query,
             max_results=data.top_k,

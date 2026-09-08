@@ -5,7 +5,7 @@
 """Synchronous search preparation must leave the event loop responsive."""
 
 import asyncio
-from threading import Event
+from threading import Event, get_ident
 from types import SimpleNamespace
 from typing import Any, Callable
 from unittest.mock import AsyncMock, MagicMock
@@ -14,6 +14,7 @@ import pytest
 
 from app.mcp_server.auth import TaskTokenInfo
 from app.mcp_server.tools import knowledge
+from app.services.knowledge import search_execution
 from app.services.rag.retrieval_service import RetrievalService
 from app.services.rag.runtime_resolver import RagRuntimeResolver
 
@@ -27,6 +28,7 @@ async def test_search_keeps_event_loop_responsive(
     # Arrange: model blocking synchronous extensions at each preparation boundary.
     loop = asyncio.get_running_loop()
     observations = []
+    preparation_threads: list[int] = []
 
     def blocking_io(*args: Any, **kwargs: Any) -> None:
         progressed = Event()
@@ -35,6 +37,8 @@ async def test_search_keeps_event_loop_responsive(
         return None
 
     db = MagicMock()
+    session = MagicMock()
+    session.__enter__.return_value = db
     user = SimpleNamespace(id=3, user_name="alice")
     kb = SimpleNamespace(
         json={
@@ -51,13 +55,16 @@ async def test_search_keeps_event_loop_responsive(
 
     def at_stage(name: str, result: Any) -> Callable[..., Any]:
         def call(*args: Any, **kwargs: Any) -> Any:
+            if name in {"permission", "runtime", "route", "config"}:
+                preparation_threads.append(get_ident())
             if stage == name:
                 blocking_io()
             return result
 
         return call
 
-    monkeypatch.setattr(knowledge, "SessionLocal", lambda: db)
+    monkeypatch.setattr(knowledge, "SessionLocal", lambda: session)
+    monkeypatch.setattr(search_execution, "SessionLocal", lambda: session)
     monkeypatch.setattr(
         knowledge, "_get_read_user_for_knowledge_base", at_stage("reader", user)
     )
@@ -67,25 +74,27 @@ async def test_search_keeps_event_loop_responsive(
         at_stage("scope", [11]),
     )
     monkeypatch.setattr(
-        knowledge.KnowledgeService,
+        search_execution.KnowledgeService,
         "get_knowledge_base",
         at_stage("permission", (kb, True)),
     )
     monkeypatch.setattr(
-        RagRuntimeResolver, "build_query_runtime_spec", at_stage("runtime", runtime)
+        search_execution.RagRuntimeResolver,
+        "build_query_runtime_spec",
+        at_stage("runtime", runtime),
     )
     monkeypatch.setattr(
-        RagRuntimeResolver, "build_query_knowledge_base_configs", at_stage("config", [])
+        search_execution.RagRuntimeResolver,
+        "build_query_knowledge_base_configs",
+        at_stage("config", []),
     )
     monkeypatch.setattr(
-        RetrievalService,
+        search_execution.RetrievalService,
         "decide_route_mode_for_chat_shell",
         at_stage("route", "rag_retrieval"),
     )
     gateway = SimpleNamespace(query=AsyncMock(return_value={"records": [], "total": 0}))
-    monkeypatch.setattr(
-        "app.services.rag.gateway_factory.get_query_gateway", lambda: gateway
-    )
+    monkeypatch.setattr(search_execution, "get_query_gateway", lambda: gateway)
 
     # Act: run the actual async MCP search and orchestrator entry points.
     result = await knowledge.search_knowledge_base(
@@ -98,8 +107,9 @@ async def test_search_keeps_event_loop_responsive(
     # Assert: another callback runs during blocking I/O, not only after it completes.
     assert "error" not in result, result
     assert observations and all(observations)
+    assert len(set(preparation_threads)) == 1
     gateway.query.assert_awaited_once()
-    db.close.assert_called_once()
+    session.__exit__.assert_called()
 
 
 @pytest.mark.parametrize("worker_fails", [False, True])
@@ -112,8 +122,12 @@ async def test_cancelled_search_waits_for_session_worker(
     release = Event()
     finished = Event()
     db = MagicMock()
+    session = MagicMock()
+    session.__enter__.return_value = db
     closed_after_worker = []
-    db.close.side_effect = lambda: closed_after_worker.append(finished.is_set())
+    session.__exit__.side_effect = lambda *args: closed_after_worker.append(
+        finished.is_set()
+    )
 
     def read_user(*args: Any) -> None:
         loop.call_soon_threadsafe(started.set)
@@ -124,7 +138,7 @@ async def test_cancelled_search_waits_for_session_worker(
         finally:
             finished.set()
 
-    monkeypatch.setattr(knowledge, "SessionLocal", lambda: db)
+    monkeypatch.setattr(knowledge, "SessionLocal", lambda: session)
     monkeypatch.setattr(knowledge, "_get_read_user_for_knowledge_base", read_user)
     task = asyncio.create_task(
         knowledge.search_knowledge_base(
