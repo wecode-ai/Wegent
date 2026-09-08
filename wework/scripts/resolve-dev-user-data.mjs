@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto'
+import { existsSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -6,27 +7,18 @@ import { fileURLToPath } from 'node:url'
 export function resolveDevUserDataDirectory(
   projectDirectory,
   configuredDirectory = '',
-  homeDirectory = homedir(),
-  platform = process.platform,
-  environment = process.env
+  homeDirectory = homedir()
 ) {
   const configured = configuredDirectory.trim()
   if (configured) return resolve(configured)
 
-  const worktreeId = createHash('sha256')
-    .update(resolve(projectDirectory))
-    .digest('hex')
-    .slice(0, 16)
+  const worktreeHash = createHash('sha256').update(resolve(projectDirectory)).digest('hex')
+  const root = join(homeDirectory, 'Library', 'Application Support', 'io.wecode.wework.dev')
+  const legacyDirectory = join(root, worktreeHash.slice(0, 12))
+  // Older launchers used this directory, which owns the persisted desktop identity.
+  if (existsSync(legacyDirectory)) return legacyDirectory
 
-  if (platform === 'win32') {
-    const appData = environment.APPDATA?.trim() || join(homeDirectory, 'AppData', 'Roaming')
-    return join(appData, 'io.wecode.wework.dev', worktreeId)
-  }
-  if (platform === 'darwin') {
-    return join(homeDirectory, 'Library', 'Application Support', 'io.wecode.wework.dev', worktreeId)
-  }
-  const configHome = environment.XDG_CONFIG_HOME?.trim() || join(homeDirectory, '.config')
-  return join(configHome, 'io.wecode.wework.dev', worktreeId)
+  return join(root, worktreeHash.slice(0, 16))
 }
 
 const invokedPath = process.argv[1] ? resolve(process.argv[1]) : ''

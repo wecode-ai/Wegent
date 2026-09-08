@@ -1,13 +1,15 @@
-import { join, resolve } from 'node:path'
+import { mkdir, mkdtemp, rm } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { basename, dirname, join, resolve } from 'node:path'
 import { describe, expect, test } from 'vitest'
 import { resolveDevUserDataDirectory } from './resolve-dev-user-data.mjs'
 
 describe('resolveDevUserDataDirectory', () => {
   test('isolates the default user data directory by worktree', () => {
     const homeDirectory = '/Users/example'
-    const first = resolveDevUserDataDirectory('/worktrees/first', '', homeDirectory, 'darwin')
-    const repeated = resolveDevUserDataDirectory('/worktrees/first', '', homeDirectory, 'darwin')
-    const second = resolveDevUserDataDirectory('/worktrees/second', '', homeDirectory, 'darwin')
+    const first = resolveDevUserDataDirectory('/worktrees/first', '', homeDirectory)
+    const repeated = resolveDevUserDataDirectory('/worktrees/first', '', homeDirectory)
+    const second = resolveDevUserDataDirectory('/worktrees/second', '', homeDirectory)
     const root = join(homeDirectory, 'Library', 'Application Support', 'io.wecode.wework.dev')
 
     expect(first).toBe(repeated)
@@ -22,29 +24,17 @@ describe('resolveDevUserDataDirectory', () => {
     ).toBe(resolve('./custom-user-data'))
   })
 
-  test('uses the platform application-data directory', () => {
-    const environment = {
-      APPDATA: 'C:\\Users\\example\\AppData\\Roaming',
-      XDG_CONFIG_HOME: '/home/example/.config',
-    }
+  test('reuses the legacy worktree directory to preserve desktop identity', async () => {
+    const homeDirectory = await mkdtemp(join(tmpdir(), 'wework-dev-user-data-'))
+    try {
+      const current = resolveDevUserDataDirectory('/worktrees/first', '', homeDirectory)
+      const legacy = join(dirname(current), basename(current).slice(0, 12))
+      await mkdir(current, { recursive: true })
+      await mkdir(legacy, { recursive: true })
 
-    expect(
-      resolveDevUserDataDirectory(
-        String.raw`D:\worktrees\first`,
-        '',
-        String.raw`C:\Users\example`,
-        'win32',
-        environment
-      )
-    ).toMatch(/io\.wecode\.wework\.dev[\\/][a-f0-9]{16}$/)
-    expect(
-      resolveDevUserDataDirectory(
-        '/home/example/worktrees/first',
-        '',
-        '/home/example',
-        'linux',
-        environment
-      )
-    ).toMatch(/\/io\.wecode\.wework\.dev\/[a-f0-9]{16}$/)
+      expect(resolveDevUserDataDirectory('/worktrees/first', '', homeDirectory)).toBe(legacy)
+    } finally {
+      await rm(homeDirectory, { recursive: true, force: true })
+    }
   })
 })
