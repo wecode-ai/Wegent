@@ -474,4 +474,6 @@ if [[ "$desktop_warmup_section" != *'image: ${{ needs.prepare-wework-desktop-ima
   fail "Wework desktop Electron warmup must use shared build caches inside the E2E container"
 fi
 
+bash "$script_dir/test-restore-executor-e2e-runtime.sh"
+
 printf 'CI cache policy tests passed\n'
