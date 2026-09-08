@@ -501,7 +501,7 @@ async fn stream_process_engine_keeps_stderr_for_process_failures() {
 async fn stream_process_engine_recovers_stale_session_with_fresh_run() {
     let task_id = format!("stale-session-{}", std::process::id());
     let script = r#"
-if printf '%s' "$WEGENT_TEST_ARGS" | grep -q -- '--resume'; then
+if printf '%s' "$0" | grep -q -- '--resume'; then
   printf '%s\n' '{"type":"result","is_error":true,"errors":["No conversation found with session ID: stale"],"subtype":"error_during_execution"}' >&2
   exit 1
 else
@@ -512,7 +512,6 @@ fi
     let spec = CommandSpec::new("sh")
         .arg("-c")
         .arg(script)
-        .env("WEGENT_TEST_ARGS", "test")
         .arg("--resume")
         .arg("stale-session");
     let engine = StreamProcessEngine::new(spec, TEST_PROCESS_TIMEOUT_SECONDS);
