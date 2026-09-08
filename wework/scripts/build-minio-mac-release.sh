@@ -498,8 +498,9 @@ else
   fi
 fi
 
-node "$SCRIPT_DIR/prepare-desktop-release-assets.mjs" \
-  macos "$arch" "$VERSION" "$OUTPUT_DIR"
+WEWORK_RELEASE_COMPONENT_ASSET_SOURCE=packaged-macos-app \
+  node "$SCRIPT_DIR/prepare-desktop-release-assets.mjs" \
+    macos "$arch" "$VERSION" "$OUTPUT_DIR"
 notes_path="$OUTPUT_DIR/WeWork_${VERSION}_$(release_platform).md"
 printf '%s\n' "$RELEASE_NOTES" > "$notes_path"
 WEWORK_RELEASE_BASE_URL="$UPDATE_BASE_URL" \
