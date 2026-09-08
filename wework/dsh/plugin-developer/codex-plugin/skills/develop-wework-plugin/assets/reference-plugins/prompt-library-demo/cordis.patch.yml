@@ -1,0 +1,3 @@
+- insert:
+    - id: prompt-library-demo
+      name: '@wegent/dsh-prompt-library-demo'

@@ -6,17 +6,19 @@
 
 import { useEffect, useState } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
-import { AppWindow, ClipboardCheck } from 'lucide-react'
+import { AppWindow, ClipboardCheck, PackageSearch } from 'lucide-react'
 
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { useTranslation } from '@/hooks/useTranslation'
 import MarketplaceManagement from './MarketplaceManagement'
+import PluginMarketplaceManagement from './PluginMarketplaceManagement'
 import PluginPublicationReviewQueue from './PluginPublicationReviewQueue'
 
-type WeworkMarketplaceView = 'plugin-publications' | 'smart-apps'
+type WeworkMarketplaceView = 'plugin-publications' | 'plugins' | 'smart-apps'
 
 function parseView(value: string | null): WeworkMarketplaceView {
-  return value === 'smart-apps' ? 'smart-apps' : 'plugin-publications'
+  if (value === 'plugins' || value === 'smart-apps') return value
+  return 'plugin-publications'
 }
 
 export default function WeworkMarketplaceManagement() {
@@ -52,7 +54,7 @@ export default function WeworkMarketplaceManagement() {
 
       <Tabs value={view} onValueChange={handleViewChange}>
         <div className="flex">
-          <TabsList className="grid w-full grid-cols-2 border border-border bg-surface shadow-sm sm:w-auto sm:min-w-[20rem]">
+          <TabsList className="grid w-full grid-cols-3 border border-border bg-surface shadow-sm sm:w-auto sm:min-w-[30rem]">
             <TabsTrigger
               value="plugin-publications"
               className="data-[state=active]:bg-primary data-[state=active]:text-white"
@@ -60,6 +62,14 @@ export default function WeworkMarketplaceManagement() {
             >
               <ClipboardCheck className="mr-2 h-4 w-4" aria-hidden />
               {t('marketplace_management.wework.plugin_tab')}
+            </TabsTrigger>
+            <TabsTrigger
+              value="plugins"
+              className="data-[state=active]:bg-primary data-[state=active]:text-white"
+              data-testid="wework-marketplace-tab-plugins"
+            >
+              <PackageSearch className="mr-2 h-4 w-4" aria-hidden />
+              {t('marketplace_management.wework.plugin_management_tab')}
             </TabsTrigger>
             <TabsTrigger
               value="smart-apps"
@@ -74,6 +84,9 @@ export default function WeworkMarketplaceManagement() {
 
         <TabsContent value="plugin-publications" className="mt-5">
           {view === 'plugin-publications' ? <PluginPublicationReviewQueue /> : null}
+        </TabsContent>
+        <TabsContent value="plugins" className="mt-5">
+          {view === 'plugins' ? <PluginMarketplaceManagement /> : null}
         </TabsContent>
         <TabsContent value="smart-apps" className="mt-5">
           {view === 'smart-apps' ? <MarketplaceManagement mode="smart-app" /> : null}

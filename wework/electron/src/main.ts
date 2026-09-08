@@ -1,3 +1,5 @@
+import './host/process-output-bootstrap.js'
+
 import {
   app,
   BrowserWindow,
@@ -37,6 +39,7 @@ import { RendererHealthService } from './host/renderer-health.js'
 import { SmartAppManager, type SmartAppRuntimeHost } from './host/smart-app-manager.js'
 import { SystemSleepController } from './host/system-sleep-controller.js'
 import { PreferencesStore } from './host/preferences-store.js'
+import { normalizeWorkbenchMode } from './runtime/workbench-mode.js'
 import { RendererStorageStore } from './host/renderer-storage-store.js'
 import {
   EMBEDDED_BROWSER_PARTITION,
@@ -54,7 +57,6 @@ import { desktopWindowFrameOptions } from './host/window-layout.js'
 import { createSingleFlight, presentWindow } from './host/window-presentation.js'
 import { DesktopRuntime } from './runtime/desktop-runtime.js'
 import { FeedbackBundleManager } from './host/feedback-bundle-manager.js'
-import { WorkbenchPluginManager } from './host/workbench-plugin-manager.js'
 import {
   resolveStartupSplashTheme,
   StartupSplash,
@@ -100,7 +102,11 @@ import {
   pluginDevelopmentElectronArguments,
 } from './runtime/plugin-development-manager.js'
 import { PluginDevelopmentChildRuntime } from './runtime/plugin-development-child-runtime.js'
-import { canReplaceWeworkCli, installWeworkCli } from './runtime/wework-cli-installer.js'
+import {
+  canReplaceWeworkCli,
+  installWeworkCli,
+  shouldInstallUserWeworkCli,
+} from './runtime/wework-cli-installer.js'
 import {
   parseLocalWorkspaceOpenRequest,
   type LocalWorkspaceOpenRequest,
@@ -108,6 +114,11 @@ import {
 import { SecureValueStore } from './host/secure-value-store.js'
 import { resolveDevelopmentDockIdentity } from './host/development-dock-identity.js'
 import { isEffectivePackagedApplication } from './host/application-packaging-mode.js'
+import {
+  createWeworkSyncRequestSignal,
+  normalizeWeworkSyncApiBaseUrl,
+  normalizeWeworkSyncPath,
+} from './host/wework-sync-request.js'
 
 const packageRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const packageMetadata = createRequire(import.meta.url)('../package.json') as {
@@ -179,7 +190,6 @@ let embeddedBrowserBridge: EmbeddedBrowserBridge | null = null
 let desktopControlBridge: WeworkDesktopControlBridge | null = null
 let browserAnnotations: BrowserAnnotationController | null = null
 let computerUse: ComputerUseService | null = null
-let workbenchPlugins: WorkbenchPluginManager | null = null
 let systemDragWindow: BrowserWindow | null = null
 let pendingSystemDragWindow: BrowserWindow | null = null
 let systemDragWindowCreationPromise: Promise<BrowserWindow> | null = null
@@ -256,6 +266,11 @@ const appUpdates = new AppUpdateService({
   updater: autoUpdater,
   currentVersion: () => app.getVersion(),
   isPackaged: () => packagedApplication,
+  log: event => appUpdateLogger.info(event),
+  prepareUpdate: async (version, channel, onProgress) => {
+    if (!componentUpdates) throw new Error('Component update manager is not initialized.')
+    await componentUpdates.stageUpdateForApp(version, channel, false, onProgress)
+  },
   prepareInstall: async () => {
     await prepareApplicationShutdown()
     await appUpdateLogger
@@ -909,6 +924,12 @@ async function createWindow(startupTheme: StartupSplashTheme): Promise<void> {
   startupSplashWindow.on('closed', () => {
     startupSplashWindow = null
   })
+  mainWindow.on('focus', () => {
+    mainWindow?.webContents.send('window:focus-changed', true)
+  })
+  mainWindow.on('blur', () => {
+    mainWindow?.webContents.send('window:focus-changed', false)
+  })
   mainWindow.on('resize', layoutPrimaryView)
   mainWindow.on('close', event => {
     if (quitting) return
@@ -1174,8 +1195,6 @@ async function shutdown(): Promise<void> {
   popoutShortcut?.dispose()
   popoutShortcut = null
   embeddedBrowser?.stop()
-  const plugins = workbenchPlugins
-  workbenchPlugins = null
   browserAnnotations = null
   const browserBridge = embeddedBrowserBridge
   embeddedBrowserBridge = null
@@ -1189,7 +1208,6 @@ async function shutdown(): Promise<void> {
     browserBridge?.stop(),
     controlBridge?.stop(),
     computerUseService?.stop(),
-    plugins?.shutdown(),
     development?.stop(),
     desktopRuntime?.stop(),
   ])
@@ -1244,7 +1262,6 @@ async function configureDesktopRuntime(): Promise<void> {
   }
   if (!preferences) throw new Error('Desktop preferences are unavailable')
   if (!rendererStorage) throw new Error('Renderer storage is unavailable')
-  workbenchPlugins = new WorkbenchPluginManager()
   const feedback = new FeedbackBundleManager({
     appVersion: () => app.getVersion(),
     cacheDirectory: join(app.getPath('userData'), 'cache'),
@@ -1279,6 +1296,7 @@ async function configureDesktopRuntime(): Promise<void> {
     projectRoot: process.env.WEWORK_PLUGIN_DEVELOPMENT_ROOT?.trim() || null,
     registryDirectory: desktopControlRegistryDirectory(),
     window: () => mainWindow,
+    smartApps: () => smartApps,
   })
   await desktopControlBridge.start()
   computerUse = new ComputerUseService(
@@ -1308,6 +1326,8 @@ async function configureDesktopRuntime(): Promise<void> {
     environment,
     dataDirectory: app.getPath('userData'),
     logDirectory: app.getPath('logs'),
+    readWorkbenchMode: async () =>
+      normalizeWorkbenchMode((await requiredPreferences().read()).workbenchMode),
     onExecutorEvent: (event, payload) => {
       systemSleep.handleExecutorEvent(event, payload)
       trayNativeStatus?.handleExecutorEvent(event)
@@ -1358,10 +1378,33 @@ async function configureDesktopRuntime(): Promise<void> {
               source: 'notification',
               taskId: taskAddressId,
             }),
-          plugins: workbenchPlugins,
           secureStorage,
           takePendingWorkspaceOpenRequests,
           updatePreferences: updateDesktopPreferences,
+          weworkSyncRequest: async request => {
+            const apiBaseUrl = normalizeWeworkSyncApiBaseUrl(request.apiBaseUrl)
+            const path = normalizeWeworkSyncPath(request.path)
+            const credential = await requiredCloudCredentials().refreshAccessToken(apiBaseUrl)
+            const response = await fetch(`${apiBaseUrl}${path}`, {
+              method: request.method,
+              signal: createWeworkSyncRequestSignal(),
+              headers: {
+                authorization: `${credential.tokenType} ${credential.accessToken}`,
+                ...(request.body === undefined ? {} : { 'content-type': 'application/json' }),
+              },
+              ...(request.body === undefined ? {} : { body: JSON.stringify(request.body) }),
+            })
+            const text = await response.text()
+            let body: unknown = null
+            if (text) {
+              try {
+                body = JSON.parse(text)
+              } catch {
+                body = text
+              }
+            }
+            return { status: response.status, body }
+          },
         },
         {
           captureTarget: windowLabel =>
@@ -1374,6 +1417,7 @@ async function configureDesktopRuntime(): Promise<void> {
                   : (workspaceWindows.get(windowLabel)?.webContents ?? null),
           cancelCloseToTray: cancelMainWindowClose,
           closeToTray: closeMainWindowToTray,
+          focusMainWindow: reactivateMainWindow,
           focusWindow: windowLabel => {
             const target =
               windowLabel === 'main' ? mainWindow : (workspaceWindows.get(windowLabel) ?? null)
@@ -1390,6 +1434,10 @@ async function configureDesktopRuntime(): Promise<void> {
               capturePath: process.env.WEWORK_E2E_STARTUP_SPLASH_CAPTURE?.trim(),
             })
             logStartupStep('startup-splash-close', 'completed')
+            if (!keepE2EWindowInBackground) {
+              mainWindow.focus()
+              mainWindow.webContents.focus()
+            }
             scheduleComputerUseStartup()
           },
           rendererStartupFailed: () => {
@@ -1672,6 +1720,7 @@ async function desktopEnvironment(): Promise<NodeJS.ProcessEnv> {
   const preparedComponents = await prepareDesktopComponents({
     isPackaged: packagedApplication,
     managerOptions: {
+      log: event => appUpdateLogger.info(event),
       resourcesRoot: componentResourcesRoot,
       dataDirectory: app.getPath('userData'),
       updateBaseUrl,
@@ -1706,7 +1755,13 @@ async function desktopEnvironment(): Promise<NodeJS.ProcessEnv> {
       nodeCommand: [nodeRuntime.status.path],
     }
   )
-  if (packagedApplication && !pluginDevelopmentInstance && process.platform === 'darwin') {
+  if (
+    shouldInstallUserWeworkCli(process.platform, {
+      environment: process.env,
+      packagedApplication,
+      pluginDevelopmentInstance,
+    })
+  ) {
     const userCliBin = join(app.getPath('home'), '.local', 'bin')
     const userCliPath = join(userCliBin, 'wework')
     if (await canReplaceWeworkCli(userCliPath)) {

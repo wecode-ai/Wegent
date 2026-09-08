@@ -26,6 +26,7 @@ from app.api.endpoints.openapi_responses import (
 )
 from app.models.api_key import KEY_TYPE_PERSONAL, APIKey
 from app.models.kind import Kind
+from app.models.namespace import Namespace
 from app.models.resource_member import MemberStatus, ResourceMember, ResourceRole
 from app.models.share_link import ResourceType
 from app.models.subtask import SenderType, Subtask, SubtaskRole, SubtaskStatus
@@ -414,7 +415,11 @@ class TestOpenAPIResponsesCreate:
         assert "Invalid model format" in response.json()["detail"]
 
     def test_create_response_team_not_found(
-        self, test_client: TestClient, test_api_key
+        self,
+        test_client: TestClient,
+        test_api_key,
+        test_user: User,
+        caplog: pytest.LogCaptureFixture,
     ):
         """Test create response fails when team not found."""
         response = test_client.post(
@@ -425,6 +430,10 @@ class TestOpenAPIResponsesCreate:
 
         assert response.status_code == 404
         assert "not found" in response.json()["detail"]
+        assert "[OPENAPI] Team resolution failed" in caplog.text
+        assert f"caller_user_id={test_user.id}" in caplog.text
+        assert "team_namespace=default" in caplog.text
+        assert "team_name=nonexistent-team" in caplog.text
 
     def test_create_response_invalid_previous_response_id_format(
         self, test_client: TestClient, test_api_key, test_team: Kind, test_bot: Kind
@@ -534,6 +543,116 @@ class TestOpenAPIResponsesCreate:
         )
 
         assert response.status_code == 401
+
+    @patch("app.api.endpoints.openapi_responses._create_non_streaming_response_unified")
+    def test_create_response_allows_shared_team_api_key(
+        self,
+        mock_create_sync,
+        test_client: TestClient,
+        test_db: Session,
+        test_admin_user: User,
+        test_admin_api_key,
+        test_team: Kind,
+        test_bot: Kind,
+        test_model: Kind,
+        test_public_shell: Kind,
+    ):
+        """An API key owner can invoke a directly shared Team."""
+        from app.schemas.openapi_response import ResponseObject
+
+        member = ResourceMember(
+            resource_type=ResourceType.TEAM.value,
+            resource_id=test_team.id,
+            entity_type="user",
+            entity_id=str(test_admin_user.id),
+            role=ResourceRole.Reporter.value,
+            status=MemberStatus.APPROVED.value,
+        )
+        test_db.add(member)
+        test_db.commit()
+        mock_create_sync.return_value = ResponseObject(
+            id="resp_123",
+            created_at=int(datetime.now().timestamp()),
+            status="completed",
+            model="default#test-team",
+            output=[],
+        )
+
+        response = test_client.post(
+            "/api/v1/responses",
+            headers={"X-API-Key": test_admin_api_key[0]},
+            json={"model": "default#test-team", "input": "Hello"},
+        )
+
+        assert response.status_code == 200
+        assert mock_create_sync.call_args.kwargs["user"].id == test_admin_user.id
+        assert mock_create_sync.call_args.kwargs["team"].id == test_team.id
+
+    @patch("app.api.endpoints.openapi_responses._create_non_streaming_response_unified")
+    def test_create_response_allows_namespace_shared_team_api_key(
+        self,
+        mock_create_sync,
+        test_client: TestClient,
+        test_db: Session,
+        test_admin_user: User,
+        test_admin_api_key,
+        test_team: Kind,
+        test_bot: Kind,
+        test_model: Kind,
+        test_public_shell: Kind,
+    ):
+        """A namespace member can invoke a Team granted to that namespace."""
+        from app.schemas.openapi_response import ResponseObject
+
+        namespace = Namespace(
+            name="openapi-shared-team-namespace",
+            display_name="OpenAPI shared Team namespace",
+            owner_user_id=test_team.user_id,
+            visibility="internal",
+            description="",
+            level="group",
+            is_active=True,
+        )
+        test_db.add(namespace)
+        test_db.flush()
+        test_db.add_all(
+            [
+                ResourceMember(
+                    resource_type="Namespace",
+                    resource_id=namespace.id,
+                    entity_type="user",
+                    entity_id=str(test_admin_user.id),
+                    role=ResourceRole.Reporter.value,
+                    status=MemberStatus.APPROVED.value,
+                ),
+                ResourceMember(
+                    resource_type=ResourceType.TEAM.value,
+                    resource_id=test_team.id,
+                    entity_type="namespace",
+                    entity_id=str(namespace.id),
+                    role=ResourceRole.Reporter.value,
+                    status=MemberStatus.APPROVED.value,
+                ),
+            ]
+        )
+        test_db.commit()
+        mock_create_sync.return_value = ResponseObject(
+            id="resp_123",
+            created_at=int(datetime.now().timestamp()),
+            status="completed",
+            model="default#test-team",
+            output=[],
+        )
+
+        response = test_client.post(
+            "/api/v1/responses",
+            headers={"X-API-Key": test_admin_api_key[0]},
+            json={"model": "default#test-team", "input": "Hello"},
+        )
+
+        assert response.status_code == 200
+        assert mock_create_sync.call_args.kwargs["user"].id == test_admin_user.id
+        assert mock_create_sync.call_args.kwargs["team"].id == test_team.id
 
     @patch("app.api.endpoints.openapi_responses._create_non_streaming_response_unified")
     def test_create_response_sync_success(

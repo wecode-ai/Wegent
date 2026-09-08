@@ -6,6 +6,7 @@
 
 import json
 from copy import deepcopy
+from datetime import datetime
 from pathlib import PurePath
 
 from fastapi import (
@@ -28,9 +29,13 @@ from app.api.dependencies import get_db
 from app.core.security import get_admin_user
 from app.models.kind import Kind
 from app.models.marketplace_resource import MarketplaceResource
+from app.models.plugin_marketplace import EPOCH_TIME, Plugin, PluginRelease
 from app.models.smart_app_marketplace import SmartApp
 from app.models.user import User
 from app.schemas.admin_marketplace import (
+    AdminMarketplacePlugin,
+    AdminMarketplacePluginList,
+    AdminMarketplacePluginUpdate,
     AdminMarketplaceResource,
     AdminMarketplaceResourceList,
     AdminMarketplaceResourceUpdate,
@@ -41,6 +46,10 @@ from app.schemas.admin_marketplace import (
 )
 from app.services.marketplace_artifact_storage import marketplace_artifact_storage
 from app.services.official_smart_app_publisher import official_smart_app_publisher
+from app.services.plugin_marketplace_identity import (
+    ENTERPRISE_CATALOG_NAMESPACE,
+    OFFICIAL_CATALOG_NAMESPACE,
+)
 from app.services.resource_library_service import (
     _marketplace_config,
     _marketplace_recommendation_score,
@@ -57,6 +66,11 @@ KIND_BY_RESOURCE_TYPE = {
     "agent": "Team",
     "skill": "Skill",
 }
+PLUGIN_CATALOG_NAMESPACES = [
+    OFFICIAL_CATALOG_NAMESPACE,
+    ENTERPRISE_CATALOG_NAMESPACE,
+]
+PLUGIN_MANAGED_STATUSES = ["published", "unpublished"]
 
 
 def _resource_metadata(resource: Kind) -> tuple[str, str | None]:
@@ -158,6 +172,51 @@ def _smart_app_response(
             and app.icon_storage_key
         ),
     )
+
+
+def _plugin_response(
+    plugin: Plugin, release: PluginRelease | None
+) -> AdminMarketplacePlugin:
+    manifest = (
+        release.manifest_json
+        if release and isinstance(release.manifest_json, dict)
+        else {}
+    )
+    author = manifest.get("author")
+    if isinstance(author, dict):
+        author = author.get("name")
+    return AdminMarketplacePlugin(
+        id=plugin.id,
+        catalog_namespace=plugin.catalog_namespace,
+        name=plugin.name or plugin.slug,
+        display_name=plugin.display_name or plugin.name or plugin.slug,
+        description=plugin.summary or plugin.description_md,
+        version=release.version if release else None,
+        author=str(author) if author else None,
+        featured_rank=plugin.featured_rank,
+        is_listed=plugin.status == "published",
+        created_at=plugin.created_at,
+        updated_at=plugin.updated_at,
+    )
+
+
+def _managed_plugin(db: Session, plugin_id: int) -> tuple[Plugin, PluginRelease | None]:
+    row = (
+        db.query(Plugin, PluginRelease)
+        .outerjoin(PluginRelease, PluginRelease.id == Plugin.latest_release_id)
+        .filter(
+            Plugin.id == plugin_id,
+            Plugin.catalog_namespace.in_(PLUGIN_CATALOG_NAMESPACES),
+            Plugin.status.in_(PLUGIN_MANAGED_STATUSES),
+        )
+        .first()
+    )
+    if row is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Managed marketplace plugin not found",
+        )
+    return row
 
 
 def _official_smart_app(db: Session, smart_app_id: int) -> SmartApp:
@@ -361,6 +420,118 @@ async def update_marketplace_resource(
         publisher_user_name,
         publication.recommendation_score if publication is not None else None,
     )
+
+
+@router.get(
+    "/marketplace-plugins",
+    response_model=AdminMarketplacePluginList,
+)
+@trace_async()
+async def list_marketplace_plugins(
+    page: int = Query(default=1, ge=1),
+    limit: int = Query(default=50, ge=1, le=200),
+    search: str = Query(default="", max_length=100),
+    listing_status: str = Query(default="all", pattern="^(all|listed|unlisted)$"),
+    source: str = Query(default="all", pattern="^(all|wework-official|enterprise)$"),
+    score_order: str = Query(default="desc", pattern="^(asc|desc)$"),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_admin_user),
+) -> AdminMarketplacePluginList:
+    """List official and enterprise plugins managed in the Wework marketplace."""
+    filters = [
+        Plugin.catalog_namespace.in_(PLUGIN_CATALOG_NAMESPACES),
+        Plugin.status.in_(PLUGIN_MANAGED_STATUSES),
+    ]
+    normalized_search = search.strip()
+    if normalized_search:
+        filters.append(
+            or_(
+                Plugin.name.contains(normalized_search, autoescape=True),
+                Plugin.slug.contains(normalized_search, autoescape=True),
+                Plugin.display_name.contains(normalized_search, autoescape=True),
+                Plugin.summary.contains(normalized_search, autoescape=True),
+                Plugin.description_md.contains(normalized_search, autoescape=True),
+            )
+        )
+    if listing_status != "all":
+        filters.append(
+            Plugin.status
+            == ("published" if listing_status == "listed" else "unpublished")
+        )
+    if source != "all":
+        filters.append(Plugin.catalog_namespace == source)
+
+    total = db.query(Plugin.id).filter(*filters).count()
+    rows = (
+        db.query(Plugin, PluginRelease)
+        .outerjoin(PluginRelease, PluginRelease.id == Plugin.latest_release_id)
+        .filter(*filters)
+        .order_by(
+            case(
+                (Plugin.catalog_namespace == OFFICIAL_CATALOG_NAMESPACE, 1),
+                else_=0,
+            ).desc(),
+            (
+                Plugin.featured_rank.asc()
+                if score_order == "asc"
+                else Plugin.featured_rank.desc()
+            ),
+            Plugin.updated_at.desc(),
+            Plugin.id.desc(),
+        )
+        .offset((page - 1) * limit)
+        .limit(limit)
+        .all()
+    )
+    return AdminMarketplacePluginList(
+        items=[_plugin_response(plugin, release) for plugin, release in rows],
+        total=total,
+        page=page,
+        limit=limit,
+    )
+
+
+@router.put(
+    "/marketplace-plugins/{plugin_id}",
+    response_model=AdminMarketplacePlugin,
+)
+@trace_async()
+async def update_marketplace_plugin(
+    update: AdminMarketplacePluginUpdate,
+    plugin_id: int = Path(gt=0),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_admin_user),
+) -> AdminMarketplacePlugin:
+    """Update marketplace copy, ranking, or listing state for one plugin."""
+    plugin, release = _managed_plugin(db, plugin_id)
+    if "description" in update.model_fields_set and update.description is not None:
+        normalized_description = update.description.strip()
+        plugin.summary = normalized_description
+        if not normalized_description:
+            plugin.description_md = ""
+    if "featured_rank" in update.model_fields_set and update.featured_rank is not None:
+        plugin.featured_rank = update.featured_rank
+    if "is_listed" in update.model_fields_set and update.is_listed is not None:
+        if update.is_listed:
+            if (
+                release is None
+                or release.status != "ready"
+                or release.scan_status != "passed"
+            ):
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail="Plugin has no release ready for marketplace publication",
+                )
+            plugin.status = "published"
+            if plugin.published_at == EPOCH_TIME:
+                plugin.published_at = datetime.now()
+        else:
+            plugin.status = "unpublished"
+    db.commit()
+    db.refresh(plugin)
+    if release is not None:
+        db.refresh(release)
+    return _plugin_response(plugin, release)
 
 
 @router.get(

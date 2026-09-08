@@ -1,4 +1,4 @@
-# Applications layout design QA
++# Applications layout design QA
 
 ## Comparison target
 
@@ -151,6 +151,43 @@ Applications result: passed
 
 final result: passed
 
+# Product Design QA
+
+## Scope
+
+- Selected reference: `docs/assets/product-design/wework-plugin-management-option-2.png`
+- First plugin-management render: `docs/assets/product-design/wework-plugin-management-implementation-iteration-1.png`
+- Rendered plugin management: `docs/assets/product-design/wework-plugin-management-implementation-final.png`
+- Original publication review reference: `/var/folders/v7/cdzm7jt91951hnc_97lch7h40000gn/T/codex-clipboard-425fd8fc-f76f-4aeb-a29c-22d58f798724.png`
+- Rendered publication review: `docs/assets/product-design/wework-plugin-review-implementation-final.png`
+- Browser viewport: 1280 × 720 CSS pixels
+- Browser: Codex in-app browser
+
+## Comparison record
+
+The selected reference and rendered plugin-management screenshot were opened in one comparison input. The implementation preserves the selected direction's three-tab navigation, grouped official and enterprise plugin list, selected-row treatment, filters, recommendation-score ordering, status tags, and persistent detail editor. At the narrower QA viewport, the redundant source and updated-time columns are hidden while the source grouping remains visible.
+
+The original and redesigned publication-review screenshots were also opened in one comparison input. The redesign keeps the existing filters while replacing the sparse card-and-empty-area layout with a compact review table, clear status and risk tags, waiting time, GitLab state, row affordances, total count, and pagination.
+
+## Findings and fixes
+
+- P2: the first 1280 px render exposed a horizontal scrollbar in the plugin list. Fixed by hiding the source and updated-time columns below 1536 px; measured table `scrollWidth` now equals `clientWidth` (718 px).
+- P0/P1: none found.
+- Console: no errors; only development informational messages were present.
+
+## Interaction verification
+
+- Switched between plugin review and plugin management tabs.
+- Changed a plugin description and recommendation score.
+- Changed listing state from listed to unlisted and saved successfully.
+- Confirmed the saved toast, disabled clean-state save button, and updated form state.
+- Toggled recommendation-score ordering.
+- Verified filter, refresh, pagination, and row controls expose accessible labels/test IDs.
+
+## Result
+
+final result: passed
+
 # Plugin Debug Panel Design QA
 
 ## Comparison target
@@ -218,3 +255,44 @@ application log contained no plugin-panel errors or warnings.
   icons without changing the official Codex plugin format.
 
 final result: passed
+
+# Plugin management row-to-drawer interaction QA
+
+## Comparison target
+
+- Source visual truth:
+  - Existing plugin-management split view: `/var/folders/v7/cdzm7jt91951hnc_97lch7h40000gn/T/codex-clipboard-3fbbed9a-4c88-46d8-9456-38fa60c70f7f.png`
+  - Publication-review drawer pattern: `/var/folders/v7/cdzm7jt91951hnc_97lch7h40000gn/T/codex-clipboard-e686b315-7ea6-4308-8fa9-4efb8ecbc7a0.png`
+- Rendered implementation screenshot: unavailable; see blocker below.
+
+## Environment and normalization
+
+- Source images: `1920 x 1049` pixels, desktop Chrome, light theme, Chinese locale.
+- Intended implementation viewport: the same authenticated local Wegent admin page.
+- State: plugin-management list before selection, then the edit drawer opened from a plugin row.
+
+## Implemented interaction
+
+- The plugin list now uses the full content width instead of reserving a persistent detail column.
+- Clicking a row, or activating it with Enter/Space, opens a right-side edit drawer using the same shared Drawer primitives, overlay, full-height frame, header, close control, scrollable body, and fixed action footer as publication review.
+- Both management and publication review now declare the right-side drawer direction explicitly, so their open and close motion is consistent with their visual placement.
+- Description, recommendation score, listing state, metadata, reset, save validation, loading, and toast behavior remain unchanged.
+- Closing the drawer clears the selected plugin while preserving list filters, ordering, and pagination.
+
+## Verification evidence
+
+- Focused component tests cover closed initial state, row-click opening, editing and saving all managed fields, closing, changing rows, score ordering, and stale-response protection.
+- The four related admin suites pass together: plugin management, publication review queue, publication review drawer, and WeWork marketplace tab integration (`13 passed`).
+- Frontend TypeScript and lint pass; lint reports only pre-existing warnings outside the changed files.
+- Fonts and typography, spacing and layout rhythm, colors and tokens, icon treatment, and copy reuse the existing admin design system and the publication-review drawer implementation.
+- No new raster or custom visual assets are required.
+
+## Blocker
+
+- The Codex in-app browser reaches the local login screen and has no authenticated session.
+- The authenticated Chrome window was actively in use, so it was not commandeered for capture.
+- Without a fresh browser-rendered implementation screenshot, a same-state combined visual comparison cannot be completed. Automated interaction and code inspection do not substitute for this visual gate.
+
+## Result
+
+final result: blocked

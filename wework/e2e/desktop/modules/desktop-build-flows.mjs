@@ -91,12 +91,17 @@ import {
 
 import { waitForTaskRowByText } from './task-state-flows.mjs'
 import { remoteDeviceE2EExtension } from '../remote-device-extension.mjs'
+import {
+  verifyRemoteTerminalRemainsResponsiveAfterOutputBurst,
+  verifyTerminalWireCompatibility,
+} from './terminal-compatibility-flows.mjs'
 
 import {
   captureVerificationScreenshot,
   waitForControlValue,
   waitForFolderPathReady,
   waitForFolderPickerInitialized,
+  waitForWorkbenchDebugState,
   waitForWorkbenchTask,
 } from './workspace-flows.mjs'
 
@@ -131,8 +136,54 @@ async function verifyRemoteTerminalUsesPanelWidth(control) {
   )
 }
 
-async function waitForSingleProjectByTitle(control, expectedTitle, message, timeoutMs) {
+async function closeRemoteTerminal(control) {
+  await control.command('click', '[data-testid="close-bottom-workspace-tab-button"]')
+  await waitForSnapshot(
+    control,
+    value =>
+      !value.testIds.includes('workspace-tool-launcher') &&
+      !value.testIds.includes('workspace-terminal-window'),
+    'The cloud task terminal and bottom panel did not close cleanly',
+    DEFAULT_STEP_TIMEOUT_MS,
+    ACTIVE_WORKBENCH_SELECTOR
+  )
+}
+
+async function verifyCloudTerminalCompatibility(control, cloudEnvironment) {
+  for (const requestedVersion of [undefined, 1, 2]) {
+    await verifyTerminalWireCompatibility(cloudEnvironment, {
+      requestedVersion,
+      expectedVersion: requestedVersion ?? 1,
+      name: `wire-request-${requestedVersion ?? 'absent'}`,
+    })
+  }
+  try {
+    await cloudEnvironment.restartBackendWithTerminalProtocolV2(false)
+    await verifyTerminalWireCompatibility(cloudEnvironment, {
+      requestedVersion: 2,
+      expectedVersion: 1,
+      name: 'wire-v2-disabled',
+    })
+    await openBottomWorkspaceTerminal(control, 'The cloud task with terminal v2 disabled')
+    await verifyRemoteTerminalUsesPanelWidth(control)
+    await verifyRemoteTerminalRemainsResponsiveAfterOutputBurst(control, 'renderer-v1')
+    await captureVerificationScreenshot(control, 'cloud-04c-legacy-terminal-rendered.png')
+    await closeRemoteTerminal(control)
+  } finally {
+    await cloudEnvironment.restartBackendWithTerminalProtocolV2(true)
+  }
+}
+
+async function waitForSingleProjectByTitle(
+  control,
+  expectedTitle,
+  message,
+  timeoutMs,
+  stableMs = 0
+) {
   const startedAt = Date.now()
+  let matchingProjectId = null
+  let matchingSince = null
   while (Date.now() - startedAt < timeoutMs) {
     const snapshot = JSON.parse(await control.command('snapshot', 'body'))
     const projectMenuTestIds = snapshot.testIds.filter(testId => testId.startsWith('project-menu-'))
@@ -143,7 +194,17 @@ async function waitForSingleProjectByTitle(control, expectedTitle, message, time
       if (title.trim() === expectedTitle) matchingProjectIds.push(projectId)
     }
     if (matchingProjectIds.length === 1) {
-      return { projectId: matchingProjectIds[0], snapshot }
+      const nextProjectId = matchingProjectIds[0]
+      if (nextProjectId !== matchingProjectId) {
+        matchingProjectId = nextProjectId
+        matchingSince = Date.now()
+      }
+      if (Date.now() - matchingSince >= stableMs) {
+        return { projectId: nextProjectId, snapshot }
+      }
+    } else {
+      matchingProjectId = null
+      matchingSince = null
     }
     await new Promise(resolvePromise => setTimeout(resolvePromise, 100))
   }
@@ -277,14 +338,16 @@ async function writeCodexConfig(
   codexHome,
   modelServerUrl,
   scenarioConfigToml = '',
-  upstreamApiFormat = 'openai-responses'
+  upstreamApiFormat = 'openai-responses',
+  providerConfigToml = '',
+  providerAuthToml = 'env_key = "WEWORK_E2E_MODEL_API_KEY"'
 ) {
   await mkdir(codexHome, { recursive: true })
   const configPath = join(codexHome, 'config.toml')
   const temporaryConfigPath = join(codexHome, `config.toml.${randomUUID()}.tmp`)
   await writeFile(
     temporaryConfigPath,
-    `model_provider = "${MODEL_PROVIDER_ID}"\nmodel = "${DEFAULT_MODEL_ID}"\napproval_policy = "never"\nsandbox_mode = "danger-full-access"\n${scenarioConfigToml}\n[model_providers.${MODEL_PROVIDER_ID}]\nname = "Wework Desktop E2E"\nbase_url = "${modelServerUrl}/v1"\nenv_key = "WEWORK_E2E_MODEL_API_KEY"\nwire_api = "responses"\nupstream_api_format = "${upstreamApiFormat}"\n`,
+    `model_provider = "${MODEL_PROVIDER_ID}"\nmodel = "${DEFAULT_MODEL_ID}"\napproval_policy = "never"\nsandbox_mode = "danger-full-access"\n${scenarioConfigToml}\n[model_providers.${MODEL_PROVIDER_ID}]\nname = "Wework Desktop E2E"\nbase_url = "${modelServerUrl}/v1"\n${providerAuthToml}\nwire_api = "responses"\nupstream_api_format = "${upstreamApiFormat}"\n${providerConfigToml}`,
     'utf8'
   )
   await rename(temporaryConfigPath, configPath)
@@ -297,11 +360,13 @@ function toolDetailsMcpConfigToml() {
     '[mcp_servers.node_repl]',
     `command = ${command}`,
     `args = [${server}, "node_repl"]`,
+    'env = { ELECTRON_RUN_AS_NODE = "1" }',
     'default_tools_approval_mode = "approve"',
     '',
     '[mcp_servers."github__issues"]',
     `command = ${command}`,
     `args = [${server}, "github__issues"]`,
+    'env = { ELECTRON_RUN_AS_NODE = "1" }',
     'default_tools_approval_mode = "approve"',
     '',
   ].join('\n')
@@ -315,6 +380,7 @@ function mcpElicitationConfigToml(evidencePath) {
     '[mcp_servers.wegent_sites_interactions]',
     `command = ${command}`,
     `args = [${server}, ${evidence}]`,
+    'env = { ELECTRON_RUN_AS_NODE = "1" }',
     'default_tools_approval_mode = "prompt"',
     '',
   ].join('\n')
@@ -561,7 +627,11 @@ async function verifyCloudVisionFlows(control, composerSelector) {
   })
 }
 
-export async function verifyRemoteDockerCommandFlow(control, cloudEnvironment) {
+export async function verifyRemoteDockerCommandFlow(
+  control,
+  cloudEnvironment,
+  { interactiveSessions = null } = {}
+) {
   await control.command('navigate', 'body', { value: '/settings/connections?addDevice=1' })
   await control.command('waitFor', '[data-testid="add-cloud-device-dialog"]', {
     timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
@@ -622,10 +692,11 @@ export async function verifyRemoteDockerCommandFlow(control, cloudEnvironment) {
   assert.ok(generatedDeviceId, 'The generated command did not include a device ID')
   assert.ok(generatedDeviceName, 'The generated command did not include a device name')
   assert.ok(generatedAuthToken, 'The generated command did not include an auth token')
-  await cloudEnvironment.startGeneratedRemoteDevice({
+  const generatedDevice = await cloudEnvironment.startGeneratedRemoteDevice({
     deviceId: generatedDeviceId,
     deviceName: generatedDeviceName,
     authToken: generatedAuthToken,
+    interactiveSessions,
   })
   await waitForSnapshot(
     control,
@@ -635,67 +706,134 @@ export async function verifyRemoteDockerCommandFlow(control, cloudEnvironment) {
     'The generated remote device did not close the dialog and refresh the device list'
   )
   await control.command('navigate', 'body', { value: '/' })
+  return { deviceId: generatedDeviceId, ...generatedDevice }
 }
 
-export async function verifyLocalRemoteControlFlow(control, cloudEnvironment) {
-  await control.command('setAppPreferences', 'body', {
-    value: JSON.stringify({ remoteControlEnabled: false }),
-  })
+async function assertDisabledControl(control, selector, message) {
+  await control.command('waitFor', selector, { timeoutMs: DEFAULT_STEP_TIMEOUT_MS })
+  assert.notEqual(
+    await control.command('getAttribute', selector, { value: 'disabled' }),
+    null,
+    message
+  )
+}
+
+export async function verifyDisabledRemoteSessionCapabilities(
+  control,
+  cloudEnvironment,
+  { deviceId, home }
+) {
+  const device = await cloudEnvironment.device(deviceId)
+  assert.deepEqual(
+    device.runtime_features?.interactiveSessions,
+    { codeServer: false, terminal: false },
+    'The real Executor did not publish the disabled interactive session capabilities'
+  )
+
   await control.command('navigate', 'body', { value: '/settings/connections' })
-  await control.command('waitFor', '[data-testid="remote-control-toggle"]', {
+  await control.command('waitFor', `[data-testid="connection-device-${deviceId}"]`, {
     timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
   })
-  assert.equal(
-    await control.command('getAttribute', '[data-testid="remote-control-toggle"]', {
-      value: 'aria-checked',
-    }),
-    'false',
-    'Remote control should default to disabled'
+  await assertDisabledControl(
+    control,
+    `[data-testid="connection-terminal-button-${deviceId}"]`,
+    'The Connections terminal action remained enabled after the Executor disabled terminal sessions'
   )
+  await assertDisabledControl(
+    control,
+    `[data-testid="connection-code-server-button-${deviceId}"]`,
+    'The Connections IDE action remained enabled after the Executor disabled code-server sessions'
+  )
+  await captureVerificationScreenshot(control, 'cloud-00-disabled-session-settings.png')
 
-  const initialDevice = await cloudEnvironment.waitForConnectedAppDevice()
-  assert.ok(initialDevice.runtime_instance_id, 'The app device did not expose a Runtime identity')
-  assert.ok(initialDevice.app_device_id, 'The app device did not expose its physical app identity')
+  const projectTitle = 'disabled-interactive-sessions'
+  const workspacePath = join(home, projectTitle)
+  await mkdir(workspacePath, { recursive: true })
+  await control.command('navigate', 'body', { value: '/' })
+  await control.command('waitFor', '[data-testid="projects-create-button"]', {
+    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+  })
+  await control.command('click', '[data-testid="projects-create-button"]')
+  await control.command('click', '[data-testid="project-create-remote-option"]')
+  await control.command('waitFor', '[data-testid="standalone-remote-device-select"]', {
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await control.command('fill', '[data-testid="standalone-remote-device-select"]', {
+    value: deviceId,
+  })
+  await control.command('clickWhenEnabled', '[data-testid="remote-project-source-existing"]', {
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await waitForControlValue(
+    control,
+    '[data-testid="device-folder-path-input"]',
+    home,
+    'The disabled-session device picker did not load the real Executor home'
+  )
+  await control.command('fill', '[data-testid="device-folder-path-input"]', {
+    value: workspacePath,
+  })
+  await control.command('press', '[data-testid="device-folder-path-input"]', { key: 'Enter' })
+  await waitForFolderPathReady(control, workspacePath)
+  await control.command('clickWhenEnabled', '[data-testid="confirm-device-folder-picker-button"]')
+  const { projectId } = await waitForSingleProjectByTitle(
+    control,
+    projectTitle,
+    'The disabled-session project was not created through the real remote project flow',
+    WORKBENCH_READY_TIMEOUT_MS,
+    COMPOSER_READY_STABILITY_MS * 4
+  )
+  await control.command(
+    'clickWhenEnabled',
+    `[data-testid="project-row-${projectId}"] [data-testid="project-new-conversation-button"]`
+  )
+  await control.command('waitFor', ACTIVE_COMPOSER_SELECTOR, {
+    stableMs: COMPOSER_READY_STABILITY_MS,
+    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+  })
 
-  await control.command('click', '[data-testid="remote-control-toggle"]')
-  const remoteDevice = await cloudEnvironment.waitForDeviceType(initialDevice.device_id, 'remote')
-  assert.equal(remoteDevice.device_id, initialDevice.device_id)
-  assert.equal(remoteDevice.runtime_instance_id, initialDevice.runtime_instance_id)
-  assert.equal(remoteDevice.app_device_id, initialDevice.app_device_id)
-  assert.equal(
-    await control.command('getAttribute', '[data-testid="remote-control-toggle"]', {
-      value: 'aria-checked',
-    }),
-    'true',
-    'Remote control switch did not stay enabled'
+  await assertDisabledControl(
+    control,
+    '[data-testid="open-code-server-titlebar-button"]',
+    'The project IDE action remained enabled after the Executor disabled code-server sessions'
   )
-  const runtimeSettings = await cloudEnvironment.runtimeSettings(initialDevice.device_id)
-  assert.equal(runtimeSettings.device_id, initialDevice.device_id)
-  await captureVerificationScreenshot(control, 'cloud-00-local-remote-control-enabled.png')
+  await control.command('click', '[data-testid="toggle-bottom-workspace-panel-button"]')
+  await assertDisabledControl(
+    control,
+    `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="workspace-terminal-card"]`,
+    'The project terminal card remained enabled after the Executor disabled terminal sessions'
+  )
+  await captureVerificationScreenshot(control, 'cloud-00-disabled-session-project.png')
+}
 
-  await control.command('click', '[data-testid="remote-control-toggle"]')
-  const appDevice = await cloudEnvironment.waitForDeviceType(initialDevice.device_id, 'app')
-  assert.equal(appDevice.device_id, initialDevice.device_id)
-  assert.equal(appDevice.runtime_instance_id, initialDevice.runtime_instance_id)
-  assert.equal(appDevice.app_device_id, initialDevice.app_device_id)
-  assert.equal(
-    (await cloudEnvironment.devices()).filter(
-      device => device.device_id === initialDevice.device_id
-    ).length,
-    1,
-    'Toggling remote control created a duplicate device registration'
+export async function verifyWeworkAppDeviceRegistrationFlow(control, cloudEnvironment) {
+  await control.command('navigate', 'body', { value: '/settings/connections' })
+
+  const appDevice = await cloudEnvironment.waitForConnectedAppDevice()
+  assert.match(
+    appDevice.device_id,
+    /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i,
+    'A fresh Wework installation must register its persisted UUID'
   )
-  assert.equal(
-    await control.command('getAttribute', '[data-testid="remote-control-toggle"]', {
-      value: 'aria-checked',
-    }),
-    'false',
-    'Remote control switch did not stay disabled'
+  assert.equal(appDevice.execution_target_id, `app-record-${appDevice.id}`)
+  assert.ok(appDevice.runtime_instance_id, 'The app device did not expose a Runtime identity')
+  assert.ok(appDevice.app_device_id, 'The app device did not expose its physical app identity')
+  const devices = await cloudEnvironment.devices()
+  for (const identity of ['device_id', 'runtime_instance_id', 'app_device_id']) {
+    assert.equal(
+      devices.filter(
+        device => device.device_type === 'app' && device[identity] === appDevice[identity]
+      ).length,
+      1,
+      `Wework created a duplicate app device registration for ${identity}`
+    )
+  }
+  const snapshot = JSON.parse(await control.command('snapshot', 'body'))
+  assert.ok(
+    !snapshot.testIds.includes('remote-control-toggle'),
+    'Wework app registration should not depend on a remote-control switch'
   )
-  await assert.rejects(
-    () => cloudEnvironment.runtimeSettings(initialDevice.device_id),
-    /Remote control is disabled for this app device/
-  )
+  await captureVerificationScreenshot(control, 'cloud-00-wework-app-device.png')
   await control.command('navigate', 'body', { value: '/' })
 }
 
@@ -748,7 +886,7 @@ async function verifyCloudProjectFlow(
   await control.command('waitFor', '[data-testid="projects-create-button"]', {
     timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
   })
-  await verifyLocalRemoteControlFlow(control, cloudEnvironment)
+  await verifyWeworkAppDeviceRegistrationFlow(control, cloudEnvironment)
   await verifyRemoteDockerCommandFlow(control, cloudEnvironment)
   await control.command('waitFor', '[data-testid="projects-create-button"]', {
     timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
@@ -915,17 +1053,10 @@ async function verifyCloudProjectFlow(
   await selectE2EModel(control, DEFAULT_MODEL_ID, DEFAULT_MODEL_LABEL)
   await openBottomWorkspaceTerminal(control, 'The new cloud task')
   await verifyRemoteTerminalUsesPanelWidth(control)
+  await verifyRemoteTerminalRemainsResponsiveAfterOutputBurst(control, 'renderer-v2')
   await captureVerificationScreenshot(control, 'cloud-04b-new-task-terminal-open.png')
-  await control.command('click', '[data-testid="close-bottom-workspace-tab-button"]')
-  await waitForSnapshot(
-    control,
-    value =>
-      !value.testIds.includes('workspace-tool-launcher') &&
-      !value.testIds.includes('workspace-terminal-window'),
-    'The new cloud task terminal and bottom panel did not close cleanly',
-    DEFAULT_STEP_TIMEOUT_MS,
-    ACTIVE_WORKBENCH_SELECTOR
-  )
+  await closeRemoteTerminal(control)
+  await verifyCloudTerminalCompatibility(control, cloudEnvironment)
 
   control.setScenario('cloud_initial')
   await sendPrompt(control, composerSelector, CLOUD_TASK_PROMPT)
@@ -1237,8 +1368,14 @@ async function verifyRetryFailureRestoration(control, composerSelector) {
     true,
     'Retry removed the failed attempt instead of preserving the conversation history'
   )
-  const successfulRetryDebugSnapshot = JSON.parse(
-    await control.command('getWorkbenchDebugSnapshot', 'body')
+  const successfulRetryDebugSnapshot = await waitForWorkbenchDebugState(
+    control,
+    snapshot =>
+      Number(snapshot.pane?.messageSummary?.byRole?.assistant ?? 0) ===
+        assistantCountBeforeRetry + 1 &&
+      Number(snapshot.pane?.messageSummary?.byRole?.user ?? 0) === userCountBeforeRetry + 1 &&
+      snapshot.pane?.messageSummary?.activeAssistantMessage === null,
+    'Retry response rendered before the completed continuation was committed to conversation state'
   )
   const successfulRetryAssistantCount = Number(
     successfulRetryDebugSnapshot.pane?.messageSummary?.byRole?.assistant ?? 0
@@ -1286,8 +1423,13 @@ async function verifyRetryFailureRestoration(control, composerSelector) {
     true,
     'Reopening the conversation lost the preserved failed attempt'
   )
-  const reopenedRetryDebugSnapshot = JSON.parse(
-    await control.command('getWorkbenchDebugSnapshot', 'body')
+  const reopenedRetryDebugSnapshot = await waitForWorkbenchDebugState(
+    control,
+    snapshot =>
+      Number(snapshot.pane?.messageSummary?.byRole?.assistant ?? 0) ===
+        successfulRetryAssistantCount &&
+      Number(snapshot.pane?.messageSummary?.byRole?.user ?? 0) === successfulRetryUserCount,
+    'Reopened retry conversation did not restore the completed continuation counts'
   )
   assert.equal(
     Number(reopenedRetryDebugSnapshot.pane?.messageSummary?.byRole?.assistant ?? 0),

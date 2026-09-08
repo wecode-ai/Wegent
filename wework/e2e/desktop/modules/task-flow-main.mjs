@@ -51,7 +51,8 @@ import {
   toolDetailsMcpConfigToml,
   verifyCloudProjectFlow,
   verifyConnectedModelsOnLocalExecution,
-  verifyLocalRemoteControlFlow,
+  verifyDisabledRemoteSessionCapabilities,
+  verifyWeworkAppDeviceRegistrationFlow,
   verifyModelProtocolMatrix,
   verifyRemoteDockerCommandFlow,
   verifyRetryFailureRestoration,
@@ -495,8 +496,45 @@ async function verifyProjectAiSettings({
     'A new local project did not initially follow the global model'
   )
   await captureVerificationScreenshot(control, 'project-ai-settings-01-defaults.png')
+  await saveProjectAiSettings(control)
+
+  setPhase('project-ai-settings-follow-global-model-memory')
+  control.setScenario('checkpoint_task')
+  await selectRememberedTaskModel(control)
+  const inheritedConversationRequest = await sendProjectAiCheckpointPrompt(
+    control,
+    composerSelector,
+    { createsConversation: true }
+  )
+  assert.equal(
+    inheritedConversationRequest.body.model,
+    REMEMBERED_TASK_MODEL_ID,
+    'The follow-global project did not use the selected global model'
+  )
+  assert.equal(
+    inheritedConversationRequest.body.reasoning?.effort,
+    REMEMBERED_TASK_REASONING,
+    'The follow-global project did not use the selected global reasoning effort'
+  )
+  await control.command('clickWhenEnabled', newConversationSelector)
+  await control.command('waitFor', composerSelector, {
+    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+  })
+  await waitForE2EModelLabel(control, [REMEMBERED_TASK_MODEL_LABEL])
+  await control.command('click', '[data-testid="model-selector-button"]')
+  assert.match(
+    await control.command('getText', '[data-testid="model-control-menu-reasoning"]'),
+    /High|高/,
+    'The follow-global project did not remember the selected model and reasoning effort'
+  )
+  await control.command('press', 'body', { key: 'Escape' })
+  await captureVerificationScreenshot(
+    control,
+    'project-ai-settings-01-follow-global-model-remembered.png'
+  )
 
   setPhase('project-ai-settings-configure')
+  await openProjectAiSettings(control, projectId)
   await control.command('fill', '[data-testid="local-project-instructions-input"]', {
     value: PROJECT_AI_INITIAL_INSTRUCTIONS,
   })
@@ -712,21 +750,21 @@ async function verifyProjectAiSettings({
     'The task-specific model override dropped the project instructions'
   )
 
-  setPhase('project-ai-settings-next-task-remembers-model')
+  setPhase('project-ai-settings-next-task-restores-project-default')
   await control.command('clickWhenEnabled', newConversationSelector)
   await control.command('waitFor', composerSelector, {
     timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
   })
-  await waitForE2EModelLabel(control, [REMEMBERED_TASK_MODEL_LABEL])
+  await waitForE2EModelLabel(control, [PROJECT_AI_MODEL_LABEL])
   await control.command('click', '[data-testid="model-selector-button"]')
   assert.match(
     await control.command('getText', '[data-testid="model-control-menu-reasoning"]'),
     /High|高/,
-    'The next task did not remember the selected model and reasoning effort'
+    'The next task did not restore the project model and reasoning effort'
   )
   await captureVerificationScreenshot(
     control,
-    'project-ai-settings-11-next-task-model-remembered.png'
+    'project-ai-settings-11-next-task-project-default.png'
   )
   await control.command('press', 'body', { key: 'Escape' })
 }
@@ -898,6 +936,7 @@ async function main() {
   const codexHome = join(executorHome, 'codex')
   const codexSqliteHome = join(tmpdir(), 'wework-desktop-e2e', String(process.pid), 'codex-sqlite')
   const nativeCodexHome = join(resultDir, 'native-codex')
+  const staleBundledMarketplacePath = join(resultDir, 'stale-wework-personal')
   const pluginMarketplacePath = join(resultDir, 'plugin-marketplace')
   const marketplacePluginPath = join(resultDir, 'marketplace-plugin')
   const officialPluginRepositoryPath = join(resultDir, 'openai-plugins')
@@ -944,6 +983,11 @@ async function main() {
       await createCoreDshPluginFixture(resultDir)
     }
     await mkdir(nativeCodexHome, { recursive: true })
+    await mkdir(join(staleBundledMarketplacePath, '.agents', 'plugins'), { recursive: true })
+    await writeFile(
+      join(staleBundledMarketplacePath, '.agents', 'plugins', 'marketplace.json'),
+      `${JSON.stringify({ name: 'wework-personal', plugins: [] }, null, 2)}\n`
+    )
     await writeFile(
       join(nativeCodexHome, 'config.toml'),
       '# desktop-e2e-native-home-marker\nmodel = "native-model-that-must-not-migrate"\n'
@@ -1060,7 +1104,10 @@ async function main() {
           DESKTOP_SEGMENT === 'permission-modes'
             ? mcpElicitationConfigToml(join(resultDir, 'mcp-elicitation-result.jsonl'))
             : ''
-        }`
+        }`,
+        'openai-responses',
+        desktopScenario?.modelProviderConfigToml,
+        desktopScenario?.modelProviderAuthToml
       )
       await writeFile(
         join(codexHome, 'auth.json'),
@@ -1102,7 +1149,6 @@ async function main() {
       WEWORK_EXECUTOR_ISOLATION_OVERRIDE: 'false',
       WEGENT_EXECUTOR_LOG_DIR: resultDir,
       WEGENT_EXECUTOR_LOG_FILE: 'executor.log',
-      DEVICE_ID: `wework-e2e-device-${process.pid}`,
       DEVICE_SESSION_GATEWAY_HOST: '127.0.0.1',
       DEVICE_SESSION_GATEWAY_PORT: '0',
       VITE_WEWORK_E2E: 'true',
@@ -1146,6 +1192,7 @@ async function main() {
         : {}),
     }
     for (const key of [
+      'DEVICE_ID',
       'ELECTRON_RUN_AS_NODE',
       'WEGENT_APP_IPC_DEVICE_ID',
       'WEGENT_APP_IPC_ENDPOINT',
@@ -1276,7 +1323,11 @@ plugins = true
 [marketplaces.${STARTUP_NETWORK_PROBE_MARKETPLACE_NAME}]
 source_type = "git"
 source = "${STARTUP_NETWORK_PROBE_MARKETPLACE_URL}"
-last_updated = "2026-07-30T00:00:00Z"`
+last_updated = "2026-07-30T00:00:00Z"
+
+[marketplaces.wework-personal]
+source_type = "local"
+source = ${JSON.stringify(staleBundledMarketplacePath)}`
         )
       await verifyStartupIgnoresBlockedCodexNetwork({
         blockingNetworkProxy,
@@ -1284,7 +1335,10 @@ last_updated = "2026-07-30T00:00:00Z"`
         control,
         restartDesktopApp,
       })
-      await waitForBundledMarketplaceRegistration(codexHome)
+      await waitForBundledMarketplaceRegistration(
+        codexHome,
+        join(executorHome, 'capabilities', 'bundled-marketplaces', 'wework-personal')
+      )
     }
     if (SYSTEM_DRAG_PANEL_ONLY) {
       phase = 'system-drag-panel-layout'
@@ -1357,8 +1411,11 @@ last_updated = "2026-07-30T00:00:00Z"`
 
     if (DESKTOP_SEGMENT === 'remote-device-onboarding') {
       phase = 'remote-device-onboarding'
-      await verifyLocalRemoteControlFlow(control, cloudEnvironment)
-      await verifyRemoteDockerCommandFlow(control, cloudEnvironment)
+      await verifyWeworkAppDeviceRegistrationFlow(control, cloudEnvironment)
+      const generatedDevice = await verifyRemoteDockerCommandFlow(control, cloudEnvironment, {
+        interactiveSessions: { codeServer: false, terminal: false },
+      })
+      await verifyDisabledRemoteSessionCapabilities(control, cloudEnvironment, generatedDevice)
       console.log(
         `Wework desktop remote-device onboarding checkpoint passed. Evidence: ${resultDir}`
       )
@@ -1654,7 +1711,11 @@ last_updated = "2026-07-30T00:00:00Z"`
         timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
       })
       await selectE2EModel(control, DEFAULT_MODEL_ID, DEFAULT_MODEL_LABEL)
-      await verifyShortConversationLayout({ composerSelector: ACTIVE_COMPOSER_SELECTOR, control })
+      await verifyShortConversationLayout({
+        composerSelector: ACTIVE_COMPOSER_SELECTOR,
+        control,
+        restartDesktopApp,
+      })
       console.log(`Wework desktop short-conversation E2E passed. Evidence: ${resultDir}`)
       return
     }
@@ -1741,7 +1802,7 @@ last_updated = "2026-07-30T00:00:00Z"`
       }
       if (shouldRunPluginSegment('sites-plugin-auto-install')) {
         phase = 'sites-plugin-auto-install'
-        await verifySitesPluginAutoInstall(control)
+        await verifySitesPluginAutoInstall(control, executorHome)
       }
       if (officialPluginFixture) {
         phase = 'plugin-uninstall'
@@ -3171,6 +3232,7 @@ last_updated = "2026-07-30T00:00:00Z"`
       const secondTaskRowTestId = await verifyShortConversationLayout({
         composerSelector,
         control,
+        restartDesktopApp,
       })
 
       phase = 'edit-last-user-message'

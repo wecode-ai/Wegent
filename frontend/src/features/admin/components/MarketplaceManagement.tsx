@@ -160,6 +160,7 @@ export default function MarketplaceManagement({ mode = 'wegent' }: MarketplaceMa
     Record<number, AdminMarketplaceExampleConversation[]>
   >({})
   const officialAppInputRef = useRef<HTMLInputElement>(null)
+  const loadRequestRef = useRef(0)
   const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE))
   const editingScoreItem = items.find(item => item.id === editingScoreItemId) || null
   const editingExampleItem = items.find(item => item.id === editingExampleItemId) || null
@@ -179,6 +180,7 @@ export default function MarketplaceManagement({ mode = 'wegent' }: MarketplaceMa
   }, [isSmartAppManagement, smartAppSearch])
 
   const loadResources = useCallback(async () => {
+    const requestId = ++loadRequestRef.current
     setLoading(true)
     try {
       const response =
@@ -194,20 +196,26 @@ export default function MarketplaceManagement({ mode = 'wegent' }: MarketplaceMa
                 items: result.items.map(smartAppToManagementItem),
               }))
           : await adminApis.getMarketplaceResources(resourceType, page, PAGE_SIZE)
-      setItems(response.items)
-      setTotal(response.total)
-      setExampleConversations(
-        Object.fromEntries(response.items.map(item => [item.id, item.example_conversations]))
-      )
+      if (requestId === loadRequestRef.current) {
+        setItems(response.items)
+        setTotal(response.total)
+        setExampleConversations(
+          Object.fromEntries(response.items.map(item => [item.id, item.example_conversations]))
+        )
+      }
     } catch {
-      setItems([])
-      setTotal(0)
-      toast({
-        title: t('marketplace_management.load_failed'),
-        variant: 'destructive',
-      })
+      if (requestId === loadRequestRef.current) {
+        setItems([])
+        setTotal(0)
+        toast({
+          title: t('marketplace_management.load_failed'),
+          variant: 'destructive',
+        })
+      }
     } finally {
-      setLoading(false)
+      if (requestId === loadRequestRef.current) {
+        setLoading(false)
+      }
     }
   }, [
     debouncedSmartAppSearch,
@@ -285,17 +293,28 @@ export default function MarketplaceManagement({ mode = 'wegent' }: MarketplaceMa
       const smartApp = await adminApis.updateMarketplaceSmartApp(item.id, {
         is_listed: !item.is_listed,
       })
-      setItems(previous =>
-        previous.map(current =>
-          current.id === item.id
-            ? {
-                ...current,
-                is_listed: smartApp.is_listed,
-                recommendation_score: smartApp.featured_rank,
-              }
-            : current
+      const leavesActiveFilter =
+        (smartAppListingFilter === 'listed' && !smartApp.is_listed) ||
+        (smartAppListingFilter === 'unlisted' && smartApp.is_listed)
+      if (leavesActiveFilter) {
+        if (items.length === 1 && page > 1) {
+          setPage(current => current - 1)
+        } else {
+          await loadResources()
+        }
+      } else {
+        setItems(previous =>
+          previous.map(current =>
+            current.id === item.id
+              ? {
+                  ...current,
+                  is_listed: smartApp.is_listed,
+                  recommendation_score: smartApp.featured_rank,
+                }
+              : current
+          )
         )
-      )
+      }
       toast({
         title: t(
           smartApp.is_listed

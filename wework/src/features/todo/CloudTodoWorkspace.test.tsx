@@ -2858,10 +2858,18 @@ describe('CloudTodoWorkspace', () => {
       />
     )
 
+    await userEvent.click(await screen.findByTestId('cloud-sidebar-project-11'))
     expect(screen.getByTestId('cloud-todo-sidebar-chrome-controls')).toHaveClass('gap-1')
     await userEvent.click(screen.getByTestId('cloud-todo-collapse-sidebar'))
     expect(screen.queryByTestId('cloud-todo-collapsed-app-current')).not.toBeInTheDocument()
-    expect(screen.getByTestId('cloud-todo-collapsed-chrome-controls')).toHaveClass('left-2')
+    expect(screen.getByTestId('cloud-todo-collapsed-chrome-controls')).toHaveClass(
+      'electron-titlebar-interactive-region',
+      'pointer-events-auto',
+      'left-2'
+    )
+    expect(
+      screen.getByTestId('cloud-project-header').querySelector('.electron-titlebar-drag-region')
+    ).toHaveClass('left-12')
 
     await userEvent.click(screen.getByTestId('cloud-todo-expand-sidebar'))
     expect(screen.queryByTestId('cloud-todo-collapsed-chrome-controls')).not.toBeInTheDocument()
@@ -3968,6 +3976,14 @@ describe('CloudTodoWorkspace', () => {
     await userEvent.selectOptions(screen.getByTestId('cloud-board-group-filter'), 'in_progress')
     expect(screen.getByTestId('cloud-board-group-filter-label')).toHaveTextContent('进行中')
     await userEvent.click(screen.getByTestId('cloud-board-group-by'))
+    const groupMenu = screen.getByTestId('cloud-board-group-menu')
+    expect(groupMenu.parentElement).toBe(document.body)
+    expect(groupMenu.closest('[data-testid="cloud-board-toolbar"]')).toBeNull()
+    fireEvent.scroll(groupMenu)
+    expect(screen.getByTestId('cloud-board-group-menu')).toBeInTheDocument()
+    fireEvent.scroll(document.body)
+    expect(screen.queryByTestId('cloud-board-group-menu')).not.toBeInTheDocument()
+    await userEvent.click(screen.getByTestId('cloud-board-group-by'))
     await userEvent.click(screen.getByTestId('cloud-board-group-option-priority'))
     expect(localStorage.getItem('wework-board-group:1:11')).toBe('priority')
     expect(screen.getByTestId('cloud-todo-column-priority-high')).toBeInTheDocument()
@@ -4358,7 +4374,7 @@ describe('CloudTodoWorkspace', () => {
     expect(screen.getByTestId('my-work-group-action-runtime-standalone')).toBeVisible()
   })
 
-  it('refreshes an open My Tasks board when runtime execution status changes', async () => {
+  it('projects an active runtime task when persisted board status lags behind', async () => {
     const defaultProject = {
       ...project,
       id: 'default-work-items',
@@ -4396,9 +4412,9 @@ describe('CloudTodoWorkspace', () => {
       chats: [],
       totalTasks: 1,
     }
+    let currentRuntimeWork = runtimeWork
     const lifecycleStore = new RuntimeTaskLifecycleStore(1)
     lifecycleStore.syncRuntimeWork(runtimeWork)
-    let persistedStatus: 'in_review' | 'in_progress' = 'in_review'
     const trackedIssue = {
       ...item,
       cloud_project_id: defaultProject.id,
@@ -4409,7 +4425,7 @@ describe('CloudTodoWorkspace', () => {
       items: [defaultProject],
     })
     workbenchServices.deliveryApi!.getBoardSnapshot = vi.fn(async () => ({
-      items: [{ ...trackedIssue, status: persistedStatus }],
+      items: [{ ...trackedIssue, status: 'in_review' }],
       task_bindings: [
         {
           id: 1,
@@ -4433,7 +4449,7 @@ describe('CloudTodoWorkspace', () => {
       <CloudTodoWorkspace
         user={{ id: 1, user_name: 'local', email: 'local@example.com' } as User}
         localProjects={[{ id: 91, name: 'Project A', tasks: [] }]}
-        runtimeWork={runtimeWork}
+        runtimeWork={currentRuntimeWork}
         runtimeTaskLifecycle={lifecycleSnapshot}
         services={workbenchServices}
         embedded
@@ -4451,7 +4467,17 @@ describe('CloudTodoWorkspace', () => {
     const initialSnapshotRequests = vi.mocked(workbenchServices.deliveryApi!.getBoardSnapshot).mock
       .calls.length
 
-    persistedStatus = 'in_progress'
+    currentRuntimeWork = {
+      ...runtimeWork,
+      projects: runtimeWork.projects.map(projectWork => ({
+        ...projectWork,
+        deviceWorkspaces: projectWork.deviceWorkspaces.map(workspace => ({
+          ...workspace,
+          tasks: [],
+        })),
+      })),
+      totalTasks: 0,
+    }
     act(() => lifecycleStore.executorStarted(address))
     rendered.rerender(workspace(lifecycleStore.getSnapshot()))
 

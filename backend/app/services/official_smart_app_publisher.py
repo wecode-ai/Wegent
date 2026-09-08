@@ -22,6 +22,7 @@ from app.services.smart_app_package_parser import smart_app_package_parser
 IGNORED_DIRECTORIES = {".git", ".pytest_cache", "__pycache__", "node_modules"}
 IGNORED_FILES = {".DS_Store"}
 ZIP_TIMESTAMP = (1980, 1, 1, 0, 0, 0)
+MAX_MARKETPLACE_ASSET_SIZE_BYTES = 2 * 1024 * 1024
 
 
 @dataclass(frozen=True)
@@ -101,7 +102,7 @@ class OfficialSmartAppPublisher:
                     self._validate_metadata(metadata)
                     root = PurePosixPath(metadata_path).parent
                     icon_path = self._archive_asset_path(root, str(metadata["icon"]))
-                    icon = archive.read(icon_path)
+                    icon = self._read_archive_asset(archive, icon_path)
                     icon_content_type = self._image_content_type(
                         PurePosixPath(icon_path), icon=True
                     )
@@ -198,6 +199,16 @@ class OfficialSmartAppPublisher:
         for field in ("summary", "descriptionMd", "tags", "icon"):
             if not metadata.get(field):
                 raise ValueError(f"Official Smart app metadata requires {field}")
+        for field, limit in (("summary", 500), ("descriptionMd", 8192)):
+            value = metadata[field]
+            if not isinstance(value, str) or not value.strip():
+                raise ValueError(
+                    f"Official Smart app metadata {field} must be a string"
+                )
+            if len(value) > limit:
+                raise ValueError(
+                    f"Official Smart app metadata {field} exceeds {limit} characters"
+                )
         if not isinstance(metadata["tags"], list) or not all(
             isinstance(value, str) and value.strip() for value in metadata["tags"]
         ):
@@ -228,11 +239,18 @@ class OfficialSmartAppPublisher:
             path = self._archive_asset_path(root, relative)
             screenshots.append(
                 (
-                    archive.read(path),
+                    self._read_archive_asset(archive, path),
                     self._image_content_type(PurePosixPath(path), icon=False),
                 )
             )
         return screenshots
+
+    @staticmethod
+    def _read_archive_asset(archive: zipfile.ZipFile, path: str) -> bytes:
+        info = archive.getinfo(path)
+        if info.is_dir() or info.file_size > MAX_MARKETPLACE_ASSET_SIZE_BYTES:
+            raise ValueError("Official Smart app marketplace asset is too large")
+        return archive.read(info)
 
     @staticmethod
     def _asset_path(root: Path, relative: str) -> Path:

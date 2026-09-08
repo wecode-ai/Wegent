@@ -66,11 +66,13 @@ const MAIN_MENU_MAX_HEIGHT = 608
 const DESKTOP_HIDDEN_CONTROL_IDS = new Set(['collaborationMode'])
 type DesktopSubmenuTarget = { type: 'models' } | { type: 'control'; id: string } | { type: 'none' }
 
-function getDesktopViewportRightBoundary(): number {
+function getDesktopViewportRightBoundary(anchor: HTMLElement | null | undefined): number {
   const shell = document.getElementById('right-workspace-panel-shell')
   if (shell && shell.getAttribute('aria-hidden') !== 'true') {
     const rect = shell.getBoundingClientRect()
-    if (rect.width > 0) return Math.round(rect.left)
+    if (rect.width > 0 && !anchor?.closest('#right-workspace-panel-shell')) {
+      return Math.round(rect.left)
+    }
   }
   return window.innerWidth
 }
@@ -218,7 +220,7 @@ export function ModelSelector({
     const maxTop = viewportBottom - menuHeight
     const clampedTop = Math.round(Math.max(viewportTop, Math.min(preferredTop, maxTop)))
     const menuWidth = menuPanel.getBoundingClientRect().width || MAIN_MENU_WIDTH
-    const viewportRight = getDesktopViewportRightBoundary()
+    const viewportRight = getDesktopViewportRightBoundary(button)
     const maxLeft = viewportRight - MODEL_SELECTOR_VIEWPORT_MARGIN - menuWidth
     const preferredLeft = buttonRect.right - menuWidth
     const clampedLeft = Math.round(

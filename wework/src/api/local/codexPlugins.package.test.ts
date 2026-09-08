@@ -16,6 +16,7 @@ vi.mock('@/lib/runtime-environment', () => ({
 vi.mock('@/desktop/localExecutor', () => ({
   ensureLocalExecutorStarted: vi.fn(),
   ensureBundledPluginMarketplaceRegistered: vi.fn(),
+  getKnownLocalExecutorDeviceId: () => 'local-device',
   getInitializedBundledPluginMarketplace: () => ({
     id: 'wework-personal',
     path: '/tmp/executor-home/capabilities/bundled-marketplaces/wework-personal',

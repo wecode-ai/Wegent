@@ -31,6 +31,7 @@ import {
   Check,
   Settings,
   Cpu,
+  AppWindow,
 } from 'lucide-react'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
@@ -38,6 +39,7 @@ import {
   compareDevicesByExecutionPriority,
   formatSlotUsage,
   getAccountDefaultDeviceId,
+  resolveDeviceSelectionId,
   getStatusColor,
   isDeviceAtCapacity,
 } from '@/features/devices/utils/execution-target'
@@ -132,6 +134,14 @@ function DeviceCard({
         <span className="font-medium text-sm text-text-primary break-all line-clamp-2">
           {device.name}
         </span>
+        {device.device_type === 'app' && (
+          <span
+            data-testid={`wework-device-badge-${device.device_id}`}
+            className="px-1.5 py-0.5 rounded text-[10px] text-primary bg-primary/10 flex-shrink-0 mt-0.5"
+          >
+            {t('wework_device_badge')}
+          </span>
+        )}
       </div>
 
       {/* Status and slots / default button */}
@@ -327,7 +337,14 @@ export function DeviceSelectorTab({
   const isExistingTask = taskId != null
   const persistedTaskDeviceId =
     isExistingTask && taskType === 'task' ? taskDeviceId?.trim() || null : null
-  const selectedTargetDeviceId = isExistingTask ? persistedTaskDeviceId : selectedDeviceId
+  const selectedTargetDeviceId = resolveDeviceSelectionId(
+    devices,
+    isExistingTask ? persistedTaskDeviceId : selectedDeviceId
+  )
+  const resolvedDefaultDeviceId = resolveDeviceSelectionId(
+    devices,
+    getAccountDefaultDeviceId(defaultExecutionTarget)
+  )
   const selectedDevice = selectedTargetDeviceId
     ? (devices.find(device => device.device_id === selectedTargetDeviceId) ?? null)
     : null
@@ -362,9 +379,13 @@ export function DeviceSelectorTab({
       device => device.device_id === selectedDeviceId
     )
     if (returningFromTask || !selectedDeviceId || !selectedDeviceIsVisible) {
-      const defaultDeviceId = getAccountDefaultDeviceId(defaultExecutionTarget)
+      const defaultDeviceId = resolveDeviceSelectionId(
+        visibleDevices,
+        getAccountDefaultDeviceId(defaultExecutionTarget)
+      )
       const availableDefaultDeviceId = visibleDevices.some(
-        device => device.device_id === defaultDeviceId
+        device =>
+          device.device_id === defaultDeviceId || device.registered_device_id === defaultDeviceId
       )
         ? defaultDeviceId
         : null
@@ -423,13 +444,19 @@ export function DeviceSelectorTab({
   const renderTriggerContent = () => {
     if (selectedDevice) {
       const devicePrefix =
-        selectedDevice.device_type === 'cloud' ? t('cloud_device_prefix') : t('local_device_prefix')
+        selectedDevice.device_type === 'cloud'
+          ? t('cloud_device_prefix')
+          : selectedDevice.device_type === 'app'
+            ? t('wework_device_prefix')
+            : t('local_device_prefix')
       const displayName = `${devicePrefix}${selectedDevice.name}`
 
       return (
         <>
           {selectedDevice.device_type === 'cloud' ? (
             <Server className="w-3.5 h-3.5 text-primary flex-shrink-0" />
+          ) : selectedDevice.device_type === 'app' ? (
+            <AppWindow className="w-3.5 h-3.5 text-primary flex-shrink-0" />
           ) : (
             <Monitor className="w-3.5 h-3.5 text-primary flex-shrink-0" />
           )}
@@ -504,13 +531,17 @@ export function DeviceSelectorTab({
                 <>
                   {selectedDevice.device_type === 'cloud' ? (
                     <Server className="w-3.5 h-3.5" />
+                  ) : selectedDevice.device_type === 'app' ? (
+                    <AppWindow className="w-3.5 h-3.5" />
                   ) : (
                     <Monitor className="w-3.5 h-3.5" />
                   )}
                   <span className="truncate max-w-[160px]">
                     {selectedDevice.device_type === 'cloud'
                       ? t('cloud_device_prefix')
-                      : t('local_device_prefix')}
+                      : selectedDevice.device_type === 'app'
+                        ? t('wework_device_prefix')
+                        : t('local_device_prefix')}
                     {selectedDevice.name}
                   </span>
                   <span
@@ -615,7 +646,7 @@ export function DeviceSelectorTab({
                         key={device.device_id}
                         device={device}
                         isSelected={selectedTargetDeviceId === device.device_id}
-                        isDefault={defaultExecutionTarget === device.device_id}
+                        isDefault={resolvedDefaultDeviceId === device.device_id}
                         disabled={disabled || isLoading}
                         onSelect={() => handleDeviceSelect(device.device_id)}
                         onSetDefault={e => void handleSetDefaultTarget(e, device.device_id)}
@@ -639,7 +670,7 @@ export function DeviceSelectorTab({
                         key={device.device_id}
                         device={device}
                         isSelected={selectedTargetDeviceId === device.device_id}
-                        isDefault={defaultExecutionTarget === device.device_id}
+                        isDefault={resolvedDefaultDeviceId === device.device_id}
                         disabled={disabled || isLoading}
                         onSelect={() => handleDeviceSelect(device.device_id)}
                         onSetDefault={e => void handleSetDefaultTarget(e, device.device_id)}

@@ -42,7 +42,6 @@ pub struct LocalBackendConfig {
     pub reconnect_delay: Duration,
     pub reconnect_delay_max: Duration,
     pub configured_capabilities: Vec<String>,
-    pub runtime_auth_home: PathBuf,
     pub local_workspace_root: PathBuf,
     pub update: UpdateConfig,
 }
@@ -78,8 +77,8 @@ impl LocalBackendConfig {
             socket_url,
             auth_token: normalize_token(&config.connection.auth_token),
             runtime_auth_token: normalize_token(&config.connection.runtime_auth_token),
-            device_id: normalize_nonempty(config.device_id, "local-device"),
-            runtime_instance_id: normalize_nonempty(config.runtime_instance_id, "runtime-local"),
+            device_id: config.device_id.trim().to_owned(),
+            runtime_instance_id: config.runtime_instance_id.trim().to_owned(),
             device_name: normalize_nonempty(config.device_name, &default_device_name()),
             device_type: normalize_nonempty(config.device_type, "local"),
             app_device_id: normalize_optional_env("WEGENT_APP_IPC_DEVICE_ID"),
@@ -105,7 +104,6 @@ impl LocalBackendConfig {
                 DEFAULT_RECONNECT_MAX_DELAY_SECONDS,
             ),
             configured_capabilities: config.capabilities,
-            runtime_auth_home: home_dir(),
             local_workspace_root: config.local_workspace_root,
             update: config.update,
         }
@@ -208,10 +206,6 @@ fn default_device_name() -> String {
         .or_else(|_| env::var("COMPUTERNAME"))
         .unwrap_or_else(|_| "local".to_owned());
     format!("{} - {host}", env::consts::OS)
-}
-
-fn home_dir() -> PathBuf {
-    dirs::home_dir().unwrap_or_else(|| PathBuf::from("."))
 }
 
 #[cfg(test)]

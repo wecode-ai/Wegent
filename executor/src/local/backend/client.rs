@@ -4,7 +4,7 @@
 
 use std::{
     future::Future,
-    path::{Path, PathBuf},
+    path::Path,
     pin::Pin,
     sync::{Arc, Mutex},
     time::Duration,
@@ -94,6 +94,11 @@ where
     }
 
     pub async fn register_device(&self, timeout: Duration) -> Result<bool, String> {
+        if self.config.device_id.is_empty() || self.config.runtime_instance_id.is_empty() {
+            return Err(
+                "persistent device and Runtime identities are required for registration".to_owned(),
+            );
+        }
         let response = self
             .transport
             .call(REGISTER_EVENT, self.registration_payload(), timeout)
@@ -190,6 +195,23 @@ where
         self.transport.emit(event, payload).await
     }
 
+    pub async fn call_raw_event(
+        &self,
+        event: &str,
+        payload: Value,
+        timeout: Duration,
+    ) -> Result<(), String> {
+        let response = self.transport.call(event, payload, timeout).await?;
+        if ack_success(&response) {
+            return Ok(());
+        }
+        Err(ack_payload(&response)
+            .and_then(|value| value.get("error"))
+            .and_then(Value::as_str)
+            .unwrap_or("Backend rejected executor event")
+            .to_owned())
+    }
+
     pub fn set_running_task_ids<I>(&self, task_ids: I)
     where
         I: IntoIterator<Item = String>,
@@ -234,7 +256,9 @@ where
             "executor_version": self.config.executor_version,
             "capabilities": self.capability_reporter.build_report(),
             "runtime_features": runtime_features(),
-            "runtime_auth_files": build_runtime_auth_file_report(&self.config.runtime_auth_home),
+            "runtime_auth_files": build_runtime_auth_file_report(
+                &crate::agents::wework_codex_home()
+            ),
             "runtime_transfer_host": self.config.runtime_transfer_host,
         })
     }
@@ -269,11 +293,7 @@ where
     }
 }
 
-pub fn build_runtime_auth_file_report(home: &Path) -> Value {
-    let codex_home = std::env::var_os("CODEX_HOME")
-        .filter(|value| !value.is_empty())
-        .map(PathBuf::from)
-        .unwrap_or_else(|| home.join(".codex"));
+pub fn build_runtime_auth_file_report(codex_home: &Path) -> Value {
     let target_path = codex_home.join("auth.json");
     json!({
         "codex": {

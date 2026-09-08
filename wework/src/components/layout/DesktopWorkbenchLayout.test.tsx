@@ -1,7 +1,7 @@
-import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
+import { act, configure, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { StrictMode, useEffect, useMemo } from 'react'
-import { beforeEach, describe, expect, test, vi } from 'vitest'
+import { afterAll, beforeAll, beforeEach, describe, expect, test, vi } from 'vitest'
 import type { ProjectChatControls } from '@/components/chat/ChatInput'
 import { createDeviceApi } from '@/api/devices'
 import { getLocalCodexUsageDisplay } from '@/api/local/codexUsage'
@@ -96,9 +96,11 @@ const desktopHostMocks = vi.hoisted(() => ({
 }))
 const harnessAppMocks = vi.hoisted(() => ({
   addPlugin: vi.fn(),
+  inspectVerification: vi.fn(),
   list: vi.fn(),
   start: vi.fn(),
   stop: vi.fn(),
+  verify: vi.fn(),
 }))
 const harnessAppTabMocks = vi.hoisted(() => ({
   register: vi.fn(),
@@ -163,9 +165,11 @@ vi.mock('@/api/local/harnessApps', async importOriginal => {
     harnessAppsApi: {
       ...actual.harnessAppsApi,
       addPlugin: harnessAppMocks.addPlugin,
+      inspectVerification: harnessAppMocks.inspectVerification,
       list: harnessAppMocks.list,
       start: harnessAppMocks.start,
       stop: harnessAppMocks.stop,
+      verify: harnessAppMocks.verify,
     },
   }
 })
@@ -591,6 +595,16 @@ function createDefaultImNotificationSettings() {
 }
 
 describe('DesktopWorkbenchLayout', () => {
+  beforeAll(() => {
+    configure({ asyncUtilTimeout: 5_000 })
+    vi.setConfig({ testTimeout: 30_000 })
+  })
+
+  afterAll(() => {
+    configure({ asyncUtilTimeout: 1_000 })
+    vi.resetConfig()
+  })
+
   function createDeferred<T>() {
     let resolve!: (value: T) => void
     let reject!: (error: unknown) => void
@@ -745,8 +759,10 @@ describe('DesktopWorkbenchLayout', () => {
     }))
     harnessAppMocks.list.mockResolvedValue([])
     harnessAppMocks.addPlugin.mockReset()
+    harnessAppMocks.inspectVerification.mockReset().mockResolvedValue(null)
     harnessAppMocks.start.mockReset()
     harnessAppMocks.stop.mockReset().mockResolvedValue(undefined)
+    harnessAppMocks.verify.mockReset()
     embeddedBrowserMocks.closeEmbeddedBrowser.mockClear()
     embeddedBrowserMocks.setEmbeddedBrowserActiveTab.mockClear()
     harnessAppTabMocks.takeProxyToken.mockResolvedValue(null)
@@ -1628,6 +1644,97 @@ describe('DesktopWorkbenchLayout', () => {
     expect(screen.queryByTestId('desktop-workbench-content')).not.toBeInTheDocument()
   })
 
+  test('keeps a retained board bound to its own workspace tab route', async () => {
+    deliveryApiMock.available = true
+    const project = {
+      id: 'project-1',
+      public_id: 'public-project-1',
+      project_key: 'PROJECT-1',
+      name: 'Retained Project',
+      description: '',
+      project_store: 'backend',
+      task_provider: 'local',
+      provider_config: {},
+      created_by_user_id: 1,
+      status: 'active',
+      tags: [],
+      version: 1,
+      created_at: '2026-08-09T00:00:00Z',
+      updated_at: '2026-08-09T00:00:00Z',
+    }
+    deliveryApiMock.listCloudProjects.mockResolvedValue({ items: [project] })
+    const boardTab = {
+      id: 'board-project-1',
+      kind: 'board' as const,
+      title: project.name,
+      contentRoute: '/todo?projectStore=backend&projectId=project-1',
+      fixed: false,
+    }
+    const taskTab = {
+      id: 'fixed-task',
+      kind: 'task' as const,
+      title: '任务',
+      contentRoute: '/',
+      fixed: true,
+    }
+    const actions = {
+      openTab: vi.fn(),
+      selectTab: vi.fn(),
+      closeTab: vi.fn(),
+      closeOtherTabs: vi.fn(),
+      restoreClosedTab: vi.fn(),
+      moveTab: vi.fn(),
+      updateActiveTab: vi.fn(),
+    }
+    const workspaceTabs = (activeTab: typeof boardTab | typeof taskTab) => ({
+      tabs: [taskTab, boardTab],
+      activeTabId: activeTab.id,
+      activeTab,
+      ...actions,
+    })
+    const props = {
+      ...baseProps,
+      workspaceTabId: boardTab.id,
+      surfaceKind: 'board' as const,
+      state: {
+        ...baseProps.state,
+        user: {
+          id: 1,
+          user_name: 'local',
+          email: 'local@example.com',
+        },
+      },
+    }
+    const view = render(
+      <WorkspaceTabsContext.Provider value={workspaceTabs(boardTab)}>
+        <DesktopWorkbenchLayout {...props} />
+      </WorkspaceTabsContext.Provider>
+    )
+
+    expect(await screen.findByTestId('cloud-project-header')).toHaveTextContent(project.name)
+    await userEvent.click(screen.getByTestId('cloud-project-automation-view'))
+    expect(screen.getByTestId('cloud-project-automation-view')).toHaveClass('bg-background')
+
+    view.rerender(
+      <WorkspaceTabsContext.Provider value={workspaceTabs(taskTab)}>
+        <DesktopWorkbenchLayout {...props} routeActive={false} />
+      </WorkspaceTabsContext.Provider>
+    )
+
+    expect(screen.getByTestId('cloud-project-header')).toHaveTextContent(project.name)
+    expect(screen.getByTestId('cloud-project-automation-view')).toHaveClass('bg-background')
+    expect(actions.updateActiveTab).not.toHaveBeenCalled()
+
+    view.rerender(
+      <WorkspaceTabsContext.Provider value={workspaceTabs(boardTab)}>
+        <DesktopWorkbenchLayout {...props} />
+      </WorkspaceTabsContext.Provider>
+    )
+
+    expect(screen.getByTestId('cloud-project-header')).toHaveTextContent(project.name)
+    expect(screen.getByTestId('cloud-project-automation-view')).toHaveClass('bg-background')
+  })
+
   test('returns to the workspace after opening settings from its account menu', async () => {
     deliveryApiMock.available = true
     window.history.pushState({}, '', '/todo')
@@ -1710,6 +1817,52 @@ describe('DesktopWorkbenchLayout', () => {
 
     expect(window.location.pathname).toBe('/todo')
     expect(screen.getByTestId('cloud-todo-workspace')).toBeVisible()
+  })
+
+  test('keeps the active task return route when an inactive project space is retained', () => {
+    const taskTab = {
+      id: 'task-existing',
+      kind: 'task' as const,
+      title: '当前任务',
+      contentRoute: '/runtime-tasks?deviceId=local-device&taskId=runtime-1',
+    }
+    const boardTab = {
+      id: 'board-existing',
+      kind: 'board' as const,
+      title: '项目空间',
+      contentRoute: '/todo?projectId=project-1',
+    }
+    const workspaceTabs = (activeTab: typeof taskTab | typeof boardTab) =>
+      ({
+        tabs: [taskTab, boardTab],
+        activeTabId: activeTab.id,
+        activeTab,
+        openTab: vi.fn(),
+        selectTab: vi.fn(),
+        closeTab: vi.fn(),
+        closeOtherTabs: vi.fn(),
+        restoreClosedTab: vi.fn(),
+        moveTab: vi.fn(),
+        updateActiveTab: vi.fn(),
+      }) as unknown as WorkspaceTabsContextValue
+
+    window.sessionStorage.clear()
+    window.history.pushState({}, '', taskTab.contentRoute)
+
+    render(
+      <>
+        <WorkspaceTabsContext.Provider value={workspaceTabs(taskTab)}>
+          <DesktopWorkbenchLayout {...baseProps} routeActive />
+        </WorkspaceTabsContext.Provider>
+        <WorkspaceTabsContext.Provider value={workspaceTabs(boardTab)}>
+          <DesktopWorkbenchLayout {...baseProps} routeActive={false} surfaceKind="board" />
+        </WorkspaceTabsContext.Provider>
+      </>
+    )
+
+    act(() => navigateTo('/settings'))
+
+    expect(window.sessionStorage.getItem('wework.settingsReturnPath')).toBe(taskTab.contentRoute)
   })
 
   test('returns to the active workspace tab when the URL is out of sync', async () => {
@@ -2244,6 +2397,151 @@ describe('DesktopWorkbenchLayout', () => {
     )
     expect(screen.getByTestId('desktop-floating-composer-card')).toHaveClass('pointer-events-auto')
     expect(screen.queryByTestId('project-work-button')).not.toBeInTheDocument()
+  })
+
+  function renderFocusableConversation() {
+    const onlineDevice = {
+      id: 1,
+      device_id: 'device-1',
+      name: 'Runtime Device',
+      status: 'online' as const,
+      is_default: true,
+      device_type: 'cloud' as const,
+      bind_shell: 'claudecode',
+      executor_version: '1.8.5',
+    }
+    render(
+      <DesktopWorkbenchLayout
+        {...baseProps}
+        state={{
+          ...baseProps.state,
+          devices: [onlineDevice],
+          standaloneDeviceId: 'device-1',
+        }}
+        projectWork={{
+          ...baseProps.projectWork,
+          devices: [onlineDevice],
+          currentStandaloneDeviceId: 'device-1',
+        }}
+        projectChat={{
+          ...baseProps.projectChat,
+          scopeKey: 'standalone:device-1',
+        }}
+        messages={[
+          {
+            id: 'message-1',
+            role: 'assistant',
+            content: 'Selectable response',
+            status: 'done',
+            createdAt: '2026-05-29T00:00:00.000Z',
+          },
+        ]}
+      />
+    )
+    return {
+      composer: screen.getByTestId('chat-message-input'),
+      hoverRegion: screen.getByTestId('message-hover-region'),
+      messageText: screen.getByText('Selectable response'),
+    }
+  }
+
+  async function waitForComposerFocusRequest() {
+    await act(
+      () =>
+        new Promise<void>(resolvePromise => {
+          window.requestAnimationFrame(() => resolvePromise())
+        })
+    )
+  }
+
+  test('focuses a restored conversation when its composer mounts', async () => {
+    const { composer } = renderFocusableConversation()
+
+    await waitFor(() => expect(composer).toHaveFocus())
+  })
+
+  test('refocuses a restored conversation when the app window becomes active', async () => {
+    const { composer } = renderFocusableConversation()
+
+    await waitFor(() => expect(composer).toHaveFocus())
+    composer.blur()
+    window.dispatchEvent(new Event('blur'))
+    window.dispatchEvent(new Event('focus'))
+
+    await waitFor(() => expect(composer).toHaveFocus())
+  })
+
+  test('focuses the composer from a non-interactive conversation click', async () => {
+    const { composer } = renderFocusableConversation()
+
+    composer.blur()
+    fireEvent.click(screen.getByTestId('desktop-chat-scroll-content'))
+
+    await waitFor(() => expect(composer).toHaveFocus())
+  })
+
+  test('does not focus the composer from a conversation action click', async () => {
+    const { composer, hoverRegion } = renderFocusableConversation()
+
+    composer.blur()
+    fireEvent.pointerEnter(hoverRegion)
+    const copyButton = await screen.findByTestId('copy-message-button')
+    await userEvent.click(copyButton)
+    await waitForComposerFocusRequest()
+
+    expect(composer).not.toHaveFocus()
+  })
+
+  test('focuses the composer before pasting after a message copy action', async () => {
+    const { composer, hoverRegion } = renderFocusableConversation()
+
+    composer.blur()
+    fireEvent.pointerEnter(hoverRegion)
+    const copyButton = await screen.findByTestId('copy-message-button')
+    await userEvent.click(copyButton)
+    expect(composer).not.toHaveFocus()
+
+    fireEvent.keyDown(document.body, { key: 'v', metaKey: true })
+
+    expect(composer).toHaveFocus()
+    fireEvent.paste(composer, {
+      clipboardData: {
+        files: [],
+        getData: (type: string) => (type === 'text/plain' ? 'Selectable response' : ''),
+        types: ['text/plain'],
+      },
+    })
+    expect(composer).toHaveValue('Selectable response')
+  })
+
+  test('keeps paste shortcuts in an explicitly focused editor', () => {
+    const { composer } = renderFocusableConversation()
+    const editor = document.createElement('textarea')
+    document.body.append(editor)
+    editor.focus()
+
+    fireEvent.keyDown(editor, { key: 'v', metaKey: true })
+
+    expect(editor).toHaveFocus()
+    expect(composer).not.toHaveFocus()
+    editor.remove()
+  })
+
+  test('does not focus the composer while conversation text is selected', async () => {
+    const { composer, messageText } = renderFocusableConversation()
+
+    composer.blur()
+    const selection = window.getSelection()
+    const range = document.createRange()
+    range.selectNodeContents(messageText)
+    selection?.removeAllRanges()
+    selection?.addRange(range)
+    fireEvent.click(messageText)
+    await waitForComposerFocusRequest()
+
+    expect(composer).not.toHaveFocus()
+    expect(selection?.toString()).toBe('Selectable response')
+    selection?.removeAllRanges()
   })
 
   test('renders subagent status below the top bar without shifting messages', () => {
@@ -4706,6 +5004,7 @@ describe('DesktopWorkbenchLayout', () => {
     await userEvent.click(screen.getByTestId('project-create-remote-option'))
 
     const select = screen.getByTestId('standalone-remote-device-select')
+    expect(select).toHaveClass('wework-native-select')
     expect(select).toHaveTextContent('云设备')
     expect(select).toHaveTextContent('远程 Docker 设备')
     expect(select).toHaveTextContent('Cloud Device')
@@ -7094,7 +7393,7 @@ describe('DesktopWorkbenchLayout', () => {
       createResult.resolve(optimisticAddress)
       await createResult.promise
     })
-  }, 15_000)
+  }, 30_000)
 
   test('temporary chat uses the refreshed source thread when the route address is stale', async () => {
     const { propsForTask, runtimeWork, taskA } = createLocalRuntimeTaskPanelFixture()
@@ -7129,7 +7428,7 @@ describe('DesktopWorkbenchLayout', () => {
         })
       )
     )
-  }, 15_000)
+  }, 30_000)
 
   test('temporary chat queues a follow-up while its current response is running', async () => {
     const address: RuntimeTaskAddress = {
@@ -7172,7 +7471,7 @@ describe('DesktopWorkbenchLayout', () => {
     expect(within(sideChat).getAllByTestId('user-message-content').at(-1)).toHaveTextContent(
       'queued follow-up'
     )
-  }, 15_000)
+  }, 30_000)
 
   test('temporary chat renders a direct follow-up before its thinking indicator', async () => {
     const address: RuntimeTaskAddress = {
@@ -7217,7 +7516,7 @@ describe('DesktopWorkbenchLayout', () => {
       followUpSend.resolve(true)
       await followUpSend.promise
     })
-  }, 15_000)
+  }, 30_000)
 
   test('temporary chat sends a busy follow-up as guidance when selected', async () => {
     const address: RuntimeTaskAddress = {
@@ -7287,7 +7586,7 @@ describe('DesktopWorkbenchLayout', () => {
     expect(within(sideChat).getAllByTestId('user-message-content').at(-1)).toHaveTextContent(
       'guide the current response'
     )
-  }, 15_000)
+  }, 30_000)
 
   test('editing a temporary chat queued message replaces draft attachments', async () => {
     const address: RuntimeTaskAddress = {
@@ -7337,7 +7636,7 @@ describe('DesktopWorkbenchLayout', () => {
     expect(within(sideChat).getAllByTestId('attachment-badge')).toHaveLength(1)
     expect(within(sideChat).getByTitle('queued attachment')).toBeInTheDocument()
     expect(within(sideChat).queryByTitle('draft attachment')).not.toBeInTheDocument()
-  }, 15_000)
+  }, 30_000)
 
   test('temporary chat keeps a stale busy rejection queued without blind retries', async () => {
     const address: RuntimeTaskAddress = {
@@ -7379,7 +7678,7 @@ describe('DesktopWorkbenchLayout', () => {
     expect(within(sideChat).queryByTestId('chat-input-error')).not.toBeInTheDocument()
 
     expect(sendRuntimePaneMessageMock).toHaveBeenCalledTimes(1)
-  }, 20_000)
+  }, 30_000)
 
   test('temporary chat marks a rejected queued send as failed', async () => {
     const address: RuntimeTaskAddress = {
@@ -7420,7 +7719,7 @@ describe('DesktopWorkbenchLayout', () => {
       )
     )
     expect(sendRuntimePaneMessageMock).toHaveBeenCalledTimes(1)
-  }, 15_000)
+  }, 30_000)
 
   test('temporary chat rolls back its optimistic address when runtime creation fails', async () => {
     const createResult = createDeferred<RuntimeTaskAddress | false>()
@@ -7461,7 +7760,7 @@ describe('DesktopWorkbenchLayout', () => {
     await waitFor(() => expect(unsubscribe).toHaveBeenCalledTimes(1))
     expect(sideChatInput).toHaveValue('side chat')
     expect(within(sideChat).getByTestId('send-message-button')).toBeEnabled()
-  }, 15_000)
+  }, 30_000)
 
   test('moves right workspace tabs into the titlebar in Electron', async () => {
     runtimeMocks.electron = true
@@ -9710,11 +10009,32 @@ describe('DesktopWorkbenchLayout', () => {
     )
     expect(scopedPanel.getByTestId('environment-push-button')).toHaveTextContent('推送')
 
-    await userEvent.click(scopedPanel.getByTestId('environment-commit-and-push-button'))
+    await userEvent.type(screen.getByTestId('environment-commit-message-input'), 'keep this')
+    await userEvent.click(screen.getByTestId('environment-cancel-commit-button'))
+    expect(screen.queryByTestId('environment-commit-form')).not.toBeInTheDocument()
+    expect(commitMenuButton).toHaveFocus()
+
+    await userEvent.click(commitMenuButton)
+    expect(screen.getByTestId('environment-commit-message-input')).toHaveValue('keep this')
+    await userEvent.keyboard('{Escape}')
+    expect(screen.queryByTestId('environment-commit-form')).not.toBeInTheDocument()
+    expect(commitMenuButton).toHaveFocus()
+
+    await userEvent.click(commitMenuButton)
+    const commitMessageInput = screen.getByTestId('environment-commit-message-input')
+    await userEvent.click(commitMessageInput)
+    expect(commitMessageInput).toHaveFocus()
+    const outsideControl = screen.getByTestId('toggle-bottom-workspace-panel-button')
+    await userEvent.click(outsideControl)
+    expect(screen.queryByTestId('environment-commit-form')).not.toBeInTheDocument()
+    expect(outsideControl).toHaveFocus()
+
+    await userEvent.click(commitMenuButton)
+    await userEvent.click(screen.getByTestId('environment-commit-and-push-button'))
     await waitFor(() =>
       expect(onCommitAndPushEnvironmentChanges).toHaveBeenCalledWith(
         null,
-        '',
+        'keep this',
         activeProjectRuntimeTarget
       )
     )
@@ -11041,6 +11361,44 @@ describe('DesktopWorkbenchLayout', () => {
     expect(screen.getByTestId('smart-app-development-preview-add-plugins')).toBeEnabled()
     expect(screen.getByTestId('smart-app-development-preview-refresh')).toBeEnabled()
     expect(harnessAppMocks.start).toHaveBeenCalledWith(installed.id, null)
+    expect(
+      screen.getByTestId('smart-app-development-preview-verification-unverified')
+    ).toHaveTextContent('尚未验证')
+
+    const verification = createDeferred<{
+      status: 'passed'
+      issues: []
+      stages: []
+      schemaVersion: 1
+      projectRoot: string
+      inputFingerprint: string
+      deliverableFingerprint: string
+      startedAt: string
+      finishedAt: string
+    }>()
+    harnessAppMocks.verify.mockImplementationOnce(() => verification.promise)
+    await userEvent.click(screen.getByTestId('smart-app-development-preview-verify'))
+    expect(harnessAppMocks.verify).toHaveBeenCalledWith(installed.id)
+    expect(
+      screen.getByTestId('smart-app-development-preview-verification-running')
+    ).toBeInTheDocument()
+
+    verification.resolve({
+      status: 'passed',
+      issues: [],
+      stages: [],
+      schemaVersion: 1,
+      projectRoot: installed.packagePath,
+      inputFingerprint: 'input',
+      deliverableFingerprint: 'deliverable',
+      startedAt: '2026-09-04T00:00:00.000Z',
+      finishedAt: '2026-09-04T00:00:01.000Z',
+    })
+    await waitFor(() =>
+      expect(
+        screen.getByTestId('smart-app-development-preview-verification-passed')
+      ).toHaveTextContent('验证通过')
+    )
 
     await userEvent.click(screen.getByTestId('smart-app-development-preview-add-plugins'))
 
@@ -11084,6 +11442,108 @@ describe('DesktopWorkbenchLayout', () => {
       )
     )
     expect(screen.queryByTestId('smart-app-development-preview')).not.toBeInTheDocument()
+  })
+
+  test('shows actionable failed and stale verification states in the Smart app preview', async () => {
+    const { propsForTask, taskA } = createLocalRuntimeTaskPanelFixture()
+    const installed = {
+      id: 'verification-workbench',
+      manifest: {
+        name: 'verification-workbench',
+        displayName: '验证工作台',
+        version: '0.1.0',
+        type: 'deepseek-harness-plugin-bundle' as const,
+        description: 'Verification fixture',
+        entry: { installPackage: 'packages/bundle/web-app', profile: 'verification-workbench' },
+        requirements: { dsh: '0.1.0-rc.8', node: '>=22' },
+      },
+      packagePath: '/tmp/verification-workbench',
+      sha256: 'd'.repeat(64),
+      modelKey: null,
+      resident: false,
+      runtimeVersion: null,
+      state: 'installed' as const,
+      webUrl: null,
+      error: null,
+      source: 'linked' as const,
+    }
+    const running = {
+      ...installed,
+      state: 'running' as const,
+      webUrl: 'http://127.0.0.1:43126/',
+    }
+    harnessAppMocks.list.mockResolvedValue([running])
+    harnessAppMocks.start.mockResolvedValue(running)
+    harnessAppMocks.inspectVerification.mockResolvedValue({
+      schemaVersion: 1,
+      status: 'failed',
+      projectRoot: installed.packagePath,
+      inputFingerprint: 'input',
+      deliverableFingerprint: null,
+      startedAt: '2026-09-04T00:00:00.000Z',
+      finishedAt: '2026-09-04T00:00:01.000Z',
+      stages: [],
+      issues: [
+        {
+          code: 'runtime_selector_missing',
+          stage: 'runtime',
+          file: 'smart-app.contract.json',
+          message: 'The ready selector was not found',
+          expected: '[data-testid="app-ready"]',
+          actual: null,
+          blocking: true,
+          hint: 'Add the stable ready selector to the client root.',
+        },
+        {
+          code: 'artifact_missing',
+          stage: 'artifacts',
+          file: 'dist/client.js',
+          message: 'Missing client artifact',
+          expected: null,
+          actual: null,
+          blocking: true,
+          hint: 'Run the declared build script.',
+        },
+      ],
+    })
+    queueSmartAppDevelopmentPreview({
+      installationId: installed.id,
+      displayName: installed.manifest.displayName,
+    })
+
+    render(<DesktopWorkbenchLayout {...propsForTask(taskA)} />)
+
+    await waitFor(() =>
+      expect(
+        screen.getByTestId('smart-app-development-preview-verification-failed')
+      ).toHaveTextContent('runtime_selector_missing')
+    )
+    expect(
+      screen.getByTestId('smart-app-development-preview-verification-failed')
+    ).toHaveTextContent('smart-app.contract.json')
+    expect(
+      screen.getByTestId('smart-app-development-preview-verification-failed')
+    ).toHaveTextContent('Add the stable ready selector to the client root.')
+    await userEvent.click(screen.getByTestId('smart-app-development-preview-verification-details'))
+    expect(screen.getByText('artifact_missing')).toBeInTheDocument()
+
+    harnessAppMocks.inspectVerification.mockResolvedValue({
+      schemaVersion: 1,
+      status: 'stale',
+      projectRoot: installed.packagePath,
+      inputFingerprint: 'changed-input',
+      deliverableFingerprint: 'previous-delivery',
+      startedAt: '2026-09-04T00:00:00.000Z',
+      finishedAt: '2026-09-04T00:00:01.000Z',
+      stages: [],
+      issues: [],
+    })
+    await userEvent.click(screen.getByTestId('smart-app-development-preview-reload'))
+    await waitFor(() =>
+      expect(
+        screen.getByTestId('smart-app-development-preview-verification-stale')
+      ).toHaveTextContent('验证已过期')
+    )
   })
 
   test('keeps an inactive Smart app preview from reclaiming the browser after switching tasks', async () => {

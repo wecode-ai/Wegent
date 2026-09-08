@@ -95,6 +95,7 @@ try {
       join(electronRoot, 'resources', 'bin'),
       join(electronRoot, 'resources', 'codex'),
       join(electronRoot, 'resources', 'wework-core-plugins'),
+      join(electronRoot, 'resources', 'wework-app-static'),
       join(electronRoot, 'resources', 'components.json'),
       join(electronRoot, 'resources', 'bundled-plugins'),
       join(sharedResourcesRoot, 'licenses'),

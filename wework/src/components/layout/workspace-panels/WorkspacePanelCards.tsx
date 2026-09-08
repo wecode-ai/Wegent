@@ -8,6 +8,7 @@ import { useTranslation } from '@/hooks/useTranslation'
 import {
   supportsCloudSessions,
   supportsLocalTerminalLaunch,
+  supportsRemoteSessions,
   supportsRemoteTerminalSessions,
 } from '@/lib/device-capabilities'
 import {
@@ -149,11 +150,18 @@ export function WorkspacePanelCards({
   const cloudToolsAvailable = Boolean(
     projectDevice && supportsCloudSessions(projectDevice, activeWorkspaceDeviceId)
   )
+  const remoteSessionTarget = Boolean(
+    projectDevice &&
+    (supportsCloudSessions(projectDevice, activeWorkspaceDeviceId) ||
+      supportsRemoteSessions(projectDevice, activeWorkspaceDeviceId))
+  )
   const remoteTerminalAvailable = Boolean(
-    projectDevice && supportsRemoteTerminalSessions(projectDevice, activeWorkspaceDeviceId)
+    remoteSessionTarget &&
+    projectDevice &&
+    supportsRemoteTerminalSessions(projectDevice, activeWorkspaceDeviceId)
   )
   const remoteWorkspaceSession = Boolean(
-    workspaceTarget?.workspaceSource === 'remote' || cloudToolsAvailable || remoteTerminalAvailable
+    workspaceTarget?.workspaceSource === 'remote' || remoteSessionTarget
   )
   const localProjectConfigTerminal =
     workspaceSource !== 'runtime' && (preferLocalTerminal || usesLocalProjectConfig(currentProject))
@@ -209,11 +217,11 @@ export function WorkspacePanelCards({
     (!localTerminalSupported &&
       (Boolean(currentProject) || Boolean(workspaceSource === 'runtime' && activeWorkspacePath)) &&
       remoteTerminalAvailable)
+  const showTerminalEntry = Boolean(
+    projectTerminalAvailable || (hasWorkspaceContext && remoteSessionTarget)
+  )
   const hasLimitedProjectTools = Boolean(
-    hasWorkspaceContext &&
-    !cloudToolsAvailable &&
-    !localTerminalCheckPending &&
-    !projectTerminalAvailable
+    hasWorkspaceContext && !cloudToolsAvailable && !localTerminalCheckPending && !showTerminalEntry
   )
   const projectKey = hasWorkspaceContext
     ? [
@@ -372,7 +380,14 @@ export function WorkspacePanelCards({
   )
 
   const startTerminalSession = useCallback(async () => {
-    if (!hasWorkspaceContext || loadingTool || !availableTools.terminal) return
+    if (
+      !hasWorkspaceContext ||
+      loadingTool ||
+      !projectTerminalAvailable ||
+      !availableTools.terminal
+    ) {
+      return
+    }
     setLoadingToolState({ tool: 'terminal', projectKey })
     setProjectError(null)
     try {
@@ -498,6 +513,7 @@ export function WorkspacePanelCards({
     localTerminalSupported,
     localTerminalAvailable,
     markToolUnavailable,
+    projectTerminalAvailable,
     projectKey,
     readLocalTerminalCheck,
     setLocalTerminalCheck,
@@ -615,8 +631,11 @@ export function WorkspacePanelCards({
   const menuActions = useMemo<WorkspacePanelMenuActions>(
     () => ({
       terminal: {
-        visible: projectTerminalAvailable,
-        disabled: toolsDisabled || !availableTools.terminal,
+        visible: showTerminalEntry,
+        disabled: toolsDisabled || !projectTerminalAvailable || !availableTools.terminal,
+        title: !projectTerminalAvailable
+          ? t('workbench.project_terminal_unavailable_tooltip')
+          : undefined,
         run: startTerminalSession,
       },
       desktop: {
@@ -632,7 +651,9 @@ export function WorkspacePanelCards({
       cloudDesktopAvailable,
       projectDevice?.status,
       projectTerminalAvailable,
+      showTerminalEntry,
       startTerminalSession,
+      t,
       toolsDisabled,
     ]
   )
@@ -665,6 +686,9 @@ export function WorkspacePanelCards({
       icon: SquareTerminal,
       label: t('workbench.terminal', '终端'),
       disabled: toolsDisabled || !projectTerminalAvailable || !availableTools.terminal,
+      title: !projectTerminalAvailable
+        ? t('workbench.project_terminal_unavailable_tooltip')
+        : undefined,
       onSelect: handleTerminalClick,
     })
 
@@ -758,16 +782,21 @@ export function WorkspacePanelCards({
               </p>
             </div>
           )}
-          {(projectTerminalAvailable || cloudDesktopAvailable) && (
+          {(showTerminalEntry || cloudDesktopAvailable) && (
             <div className="grid w-full grid-cols-[repeat(auto-fit,minmax(120px,1fr))] gap-4">
-              {projectTerminalAvailable && (
+              {showTerminalEntry && (
                 <button
                   type="button"
                   data-testid={
                     activeTerminalSession ? undefined : testId('workspace-terminal-card')
                   }
                   onClick={handleTerminalClick}
-                  disabled={toolsDisabled || !availableTools.terminal}
+                  disabled={toolsDisabled || !projectTerminalAvailable || !availableTools.terminal}
+                  title={
+                    !projectTerminalAvailable
+                      ? t('workbench.project_terminal_unavailable_tooltip')
+                      : undefined
+                  }
                   className="flex min-h-[132px] flex-col items-center justify-center rounded-lg bg-surface text-center hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50"
                 >
                   {loadingTool === 'terminal' ? (
@@ -779,9 +808,11 @@ export function WorkspacePanelCards({
                     {t('workbench.terminal', '终端')}
                   </span>
                   <span className="mt-2 text-sm leading-[18px] text-text-secondary">
-                    {availableTools.terminal
-                      ? t('workbench.start_shell', '启动交互式 shell')
-                      : t('workbench.project_tool_unavailable', '暂不可用')}
+                    {!projectTerminalAvailable
+                      ? t('workbench.project_terminal_disabled_by_device')
+                      : availableTools.terminal
+                        ? t('workbench.start_shell', '启动交互式 shell')
+                        : t('workbench.project_tool_unavailable', '暂不可用')}
                   </span>
                 </button>
               )}

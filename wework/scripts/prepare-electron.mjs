@@ -13,7 +13,9 @@ const pnpmCommand = process.platform === 'win32' ? 'pnpm.cmd' : 'pnpm'
 const releaseToolchainLock = await acquireProcessLock(electronToolchainLockPath)
 
 try {
-  await run(pnpmCommand, ['--dir', 'electron', 'install', '--frozen-lockfile'])
+  if (process.env.WEWORK_ELECTRON_DEPENDENCIES_READY !== 'true') {
+    await run(pnpmCommand, ['--dir', 'electron', 'install', '--frozen-lockfile'])
+  }
   await run(process.execPath, [
     join(weworkRoot, 'electron', 'node_modules', 'electron', 'install.js'),
   ])

@@ -7,6 +7,8 @@ import type {
   RuntimeTranscriptMessage,
 } from '@/types/runtime'
 
+import { visibleRuntimeUserMessage } from './runtimeUserMessage'
+
 export interface RuntimeStreamEvent {
   name: string
   payload: Record<string, unknown>
@@ -14,6 +16,8 @@ export interface RuntimeStreamEvent {
 
 export type ChatAction =
   | { type: 'replace'; messages: RuntimeTranscriptMessage[] }
+  | { type: 'prepend'; messages: RuntimeTranscriptMessage[] }
+  | { type: 'merge-latest'; messages: RuntimeTranscriptMessage[] }
   | { type: 'optimistic-user'; id: string; content: string; createdAt: number }
   | { type: 'stream'; event: RuntimeStreamEvent }
   | { type: 'fail'; id: string; error: string }
@@ -30,6 +34,7 @@ interface BlockUpdates {
   toolOutput?: unknown
   toolOutputDelta?: string
   renderPayload?: unknown
+  fileChanges?: ChatFileChangesSummary
   status?: ChatBlockStatus
   completedAt?: number
   durationMs?: number
@@ -38,16 +43,16 @@ interface BlockUpdates {
 export function chatReducer(state: ChatMessage[], action: ChatAction): ChatMessage[] {
   switch (action.type) {
     case 'replace':
-      return uniqueMessages(
-        action.messages
-          .filter(message => ['user', 'assistant', 'system'].includes(message.role))
-          .map(toChatMessage)
-      )
+      return uniqueMessages(transcriptMessages(action.messages))
+    case 'prepend':
+      return uniqueMessages([...transcriptMessages(action.messages), ...state])
+    case 'merge-latest':
+      return uniqueMessages([...state, ...transcriptMessages(action.messages)])
     case 'optimistic-user':
       return upsertMessage(state, {
         id: action.id,
         role: 'user',
-        content: action.content,
+        content: visibleRuntimeUserMessage(action.content),
         status: 'completed',
         createdAt: action.createdAt,
       })
@@ -63,6 +68,12 @@ export function chatReducer(state: ChatMessage[], action: ChatAction): ChatMessa
   }
 }
 
+function transcriptMessages(messages: RuntimeTranscriptMessage[]): ChatMessage[] {
+  return messages
+    .filter(message => ['user', 'assistant', 'system'].includes(message.role))
+    .map(toChatMessage)
+}
+
 function toChatMessage(message: RuntimeTranscriptMessage, index: number): ChatMessage {
   const role = message.role === 'user' ? 'user' : message.role === 'system' ? 'system' : 'assistant'
   const subtaskId = idValue(message.subtaskId)
@@ -70,7 +81,9 @@ function toChatMessage(message: RuntimeTranscriptMessage, index: number): ChatMe
   const blocks = subtaskId ? normalizeBlocks(subtaskId, message.blocks, createdAt) : undefined
   const turnId = message.turnId ?? message.turn_id
   const errorType = message.errorType ?? message.error_type
-  const fileChanges = normalizeFileChanges(message.fileChanges ?? message.file_changes)
+  const fileChanges =
+    normalizeFileChanges(message.fileChanges ?? message.file_changes) ??
+    fileChangesFromBlocks(blocks)
   return {
     id:
       role === 'user'
@@ -79,7 +92,8 @@ function toChatMessage(message: RuntimeTranscriptMessage, index: number): ChatMe
     role,
     ...(subtaskId && { subtaskId }),
     ...(turnId && { turnId }),
-    content: message.content ?? '',
+    content:
+      role === 'user' ? visibleRuntimeUserMessage(message.content ?? '') : (message.content ?? ''),
     ...(blocks?.length && { blocks }),
     ...(fileChanges && { fileChanges }),
     status: terminalStatus(message.status),
@@ -184,9 +198,10 @@ function applyRuntimeEvent(state: ChatMessage[], event: RuntimeStreamEvent): Cha
     const blocks = rawBlocks
       ? normalizeBlocks(identity.subtaskId, rawBlocks, Date.now())
       : undefined
-    const fileChanges = normalizeFileChanges(
-      response.file_changes ?? response.fileChanges ?? data.file_changes ?? data.fileChanges
-    )
+    const fileChanges =
+      normalizeFileChanges(
+        response.file_changes ?? response.fileChanges ?? data.file_changes ?? data.fileChanges
+      ) ?? fileChangesFromBlocks(blocks)
     return updateAssistant(state, identity, message => ({
       ...clearError(message),
       ...(authoritativeContent !== undefined && {
@@ -302,6 +317,7 @@ function createBlock(message: ChatMessage, incoming: ChatProcessingBlock): ChatM
     content,
     textItems,
     blocks,
+    ...(incoming.type === 'file_changes' && { fileChanges: incoming.fileChanges }),
     status: isActiveStatus(incoming.status) ? 'streaming' : message.status,
     streamingThinkingContent:
       incoming.type === 'thinking' || incoming.type === 'tool'
@@ -333,6 +349,7 @@ function blockUpdates(updates: Record<string, unknown>): BlockUpdates {
   const toolOutputDelta = updates.toolOutputDelta ?? updates.tool_output_delta
   const completedAt = finiteNumber(updates.completedAt ?? updates.completed_at)
   const durationMs = finiteNumber(updates.durationMs ?? updates.duration_ms)
+  const fileChanges = normalizeFileChanges(updates.fileChanges ?? updates.file_changes)
   return {
     ...(typeof updates.content === 'string' && { content: updates.content }),
     ...(typeof contentDelta === 'string' && { contentDelta }),
@@ -344,6 +361,7 @@ function blockUpdates(updates: Record<string, unknown>): BlockUpdates {
     ...((updates.renderPayload ?? updates.render_payload) !== undefined && {
       renderPayload: updates.renderPayload ?? updates.render_payload,
     }),
+    ...(fileChanges && { fileChanges }),
     ...(typeof updates.status === 'string' && {
       status: normalizeBlockStatus(updates.status),
     }),
@@ -381,6 +399,14 @@ function updateBlock(message: ChatMessage, blockId: string, updates: BlockUpdate
         ...(updates.renderPayload !== undefined && { renderPayload: updates.renderPayload }),
       }
     }
+    if (block.type === 'file_changes') {
+      return {
+        ...block,
+        ...timing,
+        status,
+        ...(updates.fileChanges && { fileChanges: updates.fileChanges }),
+      }
+    }
     return {
       ...block,
       ...timing,
@@ -391,7 +417,7 @@ function updateBlock(message: ChatMessage, blockId: string, updates: BlockUpdate
       }),
     }
   })
-  return {
+  const updatedMessage = {
     ...clearError(message),
     blocks,
     status: updates.status && isActiveStatus(updates.status) ? 'streaming' : message.status,
@@ -402,6 +428,8 @@ function updateBlock(message: ChatMessage, blockId: string, updates: BlockUpdate
           ? undefined
           : message.streamingThinkingContent,
   }
+  const fileChanges = fileChangesFromBlocks(blocks)
+  return fileChanges ? { ...updatedMessage, fileChanges } : updatedMessage
 }
 
 function applyToolDone(
@@ -520,6 +548,17 @@ function normalizeBlock(
         kind: 'image_generation',
         ...(typeof block.result === 'string' && { imageBase64: block.result }),
       },
+      ...timing,
+    }
+  }
+  if (type === 'file_changes') {
+    const fileChanges = normalizeFileChanges(block.fileChanges ?? block.file_changes)
+    if (!fileChanges) return null
+    return {
+      id,
+      subtaskId,
+      type: 'file_changes',
+      fileChanges,
       ...timing,
     }
   }
@@ -702,6 +741,7 @@ function finalizeNarrativeBlocks(
   return (blocks ?? []).map(block => {
     if (
       block.type !== 'tool' &&
+      block.type !== 'file_changes' &&
       ['thinking', 'text', 'plan'].includes(block.type) &&
       block.status === 'streaming'
     ) {
@@ -713,6 +753,40 @@ function finalizeNarrativeBlocks(
     }
     return block
   })
+}
+
+function fileChangesFromBlocks(
+  blocks: ChatProcessingBlock[] | undefined
+): ChatFileChangesSummary | undefined {
+  const summaries = (blocks ?? []).flatMap(block =>
+    block.type === 'file_changes' ? [block.fileChanges] : []
+  )
+  if (!summaries.length) return undefined
+
+  const files = new Map<string, ChatFileChangesSummary['files'][number]>()
+  for (const summary of summaries) {
+    for (const file of summary.files) {
+      const key = `${file.oldPath ?? ''}\0${file.path}`
+      const current = files.get(key)
+      files.set(
+        key,
+        current
+          ? {
+              ...file,
+              additions: current.additions + file.additions,
+              deletions: current.deletions + file.deletions,
+              binary: current.binary || file.binary,
+            }
+          : file
+      )
+    }
+  }
+  return {
+    fileCount: files.size,
+    additions: summaries.reduce((sum, summary) => sum + summary.additions, 0),
+    deletions: summaries.reduce((sum, summary) => sum + summary.deletions, 0),
+    files: [...files.values()],
+  }
 }
 
 function finalizeBlocks(

@@ -35,6 +35,14 @@ SESSION_RPC_EVENTS = {
 }
 
 DeviceSessionType = Literal["terminal", "code_server"]
+SESSION_FEATURE_KEYS = {
+    "terminal": "terminal",
+    "code_server": "codeServer",
+}
+SESSION_DISABLED_MESSAGES = {
+    "terminal": "Terminal sessions are disabled on this device",
+    "code_server": "Code-server sessions are disabled on this device",
+}
 
 
 class DeviceSessionError(RuntimeError):
@@ -73,6 +81,8 @@ class LocalDeviceSessionService:
         online_info = await device_service.get_device_online_info(user_id, device_id)
         if not online_info:
             raise DeviceSessionError(f"Device '{device_id}' is offline")
+        if not _interactive_session_enabled(online_info, session_type):
+            raise DeviceSessionError(SESSION_DISABLED_MESSAGES[session_type])
 
         socket_id = online_info.get("socket_id")
         if not socket_id:
@@ -185,6 +195,19 @@ class LocalDeviceSessionService:
 
 
 local_device_session_service = LocalDeviceSessionService()
+
+
+def _interactive_session_enabled(
+    online_info: dict[str, Any],
+    session_type: DeviceSessionType,
+) -> bool:
+    runtime_features = online_info.get("runtime_features")
+    if not isinstance(runtime_features, dict):
+        return True
+    interactive_sessions = runtime_features.get("interactiveSessions")
+    if not isinstance(interactive_sessions, dict):
+        return True
+    return interactive_sessions.get(SESSION_FEATURE_KEYS[session_type]) is not False
 
 
 def _ensure_session_url_token(

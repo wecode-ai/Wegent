@@ -1,31 +1,33 @@
 import { ZipArchive } from 'archiver'
 import { createHash } from 'node:crypto'
 import { createWriteStream } from 'node:fs'
-import {
-  copyFile,
-  cp,
-  mkdir,
-  readFile,
-  readdir,
-  realpath,
-  rename,
-  rm,
-  stat,
-  writeFile,
-} from 'node:fs/promises'
+import { copyFile, mkdir, readFile, realpath, rename, rm, stat, writeFile } from 'node:fs/promises'
 import { createServer } from 'node:net'
-import { basename, dirname, isAbsolute, join, normalize, resolve, sep } from 'node:path'
-import extractZip from 'extract-zip'
-import semver from 'semver'
+import { dirname, join, resolve, sep } from 'node:path'
 import type { WorkbenchRuntimeLaunch } from '../runtime/workbench-runtime.js'
 import {
+  materializeManifestPackages,
   prepareWorkbenchDshLaunch,
   WORKBENCH_DSH_VERSION,
   type WorkbenchAppManifest,
 } from '../runtime/workbench-dsh-runtime.js'
-
-const MAX_ARCHIVE_BYTES = 50 * 1024 * 1024
-const MAX_EXTRACTED_BYTES = 250 * 1024 * 1024
+import {
+  copySmartAppDirectorySafe,
+  extractSmartAppArchive,
+  findSmartAppManifestRoot,
+  isSafeSmartAppRelativePath,
+  MAX_SMART_APP_ARCHIVE_BYTES,
+  readSmartAppManifest,
+  requiredSmartAppDirectory,
+  validateSmartAppPackageDirectory,
+} from './smart-app-package-validator.js'
+import {
+  scaffoldSmartApp,
+  SMART_APP_TEMPLATES,
+  type SmartAppTemplate,
+} from './smart-app-scaffold.js'
+import { SmartAppVerifier, type SmartAppPackResult } from './smart-app-verifier.js'
+import type { SmartAppVerificationReport } from './smart-app-verification-types.js'
 
 export interface SmartAppInstallation {
   id: string
@@ -76,14 +78,29 @@ export interface SmartAppManagerOptions {
   environment: NodeJS.ProcessEnv
   runtimeHost: () => SmartAppRuntimeHost | null
   ensureWorkbenchRuntime?: () => Promise<void>
+  verificationService?: SmartAppVerificationService
+}
+
+export interface SmartAppVerificationService {
+  verify(projectRoot: string): Promise<SmartAppVerificationReport>
+  inspect(projectRoot: string): Promise<SmartAppVerificationReport | null>
+  pack(projectRoot: string, archivePath: string): Promise<SmartAppPackResult>
 }
 
 export class SmartAppManager {
   private readonly proxyTokens = new Map<string, string>()
   private readonly contextTokens = new Map<string, string>()
+  private readonly verificationService: SmartAppVerificationService
   private operation = Promise.resolve()
 
-  constructor(private readonly options: SmartAppManagerOptions) {}
+  constructor(private readonly options: SmartAppManagerOptions) {
+    this.verificationService =
+      options.verificationService ??
+      new SmartAppVerifier({
+        runtimeRoot: options.runtimeRoot,
+        environment: options.environment,
+      })
+  }
 
   async list(): Promise<SmartAppInstallation[]> {
     return this.serial(async () => {
@@ -120,9 +137,11 @@ export class SmartAppManager {
     const sha256 = await fileSha256(absolutePath)
     const staging = join(this.root(), `.preview-${process.pid}-${Date.now()}`)
     try {
-      await extractArchive(absolutePath, staging)
-      const manifest = await readManifest(staging)
-      validateManifest(manifest)
+      await extractSmartAppArchive(absolutePath, staging)
+      const packageRoot = await findSmartAppManifestRoot(staging)
+      const stagedManifest = await readSmartAppManifest(packageRoot)
+      await materializeManifestPackages(stagedManifest, packageRoot)
+      const { manifest } = await validateSmartAppPackageDirectory(packageRoot)
       return {
         valid: true,
         archivePath: absolutePath,
@@ -148,11 +167,13 @@ export class SmartAppManager {
     name: string
     displayName: string
     description: string
+    template: string
   }): Promise<SmartAppInstallation> {
     return this.serial(async () => {
       const name = validEditableName(input.name)
       const displayName = requiredText(input.displayName)
-      const parent = await requiredDirectory(input.parentPath, 'Smart app parent')
+      const template = validSmartAppTemplate(input.template)
+      const parent = await requiredSmartAppDirectory(input.parentPath, 'Smart app parent')
       const target = join(parent, name)
       await mkdir(target).catch(error => {
         if ((error as NodeJS.ErrnoException).code === 'EEXIST') {
@@ -161,13 +182,14 @@ export class SmartAppManager {
         throw error
       })
       try {
-        await scaffoldWebSmartApp(
-          target,
+        await scaffoldSmartApp({
+          path: target,
           name,
           displayName,
-          input.description.trim(),
-          WORKBENCH_DSH_VERSION
-        )
+          description: input.description.trim(),
+          dshVersion: WORKBENCH_DSH_VERSION,
+          template,
+        })
         return await this.registerLinkedDirectory(target)
       } catch (error) {
         await rm(target, { recursive: true, force: true })
@@ -191,7 +213,7 @@ export class SmartAppManager {
         throw new Error('Only marketplace Smart apps need to be copied before editing')
       }
       const name = validEditableName(input.name)
-      const parent = await requiredDirectory(input.parentPath, 'Smart app parent')
+      const parent = await requiredSmartAppDirectory(input.parentPath, 'Smart app parent')
       const target = join(parent, name)
       await mkdir(target).catch(error => {
         if ((error as NodeJS.ErrnoException).code === 'EEXIST') {
@@ -200,7 +222,7 @@ export class SmartAppManager {
         throw error
       })
       try {
-        await copyDirectorySafe(source.packagePath, target)
+        await copySmartAppDirectorySafe(source.packagePath, target)
         const manifestPath = join(target, 'plugin-manifest.json')
         const manifest = JSON.parse(await readFile(manifestPath, 'utf8')) as WorkbenchAppManifest
         manifest.name = name
@@ -229,7 +251,10 @@ export class SmartAppManager {
       if (this.options.runtimeHost()?.runningTabIds().has(tabId(installationId))) {
         throw new Error('Stop the Smart app before adding a DSH plugin')
       }
-      const packageRoot = await requiredDirectory(installation.packagePath, 'Smart app package')
+      const packageRoot = await requiredSmartAppDirectory(
+        installation.packagePath,
+        'Smart app package'
+      )
       const manifestPath = join(packageRoot, 'plugin-manifest.json')
       const originalManifest = await readFile(manifestPath)
       const manifest = JSON.parse(originalManifest.toString('utf8')) as WorkbenchAppManifest
@@ -246,10 +271,10 @@ export class SmartAppManager {
       try {
         if (localDirectory && plugin.path) {
           copiedDirectory = join(packageRoot, plugin.path)
-          await copyDirectorySafe(localDirectory, copiedDirectory)
+          await copySmartAppDirectorySafe(localDirectory, copiedDirectory)
         }
         await writeJson(manifestPath, manifest)
-        const refreshed = await validatePackageDirectory(packageRoot)
+        const refreshed = await validateLinkedSmartAppDirectory(packageRoot)
         installation.manifest = refreshed.manifest
         installation.sha256 = refreshed.sha256
         installation.error = null
@@ -277,7 +302,7 @@ export class SmartAppManager {
     if (
       !Number.isSafeInteger(input.sizeBytes) ||
       input.sizeBytes <= 0 ||
-      input.sizeBytes > MAX_ARCHIVE_BYTES
+      input.sizeBytes > MAX_SMART_APP_ARCHIVE_BYTES
     ) {
       throw new Error('Smart app download size is invalid')
     }
@@ -324,8 +349,8 @@ export class SmartAppManager {
           : `market-${input.smartAppId}`
       const target = join(this.root(), 'packages', safeName(id), preview.manifest.version)
       const staging = join(this.root(), `.install-${process.pid}-${Date.now()}`)
-      await extractArchive(preview.archivePath, staging)
-      const packageRoot = await manifestRoot(staging)
+      await extractSmartAppArchive(preview.archivePath, staging)
+      const packageRoot = await findSmartAppManifestRoot(staging)
       await mkdir(dirname(target), { recursive: true, mode: 0o700 })
       if (await exists(target)) {
         await rm(staging, { recursive: true, force: true })
@@ -474,6 +499,15 @@ export class SmartAppManager {
       directory,
       `${safeName(installation.manifest.name)}-${installation.manifest.version}.zip`
     )
+    if (installation.source === 'linked') {
+      const packed = await this.verificationService.pack(installation.packagePath, archivePath)
+      return {
+        archivePath: packed.archivePath,
+        sha256: packed.sha256,
+        sizeBytes: packed.sizeBytes,
+        manifest: packed.manifest,
+      }
+    }
     await archiveDirectory(installation.packagePath, archivePath)
     const metadata = await stat(archivePath)
     return {
@@ -491,6 +525,31 @@ export class SmartAppManager {
     const destinationPath = await uniquePath(this.options.downloadsDirectory, filename)
     await copyFile(exported.archivePath, destinationPath)
     return { ...exported, destinationPath }
+  }
+
+  async verify(installationId: string): Promise<SmartAppVerificationReport> {
+    const installation = requiredLinkedInstallation(await this.readRegistry(), installationId)
+    return this.verificationService.verify(installation.packagePath)
+  }
+
+  async inspectVerification(installationId: string): Promise<SmartAppVerificationReport | null> {
+    const installation = requiredLinkedInstallation(await this.readRegistry(), installationId)
+    return this.verificationService.inspect(installation.packagePath)
+  }
+
+  async verifyProject(projectRoot: string): Promise<SmartAppVerificationReport> {
+    const installation = await this.linkedInstallationByProject(projectRoot)
+    return this.verificationService.verify(installation.packagePath)
+  }
+
+  async inspectProject(projectRoot: string): Promise<SmartAppVerificationReport | null> {
+    const installation = await this.linkedInstallationByProject(projectRoot)
+    return this.verificationService.inspect(installation.packagePath)
+  }
+
+  async packProject(projectRoot: string, outputPath: string): Promise<SmartAppPackResult> {
+    const installation = await this.linkedInstallationByProject(projectRoot)
+    return this.verificationService.pack(installation.packagePath, outputPath)
   }
 
   async upload(archivePath: string, uploadUrl: string): Promise<void> {
@@ -554,8 +613,17 @@ export class SmartAppManager {
     return host
   }
 
+  private async linkedInstallationByProject(projectRoot: string): Promise<SmartAppInstallation> {
+    const root = await requiredSmartAppDirectory(projectRoot, 'Smart app project')
+    const installation = (await this.readRegistry()).find(
+      item => item.source === 'linked' && item.packagePath === root
+    )
+    if (!installation) throw new Error('Smart app project is not a linked project root')
+    return installation
+  }
+
   private async registerLinkedDirectory(directoryPath: string): Promise<SmartAppInstallation> {
-    const validated = await validatePackageDirectory(directoryPath)
+    const validated = await validateLinkedSmartAppDirectory(directoryPath)
     const installations = await this.readRegistry()
     if (installations.some(item => item.id === validated.manifest.name)) {
       throw new Error(`A Smart app named ${validated.manifest.name} is already registered`)
@@ -589,44 +657,9 @@ export class SmartAppManager {
   }
 }
 
-async function validatePackageDirectory(directoryPath: string): Promise<{
-  path: string
-  manifest: WorkbenchAppManifest
-  sha256: string
-}> {
-  const path = await requiredDirectory(directoryPath, 'Smart app package')
-  const manifest = JSON.parse(
-    await readFile(join(path, 'plugin-manifest.json'), 'utf8')
-  ) as WorkbenchAppManifest
-  validateManifest(manifest)
-  const files: string[] = []
-  await walk(path, async filePath => {
-    files.push(filePath)
-  })
-  files.sort()
-  const hash = createHash('sha256')
-  let totalBytes = 0
-  for (const filePath of files) {
-    const bytes = await readFile(filePath)
-    totalBytes += bytes.byteLength
-    if (totalBytes > MAX_EXTRACTED_BYTES) {
-      throw new Error('Smart app directory exceeds 250 MB')
-    }
-    hash.update(
-      filePath
-        .slice(path.length + 1)
-        .split(sep)
-        .join('/')
-    )
-    hash.update('\0')
-    hash.update(bytes)
-  }
-  return { path, manifest, sha256: hash.digest('hex') }
-}
-
 async function refreshLinkedInstallation(installation: SmartAppInstallation): Promise<boolean> {
   try {
-    const validated = await validatePackageDirectory(installation.packagePath)
+    const validated = await validateLinkedSmartAppDirectory(installation.packagePath)
     if (validated.manifest.name !== installation.id) {
       return setInstallationFailure(
         installation,
@@ -651,68 +684,16 @@ async function refreshLinkedInstallation(installation: SmartAppInstallation): Pr
   }
 }
 
+function validateLinkedSmartAppDirectory(directoryPath: string) {
+  return validateSmartAppPackageDirectory(directoryPath, { developmentSource: true })
+}
+
 function setInstallationFailure(installation: SmartAppInstallation, error: string): boolean {
   const changed = installation.state !== 'failed' || installation.error !== error
   installation.state = 'failed'
   installation.webUrl = null
   installation.error = error
   return changed
-}
-
-async function scaffoldWebSmartApp(
-  path: string,
-  name: string,
-  displayName: string,
-  description: string,
-  dshVersion: string
-): Promise<void> {
-  const bundle = join(path, 'packages', 'bundle', name)
-  await mkdir(join(bundle, 'src'), { recursive: true, mode: 0o700 })
-  const manifest: WorkbenchAppManifest = {
-    name,
-    displayName,
-    version: '0.1.0',
-    type: 'deepseek-harness-plugin-bundle',
-    description,
-    packages: [
-      {
-        name: `@wework-smart-app/${name}`,
-        role: 'profile-bundle',
-        path: `packages/bundle/${name}`,
-      },
-    ],
-    entry: {
-      installPackage: `packages/bundle/${name}`,
-      profile: 'web',
-    },
-    requirements: {
-      dsh: dshVersion,
-      node: '>=22',
-    },
-    plugins: [],
-  }
-  await writeJson(join(path, 'plugin-manifest.json'), manifest)
-  await writeJson(join(bundle, 'package.json'), {
-    name: `@wework-smart-app/${name}`,
-    version: '0.1.0',
-    private: true,
-    type: 'module',
-    files: ['cordis.patch.yml', 'src'],
-    dsh: { bundle: { patch: './cordis.patch.yml' } },
-  })
-  await writeFile(join(bundle, 'cordis.patch.yml'), '[]\n')
-  await writeFile(
-    join(bundle, 'src', 'index.ts'),
-    "export const smartApp = { preset: 'web' as const }\n"
-  )
-  await writeFile(
-    join(path, 'PLUGIN.md'),
-    `# ${displayName}\n\n${description}\n\nThis Smart app uses the DeepSeek Harness Web preset.\n`
-  )
-  await writeFile(
-    join(path, 'INSTALL.zh-CN.md'),
-    '# 安装\n\n可在 Wework 中直接关联此目录运行，或导出 ZIP 后安装。\n'
-  )
 }
 
 async function localPluginDescriptor(
@@ -727,7 +708,7 @@ async function localPluginDescriptor(
   if (!name) throw new Error('DSH plugin package has no name')
   const patch =
     typeof manifest.dsh?.bundle?.patch === 'string' ? manifest.dsh.bundle.patch.trim() : ''
-  if (!safeRelative(patch) || !(await exists(join(source, patch)))) {
+  if (!isSafeSmartAppRelativePath(patch) || !(await exists(join(source, patch)))) {
     throw new Error('Selected package does not declare a valid dsh.bundle.patch')
   }
   const directoryName = name.replace(/[^0-9A-Za-z_-]/g, '-').replace(/^-+|-+$/g, '')
@@ -738,31 +719,6 @@ async function localPluginDescriptor(
   }
   const path = relativePath.split(sep).join('/')
   return { spec: `file:${path}`, path }
-}
-
-async function copyDirectorySafe(sourcePath: string, destinationPath: string): Promise<void> {
-  const source = await requiredDirectory(sourcePath, 'Source')
-  await mkdir(destinationPath, { recursive: true, mode: 0o700 })
-  for (const entry of await readdir(source, { withFileTypes: true })) {
-    if (entry.isSymbolicLink()) {
-      throw new Error('Smart app package contains a symbolic link')
-    }
-    const sourceEntry = join(source, entry.name)
-    const destinationEntry = join(destinationPath, entry.name)
-    if (entry.isDirectory()) {
-      await copyDirectorySafe(sourceEntry, destinationEntry)
-    } else if (entry.isFile()) {
-      await cp(sourceEntry, destinationEntry)
-    }
-  }
-}
-
-async function requiredDirectory(path: string, label: string): Promise<string> {
-  const resolved = await realpath(requiredText(path)).catch(error => {
-    throw new Error(`Failed to resolve ${label} directory: ${String(error)}`)
-  })
-  if (!(await stat(resolved)).isDirectory()) throw new Error(`${label} path must be a directory`)
-  return resolved
 }
 
 async function optionalDirectory(path: string): Promise<string | null> {
@@ -782,6 +738,11 @@ function validEditableName(value: string): string {
   return name
 }
 
+function validSmartAppTemplate(value: string): SmartAppTemplate {
+  if (SMART_APP_TEMPLATES.includes(value as SmartAppTemplate)) return value as SmartAppTemplate
+  throw new Error('Smart app template is invalid')
+}
+
 async function writeJson(path: string, value: unknown): Promise<void> {
   await writeFile(path, `${JSON.stringify(value, null, 2)}\n`, { mode: 0o600 })
 }
@@ -790,110 +751,6 @@ function isSecureTransferUrl(url: URL): boolean {
   if (url.protocol === 'https:') return true
   if (url.protocol !== 'http:') return false
   return ['127.0.0.1', 'localhost', '[::1]'].includes(url.hostname)
-}
-
-async function extractArchive(archivePath: string, destination: string): Promise<void> {
-  const metadata = await stat(archivePath)
-  if (metadata.size > MAX_ARCHIVE_BYTES) throw new Error('Smart app ZIP exceeds 50 MB')
-  await rm(destination, { recursive: true, force: true })
-  await mkdir(destination, { recursive: true, mode: 0o700 })
-  let extractedBytes = 0
-  await extractZip(archivePath, {
-    dir: destination,
-    onEntry: entry => {
-      extractedBytes += entry.uncompressedSize
-      if (extractedBytes > MAX_EXTRACTED_BYTES) {
-        throw new Error('Smart app ZIP expands beyond 250 MB')
-      }
-    },
-  })
-}
-
-async function readManifest(root: string): Promise<WorkbenchAppManifest> {
-  const path = join(await manifestRoot(root), 'plugin-manifest.json')
-  return JSON.parse(await readFile(path, 'utf8')) as WorkbenchAppManifest
-}
-
-async function manifestRoot(root: string): Promise<string> {
-  const matches: string[] = []
-  await walk(root, async path => {
-    if (basename(path) === 'plugin-manifest.json') matches.push(dirname(path))
-  })
-  if (matches.length !== 1) {
-    throw new Error(
-      matches.length
-        ? 'Smart app ZIP contains multiple plugin-manifest.json files'
-        : 'plugin-manifest.json is missing'
-    )
-  }
-  return matches[0] as string
-}
-
-async function walk(root: string, visit: (path: string) => Promise<void>): Promise<void> {
-  for (const entry of await readdir(root, { withFileTypes: true })) {
-    const path = join(root, entry.name)
-    if (entry.isSymbolicLink()) throw new Error('Smart app package contains a symbolic link')
-    if (entry.isDirectory()) await walk(path, visit)
-    else if (entry.isFile()) await visit(path)
-  }
-}
-
-function validateManifest(manifest: WorkbenchAppManifest): void {
-  if (manifest.type !== 'deepseek-harness-plugin-bundle') {
-    throw new Error('Unsupported Smart app package type')
-  }
-  if (!semver.valid(manifest.version)) throw new Error('Smart app version is invalid')
-  if (
-    !manifest.name?.trim() ||
-    !/^[0-9A-Za-z_-]+$/.test(manifest.name) ||
-    !manifest.entry?.profile?.trim() ||
-    !safeRelative(manifest.entry.installPackage)
-  ) {
-    throw new Error('Smart app manifest has incomplete identity or entry fields')
-  }
-  if (
-    !manifest.requirements?.dsh ||
-    !semver.validRange(manifest.requirements.dsh, { includePrerelease: true }) ||
-    !manifest.requirements.node ||
-    !semver.validRange(manifest.requirements.node, { includePrerelease: true })
-  ) {
-    throw new Error('Smart app runtime requirements are invalid')
-  }
-  const packages = manifest.packages ?? []
-  const names = new Set<string>()
-  const paths = new Set<string>()
-  const profileBundles: string[] = []
-  for (const item of packages) {
-    if (
-      !item.name?.trim() ||
-      !item.role?.trim() ||
-      !safeRelative(item.path) ||
-      names.has(item.name) ||
-      paths.has(item.path)
-    ) {
-      throw new Error('Smart app package declaration is invalid')
-    }
-    names.add(item.name)
-    paths.add(item.path)
-    if (item.role === 'profile-bundle') profileBundles.push(item.path)
-  }
-  if (
-    packages.length &&
-    (profileBundles.length !== 1 || profileBundles[0] !== manifest.entry.installPackage)
-  ) {
-    throw new Error('Smart app must declare installPackage as its only profile-bundle')
-  }
-  const pluginSpecs = new Set<string>()
-  for (const plugin of manifest.plugins ?? []) {
-    const spec = plugin.spec?.trim()
-    if (!spec || spec.startsWith('-') || pluginSpecs.has(spec)) {
-      throw new Error('Smart app plugin declaration is invalid')
-    }
-    if (plugin.path && (!safeRelative(plugin.path) || spec !== `file:${plugin.path}`)) {
-      throw new Error('Smart app local plugin declaration is invalid')
-    }
-    pluginSpecs.add(spec)
-  }
 }
 
 async function fileSha256(path: string): Promise<string> {
@@ -924,6 +781,17 @@ function requiredInstallation(
   return installation
 }
 
+function requiredLinkedInstallation(
+  installations: SmartAppInstallation[],
+  installationId: string
+): SmartAppInstallation {
+  const installation = requiredInstallation(installations, installationId)
+  if (installation.source !== 'linked') {
+    throw new Error('Smart app verification is only available for linked projects')
+  }
+  return installation
+}
+
 function tabId(installationId: string): string {
   return `smart-app:${requiredText(installationId)}`
 }
@@ -934,18 +802,6 @@ function safeName(value: string): string {
     .slice(0, 80)
   if (!safe) throw new Error('Smart app identifier is invalid')
   return safe
-}
-
-function safeRelative(value: string): boolean {
-  const path = value?.trim()
-  if (!path || isAbsolute(path)) return false
-  const normalized = normalize(path)
-  return (
-    normalized !== '.' &&
-    normalized !== '..' &&
-    !normalized.startsWith(`..${sep}`) &&
-    !normalized.includes('\0')
-  )
 }
 
 function requiredText(value: string): string {

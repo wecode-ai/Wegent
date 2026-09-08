@@ -70,7 +70,7 @@ def test_save_auth_json_encrypts_runtime_config(test_db: Session) -> None:
 
     assert response["runtime"] == "codex"
     assert response["configured"] is True
-    assert response["target_path"] == "~/.codex/auth.json"
+    assert response["target_path"] == "auth.json"
 
     kind = _get_codex_kind(test_db, 101)
     encrypted_value = kind.json["spec"]["auth"]["encryptedValue"]
@@ -265,7 +265,7 @@ async def test_sync_auth_to_devices_preserves_skipped_existing_status(
     assert result["total"] == 1
     assert result["items"][0]["status"] == "skipped_existing"
     assert calls[0]["command_key"] == "sync_runtime_auth_file"
-    assert calls[0]["env"]["WEGENT_RUNTIME_CONFIG_TARGET_PATH"] == "~/.codex/auth.json"
+    assert "WEGENT_RUNTIME_CONFIG_TARGET_PATH" not in calls[0]["env"]
     assert json.loads(calls[0]["env"]["WEGENT_RUNTIME_CONFIG_CONTENT"]) == {
         "token": "secret"
     }
@@ -278,9 +278,7 @@ async def test_import_auth_json_from_device_encrypts_device_file(
 ) -> None:
     async def fake_execute_configured_device_command(**kwargs):
         assert kwargs["command_key"] == "read_runtime_auth_file"
-        assert (
-            kwargs["env"]["WEGENT_RUNTIME_CONFIG_TARGET_PATH"] == "~/.codex/auth.json"
-        )
+        assert "WEGENT_RUNTIME_CONFIG_TARGET_PATH" not in kwargs["env"]
         return {
             "success": True,
             "stdout": {

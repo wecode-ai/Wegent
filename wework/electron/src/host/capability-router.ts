@@ -93,11 +93,6 @@ export const HOST_CAPABILITIES = [
   'secureStorage.delete',
   'secureStorage.get',
   'secureStorage.set',
-  'plugins.authorizeCapability',
-  'plugins.list',
-  'plugins.request',
-  'plugins.start',
-  'plugins.stop',
   'pluginDevelopment.deleteData',
   'pluginDevelopment.classify',
   'pluginDevelopment.focus',
@@ -129,6 +124,7 @@ export const HOST_CAPABILITIES = [
   'smartApps.download',
   'smartApps.export',
   'smartApps.exportToDownloads',
+  'smartApps.inspectVerification',
   'smartApps.install',
   'smartApps.linkDirectory',
   'smartApps.list',
@@ -141,6 +137,7 @@ export const HOST_CAPABILITIES = [
   'smartApps.takeProxyToken',
   'smartApps.update',
   'smartApps.upload',
+  'smartApps.verify',
   'systemDrag.complete',
   'systemDrag.dismissPanel',
   'systemDrag.getContext',
@@ -163,6 +160,7 @@ export const HOST_CAPABILITIES = [
   'window.openWorkspace',
   'window.showPopout',
   'window.toggleMaximize',
+  'weworkSync.request',
 ] as const
 
 export type HostCapability = (typeof HOST_CAPABILITIES)[number]

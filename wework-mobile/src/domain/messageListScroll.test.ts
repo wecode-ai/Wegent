@@ -5,6 +5,7 @@ import {
   messageListBottomOffset,
   reduceMessageListFollow,
   resolveMessageListFollow,
+  shouldLoadEarlierMessages,
 } from './messageListScroll'
 
 describe('messageListBottomOffset', () => {
@@ -102,5 +103,20 @@ describe('reduceMessageListFollow', () => {
         userInitiated: false,
       })
     ).toBe(true)
+  })
+})
+
+describe('shouldLoadEarlierMessages', () => {
+  it('loads another page when the user reaches the top', () => {
+    expect(shouldLoadEarlierMessages(metrics(32), true, false, true)).toBe(true)
+  })
+
+  it('does not auto-load during layout or while a request is active', () => {
+    expect(shouldLoadEarlierMessages(metrics(0), true, false, false)).toBe(false)
+    expect(shouldLoadEarlierMessages(metrics(0), true, true, true)).toBe(false)
+  })
+
+  it('stops loading after the server reports the beginning', () => {
+    expect(shouldLoadEarlierMessages(metrics(0), false, false, true)).toBe(false)
   })
 })

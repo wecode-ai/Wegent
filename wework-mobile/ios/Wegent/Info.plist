@@ -7,7 +7,7 @@
 	<key>CFBundleDevelopmentRegion</key>
 	<string>$(DEVELOPMENT_LANGUAGE)</string>
 	<key>CFBundleDisplayName</key>
-	<string>Wegent</string>
+	<string>WeWork</string>
 	<key>CFBundleExecutable</key>
 	<string>$(EXECUTABLE_NAME)</string>
 	<key>CFBundleIdentifier</key>
@@ -27,13 +27,15 @@
 		<dict>
 			<key>CFBundleURLSchemes</key>
 			<array>
-				<string>wegent</string>
-				<string>com.wecode.wegent</string>
+				<string>wework</string>
+				<string>io.wecode.wework</string>
 			</array>
 		</dict>
 	</array>
 	<key>CFBundleVersion</key>
-	<string>1</string>
+	<string>2</string>
+	<key>ITSAppUsesNonExemptEncryption</key>
+	<false/>
 	<key>LSMinimumSystemVersion</key>
 	<string>12.0</string>
 	<key>LSRequiresIPhoneOS</key>
@@ -46,11 +48,11 @@
 		<true/>
 	</dict>
 	<key>NSCameraUsageDescription</key>
-	<string>允许 Wegent 拍摄照片并作为会话附件发送。</string>
+	<string>允许 WeWork 拍摄照片并作为会话附件发送。</string>
 	<key>NSFaceIDUsageDescription</key>
 	<string>Allow $(PRODUCT_NAME) to access your Face ID biometric data.</string>
 	<key>NSPhotoLibraryUsageDescription</key>
-	<string>允许 Wegent 选择照片并作为会话附件发送。</string>
+	<string>允许 WeWork 选择照片并作为会话附件发送。</string>
 	<key>RCTMetroPort</key>
 	<string>$(RCT_METRO_PORT)</string>
 	<key>RCTNewArchEnabled</key>

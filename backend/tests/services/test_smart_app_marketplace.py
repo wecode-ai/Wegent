@@ -17,7 +17,11 @@ from sqlalchemy import inspect
 from app.core.security import get_password_hash
 from app.models.namespace import Namespace
 from app.models.resource_member import MemberStatus, ResourceMember
-from app.models.smart_app_marketplace import SmartApp, SmartAppRelease
+from app.models.smart_app_marketplace import (
+    SmartApp,
+    SmartAppRelease,
+    SmartAppSubmission,
+)
 from app.models.user import User
 from app.schemas.smart_app import (
     SmartAppAccessTarget,
@@ -336,6 +340,14 @@ def test_public_app_is_immediately_visible_and_keeps_scope_for_new_versions(
     next_version = smart_app_marketplace_service.init_submission(
         test_db, user_id=test_user.id, request=next_request
     )
+    legacy_submission = test_db.get(SmartAppSubmission, next_version.submissionId)
+    assert legacy_submission is not None
+    legacy_submission.metadata_json = {
+        key: value
+        for key, value in (legacy_submission.metadata_json or {}).items()
+        if key != "scope"
+    }
+    test_db.commit()
     _upload_submission(
         test_db,
         submission_id=next_version.submissionId,

@@ -13,6 +13,7 @@ import {
   ensureLocalExecutorAvailable,
   ensureLocalExecutorStarted,
   getInitializedBundledPluginMarketplace,
+  getKnownLocalExecutorDeviceId,
   getLocalExecutorStatus,
   readLocalExecutorLog,
   requestLocalExecutor,
@@ -80,6 +81,7 @@ describe('localExecutor', () => {
     expect(describeDshExecutorMock).toHaveBeenCalledOnce()
     expect(requestDshExecutorMock).not.toHaveBeenCalled()
     expect(getInitializedBundledPluginMarketplace()).toBeNull()
+    expect(getKnownLocalExecutorDeviceId()).toBe('electron-device')
   })
 
   test('starts the Electron-managed DSH executor and caches its marketplace', async () => {
@@ -153,15 +155,25 @@ describe('localExecutor', () => {
         return { ready: true, started: true, initializeElapsedMs: 37 }
       }
       if (method === 'executor.plugins.initialize_bundled_marketplace') return marketplace
+      if (method === 'runtime.codex.plugin.reconcile_bundled_marketplace') {
+        return { marketplaceName: marketplace.id, action: 'added' }
+      }
       if (method !== 'codex.app_server_request') return {}
       const request = params as { method?: string }
-      if (request.method === 'marketplace/add') return { marketplaceName: marketplace.id }
       if (request.method === 'config/read') return { config: { plugins: {} } }
       if (request.method === 'plugin/install') return {}
       throw new Error(`Unexpected request: ${request.method}`)
     })
 
     await ensureBundledPluginInstalled('smart-app-builder')
+
+    expect(requestDshExecutorMock).toHaveBeenCalledWith(
+      'runtime.codex.plugin.reconcile_bundled_marketplace',
+      {
+        marketplaceId: marketplace.id,
+        source: marketplace.path,
+      }
+    )
 
     expect(requestDshExecutorMock).toHaveBeenCalledWith('codex.app_server_request', {
       method: 'plugin/install',

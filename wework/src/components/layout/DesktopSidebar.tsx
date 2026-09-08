@@ -75,6 +75,7 @@ import type { CloudConnectionStatus } from '@/features/cloud-connection/cloudCon
 import { useOptionalCloudConnection } from '@/features/cloud-connection/useCloudConnection'
 import { DshSidebarNavigationSurface } from '@/features/dsh-runtime/DshSidebarNavigationSurface'
 import { prefetchDshSidebarNavigation } from '@/features/dsh-runtime/dshSidebarNavigation'
+import { rightWorkspaceDshSidebar } from './workspace-panels/rightWorkspaceDshSidebar'
 import { useExperimentalFeaturesEnabled } from '@/features/experimental-features/useExperimentalFeaturesEnabled'
 import {
   StandaloneFolderProjectDialog,
@@ -739,6 +740,27 @@ function getRuntimeProjectDeviceState(
       resolvedDevice?.status ??
       'unavailable') as SidebarDeviceStatus,
   }
+}
+
+function isRuntimeWorkspaceOffline(
+  workspace: RuntimeDeviceWorkspace,
+  devices: DeviceInfo[]
+): boolean {
+  const resolvedDevice = getSidebarDeviceState(workspace.deviceId, devices)
+  const status = resolvedDevice?.device ? resolvedDevice.status : workspace.deviceStatus
+  return status === 'offline'
+}
+
+function filterOfflineRuntimeProjectWorkspaces(
+  projects: RuntimeProjectWork[],
+  devices: DeviceInfo[]
+): RuntimeProjectWork[] {
+  return projects.flatMap(projectWork => {
+    const deviceWorkspaces = projectWork.deviceWorkspaces.filter(
+      workspace => !isRuntimeWorkspaceOffline(workspace, devices)
+    )
+    return deviceWorkspaces.length > 0 ? [{ ...projectWork, deviceWorkspaces }] : []
+  })
 }
 
 function isRuntimeRemoteProject(runtimeProjectWork: RuntimeProjectWork | undefined): boolean {
@@ -3058,6 +3080,10 @@ export function DesktopSidebar({
   const projectsExpandedStorageKey = getDesktopSidebarStorageKey(storageScope, 'projectsExpanded')
   const chatsExpandedStorageKey = getDesktopSidebarStorageKey(storageScope, 'chatsExpanded')
   const priorityPinnedStorageKey = getDesktopSidebarStorageKey(storageScope, 'priorityShowPinned')
+  const showOfflineDeviceItemsStorageKey = getDesktopSidebarStorageKey(
+    storageScope,
+    'showOfflineDeviceItems'
+  )
   const expandedProjectIdsStorageKey = getDesktopSidebarStorageKey(
     storageScope,
     'expandedProjectIds'
@@ -3108,6 +3134,9 @@ export function DesktopSidebar({
   const priorityFilterShortcut = useConfiguredKeybinding(TOGGLE_PRIORITY_FILTER_COMMAND)
   const [priorityShowPinned, setPriorityShowPinned] = useState(() =>
     readStoredBoolean(priorityPinnedStorageKey, false)
+  )
+  const [showOfflineDeviceItems, setShowOfflineDeviceItems] = useState(() =>
+    readStoredBoolean(showOfflineDeviceItemsStorageKey, true)
   )
   const [expandedProjectIds, setExpandedProjectIds] = useState<Set<number>>(() =>
     readStoredNumberSet(expandedProjectIdsStorageKey)
@@ -3175,7 +3204,7 @@ export function DesktopSidebar({
       reconcileRuntimeTaskPinOverrides(current, runtimeTaskPersistedPinStates, revision)
     )
   }, [runtimeTaskPersistedPinStates])
-  const sidebarRuntimeProjects = useMemo(
+  const allSidebarRuntimeProjects = useMemo(
     () =>
       sidebarRuntimeProjectSource.map(projectWork => ({
         ...projectWork,
@@ -3199,12 +3228,35 @@ export function DesktopSidebar({
       })),
     [runtimeTaskPinOverrides, sidebarRuntimeProjectSource]
   )
+  const sidebarRuntimeProjects = useMemo(
+    () =>
+      showOfflineDeviceItems
+        ? allSidebarRuntimeProjects
+        : filterOfflineRuntimeProjectWorkspaces(allSidebarRuntimeProjects, devices),
+    [allSidebarRuntimeProjects, devices, showOfflineDeviceItems]
+  )
+  const allSidebarProjects = useMemo(() => {
+    if (runtimeWork || standaloneProjectWork) {
+      return allSidebarRuntimeProjects.map(runtimeProjectToProject)
+    }
+    return projects
+  }, [allSidebarRuntimeProjects, projects, runtimeWork, standaloneProjectWork])
   const sidebarProjects = useMemo(() => {
     if (runtimeWork || standaloneProjectWork) {
       return sidebarRuntimeProjects.map(runtimeProjectToProject)
     }
-    return projects
-  }, [projects, runtimeWork, sidebarRuntimeProjects, standaloneProjectWork])
+    if (showOfflineDeviceItems) return projects
+    return projects.filter(
+      project => getSidebarDeviceState(getProjectDeviceId(project), devices)?.status !== 'offline'
+    )
+  }, [
+    devices,
+    projects,
+    runtimeWork,
+    showOfflineDeviceItems,
+    sidebarRuntimeProjects,
+    standaloneProjectWork,
+  ])
   const visibleExpandedProjectIds = useMemo(
     () => pruneProjectIdSet(expandedProjectIds, sidebarProjects),
     [expandedProjectIds, sidebarProjects]
@@ -3239,12 +3291,16 @@ export function DesktopSidebar({
     () => new Set(sidebarProjects.map(project => project.id)),
     [sidebarProjects]
   )
+  const allSidebarProjectIds = useMemo(
+    () => new Set(allSidebarProjects.map(project => project.id)),
+    [allSidebarProjects]
+  )
   const standaloneLocalHarnessSessions = useMemo(
     () =>
       localHarnessSessions.filter(
-        session => session.projectId === null || !sidebarProjectIds.has(session.projectId)
+        session => session.projectId === null || !allSidebarProjectIds.has(session.projectId)
       ),
-    [localHarnessSessions, sidebarProjectIds]
+    [allSidebarProjectIds, localHarnessSessions]
   )
   const localHarnessSessionsByProjectId = useMemo(() => {
     const sessionsByProjectId = new Map<number, LocalHarnessWorkbenchSession[]>()
@@ -3261,9 +3317,18 @@ export function DesktopSidebar({
     () => getRuntimeChatSidebarTaskItems(chatWorkspaces),
     [chatWorkspaces]
   )
+  const visibleChatTaskItems = useMemo(
+    () =>
+      showOfflineDeviceItems
+        ? chatTaskItems
+        : getRuntimeChatSidebarTaskItems(
+            chatWorkspaces.filter(workspace => !isRuntimeWorkspaceOffline(workspace, devices))
+          ),
+    [chatTaskItems, chatWorkspaces, devices, showOfflineDeviceItems]
+  )
   const chatTaskItemsWithPinState = useMemo(
     () =>
-      chatTaskItems.map(item => {
+      visibleChatTaskItems.map(item => {
         const threadId = getRuntimeTaskThreadId(item.task)
         const persistedPinned = Boolean(item.task.pinned)
         const override = threadId
@@ -3274,7 +3339,7 @@ export function DesktopSidebar({
         const pinned = getRuntimeTaskPinnedValue(persistedPinned, override)
         return pinned === persistedPinned ? item : { ...item, task: { ...item.task, pinned } }
       }),
-    [chatTaskItems, runtimeTaskPinOverrides]
+    [runtimeTaskPinOverrides, visibleChatTaskItems]
   )
   const regularChatTaskItems = useMemo(
     () => chatTaskItemsWithPinState.filter(({ task }) => !task.pinned),
@@ -3539,13 +3604,13 @@ export function DesktopSidebar({
     }
   }
   const projectSectionArchiveItems = useMemo(() => {
-    return sidebarRuntimeProjects
+    return allSidebarRuntimeProjects
       .map(projectWork => ({
         key: projectWork.project.key,
         count: getRuntimeSidebarTaskItems(projectWork.deviceWorkspaces).length,
       }))
       .filter(item => item.count > 0)
-  }, [sidebarRuntimeProjects])
+  }, [allSidebarRuntimeProjects])
   const projectSectionArchiveKeys = useMemo(
     () => projectSectionArchiveItems.map(item => item.key),
     [projectSectionArchiveItems]
@@ -3794,6 +3859,11 @@ export function DesktopSidebar({
 
   useEffect(() => {
     if (storageScopeRef.current !== storageScope) return
+    writeStoredBoolean(showOfflineDeviceItemsStorageKey, showOfflineDeviceItems)
+  }, [showOfflineDeviceItems, showOfflineDeviceItemsStorageKey, storageScope])
+
+  useEffect(() => {
+    if (storageScopeRef.current !== storageScope) return
     writeStoredNumberSet(expandedProjectIdsStorageKey, expandedProjectIds)
   }, [expandedProjectIds, expandedProjectIdsStorageKey, storageScope])
 
@@ -3806,12 +3876,14 @@ export function DesktopSidebar({
     setPriorityFilterActive(false)
     setPrioritySession(null)
     setPriorityShowPinned(readStoredBoolean(priorityPinnedStorageKey, false))
+    setShowOfflineDeviceItems(readStoredBoolean(showOfflineDeviceItemsStorageKey, true))
     setExpandedProjectIds(readStoredNumberSet(expandedProjectIdsStorageKey))
   }, [
     chatsExpandedStorageKey,
     expandedProjectIdsStorageKey,
     priorityPinnedStorageKey,
     projectsExpandedStorageKey,
+    showOfflineDeviceItemsStorageKey,
     storageScope,
   ])
 
@@ -4021,7 +4093,13 @@ export function DesktopSidebar({
                     label={t(item.labelKey ?? item.id, item.label)}
                     testId={item.testId ?? `dsh-sidebar-navigation-${item.id}`}
                     selected={activeItem === (item.activeItem ?? item.id)}
-                    onClick={() => navigateTo(item.path)}
+                    onClick={() => {
+                      if (item.workspaceSidebarTab) {
+                        rightWorkspaceDshSidebar.openTab({ type: item.workspaceSidebarTab })
+                        return
+                      }
+                      if (item.path) navigateTo(item.path)
+                    }}
                     onPointerEnter={
                       item.prefetch ? () => prefetchDshSidebarNavigation(item) : undefined
                     }
@@ -4250,7 +4328,7 @@ export function DesktopSidebar({
                 <section>
                   <div>
                     <DesktopSidebarSectionHeader
-                      title={t('workbench.projects', '项目')}
+                      title={t('workbench.sidebar_project_spaces', '项目空间')}
                       expanded={displayedProjectsExpanded}
                       hasContent={sidebarProjects.length > 0 || gitCloneOperations.length > 0}
                       toggleTestId="projects-section-toggle"
@@ -4271,6 +4349,15 @@ export function DesktopSidebar({
                                 projectSectionArchiveCount === 0 ||
                                 isArchivingProjectSection,
                               onSelect: () => setArchiveSectionMode('projects'),
+                            },
+                            {
+                              label: t(
+                                'workbench.show_offline_device_items',
+                                '显示离线设备中的项目和任务'
+                              ),
+                              testId: 'projects-section-show-offline-device-items',
+                              checked: showOfflineDeviceItems,
+                              onSelect: () => setShowOfflineDeviceItems(visible => !visible),
                             },
                           ]}
                           triggerClassName="flex h-8 w-8 items-center justify-center rounded-md text-[rgb(var(--color-sidebar-text-secondary))] hover:bg-[rgb(var(--color-sidebar-hover))] hover:text-[rgb(var(--color-sidebar-text-primary))]"

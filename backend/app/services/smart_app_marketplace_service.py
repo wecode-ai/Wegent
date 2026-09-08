@@ -317,7 +317,7 @@ class SmartAppMarketplaceService:
                 metadata=dict(submission.metadata_json or {}),
                 created_by_user_id=user_id,
             )
-            scope = str((submission.metadata_json or {}).get("scope") or "private")
+            scope = str((submission.metadata_json or {}).get("scope") or app.visibility)
             targets = [
                 SmartAppAccessTarget.model_validate(target)
                 for target in (submission.metadata_json or {}).get("targets", [])

@@ -24,7 +24,7 @@ export function PluginOperationNotice({
       role={notice.kind === 'error' ? 'alert' : 'status'}
       data-testid="plugin-operation-notice"
       data-notice-kind={notice.kind}
-      className={`plugin-operation-notice plugin-operation-notice-${notice.kind}`}
+      className={`electron-titlebar-interactive-region plugin-operation-notice plugin-operation-notice-${notice.kind}`}
     >
       <span className="plugin-operation-notice-icon" aria-hidden="true">
         {notice.iconUrl ? (

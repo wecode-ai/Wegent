@@ -26,7 +26,7 @@ import { useOptionalCloudConnection } from '@/features/cloud-connection/useCloud
 import { ExperimentalBadge } from '@/features/experimental-features/ExperimentalBadge'
 import { useExperimentalFeaturesEnabled } from '@/features/experimental-features/useExperimentalFeaturesEnabled'
 import { useTranslation } from '@/hooks/useTranslation'
-import { SettingsPage, SettingsPageHeader, SettingsRow, SettingsSwitch } from './settings-ui'
+import { SettingsPage, SettingsPageHeader } from './settings-ui'
 import { openExternalUrl } from '@/lib/external-links'
 import { isImeEnterEvent } from '@/lib/ime'
 import { navigateTo } from '@/lib/navigation'
@@ -38,6 +38,7 @@ import { useResizableSidebar } from '@/components/layout/useResizableSidebar'
 import {
   isClaudeCodeDevice,
   isCloudDevice,
+  isDeviceInteractiveSessionEnabled,
   isRemoteDevice,
   supportsCloudLifecycleActions,
   supportsCloudSessions,
@@ -68,11 +69,10 @@ import {
 import type { RefreshWorkLists } from '@/features/workbench/workbenchContextTypes'
 import { resolveDshSettingsIcon } from '@/features/dsh-runtime/dshSettingsIcons'
 import { DshSettingsSurface } from '@/features/dsh-runtime/DshSettingsSurface'
+import { DshSettingsSectionSurface } from '@/features/dsh-runtime/DshSettingsSectionSurface'
 import { DshSlotSurface } from '@/features/dsh-runtime/DshSlotSurface'
 import { WEWORK_DSH_SLOTS } from '@/features/dsh-runtime/dshUiSlots'
 import { useDshSlotEntries } from '@/features/dsh-runtime/useDshSlotEntries'
-import { updateAppPreferences } from '@/desktop/appPreferences'
-import { useAppPreferencesState } from '@/features/app-preferences/useAppPreferencesState'
 
 const CloudDesktopDeviceAction = cloudDesktopExtension.DeviceAction
 const keepConnectionsSettingsOpen = () => undefined
@@ -448,8 +448,16 @@ function DeviceCard({ device, onChanged }: { device: DeviceInfo; onChanged: () =
     }
   }, [cloudConnection, device])
 
+  const isOnline = device.status === 'online'
+  const isRemote = isRemoteDevice(device)
+  const canUseCloudSessions = supportsCloudSessions(device)
+  const canUseRemoteSessions = supportsRemoteSessions(device)
+  const canUseDeviceSessions = canUseCloudSessions || canUseRemoteSessions
+  const terminalSessionEnabled = isDeviceInteractiveSessionEnabled(device, 'terminal')
+  const codeServerSessionEnabled = isDeviceInteractiveSessionEnabled(device, 'codeServer')
+
   const handleStartTerminal = useCallback(async () => {
-    if (device.status !== 'online') return
+    if (!isOnline || !terminalSessionEnabled) return
     setSessionLoading('terminal')
     setSessionError(null)
     try {
@@ -470,11 +478,12 @@ function DeviceCard({ device, onChanged }: { device: DeviceInfo; onChanged: () =
     } finally {
       setSessionLoading(null)
     }
-  }, [cloudConnection, device, remoteTerminalClientFactory, t])
+  }, [cloudConnection, device, isOnline, remoteTerminalClientFactory, t, terminalSessionEnabled])
 
   const handleStartCloudSession = useCallback(
     async (type: 'terminal' | 'code-server') => {
-      if (device.status !== 'online') return
+      const sessionEnabled = type === 'terminal' ? terminalSessionEnabled : codeServerSessionEnabled
+      if (!isOnline || !sessionEnabled) return
       setSessionLoading(type)
       setSessionError(null)
       try {
@@ -499,7 +508,14 @@ function DeviceCard({ device, onChanged }: { device: DeviceInfo; onChanged: () =
         setSessionLoading(null)
       }
     },
-    [cloudConnection, device.device_id, device.status, t]
+    [
+      cloudConnection,
+      codeServerSessionEnabled,
+      device.device_id,
+      isOnline,
+      t,
+      terminalSessionEnabled,
+    ]
   )
 
   const handleOpenPendingIde = useCallback(async () => {
@@ -607,16 +623,11 @@ function DeviceCard({ device, onChanged }: { device: DeviceInfo; onChanged: () =
     setConnectionInfoOpen(true)
   }
 
-  const isOnline = device.status === 'online'
   const metrics =
     device.status !== 'offline' && metricsState?.deviceId === device.device_id
       ? metricsState.value
       : null
-  const isRemote = isRemoteDevice(device)
   const displayName = deviceDisplayName(device)
-  const canUseCloudSessions = supportsCloudSessions(device)
-  const canUseRemoteSessions = supportsRemoteSessions(device)
-  const canUseDeviceSessions = canUseCloudSessions || canUseRemoteSessions
   const canUseCloudLifecycleActions = supportsCloudLifecycleActions(device)
   const canDeleteOfflineRemoteDevice = isRemote && device.status === 'offline'
 
@@ -690,7 +701,12 @@ function DeviceCard({ device, onChanged }: { device: DeviceInfo; onChanged: () =
                 icon={Terminal}
                 label="终端"
                 onClick={handleStartTerminal}
-                disabled={!isOnline || sessionLoading === 'terminal'}
+                disabled={!isOnline || !terminalSessionEnabled || sessionLoading === 'terminal'}
+                title={
+                  !terminalSessionEnabled
+                    ? t('workbench.project_terminal_unavailable_tooltip')
+                    : undefined
+                }
               />
             )}
             {canUseDeviceSessions && (
@@ -700,7 +716,14 @@ function DeviceCard({ device, onChanged }: { device: DeviceInfo; onChanged: () =
                   icon={Code2}
                   label="IDE"
                   onClick={() => handleStartCloudSession('code-server')}
-                  disabled={!isOnline || sessionLoading === 'code-server'}
+                  disabled={
+                    !isOnline || !codeServerSessionEnabled || sessionLoading === 'code-server'
+                  }
+                  title={
+                    !codeServerSessionEnabled
+                      ? t('workbench.project_ide_unavailable_tooltip')
+                      : undefined
+                  }
                 />
                 {canUseCloudSessions && cloudDesktopExtension.available && (
                   <CloudDesktopDeviceAction
@@ -1033,58 +1056,6 @@ function CloudModelsSection({ cloudConnection }: { cloudConnection: CloudSetting
   )
 }
 
-function RemoteControlSetting({ cloudConnected }: { cloudConnected: boolean }) {
-  const { t } = useTranslation('common')
-  const appPreferences = useAppPreferencesState()
-  const preferencesLoaded = appPreferences?.loaded ?? false
-  const enabled = appPreferences?.preferences.remoteControlEnabled ?? false
-  const [saving, setSaving] = useState(false)
-  const [error, setError] = useState<string | null>(null)
-
-  const handleChange = async (nextEnabled: boolean) => {
-    setSaving(true)
-    setError(null)
-    try {
-      await updateAppPreferences({ remoteControlEnabled: nextEnabled })
-    } catch (saveError) {
-      console.error('[Wework] Failed to update remote control preference', saveError)
-      setError(t('workbench.remote_control_save_failed'))
-    } finally {
-      setSaving(false)
-    }
-  }
-
-  const description = cloudConnected
-    ? t('workbench.remote_control_description')
-    : t('workbench.remote_control_requires_cloud')
-
-  return (
-    <section
-      data-testid="remote-control-setting"
-      className="mt-4 overflow-hidden rounded-lg border border-border bg-background"
-    >
-      <SettingsRow
-        label={t('workbench.remote_control_title')}
-        description={description}
-        control={
-          <SettingsSwitch
-            data-testid="remote-control-toggle"
-            aria-label={t('workbench.remote_control_title')}
-            checked={enabled}
-            disabled={!preferencesLoaded || !cloudConnected || saving}
-            onCheckedChange={nextEnabled => void handleChange(nextEnabled)}
-          />
-        }
-      />
-      {error ? (
-        <p className="border-t border-border px-4 py-2 text-xs text-red-500" role="alert">
-          {error}
-        </p>
-      ) : null}
-    </section>
-  )
-}
-
 export function ConnectionsDeviceSettingsPage({
   autoOpenAddCloudDeviceDialog = false,
   showHeader = true,
@@ -1196,7 +1167,7 @@ export function ConnectionsDeviceSettingsPage({
             </div>
           </section>
 
-          <RemoteControlSetting cloudConnected={false} />
+          <DshSettingsSectionSurface page="connections" />
         </SettingsPage>
 
         {connectDialogOpen && (
@@ -1264,9 +1235,9 @@ export function ConnectionsDeviceSettingsPage({
           </div>
         </section>
 
-        <RemoteControlSetting cloudConnected />
-
         <section className="mt-6 space-y-5">
+          <DshSettingsSectionSurface page="connections" />
+
           <CloudModelsSection cloudConnection={cloudConnection} />
 
           <div className="rounded-lg border border-border bg-background p-5">

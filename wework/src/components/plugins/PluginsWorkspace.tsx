@@ -19,6 +19,7 @@ import {
   localQrManageActionFromHealth,
   type LocalConnectorAuthTarget,
 } from '@/api/local/localConnectorAuth'
+import { ConfirmDialog } from '@/components/common/ConfirmDialog'
 import { LocalConnectorAuthDialog } from '@/components/plugins/LocalConnectorAuthDialog'
 import { getErrorMessage } from '@/lib/error-message'
 import { navigateTo } from '@/lib/navigation'
@@ -156,6 +157,7 @@ import {
   localMarketplaceIdFromItem,
   localMarketplaceKey,
   marketplaceComponentCount,
+  marketplacePluginDetailSelectionKey,
   mergeWarmInstalledPlugins,
   mergeWarmMarketplaceItems,
   mergeWarmMarketplaceOptions,
@@ -276,6 +278,7 @@ export function PluginsWorkspace({
   const [pluginOperationNotice, setPluginOperationNotice] =
     useState<PluginOperationNoticeState | null>(null)
   const [pendingInstall, setPendingInstall] = useState<PendingMarketplaceInstall | null>(null)
+  const [pendingPluginUpdate, setPendingPluginUpdate] = useState<PluginMarketplaceItem | null>(null)
   const [pendingPluginUninstall, setPendingPluginUninstall] = useState<{
     id: string | number
     name: string
@@ -1366,8 +1369,10 @@ export function PluginsWorkspace({
         return {
           ...item,
           installed: false,
+          installedLocally: false,
           installedPluginId: null,
           enabled: false,
+          updateAvailable: false,
           currentDeviceInstallation: null,
         }
       }),
@@ -1705,7 +1710,8 @@ export function PluginsWorkspace({
 
   const installMarketplacePlugin = async (
     item: PluginMarketplaceItem,
-    promptAfterInstall?: string
+    promptAfterInstall?: string,
+    updateConfirmed = false
   ) => {
     const installLock = resolveMarketplacePluginLock(item)
     if (installLock) {
@@ -1743,13 +1749,8 @@ export function PluginsWorkspace({
         item.latestReleaseId &&
         item.installedPluginId
       ) {
-        const confirmed = window.confirm(
-          t(
-            'workbench.plugins_update_confirm',
-            '更新将同步到当前设备。若失败，本机将保留当前已安装版本。是否继续？'
-          )
-        )
-        if (!confirmed) {
+        if (!updateConfirmed) {
+          setPendingPluginUpdate(item)
           return
         }
         setInstallingMarketplacePluginIds(previous => new Set(previous).add(item.id))
@@ -1757,6 +1758,7 @@ export function PluginsWorkspace({
           .updateMarketplacePlugin(item.installedPluginId, item.latestReleaseId, currentDeviceId)
           .then(plugin => {
             const next = toInstalledPluginItem(plugin)
+            const device = currentDeviceInstallation(plugin, currentDeviceId)
             setInstalledPlugins(previous =>
               previous.map(candidate =>
                 String(candidate.id) === String(next.id) ? next : candidate
@@ -1766,7 +1768,13 @@ export function PluginsWorkspace({
               ...previous,
               items: previous.items.map(candidate =>
                 candidate.id === item.id
-                  ? { ...candidate, updateAvailable: false, version: plugin.spec.version }
+                  ? {
+                      ...candidate,
+                      currentDeviceInstallation: device,
+                      updateAvailable:
+                        device?.actualReleaseId !== item.latestReleaseId ||
+                        device?.state !== 'installed',
+                    }
                   : candidate
               ),
             }))
@@ -3804,7 +3812,7 @@ export function PluginsWorkspace({
   const installedPluginsForDetailRef = useRef(installedPlugins)
   installedPluginsForDetailRef.current = installedPlugins
   const selectedMarketplaceDetailKey = selectedMarketplacePlugin
-    ? `${localMarketplaceIdFromItem(selectedMarketplacePlugin) ?? ''}::${selectedMarketplacePlugin.name}`
+    ? marketplacePluginDetailSelectionKey(selectedMarketplacePlugin)
     : ''
 
   useEffect(() => {
@@ -3831,16 +3839,12 @@ export function PluginsWorkspace({
     const shouldFetchLocalDetail = Boolean(marketplaceId)
 
     if (!shouldFetchLocalDetail) {
-      setSelectedMarketplacePluginDetail(previous =>
-        keepRicherMarketplacePluginDetail(previous, baseDetail)
-      )
+      setSelectedMarketplacePluginDetail(baseDetail)
       return
     }
 
     let disposed = false
-    setSelectedMarketplacePluginDetail(previous =>
-      keepRicherMarketplacePluginDetail(previous, baseDetail)
-    )
+    setSelectedMarketplacePluginDetail(baseDetail)
     void localPluginApi
       .readMarketplacePluginDetail(marketplaceId!, selected.name)
       .then(detail => {
@@ -4098,6 +4102,23 @@ export function PluginsWorkspace({
 
   const pluginOverlayDialogs = (
     <>
+      <ConfirmDialog
+        open={pendingPluginUpdate !== null}
+        title={t('workbench.plugins_update', '更新')}
+        description={t(
+          'workbench.plugins_update_confirm',
+          '更新将同步到当前设备。若失败，本机将保留当前已安装版本。是否继续？'
+        )}
+        cancelLabel={t('common.cancel', '取消')}
+        confirmLabel={t('workbench.plugins_update', '更新')}
+        confirmTestId="plugin-update-confirm-button"
+        onClose={() => setPendingPluginUpdate(null)}
+        onConfirm={() => {
+          const item = pendingPluginUpdate
+          setPendingPluginUpdate(null)
+          if (item) void installMarketplacePlugin(item, undefined, true)
+        }}
+      />
       {pendingInstall && (
         <InstallPluginDialog
           plugin={{
@@ -4478,7 +4499,7 @@ export function PluginsWorkspace({
     const detailRequiredConnectionNames = selectedRequiredConnectionNames ?? declaredConnectionNames
     const detailRequiresConnection = detailRequiredConnectionNames.length > 0
     const deviceState = selectedMarketplacePlugin.currentDeviceInstallation?.state
-    const isInstalled = pluginDetailReadyToTry(detailPlugin, selectedMarketplacePlugin)
+    const isInstalled = pluginDetailReadyToTry(baseDetailPlugin, selectedMarketplacePlugin)
     const isFailed = marketplaceItemOffersDeviceSyncRetry(selectedMarketplacePlugin, {
       autoSyncSettled: deviceAutoSyncSettled,
     })

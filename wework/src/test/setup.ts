@@ -9,6 +9,18 @@ import { clearDshUiModuleCache, importDshUiModule } from '@/features/dsh-runtime
 
 expect.extend(matchers)
 
+class ResizeObserverMock {
+  observe() {}
+  unobserve() {}
+  disconnect() {}
+}
+
+Object.defineProperty(globalThis, 'ResizeObserver', {
+  configurable: true,
+  value: ResizeObserverMock,
+  writable: true,
+})
+
 const electronHostInvokePath = '/wework/electron-host/v1/invoke'
 const nativeFetch = globalThis.fetch.bind(globalThis)
 let testAppPreferences: Record<string, unknown> = {}
@@ -81,7 +93,6 @@ const testSidebarNavigation = [
   {
     id: 'applications.navigation',
     activeItem: 'sites',
-    experimental: true,
     icon: 'applications',
     labelKey: 'workbench.sites',
     label: '应用',
@@ -233,11 +244,13 @@ function installDefaultDshUiTestRuntime() {
     [WEWORK_DSH_SLOTS.app, testApps],
     [WEWORK_DSH_SLOTS.pluginsAction, []],
     [WEWORK_DSH_SLOTS.boardCardStatus, []],
+    [WEWORK_DSH_SLOTS.composerAction, []],
     [WEWORK_DSH_SLOTS.environmentSection, []],
     [WEWORK_DSH_SLOTS.projectCreateSection, []],
     [WEWORK_DSH_SLOTS.projectWorkSection, []],
     [WEWORK_DSH_SLOTS.runtimeProfileWorkspacePolicy, []],
     [WEWORK_DSH_SLOTS.settingsPage, testSettings],
+    [WEWORK_DSH_SLOTS.settingsSection, []],
     [WEWORK_DSH_SLOTS.route, []],
     [WEWORK_DSH_SLOTS.sidebarNavigation, testSidebarNavigation],
     [WEWORK_DSH_SLOTS.shellAfter, []],
@@ -245,8 +258,10 @@ function installDefaultDshUiTestRuntime() {
     [WEWORK_DSH_SLOTS.shellOverlay, []],
     [WEWORK_DSH_SLOTS.taskStatus, []],
     [WEWORK_DSH_SLOTS.workspaceMenuSection, []],
+    [WEWORK_DSH_SLOTS.workspaceBottomPanelTab, []],
     [WEWORK_DSH_SLOTS.workspaceSidebarTab, []],
     [WEWORK_DSH_SLOTS.workspaceTab, []],
+    [WEWORK_DSH_SLOTS.workspaceToolbarAction, []],
   ])
   window.__WEWORK_DSH_UI__ = {
     getEntries: slotName => entries.get(slotName) ?? [],

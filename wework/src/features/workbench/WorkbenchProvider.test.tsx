@@ -94,6 +94,7 @@ const localExecutorMocks = vi.hoisted(() => ({
   ensureBundledPluginMarketplaceRegistered: vi.fn().mockResolvedValue(undefined),
   ensureLocalExecutorStarted: vi.fn(),
   getInitializedBundledPluginMarketplace: vi.fn().mockReturnValue(null),
+  getKnownLocalExecutorDeviceId: vi.fn().mockReturnValue('local-device'),
   requestLocalExecutor: vi.fn(),
   subscribeLocalExecutorEvents: vi.fn(),
 }))
@@ -120,6 +121,7 @@ vi.mock('@/desktop/localExecutor', () => ({
     localExecutorMocks.ensureBundledPluginMarketplaceRegistered,
   ensureLocalExecutorStarted: localExecutorMocks.ensureLocalExecutorStarted,
   getInitializedBundledPluginMarketplace: localExecutorMocks.getInitializedBundledPluginMarketplace,
+  getKnownLocalExecutorDeviceId: localExecutorMocks.getKnownLocalExecutorDeviceId,
   requestLocalExecutor: localExecutorMocks.requestLocalExecutor,
   subscribeLocalExecutorEvents: localExecutorMocks.subscribeLocalExecutorEvents,
 }))
@@ -2068,6 +2070,7 @@ function RuntimeModelCompatibilityProbe() {
 function RuntimeModelSelectionProbe() {
   const workbench = useWorkbench()
   const mimoModel = workbench.projectChat.models.find(model => model.name === 'local-model:mimo')
+  const gptModel = workbench.projectChat.models.find(model => model.name === 'gpt-5.5')
   const backgroundTaskModel = workbench.projectChat.resolveRuntimeTaskModelSelection({
     deviceId: 'device-1',
     workspacePath: '/workspace/project-alpha',
@@ -2094,6 +2097,15 @@ function RuntimeModelSelectionProbe() {
         }}
       >
         select mimo
+      </button>
+      <button
+        type="button"
+        data-testid="select-gpt-model"
+        onClick={() => {
+          if (gptModel) workbench.projectChat.setSelectedModel(gptModel)
+        }}
+      >
+        select gpt
       </button>
       <button
         type="button"
@@ -5535,6 +5547,68 @@ describe('WorkbenchProvider runtime tasks', () => {
     )
   })
 
+  test('serializes blank new chat model selection saves', async () => {
+    const models: UnifiedModel[] = [
+      {
+        name: 'gpt-5.5',
+        type: 'runtime',
+        provider: 'local',
+        config: {
+          weworkModelKind: 'codex-provider',
+          ui: { family: 'codex-provider', controls: ['collaborationMode'] },
+        },
+        runtime: { family: 'openai.openai-responses' },
+      },
+      {
+        name: 'local-model:mimo',
+        type: 'runtime',
+        provider: 'local',
+        config: {
+          weworkModelKind: 'model-interface',
+          ui: { family: 'model-interface', controls: ['collaborationMode'] },
+        },
+        runtime: { family: 'openai.openai-responses' },
+      },
+    ]
+    const firstSave = deferred<unknown>()
+    const updateCurrentUser = vi
+      .fn()
+      .mockImplementationOnce(() => firstSave.promise)
+      .mockResolvedValue({})
+    const services = createWorkbenchServices({
+      deviceApi: {
+        listDevices: vi.fn().mockResolvedValue([createDevice({ device_type: 'local' })]),
+      } as Partial<WorkbenchServices['deviceApi']> as WorkbenchServices['deviceApi'],
+      modelApi: {
+        listModels: vi.fn().mockResolvedValue({ data: models }),
+      },
+      userApi: {
+        updateCurrentUser,
+      } as Partial<WorkbenchServices['userApi']> as WorkbenchServices['userApi'],
+    } as Partial<WorkbenchServices>)
+
+    renderWorkbench(<RuntimeModelSelectionProbe />, services)
+
+    await waitFor(() => expect(screen.getByTestId('selected-model')).toHaveTextContent('gpt-5.5'))
+    await userEvent.click(screen.getByText('select mimo'))
+    await waitFor(() => expect(updateCurrentUser).toHaveBeenCalledTimes(1))
+
+    await userEvent.click(screen.getByText('select gpt'))
+    expect(updateCurrentUser).toHaveBeenCalledTimes(1)
+
+    firstSave.resolve({})
+
+    await waitFor(() => expect(updateCurrentUser).toHaveBeenCalledTimes(2))
+    expect(updateCurrentUser).toHaveBeenLastCalledWith({
+      preferences: {
+        wework_new_chat_model_selection: expect.objectContaining({
+          modelName: 'gpt-5.5',
+          modelType: 'runtime',
+        }),
+      },
+    })
+  })
+
   test('restores a configured model for a cloud runtime task', async () => {
     const models: UnifiedModel[] = [
       {
@@ -7351,7 +7425,7 @@ describe('WorkbenchProvider runtime tasks', () => {
     )
   })
 
-  test('remembers a local project task model and reasoning for the next task', async () => {
+  test('restores the local project default after a task-specific model override', async () => {
     const runtimeWorkApi = createRuntimeWorkApiMock({
       listRuntimeWork: vi.fn().mockResolvedValue(
         createRuntimeWork({
@@ -7451,6 +7525,120 @@ describe('WorkbenchProvider runtime tasks', () => {
       expect.objectContaining({
         modelId: 'override-model',
         modelOptions: expect.objectContaining({ reasoning: 'high' }),
+      })
+    )
+
+    await userEvent.click(screen.getByText('start new project chat'))
+
+    await waitFor(() =>
+      expect(screen.getByTestId('project-selected-model')).toHaveTextContent('project-model')
+    )
+    expect(screen.getByTestId('project-reasoning-effort')).toHaveTextContent('medium')
+  })
+
+  test('updates the global new-task model from a follow-global local project', async () => {
+    const runtimeWorkApi = createRuntimeWorkApiMock({
+      listRuntimeWork: vi.fn().mockResolvedValue(
+        createRuntimeWork({
+          projects: [
+            {
+              project: {
+                id: 7,
+                key: 'project-7',
+                name: 'Wegent',
+                source: 'local_project',
+                aiSettings: {
+                  modelSelection: null,
+                },
+              },
+              deviceWorkspaces: [
+                {
+                  deviceId: 'device-1',
+                  deviceName: 'Project Device',
+                  deviceStatus: 'online',
+                  workspacePath: '/workspace/project-alpha',
+                  mapped: true,
+                  available: true,
+                  tasks: [],
+                },
+              ],
+            },
+          ],
+          totalTasks: 0,
+        })
+      ),
+    })
+    const models: UnifiedModel[] = [
+      {
+        name: 'global-model',
+        type: 'runtime',
+        provider: 'local',
+        config: {
+          weworkModelKind: 'codex-provider',
+          ui: {
+            family: 'codex-provider',
+            reasoningEfforts: ['low', 'medium', 'high'],
+          },
+        },
+      },
+      {
+        name: 'override-model',
+        type: 'runtime',
+        provider: 'local',
+        config: {
+          weworkModelKind: 'codex-provider',
+          ui: {
+            family: 'codex-provider',
+            reasoningEfforts: ['low', 'medium', 'high'],
+          },
+        },
+      },
+    ]
+    const updateCurrentUser = vi.fn().mockResolvedValue({})
+    const services = createWorkbenchServices({
+      modelApi: {
+        listModels: vi.fn().mockResolvedValue({ data: models }),
+      },
+      runtimeWorkApi: runtimeWorkApi as WorkbenchServices['runtimeWorkApi'],
+      userApi: {
+        updateCurrentUser,
+      } as Partial<WorkbenchServices['userApi']> as WorkbenchServices['userApi'],
+    } as Partial<WorkbenchServices>)
+
+    renderWorkbenchForUser(
+      <ProjectSendProbe />,
+      {
+        id: 1,
+        user_name: 'alice',
+        email: 'a@b.c',
+        preferences: {
+          wework_new_chat_model_selection: {
+            modelName: 'global-model',
+            modelType: 'runtime',
+            options: { reasoning: 'medium' },
+          },
+        },
+      },
+      services
+    )
+
+    await userEvent.click(await screen.findByText('select project'))
+    await waitFor(() =>
+      expect(screen.getByTestId('project-selected-model')).toHaveTextContent('global-model')
+    )
+
+    await userEvent.click(screen.getByText('select override model'))
+    await userEvent.click(screen.getByText('set high reasoning'))
+
+    await waitFor(() =>
+      expect(updateCurrentUser).toHaveBeenLastCalledWith({
+        preferences: {
+          wework_new_chat_model_selection: {
+            modelName: 'override-model',
+            modelType: 'runtime',
+            options: expect.objectContaining({ reasoning: 'high' }),
+          },
+        },
       })
     )
 

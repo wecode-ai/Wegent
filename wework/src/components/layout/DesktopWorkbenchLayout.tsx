@@ -189,6 +189,11 @@ export function DesktopWorkbenchLayout({
   )
   const availableProjectSpaceApis = useMemo(() => projectSpaceApis(services), [services])
   const workspaceTabs = useOptionalWorkspaceTabs()
+  const ownedWorkspaceTab = workspaceTabs
+    ? workspaceTabId
+      ? (workspaceTabs.tabs.find(tab => tab.id === workspaceTabId) ?? null)
+      : workspaceTabs.activeTab
+    : null
   const activePane = useMemo<WorkbenchPaneIdentity>(
     () => ({
       currentRuntimeTask: state.currentRuntimeTask,
@@ -532,8 +537,10 @@ export function DesktopWorkbenchLayout({
   const [sidebarResizing, setSidebarResizing] = useState(false)
   const [settingsOpen, setSettingsOpen] = useState(() => isSettingsRoute(initialPath))
   const settingsReturnPathRef = useRef(initialPath === '/todo' ? '/todo' : '/')
+  const routeActiveRef = useRef(routeActive)
+  routeActiveRef.current = routeActive
   const activeTabRouteRef = useRef(
-    workspaceTabs?.activeTab?.contentRoute ??
+    ownedWorkspaceTab?.contentRoute ??
       `${stripAppBasePath(window.location.pathname)}${window.location.search}`
   )
   const [autoOpenAddCloudDeviceDialog, setAutoOpenAddCloudDeviceDialog] = useState(false)
@@ -568,16 +575,16 @@ export function DesktopWorkbenchLayout({
   const effectiveSidebarCollapsed = sidebarCollapsed || sidebarAutoCollapsed
 
   useEffect(() => {
-    if (!workspaceTabs?.activeTab) return
-    activeTabRouteRef.current = workspaceTabs.activeTab.contentRoute
-  }, [workspaceTabs?.activeTab])
+    if (!ownedWorkspaceTab) return
+    activeTabRouteRef.current = ownedWorkspaceTab.contentRoute
+  }, [ownedWorkspaceTab])
 
   useEffect(() => {
     let previousPath = stripAppBasePath(window.location.pathname)
     const handlePopState = () => {
       const path = stripAppBasePath(window.location.pathname)
       const enteringSettings = isSettingsRoute(path) && !isSettingsRoute(previousPath)
-      if (enteringSettings) {
+      if (enteringSettings && routeActiveRef.current) {
         settingsReturnPathRef.current = activeTabRouteRef.current
         writeSettingsReturnPath(activeTabRouteRef.current)
       }
@@ -1095,24 +1102,30 @@ export function DesktopWorkbenchLayout({
                 onOpenSettings={options => openSettings(options)}
                 onLogout={onLogout}
                 activeProjectRef={
-                  workspaceTabs?.activeTab.kind === 'board'
-                    ? projectSpaceRefFromRoute(workspaceTabs.activeTab.contentRoute)
+                  ownedWorkspaceTab?.kind === 'board'
+                    ? projectSpaceRefFromRoute(ownedWorkspaceTab.contentRoute)
                     : undefined
                 }
                 defaultProjectRequested={
-                  workspaceTabs?.activeTab.kind === 'board' &&
-                  projectSpaceRouteRequestsDefaultProject(workspaceTabs.activeTab.contentRoute)
+                  ownedWorkspaceTab?.kind === 'board' &&
+                  projectSpaceRouteRequestsDefaultProject(ownedWorkspaceTab.contentRoute)
                 }
                 focusedItemId={
-                  workspaceTabs?.activeTab.kind === 'board'
-                    ? projectSpaceRouteParam(workspaceTabs.activeTab.contentRoute, 'itemId')
+                  ownedWorkspaceTab?.kind === 'board'
+                    ? projectSpaceRouteParam(ownedWorkspaceTab.contentRoute, 'itemId')
                     : undefined
                 }
                 onFocusedItemHandled={() => {
-                  if (!workspaceTabs || workspaceTabs.activeTab.kind !== 'board') return
-                  const projectRef = projectSpaceRefFromRoute(workspaceTabs.activeTab.contentRoute)
+                  if (
+                    !workspaceTabs ||
+                    ownedWorkspaceTab?.kind !== 'board' ||
+                    workspaceTabs.activeTabId !== ownedWorkspaceTab.id
+                  ) {
+                    return
+                  }
+                  const projectRef = projectSpaceRefFromRoute(ownedWorkspaceTab.contentRoute)
                   const defaultProjectRequested = projectSpaceRouteRequestsDefaultProject(
-                    workspaceTabs.activeTab.contentRoute
+                    ownedWorkspaceTab.contentRoute
                   )
                   workspaceTabs.updateActiveTab({
                     contentRoute: projectRef
@@ -1123,7 +1136,13 @@ export function DesktopWorkbenchLayout({
                   })
                 }}
                 onActiveProjectChange={project => {
-                  if (!workspaceTabs || workspaceTabs.activeTab.kind !== 'board') return
+                  if (
+                    !workspaceTabs ||
+                    ownedWorkspaceTab?.kind !== 'board' ||
+                    workspaceTabs.activeTabId !== ownedWorkspaceTab.id
+                  ) {
+                    return
+                  }
                   if (!project) {
                     workspaceTabs.updateActiveTab({
                       title: t('workbench.workspace_tab_board', '项目空间'),

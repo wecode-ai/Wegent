@@ -84,23 +84,7 @@ export function findLocalConnectorsForMessage(
   plugins: InstalledPlugin[]
 ): LocalConnectorRequirement[] {
   const uris = message.match(PLUGIN_URI_PATTERN) ?? []
-  if (uris.length === 0) {
-    // Also gate plugins with on_use when message doesn't mention them but skills may still load.
-    // Prefer explicit mentions; fall back to enabled on_install/on_use local connectors only
-    // when the message clearly references their display name.
-    return listLocalConnectors(plugins, { authPolicies: ['on_install', 'on_use'] }).filter(
-      requirement => {
-        const name = requirement.displayName.trim()
-        const key = requirement.pluginKey.trim()
-        if (!name && !key) return false
-        const lower = message.toLowerCase()
-        return (
-          (name.length > 0 && lower.includes(name.toLowerCase())) ||
-          (key.length > 0 && lower.includes(key.toLowerCase()))
-        )
-      }
-    )
-  }
+  if (uris.length === 0) return []
 
   const mentioned = new Set<string>()
   for (const uri of uris) {
@@ -124,7 +108,7 @@ export function findLocalConnectorsForMessage(
 
 export function messageNeedsConnectorPreflight(text: string | null | undefined): boolean {
   if (!text) return false
-  return text.match(PLUGIN_URI_PATTERN) !== null || resolveLocalConnectorAuthHint(text) !== null
+  return text.match(PLUGIN_URI_PATTERN) !== null
 }
 
 /** Plugin names referenced by explicit `plugin://` mentions in composer text. */

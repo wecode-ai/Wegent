@@ -13,6 +13,7 @@ import fcntl
 import hashlib
 import json
 import os
+import re
 import shutil
 import stat
 import subprocess
@@ -163,6 +164,42 @@ def secure_tree(path):
     ensure_mode(path, 0o700)
 
 
+def cli_login_flags(executable):
+    # Executor images ship wildly different gh/glab generations: some predate
+    # --git-protocol, others predate keyring-backed storage and reject
+    # --insecure-storage. Unknown flags make `auth login` exit non-zero, so
+    # probe the installed CLI and only pass the flags it advertises.
+    try:
+        result = subprocess.run(
+            [executable, "auth", "login", "--help"],
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            errors="replace",
+            timeout=10,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return frozenset()
+    return frozenset(re.findall(r"--[a-z][a-z0-9-]+", result.stdout or ""))
+
+
+def cli_failure_detail(result, token, *, spawn_error=None):
+    # Surface a sanitized, token-free tail of the CLI output so sync failures
+    # are diagnosable from backend logs and the API response.
+    if spawn_error is not None:
+        return "spawn_error: %s" % spawn_error
+    output = (result.stdout or "") if result else ""
+    if token:
+        output = output.replace(token, "***")
+    output = " ".join(output.split())
+    if len(output) > 300:
+        output = "..." + output[-300:]
+    prefix = "exit=%s" % (result.returncode if result else "?")
+    return "%s %s".strip() % (prefix, output) if output else prefix
+
+
 def configure_cli(account, revision):
     provider = account["provider"]
     tool = "gh" if provider == "github" else "glab" if provider == "gitlab" else None
@@ -182,44 +219,40 @@ def configure_cli(account, revision):
     environment = os.environ.copy()
     if tool == "gh":
         environment["GH_CONFIG_DIR"] = str(config_dir)
-        command = [
-            executable,
-            "auth",
-            "login",
-            "--hostname",
-            account["domain"],
-            "--git-protocol",
-            "https",
-            "--with-token",
-            "--insecure-storage",
-        ]
+        token_flag = "--with-token"
     else:
         environment["GLAB_CONFIG_DIR"] = str(config_dir)
-        command = [
-            executable,
-            "auth",
-            "login",
-            "--hostname",
-            account["domain"],
-            "--git-protocol",
-            "https",
-            "--stdin",
-            "--insecure-storage",
-        ]
+        token_flag = "--stdin"
+    command = [
+        executable,
+        "auth",
+        "login",
+        "--hostname",
+        account["domain"],
+    ]
+    flags = cli_login_flags(executable)
+    if "--git-protocol" in flags:
+        command += ["--git-protocol", "https"]
+    command.append(token_flag)
+    if "--insecure-storage" in flags:
+        command.append("--insecure-storage")
 
     try:
         result = subprocess.run(
             command,
             input=account["token"] + "\n",
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
             text=True,
+            errors="replace",
             timeout=30,
             check=False,
             env=environment,
         )
-    except (OSError, subprocess.TimeoutExpired):
+        spawn_error = None
+    except (OSError, subprocess.TimeoutExpired) as exc:
         result = None
+        spawn_error = type(exc).__name__
     secure_tree(config_dir)
     if result is None or result.returncode != 0:
         return {
@@ -227,7 +260,32 @@ def configure_cli(account, revision):
             "domain": account["domain"],
             "status": "failed",
             "reason_code": "cli_auth_failed",
+            "detail": cli_failure_detail(
+                result, account["token"], spawn_error=spawn_error
+            ),
         }
+    if "--git-protocol" not in flags:
+        # Legacy CLIs (e.g. glab 1.2x) cannot select the git protocol at login
+        # and default to ssh; force https afterwards so CLI-driven git
+        # operations also use the synced HTTPS credentials. Failure is
+        # harmless because the managed gitconfig already rewrites ssh to https.
+        subprocess.run(
+            [
+                executable,
+                "config",
+                "set",
+                "git_protocol",
+                "https",
+                "--host",
+                account["domain"],
+            ],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            timeout=10,
+            check=False,
+            env=environment,
+        )
+        secure_tree(config_dir)
     return {
         "provider": tool,
         "domain": account["domain"],

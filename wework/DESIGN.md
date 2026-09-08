@@ -718,6 +718,9 @@ semantics for all three.
   persistent visible label.
 - Placeholder text is an example or prompt, not the only label.
 - Helper and error text sit next to the field they describe.
+- Native `select` popups must explicitly theme their `option`, `optgroup`, and
+  disabled text from Wework semantic tokens. Do not rely on the host platform
+  to inherit the WebView's light or dark colors for the expanded popup.
 - Validate format after blur or a reasonable pause; validate completeness on
   submit.
 - Preserve valid values and focus the first invalid field or an error summary.
@@ -867,6 +870,11 @@ implementation and WCAG conflict.
 
 - Preserve native title-bar drag regions and window controls; interactive
   elements are `no-drag` equivalents.
+- 原生标题栏拖拽区域不得与可交互控件的可见边界重叠；即使控件声明为
+  `no-drag`，也必须从拖拽区域的几何范围中明确排除。
+- Native title-bar drag regions must not geometrically overlap visible
+  interactive controls. Explicitly carve controls out of the drag region even
+  when they declare `no-drag`.
 - Respect macOS traffic-light safe areas, Windows controls, system scaling, and
   actual platform shortcuts.
 - Use the platform modifier in both behavior and visible shortcut labels.

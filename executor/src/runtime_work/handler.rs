@@ -23,12 +23,12 @@ use tokio::time::sleep;
 
 use crate::{
     agents::{
-        codex_runtime_approval_policy, select_wework_codex_user_instructions, AgentCommandPlanner,
-        AgentProcessEngine, CodexActiveTurnCallback, CodexActiveTurnFinishedCallback,
-        CodexAppServerClient, CodexAppServerTurnOptions, CodexRequestUserInputReceiver,
-        CodexThreadStartedCallback, CODEX_APP_SERVER_TURN_CANCELLED,
-        CODEX_DANGER_FULL_ACCESS_PERMISSION_PROFILE, CODEX_READ_ONLY_PERMISSION_PROFILE,
-        CODEX_WORKSPACE_PERMISSION_PROFILE,
+        codex_runtime_approval_policy, select_wework_codex_user_instructions,
+        start_codex_app_server_thread, AgentCommandPlanner, AgentProcessEngine,
+        CodexActiveTurnCallback, CodexActiveTurnFinishedCallback, CodexAppServerClient,
+        CodexAppServerTurnOptions, CodexRequestUserInputReceiver, CodexThreadStartedCallback,
+        CODEX_APP_SERVER_TURN_CANCELLED, CODEX_DANGER_FULL_ACCESS_PERMISSION_PROFILE,
+        CODEX_READ_ONLY_PERMISSION_PROFILE, CODEX_WORKSPACE_PERMISSION_PROFILE,
     },
     config::device::ConnectionConfig,
     hooks::{
@@ -117,12 +117,14 @@ mod fork_transfer;
 mod hooks;
 mod notifications;
 mod plugin_install;
+mod plugin_marketplace;
 mod queries;
 mod robot_queue_rpc;
 mod sidebar;
 mod supervisor;
 mod system;
 mod tasks;
+mod transcript_sync;
 mod turns;
 mod workspaces;
 
@@ -538,6 +540,7 @@ pub struct RuntimeWorkRpcHandler {
     codex_app_server: CodexAppServerClient,
     claude_process_engine: AgentProcessEngine,
     codex_runtime_proxy_config: Arc<AsyncMutex<CodexRuntimeProxyConfig>>,
+    bundled_plugin_marketplace_reconciliation: Arc<AsyncMutex<()>>,
     event_tx: Option<broadcast::Sender<Value>>,
     next_execution_id: Arc<AtomicU64>,
     task_send_gates: Arc<Mutex<HashMap<String, Weak<AsyncMutex<()>>>>>,
@@ -745,6 +748,7 @@ impl RuntimeWorkRpcHandler {
             codex_runtime_proxy_config: Arc::new(AsyncMutex::new(
                 CodexRuntimeProxyConfig::default(),
             )),
+            bundled_plugin_marketplace_reconciliation: Arc::new(AsyncMutex::new(())),
             event_tx: None,
             next_execution_id: Arc::new(AtomicU64::new(1)),
             task_send_gates: Arc::new(Mutex::new(HashMap::new())),
@@ -868,6 +872,9 @@ impl RuntimeWorkRpcHandler {
             "runtime.tasks.running_count" => Ok(self.running_task_count()),
             "runtime.tasks.search" => self.search_tasks(payload).await,
             "runtime.tasks.transcript" => self.transcript(payload).await,
+            "runtime.tasks.transcript.sync_status" => self.transcript_sync_status(payload),
+            "runtime.tasks.transcript.import" => self.import_transcript_turns(payload).await,
+            "runtime.tasks.transcript.acknowledge" => self.acknowledge_transcript_turn(payload),
             "runtime.tasks.create" => self.create_task(payload).await,
             "runtime.text.generate" => self.generate_text(payload).await,
             "runtime.tasks.fork_at_turn" => self.fork_task_at_turn(payload).await,
@@ -932,6 +939,9 @@ impl RuntimeWorkRpcHandler {
             "runtime.codex.personality.write" => self.write_codex_personality(payload).await,
             "runtime.codex.plugin.install_local_first" => self.install_local_plugin(payload).await,
             "runtime.codex.plugin.uninstall_local" => self.uninstall_local_plugin(payload).await,
+            "runtime.codex.plugin.reconcile_bundled_marketplace" => {
+                self.reconcile_bundled_plugin_marketplace(payload).await
+            }
             "runtime.codex.rate_limits.read" => self.read_codex_rate_limits().await,
             "runtime.codex.runtime_config.update" => {
                 self.update_codex_runtime_config(payload).await
