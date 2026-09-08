@@ -414,6 +414,27 @@ export interface AdminPublicTeamListResponse {
   items: AdminPublicTeam[]
 }
 
+export interface CodeWikiGenerationPolicyStrategy {
+  id: string
+  enabled: boolean
+  team_name: string
+  team_namespace: string
+  display_name: string
+  description: string
+}
+
+export interface CodeWikiGenerationPolicyConfig {
+  version: number
+  configured: boolean
+  default_strategy: string
+  strategies: CodeWikiGenerationPolicyStrategy[]
+}
+
+export interface CodeWikiGenerationPolicyUpdate {
+  default_strategy: string
+  strategies: CodeWikiGenerationPolicyStrategy[]
+}
+
 export interface AdminPublicTeamCreate {
   name: string
   namespace?: string
@@ -1046,6 +1067,16 @@ export const adminApis = {
     return apiClient.put('/admin/system-config/code-wiki-retrieval-profile', {
       retrieval_config: retrievalConfig,
     })
+  },
+
+  async getCodeWikiGenerationPolicy(): Promise<CodeWikiGenerationPolicyConfig> {
+    return apiClient.get('/admin/system-config/code-wiki-generation-policy')
+  },
+
+  async updateCodeWikiGenerationPolicy(
+    policy: CodeWikiGenerationPolicyUpdate
+  ): Promise<CodeWikiGenerationPolicyConfig> {
+    return apiClient.put('/admin/system-config/code-wiki-generation-policy', policy)
   },
 
   async getMarketplaceTagsConfig(): Promise<MarketplaceTagsResponse> {

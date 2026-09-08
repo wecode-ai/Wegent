@@ -1104,6 +1104,13 @@ class KnowledgeBaseSpec(BaseModel):
             "history links to it, so nothing becomes unreachable."
         ),
     )
+    generationStrategy: Optional[str] = Field(
+        None,
+        min_length=1,
+        max_length=64,
+        pattern=r"^[a-z][a-z0-9_]*$",
+        description="Default orchestration strategy for this code wiki",
+    )
     publishedGenerationId: int = Field(
         0,
         description=(

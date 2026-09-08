@@ -327,6 +327,8 @@ class KnowledgeService:
             spec_kwargs["language"] = data.language
         if data.show_generation_task:
             spec_kwargs["showGenerationTask"] = True
+        if data.generation_strategy:
+            spec_kwargs["generationStrategy"] = data.generation_strategy
 
         # Add summaryModelRef if provided
         if data.summary_model_ref:
@@ -923,6 +925,9 @@ class KnowledgeService:
         # update path.
         if data.show_generation_task is not None:
             spec["showGenerationTask"] = data.show_generation_task
+
+        if "generation_strategy" in data.model_fields_set:
+            spec["generationStrategy"] = data.generation_strategy
 
         # Update call limit configuration if provided
         if data.max_calls_per_conversation is not None:

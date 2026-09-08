@@ -1,6 +1,6 @@
 ---
 description: "Submit wiki documentation pages to Wegent backend API. Simplifies the HTTP POST process for wiki content submission."
-version: "2.0.4"
+version: "2.0.5"
 author: "Wegent Team"
 tags: ["wiki", "documentation", "api", "submission"]
 bindShells: ["ClaudeCode"]
@@ -63,6 +63,10 @@ Remove an accidental page before completing the run.
 5. In a full rebuild using the Writer/Reviewer Team, follow `REVIEW_CONTRACT.md`: open a
    persisted Plan handoff, delegate the Reviewer synchronously, and obtain a `passed`
    Plan verdict before submitting pages.
+6. In a full rebuild whose prompt says there is no review loop, record the finished page
+   plan with `plan` before the first page submission. Update it with the full current
+   order if exploration changes the plan. This reports progress to readers; it is not a
+   review or a publishing gate.
 
 ### Before ending the run
 
@@ -152,6 +156,19 @@ node wiki_submit.js remove \
   --generation-id 123 \
   --path modules/legacy-sync \
   --path guides/old-setup
+```
+
+### Record a no-review page plan
+
+Use this only when the run prompt says there is no review loop. It records the current
+ordered page plan so readers can see `writing N / M` progress. It does not request a
+Reviewer verdict and it does not constrain the final publish; rerun it with the complete
+updated order if exploration adds or removes planned pages.
+
+```bash
+node wiki_submit.js plan \
+  --generation-id 123 \
+  --structure-order index,quickstart,architecture,modules
 ```
 
 ### Complete the wiki generation
