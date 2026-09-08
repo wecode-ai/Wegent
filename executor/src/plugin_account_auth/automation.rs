@@ -88,10 +88,8 @@ impl Reconciler {
     fn record(&mut self, key: (u64, String), _succeeded: bool) {
         // Missing/locked credentials remain local. Retry after login without
         // repeatedly prompting the OS on every scheduler tick.
-        self.retries.insert(
-            key,
-            Instant::now() + Duration::from_secs(60),
-        );
+        self.retries
+            .insert(key, Instant::now() + Duration::from_secs(60));
     }
 }
 

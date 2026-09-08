@@ -330,6 +330,14 @@ class PackageTests(unittest.TestCase):
                 with self.assertRaises(ValueError):
                     tool.scaffold(parent, name, "password")
 
+    def test_inventory_is_independent_of_directory_enumeration(self):
+        with tempfile.TemporaryDirectory() as directory:
+            plugin = Path(directory)
+            files = list((tool.ROOT / tool.PACKAGE).glob("*.py"))
+            tool.bundle(plugin)
+            with patch.object(Path, "glob", return_value=iter(reversed(files))):
+                tool.bundle(plugin, check=True)
+
     def test_zip_extracted_plugin_uses_authenticated_socket_without_source_tree(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

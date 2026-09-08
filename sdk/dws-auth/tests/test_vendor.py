@@ -2,6 +2,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import vendor
@@ -31,6 +32,14 @@ class BuildVendorTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "unexpected"):
             vendor.bundle(self.repository)
         self.assertEqual(unknown.read_text(), "keep")
+
+    def test_inventory_is_independent_of_platform_path_order(self):
+        files = vendor.source_files()
+        vendor.bundle(self.repository)
+        with patch.object(
+            vendor, "source_files", return_value=dict(reversed(files.items()))
+        ):
+            vendor.bundle(self.repository, check=True)
 
     def test_symlink_destination_is_rejected(self):
         (self.repository / "plugins/dingtalk").mkdir(parents=True, exist_ok=True)

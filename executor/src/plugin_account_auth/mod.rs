@@ -9,8 +9,8 @@ use std::{
     time::Duration,
 };
 
-pub mod broker;
 mod automation;
+pub mod broker;
 mod execution;
 mod gateway;
 pub use execution::{execute, ExecutionRequest};

@@ -25,7 +25,8 @@ def bundle(plugin: Path, *, check: bool = False) -> None:
         "version": __version__,
         "protocolVersion": 1,
         "files": {
-            name: hashlib.sha256(data).hexdigest() for name, data in files.items()
+            name: hashlib.sha256(data).hexdigest()
+            for name, data in sorted(files.items())
         },
     }
     files["vendor.json"] = (json.dumps(lock, indent=2) + "\n").encode()

@@ -33,7 +33,8 @@ def bundle(repository: Path, *, check: bool = False) -> None:
         "schemaVersion": 1,
         "source": "Wegent/sdk",
         "files": {
-            name: hashlib.sha256(content).hexdigest() for name, content in files.items()
+            name: hashlib.sha256(content).hexdigest()
+            for name, content in sorted(files.items())
         },
     }
     files[INVENTORY] = (json.dumps(inventory, indent=2) + "\n").encode()
