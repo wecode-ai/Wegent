@@ -87,6 +87,11 @@ macOS 发布先按未签名内容、证书身份、架构、签名参数和构�
 签名时间戳单独改变组件哈希。发布组件清单中的内容 SHA-256 必须从这份最终资源
 计算，不得从重新签名后的安装包再次提取组件。
 
+重新签名已有 Mach-O 文件时必须保留原签名中的 entitlement。Codex 及其
+`codex-code-mode-host` 依赖 `allow-jit` 和 `allow-unsigned-executable-memory`
+运行 V8；仅执行 `codesign --verify` 无法发现 entitlement 被移除。任何签名参数
+变化都必须更新签名策略版本，使旧的已签名组件缓存失效。
+
 Codex 组件的发布边界是完整的 `codex/` 运行时目录，不是单独的 `codex` 可执行
 文件。组件必须包含 `WEGENT_CODEX_BINARY.json`、目标架构的 `codex` 与
 `codex-code-mode-host`、`codex-path` 工具和 legal 资源。客户端从运行时描述中的
