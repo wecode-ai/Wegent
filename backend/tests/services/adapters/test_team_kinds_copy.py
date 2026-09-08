@@ -796,3 +796,216 @@ class TestCopyTeamWithSkills:
         assert cloned_ghost is not None
         refs = cloned_ghost.json.get("spec", {}).get("skill_refs", {})
         assert refs["skip-skill"]["skill_id"] == personal_skill.id
+
+
+class TestCopyTeamToPersonalSpaceWithSkills:
+    """Copying an agent into personal space must keep its Skills usable there.
+
+    The copier only gains a user-default binding to private Skills they can
+    already access in the source context (owner, group member, or group admin).
+    Copying to personal space only affects the copier, so no consent dialog is
+    needed, unlike copying private Skills into a whole group.
+    """
+
+    def _create_group_solo_agent(
+        self,
+        test_db: Session,
+        *,
+        owner: User,
+        group: Namespace,
+        skill_name: str,
+    ):
+        """Create a solo Team inside a group whose bot references a group Skill."""
+        skill = _create_skill_with_binary(
+            test_db,
+            user_id=owner.id,
+            name=skill_name,
+            namespace=group.name,
+        )
+        bot = _create_bot(
+            test_db,
+            user_id=owner.id,
+            name=f"group-agent-bot-{skill_name}",
+            namespace=group.name,
+        )
+        _create_ghost(
+            test_db,
+            user_id=owner.id,
+            name=f"ghost-group-agent-bot-{skill_name}",
+            namespace=group.name,
+        )
+        _attach_skill_to_bot(test_db, bot=bot, skill=skill)
+        team = _create_team(
+            test_db,
+            user_id=owner.id,
+            name=f"group-agent-{skill_name}",
+            namespace=group.name,
+            collaboration_model="solo",
+            bot_ids=[bot.id],
+        )
+        return {"skill": skill, "bot": bot, "team": team}
+
+    def _cloned_personal_bot(self, test_db: Session, *, user_id: int) -> Kind:
+        from app.models.kind import Kind
+
+        return (
+            test_db.query(Kind)
+            .filter(
+                Kind.kind == "Bot",
+                Kind.namespace == "default",
+                Kind.user_id == user_id,
+                Kind.is_active == True,
+            )
+            .first()
+        )
+
+    def test_group_maintainer_copies_group_agent_to_personal(self, test_db: Session):
+        """Group Maintainer can copy a group solo agent into personal space."""
+        owner = _create_user(test_db, "group_agent_owner", "owner@test.com")
+        admin = _create_user(test_db, "group_agent_admin", "admin@test.com")
+        group = _create_group(test_db, owner, "weather-group")
+        _add_group_member(test_db, group, admin, "Maintainer")
+        _create_shell(test_db, name="ClaudeCode", namespace="default")
+
+        assets = self._create_group_solo_agent(
+            test_db, owner=owner, group=group, skill_name="group-weather-skill"
+        )
+        skill = assets["skill"]
+
+        result = team_kinds_service.copy_team(
+            test_db,
+            team_id=assets["team"].id,
+            user_id=admin.id,
+            target_namespace="default",
+        )
+
+        assert result["namespace"] == "default"
+        assert skill.id in skill_binding_service.list_user_default_skill_ids(
+            test_db, admin.id
+        )
+        cloned_bot = self._cloned_personal_bot(test_db, user_id=admin.id)
+        assert cloned_bot is not None
+        ghost_ref = cloned_bot.json.get("spec", {}).get("ghostRef", {})
+        cloned_ghost = (
+            test_db.query(Kind)
+            .filter(
+                Kind.kind == "Ghost",
+                Kind.name == ghost_ref.get("name"),
+                Kind.namespace == "default",
+                Kind.is_active == True,
+            )
+            .first()
+        )
+        assert cloned_ghost is not None
+        refs = cloned_ghost.json.get("spec", {}).get("skill_refs", {})
+        assert refs["group-weather-skill"]["skill_id"] == skill.id
+
+    def test_group_owner_copies_group_agent_to_personal(self, test_db: Session):
+        """The creator of a group agent can copy it into personal space."""
+        owner = _create_user(test_db, "group_agent_owner2", "owner2@test.com")
+        group = _create_group(test_db, owner, "weather-group-2")
+        _create_shell(test_db, name="ClaudeCode", namespace="default")
+
+        assets = self._create_group_solo_agent(
+            test_db, owner=owner, group=group, skill_name="owner-group-skill"
+        )
+        skill = assets["skill"]
+
+        result = team_kinds_service.copy_team(
+            test_db,
+            team_id=assets["team"].id,
+            user_id=owner.id,
+            target_namespace="default",
+        )
+
+        assert result["namespace"] == "default"
+        assert skill.id in skill_binding_service.list_user_default_skill_ids(
+            test_db, owner.id
+        )
+
+    def test_personal_agent_referencing_group_skill_copies_to_personal(
+        self, test_db: Session
+    ):
+        """Owner can copy a personal agent that references their group Skill."""
+        owner = _create_user(test_db, "hybrid_agent_owner", "hybrid@test.com")
+        group = _create_group(test_db, owner, "hybrid-group")
+        _create_shell(test_db, name="ClaudeCode", namespace="default")
+        skill = _create_skill_with_binary(
+            test_db,
+            user_id=owner.id,
+            name="hybrid-skill",
+            namespace=group.name,
+        )
+        bot = _create_bot(test_db, user_id=owner.id, name="hybrid-bot")
+        _create_ghost(test_db, user_id=owner.id, name="ghost-hybrid-bot")
+        _attach_skill_to_bot(test_db, bot=bot, skill=skill)
+        team = _create_team(
+            test_db,
+            user_id=owner.id,
+            name="hybrid-agent",
+            collaboration_model="solo",
+            bot_ids=[bot.id],
+        )
+
+        result = team_kinds_service.copy_team(
+            test_db,
+            team_id=team.id,
+            user_id=owner.id,
+            target_namespace="default",
+        )
+
+        assert result["namespace"] == "default"
+        assert skill.id in skill_binding_service.list_user_default_skill_ids(
+            test_db, owner.id
+        )
+
+    def test_user_without_skill_access_still_denied(self, test_db: Session):
+        """Copying a group agent with a private Skill still fails for outsiders."""
+        from fastapi import HTTPException
+
+        owner = _create_user(test_db, "restricted_owner", "restricted@test.com")
+        outsider = _create_user(test_db, "restricted_outsider", "outsider@test.com")
+        group = _create_group(test_db, owner, "restricted-group")
+        _create_shell(test_db, name="ClaudeCode", namespace="default")
+
+        assets = self._create_group_solo_agent(
+            test_db, owner=owner, group=group, skill_name="restricted-skill"
+        )
+
+        with pytest.raises(HTTPException) as exc_info:
+            team_kinds_service.copy_team(
+                test_db,
+                team_id=assets["team"].id,
+                user_id=outsider.id,
+                target_namespace="default",
+            )
+
+        assert exc_info.value.status_code == 403
+
+    def test_copying_own_personal_agent_adds_no_default_binding(self, test_db: Session):
+        """Personal Skills already owned by the copier need no extra binding."""
+        user = _create_user(test_db, "own_personal_owner", "own@test.com")
+        _create_shell(test_db, name="ClaudeCode", namespace="default")
+        skill = _create_skill_with_binary(test_db, user_id=user.id, name="own-skill")
+        bot = _create_bot(test_db, user_id=user.id, name="own-bot")
+        _create_ghost(test_db, user_id=user.id, name="ghost-own-bot")
+        _attach_skill_to_bot(test_db, bot=bot, skill=skill)
+        team = _create_team(
+            test_db,
+            user_id=user.id,
+            name="own-agent",
+            collaboration_model="solo",
+            bot_ids=[bot.id],
+        )
+
+        result = team_kinds_service.copy_team(
+            test_db,
+            team_id=team.id,
+            user_id=user.id,
+            target_namespace="default",
+        )
+
+        assert result["namespace"] == "default"
+        assert skill.id not in skill_binding_service.list_user_default_skill_ids(
+            test_db, user.id
+        )
