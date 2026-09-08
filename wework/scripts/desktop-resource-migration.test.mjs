@@ -295,19 +295,28 @@ describe('desktop resource migration', () => {
     expect(source).toContain('WeWorkHostUpdate_${escape(version)}_linux_')
   })
 
-  test('creates component archives from immutable prepared resources', async () => {
+  test('selects the component asset source explicitly for each release flow', async () => {
     const source = await readFile(
       join(weworkRoot, 'scripts/prepare-desktop-release-assets.mjs'),
       'utf8'
     )
+    const minioMacRelease = await readFile(
+      join(weworkRoot, 'scripts/build-minio-mac-release.sh'),
+      'utf8'
+    )
 
     expect(source).toContain("arch === 'arm64' ? 'mac-arm64' : 'mac'")
-    expect(source).toContain('const packagedComponentResourcesRoot = componentResourcesRoot')
+    expect(source).toContain("WEWORK_RELEASE_COMPONENT_ASSET_SOURCE?.trim() || 'prepared'")
+    expect(source).toContain("componentAssetSource === 'packaged-macos-app'")
+    expect(source).toContain(
+      "packagedComponentResourcesRoot = join(appPath, 'Contents', 'Resources')"
+    )
     expect(source).toContain("join(packagedComponentResourcesRoot, 'components.json')")
     expect(source).toContain('join(packagedComponentResourcesRoot, component.path)')
     expect(source).toContain('contentSha256 = await hashComponentPath(sourcePath)')
     expect(source).toContain('releaseScope: componentReleaseScope(id)')
     expect(source).not.toContain('async function findDirectory')
+    expect(minioMacRelease).toContain('WEWORK_RELEASE_COMPONENT_ASSET_SOURCE=packaged-macos-app')
   })
 
   test('requires differential update blockmaps in formal release assets', async () => {

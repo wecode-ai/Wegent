@@ -379,7 +379,16 @@ this identity to overwrite the installed internal application and continue
 using its existing conversations and Executor data. Explicit runtime
 environment variables may still override the URL defaults.
 
-The script publishes versioned DMG/ZIP files, four immutable component
+The MinIO release script creates component archives from the final signed
+application's `Contents/Resources` instead of depending on
+`wework/electron/resources` in the build workspace. A
+`--resume-signed-app` release can therefore regenerate component assets from a
+complete signed application, including the full Codex runtime and
+`codex-code-mode-host`. GitHub Actions publishes within the same build job and
+continues to create the same component manifests from the prepared and signed
+`wework/electron/resources`.
+
+The script publishes versioned DMG/ZIP files, immutable component
 archives, Electron YAML, the legacy Tauri migration JSON, and the rolling
 component manifest, then verifies every public download. An equal but
 incomplete version is repaired; an incomplete newer remote version fails. A

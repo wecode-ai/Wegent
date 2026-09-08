@@ -294,7 +294,13 @@ bash wework/scripts/build-minio-mac-release.sh \
 和 Socket 默认地址。安装包必须使用该配置构建，才能覆盖安装现有内网客户端并继续
 读取原聊天与 Executor 数据。命令行显式传入的运行时环境变量仍可覆盖地址默认值。
 
-发布脚本依次上传版本化 DMG/ZIP、四类不可变组件包、Electron YAML、旧 Tauri
+MinIO 发布脚本从最终签名应用的 `Contents/Resources` 生成组件包，而不是依赖构建
+工作区中的 `wework/electron/resources`。因此从 `--resume-signed-app` 恢复发布时，
+只要签名应用完整，就可以重新生成包含完整 Codex 运行时及其
+`codex-code-mode-host` 的组件资产。GitHub Actions 在同一构建任务内发布，仍从已
+准备并签名的 `wework/electron/resources` 生成相同组件清单。
+
+发布脚本依次上传版本化 DMG/ZIP、各类不可变组件包、Electron YAML、旧 Tauri
 迁移 JSON 和组件滚动清单，最后从公开下载地址逐项验证。相同版本但清单不完整时会
 补齐；远端存在不完整的更高版本时直接失败。DMG 是压缩产物，约 350 MB 的 DMG
 解包后应用目录约 700 MB 属于同一套完整离线运行环境，不代表重复打包。

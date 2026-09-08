@@ -634,6 +634,7 @@ def test_minio_macos_build_uses_the_electron_release_and_tauri_bridge() -> None:
     assert "WeWork_${VERSION}_$(release_platform).zip" in script
     assert "WeWorkHostUpdate_${VERSION}_$(release_platform).zip" in script
     assert "WEWORK_ONLINE_UPDATE_INCLUDE_COMPONENTS" in script
+    assert "WEWORK_RELEASE_COMPONENT_ASSET_SOURCE=packaged-macos-app" in script
     assert 'WEWORK_USE_COMPONENTIZED_HOST_UPDATE="$COMPONENTIZED_HOST_UPDATE"' in script
     assert "components-$CHANNEL-macos-$arch.json" in script
     assert "const releaseBaseName = `WeWork_${version}_${releasePlatform}`" in preparer

@@ -23,12 +23,19 @@ const componentResourcesRoot = join(weworkRoot, 'electron', 'resources')
 const pnpmCommand = process.platform === 'win32' ? 'pnpm.cmd' : 'pnpm'
 const [platform, arch, version, outputDirectory] = process.argv.slice(2)
 const identity = resolveBuildIdentity()
-const packagedComponentResourcesRoot = componentResourcesRoot
+const componentAssetSource = process.env.WEWORK_RELEASE_COMPONENT_ASSET_SOURCE?.trim() || 'prepared'
+let packagedComponentResourcesRoot = componentResourcesRoot
 
 if (!platform || !arch || !version || !outputDirectory) {
   throw new Error(
     'Usage: prepare-desktop-release-assets.mjs <macos|windows|linux> <arm64|x64> <version> <output-directory>'
   )
+}
+if (!['prepared', 'packaged-macos-app'].includes(componentAssetSource)) {
+  throw new Error(`Unsupported release component asset source: ${componentAssetSource}`)
+}
+if (componentAssetSource === 'packaged-macos-app' && platform !== 'macos') {
+  throw new Error('packaged-macos-app component assets require the macOS release platform')
 }
 
 const output = resolve(outputDirectory)
@@ -44,6 +51,9 @@ if (platform === 'macos') {
   const appName = `${identity.productName}.app`
   const appPath = join(appDirectory, appName)
   await requireDirectory(appPath)
+  if (componentAssetSource === 'packaged-macos-app') {
+    packagedComponentResourcesRoot = join(appPath, 'Contents', 'Resources')
+  }
   const dmg = await findFile(
     installerRoot,
     new RegExp(`^WeWork_${escape(version)}_macos_${arch}\\.dmg$`)
