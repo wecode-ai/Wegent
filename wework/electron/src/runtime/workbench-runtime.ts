@@ -1,4 +1,5 @@
 import type { DshRuntimeOptions } from './dsh-runtime.js'
+import type { HostPipeServer } from '../host/host-pipe.js'
 import { DshRuntime } from './dsh-runtime.js'
 
 const FORBIDDEN_ENVIRONMENT_PREFIXES = [
@@ -15,6 +16,8 @@ export interface WorkbenchRuntimeLaunch {
   cwd?: string
   environment?: NodeJS.ProcessEnv
   logDirectory?: string
+  hostPipe?: HostPipeServer
+  hostPrincipal?: string
 }
 
 export interface WorkbenchRuntimeSnapshot {
@@ -57,9 +60,10 @@ export class WorkbenchRuntimeManager {
       command: launch.command,
       args: launch.args,
       cwd: launch.cwd,
-      env: isolatedWorkbenchEnvironment(launch.environment),
+      env: workbenchEnvironment(launch),
       logDirectory: launch.logDirectory,
       logFileName: `dsh-workbench-${safeName(tabId)}.log`,
+      ...(launch.hostPipe ? { hostPipe: launch.hostPipe } : {}),
     })
     this.runtimes.set(tabId, runtime)
     try {
@@ -92,6 +96,17 @@ export class WorkbenchRuntimeManager {
     const runtimes = [...this.runtimes.values()]
     this.runtimes.clear()
     await Promise.allSettled(runtimes.map(runtime => runtime.stop()))
+  }
+}
+
+function workbenchEnvironment(launch: WorkbenchRuntimeLaunch): NodeJS.ProcessEnv {
+  const environment = isolatedWorkbenchEnvironment(launch.environment)
+  if (!launch.hostPipe) return environment
+  if (!launch.hostPrincipal?.trim()) throw new Error('Workbench Host principal is required')
+  return {
+    ...environment,
+    ...launch.hostPipe.environment(),
+    WEWORK_ELECTRON_HOST_PRINCIPAL: launch.hostPrincipal,
   }
 }
 

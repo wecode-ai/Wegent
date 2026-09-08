@@ -9,8 +9,12 @@ import type {
 } from './capability-router.js'
 import {
   captureWebContentsDataUrl,
+  coreGrantedCapabilities,
   cpuLoadRatioBetween,
   e2eOpenDialogOverride,
+  createWorkbenchCapabilityRouter,
+  WEWORK_APP_PRINCIPAL,
+  WEWORK_WORKBENCH_PRINCIPAL,
   registerAppUpdateCapabilities,
   registerBrowserHistoryCapabilities,
   registerCoreDshPluginCapabilities,
@@ -573,5 +577,131 @@ describe('registerPluginDevelopmentCapabilities', () => {
     expect(pluginDevelopment.openLogDirectory).toHaveBeenCalledOnce()
     expect(pluginDevelopment.stop).toHaveBeenCalledOnce()
     expect(pluginDevelopment.deleteData).toHaveBeenCalledOnce()
+  })
+})
+
+describe('createWorkbenchCapabilityRouter', () => {
+  test('captures a rectangle from the scoped owner without accepting a caller-supplied label', async () => {
+    const browser = {
+      has: vi.fn((label: string) => label === 'smart-app:test'),
+      state: vi.fn(() => ({ visible: true })),
+      capture: vi.fn(async () => 'data:image/png;base64,owner-rect'),
+    }
+    const router = createWorkbenchCapabilityRouter(browser as never, 'smart-app:test')
+
+    expect(router.describe(WEWORK_WORKBENCH_PRINCIPAL)).toContain('dshCapture.ownerRect')
+    await expect(
+      router.invoke(WEWORK_WORKBENCH_PRINCIPAL, 'dshCapture.ownerRect', {
+        x: 12.4,
+        y: 24.2,
+        width: 320.1,
+        height: 180.8,
+        label: 'smart-app:another',
+      })
+    ).resolves.toEqual({ dataUrl: 'data:image/png;base64,owner-rect' })
+    expect(browser.capture).toHaveBeenCalledWith('smart-app:test', {
+      x: 12,
+      y: 24,
+      width: 321,
+      height: 181,
+    })
+  })
+
+  test('rejects invalid rectangles before reaching the scoped owner', async () => {
+    const browser = {
+      has: vi.fn(() => true),
+      state: vi.fn(() => ({ visible: true })),
+      capture: vi.fn(),
+    }
+    const router = createWorkbenchCapabilityRouter(browser as never, 'smart-app:test')
+
+    await expect(
+      router.invoke(WEWORK_WORKBENCH_PRINCIPAL, 'dshCapture.ownerRect', {
+        x: -1,
+        y: 0,
+        width: 320,
+        height: 180,
+      })
+    ).rejects.toMatchObject({ code: 'invalid_params' })
+    await expect(
+      router.invoke(WEWORK_WORKBENCH_PRINCIPAL, 'dshCapture.ownerRect', {
+        x: 0,
+        y: 0,
+        width: 7681,
+        height: 180,
+      })
+    ).rejects.toMatchObject({ code: 'invalid_params' })
+    expect(browser.capture).not.toHaveBeenCalled()
+  })
+
+  test('rejects capture while the scoped owner is hidden', async () => {
+    const browser = {
+      has: vi.fn(() => true),
+      state: vi.fn(() => ({ visible: false })),
+      capture: vi.fn(),
+    }
+    const router = createWorkbenchCapabilityRouter(browser as never, 'smart-app:test')
+
+    await expect(
+      router.invoke(WEWORK_WORKBENCH_PRINCIPAL, 'dshCapture.ownerRect', {
+        x: 0,
+        y: 0,
+        width: 320,
+        height: 180,
+      })
+    ).rejects.toMatchObject({ code: 'owner_view_hidden' })
+    expect(browser.capture).not.toHaveBeenCalled()
+  })
+
+  test('grants only owner-view capture capabilities to the workbench principal', async () => {
+    const router = createWorkbenchCapabilityRouter(null, null)
+    const granted = router.describe(WEWORK_WORKBENCH_PRINCIPAL)
+    expect(granted).toEqual(['dshCapture.capabilities', 'dshCapture.ownerRect'])
+    expect(granted).not.toContain('browser.open')
+    expect(granted).not.toContain('filesystem.stat')
+    expect(granted).not.toContain('executor.*')
+  })
+
+  test('denies capabilities for the core principal', async () => {
+    const router = createWorkbenchCapabilityRouter(null, null)
+    expect(router.describe(WEWORK_APP_PRINCIPAL)).toEqual([])
+  })
+
+  test('denies unknown capabilities for the workbench principal', async () => {
+    const router = createWorkbenchCapabilityRouter(null, null)
+    await expect(
+      router.invoke(WEWORK_WORKBENCH_PRINCIPAL, 'browser.open', {})
+    ).rejects.toMatchObject({ code: 'capability_denied' })
+  })
+
+  test('keeps owner-view capture out of the core principal grant', () => {
+    const granted = coreGrantedCapabilities()
+    expect(granted).not.toContain('dshCapture.capabilities')
+    expect(granted).not.toContain('dshCapture.ownerRect')
+    expect(granted).toContain('browser.open')
+  })
+
+  test('reports capability available only while the scoped owner is visible', async () => {
+    const hidden = createWorkbenchCapabilityRouter(
+      {
+        has: vi.fn(() => true),
+        state: vi.fn(() => ({ visible: false })),
+      } as never,
+      'smart-app:test'
+    )
+    await expect(
+      hidden.invoke(WEWORK_WORKBENCH_PRINCIPAL, 'dshCapture.capabilities', {})
+    ).resolves.toEqual({ available: false })
+
+    const visible = createWorkbenchCapabilityRouter(
+      {
+        has: vi.fn(() => true),
+        state: vi.fn(() => ({ visible: true })),
+      } as never,
+      'smart-app:test'
+    )
+    await expect(
+      visible.invoke(WEWORK_WORKBENCH_PRINCIPAL, 'dshCapture.capabilities', {})
+    ).resolves.toEqual({ available: true })
   })
 })

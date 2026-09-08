@@ -4,6 +4,7 @@ import { createInterface } from 'node:readline'
 export const ELECTRON_HOST_PROTOCOL_VERSION = 1
 const MAX_FRAME_BYTES = 64 * 1024 * 1024
 const DEFAULT_TIMEOUT_MS = 120_000
+const DEFAULT_PRINCIPAL = '@wegent/dsh-app-wework'
 
 export class ElectronHostError extends Error {
   constructor(code, message, details = {}) {
@@ -38,11 +39,14 @@ export class ElectronHostClient {
       environment.WEWORK_ELECTRON_HOST_RESPONSE_FD,
       'WEWORK_ELECTRON_HOST_RESPONSE_FD'
     )
+    const principal =
+      optionalString(environment.WEWORK_ELECTRON_HOST_PRINCIPAL) ?? DEFAULT_PRINCIPAL
     return new ElectronHostClient({
       protocolVersion,
       token,
       input: createReadStream(null, { fd: requestFd, autoClose: false }),
       output: createWriteStream(null, { fd: responseFd, autoClose: false }),
+      principal,
       onDisconnect: options.onDisconnect,
     })
   }
@@ -52,7 +56,7 @@ export class ElectronHostClient {
     token,
     input,
     output,
-    principal = '@wegent/dsh-app-wework',
+    principal = DEFAULT_PRINCIPAL,
     timeoutMs = DEFAULT_TIMEOUT_MS,
     onDisconnect = () => {},
   }) {
@@ -257,6 +261,10 @@ function requiredInteger(value, name) {
     throw new ElectronHostError('invalid_environment', `${name} must be an integer`)
   }
   return parsed
+}
+
+function optionalString(value) {
+  return typeof value === 'string' && value.trim() ? value.trim() : null
 }
 
 function deferred() {

@@ -31,6 +31,8 @@ import { promisify } from 'node:util'
 import {
   captureWebContentsDataUrl,
   createElectronCapabilityRouter,
+  WEWORK_WORKBENCH_PRINCIPAL,
+  createWorkbenchCapabilityRouter,
 } from './host/electron-capabilities.js'
 import { HostPipeServer } from './host/host-pipe.js'
 import { DesktopHostEventBroker } from './host/desktop-host-events.js'
@@ -1328,6 +1330,10 @@ async function configureDesktopRuntime(): Promise<void> {
     logDirectory: app.getPath('logs'),
     readWorkbenchMode: async () =>
       normalizeWorkbenchMode((await requiredPreferences().read()).workbenchMode),
+    createWorkbenchHostPipe: tabId => {
+      const pipe = new HostPipeServer(createWorkbenchCapabilityRouter(embeddedBrowser, tabId))
+      return { hostPipe: pipe, principal: WEWORK_WORKBENCH_PRINCIPAL }
+    },
     onExecutorEvent: (event, payload) => {
       systemSleep.handleExecutorEvent(event, payload)
       trayNativeStatus?.handleExecutorEvent(event)

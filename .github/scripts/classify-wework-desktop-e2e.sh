@@ -58,6 +58,7 @@ core_segments=(
   browser-annotation-core
   browser-annotation-anchors
   browser-annotation-design
+  dsh-owner-capture
 )
 plugin_segments=(
   core-dsh-ui-plugin-composition
@@ -128,7 +129,7 @@ core_shards=(
   harness-apps,browser-annotation-design
   supervisor-lifecycle,remote-device-onboarding
   temporary-chat,local-file-preview
-  goal-lifecycle,embedded-browser,browser-annotation-core,permission-modes,tray-lifecycle
+  goal-lifecycle,embedded-browser,browser-annotation-core,permission-modes,tray-lifecycle,dsh-owner-capture
   conversation-state,project-ai-settings,offline-local-project-space,cloud-context-resilience,cloud-space-mention
   claude-runtime,workspace-tabs,task-attachments
   task-status-sync,task-board-association,core-task-flow,change-request-status,context-compaction
