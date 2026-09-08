@@ -121,8 +121,10 @@ function ConnectedNotificationCenter({ baseUrl, token }: { baseUrl: string; toke
             unread_count: Math.max(0, current.unread_count - (notification.read_at ? 0 : 1)),
           }
       )
-      if (!openWeworkScheme(notification.url)) throw new Error(t('notifications.invalid_link'))
-      close()
+      if (read.url) {
+        if (!openWeworkScheme(read.url)) throw new Error(t('notifications.invalid_link'))
+        close()
+      }
     })
 
   return (

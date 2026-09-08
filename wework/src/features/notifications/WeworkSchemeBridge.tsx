@@ -27,7 +27,7 @@ export function WeworkSchemeBridge() {
       }
       return false
     }
-    tabsRef.current.openTab(destination.kind === 'board' ? 'board' : 'task', {
+    tabsRef.current.openTab(destination.kind === 'task' ? 'task' : 'board', {
       contentRoute: weworkDestinationRoute(destination),
     })
     return true

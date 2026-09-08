@@ -1,3 +1,4 @@
+import { NotificationEventsBridge } from '@/features/notifications/NotificationEventsBridge'
 import { WeworkSchemeBridge } from '@/features/notifications/WeworkSchemeBridge'
 import {
   Activity,
@@ -642,6 +643,7 @@ function AppRoutes({ onWorkbenchStartupReadyChange, onOpenWeworkForAppshot }: Ap
       <>
         <RuntimeTaskLifecycleStreamCoordinator services={services} store={lifecycleStore} />
         <RuntimeTaskSystemSleepBridge store={lifecycleStore} />
+        <NotificationEventsBridge chatStream={services.chatStream} />
         <WorkbenchProvider
           lifecycleStore={lifecycleStore}
           services={services}
@@ -669,6 +671,7 @@ function AppRoutes({ onWorkbenchStartupReadyChange, onOpenWeworkForAppshot }: Ap
     <>
       <RuntimeTaskLifecycleStreamCoordinator services={services} store={lifecycleStore} />
       <RuntimeTaskSystemSleepBridge store={lifecycleStore} />
+      <NotificationEventsBridge chatStream={services.chatStream} />
       {mountedWorkspaceTabs.map(tab => (
         <WorkspaceTabSurface
           key={tab.id}

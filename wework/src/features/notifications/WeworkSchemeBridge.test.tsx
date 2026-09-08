@@ -107,6 +107,14 @@ describe('Wework scheme bridge', () => {
     expect(openTab).toHaveBeenCalledOnce()
   })
 
+  it('opens the board homepage without a cloud account', () => {
+    render(<WeworkSchemeBridge />)
+    act(() => {
+      openWeworkScheme('wework://boards')
+    })
+    expect(openTab).toHaveBeenCalledExactlyOnceWith('board', { contentRoute: '/todo' })
+  })
+
   it('opens local task links without a cloud account and rejects unknown routes', () => {
     openTab.mockClear()
     render(<WeworkSchemeBridge />)

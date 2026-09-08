@@ -39,18 +39,40 @@ beforeEach(() => {
 })
 
 describe('notification center', () => {
-  it('loads the inbox and opens the saved scheme after marking it read', async () => {
+  it('marks a general notification read while keeping its content open without navigation', async () => {
+    const general = { ...entry, url: null, body: '你好' }
+    api.list.mockResolvedValue({ items: [general], unread_count: 1, next_offset: null })
+    api.read.mockResolvedValue({ ...general, read_at: '2026-09-08T01:00:00+00:00' })
     const open = vi.fn()
     window.addEventListener('wework-open-scheme', open)
     render(view())
     await screen.findByTestId('wework-notifications-unread')
     fireEvent.click(screen.getByTestId('wework-notifications-button'))
     fireEvent.click(await screen.findByTestId('wework-notification-n1'))
-    await waitFor(() => expect(api.read).toHaveBeenCalledWith('n1'))
-    await waitFor(() => expect(open).toHaveBeenCalledOnce())
-    expect(open.mock.calls[0][0].detail).toBe(entry.url)
+    await waitFor(() => expect(screen.queryByTestId('wework-notifications-unread')).toBeNull())
+    expect(api.read).toHaveBeenCalledWith('n1')
+    expect(screen.getByText('你好')).toBeVisible()
+    expect(screen.queryByRole('alert')).toBeNull()
+    expect(open).not.toHaveBeenCalled()
     window.removeEventListener('wework-open-scheme', open)
   })
+
+  it.each([entry.url, 'wework://boards'])(
+    'opens the saved scheme after marking it read: %s',
+    async url => {
+      api.read.mockResolvedValue({ ...entry, url, read_at: '2026-09-08T01:00:00+00:00' })
+      const open = vi.fn()
+      window.addEventListener('wework-open-scheme', open)
+      render(view())
+      await screen.findByTestId('wework-notifications-unread')
+      fireEvent.click(screen.getByTestId('wework-notifications-button'))
+      fireEvent.click(await screen.findByTestId('wework-notification-n1'))
+      await waitFor(() => expect(api.read).toHaveBeenCalledWith('n1'))
+      await waitFor(() => expect(open).toHaveBeenCalledOnce())
+      expect(open.mock.calls[0][0].detail).toBe(url)
+      window.removeEventListener('wework-open-scheme', open)
+    }
+  )
 
   it('retains the notification and reports a failed read instead of navigating', async () => {
     api.read.mockRejectedValue(new Error('offline'))

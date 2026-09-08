@@ -10,6 +10,10 @@ describe('Wework scheme routing', () => {
     expect(route.searchParams.get('projectStore')).toBe('backend')
     expect(route.searchParams.get('itemId')).toBe('gitlab:12/issue#3')
   })
+  it.each(['wework://boards', 'wework://boards/'])('opens the board homepage: %s', url => {
+    expect(parseWeworkScheme(url)).toEqual({ kind: 'boards' })
+    expect(weworkDestinationRoute(parseWeworkScheme(url)!)).toBe('/todo')
+  })
   it('supports boards and device-owned tasks', () => {
     expect(parseWeworkScheme('wework://boards/12')).toEqual({ kind: 'board', projectId: '12' })
     expect(weworkDestinationRoute(parseWeworkScheme('wework://tasks/local-device/task-1')!)).toBe(

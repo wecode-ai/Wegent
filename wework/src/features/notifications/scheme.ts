@@ -1,4 +1,5 @@
 export type WeworkDestination =
+  | { kind: 'boards' }
   | { kind: 'board'; projectId: string; itemId?: string }
   | { kind: 'task'; deviceId: string; taskId: string }
 
@@ -15,6 +16,9 @@ export function parseWeworkScheme(input: string): WeworkDestination | null {
   try {
     if (
       input !== input.trim() ||
+      input.includes('?') ||
+      input.includes('#') ||
+      Array.from(input).some(char => char.charCodeAt(0) < 32 || char.charCodeAt(0) === 127) ||
       input.split('/').some(part => ['.', '..'].includes(decodeURIComponent(part)))
     )
       return null
@@ -28,6 +32,7 @@ export function parseWeworkScheme(input: string): WeworkDestination | null {
       url.hash
     )
       return null
+    if (url.hostname === 'boards' && ['', '/'].includes(url.pathname)) return { kind: 'boards' }
     const parts = url.pathname.split('/').slice(1)
     if (url.hostname === 'boards' && (parts.length === 1 || parts.length === 3)) {
       const projectId = segment(parts[0])
@@ -48,6 +53,7 @@ export function parseWeworkScheme(input: string): WeworkDestination | null {
 }
 
 export function weworkDestinationRoute(destination: WeworkDestination): string {
+  if (destination.kind === 'boards') return '/todo'
   if (destination.kind === 'task') {
     return `/runtime-tasks?${new URLSearchParams({ deviceId: destination.deviceId, taskId: destination.taskId })}`
   }

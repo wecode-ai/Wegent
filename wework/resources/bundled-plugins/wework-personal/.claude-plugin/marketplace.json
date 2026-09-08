@@ -10,7 +10,7 @@
       "name": "wework-space",
       "description": "Provides project-space, Issue, attachment, and delivery tools to Wework Agent sessions.",
       "source": "./plugins/wework-space",
-      "version": "0.2.0"
+      "version": "0.2.2"
     },
     {
       "name": "smart-app-builder",

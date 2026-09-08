@@ -565,6 +565,25 @@ async def test_board_robot_task_can_assign_item_to_another_project_robot(
     dispatch.assert_awaited_once()
 
 
+@pytest.mark.parametrize("url", [None, "wework://boards"])
+def test_notification_tool_sends_to_self_without_project_context(
+    test_db, test_user, monkeypatch, url
+):
+    from app.models.wework_notification import WeworkNotification
+
+    monkeypatch.setattr(wework_space, "SessionLocal", lambda: _SessionContext(test_db))
+    monkeypatch.setattr("app.core.async_utils.schedule_async_task", lambda *_: None)
+
+    result = wework_space.send_notification(
+        _token(test_user), "Greeting", "你好", url=url
+    )
+
+    assert result["url"] == url
+    row = test_db.get(WeworkNotification, result["id"])
+    assert row.user_id == test_user.id
+    assert row.body == "你好"
+
+
 def test_notification_tool_uses_bound_project_and_current_user(
     test_db, test_user, monkeypatch
 ):

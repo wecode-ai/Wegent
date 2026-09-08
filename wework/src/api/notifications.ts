@@ -5,7 +5,7 @@ export interface WeworkNotification {
   kind: string
   title: string
   body: string
-  url: string
+  url: string | null
   payload: Record<string, string>
   created_at: string
   read_at: string | null

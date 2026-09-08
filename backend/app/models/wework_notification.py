@@ -17,7 +17,7 @@ class WeworkNotification(Base):
     kind = Column(String(64), nullable=False)
     title = Column(String(256), nullable=False)
     body = Column(Text, nullable=False)
-    url = Column(String(2048), nullable=False)
+    url = Column(String(2048), nullable=True)
     payload = Column(JSON, nullable=False)
     created_at = Column(DateTime, nullable=False)
     read_at = Column(DateTime, nullable=True)

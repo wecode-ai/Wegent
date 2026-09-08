@@ -1,4 +1,4 @@
-"""Authenticated Wework inbox and project-scoped notification creation."""
+"""Authenticated Wework inbox and user notification creation."""
 
 from datetime import datetime, timezone
 
@@ -14,7 +14,7 @@ from app.schemas.wework_notification import (
     NotificationCreate,
     NotificationView,
 )
-from app.services.wework_notifications import send_project_notification
+from app.services.wework_notifications import send_wework_notification
 
 router = APIRouter()
 
@@ -48,7 +48,7 @@ def send_notification(
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user_jwt_apikey_tasktoken),
 ) -> WeworkNotification:
-    return send_project_notification(db, user_id=user.id, values=values)
+    return send_wework_notification(db, user_id=user.id, values=values)
 
 
 @router.post("/read-all", status_code=204)

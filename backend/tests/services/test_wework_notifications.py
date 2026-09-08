@@ -14,7 +14,7 @@ from app.services.wework_notifications import (
     create_notification,
     deliver_notification,
     issue_url,
-    send_project_notification,
+    send_wework_notification,
 )
 from tests.services.test_loop_item_assignment import (
     _make_item,
@@ -27,6 +27,60 @@ from tests.services.test_loop_item_assignment import (
 def no_external_delivery():
     with patch("app.core.async_utils.schedule_async_task") as schedule:
         yield schedule
+
+
+@pytest.mark.parametrize(
+    "url", [None, "wework://boards", "wework://tasks/local/task-1"]
+)
+@pytest.mark.parametrize("explicit_self", [False, True])
+def test_send_without_project_persists_in_own_inbox(
+    test_client,
+    test_db,
+    test_user,
+    test_token,
+    no_external_delivery,
+    explicit_self,
+    url,
+):
+    headers = {"Authorization": f"Bearer {test_token}"}
+    values = {"title": "Greeting", "body": "你好", "url": url}
+    if explicit_self:
+        values["recipient_user_id"] = test_user.id
+    path = "/api/v1/wework-notifications"
+
+    assert test_client.post(path, json=values).status_code == 401
+    response = test_client.post(path, json=values, headers=headers)
+
+    assert response.status_code == 201
+    saved = response.json()
+    assert saved["url"] == url
+    assert saved["body"] == "你好"
+    assert test_db.get(WeworkNotification, saved["id"]).user_id == test_user.id
+    no_external_delivery.assert_called_once_with(deliver_notification, saved["id"])
+    inbox = test_client.get(path, headers=headers).json()
+    assert [row["id"] for row in inbox["items"]] == [saved["id"]]
+    assert inbox["unread_count"] == 1
+    read = test_client.post(f"{path}/{saved['id']}/read", headers=headers)
+    assert read.status_code == 200
+    assert read.json()["read_at"] is not None
+    assert test_client.get(path, headers=headers).json()["unread_count"] == 0
+
+
+@pytest.mark.parametrize(
+    "extra, status",
+    [({"recipient_user_id": 999999}, 403), ({"item_id": "ISSUE-1"}, 422)],
+)
+def test_send_without_project_rejects_other_recipient_and_orphan_issue(
+    test_client, test_db, test_token, no_external_delivery, extra, status
+):
+    response = test_client.post(
+        "/api/v1/wework-notifications",
+        json={"title": "Greeting", "body": "Hello", **extra},
+        headers={"Authorization": f"Bearer {test_token}"},
+    )
+    assert response.status_code == status
+    assert test_db.query(WeworkNotification).count() == 0
+    no_external_delivery.assert_not_called()
 
 
 def test_assignment_persists_once_and_honors_opt_out(test_db, test_user):
@@ -106,14 +160,14 @@ def test_inbox_api_is_private_and_read_state_persists(
 ):
     project = _make_project(test_db, test_user)
     member = _make_member(test_db, project, "recipient", BaseRole.Developer)
-    own = send_project_notification(
+    own = send_wework_notification(
         test_db,
         user_id=test_user.id,
         values=NotificationCreate(
             project_id=project.id, title="Review", body="Review failed"
         ),
     )
-    other = send_project_notification(
+    other = send_wework_notification(
         test_db,
         user_id=test_user.id,
         values=NotificationCreate(
@@ -149,7 +203,7 @@ def test_send_rejects_cross_project_item_and_nonmember(test_db, test_user):
     outsider = _make_member(test_db, other, "outsider", BaseRole.Developer)
     for data in [{"item_id": item.id}, {"recipient_user_id": outsider.id}]:
         with pytest.raises(HTTPException):
-            send_project_notification(
+            send_wework_notification(
                 test_db,
                 user_id=test_user.id,
                 values=NotificationCreate(
@@ -159,7 +213,12 @@ def test_send_rejects_cross_project_item_and_nonmember(test_db, test_user):
     assert test_db.query(WeworkNotification).count() == 0
 
 
-async def test_im_receives_saved_link_even_when_live_push_fails(test_db, test_user):
+@pytest.mark.parametrize(
+    "with_source, url", [(False, None), (True, None), (False, "wework://boards")]
+)
+async def test_im_receives_message_even_when_live_push_fails(
+    test_db, test_user, with_source, url
+):
     from types import SimpleNamespace
 
     row = create_notification(
@@ -168,8 +227,9 @@ async def test_im_receives_saved_link_even_when_live_push_fails(test_db, test_us
         actor_user_id=test_user.id,
         title="Review",
         body="Review failed",
-        project_id="123",
-        item_id="ISSUE-1",
+        project_id="123" if with_source else None,
+        item_id="ISSUE-1" if with_source else None,
+        url=url,
     )
     test_db.commit()
     session = SimpleNamespace(channel_type="dingtalk", user_id=test_user.id)
@@ -191,7 +251,8 @@ async def test_im_receives_saved_link_even_when_live_push_fails(test_db, test_us
         ) as send,
     ):
         await deliver_notification(row.id)
-    assert send.call_args.args[2] == f"Review failed\n\n{row.url}"
+    expected = f"Review failed\n\n{row.url}" if row.url else "Review failed"
+    assert send.call_args.args[2] == expected
 
 
 def test_scheme_encodes_external_issue_identifiers():
@@ -199,3 +260,45 @@ def test_scheme_encodes_external_issue_identifiers():
         issue_url("12", "gitlab:12/issue#3")
         == "wework://boards/12/issues/gitlab%3A12%2Fissue%233"
     )
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "https://example.com",
+        "wework://shell/run",
+        "wework://boards/0",
+        "wework://boards/12/../13",
+        "wework://boards/12/issues/%00",
+        "wework://boards/12/issues/%FF",
+        "wework://boards/12/issues/%ZZ",
+        "wework://user@boards/12",
+        "wework://boards?redirect=x",
+        123,
+        " wework://boards",
+        "wework://boards#",
+        "wework://boards\n",
+    ],
+)
+def test_notification_rejects_unsupported_click_targets(
+    test_client, test_db, test_token, url
+):
+    response = test_client.post(
+        "/api/v1/wework-notifications",
+        json={"title": "Hello", "body": "你好", "url": url},
+        headers={"Authorization": f"Bearer {test_token}"},
+    )
+    assert response.status_code == 422
+    assert test_db.query(WeworkNotification).count() == 0
+
+
+def test_explicit_click_target_overrides_source_link(test_db, test_user):
+    project = _make_project(test_db, test_user)
+    row = send_wework_notification(
+        test_db,
+        user_id=test_user.id,
+        values=NotificationCreate(
+            project_id=project.id, title="Hello", body="你好", url="wework://boards/"
+        ),
+    )
+    assert row.url == "wework://boards"

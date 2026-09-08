@@ -644,26 +644,37 @@ def send_notification(
     recipient_user_id: int | None = None,
     space_id: str = "",
     item_id: str = "",
+    url: str | None = None,
 ) -> dict[str, Any]:
     """Send a persistent Wework notification and push to connected IM.
 
-    Omit recipient_user_id to notify the current user. Assignments already
+    No project or Issue is required to notify yourself. Omit recipient_user_id
+    to notify the current user. Set url="wework://boards" to open the board
+    homepage when clicked; project/Issue and device task wework:// links are
+    also supported. This click action does not open the page immediately.
+    Assignments already
     notify their new human owner by default; do not send duplicate alerts.
     """
     from app.schemas.wework_notification import NotificationCreate, NotificationView
-    from app.services.wework_notifications import send_project_notification
+    from app.services.wework_notifications import send_wework_notification
 
     with SessionLocal() as db:
-        resolved_space = _space_id(db, token_info, space_id)
-        resolved_item = item_id or _board_context(db, token_info).get("item_id")
+        context = _board_context(db, token_info)
+        resolved_space = (
+            _space_id(db, token_info, space_id)
+            if space_id or context.get("space_id")
+            else None
+        )
+        resolved_item = item_id or context.get("item_id")
         values = NotificationCreate(
-            project_id=int(resolved_space),
+            project_id=int(resolved_space) if resolved_space else None,
             item_id=resolved_item,
             recipient_user_id=recipient_user_id,
+            url=url,
             title=title,
             body=body,
         )
-        row = send_project_notification(db, user_id=token_info.user_id, values=values)
+        row = send_wework_notification(db, user_id=token_info.user_id, values=values)
         return NotificationView.model_validate(row).model_dump(mode="json")
 
 

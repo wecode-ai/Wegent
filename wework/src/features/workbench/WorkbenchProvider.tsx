@@ -82,7 +82,6 @@ import { useWorkbenchDataRefresh } from './useWorkbenchDataRefresh'
 import { useStableEvent } from './useStableEvent'
 import { initialWorkbenchState, workbenchReducer } from './workbenchReducer'
 import { useRuntimeTaskReminders } from './runtimeTaskReminders'
-import { sendSystemNotification } from './runtimeTaskSystemNotifications'
 import { WorkbenchContext, WorkbenchPaneContext } from './useWorkbench'
 import { projectTaskTrackingApi } from './projectTaskTracking'
 import {
@@ -334,23 +333,6 @@ export function WorkbenchProvider({
     lifecycleStore,
     lifecycleSnapshot,
   })
-  useEffect(
-    () =>
-      resolvedServices.chatStream.subscribe({
-        onWeworkNotification: () => window.dispatchEvent(new Event('wework-notifications-changed')),
-        onProjectTaskAssigned: payload => {
-          void sendSystemNotification({
-            title: t('workbench.project_task_assigned_notification_title'),
-            body: t('workbench.project_task_assigned_notification_body', {
-              assigner: payload.assignerName,
-              task: payload.itemTitle,
-              project: payload.projectName,
-            }),
-          })
-        },
-      }),
-    [resolvedServices.chatStream, t]
-  )
   const currentContextUsage = state.currentRuntimeTask
     ? contextUsageByRuntimeTask[runtimeConversationKey(state.currentRuntimeTask)]
     : undefined

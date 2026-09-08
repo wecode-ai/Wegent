@@ -4,21 +4,24 @@ sidebar_position: 35
 
 # Wework notifications and navigation
 
-The bell beside Feedback displays your inbox and unread count. Opening a notification marks it read and opens its board Issue. Notifications are stored in Backend and remain available across devices and reconnects.
+The bell beside Feedback displays your inbox and unread count. Opening a notification marks it read. Entries with a source link open that destination; entries without a link keep the current page and notification content visible. Notifications are stored in Backend and remain available across devices and reconnects.
 
 Human assignments offer Notify or Do not notify before saving, including assignment through board lanes and Issue creation. Assigning the same person again does not duplicate the notification. Ordinary self-assignment stays quiet; AI handing an Issue back to its user sends a notification.
 
 Delivery also attempts the recipient's connected private IM sessions. IM failures do not remove the inbox entry or change the active IM task.
 
-The first integration covers Backend boards. The built-in `wework-notifications` skill calls `wework_space.send_notification`. Omitting the recipient notifies the authenticated user; another recipient must belong to the same project. For example: “If acceptance fails, notify me in Wework.” AI assignments notify by default and must not send a duplicate alert; explicit opt-out uses `notify_assignee: false`.
+Notifications belong to Wework users and do not require a project or board. With Backend connected, an ordinary conversation can request “Send me a notification saying hello.” The built-in `wework-notifications` skill calls `wework_space.send_notification` with a title and body. Omitting the recipient notifies the authenticated user. Project and Issue context are optional sources: when provided, they are authorized and produce a navigation link. Sending to another user requires a shared Backend project to establish recipient authorization. For example: “If acceptance fails, notify me in Wework.” AI assignments notify by default and must not send a duplicate alert; explicit opt-out uses `notify_assignee: false`.
+
+An optional `url` specifies the click destination independently of project source. For “send me a hello notification that opens the board homepage when clicked”, use `{ "title": "Hello", "body": "Hello", "url": "wework://boards" }`. Receiving it keeps the current page; clicking opens the board homepage. An explicit URL takes precedence over the source link.
 
 ## Scheme addresses
 
-| Address                                       | Destination                 |
-| --------------------------------------------- | --------------------------- |
-| `wework://boards/{projectId}`                 | Backend board               |
-| `wework://boards/{projectId}/issues/{itemId}` | Board Issue                 |
-| `wework://tasks/{deviceId}/{taskId}`          | Task on a particular device |
+| Address                                       | Destination                         |
+| --------------------------------------------- | ----------------------------------- |
+| `wework://boards`                             | Board homepage; no project required |
+| `wework://boards/{projectId}`                 | Backend board                       |
+| `wework://boards/{projectId}/issues/{itemId}` | Board Issue                         |
+| `wework://tasks/{deviceId}/{taskId}`          | Task on a particular device         |
 
 URL-encode each address segment. In-app Markdown links, inbox actions and Electron external launches use the same destination parser. Installers register `wework`; cold-start URLs wait until authentication and the workbench are ready. Normal resource permissions apply. Links cannot execute commands, switch servers or grant access.
 
