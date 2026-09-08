@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Any, Mapping, Optional, Tuple, Type
 
 from dotenv import dotenv_values
-from pydantic import field_validator
+from pydantic import Field, field_validator
 from pydantic_settings import (
     BaseSettings,
     PydanticBaseSettingsSource,
@@ -132,6 +132,15 @@ class Settings(BaseSettings):
 
     # Database auto-migration configuration (only in development)
     DB_AUTO_MIGRATE: bool = True
+
+    # Database connection pool configuration. Each Backend or Celery process owns
+    # its own pool, so deployment capacity must account for every process.
+    DB_POOL_SIZE: int = Field(default=20, ge=1)
+    DB_MAX_OVERFLOW: int = Field(default=20, ge=0)
+    DB_ASYNC_POOL_SIZE: int = Field(default=5, ge=1)
+    DB_ASYNC_MAX_OVERFLOW: int = Field(default=5, ge=0)
+    DB_POOL_TIMEOUT: int = Field(default=30, ge=1)
+    DB_POOL_RECYCLE: int = Field(default=3600, ge=1)
 
     # Executor configuration
     EXECUTOR_DELETE_TASK_URL: str = (

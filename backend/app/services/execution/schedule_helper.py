@@ -11,6 +11,7 @@ handling the async-to-sync context switching and database queries.
 
 import asyncio
 import logging
+import threading
 from abc import ABC, abstractmethod
 from concurrent.futures import ThreadPoolExecutor
 from typing import Any
@@ -19,6 +20,7 @@ from sqlalchemy.orm import Session
 
 from app.utils.prompt_utils import extract_display_prompt
 from shared.telemetry.decorators import add_span_event, trace_async
+from shared.telemetry.metrics import record_dispatch_waiting_change
 
 logger = logging.getLogger(__name__)
 
@@ -94,6 +96,30 @@ def _run_in_new_loop(coro) -> Any:
 
 # Thread pool for running async dispatch in separate threads
 _thread_pool: ThreadPoolExecutor | None = None
+
+
+class _DispatchWaitMetric:
+    """Track one scheduled dispatch until its execution starts or is cancelled."""
+
+    def __init__(self) -> None:
+        self._waiting = True
+        self._lock = threading.Lock()
+        record_dispatch_waiting_change(1)
+
+    def finish_waiting(self) -> None:
+        with self._lock:
+            if not self._waiting:
+                return
+            self._waiting = False
+        record_dispatch_waiting_change(-1)
+
+
+async def _run_scheduled_dispatch(
+    task_id: int,
+    wait_metric: _DispatchWaitMetric,
+) -> None:
+    wait_metric.finish_waiting()
+    await _dispatch_task_async(task_id)
 
 
 def _resolve_dispatch_message(db: Session, subtask: "Subtask") -> str:
@@ -488,14 +514,21 @@ class _RunningLoopStrategy(_DispatchStrategy):
             f"[schedule_dispatch] Using running loop strategy for task_id={task_id}"
         )
 
+        wait_metric = _DispatchWaitMetric()
+
         def run_in_thread():
-            return _run_in_new_loop(_dispatch_task_async(task_id))
+            return _run_in_new_loop(_run_scheduled_dispatch(task_id, wait_metric))
 
         # Submit to thread pool without blocking
-        future = _get_thread_pool().submit(run_in_thread)
+        try:
+            future = _get_thread_pool().submit(run_in_thread)
+        except Exception:
+            wait_metric.finish_waiting()
+            raise
 
         # Add callback for logging
         def log_result(f):
+            wait_metric.finish_waiting()
             try:
                 f.result(timeout=30)
                 logger.info(
@@ -531,7 +564,16 @@ class _MainLoopStrategy(_DispatchStrategy):
             from app.services.chat.webpage_ws_chat_emitter import get_main_event_loop
 
             main_loop = get_main_event_loop()
-            asyncio.run_coroutine_threadsafe(_dispatch_task_async(task_id), main_loop)
+            wait_metric = _DispatchWaitMetric()
+            try:
+                future = asyncio.run_coroutine_threadsafe(
+                    _run_scheduled_dispatch(task_id, wait_metric),
+                    main_loop,
+                )
+            except Exception:
+                wait_metric.finish_waiting()
+                raise
+            future.add_done_callback(lambda _future: wait_metric.finish_waiting())
             logger.debug(
                 f"[schedule_dispatch] Scheduled dispatch on main loop for task {task_id}"
             )

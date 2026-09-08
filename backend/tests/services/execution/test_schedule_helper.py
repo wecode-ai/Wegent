@@ -1,10 +1,11 @@
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, call, patch
 
 import pytest
 
 from app.services.execution.schedule_helper import (
     _dispatch_task_async,
+    _DispatchWaitMetric,
     _extract_device_id_from_executor_name,
 )
 
@@ -21,6 +22,20 @@ def test_extract_device_id_from_executor_name_ignores_non_device_executor() -> N
     assert _extract_device_id_from_executor_name("executor-123") is None
     assert _extract_device_id_from_executor_name("") is None
     assert _extract_device_id_from_executor_name(None) is None
+
+
+def test_dispatch_wait_metric_finishes_exactly_once() -> None:
+    with patch(
+        "app.services.execution.schedule_helper.record_dispatch_waiting_change"
+    ) as record_waiting:
+        metric = _DispatchWaitMetric()
+        metric.finish_waiting()
+        metric.finish_waiting()
+
+    assert record_waiting.call_args_list == [
+        call(1),
+        call(-1),
+    ]
 
 
 @pytest.mark.asyncio
