@@ -24,7 +24,10 @@ use tokio::{
 };
 
 use crate::{
-    agents::{runtime_capabilities, task_identity::task_identity_env},
+    agents::{
+        runtime_capabilities,
+        task_identity::{task_identity_env, TASK_SCOPED_ENV_KEYS},
+    },
     attachments::{process_prompt, AttachmentPromptProcessor, AttachmentRecord},
     image_preprocessor::prepare_image_bytes_for_model_with_short_edge_limit,
     logging::{log_executor_event, task_fields},
@@ -2772,7 +2775,10 @@ fn spawn_codex_app_server(
     let codex_home = wework_codex_home();
     prepare_wework_codex_home(&codex_home)?;
     let mut command = Command::new(&resolved_binary);
-    for key in EXECUTOR_INTERNAL_ENV_KEYS {
+    for key in EXECUTOR_INTERNAL_ENV_KEYS
+        .iter()
+        .chain(TASK_SCOPED_ENV_KEYS.iter())
+    {
         command.env_remove(key);
     }
     for config_override in &launch_config.config_overrides {
