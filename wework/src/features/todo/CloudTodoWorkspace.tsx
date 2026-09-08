@@ -3209,10 +3209,10 @@ export function CloudTodoWorkspace({
     if (focusedItemRequestRef.current === requestKey) return
     const focusedItem = items.find(item => item.id === focusedItemId)
     if (!focusedItem || focusedItem.can_view_detail === false) return
-    focusedItemRequestRef.current = requestKey
     let active = true
     queueMicrotask(() => {
       if (!active) return
+      focusedItemRequestRef.current = requestKey
       setRootView('projects')
       setProjectView('board')
       setBoardParentId(focusedItem.parent_id)

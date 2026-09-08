@@ -27,6 +27,8 @@ URL-encode each address segment. In-app Markdown links, inbox actions and Electr
 
 Native addresses remain queued in the Electron process until navigation is acknowledged. Renderer remounts and authentication restoration do not consume them prematurely.
 
+An Issue navigation request is marked as handled only when its detail view opens. The request remains pending while project data loads or a parent rerender cancels the scheduled operation, so clicking a notification does not stop at the board without opening the Issue.
+
 ## Architecture
 
 ```mermaid

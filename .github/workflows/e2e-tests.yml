@@ -582,6 +582,10 @@ jobs:
 
   executor-e2e-tests:
     name: Executor E2E Tests
+    permissions:
+      actions: read
+      contents: read
+      packages: read
     needs:
       [
         build-frontend-e2e,
@@ -750,10 +754,12 @@ jobs:
 
       - name: Download fork Executor E2E runtime
         if: needs.build-executor-e2e-runtime.outputs.artifact == 'true'
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
-        with:
-          name: executor-e2e-runtime
-          path: .ci-artifacts
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          .github/scripts/download-actions-artifact.sh \
+            executor-e2e-runtime \
+            .ci-artifacts
 
       - name: Restore fork Executor E2E runtime
         if: needs.build-executor-e2e-runtime.outputs.artifact == 'true'
