@@ -480,7 +480,8 @@ async function declaresProfilePatch(profileDir: string, packageName: string): Pr
       )
     ) as { dsh?: { bundle?: { patch?: unknown } } }
     return manifest.dsh?.bundle?.patch !== undefined
-  } catch {
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
     return false
   }
 }
