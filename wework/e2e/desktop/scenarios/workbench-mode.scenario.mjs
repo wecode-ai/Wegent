@@ -38,6 +38,10 @@ async function assertMode(control, mode) {
 
 async function assertHome(control, mode) {
   await control.command('navigate', 'body', { value: '/' })
+  await control.command(
+    'waitFor',
+    mode === 'focus' ? '[data-testid="focus-home"]' : '[data-testid="task-suggestion-categories"]'
+  )
   const focusHomeCount = Number(
     await control.command('getElementCount', '[data-testid="focus-home"]')
   )
