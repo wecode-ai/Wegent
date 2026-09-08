@@ -15,9 +15,10 @@ by the same WebContents, so layout, input, focus, stacking, and lifecycle retain
 semantics.
 
 For capture, the plugin reports the iframe's `getBoundingClientRect()`. The scoped HostPipe resolves
-the calling Smart App owner and invokes `capturePage(rect)` on that owner WebContents. Cross-origin
-OOPIF pixels are part of the owner's final composited frame, so the plugin does not read iframe DOM
-and does not need desktop screen-recording permission.
+the calling Smart App owner, captures its final composed surface through CDP first, and keeps
+`capturePage(rect)` as the fallback. Cross-origin iframe OOPIF pixels are part of the owner's final
+composited frame, so the plugin does not read iframe DOM and does not need desktop screen-recording
+permission.
 
 ```text
 BrowserWindow
@@ -27,7 +28,8 @@ BrowserWindow
 
 iframe DOMRect
   → dshCapture.ownerRect
-  → owner WebContents.capturePage(rect)
+  → owner CDP Page.captureScreenshot(fromSurface=true, clip=rect)
+  → owner WebContents.capturePage(rect) (fallback)
   → PNG data URL
 ```
 
