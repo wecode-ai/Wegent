@@ -672,6 +672,17 @@ export function ProjectAutomationView(props: ProjectAutomationViewProps) {
       onLoadExecutionCatalog={loadExecutionCatalog}
       onLoadExecutionPlugins={loadExecutionPlugins}
       onLoadRuns={refreshRuns}
+      onRunRule={
+        projectAutomationApi
+          ? async rule => {
+              const run = await projectAutomationApi.runNow(projectId, rule.id)
+              setRuns(current => [
+                automationRunFromBackend(run, rule),
+                ...current.filter(item => item.id !== run.id),
+              ])
+            }
+          : undefined
+      }
       onSaveRule={persistRule}
       onToggleRule={toggleRule}
       onDuplicateRule={duplicateRule}

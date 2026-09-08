@@ -36,6 +36,7 @@ use crate::{
 
 const FILE_EDIT_HOOK_COMMAND_ENV: &str = "WEGENT_FILE_EDIT_HOOK_COMMAND";
 const CLAUDE_FILE_EDIT_HOOK_MATCHER: &str = "Write|Edit|MultiEdit|NotebookEdit";
+const CLAUDE_MAX_CONTEXT_TOKENS_ENV: &str = "CLAUDE_CODE_MAX_CONTEXT_TOKENS";
 const SKILL_MANIFEST_FILE: &str = ".wegent-skills.json";
 const DEFAULT_CLAUDE_MODEL_ENV: &[&str] = &[
     "ANTHROPIC_DEFAULT_HAIKU_MODEL",
@@ -474,7 +475,7 @@ pub(crate) fn model_id(request: &ExecutionRequest) -> Option<String> {
 fn apply_model_environment(mut spec: CommandSpec, request: &ExecutionRequest) -> CommandSpec {
     let env_values = model_env(request);
     for (key, value) in &env_values {
-        if is_process_env_key(key) {
+        if key != CLAUDE_MAX_CONTEXT_TOKENS_ENV && is_process_env_key(key) {
             spec = spec.env(key, value);
         }
     }
@@ -491,9 +492,59 @@ fn apply_model_environment(mut spec: CommandSpec, request: &ExecutionRequest) ->
         }
     }
 
+    spec = apply_model_context_window_environment(spec, request);
     spec = apply_default_model_environment(spec, request);
 
     spec
+}
+
+fn apply_model_context_window_environment(
+    spec: CommandSpec,
+    request: &ExecutionRequest,
+) -> CommandSpec {
+    let Some((context_window, source)) = resolved_claude_context_window(request) else {
+        return spec;
+    };
+
+    let mut fields = task_fields(&request.task_id, &request.subtask_id);
+    fields.push(("context_window_tokens", context_window.to_string()));
+    fields.push(("context_window_source", source.to_owned()));
+    log_executor_event("claude context window configured", &fields);
+
+    spec.env(CLAUDE_MAX_CONTEXT_TOKENS_ENV, context_window.to_string())
+}
+
+fn resolved_claude_context_window(request: &ExecutionRequest) -> Option<(i64, &'static str)> {
+    if let Some(context_window) = model_string(request, CLAUDE_MAX_CONTEXT_TOKENS_ENV)
+        .and_then(|value| positive_context_window(&Value::String(value)))
+    {
+        return Some((context_window, "explicit_env"));
+    }
+
+    if let Some(context_window) = claude_model_context_window(&request.model_config) {
+        return Some((context_window, "model_config"));
+    }
+
+    process_model_environment(CLAUDE_MAX_CONTEXT_TOKENS_ENV)
+        .and_then(|value| positive_context_window(&Value::String(value)))
+        .map(|context_window| (context_window, "process_env"))
+}
+
+fn claude_model_context_window(model_config: &Value) -> Option<i64> {
+    model_config
+        .get("model_context_window")
+        .or_else(|| model_config.get("context_window"))
+        .or_else(|| model_config.get("contextWindow"))
+        .and_then(positive_context_window)
+}
+
+fn positive_context_window(value: &Value) -> Option<i64> {
+    let context_window = match value {
+        Value::Number(value) => value.as_i64(),
+        Value::String(value) => value.trim().parse().ok(),
+        _ => None,
+    }?;
+    (context_window > 0).then_some(context_window)
 }
 
 fn apply_default_model_environment(

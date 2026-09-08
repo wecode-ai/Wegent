@@ -91,6 +91,10 @@ import {
 
 import { waitForTaskRowByText } from './task-state-flows.mjs'
 import { remoteDeviceE2EExtension } from '../remote-device-extension.mjs'
+import {
+  verifyRemoteTerminalRemainsResponsiveAfterOutputBurst,
+  verifyTerminalWireCompatibility,
+} from './terminal-compatibility-flows.mjs'
 
 import {
   captureVerificationScreenshot,
@@ -130,6 +134,44 @@ async function verifyRemoteTerminalUsesPanelWidth(control) {
   throw new Error(
     `The remote PTY did not reach the fitted panel width; last size: ${lastReportedSize}; terminal: ${terminalText.slice(-2000)}`
   )
+}
+
+async function closeRemoteTerminal(control) {
+  await control.command('click', '[data-testid="close-bottom-workspace-tab-button"]')
+  await waitForSnapshot(
+    control,
+    value =>
+      !value.testIds.includes('workspace-tool-launcher') &&
+      !value.testIds.includes('workspace-terminal-window'),
+    'The cloud task terminal and bottom panel did not close cleanly',
+    DEFAULT_STEP_TIMEOUT_MS,
+    ACTIVE_WORKBENCH_SELECTOR
+  )
+}
+
+async function verifyCloudTerminalCompatibility(control, cloudEnvironment) {
+  for (const requestedVersion of [undefined, 1, 2]) {
+    await verifyTerminalWireCompatibility(cloudEnvironment, {
+      requestedVersion,
+      expectedVersion: requestedVersion ?? 1,
+      name: `wire-request-${requestedVersion ?? 'absent'}`,
+    })
+  }
+  try {
+    await cloudEnvironment.restartBackendWithTerminalProtocolV2(false)
+    await verifyTerminalWireCompatibility(cloudEnvironment, {
+      requestedVersion: 2,
+      expectedVersion: 1,
+      name: 'wire-v2-disabled',
+    })
+    await openBottomWorkspaceTerminal(control, 'The cloud task with terminal v2 disabled')
+    await verifyRemoteTerminalUsesPanelWidth(control)
+    await verifyRemoteTerminalRemainsResponsiveAfterOutputBurst(control, 'renderer-v1')
+    await captureVerificationScreenshot(control, 'cloud-04c-legacy-terminal-rendered.png')
+    await closeRemoteTerminal(control)
+  } finally {
+    await cloudEnvironment.restartBackendWithTerminalProtocolV2(true)
+  }
 }
 
 async function waitForSingleProjectByTitle(
@@ -764,65 +806,34 @@ export async function verifyDisabledRemoteSessionCapabilities(
   await captureVerificationScreenshot(control, 'cloud-00-disabled-session-project.png')
 }
 
-export async function verifyLocalRemoteControlFlow(control, cloudEnvironment) {
-  await control.command('setAppPreferences', 'body', {
-    value: JSON.stringify({ remoteControlEnabled: false }),
-  })
+export async function verifyWeworkAppDeviceRegistrationFlow(control, cloudEnvironment) {
   await control.command('navigate', 'body', { value: '/settings/connections' })
-  await control.command('waitFor', '[data-testid="remote-control-toggle"]', {
-    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
-  })
-  assert.equal(
-    await control.command('getAttribute', '[data-testid="remote-control-toggle"]', {
-      value: 'aria-checked',
-    }),
-    'false',
-    'Remote control should default to disabled'
-  )
 
-  const initialDevice = await cloudEnvironment.waitForConnectedAppDevice()
-  assert.ok(initialDevice.runtime_instance_id, 'The app device did not expose a Runtime identity')
-  assert.ok(initialDevice.app_device_id, 'The app device did not expose its physical app identity')
-
-  await control.command('click', '[data-testid="remote-control-toggle"]')
-  const remoteDevice = await cloudEnvironment.waitForDeviceType(initialDevice.device_id, 'remote')
-  assert.equal(remoteDevice.device_id, initialDevice.device_id)
-  assert.equal(remoteDevice.runtime_instance_id, initialDevice.runtime_instance_id)
-  assert.equal(remoteDevice.app_device_id, initialDevice.app_device_id)
-  assert.equal(
-    await control.command('getAttribute', '[data-testid="remote-control-toggle"]', {
-      value: 'aria-checked',
-    }),
-    'true',
-    'Remote control switch did not stay enabled'
+  const appDevice = await cloudEnvironment.waitForConnectedAppDevice()
+  assert.match(
+    appDevice.device_id,
+    /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i,
+    'A fresh Wework installation must register its persisted UUID'
   )
-  const runtimeSettings = await cloudEnvironment.runtimeSettings(initialDevice.device_id)
-  assert.equal(runtimeSettings.device_id, initialDevice.device_id)
-  await captureVerificationScreenshot(control, 'cloud-00-local-remote-control-enabled.png')
-
-  await control.command('click', '[data-testid="remote-control-toggle"]')
-  const appDevice = await cloudEnvironment.waitForDeviceType(initialDevice.device_id, 'app')
-  assert.equal(appDevice.device_id, initialDevice.device_id)
-  assert.equal(appDevice.runtime_instance_id, initialDevice.runtime_instance_id)
-  assert.equal(appDevice.app_device_id, initialDevice.app_device_id)
-  assert.equal(
-    (await cloudEnvironment.devices()).filter(
-      device => device.device_id === initialDevice.device_id
-    ).length,
-    1,
-    'Toggling remote control created a duplicate device registration'
+  assert.equal(appDevice.execution_target_id, `app-record-${appDevice.id}`)
+  assert.ok(appDevice.runtime_instance_id, 'The app device did not expose a Runtime identity')
+  assert.ok(appDevice.app_device_id, 'The app device did not expose its physical app identity')
+  const devices = await cloudEnvironment.devices()
+  for (const identity of ['device_id', 'runtime_instance_id', 'app_device_id']) {
+    assert.equal(
+      devices.filter(
+        device => device.device_type === 'app' && device[identity] === appDevice[identity]
+      ).length,
+      1,
+      `Wework created a duplicate app device registration for ${identity}`
+    )
+  }
+  const snapshot = JSON.parse(await control.command('snapshot', 'body'))
+  assert.ok(
+    !snapshot.testIds.includes('remote-control-toggle'),
+    'Wework app registration should not depend on a remote-control switch'
   )
-  assert.equal(
-    await control.command('getAttribute', '[data-testid="remote-control-toggle"]', {
-      value: 'aria-checked',
-    }),
-    'false',
-    'Remote control switch did not stay disabled'
-  )
-  await assert.rejects(
-    () => cloudEnvironment.runtimeSettings(initialDevice.device_id),
-    /Remote control is disabled for this app device/
-  )
+  await captureVerificationScreenshot(control, 'cloud-00-wework-app-device.png')
   await control.command('navigate', 'body', { value: '/' })
 }
 
@@ -875,7 +886,7 @@ async function verifyCloudProjectFlow(
   await control.command('waitFor', '[data-testid="projects-create-button"]', {
     timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
   })
-  await verifyLocalRemoteControlFlow(control, cloudEnvironment)
+  await verifyWeworkAppDeviceRegistrationFlow(control, cloudEnvironment)
   await verifyRemoteDockerCommandFlow(control, cloudEnvironment)
   await control.command('waitFor', '[data-testid="projects-create-button"]', {
     timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
@@ -1042,17 +1053,10 @@ async function verifyCloudProjectFlow(
   await selectE2EModel(control, DEFAULT_MODEL_ID, DEFAULT_MODEL_LABEL)
   await openBottomWorkspaceTerminal(control, 'The new cloud task')
   await verifyRemoteTerminalUsesPanelWidth(control)
+  await verifyRemoteTerminalRemainsResponsiveAfterOutputBurst(control, 'renderer-v2')
   await captureVerificationScreenshot(control, 'cloud-04b-new-task-terminal-open.png')
-  await control.command('click', '[data-testid="close-bottom-workspace-tab-button"]')
-  await waitForSnapshot(
-    control,
-    value =>
-      !value.testIds.includes('workspace-tool-launcher') &&
-      !value.testIds.includes('workspace-terminal-window'),
-    'The new cloud task terminal and bottom panel did not close cleanly',
-    DEFAULT_STEP_TIMEOUT_MS,
-    ACTIVE_WORKBENCH_SELECTOR
-  )
+  await closeRemoteTerminal(control)
+  await verifyCloudTerminalCompatibility(control, cloudEnvironment)
 
   control.setScenario('cloud_initial')
   await sendPrompt(control, composerSelector, CLOUD_TASK_PROMPT)

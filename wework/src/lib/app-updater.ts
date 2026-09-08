@@ -10,10 +10,8 @@ export interface WeworkUpdateInfo {
   body?: string
 }
 
-export interface WeworkUpdateDownloadProgress {
-  downloadedBytes: number
-  totalBytes: number | null
-}
+import type { WeworkUpdateDownloadProgress } from '../../electron/src/host/app-update-progress'
+export type { WeworkUpdateDownloadProgress } from '../../electron/src/host/app-update-progress'
 
 interface PendingUpdate {
   version: string

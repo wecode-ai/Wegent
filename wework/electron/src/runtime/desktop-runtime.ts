@@ -16,6 +16,7 @@ import {
   type WorkbenchRuntimeLaunch,
   type WorkbenchRuntimeSnapshot,
 } from './workbench-runtime.js'
+import { applyWorkbenchModeToCorePlugins, type WorkbenchMode } from './workbench-mode.js'
 
 const CORE_APP_PATH = '/'
 const CORE_DSH_START_TIMEOUT_MS = 120_000
@@ -25,6 +26,7 @@ export interface DesktopRuntimeOptions {
   dataDirectory: string
   logDirectory: string
   hostPipe: HostPipeServer
+  readWorkbenchMode?: () => Promise<WorkbenchMode>
   onExecutorEvent?: (event: string, payload: Record<string, unknown>) => void
   createCoreDsh?: (options: DshRuntimeOptions) => CoreDshHandle
 }
@@ -272,6 +274,10 @@ export class DesktopRuntime {
         nodeCommand: launch.command,
         environment: launch.environment,
       })
+      if (this.options.readWorkbenchMode) {
+        await applyWorkbenchModeToCorePlugins(await this.options.readWorkbenchMode(), plugins)
+        if (this.lifecycleGeneration !== generation) return
+      }
       const developmentRoot = this.options.environment.WEWORK_PLUGIN_DEVELOPMENT_ROOT?.trim()
       if (developmentRoot && this.developmentPlugin?.sourceRoot !== resolve(developmentRoot)) {
         const developmentPlugin = await plugins.ensureDevelopmentPlugin(developmentRoot)

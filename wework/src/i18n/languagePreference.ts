@@ -40,6 +40,7 @@ export function resolvePreferredLanguage(
 
 export async function applyLanguagePreference(preference: AppLanguagePreference) {
   const language = resolvePreferredLanguage(preference)
+  document.documentElement.lang = language
   if (i18n.resolvedLanguage === language || i18n.language === language) {
     return language
   }

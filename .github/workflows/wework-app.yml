@@ -296,6 +296,15 @@ jobs:
           chmod 0600 "$key_path"
           echo "APPLE_API_KEY=$key_path" >> "$GITHUB_ENV"
 
+      - name: Restore immutable signed components
+        if: matrix.platform == 'macos'
+        uses: actions/cache@v4
+        with:
+          path: wework/electron/.cache/signed-components
+          key: signed-components-v1-${{ matrix.arch }}-${{ env.APPLE_SIGNING_IDENTITY }}-${{ needs.prepare-release.outputs.release_sha }}
+          restore-keys: |
+            signed-components-v1-${{ matrix.arch }}-${{ env.APPLE_SIGNING_IDENTITY }}-
+
       - name: Build signed Electron release
         env:
           APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
@@ -331,6 +340,7 @@ jobs:
         run: |
           pnpm --filter wework e2e:desktop -- \
             --parallel-segments release-package-startup,component-update,app-update-differential
+          pnpm --filter wework e2e:desktop -- --segment app-update-baseline
 
       - name: Prepare installer and legacy bridge assets
         shell: bash

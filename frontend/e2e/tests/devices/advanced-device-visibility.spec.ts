@@ -74,6 +74,19 @@ async function waitForDevices(
 }
 
 async function deleteDevice(request: APIRequestContext, token: string, deviceId: string) {
+  // Disposing a socket does not synchronously complete backend disconnection.
+  await expect
+    .poll(async () => {
+      const response = await request.get(`${API_BASE_URL}/api/devices`, {
+        headers: { Authorization: `Bearer ${token}` },
+      })
+      expect(response.status()).toBe(200)
+      const { items } = (await response.json()) as {
+        items: Array<{ device_id: string; status: string }>
+      }
+      return items.find(device => device.device_id === deviceId)?.status ?? 'offline'
+    })
+    .toBe('offline')
   const response = await request.delete(
     `${API_BASE_URL}/api/devices/${encodeURIComponent(deviceId)}`,
     { headers: { Authorization: `Bearer ${token}` } }
