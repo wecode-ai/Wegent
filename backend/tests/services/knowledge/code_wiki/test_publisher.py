@@ -633,10 +633,10 @@ def test_the_agents_declared_order_is_what_gets_recorded(
     ]
 
 
-def test_required_review_rejects_a_csv_string_as_one_page_order_path(
+def test_required_review_accepts_a_legacy_csv_page_order(
     test_db: Session, knowledge_base: Kind, effects: FakeEffects
 ):
-    """A malformed order must not fall back to concurrent writer completion order."""
+    """Older completed versions stored a comma-separated order as one element."""
     generation = _generation(test_db, knowledge_base.id)
     pages = [
         PageSource(path="index", title="index", content="body"),
@@ -680,9 +680,12 @@ def test_required_review_rejects_a_csv_string_as_one_page_order_path(
         effects=effects.build(),
     )
 
-    assert result.published is False
-    assert "page order lists paths not written" in result.reason
-    assert PAGE_ORDER_KEY not in (knowledge_base.json or {})["spec"]
+    assert result.published is True
+    assert (knowledge_base.json or {})["spec"][PAGE_ORDER_KEY] == [
+        "index",
+        "quickstart",
+        "architecture",
+    ]
 
 
 def test_pages_the_agent_did_not_rank_follow_the_ones_it_did(

@@ -6,6 +6,9 @@ use super::tasks::{forked_task_link, mark_runtime_model_switch, runtime_model_se
 use super::turns::{read_runtime_turn_queue, write_runtime_turn_queue};
 use super::*;
 
+#[path = "execution_timestamp_tests.rs"]
+mod execution_timestamp_tests;
+
 #[test]
 fn codex_runtime_proxy_defaults_to_initialized_without_proxy() {
     let config = CodexRuntimeProxyConfig::default();
@@ -4365,6 +4368,7 @@ fn active_local_task_routes_only_notifications_from_other_turns_globally() {
     link.updated_at = 1_780_000_000_000;
     handler.upsert_local_task(link);
     let execution_id = start_test_execution(&handler, local_task_id);
+    let started_at = handler.store.get_task(local_task_id).unwrap().updated_at;
     handler.register_thread_event_route("thread-1", local_task_id.to_owned(), request, true);
     handler.record_active_codex_turn(
         local_task_id,
@@ -4379,7 +4383,7 @@ fn active_local_task_routes_only_notifications_from_other_turns_globally() {
             .get_task(local_task_id)
             .expect("registered task should remain stored")
             .updated_at,
-        1_780_000_000_000
+        started_at
     );
 
     handler.route_codex_notification(json!({

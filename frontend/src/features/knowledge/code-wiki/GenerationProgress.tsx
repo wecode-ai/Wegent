@@ -35,11 +35,14 @@ export function GenerationProgress({
   if (!progress) return null
   const hasSteps = progress.total_steps > 0
   const steps = progress.total_steps === 3 ? PLAN_ONLY_STEPS : PLAN_AND_QA_STEPS
+  const planLabel = progress.review_required
+    ? 'codeWiki.progress.stepLabel.planPassed'
+    : 'codeWiki.progress.stepLabel.planCompleted'
 
   const stepLabel = (step: ProgressStep, number: number) => {
     if (number < progress.current_step) {
       if (step === 'plan') {
-        return t('codeWiki.progress.stepLabel.planPassed', { count: progress.pages_total })
+        return t(planLabel, { count: progress.pages_total })
       }
       return t(`codeWiki.progress.stepLabel.${step}Completed`, {
         count: progress.pages_total,
@@ -59,7 +62,7 @@ export function GenerationProgress({
 
   return (
     <div className="px-4 pt-4" data-testid="code-wiki-generation-progress">
-      <section className="mx-auto w-full max-w-2xl overflow-hidden rounded-xl border border-border bg-surface shadow-sm">
+      <section className="mx-auto w-full max-w-5xl overflow-hidden rounded-xl border border-border bg-surface shadow-sm">
         <div className="flex items-center">
           <button
             type="button"
