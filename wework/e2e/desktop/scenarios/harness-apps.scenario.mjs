@@ -279,7 +279,9 @@ export async function createDesktopScenario({ captureScreenshot, resultDir, uiTi
     version: '0.0.9',
   })
   const officialSource = await createOfficialSource(resultDir, packagePath)
-  const downloadsPath = join(homedir(), 'Downloads')
+  // Electron falls back to HOME on Linux when XDG user directories are unavailable.
+  const downloadsPath =
+    process.platform === 'linux' ? join(resultDir, 'home') : join(homedir(), 'Downloads')
   let sharedSmartAppId = null
   let ownerRequest
   return {
