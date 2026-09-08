@@ -18,6 +18,11 @@ name = "wegent-executor-dev"
 path = "src/bin/wegent-executor-dev.rs"
 required-features = ["dev-reload"]
 
+[[example]]
+name = "terminal_load"
+path = "examples/terminal_load.rs"
+test = true
+
 [features]
 default = []
 dev-reload = ["dep:ctrlc", "dep:notify"]

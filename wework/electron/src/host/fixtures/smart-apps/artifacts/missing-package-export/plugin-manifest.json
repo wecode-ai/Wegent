@@ -1,9 +1,0 @@
-{
-  "name": "missing-package-export",
-  "displayName": "Missing Package Export",
-  "version": "1.0.0",
-  "type": "deepseek-harness-plugin-bundle",
-  "description": "Missing package export fixture",
-  "entry": { "installPackage": "package", "profile": "web" },
-  "requirements": { "dsh": "0.1.0-rc.8", "node": ">=22" }
-}

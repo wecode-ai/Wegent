@@ -831,6 +831,15 @@ export function WorkbenchProvider({
     },
     [persistProjectWorkPreference, projectExecutionMode, state.currentRuntimeTask, t]
   )
+  const projectModelSelection = useMemo(() => {
+    if (state.currentRuntimeTask || !state.currentProject || !state.runtimeWork) return null
+    const runtimeProject = state.runtimeWork.projects.find(
+      item => runtimeProjectUiId(item.project) === state.currentProject?.id
+    )?.project
+    return runtimeProject?.source === 'local_project'
+      ? (runtimeProject.aiSettings?.modelSelection ?? null)
+      : null
+  }, [state.currentProject, state.currentRuntimeTask, state.runtimeWork])
   const modelSelectionConfig = useMemo(() => {
     if (state.currentRuntimeTask) {
       return (
@@ -839,27 +848,8 @@ export function WorkbenchProvider({
         null
       )
     }
-    const runtimeProject =
-      state.currentProject && state.runtimeWork
-        ? state.runtimeWork.projects.find(
-            item => runtimeProjectUiId(item.project) === state.currentProject?.id
-          )?.project
-        : null
-    const projectModelSelection =
-      runtimeProject?.source === 'local_project'
-        ? (runtimeProject.aiSettings?.modelSelection ?? null)
-        : null
-    if (projectModelSelection) return projectModelSelection
-    return getNewChatModelSelection(currentUser) ?? null
-  }, [currentUser, state.currentProject, state.currentRuntimeTask, state.runtimeWork])
-  const usesLocalProjectScopedSelection = useMemo(() => {
-    if (state.currentRuntimeTask || !state.currentProject || !state.runtimeWork) return false
-    return state.runtimeWork.projects.some(
-      item =>
-        runtimeProjectUiId(item.project) === state.currentProject?.id &&
-        item.project.source === 'local_project'
-    )
-  }, [state.currentProject, state.currentRuntimeTask, state.runtimeWork])
+    return projectModelSelection ?? getNewChatModelSelection(currentUser) ?? null
+  }, [currentUser, projectModelSelection, state.currentRuntimeTask, state.runtimeWork])
   const defaultModelSelectionConfig = useCallback(
     (models: UnifiedModel[]) => defaultNewChatModelSelection(models),
     []
@@ -917,7 +907,7 @@ export function WorkbenchProvider({
     locked: false,
     enabled: taskComposerCatalogsEnabled,
     scopeKey: modelSelectionScopeKey,
-    persistSelection: !state.currentRuntimeTask && !usesLocalProjectScopedSelection,
+    persistSelection: !state.currentRuntimeTask && !projectModelSelection,
     selectionConfig: modelSelectionConfig,
     defaultSelectionConfig: defaultModelSelectionConfig,
     fallbackWhenConfiguredModelUnavailable: !state.currentRuntimeTask,

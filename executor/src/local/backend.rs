@@ -4,7 +4,7 @@
 
 use std::{
     env,
-    future::Future,
+    future::{pending, Future},
     pin::Pin,
     sync::{
         atomic::{AtomicBool, Ordering},
@@ -13,9 +13,10 @@ use std::{
     time::Duration,
 };
 
+use futures_util::{stream, StreamExt, TryStreamExt};
 use serde_json::{json, Value};
 use tokio::{
-    sync::{broadcast, Mutex as AsyncMutex},
+    sync::{broadcast, Mutex as AsyncMutex, Notify},
     task::JoinHandle,
     time::{sleep, sleep_until, Instant},
 };
@@ -43,10 +44,14 @@ mod client;
 mod config;
 mod connection_controller;
 mod extension;
+mod handlers;
 pub(crate) mod runtime_rpc_encoding;
 mod session_events;
 mod socket_transport;
 mod tasks;
+mod terminal_relay;
+#[cfg(test)]
+mod tests;
 mod upgrade;
 
 pub use cancellation::LocalCancellationSnapshot;
@@ -78,12 +83,15 @@ const DEVICE_SYNC_CAPABILITIES_EVENT: &str = "device:sync_capabilities";
 const DEVICE_START_TERMINAL_SESSION_EVENT: &str = "device:start_terminal_session";
 const DEVICE_START_CODE_SERVER_SESSION_EVENT: &str = "device:start_code_server_session";
 const TERMINAL_ATTACH_EVENT: &str = "terminal:attach";
+const TERMINAL_ACK_EVENT: &str = "terminal:ack";
 const TERMINAL_INPUT_EVENT: &str = "terminal:input";
 const TERMINAL_RESIZE_EVENT: &str = "terminal:resize";
 const TERMINAL_CLOSE_EVENT: &str = "terminal:close";
 const TERMINAL_OUTPUT_EVENT: &str = "terminal:output";
 const TERMINAL_EXIT_EVENT: &str = "terminal:exit";
-const TERMINAL_POLL_INTERVAL: Duration = Duration::from_millis(25);
+const TERMINAL_OUTPUT_BATCH_DELAY: Duration = Duration::from_millis(3);
+const TERMINAL_DELIVERY_TIMEOUT: Duration = Duration::from_secs(10);
+const TERMINAL_SESSION_DELIVERY_CONCURRENCY: usize = 8;
 const RUNTIME_RPC_EVENT: &str = "runtime:rpc";
 const RUNTIME_EVENT_EVENT: &str = "runtime:event";
 const RUNTIME_TASKS_AVAILABLE_EVENT: &str = "runtime.tasks.available";
@@ -548,6 +556,9 @@ where
             .on(TERMINAL_ATTACH_EVENT, self.terminal_attach_handler());
         self.client
             .transport
+            .on(TERMINAL_ACK_EVENT, self.terminal_ack_handler());
+        self.client
+            .transport
             .on(TERMINAL_INPUT_EVENT, self.terminal_input_handler());
         self.client
             .transport
@@ -570,451 +581,6 @@ where
             .on(DEVICE_RUN_EXTENSION_EVENT, self.extension_handler());
     }
 
-    fn task_handler(&self) -> EventHandler {
-        let runner = self.runner.clone();
-        let config = Arc::clone(&self.client.config);
-        let cancellations = self.cancellations.clone();
-        Arc::new(move |payload| {
-            let runner = runner.clone();
-            let config = Arc::clone(&config);
-            let cancellations = cancellations.clone();
-            Box::pin(async move {
-                write_executor_log_line(&format_executor_log(
-                    "task:execute received",
-                    &[(
-                        "payload_keys",
-                        payload
-                            .as_object()
-                            .map(|object| object.len().to_string())
-                            .unwrap_or_else(|| "non-object".to_owned()),
-                    )],
-                ));
-                let Ok(mut request) = serde_json::from_value::<ExecutionRequest>(payload) else {
-                    write_executor_log_line(
-                        "task:execute parse failed (unsupported execution request shape)",
-                    );
-                    return None;
-                };
-                write_executor_log_line(&format_executor_log(
-                    "task:execute parsed",
-                    &[
-                        ("task_id", request.task_id.clone()),
-                        (
-                            "shell",
-                            request
-                                .resolved_shell_type()
-                                .unwrap_or_else(|| "none".to_owned()),
-                        ),
-                        ("cwd", request.cwd().unwrap_or("<missing>").to_owned()),
-                    ],
-                ));
-                normalize_local_task_request(&mut request, &config);
-                cancellations.register_task(&request);
-                let result = runner.submit(request).await;
-                write_executor_log_line(&format_executor_log(
-                    "task:execute submit result",
-                    &[
-                        ("status", format!("{:?}", result.status)),
-                        ("message", result.message.unwrap_or_default()),
-                    ],
-                ));
-                None
-            })
-        })
-    }
-
-    fn cancel_handler(&self) -> EventHandler {
-        let cancellations = self.cancellations.clone();
-        let task_controller = self.task_controller.clone();
-        Arc::new(move |payload| {
-            let cancellations = cancellations.clone();
-            let task_controller = task_controller.clone();
-            Box::pin(async move {
-                let task_id = id_field(&payload, "task_id")?;
-                let subtask_id = payload.get("subtask_id").and_then(id_value_string);
-                cancellations.cancel_task(task_id.clone(), subtask_id.clone());
-                if let Some(controller) = task_controller {
-                    let _ = controller.cancel_task(task_id, subtask_id).await;
-                }
-                None
-            })
-        })
-    }
-
-    fn close_session_handler(&self) -> EventHandler {
-        let task_controller = self.task_controller.clone();
-        let client = self.client.clone();
-        Arc::new(move |payload| {
-            let task_controller = task_controller.clone();
-            let client = client.clone();
-            Box::pin(async move {
-                let Some(task_id) = id_field(&payload, "task_id") else {
-                    return Some(json!({"success": false, "error": "task_id is required"}));
-                };
-                if let Some(controller) = task_controller {
-                    let _ = controller.close_task_session(task_id).await;
-                    client.set_running_task_ids(controller.running_task_ids());
-                }
-                let _ = client.send_heartbeat(client.config.heartbeat_timeout).await;
-                Some(json!({"success": true}))
-            })
-        })
-    }
-
-    fn device_command_handler(&self) -> EventHandler {
-        let command_handler = Arc::clone(&self.command_handler);
-        Arc::new(move |payload| {
-            let command_handler = Arc::clone(&command_handler);
-            Box::pin(async move {
-                if let Some(command_key) = payload.get("command_key").and_then(Value::as_str) {
-                    if is_workspace_file_command(command_key) {
-                        let path = payload
-                            .get("cwd")
-                            .or_else(|| payload.get("path"))
-                            .and_then(Value::as_str)
-                            .map(str::to_owned);
-                        let args = payload
-                            .get("args")
-                            .and_then(Value::as_array)
-                            .map(|items| {
-                                items
-                                    .iter()
-                                    .filter_map(Value::as_str)
-                                    .map(str::to_owned)
-                                    .collect()
-                            })
-                            .unwrap_or_default();
-                        let env = payload
-                            .get("env")
-                            .and_then(Value::as_object)
-                            .map(|items| {
-                                items
-                                    .iter()
-                                    .filter_map(|(key, value)| {
-                                        value.as_str().map(|value| (key.clone(), value.to_owned()))
-                                    })
-                                    .collect()
-                            })
-                            .unwrap_or_default();
-                        let result =
-                            execute_workspace_file_command(command_key, path, args, env).await;
-                        return Some(serde_json::to_value(result).unwrap_or_else(
-                            |error| json!({"success": false, "error": error.to_string()}),
-                        ));
-                    }
-                }
-                let result = command_handler
-                    .handle_execute_command(CommandRequest::from_value(payload))
-                    .await;
-                Some(serde_json::to_value(result).unwrap_or_else(|error| {
-                    json!({
-                        "success": false,
-                        "exit_code": null,
-                        "stdout": "",
-                        "stderr": "",
-                        "duration": 0.0,
-                        "timed_out": false,
-                        "error": error.to_string(),
-                    })
-                }))
-            })
-        })
-    }
-
-    fn runtime_rpc_handler(&self) -> EventHandler {
-        let runtime_work_handler = self.runtime_work_handler.clone();
-        Arc::new(move |payload| {
-            let runtime_work_handler = runtime_work_handler.clone();
-            Box::pin(async move {
-                let method = payload
-                    .get("method")
-                    .and_then(Value::as_str)
-                    .unwrap_or("<missing>")
-                    .to_owned();
-                let request_id = payload
-                    .get("request_id")
-                    .and_then(Value::as_str)
-                    .filter(|value| !value.trim().is_empty())
-                    .unwrap_or("-")
-                    .to_owned();
-                write_executor_log_line(&format_executor_log(
-                    "runtime:rpc received",
-                    &[
-                        ("request_id", request_id.clone()),
-                        ("method", method.clone()),
-                    ],
-                ));
-                let response = if let Some(handler) = runtime_work_handler {
-                    match handler.handle_runtime_rpc(payload).await {
-                        Ok(result) => result,
-                        Err(error) => runtime_error_response(error),
-                    }
-                } else {
-                    runtime_error_response(AppIpcError::new(
-                        "runtime_unavailable",
-                        "Runtime work handler is not available",
-                    ))
-                };
-                write_executor_log_line(&format_executor_log(
-                    "runtime:rpc responded",
-                    &[
-                        ("request_id", request_id),
-                        ("method", method.clone()),
-                        (
-                            "ok",
-                            response
-                                .get("success")
-                                .and_then(Value::as_bool)
-                                .unwrap_or(false)
-                                .to_string(),
-                        ),
-                        (
-                            "error",
-                            response
-                                .get("error")
-                                .map(|v| v.to_string())
-                                .unwrap_or_default(),
-                        ),
-                    ],
-                ));
-                Some(encode_runtime_rpc_response(&method, response))
-            })
-        })
-    }
-
-    fn runtime_tasks_available_handler(&self) -> EventHandler {
-        let client = self.client.clone();
-        let runtime_work_handler = self.runtime_work_handler.clone();
-        let runtime_pull_lock = Arc::clone(&self.runtime_pull_lock);
-        Arc::new(move |_| {
-            let client = client.clone();
-            let runtime_work_handler = runtime_work_handler.clone();
-            let runtime_pull_lock = Arc::clone(&runtime_pull_lock);
-            Box::pin(async move {
-                if let Some(handler) = runtime_work_handler {
-                    tokio::spawn(poll_available_runtime_work(
-                        client,
-                        handler,
-                        runtime_pull_lock,
-                    ));
-                }
-                Some(json!({"success": true}))
-            })
-        })
-    }
-
-    fn capability_sync_handler(&self) -> EventHandler {
-        let capability_sync_handler = self.capability_sync_handler.clone();
-        Arc::new(move |payload| {
-            let capability_sync_handler = capability_sync_handler.clone();
-            Box::pin(async move {
-                let started_at = Instant::now();
-                write_executor_log_line(&format_executor_log(
-                    "device capability sync started",
-                    &[(
-                        "mode",
-                        payload
-                            .get("mode")
-                            .and_then(Value::as_str)
-                            .unwrap_or("merge")
-                            .to_owned(),
-                    )],
-                ));
-                let response = match capability_sync_handler {
-                    Some(handler) => handler.handle_sync_capabilities(payload).await,
-                    None => json!({
-                        "success": false,
-                        "error": "Capability sync handler is not available",
-                    }),
-                };
-                write_executor_log_line(&format_executor_log(
-                    "device capability sync finished",
-                    &[
-                        ("elapsed_ms", started_at.elapsed().as_millis().to_string()),
-                        (
-                            "ok",
-                            response
-                                .get("success")
-                                .and_then(Value::as_bool)
-                                .unwrap_or(false)
-                                .to_string(),
-                        ),
-                        (
-                            "error",
-                            response
-                                .get("error")
-                                .map(Value::to_string)
-                                .unwrap_or_default(),
-                        ),
-                    ],
-                ));
-                Some(response)
-            })
-        })
-    }
-
-    fn session_start_handler(&self, session_type: SessionType) -> EventHandler {
-        let session_handler = self.session_handler.clone();
-        Arc::new(move |payload| {
-            let session_handler = session_handler.clone();
-            Box::pin(async move {
-                let Some(handler) = session_handler else {
-                    return Some(json!({
-                        "success": false,
-                        "error": "Session handler is not available",
-                    }));
-                };
-                let request = match session_start_request(payload, session_type) {
-                    Ok(request) => request,
-                    Err(error) => return Some(json!({"success": false, "error": error})),
-                };
-                let result = handler
-                    .lock()
-                    .expect("session handler lock")
-                    .handle_start_session(request);
-                Some(session_result_payload(result))
-            })
-        })
-    }
-
-    fn terminal_input_handler(&self) -> EventHandler {
-        let session_handler = self.session_handler.clone();
-        Arc::new(move |payload| {
-            let session_handler = session_handler.clone();
-            Box::pin(async move {
-                let Some(handler) = session_handler else {
-                    return Some(
-                        json!({"success": false, "error": "Session handler is not available"}),
-                    );
-                };
-                let Some(session_id) = value_string(payload.get("session_id")) else {
-                    return Some(json!({"success": false, "error": "session_id is required"}));
-                };
-                let Some(data) = payload
-                    .get("data")
-                    .and_then(Value::as_str)
-                    .map(str::to_owned)
-                else {
-                    return Some(json!({"success": false, "error": "data is required"}));
-                };
-                let result = handler
-                    .lock()
-                    .expect("session handler lock")
-                    .handle_terminal_input(&session_id, &data);
-                Some(session_result_payload(result))
-            })
-        })
-    }
-
-    fn terminal_attach_handler(&self) -> EventHandler {
-        let session_handler = self.session_handler.clone();
-        Arc::new(move |payload| {
-            let session_handler = session_handler.clone();
-            Box::pin(async move {
-                let Some(handler) = session_handler else {
-                    return Some(
-                        json!({"success": false, "error": "Session handler is not available"}),
-                    );
-                };
-                let Some(session_id) = value_string(payload.get("session_id")) else {
-                    return Some(json!({"success": false, "error": "session_id is required"}));
-                };
-                let result = handler
-                    .lock()
-                    .expect("session handler lock")
-                    .handle_terminal_attach(&session_id);
-                Some(session_result_payload(result))
-            })
-        })
-    }
-
-    fn terminal_resize_handler(&self) -> EventHandler {
-        let session_handler = self.session_handler.clone();
-        Arc::new(move |payload| {
-            let session_handler = session_handler.clone();
-            Box::pin(async move {
-                let Some(handler) = session_handler else {
-                    return Some(
-                        json!({"success": false, "error": "Session handler is not available"}),
-                    );
-                };
-                let Some(session_id) = value_string(payload.get("session_id")) else {
-                    return Some(json!({"success": false, "error": "session_id is required"}));
-                };
-                let rows = value_u16(payload.get("rows")).unwrap_or(24);
-                let cols = value_u16(payload.get("cols")).unwrap_or(80);
-                let result = handler
-                    .lock()
-                    .expect("session handler lock")
-                    .handle_terminal_resize(&session_id, rows, cols);
-                Some(session_result_payload(result))
-            })
-        })
-    }
-
-    fn terminal_close_handler(&self) -> EventHandler {
-        let session_handler = self.session_handler.clone();
-        Arc::new(move |payload| {
-            let session_handler = session_handler.clone();
-            Box::pin(async move {
-                let Some(handler) = session_handler else {
-                    return Some(
-                        json!({"success": false, "error": "Session handler is not available"}),
-                    );
-                };
-                let Some(session_id) = value_string(payload.get("session_id")) else {
-                    return Some(json!({"success": false, "error": "session_id is required"}));
-                };
-                let result = handler
-                    .lock()
-                    .expect("session handler lock")
-                    .handle_terminal_close(&session_id);
-                Some(session_result_payload(result))
-            })
-        })
-    }
-
-    fn upgrade_handler(&self) -> EventHandler {
-        let upgrade_handler = self.upgrade_handler.clone().or_else(|| {
-            self.upgrade_service.as_ref().map(|service| {
-                Arc::new(LocalDeviceUpgradeHandler::with_service_arc(
-                    self.client.clone(),
-                    self.task_controller.clone(),
-                    self.client.config.update.clone(),
-                    Arc::clone(service),
-                )) as Arc<dyn DeviceUpgradeHandler>
-            })
-        });
-        Arc::new(move |payload| {
-            let upgrade_handler = upgrade_handler.clone();
-            Box::pin(async move {
-                let Some(handler) = upgrade_handler else {
-                    return Some(json!({
-                        "success": false,
-                        "error": "Upgrade handler is not available",
-                    }));
-                };
-                Some(handler.handle_upgrade(payload).await)
-            })
-        })
-    }
-
-    fn extension_handler(&self) -> EventHandler {
-        let extension_handler = self.extension_handler.clone();
-        Arc::new(move |payload| {
-            let extension_handler = extension_handler.clone();
-            Box::pin(async move {
-                let Some(handler) = extension_handler else {
-                    return Some(json!({
-                        "success": false,
-                        "message": "Extension handler is not available",
-                    }));
-                };
-                Some(handler.handle_run_extension(payload).await)
-            })
-        })
-    }
-
     pub async fn connect_and_register(&self) -> Result<(), String> {
         self.client.connect().await?;
         match self
@@ -1026,6 +592,12 @@ where
                 if let Err(error) = self.client.emit_liveness_heartbeat().await {
                     let _ = self.client.disconnect().await;
                     return Err(error);
+                }
+                if let Some(handler) = &self.session_handler {
+                    handler
+                        .lock()
+                        .expect("session handler lock")
+                        .prepare_terminal_reconnect();
                 }
                 self.trigger_runtime_work_poll();
                 Ok(())
@@ -1044,13 +616,32 @@ where
     async fn heartbeat_until_reconnect(&self) {
         let mut consecutive_failures = 0_u32;
         let mut next_heartbeat_at = Instant::now() + self.client.config.heartbeat_interval;
+        let terminal_event_notifier = self.session_handler.as_ref().map(|handler| {
+            handler
+                .lock()
+                .expect("session handler lock")
+                .terminal_event_notifier()
+        });
+        let terminal_relay = self.relay_terminal_events_until_error(terminal_event_notifier);
+        tokio::pin!(terminal_relay);
         loop {
             tokio::select! {
-                _ = sleep_until(next_heartbeat_at) => {}
-                _ = sleep(TERMINAL_POLL_INTERVAL) => {
-                    self.forward_terminal_events().await;
-                    continue;
+                _ = sleep_until(next_heartbeat_at) => {},
+                result = &mut terminal_relay => {
+                    let error = result.expect_err("terminal relay only stops on error");
+                    write_executor_error_line(&format_executor_log(
+                        "terminal event relay paused until reconnect",
+                        &[("error", error)],
+                    ));
+                    let _ = self.client.disconnect().await;
+                    return;
                 }
+            }
+            if let Some(handler) = &self.session_handler {
+                handler
+                    .lock()
+                    .expect("session handler lock")
+                    .reap_expired_sessions();
             }
             let failure = match self.client.emit_liveness_heartbeat().await {
                 Ok(()) => {
@@ -1084,49 +675,6 @@ where
             handler,
             Arc::clone(&self.runtime_pull_lock),
         ));
-    }
-
-    async fn forward_terminal_events(&self) {
-        let Some(handler) = &self.session_handler else {
-            return;
-        };
-        let events = handler
-            .lock()
-            .expect("session handler lock")
-            .drain_terminal_events();
-
-        for event in events {
-            let (event_name, payload, error) = match event {
-                TerminalEvent::Output { session_id, data } => (
-                    TERMINAL_OUTPUT_EVENT,
-                    json!({"session_id": session_id, "data": data}),
-                    None,
-                ),
-                TerminalEvent::Exit {
-                    session_id,
-                    exit_code,
-                    error,
-                } => {
-                    let mut payload = json!({"session_id": session_id, "exit_code": exit_code});
-                    if let Some(error) = &error {
-                        payload["error"] = json!(error);
-                    }
-                    (TERMINAL_EXIT_EVENT, payload, error)
-                }
-            };
-            if let Some(error) = error {
-                write_executor_error_line(&format_executor_log(
-                    "terminal session failed",
-                    &[("error", error)],
-                ));
-            }
-            if let Err(error) = self.client.emit_raw_event(event_name, payload).await {
-                write_executor_error_line(&format_executor_log(
-                    "terminal event relay failed",
-                    &[("event", event_name.to_owned()), ("error", error)],
-                ));
-            }
-        }
     }
 }
 
@@ -1368,191 +916,4 @@ fn runtime_error_response(error: AppIpcError) -> Value {
         "code": error.code,
         "error": error.message,
     })
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::config::device::UpdateConfig;
-    use std::{
-        ffi::OsString,
-        path::PathBuf,
-        sync::{Mutex as TestMutex, MutexGuard, OnceLock},
-        time::Duration,
-    };
-
-    fn env_lock() -> MutexGuard<'static, ()> {
-        static LOCK: OnceLock<TestMutex<()>> = OnceLock::new();
-        LOCK.get_or_init(|| TestMutex::new(()))
-            .lock()
-            .expect("env lock should be available")
-    }
-
-    fn restore_env(key: &str, value: Option<OsString>) {
-        if let Some(value) = value {
-            env::set_var(key, value);
-        } else {
-            env::remove_var(key);
-        }
-    }
-
-    fn backend_config(device_id: &str) -> LocalBackendConfig {
-        LocalBackendConfig {
-            backend_url: "https://backend.example.com".to_string(),
-            socket_url: "wss://socket.example.com".to_string(),
-            auth_token: "token".to_string(),
-            runtime_auth_token: "runtime-token".to_string(),
-            device_id: device_id.to_string(),
-            runtime_instance_id: "runtime-1".to_string(),
-            device_name: "Cloud Device".to_string(),
-            device_type: "remote".to_string(),
-            app_device_id: String::new(),
-            bind_shell: "claudecode".to_string(),
-            executor_version: "1.0.0".to_string(),
-            client_ip: "127.0.0.1".to_string(),
-            runtime_transfer_host: "127.0.0.1".to_string(),
-            heartbeat_interval: Duration::from_secs(30),
-            heartbeat_timeout: Duration::from_secs(10),
-            registration_timeout: Duration::from_secs(10),
-            reconnect_delay: Duration::from_secs(1),
-            reconnect_delay_max: Duration::from_secs(30),
-            configured_capabilities: Vec::new(),
-            local_workspace_root: PathBuf::from("/tmp/workspace"),
-            update: UpdateConfig::default(),
-        }
-    }
-
-    #[test]
-    fn app_ipc_sidecar_device_id_uses_explicit_app_device_id() {
-        let _guard = env_lock();
-        let previous = env::var_os(APP_IPC_DEVICE_ID_ENV);
-        env::set_var(APP_IPC_DEVICE_ID_ENV, "local-app-device");
-
-        let device_id = app_ipc_sidecar_device_id(&backend_config("local-app-device-cloud"));
-
-        restore_env(APP_IPC_DEVICE_ID_ENV, previous);
-        assert_eq!(device_id, "local-app-device");
-    }
-
-    #[test]
-    fn app_ipc_sidecar_device_id_falls_back_to_backend_device_id() {
-        let _guard = env_lock();
-        let previous = env::var_os(APP_IPC_DEVICE_ID_ENV);
-        env::remove_var(APP_IPC_DEVICE_ID_ENV);
-
-        let device_id = app_ipc_sidecar_device_id(&backend_config("remote-device"));
-
-        restore_env(APP_IPC_DEVICE_ID_ENV, previous);
-        assert_eq!(device_id, "remote-device");
-    }
-
-    #[tokio::test]
-    async fn app_sidecar_runner_does_not_start_session_gateway() {
-        let _guard = env_lock();
-        let previous_enabled = env::var_os("DEVICE_SESSION_GATEWAY_ENABLED");
-        let previous_public_url = env::var_os("DEVICE_PUBLIC_BASE_URL");
-        env::remove_var("DEVICE_SESSION_GATEWAY_ENABLED");
-        env::remove_var("DEVICE_PUBLIC_BASE_URL");
-        let (event_tx, _) = broadcast::channel(8);
-        let event_hub = ExecutorEventHub::new(event_tx.clone());
-        event_hub.ensure_started();
-        let runtime_work_handler: Arc<dyn RuntimeWorkHandler> = Arc::new(
-            RuntimeWorkRpcHandler::with_event_sender("local-app-device", "/bin/false", event_tx),
-        );
-        let runner = LocalBackendRunner::new_for_app_sidecar_with_event_hub(
-            backend_config("local-device"),
-            SocketIoTransport::default(),
-            runtime_work_handler,
-            event_hub,
-        );
-
-        assert!(!runner.start_session_gateway);
-        let session_handler = runner.session_handler.as_ref().unwrap().lock().unwrap();
-        assert!(!session_handler.gateway_enabled);
-        assert_eq!(session_handler.public_base_url, "http://localhost:0");
-        drop(session_handler);
-        restore_env("DEVICE_SESSION_GATEWAY_ENABLED", previous_enabled);
-        restore_env("DEVICE_PUBLIC_BASE_URL", previous_public_url);
-    }
-
-    #[tokio::test]
-    async fn app_sidecar_gateway_uses_dynamic_port_when_explicitly_enabled() {
-        let _guard = env_lock();
-        let previous_enabled = env::var_os("DEVICE_SESSION_GATEWAY_ENABLED");
-        let previous_public_url = env::var_os("DEVICE_PUBLIC_BASE_URL");
-        env::set_var("DEVICE_SESSION_GATEWAY_ENABLED", "true");
-        env::remove_var("DEVICE_PUBLIC_BASE_URL");
-        let runner = LocalBackendRunner::new_for_app_sidecar(
-            backend_config("local-device"),
-            SocketIoTransport::default(),
-        );
-
-        assert!(runner.start_session_gateway);
-        let session_handler = runner.session_handler.as_ref().unwrap().lock().unwrap();
-        assert!(session_handler.gateway_enabled);
-        assert_eq!(session_handler.public_base_url, "http://localhost:0");
-        drop(session_handler);
-        restore_env("DEVICE_SESSION_GATEWAY_ENABLED", previous_enabled);
-        restore_env("DEVICE_PUBLIC_BASE_URL", previous_public_url);
-    }
-
-    #[tokio::test]
-    async fn remote_backend_runner_starts_session_gateway() {
-        let _guard = env_lock();
-        let previous_enabled = env::var_os("DEVICE_SESSION_GATEWAY_ENABLED");
-        let previous_public_url = env::var_os("DEVICE_PUBLIC_BASE_URL");
-        env::remove_var("DEVICE_SESSION_GATEWAY_ENABLED");
-        env::remove_var("DEVICE_PUBLIC_BASE_URL");
-        let runner = LocalBackendRunner::new(
-            backend_config("remote-device"),
-            SocketIoTransport::default(),
-        );
-
-        assert!(runner.start_session_gateway);
-        let session_handler = runner.session_handler.as_ref().unwrap().lock().unwrap();
-        assert!(session_handler.gateway_enabled);
-        assert_eq!(session_handler.public_base_url, "http://localhost:17888");
-        drop(session_handler);
-        restore_env("DEVICE_SESSION_GATEWAY_ENABLED", previous_enabled);
-        restore_env("DEVICE_PUBLIC_BASE_URL", previous_public_url);
-    }
-
-    #[test]
-    fn normalizes_backend_context_for_local_task_mcp() {
-        let config = backend_config("local-device");
-        let mut request = ExecutionRequest::default();
-
-        normalize_local_task_request(&mut request, &config);
-
-        assert_eq!(
-            request.backend_url.as_deref(),
-            Some("https://backend.example.com")
-        );
-        assert_eq!(request.auth_token.as_deref(), Some("token"));
-        assert_eq!(request.runtime_auth_token.as_deref(), Some("runtime-token"));
-        assert_eq!(request.device_id.as_deref(), Some("local-device"));
-    }
-
-    #[test]
-    fn heartbeat_reports_runtime_capacity_and_installation_identity() {
-        let client =
-            LocalBackendClient::new(backend_config("local-device"), SocketIoTransport::default());
-        client.set_runtime_capacity(Some(json!({
-            "limit": 4,
-            "active": 2,
-            "active_task_ids": ["task-1", "task-2"],
-            "queued": 1,
-        })));
-
-        let payload = client.heartbeat_payload();
-
-        assert_eq!(payload["runtime_instance_id"], "runtime-1");
-        assert_eq!(payload["runtime_capacity"]["limit"], 4);
-        assert_eq!(payload["runtime_capacity"]["active"], 2);
-        assert_eq!(
-            payload["runtime_capacity"]["active_task_ids"],
-            json!(["task-1", "task-2"])
-        );
-        assert_eq!(payload["runtime_capacity"]["queued"], 1);
-    }
 }

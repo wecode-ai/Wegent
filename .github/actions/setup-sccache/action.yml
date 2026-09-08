@@ -15,11 +15,20 @@ runs:
   using: composite
   steps:
     - name: Install sccache
+      id: install
+      continue-on-error: true
       uses: mozilla-actions/sccache-action@fc920bf0ec8de6ee65d409111f7ec508035751ba
       with:
         version: ${{ inputs.version }}
 
+    - name: Report unavailable sccache
+      if: steps.install.outcome != 'success'
+      shell: bash
+      run: |
+        echo "::warning::sccache is unavailable; continuing without Rust compiler caching"
+
     - name: Export GitHub Actions cache credentials
+      if: steps.install.outcome == 'success'
       uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b
       with:
         script: |
@@ -34,6 +43,7 @@ runs:
           core.exportVariable('ACTIONS_RUNTIME_TOKEN', runtimeToken)
 
     - name: Configure Rust compiler cache
+      if: steps.install.outcome == 'success'
       shell: bash
       run: |
         {

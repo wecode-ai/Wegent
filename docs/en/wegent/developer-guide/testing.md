@@ -342,7 +342,8 @@ runs may restore the default-branch cache, but they do not save another copy:
 - Rust unit tests, the Windows check, release and snapshot binaries, and the
   macOS memory gate use sccache. The `main` warmup runs the same Electron
   desktop build on `macos-14`; non-`main` jobs access the shared compiler cache
-  in read-only mode.
+  in read-only mode. If sccache installation is temporarily unavailable, jobs
+  emit a warning and compile without the cache instead of failing.
 - Wework Desktop Core E2E retains its `main`-owned Cargo target cache because
   several desktop jobs must reuse the same complete binary output.
 - Platform E2E, Release, and Snapshot Docker BuildKit caches live in

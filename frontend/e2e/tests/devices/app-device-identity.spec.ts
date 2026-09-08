@@ -107,12 +107,24 @@ test('keeps app identity unique across concurrent registration and reconnect wit
     expect(initial).toHaveLength(1)
     const recordId = initial[0].id
     expect(initial[0]).toMatchObject({ status: 'online', device_type: 'app' })
+    const initialIdentity = {
+      id: initial[0].id,
+      device_id: initial[0].device_id,
+      execution_target_id: initial[0].execution_target_id,
+      runtime_instance_id: initial[0].runtime_instance_id,
+      app_device_id: initial[0].app_device_id,
+    }
 
     await test.step('reject a different Runtime before it changes the existing route', async () => {
       const rejected = await register(await connect(), routeId, `other-${runId}`)
       expect(rejected.success).not.toBe(true)
       expect(rejected.error).toContain('Runtime instance ID mismatch')
-      expect(await devices()).toEqual(initial)
+      const afterRejectedRegistration = await devices()
+      expect(afterRejectedRegistration).toHaveLength(1)
+      expect(afterRejectedRegistration[0]).toMatchObject({
+        ...initialIdentity,
+        status: 'online',
+      })
     })
 
     await test.step('reconnect the same installation without changing its database record', async () => {

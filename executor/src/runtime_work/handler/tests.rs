@@ -3857,6 +3857,35 @@ async fn transcript_without_runtime_link_returns_empty_local_transcript() {
     assert_eq!(result["messages"].as_array().unwrap().len(), 0);
 }
 
+#[test]
+fn transcript_sync_allows_import_before_native_thread_exists() {
+    let index_path = temp_runtime_work_index_path("transcript-sync-pending-thread");
+    let mut handler = RuntimeWorkRpcHandler::new("device-1", "/bin/false");
+    handler.store = RuntimeWorkStore::new(index_path.clone());
+    let mut link = RuntimeTaskLink::new_pending(
+        "local-task-1".to_owned(),
+        "/tmp/project".to_owned(),
+        "Synced task".to_owned(),
+    );
+    link.runtime_handle["cloudTranscript"] = json!({
+        "transcriptId": "cloud-transcript-1",
+        "importedThrough": 3,
+    });
+    handler.upsert_local_task(link);
+
+    let result = handler
+        .transcript_sync_status(json!({
+            "taskId": "local-task-1",
+            "transcriptId": "cloud-transcript-1",
+        }))
+        .expect("pending native thread should remain importable");
+
+    assert_eq!(result["available"], true);
+    assert_eq!(result["importedThrough"], 3);
+    assert_eq!(result["reason"], "thread_pending");
+    let _ = fs::remove_file(index_path);
+}
+
 #[tokio::test]
 async fn transcript_rejects_conflicting_cursors_before_task_lookup() {
     let handler = RuntimeWorkRpcHandler::new("device-1", "/bin/false");

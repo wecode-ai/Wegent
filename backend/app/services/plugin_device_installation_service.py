@@ -18,6 +18,10 @@ from app.schemas.device import (
 )
 from app.schemas.installed_plugin import PluginDeviceReportItem
 from app.services.device_service import device_service
+from app.services.plugin_device_identity import (
+    plugin_device_id,
+    reconcile_plugin_device_rows,
+)
 
 
 class PluginDeviceInstallationService:
@@ -33,11 +37,13 @@ class PluginDeviceInstallationService:
         reset_failures: bool = False,
     ) -> None:
         """Materialize desired state for registered online and offline devices."""
+        reconcile_plugin_device_rows(db, user_id)
         devices = await device_service.get_all_devices(db, user_id)
         for device in devices:
             device_id = self._device_id(device)
             if not device_id:
                 continue
+            device_id = plugin_device_id(db, user_id, device_id)
             row = self._device_row(db, installed_kind_id, device_id)
             if not row:
                 row = PluginDeviceInstallation(
@@ -153,7 +159,8 @@ class PluginDeviceInstallationService:
         reported_plugins: list[PluginDeviceReportItem],
     ) -> list[int]:
         """Mark locally present plugins as installed without pushing packages."""
-        normalized_device_id = device_id.strip()
+        reconcile_plugin_device_rows(db, user_id)
+        normalized_device_id = plugin_device_id(db, user_id, device_id)
         reports_by_id = {
             report.installedPluginId: report for report in reported_plugins
         }
@@ -183,6 +190,10 @@ class PluginDeviceInstallationService:
         user_id: int,
         result: DeviceCapabilitySyncResult,
     ) -> None:
+        reconcile_plugin_device_rows(db, user_id)
+        result = result.model_copy(
+            update={"device_id": plugin_device_id(db, user_id, result.device_id)}
+        )
         installs = self._desired_installs(db, user_id)
         desired_ids = {installed.id for installed in installs}
         self._record_removed_installs(db, user_id, result, desired_ids)
@@ -329,7 +340,8 @@ class PluginDeviceInstallationService:
         Creates missing rows and retries failed updates until their per-release
         circuit breaker opens. Manual retries reset that breaker.
         """
-        normalized_device_id = device_id.strip()
+        reconcile_plugin_device_rows(db, user_id)
+        normalized_device_id = plugin_device_id(db, user_id, device_id)
         if not normalized_device_id:
             return 0
         changed = 0

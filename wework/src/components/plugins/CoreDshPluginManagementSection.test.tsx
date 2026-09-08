@@ -88,4 +88,24 @@ describe('CoreDshPluginManagementSection', () => {
 
     await waitFor(() => expect(mocks.uninstall).toHaveBeenCalledWith('dsh-example'))
   })
+
+  test('leaves the Git plugin controls to workbench mode', async () => {
+    mocks.list.mockResolvedValue([
+      {
+        ...plugin,
+        name: '@wegent/dsh-ui-git',
+        displayName: 'Git',
+        requestedSpec: '',
+        canUpdate: false,
+        canUninstall: false,
+      },
+    ])
+
+    render(<CoreDshPluginManagementSection />)
+
+    expect(await screen.findByText('由“设置 → 通用 → 模式”管理')).toBeInTheDocument()
+    expect(
+      screen.queryByTestId('core-dsh-plugin-toggle-@wegent/dsh-ui-git')
+    ).not.toBeInTheDocument()
+  })
 })

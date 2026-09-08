@@ -61,6 +61,8 @@ let nextChunkId = 1
 installPreferencesListener()
 
 export function appendRuntimeTerminalContext(input: TerminalContextAppendInput): void {
+  if (!terminalContextInjectionEnabled) return
+
   const text = sanitizeTerminalOutput(input.data)
   if (!text) return
 

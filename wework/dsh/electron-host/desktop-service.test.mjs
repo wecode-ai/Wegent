@@ -24,12 +24,30 @@ test('maps the typed desktop service to narrow Electron capabilities', async () 
     capability: 'rendererHealth.getState',
   })
   await generation.service.shell.openExternal('https://example.com')
+  await generation.service.preferences.update({ appearanceMode: 'dark' })
+  await generation.service.weworkSync.request({
+    apiBaseUrl: 'https://cloud.example.com/api',
+    path: '/wework-transcripts',
+    method: 'GET',
+  })
   assert.deepEqual(invocations, [
     { capability: 'window.getState', params: {} },
     { capability: 'rendererHealth.getState', params: {} },
     {
       capability: 'shell.openExternal',
       params: { url: 'https://example.com' },
+    },
+    {
+      capability: 'preferences.update',
+      params: { patch: { appearanceMode: 'dark' } },
+    },
+    {
+      capability: 'weworkSync.request',
+      params: {
+        apiBaseUrl: 'https://cloud.example.com/api',
+        path: '/wework-transcripts',
+        method: 'GET',
+      },
     },
   ])
 })

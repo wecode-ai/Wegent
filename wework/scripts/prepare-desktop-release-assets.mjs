@@ -23,7 +23,7 @@ const componentResourcesRoot = join(weworkRoot, 'electron', 'resources')
 const pnpmCommand = process.platform === 'win32' ? 'pnpm.cmd' : 'pnpm'
 const [platform, arch, version, outputDirectory] = process.argv.slice(2)
 const identity = resolveBuildIdentity()
-let packagedComponentResourcesRoot = componentResourcesRoot
+const packagedComponentResourcesRoot = componentResourcesRoot
 
 if (!platform || !arch || !version || !outputDirectory) {
   throw new Error(
@@ -44,8 +44,6 @@ if (platform === 'macos') {
   const appName = `${identity.productName}.app`
   const appPath = join(appDirectory, appName)
   await requireDirectory(appPath)
-  packagedComponentResourcesRoot = join(appPath, 'Contents', 'Resources')
-  await requireFile(join(packagedComponentResourcesRoot, 'app-update.yml'))
   const dmg = await findFile(
     installerRoot,
     new RegExp(`^WeWork_${escape(version)}_macos_${arch}\\.dmg$`)

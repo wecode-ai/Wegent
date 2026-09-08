@@ -107,6 +107,13 @@ window.__ModuleLoader__.load({
       )
     }
 
+    function DemoSettingsSection() {
+      return createElement(DemoPanel, {
+        testId: 'dsh-extension-demo-settings-section',
+        title: 'DSH settings section',
+      })
+    }
+
     function DemoWorkspaceTab({ tab, visible }) {
       return createElement(
         'div',
@@ -407,6 +414,16 @@ window.__ModuleLoader__.load({
           path: '/settings/dsh-extension-demo',
         },
         component: DemoSettings,
+      },
+      {
+        slot: 'wework.settings.section',
+        descriptor: {
+          id: 'dsh-extension-demo.settings-section',
+          label: 'DSH Demo',
+          order: 90,
+          page: 'connections',
+        },
+        component: DemoSettingsSection,
       },
       {
         slot: 'wework.workspace.tab',

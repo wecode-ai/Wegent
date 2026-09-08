@@ -4,7 +4,6 @@ import { describe, expect, test, vi } from 'vitest'
 import {
   injectModelProviderPatch,
   prepareWorkbenchDshLaunch,
-  resolveWorkbenchProjectPnpmCommand,
   WORKBENCH_DSH_VERSION,
 } from './workbench-dsh-runtime.js'
 import { temporaryDirectory } from './test-helpers.js'
@@ -118,52 +117,6 @@ describe('workbench DSH runtime', () => {
         }),
       })
     )
-    await root.remove()
-  })
-
-  test('resolves project scripts through the managed Node and runtime-owned pnpm', async () => {
-    const root = await temporaryDirectory('workbench-project-command-')
-    const runtimeRoot = join(root.path, 'runtime')
-    const dshRoot = join(runtimeRoot, 'node_modules', '@deepseek-ai', 'dsh')
-    const pnpmEntry = join(runtimeRoot, 'node_modules', 'pnpm', 'bin', 'pnpm.cjs')
-    const managedNode = join(root.path, 'managed-node', 'bin', 'node')
-    await mkdir(join(dshRoot, 'lib'), { recursive: true })
-    await mkdir(dirname(pnpmEntry), { recursive: true })
-    await writeFile(
-      join(runtimeRoot, 'runtime.json'),
-      JSON.stringify({
-        dshVersion: WORKBENCH_DSH_VERSION,
-        role: 'workbench',
-        sourceFingerprint: 'a'.repeat(64),
-      })
-    )
-    await writeFile(
-      join(dshRoot, 'package.json'),
-      JSON.stringify({ version: WORKBENCH_DSH_VERSION })
-    )
-    await writeFile(join(dshRoot, 'lib', 'bin.js'), '')
-    await writeFile(pnpmEntry, '')
-
-    const command = await resolveWorkbenchProjectPnpmCommand({
-      runtimeRoot,
-      environment: {
-        PATH: '/unmanaged/bin',
-        WEWORK_NODE_PATH: managedNode,
-        WEWORK_NODE_RUNTIME_KIND: 'configured',
-      },
-    })
-
-    expect(command).toEqual({
-      command: managedNode,
-      argsPrefix: [pnpmEntry],
-      environment: expect.objectContaining({
-        PATH: [
-          join(runtimeRoot, 'node_modules', '.bin'),
-          dirname(managedNode),
-          '/unmanaged/bin',
-        ].join(delimiter),
-      }),
-    })
     await root.remove()
   })
 })

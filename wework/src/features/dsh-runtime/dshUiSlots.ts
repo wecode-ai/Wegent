@@ -10,6 +10,7 @@ export const WEWORK_DSH_SLOTS = {
   route: 'wework.route',
   runtimeProfileWorkspacePolicy: 'wework.runtime-profile.workspace-policy',
   settingsPage: 'wework.settings.page',
+  settingsSection: 'wework.settings.section',
   sidebarNavigation: 'wework.sidebar.navigation',
   shellAfter: 'wework.shell.after',
   shellBefore: 'wework.shell.before',
