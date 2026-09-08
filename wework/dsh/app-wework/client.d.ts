@@ -156,6 +156,7 @@ export interface WeworkContributionMap {
   readonly 'wework.board.card.status': WeworkContribution
   readonly 'wework.composer.action': WeworkContribution
   readonly 'wework.environment.section': WeworkContribution
+  readonly 'wework.home': WeworkContribution
   readonly 'wework.project.create.section': WeworkContribution
   readonly 'wework.project.work.section': WeworkContribution
   readonly 'wework.route': WeworkContribution
@@ -407,6 +408,11 @@ declare module '@deepseek-ai/dsh-client-ui-slots' {
     'wework.environment.section': {
       kind: 'list'
       scope: 'session-maybe'
+      owner: Readonly<Record<string, unknown>>
+    }
+    'wework.home': {
+      kind: 'list'
+      scope: 'root'
       owner: Readonly<Record<string, unknown>>
     }
     'wework.project.create.section': {
