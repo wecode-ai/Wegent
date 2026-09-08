@@ -736,21 +736,21 @@ impl CodexAppServerClient {
         generation: u64,
     ) -> Result<bool, String> {
         let timeout_seconds = codex_rpc_timeout_seconds();
-        let response_rx = {
-            let lifecycle_gate = self.thread_lifecycle_gate(thread_id).await;
-            let _lifecycle_guard = lifecycle_gate.lock().await;
+        let lifecycle_gate = self.thread_lifecycle_gate(thread_id).await;
+        let _lifecycle_guard = lifecycle_gate.lock().await;
+        {
+            let state = self.state.lock().await;
+            if state.active_threads.contains_key(thread_id)
+                || state.thread_generations.get(thread_id) != Some(&generation)
             {
-                let state = self.state.lock().await;
-                if state.active_threads.contains_key(thread_id)
-                    || state.thread_generations.get(thread_id) != Some(&generation)
-                {
-                    return Ok(false);
-                }
+                return Ok(false);
             }
+        }
 
-            let response_rx = self
-                .start_existing_request("thread/unsubscribe", json!({"threadId": thread_id}))
-                .await?;
+        let response_rx = self
+            .start_existing_request("thread/unsubscribe", json!({"threadId": thread_id}))
+            .await?;
+        {
             let mut state = self.state.lock().await;
             if !state.active_threads.contains_key(thread_id)
                 && state.thread_generations.get(thread_id) == Some(&generation)
@@ -758,8 +758,7 @@ impl CodexAppServerClient {
                 state.thread_generations.remove(thread_id);
                 state.idle_thread_generations.remove(thread_id);
             }
-            response_rx
-        };
+        }
 
         let result = with_rpc_timeout("thread/unsubscribe", timeout_seconds, async {
             response_rx
@@ -770,8 +769,6 @@ impl CodexAppServerClient {
         match result {
             Ok(_) => Ok(true),
             Err(error) => {
-                let lifecycle_gate = self.thread_lifecycle_gate(thread_id).await;
-                let _lifecycle_guard = lifecycle_gate.lock().await;
                 let mut state = self.state.lock().await;
                 if !state.active_threads.contains_key(thread_id)
                     && !state.thread_generations.contains_key(thread_id)
@@ -1463,6 +1460,17 @@ fn codex_thread_plan(
     }
 }
 
+fn thread_id_to_activate_before_start(thread_plan: &CodexThreadPlan) -> Option<&str> {
+    match &thread_plan.start {
+        CodexThreadStart::Direct(thread_id) => Some(thread_id),
+        CodexThreadStart::Request {
+            operation: "thread/resume",
+            params,
+        } => params.get("threadId").and_then(Value::as_str),
+        CodexThreadStart::Request { .. } => None,
+    }
+}
+
 fn thread_id_from_response(
     operation: &str,
     response: &Value,
@@ -1546,6 +1554,10 @@ async fn run_codex_app_server_turn_on_shared_client(
             request,
             &launch_config,
         );
+        if let Some(thread_id) = thread_id_to_activate_before_start(&thread_plan) {
+            client.mark_thread_active(thread_id).await;
+            subscribed_thread_id = Some(thread_id.to_owned());
+        }
         let thread_id = match thread_plan.start {
             CodexThreadStart::Direct(thread_id) => {
                 let mut thread_fields = task_fields(&request.task_id, &request.subtask_id);
@@ -1573,9 +1585,18 @@ async fn run_codex_app_server_turn_on_shared_client(
                 thread_id
             }
         };
+        if let Some(active_thread_id) = subscribed_thread_id.as_deref() {
+            if active_thread_id != thread_id {
+                return Err(format!(
+                    "codex app-server resumed thread {thread_id} instead of requested thread {active_thread_id}"
+                ));
+            }
+        } else {
+            client.mark_thread_active(&thread_id).await;
+            subscribed_thread_id = Some(thread_id.clone());
+        }
         state.set_root_thread_id(thread_id.clone());
         bind_local_proxy_thread(&launch_config, &thread_id)?;
-        subscribed_thread_id = Some(thread_id.clone());
         let mut notification_rx = client
             .subscribe_thread_notifications_for_launch_config(&launch_config, &thread_id)
             .await?;
@@ -1619,7 +1640,6 @@ async fn run_codex_app_server_turn_on_shared_client(
         let auto_approve_mcp_tool_calls = codex_auto_approve_mcp_tool_calls(request);
 
         let mut turn_fields = codex_turn_fields(request, &thread_id);
-        client.mark_thread_active(&thread_id).await;
         let startup_timeout_seconds = codex_turn_startup_timeout_seconds();
         let startup_deadline = Instant::now() + Duration::from_secs(startup_timeout_seconds);
         let active_turn_id = if awaits_initial_goal_turn {
@@ -5128,24 +5148,6 @@ fn append_thread_launch_params(
     }
 }
 
-fn append_turn_shell_environment_params(
-    params: &mut serde_json::Map<String, Value>,
-    launch_config: &CodexLaunchConfig,
-) {
-    let mut config = serde_json::Map::new();
-    for override_value in &launch_config.config_overrides {
-        let Some((key, value)) = config_override_entry(override_value) else {
-            continue;
-        };
-        if key.starts_with("shell_environment_policy.set.") {
-            config.insert(key, value);
-        }
-    }
-    if !config.is_empty() {
-        params.insert("config".to_owned(), Value::Object(config));
-    }
-}
-
 fn turn_start_params(
     thread_id: &str,
     request: &ExecutionRequest,
@@ -5179,7 +5181,6 @@ fn turn_start_params(
     if let Some(summary) = &launch_config.summary {
         params.insert("summary".to_owned(), Value::String(summary.clone()));
     }
-    append_turn_shell_environment_params(&mut params, launch_config);
     if let Some(collaboration_mode) = codex_collaboration_mode_payload(request, launch_config) {
         params.insert("collaborationMode".to_owned(), collaboration_mode);
     }

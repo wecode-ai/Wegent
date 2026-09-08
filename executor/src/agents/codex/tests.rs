@@ -119,6 +119,45 @@ async fn reactivating_idle_thread_invalidates_its_previous_generation() {
 }
 
 #[tokio::test]
+async fn lifecycle_gate_blocks_reactivation_until_idle_cleanup_finishes() {
+    let client = CodexAppServerClient::new("codex-idle-cleanup-race-test");
+
+    client.mark_thread_active("thread-1").await;
+    let (idle_generation, _) = client
+        .mark_thread_idle("thread-1", true)
+        .await
+        .expect("thread should become idle");
+    let lifecycle_gate = client.thread_lifecycle_gate("thread-1").await;
+    let lifecycle_guard = lifecycle_gate.lock().await;
+    let reactivation = {
+        let client = client.clone();
+        tokio::spawn(async move {
+            client.mark_thread_active("thread-1").await;
+        })
+    };
+    tokio::task::yield_now().await;
+
+    {
+        let state = client.state.lock().await;
+        assert_eq!(
+            state.idle_thread_generations.get("thread-1"),
+            Some(&idle_generation)
+        );
+        assert!(!state.active_threads.contains_key("thread-1"));
+    }
+
+    drop(lifecycle_guard);
+    reactivation.await.expect("reactivation should finish");
+    let state = client.state.lock().await;
+    assert_eq!(state.active_threads.get("thread-1"), Some(&1));
+    assert_ne!(
+        state.thread_generations.get("thread-1"),
+        Some(&idle_generation)
+    );
+    assert!(!state.idle_thread_generations.contains_key("thread-1"));
+}
+
+#[tokio::test]
 async fn notification_hub_isolates_thread_subscribers_from_cross_thread_bursts() {
     let hub = CodexNotificationHub::new();
     let mut thread_a = hub.subscribe_thread("thread-a");
@@ -1709,57 +1748,6 @@ fn codex_worktree_launch_config_sets_pnpm_environment() {
 }
 
 #[test]
-fn turn_start_params_refreshes_task_identity_shell_environment() {
-    let request = ExecutionRequest {
-        task_id: "task-525".to_owned(),
-        auth_token: Some("task-jwt".to_owned()),
-        runtime_auth_token: Some("runtime-jwt".to_owned()),
-        skill_identity_token: Some("skill-jwt".to_owned()),
-        user_name: Some("alice".to_owned()),
-        prompt: Value::String("continue".to_owned()),
-        model_config: json!({
-            "model_id": "gpt-5.5-codex",
-        }),
-        ..ExecutionRequest::default()
-    };
-
-    let mut launch_config =
-        build_codex_launch_config(&request).expect("Codex launch config should be built");
-    launch_config
-        .config_overrides
-        .push("model_provider=wework-router".to_owned());
-
-    let params = turn_start_params("thread-1", &request, &launch_config, Vec::new());
-    let config = params
-        .get("config")
-        .and_then(Value::as_object)
-        .expect("turn config should include shell env");
-
-    assert_eq!(
-        config["shell_environment_policy.set.WEGENT_TASK_ID"],
-        "task-525"
-    );
-    assert_eq!(
-        config["shell_environment_policy.set.AUTH_TOKEN"],
-        "task-jwt"
-    );
-    assert_eq!(
-        config["shell_environment_policy.set.WEGENT_RUNTIME_AUTH_TOKEN"],
-        "runtime-jwt"
-    );
-    assert_eq!(
-        config["shell_environment_policy.set.WEGENT_SKILL_IDENTITY_TOKEN"],
-        "skill-jwt"
-    );
-    assert_eq!(
-        config["shell_environment_policy.set.WEGENT_SKILL_USER_NAME"],
-        "alice"
-    );
-    assert!(config.contains_key("shell_environment_policy.set.PATH"));
-    assert!(config.get("model_provider").is_none());
-}
-
-#[test]
 fn persistent_codex_app_server_launch_config_keeps_only_process_settings() {
     let request_launch_config = CodexLaunchConfig {
         env: BTreeMap::from([("HTTP_PROXY".to_owned(), "http://127.0.0.1:7890".to_owned())]),
@@ -2667,6 +2655,10 @@ fn codex_thread_plan_selects_resume_when_fork_is_absent() {
         &CodexLaunchConfig::default(),
     );
 
+    assert_eq!(
+        thread_id_to_activate_before_start(&plan),
+        Some("resume-thread")
+    );
     match plan.start {
         CodexThreadStart::Request { operation, params } => {
             assert_eq!(operation, "thread/resume");
@@ -2691,6 +2683,7 @@ fn codex_thread_plan_starts_new_thread_without_identifiers() {
         &CodexLaunchConfig::default(),
     );
 
+    assert_eq!(thread_id_to_activate_before_start(&plan), None);
     match plan.start {
         CodexThreadStart::Request { operation, .. } => assert_eq!(operation, "thread/start"),
         CodexThreadStart::Direct(thread_id) => {
