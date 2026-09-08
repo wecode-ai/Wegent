@@ -413,6 +413,7 @@ class DesktopE2EServer {
     this.commandQueue = []
     this.commandResults = new Map()
     this.commandHistory = []
+    this.controlTransportHistory = []
     this.controlLongPolls = new Map()
     this.modelRequests = []
     this.catalogRequests = []
@@ -1019,6 +1020,11 @@ class DesktopE2EServer {
     return this.commandForClient(clientId, action, selector, options)
   }
 
+  recordControlTransport(event, clientId) {
+    this.controlTransportHistory.push({ event, clientId, at: new Date().toISOString() })
+    if (this.controlTransportHistory.length > 200) this.controlTransportHistory.shift()
+  }
+
   async commandForClient(clientId, action, selector, options = {}) {
     const observesElectronState = ELECTRON_OBSERVATION_ACTIONS.has(action)
     const availableAt = observesElectronState
@@ -1100,6 +1106,7 @@ class DesktopE2EServer {
     }
     const timeout = setTimeout(() => {
       if (this.controlLongPolls.get(clientId)?.response !== response) return
+      this.recordControlTransport('poll-timeout', clientId)
       this.controlLongPolls.delete(clientId)
       response.writeHead(204)
       response.end()
@@ -1107,6 +1114,7 @@ class DesktopE2EServer {
     this.controlLongPolls.set(clientId, { response, timeout })
     response.once('close', () => {
       if (this.controlLongPolls.get(clientId)?.response !== response) return
+      this.recordControlTransport('poll-close', clientId)
       clearTimeout(timeout)
       this.controlLongPolls.delete(clientId)
     })
@@ -1732,6 +1740,7 @@ class DesktopE2EServer {
   }
 
   async handleControlRoute(request, response, url) {
+    response.setHeader('Cache-Control', 'no-store')
     if (request.method === 'POST' && url.pathname === '/ready') {
       const ready = await readRequestBody(request)
       assert.equal(typeof ready.clientId, 'string', 'Desktop control client ID is required')
@@ -1784,6 +1793,7 @@ class DesktopE2EServer {
 
     if (request.method === 'GET' && url.pathname === '/commands') {
       const clientId = url.searchParams.get('clientId')
+      this.recordControlTransport('poll', clientId)
       if (!clientId || !this.controlWindowsByClient.has(clientId)) {
         response.writeHead(204)
         response.end()

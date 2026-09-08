@@ -64,6 +64,7 @@ describe('AI_VERIFY_ACTIONS', () => {
       'paste-text': 'pasteText',
       'pointer-move': 'pointerMove',
       press: 'press',
+      'native-press': 'nativePress',
       submit: 'submit',
       'scroll-into-view': 'scrollIntoView',
       'select-text': 'selectText',

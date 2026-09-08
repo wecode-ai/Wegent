@@ -1,7 +1,8 @@
 import { codexUpstreamApiFormat, writeCodexConfig } from './desktop-build-flows.mjs'
 import { remoteDeviceE2EExtension } from '../remote-device-extension.mjs'
 
-import { createHash } from 'node:crypto'
+import { randomBytes } from 'node:crypto'
+import { LocalPluginObjectStorage } from './local-plugin-object-storage.mjs'
 import { rm } from 'node:fs/promises'
 
 import {
@@ -20,7 +21,6 @@ import {
   assert,
   commandOutput,
   commandOutputAsync,
-  createServer,
   dirname,
   fetchJson,
   join,
@@ -109,114 +109,6 @@ async function startRedisServer(
   throw new Error(`Redis did not start after ${REDIS_START_ATTEMPTS} attempts`)
 }
 
-class LocalPluginObjectStorage {
-  constructor() {
-    this.buckets = new Set()
-    this.objects = new Map()
-  }
-
-  async start() {
-    this.port = await reservePort()
-    this.server = createServer((request, response) => {
-      void this.handle(request, response).catch(error => {
-        if (response.headersSent) {
-          response.destroy(error instanceof Error ? error : undefined)
-          return
-        }
-        response.writeHead(error instanceof URIError ? 400 : 500)
-        response.end()
-      })
-    })
-    await new Promise((resolvePromise, reject) => {
-      this.server.once('error', reject)
-      this.server.listen(this.port, '127.0.0.1', resolvePromise)
-    })
-    this.endpoint = `http://127.0.0.1:${this.port}`
-  }
-
-  async handle(request, response) {
-    const url = new URL(request.url ?? '/', this.endpoint)
-    const [bucket = '', ...objectParts] = url.pathname.split('/').filter(Boolean)
-    const objectKey = decodeURIComponent(objectParts.join('/'))
-    const storageKey = `${bucket}/${objectKey}`
-    if (!objectKey) {
-      if (request.method === 'HEAD') {
-        response.writeHead(
-          this.buckets.has(bucket) ? 200 : 404,
-          this.buckets.has(bucket)
-            ? {}
-            : {
-                'x-minio-error-code': 'NoSuchBucket',
-                'x-minio-error-desc': 'Bucket does not exist',
-              }
-        )
-        response.end()
-        return
-      }
-      if (request.method === 'PUT') {
-        this.buckets.add(bucket)
-        response.writeHead(200)
-        response.end()
-        return
-      }
-    }
-    if (request.method === 'PUT') {
-      const chunks = []
-      for await (const chunk of request) chunks.push(chunk)
-      this.buckets.add(bucket)
-      this.objects.set(storageKey, Buffer.concat(chunks))
-      response.writeHead(200, {
-        ETag: `"${createHash('md5').update(this.objects.get(storageKey)).digest('hex')}"`,
-      })
-      response.end()
-      return
-    }
-    const object = this.objects.get(storageKey)
-    if (!object) {
-      response.writeHead(404, {
-        'Content-Type': 'application/xml',
-        'x-minio-error-code': 'NoSuchKey',
-        'x-minio-error-desc': 'Object does not exist',
-      })
-      response.end('<Error><Code>NoSuchKey</Code><Message>Not found</Message></Error>')
-      return
-    }
-    if (request.method === 'HEAD') {
-      response.writeHead(200, {
-        'Content-Length': String(object.length),
-        'Last-Modified': new Date().toUTCString(),
-        ETag: '"e2e"',
-      })
-      response.end()
-      return
-    }
-    if (request.method === 'GET') {
-      response.writeHead(200, {
-        'Content-Length': String(object.length),
-        'Content-Type': 'application/zip',
-      })
-      response.end(object)
-      return
-    }
-    if (request.method === 'DELETE') {
-      this.objects.delete(storageKey)
-      response.writeHead(204)
-      response.end()
-      return
-    }
-    response.writeHead(405)
-    response.end()
-  }
-
-  async stop() {
-    if (!this.server) return
-    await new Promise(resolvePromise => {
-      this.server.close(resolvePromise)
-      this.server.closeAllConnections?.()
-    })
-  }
-}
-
 class RealCloudEnvironment {
   constructor({
     claudeBinary,
@@ -260,7 +152,13 @@ class RealCloudEnvironment {
       ...process.env,
       DATABASE_URL: `sqlite:///${this.databasePath}`,
       REDIS_URL: `redis://127.0.0.1:${this.redisPort}/0`,
+      CELERY_BROKER_URL: `redis://127.0.0.1:${this.redisPort}/0`,
+      CELERY_RESULT_BACKEND: `redis://127.0.0.1:${this.redisPort}/0`,
       SECRET_KEY: `wework-desktop-e2e-${process.pid}`,
+      WEWORK_PLUGIN_CREDENTIAL_ACTIVE_KEY_ID: 'desktop-e2e',
+      WEWORK_PLUGIN_CREDENTIAL_KEYS: JSON.stringify({
+        'desktop-e2e': randomBytes(32).toString('base64'),
+      }),
       INTERNAL_SERVICE_TOKEN: `wework-desktop-e2e-internal-${process.pid}`,
       BACKEND_INTERNAL_URL: this.backendUrl,
       WEGENT_BACKEND_PUBLIC_URL: this.backendUrl,
@@ -366,22 +264,26 @@ class RealCloudEnvironment {
     }
   }
 
-  async publishPluginRelease({ slug, version }) {
-    const packageRoot = join(resultDir, 'plugin-auto-update-fixtures', `${slug}-${version}`)
-    const manifestDir = join(packageRoot, '.codex-plugin')
-    await mkdir(manifestDir, { recursive: true })
-    await writeFile(
-      join(manifestDir, 'plugin.json'),
-      `${JSON.stringify({ name: slug, version, description: `Desktop E2E ${slug}` }, null, 2)}\n`,
-      'utf8'
-    )
+  async publishPluginRelease({ slug, version, packageRoot: providedRoot, prebuilt }) {
+    const packageRoot =
+      providedRoot ?? join(resultDir, 'plugin-auto-update-fixtures', `${slug}-${version}`)
+    if (!providedRoot && !prebuilt) {
+      const manifestDir = join(packageRoot, '.codex-plugin')
+      await mkdir(manifestDir, { recursive: true })
+      await writeFile(
+        join(manifestDir, 'plugin.json'),
+        `${JSON.stringify({ name: slug, version, description: `Desktop E2E ${slug}` }, null, 2)}\n`,
+        'utf8'
+      )
+    }
     const output = await commandOutputAsync(
       'uv',
       [
         'run',
         'python',
         'scripts/publish_official_plugin.py',
-        packageRoot,
+        prebuilt?.path ?? packageRoot,
+        ...(prebuilt ? ['--prebuilt', '--sha256', prebuilt.sha256] : []),
         '--slug',
         slug,
         '--visibility',
@@ -611,20 +513,26 @@ class RealCloudEnvironment {
     return JSON.parse(marker.slice('[WEGENT_PLUGIN_RESULT]'.length))
   }
 
-  async createPluginWorkspaceTask() {
+  async createPluginWorkspaceTask({
+    message = PLUGIN_CREATOR_PROMPT,
+    title = 'Cloud Plugin Creator E2E',
+    workspacePath: providedWorkspace,
+  } = {}) {
     const teams = await fetchJson(`${this.backendUrl}/api/teams?page=1&limit=100`, {
       headers: { Authorization: `Bearer ${this.authToken}` },
     })
     const team = teams.items?.[0]
     assert.ok(team?.id, 'Cloud Plugin Creator E2E requires a Team fixture')
     assert.ok(this.remoteCodexHome, 'Cloud Executor Codex home is not initialized')
-    const workspacePath = join(
-      dirname(this.remoteCodexHome),
-      'Documents',
-      'Codex',
-      'plugin-workspace-publication',
-      `${process.pid}-${Date.now()}`
-    )
+    const workspacePath =
+      providedWorkspace ??
+      join(
+        dirname(this.remoteCodexHome),
+        'Documents',
+        'Codex',
+        'plugin-workspace-publication',
+        `${process.pid}-${Date.now()}`
+      )
     await mkdir(workspacePath, { recursive: true })
     const task = await fetchJson(`${this.backendUrl}/api/runtime-work/create`, {
       method: 'POST',
@@ -637,8 +545,8 @@ class RealCloudEnvironment {
         workspacePath,
         teamId: team.id,
         runtime: 'codex',
-        message: PLUGIN_CREATOR_PROMPT,
-        title: 'Cloud Plugin Creator E2E',
+        message,
+        title,
         modelId: CLOUD_PUBLIC_MODEL_NAME,
         modelType: 'public',
         modelOptions: CLOUD_PUBLIC_MODEL_OPTIONS,

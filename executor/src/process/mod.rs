@@ -821,13 +821,13 @@ enum StreamingStdoutOutcome {
     },
 }
 
-struct ProcessTreeGuard {
+pub(crate) struct ProcessTreeGuard {
     #[cfg(windows)]
     pid: Option<u32>,
 }
 
 impl ProcessTreeGuard {
-    fn new(pid: Option<u32>) -> Self {
+    pub(crate) fn new(pid: Option<u32>) -> Self {
         #[cfg(not(windows))]
         let _ = pid;
         Self {
@@ -836,20 +836,24 @@ impl ProcessTreeGuard {
         }
     }
 
-    fn disarm(&mut self) {
+    pub(crate) fn disarm(&mut self) {
         #[cfg(windows)]
         {
             self.pid = None;
+        }
+    }
+
+    pub(crate) fn terminate(&mut self) {
+        #[cfg(windows)]
+        if let Some(pid) = self.pid.take() {
+            kill_windows_process_tree(pid);
         }
     }
 }
 
 impl Drop for ProcessTreeGuard {
     fn drop(&mut self) {
-        #[cfg(windows)]
-        if let Some(pid) = self.pid.take() {
-            kill_windows_process_tree(pid);
-        }
+        self.terminate();
     }
 }
 

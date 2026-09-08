@@ -1271,6 +1271,20 @@ class DeviceNamespace(socketio.AsyncNamespace):
             "device:status": "on_device_status",
             "device:upgrade_status": "on_device_upgrade_status",
             "runtime:event": "on_runtime_event",
+            "plugin.auth.automatic": "on_plugin_auth_automatic",
+            "plugin.auth.prepare": "on_plugin_auth_prepare",
+            "plugin.auth.transfer.stage": "on_plugin_auth_transfer_stage",
+            "plugin.auth.transfer.prepare": "on_plugin_auth_transfer_prepare",
+            "plugin.auth.transfer.finish": "on_plugin_auth_transfer_finish",
+            "plugin.auth.transfer.abort": "on_plugin_auth_transfer_abort",
+            "plugin.auth.execute": "on_plugin_auth_execute",
+            "plugin.auth.oauth.begin": "on_plugin_auth_oauth_begin",
+            "plugin.auth.oauth.finish": "on_plugin_auth_oauth_finish",
+            "plugin.auth.oauth.revocations": "on_plugin_auth_oauth_revocations",
+            "plugin.auth.oauth.revoke_begin": "on_plugin_auth_oauth_revoke_begin",
+            "plugin.auth.oauth.revoke_finish": "on_plugin_auth_oauth_revoke_finish",
+            "plugin.auth.enroll": "on_plugin_auth_enroll",
+            "plugin.auth.read": "on_plugin_auth_read",
             "runtime.tasks.pull": "on_runtime_tasks_pull",
             "runtime.tasks.accept": "on_runtime_tasks_accept",
             "runtime.tasks.updated": "on_runtime_task_updated",
@@ -1396,7 +1410,23 @@ class DeviceNamespace(socketio.AsyncNamespace):
         return self._runtime_event_locks[sid]
 
     @trace_websocket_event(
-        exclude_events={"connect"},
+        exclude_events={
+            "connect",
+            "plugin.auth.automatic",
+            "plugin.auth.prepare",
+            "plugin.auth.transfer.stage",
+            "plugin.auth.transfer.prepare",
+            "plugin.auth.transfer.finish",
+            "plugin.auth.transfer.abort",
+            "plugin.auth.execute",
+            "plugin.auth.oauth.begin",
+            "plugin.auth.oauth.finish",
+            "plugin.auth.oauth.revocations",
+            "plugin.auth.oauth.revoke_begin",
+            "plugin.auth.oauth.revoke_finish",
+            "plugin.auth.enroll",
+            "plugin.auth.read",
+        },
         extract_event_data=True,
     )
     async def trigger_event(self, event: str, sid: str, *args):
@@ -2230,6 +2260,134 @@ class DeviceNamespace(socketio.AsyncNamespace):
             )
 
         return {"success": True}
+
+    async def on_plugin_auth_oauth_revocations(self, sid: str, data: dict) -> dict:
+        from app.api.ws.plugin_auth_broker import exchange
+
+        return await exchange(
+            sid=sid,
+            session=await self.get_session(sid),
+            operation="oauth_revocations",
+            data=data,
+        )
+
+    async def on_plugin_auth_oauth_revoke_begin(self, sid: str, data: dict) -> dict:
+        from app.api.ws.plugin_auth_broker import exchange
+
+        return await exchange(
+            sid=sid,
+            session=await self.get_session(sid),
+            operation="oauth_revoke_begin",
+            data=data,
+        )
+
+    async def on_plugin_auth_oauth_revoke_finish(self, sid: str, data: dict) -> dict:
+        from app.api.ws.plugin_auth_broker import exchange
+
+        return await exchange(
+            sid=sid,
+            session=await self.get_session(sid),
+            operation="oauth_revoke_finish",
+            data=data,
+        )
+
+    async def on_plugin_auth_oauth_begin(self, sid: str, data: dict) -> dict:
+        from app.api.ws.plugin_auth_broker import exchange
+
+        return await exchange(
+            sid=sid,
+            session=await self.get_session(sid),
+            operation="oauth_begin",
+            data=data,
+        )
+
+    async def on_plugin_auth_oauth_finish(self, sid: str, data: dict) -> dict:
+        from app.api.ws.plugin_auth_broker import exchange
+
+        return await exchange(
+            sid=sid,
+            session=await self.get_session(sid),
+            operation="oauth_finish",
+            data=data,
+        )
+
+    async def on_plugin_auth_execute(self, sid: str, data: dict) -> dict:
+        from app.api.ws.plugin_auth_broker import exchange
+
+        return await exchange(
+            sid=sid, session=await self.get_session(sid), operation="execute", data=data
+        )
+
+    async def on_plugin_auth_transfer_stage(self, sid: str, data: dict) -> dict:
+        from app.api.ws.plugin_auth_broker import exchange
+
+        return await exchange(
+            sid=sid,
+            session=await self.get_session(sid),
+            operation="transfer_stage",
+            data=data,
+        )
+
+    async def on_plugin_auth_transfer_prepare(self, sid: str, data: dict) -> dict:
+        from app.api.ws.plugin_auth_broker import exchange
+
+        return await exchange(
+            sid=sid,
+            session=await self.get_session(sid),
+            operation="transfer_prepare",
+            data=data,
+        )
+
+    async def on_plugin_auth_transfer_abort(self, sid: str, data: dict) -> dict:
+        from app.api.ws.plugin_auth_broker import exchange
+
+        return await exchange(
+            sid=sid,
+            session=await self.get_session(sid),
+            operation="transfer_abort",
+            data=data,
+        )
+
+    async def on_plugin_auth_transfer_finish(self, sid: str, data: dict) -> dict:
+        from app.api.ws.plugin_auth_broker import exchange
+
+        return await exchange(
+            sid=sid,
+            session=await self.get_session(sid),
+            operation="transfer_finish",
+            data=data,
+        )
+
+    async def on_plugin_auth_automatic(self, sid: str, data: dict) -> dict:
+        from app.api.ws.plugin_auth_broker import exchange
+
+        return await exchange(
+            sid=sid,
+            session=await self.get_session(sid),
+            operation="automatic",
+            data=data,
+        )
+
+    async def on_plugin_auth_prepare(self, sid: str, data: dict) -> dict:
+        from app.api.ws.plugin_auth_broker import exchange
+
+        return await exchange(
+            sid=sid, session=await self.get_session(sid), operation="prepare", data=data
+        )
+
+    async def on_plugin_auth_enroll(self, sid: str, data: dict) -> dict:
+        from app.api.ws.plugin_auth_broker import exchange
+
+        return await exchange(
+            sid=sid, session=await self.get_session(sid), operation="enroll", data=data
+        )
+
+    async def on_plugin_auth_read(self, sid: str, data: dict) -> dict:
+        from app.api.ws.plugin_auth_broker import exchange
+
+        return await exchange(
+            sid=sid, session=await self.get_session(sid), operation="read", data=data
+        )
 
     async def on_runtime_tasks_pull(self, sid: str, data: dict) -> dict:
         """Return one atomically claimed execution to this Executor."""

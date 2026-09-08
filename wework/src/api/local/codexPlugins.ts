@@ -318,6 +318,7 @@ export interface CodexPluginSummary {
 
 interface CodexPluginConnector {
   slug: string
+  accountAuth?: NonNullable<InstalledPluginComponents['connectors']>[number]['accountAuth']
   authPolicy?: 'on_install' | 'on_use' | 'optional' | string | null
   localAuth?: {
     kind?: 'local_qr' | 'browser_oauth'
@@ -1617,6 +1618,7 @@ function pluginComponents(detail?: CodexPluginDetail | null): InstalledPluginCom
     const localAuth = connector.localAuth
     return {
       slug: connector.slug,
+      ...(connector.accountAuth ? { accountAuth: connector.accountAuth } : {}),
       authPolicy:
         connector.authPolicy === 'on_install' ||
         connector.authPolicy === 'on_use' ||

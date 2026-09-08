@@ -9,6 +9,7 @@ use crate::{protocol::ExecutionRequest, runtime_work::runtime_task_title};
 
 pub(super) fn task_identity_env(request: &ExecutionRequest) -> BTreeMap<String, String> {
     let mut env = BTreeMap::new();
+    env.extend(crate::plugin_account_auth::broker::environment());
 
     if let Ok(executable) = std::env::current_exe() {
         env.insert(

@@ -22,11 +22,12 @@ import logging
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 
-from sqlalchemy import and_
+from sqlalchemy import and_, update
 from sqlalchemy.orm import Session
 from sqlalchemy.orm.attributes import flag_modified
 
 from app.models.kind import Kind
+from app.models.user import User
 from app.schemas.device import DeviceType
 from app.services.device.display_name import (
     resolve_device_display_name,
@@ -382,6 +383,14 @@ class DeviceService:
         Returns:
             Kind model instance for the device
         """
+        # Lock an existing owner row before looking up a possibly absent device.
+        # A no-op UPDATE also serializes SQLite writers; it preserves user metadata.
+        db.execute(
+            update(User)
+            .where(User.id == user_id)
+            .values(id=User.id, updated_at=User.updated_at)
+            .execution_options(synchronize_session=False)
+        )
         # Find device by Kind.name (which stores device_id), including soft-deleted
         device_kind = (
             db.query(Kind)
@@ -393,6 +402,7 @@ class DeviceService:
                     Kind.name == device_id,
                 )
             )
+            .populate_existing()
             .with_for_update()
             .first()
         )

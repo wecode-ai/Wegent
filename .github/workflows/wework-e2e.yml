@@ -732,6 +732,13 @@ jobs:
           setup-python: "false"
           setup-uv: "false"
 
+      - name: Prepare the pinned native DWS compiler for account authentication E2E
+        if: contains(matrix.segments, 'plugin-account-auth')
+        uses: actions/setup-go@v6
+        with:
+          go-version: "1.25.9"
+          cache: false
+
       - name: Run Wework desktop Cloud E2E checkpoints
         env:
           CI: true
