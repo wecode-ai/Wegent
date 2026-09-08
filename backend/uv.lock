@@ -5985,6 +5985,7 @@ dependencies = [
     { name = "wegent-chat-shell" },
     { name = "wegent-knowledge-engine" },
     { name = "wegent-shared" },
+    { name = "zstandard" },
 ]
 
 [package.dev-dependencies]
@@ -6095,6 +6096,7 @@ requires-dist = [
     { name = "wegent-chat-shell", editable = "../chat_shell" },
     { name = "wegent-knowledge-engine", editable = "../knowledge_engine" },
     { name = "wegent-shared", editable = "../shared" },
+    { name = "zstandard", specifier = ">=0.25.0" },
 ]
 
 [package.metadata.requires-dev]

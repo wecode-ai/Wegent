@@ -37,10 +37,12 @@ Electron 版本通过 `electron-updater` 检查 `wework-updater` Release 中的
 “暂无可用更新”，而不是网络错误。其他检查失败仍需原样报告。
 
 macOS 和 Windows 的正式版本 Release 必须分别包含 ZIP 和 NSIS 安装器对应的
-`.blockmap`。`electron-updater` 使用上一版本缓存和新旧 blockmap 计算差分，只下载
-变化的数据块；首次更新、缓存被清理或差分失败时才回退到完整安装包。构建产物缺少
-任一 blockmap 时发布流程必须失败。差分计划、实际下载量和回退原因记录在应用日志
-目录的 `app-update.log` 中。
+`.blockmap`。macOS 客户端将完整下载或差分下载成功后的 ZIP、blockmap、版本、
+架构、URL 和 SHA-512 作为一组经过验证的差分基线原子保存；后续更新只使用这组本地
+基线，不根据新产物文件名猜测旧 blockmap 地址。首次更新、缓存基线不完整或校验
+失败时下载完整安装包并建立新基线。差分校验失败时只再执行一次完整下载。构建产物
+缺少任一 blockmap 时发布流程必须失败。差分计划、累计下载量和回退原因记录在应用
+日志目录的 `app-update.log` 中。
 
 为让已安装的 Tauri 版本直接使用设置页的“升级”迁移到 Electron，同一次发布还会
 生成旧 updater 协议的 JSON 和签名产物：
@@ -79,9 +81,17 @@ SHA-512 校验。
 SHA-256。Electron 应用本身仍通过 `electron-updater` 升级；其余七个组件使用
 `components-<channel>-<platform>-<arch>.json` 独立升级。
 
-发布组件清单中的内容 SHA-256 必须从 Electron Builder 完成签名后的最终应用资源
-计算。macOS 代码签名可能重写嵌套可执行文件，因此不得直接复用打包前
-`components.json` 中的内容哈希。
+macOS 发布先按未签名内容、证书身份、架构、签名参数和构建工具版本定位不可变的
+已签名组件。输入和签名策略不变时，安装包与在线组件复用完全相同的已签名字节；
+任一输入变化时重新签名并校验。Electron Builder 跳过这些已处理的托管资源，避免
+签名时间戳单独改变组件哈希。发布组件清单中的内容 SHA-256 必须从这份最终资源
+计算，不得从重新签名后的安装包再次提取组件。
+
+Codex 组件的发布边界是完整的 `codex/` 运行时目录，不是单独的 `codex` 可执行
+文件。组件必须包含 `WEGENT_CODEX_BINARY.json`、目标架构的 `codex` 与
+`codex-code-mode-host`、`codex-path` 工具和 legal 资源。客户端从运行时描述中的
+`binaryPath` 解析主程序，并在激活组件前校验同目录的 code-mode host；发布脚本不得
+把 `components.json` 中的 Codex 路径指向主程序或只归档主程序。
 
 组件压缩包以压缩包 SHA-256 命名并作为不可变资产保存。本项目源码构建的 Wework
 核心插件及 UI、应用静态资源、内置插件和 Executor 压缩包存放在对应的版本
@@ -149,6 +159,12 @@ Electron 宿主在线更新使用独立的 `WeWorkHostUpdate` 产物。滚动 El
 工作台和 Core DSH 完成启动后才确认新组件；如果启动失败或进程在确认前退出，下次
 启动自动回滚到上一组组件。打包内资源始终保留为最终兜底。
 
+应用更新由主进程中的单个任务管理。同一版本和通道的自动下载、手动下载与重复检查
+共享任务，检查操作不得清空正在进行的下载。缺失组件最多使用三个并发下载；全部
+完成大小、压缩包哈希和解包内容校验后才写入 `pending`。更新进度依次覆盖组件、
+宿主下载、校验和安装就绪阶段，并累计差分失败前已经传输的字节；Squirrel.Mac 对
+本地缓存 ZIP 的安装交接不计入网络下载量。
+
 Wework 不再打包或下载第二份 Node。启动时会在用户数据目录生成轻量 `node`
 入口，将 `PATH`、`WEWORK_NODE_PATH`、`NODE` 和 `npm_node_execpath` 统一指向
 Electron，并设置 `ELECTRON_RUN_AS_NODE=1`。因此 Core DSH 以及 Codex skill 中
@@ -182,7 +198,7 @@ Codex 下载包按 `wework/codex-binaries.lock.json` 固定并校验 SHA-512。�
 `wework/electron/scripts/prepare-package-assets.mjs` 会把 sidecar、插件、图标和运行时
 描述复制到应用资源目录。不要重新建立第二份桌面资源目录或资源清单。
 
-当前固定版本为 Codex `0.152.1`。Codex `0.152` 开始默认关闭
+当前固定版本为 Codex `0.153.3`。Codex `0.152` 开始默认关闭
 `tools.update_plan.enabled`，但 Wework 会消费对应的计划事件并渲染计划块，因此
 Executor 启动 Codex 时必须显式启用该工具。桌面 E2E 默认验证锁文件中的二进制；
 只有专用的 `WEWORK_E2E_CODEX_BIN` 可以覆盖它，不能继承通用 `CODEX_BIN`，否则

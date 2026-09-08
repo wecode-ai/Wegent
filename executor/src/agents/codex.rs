@@ -4853,6 +4853,26 @@ fn thread_start_params(request: &ExecutionRequest, launch_config: &CodexLaunchCo
     Value::Object(params)
 }
 
+pub(crate) async fn start_codex_app_server_thread(
+    client: &CodexAppServerClient,
+    request: &ExecutionRequest,
+) -> Result<String, String> {
+    let launch_config = build_codex_launch_config(request)?;
+    client
+        .ensure_process_for_launch_config(&launch_config)
+        .await?;
+    let response = client
+        .request("thread/start", thread_start_params(request, &launch_config))
+        .await?;
+    let thread_id = thread_id_from_response(
+        "thread/start",
+        &response,
+        launch_config.model_provider.as_deref(),
+    )?;
+    bind_local_proxy_thread(&launch_config, &thread_id)?;
+    Ok(thread_id)
+}
+
 fn thread_fork_params(
     thread_id: &str,
     thread_path: Option<&str>,

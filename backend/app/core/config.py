@@ -242,6 +242,8 @@ class Settings(BaseSettings):
     WORKSPACE_ARCHIVE_BUCKET: str = "wegent-archives"
     WORKSPACE_ARCHIVE_ENABLED: bool = True
     WORKSPACE_ARCHIVE_TIMEZONE: str = "Asia/Shanghai"
+    WEWORK_TRANSCRIPT_S3_BUCKET: str = "wework-transcripts"
+    WEWORK_TRANSCRIPT_DOWNLOAD_URL_EXPIRE_SECONDS: int = 900
 
     # Publish storage configuration
     PUBLISH_PRESIGNED_UPLOAD_EXPIRE_SECONDS: int = 3600
@@ -279,6 +281,10 @@ class Settings(BaseSettings):
 
     # Redis configuration
     REDIS_URL: str = "redis://127.0.0.1:6379/0"
+    TERMINAL_SESSION_CACHE_MAX_ENTRIES: int = 8192
+    TERMINAL_SESSION_CACHE_TTL_SECONDS: float = 5.0
+    # Keep false during mixed-version Backend rollout; enable after all replicas upgrade.
+    TERMINAL_PROTOCOL_V2_ENABLED: bool = True
     TASK_RUN_METRICS_RETENTION_DAYS: int = 32
 
     # Public base URL of this backend, reachable from executor devices. The

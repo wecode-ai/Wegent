@@ -20,7 +20,6 @@ window.__ModuleLoader__.load({
           ctx.wework.contributions.register(ctx, 'wework.sidebar.navigation', {
             id: 'applications.navigation',
             activeItem: 'sites',
-            experimental: true,
             icon: 'applications',
             labelKey: 'workbench.sites',
             label: '应用',

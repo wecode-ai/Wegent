@@ -6,14 +6,6 @@ import type { DeviceInfo } from '@/apis/devices'
 import { isOpenClawDevice } from './device-status'
 
 /**
- * Return whether a device can be exposed as an execution target in Wegent web.
- * App-only registrations are local Wework connections and reject backend dispatch.
- */
-export function isWegentExecutionDevice(device: DeviceInfo): boolean {
-  return device.device_type !== 'app'
-}
-
-/**
  * Hide advanced runtimes from ordinary execution choices until the user opts in.
  */
 export function filterDevicesByAdvancedMode(
@@ -32,7 +24,12 @@ export function resolveOrdinaryDeviceChatTarget(
   if (executorDevices.some(device => device.device_id === selectedDeviceId)) {
     return selectedDeviceId
   }
-  if (executorDevices.some(device => device.device_id === defaultDeviceId)) {
+  if (
+    executorDevices.some(
+      device =>
+        device.device_id === defaultDeviceId || device.registered_device_id === defaultDeviceId
+    )
+  ) {
     return defaultDeviceId
   }
   return executorDevices.length === 1 ? executorDevices[0].device_id : null

@@ -28,6 +28,7 @@ window.__ModuleLoader__.load({
         'wework.route': { kind: 'list', scope: 'root' },
         'wework.runtime-profile.workspace-policy': { kind: 'list', scope: 'root' },
         'wework.settings.page': { kind: 'list', scope: 'root' },
+        'wework.settings.section': { kind: 'list', scope: 'root' },
         'wework.sidebar.navigation': { kind: 'list', scope: 'root' },
       },
       'wework.internal.shell': {

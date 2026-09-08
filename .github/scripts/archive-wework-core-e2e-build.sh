@@ -29,6 +29,7 @@ rm -rf "$staging_dir"
 mkdir -p "$staging_dir/codex"
 cp -a "$electron_package" "$staging_dir/electron-app"
 cp -R "$codex_root" "$staging_dir/codex/$codex_target"
+node wework/scripts/build-desktop-e2e-client.mjs "$staging_dir/e2e-client"
 chmod 0755 \
   "$staging_dir/electron-app/WeWork" \
   "$staging_dir/electron-app/resources/bin/wegent-executor"

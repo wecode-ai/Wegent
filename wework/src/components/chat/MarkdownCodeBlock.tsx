@@ -1,6 +1,7 @@
 import { memo, useEffect, useRef, useState } from 'react'
 import type { CSSProperties, HTMLProps, ReactNode } from 'react'
 import { ArrowRightToLine, Copy, CopyCheck, TextWrap } from 'lucide-react'
+import * as ScrollAreaPrimitive from '@radix-ui/react-scroll-area'
 import { track } from '@/telemetry/client'
 import type { HighlightedCode } from './highlightCode'
 import 'highlight.js/styles/atom-one-dark.css'
@@ -145,25 +146,61 @@ export function MarkdownCodeBlock({
           </button>
         </div>
       </div>
-      <div
-        data-testid="markdown-code-scroll-container"
-        data-wrap={effectiveWrapLines ? 'true' : 'false'}
-        data-syntax-highlighted={highlightedPrefix ? 'true' : 'false'}
-        className={
-          effectiveWrapLines
-            ? 'max-w-full select-none overflow-x-hidden'
-            : `max-w-full select-none overflow-x-auto ${
-                isStreaming ? 'scrollbar-none' : 'scrollbar-soft'
-              }`
-        }
+      <MarkdownCodeScrollArea
+        wrapLines={effectiveWrapLines}
+        isStreaming={isStreaming}
+        syntaxHighlighted={Boolean(highlightedPrefix)}
       >
         <pre style={codeStyle}>
           <code {...codeProps}>
             <HighlightedCodeContent text={text} highlightedCode={highlightedPrefix} />
           </code>
         </pre>
-      </div>
+      </MarkdownCodeScrollArea>
     </div>
+  )
+}
+
+function MarkdownCodeScrollArea({
+  children,
+  isStreaming,
+  syntaxHighlighted,
+  wrapLines,
+}: {
+  children: ReactNode
+  isStreaming: boolean
+  syntaxHighlighted: boolean
+  wrapLines: boolean
+}) {
+  const hideHorizontalScrollbar = isStreaming || wrapLines
+
+  return (
+    <ScrollAreaPrimitive.Root type="always" className="relative max-w-full">
+      <ScrollAreaPrimitive.Viewport
+        data-testid="markdown-code-scroll-container"
+        data-wrap={wrapLines ? 'true' : 'false'}
+        data-syntax-highlighted={syntaxHighlighted ? 'true' : 'false'}
+        className={[
+          'max-w-full select-none',
+          hideHorizontalScrollbar
+            ? 'scrollbar-none overflow-x-hidden'
+            : 'scrollbar-soft overflow-x-auto',
+        ].join(' ')}
+      >
+        {children}
+      </ScrollAreaPrimitive.Viewport>
+      <ScrollAreaPrimitive.Scrollbar
+        orientation="horizontal"
+        data-testid="markdown-code-horizontal-scrollbar"
+        hidden={hideHorizontalScrollbar}
+        className="flex h-2.5 touch-none select-none bg-transparent p-0.5"
+      >
+        <ScrollAreaPrimitive.Thumb
+          data-testid="markdown-code-horizontal-scrollbar-thumb"
+          className="relative self-stretch rounded-full bg-[#aaaaaa] hover:bg-[#8c8c8c]"
+        />
+      </ScrollAreaPrimitive.Scrollbar>
+    </ScrollAreaPrimitive.Root>
   )
 }
 

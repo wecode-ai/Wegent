@@ -93,7 +93,6 @@ const TEST_DSH_NAVIGATION = [
   {
     id: 'applications.navigation',
     activeItem: 'sites',
-    experimental: true,
     icon: 'applications',
     label: '应用',
     order: 30,
