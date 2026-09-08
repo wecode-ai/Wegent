@@ -1231,6 +1231,7 @@ impl RuntimeWorkRpcHandler {
                 self.mark_thread_event_route_idle(&thread_id);
                 self.register_codex_thread_workspace_root(&thread_id, &event_request);
                 let response_item_id = turn.response_item_id;
+                let response_value_origin = turn.response_value_origin;
                 match turn.outcome {
                     ExecutionOutcome::Completed { content } => emit_response_event(
                         &self.event_tx,
@@ -1240,6 +1241,7 @@ impl RuntimeWorkRpcHandler {
                         &event_request,
                         json!({
                             "value": content,
+                            "valueOrigin": response_value_origin.as_str(),
                             "turnId": active_turn.map(|turn| &turn.turn_id),
                             "itemId": response_item_id,
                         }),
@@ -1252,6 +1254,7 @@ impl RuntimeWorkRpcHandler {
                         &event_request,
                         json!({
                             "value": "",
+                            "valueOrigin": "empty",
                             "turnId": active_turn.map(|turn| &turn.turn_id),
                             "stop_reason": stop_reason,
                             "silent_exit": true,
