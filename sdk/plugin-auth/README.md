@@ -5,10 +5,14 @@ title: Python 插件账号认证 SDK
 
 # Python 插件账号认证 SDK
 
-这是 `accountAuth` 协议草案 v1 的公共 Python 实现，SDK 版本为 `0.7.0`。
+这是 `accountAuth` 协议草案 v1 的公共 Python 实现，SDK 版本为 `0.7.1`。
 支持 Python 3.9+，只使用标准库；SDK 源码随插件打包，不依赖运行时安装。
 邮箱插件已使用此实现。当前提供原生 `export`、`run` 和公开业务命令委托，
 已接入桌面与独立设备的 Backend Runner。OAuth 授权、刷新回调已接入原生链路；真实后端/桌面已通过合成 OAuth 服务的端到端验证，提供方撤销已接入持久化任务；真实服务方与 Windows 实机验收待完成，协议继续作为草案。
+
+SDK 根据宿主 capabilities 清单中的 `store_path`、`runtime.codex_link` 和
+`runtime.claude_link` 识别安装身份，支持运行时复制目录。未登记、禁用、非托管
+或映射不唯一的路径不能发起账号代理请求；原生宿主继续校验包哈希与设备权限。
 
 ## 新插件接入
 

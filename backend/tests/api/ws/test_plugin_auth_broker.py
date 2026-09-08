@@ -29,9 +29,7 @@ def route(monkeypatch):
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize(
-    "field", ["user_id", "execution_target_id", "device_id", "runtime_instance_id"]
-)
+@pytest.mark.parametrize("field", ["user_id", "device_id", "runtime_instance_id"])
 async def test_unregistered_socket_never_reads_credentials(
     identity, field, monkeypatch
 ):
@@ -64,7 +62,7 @@ async def test_replaced_route_never_reads_credentials(
 
 @pytest.mark.asyncio
 async def test_identity_comes_from_session_and_errors_do_not_leak(
-    identity, route, monkeypatch
+    identity, route, monkeypatch, caplog
 ):
     exchange = Mock(side_effect=RuntimeError("synthetic-secret"))
     monkeypatch.setattr(broker, "_exchange_sync", exchange)
@@ -73,8 +71,41 @@ async def test_identity_comes_from_session_and_errors_do_not_leak(
         sid="socket", session=identity, operation="enroll", data=data
     )
     assert result == {"success": False, "error": "plugin_auth_exchange_failed"}
+    assert "stage=exchange error_type=RuntimeError" in caplog.text
+    assert "synthetic-secret" not in caplog.text
     exchange.assert_called_once_with(
-        12, "logical", "runtime", "instance", "enroll", data
+        12, "runtime", "runtime", "instance", "enroll", data
+    )
+
+
+@pytest.mark.asyncio
+async def test_shared_app_alias_uses_registered_record_route(
+    identity, route, monkeypatch
+):
+    identity["execution_target_id"] = "shared-desktop-alias"
+    identity["device_id"] = "app-record-78"
+    route.runtime_device_id = "app-record-78"
+    exchange = Mock(return_value={"success": True, "migrations": []})
+    monkeypatch.setattr(broker, "_exchange_sync", exchange)
+
+    result = await broker.exchange(
+        sid="socket",
+        session=identity,
+        operation="automatic",
+        data={"installed_plugin_ids": [64]},
+    )
+
+    assert result["success"] is True
+    broker.runtime_route_resolver.resolve.assert_awaited_once_with(
+        user_id=12, submitted_device_id="app-record-78"
+    )
+    exchange.assert_called_once_with(
+        12,
+        "app-record-78",
+        "app-record-78",
+        "instance",
+        "automatic",
+        {"installed_plugin_ids": [64]},
     )
 
 

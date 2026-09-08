@@ -95,6 +95,41 @@ def enroll(service, db, user, installed, **changes):
     return service.enroll(db, user_id=user.id, request=PluginCredentialWrite(**payload))
 
 
+def test_record_route_binds_exact_app_when_alias_is_shared(service, test_db, test_user):
+    devices = []
+    for index in range(2):
+        device = Kind(
+            user_id=test_user.id,
+            kind="Device",
+            namespace="default",
+            name=f"installation-{index}",
+            is_active=True,
+            json={
+                "spec": {
+                    "deviceType": "app",
+                    "deviceId": f"installation-{index}",
+                    "appDeviceId": "shared-desktop-alias",
+                    "runtimeInstanceId": f"instance-{index}",
+                }
+            },
+        )
+        test_db.add(device)
+        devices.append(device)
+    test_db.flush()
+    route = f"app-record-{devices[1].id}"
+
+    logical, binding = service._device_binding(test_db, test_user.id, route)
+
+    assert logical == route
+    assert binding == {
+        "deviceRowId": devices[1].id,
+        "runtimeDeviceId": route,
+        "runtimeInstanceId": "instance-1",
+    }
+    with pytest.raises(PluginAccountAuthError, match="plugin_auth_device_not_found"):
+        service._device_binding(test_db, test_user.id + 1, route)
+
+
 def read(service, db, user, installed, connection, device_id="logical-device"):
     return service.read_for_device(
         db,

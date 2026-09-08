@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { execFile } from 'node:child_process'
-import { mkdir, readFile, rm, writeFile } from 'node:fs/promises'
+import { lstat, mkdir, readFile, rm, writeFile } from 'node:fs/promises'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { promisify } from 'node:util'
@@ -48,7 +48,12 @@ async function managedRoot(home, installedId) {
   const item = Object.values(manifest?.plugins ?? {}).find(
     item => item.installed_plugin_id === installedId && item.managed && item.enabled
   )
-  return item ? resolve(home, 'capabilities', item.store_path) : null
+  if (!item) return null
+  assert.ok(item.runtime?.codex_link, 'Managed plugin has no Codex runtime mapping')
+  const root = resolve(home, 'capabilities', item.runtime.codex_link)
+  assert.notEqual(root, resolve(home, 'capabilities', item.store_path))
+  assert.ok(!(await lstat(root)).isSymbolicLink(), 'Expected a real runtime copy')
+  return root
 }
 
 export async function createDesktopScenario({
@@ -607,6 +612,7 @@ raise SystemExit(delegated if delegated is not None else provider.execute(provid
             automaticCredentialUpdate: true,
             automaticCloudGrant: true,
             cloudBusinessWithoutSource: true,
+            cloudBusinessFromRuntimeCopy: true,
             exclusiveSourceChangeFenced: true,
             interruptedDetachRecoveredAutomatically: true,
             exclusiveTransferCloudExecution: true,

@@ -19,6 +19,7 @@ from app.schemas.plugin_account_auth import (
     PluginAccountConnectionResponse,
     PluginCredentialWrite,
 )
+from app.services.device.identity import record_id_from_route
 from app.services.device.runtime_route import resolve_runtime_route_identity
 from app.services.plugin_credential_cipher import PluginCredentialCipher
 from shared.telemetry.decorators import trace_sync
@@ -377,13 +378,18 @@ class PluginAccountConnectionService:
             raise PluginAccountAuthError("plugin_auth_device_not_found", 404)
         if not identity.runtime_instance_id:
             raise PluginAccountAuthError("plugin_auth_device_upgrade_required", 409)
+        record_id = record_id_from_route(identity.runtime_device_id)
         device = (
             db.query(Kind)
             .filter(
                 Kind.user_id == user_id,
                 Kind.kind == "Device",
                 Kind.namespace == "default",
-                Kind.name == identity.logical_device_id,
+                (
+                    Kind.id == record_id
+                    if record_id is not None
+                    else Kind.name == identity.logical_device_id
+                ),
                 Kind.is_active.is_(True),
             )
             .one()

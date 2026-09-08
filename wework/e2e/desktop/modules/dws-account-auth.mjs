@@ -37,7 +37,10 @@ export async function verifyDwsCloudAccount({
     prebuilt: { path: archive, sha256 },
   })
   const local = await cloud.waitForConnectedAppDevice()
-  for (const device of [local.device_id, CLOUD_DEVICE_ID]) {
+  // Account grants use the canonical execution route, not the displayed device ID.
+  const sourceDeviceId = local.execution_target_id
+  assert.match(sourceDeviceId, /^app-record-[1-9][0-9]*$/)
+  for (const device of [sourceDeviceId, CLOUD_DEVICE_ID]) {
     await api(`/plugins/marketplace/${release.pluginId}/install?device_id=${device}`, 'POST')
   }
   const installed = (await api('/plugins/installed')).items.find(
@@ -70,12 +73,15 @@ export async function verifyDwsCloudAccount({
   const command = `python3 ${quote(join(cloudRoot, 'scripts/cli.py'))} account-status`
   const connection = await waitForValue(
     () => api('/plugin-connections'),
-    list => list.some(item => item.installed_plugin_id === installedId),
+    list =>
+      list.some(
+        item => item.installed_plugin_id === installedId && item.device_ids.includes(sourceDeviceId)
+      ),
     timeoutMs,
-    'The native DWS source-store migration did not enroll an account'
+    'The native DWS source-store migration did not enroll and grant the source device'
   ).then(list => list.find(item => item.installed_plugin_id === installedId))
   assert.equal(connection.account_id, 'synthetic-corp:synthetic-user')
-  assert.ok(connection.device_ids.includes(local.device_id))
+  assert.ok(connection.device_ids.includes(sourceDeviceId))
   assert.equal(JSON.parse((await store('check')).stdout).verified, true)
   await waitForValue(
     () => api('/plugin-connections'),

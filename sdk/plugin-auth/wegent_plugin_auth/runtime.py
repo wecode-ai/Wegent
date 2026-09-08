@@ -12,7 +12,7 @@ import urllib.parse
 import urllib.request
 from contextvars import ContextVar
 from pathlib import Path
-from typing import Optional, Sequence
+from typing import Iterator, Optional, Sequence
 
 from .transport import AuthError
 
@@ -52,6 +52,20 @@ class _NoRedirect(urllib.request.HTTPRedirectHandler):
         raise AuthError("plugin_auth_broker_unavailable")
 
 
+def _entry_roots(entry: dict, capabilities: Path) -> Iterator[Path]:
+    """Use only paths recorded by the host, including its runtime copies."""
+    paths = [entry.get("store_path")]
+    runtime_paths = entry.get("runtime")
+    if isinstance(runtime_paths, dict):
+        paths.extend(runtime_paths.get(key) for key in ("codex_link", "claude_link"))
+    for value in paths:
+        if not isinstance(value, str) or not value:
+            continue
+        path = Path(value)
+        path = path if path.is_absolute() else capabilities / path
+        yield path.resolve()
+
+
 def _installed_id(plugin_root: Path) -> int:
     home = os.environ.get("WEGENT_EXECUTOR_HOME", "")
     if not home:
@@ -66,9 +80,7 @@ def _installed_id(plugin_root: Path) -> int:
     for entry in entries.values():
         if entry.get("managed") is not True or entry.get("enabled") is not True:
             continue
-        path = Path(entry["store_path"])
-        path = path if path.is_absolute() else capabilities / path
-        if path.resolve() == root:
+        if root in _entry_roots(entry, capabilities):
             matches.append(entry["installed_plugin_id"])
     if len(matches) != 1 or type(matches[0]) is not int or matches[0] <= 0:
         raise AuthError("plugin_auth_package_sync_required")

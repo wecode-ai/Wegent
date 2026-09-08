@@ -6,7 +6,7 @@ title: Python plugin account authentication SDK
 # Python plugin account authentication SDK
 
 This dependency-free Python 3.9+ SDK implements `accountAuth` draft protocol v1.
-SDK version `0.7.0` is vendored into each plugin. The company email adapter uses it.
+SDK version `0.7.1` is vendored into each plugin. The company email adapter uses it.
 
 Optional `accountAuth.localEnvironment` declares non-secret source settings, for
 example `{"DWS_CONFIG_DIR":{"type":"directory"},"DWS_DISABLE_KEYCHAIN":{"type":"enum","values":["1"]}}`.
@@ -23,6 +23,11 @@ Native export/run and public business dispatch are connected to desktop and
 standalone Backend Runners. Native OAuth authorization and leased refresh are connected. Real backend/desktop tests pass with a synthetic OAuth provider. Persistent provider
 revocation is connected; real-provider and native Windows acceptance remain pending.
 The protocol remains a draft.
+
+The SDK resolves installation identity using the host capabilities manifest entries
+`store_path`, `runtime.codex_link`, and `runtime.claude_link`, including runtime copies.
+Unregistered, disabled, unmanaged, or ambiguous paths cannot dispatch account requests.
+The native host still verifies package checksums and device grants.
 
 ## Scaffold a provider
 

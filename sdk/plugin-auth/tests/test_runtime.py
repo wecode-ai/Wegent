@@ -113,3 +113,85 @@ class RuntimeTests(unittest.TestCase):
                 manifest.write_text(json.dumps({"plugins": {"mail": entry}}))
                 with self.assertRaises(AuthError):
                     runtime._installed_id(root)
+
+    def test_runtime_copies_use_host_mapping_and_reject_unregistered_paths(self):
+        with tempfile.TemporaryDirectory() as directory:
+            home = Path(directory)
+            capabilities = home / "capabilities"
+            store = capabilities / "store/plugins/42-mail-1.0"
+            codex = home / "codex/plugins/cache/market/mail/1.0"
+            claude = home / "claude/plugins/cache/market/mail/1.0"
+            old = home / "codex/plugins/cache/market/mail/0.9"
+            arbitrary = home / "workspace/mail/1.0"
+            for root in (store, codex, claude, old, arbitrary):
+                root.mkdir(parents=True)
+            entry = {
+                "installed_plugin_id": 42,
+                "enabled": True,
+                "managed": True,
+                "store_path": str(store),
+                "runtime": {"codex_link": str(codex), "claude_link": str(claude)},
+            }
+            manifest = capabilities / "manifest.json"
+            with patch.dict(os.environ, {"WEGENT_EXECUTOR_HOME": str(home)}):
+                manifest.write_text(json.dumps({"plugins": {"mail": entry}}))
+                for root in (store, codex, claude):
+                    with self.subTest(root=root):
+                        self.assertEqual(runtime._installed_id(root), 42)
+                for root in (old, arbitrary):
+                    with self.subTest(root=root), self.assertRaises(AuthError):
+                        runtime._installed_id(root)
+                for field in ("enabled", "managed"):
+                    changed = {**entry, field: False}
+                    manifest.write_text(json.dumps({"plugins": {"mail": changed}}))
+                    with self.subTest(field=field), self.assertRaises(AuthError):
+                        runtime._installed_id(codex)
+                manifest.write_text(
+                    json.dumps({"plugins": {"mail": entry, "other": entry}})
+                )
+                with self.assertRaises(AuthError):
+                    runtime._installed_id(codex)
+
+    def test_runtime_copy_dispatches_managed_id_to_broker(self):
+        with tempfile.TemporaryDirectory() as directory:
+            home = Path(directory)
+            capabilities = home / "capabilities"
+            root = home / "codex/plugins/cache/market/mail/1.0"
+            root.mkdir(parents=True)
+            capabilities.mkdir()
+            (capabilities / "manifest.json").write_text(
+                json.dumps(
+                    {
+                        "plugins": {
+                            "mail": {
+                                "installed_plugin_id": 42,
+                                "managed": True,
+                                "enabled": True,
+                                "store_path": "store/plugins/mail",
+                                "runtime": {"codex_link": str(root)},
+                            }
+                        }
+                    }
+                )
+            )
+            response = io.BytesIO(b'{"stdout":"synthetic mailbox result"}')
+            response.status = 200
+            with (
+                patch.dict(
+                    os.environ,
+                    {
+                        "WEGENT_EXECUTOR_HOME": str(home),
+                        "WEGENT_PLUGIN_AUTH_BROKER": "http://127.0.0.1:1234/v1/run",
+                        "WEGENT_PLUGIN_AUTH_BROKER_TOKEN": "a" * 64,
+                    },
+                    clear=True,
+                ),
+                patch.object(runtime.urllib.request, "build_opener") as build,
+            ):
+                build.return_value.open.return_value = response
+                result = run_account_command(root, "mail", ["list", "--limit", "1"])
+            request = build.return_value.open.call_args.args[0]
+            payload = json.loads(request.data)
+            self.assertEqual(payload["installed_plugin_id"], 42)
+            self.assertEqual(payload["args"], ["list", "--limit", "1"])
+            self.assertEqual(result, "synthetic mailbox result")

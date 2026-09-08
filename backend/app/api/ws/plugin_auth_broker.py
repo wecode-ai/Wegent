@@ -1,6 +1,7 @@
 """Native-only credential exchange; never routed through task or runtime RPC logs."""
 
 import asyncio
+import logging
 from typing import Any
 
 from pydantic import ValidationError
@@ -35,19 +36,25 @@ from app.services.plugin_oauth_operations import plugin_oauth_operations
 from app.services.plugin_oauth_revocations import plugin_oauth_revocations
 from shared.telemetry.decorators import trace_async
 
+logger = logging.getLogger(__name__)
+
 
 @trace_async("plugin_auth.native.exchange", "backend.plugin_auth")
 async def exchange(
     *, sid: str, session: dict[str, Any], operation: str, data: Any
 ) -> dict:
     """Identity comes exclusively from the authenticated, registered socket."""
+    stage = "session"
     try:
         user_id = session.get("user_id")
-        device_id = session.get("execution_target_id")
         runtime_id = session.get("device_id")
+        # Registered app-record routes are unique even when desktop restarts
+        # leave several installations with the same app exposure alias.
+        device_id = runtime_id
         instance_id = session.get("runtime_instance_id")
         if not user_id or not device_id or not runtime_id or not instance_id:
             raise PluginAccountAuthError("plugin_auth_device_not_registered", 403)
+        stage = "route"
         route = await runtime_route_resolver.resolve(
             user_id=user_id, submitted_device_id=device_id
         )
@@ -57,6 +64,7 @@ async def exchange(
             or route.runtime_instance_id != instance_id
         ):
             raise PluginAccountAuthError("plugin_auth_stale_device_socket", 403)
+        stage = "exchange"
         return await asyncio.to_thread(
             _exchange_sync,
             user_id,
@@ -67,13 +75,21 @@ async def exchange(
             data,
         )
     except (PluginAccountAuthError, RuntimeRouteError) as exc:
+        logger.warning(
+            "Plugin auth exchange rejected stage=%s code=%s", stage, exc.code
+        )
         return {"success": False, "error": exc.code}
     except (ValidationError, ValueError, TypeError):
         return {"success": False, "error": "plugin_auth_invalid_request"}
     except PluginCredentialCipherError:
         return {"success": False, "error": "plugin_auth_keyring_unavailable"}
-    except Exception:
+    except Exception as exc:
         # Never include the exception: upstream validation may embed credentials.
+        logger.warning(
+            "Plugin auth exchange failed stage=%s error_type=%s",
+            stage,
+            type(exc).__name__,
+        )
         return {"success": False, "error": "plugin_auth_exchange_failed"}
 
 
