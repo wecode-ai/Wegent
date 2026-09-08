@@ -26,7 +26,9 @@ from app.services.execution.agents.image.providers.base import (
 @pytest.mark.parametrize(
     "reference_images", [None, ["42"], [42, "https://example.com/ref.png", "42"]]
 )
-async def test_generated_image_returns_one_hour_download_url(reference_images) -> None:
+async def test_generated_image_returns_one_hour_download_url(
+    reference_images: list[str | int] | None,
+) -> None:
     token_info = SimpleNamespace(user_id=7, task_id=8, subtask_id=9)
     db = MagicMock()
     attachment = SimpleNamespace(
@@ -123,7 +125,7 @@ async def test_generated_image_returns_one_hour_download_url(reference_images) -
     ],
 )
 def test_reference_attachment_without_image_data_has_actionable_error(
-    attachment,
+    attachment: SimpleNamespace | None,
 ) -> None:
     db = MagicMock()
     db.get.return_value = attachment

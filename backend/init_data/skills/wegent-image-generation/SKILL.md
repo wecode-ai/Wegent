@@ -20,7 +20,8 @@ Call `generate_image` when the user asks for an image.
 
 - Put the complete visual description in `prompt`.
 - Use `reference_images` only when the user supplied image attachments or URLs.
-- Pass attachment IDs or public HTTP/HTTPS URLs, not local sandbox paths.
+- Pass attachment IDs, public HTTP/HTTPS URLs, or base64 data URLs, not local
+  sandbox paths.
 - For uploaded or previously generated images, pass attachment IDs. Do not pass Wegent
   attachment download URLs or relative `/api/attachments/...` paths as remote references.
 - Default to one image unless the user explicitly asks for multiple images.
