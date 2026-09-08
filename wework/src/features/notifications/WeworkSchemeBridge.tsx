@@ -20,14 +20,19 @@ export function WeworkSchemeBridge() {
     const destination = parseWeworkScheme(url)
     if (!destination) return true
     const cloud = connectionRef.current
-    if (destination.kind === 'board' && (!cloud?.isConnected || !cloud.token)) {
+    if (
+      (destination.kind === 'board' || destination.kind === 'smartApp') &&
+      (!cloud?.isConnected || !cloud.token)
+    ) {
       if (deferInRenderer) pendingUrls.current.add(url)
       if (cloud?.status !== 'restoring' && cloud?.status !== 'connecting') {
         tabsRef.current.openTab('task', { contentRoute: '/settings/connections' })
       }
       return false
     }
-    tabsRef.current.openTab(destination.kind === 'task' ? 'task' : 'board', {
+    const tabKind =
+      destination.kind === 'task' ? 'task' : destination.kind === 'smartApp' ? 'auxiliary' : 'board'
+    tabsRef.current.openTab(tabKind, {
       contentRoute: weworkDestinationRoute(destination),
     })
     return true

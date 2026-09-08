@@ -6,6 +6,10 @@ import type { UnifiedModel } from '@/types/api'
 import { SmartAppsMarketplacePage } from './SmartAppsMarketplacePage'
 
 const trackMock = vi.hoisted(() => vi.fn())
+const workbench = vi.hoisted(() => ({
+  hasCompletedModelLoad: true,
+  models: [] as UnifiedModel[],
+}))
 const navigateTo = vi.fn()
 const queuePluginReferenceTrial = vi.fn()
 const queueSmartAppDevelopmentPreview = vi.fn()
@@ -25,6 +29,7 @@ const linkDirectory = vi.fn()
 const copyToDirectory = vi.fn()
 const revealLocalFile = vi.fn()
 const getLocalExecutorDeviceId = vi.fn()
+const openHarnessAppTab = vi.fn()
 
 vi.mock('@/hooks/useTranslation', () => {
   const translate = (_key: string, fallback?: string) => fallback ?? _key
@@ -60,7 +65,10 @@ const harnessModel: UnifiedModel = {
 
 vi.mock('@/features/workbench/useWorkbench', () => ({
   useWorkbench: () => ({
-    projectChat: { models: [harnessModel] },
+    projectChat: {
+      hasCompletedModelLoad: workbench.hasCompletedModelLoad,
+      models: workbench.models,
+    },
     services: { localHarnessModelApi: null },
   }),
 }))
@@ -78,7 +86,7 @@ vi.mock('@/features/workspace-tabs/workspaceTabsContextValue', async importOrigi
 })
 vi.mock('@/features/harness-apps/harnessAppTabs', () => ({
   harnessAppRoute: (id: string) => `/app/harness-${id}`,
-  openHarnessAppTab: vi.fn(),
+  openHarnessAppTab: (...args: unknown[]) => openHarnessAppTab(...args),
   registerHarnessAppTab: vi.fn(),
   takeHarnessAppContextToken: vi.fn().mockResolvedValue(null),
   takeHarnessAppProxyToken: vi.fn().mockResolvedValue(null),
@@ -146,7 +154,10 @@ function api(items: SmartAppMarketplaceItem[] = [item()]): SmartAppsApi {
       sizeBytes: 1024,
       expiresAt: '2026-08-20T00:10:00Z',
     }),
-    getItem: vi.fn(),
+    getItem: vi.fn().mockImplementation((id: number) => {
+      const match = items.find(value => value.id === id)
+      return match ? Promise.resolve(match) : Promise.reject(new Error('Smart app not found'))
+    }),
     getAccess: vi.fn(),
     updateAccess: vi.fn(),
     searchUsers: vi.fn(),
@@ -204,6 +215,9 @@ describe('SmartAppsMarketplacePage', () => {
     })
     addPlugin.mockReset().mockResolvedValue(importedInstallation)
     getLocalExecutorDeviceId.mockReset().mockResolvedValue('local-device-1')
+    workbench.hasCompletedModelLoad = true
+    workbench.models = [harnessModel]
+    openHarnessAppTab.mockReset()
     downloadPackage.mockReset().mockResolvedValue({
       valid: true,
       archivePath: '/tmp/research.zip',
@@ -486,6 +500,95 @@ describe('SmartAppsMarketplacePage', () => {
 
     await waitFor(() => expect(invokeDesktopHost).toHaveBeenCalledOnce())
     expect(trackMock).not.toHaveBeenCalled()
+  })
+
+  test('automatically installs and opens a Smart app from a deep link', async () => {
+    const installedFromLink = {
+      ...importedInstallation,
+      smartAppId: 7,
+      releaseId: 17,
+      modelKey: 'wework:runtime:::local-model%3Amodel-1',
+      source: 'market' as const,
+    }
+    installPackage.mockResolvedValue(installedFromLink)
+    const smartAppsApi = api()
+    window.history.replaceState({}, '', '/sites?app_type=smart_app&action=open&smartAppId=7')
+
+    render(<SmartAppsMarketplacePage api={smartAppsApi} />)
+
+    await waitFor(() => expect(smartAppsApi.getItem).toHaveBeenCalledWith(7))
+    expect(smartAppsApi.getDownload).toHaveBeenCalledWith(7)
+    expect(downloadPackage).toHaveBeenCalledWith(expect.objectContaining({ smartAppId: 7 }))
+    expect(installPackage).toHaveBeenCalledWith(
+      expect.objectContaining({ archivePath: '/tmp/research.zip' }),
+      'wework:runtime:::local-model%3Amodel-1',
+      { smartAppId: 7, releaseId: 17 }
+    )
+    expect(openHarnessAppTab).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ id: 'research-desk' })
+    )
+    expect(trackMock).toHaveBeenCalledWith('smart_app_installed', {
+      domain: 'smart_app',
+      install_source: 'marketplace',
+    })
+    expect(window.location.search).toBe('?app_type=smart_app')
+  })
+
+  test('retains a Smart app deep link until model loading completes', async () => {
+    workbench.hasCompletedModelLoad = false
+    const smartAppsApi = api()
+    window.history.replaceState({}, '', '/sites?app_type=smart_app&action=open&smartAppId=7')
+
+    const rendered = render(<SmartAppsMarketplacePage api={smartAppsApi} />)
+
+    await act(async () => {})
+    expect(smartAppsApi.getItem).not.toHaveBeenCalled()
+    expect(window.location.search).toBe('?app_type=smart_app&action=open&smartAppId=7')
+
+    workbench.hasCompletedModelLoad = true
+    rendered.rerender(<SmartAppsMarketplacePage api={smartAppsApi} />)
+
+    await waitFor(() => expect(smartAppsApi.getItem).toHaveBeenCalledWith(7))
+    expect(window.location.search).toBe('?app_type=smart_app')
+  })
+
+  test('reports no available model after model loading completes', async () => {
+    workbench.models = []
+    const smartAppsApi = api()
+    window.history.replaceState({}, '', '/sites?app_type=smart_app&action=open&smartAppId=7')
+
+    render(<SmartAppsMarketplacePage api={smartAppsApi} />)
+
+    await waitFor(() => expect(smartAppsApi.getItem).toHaveBeenCalledWith(7))
+    await waitFor(() => expect(window.location.search).toBe('?app_type=smart_app'))
+    expect(screen.getByRole('alert')).toHaveTextContent(
+      '当前没有可用的 Wework 模型，请先在模型设置中完成配置。'
+    )
+    expect(installPackage).not.toHaveBeenCalled()
+  })
+
+  test('opens an already running Smart app from a deep link without downloading it', async () => {
+    listInstalled.mockResolvedValue([
+      {
+        ...importedInstallation,
+        smartAppId: 7,
+        releaseId: 17,
+        modelKey: 'wework:runtime:::local-model%3Amodel-1',
+        state: 'running',
+        webUrl: 'http://127.0.0.1:3080',
+        source: 'market',
+      },
+    ])
+    const smartAppsApi = api()
+    window.history.replaceState({}, '', '/sites?app_type=smart_app&action=open&smartAppId=7')
+
+    render(<SmartAppsMarketplacePage api={smartAppsApi} />)
+
+    await waitFor(() => expect(openHarnessAppTab).toHaveBeenCalled())
+    expect(smartAppsApi.getDownload).not.toHaveBeenCalled()
+    expect(downloadPackage).not.toHaveBeenCalled()
+    expect(installPackage).not.toHaveBeenCalled()
   })
 
   test('structures long marketplace details for scanning and fixed actions', async () => {
@@ -836,6 +939,8 @@ describe('SmartAppsMarketplacePage', () => {
 
     fireEvent.click(await screen.findByTestId(`smart-app-visibility-${ownedItem.id}`))
     await screen.findByTestId('smart-app-share-dialog')
+    expect(screen.getByText('wework://smart-app/7')).toBeInTheDocument()
+    expect(screen.getByTestId('smart-app-share-copy-link')).toBeInTheDocument()
     fireEvent.click(screen.getByTestId('smart-app-share-scope-public'))
     expect(screen.queryByTestId('smart-app-target-search')).not.toBeInTheDocument()
     expect(

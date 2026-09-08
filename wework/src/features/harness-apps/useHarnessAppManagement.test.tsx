@@ -17,6 +17,7 @@ const mocks = vi.hoisted(() => ({
   unregister: vi.fn(),
   unregisterContext: vi.fn(),
   unregisterProxy: vi.fn(),
+  beginLaunch: vi.fn(),
 }))
 
 vi.mock('@/api/local/harnessApps', () => ({
@@ -34,6 +35,11 @@ vi.mock('./harnessAppTabs', async importOriginal => {
     unregisterHarnessAppTab: mocks.unregister,
   }
 })
+
+vi.mock('./harnessAppLaunchState', () => ({
+  beginHarnessAppLaunch: mocks.beginLaunch,
+  clearHarnessAppLaunch: vi.fn(),
+}))
 
 const model: UnifiedModel = {
   name: 'local-model:model-1',
@@ -114,6 +120,7 @@ describe('useHarnessAppManagement', () => {
     mocks.unregister.mockReset()
     mocks.unregisterContext.mockReset()
     mocks.unregisterProxy.mockReset()
+    mocks.beginLaunch.mockReset()
     onBusyChange.mockReset()
     onError.mockReset()
     onRefresh.mockReset().mockResolvedValue(undefined)
@@ -140,6 +147,12 @@ describe('useHarnessAppManagement', () => {
     act(() => result.current.start(installed))
 
     expect(mocks.openTab).toHaveBeenCalledWith(workspaceTabs, installed)
+    expect(mocks.beginLaunch).toHaveBeenCalledWith(
+      installed.id,
+      installed.manifest.displayName,
+      expect.any(Function),
+      'preparingRuntime'
+    )
     expect(onError).toHaveBeenCalledWith(null)
   })
 

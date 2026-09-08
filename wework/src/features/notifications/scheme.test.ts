@@ -20,6 +20,13 @@ describe('Wework scheme routing', () => {
       '/runtime-tasks?deviceId=local-device&taskId=task-1'
     )
   })
+  it('routes Smart app links into the install-and-open flow', () => {
+    const destination = parseWeworkScheme('wework://smart-app/42')
+    expect(destination).toEqual({ kind: 'smartApp', smartAppId: 42 })
+    expect(weworkDestinationRoute(destination!)).toBe(
+      '/sites?app_type=smart_app&action=open&smartAppId=42'
+    )
+  })
   it.each([
     'https://boards/12',
     'wework://boards/0',
@@ -29,6 +36,10 @@ describe('Wework scheme routing', () => {
     'wework://user@boards/12',
     'wework://boards/12?redirect=https://evil.test',
     'wework://shell/run',
+    'wework://smart-app/0',
+    'wework://smart-app/not-a-number',
+    'wework://smart-app/1/extra',
+    'wework://smart-app/9007199254740992',
     'wework://boards/12/../13',
   ])('rejects invalid or privileged navigation: %s', url => {
     expect(parseWeworkScheme(url)).toBeNull()

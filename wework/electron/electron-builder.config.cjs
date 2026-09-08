@@ -55,6 +55,12 @@ module.exports = {
     provider: 'generic',
     url: updateBaseUrl,
   },
+  protocols: [
+    {
+      name: 'Wework',
+      schemes: ['wework'],
+    },
+  ],
   ...(useCustomMacosNotarization
     ? { afterSign: path.resolve(__dirname, 'scripts/notarize-macos.cjs') }
     : {}),
