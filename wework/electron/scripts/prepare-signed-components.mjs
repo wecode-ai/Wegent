@@ -9,18 +9,15 @@ import { hashComponentPath } from '../../scripts/lib/component-content-hash.mjs'
 const execute = promisify(execFile)
 const electronRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 export const SIGNED_COMPONENT_POLICY_VERSION = 2
+const SIGNED_COMPONENT_CODESIGN_FLAGS = [
+  '--timestamp',
+  '--options',
+  'runtime',
+  '--preserve-metadata=entitlements',
+]
 
 export function signedComponentCodesignArguments(identity, file) {
-  return [
-    '--force',
-    '--sign',
-    identity,
-    '--timestamp',
-    '--options',
-    'runtime',
-    '--preserve-metadata=entitlements',
-    file,
-  ]
+  return ['--force', '--sign', identity, ...SIGNED_COMPONENT_CODESIGN_FLAGS, file]
 }
 
 export async function reuseSignedComponent({ source, cacheRoot, identity, policy, sign, verify }) {
@@ -73,7 +70,7 @@ export async function prepareSignedComponents(environment = process.env) {
     platform: 'darwin',
     arch: environment.WEWORK_RELEASE_ARCH || process.arch,
     builder: toolchain.devDependencies['electron-builder'],
-    flags: ['--timestamp', '--options', 'runtime', '--preserve-metadata=entitlements'],
+    flags: SIGNED_COMPONENT_CODESIGN_FLAGS,
   }
   for (const [id, component] of Object.entries(manifest.components)) {
     if (!component.path) continue
