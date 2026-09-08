@@ -22,7 +22,7 @@ which is what makes the next scheduled run pick the work up again rather than sk
 import logging
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
-from typing import Optional, Sequence
+from typing import Callable, Optional, Sequence
 
 from sqlalchemy.orm import Session
 
@@ -33,6 +33,11 @@ from app.models.wiki import (
     WikiGeneration,
     WikiGenerationStatus,
     WikiGenerationType,
+)
+from app.services.knowledge.code_wiki.generation_strategy import (
+    COORDINATOR_ADAPTIVE,
+    COORDINATOR_SOLO,
+    GENERATION_STRATEGY_EXT_KEY,
 )
 from app.services.knowledge.code_wiki.projection import ProjectionSideEffects
 from app.services.knowledge.code_wiki.publish_gate import PublishPolicy
@@ -60,6 +65,7 @@ from app.services.knowledge.code_wiki.version_store import (
     STALE_RUN_AFTER_HOURS,
     _as_naive_utc,
     apply_retention,
+    page_path_of,
     reclaim_stale_generations,
     seed_from_published,
 )
@@ -183,6 +189,7 @@ def start_generation(
     total_source_files: Optional[int] = None,
     project_id: int = 0,
     team_id: int = 0,
+    team_id_for_mode: Optional[Callable[[RunMode], int]] = None,
     task_id: int = 0,
     policy: Optional[RunModePolicy] = None,
     now: Optional[datetime] = None,
@@ -201,6 +208,7 @@ def start_generation(
         project_id: Registry row this version belongs to. A real foreign key, so a
             version cannot be written without one.
         team_id: Team the generation task belongs to.
+        team_id_for_mode: Lazily resolves the Team after the run mode is known.
         task_id: Task driving the run, when one exists yet.
         policy: Thresholds promoting an incremental run to a full one.
         now: Reference time, for tests.
@@ -288,7 +296,9 @@ def start_generation(
         kind_id=knowledge_base.id,
         user_id=user.id,
         task_id=task_id,
-        team_id=team_id,
+        team_id=(
+            team_id_for_mode(RunMode(decision.mode)) if team_id_for_mode else team_id
+        ),
         generation_type=(
             WikiGenerationType.FULL
             if RunMode(decision.mode) == RunMode.FULL
@@ -477,6 +487,7 @@ class RunProgress:
     total_steps: int
     pages_written: int
     pages_total: int
+    review_required: bool = False
 
 
 @dataclass(frozen=True)
@@ -566,12 +577,31 @@ def current_run_state(
 def _run_progress(db: Session, generation: WikiGeneration) -> RunProgress:
     """Describe progress without persisting a second workflow state machine."""
     quality_review = (generation.ext or {}).get(QUALITY_REVIEW_EXT_KEY) or {}
-    if not quality_review.get("required"):
-        return RunProgress("generating", 0, 0, 0, 0)
-
     pages_written = (
         db.query(WikiContent).filter(WikiContent.generation_id == generation.id).count()
     )
+    if not quality_review.get("required"):
+        strategy = (generation.ext or {}).get(GENERATION_STRATEGY_EXT_KEY) or {}
+        is_no_review_full_rebuild = (
+            generation.generation_type is WikiGenerationType.FULL
+            and strategy.get("id") in {COORDINATOR_ADAPTIVE, COORDINATOR_SOLO}
+        )
+        if not is_no_review_full_rebuild:
+            return RunProgress("generating", 0, 0, pages_written, 0)
+        planned_paths = _declared_plan_paths(generation)
+        if not planned_paths:
+            return RunProgress("planning", 1, 3, pages_written, 0)
+
+        written_paths = {
+            page_path_of(content)
+            for content in db.query(WikiContent)
+            .filter(WikiContent.generation_id == generation.id)
+            .all()
+            if page_path_of(content)
+        }
+        if set(planned_paths).issubset(written_paths):
+            return RunProgress("publishing", 3, 3, pages_written, len(planned_paths))
+        return RunProgress("writing", 2, 3, pages_written, len(planned_paths))
 
     plan = review_state(generation, phase="plan")
     plan_evidence = (
@@ -583,7 +613,7 @@ def _run_progress(db: Session, generation: WikiGeneration) -> RunProgress:
     if plan["state"] != "passed":
         if plan["state"] == "ready":
             return RunProgress(
-                "plan_review", 1, total_steps, pages_written, pages_total
+                "plan_review", 1, total_steps, pages_written, pages_total, True
             )
         if plan["state"] == "changes_requested":
             stage = (
@@ -591,8 +621,8 @@ def _run_progress(db: Session, generation: WikiGeneration) -> RunProgress:
                 if plan["nextAction"] == "revise_plan_then_open_plan"
                 else "finishing"
             )
-            return RunProgress(stage, 1, total_steps, pages_written, pages_total)
-        return RunProgress("planning", 1, total_steps, pages_written, pages_total)
+            return RunProgress(stage, 1, total_steps, pages_written, pages_total, True)
+        return RunProgress("planning", 1, total_steps, pages_written, pages_total, True)
 
     if plan_only:
         page_progress = writing_progress(db, generation)
@@ -602,25 +632,42 @@ def _run_progress(db: Session, generation: WikiGeneration) -> RunProgress:
             and not page_progress["unexpectedPaths"]
         )
         if pages_total > 0 and page_set_complete:
-            return RunProgress("publishing", 3, 3, pages_written, pages_total)
-        return RunProgress("writing", 2, 3, pages_written, pages_total)
+            return RunProgress("publishing", 3, 3, pages_written, pages_total, True)
+        return RunProgress("writing", 2, 3, pages_written, pages_total, True)
 
     qa = review_state(generation, phase="qa")
     if qa["state"] == "not_started":
-        return RunProgress("writing", 2, 4, pages_written, pages_total)
+        return RunProgress("writing", 2, 4, pages_written, pages_total, True)
     if qa["state"] == "ready":
-        return RunProgress("qa_review", 3, 4, pages_written, pages_total)
+        return RunProgress("qa_review", 3, 4, pages_written, pages_total, True)
     if qa["state"] == "passed":
-        return RunProgress("publishing", 4, 4, pages_written, pages_total)
+        return RunProgress("publishing", 4, 4, pages_written, pages_total, True)
 
     recheck = review_state(generation, phase="recheck")
     if recheck["state"] == "not_started":
-        return RunProgress("repairing", 3, 4, pages_written, pages_total)
+        return RunProgress("repairing", 3, 4, pages_written, pages_total, True)
     if recheck["state"] == "ready":
-        return RunProgress("recheck", 4, 4, pages_written, pages_total)
+        return RunProgress("recheck", 4, 4, pages_written, pages_total, True)
     if recheck["state"] == "passed":
-        return RunProgress("publishing", 4, 4, pages_written, pages_total)
-    return RunProgress("finishing", 4, 4, pages_written, pages_total)
+        return RunProgress("publishing", 4, 4, pages_written, pages_total, True)
+    return RunProgress("finishing", 4, 4, pages_written, pages_total, True)
+
+
+def _declared_plan_paths(generation: WikiGeneration) -> list[str]:
+    """Read a no-review plan written by the normal completion channel.
+
+    The plan is advisory progress evidence, never a publishing gate. Accept the old
+    comma-joined representation too, so a repaired historical order cannot make the
+    reader report an empty plan while a run is still active.
+    """
+    summary = (generation.ext or {}).get("content_write", {}).get("summary", {})
+    raw_paths = (summary or {}).get("structure_order") or []
+    if isinstance(raw_paths, str):
+        raw_paths = [raw_paths]
+    paths = []
+    for raw_path in raw_paths:
+        paths.extend(part.strip() for part in str(raw_path).split(",") if part.strip())
+    return list(dict.fromkeys(paths))
 
 
 @dataclass(frozen=True)
@@ -640,6 +687,8 @@ class RunRecord:
     #: What became of the task that ran the agent, as the task itself records it.
     #: Empty when there was no task, or it is gone.
     task_status: str = ""
+    strategy_id: str = "legacy"
+    strategy_revision: int = 0
 
 
 # Enough to cover the run that broke the wiki without turning this into an audit log.
@@ -691,6 +740,17 @@ def run_history(
             published=bool(published) and row.id == published,
             task_id=int(row.task_id or 0),
             task_status=task_states.get(int(row.task_id or 0), ""),
+            strategy_id=str(
+                ((row.ext or {}).get(GENERATION_STRATEGY_EXT_KEY) or {}).get(
+                    "id", "legacy"
+                )
+            ),
+            strategy_revision=int(
+                ((row.ext or {}).get(GENERATION_STRATEGY_EXT_KEY) or {}).get(
+                    "revision", 0
+                )
+                or 0
+            ),
         )
         for row in rows
     ]
