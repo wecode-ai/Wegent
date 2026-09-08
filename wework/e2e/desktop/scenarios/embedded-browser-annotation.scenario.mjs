@@ -1216,14 +1216,11 @@ async function verifyDesign(
     uiTimeoutMs,
     'Holding Original View did not complete its page render'
   )
-  assert.equal(
-    await pageValueWithRuntimeDiagnostics(
-      control,
-      bridge,
-      `getComputedStyle(document.querySelector('#design-target')).color`,
-      runtimeRevision
-    ),
+  await waitForPageValue(
+    bridge,
+    `getComputedStyle(document.querySelector('#design-target')).color`,
     'rgb(17, 24, 39)',
+    uiTimeoutMs,
     'Original View did not restore the target color'
   )
   await captureScreenshot(control, 'browser-annotation-06-original-view.png')
@@ -1244,14 +1241,11 @@ async function verifyDesign(
     uiTimeoutMs,
     'Releasing Original View did not complete its page render'
   )
-  assert.equal(
-    await pageValueWithRuntimeDiagnostics(
-      control,
-      bridge,
-      `getComputedStyle(document.querySelector('#design-target')).color`,
-      runtimeRevision
-    ),
+  await waitForPageValue(
+    bridge,
+    `getComputedStyle(document.querySelector('#design-target')).color`,
     'rgb(239, 68, 68)',
+    uiTimeoutMs,
     'Releasing Original View did not replay the design change'
   )
 
