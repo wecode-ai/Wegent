@@ -182,6 +182,29 @@ describe('captureWebContentsDataUrl', () => {
     expect(capturePage).not.toHaveBeenCalled()
   })
 
+  test('can prefer debugger surface capture for composed owner content', async () => {
+    const { capturePage, contents, debuggerSession } = createWebContents({
+      captureDataUrl: 'data:image/png;base64,native-capture',
+      debuggerData: 'debugger-surface-capture',
+    })
+    const rect = { x: 10, y: 20, width: 30, height: 40 }
+
+    await expect(
+      captureWebContentsDataUrl(contents, {
+        rect,
+        preferDebugger: true,
+        debuggerFromSurface: true,
+      })
+    ).resolves.toBe('data:image/png;base64,debugger-surface-capture')
+    expect(debuggerSession.sendCommand).toHaveBeenCalledWith('Page.captureScreenshot', {
+      captureBeyondViewport: false,
+      format: 'png',
+      fromSurface: true,
+      clip: { ...rect, scale: 1 },
+    })
+    expect(capturePage).not.toHaveBeenCalled()
+  })
+
   test('falls back to native capture when preferred debugger capture times out', async () => {
     vi.useFakeTimers()
     try {
@@ -599,12 +622,19 @@ describe('createWorkbenchCapabilityRouter', () => {
         label: 'smart-app:another',
       })
     ).resolves.toEqual({ dataUrl: 'data:image/png;base64,owner-rect' })
-    expect(browser.capture).toHaveBeenCalledWith('smart-app:test', {
-      x: 12,
-      y: 24,
-      width: 321,
-      height: 181,
-    })
+    expect(browser.capture).toHaveBeenCalledWith(
+      'smart-app:test',
+      {
+        x: 12,
+        y: 24,
+        width: 321,
+        height: 181,
+      },
+      {
+        preferDebugger: true,
+        debuggerFromSurface: true,
+      }
+    )
   })
 
   test('rejects invalid rectangles before reaching the scoped owner', async () => {
