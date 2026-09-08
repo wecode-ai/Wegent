@@ -1593,6 +1593,13 @@ async fn run_codex_app_server_turn_on_shared_client(
         }
 
         if awaits_initial_goal_turn {
+            if let Some(settings_params) =
+                thread_collaboration_mode_update_params(&thread_id, request, &launch_config)
+            {
+                client
+                    .request("thread/settings/update", settings_params)
+                    .await?;
+            }
             let goal = initial_thread_goal
                 .as_ref()
                 .expect("initial goal must exist when awaiting its turn");
@@ -5072,6 +5079,17 @@ fn thread_resume_params(
     );
     insert_codex_runtime_permissions(&mut params, request);
     Value::Object(params)
+}
+
+fn thread_collaboration_mode_update_params(
+    thread_id: &str,
+    request: &ExecutionRequest,
+    launch_config: &CodexLaunchConfig,
+) -> Option<Value> {
+    Some(json!({
+        "threadId": thread_id,
+        "collaborationMode": codex_collaboration_mode_payload(request, launch_config)?,
+    }))
 }
 
 fn insert_codex_developer_instructions(

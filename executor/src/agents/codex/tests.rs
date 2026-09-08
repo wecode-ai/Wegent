@@ -2523,6 +2523,46 @@ fn turn_start_params_includes_plan_collaboration_mode_when_requested() {
 }
 
 #[test]
+fn thread_collaboration_mode_update_params_resets_retained_plan_thread() {
+    let mut request = ExecutionRequest {
+        model_config: json!({
+            "model_id": "gpt-5.5",
+        }),
+        ..ExecutionRequest::default()
+    };
+    request.extra.insert(
+        "collaborationMode".to_owned(),
+        Value::String("default".to_owned()),
+    );
+    let launch_config = CodexLaunchConfig {
+        effort: Some("high".to_owned()),
+        ..CodexLaunchConfig::default()
+    };
+
+    let params = thread_collaboration_mode_update_params("thread-1", &request, &launch_config)
+        .expect("supported collaboration mode should produce settings");
+
+    assert_eq!(params["threadId"], "thread-1");
+    assert_eq!(params["collaborationMode"]["mode"], "default");
+    assert_eq!(params["collaborationMode"]["settings"]["model"], "gpt-5.5");
+    assert_eq!(
+        params["collaborationMode"]["settings"]["reasoning_effort"],
+        "high"
+    );
+    assert!(params["collaborationMode"]["settings"]["developer_instructions"].is_null());
+}
+
+#[test]
+fn thread_collaboration_mode_update_params_skips_missing_mode() {
+    assert!(thread_collaboration_mode_update_params(
+        "thread-1",
+        &ExecutionRequest::default(),
+        &CodexLaunchConfig::default(),
+    )
+    .is_none());
+}
+
+#[test]
 fn turn_start_params_includes_client_user_message_id() {
     let mut request = ExecutionRequest::default();
     request.extra.insert(
