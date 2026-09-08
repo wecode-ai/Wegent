@@ -662,26 +662,42 @@ async function verifyRunningFollowUpFork({
   executorHome,
   sourceTaskRowTestId,
 }) {
+  const sourceTaskId = sourceTaskRowTestId.replace('runtime-local-task-row-', '')
+  const previousTask = findRuntimeWorkTask(
+    JSON.parse(await control.command('getLocalRuntimeWork', 'body')),
+    sourceTaskId
+  )
+  assert.equal(previousTask?.running, false, 'The source turn must be complete before follow-up')
+  assert.equal(typeof previousTask?.completedAt, 'number')
   const taskRowsBeforeFork = new Set(
     JSON.parse(await control.command('snapshot', 'body')).testIds.filter(testId =>
       testId.startsWith('runtime-local-task-row-')
     )
   )
   control.setScenario('running_fork_follow_up')
-  await sendPromptUntilScenarioRequest(
-    control,
-    composerSelector,
-    RUNNING_FORK_FOLLOW_UP_PROMPT,
-    'running_fork_follow_up'
-  )
-  await control.command('waitFor', '[data-testid="pause-response-button"]', {
-    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
-  })
-  const firstTurnForkButtonSelector = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="message-assistant"] [data-testid="fork-message-button"]`
-  await control.command('scrollIntoView', firstTurnForkButtonSelector)
-  await captureVerificationScreenshot(control, 'running-follow-up-fork-01-streaming.png')
-
   try {
+    await sendPromptUntilScenarioRequest(
+      control,
+      composerSelector,
+      RUNNING_FORK_FOLLOW_UP_PROMPT,
+      'running_fork_follow_up'
+    )
+    const runningTask = findRuntimeWorkTask(
+      JSON.parse(await control.command('getLocalRuntimeWork', 'body')),
+      sourceTaskId
+    )
+    assert.equal(runningTask?.running, true, 'The held follow-up must remain running')
+    assert.ok(
+      runningTask.updatedAt > previousTask.completedAt,
+      'The follow-up projection must be newer than the previous completion'
+    )
+    await control.command('waitFor', '[data-testid="pause-response-button"]', {
+      timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+    })
+    const firstTurnForkButtonSelector = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="message-assistant"] [data-testid="fork-message-button"]`
+    await control.command('scrollIntoView', firstTurnForkButtonSelector)
+    await captureVerificationScreenshot(control, 'running-follow-up-fork-01-streaming.png')
+
     await control.command(
       'clickDescendantInElementWithText',
       `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="message-assistant"]`,
@@ -698,7 +714,6 @@ async function verifyRunningFollowUpFork({
       'Forking the first turn reused the running source task'
     )
 
-    const sourceTaskId = sourceTaskRowTestId.replace('runtime-local-task-row-', '')
     const forkTaskId = forkTaskRowTestId.replace('runtime-local-task-row-', '')
     const runtimeIndex = JSON.parse(
       await readFile(join(executorHome, 'runtime-work', 'index.json'), 'utf8')
@@ -736,7 +751,6 @@ async function verifyRunningFollowUpFork({
   const settledRuntimeIndex = JSON.parse(
     await readFile(join(executorHome, 'runtime-work', 'index.json'), 'utf8')
   )
-  const sourceTaskId = sourceTaskRowTestId.replace('runtime-local-task-row-', '')
   assert.equal(
     Object.hasOwn(settledRuntimeIndex.tasks[sourceTaskId] ?? {}, 'turn_status'),
     false,

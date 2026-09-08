@@ -375,6 +375,8 @@ export interface KnowledgeBase {
   language?: string
   /** Whether a code wiki's generation runs appear in the conversation list. */
   show_generation_task?: boolean
+  /** Default generation strategy for this code wiki. */
+  generation_strategy?: string | null
   summary_enabled: boolean
   summary_model_ref?: SummaryModelRef | null
   /** Which model this knowledge base's own generation runs on. */
@@ -435,6 +437,8 @@ export interface KnowledgeBaseCreate {
    * sees it is the creator's choice rather than the team bot's default.
    */
   execution_model_ref?: SummaryModelRef | null
+  /** Only for `kb_type: 'code_wiki'` — leave unset to use the deployment default. */
+  generation_strategy?: string
   /** Guided questions list (max 3) for notebook mode quick user interaction */
   guided_questions?: string[]
   /** Maximum number of knowledge base tool calls allowed per conversation */
@@ -475,6 +479,8 @@ export interface KnowledgeBaseUpdate {
   /** Guided questions list (max 3) for notebook mode quick user interaction */
   /** Only for a code wiki: whether its generation runs are listed as conversations. */
   show_generation_task?: boolean
+  /** Only for a code wiki: applies to future runs. */
+  generation_strategy?: string
   guided_questions?: string[]
   /** Maximum number of knowledge base tool calls allowed per conversation */
   max_calls_per_conversation?: number

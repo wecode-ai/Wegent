@@ -554,13 +554,20 @@ class SubscriptionTaskCompletionHandler:
             if team_display_name:
                 subscription_info = f"{subscription_info} ({team_display_name})"
 
+            # Keep partial output in execution history, but report the failure cause.
+            notification_summary = result_summary or ""
+            if execution.status == BackgroundExecutionStatus.FAILED.value:
+                notification_summary = (
+                    event.error or ""
+                ).strip() or "Execution failed; no error details were provided."
+
             # Dispatch follower notifications (via Messager channels)
             await subscription_notification_dispatcher.dispatch_execution_notifications(
                 db,
                 subscription_id=execution.subscription_id,
                 execution_id=execution.id,
                 subscription_display_name=subscription_display_name,
-                result_summary=result_summary or "",
+                result_summary=notification_summary,
                 status=execution.status,
                 detail_url=None,  # Could be added if needed
             )
@@ -570,7 +577,7 @@ class SubscriptionTaskCompletionHandler:
                 await subscription_notification_dispatcher.dispatch_webhook_notifications(
                     webhooks=subscription_crd.spec.notificationWebhooks,
                     subscription_display_name=subscription_display_name,
-                    result_summary=result_summary or "",
+                    result_summary=notification_summary,
                     status=execution.status,
                     execution_id=execution.id,
                     detail_url=None,

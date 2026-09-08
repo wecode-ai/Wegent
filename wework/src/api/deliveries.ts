@@ -3,6 +3,7 @@ import type { ProjectChatAgent } from './projectChatAgents'
 import type { ProjectChatWorkspaceBindingInput } from './projectChatAgents'
 import type {
   Attachment,
+  ModelSelectionConfig,
   ModelType,
   RuntimeAdditionalContext,
   RuntimeGoalCreateInput,
@@ -642,6 +643,7 @@ export interface LoopItemTaskBinding {
   task_id: string
   task_title: string | null
   backend_task_id: number | null
+  modelSelection?: ModelSelectionConfig | null
   workflow_node_id?: string | null
   binding_type?: 'system' | 'user'
   linked_at: string
@@ -1164,10 +1166,13 @@ export function createDeliveryApi(client: HttpClient) {
       taskTitle?: string | null,
       workflowNodeId?: string | null
     ): Promise<void> {
+      const modelSelection =
+        task.runtimeHandle?.modelSelection ?? task.runtimeHandle?.model_selection
       return client.post(`/v1/loop-items/${encodeURIComponent(itemId)}/tasks`, {
         ...task,
         ...(taskTitle ? { taskTitle } : {}),
         ...(workflowNodeId ? { workflowNodeId } : {}),
+        ...(modelSelection ? { modelSelection } : {}),
       })
     },
     decideWorkflowNode(
