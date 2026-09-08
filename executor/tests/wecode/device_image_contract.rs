@@ -88,6 +88,11 @@ fn internal_device_image_pipeline_keeps_policy_in_wecode() {
     assert!(device_dockerfile
         .contains("ARG DEVICE_BASE_IMAGE=registry.api.weibo.com/weibo_rd_if/ubuntu:26.04"));
     assert!(device_dockerfile.contains("/etc/apt/sources.list.d/ubuntu.sources"));
+    assert!(device_dockerfile.contains("ARG GH_VERSION=2.100.0"));
+    assert!(device_dockerfile.contains("ARG GLAB_VERSION=1.116.0"));
+    assert!(device_dockerfile.contains("gh_${GH_VERSION}_linux_${cli_arch}.tar.gz"));
+    assert!(device_dockerfile.contains("glab_${GLAB_VERSION}_linux_${cli_arch}.tar.gz"));
+    assert!(device_dockerfile.contains("gh --version && glab --version"));
     assert!(device_dockerfile.contains("ENV DEVICE_CODE_SERVER_ENABLED=true"));
     assert!(device_dockerfile.contains("ENV DEVICE_TERMINAL_ENABLED=true"));
     assert!(device_dockerfile.contains(
