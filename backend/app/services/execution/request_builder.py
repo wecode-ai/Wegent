@@ -404,10 +404,10 @@ class TaskRequestBuilder:
                     if server.get("name") not in managed_names
                 ] + managed_bot_servers
 
-        # For ClaudeCode executor: merge skill MCP, normalize types, filter unreachable
+        # Code runtimes consume Skill-defined MCP servers directly.
         if bot_config:
             shell_type = bot_config[0].get("shell_type", "")
-            if shell_type == "ClaudeCode":
+            if shell_type in {"ClaudeCode", "Codex"}:
                 if collaboration_model == "coordinate":
                     self._extend_resolved_skills_from_bot_configs(
                         bot_configs=bot_config,
@@ -417,7 +417,7 @@ class TaskRequestBuilder:
                         user=user,
                     )
                     self._merge_coordinate_capabilities_into_leader(bot_config)
-                self._prepare_mcp_for_claude_code(bot_config[0], resolved_skills)
+                self._prepare_mcp_for_code_runtime(bot_config[0], resolved_skills)
 
         # Build MCP servers configuration (with auto-injection for subscription tasks)
         mcp_servers = self._build_mcp_servers(
@@ -772,14 +772,14 @@ class TaskRequestBuilder:
                 existing_bot_skills.add(skill_name)
         self._sync_skill_refs_to_bot_configs(request.bot, skill_refs)
 
-        if bot_config.get("shell_type") == "ClaudeCode":
+        if bot_config.get("shell_type") in {"ClaudeCode", "Codex"}:
             new_skill_configs = [
                 skill_config
                 for skill_config in resolved_skills
                 if skill_config.get("name") in missing_skill_names
             ]
             if new_skill_configs:
-                self._prepare_mcp_for_claude_code(bot_config, new_skill_configs)
+                self._prepare_mcp_for_code_runtime(bot_config, new_skill_configs)
 
         logger.info(
             "[TaskRequestBuilder] Resolved request preload skills: added=%s, total_skills=%s",
@@ -2425,18 +2425,18 @@ Response template:
         return merged_preload_skills
 
     # =========================================================================
-    # Claude Code MCP Processing
+    # Code Runtime MCP Processing
     # =========================================================================
 
-    def _prepare_mcp_for_claude_code(
+    def _prepare_mcp_for_code_runtime(
         self, bot_config: dict, skill_configs: list
     ) -> None:
-        """Prepare MCP servers for Claude Code executor.
+        """Prepare MCP servers for local code runtimes.
 
-        For ClaudeCode shell type, this method:
+        For Claude Code and Codex shell types, this method:
         1. Extracts skill MCP servers and merges into bot mcp_servers
-        2. Normalizes types (streamable-http -> http) for Claude Code SDK
-        3. Filters out unreachable servers to prevent SDK initialization timeout
+        2. Normalizes transport types for the code runtime adapters
+        3. Filters out unreachable servers to prevent runtime initialization timeout
 
         Modifies bot_config in-place.
 
@@ -2449,7 +2449,7 @@ Response template:
         if skill_mcp:
             bot_config.setdefault("mcp_servers", []).extend(skill_mcp)
             logger.info(
-                "[MCP-CLAUDE] Merged %d skill MCP server(s): %s",
+                "[MCP-CODE-RUNTIME] Merged %d skill MCP server(s): %s",
                 len(skill_mcp),
                 [s.get("name", "?") for s in skill_mcp],
             )
@@ -2464,7 +2464,7 @@ Response template:
         # Step 3: Filter out unreachable servers
         bot_config["mcp_servers"] = self._filter_reachable_mcp_servers(mcp_list)
         if not bot_config["mcp_servers"]:
-            logger.warning("[MCP-CLAUDE] All MCP servers unreachable, removed")
+            logger.warning("[MCP-CODE-RUNTIME] All MCP servers unreachable, removed")
 
     @staticmethod
     def _merge_coordinate_capabilities_into_leader(bot_configs: list[dict]) -> None:

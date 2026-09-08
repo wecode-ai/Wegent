@@ -68,7 +68,7 @@ import { shellSupportsPreloadSkills } from './team-edit/simple-team-edit-utils'
 import { resolveSelectedModel } from './team-edit/model-select-utils'
 
 /** Agent types supported by the system */
-export type AgentType = 'ClaudeCode' | 'Agno' | 'Dify'
+export type AgentType = 'ClaudeCode' | 'Codex' | 'Agno' | 'Dify'
 
 /** Interface for bot data returned by getBotData */
 export interface BotFormData {
@@ -408,10 +408,9 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
     updateAgentName(shells[0].name)
   }, [allowedAgents, agentName, shells, updateAgentName])
 
-  // Check if current agent supports skills (ClaudeCode and Chat shell types)
+  // Check if current agent supports Skills.
   const supportsSkills = useMemo(() => {
-    // Skills are supported for ClaudeCode and Chat shell types
-    return selectedShellType === 'ClaudeCode' || selectedShellType === 'Chat'
+    return ['ClaudeCode', 'Codex', 'Chat'].includes(selectedShellType)
   }, [selectedShellType])
 
   // Check if current agent supports preload skills
@@ -434,7 +433,7 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
   )
 
   useEffect(() => {
-    // Only fetch skills when agent supports skills (ClaudeCode or Chat)
+    // Only fetch Skills when the selected runtime can consume them.
     if (!supportsSkills) {
       setAllSkills([])
       setAvailableSkills([])

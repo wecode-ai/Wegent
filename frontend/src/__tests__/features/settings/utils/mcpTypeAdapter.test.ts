@@ -47,17 +47,20 @@ describe('mcpTypeAdapter', () => {
       expect((result.server1 as Record<string, unknown>).type).toBe('streamable-http')
     })
 
-    it('should convert streamable-http to http for ClaudeCode', () => {
-      const config = {
-        server1: {
-          type: 'streamable-http',
-          url: 'http://example.com',
-        },
-      }
+    it.each(['ClaudeCode', 'Codex'] as const)(
+      'should convert streamable-http to http for %s',
+      agentType => {
+        const config = {
+          server1: {
+            type: 'streamable-http',
+            url: 'http://example.com',
+          },
+        }
 
-      const result = adaptMcpConfigForAgent(config, 'ClaudeCode')
-      expect((result.server1 as Record<string, unknown>).type).toBe('http')
-    })
+        const result = adaptMcpConfigForAgent(config, agentType)
+        expect((result.server1 as Record<string, unknown>).type).toBe('http')
+      }
+    )
 
     it('should handle sse and stdio types without conversion', () => {
       const config = {
@@ -131,6 +134,13 @@ describe('mcpTypeAdapter', () => {
       expect(isValidMcpTypeForAgent('streamable-http', 'ClaudeCode')).toBe(false)
     })
 
+    it('should validate Codex types', () => {
+      expect(isValidMcpTypeForAgent('sse', 'Codex')).toBe(true)
+      expect(isValidMcpTypeForAgent('http', 'Codex')).toBe(true)
+      expect(isValidMcpTypeForAgent('stdio', 'Codex')).toBe(true)
+      expect(isValidMcpTypeForAgent('streamable-http', 'Codex')).toBe(false)
+    })
+
     it('should validate Agno types', () => {
       expect(isValidMcpTypeForAgent('sse', 'Agno')).toBe(true)
       expect(isValidMcpTypeForAgent('streamable-http', 'Agno')).toBe(true)
@@ -151,6 +161,11 @@ describe('mcpTypeAdapter', () => {
       expect(types).toEqual(['sse', 'http', 'stdio'])
     })
 
+    it('should return Codex supported types', () => {
+      const types = getSupportedMcpTypes('Codex')
+      expect(types).toEqual(['sse', 'http', 'stdio'])
+    })
+
     it('should return Agno supported types', () => {
       const types = getSupportedMcpTypes('Agno')
       expect(types).toEqual(['sse', 'streamable-http', 'stdio'])
@@ -158,7 +173,7 @@ describe('mcpTypeAdapter', () => {
   })
 
   describe('shell adaptation', () => {
-    it('uses Claude Code HTTP transport naming', () => {
+    it.each(['ClaudeCode', 'Codex'] as const)('uses %s HTTP transport naming', shellType => {
       const result = adaptMcpConfigForShell(
         {
           server1: {
@@ -166,13 +181,13 @@ describe('mcpTypeAdapter', () => {
             url: 'https://example.com/mcp',
           },
         },
-        'ClaudeCode'
+        shellType
       )
 
       expect((result.server1 as Record<string, unknown>).type).toBe('http')
     })
 
-    it.each(['Chat', 'Agno', 'Codex', 'CodeX'] as const)(
+    it.each(['Chat', 'Agno', 'CodeX'] as const)(
       'uses canonical streamable-http naming for %s',
       shellType => {
         const result = adaptMcpConfigForShell(

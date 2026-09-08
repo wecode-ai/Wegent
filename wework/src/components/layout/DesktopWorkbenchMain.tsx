@@ -241,7 +241,8 @@ import { CentralHarnessTerminal } from './CentralHarnessTerminal'
 import { HarnessSessionPickerDialog } from './HarnessSessionPickerDialog'
 import { DesktopEmptyTaskLauncher } from './DesktopEmptyTaskLauncher'
 import { WorkbenchHarnessModelSelector } from './WorkbenchHarnessModelSelector'
-import { WorkbenchHarnessSelector } from './WorkbenchHarnessSelector'
+import { WorkbenchAgentSelector } from './WorkbenchAgentSelector'
+import { WorkbenchRuntimeSelector } from './WorkbenchRuntimeSelector'
 import type {
   LocalHarnessSessionRegistrationOptions,
   LocalHarnessWorkbenchSession,
@@ -1123,6 +1124,12 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
   const selectWegentTeam = useCallback((team: Team | null) => {
     setCentralHarnessError(null)
     setSelectedTeam(team)
+    const agentType = team?.agent_type?.toLowerCase()
+    if (agentType === 'claude' || agentType === 'claudecode' || agentType === 'claude_code') {
+      setNewChatRuntime('claude_code')
+    } else if (agentType === 'codex') {
+      setNewChatRuntime('codex')
+    }
   }, [])
   useEffect(() => {
     if (!experimentalFeaturesEnabled || !isLocalHarnessAvailable()) return
@@ -2037,8 +2044,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     experimentalFeaturesEnabled && newChatRuntime !== 'codex' && selectedHarnessInstalled
       ? newChatRuntime
       : 'codex'
-  const activeTeam =
-    experimentalFeaturesEnabled && activeNewChatRuntime === 'codex' ? selectedTeam : null
+  const activeTeam = experimentalFeaturesEnabled ? selectedTeam : null
   const localPluginApi = useMemo(() => createLocalCodexPluginApi(), [])
   const resolveHarnessPluginRoots = useCallback(async () => {
     const [skillsResult, installedResult] = await Promise.allSettled([
@@ -2370,11 +2376,31 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     if (currentRuntimeTask) {
       return submitPaneInput(value, options)
     }
-    if (activeNewChatRuntime === 'codex') {
+    if (activeTeam) {
+      if (activeNewChatRuntime !== 'codex' && activeNewChatRuntime !== 'claude_code') {
+        setCentralHarnessError(
+          t('workbench.agent_runtime_unsupported', '云端智能体仅支持 Codex 或 Claude Code')
+        )
+        return
+      }
       return submitPaneInput(value, {
         ...options,
-        ...(activeTeam ? { wegentTeamId: activeTeam.id } : {}),
+        wegentTeamId: activeTeam.id,
+        runtime: activeNewChatRuntime,
+        modelSelection: null,
+        ...(activeNewChatRuntime === 'claude_code'
+          ? {
+              runtimeExecutablePath: selectedHarnessExecutablePath,
+              runtimePermissionMode:
+                selectedHarnessPreference?.permissionMode === 'bypass'
+                  ? 'bypassPermissions'
+                  : (selectedHarnessPreference?.permissionMode ?? 'default'),
+            }
+          : {}),
       })
+    }
+    if (activeNewChatRuntime === 'codex') {
+      return submitPaneInput(value, options)
     }
     if (activeNewChatRuntime === 'claude_code') {
       return submitPaneInput(value, {
@@ -5092,27 +5118,34 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
                           projectWorkBarMiddleContext={projectSpaceContext}
                           projectWorkBarTrailingContext={
                             experimentalFeaturesEnabled ? (
-                              <WorkbenchHarnessSelector
-                                runtime={activeNewChatRuntime}
-                                harnesses={localHarnesses}
-                                enabledHarnesses={enabledLocalHarnesses.map(
-                                  preference => preference.id
-                                )}
-                                loading={localHarnessesLoading}
-                                detectionFailed={localHarnessDetectionFailed}
-                                onRuntimeChange={runtime => {
-                                  setCentralHarnessError(null)
-                                  setNewChatRuntime(runtime)
-                                }}
-                                teams={wegentTeams}
-                                selectedTeamId={activeTeam?.id ?? null}
-                                teamsLoading={teamsLoading}
-                                onTeamChange={selectWegentTeam}
-                              />
+                              <div className="flex min-w-0 items-center gap-1">
+                                <WorkbenchAgentSelector
+                                  teams={wegentTeams}
+                                  selectedTeamId={activeTeam?.id ?? null}
+                                  loading={teamsLoading}
+                                  onTeamChange={selectWegentTeam}
+                                />
+                                <WorkbenchRuntimeSelector
+                                  runtime={activeNewChatRuntime}
+                                  harnesses={localHarnesses}
+                                  enabledHarnesses={enabledLocalHarnesses.map(
+                                    preference => preference.id
+                                  )}
+                                  loading={localHarnessesLoading}
+                                  detectionFailed={localHarnessDetectionFailed}
+                                  onRuntimeChange={runtime => {
+                                    setCentralHarnessError(null)
+                                    if (runtime !== 'codex' && runtime !== 'claude_code') {
+                                      setSelectedTeam(null)
+                                    }
+                                    setNewChatRuntime(runtime)
+                                  }}
+                                />
+                              </div>
                             ) : undefined
                           }
                           modelSelectorOverride={
-                            selectedHarnessPreference ? (
+                            selectedHarnessPreference && !activeTeam ? (
                               <WorkbenchHarnessModelSelector
                                 harnessId={selectedHarnessPreference.id}
                                 models={harnessModelOptions}

@@ -16,7 +16,7 @@ export type TeamMode = 'solo' | 'pipeline' | 'route' | 'coordinate' | 'collabora
 /**
  * Agent types supported by the system
  */
-export type AgentType = 'ClaudeCode' | 'Agno' | 'Dify'
+export type AgentType = 'ClaudeCode' | 'Codex' | 'Agno' | 'Dify'
 
 const SELECTABLE_TEAM_MODES: TeamMode[] = ['solo', 'pipeline', 'coordinate']
 
@@ -25,9 +25,9 @@ const SELECTABLE_TEAM_MODES: TeamMode[] = ['solo', 'pipeline', 'coordinate']
  */
 const MODE_AGENT_FILTER: Record<TeamMode, AgentType[] | null> = {
   solo: null, // null means all selectable agents are allowed
-  pipeline: ['ClaudeCode'],
+  pipeline: ['ClaudeCode', 'Codex'],
   route: [],
-  coordinate: ['ClaudeCode'],
+  coordinate: ['ClaudeCode', 'Codex'],
   collaborate: [],
 }
 
@@ -51,7 +51,7 @@ export function getAllowedAgentsForTeamMode(mode: TeamMode): AgentType[] | undef
  */
 export function getActualShellType(shellType: string, shellMap: Map<string, UnifiedShell>): string {
   // First check if shellType is already a known agent type
-  const knownAgentTypes: AgentType[] = ['ClaudeCode', 'Agno', 'Dify']
+  const knownAgentTypes: AgentType[] = ['ClaudeCode', 'Codex', 'Agno', 'Dify']
   if (knownAgentTypes.includes(shellType as AgentType)) {
     return shellType
   }

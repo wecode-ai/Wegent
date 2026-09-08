@@ -4,11 +4,11 @@
 
 import type { TaskType } from '@/types/api'
 
-export type TeamExecutorAgent = 'ClaudeCode' | 'Agno' | 'Dify'
+export type TeamExecutorAgent = 'ClaudeCode' | 'Codex' | 'Agno' | 'Dify'
 
-const CLAUDE_CODE_AGENT: TeamExecutorAgent = 'ClaudeCode'
+const CODE_RUNTIME_AGENTS: TeamExecutorAgent[] = ['ClaudeCode', 'Codex']
 
-export function requiresClaudeCodeForBindMode(bindMode: TaskType[]): boolean {
+export function requiresCodeRuntimeForBindMode(bindMode: TaskType[]): boolean {
   return bindMode.includes('code') || bindMode.includes('task')
 }
 
@@ -16,9 +16,11 @@ export function getAllowedAgentsForBindMode(
   bindMode: TaskType[],
   allowedAgents?: TeamExecutorAgent[]
 ): TeamExecutorAgent[] | undefined {
-  if (!requiresClaudeCodeForBindMode(bindMode)) {
+  if (!requiresCodeRuntimeForBindMode(bindMode)) {
     return allowedAgents
   }
 
-  return [CLAUDE_CODE_AGENT]
+  return allowedAgents
+    ? CODE_RUNTIME_AGENTS.filter(agent => allowedAgents.includes(agent))
+    : CODE_RUNTIME_AGENTS
 }

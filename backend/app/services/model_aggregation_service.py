@@ -363,13 +363,14 @@ class ModelAggregationService:
         shell_provider_map = {
             "Agno": ["openai", "claude", "gemini"],
             "ClaudeCode": ["claude", "openai"],
+            "Codex": ["openai"],
         }
 
         if support_model:
             if provider not in support_model:
                 return False
 
-        if shell_type == "ClaudeCode" and provider == "openai":
+        if shell_type in {"ClaudeCode", "Codex"} and provider == "openai":
             return self._is_codex_compatible_model_config(config or {})
 
         if support_model:

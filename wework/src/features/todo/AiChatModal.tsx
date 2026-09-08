@@ -11,7 +11,7 @@ import {
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 
 import type { CloudLoopItem, CloudProject } from '@/api/deliveries'
-import { WorkbenchHarnessSelector } from '@/components/layout/WorkbenchHarnessSelector'
+import { WorkbenchRuntimeSelector } from '@/components/layout/WorkbenchRuntimeSelector'
 import { TemporaryChatPanel } from '@/components/layout/workspace-panels/TemporaryChatPanel'
 import { useWorkbenchPaneContext } from '@/features/workbench/useWorkbench'
 import { useTranslation } from '@/hooks/useTranslation'
@@ -241,7 +241,7 @@ export function AiChatModal({
         showProjectWorkBar={Boolean(projectWork)}
         projectWorkBarMiddleContext={<WorkItemComposerGuide integrated toolbar project={project} />}
         projectWorkBarTrailingContext={
-          <WorkbenchHarnessSelector
+          <WorkbenchRuntimeSelector
             runtime="codex"
             harnesses={[]}
             enabledHarnesses={[]}

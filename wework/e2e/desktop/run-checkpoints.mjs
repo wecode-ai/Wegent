@@ -20,6 +20,7 @@ const CHECKPOINT_SCENARIO_MODULES = {
   'temporary-chat': './scenarios/temporary-chat.scenario.mjs',
   'embedded-browser': './scenarios/embedded-browser-agent.scenario.mjs',
   'change-request-status': './scenarios/change-request-status.scenario.mjs',
+  'agent-runtime': './scenarios/agent-runtime.scenario.mjs',
   'claude-runtime': './scenarios/claude-runtime.scenario.mjs',
   'local-file-preview': './scenarios/local-file-preview.scenario.mjs',
   'local-harness': './scenarios/local-terminal.scenario.mjs',
@@ -60,6 +61,7 @@ const CHECKPOINT_SCENARIO_MODULES = {
 const SCENARIO_ONLY_CHECKPOINTS = new Set([
   'cloud-space-mention',
   'change-request-status',
+  'agent-runtime',
   'claude-runtime',
   'local-file-preview',
   'local-harness',

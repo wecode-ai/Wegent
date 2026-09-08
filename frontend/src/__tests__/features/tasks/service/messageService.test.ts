@@ -44,6 +44,10 @@ describe('messageService canUseChatContexts', () => {
     expect(canUseChatContexts('chat', createTeam('ClaudeCode'))).toBe(true)
   })
 
+  it('returns true for Codex shell teams in chat mode', () => {
+    expect(canUseChatContexts('chat', createTeam('Codex'))).toBe(true)
+  })
+
   it('returns true for chat shell teams in chat mode', () => {
     const team = {
       id: 1,
@@ -65,6 +69,10 @@ describe('messageService canUseChatContexts', () => {
 describe('messageService canSwitchModelAfterMessages', () => {
   it('allows chat shell teams to switch models after messages exist', () => {
     expect(canSwitchModelAfterMessages(createTeam('chat'))).toBe(true)
+  })
+
+  it('allows Codex teams to switch models after messages exist', () => {
+    expect(canSwitchModelAfterMessages(createTeam('Codex'))).toBe(true)
   })
 
   it('allows ClaudeCode teams to switch models after messages exist', () => {

@@ -301,7 +301,7 @@
       "executor": {
         "title": "Executor",
         "required": "Choose an available executor",
-        "requires_complex_hint": "Code and device modes need Claude Code capability, so the complex executor is preferred.",
+        "requires_complex_hint": "Code and device modes need a code runtime such as Claude Code or Codex.",
         "custom_shell_placeholder": "Choose custom executor",
         "no_custom_shells": "No custom executors available",
         "manage_custom_shells_hint": "Manage custom executors in Resource Library - Executors.",

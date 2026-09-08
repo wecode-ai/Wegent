@@ -876,6 +876,18 @@ class TestModelAggregationService:
             "gemini", "ClaudeCode", []
         )
 
+    def test_is_model_compatible_with_shell_codex(self, test_db: Session):
+        """Codex only exposes OpenAI Responses-compatible models."""
+        assert model_aggregation_service._is_model_compatible_with_shell(
+            "openai", "Codex", [], {"apiFormat": "responses"}
+        )
+        assert not model_aggregation_service._is_model_compatible_with_shell(
+            "openai", "Codex", [], {"apiFormat": "chat/completions"}
+        )
+        assert not model_aggregation_service._is_model_compatible_with_shell(
+            "claude", "Codex", []
+        )
+
     def test_is_model_compatible_with_shell_agno(self, test_db: Session):
         """Test model compatibility for Agno shell type."""
         # Agno supports OpenAI, Claude, and Gemini models

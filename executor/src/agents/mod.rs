@@ -280,6 +280,12 @@ impl AgentProcessEngine {
     }
 }
 
+async fn prepare_codex_process_request(mut request: ExecutionRequest) -> ExecutionRequest {
+    git_auth::setup_git_authentication(&request).await;
+    runtime_capabilities::prepare_codex_runtime(&mut request).await;
+    request
+}
+
 impl AgentEngine for AgentProcessEngine {
     type RunFuture = Pin<Box<dyn Future<Output = ExecutionOutcome> + Send>>;
 
@@ -303,8 +309,7 @@ impl AgentEngine for AgentProcessEngine {
 
             match agent_kind {
                 AgentKind::CodeX => {
-                    git_auth::setup_git_authentication(&request).await;
-                    runtime_capabilities::prepare_codex_runtime(&request).await;
+                    let request = prepare_codex_process_request(request).await;
                     CodexAppServerEngine::new(planner.codex_binary)
                         .run(request)
                         .await
@@ -423,9 +428,9 @@ impl AgentEngine for AgentProcessEngine {
 
             match agent_kind {
                 AgentKind::CodeX => {
-                    runtime_capabilities::prepare_codex_runtime(&request).await;
+                    let request = prepare_codex_process_request(request).await;
                     CodexAppServerEngine::new(planner.codex_binary)
-                        .run(request)
+                        .run_with_events(request, sink, builder)
                         .await
                 }
                 AgentKind::Dify => DifyEngine::new().run(request).await,

@@ -21,13 +21,13 @@ import type { Team } from '@/types/api'
  * Shell types that support file attachments.
  * Add new shell types here when they gain attachment support.
  */
-const ATTACHMENT_SUPPORTED_SHELL_TYPES = ['chat', 'claudecode'] as const
+const ATTACHMENT_SUPPORTED_SHELL_TYPES = ['chat', 'claudecode', 'codex'] as const
 
 /**
  * Agent types that support file attachments.
  * This maps to team.agent_type field.
  */
-const ATTACHMENT_SUPPORTED_AGENT_TYPES = ['chat', 'claudecode'] as const
+const ATTACHMENT_SUPPORTED_AGENT_TYPES = ['chat', 'claudecode', 'codex'] as const
 
 /**
  * Check if a team uses Chat Shell type.
@@ -55,23 +55,23 @@ export function isChatShell(team: Team | null): boolean {
 }
 
 /**
- * Check if a team uses ClaudeCode Shell type.
+ * Check if a team uses a code runtime Shell type.
  *
  * @param team - Team to check
- * @returns true if the team uses ClaudeCode Shell
+ * @returns true if the team uses Claude Code or Codex
  */
-export function isClaudeCodeShell(team: Team | null): boolean {
+export function isCodeRuntimeShell(team: Team | null): boolean {
   if (!team) return false
 
   // Primary check: agent_type field (case-insensitive)
-  if (team.agent_type?.toLowerCase() === 'claudecode') {
+  if (['claudecode', 'codex'].includes(team.agent_type?.toLowerCase() ?? '')) {
     return true
   }
 
   // Fallback: check first bot's shell_type
   if (team.bots && team.bots.length > 0) {
     const firstBot = team.bots[0]
-    if (firstBot.bot?.shell_type?.toLowerCase() === 'claudecode') {
+    if (['claudecode', 'codex'].includes(firstBot.bot?.shell_type?.toLowerCase() ?? '')) {
       return true
     }
   }
@@ -87,7 +87,7 @@ export function isClaudeCodeShell(team: Team | null): boolean {
  *
  * Currently supports:
  * - Chat Shell: Full attachment support with vision for images
- * - ClaudeCode Shell: Attachments downloaded to workspace
+ * - Claude Code and Codex Shells: Attachments downloaded to workspace
  *
  * @param team - Team to check
  * @returns true if the team supports file attachments
@@ -171,7 +171,7 @@ export function isPasteFileEnabled(team: Team | null): boolean {
  */
 export const attachmentService = {
   isChatShell,
-  isClaudeCodeShell,
+  isCodeRuntimeShell,
   supportsAttachments,
   getShellType,
   isDragDropEnabled,

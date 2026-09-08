@@ -44,6 +44,13 @@ const shells: UnifiedShell[] = [
     namespace: 'dev-group',
   },
   {
+    name: 'custom-codex',
+    type: 'group',
+    displayName: 'Custom Codex',
+    shellType: 'Codex',
+    namespace: 'dev-group',
+  },
+  {
     name: 'custom-agno',
     type: 'group',
     displayName: 'Custom Agno',
@@ -141,7 +148,11 @@ describe('simple team edit utils', () => {
   })
 
   it('excludes Agno custom shells from custom executor choices', () => {
-    expect(getCustomShells(shells).map(shell => shell.name)).toEqual(['custom-chat', 'custom-code'])
+    expect(getCustomShells(shells).map(shell => shell.name)).toEqual([
+      'custom-chat',
+      'custom-code',
+      'custom-codex',
+    ])
   })
 
   it('does not resolve custom executor without a selected shell', () => {
@@ -153,7 +164,7 @@ describe('simple team edit utils', () => {
 
     expect(normalizeExecutorForBindMode('simple', bindMode, shells)).toEqual({
       mode: 'complex',
-      reason: 'requires_claude_code',
+      reason: 'requires_code_runtime',
     })
   })
 
@@ -161,6 +172,15 @@ describe('simple team edit utils', () => {
     const bindMode = ['task'] as TaskType[]
 
     expect(normalizeExecutorForBindMode('custom', bindMode, shells, 'custom-code')).toEqual({
+      mode: 'custom',
+      reason: null,
+    })
+  })
+
+  it('keeps custom executor when its selected shell is Codex-compatible', () => {
+    const bindMode = ['task'] as TaskType[]
+
+    expect(normalizeExecutorForBindMode('custom', bindMode, shells, 'custom-codex')).toEqual({
       mode: 'custom',
       reason: null,
     })

@@ -26,11 +26,12 @@ use tokio::{
 use crate::{
     agents::{runtime_capabilities, task_identity::task_identity_env},
     attachments::{process_prompt, AttachmentPromptProcessor, AttachmentRecord},
+    emitter::ResponsesEventBuilder,
     image_preprocessor::prepare_image_bytes_for_model_with_short_edge_limit,
     logging::{log_executor_event, task_fields},
     process_environment,
     protocol::{ExecutionRequest, CODEX_FILES_MENTIONED_HEADER, CODEX_REQUEST_MARKER},
-    runner::{AgentEngine, ExecutionOutcome},
+    runner::{AgentEngine, EventSink, ExecutionOutcome},
     server::{
         codex_model_catalog, executor_loopback_base_url,
         local_model_proxy::{self, LocalModelProxyUpstream, VisionSidecarUpstream},
@@ -258,6 +259,195 @@ impl AgentEngine for CodexAppServerEngine {
             }
         })
     }
+
+    fn run_with_events<S>(
+        &self,
+        request: ExecutionRequest,
+        sink: S,
+        builder: ResponsesEventBuilder,
+    ) -> Pin<Box<dyn Future<Output = ExecutionOutcome> + Send>>
+    where
+        S: EventSink,
+    {
+        let binary = self.binary.clone();
+        Box::pin(async move {
+            let (notification_tx, notification_rx) = mpsc::unbounded_channel();
+            let callback_task =
+                tokio::spawn(forward_codex_tool_events(notification_rx, sink, builder));
+            let result =
+                run_codex_app_server_turn(&binary, request, None, None, Some(notification_tx))
+                    .await;
+            if let Err(error) = callback_task.await {
+                log_executor_event(
+                    "codex callback event mapper stopped unexpectedly",
+                    &[("error", error.to_string())],
+                );
+            }
+            match result {
+                Ok(turn) => turn.outcome,
+                Err(message) => ExecutionOutcome::Failed { message },
+            }
+        })
+    }
+}
+
+#[derive(Clone)]
+struct CodexCallbackTool {
+    id: String,
+    name: String,
+    input: Value,
+}
+
+async fn forward_codex_tool_events<S>(
+    mut notifications: mpsc::UnboundedReceiver<Value>,
+    sink: S,
+    builder: ResponsesEventBuilder,
+) where
+    S: EventSink,
+{
+    let mut tools = HashMap::<String, CodexCallbackTool>::new();
+    while let Some(message) = notifications.recv().await {
+        let method = message.get("method").and_then(Value::as_str);
+        let params = message.get("params").unwrap_or(&message);
+        match method {
+            Some("item/started") => {
+                let Some(tool) = codex_callback_tool(params) else {
+                    continue;
+                };
+                let event =
+                    builder.response_tool_block_created(&tool.id, &tool.name, &tool.input, None);
+                if let Err(error) = sink.send(event).await {
+                    log_codex_callback_event_failure("started", &tool.id, &error);
+                }
+                tools.insert(tool.id.clone(), tool);
+            }
+            Some("item/completed") => {
+                let Some(completed) = codex_callback_tool(params) else {
+                    continue;
+                };
+                let tool = tools.remove(&completed.id).unwrap_or(completed);
+                let item = params.get("item").unwrap_or(params);
+                let output = codex_callback_tool_output(item);
+                let is_error = codex_callback_tool_failed(item);
+                let event = builder.response_tool_block_updated(
+                    &tool.id,
+                    &tool.input,
+                    output.as_deref(),
+                    is_error,
+                    None,
+                );
+                if let Err(error) = sink.send(event).await {
+                    log_codex_callback_event_failure("completed", &tool.id, &error);
+                }
+            }
+            _ => {}
+        }
+    }
+}
+
+fn codex_callback_tool(params: &Value) -> Option<CodexCallbackTool> {
+    let item = params.get("item").unwrap_or(params);
+    let item_type = normalized_codex_item_type(item);
+    let id = item.get("id").and_then(Value::as_str)?.to_owned();
+    let (name, input) = match item_type.as_str() {
+        "mcptoolcall" => {
+            let server = item
+                .get("server")
+                .and_then(Value::as_str)
+                .unwrap_or_default();
+            let tool = item.get("tool").and_then(Value::as_str)?;
+            let name = if server.is_empty() {
+                tool.to_owned()
+            } else {
+                format!("{server}__{tool}")
+            };
+            (
+                name,
+                item.get("arguments").cloned().unwrap_or_else(|| json!({})),
+            )
+        }
+        "commandexecution" => (
+            "exec_command".to_owned(),
+            json!({
+                "cmd": item.get("command").and_then(Value::as_str).unwrap_or_default(),
+                "cwd": item.get("cwd").and_then(Value::as_str),
+            }),
+        ),
+        "dynamictoolcall" => {
+            let namespace = item
+                .get("namespace")
+                .and_then(Value::as_str)
+                .unwrap_or_default();
+            let tool = item.get("tool").and_then(Value::as_str)?;
+            let name = if namespace.is_empty() {
+                tool.to_owned()
+            } else {
+                format!("{namespace}__{tool}")
+            };
+            (
+                name,
+                item.get("arguments").cloned().unwrap_or_else(|| json!({})),
+            )
+        }
+        "websearch" | "websearchcall" => (
+            "web_search".to_owned(),
+            json!({
+                "query": item.get("query").and_then(Value::as_str).unwrap_or_default(),
+            }),
+        ),
+        "filechange" => (
+            "apply_patch".to_owned(),
+            json!({
+                "changes": item.get("changes").cloned().unwrap_or_else(|| json!([])),
+            }),
+        ),
+        _ => return None,
+    };
+    Some(CodexCallbackTool { id, name, input })
+}
+
+fn codex_callback_tool_output(item: &Value) -> Option<String> {
+    item.get("result")
+        .filter(|result| !result.is_null())
+        .or_else(|| item.get("aggregatedOutput"))
+        .or_else(|| item.get("aggregated_output"))
+        .or_else(|| item.get("output"))
+        .or_else(|| item.get("contentItems"))
+        .or_else(|| item.get("content_items"))
+        .or_else(|| item.get("status"))
+        .map(|output| match output {
+            Value::String(output) => output.clone(),
+            output => serde_json::to_string(output).unwrap_or_else(|_| output.to_string()),
+        })
+}
+
+fn codex_callback_tool_failed(item: &Value) -> bool {
+    item.get("error").is_some_and(|error| !error.is_null())
+        || item
+            .get("status")
+            .and_then(Value::as_str)
+            .is_some_and(|status| {
+                status.eq_ignore_ascii_case("failed") || status.eq_ignore_ascii_case("declined")
+            })
+}
+
+fn normalized_codex_item_type(item: &Value) -> String {
+    item.get("type")
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+        .replace(['_', '-'], "")
+        .to_ascii_lowercase()
+}
+
+fn log_codex_callback_event_failure(stage: &str, tool_use_id: &str, error: &str) {
+    log_executor_event(
+        "codex tool callback failed",
+        &[
+            ("stage", stage.to_owned()),
+            ("tool_use_id", tool_use_id.to_owned()),
+            ("error", error.to_owned()),
+        ],
+    );
 }
 
 #[derive(Clone)]
@@ -3795,7 +3985,7 @@ fn cdp_browser_mcp_config_overrides(request: &ExecutionRequest) -> Result<Vec<St
     let mut overrides = vec![
         format!(
             "skills.config={}",
-            serde_json::to_string(&json!([
+            toml_json_value(&json!([
                 {
                     "name": "browser:control-in-app-browser",
                     "enabled": false,
@@ -3805,7 +3995,6 @@ fn cdp_browser_mcp_config_overrides(request: &ExecutionRequest) -> Result<Vec<St
                     "enabled": false,
                 },
             ]))
-            .unwrap_or_else(|_| "[]".to_owned())
         ),
         "features.non_prefixed_mcp_tool_names=true".to_owned(),
     ];
@@ -4115,6 +4304,19 @@ async fn prepare_codex_execution_request(
     } else {
         super::runtime_capabilities::prepare_runtime_attachments(request).await
     };
+    if let Some(selected_knowledge_prompt) = request
+        .extra
+        .get("selected_knowledge_prompt")
+        .or_else(|| request.extra.get("selectedKnowledgePrompt"))
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        request.prompt = crate::prompt_enrichment::inject_selected_knowledge_prompt(
+            &request.prompt,
+            selected_knowledge_prompt,
+        );
+    }
     let attachments = attachment_records(&request);
     if attachments.is_empty() {
         return Ok(PreparedCodexExecutionRequest {
@@ -4214,7 +4416,6 @@ async fn prepare_codex_execution_request(
     if !text_attachment_context.is_empty() {
         request.prompt = append_text_attachment_context(&request.prompt, &text_attachment_context);
     }
-
     Ok(PreparedCodexExecutionRequest {
         request,
         generated_files,
@@ -4618,6 +4819,16 @@ fn toml_json_value(value: &Value) -> String {
                 .collect::<Vec<_>>()
                 .join(",")
         ),
+        Value::Object(values) => format!(
+            "{{{}}}",
+            values
+                .iter()
+                .map(|(key, value)| {
+                    format!("{}={}", toml_key_segment(key), toml_json_value(value))
+                })
+                .collect::<Vec<_>>()
+                .join(",")
+        ),
         Value::Bool(value) => value.to_string(),
         Value::Number(value) => value.to_string(),
         Value::String(value) => toml_value(value),
@@ -4638,6 +4849,11 @@ fn config_override_entry(value: &str) -> Option<(String, Value)> {
 }
 
 fn parse_config_override_value(value: &str) -> Value {
+    if let Ok(document) = format!("value={value}").parse::<toml_edit::DocumentMut>() {
+        if let Some(value) = document.get("value").and_then(toml_edit::Item::as_value) {
+            return toml_edit_value_to_json(value);
+        }
+    }
     if value.eq_ignore_ascii_case("true") {
         return Value::Bool(true);
     }
@@ -4661,6 +4877,27 @@ fn parse_config_override_value(value: &str) -> Value {
         }
     }
     Value::String(value.to_owned())
+}
+
+fn toml_edit_value_to_json(value: &toml_edit::Value) -> Value {
+    match value {
+        toml_edit::Value::String(value) => Value::String(value.value().to_owned()),
+        toml_edit::Value::Integer(value) => json!(*value.value()),
+        toml_edit::Value::Float(value) => serde_json::Number::from_f64(*value.value())
+            .map(Value::Number)
+            .unwrap_or_else(|| Value::String(value.value().to_string())),
+        toml_edit::Value::Boolean(value) => Value::Bool(*value.value()),
+        toml_edit::Value::Datetime(value) => Value::String(value.value().to_string()),
+        toml_edit::Value::Array(values) => {
+            Value::Array(values.iter().map(toml_edit_value_to_json).collect())
+        }
+        toml_edit::Value::InlineTable(values) => Value::Object(
+            values
+                .iter()
+                .map(|(key, value)| (key.to_owned(), toml_edit_value_to_json(value)))
+                .collect(),
+        ),
+    }
 }
 
 fn resolve_codex_binary(value: &str) -> String {

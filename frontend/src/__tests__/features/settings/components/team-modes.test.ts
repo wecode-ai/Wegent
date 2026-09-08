@@ -13,9 +13,10 @@ import {
 const bots = [
   { id: 1, name: 'chat', shell_type: 'Chat' },
   { id: 2, name: 'claude', shell_type: 'ClaudeCode' },
-  { id: 3, name: 'agno', shell_type: 'Agno' },
-  { id: 4, name: 'custom-code', shell_type: 'custom-code' },
-  { id: 5, name: 'custom-agno', shell_type: 'custom-agno' },
+  { id: 3, name: 'codex', shell_type: 'Codex' },
+  { id: 4, name: 'agno', shell_type: 'Agno' },
+  { id: 5, name: 'custom-code', shell_type: 'custom-code' },
+  { id: 6, name: 'custom-agno', shell_type: 'custom-agno' },
 ] as Bot[]
 
 const shells: UnifiedShell[] = [
@@ -38,19 +39,21 @@ describe('team modes', () => {
     expect(getSelectableTeamModes()).toEqual(['solo', 'pipeline', 'coordinate'])
   })
 
-  it('limits non-solo selectable collaboration modes to ClaudeCode', () => {
-    expect(getAllowedAgentsForTeamMode('pipeline')).toEqual(['ClaudeCode'])
-    expect(getAllowedAgentsForTeamMode('coordinate')).toEqual(['ClaudeCode'])
+  it('limits non-solo selectable collaboration modes to code runtimes', () => {
+    expect(getAllowedAgentsForTeamMode('pipeline')).toEqual(['ClaudeCode', 'Codex'])
+    expect(getAllowedAgentsForTeamMode('coordinate')).toEqual(['ClaudeCode', 'Codex'])
   })
 
   it('excludes Agno bots and custom Agno shells from mode-compatible bots', () => {
     expect(getFilteredBotsForMode(bots, 'solo', shells).map(bot => bot.name)).toEqual([
       'chat',
       'claude',
+      'codex',
       'custom-code',
     ])
     expect(getFilteredBotsForMode(bots, 'pipeline', shells).map(bot => bot.name)).toEqual([
       'claude',
+      'codex',
       'custom-code',
     ])
   })

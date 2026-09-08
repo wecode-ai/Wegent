@@ -28,7 +28,7 @@ RUN find src -type f -exec touch {} + \
 
 FROM ${BASE_IMAGE}
 
-RUN npm install -g @anthropic-ai/claude-code@2.1.247 \
+RUN npm install -g @anthropic-ai/claude-code@2.1.247 @openai/codex@0.142.5 \
     && npm cache clean --force
 
 COPY --from=builder /workspace/src/executor/target/release/wegent-executor /app/executor

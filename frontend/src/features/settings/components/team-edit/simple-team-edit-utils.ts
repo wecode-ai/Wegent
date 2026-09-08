@@ -7,7 +7,7 @@ import { filterSelectableShells, type UnifiedShell } from '@/apis/shells'
 import type { Bot, TaskType } from '@/types/api'
 
 export type SimpleExecutorMode = 'simple' | 'complex' | 'custom'
-export type ExecutorNormalizationReason = 'requires_claude_code' | null
+export type ExecutorNormalizationReason = 'requires_code_runtime' | null
 
 export interface SimpleBindModeOption {
   value: Extract<TaskType, 'chat' | 'code' | 'task' | 'video' | 'image'>
@@ -84,7 +84,7 @@ export function getSimpleExecutorOptions(): SimpleExecutorOption[] {
   return SIMPLE_EXECUTOR_OPTIONS
 }
 
-export function bindModeRequiresClaudeCode(bindMode: TaskType[]): boolean {
+export function bindModeRequiresCodeRuntime(bindMode: TaskType[]): boolean {
   return bindMode.includes('code') || bindMode.includes('task')
 }
 
@@ -94,15 +94,15 @@ export function getModelCategoryTypeForBindMode(bindMode: TaskType[]): ModelCate
   return 'llm'
 }
 
-export function isClaudeCodeShell(shell: UnifiedShell | null | undefined): boolean {
-  return shell?.shellType === 'ClaudeCode'
+export function isCodeRuntimeShell(shell: UnifiedShell | null | undefined): boolean {
+  return shell?.shellType === 'ClaudeCode' || shell?.shellType === 'Codex'
 }
 
 type ShellIdentity = Pick<UnifiedShell, 'name'> & Partial<Pick<UnifiedShell, 'shellType'>>
 
 export function shellSupportsPreloadSkills(shell: ShellIdentity | null | undefined): boolean {
   const shellType = shell?.shellType || shell?.name
-  return shellType === 'Chat' || shellType === 'ClaudeCode'
+  return shellType === 'Chat' || shellType === 'ClaudeCode' || shellType === 'Codex'
 }
 
 export function getCustomShells(shells: UnifiedShell[]): UnifiedShell[] {
@@ -156,7 +156,7 @@ export function normalizeExecutorForBindMode(
   shells: UnifiedShell[],
   customShellName?: string
 ): NormalizedExecutor {
-  if (!bindModeRequiresClaudeCode(bindMode)) {
+  if (!bindModeRequiresCodeRuntime(bindMode)) {
     return { mode, reason: null }
   }
 
@@ -165,14 +165,14 @@ export function normalizeExecutorForBindMode(
   }
 
   const selectedShell = resolveShellForExecutor(shells, mode, customShellName)
-  if (isClaudeCodeShell(selectedShell)) {
+  if (isCodeRuntimeShell(selectedShell)) {
     return { mode, reason: null }
   }
 
   const complexShell = resolveShellForExecutor(shells, 'complex')
   if (complexShell) {
-    return { mode: 'complex', reason: 'requires_claude_code' }
+    return { mode: 'complex', reason: 'requires_code_runtime' }
   }
 
-  return { mode, reason: 'requires_claude_code' }
+  return { mode, reason: 'requires_code_runtime' }
 }

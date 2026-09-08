@@ -63,6 +63,10 @@ class ExecutionRouter:
             "mode": "http_callback",
             "url": None,  # Will be set from settings
         },
+        "Codex": {
+            "mode": "http_callback",
+            "url": None,
+        },
         "Agno": {
             "mode": "http_callback",
             "url": None,
@@ -74,7 +78,13 @@ class ExecutionRouter:
     }
 
     # Shell types handled by the bundled Rust executor in standalone mode.
-    STANDALONE_EXECUTOR_SHELL_TYPES = {"ClaudeCode", "Agno", "Dify", "ImageValidator"}
+    STANDALONE_EXECUTOR_SHELL_TYPES = {
+        "ClaudeCode",
+        "Codex",
+        "Agno",
+        "Dify",
+        "ImageValidator",
+    }
     # Chat: executed via chat_shell module (when CHAT_SHELL_MODE=package)
     INPROCESS_CHAT_SHELL_TYPES = {"Chat"}
 
@@ -107,6 +117,9 @@ class ExecutionRouter:
 
         self.EXECUTION_SERVICES["Chat"]["url"] = chat_shell_url
         self.EXECUTION_SERVICES["ClaudeCode"]["url"] = (
+            executor_manager_url + "/executor-manager"
+        )
+        self.EXECUTION_SERVICES["Codex"]["url"] = (
             executor_manager_url + "/executor-manager"
         )
         self.EXECUTION_SERVICES["Agno"]["url"] = (
