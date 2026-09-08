@@ -569,6 +569,8 @@ def update_knowledge_base(
             execution_model_ref=data.execution_model_ref,
             execution_model_ref_is_set="execution_model_ref" in data.model_fields_set,
             show_generation_task=data.show_generation_task,
+            generation_strategy=data.generation_strategy,
+            generation_strategy_is_set=("generation_strategy" in data.model_fields_set),
             guided_questions=data.guided_questions,
             max_calls_per_conversation=data.max_calls_per_conversation,
             exempt_calls_before_check=data.exempt_calls_before_check,

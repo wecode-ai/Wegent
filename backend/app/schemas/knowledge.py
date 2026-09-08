@@ -334,6 +334,16 @@ class KnowledgeBaseCreate(MultimodalAnalysisFieldsMixin):
             "loses nothing. Meaningless for other knowledge base types."
         ),
     )
+    generation_strategy: Optional[str] = Field(
+        None,
+        min_length=1,
+        max_length=64,
+        pattern=r"^[a-z][a-z0-9_]*$",
+        description=(
+            "Default orchestration strategy for this code wiki. The dedicated "
+            "create endpoint resolves and persists the deployment default when unset."
+        ),
+    )
     retrieval_config: Optional[RetrievalConfigCreate] = Field(
         None, description="Retrieval configuration"
     )
@@ -450,6 +460,13 @@ class KnowledgeBaseUpdate(MultimodalAnalysisFieldsMixin):
             "wiki was built with, so a reader who wants to watch a run should not "
             "have to rebuild the wiki to see one."
         ),
+    )
+    generation_strategy: Optional[str] = Field(
+        None,
+        min_length=1,
+        max_length=64,
+        pattern=r"^[a-z][a-z0-9_]*$",
+        description="Default orchestration strategy for this code wiki",
     )
     guided_questions: Optional[List[str]] = Field(
         None,
@@ -658,6 +675,9 @@ class CodeWikiRunProgress(BaseModel):
     total_steps: int = Field(0, ge=0)
     pages_written: int = Field(0, ge=0)
     pages_total: int = Field(0, ge=0)
+    # The same three visible phases serve reviewed and no-review runs. This tells the
+    # client whether the completed planning phase was a quality-gated review.
+    review_required: bool = False
 
 
 class CodeWikiRunStatus(BaseModel):
@@ -726,6 +746,24 @@ class CodeWikiRunCreate(BaseModel):
     )
 
 
+class CodeWikiGenerationStrategyOption(BaseModel):
+    """One deployment-enabled, validated strategy a caller may select."""
+
+    id: str
+    revision: int
+    display_name: str
+    description: str
+
+
+class CodeWikiGenerationStrategyCapabilities(BaseModel):
+    """Deployment policy projected into the choices a Code Wiki UI needs."""
+
+    # Empty means the configured default is currently unavailable, so a form must
+    # require the caller to choose one of the runnable strategies explicitly.
+    default_strategy: Optional[str] = None
+    strategies: List[CodeWikiGenerationStrategyOption] = Field(default_factory=list)
+
+
 class CodeWikiRunResponse(BaseModel):
     """What happened when a code wiki was asked to regenerate."""
 
@@ -734,6 +772,8 @@ class CodeWikiRunResponse(BaseModel):
     reason: str = Field("", description="Why that mode was chosen")
     generation_id: int = Field(0, description="The version being written, when started")
     task_id: int = Field(0, description="Task running the agent, when started")
+    strategy_id: str = Field("", description="Resolved generation strategy")
+    strategy_revision: int = Field(0, description="Resolved strategy revision")
 
 
 class CodeWikiRunRecord(BaseModel):
@@ -773,6 +813,8 @@ class CodeWikiRunRecord(BaseModel):
             "container then died."
         ),
     )
+    strategy_id: str = Field("legacy", description="Resolved generation strategy")
+    strategy_revision: int = Field(0, description="Resolved strategy revision")
 
 
 class CodeWikiRunHistory(BaseModel):
@@ -864,6 +906,9 @@ class KnowledgeBaseResponse(MultimodalAnalysisResponseFieldsMixin):
             "Returned so the edit form can show what is set rather than defaulting "
             "the switch to off and silently turning it off on the next save."
         ),
+    )
+    generation_strategy: Optional[str] = Field(
+        None, description="Default orchestration strategy for this code wiki"
     )
     kb_type: KnowledgeBaseType = Field(
         KnowledgeBaseType.NOTEBOOK,
@@ -977,6 +1022,7 @@ class KnowledgeBaseResponse(MultimodalAnalysisResponseFieldsMixin):
             source=source,
             language=language,
             show_generation_task=bool(spec.get("showGenerationTask", False)),
+            generation_strategy=spec.get("generationStrategy"),
             document_count=document_count,
             retrieval_config=cls._normalize_retrieval_config_for_response(
                 spec.get("retrievalConfig"), kind.id
