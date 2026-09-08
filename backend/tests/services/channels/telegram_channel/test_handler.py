@@ -4,6 +4,7 @@
 
 """Unit tests for TelegramChannelHandler."""
 
+from datetime import datetime
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -12,8 +13,13 @@ from fastapi import HTTPException
 
 from app.models.subtask import SubtaskStatus
 from app.services.channels.callback import ChannelType
+from app.services.channels.device_selection import DeviceSelection, DeviceType
 from app.services.channels.handler import MessageContext
 from app.services.channels.telegram.handler import TelegramChannelHandler
+from app.services.execution.emitters import (
+    CompositeResultEmitter,
+    WebSocketResultEmitter,
+)
 
 EXPECTED_IM_SOURCE = {
     "source": "im",
@@ -288,6 +294,74 @@ class TestTelegramChannelHandler:
         assert service == telegram_callback_service
 
     @pytest.mark.asyncio
+    async def test_device_callback_selects_app_execution_target(self, handler):
+        user = SimpleNamespace(id=6)
+        devices = [
+            {
+                "device_id": "local-device",
+                "execution_target_id": "app-record-1819",
+                "name": "APB22015038",
+                "status": "online",
+            }
+        ]
+
+        with (
+            patch("app.services.channels.telegram.handler.SessionLocal"),
+            patch(
+                "app.services.device_service.device_service.get_all_devices",
+                new=AsyncMock(return_value=devices),
+            ),
+            patch(
+                "app.services.channels.device_selection.device_selection_manager.set_local_device",
+                new=AsyncMock(return_value=True),
+            ) as set_local_device,
+        ):
+            result = await handler._handle_device_callback(user, "1")
+
+        assert result == "✅ 已切换到设备 **APB22015038**"
+        set_local_device.assert_awaited_once_with(
+            user.id,
+            "app-record-1819",
+            "APB22015038",
+        )
+
+    @pytest.mark.asyncio
+    async def test_device_mode_callback_migrates_legacy_app_selection(self, handler):
+        user = SimpleNamespace(id=6)
+        selection = DeviceSelection(
+            device_type=DeviceType.LOCAL,
+            device_id="local-device",
+            device_name="APB22015038",
+        )
+        route = SimpleNamespace(
+            logical_device_id="local-device",
+            runtime_device_id="app-record-1819",
+        )
+
+        with (
+            patch(
+                "app.services.channels.device_selection.device_selection_manager.get_selection",
+                new=AsyncMock(return_value=selection),
+            ),
+            patch(
+                "app.services.channels.device_selection.device_selection_manager.set_local_device",
+                new=AsyncMock(return_value=True),
+            ) as set_local_device,
+            patch(
+                "app.services.device.runtime_route.runtime_route_resolver.resolve",
+                new=AsyncMock(return_value=route),
+            ),
+        ):
+            result = await handler._handle_mode_callback(user, "device")
+
+        assert result == "✅ 已切换到**设备模式**"
+        set_local_device.assert_awaited_once_with(
+            user.id,
+            "app-record-1819",
+            "APB22015038",
+        )
+
+    @pytest.mark.asyncio
     async def test_create_streaming_emitter(self, handler, mock_bot):
         """Test creating streaming emitter."""
         mock_context = MagicMock()
@@ -318,6 +392,10 @@ class TestTelegramChannelHandler:
         creation_result = _creation_result()
         db = MagicMock()
         streaming_emitter = _streaming_emitter()
+        event_order: list[str] = []
+        streaming_emitter.emit_start.side_effect = lambda **_: event_order.append(
+            "assistant_start"
+        )
 
         with (
             patch(
@@ -354,6 +432,13 @@ class TestTelegramChannelHandler:
                 "_register_streaming_emitter",
                 new=AsyncMock(),
             ),
+            patch.object(
+                handler,
+                "_broadcast_user_message_to_web",
+                new=AsyncMock(
+                    side_effect=lambda **_: event_order.append("user_message")
+                ),
+            ) as broadcast_mock,
             patch(
                 "app.services.chat.storage.task_manager.create_task_and_subtasks",
                 new=AsyncMock(return_value=creation_result),
@@ -361,11 +446,27 @@ class TestTelegramChannelHandler:
             patch(
                 "app.services.chat.trigger.trigger_ai_response_unified",
                 new=AsyncMock(),
-            ),
+            ) as trigger_mock,
         ):
             result = await handler._create_and_process_chat(user, message_context)
 
         assert result is None
+        broadcast_mock.assert_awaited_once_with(
+            db=db,
+            task_id=creation_result.task.id,
+            user_subtask=creation_result.user_subtask,
+            message=message_context.content,
+            user=user,
+        )
+        assert event_order[:2] == ["user_message", "assistant_start"]
+        dispatch_emitter = trigger_mock.await_args.kwargs["result_emitter"]
+        assert isinstance(dispatch_emitter, CompositeResultEmitter)
+        assert dispatch_emitter.emitters[0] is streaming_emitter
+        websocket_emitter = dispatch_emitter.emitters[1]
+        assert isinstance(websocket_emitter, WebSocketResultEmitter)
+        assert websocket_emitter.task_id == creation_result.task.id
+        assert websocket_emitter.subtask_id == creation_result.assistant_subtask.id
+        assert websocket_emitter.user_id == user.id
         _assert_message_source(create_task_mock)
 
     @pytest.mark.asyncio
@@ -415,6 +516,11 @@ class TestTelegramChannelHandler:
                 "_register_streaming_emitter",
                 new=AsyncMock(),
             ),
+            patch.object(
+                handler,
+                "_broadcast_user_message_to_web",
+                new=AsyncMock(),
+            ),
             patch(
                 "app.services.chat.storage.task_manager.create_task_and_subtasks",
                 new=AsyncMock(return_value=creation_result),
@@ -440,6 +546,10 @@ class TestTelegramChannelHandler:
         creation_result = _creation_result()
         db = MagicMock()
         streaming_emitter = _streaming_emitter()
+        event_order: list[str] = []
+        streaming_emitter.emit_start.side_effect = lambda **_: event_order.append(
+            "assistant_start"
+        )
 
         with (
             patch.object(
@@ -467,6 +577,13 @@ class TestTelegramChannelHandler:
                 "_register_streaming_emitter",
                 new=AsyncMock(),
             ),
+            patch.object(
+                handler,
+                "_broadcast_user_message_to_web",
+                new=AsyncMock(
+                    side_effect=lambda **_: event_order.append("user_message")
+                ),
+            ) as broadcast_mock,
             patch(
                 "app.services.chat.storage.task_manager.create_task_and_subtasks",
                 new=AsyncMock(return_value=creation_result),
@@ -485,6 +602,14 @@ class TestTelegramChannelHandler:
             )
 
         assert result is None
+        broadcast_mock.assert_awaited_once_with(
+            db=db,
+            task_id=creation_result.task.id,
+            user_subtask=creation_result.user_subtask,
+            message=message_context.content,
+            user=user,
+        )
+        assert event_order[:2] == ["user_message", "assistant_start"]
         _assert_message_source(create_task_mock)
 
     @pytest.mark.asyncio
@@ -498,6 +623,7 @@ class TestTelegramChannelHandler:
         creation_result = _creation_result()
         db = MagicMock()
         streaming_emitter = _streaming_emitter()
+        event_order: list[str] = []
 
         with (
             patch.object(
@@ -525,11 +651,21 @@ class TestTelegramChannelHandler:
                 "_register_streaming_emitter",
                 new=AsyncMock(),
             ),
+            patch.object(
+                handler,
+                "_broadcast_user_message_to_web",
+                new=AsyncMock(
+                    side_effect=lambda **_: event_order.append("user_message")
+                ),
+            ) as broadcast_mock,
             patch(
                 "app.services.chat.storage.task_manager.create_task_and_subtasks",
                 new=AsyncMock(return_value=creation_result),
             ) as create_task_mock,
-            patch("app.services.execution.schedule_dispatch") as schedule_dispatch,
+            patch(
+                "app.services.execution.schedule_dispatch",
+                side_effect=lambda _: event_order.append("dispatch"),
+            ) as schedule_dispatch,
         ):
             result = await handler._create_and_process_cloud_task(
                 db=db,
@@ -539,8 +675,71 @@ class TestTelegramChannelHandler:
             )
 
         assert result is None
+        broadcast_mock.assert_awaited_once_with(
+            db=db,
+            task_id=creation_result.task.id,
+            user_subtask=creation_result.user_subtask,
+            message=message_context.content,
+            user=user,
+        )
+        assert event_order[:2] == ["user_message", "dispatch"]
         schedule_dispatch.assert_called_once_with(creation_result.task.id)
         _assert_message_source(create_task_mock)
+
+    @pytest.mark.asyncio
+    async def test_broadcast_user_message_to_web_includes_display_metadata(
+        self, handler
+    ):
+        created_at = datetime(2026, 9, 8, 15, 39, 46)
+        user = SimpleNamespace(id=1, user_name="Test User")
+        user_subtask = SimpleNamespace(
+            id=300,
+            message_id=5,
+            created_at=created_at,
+            result={"source": EXPECTED_IM_SOURCE},
+        )
+        context = MagicMock()
+        context.model_dump.return_value = {
+            "id": 400,
+            "context_type": "attachment",
+        }
+        websocket_emitter = SimpleNamespace(emit_chat_message=AsyncMock())
+        db = MagicMock()
+
+        with (
+            patch(
+                "app.services.chat.webpage_ws_chat_emitter.get_webpage_ws_emitter",
+                return_value=websocket_emitter,
+            ),
+            patch(
+                "app.services.context.context_service.context_service."
+                "get_briefs_by_subtask",
+                return_value=[context],
+            ) as get_contexts_mock,
+        ):
+            await handler._broadcast_user_message_to_web(
+                db=db,
+                task_id=200,
+                user_subtask=user_subtask,
+                message="Hello from Telegram",
+                user=user,
+            )
+
+        get_contexts_mock.assert_called_once_with(db, user_subtask.id)
+        context.model_dump.assert_called_once_with(mode="json")
+        websocket_emitter.emit_chat_message.assert_awaited_once_with(
+            task_id=200,
+            subtask_id=user_subtask.id,
+            message_id=user_subtask.message_id,
+            role="user",
+            content="Hello from Telegram",
+            sender={"user_id": user.id, "user_name": user.user_name},
+            created_at=created_at,
+            attachment=None,
+            attachments=[],
+            contexts=[{"id": 400, "context_type": "attachment"}],
+            source=EXPECTED_IM_SOURCE,
+        )
 
     @pytest.mark.asyncio
     async def test_private_im_task_response_failure_marks_task_failed(self, handler):

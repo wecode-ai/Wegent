@@ -70,6 +70,7 @@ def find_registration_device(
     device_id: str,
     runtime_instance_id: str | None,
     app_device_id: str | None = None,
+    device_type: str | None = None,
 ) -> Kind | None:
     """Serialize first registration on the owner, then lock the scoped identity."""
     if device_id.startswith(RECORD_ROUTE_PREFIX):
@@ -92,6 +93,9 @@ def find_registration_device(
     if exact:
         # Reuse a stable record, including a previously removed installation.
         return next((device for device in exact if device.is_active), exact[0])
+    if device_type == "app":
+        # A distinct Wework installation owns an independent record-scoped route.
+        return None
     active = [device for device in devices if device.is_active]
     if len(active) > 1:
         raise DeviceIdentityConflictError(

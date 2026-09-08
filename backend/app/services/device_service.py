@@ -403,7 +403,12 @@ class DeviceService:
             Kind model instance for the device
         """
         device_kind = find_registration_device(
-            db, user_id, device_id, runtime_instance_id, app_device_id
+            db,
+            user_id,
+            device_id,
+            runtime_instance_id,
+            app_device_id,
+            device_type=device_type,
         )
 
         if device_kind:
