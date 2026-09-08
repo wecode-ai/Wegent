@@ -1009,3 +1009,71 @@ class TestCopyTeamToPersonalSpaceWithSkills:
         assert skill.id not in skill_binding_service.list_user_default_skill_ids(
             test_db, user.id
         )
+
+    def test_group_maintainer_cannot_copy_agent_with_owners_personal_skill(
+        self, test_db: Session
+    ):
+        """Skills without permission are never copied; the copy is denied.
+
+        Mirrors the production case where a group agent (owned by user A)
+        references A's personal Skill and a group Maintainer (user B, not the
+        Skill owner) copies the agent into personal space. The Skill is not
+        bound or duplicated for B, so the copy fails with the permission error
+        and the UI prompts B to obtain access first.
+        """
+        from fastapi import HTTPException
+
+        owner = _create_user(test_db, "skill_owner3", "skill-owner3@test.com")
+        admin = _create_user(test_db, "agent_copier2", "copier2@test.com")
+        group = _create_group(test_db, owner, "weather-group-5")
+        _add_group_member(test_db, group, admin, "Maintainer")
+        _create_shell(test_db, name="ClaudeCode", namespace="default")
+        skill = _create_skill_with_binary(
+            test_db, user_id=owner.id, name="owner-private-skill"
+        )
+        bot = _create_bot(
+            test_db,
+            user_id=owner.id,
+            name="private-skill-agent-bot",
+            namespace=group.name,
+        )
+        _create_ghost(
+            test_db,
+            user_id=owner.id,
+            name="ghost-private-skill-agent-bot",
+            namespace=group.name,
+        )
+        _attach_skill_to_bot(test_db, bot=bot, skill=skill)
+        team = _create_team(
+            test_db,
+            user_id=owner.id,
+            name="private-skill-agent",
+            namespace=group.name,
+            collaboration_model="solo",
+            bot_ids=[bot.id],
+        )
+
+        with pytest.raises(HTTPException) as exc_info:
+            team_kinds_service.copy_team(
+                test_db,
+                team_id=team.id,
+                user_id=admin.id,
+                target_namespace="default",
+            )
+
+        assert exc_info.value.status_code == 403
+        assert (
+            test_db.query(Kind)
+            .filter(
+                Kind.kind == "Skill",
+                Kind.name == "owner-private-skill",
+                Kind.namespace == "default",
+                Kind.user_id == admin.id,
+                Kind.is_active == True,
+            )
+            .first()
+            is None
+        )
+        assert skill.id not in skill_binding_service.list_user_default_skill_ids(
+            test_db, admin.id
+        )
