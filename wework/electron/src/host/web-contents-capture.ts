@@ -13,17 +13,19 @@ export interface CaptureRect {
 export interface WebContentsCaptureOptions {
   rect?: CaptureRect
   preferDebugger?: boolean
+  debuggerFromSurface?: boolean
 }
 
 export async function captureWebContentsDataUrl(
   contents: WebContents,
   options: WebContentsCaptureOptions = {}
 ): Promise<string> {
+  const debuggerFromSurface = options.debuggerFromSurface ?? !options.preferDebugger
   const attempts = options.preferDebugger
     ? [
         {
           label: 'CDP Page.captureScreenshot',
-          capture: () => captureDebugger(contents, false, options.rect),
+          capture: () => captureDebugger(contents, debuggerFromSurface, options.rect),
         },
         {
           label: 'Electron capturePage',
@@ -37,7 +39,7 @@ export async function captureWebContentsDataUrl(
         },
         {
           label: 'CDP Page.captureScreenshot',
-          capture: () => captureDebugger(contents, true, options.rect),
+          capture: () => captureDebugger(contents, debuggerFromSurface, options.rect),
         },
       ]
   const failures: string[] = []

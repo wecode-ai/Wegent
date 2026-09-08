@@ -13,9 +13,10 @@ sidebar_position: 30
 WebContents 合成，因此 CSS 层级、点击、滚动、焦点和生命周期都遵循标准 Web 语义。
 
 截图由宿主对调用插件所属的 Smart App WebContents 执行：插件只上报 iframe 的
-`getBoundingClientRect()`，宿主通过 scoped HostPipe 找到 owner，然后调用
-`capturePage(rect)`。跨域 iframe 的 OOPIF 像素属于 owner WebContents 的最终合成结果，
-插件不需要读取 iframe DOM，也不需要桌面录屏权限。
+`getBoundingClientRect()`，宿主通过 scoped HostPipe 找到 owner，然后优先通过 CDP
+截取 owner 的最终合成 surface，并用 `capturePage(rect)` 作为后备。跨域 iframe 的
+OOPIF 像素属于 owner WebContents 的最终合成结果，插件不需要读取 iframe DOM，也不需要
+桌面录屏权限。
 
 ```text
 BrowserWindow
@@ -25,7 +26,8 @@ BrowserWindow
 
 iframe DOMRect
   → dshCapture.ownerRect
-  → owner WebContents.capturePage(rect)
+  → owner CDP Page.captureScreenshot(fromSurface=true, clip=rect)
+  → owner WebContents.capturePage(rect)（后备）
   → PNG data URL
 ```
 

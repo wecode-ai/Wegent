@@ -19,7 +19,10 @@ import {
   type BrowserHistorySearch,
 } from './browser-history-store.js'
 import { prepareLocalFileNavigation } from './local-file-preview.js'
-import { captureWebContentsDataUrl } from './web-contents-capture.js'
+import {
+  captureWebContentsDataUrl,
+  type WebContentsCaptureOptions,
+} from './web-contents-capture.js'
 
 export interface BrowserBounds {
   x: number
@@ -991,9 +994,13 @@ export class EmbeddedBrowserManager {
     return this.history.remove(ids)
   }
 
-  async capture(label: string, rect?: BrowserBounds): Promise<string> {
+  async capture(
+    label: string,
+    rect?: BrowserBounds,
+    options: Omit<WebContentsCaptureOptions, 'rect'> = {}
+  ): Promise<string> {
     const entry = this.required(label)
-    return captureWebContentsDataUrl(entry.contents, { rect })
+    return captureWebContentsDataUrl(entry.contents, { ...options, rect })
   }
 
   labelForContentsId(contentsId: number): string | null {
