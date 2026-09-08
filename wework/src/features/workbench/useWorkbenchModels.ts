@@ -107,6 +107,7 @@ export function useWorkbenchModels({
   const selectedModelRef = useRef<Record<string, UnifiedModel | null>>({})
   const selectedModelOptionsRef = useRef<Record<string, ModelOptions>>({})
   const modelLoadRevisionRef = useRef(0)
+  const [hasCompletedModelLoad, setHasCompletedModelLoad] = useState(false)
   const [isLoading, setIsLoading] = useState(false)
   const [error, setError] = useState<Error | null>(null)
   const [restoredSelectionKeyByScope, setRestoredSelectionKeyByScope] = useState<
@@ -155,13 +156,13 @@ export function useWorkbenchModels({
     () =>
       !enabled ||
       (selectionReady &&
-        !isLoading &&
+        hasCompletedModelLoad &&
         !configuredModelUnavailable &&
         (restoredSelectionKeyByScope[scopeKey] === selectionKey || selectionMatchesConfig)),
     [
       configuredModelUnavailable,
       enabled,
-      isLoading,
+      hasCompletedModelLoad,
       restoredSelectionKeyByScope,
       scopeKey,
       selectionMatchesConfig,
@@ -252,6 +253,7 @@ export function useWorkbenchModels({
         }
       } finally {
         if (!cancelled && revision === modelLoadRevisionRef.current) {
+          setHasCompletedModelLoad(true)
           setIsLoading(false)
         }
       }
