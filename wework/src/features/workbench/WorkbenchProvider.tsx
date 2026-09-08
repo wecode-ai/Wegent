@@ -291,6 +291,7 @@ export function WorkbenchProvider({
   const removedRemoteProjectPathsRef = useRef(new Set<string>())
   const remoteProjectMutationQueueRef = useRef<Promise<void>>(Promise.resolve())
   const projectWorkPreferenceMutationQueueRef = useRef<Promise<void>>(Promise.resolve())
+  const modelSelectionMutationQueueRef = useRef<Promise<void>>(Promise.resolve())
   const projectActivationSignatureRef = useRef('')
   const lastProjectRestoreAttemptedRef = useRef(false)
   const projectSelectionStartedRef = useRef(false)
@@ -371,7 +372,7 @@ export function WorkbenchProvider({
   )
   const projectWorkPreferenceKey = getProjectWorkPreferenceKey(projectWorkPreferenceScope)
   const activeProjectWorkPreferenceKeyRef = useRef<string | null>(projectWorkPreferenceKey)
-  const latestProjectWorkPreferencesRef = useRef<UserPreferences | null | undefined>(
+  const latestUserPreferencesRef = useRef<UserPreferences | null | undefined>(
     currentUser.preferences
   )
   const projectWorkPreferenceSyncRevisionRef = useRef(0)
@@ -379,7 +380,7 @@ export function WorkbenchProvider({
     activeProjectWorkPreferenceKeyRef.current = projectWorkPreferenceKey
   }, [projectWorkPreferenceKey])
   useLayoutEffect(() => {
-    latestProjectWorkPreferencesRef.current = currentUser.preferences
+    latestUserPreferencesRef.current = currentUser.preferences
   }, [currentUser.preferences])
   useWorkbenchTelemetry({
     currentProject: state.currentProject,
@@ -394,6 +395,7 @@ export function WorkbenchProvider({
     userId: currentUser.id,
     currentProjectId: state.currentProject?.id ?? null,
     currentRuntimeTask: state.currentRuntimeTask,
+    standaloneChatKey: state.standaloneChatKey,
   })
   const [draftInputByScope, setDraftInputByScope] = useState<Record<string, string>>(() =>
     workspaceTabId ? (consumeWorkspaceTabTransfer(workspaceTabId)?.draftInputByScope ?? {}) : {}
@@ -742,13 +744,13 @@ export function WorkbenchProvider({
       if (!projectWorkPreferenceScope || !projectWorkPreferenceKey) return
 
       const preferences = mergeProjectWorkPreference(
-        latestProjectWorkPreferencesRef.current,
+        latestUserPreferencesRef.current,
         projectWorkPreferenceScope,
         patch
       )
       if (!preferences) return
 
-      latestProjectWorkPreferencesRef.current = preferences
+      latestUserPreferencesRef.current = preferences
       dispatch({ type: 'user_preferences_updated', preferences })
 
       const userApi = resolvedServices.userApi
@@ -829,6 +831,15 @@ export function WorkbenchProvider({
     },
     [persistProjectWorkPreference, projectExecutionMode, state.currentRuntimeTask, t]
   )
+  const projectModelSelection = useMemo(() => {
+    if (state.currentRuntimeTask || !state.currentProject || !state.runtimeWork) return null
+    const runtimeProject = state.runtimeWork.projects.find(
+      item => runtimeProjectUiId(item.project) === state.currentProject?.id
+    )?.project
+    return runtimeProject?.source === 'local_project'
+      ? (runtimeProject.aiSettings?.modelSelection ?? null)
+      : null
+  }, [state.currentProject, state.currentRuntimeTask, state.runtimeWork])
   const modelSelectionConfig = useMemo(() => {
     if (state.currentRuntimeTask) {
       return (
@@ -837,27 +848,8 @@ export function WorkbenchProvider({
         null
       )
     }
-    const runtimeProject =
-      state.currentProject && state.runtimeWork
-        ? state.runtimeWork.projects.find(
-            item => runtimeProjectUiId(item.project) === state.currentProject?.id
-          )?.project
-        : null
-    const projectModelSelection =
-      runtimeProject?.source === 'local_project'
-        ? (runtimeProject.aiSettings?.modelSelection ?? null)
-        : null
-    if (projectModelSelection) return projectModelSelection
-    return getNewChatModelSelection(currentUser) ?? null
-  }, [currentUser, state.currentProject, state.currentRuntimeTask, state.runtimeWork])
-  const usesLocalProjectScopedSelection = useMemo(() => {
-    if (state.currentRuntimeTask || !state.currentProject || !state.runtimeWork) return false
-    return state.runtimeWork.projects.some(
-      item =>
-        runtimeProjectUiId(item.project) === state.currentProject?.id &&
-        item.project.source === 'local_project'
-    )
-  }, [state.currentProject, state.currentRuntimeTask, state.runtimeWork])
+    return projectModelSelection ?? getNewChatModelSelection(currentUser) ?? null
+  }, [currentUser, projectModelSelection, state.currentRuntimeTask, state.runtimeWork])
   const defaultModelSelectionConfig = useCallback(
     (models: UnifiedModel[]) => defaultNewChatModelSelection(models),
     []
@@ -865,19 +857,30 @@ export function WorkbenchProvider({
   const persistNewChatModelSelection = useCallback(
     (selection: ModelSelectionConfig) => {
       const preferences = {
-        ...(currentUser.preferences ?? {}),
+        ...(latestUserPreferencesRef.current ?? {}),
         wework_new_chat_model_selection: selection,
       }
+      latestUserPreferencesRef.current = preferences
       dispatch({ type: 'user_preferences_updated', preferences })
-      void resolvedServices.userApi
-        ?.updateCurrentUser({
-          preferences: { wework_new_chat_model_selection: selection },
-        })
-        .catch(() => {
-          dispatch({ type: 'error_set', error: '模型配置保存失败' })
-        })
+
+      const userApi = resolvedServices.userApi
+      if (!userApi) return
+      const mutation = () =>
+        userApi
+          .updateCurrentUser({
+            preferences: { wework_new_chat_model_selection: selection },
+          })
+          .then(() => undefined)
+      const run = modelSelectionMutationQueueRef.current.catch(() => undefined).then(mutation)
+      modelSelectionMutationQueueRef.current = run.then(
+        () => undefined,
+        () => undefined
+      )
+      void run.catch(() => {
+        dispatch({ type: 'error_set', error: '模型配置保存失败' })
+      })
     },
-    [currentUser.preferences, resolvedServices.userApi]
+    [resolvedServices.userApi]
   )
   const handleBlockedModelSelection = useCallback(
     (reason: ModelCompatibilityDisabledReason | 'locked', model?: UnifiedModel | null) => {
@@ -904,7 +907,7 @@ export function WorkbenchProvider({
     locked: false,
     enabled: taskComposerCatalogsEnabled,
     scopeKey: modelSelectionScopeKey,
-    persistSelection: !state.currentRuntimeTask && !usesLocalProjectScopedSelection,
+    persistSelection: !state.currentRuntimeTask && !projectModelSelection,
     selectionConfig: modelSelectionConfig,
     defaultSelectionConfig: defaultModelSelectionConfig,
     fallbackWhenConfiguredModelUnavailable: !state.currentRuntimeTask,
@@ -3034,15 +3037,17 @@ function getModelSelectionScopeKey({
   userId,
   currentProjectId,
   currentRuntimeTask,
+  standaloneChatKey,
 }: {
   userId: number
   currentProjectId: number | null
   currentRuntimeTask: RuntimeTaskAddress | null
+  standaloneChatKey: number
 }): string {
   if (currentRuntimeTask) {
     return `user:${userId}:${getRuntimeTaskChatScopeKey(currentRuntimeTask)}`
   }
   return currentProjectId === null
-    ? `user:${userId}:new-task:standalone`
-    : `user:${userId}:new-task:project:${currentProjectId}`
+    ? `user:${userId}:new-task:standalone:${standaloneChatKey}`
+    : `user:${userId}:new-task:project:${currentProjectId}:${standaloneChatKey}`
 }

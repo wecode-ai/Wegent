@@ -36,12 +36,16 @@ def test_remote_docker_command_binds_device_identity_to_stable_home(monkeypatch)
 
     assert first.command == rebuilt.command
     assert first.env["DEVICE_ID"] == "device-stable-1"
+    assert first.env["DEVICE_CODE_SERVER_ENABLED"] == "true"
+    assert first.env["DEVICE_TERMINAL_ENABLED"] == "true"
     assert first.env["WEGENT_EXECUTOR_HOME_ID"] == "device-stable-1"
     assert first.env["WEGENT_WORKTREE_PERSISTENT_STORAGE_VERIFIED"] == "true"
     assert (
         "-v remote-device-1-home:/home/wegent/.wecode/wegent-executor" in first.command
     )
     assert "-e WEGENT_WORKTREE_PERSISTENT_STORAGE_VERIFIED=true" in first.command
+    assert "-e DEVICE_CODE_SERVER_ENABLED=true" in first.command
+    assert "-e DEVICE_TERMINAL_ENABLED=true" in first.command
     assert "WEGENT_EXECUTOR_HOME_ID" not in first.commands[1].command
     assert (
         "WEGENT_WORKTREE_PERSISTENT_STORAGE_VERIFIED" not in first.commands[1].command

@@ -70,10 +70,7 @@ import {
 import { MacOSTitleBarDragRegion } from '@/components/layout/MacOSTitleBarDragRegion'
 import { ActionMenu } from '@/components/common/ActionMenu'
 import { Tooltip } from '@/components/ui/tooltip'
-import type {
-  ArchiveRuntimeTaskOptions,
-  ArchiveRuntimeTaskResult,
-} from '@/features/workbench/workbenchContextTypes'
+import type { ArchiveRuntimeConversationsResult } from '@/features/workbench/workbenchContextTypes'
 import { useAppPreferencesState } from '@/features/app-preferences/useAppPreferencesState'
 import { WEWORK_DSH_SLOTS } from '@/features/dsh-runtime/dshUiSlots'
 import { useDshSlotAvailable } from '@/features/dsh-runtime/useDshSlotAvailable'
@@ -110,6 +107,7 @@ import {
 } from '@/features/workbench/runtimeTaskLifecycle/projection'
 import { createRuntimeUserMessage } from '@/features/workbench/runtimeUserMessage'
 import type { RuntimeTaskLifecycleStoreSnapshot } from '@/features/workbench/runtimeTaskLifecycle'
+import { getRuntimeTaskLifecycleKey } from '@/features/workbench/runtimeTaskLifecycle'
 import {
   findRuntimeTask,
   hydrateRuntimeTaskAddress,
@@ -509,6 +507,33 @@ type BoardReadResult = {
   page_cursors?: Record<string, string | null>
 }
 
+function projectActiveRuntimeTaskStatuses(
+  items: LocatedLoopItem[],
+  bindings: LoopItemTaskBinding[],
+  lifecycleSnapshot: RuntimeTaskLifecycleStoreSnapshot | undefined
+): LocatedLoopItem[] {
+  if (!lifecycleSnapshot) return items
+  const runningItemIds = new Set<string>()
+  for (const binding of bindings) {
+    if (!binding.loop_item_id) continue
+    const lifecycle = lifecycleSnapshot.tasks.get(
+      getRuntimeTaskLifecycleKey({
+        deviceId: binding.device_id,
+        taskId: binding.task_id,
+      })
+    )
+    if (lifecycle && runtimeTaskTrackingExecutionStatus(lifecycle) === 'running') {
+      runningItemIds.add(binding.loop_item_id)
+    }
+  }
+  if (runningItemIds.size === 0) return items
+  return items.map(item =>
+    runningItemIds.has(item.id) && item.status !== 'in_progress'
+      ? { ...item, status: 'in_progress' }
+      : item
+  )
+}
+
 function modelSelectionFromExecutionConfig(
   config: WorkflowExecutionConfig | null | undefined
 ): ModelSelectionConfig | null {
@@ -525,6 +550,8 @@ function boardTaskModelSelection(
   binding: CloudTodoBoardTaskBinding,
   runtimeWork: RuntimeWorkListResponse | null | undefined
 ): ModelSelectionConfig | null {
+  if (binding.modelSelection) return binding.modelSelection
+
   const runtimeSelection = findRuntimeTask(runtimeWork, {
     deviceId: binding.device_id,
     taskId: binding.task_id,
@@ -661,10 +688,9 @@ interface CloudTodoWorkspaceProps {
   onListDeviceDirectories?: (deviceId: string, path: string) => Promise<string[]>
   onCreateDeviceDirectory?: (deviceId: string, path: string) => Promise<void>
   onCloneGitRepository?: (deviceId: string, input: CloneGitRepositoryInput) => Promise<void>
-  onArchiveRuntimeTask?: (
-    address: RuntimeTaskAddress,
-    options?: ArchiveRuntimeTaskOptions
-  ) => Promise<ArchiveRuntimeTaskResult | void> | ArchiveRuntimeTaskResult | void
+  onArchiveRuntimeTasks?: (
+    addresses: RuntimeTaskAddress[]
+  ) => Promise<ArchiveRuntimeConversationsResult | void> | ArchiveRuntimeConversationsResult | void
   onOpenSettings?: (options?: DesktopSidebarAccountSettingsOptions) => void
   onLogout?: () => void
 }
@@ -1205,7 +1231,7 @@ export function CloudTodoWorkspace({
   onListDeviceDirectories,
   onCreateDeviceDirectory,
   onCloneGitRepository,
-  onArchiveRuntimeTask,
+  onArchiveRuntimeTasks,
   onOpenSettings,
   onLogout,
 }: CloudTodoWorkspaceProps) {
@@ -1515,9 +1541,6 @@ export function CloudTodoWorkspace({
   const [runtimeBatchArchiveItems, setRuntimeBatchArchiveItems] = useState<
     LocatedLoopItem[] | null
   >(null)
-  const [runtimeForceArchiveItems, setRuntimeForceArchiveItems] = useState<
-    LocatedLoopItem[] | null
-  >(null)
   const [runtimeConversationPreviews, setRuntimeConversationPreviews] = useState<
     Record<
       string,
@@ -1670,7 +1693,13 @@ export function CloudTodoWorkspace({
     }
     return result
   }, [runtimeWork])
-  const runtimeTaskKeys = useMemo(() => new Set(runtimeTasksByKey.keys()), [runtimeTasksByKey])
+  const runtimeTaskKeys = useMemo(() => {
+    const keys = new Set(runtimeTasksByKey.keys())
+    for (const lifecycle of runtimeTaskLifecycle?.tasks.values() ?? []) {
+      keys.add(runtimeConversationKey(lifecycle.address))
+    }
+    return keys
+  }, [runtimeTaskLifecycle, runtimeTasksByKey])
   const runtimeAddressesByWorkItem = useMemo(() => {
     const result = new Map<string, RuntimeTaskAddress[]>()
     const workspaces = [
@@ -1756,6 +1785,7 @@ export function CloudTodoWorkspace({
               task_id: binding.task_id,
               task_title: binding.task_title,
               workflow_node_id: binding.workflow_node_id,
+              modelSelection: binding.modelSelection,
               running: runtimeTaskRunningByAddress.get(addressKey) ?? false,
               changeRequestTarget: runtimeTask
                 ? runtimeTaskChangeRequestTarget(runtimeTask.workspace, runtimeTask.task)
@@ -2449,19 +2479,15 @@ export function CloudTodoWorkspace({
     }
   }
 
-  async function archiveCompletedItems(
-    completedItems: LocatedLoopItem[],
-    options?: ArchiveRuntimeTaskOptions
-  ) {
-    if (!onArchiveRuntimeTask || archiveBusy || completedItems.length === 0) return
+  async function archiveCompletedItems(completedItems: LocatedLoopItem[]) {
+    if (!onArchiveRuntimeTasks || archiveBusy || completedItems.length === 0) return
     setArchiveBusy(true)
     setArchiveError(null)
     const archivedItemKeys = new Set<string>()
-    const dirtyItems: LocatedLoopItem[] = []
     const failedItems: LocatedLoopItem[] = []
     try {
+      const addresses = new Map<string, RuntimeTaskAddress>()
       for (const item of completedItems) {
-        const addresses = new Map<string, RuntimeTaskAddress>()
         for (const binding of itemTaskBindings[item.id] ?? []) {
           const address = { deviceId: binding.device_id, taskId: binding.task_id }
           addresses.set(runtimeConversationKey(address), address)
@@ -2471,33 +2497,28 @@ export function CloudTodoWorkspace({
         ) ?? []) {
           addresses.set(runtimeConversationKey(address), address)
         }
-        let itemIsDirty = false
-        let itemFailed = false
-        try {
-          for (const address of addresses.values()) {
-            const result = await onArchiveRuntimeTask(address, options)
-            if (!options?.force && result?.status === 'dirty_worktree') {
-              itemIsDirty = true
-            } else if (result?.status === 'failed') {
-              itemFailed = true
-            }
-          }
-          if (itemIsDirty) {
-            dirtyItems.push(item)
-            continue
-          }
-          if (itemFailed) {
+      }
+      const runtimeResult = await onArchiveRuntimeTasks([...addresses.values()])
+      if (runtimeResult?.status === 'failed') {
+        failedItems.push(...completedItems)
+      } else {
+        const archiveResults = await Promise.allSettled(
+          completedItems.map(async item => {
+            const api = apiForProject(projectForItem(item))
+            if (!api) throw new Error('项目空间当前不可用')
+            await api.archiveLoopItem(item.id)
+            return item
+          })
+        )
+        archiveResults.forEach((result, index) => {
+          const item = completedItems[index]
+          if (result.status === 'fulfilled') {
+            archivedItemKeys.add(`${item.project_store ?? 'backend'}:${item.id}`)
+          } else {
             failedItems.push(item)
-            continue
+            console.error('[Wework my tasks] archive project task failed', result.reason)
           }
-          const api = apiForProject(projectForItem(item))
-          if (!api) throw new Error('项目空间当前不可用')
-          await api.archiveLoopItem(item.id)
-          archivedItemKeys.add(`${item.project_store ?? 'backend'}:${item.id}`)
-        } catch (error) {
-          failedItems.push(item)
-          console.error('[Wework my tasks] archive runtime task failed', error)
-        }
+        })
       }
       if (archivedItemKeys.size > 0) {
         setItems(current =>
@@ -2506,8 +2527,7 @@ export function CloudTodoWorkspace({
           )
         )
       }
-      setRuntimeBatchArchiveItems(dirtyItems.length === 0 ? failedItems : null)
-      setRuntimeForceArchiveItems(!options?.force && dirtyItems.length > 0 ? dirtyItems : null)
+      setRuntimeBatchArchiveItems(failedItems.length > 0 ? failedItems : null)
       if (failedItems.length > 0) {
         setArchiveError(
           t('todo.batch_archive_failed', '{{count}} 个任务归档失败，请稍后重试', {
@@ -2515,6 +2535,14 @@ export function CloudTodoWorkspace({
           })
         )
       }
+    } catch (error) {
+      console.error('[Wework my tasks] batch archive failed', error)
+      setRuntimeBatchArchiveItems(completedItems)
+      setArchiveError(
+        t('todo.batch_archive_failed', '{{count}} 个任务归档失败，请稍后重试', {
+          count: completedItems.length,
+        })
+      )
     } finally {
       setArchiveBusy(false)
     }
@@ -2771,9 +2799,14 @@ export function CloudTodoWorkspace({
         const activeItemIds = new Set(
           activeBindings.flatMap(binding => (binding.loop_item_id ? [binding.loop_item_id] : []))
         )
+        const activeItems = selectedItems.filter(item => activeItemIds.has(item.id))
         return {
           ...selectedResponse,
-          items: selectedItems.filter(item => activeItemIds.has(item.id)),
+          items: projectActiveRuntimeTaskStatuses(
+            activeItems,
+            activeBindings,
+            runtimeTaskLifecycle
+          ),
           task_bindings: activeBindings,
         }
       }
@@ -2932,6 +2965,7 @@ export function CloudTodoWorkspace({
     selectedProjectId,
     selectedProjectKey,
     locateItems,
+    runtimeTaskLifecycle,
     runtimeTaskStatusSignature,
     runtimeTaskKeys,
     services.aitableApi,
@@ -4952,7 +4986,7 @@ export function CloudTodoWorkspace({
                                     nativeGroupBy === 'status' &&
                                     column.status === 'completed' &&
                                     columnItems.length > 0 &&
-                                    onArchiveRuntimeTask ? (
+                                    onArchiveRuntimeTasks ? (
                                       <Tooltip
                                         label={t(
                                           'todo.archive_completed_tasks',
@@ -5819,33 +5853,22 @@ export function CloudTodoWorkspace({
           </div>
         </Modal>
       )}
-      {(runtimeBatchArchiveItems || runtimeForceArchiveItems) && (
+      {runtimeBatchArchiveItems && (
         <Modal
-          title={
-            runtimeForceArchiveItems
-              ? t('todo.force_archive_completed_tasks_title', '强制归档已完成任务？')
-              : t('todo.archive_completed_tasks_title', '归档已完成任务？')
-          }
+          title={t('todo.archive_completed_tasks_title', '归档已完成任务？')}
           onClose={() => {
             if (archiveBusy) return
             setRuntimeBatchArchiveItems(null)
-            setRuntimeForceArchiveItems(null)
             setArchiveError(null)
           }}
         >
           <div className="px-5 pb-5 pt-4">
             <p className="text-sm leading-5 text-text-secondary">
-              {runtimeForceArchiveItems
-                ? t(
-                    'todo.force_archive_completed_tasks_description',
-                    '{{count}} 个任务的工作树包含未提交修改。强制归档会删除这些工作树目录。',
-                    { count: runtimeForceArchiveItems.length }
-                  )
-                : t(
-                    'todo.archive_completed_tasks_description',
-                    '将从任务列表中归档 {{count}} 个已完成任务。归档后可在设置中恢复。',
-                    { count: runtimeBatchArchiveItems?.length ?? 0 }
-                  )}
+              {t(
+                'todo.archive_completed_tasks_description',
+                '将从任务列表中归档 {{count}} 个已完成任务。归档后可在设置中恢复。',
+                { count: runtimeBatchArchiveItems.length }
+              )}
             </p>
             {archiveError ? (
               <p className="mt-3 text-xs text-destructive" role="alert">
@@ -5859,7 +5882,6 @@ export function CloudTodoWorkspace({
                 disabled={archiveBusy}
                 onClick={() => {
                   setRuntimeBatchArchiveItems(null)
-                  setRuntimeForceArchiveItems(null)
                   setArchiveError(null)
                 }}
                 className="h-9 rounded-lg border border-border px-4 text-sm text-text-primary hover:bg-muted disabled:opacity-50"
@@ -5868,25 +5890,14 @@ export function CloudTodoWorkspace({
               </button>
               <button
                 type="button"
-                data-testid={
-                  runtimeForceArchiveItems
-                    ? 'cloud-my-tasks-force-archive-completed-confirm'
-                    : 'cloud-my-tasks-archive-completed-confirm'
-                }
+                data-testid="cloud-my-tasks-archive-completed-confirm"
                 disabled={archiveBusy}
-                onClick={() =>
-                  void archiveCompletedItems(
-                    runtimeForceArchiveItems ?? runtimeBatchArchiveItems ?? [],
-                    runtimeForceArchiveItems ? { force: true } : undefined
-                  )
-                }
+                onClick={() => void archiveCompletedItems(runtimeBatchArchiveItems)}
                 className="h-9 rounded-lg bg-red-600 px-4 text-sm font-medium text-white hover:bg-red-700 disabled:opacity-50"
               >
                 {archiveBusy
                   ? t('todo.archiving', '归档中…')
-                  : runtimeForceArchiveItems
-                    ? t('todo.force_archive', '强制归档')
-                    : t('todo.confirm_archive', '确认归档')}
+                  : t('todo.confirm_archive', '确认归档')}
               </button>
             </div>
           </div>

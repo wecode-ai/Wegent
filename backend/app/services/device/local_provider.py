@@ -25,9 +25,10 @@ from app.core.config import settings
 from app.models.kind import Kind
 from app.schemas.device import DeviceConnectionMode, DeviceType
 from app.services.device.base_provider import BaseDeviceProvider
-from app.services.device.display_name import (
-    resolve_device_display_name,
-    set_device_display_name,
+from app.services.device.identity import (
+    matching_online_info,
+    owned_active_device,
+    record_route_id,
 )
 from app.services.device.version_service import executor_version_service
 
@@ -105,6 +106,8 @@ class LocalDeviceProvider(BaseDeviceProvider):
         capabilities: Optional[List[str]] = None,
         client_ip: Optional[str] = None,
         runtime_transfer_host: Optional[str] = None,
+        runtime_instance_id: Optional[str] = None,
+        app_device_id: Optional[str] = None,
     ) -> Dict[str, Any]:
         """Register a local device.
 
@@ -124,113 +127,33 @@ class LocalDeviceProvider(BaseDeviceProvider):
         Returns:
             Dict with device 'id' and 'is_default'
         """
-        # Find existing device by Kind.name (device_id)
-        device_kind = (
-            db.query(Kind)
-            .filter(
-                and_(
-                    Kind.user_id == user_id,
-                    Kind.kind == "Device",
-                    Kind.namespace == "default",
-                    Kind.name == device_id,
-                )
-            )
-            .first()
+        from app.services.device_service import device_service
+
+        device_kind = device_service.upsert_device_crd(
+            db,
+            user_id,
+            device_id,
+            name,
+            device_type=self.device_type.value,
+            capabilities=capabilities,
+            client_ip=client_ip,
+            runtime_transfer_host=runtime_transfer_host,
+            runtime_instance_id=runtime_instance_id,
+            app_device_id=app_device_id,
         )
-
-        is_first_device = False
-        if device_kind:
-            # Update existing device (reactivate if soft-deleted)
-            device_json = device_kind.json.copy()
-            persisted_display_name = resolve_device_display_name(device_json, name)
-            set_device_display_name(device_json, persisted_display_name)
-            device_json["spec"]["deviceType"] = self.device_type.value
-            device_json["spec"]["connectionMode"] = DeviceConnectionMode.WEBSOCKET.value
-            if capabilities is not None:
-                device_json["spec"]["capabilities"] = capabilities
-            if client_ip is not None:
-                device_json["spec"]["clientIp"] = client_ip
-            if runtime_transfer_host is not None:
-                device_json["spec"]["runtimeTransferHost"] = runtime_transfer_host
-            device_kind.json = device_json
-            device_kind.updated_at = datetime.now()
-            device_kind.is_active = True
-            db.add(device_kind)
-            logger.info(
-                f"[LocalDeviceProvider] Updated device: user_id={user_id}, device_id={device_id}"
-            )
-        else:
-            # Check if this is the first device for the user
-            existing_devices = (
-                db.query(Kind)
-                .filter(
-                    and_(
-                        Kind.user_id == user_id,
-                        Kind.kind == "Device",
-                        Kind.namespace == "default",
-                        Kind.is_active == True,
-                    )
-                )
-                .all()
-            )
-            existing_count = sum(
-                1
-                for device in existing_devices
-                if device.json.get("spec", {}).get("deviceType", DeviceType.LOCAL.value)
-                == self.device_type.value
-            )
-            is_first_device = existing_count == 0
-
-            # Create new device CRD
-            device_json = {
-                "apiVersion": "agent.wecode.io/v1",
-                "kind": "Device",
-                "metadata": {
-                    "name": device_id,
-                    "namespace": "default",
-                },
-                "spec": {
-                    "deviceId": device_id,
-                    "deviceType": self.device_type.value,
-                    "connectionMode": DeviceConnectionMode.WEBSOCKET.value,
-                    "isDefault": is_first_device,
-                    "capabilities": capabilities,
-                    "clientIp": client_ip,
-                    "runtimeTransferHost": runtime_transfer_host,
-                },
-                "status": {
-                    "state": "Available",
-                },
-            }
-            set_device_display_name(device_json, name)
-
-            device_kind = Kind(
-                user_id=user_id,
-                kind="Device",
-                name=device_id,
-                namespace="default",
-                json=device_json,
-            )
-            db.add(device_kind)
-            logger.info(
-                f"[LocalDeviceProvider] Registered new device: user_id={user_id}, "
-                f"device_id={device_id}, is_default={is_first_device}"
-            )
-
-        db.commit()
-        db.refresh(device_kind)
 
         # Set online status in Redis
         if socket_id:
             await self._set_online(
                 user_id=user_id,
-                device_id=device_id,
+                device_id=record_route_id(device_kind),
                 socket_id=socket_id,
                 name=name,
                 status="online",
                 executor_version=executor_version,
                 client_ip=client_ip,
                 runtime_transfer_host=runtime_transfer_host,
+                runtime_instance_id=runtime_instance_id,
             )
 
         return {
@@ -288,19 +211,7 @@ class LocalDeviceProvider(BaseDeviceProvider):
     ) -> Optional[Dict[str, Any]]:
         """Get device status from Redis and database."""
         # Get CRD from database
-        device_kind = (
-            db.query(Kind)
-            .filter(
-                and_(
-                    Kind.user_id == user_id,
-                    Kind.kind == "Device",
-                    Kind.namespace == "default",
-                    Kind.name == device_id,
-                    Kind.is_active == True,
-                )
-            )
-            .first()
-        )
+        device_kind = owned_active_device(db, user_id, device_id)
 
         if not device_kind:
             return None
@@ -310,8 +221,14 @@ class LocalDeviceProvider(BaseDeviceProvider):
             return None
 
         # Get online info from Redis
-        online_info = await self._get_online_info(user_id, device_id)
-        slot_info = await self.get_slot_usage(db, user_id, device_id)
+        online_info = matching_online_info(
+            spec, await self._get_online_info(user_id, record_route_id(device_kind))
+        )
+        slot_info = self._build_slot_usage(
+            db,
+            online_info.get("running_task_ids") if online_info else None,
+            online_info,
+        )
 
         # Get version info
         executor_version = online_info.get("executor_version") if online_info else None
@@ -324,6 +241,16 @@ class LocalDeviceProvider(BaseDeviceProvider):
         return {
             "id": device_kind.id,
             "device_id": device_id,
+            "execution_target_id": (
+                record_route_id(device_kind)
+                if self.device_type == DeviceType.APP
+                else None
+            ),
+            "socket_device_id": (
+                record_route_id(device_kind)
+                if self.device_type == DeviceType.APP
+                else None
+            ),
             "name": spec.get("displayName") or device_id,
             "status": online_info.get("status", "online") if online_info else "offline",
             "is_default": spec.get("isDefault", False),
@@ -417,7 +344,7 @@ class LocalDeviceProvider(BaseDeviceProvider):
             return []
 
         # Batch fetch online info from Redis using mget
-        device_ids = [d.name for d in local_devices]
+        device_ids = [record_route_id(d) for d in local_devices]
         redis_keys = [self.generate_online_key(user_id, did) for did in device_ids]
         online_info_map = await cache_manager.mget(redis_keys)
 
@@ -434,7 +361,7 @@ class LocalDeviceProvider(BaseDeviceProvider):
             device_id = device_kind.name
             redis_key = redis_keys[i]
 
-            online_info = online_info_map.get(redis_key)
+            online_info = matching_online_info(spec, online_info_map.get(redis_key))
             is_online = online_info is not None
 
             # Skip offline devices if requested
@@ -459,6 +386,16 @@ class LocalDeviceProvider(BaseDeviceProvider):
                 {
                     "id": device_kind.id,
                     "device_id": device_id,
+                    "execution_target_id": (
+                        record_route_id(device_kind)
+                        if self.device_type == DeviceType.APP
+                        else None
+                    ),
+                    "socket_device_id": (
+                        record_route_id(device_kind)
+                        if self.device_type == DeviceType.APP
+                        else None
+                    ),
                     "name": spec.get("displayName") or device_id,
                     "status": (
                         online_info.get("status", "online")

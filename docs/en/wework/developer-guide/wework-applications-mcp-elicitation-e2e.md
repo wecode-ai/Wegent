@@ -55,6 +55,13 @@ GitHub CI must invoke both checkpoints. The desktop E2E classifier should map th
 3. Wait for the saved state and assert that the request persisted to the Sites upstream fixture through the real Backend.
 4. Capture the saved state and close the dialog.
 
+### Manage Internal Site Access
+
+1. Open the more-actions menu for `E2E Product Site`, then choose Access permissions.
+2. Select project members plus specified users, enter two usernames in reverse order, and save.
+3. Wait for the saved state and assert that the request persisted the normalized order to the Sites upstream fixture through the real Backend.
+4. Capture the saved state and close the dialog.
+
 ### Manage Site Collaborators
 
 1. Open the more-actions menu for `E2E Product Site`, then choose Manage collaborators.

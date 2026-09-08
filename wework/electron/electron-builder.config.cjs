@@ -64,7 +64,9 @@ module.exports = {
     hardenedRuntime: true,
     ...(useCustomMacosNotarization ? { notarize: false } : {}),
     icon: path.resolve(__dirname, '../resources/icons/icon.icns'),
-    signIgnore: ['/Contents/Resources/wework-core-plugins/'],
+    signIgnore: process.env.APPLE_SIGNING_IDENTITY
+      ? managedComponentResources.map(resource => '/Contents/Resources/' + resource.to + '/')
+      : ['/Contents/Resources/wework-core-plugins/'],
     target: onlineUpdateBuild ? ['zip'] : ['dmg', 'zip'],
   },
   dmg: {

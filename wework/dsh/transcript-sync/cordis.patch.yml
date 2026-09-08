@@ -1,0 +1,8 @@
+- insert:
+    - id: wework-transcript-sync
+      name: '@wegent/dsh-transcript-sync'
+      inject:
+        - weworkDesktop
+        - weworkPluginRuntime
+        - weworkSecureStorage
+        - weworkTranscriptSource

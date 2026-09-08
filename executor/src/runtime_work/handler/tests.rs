@@ -6,6 +6,9 @@ use super::tasks::{forked_task_link, mark_runtime_model_switch, runtime_model_se
 use super::turns::{read_runtime_turn_queue, write_runtime_turn_queue};
 use super::*;
 
+#[path = "execution_timestamp_tests.rs"]
+mod execution_timestamp_tests;
+
 #[test]
 fn codex_runtime_proxy_defaults_to_initialized_without_proxy() {
     let config = CodexRuntimeProxyConfig::default();
@@ -3857,6 +3860,35 @@ async fn transcript_without_runtime_link_returns_empty_local_transcript() {
     assert_eq!(result["messages"].as_array().unwrap().len(), 0);
 }
 
+#[test]
+fn transcript_sync_allows_import_before_native_thread_exists() {
+    let index_path = temp_runtime_work_index_path("transcript-sync-pending-thread");
+    let mut handler = RuntimeWorkRpcHandler::new("device-1", "/bin/false");
+    handler.store = RuntimeWorkStore::new(index_path.clone());
+    let mut link = RuntimeTaskLink::new_pending(
+        "local-task-1".to_owned(),
+        "/tmp/project".to_owned(),
+        "Synced task".to_owned(),
+    );
+    link.runtime_handle["cloudTranscript"] = json!({
+        "transcriptId": "cloud-transcript-1",
+        "importedThrough": 3,
+    });
+    handler.upsert_local_task(link);
+
+    let result = handler
+        .transcript_sync_status(json!({
+            "taskId": "local-task-1",
+            "transcriptId": "cloud-transcript-1",
+        }))
+        .expect("pending native thread should remain importable");
+
+    assert_eq!(result["available"], true);
+    assert_eq!(result["importedThrough"], 3);
+    assert_eq!(result["reason"], "thread_pending");
+    let _ = fs::remove_file(index_path);
+}
+
 #[tokio::test]
 async fn transcript_rejects_conflicting_cursors_before_task_lookup() {
     let handler = RuntimeWorkRpcHandler::new("device-1", "/bin/false");
@@ -4318,6 +4350,7 @@ fn active_local_task_routes_only_notifications_from_other_turns_globally() {
     link.updated_at = 1_780_000_000_000;
     handler.upsert_local_task(link);
     let execution_id = start_test_execution(&handler, local_task_id);
+    let started_at = handler.store.get_task(local_task_id).unwrap().updated_at;
     handler.register_thread_event_route("thread-1", local_task_id.to_owned(), request, true);
     handler.record_active_codex_turn(
         local_task_id,
@@ -4332,7 +4365,7 @@ fn active_local_task_routes_only_notifications_from_other_turns_globally() {
             .get_task(local_task_id)
             .expect("registered task should remain stored")
             .updated_at,
-        1_780_000_000_000
+        started_at
     );
 
     handler.route_codex_notification(json!({

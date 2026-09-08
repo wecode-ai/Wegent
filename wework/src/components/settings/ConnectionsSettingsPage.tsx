@@ -26,7 +26,7 @@ import { useOptionalCloudConnection } from '@/features/cloud-connection/useCloud
 import { ExperimentalBadge } from '@/features/experimental-features/ExperimentalBadge'
 import { useExperimentalFeaturesEnabled } from '@/features/experimental-features/useExperimentalFeaturesEnabled'
 import { useTranslation } from '@/hooks/useTranslation'
-import { SettingsPage, SettingsPageHeader, SettingsRow, SettingsSwitch } from './settings-ui'
+import { SettingsPage, SettingsPageHeader } from './settings-ui'
 import { openExternalUrl } from '@/lib/external-links'
 import { isImeEnterEvent } from '@/lib/ime'
 import { navigateTo } from '@/lib/navigation'
@@ -69,11 +69,10 @@ import {
 import type { RefreshWorkLists } from '@/features/workbench/workbenchContextTypes'
 import { resolveDshSettingsIcon } from '@/features/dsh-runtime/dshSettingsIcons'
 import { DshSettingsSurface } from '@/features/dsh-runtime/DshSettingsSurface'
+import { DshSettingsSectionSurface } from '@/features/dsh-runtime/DshSettingsSectionSurface'
 import { DshSlotSurface } from '@/features/dsh-runtime/DshSlotSurface'
 import { WEWORK_DSH_SLOTS } from '@/features/dsh-runtime/dshUiSlots'
 import { useDshSlotEntries } from '@/features/dsh-runtime/useDshSlotEntries'
-import { updateAppPreferences } from '@/desktop/appPreferences'
-import { useAppPreferencesState } from '@/features/app-preferences/useAppPreferencesState'
 
 const CloudDesktopDeviceAction = cloudDesktopExtension.DeviceAction
 const keepConnectionsSettingsOpen = () => undefined
@@ -1057,58 +1056,6 @@ function CloudModelsSection({ cloudConnection }: { cloudConnection: CloudSetting
   )
 }
 
-function RemoteControlSetting({ cloudConnected }: { cloudConnected: boolean }) {
-  const { t } = useTranslation('common')
-  const appPreferences = useAppPreferencesState()
-  const preferencesLoaded = appPreferences?.loaded ?? false
-  const enabled = appPreferences?.preferences.remoteControlEnabled ?? false
-  const [saving, setSaving] = useState(false)
-  const [error, setError] = useState<string | null>(null)
-
-  const handleChange = async (nextEnabled: boolean) => {
-    setSaving(true)
-    setError(null)
-    try {
-      await updateAppPreferences({ remoteControlEnabled: nextEnabled })
-    } catch (saveError) {
-      console.error('[Wework] Failed to update remote control preference', saveError)
-      setError(t('workbench.remote_control_save_failed'))
-    } finally {
-      setSaving(false)
-    }
-  }
-
-  const description = cloudConnected
-    ? t('workbench.remote_control_description')
-    : t('workbench.remote_control_requires_cloud')
-
-  return (
-    <section
-      data-testid="remote-control-setting"
-      className="mt-4 overflow-hidden rounded-lg border border-border bg-background"
-    >
-      <SettingsRow
-        label={t('workbench.remote_control_title')}
-        description={description}
-        control={
-          <SettingsSwitch
-            data-testid="remote-control-toggle"
-            aria-label={t('workbench.remote_control_title')}
-            checked={enabled}
-            disabled={!preferencesLoaded || !cloudConnected || saving}
-            onCheckedChange={nextEnabled => void handleChange(nextEnabled)}
-          />
-        }
-      />
-      {error ? (
-        <p className="border-t border-border px-4 py-2 text-xs text-red-500" role="alert">
-          {error}
-        </p>
-      ) : null}
-    </section>
-  )
-}
-
 export function ConnectionsDeviceSettingsPage({
   autoOpenAddCloudDeviceDialog = false,
   showHeader = true,
@@ -1220,7 +1167,7 @@ export function ConnectionsDeviceSettingsPage({
             </div>
           </section>
 
-          <RemoteControlSetting cloudConnected={false} />
+          <DshSettingsSectionSurface page="connections" />
         </SettingsPage>
 
         {connectDialogOpen && (
@@ -1288,9 +1235,9 @@ export function ConnectionsDeviceSettingsPage({
           </div>
         </section>
 
-        <RemoteControlSetting cloudConnected />
-
         <section className="mt-6 space-y-5">
+          <DshSettingsSectionSurface page="connections" />
+
           <CloudModelsSection cloudConnection={cloudConnection} />
 
           <div className="rounded-lg border border-border bg-background p-5">
