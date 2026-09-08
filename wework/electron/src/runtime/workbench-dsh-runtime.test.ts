@@ -1,9 +1,10 @@
-import { mkdir, writeFile } from 'node:fs/promises'
+import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { delimiter, dirname, join } from 'node:path'
 import { describe, expect, test, vi } from 'vitest'
 import {
   injectModelProviderPatch,
   prepareWorkbenchDshLaunch,
+  reconcileProfileBundles,
   resolveWorkbenchProjectPnpmCommand,
   WORKBENCH_DSH_VERSION,
 } from './workbench-dsh-runtime.js'
@@ -54,10 +55,12 @@ describe('workbench DSH runtime', () => {
     const root = await temporaryDirectory('workbench-dsh-node-path-')
     const runtimeRoot = join(root.path, 'runtime')
     const packageRoot = join(runtimeRoot, 'node_modules', '@deepseek-ai', 'dsh')
+    const pnpmEntry = join(runtimeRoot, 'node_modules', 'pnpm', 'bin', 'pnpm.cjs')
     const appRoot = join(root.path, 'smart-app', 'profile-bundle')
     const managedNode = join(root.path, 'managed-node', 'bin', 'node')
     const fingerprint = 'a'.repeat(64)
     await mkdir(join(packageRoot, 'lib'), { recursive: true })
+    await mkdir(dirname(pnpmEntry), { recursive: true })
     await mkdir(appRoot, { recursive: true })
     await writeFile(
       join(runtimeRoot, 'runtime.json'),
@@ -72,12 +75,14 @@ describe('workbench DSH runtime', () => {
       JSON.stringify({ version: WORKBENCH_DSH_VERSION })
     )
     await writeFile(join(packageRoot, 'lib', 'bin.js'), '')
+    await writeFile(pnpmEntry, '')
     await writeFile(join(appRoot, 'package.json'), JSON.stringify({ name: 'profile-bundle' }))
     const run = vi.fn().mockResolvedValue(undefined)
+    const dataDirectory = join(root.path, 'data')
 
     const launch = await prepareWorkbenchDshLaunch({
       runtimeRoot,
-      dataDirectory: join(root.path, 'data'),
+      dataDirectory,
       installationId: 'test-app',
       packagePath: join(root.path, 'smart-app'),
       manifest: {
@@ -111,13 +116,83 @@ describe('workbench DSH runtime', () => {
     ])
     expect(run).toHaveBeenCalledWith(
       managedNode,
-      expect.arrayContaining(['--expose-internals']),
+      expect.arrayContaining([
+        '--expose-internals',
+        pnpmEntry,
+        'add',
+        '--ignore-scripts',
+        `file:${join(dataDirectory, 'harness-apps', 'instances', 'test-app', 'wework-package', 'profile-bundle')}`,
+      ]),
       expect.objectContaining({
+        cwd: join(dataDirectory, 'harness-apps', 'instances', 'test-app', 'profiles', 'web'),
         env: expect.objectContaining({
           PATH: launch.environment.PATH,
         }),
       })
     )
+    expect(run.mock.calls[0][1]).not.toContain('plugin')
+    await root.remove()
+  })
+
+  test('reconciles installed packages into the profile bundle list', async () => {
+    const root = await temporaryDirectory('workbench-reconcile-')
+    const profileDir = join(root.path, 'profiles', 'web')
+    await mkdir(profileDir, { recursive: true })
+    const manifestPath = join(profileDir, 'package.json')
+    const base = {
+      name: 'dsh-profile-web',
+      private: true,
+      dependencies: {},
+      dsh: {
+        profile: {
+          bundles: ['@deepseek-ai/dsh-base', '@deepseek-ai/dsh-web-app'],
+        },
+      },
+    }
+    const writeManifest = (manifest: object): Promise<void> =>
+      writeFile(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`)
+    const readManifest = async (): Promise<{
+      dependencies: Record<string, string>
+      dsh: { profile: { bundles: string[] } }
+    }> => JSON.parse(await readFile(manifestPath, 'utf8'))
+    await writeManifest(base)
+
+    const bundlePackage = join(profileDir, 'node_modules', '@wework-smart-app', 'test-bundle')
+    const plainPackage = join(profileDir, 'node_modules', 'plain-library')
+    await mkdir(bundlePackage, { recursive: true })
+    await mkdir(plainPackage, { recursive: true })
+    await writeFile(
+      join(bundlePackage, 'package.json'),
+      JSON.stringify({ name: '@wework-smart-app/test-bundle', dsh: { bundle: { patch: 'x.yml' } } })
+    )
+    await writeFile(join(plainPackage, 'package.json'), JSON.stringify({ name: 'plain-library' }))
+
+    await writeManifest({
+      ...base,
+      dependencies: {
+        '@wework-smart-app/test-bundle': 'file:../bundle',
+        'plain-library': 'file:../plain',
+      },
+    })
+    await reconcileProfileBundles(profileDir, base)
+    expect((await readManifest()).dsh.profile.bundles).toEqual([
+      '@deepseek-ai/dsh-base',
+      '@deepseek-ai/dsh-web-app',
+      '@wework-smart-app/test-bundle',
+    ])
+
+    // Simulate a later pnpm remove: dependencies drop the bundle package while
+    // pnpm leaves the dsh.profile.bundles field untouched.
+    const withBundle = await readManifest()
+    await writeManifest({
+      ...withBundle,
+      dependencies: { 'plain-library': 'file:../plain' },
+    })
+    await reconcileProfileBundles(profileDir, withBundle)
+    expect((await readManifest()).dsh.profile.bundles).toEqual([
+      '@deepseek-ai/dsh-base',
+      '@deepseek-ai/dsh-web-app',
+    ])
     await root.remove()
   })
 
