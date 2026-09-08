@@ -67,8 +67,8 @@ def device_identity_ids(device: Kind) -> list[str]:
     return list(dict.fromkeys(candidate for candidate in candidates if candidate))
 
 
-def _same_runtime_device(matches: list[Kind]) -> Kind | None:
-    """Collapse duplicate rows only when they describe the same installation."""
+def _unambiguous_device(matches: list[Kind]) -> Kind | None:
+    """Resolve aliases only when they identify one unambiguous device."""
 
     if not matches:
         return None
@@ -79,20 +79,7 @@ def _same_runtime_device(matches: list[Kind]) -> Kind | None:
     ]
     if len(app_matches) == 1:
         return app_matches[0]
-    signatures = {
-        (
-            device_kind_type(device),
-            str(device.json.get("spec", {}).get("runtimeInstanceId") or "").strip(),
-            str(device.json.get("spec", {}).get("appDeviceId") or "").strip(),
-        )
-        for device in matches
-    }
-    if len(signatures) != 1:
-        return None
-    _, runtime_instance_id, _ = next(iter(signatures))
-    if not runtime_instance_id:
-        return None
-    return min(matches, key=lambda device: device.id)
+    return None
 
 
 def resolve_owned_device_alias(
@@ -123,7 +110,7 @@ def resolve_owned_device_alias(
     matches = [
         device for device in query.all() if submitted in device_identity_ids(device)
     ]
-    return _same_runtime_device(matches)
+    return _unambiguous_device(matches)
 
 
 def lock_device_owner(db: Session, user_id: int) -> None:

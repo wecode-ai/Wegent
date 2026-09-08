@@ -114,6 +114,8 @@ export interface AutomationUiRule {
   trigger: AutomationUiTrigger
   steps: AutomationUiStep[]
   legacyDefinition: ProjectWorkflowDefinition | null
+  runtimeSource?: 'agent_default' | 'fixed_profile' | 'issue_creator' | 'runtime_user'
+  runtimeUserId?: number | null
 }
 
 export interface AutomationUiRun {
@@ -478,6 +480,7 @@ function buildCron(trigger: AutomationUiTrigger): string {
 }
 
 function fallbackStep(rule: ProjectAutomationRule): AutomationUiStep {
+  const agentId = rule.roleSource === 'generic' ? null : rule.agentId
   return {
     id: `step-${rule.id}`,
     name: rule.agentName || '执行任务',
@@ -503,10 +506,22 @@ function fallbackStep(rule: ProjectAutomationRule): AutomationUiStep {
     modelOptions: {},
     plugins: ['Wework 项目空间'],
     projectPlugins: [],
-    workspacePolicy: 'composer',
+    workspacePolicy: 'none',
     required: true,
     automationRuleId: rule.triggerType === 'workflow' ? rule.id : null,
-    executionConfig: null,
+    executionConfig: agentId
+      ? {
+          agent_id: agentId,
+          runtime_profile_id: rule.runtimeProfileId ?? null,
+          execution_device_id: rule.executionDeviceId,
+          model: rule.model,
+          model_type: null,
+          model_options: {},
+          workspace_binding: {
+            type: 'standalone',
+          },
+        }
+      : null,
     executionConfigOverride: false,
     subgraph: rule.assignmentMode === 'ai_managed' ? { nodes: [] } : null,
   }
@@ -612,6 +627,8 @@ export function automationRuleFromBackend(rule: ProjectAutomationRule): Automati
     },
     steps: flow?.graph.nodes.length ? flow.graph.nodes : [fallbackStep(rule)],
     legacyDefinition: null,
+    runtimeSource: rule.runtimeSource,
+    runtimeUserId: rule.runtimeUserId,
   }
 }
 
@@ -913,9 +930,7 @@ function executionConfigFromUiNode(node: AutomationUiStep): WorkflowExecutionCon
         ? (preserved.workspace_binding ?? {
             type: 'standalone',
           })
-        : {
-            type: 'standalone',
-          },
+        : preserved.workspace_binding,
     project_plugins: node.projectPlugins.flatMap(plugin => {
       const id = typeof plugin.id === 'string' ? plugin.id : ''
       const pluginName = typeof plugin.pluginName === 'string' ? plugin.pluginName : ''
@@ -1188,6 +1203,13 @@ export function automationInputFromUi(
   const eventTrigger = rule.trigger.type === 'event'
   const externalEventTrigger = eventTrigger && rule.trigger.source !== 'wework'
   const isAiDynamicWorkflow = rule.steps.length === 1 && rule.steps[0]?.kind === 'dynamic'
+  const directStep =
+    !isAiDynamicWorkflow && rule.steps.length === 1 && rule.steps[0]?.executionMode === 'automatic'
+      ? rule.steps[0]
+      : null
+  const directConfig = directStep ? executionConfigFromUiNode(directStep) : null
+  const directAgentId = directConfig?.agent_id ?? null
+  const runtimeProfileId = directConfig?.runtime_profile_id ?? null
   const description = rule.description.trim()
   return {
     name: rule.name.trim(),
@@ -1232,15 +1254,17 @@ export function automationInputFromUi(
     enabled: rule.enabled,
     assignmentMode: isAiDynamicWorkflow ? 'ai_managed' : 'manual',
     managerType: isAiDynamicWorkflow ? 'custom' : null,
-    agentId: null,
+    agentId: directAgentId,
     wegentTeamId: null,
-    model: null,
-    executionEnvironment: null,
-    executionDeviceId: null,
-    roleSource: 'generic',
-    runtimeSource: 'runtime_user',
-    runtimeProfileId: null,
-    runtimeUserId,
+    model: directAgentId ? null : (directConfig?.model ?? null),
+    executionEnvironment: directAgentId ? null : (directStep?.executionEnvironment ?? null),
+    executionDeviceId: directAgentId ? null : (directConfig?.execution_device_id ?? null),
+    roleSource: directAgentId ? 'agent' : 'generic',
+    runtimeSource: directAgentId
+      ? 'agent_default'
+      : (rule.runtimeSource ?? (runtimeProfileId !== null ? 'fixed_profile' : 'runtime_user')),
+    runtimeProfileId: directAgentId ? null : runtimeProfileId,
+    runtimeUserId: rule.runtimeUserId ?? runtimeUserId,
   }
 }
 

@@ -849,10 +849,10 @@ class ProjectAutomationService:
                 status.HTTP_409_CONFLICT,
                 "Workflow execution configuration is incomplete",
             )
-        if execution_config.agent_id:
+        if not execution_config.agent_id and not execution_config.execution_device_id:
             raise HTTPException(
                 status.HTTP_409_CONFLICT,
-                "Robot preset workflow execution requires an automation rule",
+                "Workflow node execution requires a Runtime target",
             )
 
         scheduled_for = utcnow()

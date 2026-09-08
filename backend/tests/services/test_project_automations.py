@@ -11,6 +11,7 @@ from app.models.delivery import (
     LoopItemTaskBinding,
     ProjectAutomationRule,
     ProjectAutomationRun,
+    ProjectChatAgent,
     loop_datetime_value_is_unset,
     loop_unset_datetime_for_connection,
 )
@@ -661,25 +662,92 @@ def test_status_rule_create_and_update_persist_only_canonical_transition(
         "execution_target": "existing_issue",
     }
 
-    project_automation_service.update(
+
+def test_direct_workflow_node_runs_without_binding_to_an_automation_rule(
+    test_db,
+    test_user,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A unified automation's task node can own its Runtime configuration."""
+
+    project = CloudProject(
+        project_key="DIRECTNODE",
+        name="Direct node project",
+        created_by_user_id=test_user.id,
+        storage_prefix="projects/direct-node",
+    )
+    test_db.add(project)
+    test_db.commit()
+    test_db.add(
+        ProjectChatAgent(
+            id="agent-1",
+            cloud_project_id=project.id,
+            title="Direct robot",
+            name="Direct robot",
+            status="active",
+            metadata_json={"runtime": "codex"},
+        )
+    )
+    test_db.commit()
+    monkeypatch.setattr(
+        project_automations_module, "require_cloud_project_role", lambda *_args: None
+    )
+    created = project_automation_service.create(
         test_db,
         str(project.id),
-        str(rule.id),
         test_user.id,
-        ProjectAutomationUpdate(
-            version=rule.version,
+        ProjectAutomationCreate(
+            name="Direct node workflow",
+            prompt="Run the direct node",
+            triggerType="schedule",
+            cronExpression="59 * * * *",
+            assignmentMode="manual",
+            agentId="agent-1",
             eventConfig={
-                "statuses": ["pending"],
-                "transition": "unsupported_transition",
+                "runtime_workflow_definition": {
+                    "version": 1,
+                    "stage_mode": "dag",
+                    "advancement_policy": "manual",
+                    "nodes": [
+                        {
+                            "id": "start",
+                            "name": "开始",
+                            "node_type": "event",
+                            "role": "start",
+                            "execution_mode": "human",
+                            "depends_on": [],
+                            "required": False,
+                            "workspace_policy": "none",
+                            "start_config": {
+                                "trigger_type": "schedule",
+                                "cron_expression": "59 * * * *",
+                            },
+                        },
+                        {
+                            "id": "work",
+                            "name": "执行",
+                            "prompt": "执行任务",
+                            "execution_mode": "robot",
+                            "depends_on": ["start"],
+                            "workspace_policy": "none",
+                            "execution_config": {
+                                "agent_id": "agent-1",
+                                "execution_device_id": "cloud-device",
+                                "model": "model",
+                                "workspace_binding": {"type": "standalone"},
+                            },
+                        },
+                    ],
+                }
             },
         ),
     )
 
-    test_db.refresh(rule)
-    assert rule.metadata_json["event_config"] == {
-        "transition": "entered_processing",
-        "execution_target": "existing_issue",
-    }
+    assert created["id"]
+    rule = test_db.get(ProjectAutomationRule, created["id"])
+    assert rule is not None
+    definition = rule.metadata_json["event_config"]["runtime_workflow_definition"]
+    assert definition["nodes"][1]["execution_config"]["agent_id"] == "agent-1"
 
 
 @pytest.mark.asyncio

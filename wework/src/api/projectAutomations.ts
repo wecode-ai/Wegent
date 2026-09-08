@@ -1,5 +1,9 @@
 import type { HttpClient } from './http'
 import type { LocalLoopItemExecution } from './local/localDelivery'
+
+type ProjectAutomationExecution = LocalLoopItemExecution & {
+  automation_run_id: string
+}
 import type { ProjectWorkflowDefinition } from './deliveries'
 
 export type ProjectAutomationRunStatus =
@@ -112,7 +116,7 @@ export interface ProjectAutomationDeleteResult {
   workflowAutomationId: string | null
 }
 
-function cloudExecution(row: Record<string, unknown>): LocalLoopItemExecution {
+function cloudExecution(row: Record<string, unknown>): ProjectAutomationExecution {
   const payload = (row.runtimePayload as Record<string, unknown> | null) ?? null
   const bots = Array.isArray(payload?.bot) ? payload.bot : []
   const bot = (bots[0] as Record<string, unknown> | undefined) ?? {}
@@ -124,6 +128,7 @@ function cloudExecution(row: Record<string, unknown>): LocalLoopItemExecution {
     task_status: row.taskStatus == null ? null : String(row.taskStatus),
     task_priority: row.taskPriority == null ? null : String(row.taskPriority),
     agent_id: String(row.agentId ?? ''),
+    automation_run_id: String(row.automationRunId ?? ''),
     assigner_user_id: Number(row.assignerUserId ?? 0),
     execution_environment: String(row.executionEnvironment ?? ''),
     execution_device_id: row.executionDeviceId == null ? null : String(row.executionDeviceId),

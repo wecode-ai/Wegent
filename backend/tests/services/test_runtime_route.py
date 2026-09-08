@@ -64,10 +64,11 @@ def test_resolve_runtime_route_identity_accepts_app_device_id(test_db):
     )
 
     assert identity == RuntimeRouteIdentity(
-        logical_device_id="electron-app",
+        logical_device_id="cloud-logical",
         runtime_device_id="runtime-cloud",
         runtime_instance_id="runtime-instance-1",
         device_type=DeviceType.CLOUD,
+        app_device_id="electron-app",
     )
 
 
@@ -159,6 +160,12 @@ def test_resolve_runtime_route_identity_prefers_app_when_app_id_is_shared(test_d
         )
     )
     test_db.commit()
+    app = (
+        test_db.query(Kind)
+        .filter_by(user_id=7, kind="Device", namespace="default", name="app-logical")
+        .one()
+    )
+    route_id = f"app-record-{app.id}"
 
     identity = resolve_runtime_route_identity(
         test_db,
@@ -167,23 +174,24 @@ def test_resolve_runtime_route_identity_prefers_app_when_app_id_is_shared(test_d
     )
 
     assert identity == RuntimeRouteIdentity(
-        logical_device_id="electron-app",
-        runtime_device_id="app-runtime",
+        logical_device_id=route_id,
+        runtime_device_id=route_id,
         runtime_instance_id="runtime-app",
         device_type=DeviceType.APP,
+        app_device_id="electron-app",
     )
 
 
-def test_normalize_execution_device_id_returns_canonical_logical_id(test_db):
-    test_db.add(
-        _device(
-            logical_id="app-logical",
-            runtime_id="app-runtime",
-            app_device_id="electron-app",
-            device_type="app",
-        )
+def test_normalize_execution_device_id_returns_canonical_runtime_route(test_db):
+    app = _device(
+        logical_id="app-logical",
+        runtime_id="app-runtime",
+        app_device_id="electron-app",
+        device_type="app",
     )
+    test_db.add(app)
     test_db.commit()
+    route_id = f"app-record-{app.id}"
 
     assert (
         normalize_execution_device_id(
@@ -191,15 +199,15 @@ def test_normalize_execution_device_id_returns_canonical_logical_id(test_db):
             user_id=7,
             submitted_device_id="electron-app",
         )
-        == "app-runtime"
+        == route_id
     )
     assert (
         normalize_execution_device_id(
             test_db,
             user_id=7,
-            submitted_device_id="app-runtime",
+            submitted_device_id=route_id,
         )
-        == "app-runtime"
+        == route_id
     )
     assert (
         normalize_execution_device_id(

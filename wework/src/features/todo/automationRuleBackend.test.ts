@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'vitest'
-import type { CloudProject } from '@/api/deliveries'
+import type { CloudProject, WorkflowExecutionConfig } from '@/api/deliveries'
 import type { ProjectAutomationRule, ProjectAutomationRun } from '@/api/projectAutomations'
 import {
   automationInputFromUi,
@@ -234,11 +234,9 @@ describe('automationRuleBackend', () => {
       plugins: ['Wework 项目空间'],
     })
     const runtimeWorkflow = input.eventConfig.runtime_workflow_definition as {
-      nodes: Array<{ execution_config: { workspace_binding: { type: string } } }>
+      nodes: Array<{ execution_config: { workspace_binding: unknown } }>
     }
-    expect(runtimeWorkflow.nodes[1].execution_config.workspace_binding).toEqual({
-      type: 'standalone',
-    })
+    expect(runtimeWorkflow.nodes[1].execution_config.workspace_binding).toBeNull()
   })
 
   test('preserves loop body execution configuration after a save round trip', () => {
@@ -339,6 +337,51 @@ describe('automationRuleBackend', () => {
     expect(input.triggerType).toBe('schedule')
     expect(input.eventType).toBeNull()
     expect(input.cronExpression).toBe('30 9 * * 1-5')
+  })
+
+  test('preserves a legacy manual agent when editing and saving its schedule', () => {
+    const mapped = automationRuleFromBackend(
+      backendRule({
+        triggerType: 'schedule',
+        eventType: null,
+        cronExpression: '0 3 * * *',
+        agentId: 'agent-1',
+        roleSource: 'agent',
+        model: 'codex-runtime',
+        executionEnvironment: 'local',
+        executionDeviceId: 'device-1',
+        runtimeSource: 'runtime_user',
+        runtimeUserId: 7,
+      })
+    )
+    mapped.trigger.schedule = {
+      ...mapped.trigger.schedule,
+      frequency: 'hourly',
+      time: '00:15',
+    }
+
+    const input = automationInputFromUi(mapped, 7)
+    const workflow = input.eventConfig.runtime_workflow_definition as {
+      nodes: Array<{ execution_config: WorkflowExecutionConfig | null }>
+    }
+
+    expect(input).toMatchObject({
+      cronExpression: '15 * * * *',
+      assignmentMode: 'manual',
+      agentId: 'agent-1',
+      roleSource: 'agent',
+      runtimeSource: 'agent_default',
+      runtimeProfileId: null,
+      model: null,
+      executionEnvironment: null,
+      executionDeviceId: null,
+    })
+    expect(workflow.nodes[1]?.execution_config).toMatchObject({
+      agent_id: 'agent-1',
+      execution_device_id: 'device-1',
+      model: 'codex-runtime',
+      workspace_binding: { type: 'standalone' },
+    })
   })
 
   test('uses a standalone conversation when scheduled automation has no project workspace', () => {
@@ -524,6 +567,21 @@ describe('automationRuleBackend', () => {
       depends_on: ['start'],
       automation_rule_id: 'workflow-rule-1',
       execution_config_override: true,
+    })
+    const scheduleWorkflow = legacyWorkflowFromAutomationRule(
+      automationRuleFromBackend(
+        backendRule({
+          triggerType: 'schedule',
+          eventType: null,
+          cronExpression: '59 * * * *',
+          agentId: 'agent-1',
+          roleSource: 'agent',
+        })
+      )
+    )
+    expect(scheduleWorkflow.nodes[1]).toMatchObject({
+      execution_mode: 'robot',
+      automation_rule_id: null,
     })
   })
 
