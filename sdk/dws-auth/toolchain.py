@@ -38,10 +38,19 @@ ARCHIVES = {
 def ensure_go(directory: Path) -> None:
     executable = shutil.which("go")
     if executable:
+        probe_environment = {k: v for k, v in os.environ.items() if k != "GOROOT"}
+        probe_environment.update({"GOENV": "off", "GOTOOLCHAIN": "local"})
         result = subprocess.run(
-            [executable, "version"], capture_output=True, text=True, check=True
+            [executable, "env", "GOVERSION", "GOROOT"],
+            env=probe_environment,
+            capture_output=True,
+            text=True,
+            check=True,
         )
-        if result.stdout.split()[2] == GO_VERSION:
+        installed = result.stdout.strip().splitlines()
+        if len(installed) == 2 and installed[0] == GO_VERSION:
+            os.environ["GOROOT"] = installed[1]
+            os.environ["GOTOOLCHAIN"] = "local"
             return
     system = {"Darwin": "darwin", "Linux": "linux", "Windows": "windows"}.get(
         platform.system()
@@ -72,4 +81,6 @@ def ensure_go(directory: Path) -> None:
     os.environ["PATH"] = (
         str(directory / "go/bin") + os.pathsep + os.environ.get("PATH", "")
     )
+    # The selected compiler and standard library must come from the same archive.
+    os.environ["GOROOT"] = str(directory / "go")
     os.environ["GOTOOLCHAIN"] = "local"
