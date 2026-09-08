@@ -4645,7 +4645,10 @@ describe('CloudTodoWorkspace', () => {
       getRuntimeTranscript,
     } as WorkbenchServices['runtimeWorkApi']
     const onOpenRuntimeTask = vi.fn()
-    const onArchiveRuntimeTasks = vi.fn(async () => ({ status: 'archived' as const }))
+    const onArchiveRuntimeTasks = vi
+      .fn()
+      .mockResolvedValueOnce({ status: 'failed' as const })
+      .mockResolvedValue({ status: 'archived' as const })
 
     render(
       <CloudTodoWorkspace
@@ -4787,7 +4790,28 @@ describe('CloudTodoWorkspace', () => {
         undefined
       )
     )
-    expect(onArchiveRuntimeTasks).toHaveBeenCalledTimes(1)
+    expect(workbenchServices.deliveryApi!.archiveLoopItem).not.toHaveBeenCalled()
+    expect(screen.getByTestId('cloud-todo-column-completed')).toHaveTextContent(
+      'Completed task Issue'
+    )
+    expect(screen.getByTestId('cloud-todo-column-completed')).toHaveTextContent(
+      'Second completed task Issue'
+    )
+    expect(screen.getByText('归档已完成任务？')).toBeInTheDocument()
+
+    await userEvent.click(screen.getByTestId('cloud-my-tasks-archive-completed-confirm'))
+
+    await waitFor(() => expect(onArchiveRuntimeTasks).toHaveBeenCalledTimes(2))
+    expect(onArchiveRuntimeTasks).toHaveBeenLastCalledWith(
+      expect.arrayContaining([
+        expect.objectContaining({ deviceId: 'local-device', taskId: 'completed-task' }),
+        expect.objectContaining({
+          deviceId: 'local-device',
+          taskId: 'second-completed-task',
+        }),
+      ]),
+      undefined
+    )
     expect(workbenchServices.deliveryApi!.archiveLoopItem).toHaveBeenCalledWith('WEG-2')
     expect(workbenchServices.deliveryApi!.archiveLoopItem).toHaveBeenCalledWith('WEG-5')
     expect(screen.getByTestId('cloud-todo-column-completed')).not.toHaveTextContent(
