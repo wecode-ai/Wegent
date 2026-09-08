@@ -21,7 +21,10 @@ from app.schemas.issue_workflow import (
     WorkflowNodeDefinition,
     instantiate_workflow,
 )
-from app.schemas.project_incoming_hook import ChangeRequestBindingInput
+from app.schemas.project_incoming_hook import (
+    ChangeRequestBindingInput,
+    ProjectIncomingHookCreate,
+)
 from app.services.machine_cli_credentials import machine_cli_token
 from app.services.project_branch_collectors import (
     ensure_branch_collectors,
@@ -272,6 +275,44 @@ def test_ensure_creates_one_collector_per_selected_platform(test_db):
     branch = next(node for node in nodes if node["id"] == "br")
     assert set(branch["collectors"]) == {"github", "gitlab"}
     assert _hook_count(test_db, project, "poll") == 2
+
+
+def test_webhook_branch_reuses_selected_project_subscription(test_db):
+    project = _project(test_db)
+    hook, _secret = project_incoming_hook_service.create(
+        test_db,
+        str(project.id),
+        1,
+        ProjectIncomingHookCreate(
+            name="GitLab webhook",
+            source_type="gitlab",
+            collection_mode="webhook",
+            resource={"url": "https://gitlab.example/acme/app"},
+        ),
+    )
+    definition = _definition()
+    branch = next(node for node in definition.nodes if node.id == "br")
+    branch.event_wait = branch.event_wait.model_copy(
+        update={
+            "collection_mode": "webhook",
+            "subscription_id": str(hook.id),
+            "poll_interval_seconds": None,
+        }
+    )
+    item = _item(test_db, project, definition=definition)
+    nodes = _nodes(item)
+
+    changed = ensure_branch_collectors(test_db, item, nodes=nodes)
+
+    assert changed == 1
+    assert _hook_count(test_db, project, "webhook") == 1
+    stored_branch = next(node for node in nodes if node["id"] == "br")
+    assert stored_branch["collectors"]["gitlab"] == {
+        "collector_id": str(hook.id),
+        "mode": "webhook",
+        "status": "active",
+        "created_at": stored_branch["collectors"]["gitlab"]["created_at"],
+    }
 
 
 def test_release_disables_collector_when_workflow_terminal(test_db):

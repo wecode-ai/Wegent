@@ -251,6 +251,24 @@ def rotate_incoming_hook(
     return _view(request, hook, webhook_secret=webhook_secret)
 
 
+@router.delete(
+    "/{project_id}/incoming-hooks/{hook_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+)
+def delete_incoming_hook(
+    project_id: str,
+    hook_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> None:
+    project_incoming_hook_service.delete(
+        db,
+        project_id,
+        hook_id,
+        current_user.id,
+    )
+
+
 @router.get(
     "/{project_id}/incoming-hooks/{hook_id}/webhook-token",
 )

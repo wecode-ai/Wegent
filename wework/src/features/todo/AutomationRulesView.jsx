@@ -40,7 +40,7 @@ import { PopupMenu } from '@/components/common/MenuSelect'
 import { AutomationWorkflowCanvas } from './AutomationWorkflowCanvas.jsx'
 import { automationClass } from './automationStyles'
 import { eventTypeLabel } from './eventTypeLabel'
-import { EventSubscriptionManager } from './EventSubscriptionManager'
+import { EventSubscriptionManager, EventSubscriptionPicker } from './EventSubscriptionManager'
 import {
   BRANCH_HANDLER_ROW_GAP,
   OUTER_NODE_GAP,
@@ -338,6 +338,7 @@ function createLoopBodyNode(executionCatalog, loopId, kind) {
       branchConditions: [],
       eventWait: {
         collectionMode: 'poll',
+        subscriptionId: null,
         pollIntervalSeconds: 300,
       },
     })
@@ -386,6 +387,7 @@ function createBranchNode(id = `branch-${Date.now()}`) {
     branchConditions: [],
     eventWait: {
       collectionMode: 'poll',
+      subscriptionId: null,
       pollIntervalSeconds: 300,
     },
   })
@@ -1521,15 +1523,31 @@ export function AutomationRulesView({
     <main className={automationClass('project-content')}>
       <div className={automationClass('project-page-title')}>
         <div>
-          <h1>{homeTab === 'rules' ? '自动化' : '运行记录'}</h1>
+          <h1>
+            {homeTab === 'rules'
+              ? '自动化'
+              : homeTab === 'subscriptions'
+                ? t('todo.event_subscription_title')
+                : '运行记录'}
+          </h1>
           <p>
             {homeTab === 'rules'
               ? '统一配置触发规则和执行流程，查看每条自动化的运行状态。'
-              : '查看当前项目内所有自动化的执行过程、结果与耗时。'}
+              : homeTab === 'subscriptions'
+                ? t('todo.event_subscription_project_description')
+                : '查看当前项目内所有自动化的执行过程、结果与耗时。'}
           </p>
         </div>
         {homeTab === 'rules' ? (
           <div className={automationClass('project-page-actions')}>
+            <button
+              className={automationClass('project-secondary-action')}
+              data-testid="automation-open-event-subscriptions"
+              onClick={() => setHomeTab('subscriptions')}
+            >
+              <Webhook size={15} />
+              {t('todo.event_subscription_title')}
+            </button>
             <button
               className={automationClass('project-secondary-action')}
               data-testid="automation-open-runs"
@@ -1664,6 +1682,23 @@ export function AutomationRulesView({
               <span>换个搜索词或筛选条件。</span>
             </div>
           ) : null}
+        </section>
+      ) : homeTab === 'subscriptions' ? (
+        <section className={automationClass('project-runs-section')}>
+          <button
+            className={automationClass('back-to-automation')}
+            data-testid="automation-back-from-event-subscriptions"
+            onClick={() => setHomeTab('rules')}
+          >
+            <ArrowLeft size={14} />
+            返回自动化规则
+          </button>
+          <EventSubscriptionManager
+            api={projectIncomingHookApi}
+            projectId={projectId}
+            catalog={eventSourceCatalog}
+            canManage={canManage}
+          />
         </section>
       ) : (
         <section className={automationClass('project-runs-section')}>
@@ -3082,6 +3117,8 @@ function WorkflowEditor({
                         bodyNodes={draft.steps}
                         eventTypeOptions={eventTypeOptions}
                         eventSourceCatalog={eventSourceCatalog}
+                        projectIncomingHookApi={projectIncomingHookApi}
+                        projectId={projectId}
                         onChange={updateStep}
                         onDelete={() => onRemoveStep()}
                       />
@@ -3091,6 +3128,8 @@ function WorkflowEditor({
                         bodyNodes={selectedLoopParent?.subgraph?.nodes ?? []}
                         eventTypeOptions={eventTypeOptions}
                         eventSourceCatalog={eventSourceCatalog}
+                        projectIncomingHookApi={projectIncomingHookApi}
+                        projectId={projectId}
                         onChange={updateLoopBodyStep}
                         onDelete={() => removeLoopBodyStep()}
                       />
@@ -3625,13 +3664,12 @@ function TriggerSettings({
               placeholder="main, release"
             />
           </label>
-          <EventSubscriptionManager
+          <EventSubscriptionPicker
             key={`${collectionMode}:${trigger.source}`}
             api={projectIncomingHookApi}
             projectId={projectId}
-            sourceType={trigger.source}
+            sourceTypes={[trigger.source]}
             collectionMode={collectionMode}
-            sourceLabel={sourceLabel}
             cascadeIndex={
               hasPlatformStep
                 ? collectionMode === 'poll'
@@ -3641,8 +3679,6 @@ function TriggerSettings({
                   ? 4
                   : 3
             }
-            pollIntervalSeconds={trigger.pollIntervalSeconds ?? 300}
-            showPollIntervalField={false}
             value={trigger.subscriptionId}
             onChange={handleSubscriptionChange}
           />
@@ -4135,6 +4171,8 @@ function BranchSettings({
   bodyNodes,
   eventTypeOptions,
   eventSourceCatalog = [],
+  projectIncomingHookApi,
+  projectId,
   onChange,
   onDelete,
 }) {
@@ -4142,6 +4180,7 @@ function BranchSettings({
   const conditions = step.branchConditions ?? []
   const eventWait = step.eventWait ?? {
     collectionMode: 'poll',
+    subscriptionId: null,
     pollIntervalSeconds: 300,
   }
   const platformSources = eventSourceCatalog.filter(
@@ -4175,6 +4214,7 @@ function BranchSettings({
     onChange('eventWait', {
       ...eventWait,
       collectionMode: mode,
+      subscriptionId: mode === 'webhook' ? (eventWait.subscriptionId ?? null) : null,
       pollIntervalSeconds: mode === 'poll' ? (eventWait.pollIntervalSeconds ?? 300) : null,
     })
   }
@@ -4239,16 +4279,27 @@ function BranchSettings({
             <option value="webhook">{t('todo.automation_trigger_webhook_label')}</option>
           </select>
         </label>
-        {eventWait.collectionMode === 'poll' ? (
+        {eventWait.collectionMode === 'webhook' ? (
+          <EventSubscriptionPicker
+            api={projectIncomingHookApi}
+            projectId={projectId}
+            sourceTypes={[...new Set(conditions.map(condition => condition.sourceType))]}
+            collectionMode="webhook"
+            cascadeIndex={3}
+            testIdPrefix="branch"
+            value={eventWait.subscriptionId ?? null}
+            onChange={subscriptionId => onChange('eventWait', { ...eventWait, subscriptionId })}
+          />
+        ) : (
           <PollIntervalField
             testId="branch-event-wait-poll-interval"
             value={eventWait.pollIntervalSeconds}
-            index={1}
+            index={3}
             onChange={pollIntervalSeconds =>
               onChange('eventWait', { ...eventWait, pollIntervalSeconds })
             }
           />
-        ) : null}
+        )}
         {eventWait.collectionMode === 'poll' ? (
           <p
             className={automationClass('execution-hint')}

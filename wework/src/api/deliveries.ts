@@ -449,6 +449,7 @@ export interface WorkflowNodeDefinition {
   event_wait?: {
     subject_source: 'upstream_pull_request'
     collection_mode: 'webhook' | 'poll'
+    subscription_id?: string | null
     poll_interval_seconds?: number | null
   } | null
   execution_mode?: 'human' | 'robot'

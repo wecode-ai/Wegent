@@ -1866,7 +1866,7 @@ describe('ProjectAutomationView', () => {
     expect(projectAutomationApi.listRuns).toHaveBeenCalledWith('21', 'root-rule')
   })
 
-  test('offers webhook/poll triggers with a nested platform and shows the subscription resource inline', async () => {
+  test('offers webhook/poll triggers and selects an existing project subscription', async () => {
     const incomingHookApi = {
       catalog: vi.fn().mockResolvedValue([
         {
@@ -1943,10 +1943,7 @@ describe('ProjectAutomationView', () => {
       expect(screen.getByTestId('automation-event-subscription')).toHaveValue('sub-1')
     )
     expect(screen.getAllByText('acme/app').length).toBeGreaterThan(0)
-    expect(
-      screen.getAllByText('https://cloud.example/api/v1/incoming-hooks/sub-1').length
-    ).toBeGreaterThan(0)
-    expect(screen.getByTestId('automation-copy-webhook-url')).toBeInTheDocument()
+    expect(screen.queryByTestId('automation-create-subscription')).toBeNull()
     expect(screen.queryByTestId('automation-execution-target')).toBeNull()
     expect(
       screen
@@ -2085,7 +2082,31 @@ describe('ProjectAutomationView', () => {
           descriptionKey: 'event_sources.gitlab.description',
         },
       ]),
-      list: vi.fn().mockResolvedValue([]),
+      list: vi.fn().mockResolvedValue([
+        {
+          id: 'gitlab-webhook',
+          projectId: '11',
+          name: 'acme/app GitLab',
+          status: 'active',
+          sourceType: 'gitlab',
+          collectionMode: 'webhook',
+          resource: {
+            resourceType: 'project',
+            url: 'https://gitlab.com/acme/app',
+            displayName: 'acme/app',
+          },
+          webhookUrl: 'https://cloud.example/api/v1/incoming-hooks/gitlab-webhook',
+          webhookSecret: null,
+          pollIntervalSeconds: null,
+          credentialRef: null,
+          health: {},
+          lastEventAt: null,
+          nextPollAt: null,
+          version: 1,
+          createdAt: '2026-08-28T00:00:00Z',
+          updatedAt: '2026-08-28T00:00:00Z',
+        },
+      ]),
     } as unknown as ReturnType<typeof createProjectIncomingHookApi>
 
     const { projectAutomationApi } = renderView({
@@ -2127,14 +2148,11 @@ describe('ProjectAutomationView', () => {
     fireEvent.change(screen.getByTestId('branch-event-wait-mode'), {
       target: { value: 'webhook' },
     })
+    await waitFor(() =>
+      expect(screen.getByTestId('branch-event-subscription')).toHaveValue('gitlab-webhook')
+    )
     fireEvent.change(screen.getByTestId('branch-condition-event-0'), {
       target: { value: 'change_request.comment_created' },
-    })
-    fireEvent.change(screen.getByTestId('branch-event-wait-mode'), {
-      target: { value: 'poll' },
-    })
-    fireEvent.change(screen.getByTestId('branch-event-wait-poll-interval'), {
-      target: { value: '7' },
     })
     fireEvent.click(screen.getByTestId('automation-editor-name'))
     fireEvent.change(screen.getByRole('textbox', { name: '自动化名称' }), {
@@ -2149,13 +2167,14 @@ describe('ProjectAutomationView', () => {
     )
     expect(branch.event_wait).toEqual({
       subject_source: 'upstream_pull_request',
-      collection_mode: 'poll',
-      poll_interval_seconds: 420,
+      collection_mode: 'webhook',
+      subscription_id: 'gitlab-webhook',
+      poll_interval_seconds: null,
     })
     expect(branch.branch_conditions[0].source_type).toBe('gitlab')
   })
 
-  test('creates a subscription inline inside the trigger settings', async () => {
+  test('creates project subscriptions from the project-level subscription view', async () => {
     let created = false
     const createdHook = {
       id: 'sub-new',
@@ -2208,23 +2227,14 @@ describe('ProjectAutomationView', () => {
       }),
       update: vi.fn(),
       rotate: vi.fn(),
+      remove: vi.fn(),
+      revealSecret: vi.fn(),
       listEvents: vi.fn().mockResolvedValue([]),
     } as unknown as ReturnType<typeof createProjectIncomingHookApi>
 
     renderView({ incomingHookApi })
-    await openRuleEditor()
-
-    fireEvent.change(screen.getByTestId('automation-trigger-type'), {
-      target: { value: 'webhook' },
-    })
-    await waitFor(() =>
-      expect(screen.getByTestId('automation-trigger-type')).toHaveValue('webhook')
-    )
-    await waitFor(() =>
-      expect(screen.getByTestId('automation-trigger-platform')).toHaveValue('github')
-    )
-
-    fireEvent.click(screen.getByTestId('automation-create-subscription'))
+    fireEvent.click(await screen.findByTestId('automation-open-event-subscriptions'))
+    fireEvent.click(await screen.findByTestId('event-subscription-add'))
     fireEvent.change(screen.getByTestId('event-subscription-name'), {
       target: { value: 'GitHub repository' },
     })
@@ -2233,9 +2243,7 @@ describe('ProjectAutomationView', () => {
     })
     fireEvent.click(screen.getByTestId('event-subscription-save'))
 
-    await waitFor(() =>
-      expect(screen.getByTestId('automation-event-subscription')).toHaveValue('sub-new')
-    )
+    await screen.findByTestId('event-subscription-card-sub-new')
     expect(incomingHookApi.create).toHaveBeenCalledWith('11', {
       name: 'GitHub repository',
       sourceType: 'github',

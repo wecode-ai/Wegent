@@ -20,6 +20,7 @@ from app.models.delivery import (
     ProjectAutomationRun,
     ProjectIncomingEvent,
     ProjectIncomingHook,
+    loop_datetime_value_is_unset,
 )
 from app.models.loop_item_execution import LoopItemExecution
 from app.models.user import User
@@ -291,6 +292,33 @@ def test_disabled_and_rotated_subscription_invalidates_old_address(
     stored = test_db.get(ProjectIncomingHook, hook["id"])
     assert stored is not None
     assert stored.status == "disabled"
+
+
+def test_delete_subscription_removes_it_and_invalidates_webhook(
+    test_client: TestClient,
+    test_db: Session,
+    test_token: str,
+) -> None:
+    project = _project(test_client, test_token)
+    hook = _github_subscription(test_client, test_token, str(project["id"]))
+
+    response = test_client.delete(
+        f"/api/v1/cloud-projects/{project['id']}/incoming-hooks/{hook['id']}",
+        headers=_auth(test_token),
+    )
+
+    assert response.status_code == 204
+    listed = test_client.get(
+        f"/api/v1/cloud-projects/{project['id']}/incoming-hooks",
+        headers=_auth(test_token),
+    )
+    assert listed.status_code == 200
+    assert listed.json() == []
+    assert test_client.post(str(hook["webhookUrl"]), json={}).status_code == 404
+    stored = test_db.get(ProjectIncomingHook, hook["id"])
+    assert stored is not None
+    assert stored.status == "disabled"
+    assert not loop_datetime_value_is_unset(stored.deleted_at)
 
 
 def test_poll_subscription_requires_a_connected_credential(

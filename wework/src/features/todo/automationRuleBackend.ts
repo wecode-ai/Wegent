@@ -68,6 +68,7 @@ export interface AutomationUiStep {
   }>
   eventWait?: {
     collectionMode: Extract<ProjectEventCollectionMode, 'webhook' | 'poll'>
+    subscriptionId: string | null
     pollIntervalSeconds: number | null
   } | null
   subgraph: AutomationUiGraph | null
@@ -361,6 +362,12 @@ function normalizeStoredStep(
       return nodeType === 'branch'
         ? {
             collectionMode: collectionMode || 'poll',
+            subscriptionId:
+              typeof stored?.subscriptionId === 'string'
+                ? stored.subscriptionId
+                : typeof stored?.subscription_id === 'string'
+                  ? stored.subscription_id
+                  : null,
             pollIntervalSeconds:
               typeof stored?.pollIntervalSeconds === 'number'
                 ? Math.max(60, stored.pollIntervalSeconds)
@@ -737,6 +744,7 @@ function workflowNodesFromLegacy(
           ? {
               collectionMode:
                 normalizeBranchCollectionMode(node.event_wait?.collection_mode) || 'poll',
+              subscriptionId: node.event_wait?.subscription_id ?? null,
               pollIntervalSeconds:
                 node.event_wait?.poll_interval_seconds ??
                 (node.event_wait?.collection_mode === 'webhook' ? null : 300),
@@ -986,6 +994,9 @@ function workflowNodeFromUi(
         ? {
             subject_source: 'upstream_pull_request',
             collection_mode: node.eventWait?.collectionMode ?? 'poll',
+            ...(node.eventWait?.collectionMode === 'webhook'
+              ? { subscription_id: node.eventWait?.subscriptionId ?? null }
+              : {}),
             poll_interval_seconds:
               node.eventWait?.collectionMode === 'webhook'
                 ? null

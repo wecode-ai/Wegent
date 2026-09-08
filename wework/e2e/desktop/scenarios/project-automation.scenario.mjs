@@ -4320,21 +4320,14 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
         timeoutMs: uiTimeoutMs,
         visible: true,
       })
-      await control.command('click', '[data-testid="automation-create-rule"]', {
+      await control.command('click', '[data-testid="automation-open-event-subscriptions"]', {
         visible: true,
       })
-      await control.command('waitFor', '[data-testid="automation-rule-editor"]', {
+      await control.command('waitFor', '[data-testid="project-event-subscriptions"]', {
         timeoutMs: uiTimeoutMs,
         visible: true,
       })
-      await control.command('select', '[data-testid="automation-trigger-type"]', {
-        value: 'github',
-      })
-      await control.command('waitFor', '[data-testid="automation-event-subscription"]', {
-        timeoutMs: uiTimeoutMs,
-        visible: true,
-      })
-      await control.command('clickWhenEnabled', '[data-testid="automation-create-subscription"]', {
+      await control.command('clickWhenEnabled', '[data-testid="event-subscription-add"]', {
         timeoutMs: uiTimeoutMs,
       })
       await control.command('waitFor', '[data-testid="event-subscription-editor"]', {
@@ -4348,7 +4341,33 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
         value: 'https://github.com/acme/app',
       })
       await control.command('click', '[data-testid="event-subscription-save"]')
-      await control.command('waitFor', '[data-testid="automation-copy-webhook-url"]', {
+      await control.command('waitFor', '[data-testid="event-subscription-card-subscription-1"]', {
+        timeoutMs: uiTimeoutMs,
+        visible: true,
+      })
+      await control.command(
+        'waitFor',
+        '[data-testid="event-subscription-copy-url-subscription-1"]',
+        {
+          timeoutMs: uiTimeoutMs,
+          visible: true,
+        }
+      )
+      await captureScreenshot(control, 'project-event-subscriptions.png')
+      await control.command('click', '[data-testid="automation-back-from-event-subscriptions"]', {
+        visible: true,
+      })
+      await control.command('click', '[data-testid="automation-create-rule"]', {
+        visible: true,
+      })
+      await control.command('waitFor', '[data-testid="automation-rule-editor"]', {
+        timeoutMs: uiTimeoutMs,
+        visible: true,
+      })
+      await control.command('select', '[data-testid="automation-trigger-type"]', {
+        value: 'github',
+      })
+      await control.command('waitFor', '[data-testid="automation-event-subscription"]', {
         timeoutMs: uiTimeoutMs,
         visible: true,
       })
@@ -4467,15 +4486,18 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
         await control.command('snapshot', '[data-testid="automation-rule-editor"]')
       ).testIds.find(testId => /^branch-condition-source-/.test(testId))
       assert.ok(conditionId, 'The branch condition platform selector was not rendered')
-      await control.command('select', `[data-testid="${conditionId}"]`, {
-        value: 'gitlab',
+      await control.command('select', '[data-testid="branch-event-wait-mode"]', {
+        value: 'webhook',
       })
-      await control.command('select', '[data-testid="branch-condition-event-0"]', {
-        value: 'change_request.comment_created',
+      await control.command('waitFor', '[data-testid="branch-event-subscription"]', {
+        timeoutMs: uiTimeoutMs,
+        visible: true,
       })
-      await control.command('fill', '[data-testid="branch-event-wait-poll-interval"]', {
-        value: '3',
-      })
+      assert.equal(
+        await control.command('getValue', '[data-testid="branch-event-subscription"]'),
+        'subscription-1',
+        'The branch did not select the existing project webhook subscription'
+      )
       await control.command('click', '[data-testid="automation-editor-section-menu"]')
       await control.command('fill', '[aria-label="自动化名称"]', {
         value: '项目 MR 事件分支',
@@ -4490,10 +4512,11 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
       )
       assert.deepEqual(savedBranch?.event_wait, {
         subject_source: 'upstream_pull_request',
-        collection_mode: 'poll',
-        poll_interval_seconds: 180,
+        collection_mode: 'webhook',
+        subscription_id: 'subscription-1',
+        poll_interval_seconds: null,
       })
-      assert.equal(savedBranch?.branch_conditions[0]?.source_type, 'gitlab')
+      assert.equal(savedBranch?.branch_conditions[0]?.source_type, 'github')
       await captureScreenshot(control, 'project-automation-branch-event-listener.png')
 
       await control.command(

@@ -28,7 +28,10 @@ from app.models.delivery import (
 from app.schemas.project_incoming_hook import ProjectIncomingHookCreate
 from app.services.loop_item_unread import advance_content_revision
 from app.services.project_automation_domain import utcnow
-from app.services.project_event_sources import normalize_observed_resource
+from app.services.project_event_sources import (
+    normalize_observed_resource,
+    resource_matches,
+)
 from app.services.project_incoming_hooks import project_incoming_hook_service
 
 logger = logging.getLogger(__name__)
@@ -71,6 +74,33 @@ def _poll_interval(branch: Mapping[str, Any]) -> int:
     event_wait = branch.get("event_wait") or {}
     interval = int(event_wait.get("poll_interval_seconds") or 300)
     return max(60, min(interval, 86_400))
+
+
+def _configured_webhook(
+    db: Session,
+    *,
+    project_id: str,
+    subscription_id: str,
+    platform: str,
+    resource: Mapping[str, Any],
+) -> ProjectIncomingHook | None:
+    hook = db.get(ProjectIncomingHook, subscription_id)
+    if (
+        hook is None
+        or str(hook.cloud_project_id) != project_id
+        or hook.status != "active"
+        or not loop_datetime_value_is_unset(hook.deleted_at)
+    ):
+        return None
+    metadata = project_incoming_hook_service.metadata(hook)
+    candidate = metadata.get("resource")
+    if (
+        metadata.get("collection_mode") not in {"webhook", "hybrid"}
+        or metadata.get("source_type") != platform
+        or not isinstance(candidate, dict)
+    ):
+        return None
+    return hook if resource_matches(candidate, resource) else None
 
 
 def _bound_change_request(
@@ -265,6 +295,7 @@ def ensure_branch_collectors(
             collectors = _collectors(branch)
             event_wait = branch.get("event_wait") or {}
             mode = str(event_wait.get("collection_mode") or "poll")
+            configured_subscription_id = str(event_wait.get("subscription_id") or "")
             for platform in _platforms(branch):
                 collector = collectors.get(platform)
                 hook = (
@@ -277,14 +308,23 @@ def ensure_branch_collectors(
                     if change_request is None:
                         continue
                     resource = _collector_resource(platform, change_request)
-                    hook = _existing_collector(
-                        db,
-                        project_id=str(project.id),
-                        platform=platform,
-                        mode=mode,
-                        resource=resource,
-                    )
-                    if hook is None:
+                    if mode == "webhook":
+                        hook = _configured_webhook(
+                            db,
+                            project_id=str(project.id),
+                            subscription_id=configured_subscription_id,
+                            platform=platform,
+                            resource=resource,
+                        )
+                    else:
+                        hook = _existing_collector(
+                            db,
+                            project_id=str(project.id),
+                            platform=platform,
+                            mode=mode,
+                            resource=resource,
+                        )
+                    if hook is None and mode != "webhook":
                         hook = _create_collector(
                             db,
                             project=project,
@@ -313,9 +353,7 @@ def ensure_branch_collectors(
                     collectors[platform] = {
                         "collector_id": str(hook.id),
                         "mode": mode,
-                        "status": (
-                            "needs_registration" if mode == "webhook" else "active"
-                        ),
+                        "status": "active",
                         "created_at": current.get("created_at") or utcnow().isoformat(),
                     }
                     branch["collectors"] = collectors

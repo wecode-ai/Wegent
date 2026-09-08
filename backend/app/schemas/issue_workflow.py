@@ -271,14 +271,18 @@ class WorkflowEventWaitConfig(BaseModel):
 
     subject_source: Literal["upstream_pull_request"] = "upstream_pull_request"
     collection_mode: Literal["webhook", "poll"] = "poll"
+    subscription_id: str | None = Field(default=None, min_length=1, max_length=128)
     poll_interval_seconds: int | None = Field(default=300, ge=60, le=86_400)
 
     @model_validator(mode="after")
     def validate_poll_interval(self) -> "WorkflowEventWaitConfig":
         if self.collection_mode == "poll":
             self.poll_interval_seconds = self.poll_interval_seconds or 300
+            self.subscription_id = None
         else:
             self.poll_interval_seconds = None
+            if not self.subscription_id:
+                raise ValueError("webhook branch wait requires subscription_id")
         return self
 
 

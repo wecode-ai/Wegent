@@ -109,6 +109,14 @@ export function createProjectIncomingHookApi(client: HttpClient) {
         `/v1/cloud-projects/${projectId}/incoming-hooks/${hookId}/rotate`
       )
     },
+    remove(projectId: string, hookId: string) {
+      return client.delete<void>(`/v1/cloud-projects/${projectId}/incoming-hooks/${hookId}`)
+    },
+    revealSecret(projectId: string, hookId: string) {
+      return client.get<{ webhookToken: string }>(
+        `/v1/cloud-projects/${projectId}/incoming-hooks/${hookId}/webhook-token`
+      )
+    },
     listEvents(projectId: string, hookId: string, limit = 20) {
       const query = new URLSearchParams({ limit: String(limit) })
       return client.get<ProjectIncomingEvent[]>(

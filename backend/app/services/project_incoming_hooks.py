@@ -304,6 +304,21 @@ class ProjectIncomingHookService:
         db.refresh(hook)
         return hook, webhook_secret
 
+    def delete(
+        self,
+        db: Session,
+        project_id: str,
+        hook_id: str,
+        user_id: int,
+    ) -> None:
+        hook = self.get(db, project_id, hook_id, user_id, for_update=True)
+        hook.status = "disabled"
+        hook.deleted_at = utcnow()
+        hook.due_at = None
+        hook.updated_by_user_id = user_id
+        hook.version += 1
+        db.commit()
+
     def reveal_webhook_token(
         self,
         db: Session,

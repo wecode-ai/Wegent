@@ -546,6 +546,14 @@ def _matching_branch(
         and node.get("status") in {"waiting", "reacting"}
     ]
     for branch in candidates:
+        event_wait = branch.get("event_wait")
+        if (
+            isinstance(event_wait, dict)
+            and event_wait.get("collection_mode") == "webhook"
+            and str(event_wait.get("subscription_id") or "")
+            != str(event.subscription_id or "")
+        ):
+            continue
         conditions = branch.get("branch_conditions") or []
         if any(_condition_matches_event(condition, event) for condition in conditions):
             return branch
@@ -765,6 +773,13 @@ def catch_up_branch_events(
     ]
     if not conditions:
         return
+    event_wait = branch.get("event_wait")
+    subscription_id = (
+        str(event_wait.get("subscription_id") or "")
+        if isinstance(event_wait, dict)
+        and event_wait.get("collection_mode") == "webhook"
+        else ""
+    )
     rows = (
         db.query(ProjectIncomingEvent)
         .filter(
@@ -777,6 +792,8 @@ def catch_up_branch_events(
         .all()
     )
     for row in rows:
+        if subscription_id and str(row.parent_id or "") != subscription_id:
+            continue
         metadata = row.metadata_json if isinstance(row.metadata_json, dict) else {}
         payload = metadata.get("payload")
         payload = payload if isinstance(payload, dict) else {}
