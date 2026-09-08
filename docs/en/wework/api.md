@@ -85,6 +85,8 @@ curl -N 'https://example.com/api/v1/responses' \
 - Creation and continuation currently use Codex Runtime. Runtime owns tool configuration. Client-defined function tools, tool-output submission, and injected assistant history are not supported.
 - `execution.model_type` can disambiguate model sources; prefer the full ID from `/models`. `model_options` passes existing Runtime model options. Resource identity always comes from the authorized server catalog.
 
+The backend Model configuration determines each cloud model's upstream protocol; `model_options` cannot override it. Runtime converts requests and streaming responses for OpenAI Responses, Chat Completions, or Anthropic Messages while the public API consistently uses Responses. Provider API keys remain on the backend.
+
 Continue with `conversation`, omitting device and title:
 
 ```json

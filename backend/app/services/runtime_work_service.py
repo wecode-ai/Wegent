@@ -132,7 +132,6 @@ CLOUD_MODEL_NAMESPACE_OPTION = "weworkCloudModelNamespace"
 CLOUD_MODEL_RESOURCE_USER_ID_OPTION = "weworkCloudModelResourceUserId"
 CLOUD_MODEL_CONTEXT_WINDOW_OPTION = "weworkCloudModelContextWindow"
 CLOUD_MODEL_MAX_OUTPUT_TOKENS_OPTION = "weworkCloudModelMaxOutputTokens"
-CLOUD_MODEL_UPSTREAM_API_FORMAT_OPTION = "weworkCloudModelUpstreamApiFormat"
 CLOUD_MODEL_CODEX_CATALOG_MODEL_ID_OPTION = "weworkCloudModelCodexCatalogModelId"
 CLOUD_MODEL_NATIVE_TOOL_SEARCH_OPTION = "weworkCloudModelNativeToolSearch"
 CLOUD_MODEL_NATIVE_NAMESPACE_TOOLS_OPTION = "weworkCloudModelNativeNamespaceTools"
@@ -4418,11 +4417,6 @@ def _runtime_model_override_values(
             db,
             model_name=model_id,
             creator=_get_user(db, user_id),
-            upstream_api_format=_string_model_option(
-                model_options,
-                CLOUD_MODEL_UPSTREAM_API_FORMAT_OPTION,
-            )
-            or "openai-responses",
             model_type=model_type,
             namespace=namespace,
             resource_user_id=resource_user_id,

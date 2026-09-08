@@ -85,6 +85,8 @@ curl -N 'https://example.com/api/v1/responses' \
 - 创建和续写目前使用 Codex Runtime。工具执行由 Runtime 自身配置；本接口不接受客户端 function tool 定义或 tool output 回传，不支持客户端注入 assistant 历史。
 - `execution.model_type` 可消除模型来源歧义；推荐直接使用 `/models` 返回的完整 ID。`model_options` 传递现有 Runtime 的模型选项，资源身份始终由服务端模型目录决定。
 
+云模型的上游协议由 backend 的 Model 配置决定，不由 `model_options` 覆盖。Runtime 按该配置转换 OpenAI Responses、Chat Completions 或 Anthropic Messages 请求及流式响应；对外仍统一使用 Responses 协议。模型服务的 API Key 只保留在 backend。
+
 继续对话时传 `conversation`，不再传设备和标题：
 
 ```json
