@@ -7,16 +7,21 @@ title: Plugin account authentication
 
 ## Delivery status
 
-`feature/plugin-account-auth` implements the Backend, native Executor, background account
-connection service, Python SDK 0.7.0, and email adapter. Isolated real Backend, Electron and
-cloud executors have passed password reuse and a synthetic OAuth authorization,
-refresh and revocation flow. Nothing has been committed, released or deployed.
-DWS native adaptation, recoverable handoff, public CLI delegation and five-platform
-packages have source implementations and local verification. Standalone public-repository CI,
-prebuilt publishing and seeding are connected and dry-run verified. Actual publication,
-real-provider OAuth acceptance and native Windows
-verification remain incomplete. `accountAuth` remains a protocol draft, not a promise that every
-Connector plugin automatically supports account reuse.
+The implementation includes the Backend, native Executor, background account connections,
+Python SDK 0.7.1, and email and DWS native adapters. Isolated real Backend, Electron and
+remote-executor E2E tests cover 17 assertions, including runtime-copy execution, password
+updates, offline OAuth refresh, recoverable DWS handoff and device revocation. Email 0.2.3
+has also passed a real-account read on a simulated remote device in a local test environment.
+Five-platform adapter packaging, public-repository build CI and internal declarative plugin
+builds are connected. Production publication, real-provider OAuth and native Windows
+acceptance still require separate verification. `accountAuth` remains a draft protocol,
+not a promise that every Connector plugin automatically supports account reuse.
+
+Public business entry points resolve installation identity from the host manifest's
+`store_path`, `runtime.codex_link` and `runtime.claude_link`, including copied runtime caches.
+The native executor still verifies and executes the adapter from the managed package store.
+Device grants bind to the unique execution route and Runtime instance, preventing stale
+shared desktop aliases from disrupting authentication reuse after a restart.
 
 ## Credential flow
 
