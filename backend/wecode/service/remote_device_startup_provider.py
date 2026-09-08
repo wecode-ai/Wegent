@@ -186,6 +186,8 @@ class WecodeRemoteDeviceCommandProvider:
             "DEVICE_ID": context.device_id,
             "DEVICE_NAME": context.device_name,
             "EXECUTOR_MODE": "local",
+            "DEVICE_CODE_SERVER_ENABLED": "true",
+            "DEVICE_TERMINAL_ENABLED": "true",
             "WEGENT_BACKEND_URL": backend_url,
             "WEGENT_SOCKET_URL": socket_url,
             "WEGENT_AUTH_TOKEN": context.auth_token,

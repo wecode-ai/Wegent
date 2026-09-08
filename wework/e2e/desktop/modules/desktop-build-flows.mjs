@@ -662,7 +662,7 @@ export async function verifyRemoteDockerCommandFlow(
   if (remoteDeviceE2EExtension.supportsStatusRecovery) {
     await control.command('waitFor', '[data-testid="remote-docker-connection-status"]', {
       text: '连接失败',
-      timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+      timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
     })
     await control.command('clickWhenEnabled', '[data-testid="add-remote-docker-button"]')
     runnableCommandSnapshot = await waitForSnapshot(
