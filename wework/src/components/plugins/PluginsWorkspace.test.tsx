@@ -5399,6 +5399,26 @@ describe('PluginsWorkspace', () => {
     expect(screen.queryByTestId('plugin-detail-actions-101')).not.toBeInTheDocument()
   })
 
+  test('invalidates a materialized cloud detail immediately after uninstall', async () => {
+    window.__WEWORK_RUNTIME_CONFIG__ = { desktopHost: 'electron' }
+    mockSystemSkillsFetch({
+      marketplaceInstalled: true,
+      marketplaceSourceProvider: 'wegent',
+      localVersionEvidence: '1.0.0',
+    })
+    mockCodexAppServerInvoke({ deviceId: 'current-device', marketplaces: [] })
+    render(<PluginsWorkspace cloudApiBaseUrl="/api" cloudToken="cloud-token" />)
+    await userEvent.click(await screen.findByTestId('plugin-marketplace-row-101'))
+    expect(screen.getByTestId('plugin-detail-toggle-101')).toHaveTextContent('立即对话')
+    await userEvent.click(screen.getByTestId('plugin-detail-actions-101'))
+    await userEvent.click(screen.getByTestId('plugin-detail-uninstall-101'))
+    await userEvent.click(screen.getByTestId('plugin-uninstall-confirm-button'))
+    await waitFor(() =>
+      expect(screen.getByTestId('plugin-detail-toggle-101')).toHaveTextContent('安装插件')
+    )
+    expect(screen.queryByTestId('plugin-detail-actions-101')).not.toBeInTheDocument()
+  })
+
   test('does not expose arbitrary marketplace controls to ordinary users', async () => {
     render(<PluginsWorkspace />)
 

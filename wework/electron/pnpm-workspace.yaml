@@ -9,3 +9,4 @@ allowBuilds:
 
 patchedDependencies:
   '@trycua/cua-driver@0.22.1': patches/@trycua__cua-driver@0.22.1.patch
+  electron-updater@6.8.9: patches/electron-updater@6.8.9.patch

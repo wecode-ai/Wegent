@@ -3,17 +3,64 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use std::{
-    collections::HashMap,
+    collections::{HashMap, VecDeque},
     env, fs,
     path::{Path, PathBuf},
-    sync::Arc,
+    sync::{
+        atomic::{AtomicU64, Ordering},
+        Arc,
+    },
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
+
+use tokio::sync::Notify;
+
+mod terminal;
+pub use terminal::TerminalEvent;
 
 use crate::local::{command::build_env, pty::UnixPtyProcess};
 
 const DEFAULT_SESSION_TTL_SECONDS: u64 = 60 * 60;
 const SESSION_PROBE_QUERY_KEY: &str = "__wegent_probe";
+const TERMINAL_REPLAY_MAX_BYTES: usize = 512 * 1024;
+const TERMINAL_REPLAY_HIGH_WATERMARK_BYTES: usize = 384 * 1024;
+const TERMINAL_REPLAY_LOW_WATERMARK_BYTES: usize = 128 * 1024;
+const MAX_UTF8_PENDING_BYTES: usize = 3;
+
+static TERMINAL_OUTPUT_BATCHES_TOTAL: AtomicU64 = AtomicU64::new(0);
+static TERMINAL_OUTPUT_BYTES_TOTAL: AtomicU64 = AtomicU64::new(0);
+static TERMINAL_REPLAYED_BATCHES_TOTAL: AtomicU64 = AtomicU64::new(0);
+static TERMINAL_REPLAY_BYTES: AtomicU64 = AtomicU64::new(0);
+static TERMINAL_ACK_LAG_BYTES: AtomicU64 = AtomicU64::new(0);
+static TERMINAL_BACKPRESSURED_SESSIONS: AtomicU64 = AtomicU64::new(0);
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct TerminalMetricsSnapshot {
+    pub output_batches_total: u64,
+    pub output_bytes_total: u64,
+    pub replayed_batches_total: u64,
+    pub replay_bytes: u64,
+    pub ack_lag_bytes: u64,
+    pub backpressured_sessions: u64,
+}
+
+pub(crate) fn terminal_metrics_snapshot() -> TerminalMetricsSnapshot {
+    TerminalMetricsSnapshot {
+        output_batches_total: TERMINAL_OUTPUT_BATCHES_TOTAL.load(Ordering::Relaxed),
+        output_bytes_total: TERMINAL_OUTPUT_BYTES_TOTAL.load(Ordering::Relaxed),
+        replayed_batches_total: TERMINAL_REPLAYED_BATCHES_TOTAL.load(Ordering::Relaxed),
+        replay_bytes: TERMINAL_REPLAY_BYTES.load(Ordering::Relaxed),
+        ack_lag_bytes: TERMINAL_ACK_LAG_BYTES.load(Ordering::Relaxed),
+        backpressured_sessions: TERMINAL_BACKPRESSURED_SESSIONS.load(Ordering::Relaxed),
+    }
+}
+
+fn subtract_metric(metric: &AtomicU64, value: usize) {
+    let value = value as u64;
+    let _ = metric.fetch_update(Ordering::Relaxed, Ordering::Relaxed, |current| {
+        Some(current.saturating_sub(value))
+    });
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SessionType {
@@ -21,11 +68,21 @@ pub enum SessionType {
     CodeServer,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TerminalProtocol {
+    V1 = 1,
+    V2 = 2,
+}
+
 pub trait TerminalPty: Send {
     fn pid(&self) -> u32;
     fn fd(&self) -> Option<i32>;
     fn write(&mut self, data: &[u8]) -> std::io::Result<usize>;
     fn read_available(&mut self, timeout: Duration) -> std::io::Result<Option<Vec<u8>>>;
+    fn set_event_notifier(&mut self, _notifier: Arc<Notify>) {}
+    fn output_closed(&self) -> bool {
+        true
+    }
     fn resize(&mut self, rows: u16, cols: u16) -> Result<(), String>;
     fn poll(&mut self) -> std::io::Result<Option<u32>>;
     fn terminate(&mut self, force: bool);
@@ -65,6 +122,14 @@ impl TerminalPty for UnixPtyProcess {
                 "PTY output polling is not supported on this platform",
             ))
         }
+    }
+
+    fn set_event_notifier(&mut self, notifier: Arc<Notify>) {
+        self.set_event_notifier(notifier);
+    }
+
+    fn output_closed(&self) -> bool {
+        self.output_closed()
     }
 
     fn resize(&mut self, rows: u16, cols: u16) -> Result<(), String> {
@@ -128,8 +193,38 @@ pub struct LocalSession {
     pub port: u16,
     pub terminal: Option<Box<dyn TerminalPty>>,
     pub terminal_attached: bool,
+    terminal_protocol: Option<TerminalProtocol>,
+    terminal_consumer_id: Option<String>,
+    terminal_next_sequence: u64,
+    terminal_acked_sequence: u64,
+    terminal_last_sent_sequence: u64,
+    terminal_highest_sent_sequence: u64,
+    terminal_replay: VecDeque<TerminalOutputRecord>,
+    terminal_replay_bytes: usize,
+    terminal_ack_lag_bytes: usize,
+    terminal_backpressured: bool,
+    terminal_utf8_decoder: TerminalUtf8Decoder,
+    terminal_exit: Option<TerminalExitRecord>,
     pub expires_at: u64,
     pub code_server_authenticated: bool,
+}
+
+#[derive(Debug, Default)]
+struct TerminalUtf8Decoder {
+    pending: [u8; MAX_UTF8_PENDING_BYTES],
+    pending_len: usize,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct TerminalOutputRecord {
+    sequence: u64,
+    data: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct TerminalExitRecord {
+    exit_code: Option<u32>,
+    error: Option<String>,
 }
 
 impl LocalSession {
@@ -150,6 +245,18 @@ impl LocalSession {
             port,
             terminal: None,
             terminal_attached: false,
+            terminal_protocol: None,
+            terminal_consumer_id: None,
+            terminal_next_sequence: 1,
+            terminal_acked_sequence: 0,
+            terminal_last_sent_sequence: 0,
+            terminal_highest_sent_sequence: 0,
+            terminal_replay: VecDeque::new(),
+            terminal_replay_bytes: 0,
+            terminal_ack_lag_bytes: 0,
+            terminal_backpressured: false,
+            terminal_utf8_decoder: TerminalUtf8Decoder::default(),
+            terminal_exit: None,
             expires_at,
             code_server_authenticated: false,
         }
@@ -172,8 +279,30 @@ impl LocalSession {
             port: 0,
             terminal: Some(terminal),
             terminal_attached: false,
+            terminal_protocol: None,
+            terminal_consumer_id: None,
+            terminal_next_sequence: 1,
+            terminal_acked_sequence: 0,
+            terminal_last_sent_sequence: 0,
+            terminal_highest_sent_sequence: 0,
+            terminal_replay: VecDeque::new(),
+            terminal_replay_bytes: 0,
+            terminal_ack_lag_bytes: 0,
+            terminal_backpressured: false,
+            terminal_utf8_decoder: TerminalUtf8Decoder::default(),
+            terminal_exit: None,
             expires_at,
             code_server_authenticated: false,
+        }
+    }
+}
+
+impl Drop for LocalSession {
+    fn drop(&mut self) {
+        subtract_metric(&TERMINAL_REPLAY_BYTES, self.terminal_replay_bytes);
+        subtract_metric(&TERMINAL_ACK_LAG_BYTES, self.terminal_ack_lag_bytes);
+        if self.terminal_backpressured {
+            subtract_metric(&TERMINAL_BACKPRESSURED_SESSIONS, 1);
         }
     }
 }
@@ -466,9 +595,12 @@ pub struct LocalSessionHandler {
     pub workspace_root: PathBuf,
     pub sessions: HashMap<String, LocalSession>,
     pty_manager: Arc<dyn SessionPtyManager>,
+    terminal_event_notifier: Arc<Notify>,
+    terminal_drain_offset: usize,
 }
 
 const MAX_TERMINAL_READS_PER_DRAIN: usize = 16;
+const MAX_TERMINAL_SESSIONS_PER_DRAIN: usize = 32;
 
 impl LocalSessionHandler {
     pub fn new(
@@ -487,6 +619,8 @@ impl LocalSessionHandler {
             workspace_root,
             sessions: HashMap::new(),
             pty_manager,
+            terminal_event_notifier: Arc::new(Notify::new()),
+            terminal_drain_offset: 0,
         }
     }
 
@@ -498,6 +632,10 @@ impl LocalSessionHandler {
         self.code_server_enabled = code_server_enabled;
         self.terminal_enabled = terminal_enabled;
         self
+    }
+
+    pub fn terminal_event_notifier(&self) -> Arc<Notify> {
+        Arc::clone(&self.terminal_event_notifier)
     }
 
     pub fn handle_start_session(&mut self, request: SessionStartRequest) -> SessionResult {
@@ -541,127 +679,6 @@ impl LocalSessionHandler {
             port: session.port,
             expires_at: session.expires_at,
         })
-    }
-
-    pub fn handle_terminal_input(&mut self, session_id: &str, data: &str) -> SessionResult {
-        let Some(session) = self.terminal_session_mut(session_id) else {
-            return SessionResult::error("Terminal session not found");
-        };
-        let Some(terminal) = session.terminal.as_mut() else {
-            return SessionResult::error("Terminal session not found");
-        };
-        if terminal.write(data.as_bytes()).is_err() {
-            return SessionResult::error("Terminal session is not writable");
-        }
-        SessionResult::success()
-    }
-
-    pub fn handle_terminal_attach(&mut self, session_id: &str) -> SessionResult {
-        let Some(session) = self.terminal_session_mut(session_id) else {
-            return SessionResult::error("Terminal session not found");
-        };
-        session.terminal_attached = true;
-        SessionResult::success()
-    }
-
-    pub fn handle_terminal_resize(
-        &mut self,
-        session_id: &str,
-        rows: u16,
-        cols: u16,
-    ) -> SessionResult {
-        let Some(session) = self.terminal_session_mut(session_id) else {
-            return SessionResult::error("Terminal session not found");
-        };
-        let Some(terminal) = session.terminal.as_mut() else {
-            return SessionResult::error("Terminal session not found");
-        };
-        if terminal.resize(rows.max(1), cols.max(1)).is_err() {
-            return SessionResult::error("Terminal session is not resizable");
-        }
-        SessionResult::success()
-    }
-
-    pub fn handle_terminal_close(&mut self, session_id: &str) -> SessionResult {
-        let Some(mut session) = self.sessions.remove(session_id) else {
-            return SessionResult::success();
-        };
-        if let Some(mut terminal) = session.terminal.take() {
-            let _ = terminal.poll();
-            terminal.terminate(false);
-            terminal.close();
-        }
-        SessionResult::success()
-    }
-
-    pub fn drain_terminal_events(&mut self) -> Vec<TerminalEvent> {
-        let session_ids = self
-            .sessions
-            .values()
-            .filter(|session| {
-                session.session_type == SessionType::Terminal && session.terminal_attached
-            })
-            .map(|session| session.session_id.clone())
-            .collect::<Vec<_>>();
-        let mut events = Vec::new();
-        let mut finished_session_ids = Vec::new();
-
-        for session_id in session_ids {
-            let Some(session) = self.sessions.get_mut(&session_id) else {
-                continue;
-            };
-            let Some(terminal) = session.terminal.as_mut() else {
-                continue;
-            };
-            let mut output = Vec::new();
-            let mut terminal_error = None;
-
-            for _ in 0..MAX_TERMINAL_READS_PER_DRAIN {
-                match terminal.read_available(Duration::ZERO) {
-                    Ok(Some(chunk)) if chunk.is_empty() => break,
-                    Ok(Some(chunk)) => output.extend_from_slice(&chunk),
-                    Ok(None) => break,
-                    Err(error) => {
-                        terminal_error = Some(format!("Failed to read terminal output: {error}"));
-                        break;
-                    }
-                }
-            }
-
-            if !output.is_empty() {
-                events.push(TerminalEvent::Output {
-                    session_id: session_id.clone(),
-                    data: String::from_utf8_lossy(&output).into_owned(),
-                });
-            }
-
-            let exit_code = match terminal.poll() {
-                Ok(exit_code) => exit_code,
-                Err(error) => {
-                    terminal_error =
-                        Some(format!("Failed to poll terminal process status: {error}"));
-                    None
-                }
-            };
-            if exit_code.is_some() || terminal_error.is_some() {
-                events.push(TerminalEvent::Exit {
-                    session_id: session_id.clone(),
-                    exit_code,
-                    error: terminal_error,
-                });
-                finished_session_ids.push(session_id);
-            }
-        }
-
-        for session_id in finished_session_ids {
-            if let Some(mut session) = self.sessions.remove(&session_id) {
-                if let Some(mut terminal) = session.terminal.take() {
-                    terminal.close();
-                }
-            }
-        }
-
-        events
     }
 
     fn start_code_server_session(
@@ -715,10 +732,11 @@ impl LocalSessionHandler {
             rows: request.rows.unwrap_or(24).max(1),
             cols: request.cols.unwrap_or(80).max(1),
         };
-        let terminal = match self.pty_manager.spawn(spawn_request) {
+        let mut terminal = match self.pty_manager.spawn(spawn_request) {
             Ok(terminal) => terminal,
             Err(error) => return SessionResult::error(error),
         };
+        terminal.set_event_notifier(Arc::clone(&self.terminal_event_notifier));
         let expires_at =
             epoch_seconds() + request.ttl_seconds.unwrap_or(DEFAULT_SESSION_TTL_SECONDS);
         let session = LocalSession::terminal(
@@ -830,19 +848,6 @@ impl LocalSessionHandler {
         let session = self.sessions.get_mut(session_id)?;
         (session.session_type == SessionType::Terminal).then_some(session)
     }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum TerminalEvent {
-    Output {
-        session_id: String,
-        data: String,
-    },
-    Exit {
-        session_id: String,
-        exit_code: Option<u32>,
-        error: Option<String>,
-    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

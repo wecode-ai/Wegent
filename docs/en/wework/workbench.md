@@ -16,6 +16,12 @@ When many tabs are open, the tab list scrolls horizontally while the **+** and t
 
 The Task page and auxiliary product pages such as Plugins and Cloud Work share the same full-bleed desktop content container below the title bar. Switching pages within a tab therefore keeps the left sidebar's position and chrome stable instead of shifting with the page type. Pages may still render their own internal chrome inside this container.
 
+## Configure board automations
+
+Under **Automation** in a project space, choose a scheduled trigger and select daily, weekdays, weekly, or **Hourly**. Hourly schedules support minute 0–59 and use the configured timezone.
+
+Scheduled automations have a **Run** button on both their list card and detail view, including when their schedule is paused. Save configuration changes before running. The button is disabled while a run is starting to prevent duplicate submissions and becomes available again after a failed start. View results in run history.
+
 ## Manage issues and tasks in workspaces
 
 The top-level **Workspace** tab is where users browse boards, issues, and their linked tasks. It remains independent from Task tabs, preserving its selected board, route, and interface state.

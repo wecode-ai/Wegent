@@ -69,6 +69,7 @@ import {
 import type { RefreshWorkLists } from '@/features/workbench/workbenchContextTypes'
 import { resolveDshSettingsIcon } from '@/features/dsh-runtime/dshSettingsIcons'
 import { DshSettingsSurface } from '@/features/dsh-runtime/DshSettingsSurface'
+import { DshSettingsSectionSurface } from '@/features/dsh-runtime/DshSettingsSectionSurface'
 import { DshSlotSurface } from '@/features/dsh-runtime/DshSlotSurface'
 import { WEWORK_DSH_SLOTS } from '@/features/dsh-runtime/dshUiSlots'
 import { useDshSlotEntries } from '@/features/dsh-runtime/useDshSlotEntries'
@@ -1165,6 +1166,8 @@ export function ConnectionsDeviceSettingsPage({
               </button>
             </div>
           </section>
+
+          <DshSettingsSectionSurface page="connections" />
         </SettingsPage>
 
         {connectDialogOpen && (
@@ -1233,6 +1236,8 @@ export function ConnectionsDeviceSettingsPage({
         </section>
 
         <section className="mt-6 space-y-5">
+          <DshSettingsSectionSurface page="connections" />
+
           <CloudModelsSection cloudConnection={cloudConnection} />
 
           <div className="rounded-lg border border-border bg-background p-5">

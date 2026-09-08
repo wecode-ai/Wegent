@@ -19,6 +19,7 @@ use axum::{
 };
 use futures_util::{SinkExt, StreamExt};
 use tokio::net::TcpListener;
+use tokio::sync::Notify;
 use tokio_tungstenite::tungstenite::{client::IntoClientRequest, Message as TungsteniteMessage};
 use wegent_executor::local::session::{
     CodeServerLoginClient, GatewayRequest, LocalSession, LocalSessionHandler, PtySpawnRequest,
@@ -26,6 +27,8 @@ use wegent_executor::local::session::{
     TerminalPty,
 };
 use wegent_executor::local::session_gateway::start_session_gateway;
+
+const TERMINAL_CONSUMER_ID: &str = "consumer-1";
 
 fn env_lock() -> MutexGuard<'static, ()> {
     static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
@@ -441,13 +444,27 @@ fn start_terminal_session_uses_embedded_pty_and_lifecycle_methods() {
     assert!(!spawned[0].env.is_empty());
     drop(spawned);
 
-    assert!(handler.handle_terminal_input("terminal-1", "pwd\r").success);
     assert!(
         handler
-            .handle_terminal_resize("terminal-1", 30, 100)
+            .handle_terminal_attach("terminal-1", TERMINAL_CONSUMER_ID, 0)
             .success
     );
-    assert!(handler.handle_terminal_close("terminal-1").success);
+    assert!(
+        handler
+            .handle_terminal_input("terminal-1", TERMINAL_CONSUMER_ID, "pwd\r")
+            .success
+    );
+    assert!(
+        handler
+            .handle_terminal_resize("terminal-1", TERMINAL_CONSUMER_ID, 30, 100)
+            .success
+    );
+    assert!(
+        handler
+            .handle_terminal_close("terminal-1", TERMINAL_CONSUMER_ID)
+            .success
+    );
+    assert!(!handler.sessions.contains_key("terminal-1"));
 
     let terminal = terminal.lock().unwrap();
     assert_eq!(terminal.writes, vec![b"pwd\r".to_vec()]);
@@ -464,23 +481,15 @@ fn terminal_input_and_resize_return_errors_when_pty_is_gone() {
         fail_resize: true,
         ..RecordingTerminal::default()
     }));
-    let pty_manager = Arc::new(RecordingPtyManager::new(Arc::clone(&terminal)));
-    let mut handler =
-        LocalSessionHandler::new("http://localhost:17888", true, 18080, root, pty_manager);
-    handler.sessions.insert(
-        "terminal-1".to_owned(),
-        LocalSession::terminal(
-            "terminal-1",
-            "secret",
-            123,
-            PathBuf::from("/workspace"),
-            Box::new(SharedTerminal(terminal)),
-            9999999999,
-        ),
-    );
+    let mut handler = terminal_handler(root, &terminal);
 
-    let input = handler.handle_terminal_input("terminal-1", "pwd\r");
-    let resize = handler.handle_terminal_resize("terminal-1", 30, 100);
+    assert!(
+        handler
+            .handle_terminal_attach("terminal-1", TERMINAL_CONSUMER_ID, 0)
+            .success
+    );
+    let input = handler.handle_terminal_input("terminal-1", TERMINAL_CONSUMER_ID, "pwd\r");
+    let resize = handler.handle_terminal_resize("terminal-1", TERMINAL_CONSUMER_ID, 30, 100);
 
     assert!(!input.success);
     assert_eq!(
@@ -502,9 +511,379 @@ fn terminal_events_drain_output_before_exit_and_remove_finished_session() {
         exit_code: Some(0),
         ..RecordingTerminal::default()
     }));
-    let pty_manager = Arc::new(RecordingPtyManager::new(Arc::clone(&terminal)));
-    let mut handler =
-        LocalSessionHandler::new("http://localhost:17888", true, 18080, root, pty_manager);
+    let mut handler = terminal_handler(root, &terminal);
+
+    assert!(handler.drain_terminal_events().is_empty());
+    assert_eq!(terminal.lock().unwrap().output.len(), 2);
+    assert!(
+        handler
+            .handle_terminal_attach("terminal-1", TERMINAL_CONSUMER_ID, 0)
+            .success
+    );
+    let events = handler.drain_terminal_events();
+
+    assert_eq!(
+        events,
+        vec![TerminalEvent::Output {
+            session_id: "terminal-1".to_owned(),
+            consumer_id: Some(TERMINAL_CONSUMER_ID.to_owned()),
+            sequence: 1,
+            data: "hello world�".to_owned(),
+        }]
+    );
+    mark_output_events_delivered(&mut handler, &events);
+    assert!(
+        handler
+            .handle_terminal_ack("terminal-1", TERMINAL_CONSUMER_ID, 1)
+            .success
+    );
+    let exit_events = vec![TerminalEvent::Exit {
+        session_id: "terminal-1".to_owned(),
+        consumer_id: Some(TERMINAL_CONSUMER_ID.to_owned()),
+        exit_code: Some(0),
+        error: None,
+    }];
+    assert_eq!(handler.drain_terminal_events(), exit_events);
+    assert_eq!(
+        handler.drain_terminal_events(),
+        vec![TerminalEvent::Exit {
+            session_id: "terminal-1".to_owned(),
+            consumer_id: Some(TERMINAL_CONSUMER_ID.to_owned()),
+            exit_code: Some(0),
+            error: None,
+        }]
+    );
+    handler
+        .complete_terminal_exit("terminal-1", TERMINAL_CONSUMER_ID)
+        .unwrap();
+    assert!(!handler.sessions.contains_key("terminal-1"));
+    assert!(terminal.lock().unwrap().closed);
+}
+
+#[test]
+fn terminal_output_preserves_chinese_characters_split_across_pty_chunks() {
+    let chinese = "中文".as_bytes();
+    let terminal = Arc::new(Mutex::new(RecordingTerminal {
+        output: VecDeque::from([
+            chinese[..2].to_vec(),
+            chinese[2..4].to_vec(),
+            chinese[4..].to_vec(),
+        ]),
+        ..RecordingTerminal::default()
+    }));
+    let mut handler = terminal_handler(temp_root("terminal-utf8-pty-chunks"), &terminal);
+    assert!(
+        handler
+            .handle_terminal_attach("terminal-1", TERMINAL_CONSUMER_ID, 0)
+            .success
+    );
+
+    assert_eq!(
+        handler.drain_terminal_events(),
+        vec![TerminalEvent::Output {
+            session_id: "terminal-1".to_owned(),
+            consumer_id: Some(TERMINAL_CONSUMER_ID.to_owned()),
+            sequence: 1,
+            data: "中文".to_owned(),
+        }]
+    );
+}
+
+#[test]
+fn terminal_output_preserves_chinese_character_split_across_drains() {
+    let terminal = Arc::new(Mutex::new(RecordingTerminal {
+        output: VecDeque::from([vec![0xe4]]),
+        ..RecordingTerminal::default()
+    }));
+    let mut handler = terminal_handler(temp_root("terminal-utf8-drains"), &terminal);
+    assert!(
+        handler
+            .handle_terminal_attach("terminal-1", TERMINAL_CONSUMER_ID, 0)
+            .success
+    );
+
+    assert!(handler.drain_terminal_events().is_empty());
+    push_terminal_output(&terminal, vec![0xb8, 0xad]);
+
+    assert_eq!(
+        handler.drain_terminal_events(),
+        vec![TerminalEvent::Output {
+            session_id: "terminal-1".to_owned(),
+            consumer_id: Some(TERMINAL_CONSUMER_ID.to_owned()),
+            sequence: 1,
+            data: "中".to_owned(),
+        }]
+    );
+}
+
+#[test]
+fn terminal_output_replaces_invalid_utf8_without_losing_valid_bytes() {
+    let terminal = Arc::new(Mutex::new(RecordingTerminal {
+        output: VecDeque::from([
+            b"valid".to_vec(),
+            vec![0xf0, 0x28, 0x8c, 0x28],
+            b"tail".to_vec(),
+        ]),
+        ..RecordingTerminal::default()
+    }));
+    let mut handler = terminal_handler(temp_root("terminal-invalid-utf8"), &terminal);
+    assert!(
+        handler
+            .handle_terminal_attach("terminal-1", TERMINAL_CONSUMER_ID, 0)
+            .success
+    );
+
+    assert_eq!(
+        handler.drain_terminal_events(),
+        vec![TerminalEvent::Output {
+            session_id: "terminal-1".to_owned(),
+            consumer_id: Some(TERMINAL_CONSUMER_ID.to_owned()),
+            sequence: 1,
+            data: "valid�(�(tail".to_owned(),
+        }]
+    );
+}
+
+#[test]
+fn terminal_output_flushes_incomplete_utf8_at_eof_before_exit() {
+    let terminal = Arc::new(Mutex::new(RecordingTerminal {
+        output: VecDeque::from([vec![b't', b'a', b'i', b'l', 0xe4, 0xb8]]),
+        exit_code: Some(0),
+        ..RecordingTerminal::default()
+    }));
+    let mut handler = terminal_handler(temp_root("terminal-incomplete-utf8-eof"), &terminal);
+    assert!(
+        handler
+            .handle_terminal_attach("terminal-1", TERMINAL_CONSUMER_ID, 0)
+            .success
+    );
+
+    let output = handler.drain_terminal_events();
+    assert_eq!(
+        output,
+        vec![TerminalEvent::Output {
+            session_id: "terminal-1".to_owned(),
+            consumer_id: Some(TERMINAL_CONSUMER_ID.to_owned()),
+            sequence: 1,
+            data: "tail�".to_owned(),
+        }]
+    );
+    mark_output_events_delivered(&mut handler, &output);
+    assert!(
+        handler
+            .handle_terminal_ack("terminal-1", TERMINAL_CONSUMER_ID, 1)
+            .success
+    );
+    assert_eq!(
+        handler.drain_terminal_events(),
+        vec![TerminalEvent::Exit {
+            session_id: "terminal-1".to_owned(),
+            consumer_id: Some(TERMINAL_CONSUMER_ID.to_owned()),
+            exit_code: Some(0),
+            error: None,
+        }]
+    );
+}
+
+#[test]
+fn terminal_exit_waits_until_pending_output_is_closed() {
+    let terminal = Arc::new(Mutex::new(RecordingTerminal {
+        output: VecDeque::from([b"last output".to_vec()]),
+        exit_code: Some(0),
+        output_open: true,
+        ..RecordingTerminal::default()
+    }));
+    let mut handler = terminal_handler(temp_root("terminal-exit-order"), &terminal);
+    assert!(
+        handler
+            .handle_terminal_attach("terminal-1", TERMINAL_CONSUMER_ID, 0)
+            .success
+    );
+
+    let output_events = handler.drain_terminal_events();
+    assert_eq!(
+        output_events,
+        vec![TerminalEvent::Output {
+            session_id: "terminal-1".to_owned(),
+            consumer_id: Some(TERMINAL_CONSUMER_ID.to_owned()),
+            sequence: 1,
+            data: "last output".to_owned(),
+        }]
+    );
+    mark_output_events_delivered(&mut handler, &output_events);
+    assert!(handler.sessions.contains_key("terminal-1"));
+
+    terminal.lock().unwrap().output_open = false;
+    assert_eq!(handler.drain_terminal_events(), Vec::<TerminalEvent>::new());
+    assert!(handler.sessions.contains_key("terminal-1"));
+    assert!(terminal.lock().unwrap().closed);
+    assert!(
+        handler
+            .handle_terminal_ack("terminal-1", TERMINAL_CONSUMER_ID, 1)
+            .success
+    );
+    assert_eq!(
+        handler.drain_terminal_events(),
+        vec![TerminalEvent::Exit {
+            session_id: "terminal-1".to_owned(),
+            consumer_id: Some(TERMINAL_CONSUMER_ID.to_owned()),
+            exit_code: Some(0),
+            error: None,
+        }]
+    );
+    handler
+        .complete_terminal_exit("terminal-1", TERMINAL_CONSUMER_ID)
+        .unwrap();
+    assert!(!handler.sessions.contains_key("terminal-1"));
+}
+
+#[test]
+fn terminal_output_is_retried_until_transport_delivery_succeeds() {
+    let terminal = Arc::new(Mutex::new(RecordingTerminal {
+        output: VecDeque::from([b"retry".to_vec()]),
+        ..RecordingTerminal::default()
+    }));
+    let mut handler = terminal_handler(temp_root("terminal-delivery-retry"), &terminal);
+    assert!(
+        handler
+            .handle_terminal_attach("terminal-1", TERMINAL_CONSUMER_ID, 0)
+            .success
+    );
+
+    let first_attempt = handler.drain_terminal_events();
+    assert_eq!(
+        first_attempt,
+        vec![TerminalEvent::Output {
+            session_id: "terminal-1".to_owned(),
+            consumer_id: Some(TERMINAL_CONSUMER_ID.to_owned()),
+            sequence: 1,
+            data: "retry".to_owned(),
+        }]
+    );
+    mark_output_events_delivered(&mut handler, &first_attempt);
+    assert!(handler.drain_terminal_events().is_empty());
+    assert!(handler.retry_terminal_output_delivery("terminal-1", 1));
+    assert_eq!(handler.drain_terminal_events(), first_attempt);
+}
+
+#[test]
+fn terminal_ack_can_arrive_while_backend_delivery_call_is_in_flight() {
+    let terminal = Arc::new(Mutex::new(RecordingTerminal {
+        output: VecDeque::from([b"race".to_vec()]),
+        ..RecordingTerminal::default()
+    }));
+    let mut handler = terminal_handler(temp_root("terminal-ack-race"), &terminal);
+    assert!(
+        handler
+            .handle_terminal_attach("terminal-1", TERMINAL_CONSUMER_ID, 0)
+            .success
+    );
+
+    let events = handler.drain_terminal_events();
+    mark_output_events_delivered(&mut handler, &events);
+
+    assert!(
+        handler
+            .handle_terminal_ack("terminal-1", TERMINAL_CONSUMER_ID, 1)
+            .success
+    );
+    assert!(handler.drain_terminal_events().is_empty());
+}
+
+#[test]
+fn terminal_backend_reconnect_replays_every_unacknowledged_delivery() {
+    let terminal = Arc::new(Mutex::new(RecordingTerminal {
+        output: VecDeque::from([b"reconnect".to_vec()]),
+        ..RecordingTerminal::default()
+    }));
+    let mut handler = terminal_handler(temp_root("terminal-backend-reconnect"), &terminal);
+    assert!(
+        handler
+            .handle_terminal_attach("terminal-1", TERMINAL_CONSUMER_ID, 0)
+            .success
+    );
+
+    let events = handler.drain_terminal_events();
+    mark_output_events_delivered(&mut handler, &events);
+    assert!(handler.drain_terminal_events().is_empty());
+
+    handler.prepare_terminal_reconnect();
+
+    assert_eq!(handler.drain_terminal_events(), events);
+}
+
+#[test]
+fn terminal_reconnect_accepts_output_consumed_before_ack_reached_executor() {
+    let terminal = Arc::new(Mutex::new(RecordingTerminal {
+        output: VecDeque::from([b"consumed".to_vec()]),
+        ..RecordingTerminal::default()
+    }));
+    let mut handler = terminal_handler(temp_root("terminal-reconnect-lost-ack"), &terminal);
+    assert!(
+        handler
+            .handle_terminal_attach("terminal-1", TERMINAL_CONSUMER_ID, 0)
+            .success
+    );
+    let events = handler.drain_terminal_events();
+    mark_output_events_delivered(&mut handler, &events);
+
+    handler.prepare_terminal_reconnect();
+
+    assert!(
+        handler
+            .handle_terminal_attach("terminal-1", TERMINAL_CONSUMER_ID, 1)
+            .success
+    );
+    assert!(handler.drain_terminal_events().is_empty());
+}
+
+#[test]
+fn terminal_consumer_takeover_rejects_stale_ack_and_relabels_replay() {
+    let terminal = Arc::new(Mutex::new(RecordingTerminal {
+        output: VecDeque::from([b"takeover".to_vec()]),
+        ..RecordingTerminal::default()
+    }));
+    let mut handler = terminal_handler(temp_root("terminal-consumer-takeover"), &terminal);
+    assert!(
+        handler
+            .handle_terminal_attach("terminal-1", "consumer-old", 0)
+            .success
+    );
+    let first = handler.drain_terminal_events();
+    mark_output_events_delivered(&mut handler, &first);
+
+    assert!(
+        handler
+            .handle_terminal_attach("terminal-1", "consumer-new", 0)
+            .success
+    );
+    let stale_ack = handler.handle_terminal_ack("terminal-1", "consumer-old", 1);
+    assert!(!stale_ack.success);
+    assert_eq!(
+        stale_ack.error.as_deref(),
+        Some("Terminal consumer is no longer active")
+    );
+    assert_eq!(
+        handler.drain_terminal_events(),
+        vec![TerminalEvent::Output {
+            session_id: "terminal-1".to_owned(),
+            consumer_id: Some("consumer-new".to_owned()),
+            sequence: 1,
+            data: "takeover".to_owned(),
+        }]
+    );
+}
+
+#[test]
+fn expired_terminal_sessions_are_reaped_and_close_the_pty() {
+    let terminal = Arc::new(Mutex::new(RecordingTerminal::default()));
+    let mut handler = LocalSessionHandler::new(
+        "http://localhost:17888",
+        true,
+        18080,
+        temp_root("terminal-expiry"),
+        Arc::new(RecordingPtyManager::new(Arc::clone(&terminal))),
+    );
     handler.sessions.insert(
         "terminal-1".to_owned(),
         LocalSession::terminal(
@@ -513,31 +892,325 @@ fn terminal_events_drain_output_before_exit_and_remove_finished_session() {
             123,
             PathBuf::from("/workspace"),
             Box::new(SharedTerminal(Arc::clone(&terminal))),
-            9999999999,
+            1,
         ),
     );
 
+    assert_eq!(handler.reap_expired_sessions(), 1);
+    assert!(!handler.sessions.contains_key("terminal-1"));
+    assert!(terminal.lock().unwrap().terminated);
+    assert!(terminal.lock().unwrap().closed);
+}
+
+#[tokio::test]
+async fn terminal_output_notification_wakes_without_periodic_polling() {
+    let terminal = Arc::new(Mutex::new(RecordingTerminal::default()));
+    let mut handler = terminal_handler(temp_root("terminal-notification"), &terminal);
+    let event_notifier = handler.terminal_event_notifier();
+
+    assert!(
+        handler
+            .handle_terminal_attach("terminal-1", TERMINAL_CONSUMER_ID, 0)
+            .success
+    );
+    tokio::time::timeout(Duration::from_millis(50), event_notifier.notified())
+        .await
+        .expect("attaching should wake the terminal event loop");
     assert!(handler.drain_terminal_events().is_empty());
-    assert_eq!(terminal.lock().unwrap().output.len(), 2);
-    assert!(handler.handle_terminal_attach("terminal-1").success);
-    let events = handler.drain_terminal_events();
+
+    push_terminal_output(&terminal, b"prompt$ ".to_vec());
+    tokio::time::timeout(Duration::from_millis(50), event_notifier.notified())
+        .await
+        .expect("PTY output should wake the terminal event loop");
 
     assert_eq!(
-        events,
-        vec![
-            TerminalEvent::Output {
-                session_id: "terminal-1".to_owned(),
-                data: "hello world�".to_owned(),
-            },
-            TerminalEvent::Exit {
-                session_id: "terminal-1".to_owned(),
-                exit_code: Some(0),
-                error: None,
-            },
-        ]
+        handler.drain_terminal_events(),
+        vec![TerminalEvent::Output {
+            session_id: "terminal-1".to_owned(),
+            consumer_id: Some(TERMINAL_CONSUMER_ID.to_owned()),
+            sequence: 1,
+            data: "prompt$ ".to_owned(),
+        }]
     );
-    assert!(!handler.sessions.contains_key("terminal-1"));
-    assert!(terminal.lock().unwrap().closed);
+}
+
+#[tokio::test]
+async fn terminal_event_drain_keeps_busy_and_quiet_sessions_fair() {
+    let busy = Arc::new(Mutex::new(RecordingTerminal {
+        output: VecDeque::from(vec![b"a".to_vec(); 20]),
+        ..RecordingTerminal::default()
+    }));
+    let quiet = Arc::new(Mutex::new(RecordingTerminal {
+        output: VecDeque::from([b"b".to_vec()]),
+        ..RecordingTerminal::default()
+    }));
+    let mut handler = LocalSessionHandler::new(
+        "http://localhost:17888",
+        true,
+        18080,
+        temp_root("terminal-fairness"),
+        Arc::new(RecordingPtyManager::new(Arc::clone(&busy))),
+    );
+    handler.sessions.insert(
+        "busy".to_owned(),
+        LocalSession::terminal(
+            "busy",
+            "secret",
+            123,
+            PathBuf::from("/workspace"),
+            Box::new(SharedTerminal(busy)),
+            9999999999,
+        ),
+    );
+    handler.sessions.insert(
+        "quiet".to_owned(),
+        LocalSession::terminal(
+            "quiet",
+            "secret",
+            123,
+            PathBuf::from("/workspace"),
+            Box::new(SharedTerminal(quiet)),
+            9999999999,
+        ),
+    );
+    assert!(
+        handler
+            .handle_terminal_attach("busy", TERMINAL_CONSUMER_ID, 0)
+            .success
+    );
+    assert!(
+        handler
+            .handle_terminal_attach("quiet", TERMINAL_CONSUMER_ID, 0)
+            .success
+    );
+
+    let events = handler.drain_terminal_events();
+    assert!(events.iter().any(|event| {
+        matches!(
+            event,
+            TerminalEvent::Output {
+                session_id,
+                consumer_id: _,
+                sequence: 1,
+                data,
+            }
+                if session_id == "busy" && data.len() == 16
+        )
+    }));
+    assert!(events.iter().any(|event| {
+        matches!(
+            event,
+            TerminalEvent::Output {
+                session_id,
+                consumer_id: _,
+                sequence: 1,
+                data,
+            }
+                if session_id == "quiet" && data == "b"
+        )
+    }));
+    mark_output_events_delivered(&mut handler, &events);
+
+    let notifier = handler.terminal_event_notifier();
+    tokio::time::timeout(Duration::from_millis(50), notifier.notified())
+        .await
+        .expect("bounded draining should schedule the remaining busy output");
+    assert!(handler.drain_terminal_events().iter().any(|event| {
+        matches!(
+            event,
+            TerminalEvent::Output {
+                session_id,
+                consumer_id: _,
+                sequence: 2,
+                data,
+            }
+                if session_id == "busy" && data == "aaaa"
+        )
+    }));
+}
+
+#[tokio::test]
+async fn terminal_event_drain_preserves_continuous_large_output() {
+    let chunk = vec![b'x'; 4096];
+    let terminal = Arc::new(Mutex::new(RecordingTerminal {
+        output: VecDeque::from(vec![chunk; 64]),
+        ..RecordingTerminal::default()
+    }));
+    let mut handler = terminal_handler(temp_root("terminal-large-output"), &terminal);
+    assert!(
+        handler
+            .handle_terminal_attach("terminal-1", TERMINAL_CONSUMER_ID, 0)
+            .success
+    );
+    let notifier = handler.terminal_event_notifier();
+    tokio::time::timeout(Duration::from_millis(50), notifier.notified())
+        .await
+        .expect("attaching should wake the terminal event loop");
+
+    let mut output_len = 0;
+    for cycle in 0..4 {
+        if cycle > 0 {
+            tokio::time::timeout(Duration::from_millis(50), notifier.notified())
+                .await
+                .expect("bounded draining should continue until all output is consumed");
+        }
+        let events = handler.drain_terminal_events();
+        for event in &events {
+            if let TerminalEvent::Output { data, .. } = event {
+                output_len += data.len();
+            }
+        }
+        mark_output_events_delivered(&mut handler, &events);
+    }
+
+    assert_eq!(output_len, 64 * 4096);
+}
+
+#[test]
+fn terminal_reconnect_replays_only_output_after_last_acknowledged_sequence() {
+    let terminal = Arc::new(Mutex::new(RecordingTerminal {
+        output: VecDeque::from([b"one".to_vec()]),
+        ..RecordingTerminal::default()
+    }));
+    let mut handler = terminal_handler(temp_root("terminal-replay"), &terminal);
+    assert!(
+        handler
+            .handle_terminal_attach("terminal-1", TERMINAL_CONSUMER_ID, 0)
+            .success
+    );
+
+    let initial = handler.drain_terminal_events();
+    assert_eq!(
+        initial,
+        vec![TerminalEvent::Output {
+            session_id: "terminal-1".to_owned(),
+            consumer_id: Some(TERMINAL_CONSUMER_ID.to_owned()),
+            sequence: 1,
+            data: "one".to_owned(),
+        }]
+    );
+    mark_output_events_delivered(&mut handler, &initial);
+    push_terminal_output(&terminal, b"two".to_vec());
+    let second = handler.drain_terminal_events();
+    assert_eq!(
+        second,
+        vec![TerminalEvent::Output {
+            session_id: "terminal-1".to_owned(),
+            consumer_id: Some(TERMINAL_CONSUMER_ID.to_owned()),
+            sequence: 2,
+            data: "two".to_owned(),
+        }]
+    );
+    mark_output_events_delivered(&mut handler, &second);
+    assert!(
+        handler
+            .handle_terminal_ack("terminal-1", TERMINAL_CONSUMER_ID, 1)
+            .success
+    );
+
+    assert!(
+        handler
+            .handle_terminal_attach("terminal-1", TERMINAL_CONSUMER_ID, 1)
+            .success
+    );
+    assert_eq!(
+        handler.drain_terminal_events(),
+        vec![TerminalEvent::Output {
+            session_id: "terminal-1".to_owned(),
+            consumer_id: Some(TERMINAL_CONSUMER_ID.to_owned()),
+            sequence: 2,
+            data: "two".to_owned(),
+        }]
+    );
+}
+
+#[test]
+fn terminal_rejects_unavailable_replay_and_unsent_acknowledgement() {
+    let terminal = Arc::new(Mutex::new(RecordingTerminal {
+        output: VecDeque::from([b"one".to_vec()]),
+        ..RecordingTerminal::default()
+    }));
+    let mut handler = terminal_handler(temp_root("terminal-invalid-sequence"), &terminal);
+    assert!(
+        handler
+            .handle_terminal_attach("terminal-1", TERMINAL_CONSUMER_ID, 0)
+            .success
+    );
+    let events = handler.drain_terminal_events();
+    mark_output_events_delivered(&mut handler, &events);
+    assert!(
+        handler
+            .handle_terminal_ack("terminal-1", TERMINAL_CONSUMER_ID, 1)
+            .success
+    );
+
+    let stale_attach = handler.handle_terminal_attach("terminal-1", TERMINAL_CONSUMER_ID, 0);
+    assert!(!stale_attach.success);
+    assert_eq!(
+        stale_attach.error.as_deref(),
+        Some("Terminal replay history is no longer available")
+    );
+    let future_ack = handler.handle_terminal_ack("terminal-1", TERMINAL_CONSUMER_ID, 2);
+    assert!(!future_ack.success);
+    assert_eq!(
+        future_ack.error.as_deref(),
+        Some("Terminal output sequence has not been sent")
+    );
+}
+
+#[tokio::test]
+async fn terminal_acknowledgement_resumes_pty_drain_below_low_watermark() {
+    let chunk = vec![b'x'; 8 * 1024];
+    let terminal = Arc::new(Mutex::new(RecordingTerminal {
+        output: VecDeque::from(vec![chunk; 50]),
+        ..RecordingTerminal::default()
+    }));
+    let mut handler = terminal_handler(temp_root("terminal-backpressure"), &terminal);
+    let notifier = handler.terminal_event_notifier();
+    assert!(
+        handler
+            .handle_terminal_attach("terminal-1", TERMINAL_CONSUMER_ID, 0)
+            .success
+    );
+    tokio::time::timeout(Duration::from_millis(50), notifier.notified())
+        .await
+        .unwrap();
+
+    for cycle in 0..3 {
+        let events = handler.drain_terminal_events();
+        assert_eq!(events.len(), 1);
+        assert!(matches!(
+            events.first(),
+            Some(TerminalEvent::Output { sequence, data, .. })
+                if *sequence == cycle + 1 && data.len() == 128 * 1024
+        ));
+        mark_output_events_delivered(&mut handler, &events);
+        if cycle < 2 {
+            tokio::time::timeout(Duration::from_millis(50), notifier.notified())
+                .await
+                .unwrap();
+        }
+    }
+
+    assert_eq!(terminal.lock().unwrap().output.len(), 2);
+    assert!(handler.drain_terminal_events().is_empty());
+
+    assert!(
+        handler
+            .handle_terminal_ack("terminal-1", TERMINAL_CONSUMER_ID, 2)
+            .success
+    );
+    tokio::time::timeout(Duration::from_millis(50), notifier.notified())
+        .await
+        .expect("ACK below the low watermark should resume PTY draining");
+
+    let resumed = handler.drain_terminal_events();
+    assert_eq!(resumed.len(), 1);
+    assert!(matches!(
+        resumed.first(),
+        Some(TerminalEvent::Output { sequence: 4, data, .. }) if data.len() == 16 * 1024
+    ));
+    assert!(terminal.lock().unwrap().output.is_empty());
 }
 
 #[test]
@@ -877,6 +1550,31 @@ fn start_session_resolves_relative_default_path() {
     assert_eq!(pty_manager.spawned.lock().unwrap()[0].cwd, expected_path);
 }
 
+fn terminal_handler(
+    root: PathBuf,
+    terminal: &Arc<Mutex<RecordingTerminal>>,
+) -> LocalSessionHandler {
+    let mut handler = LocalSessionHandler::new(
+        "http://localhost:17888",
+        true,
+        18080,
+        root,
+        Arc::new(RecordingPtyManager::new(Arc::clone(terminal))),
+    );
+    handler.sessions.insert(
+        "terminal-1".to_owned(),
+        LocalSession::terminal(
+            "terminal-1",
+            "secret",
+            123,
+            PathBuf::from("/workspace"),
+            Box::new(SharedTerminal(Arc::clone(terminal))),
+            9999999999,
+        ),
+    );
+    handler
+}
+
 fn code_session(session_id: &str) -> LocalSession {
     LocalSession::code_server(
         session_id,
@@ -929,6 +1627,8 @@ impl SessionPtyManager for RecordingPtyManager {
 struct RecordingTerminal {
     output: VecDeque<Vec<u8>>,
     exit_code: Option<u32>,
+    output_open: bool,
+    event_notifier: Option<Arc<Notify>>,
     writes: Vec<Vec<u8>>,
     resizes: Vec<(u16, u16)>,
     terminated: bool,
@@ -964,6 +1664,14 @@ impl TerminalPty for SharedTerminal {
         Ok(self.0.lock().unwrap().output.pop_front())
     }
 
+    fn set_event_notifier(&mut self, notifier: Arc<Notify>) {
+        self.0.lock().unwrap().event_notifier = Some(notifier);
+    }
+
+    fn output_closed(&self) -> bool {
+        !self.0.lock().unwrap().output_open
+    }
+
     fn resize(&mut self, rows: u16, cols: u16) -> Result<(), String> {
         let mut terminal = self.0.lock().unwrap();
         if terminal.fail_resize {
@@ -983,6 +1691,33 @@ impl TerminalPty for SharedTerminal {
 
     fn close(&mut self) {
         self.0.lock().unwrap().closed = true;
+    }
+}
+
+fn push_terminal_output(terminal: &Arc<Mutex<RecordingTerminal>>, output: Vec<u8>) {
+    let notifier = {
+        let mut terminal = terminal.lock().unwrap();
+        terminal.output.push_back(output);
+        terminal.event_notifier.clone()
+    };
+    notifier
+        .expect("terminal event notifier must be configured before output")
+        .notify_one();
+}
+
+fn mark_output_events_delivered(handler: &mut LocalSessionHandler, events: &[TerminalEvent]) {
+    for event in events {
+        if let TerminalEvent::Output {
+            session_id,
+            consumer_id,
+            sequence,
+            ..
+        } = event
+        {
+            assert!(handler
+                .begin_terminal_output_delivery(session_id, consumer_id.as_deref(), *sequence)
+                .unwrap());
+        }
     }
 }
 

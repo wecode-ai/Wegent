@@ -69,6 +69,7 @@ from app.api.endpoints import (
     web_content,
     web_scraper,
     wework_auth,
+    wework_transcripts,
     wiki,
     wizard,
     work_queue,
@@ -377,6 +378,11 @@ api_router.include_router(
 )
 api_router.include_router(
     runtime_work.router, prefix="/runtime-work", tags=["runtime-work"]
+)
+api_router.include_router(
+    wework_transcripts.router,
+    prefix="/wework-transcripts",
+    tags=["wework-transcripts"],
 )
 
 api_router.include_router(utils.router, prefix="/utils", tags=["utils"])

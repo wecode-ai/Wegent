@@ -23,12 +23,12 @@ use tokio::time::sleep;
 
 use crate::{
     agents::{
-        codex_runtime_approval_policy, select_wework_codex_user_instructions, AgentCommandPlanner,
-        AgentProcessEngine, CodexActiveTurnCallback, CodexActiveTurnFinishedCallback,
-        CodexAppServerClient, CodexAppServerTurnOptions, CodexRequestUserInputReceiver,
-        CodexThreadStartedCallback, CODEX_APP_SERVER_TURN_CANCELLED,
-        CODEX_DANGER_FULL_ACCESS_PERMISSION_PROFILE, CODEX_READ_ONLY_PERMISSION_PROFILE,
-        CODEX_WORKSPACE_PERMISSION_PROFILE,
+        codex_runtime_approval_policy, select_wework_codex_user_instructions,
+        start_codex_app_server_thread, AgentCommandPlanner, AgentProcessEngine,
+        CodexActiveTurnCallback, CodexActiveTurnFinishedCallback, CodexAppServerClient,
+        CodexAppServerTurnOptions, CodexRequestUserInputReceiver, CodexThreadStartedCallback,
+        CODEX_APP_SERVER_TURN_CANCELLED, CODEX_DANGER_FULL_ACCESS_PERMISSION_PROFILE,
+        CODEX_READ_ONLY_PERMISSION_PROFILE, CODEX_WORKSPACE_PERMISSION_PROFILE,
     },
     config::device::ConnectionConfig,
     hooks::{
@@ -124,6 +124,7 @@ mod sidebar;
 mod supervisor;
 mod system;
 mod tasks;
+mod transcript_sync;
 mod turns;
 mod workspaces;
 
@@ -871,6 +872,9 @@ impl RuntimeWorkRpcHandler {
             "runtime.tasks.running_count" => Ok(self.running_task_count()),
             "runtime.tasks.search" => self.search_tasks(payload).await,
             "runtime.tasks.transcript" => self.transcript(payload).await,
+            "runtime.tasks.transcript.sync_status" => self.transcript_sync_status(payload),
+            "runtime.tasks.transcript.import" => self.import_transcript_turns(payload).await,
+            "runtime.tasks.transcript.acknowledge" => self.acknowledge_transcript_turn(payload),
             "runtime.tasks.create" => self.create_task(payload).await,
             "runtime.text.generate" => self.generate_text(payload).await,
             "runtime.tasks.fork_at_turn" => self.fork_task_at_turn(payload).await,

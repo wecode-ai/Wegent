@@ -1,3 +1,4 @@
+import { prepareSignedComponents } from './prepare-signed-components.mjs'
 import { spawn } from 'node:child_process'
 import { dirname, resolve } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
@@ -7,6 +8,7 @@ import { wrapWindowsScriptCommand } from '../../scripts/child-process-command.mj
 const electronRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 
 if (isMainModule()) {
+  await prepareSignedComponents()
   await buildRelease()
 }
 

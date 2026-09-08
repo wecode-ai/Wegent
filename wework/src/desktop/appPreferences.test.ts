@@ -7,6 +7,7 @@ vi.mock('@/api/dsh/desktopHost', () => ({
 }))
 
 const mergedDefaultPreferences = {
+  workbenchMode: 'developer',
   appearanceMode: 'system',
   closeToTrayEnabled: true,
   showMainWindowOnLaunch: true,
@@ -136,6 +137,20 @@ describe('appPreferences', () => {
 
     const { getAppPreferences } = await import('./appPreferences')
 
+    await expect(getAppPreferences()).resolves.toEqual(mergedDefaultPreferences)
+  })
+
+  test('normalizes the workbench mode and preserves existing behavior by default', async () => {
+    invokeMock.mockResolvedValue({ workbenchMode: 'focus' })
+
+    const { getAppPreferences } = await import('./appPreferences')
+
+    await expect(getAppPreferences()).resolves.toEqual({
+      ...mergedDefaultPreferences,
+      workbenchMode: 'focus',
+    })
+
+    invokeMock.mockResolvedValue({ workbenchMode: 'unknown' })
     await expect(getAppPreferences()).resolves.toEqual(mergedDefaultPreferences)
   })
 

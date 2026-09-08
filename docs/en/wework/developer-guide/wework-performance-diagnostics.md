@@ -118,6 +118,59 @@ Each conversation stores only a bounded TanStack measurement snapshot alongside 
 
 Terminal and built-in browser sessions are stateful active resources and do not follow ordinary pane eviction. A pane remains mounted while it owns a Terminal or browser tab so its terminal process and page session survive task switches. After the corresponding resources close, the pane is subject to the ordinary cache limit again. Changes to this boundary must continue to cover ordinary-pane LRU eviction, resource-pane retention, message-row virtualization, and the desktop memory E2E.
 
+## Cloud Terminal Load and Acceptance
+
+See [cloud terminal compatibility and rollout](wework-cloud-connection.md#cloud-terminal-compatibility-and-rollout) for protocol boundaries and deployment order. Run these commands sequentially from the repository root with project dependencies, `uv`, Cargo, and `redis-server` installed.
+
+```bash
+env -u TERMINAL_LOAD_REDIS_URL ./scripts/run-terminal-load.sh quick
+env -u TERMINAL_LOAD_REDIS_URL ./scripts/run-terminal-load.sh baseline
+env -u TERMINAL_LOAD_REDIS_URL ./scripts/run-terminal-load.sh capacity
+env -u TERMINAL_LOAD_REDIS_URL ./scripts/run-terminal-load.sh over-capacity
+pnpm --filter wework e2e:desktop -- --cloud-only --segment core-task-flow
+```
+
+- These load commands start temporary Redis bound only to `127.0.0.1` and destroy it afterward. They require no real passwords, user tokens, or API keys. `load-token` is only an Executor in-memory test placeholder.
+- Keeping `TERMINAL_LOAD_REDIS_URL` explicitly connects to the specified Redis; use a dedicated test instance. The script deletes only exact session keys created by the run, without scans or flushing. Shared-instance `INFO` includes unrelated traffic and cannot be attributed to this run.
+- `baseline` covers 3 Backends / 1000 sessions. `capacity` and `over-capacity` cover 8192 / 9000 sessions on one Backend to check uneven distribution, cache capacity, and eviction.
+- The Backend script tests the session store/cache and cross-instance invalidation. The Executor script uses production `LocalSessionHandler` with an in-memory PTY to test sequences, consumption ACK, consumer takeover, replay, and backpressure. Neither includes the full Socket.IO/network/xterm path; throughput is not end-to-end capacity.
+- Real Electron E2E covers v1/v2 rendering, missing/v1/v2 attach versions, v2-disabled negotiation, output above 512 KiB, resize, reconnect, protocol pinning, and close. v1 sends no consumption ACK. After Backend restart, wait for the target device's registration log from the new process before checking online status, so stale Redis presence cannot satisfy readiness. Evidence is stored in `wework/test-results/desktop-e2e/<run>/terminal-compatibility-*.json`. Desktop builds share resource directories and must not run concurrently.
+
+### Release Acceptance Gate
+
+Local tests do not replace sustained testing in a production-equivalent environment or mixed-version validation with actual release/rollback binaries. As of 2026-09-07, local unit/contract tests, both load profiles, and real Electron E2E passed; the complete historical-artifact matrix and sustained load below remain outstanding, not approved for release. The full CI classifier suite also still requires Bash 4+.
+
+Run each row for at least 30 minutes with real Backend, Redis, Executor PTY, and Wework, covering multiple Backends and single-replica traffic skew:
+
+| Sessions | Output per session | ACK delay | Purpose                       |
+| -------- | ------------------ | --------- | ----------------------------- |
+| 100      | 10 KiB/s           | 0ms       | Baseline                      |
+| 500      | 10 KiB/s           | 50ms      | Normal concurrency            |
+| 1000     | 100 KiB/s          | 200ms     | High throughput               |
+| 3000     | 1 KiB/s            | 50ms      | Many low-frequency terminals  |
+| 8192     | 10 KiB/s           | 200ms     | Single Backend cache capacity |
+| 9000     | 1 KiB/s            | 50ms      | Over-capacity eviction        |
+| 1000     | 100 KiB/s          | 1000ms    | Forced backpressure           |
+
+For each row, disconnect a random 10% of clients for 3 seconds, then restore connectivity and reattach within 1 second of connection recovery, verifying that v2 replay begins. Include delayed/lost ACKs, 10 MiB bursts, five parallel terminals, theme changes, and hide/reactivate. Also test Backend restart, Redis invalidation failure, stale-consumer controls, invalid handshakes, and rejection of protocol changes on existing sessions. Verify session identity and output markers; a recovered screen alone does not prove lossless recovery. Clean up test sessions and isolated resources afterward.
+
+Acceptance targets, not measured local-script performance claims:
+
+- v2 sequence gaps, duplicate writes, and silent loss are zero. Check basic I/O and reconnection for v1, without imposing lossless replay guarantees that v1 does not provide.
+- Executor replay stays within 512 KiB, pauses reads at 384 KiB, and resumes at or below 128 KiB. Memory plateaus over 30 minutes instead of growing with total output.
+- Same-region input echo P95 ≤ 50ms; RTT-adjusted path P95 ≤ 20ms. For each sample, compute `echo latency - paired RTT`, sort the residuals, and select the `ceil(0.95 × sample count)`-th value (the Backend load script's nearest-rank estimator); do not subtract two P95 values. Ctrl-C stops continuous `yes` output at P95 ≤ 200ms.
+- After a 3-second outage, reattach within 1 second of connection recovery and begin v2 replay. After a 10 MiB burst, the Renderer remains interactive and displays the completion marker and subsequent commands.
+- Isolated Redis command increments show `SCAN=0` and `KEYS=0`. For shared Redis, inspect code and exact-key operation counts instead of attributing global counters to the run.
+
+### Pressure and Observability
+
+- Steady authenticated data forwarding does not access SQL. Session-cache hits avoid Redis metadata reads, not Socket.IO multi-replica Pub/Sub or ACK forwarding. Count connection, authentication, and session creation separately.
+- Each Backend caches 8192 entries by default and revalidates active authorization using exact keys every 4–5 seconds with jitter. Watch miss/eviction above capacity. Each process reuses a Redis pool; Pub/Sub owns a connection within it, with no terminal-specific connection cap. Listener disconnection rejects cached authorization; reconnection clears the cache.
+- Collect CPU, memory, network throughput, Socket output/ACK events, Redis connections, and rejections. Distinguish useful output from two-hop forwarding overhead.
+- Backend metrics: `terminal_ws_events_total`, `terminal_session_cache_requests_total`, `terminal_session_cache_evictions_total`, `terminal_session_store_operations_total`, and `terminal_session_store_duration_seconds`.
+- Executor `/metrics`: `terminal_output_batches_total`, `terminal_output_bytes_total`, `terminal_replayed_batches_total`, `terminal_replay_bytes`, `terminal_ack_lag_bytes`, and `terminal_backpressured_sessions`.
+- Wework performance events: `remote-terminal-write` and `remote-terminal-replay-request`. Metrics, traces, and diagnostic logs must not record raw terminal content or credentials. Use Redis `INFO commandstats`, never `SCAN`, `KEYS`, or `MONITOR`, for observation.
+
 ## Local Codex Streaming Logs
 
 The local executor keeps Codex delta details enabled by default so developers can diagnose streaming order, phase classification, and final-content overwrite issues. By default, it records raw Codex delta events and run-state classification summaries.

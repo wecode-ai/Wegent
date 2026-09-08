@@ -143,6 +143,7 @@ dependencies = [
     "minio>=7.2.20",
     "boto3>=1.42.97",
     "oss2>=2.19.1",
+    "zstandard>=0.25.0",
 ]
 
 [tool.uv.sources]

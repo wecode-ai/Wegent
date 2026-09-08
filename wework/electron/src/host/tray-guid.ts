@@ -1,6 +1,8 @@
 import { createHash } from 'node:crypto'
 
 const WEWORK_TRAY_NAMESPACE = '69ef5f47-9421-53b7-8c12-5a09a4450863'
+const RELEASED_WEWORK_APPLICATION_ID = 'io.wecode.wework'
+const RELEASED_WEWORK_TRAY_GUID = '8fda9369-51a7-5cd6-9625-cb1b65f440db'
 
 function uuidBytes(uuid: string): Buffer {
   return Buffer.from(uuid.replaceAll('-', ''), 'hex')
@@ -18,6 +20,10 @@ function formatUuid(bytes: Buffer): string {
 }
 
 export function trayGuidForApplicationId(applicationId: string): string {
+  if (applicationId === RELEASED_WEWORK_APPLICATION_ID) {
+    return RELEASED_WEWORK_TRAY_GUID
+  }
+
   const bytes = createHash('sha1')
     .update(uuidBytes(WEWORK_TRAY_NAMESPACE))
     .update(applicationId)
